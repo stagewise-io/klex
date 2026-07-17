@@ -22,11 +22,12 @@
   },
   "dependencies": {
     "@hono/node-server": "2.0.10",
-    "hono": "4.12.30",
-    "zod": "4.4.3",
     "@libsql/client": "^0.17.4",
+    "ai": "7.0.31",
     "drizzle-orm": "^0.45.2",
-    "ai": "7.0.31"
+    "hono": "4.12.30",
+    "tslog": "5.0.0",
+    "zod": "4.4.3"
   },
   "keywords": [],
   "author": "",

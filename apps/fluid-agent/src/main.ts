@@ -1,20 +1,18 @@
-import type { Logger } from './admin/admin-api';
 import { createAdminApi } from './admin/admin-api';
+import { createLogger } from './logger/logger';
 
-// TODO: Replace with proper services (config file loader, structured logger, etc.)
-const logger: Logger = {
-  info: (msg, ...args) => console.log(`[info] ${msg}`, ...args),
-};
+const logger = createLogger({ name: 'fluid-agent' });
 
 async function main(): Promise<void> {
-  console.log('Fluid Agent v1.0.0\n');
+  logger.info('Fluid Agent v1.0.0');
 
-  const adminApi = createAdminApi({ logger });
+  const adminApi = createAdminApi({ logging: logger });
   await adminApi.start();
 
   // Idle until signal — graceful shutdown
   const shutdown = async () => {
     await adminApi.close();
+    await logger[Symbol.asyncDispose]();
     process.exit(0);
   };
 

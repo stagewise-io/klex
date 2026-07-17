@@ -31,13 +31,13 @@
 
 import { execSync } from 'node:child_process';
 import {
-  copyFileSync,
   chmodSync,
+  copyFileSync,
   existsSync,
   mkdirSync,
   writeFileSync,
 } from 'node:fs';
-import { resolve, join } from 'node:path';
+import { join, resolve } from 'node:path';
 
 const ROOT = resolve(import.meta.dirname, '..');
 const DIST = join(ROOT, 'dist');

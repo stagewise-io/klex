@@ -1,5 +1,5 @@
-import { createAdminApi } from './admin/admin-api';
 import type { Logger } from './admin/admin-api';
+import { createAdminApi } from './admin/admin-api';
 
 // TODO: Replace with proper services (config file loader, structured logger, etc.)
 const logger: Logger = {

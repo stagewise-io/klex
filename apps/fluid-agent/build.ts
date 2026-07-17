@@ -1,5 +1,5 @@
-import * as esbuild from 'esbuild';
 import type { BuildOptions } from 'esbuild';
+import * as esbuild from 'esbuild';
 
 const isWatch = process.argv.includes('--watch');
 const isSea = process.argv.includes('--sea');

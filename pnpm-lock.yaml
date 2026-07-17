@@ -29,6 +29,9 @@ importers:
       '@libsql/client':
         specifier: ^0.17.4
         version: 0.17.4
+      ai:
+        specifier: 7.0.31
+        version: 7.0.31(zod@4.4.3)
       drizzle-orm:
         specifier: ^0.45.2
         version: 0.45.2(@libsql/client@0.17.4)
@@ -68,6 +71,22 @@ importers:
   packages/typescript-config: {}
 
 packages:
+
+  '@ai-sdk/gateway@4.0.23':
+    resolution: {integrity: sha512-f85diFdPMXYJpxCjOYZchMQkRH8h3r6lhK4Q2xmzJ7UA2OQ80L3W7tFu61742xGQK7zHWm5AhxYhNuc50H9SGQ==}
+    engines: {node: '>=22'}
+    peerDependencies:
+      zod: ^3.25.76 || ^4.1.8
+
+  '@ai-sdk/provider-utils@5.0.11':
+    resolution: {integrity: sha512-7/96wE+ZsKB35iS9ASyllrE4Ym/EolXEB7AkuJ5FI++fmS85BVTAs77890C+1Z2jwHfBKjBQSBmsliOsAh0iFQ==}
+    engines: {node: '>=22'}
+    peerDependencies:
+      zod: ^3.25.76 || ^4.1.8
+
+  '@ai-sdk/provider@4.0.3':
+    resolution: {integrity: sha512-e0CpNWJUY7OxAFAnCZkw+ri9QOHWwTs1tXP42782KFGCU07qt8NiXCrCVowyCB5dP2r5/Uls+g2oPd8kOJn9dw==}
+    engines: {node: '>=22'}
 
   '@biomejs/biome@2.4.15':
     resolution: {integrity: sha512-j5VH3a/h/HXTKBM50MDMxRCzkeLv9S2XJcW2WgnZT1+xyisi+0bISrXR82gCX+8S9lvK0skEvHJRN+3Ktr2hlw==}
@@ -653,6 +672,9 @@ packages:
     cpu: [x64]
     os: [win32]
 
+  '@standard-schema/spec@1.1.0':
+    resolution: {integrity: sha512-l2aFy5jALhniG5HgqrD6jXLi/rUWrKvqN/qJx6yoJsgKhblVd+iqqU4RCXavm/jPityDo5TCvKMnpjKnOriy0w==}
+
   '@turbo/darwin-64@2.10.5':
     resolution: {integrity: sha512-ENvPwy3x5yS7MwNYHeWjqOBXkwIMp39Pd+/zXC6PoiNzF8EIvvLZOZZ+ny6L9x4WgS5vxUii2LM5gM+zjPdnWw==}
     cpu: [x64]
@@ -698,6 +720,10 @@ packages:
   '@types/ws@8.18.1':
     resolution: {integrity: sha512-ThVF6DCVhA8kUGy+aazFQ4kXQ7E1Ty7A3ypFOe0IcJV8O/M511G99AW24irKrW56Wt44yG9+ij8FaqoBGkuBXg==}
 
+  '@vercel/oidc@3.2.0':
+    resolution: {integrity: sha512-UycprH3T6n3jH0k44NHMa7pnFHGu/N05MjojYr+Mc6I7obkoLIJujSWwin1pCvdy/eOxrI/l3uDLQsmcrOb4ug==}
+    engines: {node: '>= 20'}
+
   '@vitest/expect@3.2.7':
     resolution: {integrity: sha512-E8eBXaKibuvH2pSZErOjdVb5vF4PbKYcrnluBTYxEk1l/VhhwZg1kZQsdtjq+CsF5CFydf2Rdkz7jDHKSisi3w==}
 
@@ -726,6 +752,15 @@ packages:
 
   '@vitest/utils@3.2.7':
     resolution: {integrity: sha512-x6BDOd7dyo3PFLY3I9/HJ25X/6OurhGXk2/B9gOZNPF7XDVjeBK4k01lQE5uvDpbuheErh91qYuE1E2OEjK3Rw==}
+
+  '@workflow/serde@4.1.0':
+    resolution: {integrity: sha512-pav4F2BoirECWR7Nf1TKt+2eETcBj7jj4cBefQ8VXQCA6NPkaKeLfj/zMgi+3zYV5ZIBT4GuUiphsj0/b9hPQQ==}
+
+  ai@7.0.31:
+    resolution: {integrity: sha512-pJfwKXjF5kw0rKRTePwYo60EfWb8wfzJAgf3ojln/YkOsVVKttzZAJVcRPsg37Z3a06ZdKkxX+DSrMAFlPm5Mw==}
+    engines: {node: '>=22'}
+    peerDependencies:
+      zod: ^3.25.76 || ^4.1.8
 
   ansi-regex@5.0.1:
     resolution: {integrity: sha512-quJQXlTSUGL2LH9SUXo8VwsY4soanhgo6LNSm84E1LBcE8s3O0wpdiRzyR9z/ZZJMlMWv37qOOb9pdJlMUEKFQ==}
@@ -914,6 +949,10 @@ packages:
   estree-walker@3.0.3:
     resolution: {integrity: sha512-7RUKfXgSMMkzt6ZuXmqapOurLGPPfgj6l9uRZ7lRGolvk0y2yocc35LdcxKC5PQZdn2DMqioAQ2NoWcrTKmm6g==}
 
+  eventsource-parser@3.1.0:
+    resolution: {integrity: sha512-kJezFj9YFAMLeORyi7aCLxLbD5/qWMQnoMVlVPyHIll7lgRJCc3JVln9Vgl9nwQi0YkMnhdGTMNn7CkRRAptMg==}
+    engines: {node: '>=18.0.0'}
+
   expect-type@1.4.0:
     resolution: {integrity: sha512-KfYbmpRm0VbLjEvVa9yGwCi9GI34xvi7A/HXYWQO65CSD2u3MczUJSuwXKFIxlGsgBQizV9q5J9NHj4VG0n+pA==}
     engines: {node: '>=12.0.0'}
@@ -960,6 +999,9 @@ packages:
 
   js-tokens@9.0.1:
     resolution: {integrity: sha512-mxa9E9ITFOt0ban3j6L5MpjwegGz6lBQmM1IJkWeBZGcMxto50+eWdjC/52xDbS2vy0k7vIMK0Fe2wfL9OQSpQ==}
+
+  json-schema@0.4.0:
+    resolution: {integrity: sha512-es94M3nTIfsEPisRafak+HDLfHXnKBhV3vU5eqPcS3flIWqcxJWgXHXiey3YrpaNsanY5ei1VoYEbOzijuq9BA==}
 
   libsql@0.5.29:
     resolution: {integrity: sha512-8lMP8iMgiBzzoNbAPQ59qdVcj6UaE/Vnm+fiwX4doX4Narook0a4GPKWBEv+CR8a1OwbfkgL18uBfBjWdF0Fzg==}
@@ -1227,6 +1269,25 @@ packages:
     resolution: {integrity: sha512-ytENFjIJFl2UwYglde2jchW2Hwm4GJFLDiSXWdTrJQBIN9Fcyp7n4DhxJEiWNAJMV1/BqWfW/kkg71UDcHJyTQ==}
 
 snapshots:
+
+  '@ai-sdk/gateway@4.0.23(zod@4.4.3)':
+    dependencies:
+      '@ai-sdk/provider': 4.0.3
+      '@ai-sdk/provider-utils': 5.0.11(zod@4.4.3)
+      '@vercel/oidc': 3.2.0
+      zod: 4.4.3
+
+  '@ai-sdk/provider-utils@5.0.11(zod@4.4.3)':
+    dependencies:
+      '@ai-sdk/provider': 4.0.3
+      '@standard-schema/spec': 1.1.0
+      '@workflow/serde': 4.1.0
+      eventsource-parser: 3.1.0
+      zod: 4.4.3
+
+  '@ai-sdk/provider@4.0.3':
+    dependencies:
+      json-schema: 0.4.0
 
   '@biomejs/biome@2.4.15':
     optionalDependencies:
@@ -1572,6 +1633,8 @@ snapshots:
   '@rollup/rollup-win32-x64-msvc@4.62.2':
     optional: true
 
+  '@standard-schema/spec@1.1.0': {}
+
   '@turbo/darwin-64@2.10.5':
     optional: true
 
@@ -1606,6 +1669,8 @@ snapshots:
   '@types/ws@8.18.1':
     dependencies:
       '@types/node': 26.1.1
+
+  '@vercel/oidc@3.2.0': {}
 
   '@vitest/expect@3.2.7':
     dependencies:
@@ -1648,6 +1713,15 @@ snapshots:
       '@vitest/pretty-format': 3.2.7
       loupe: 3.2.1
       tinyrainbow: 2.0.0
+
+  '@workflow/serde@4.1.0': {}
+
+  ai@7.0.31(zod@4.4.3):
+    dependencies:
+      '@ai-sdk/gateway': 4.0.23(zod@4.4.3)
+      '@ai-sdk/provider': 4.0.3
+      '@ai-sdk/provider-utils': 5.0.11(zod@4.4.3)
+      zod: 4.4.3
 
   ansi-regex@5.0.1: {}
 
@@ -1775,6 +1849,8 @@ snapshots:
     dependencies:
       '@types/estree': 1.0.9
 
+  eventsource-parser@3.1.0: {}
+
   expect-type@1.4.0: {}
 
   fdir@6.5.0(picomatch@4.0.5):
@@ -1813,6 +1889,8 @@ snapshots:
   js-base64@3.9.1: {}
 
   js-tokens@9.0.1: {}
+
+  json-schema@0.4.0: {}
 
   libsql@0.5.29:
     dependencies:

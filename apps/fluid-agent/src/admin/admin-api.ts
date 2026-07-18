@@ -44,7 +44,7 @@ class AdminApiModule implements AdminApi {
   async close(): Promise<void> {
     if (!this.server) return;
 
-    await new Promise<void>((resolve) => this.server.close(() => resolve()));
+    await new Promise<void>((resolve) => this.server!.close(() => resolve()));
     this.server = null;
     this.deps.logger.info('AdminAPI stopped');
   }

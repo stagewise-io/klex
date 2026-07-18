@@ -23,7 +23,8 @@ export const metaTable = sqliteTable('meta', {
 /** Context passed to MigrationScript.up() — accepts both a raw DB and a transaction. */
 type MigrationContext =
   | LibSQLDatabase<SchemaWithMeta>
-  | SQLiteTransaction<'async', unknown, SchemaWithMeta, Record<string, never>>;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  | SQLiteTransaction<'async', any, SchemaWithMeta, any>;
 
 /**
  * Schema shape every service must adopt.

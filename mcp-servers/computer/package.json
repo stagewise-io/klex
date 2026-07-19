@@ -1,13 +1,33 @@
 {
   "name": "@stagewise/computer",
   "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "type": "module",
+  "description": "Computer MCP server for stagewise",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "build": "node build.mjs",
+    "dev": "tsx watch src/index.ts",
+    "start": "node dist/index.js",
+    "typecheck": "tsc --noEmit -p tsconfig.test.json",
+    "test": "vitest run"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
-  "packageManager": "pnpm@10.30.3"
+  "packageManager": "pnpm@10.30.3",
+  "dependencies": {
+    "@hono/node-server": "2.0.10",
+    "@modelcontextprotocol/hono": "2.0.0-beta.4",
+    "@modelcontextprotocol/server": "2.0.0-beta.4",
+    "hono": "4.12.30",
+    "tslog": "5.0.1"
+  },
+  "devDependencies": {
+    "@stagewise/typescript-config": "workspace:*",
+    "@types/node": "26.1.1",
+    "esbuild": "0.28.1",
+    "tsx": "4.23.1",
+    "typescript": "7.0.2",
+    "vite": "8.1.5",
+    "vitest": "4.1.10"
+  }
 }

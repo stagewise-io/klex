@@ -4,7 +4,7 @@
   "type": "module",
   "description": "Computer MCP server for stagewise",
   "scripts": {
-    "build": "tsc",
+    "build": "node build.mjs",
     "dev": "tsx watch src/index.ts",
     "start": "node dist/index.js",
     "typecheck": "tsc --noEmit -p tsconfig.test.json",
@@ -24,6 +24,7 @@
   "devDependencies": {
     "@stagewise/typescript-config": "workspace:*",
     "@types/node": "26.1.1",
+    "esbuild": "0.28.1",
     "tsx": "4.23.1",
     "typescript": "7.0.2",
     "vite": "8.1.5",

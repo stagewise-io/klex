@@ -8,7 +8,7 @@ await build({
   target: "node22",
   outfile: "dist/index.js",
   packages: "external",
-  sourcemap: false,
+  sourcemap: true,
   legalComments: "none",
 });
 

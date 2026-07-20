@@ -1,0 +1,65 @@
+import { Hono } from 'hono';
+import type { ChatStore } from './chat-store.js';
+import { InvalidMessageError } from './chat-store.js';
+import type { ChatMcp } from './mcp.js';
+import { renderChatPage } from './ui.js';
+
+export function createApp(store: ChatStore, mcp: ChatMcp): Hono {
+  const app = new Hono();
+
+  app.get('/', (context) => context.html(renderChatPage()));
+  app.get('/health', (context) => context.json({ status: 'ok' }));
+  app.get('/api/messages', (context) =>
+    context.json({ messages: store.listMessages() }),
+  );
+  app.post('/api/messages', async (context) => {
+    const body: unknown = await context.req.json().catch(() => null);
+    if (
+      typeof body !== 'object' ||
+      body === null ||
+      !('message' in body) ||
+      typeof body.message !== 'string'
+    ) {
+      return context.json({ error: 'Expected a message string' }, 400);
+    }
+    try {
+      const created = store.addUserMessage(body.message);
+      mcp.publishUserEvent(created.notification);
+      return context.json({ message: created.message }, 201);
+    } catch (error) {
+      if (error instanceof InvalidMessageError) {
+        return context.json({ error: error.message }, 400);
+      }
+      throw error;
+    }
+  });
+  app.get('/api/stream', (_context) => {
+    const encoder = new TextEncoder();
+    let unsubscribe = () => {};
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(encoder.encode(': connected\n\n'));
+        unsubscribe = store.subscribe((message) => {
+          controller.enqueue(
+            encoder.encode(
+              `event: message\ndata: ${JSON.stringify(message)}\n\n`,
+            ),
+          );
+        });
+      },
+      cancel() {
+        unsubscribe();
+      },
+    });
+    return new Response(stream, {
+      headers: {
+        'Cache-Control': 'no-cache',
+        Connection: 'keep-alive',
+        'Content-Type': 'text/event-stream',
+      },
+    });
+  });
+  app.all('/mcp', (context) => mcp.fetch(context.req.raw));
+
+  return app;
+}

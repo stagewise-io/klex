@@ -86,7 +86,7 @@ describe('Fluid Events server', () => {
     registerFluidEventsServer(server, { getEvents, acknowledgeEvents });
     const context = {
       mcpReq: {
-        envelope: metadata['io.modelcontextprotocol/clientCapabilities'],
+        envelope: metadata,
       },
     };
     await handlers.get('io.stagewise.fluid/events/get')?.(

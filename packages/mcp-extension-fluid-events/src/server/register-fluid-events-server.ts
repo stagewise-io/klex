@@ -24,7 +24,6 @@ import {
 import type {
   AcknowledgeEventsParams,
   FluidEventNotificationParams,
-  FluidEventsCapabilities,
   GetEventsParams,
   GetEventsResult,
 } from '../spec.types.js';
@@ -92,12 +91,9 @@ export function registerFluidEventsServer(
       hasFluidEventsCapability(server.getClientCapabilities()));
 
   const requireSupport = (context: BaseContext): void => {
-    const envelope = context.mcpReq?.envelope as
-      | FluidEventsCapabilities
+    const metadata = context.mcpReq?.envelope as
+      | Record<string, unknown>
       | undefined;
-    const metadata = envelope
-      ? { 'io.modelcontextprotocol/clientCapabilities': envelope }
-      : undefined;
     if (!supports(metadata)) {
       throw new FluidEventsProtocolError(missingFluidEventsCapabilityError());
     }

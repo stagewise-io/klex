@@ -17,6 +17,9 @@ const buildOptions: BuildOptions = {
   minify: true,
   treeShaking: true,
   keepNames: false,
+  loader: {
+    '.md': 'text',
+  },
 };
 
 if (isWatch) {

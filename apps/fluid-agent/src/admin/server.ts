@@ -1,6 +1,6 @@
+import type { ModuleLogger } from '@stagewise/logger';
 import { Hono } from 'hono';
 import type { Config } from '../config/config';
-import type { ModuleLogger } from '../logger/logger';
 import { getConfig, putConfig } from './routes/v1/config';
 import { getHealth } from './routes/v1/health';
 

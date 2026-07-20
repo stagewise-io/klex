@@ -1,0 +1,26 @@
+{
+  "name": "@stagewise/logger",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "files": [
+    "src"
+  ],
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "tslog": "5.0.1"
+  },
+  "devDependencies": {
+    "@stagewise/typescript-config": "workspace:*",
+    "typescript": "7.0.2"
+  }
+}

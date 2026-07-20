@@ -23,11 +23,11 @@
   },
   "dependencies": {
     "@hono/node-server": "2.0.10",
+    "@stagewise/logger": "workspace:*",
     "@libsql/client": "0.17.4",
     "ai": "7.0.31",
     "drizzle-orm": "0.45.2",
     "hono": "4.12.30",
-    "tslog": "5.0.1",
     "zod": "4.4.3"
   },
   "keywords": [],

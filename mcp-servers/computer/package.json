@@ -18,8 +18,8 @@
     "@hono/node-server": "2.0.10",
     "@modelcontextprotocol/hono": "2.0.0-beta.4",
     "@modelcontextprotocol/server": "2.0.0-beta.4",
-    "hono": "4.12.30",
-    "tslog": "5.0.1"
+    "@stagewise/logger": "workspace:*",
+    "hono": "4.12.30"
   },
   "devDependencies": {
     "@stagewise/typescript-config": "workspace:*",

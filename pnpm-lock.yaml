@@ -29,6 +29,9 @@ importers:
       '@libsql/client':
         specifier: 0.17.4
         version: 0.17.4
+      '@stagewise/logger':
+        specifier: workspace:*
+        version: link:../../packages/logger
       ai:
         specifier: 7.0.31
         version: 7.0.31(zod@4.4.3)
@@ -38,9 +41,6 @@ importers:
       hono:
         specifier: 4.12.30
         version: 4.12.30
-      tslog:
-        specifier: 5.0.1
-        version: 5.0.1
       zod:
         specifier: 4.4.3
         version: 4.4.3
@@ -78,12 +78,12 @@ importers:
       '@modelcontextprotocol/server':
         specifier: 2.0.0-beta.4
         version: 2.0.0-beta.4
+      '@stagewise/logger':
+        specifier: workspace:*
+        version: link:../../packages/logger
       hono:
         specifier: 4.12.30
         version: 4.12.30
-      tslog:
-        specifier: 5.0.1
-        version: 5.0.1
     devDependencies:
       '@stagewise/typescript-config':
         specifier: workspace:*
@@ -106,6 +106,19 @@ importers:
       vitest:
         specifier: 4.1.10
         version: 4.1.10(@types/node@26.1.1)(vite@8.1.5(@types/node@26.1.1)(esbuild@0.28.1)(tsx@4.23.1))
+
+  packages/logger:
+    dependencies:
+      tslog:
+        specifier: 5.0.1
+        version: 5.0.1
+    devDependencies:
+      '@stagewise/typescript-config':
+        specifier: workspace:*
+        version: link:../typescript-config
+      typescript:
+        specifier: 7.0.2
+        version: 7.0.2
 
   packages/mcp-schema: {}
 

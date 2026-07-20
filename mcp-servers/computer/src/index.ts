@@ -1,7 +1,7 @@
 import { serve } from '@hono/node-server';
 import { createMcpHonoApp } from '@modelcontextprotocol/hono';
 import { createMcpHandler, McpServer } from '@modelcontextprotocol/server';
-import { createLogger } from './logger';
+import { createLogger } from '@stagewise/logger';
 
 const PORT = Number(process.env.PORT ?? 3123);
 const LOG_LEVEL = (process.env.LOG_LEVEL ?? 'INFO') as

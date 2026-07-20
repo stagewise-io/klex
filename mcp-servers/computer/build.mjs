@@ -1,3 +1,4 @@
+import { fileURLToPath } from 'node:url';
 import { build } from 'esbuild';
 
 await build({
@@ -8,6 +9,11 @@ await build({
   target: 'node22',
   outfile: 'dist/index.js',
   packages: 'external',
+  alias: {
+    '@stagewise/logger': fileURLToPath(
+      new URL('../../packages/logger/src/index.ts', import.meta.url),
+    ),
+  },
   sourcemap: true,
   legalComments: 'none',
 });

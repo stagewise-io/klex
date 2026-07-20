@@ -1,6 +1,6 @@
+import { createLogger } from '@stagewise/logger';
 import { createAdminApi } from './admin/admin-api';
 import { createConfig } from './config/config';
-import { createLogger } from './logger/logger';
 
 const logger = createLogger({ name: 'fluid-agent' });
 

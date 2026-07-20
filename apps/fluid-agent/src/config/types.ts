@@ -3,8 +3,12 @@ import z from 'zod';
 // ModelId: providerId:endpointId:modelId
 
 const modelIdSchema = z.custom<`${string}:${string}:${string}`>(
-  (v): v is `${string}:${string}:${string}` =>
-    typeof v === 'string' && /^[^:]+:[^:]+:[^:]+$/.test(v),
+  (value): value is `${string}:${string}:${string}` =>
+    typeof value === 'string' && /^[^:]+:[^:]+:.+$/.test(value),
+  {
+    error:
+      'Model ID must use the format providerId:endpointId:modelId with non-empty segments',
+  },
 );
 
 type ModelId = z.infer<typeof modelIdSchema>;
@@ -39,7 +43,7 @@ type ModelEntry = z.infer<typeof modelEntrySchema>;
 // Endpoint config
 
 const endpointConfigSchema = z.object({
-  url: z.string().url(),
+  url: z.url(),
   format: apiFormatSchema,
   auth: endpointAuthSchema,
   models: z.record(z.string(), modelEntrySchema).optional(),
@@ -64,6 +68,7 @@ const modelSelectionSchema = z.object({
 });
 
 type ModelSelection = z.infer<typeof modelSelectionSchema>;
+type ModelPurpose = keyof ModelSelection;
 
 // MCP server config (standard mcp.json shape)
 
@@ -76,7 +81,7 @@ const stdioServerConfigSchema = z.object({
 type StdioServerConfig = z.infer<typeof stdioServerConfigSchema>;
 
 const httpServerConfigSchema = z.object({
-  url: z.string().url(),
+  url: z.url(),
   headers: z.record(z.string(), z.string()).optional(),
 });
 
@@ -119,6 +124,7 @@ export type {
   McpServerConfig,
   ModelEntry,
   ModelId,
+  ModelPurpose,
   ModelSelection,
   ProviderConfig,
   StdioServerConfig,

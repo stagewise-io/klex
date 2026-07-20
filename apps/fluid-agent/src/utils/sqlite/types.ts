@@ -1,5 +1,6 @@
-import type { Client } from '@libsql/client';
+import type { Client, ResultSet } from '@libsql/client';
 import type { LibSQLDatabase } from 'drizzle-orm/libsql';
+import type { ExtractTablesWithRelations } from 'drizzle-orm/relations';
 import {
   type SQLiteTransaction,
   sqliteTable,
@@ -23,8 +24,12 @@ export const metaTable = sqliteTable('meta', {
 /** Context passed to MigrationScript.up() — accepts both a raw DB and a transaction. */
 type MigrationContext =
   | LibSQLDatabase<SchemaWithMeta>
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  | SQLiteTransaction<'async', any, SchemaWithMeta, any>;
+  | SQLiteTransaction<
+      'async',
+      ResultSet,
+      SchemaWithMeta,
+      ExtractTablesWithRelations<SchemaWithMeta>
+    >;
 
 /**
  * Schema shape every service must adopt.

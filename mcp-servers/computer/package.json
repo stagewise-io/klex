@@ -19,6 +19,7 @@
     "@modelcontextprotocol/hono": "2.0.0-beta.4",
     "@modelcontextprotocol/server": "2.0.0-beta.4",
     "@stagewise/logger": "workspace:*",
+    "@stagewise/mcp-extension-fluid-events": "workspace:*",
     "hono": "4.12.30"
   },
   "devDependencies": {

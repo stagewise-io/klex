@@ -5,6 +5,7 @@
   "scripts": {
     "build": "turbo run build",
     "dev": "turbo watch dev",
+    "prepare": "husky",
     "check": "biome check .",
     "check:fix": "biome check . --write",
     "typecheck": "turbo run typecheck",
@@ -12,6 +13,8 @@
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.4",
+    "husky": "9.1.7",
+    "lint-staged": "16.4.0",
     "turbo": "2.10.5",
     "typescript": "7.0.2",
     "vitest": "4.1.10"

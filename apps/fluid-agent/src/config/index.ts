@@ -65,7 +65,43 @@ const modelSelectionSchema = z.object({
 
 type ModelSelection = z.infer<typeof modelSelectionSchema>;
 
-// Full model provider config
+// MCP server config (standard mcp.json shape)
+
+const stdioServerConfigSchema = z.object({
+  command: z.string(),
+  args: z.array(z.string()).optional(),
+  env: z.record(z.string(), z.string()).optional(),
+});
+
+type StdioServerConfig = z.infer<typeof stdioServerConfigSchema>;
+
+const httpServerConfigSchema = z.object({
+  url: z.string().url(),
+  headers: z.record(z.string(), z.string()).optional(),
+});
+
+type HttpServerConfig = z.infer<typeof httpServerConfigSchema>;
+
+const mcpServerConfigSchema = z.union([
+  stdioServerConfigSchema,
+  httpServerConfigSchema,
+]);
+
+type McpServerConfig = z.infer<typeof mcpServerConfigSchema>;
+
+export const mcpConfigSchema = z.object({
+  mcpServers: z.record(z.string(), mcpServerConfigSchema),
+});
+
+export type McpConfig = z.infer<typeof mcpConfigSchema>;
+
+export const fluidConfigSchema = z.object({
+  providers: z.record(z.string(), providerConfigSchema),
+  modelSelection: modelSelectionSchema,
+  mcpServers: z.record(z.string(), mcpServerConfigSchema),
+});
+
+type FluidConfig = z.infer<typeof fluidConfigSchema>;
 
 export const modelProviderConfigSchema = z.object({
   providers: z.record(z.string(), providerConfigSchema),
@@ -78,8 +114,12 @@ export type {
   ApiFormat,
   EndpointAuth,
   EndpointConfig,
+  FluidConfig,
+  HttpServerConfig,
+  McpServerConfig,
   ModelEntry,
   ModelId,
   ModelSelection,
   ProviderConfig,
+  StdioServerConfig,
 };

@@ -4,13 +4,15 @@ import { join } from 'node:path';
 import type { ModuleLogger, RootLogger } from '@stagewise/logger';
 import { ZodError } from 'zod';
 import {
+  type EndpointAuth,
   type EndpointConfig,
   type FluidConfig,
   fluidConfigSchema,
   type McpServerConfig,
-  type ModelEntry,
   type ModelId,
   type ModelPurpose,
+  type ProviderPreset,
+  resolvePresetEndpoint,
 } from './types';
 
 export interface ResolvedModelConfig {
@@ -18,7 +20,7 @@ export interface ResolvedModelConfig {
   endpointId: string;
   modelId: string;
   endpoint: EndpointConfig;
-  model: ModelEntry;
+  isPreset: boolean;
 }
 
 export class ConfigValidationError extends Error {
@@ -120,25 +122,50 @@ class ConfigModule implements Config {
 
   resolveModel(modelId: ModelId): ResolvedModelConfig {
     const config = this.requireConfig();
-    const { providerId, endpointId, localModelId } = splitModelId(modelId);
-    const endpoint = config.providers[providerId]?.endpoints[endpointId];
-    const model = endpoint?.models?.[localModelId];
+    const { providerId, rest } = splitProviderId(modelId);
+    const provider = config.providers[providerId];
+
+    if (!provider) {
+      throw new Error(
+        `Model ${modelId} references unknown provider ${providerId}`,
+      );
+    }
+
+    if ('preset' in provider) {
+      const localModelId = rest;
+      const endpoint = resolvePresetEndpoint(provider.preset, provider.auth);
+      return {
+        providerId,
+        endpointId: provider.preset,
+        modelId: localModelId,
+        endpoint: resolveAuthEnvVars(endpoint),
+        isPreset: true,
+      };
+    }
+
+    const colon = rest.indexOf(':');
+    if (colon === -1) {
+      throw new Error(
+        `Manual provider ${providerId} requires an endpoint ID; use ${providerId}:endpointId:modelId format`,
+      );
+    }
+
+    const endpointId = rest.slice(0, colon);
+    const localModelId = rest.slice(colon + 1);
+    const endpoint = provider.endpoints[endpointId];
 
     if (!endpoint) {
       throw new Error(
         `Model ${modelId} references unknown endpoint ${providerId}:${endpointId}`,
       );
     }
-    if (!model) {
-      throw new Error(`Model ${modelId} is not configured at its endpoint`);
-    }
 
     return {
       providerId,
       endpointId,
       modelId: localModelId,
-      endpoint,
-      model,
+      endpoint: resolveAuthEnvVars(endpoint),
+      isPreset: false,
     };
   }
 
@@ -182,7 +209,7 @@ class ConfigModule implements Config {
 
     try {
       this.validateModelReferences(config);
-      this.validateHeaders(config);
+      this.validateAuth(config);
     } catch (error) {
       if (error instanceof ConfigValidationError) throw error;
       throw new ConfigValidationError(
@@ -201,20 +228,29 @@ class ConfigModule implements Config {
     return this.config;
   }
 
-  private validateHeaders(config: FluidConfig): void {
-    const providerHeaders = Object.values(config.providers).flatMap(
-      (provider) =>
-        Object.values(provider.endpoints).flatMap((endpoint) =>
-          Object.values(endpoint.auth.headers ?? {}),
-        ),
+  private validateAuth(config: FluidConfig): void {
+    const providerAuthValues = Object.values(config.providers).flatMap(
+      (provider) => {
+        const authValues: string[] = [];
+        if ('preset' in provider) {
+          if (provider.auth.apiKey) authValues.push(provider.auth.apiKey);
+          authValues.push(...Object.values(provider.auth.headers ?? {}));
+        } else {
+          for (const endpoint of Object.values(provider.endpoints)) {
+            if (endpoint.auth.apiKey) authValues.push(endpoint.auth.apiKey);
+            authValues.push(...Object.values(endpoint.auth.headers ?? {}));
+          }
+        }
+        return authValues;
+      },
     );
     const mcpHeaders = Object.values(config.mcpServers).flatMap((server) =>
       'url' in server ? Object.values(server.headers ?? {}) : [],
     );
 
-    if ([...providerHeaders, ...mcpHeaders].includes('[REDACTED]')) {
+    if ([...providerAuthValues, ...mcpHeaders].includes('[REDACTED]')) {
       throw new ConfigValidationError(
-        'Header values must not use the reserved [REDACTED] marker',
+        'Auth values must not use the reserved [REDACTED] marker',
       );
     }
   }
@@ -222,7 +258,7 @@ class ConfigModule implements Config {
   private validateModelReferences(config: FluidConfig): void {
     for (const [purpose, modelIds] of Object.entries(config.modelSelection)) {
       for (const modelId of modelIds) {
-        const { providerId, endpointId, localModelId } = splitModelId(modelId);
+        const { providerId, rest } = splitProviderId(modelId);
         const provider = config.providers[providerId];
         if (!provider) {
           throw new Error(
@@ -230,16 +266,23 @@ class ConfigModule implements Config {
           );
         }
 
+        if ('preset' in provider) {
+          // Preset providers accept any model name — the API rejects invalid ones.
+          continue;
+        }
+
+        const colon = rest.indexOf(':');
+        if (colon === -1) {
+          throw new Error(
+            `Model selection ${purpose} references provider ${providerId} without an endpoint ID; use ${providerId}:endpointId:modelId format`,
+          );
+        }
+
+        const endpointId = rest.slice(0, colon);
         const endpoint = provider.endpoints[endpointId];
         if (!endpoint) {
           throw new Error(
             `Model selection ${purpose} references unknown endpoint ${providerId}:${endpointId}`,
-          );
-        }
-
-        if (!endpoint.models?.[localModelId]) {
-          throw new Error(
-            `Model selection ${purpose} references unconfigured model ${modelId}`,
           );
         }
       }
@@ -251,19 +294,37 @@ function isNodeError(error: unknown): error is NodeJS.ErrnoException {
   return error instanceof Error && 'code' in error;
 }
 
-function splitModelId(modelId: ModelId): {
+function splitProviderId(modelId: ModelId): {
   providerId: string;
-  endpointId: string;
-  localModelId: string;
+  rest: string;
 } {
-  const firstColon = modelId.indexOf(':');
-  const secondColon = modelId.indexOf(':', firstColon + 1);
-
+  const colon = modelId.indexOf(':');
   return {
-    providerId: modelId.slice(0, firstColon),
-    endpointId: modelId.slice(firstColon + 1, secondColon),
-    localModelId: modelId.slice(secondColon + 1),
+    providerId: modelId.slice(0, colon),
+    rest: modelId.slice(colon + 1),
   };
+}
+
+const ENV_VAR_PATTERN = /^\{env:\s*(.+?)\s*\}$/;
+
+function resolveEnvVar(value: string | undefined): string | undefined {
+  if (!value) return value;
+  const match = value.match(ENV_VAR_PATTERN);
+  if (!match) return value;
+  const varName = match[1]!.trim();
+  const envValue = process.env[varName];
+  if (envValue === undefined) {
+    throw new Error(`Environment variable ${varName} is not set`);
+  }
+  return envValue;
+}
+
+function resolveAuthEnvVars(endpoint: EndpointConfig): EndpointConfig {
+  const auth: EndpointAuth = { ...endpoint.auth };
+  if (auth.apiKey !== undefined) {
+    auth.apiKey = resolveEnvVar(auth.apiKey);
+  }
+  return { ...endpoint, auth };
 }
 
 export function createConfig(deps: ConfigDependencies): Config {

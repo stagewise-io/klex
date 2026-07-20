@@ -1,13 +1,13 @@
 import z from 'zod';
 
-// ModelId: providerId:endpointId:modelId
+// ModelId: providerId:modelId (preset) or providerId:endpointId:modelId (manual)
 
-const modelIdSchema = z.custom<`${string}:${string}:${string}`>(
-  (value): value is `${string}:${string}:${string}` =>
-    typeof value === 'string' && /^[^:]+:[^:]+:.+$/.test(value),
+const modelIdSchema = z.custom<`${string}:${string}`>(
+  (value): value is `${string}:${string}` =>
+    typeof value === 'string' && /^[^:]+:.+$/.test(value),
   {
     error:
-      'Model ID must use the format providerId:endpointId:modelId with non-empty segments',
+      'Model ID must use the format providerId:modelId (preset) or providerId:endpointId:modelId (manual) with non-empty segments',
   },
 );
 
@@ -16,29 +16,27 @@ type ModelId = z.infer<typeof modelIdSchema>;
 // ApiFormat: which wire protocol / AI-SDK provider
 
 const apiFormatSchema = z.enum([
-  'openai-chat-completions',
-  'openai-responses',
-  'anthropic',
-  'google',
+  // Direct vendor providers
+  'openai', // used for full OpenAI API
+  'anthropic', // used for full Anthropic API
+  'google', // used for full Google API
+
+  // Standardized formats for individual functionalities
+  'chat-completions', // used for OpenAI-compatible chat completions endpoints
+  'open-responses', // used for OpenAI-compatible responses endpoints
+  'messages', // used for Anthropic-compatible messages endpoints
 ]);
 
 type ApiFormat = z.infer<typeof apiFormatSchema>;
 
-// Endpoint auth
+// Endpoint auth: apiKey (literal or {env:VAR}) plus optional custom headers
 
 const endpointAuthSchema = z.object({
+  apiKey: z.string().optional(),
   headers: z.record(z.string(), z.string()).optional(),
 });
 
 type EndpointAuth = z.infer<typeof endpointAuthSchema>;
-
-// Model entry: metadata for a model served at an endpoint
-
-const modelEntrySchema = z.object({
-  displayName: z.string().optional(),
-});
-
-type ModelEntry = z.infer<typeof modelEntrySchema>;
 
 // Endpoint config
 
@@ -46,16 +44,67 @@ const endpointConfigSchema = z.object({
   url: z.url(),
   format: apiFormatSchema,
   auth: endpointAuthSchema,
-  models: z.record(z.string(), modelEntrySchema).optional(),
 });
 
 type EndpointConfig = z.infer<typeof endpointConfigSchema>;
 
-// Provider config: a named provider with one or more endpoints
+// Provider preset: a named bundle of endpoint URL and format
 
-const providerConfigSchema = z.object({
-  endpoints: z.record(z.string(), endpointConfigSchema),
-});
+const providerPresetSchema = z.enum(['openai', 'anthropic', 'google']);
+
+type ProviderPreset = z.infer<typeof providerPresetSchema>;
+
+interface PresetDefinition {
+  url: string;
+  format: ApiFormat;
+}
+
+const providerPresets: Record<ProviderPreset, PresetDefinition> = {
+  openai: {
+    url: 'https://api.openai.com/v1',
+    format: 'openai',
+  },
+  anthropic: {
+    url: 'https://api.anthropic.com/v1',
+    format: 'anthropic',
+  },
+  google: {
+    url: 'https://generativelanguage.googleapis.com/v1beta',
+    format: 'google',
+  },
+};
+
+export function resolvePresetEndpoint(
+  preset: ProviderPreset,
+  auth: EndpointAuth,
+): EndpointConfig {
+  const def = providerPresets[preset];
+  return {
+    url: def.url,
+    format: def.format,
+    auth,
+  };
+}
+
+// Provider config: a named provider with either a preset or manual endpoints
+
+const presetProviderSchema = z
+  .object({
+    preset: providerPresetSchema,
+    auth: endpointAuthSchema,
+  })
+  .strict();
+
+const manualProviderSchema = z
+  .object({
+    endpoints: z.record(z.string(), endpointConfigSchema),
+  })
+  .strict();
+
+const providerConfigSchema = z.union([
+  presetProviderSchema,
+  manualProviderSchema,
+]);
 
 type ProviderConfig = z.infer<typeof providerConfigSchema>;
 
@@ -94,12 +143,6 @@ const mcpServerConfigSchema = z.union([
 
 type McpServerConfig = z.infer<typeof mcpServerConfigSchema>;
 
-export const mcpConfigSchema = z.object({
-  mcpServers: z.record(z.string(), mcpServerConfigSchema),
-});
-
-export type McpConfig = z.infer<typeof mcpConfigSchema>;
-
 export const fluidConfigSchema = z.object({
   providers: z.record(z.string(), providerConfigSchema),
   modelSelection: modelSelectionSchema,
@@ -108,13 +151,6 @@ export const fluidConfigSchema = z.object({
 
 type FluidConfig = z.infer<typeof fluidConfigSchema>;
 
-export const modelProviderConfigSchema = z.object({
-  providers: z.record(z.string(), providerConfigSchema),
-  modelSelection: modelSelectionSchema,
-});
-
-export type ModelProviderConfig = z.infer<typeof modelProviderConfigSchema>;
-
 export type {
   ApiFormat,
   EndpointAuth,
@@ -122,10 +158,10 @@ export type {
   FluidConfig,
   HttpServerConfig,
   McpServerConfig,
-  ModelEntry,
   ModelId,
   ModelPurpose,
   ModelSelection,
   ProviderConfig,
+  ProviderPreset,
   StdioServerConfig,
 };

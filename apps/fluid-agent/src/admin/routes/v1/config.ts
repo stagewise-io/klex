@@ -17,21 +17,25 @@ export function redactConfig(config: FluidConfig): FluidConfig {
     providers: Object.fromEntries(
       Object.entries(config.providers).map(([providerId, provider]) => [
         providerId,
-        {
-          ...provider,
-          endpoints: Object.fromEntries(
-            Object.entries(provider.endpoints).map(([endpointId, endpoint]) => [
-              endpointId,
-              {
-                ...endpoint,
-                auth: {
-                  ...endpoint.auth,
-                  headers: redactHeaders(endpoint.auth.headers),
-                },
-              },
-            ]),
-          ),
-        },
+        'preset' in provider
+          ? {
+              ...provider,
+              auth: redactAuth(provider.auth),
+            }
+          : {
+              ...provider,
+              endpoints: Object.fromEntries(
+                Object.entries(provider.endpoints).map(
+                  ([endpointId, endpoint]) => [
+                    endpointId,
+                    {
+                      ...endpoint,
+                      auth: redactAuth(endpoint.auth),
+                    },
+                  ],
+                ),
+              ),
+            },
       ]),
     ),
     mcpServers: Object.fromEntries(
@@ -74,6 +78,17 @@ export function putConfig(deps: ConfigRouteDependencies) {
       deps.logger.error({ error }, 'Config update failed');
       return c.json({ error: 'Failed to update config' }, 500);
     }
+  };
+}
+
+function redactAuth(auth: {
+  apiKey?: string;
+  headers?: Record<string, string>;
+}): { apiKey?: string; headers?: Record<string, string> } {
+  return {
+    ...auth,
+    apiKey: auth.apiKey ? REDACTED : auth.apiKey,
+    headers: redactHeaders(auth.headers),
   };
 }
 

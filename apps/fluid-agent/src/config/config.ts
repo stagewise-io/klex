@@ -1,4 +1,5 @@
-import { readFile } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
+import { readFile, rename, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { ZodError } from 'zod';
 import type { ModuleLogger, RootLogger } from '../logger/logger';
@@ -20,10 +21,15 @@ export interface ResolvedModelConfig {
   model: ModelEntry;
 }
 
+export class ConfigValidationError extends Error {
+  override readonly name = 'ConfigValidationError';
+}
+
 export interface Config {
   start(): Promise<void>;
   close(): Promise<void>;
   get(): Readonly<FluidConfig>;
+  replace(input: unknown): Promise<Readonly<FluidConfig>>;
   getModelSelection(purpose: ModelPurpose): readonly ModelId[];
   resolveModel(modelId: ModelId): ResolvedModelConfig;
   getMcpServers(): Readonly<Record<string, McpServerConfig>>;
@@ -36,6 +42,7 @@ export interface ConfigDependencies {
 
 class ConfigModule implements Config {
   private config: FluidConfig | null = null;
+  private updateQueue: Promise<void> = Promise.resolve();
 
   constructor(
     private readonly deps: {
@@ -73,11 +80,9 @@ class ConfigModule implements Config {
     }
 
     try {
-      const config = fluidConfigSchema.parse(input);
-      this.validateModelReferences(config);
-      this.config = config;
+      this.config = this.parse(input);
     } catch (error) {
-      if (error instanceof ZodError) {
+      if (error instanceof ConfigValidationError) {
         throw new Error(
           `Config at ${this.deps.configPath} is invalid: ${error.message}`,
           { cause: error },
@@ -98,6 +103,15 @@ class ConfigModule implements Config {
 
   get(): Readonly<FluidConfig> {
     return this.requireConfig();
+  }
+
+  replace(input: unknown): Promise<Readonly<FluidConfig>> {
+    const update = this.updateQueue.then(() => this.replaceNow(input));
+    this.updateQueue = update.then(
+      () => undefined,
+      () => undefined,
+    );
+    return update;
   }
 
   getModelSelection(purpose: ModelPurpose): readonly ModelId[] {
@@ -132,11 +146,77 @@ class ConfigModule implements Config {
     return this.requireConfig().mcpServers;
   }
 
+  private async replaceNow(input: unknown): Promise<Readonly<FluidConfig>> {
+    this.requireConfig();
+    const config = this.parse(input);
+    const temporaryPath = `${this.deps.configPath}.${process.pid}.${randomUUID()}.tmp`;
+
+    try {
+      await writeFile(temporaryPath, `${JSON.stringify(config, null, 2)}\n`, {
+        encoding: 'utf8',
+        mode: 0o600,
+      });
+      await rename(temporaryPath, this.deps.configPath);
+    } catch (error) {
+      await unlink(temporaryPath).catch(() => undefined);
+      throw new Error(`Failed to persist config at ${this.deps.configPath}`, {
+        cause: error,
+      });
+    }
+
+    this.config = config;
+    this.deps.logger.info('Config updated');
+    return config;
+  }
+
+  private parse(input: unknown): FluidConfig {
+    let config: FluidConfig;
+    try {
+      config = fluidConfigSchema.parse(input);
+    } catch (error) {
+      if (error instanceof ZodError) {
+        throw new ConfigValidationError(error.message, { cause: error });
+      }
+      throw error;
+    }
+
+    try {
+      this.validateModelReferences(config);
+      this.validateHeaders(config);
+    } catch (error) {
+      if (error instanceof ConfigValidationError) throw error;
+      throw new ConfigValidationError(
+        error instanceof Error ? error.message : 'Invalid config',
+        { cause: error },
+      );
+    }
+
+    return config;
+  }
+
   private requireConfig(): FluidConfig {
     if (!this.config) {
       throw new Error('Config has not been started');
     }
     return this.config;
+  }
+
+  private validateHeaders(config: FluidConfig): void {
+    const providerHeaders = Object.values(config.providers).flatMap(
+      (provider) =>
+        Object.values(provider.endpoints).flatMap((endpoint) =>
+          Object.values(endpoint.auth.headers ?? {}),
+        ),
+    );
+    const mcpHeaders = Object.values(config.mcpServers).flatMap((server) =>
+      'url' in server ? Object.values(server.headers ?? {}) : [],
+    );
+
+    if ([...providerHeaders, ...mcpHeaders].includes('[REDACTED]')) {
+      throw new ConfigValidationError(
+        'Header values must not use the reserved [REDACTED] marker',
+      );
+    }
   }
 
   private validateModelReferences(config: FluidConfig): void {

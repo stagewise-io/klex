@@ -1,9 +1,11 @@
 import { type ServerType, serve } from '@hono/node-server';
+import type { Config } from '../config/config';
 import type { ModuleLogger, RootLogger } from '../logger/logger';
 import { createAdminApp } from './server';
 
 export interface AdminApiDependencies {
   logging: RootLogger;
+  config: Config;
 }
 
 export interface AdminApi {
@@ -18,6 +20,7 @@ class AdminApiModule implements AdminApi {
   constructor(
     private readonly deps: {
       logger: ModuleLogger;
+      config: Config;
     },
   ) {}
 
@@ -25,7 +28,10 @@ class AdminApiModule implements AdminApi {
     if (this.started) return;
     this.started = true;
 
-    const app = createAdminApp();
+    const app = createAdminApp({
+      config: this.deps.config,
+      logger: this.deps.logger,
+    });
 
     this.server = await new Promise<ServerType>((resolve) => {
       const server = serve(
@@ -42,9 +48,10 @@ class AdminApiModule implements AdminApi {
   }
 
   async close(): Promise<void> {
-    if (!this.server) return;
+    const server = this.server;
+    if (!server) return;
 
-    await new Promise<void>((resolve) => this.server!.close(() => resolve()));
+    await new Promise<void>((resolve) => server.close(() => resolve()));
     this.server = null;
     this.deps.logger.info('AdminAPI stopped');
   }
@@ -56,5 +63,6 @@ export function createAdminApi(deps: AdminApiDependencies): AdminApi {
       name: 'admin-api',
       bindings: { module: 'admin-api' },
     }),
+    config: deps.config,
   });
 }

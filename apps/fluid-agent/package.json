@@ -9,6 +9,7 @@
     "build": "tsx build.ts",
     "build:exe": "tsx build.ts --sea && tsx scripts/package-exe.ts",
     "typecheck": "tsc --noEmit",
+    "test": "vitest run",
     "clean": "rimraf dist"
   },
   "devDependencies": {

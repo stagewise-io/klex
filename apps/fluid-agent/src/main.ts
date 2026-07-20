@@ -13,7 +13,7 @@ async function main(): Promise<void> {
   });
   await config.start();
 
-  const adminApi = createAdminApi({ logging: logger });
+  const adminApi = createAdminApi({ logging: logger, config });
   await adminApi.start();
 
   // Idle until signal — graceful shutdown

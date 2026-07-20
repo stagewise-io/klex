@@ -1,6 +1,6 @@
-import type { WebSocket } from 'ws';
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 import type { JSONRPCMessage } from '@modelcontextprotocol/sdk/types.js';
+import type { WebSocket } from 'ws';
 
 /**
  * MCP `Transport` implementation over a `ws` WebSocket.

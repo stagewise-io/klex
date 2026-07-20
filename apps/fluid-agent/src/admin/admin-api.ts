@@ -1,6 +1,6 @@
 import { type ServerType, serve } from '@hono/node-server';
+import type { ModuleLogger, RootLogger } from '../logger/logger';
 import { createAdminApp } from './server';
-import type { RootLogger, ModuleLogger } from '../logger/logger';
 
 export interface AdminApiDependencies {
   logging: RootLogger;

@@ -1,4 +1,4 @@
-import { Logger as TslogLogger, type ILogObj, type TLogLevelName } from 'tslog';
+import { type ILogObj, type TLogLevelName, Logger as TslogLogger } from 'tslog';
 
 export type RootLogger = TslogLogger<ILogObj>;
 

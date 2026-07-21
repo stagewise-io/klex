@@ -1,0 +1,16 @@
+{
+  "extends": "../../packages/typescript-config/base.json",
+  "compilerOptions": {
+    "composite": false,
+    "noEmit": true,
+    "outDir": "./dist",
+    "rootDir": "./src",
+    "lib": ["esnext", "dom"],
+    "types": ["node"],
+    "declaration": false,
+    "declarationMap": false,
+    "sourceMap": false
+  },
+  "include": ["src"],
+  "exclude": ["dist", "node_modules", ".turbo"]
+}

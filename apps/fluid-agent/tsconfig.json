@@ -7,9 +7,14 @@
     "rootDir": "./src",
     "lib": ["esnext"],
     "types": ["node"],
+    "paths": {
+      "@/*": ["./src/*"]
+    },
     "declaration": false,
     "declarationMap": false,
-    "sourceMap": false
+    "sourceMap": false,
+    "verbatimModuleSyntax": true,
+    "isolatedModules": true
   },
   "include": ["src"],
   "exclude": ["dist", "node_modules", ".turbo"]

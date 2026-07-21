@@ -1,8 +1,9 @@
-import type { ModuleLogger } from '@stagewise/logger';
 import type { Context } from 'hono';
-import type { Config } from '../../../config/config';
-import { ConfigValidationError } from '../../../config/config';
-import type { FluidConfig } from '../../../config/types';
+
+import type { ModuleLogger } from '@stagewise/logger';
+
+import type { Config, FluidConfig } from '@/config';
+import { ConfigValidationError } from '@/config';
 
 const REDACTED = '[REDACTED]';
 

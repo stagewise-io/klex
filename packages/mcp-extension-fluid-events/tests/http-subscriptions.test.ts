@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+
 import {
   createFluidEventsHttpSubscriptionManager,
   FLUID_EVENTS_EXTENSION_ID,

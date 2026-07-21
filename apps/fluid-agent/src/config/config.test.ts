@@ -1,8 +1,11 @@
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { RootLogger } from '@stagewise/logger';
+
 import { afterEach, describe, expect, it } from 'vitest';
+
+import type { RootLogger } from '@stagewise/logger';
+
 import { ConfigValidationError, createConfig } from './config';
 import type { FluidConfig, ProviderPreset } from './types';
 
@@ -337,6 +340,7 @@ describe('Config — validation', () => {
     const local = config.providers.local;
     if (!local || !('endpoints' in local))
       throw new Error('Expected fixture provider with endpoints');
+    // biome-ignore lint/style/noNonNullAssertion: guarded by throw above
     local.endpoints.chat!.auth.apiKey = '[REDACTED]';
     await expect(module.replace(config)).rejects.toBeInstanceOf(
       ConfigValidationError,
@@ -361,6 +365,7 @@ describe('Config — validation', () => {
     const local = config.providers.local;
     if (!local || !('endpoints' in local))
       throw new Error('Expected fixture provider with endpoints');
+    // biome-ignore lint/style/noNonNullAssertion: guarded by throw above
     local.endpoints.chat!.auth.headers = { 'X-Custom': '[REDACTED]' };
     await expect(module.replace(config)).rejects.toBeInstanceOf(
       ConfigValidationError,
@@ -439,7 +444,7 @@ describe('Config — validation', () => {
 
 describe('Config — env var resolution', () => {
   it('resolves {env:VAR} in preset provider apiKey', async () => {
-    process.env['FLUID_TEST_KEY'] = 'env-resolved-key';
+    process.env.FLUID_TEST_KEY = 'env-resolved-key';
     try {
       const config = presetConfig();
       const provider = config.providers['my-openai'];
@@ -450,23 +455,24 @@ describe('Config — env var resolution', () => {
       const resolved = module.resolveModel('my-openai:gpt-4o');
       expect(resolved.endpoint.auth.apiKey).toBe('env-resolved-key');
     } finally {
-      delete process.env['FLUID_TEST_KEY'];
+      delete process.env.FLUID_TEST_KEY;
     }
   });
 
   it('resolves {env:VAR} in manual endpoint apiKey', async () => {
-    process.env['FLUID_TEST_KEY'] = 'manual-env-key';
+    process.env.FLUID_TEST_KEY = 'manual-env-key';
     try {
       const config = manualConfig();
       const local = config.providers.local;
       if (!local || !('endpoints' in local))
         throw new Error('Expected manual provider');
+      // biome-ignore lint/style/noNonNullAssertion: guarded by throw above
       local.endpoints.chat!.auth.apiKey = '{env:FLUID_TEST_KEY}';
       const { module } = await setup(config);
       const resolved = module.resolveModel('local:chat:model:8b');
       expect(resolved.endpoint.auth.apiKey).toBe('manual-env-key');
     } finally {
-      delete process.env['FLUID_TEST_KEY'];
+      delete process.env.FLUID_TEST_KEY;
     }
   });
 

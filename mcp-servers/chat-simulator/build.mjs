@@ -1,4 +1,5 @@
 import { fileURLToPath } from 'node:url';
+
 import { build } from 'esbuild';
 
 await build({

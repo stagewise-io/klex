@@ -1,9 +1,16 @@
 import type { LanguageModelV4, ProviderV4 } from '@ai-sdk/provider';
+import { beforeEach, describe, expect, it } from 'vitest';
+
 import type { ModuleLogger, RootLogger } from '@stagewise/logger';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { Config, ResolvedModelConfig } from '../config/config';
-import type { EndpointConfig, ModelId } from '../config/types';
-import { createModelProvider, type ModelProvider } from './index';
+
+import type {
+  Config,
+  EndpointConfig,
+  ModelId,
+  ResolvedModelConfig,
+} from '@/config';
+
+import { createModelProvider } from './model-provider';
 
 const logging = {
   child: () => ({ info: () => undefined }) as unknown as ModuleLogger,
@@ -18,7 +25,7 @@ const mockLanguageModel = (id: string): LanguageModelV4 =>
     provider: 'mock',
   }) as unknown as LanguageModelV4;
 
-let createdProviders: MockProvider[] = [];
+let _createdProviders: MockProvider[] = [];
 
 class MockProvider implements ProviderV4 {
   readonly specificationVersion = 'v4' as const;
@@ -86,7 +93,7 @@ function resolved(
 }
 
 beforeEach(() => {
-  createdProviders = [];
+  _createdProviders = [];
 });
 
 // --- tests ---
@@ -137,9 +144,9 @@ describe('ModelProvider — lifecycle', () => {
 
 describe('ModelProvider — caching behavior', () => {
   it('returns the same provider instance for models on the same preset provider', async () => {
-    let callCount = 0;
+    let _callCount = 0;
     const config = createMockConfig((modelId) => {
-      callCount++;
+      _callCount++;
       // Extract the local model ID from the full modelId
       const colon = modelId.indexOf(':');
       const localModelId = modelId.slice(colon + 1);

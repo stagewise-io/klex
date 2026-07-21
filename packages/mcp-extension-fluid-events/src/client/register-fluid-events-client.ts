@@ -1,4 +1,5 @@
 import type { Client, RequestOptions } from '@modelcontextprotocol/client';
+
 import {
   resolveServerFluidEventsSupport,
   withFluidEventsCapability,

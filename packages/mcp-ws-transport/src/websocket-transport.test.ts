@@ -1,7 +1,9 @@
 import type { AddressInfo } from 'node:net';
+
 import type { JSONRPCMessage } from '@modelcontextprotocol/sdk/types.js';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { WebSocket, WebSocketServer } from 'ws';
+
 import { WebSocketTransport } from './websocket-transport.js';
 
 describe('WebSocketTransport', () => {

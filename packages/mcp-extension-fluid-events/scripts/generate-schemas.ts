@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, relative } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+
 import { generate } from 'ts-to-zod';
 import { type $ZodType, toJSONSchema } from 'zod/v4/core';
 

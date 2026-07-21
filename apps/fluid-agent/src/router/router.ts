@@ -1,5 +1,7 @@
 import { randomUUID } from 'node:crypto';
+
 import type { ModuleLogger, RootLogger } from '@stagewise/logger';
+
 import type { AgentSession } from '@/session/types';
 
 export type SessionId = string;

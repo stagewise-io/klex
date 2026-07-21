@@ -1,5 +1,7 @@
-import type { ModuleLogger } from '@stagewise/logger';
 import type { Context } from 'hono';
+
+import type { ModuleLogger } from '@stagewise/logger';
+
 import type { Config, FluidConfig } from '@/config';
 import { ConfigValidationError } from '@/config';
 

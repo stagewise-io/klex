@@ -1,8 +1,11 @@
 import { randomUUID } from 'node:crypto';
 import { readFile, rename, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import type { ModuleLogger, RootLogger } from '@stagewise/logger';
+
 import { ZodError } from 'zod';
+
+import type { ModuleLogger, RootLogger } from '@stagewise/logger';
+
 import {
   type EndpointAuth,
   type EndpointConfig,

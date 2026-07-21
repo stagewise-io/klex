@@ -1,5 +1,6 @@
 import type { BaseContext, Server } from '@modelcontextprotocol/server';
 import { z } from 'zod/v4';
+
 import {
   fluidEventsCapabilities,
   hasFluidEventsCapability,

@@ -1,12 +1,15 @@
 import type { LanguageModelV4, ProviderV4 } from '@ai-sdk/provider';
-import type { ModuleLogger, RootLogger } from '@stagewise/logger';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+import type { ModuleLogger, RootLogger } from '@stagewise/logger';
+
 import type {
   Config,
   EndpointConfig,
   ModelId,
   ResolvedModelConfig,
 } from '@/config';
+
 import { createModelProvider, type ModelProvider } from './model-provider';
 
 const logging = {

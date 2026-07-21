@@ -1,5 +1,7 @@
 import { serve } from '@hono/node-server';
+
 import { createLogger } from '@stagewise/logger';
+
 import { createApp } from './app.js';
 import { createChatStore } from './chat-store.js';
 import { createChatMcp } from './mcp.js';

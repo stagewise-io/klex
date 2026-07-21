@@ -1,10 +1,12 @@
 import { createMcpHandler, McpServer } from '@modelcontextprotocol/server';
+import { z } from 'zod/v4';
+
 import {
   createFluidEventsHttpSubscriptionManager,
   type FluidEventsHttpSubscriptionManager,
   registerFluidEventsServer,
 } from '@stagewise/mcp-extension-fluid-events/server';
-import { z } from 'zod/v4';
+
 import type { ChatStore } from './chat-store.js';
 import { MAX_MESSAGE_LENGTH } from './chat-store.js';
 

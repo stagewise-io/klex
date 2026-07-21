@@ -1,11 +1,14 @@
-import type { ModuleLogger, RootLogger } from '@stagewise/logger';
 import { streamText } from 'ai';
+
+import type { ModuleLogger, RootLogger } from '@stagewise/logger';
+
 import type { Config, ModelId } from '@/config';
 import type { ModelProvider } from '@/model-provider';
 import type { AgentTools } from '@/session/tools';
 import { getReplSandboxTools } from '@/session/tools/js-repl-sandbox';
 import { getMemoryTools } from '@/session/tools/memory';
 import type { AgentSession, ExtendedUIMessage } from '@/session/types';
+
 import { convertToModelMessagesExtended } from './utils/convert-to-model-messages';
 import systemPrompt from './utils/system-prompt.md';
 

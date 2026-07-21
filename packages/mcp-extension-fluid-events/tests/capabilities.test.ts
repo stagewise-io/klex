@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+
 import {
   CLIENT_CAPABILITIES_META_KEY,
   FLUID_EVENTS_EXTENSION_ID,

@@ -13,6 +13,7 @@
     "clean": "rimraf dist"
   },
   "devDependencies": {
+    "@jitl/quickjs-singlefile-mjs-debug-sync": "0.32.0",
     "@stagewise/typescript-config": "workspace:*",
     "@types/node": "26.1.1",
     "esbuild": "0.28.1",
@@ -27,12 +28,15 @@
     "@ai-sdk/open-responses": "2.0.11",
     "@ai-sdk/openai": "4.0.16",
     "@ai-sdk/openai-compatible": "3.0.12",
+    "@ai-sdk/provider": "4.0.3",
     "@hono/node-server": "2.0.10",
-    "@stagewise/logger": "workspace:*",
+    "@jitl/quickjs-singlefile-mjs-release-sync": "0.32.0",
     "@libsql/client": "0.17.4",
+    "@stagewise/logger": "workspace:*",
     "ai": "7.0.31",
     "drizzle-orm": "0.45.2",
     "hono": "4.12.30",
+    "quickjs-emscripten-core": "0.32.0",
     "zod": "4.4.3"
   },
   "keywords": [],

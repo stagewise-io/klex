@@ -12,9 +12,8 @@ const source: FluidConfig = {
       endpoints: {
         chat: {
           url: 'https://example.com/v1',
-          format: 'openai-chat-completions',
-          auth: { headers: { Authorization: 'Bearer secret' } },
-          models: { model: {} },
+          format: 'chat-completions',
+          auth: { apiKey: 'secret', headers: { 'X-Custom': 'custom-val' } },
         },
       },
     },
@@ -59,19 +58,29 @@ function configWith(replace: Config['replace']): Config {
 }
 
 describe('config routes', () => {
-  it('redacts provider and MCP headers without mutating source', () => {
+  it('redacts provider apiKey, headers, and MCP headers without mutating source', () => {
     const redacted = redactConfig(source);
 
-    expect(redacted.providers.remote?.endpoints.chat?.auth.headers).toEqual({
-      Authorization: '[REDACTED]',
+    const redactedEndpoint =
+      redacted.providers.remote && 'endpoints' in redacted.providers.remote
+        ? redacted.providers.remote.endpoints.chat
+        : undefined;
+    expect(redactedEndpoint?.auth.apiKey).toBe('[REDACTED]');
+    expect(redactedEndpoint?.auth.headers).toEqual({
+      'X-Custom': '[REDACTED]',
     });
+
     const mcpServer = redacted.mcpServers.remote;
     expect(
       mcpServer && 'url' in mcpServer ? mcpServer.headers : undefined,
     ).toEqual({ 'x-api-key': '[REDACTED]' });
-    expect(source.providers.remote?.endpoints.chat?.auth.headers).toEqual({
-      Authorization: 'Bearer secret',
-    });
+
+    const sourceEndpoint =
+      source.providers.remote && 'endpoints' in source.providers.remote
+        ? source.providers.remote.endpoints.chat
+        : undefined;
+    expect(sourceEndpoint?.auth.apiKey).toBe('secret');
+    expect(sourceEndpoint?.auth.headers).toEqual({ 'X-Custom': 'custom-val' });
   });
 
   it('returns redacted config from GET and successful PUT', async () => {

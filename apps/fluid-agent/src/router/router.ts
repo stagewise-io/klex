@@ -1,5 +1,3 @@
-import { randomUUID } from 'node:crypto';
-
 import type { ModuleLogger, RootLogger } from '@stagewise/logger';
 
 import type { AgentSession } from '@/session/types';
@@ -38,39 +36,6 @@ class RouterModule implements Router {
     this.sessions.clear();
     this.started = false;
     this.deps.logger.info('Router stopped');
-  }
-
-  /**
-   * Creates a new agent session, stores it, and returns its ID.
-   *
-   * Internal — not yet exposed through the public Router API.
-   */
-  private createSession(): SessionId {
-    const sessionId = randomUUID();
-    const session = this.deps.createChatSession();
-    this.sessions.set(sessionId, session);
-    this.deps.logger.info({ sessionId }, 'Router created session');
-    return sessionId;
-  }
-
-  /**
-   * Removes a session by ID.
-   *
-   * Internal — not yet exposed through the public Router API.
-   *
-   * `AgentSession` currently has no `close()` lifecycle, so deletion only
-   * removes the reference from the registry. Once sessions become
-   * lifecycle-managed, this should close the session before removing it.
-   */
-  private deleteSession(sessionId: SessionId): void {
-    if (!this.sessions.delete(sessionId)) {
-      this.deps.logger.warn(
-        { sessionId },
-        'Router deleteSession — session not found',
-      );
-      return;
-    }
-    this.deps.logger.info({ sessionId }, 'Router deleted session');
   }
 }
 

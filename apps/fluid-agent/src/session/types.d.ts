@@ -12,7 +12,7 @@ export interface AgentSession {
 /**
  * Extension to the metadata of UI messages for agents
  */
-export type UIMessageMetadata = {};
+export type UIMessageMetadata = Record<string, never>;
 
 /**
  * Custom data part that stores a history summary of the chat session. This is used to provide context to the agent about what has happened in the session so far.

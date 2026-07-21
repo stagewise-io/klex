@@ -4,7 +4,7 @@ import type {
 } from '@/session/types';
 
 export const compressHistory = async (
-  history: ExtendedUIMessage[],
+  _history: ExtendedUIMessage[],
 ): Promise<HistorySummaryDataUIPart> => {
   return {
     summary: 'Not implemented yet!',

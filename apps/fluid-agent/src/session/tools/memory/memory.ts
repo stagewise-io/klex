@@ -11,7 +11,7 @@ export const getMemoryTools = () => {
             "The information to memorize (Example: 'The user's name is John Doe.').",
           ),
       }),
-      execute: async (input: string) => {
+      execute: async (_input: string) => {
         // TODO
       },
     },
@@ -24,7 +24,7 @@ export const getMemoryTools = () => {
           ),
       }),
       outputSchema: z.string().describe('The answer to the question.'),
-      execute: async (input: string) => {
+      execute: async (_input: string) => {
         // TODO
         return 'Not implemented yet!';
       },

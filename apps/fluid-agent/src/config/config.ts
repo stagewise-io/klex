@@ -14,7 +14,6 @@ import {
   type McpServerConfig,
   type ModelId,
   type ModelPurpose,
-  type ProviderPreset,
   resolvePresetEndpoint,
 } from './types';
 
@@ -314,6 +313,7 @@ function resolveEnvVar(value: string | undefined): string | undefined {
   if (!value) return value;
   const match = value.match(ENV_VAR_PATTERN);
   if (!match) return value;
+  // biome-ignore lint/style/noNonNullAssertion: capture group guaranteed by regex match
   const varName = match[1]!.trim();
   const envValue = process.env[varName];
   if (envValue === undefined) {

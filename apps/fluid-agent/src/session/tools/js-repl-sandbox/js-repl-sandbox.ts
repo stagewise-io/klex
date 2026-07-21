@@ -12,7 +12,7 @@ export const getReplSandboxTools = () => {
           ),
       }),
       outputSchema: z.string().describe('The output of the executed code.'),
-      execute: async (input: string) => {
+      execute: async (_input: string) => {
         // TODO
         return 'REPL environment implemented yet!';
       },

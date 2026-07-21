@@ -1,4 +1,7 @@
-import type { ExtendedUIMessage, HistorySummaryDataUIPart } from '../../types';
+import type {
+  ExtendedUIMessage,
+  HistorySummaryDataUIPart,
+} from '@/session/types';
 
 export const compressHistory = async (
   history: ExtendedUIMessage[],

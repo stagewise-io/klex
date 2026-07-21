@@ -7,6 +7,9 @@
     "rootDir": "./src",
     "lib": ["esnext"],
     "types": ["node"],
+    "paths": {
+      "@/*": ["./src/*"]
+    },
     "declaration": false,
     "declarationMap": false,
     "sourceMap": false

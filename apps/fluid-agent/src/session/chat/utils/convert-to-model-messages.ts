@@ -4,7 +4,7 @@ import {
   type FilePart,
   type TextPart,
 } from 'ai';
-import type { CustomUIDataParts, ExtendedUIMessage } from '../../types';
+import type { CustomUIDataParts, ExtendedUIMessage } from '@/session/types';
 
 /**
  * Implements an extended "convertToModelMessages" function that converts a list of messages into the format expected by the model.

@@ -1,9 +1,8 @@
 import type { ModuleLogger } from '@stagewise/logger';
 import { Hono } from 'hono';
 import { describe, expect, it } from 'vitest';
-import type { Config } from '../../../config/config';
-import { ConfigValidationError } from '../../../config/config';
-import type { FluidConfig } from '../../../config/types';
+import type { Config, FluidConfig } from '@/config';
+import { ConfigValidationError } from '@/config';
 import { getConfig, putConfig, redactConfig } from './config';
 
 const source: FluidConfig = {

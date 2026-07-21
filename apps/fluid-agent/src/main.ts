@@ -1,8 +1,8 @@
 import { createLogger } from '@stagewise/logger';
-import { createAdminApi } from './admin/admin-api';
-import { createConfig } from './config/config';
-import { createModelProvider } from './model-provider';
-import { createChatSession } from './session/chat';
+import { createAdminApi } from '@/admin-api';
+import { createConfig } from '@/config';
+import { createModelProvider } from '@/model-provider';
+import { createChatSession } from '@/session/chat';
 
 const logger = createLogger({ name: 'fluid-agent' });
 

@@ -1,9 +1,13 @@
 import type { LanguageModelV4, ProviderV4 } from '@ai-sdk/provider';
 import type { ModuleLogger, RootLogger } from '@stagewise/logger';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { Config, ResolvedModelConfig } from '../config/config';
-import type { EndpointConfig, ModelId } from '../config/types';
-import { createModelProvider, type ModelProvider } from './index';
+import type {
+  Config,
+  EndpointConfig,
+  ModelId,
+  ResolvedModelConfig,
+} from '@/config';
+import { createModelProvider, type ModelProvider } from './model-provider';
 
 const logging = {
   child: () => ({ info: () => undefined }) as unknown as ModuleLogger,

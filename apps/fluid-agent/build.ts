@@ -6,6 +6,10 @@ const isSea = process.argv.includes('--sea');
 
 const buildOptions: BuildOptions = {
   entryPoints: ['src/main.ts'],
+  tsconfig: 'tsconfig.json',
+  alias: {
+    '@/': './src/',
+  },
   bundle: true,
   outfile: 'dist/main.js',
   // SEA embeds the blob as CJS — must output CJS for executable builds.

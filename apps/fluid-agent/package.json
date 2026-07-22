@@ -5,7 +5,7 @@
   "type": "module",
   "main": "./dist/main.js",
   "scripts": {
-    "dev": "tsx --import ./md-register.mjs src/main.ts",
+    "dev": "tsx scripts/dev.ts",
     "build": "tsx build.ts",
     "build:exe": "tsx build.ts --sea && tsx scripts/package-exe.ts",
     "typecheck": "tsc --noEmit",

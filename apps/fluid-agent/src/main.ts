@@ -2,6 +2,7 @@ import { createLogger } from '@stagewise/logger';
 
 import { createAdminApi } from '@/admin-api';
 import { createConfig } from '@/config';
+import { createMcp } from '@/mcp';
 import { createModelProvider } from '@/model-provider';
 import { createChatSession } from '@/session/chat';
 
@@ -14,32 +15,50 @@ async function main(): Promise<void> {
     logging: logger,
     dataDirectory: process.env.FLUID_DATA_DIR ?? process.cwd(),
   });
-  await config.start();
-
   const adminApi = createAdminApi({ logging: logger, config });
-  await adminApi.start();
-
   const modelProvider = createModelProvider({ logging: logger, config });
-
-  // For the first test, we create a simple session and enter some content into it
+  const mcp = createMcp({ logging: logger, config });
   const session = createChatSession({
     logging: logger,
-    config: config,
-    modelProvider: modelProvider,
+    config,
+    modelProvider,
+    toolProvider: mcp,
   });
+
+  const started: { close(): Promise<void> }[] = [];
+  try {
+    for (const resource of [config, adminApi, modelProvider, mcp, session]) {
+      await resource.start();
+      started.push(resource);
+    }
+  } catch (error) {
+    await closeReverse(started);
+    throw error;
+  }
 
   session.sendMessage('Hello there!');
 
-  // Idle until signal — graceful shutdown
+  let shuttingDown = false;
   const shutdown = async () => {
-    await adminApi.close();
-    await config.close();
+    if (shuttingDown) return;
+    shuttingDown = true;
+    await closeReverse(started);
     await logger[Symbol.asyncDispose]();
     process.exit(0);
   };
 
   process.on('SIGINT', shutdown);
   process.on('SIGTERM', shutdown);
+}
+
+async function closeReverse(
+  resources: readonly { close(): Promise<void> }[],
+): Promise<void> {
+  for (const resource of [...resources].reverse()) {
+    await resource.close().catch((error: unknown) => {
+      logger.error({ error }, 'Resource shutdown failed');
+    });
+  }
 }
 
 main().catch(async (error: unknown) => {

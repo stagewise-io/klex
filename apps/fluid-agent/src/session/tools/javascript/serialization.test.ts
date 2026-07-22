@@ -1,12 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
-import {
-  assertJsonValue,
-  assertSerializedSize,
-  SerializationError,
-} from './serialization';
+import { assertJsonValue, JsonValidationError } from '@/tool-provider';
 
-describe('toolbox serialization', () => {
+import { assertSerializedSize } from './serialization';
+
+describe('JavaScript sandbox serialization', () => {
   it('accepts nested JSON values', () => {
     expect(() =>
       assertJsonValue({ value: [true, null, 1, 'x'] }),
@@ -20,7 +18,7 @@ describe('toolbox serialization', () => {
     Symbol('x'),
     () => undefined,
   ])('rejects unsupported value %s', (value) =>
-    expect(() => assertJsonValue(value)).toThrow(SerializationError),
+    expect(() => assertJsonValue(value)).toThrow(JsonValidationError),
   );
 
   it('rejects cyclic and prototype-bearing values', () => {

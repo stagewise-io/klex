@@ -5,9 +5,13 @@ import type { ModuleLogger, RootLogger } from '@stagewise/logger';
 import type { Config, ModelId } from '@/config';
 import type { ModelProvider } from '@/model-provider';
 import type { AgentTools } from '@/session/tools';
-import { getReplSandboxTools } from '@/session/tools/js-repl-sandbox';
+import {
+  createJavaScriptTool,
+  type JavaScriptTool,
+} from '@/session/tools/javascript';
 import { getMemoryTools } from '@/session/tools/memory';
 import type { AgentSession, ExtendedUIMessage } from '@/session/types';
+import type { ToolProvider } from '@/tool-provider';
 
 import { convertToModelMessagesExtended } from './utils/convert-to-model-messages';
 import systemPrompt from './utils/system-prompt.md';
@@ -16,6 +20,7 @@ export interface ChatSessionDependencies {
   logging: RootLogger;
   modelProvider: ModelProvider;
   config: Config;
+  toolProvider: ToolProvider;
 }
 
 class ChatSessionModule implements AgentSession {
@@ -31,9 +36,20 @@ class ChatSessionModule implements AgentSession {
       logger: ModuleLogger;
       modelProvider: ModelProvider;
       config: Config;
+      javaScriptTool: JavaScriptTool;
       tools: AgentTools;
     },
   ) {}
+
+  async start(): Promise<void> {
+    await this.deps.javaScriptTool.start();
+    this.deps.logger.info('ChatSession started');
+  }
+
+  async close(): Promise<void> {
+    await this.deps.javaScriptTool.close();
+    this.deps.logger.info('ChatSession stopped');
+  }
 
   inform(info: string): void {
     this.info.push(info);
@@ -109,6 +125,10 @@ class ChatSessionModule implements AgentSession {
 }
 
 export function createChatSession(deps: ChatSessionDependencies): AgentSession {
+  const javaScriptTool = createJavaScriptTool({
+    logging: deps.logging,
+    provider: deps.toolProvider,
+  });
   return new ChatSessionModule({
     logger: deps.logging.child({
       name: 'chat-session',
@@ -116,9 +136,10 @@ export function createChatSession(deps: ChatSessionDependencies): AgentSession {
     }),
     modelProvider: deps.modelProvider,
     config: deps.config,
+    javaScriptTool,
     tools: {
       ...getMemoryTools(),
-      ...getReplSandboxTools(),
+      ...javaScriptTool.tools,
     },
   });
 }

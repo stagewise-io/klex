@@ -1,7 +1,8 @@
 import type { QuickJSContext, QuickJSHandle } from 'quickjs-emscripten-core';
 
-import type { CapabilitySnapshotMessage, ProviderRequest } from './protocol';
-import { assertJsonValue, type JsonValue } from './serialization';
+import { assertJsonValue, type JsonValue } from '@/tool-provider';
+
+import type { ProviderRequest, ToolSnapshotMessage } from './protocol';
 
 export interface NamespaceBridge {
   request(request: ProviderRequest): Promise<JsonValue>;
@@ -9,7 +10,7 @@ export interface NamespaceBridge {
 }
 
 export interface NamespaceController {
-  activate(snapshot: CapabilitySnapshotMessage, bridge: NamespaceBridge): void;
+  activate(snapshot: ToolSnapshotMessage, bridge: NamespaceBridge): void;
   deactivate(): void;
 }
 
@@ -18,7 +19,7 @@ export function createNamespaceController(
 ): NamespaceController {
   let activeBridge: NamespaceBridge | undefined;
   const requireBridge = (): NamespaceBridge => {
-    if (!activeBridge) throw new Error('No Toolbox execution is active');
+    if (!activeBridge) throw new Error('No JavaScript execution is active');
     return activeBridge;
   };
 
@@ -83,7 +84,7 @@ export function createNamespaceController(
 
 function installMcpNamespace(
   context: QuickJSContext,
-  snapshot: CapabilitySnapshotMessage,
+  snapshot: ToolSnapshotMessage,
   requireBridge: () => NamespaceBridge,
 ): void {
   const mcp = context.newObject();
@@ -166,7 +167,7 @@ function jsonToHandle(
   assertJsonValue(value);
   const source = `JSON.parse(${JSON.stringify(JSON.stringify(value))})`;
   return context.unwrapResult(
-    context.evalCode(source, 'toolbox-value.js', { strict: true }),
+    context.evalCode(source, 'javascript-tool-value.js', { strict: true }),
   );
 }
 
@@ -186,7 +187,7 @@ function freeze(context: QuickJSContext, handle: QuickJSHandle): void {
 function asInput(value: unknown): { [key: string]: JsonValue } {
   assertJsonValue(value);
   if (!isRecord(value))
-    throw new TypeError('Capability input must be a plain object');
+    throw new TypeError('Tool input must be a plain object');
   return value;
 }
 
@@ -196,7 +197,7 @@ function asReference(value: unknown): { namespace: string; name: string } {
     typeof value.namespace !== 'string' ||
     typeof value.name !== 'string'
   ) {
-    throw new TypeError('Capability reference must contain namespace and name');
+    throw new TypeError('Tool reference must contain namespace and name');
   }
   return { namespace: value.namespace, name: value.name };
 }

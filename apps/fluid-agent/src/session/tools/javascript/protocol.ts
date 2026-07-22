@@ -2,15 +2,16 @@ import {
   assertJsonValue,
   type JsonObject,
   type JsonValue,
-  type SerializedError,
-} from './serialization';
+} from '@/tool-provider';
 
-export interface CapabilityReferenceMessage {
+import type { SerializedError } from './serialization';
+
+export interface ToolReferenceMessage {
   namespace: string;
   name: string;
 }
 
-export interface CapabilitySnapshotMessage {
+export interface ToolSnapshotMessage {
   namespaces: readonly {
     name: string;
     capabilities: readonly { name: string }[];
@@ -19,10 +20,10 @@ export interface CapabilitySnapshotMessage {
 
 export type ProviderRequest =
   | { operation: 'search'; query: string; limit?: number }
-  | { operation: 'describe'; reference: CapabilityReferenceMessage }
+  | { operation: 'describe'; reference: ToolReferenceMessage }
   | {
       operation: 'invoke';
-      reference: CapabilityReferenceMessage;
+      reference: ToolReferenceMessage;
       input: JsonObject;
     };
 
@@ -32,7 +33,7 @@ export type ParentMessage =
       type: 'execute';
       executionId: string;
       source: string;
-      snapshot: CapabilitySnapshotMessage;
+      snapshot: ToolSnapshotMessage;
       deadline: number;
     }
   | {
@@ -128,18 +129,15 @@ function assertProviderRequest(
   if (value.operation === 'describe') return;
   if (value.operation === 'invoke') {
     assertJsonValue(value.input);
-    if (!isRecord(value.input))
-      throw new Error('Capability input must be an object');
+    if (!isRecord(value.input)) throw new Error('Tool input must be an object');
     return;
   }
   throw new Error('Unknown provider operation');
 }
 
-function assertSnapshot(
-  value: unknown,
-): asserts value is CapabilitySnapshotMessage {
+function assertSnapshot(value: unknown): asserts value is ToolSnapshotMessage {
   if (!isRecord(value) || !Array.isArray(value.namespaces))
-    throw new Error('Invalid capability snapshot');
+    throw new Error('Invalid tool snapshot');
   for (const namespace of value.namespaces) {
     if (!isRecord(namespace) || !Array.isArray(namespace.capabilities))
       throw new Error('Invalid namespace');
@@ -153,8 +151,8 @@ function assertSnapshot(
 
 function assertReference(
   value: unknown,
-): asserts value is CapabilityReferenceMessage {
-  if (!isRecord(value)) throw new Error('Invalid capability reference');
+): asserts value is ToolReferenceMessage {
+  if (!isRecord(value)) throw new Error('Invalid tool reference');
   assertString(value.namespace, 'reference.namespace');
   assertString(value.name, 'reference.name');
 }

@@ -2,22 +2,27 @@ import { randomUUID } from 'node:crypto';
 import { getAsset, isSea } from 'node:sea';
 import { Worker } from 'node:worker_threads';
 
+import type { ToolSet } from 'ai';
+import z from 'zod';
+
 import type { ModuleLogger, RootLogger } from '@stagewise/logger';
+
+import {
+  assertJsonValue,
+  type JsonValue,
+  type ToolProvider,
+  type ToolRequestContext,
+  type ToolSnapshot,
+} from '@/tool-provider';
 
 import {
   type ProviderRequest,
   parseWorkerMessage,
   type WorkerMessage,
 } from './protocol';
-import {
-  assertJsonValue,
-  assertSerializedSize,
-  type JsonObject,
-  type JsonValue,
-  toSerializedError,
-} from './serialization';
+import { assertSerializedSize, toSerializedError } from './serialization';
 
-export const TOOLBOX_LIMITS = Object.freeze({
+export const JAVASCRIPT_SANDBOX_LIMITS = Object.freeze({
   wallTimeMs: 30_000,
   memoryBytes: 64 * 1024 * 1024,
   stackBytes: 1024 * 1024,
@@ -30,105 +35,74 @@ export const TOOLBOX_LIMITS = Object.freeze({
   workerStackMb: 2,
 });
 
-export interface CapabilityReference {
-  namespace: string;
-  name: string;
-}
-
-export interface CapabilitySnapshot {
-  namespaces: readonly {
-    name: string;
-    capabilities: readonly { name: string }[];
-  }[];
-}
-
-export interface CapabilitySearchOptions {
-  limit?: number;
-}
-
-export interface CapabilitySearchResult {
-  reference: CapabilityReference;
-  description?: string;
-}
-
-export interface CapabilityDescription {
-  reference: CapabilityReference;
-  description?: string;
-  inputSchema?: JsonObject;
-  outputSchema?: JsonObject;
-}
-
-export interface CapabilityRequestContext {
-  executionId: string;
-  signal: AbortSignal;
-}
-
-export interface CapabilityProvider {
-  snapshot(context: CapabilityRequestContext): Promise<CapabilitySnapshot>;
-  search(
-    query: string,
-    options: CapabilitySearchOptions,
-    context: CapabilityRequestContext,
-  ): Promise<CapabilitySearchResult[]>;
-  describe(
-    reference: CapabilityReference,
-    context: CapabilityRequestContext,
-  ): Promise<CapabilityDescription>;
-  invoke(
-    reference: CapabilityReference,
-    input: JsonObject,
-    context: CapabilityRequestContext,
-  ): Promise<JsonValue>;
-}
-
-export interface ToolboxExecution {
+export interface JavaScriptExecution {
   code: string;
   signal?: AbortSignal;
 }
 
 /**
- * A session-owned JavaScript toolbox with serialized executions and strict JSON
+ * A session-owned JavaScript tool with serialized executions and strict JSON
  * results. Explicit `globalThis` assignments persist until reset, fatal
  * recovery, or close. Executions normalize zero emissions to `null`, return one
  * emission directly, and aggregate multiple emissions in order.
  *
- * See `src/toolbox/README.md` for the guest API, lifecycle, and isolation model.
+ * See this module's `README.md` for the guest API, lifecycle, and isolation model.
  */
-export interface Toolbox {
+export interface JavaScriptTool {
   start(): Promise<void>;
-  execute(input: ToolboxExecution): Promise<JsonValue>;
+  execute(input: JavaScriptExecution): Promise<JsonValue>;
   reset(): Promise<void>;
+  readonly tools: ToolSet;
   close(): Promise<void>;
 }
 
-export interface ToolboxDependencies {
+export interface JavaScriptToolDependencies {
   logging: RootLogger;
-  provider: CapabilityProvider;
+  provider: ToolProvider;
   workerUrl?: URL;
 }
 
-class ToolboxModule implements Toolbox {
+class JavaScriptToolModule implements JavaScriptTool {
   private worker: Worker | undefined;
   private activeAbort: AbortController | undefined;
   private queue: Promise<void> = Promise.resolve();
   private started = false;
   private closed = false;
 
+  readonly tools = {
+    runJavascript: {
+      inputSchema: z.object({
+        code: z
+          .string()
+          .describe(
+            'JavaScript code executed in an async QuickJS wrapper. Top-level await is supported. Return one JSON result or emit one or more JSON values with output().',
+          ),
+      }),
+      outputSchema: z
+        .json()
+        .describe(
+          'The JSON result emitted or returned by the executed code. Multiple emissions are returned as an array.',
+        ),
+      execute: async ({ code }, options) =>
+        this.execute({ code, signal: options.abortSignal }),
+    },
+  } satisfies ToolSet;
+
   constructor(
     private readonly deps: {
       logger: ModuleLogger;
-      provider: CapabilityProvider;
+      provider: ToolProvider;
       workerUrl?: URL;
     },
   ) {}
 
   async start(): Promise<void> {
     if (this.started) return;
-    if (this.closed) throw new Error('Toolbox is closed');
+    if (this.closed) throw new Error('JavaScript tool is closed');
     this.started = true;
     try {
       await this.ensureWorker();
-      this.deps.logger.info('Toolbox started');
+      this.deps.logger.info('JavaScript tool started');
     } catch (error) {
       this.started = false;
       await this.invalidateWorker();
@@ -136,12 +110,17 @@ class ToolboxModule implements Toolbox {
     }
   }
 
-  execute(input: ToolboxExecution): Promise<JsonValue> {
+  execute(input: JavaScriptExecution): Promise<JsonValue> {
     if (!this.started || this.closed)
-      return Promise.reject(new Error('Toolbox is not started'));
-    if (Buffer.byteLength(input.code, 'utf8') > TOOLBOX_LIMITS.sourceBytes) {
+      return Promise.reject(new Error('JavaScript tool is not started'));
+    if (
+      Buffer.byteLength(input.code, 'utf8') >
+      JAVASCRIPT_SANDBOX_LIMITS.sourceBytes
+    ) {
       return Promise.reject(
-        new Error(`Source exceeds ${TOOLBOX_LIMITS.sourceBytes} bytes`),
+        new Error(
+          `Source exceeds ${JAVASCRIPT_SANDBOX_LIMITS.sourceBytes} bytes`,
+        ),
       );
     }
     return this.enqueue(() => this.executeNow(input));
@@ -149,11 +128,11 @@ class ToolboxModule implements Toolbox {
 
   reset(): Promise<void> {
     if (!this.started || this.closed)
-      return Promise.reject(new Error('Toolbox is not started'));
+      return Promise.reject(new Error('JavaScript tool is not started'));
     return this.enqueue(async () => {
       await this.invalidateWorker();
       await this.ensureWorker();
-      this.deps.logger.info('Toolbox reset');
+      this.deps.logger.info('JavaScript tool reset');
     });
   }
 
@@ -161,10 +140,10 @@ class ToolboxModule implements Toolbox {
     if (!this.started) return;
     this.closed = true;
     this.started = false;
-    this.activeAbort?.abort(new Error('Toolbox closed'));
+    this.activeAbort?.abort(new Error('JavaScript tool closed'));
     await this.queue.catch(() => undefined);
     await this.invalidateWorker();
-    this.deps.logger.info('Toolbox stopped');
+    this.deps.logger.info('JavaScript tool stopped');
   }
 
   private enqueue<T>(operation: () => Promise<T>): Promise<T> {
@@ -180,8 +159,8 @@ class ToolboxModule implements Toolbox {
     if (this.worker) return this.worker;
     const worker = new Worker(this.deps.workerUrl ?? resolveWorkerUrl(), {
       resourceLimits: {
-        maxOldGenerationSizeMb: TOOLBOX_LIMITS.workerOldGenerationMb,
-        stackSizeMb: TOOLBOX_LIMITS.workerStackMb,
+        maxOldGenerationSizeMb: JAVASCRIPT_SANDBOX_LIMITS.workerOldGenerationMb,
+        stackSizeMb: JAVASCRIPT_SANDBOX_LIMITS.workerStackMb,
       },
     });
     this.worker = worker;
@@ -198,7 +177,7 @@ class ToolboxModule implements Toolbox {
         };
         const onError = (error: Error) => fail(error);
         const onExit = (code: number) =>
-          fail(new Error(`Toolbox Worker exited with code ${code}`));
+          fail(new Error(`JavaScript sandbox Worker exited with code ${code}`));
         const onMessage = (value: unknown) => {
           try {
             const message = parseWorkerMessage(value);
@@ -227,8 +206,8 @@ class ToolboxModule implements Toolbox {
     if (worker) await worker.terminate();
   }
 
-  private async executeNow(input: ToolboxExecution): Promise<JsonValue> {
-    if (this.closed) throw new Error('Toolbox is closed');
+  private async executeNow(input: JavaScriptExecution): Promise<JsonValue> {
+    if (this.closed) throw new Error('JavaScript tool is closed');
     if (input.signal?.aborted) throw input.signal.reason;
     const executionId = randomUUID();
     const abort = new AbortController();
@@ -259,14 +238,14 @@ class ToolboxModule implements Toolbox {
     worker: Worker,
     executionId: string,
     source: string,
-    snapshot: CapabilitySnapshot,
+    snapshot: ToolSnapshot,
     abort: AbortController,
   ): Promise<JsonValue> {
     return new Promise((resolve, reject) => {
       let settled = false;
       let requests = 0;
       let concurrent = 0;
-      const deadline = Date.now() + TOOLBOX_LIMITS.wallTimeMs;
+      const deadline = Date.now() + JAVASCRIPT_SANDBOX_LIMITS.wallTimeMs;
       const cleanup = () => {
         clearTimeout(timer);
         worker.off('message', onMessage);
@@ -287,13 +266,15 @@ class ToolboxModule implements Toolbox {
       };
       const invalidate = (error: unknown) => finish(error, undefined, true);
       const timer = setTimeout(() => {
-        abort.abort(new Error('Toolbox execution timed out'));
-        invalidate(new Error('Toolbox execution timed out'));
-      }, TOOLBOX_LIMITS.wallTimeMs);
+        abort.abort(new Error('JavaScript execution timed out'));
+        invalidate(new Error('JavaScript execution timed out'));
+      }, JAVASCRIPT_SANDBOX_LIMITS.wallTimeMs);
       const onAbort = () => invalidate(abort.signal.reason);
       const onError = (error: Error) => invalidate(error);
       const onExit = (code: number) =>
-        invalidate(new Error(`Toolbox Worker exited with code ${code}`));
+        invalidate(
+          new Error(`JavaScript sandbox Worker exited with code ${code}`),
+        );
       const onMessage = (value: unknown) => {
         let message: WorkerMessage;
         try {
@@ -318,7 +299,7 @@ class ToolboxModule implements Toolbox {
           try {
             assertSerializedSize(
               message.result,
-              TOOLBOX_LIMITS.maximumOutputBytes,
+              JAVASCRIPT_SANDBOX_LIMITS.maximumOutputBytes,
               'Output',
             );
             finish(undefined, message.result);
@@ -330,8 +311,8 @@ class ToolboxModule implements Toolbox {
         requests += 1;
         concurrent += 1;
         if (
-          requests > TOOLBOX_LIMITS.maximumRequests ||
-          concurrent > TOOLBOX_LIMITS.maximumConcurrentRequests
+          requests > JAVASCRIPT_SANDBOX_LIMITS.maximumRequests ||
+          concurrent > JAVASCRIPT_SANDBOX_LIMITS.maximumConcurrentRequests
         ) {
           invalidate(new Error('Provider request limit exceeded'));
           return;
@@ -342,7 +323,7 @@ class ToolboxModule implements Toolbox {
             assertJsonValue(result);
             assertSerializedSize(
               result,
-              TOOLBOX_LIMITS.maximumProviderResponseBytes,
+              JAVASCRIPT_SANDBOX_LIMITS.maximumProviderResponseBytes,
               'Provider response',
             );
             worker.postMessage({
@@ -382,7 +363,7 @@ class ToolboxModule implements Toolbox {
 
   private async dispatch(
     request: ProviderRequest,
-    context: CapabilityRequestContext,
+    context: ToolRequestContext,
   ): Promise<JsonValue> {
     let result: unknown;
     switch (request.operation) {
@@ -412,25 +393,27 @@ class ToolboxModule implements Toolbox {
 function contextFrom(
   executionId: string,
   abort: AbortController,
-): CapabilityRequestContext {
+): ToolRequestContext {
   return { executionId, signal: abort.signal };
 }
 
 function resolveWorkerUrl(): URL {
   if (isSea()) {
-    const source = getAsset('toolbox-worker.js', 'utf8');
+    const source = getAsset('javascript-sandbox-worker.js', 'utf8');
     return new URL(
       `data:text/javascript;base64,${Buffer.from(source).toString('base64')}`,
     );
   }
-  return new URL('./toolbox-worker.js', import.meta.url);
+  return new URL('./javascript-sandbox-worker.js', import.meta.url);
 }
 
-export function createToolbox(deps: ToolboxDependencies): Toolbox {
-  return new ToolboxModule({
+export function createJavaScriptTool(
+  deps: JavaScriptToolDependencies,
+): JavaScriptTool {
+  return new JavaScriptToolModule({
     logger: deps.logging.child({
-      name: 'toolbox',
-      bindings: { module: 'toolbox' },
+      name: 'javascript-tool',
+      bindings: { module: 'javascript-tool' },
     }),
     provider: deps.provider,
     workerUrl: deps.workerUrl,

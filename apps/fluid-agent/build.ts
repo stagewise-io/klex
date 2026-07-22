@@ -38,8 +38,8 @@ export function createBuildOptions(isSea: boolean): {
     },
     worker: {
       ...sharedOptions,
-      entryPoints: ['src/toolbox/worker-entry.ts'],
-      outfile: 'dist/toolbox-worker.js',
+      entryPoints: ['src/session/tools/javascript/worker-entry.ts'],
+      outfile: 'dist/javascript-sandbox-worker.js',
       format: 'esm',
     },
   };
@@ -53,7 +53,7 @@ async function main(): Promise<void> {
     esbuild.build(options.worker),
   ]);
   console.log(
-    `Build complete → dist/main.js (${isSea ? 'CJS/SEA' : 'ESM'}) + dist/toolbox-worker.js`,
+    `Build complete → dist/main.js (${isSea ? 'CJS/SEA' : 'ESM'}) + dist/javascript-sandbox-worker.js`,
   );
 }
 

@@ -1,17 +1,20 @@
-import type { CallToolResult, Tool } from '@modelcontextprotocol/client';
+import type {
+  CallToolResult,
+  Tool as McpToolDefinition,
+} from '@modelcontextprotocol/client';
 
 import {
   assertJsonValue,
   type JsonObject,
   type JsonValue,
-} from '@/toolbox/serialization';
-import type { CapabilityDescription } from '@/toolbox/toolbox';
+  type ToolDescription,
+} from '@/tool-provider';
 
 import type { McpConnection } from './connection';
 
 export interface RegisteredMcpTool {
-  readonly tool: Tool;
-  readonly descriptor: CapabilityDescription;
+  readonly tool: McpToolDefinition;
+  readonly descriptor: ToolDescription;
 }
 
 export interface RegisteredMcpNamespace {
@@ -74,7 +77,9 @@ export function canonicalConfigSignature(value: unknown): string {
   return JSON.stringify(sortJson(value));
 }
 
-function normalizeInputSchema(schema: Tool['inputSchema']): JsonObject {
+function normalizeInputSchema(
+  schema: McpToolDefinition['inputSchema'],
+): JsonObject {
   assertJsonValue(schema);
   return schema as JsonObject;
 }

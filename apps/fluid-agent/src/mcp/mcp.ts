@@ -2,15 +2,16 @@ import type { ModuleLogger, RootLogger } from '@stagewise/logger';
 
 import type { Config, McpServerConfig } from '@/config';
 import type {
-  CapabilityDescription,
-  CapabilityProvider,
-  CapabilityReference,
-  CapabilityRequestContext,
-  CapabilitySearchOptions,
-  CapabilitySearchResult,
-  CapabilitySnapshot,
-} from '@/toolbox';
-import type { JsonObject, JsonValue } from '@/toolbox/serialization';
+  JsonObject,
+  JsonValue,
+  ToolDescription,
+  ToolProvider,
+  ToolReference,
+  ToolRequestContext,
+  ToolSearchOptions,
+  ToolSearchResult,
+  ToolSnapshot,
+} from '@/tool-provider';
 
 import {
   connectMcpServer,
@@ -25,7 +26,7 @@ import {
   normalizeCallToolResult,
 } from './registry';
 
-export interface Mcp extends CapabilityProvider {
+export interface Mcp extends ToolProvider {
   start(): Promise<void>;
   close(): Promise<void>;
 }
@@ -90,9 +91,7 @@ class McpModule implements Mcp {
     this.deps.logger.info('MCP stopped');
   }
 
-  async snapshot(
-    _context: CapabilityRequestContext,
-  ): Promise<CapabilitySnapshot> {
+  async snapshot(_context: ToolRequestContext): Promise<ToolSnapshot> {
     return {
       namespaces: [...this.registry.entries()].map(([name, namespace]) => ({
         name,
@@ -105,9 +104,9 @@ class McpModule implements Mcp {
 
   async search(
     query: string,
-    options: CapabilitySearchOptions,
-    _context: CapabilityRequestContext,
-  ): Promise<CapabilitySearchResult[]> {
+    options: ToolSearchOptions,
+    _context: ToolRequestContext,
+  ): Promise<ToolSearchResult[]> {
     const terms = query.toLocaleLowerCase().split(/\s+/u).filter(Boolean);
     const matches = [...this.registry.entries()].flatMap(
       ([namespace, registeredNamespace]) =>
@@ -127,28 +126,28 @@ class McpModule implements Mcp {
   }
 
   async describe(
-    reference: CapabilityReference,
-    _context: CapabilityRequestContext,
-  ): Promise<CapabilityDescription> {
+    reference: ToolReference,
+    _context: ToolRequestContext,
+  ): Promise<ToolDescription> {
     return this.getTool(reference).descriptor;
   }
 
   async invoke(
-    reference: CapabilityReference,
+    reference: ToolReference,
     input: JsonObject,
-    context: CapabilityRequestContext,
+    context: ToolRequestContext,
   ): Promise<JsonValue> {
     const { connection, tool } = this.getTool(reference);
     const result = await connection.invoke(tool, input, context.signal);
     return normalizeCallToolResult(result);
   }
 
-  private getTool(reference: CapabilityReference) {
+  private getTool(reference: ToolReference) {
     const namespace = this.registry.get(reference.namespace);
     const tool = namespace?.tools.get(reference.name);
     if (!namespace || !tool)
       throw new Error(
-        `Unknown MCP capability: ${reference.namespace}.${reference.name}`,
+        `Unknown MCP tool: ${reference.namespace}.${reference.name}`,
       );
     return { connection: namespace.connection, ...tool };
   }

@@ -4,6 +4,6 @@
   "disableExperimentalSEAWarning": true,
   "useCodeCache": true,
   "assets": {
-    "toolbox-worker.js": "dist/toolbox-worker.js"
+    "javascript-sandbox-worker.js": "dist/javascript-sandbox-worker.js"
   }
 }

@@ -1,5 +1,8 @@
 import { parentPort } from 'node:worker_threads';
 
+import type { JsonValue } from '@/tool-provider';
+
+import { JAVASCRIPT_SANDBOX_LIMITS } from './javascript';
 import {
   type ParentMessage,
   type ProviderRequest,
@@ -11,10 +14,10 @@ import {
   FatalQuickJsError,
   type PersistentQuickJsRuntime,
 } from './quickjs-runtime';
-import { type JsonValue, toSerializedError } from './serialization';
-import { TOOLBOX_LIMITS } from './toolbox';
+import { toSerializedError } from './serialization';
 
-if (!parentPort) throw new Error('Toolbox Worker requires a parent port');
+if (!parentPort)
+  throw new Error('JavaScript sandbox Worker requires a parent port');
 
 const port = parentPort;
 const pending = new Map<
@@ -65,8 +68,8 @@ async function handleMessage(message: ParentMessage): Promise<void> {
     }
     try {
       runtime = await createQuickJsRuntime({
-        memoryBytes: TOOLBOX_LIMITS.memoryBytes,
-        stackBytes: TOOLBOX_LIMITS.stackBytes,
+        memoryBytes: JAVASCRIPT_SANDBOX_LIMITS.memoryBytes,
+        stackBytes: JAVASCRIPT_SANDBOX_LIMITS.stackBytes,
       });
       post({ type: 'ready' });
     } catch (error) {
@@ -94,7 +97,7 @@ async function handleMessage(message: ParentMessage): Promise<void> {
       source: message.source,
       snapshot: message.snapshot,
       deadline: message.deadline,
-      maximumOutputBytes: TOOLBOX_LIMITS.maximumOutputBytes,
+      maximumOutputBytes: JAVASCRIPT_SANDBOX_LIMITS.maximumOutputBytes,
       request: (request) => requestProvider(message.executionId, request),
     });
     post({ type: 'complete', executionId: message.executionId, result });

@@ -6,7 +6,9 @@ import type { AgentUITools } from './tools';
  * This is the interface that AgentSessions must implement in order to become controllable by the Router.
  */
 export interface AgentSession {
+  start(): Promise<void>;
   sendMessage: (input: string) => void;
+  close(): Promise<void>;
 }
 
 /**

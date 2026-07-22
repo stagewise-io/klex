@@ -4,15 +4,18 @@ import { beforeAll, describe, expect, it } from 'vitest';
 
 import type { ModuleLogger, RootLogger } from '@stagewise/logger';
 
-import { InMemoryCapabilityProvider } from './in-memory-provider.fixture';
-import { createToolbox } from './toolbox';
+import { InMemoryToolProvider } from './in-memory-tool-provider.fixture';
+import { createJavaScriptTool } from './javascript';
 
-const workerUrl = new URL('../../dist/toolbox-worker.js', import.meta.url);
+const workerUrl = new URL(
+  '../../../../dist/javascript-sandbox-worker.js',
+  import.meta.url,
+);
 const logging = {
   child: () => ({ info: () => undefined }) as unknown as ModuleLogger,
 } as unknown as RootLogger;
 
-describe('packaged Toolbox Worker', () => {
+describe('packaged JavaScript sandbox Worker', () => {
   beforeAll(() => {
     if (!existsSync(workerUrl)) {
       throw new Error(
@@ -22,15 +25,15 @@ describe('packaged Toolbox Worker', () => {
   });
 
   it('runs the file-backed bundle without ambient Node authority', async () => {
-    const toolbox = createToolbox({
+    const javaScriptTool = createJavaScriptTool({
       logging,
-      provider: new InMemoryCapabilityProvider(),
+      provider: new InMemoryToolProvider(),
       workerUrl,
     });
-    await toolbox.start();
+    await javaScriptTool.start();
     try {
       await expect(
-        toolbox.execute({
+        javaScriptTool.execute({
           code: `globalThis.packaged = 41; output({
             value: await mcp['git.hub']['echo-value']({ packaged: true }),
             process: typeof process,
@@ -43,17 +46,17 @@ describe('packaged Toolbox Worker', () => {
         require: 'undefined',
       });
       await expect(
-        toolbox.execute({ code: `return globalThis.packaged + 1` }),
+        javaScriptTool.execute({ code: `return globalThis.packaged + 1` }),
       ).resolves.toBe(42);
       await expect(
-        toolbox.execute({ code: `output('first'); return 'second'` }),
+        javaScriptTool.execute({ code: `output('first'); return 'second'` }),
       ).resolves.toEqual(['first', 'second']);
-      await toolbox.reset();
+      await javaScriptTool.reset();
       await expect(
-        toolbox.execute({ code: `output(typeof globalThis.packaged)` }),
+        javaScriptTool.execute({ code: `output(typeof globalThis.packaged)` }),
       ).resolves.toBe('undefined');
     } finally {
-      await toolbox.close();
+      await javaScriptTool.close();
     }
   });
 });

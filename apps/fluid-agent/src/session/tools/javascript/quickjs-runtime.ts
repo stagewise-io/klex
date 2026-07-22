@@ -6,17 +6,15 @@ import {
   type QuickJSRuntime,
 } from 'quickjs-emscripten-core';
 
+import { assertJsonValue, type JsonValue } from '@/tool-provider';
+
 import { createNamespaceController, type NamespaceBridge } from './namespace';
-import type { CapabilitySnapshotMessage, ProviderRequest } from './protocol';
-import {
-  assertJsonValue,
-  assertSerializedSize,
-  type JsonValue,
-} from './serialization';
+import type { ProviderRequest, ToolSnapshotMessage } from './protocol';
+import { assertSerializedSize } from './serialization';
 
 export interface QuickJsExecutionOptions {
   source: string;
-  snapshot: CapabilitySnapshotMessage;
+  snapshot: ToolSnapshotMessage;
   deadline: number;
   maximumOutputBytes: number;
   request(request: ProviderRequest): Promise<JsonValue>;
@@ -91,9 +89,13 @@ class PersistentQuickJsRuntimeModule implements PersistentQuickJsRuntime {
     try {
       this.namespace.activate(options.snapshot, bridge);
       const source = createExecutionSource(options.source);
-      const evaluation = this.context.evalCode(source, 'toolbox-user-code.js', {
-        strict: true,
-      });
+      const evaluation = this.context.evalCode(
+        source,
+        'javascript-user-code.js',
+        {
+          strict: true,
+        },
+      );
       let promiseHandle: QuickJSHandle;
       try {
         promiseHandle = this.context.unwrapResult(evaluation);
@@ -130,11 +132,11 @@ class PersistentQuickJsRuntimeModule implements PersistentQuickJsRuntime {
             throw new Error(
               typeof dumped?.message === 'string'
                 ? dumped.message
-                : 'Toolbox execution failed',
+                : 'JavaScript execution failed',
             );
           }
           if (Date.now() >= options.deadline)
-            throw new FatalQuickJsError('Toolbox execution timed out');
+            throw new FatalQuickJsError('JavaScript execution timed out');
           await new Promise<void>((resolve) => {
             wake = resolve;
             setTimeout(resolve, 5);
@@ -149,7 +151,7 @@ class PersistentQuickJsRuntimeModule implements PersistentQuickJsRuntime {
     } catch (error) {
       if (error instanceof FatalQuickJsError) throw error;
       if (Date.now() >= options.deadline)
-        throw new FatalQuickJsError('Toolbox execution timed out');
+        throw new FatalQuickJsError('JavaScript execution timed out');
       throw error;
     } finally {
       this.namespace.deactivate();

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { parseParentMessage, parseWorkerMessage } from './protocol';
 
-describe('toolbox protocol', () => {
+describe('JavaScript sandbox protocol', () => {
   it('separates initialization from repeated executions', () => {
     expect(parseParentMessage({ type: 'initialize' })).toEqual({
       type: 'initialize',

@@ -1,15 +1,15 @@
-# QuickJS Toolbox
+# JavaScript Tool
 
-The toolbox is the Fluid Agent's isolated JavaScript orchestration environment. It exposes capabilities through a narrow JSON-only provider seam without adding every external tool to the model's native AI SDK tool list.
+The JavaScript tool is the Fluid Agent's session-owned orchestration environment. It exposes external tools through a narrow JSON-only `ToolProvider` port without adding every external tool to the model's native AI SDK tool list.
 
 ## Ownership and lifecycle
 
-One `Toolbox` owns one Node Worker, QuickJS runtime, and QuickJS context while started.
+One `JavaScriptTool` owns one Node Worker, QuickJS runtime, and QuickJS context while started.
 
 - `start()` creates the Worker and waits for QuickJS readiness.
 - `execute()` queues work in FIFO order; one context never evaluates two executions concurrently.
-- `reset()` replaces the Worker/runtime/context and clears guest state while keeping the toolbox usable.
-- `close()` aborts active work and disposes owned resources. The injected capability provider and logger are borrowed and are never closed by the toolbox.
+- `reset()` replaces the Worker/runtime/context and clears guest state while keeping the JavaScript tool usable.
+- `close()` aborts active work and disposes owned resources. The injected tool provider and logger are borrowed and are never closed by the JavaScript tool.
 
 Fatal failures such as cancellation, timeout, Worker exit, malformed protocol, or unrecoverable QuickJS failure invalidate the context. The next execution starts with a fresh empty context and the failed source is not retried. Ordinary guest exceptions and provider rejections fail only that execution and preserve the context.
 
@@ -23,28 +23,28 @@ globalThis.increment = (value) => value + 1;
 return globalThis.cache;
 ```
 
-Explicit global state survives subsequent `execute()` calls until reset, fatal recovery, or close. Separate Toolbox instances remain isolated.
+Explicit global state survives subsequent `execute()` calls until reset, fatal recovery, or close. Separate `JavaScriptTool` instances remain isolated.
 
 ## Guest API
 
-Every execution receives a fresh capability snapshot. The toolbox replaces `globalThis.mcp` with frozen namespaces and wrappers generated from that snapshot. Retained wrappers still pass through the live provider, which remains responsible for authorization and can reject removed capabilities.
+Every execution receives a fresh tool snapshot. The JavaScript tool replaces `globalThis.mcp` with frozen namespaces and wrappers generated from that snapshot. Retained wrappers still pass through the live provider, which remains responsible for authorization and can reject removed capabilities.
 
 ```ts
 tools.search(
   query: string,
   options?: { limit?: number },
-): Promise<CapabilitySearchResult[]>;
+): Promise<ToolSearchResult[]>;
 
 tools.describe(
   reference: { namespace: string; name: string },
-): Promise<CapabilityDescription>;
+): Promise<ToolDescription>;
 
 mcp[namespace][capability](input: JsonObject): Promise<JsonValue>;
 
 output(value: JsonValue): void;
 ```
 
-Use bracket notation for capability names so punctuation, dots, slashes, and other exact names are preserved:
+Use bracket notation for tool names so punctuation, dots, slashes, and other exact names are preserved:
 
 ```js
 const matches = await tools.search('open pull requests');
@@ -55,7 +55,7 @@ return await mcp[details.reference.namespace][details.reference.name]({
 });
 ```
 
-The frozen `mcp`, `tools`, namespace, and wrapper objects are presentation APIs over the generic `CapabilityProvider`; the Worker does not contain MCP-specific transport or policy logic.
+The frozen `mcp`, `tools`, namespace, and wrapper objects are presentation APIs over the `ToolProvider`;  the Worker does not contain MCP-specific transport or policy logic.
 
 ## Execution results
 
@@ -86,7 +86,7 @@ Every emitted or returned value must be strict JSON: null, booleans, strings, fi
 
 QuickJS receives no ambient Node authority: no `process`, `require`, module loader, filesystem, network, environment, credentials, timers, streams, host objects, or shared memory. External actions are possible only through injected capability wrappers.
 
-Fixed limits are exported as `TOOLBOX_LIMITS`:
+Fixed limits are exported as `JAVASCRIPT_SANDBOX_LIMITS`:
 
 - 30-second wall time.
 - 64 MiB QuickJS memory.
@@ -98,4 +98,4 @@ Fixed limits are exported as `TOOLBOX_LIMITS`:
 - 256 KiB normalized execution result.
 - 64 MiB Worker old-generation V8 heap and constrained Worker stack.
 
-The result limit applies to the normalized aggregate so repeated small `output()` calls cannot bypass it. JSON validation and byte limits are enforced at Worker and parent boundaries. Worker resource limits are defense in depth; QuickJS and the capability-provider boundary provide the primary guest isolation and authority control.
+The result limit applies to the normalized aggregate so repeated small `output()` calls cannot bypass it. JSON validation and byte limits are enforced at Worker and parent boundaries. Worker resource limits are defense in depth; QuickJS and the tool-provider boundary provide the primary guest isolation and authority control.

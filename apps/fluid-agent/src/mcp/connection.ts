@@ -1,8 +1,8 @@
 import {
   type CallToolResult,
   Client,
+  type Tool as McpToolDefinition,
   StreamableHTTPClientTransport,
-  type Tool,
   type Transport,
 } from '@modelcontextprotocol/client';
 import { StdioClientTransport } from '@modelcontextprotocol/client/stdio';
@@ -13,15 +13,15 @@ import {
 } from '@stagewise/mcp-extension-fluid-events/client';
 
 import type { McpServerConfig } from '@/config';
-import type { JsonObject } from '@/toolbox/serialization';
+import type { JsonObject } from '@/tool-provider';
 
 export interface McpConnection {
   readonly namespace: string;
-  readonly tools: readonly Tool[];
+  readonly tools: readonly McpToolDefinition[];
   readonly fluidEvents: RegisteredFluidEventsClient;
   readonly supportsFluidEvents: boolean;
   invoke(
-    tool: Tool,
+    tool: McpToolDefinition,
     input: JsonObject,
     signal: AbortSignal,
   ): Promise<CallToolResult>;
@@ -48,19 +48,19 @@ class McpServerConnection implements McpConnection {
     private readonly client: Client,
     readonly fluidEvents: RegisteredFluidEventsClient,
     readonly supportsFluidEvents: boolean,
-    private currentTools: readonly Tool[],
+    private currentTools: readonly McpToolDefinition[],
   ) {}
 
-  get tools(): readonly Tool[] {
+  get tools(): readonly McpToolDefinition[] {
     return this.currentTools;
   }
 
-  replaceTools(tools: readonly Tool[]): void {
+  replaceTools(tools: readonly McpToolDefinition[]): void {
     this.currentTools = tools;
   }
 
   async invoke(
-    tool: Tool,
+    tool: McpToolDefinition,
     input: JsonObject,
     signal: AbortSignal,
   ): Promise<CallToolResult> {

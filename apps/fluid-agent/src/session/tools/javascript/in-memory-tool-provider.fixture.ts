@@ -1,15 +1,16 @@
-import type { JsonObject, JsonValue } from './serialization';
 import type {
-  CapabilityDescription,
-  CapabilityProvider,
-  CapabilityReference,
-  CapabilityRequestContext,
-  CapabilitySearchOptions,
-  CapabilitySearchResult,
-  CapabilitySnapshot,
-} from './toolbox';
+  JsonObject,
+  JsonValue,
+  ToolDescription,
+  ToolProvider,
+  ToolReference,
+  ToolRequestContext,
+  ToolSearchOptions,
+  ToolSearchResult,
+  ToolSnapshot,
+} from '@/tool-provider';
 
-const CAPABILITIES = [
+const TOOLS = [
   { namespace: 'git.hub', name: 'echo-value', description: 'Echoes its input' },
   {
     namespace: 'git.hub',
@@ -38,18 +39,16 @@ const CAPABILITIES = [
   },
 ] as const;
 
-export class InMemoryCapabilityProvider implements CapabilityProvider {
-  readonly invoked: CapabilityReference[] = [];
-  readonly searches: { query: string; options: CapabilitySearchOptions }[] = [];
-  readonly described: CapabilityReference[] = [];
-  private readonly available = new Set(CAPABILITIES.map(capabilityKey));
+export class InMemoryToolProvider implements ToolProvider {
+  readonly invoked: ToolReference[] = [];
+  readonly searches: { query: string; options: ToolSearchOptions }[] = [];
+  readonly described: ToolReference[] = [];
+  private readonly available = new Set(TOOLS.map(capabilityKey));
   private readonly expireAfterSnapshot = new Set<string>();
 
-  async snapshot(
-    _context: CapabilityRequestContext,
-  ): Promise<CapabilitySnapshot> {
+  async snapshot(_context: ToolRequestContext): Promise<ToolSnapshot> {
     const namespaces = new Map<string, { name: string }[]>();
-    for (const capability of CAPABILITIES) {
+    for (const capability of TOOLS) {
       if (!this.available.has(capabilityKey(capability))) continue;
       const capabilities = namespaces.get(capability.namespace) ?? [];
       capabilities.push({ name: capability.name });
@@ -68,12 +67,12 @@ export class InMemoryCapabilityProvider implements CapabilityProvider {
 
   async search(
     query: string,
-    options: CapabilitySearchOptions,
-    _context: CapabilityRequestContext,
-  ): Promise<CapabilitySearchResult[]> {
+    options: ToolSearchOptions,
+    _context: ToolRequestContext,
+  ): Promise<ToolSearchResult[]> {
     this.searches.push({ query, options });
     const normalizedQuery = query.toLowerCase();
-    return CAPABILITIES.filter(
+    return TOOLS.filter(
       (capability) =>
         this.available.has(capabilityKey(capability)) &&
         `${capability.namespace} ${capability.name} ${capability.description}`
@@ -88,18 +87,18 @@ export class InMemoryCapabilityProvider implements CapabilityProvider {
   }
 
   async describe(
-    reference: CapabilityReference,
-    _context: CapabilityRequestContext,
-  ): Promise<CapabilityDescription> {
+    reference: ToolReference,
+    _context: ToolRequestContext,
+  ): Promise<ToolDescription> {
     this.described.push(reference);
     const capability = this.requireCapability(reference);
     return { reference, description: capability.description };
   }
 
   async invoke(
-    reference: CapabilityReference,
+    reference: ToolReference,
     input: JsonObject,
-    context: CapabilityRequestContext,
+    context: ToolRequestContext,
   ): Promise<JsonValue> {
     this.requireCapability(reference);
     this.invoked.push(reference);
@@ -113,30 +112,30 @@ export class InMemoryCapabilityProvider implements CapabilityProvider {
     return input;
   }
 
-  expireFromNextSnapshot(reference: CapabilityReference): void {
+  expireFromNextSnapshot(reference: ToolReference): void {
     this.expireAfterSnapshot.add(capabilityKey(reference));
   }
 
-  remove(reference: CapabilityReference): void {
+  remove(reference: ToolReference): void {
     this.available.delete(capabilityKey(reference));
   }
 
-  private requireCapability(reference: CapabilityReference) {
-    const capability = CAPABILITIES.find(
+  private requireCapability(reference: ToolReference) {
+    const capability = TOOLS.find(
       (candidate) =>
         candidate.namespace === reference.namespace &&
         candidate.name === reference.name,
     );
     if (!capability || !this.available.has(capabilityKey(reference))) {
       throw new Error(
-        `Capability is unavailable: ${reference.namespace}/${reference.name}`,
+        `Tool is unavailable: ${reference.namespace}/${reference.name}`,
       );
     }
     return capability;
   }
 }
 
-function capabilityKey(reference: CapabilityReference): string {
+function capabilityKey(reference: ToolReference): string {
   return JSON.stringify([reference.namespace, reference.name]);
 }
 

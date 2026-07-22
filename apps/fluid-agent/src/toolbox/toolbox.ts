@@ -87,8 +87,12 @@ export interface ToolboxExecution {
 }
 
 /**
- * A session-owned JavaScript toolbox. Executions are serialized and explicit
- * assignments to globalThis persist until reset(), fatal recovery, or close().
+ * A session-owned JavaScript toolbox with serialized executions and strict JSON
+ * results. Explicit `globalThis` assignments persist until reset, fatal
+ * recovery, or close. Executions normalize zero emissions to `null`, return one
+ * emission directly, and aggregate multiple emissions in order.
+ *
+ * See `src/toolbox/README.md` for the guest API, lifecycle, and isolation model.
  */
 export interface Toolbox {
   start(): Promise<void>;

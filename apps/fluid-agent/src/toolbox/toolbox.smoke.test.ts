@@ -43,8 +43,11 @@ describe('packaged Toolbox Worker', () => {
         require: 'undefined',
       });
       await expect(
-        toolbox.execute({ code: `output(globalThis.packaged + 1)` }),
+        toolbox.execute({ code: `return globalThis.packaged + 1` }),
       ).resolves.toBe(42);
+      await expect(
+        toolbox.execute({ code: `output('first'); return 'second'` }),
+      ).resolves.toEqual(['first', 'second']);
       await toolbox.reset();
       await expect(
         toolbox.execute({ code: `output(typeof globalThis.packaged)` }),

@@ -157,14 +157,70 @@ describe('Toolbox', () => {
     ).resolves.toBe(1);
   });
 
-  it('resets exactly-once output tracking between calls', async () => {
-    await expect(toolbox.execute({ code: 'void 0' })).rejects.toThrow(
-      /exactly once/,
+  describe('execution results', () => {
+    it.each(['void 0', 'return undefined'])(
+      'returns null without emissions for %s',
+      async (code) => {
+        await expect(toolbox.execute({ code })).resolves.toBeNull();
+      },
     );
-    await expect(
-      toolbox.execute({ code: 'output(1); output(2)' }),
-    ).rejects.toThrow(/exactly once/);
-    await expect(toolbox.execute({ code: 'output(3)' })).resolves.toBe(3);
+
+    it('returns one output directly', async () => {
+      await expect(toolbox.execute({ code: 'output(1)' })).resolves.toBe(1);
+    });
+
+    it('aggregates multiple outputs in order', async () => {
+      await expect(
+        toolbox.execute({ code: `output('first'); output({ second: true })` }),
+      ).resolves.toEqual(['first', { second: true }]);
+    });
+
+    it('treats a return value as the final emission', async () => {
+      await expect(
+        toolbox.execute({ code: 'return { value: 1 }' }),
+      ).resolves.toEqual({ value: 1 });
+      await expect(
+        toolbox.execute({ code: `output('starting'); return { done: true }` }),
+      ).resolves.toEqual(['starting', { done: true }]);
+      await expect(
+        toolbox.execute({ code: 'return null' }),
+      ).resolves.toBeNull();
+    });
+
+    it('supports async return values after provider calls', async () => {
+      await expect(
+        toolbox.execute({
+          code: `return await mcp['git.hub']['echo-value']({ returned: true })`,
+        }),
+      ).resolves.toEqual({ returned: true });
+    });
+
+    it.each([
+      'output(undefined)',
+      'return () => undefined',
+      'return 1n',
+      'return Infinity',
+      `const value = {}; value.self = value; return value`,
+    ])('rejects non-JSON result values from %s', async (code) => {
+      await expect(toolbox.execute({ code })).rejects.toThrow();
+    });
+
+    it('enforces the byte limit across aggregated emissions', async () => {
+      await expect(
+        toolbox.execute({
+          code: `output('x'.repeat(140_000)); output('x'.repeat(140_000))`,
+        }),
+      ).rejects.toThrow(/Output exceeds/);
+    });
+
+    it('discards partial emissions when execution fails', async () => {
+      await expect(
+        toolbox.execute({
+          code: `output('partial'); throw new Error('failed')`,
+        }),
+      ).rejects.toThrow(/failed/);
+      await expect(toolbox.execute({ code: 'return 3' })).resolves.toBe(3);
+    });
   });
 
   it('does not expose ambient Node authority', async () => {

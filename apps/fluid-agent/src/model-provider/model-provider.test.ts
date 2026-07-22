@@ -65,6 +65,7 @@ function createMockConfig(
     replace: async () => {
       throw new Error('Not used in model provider tests');
     },
+    subscribe: () => () => undefined,
     getModelSelection: () => [],
     resolveModel: resolveModelImpl,
     getMcpServers: () => ({}),

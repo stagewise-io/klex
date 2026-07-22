@@ -11,7 +11,10 @@ import type { FluidConfig, ProviderPreset } from './types';
 
 const directories: string[] = [];
 const logging = {
-  child: () => ({ info: () => undefined }),
+  child: () => ({
+    error: () => undefined,
+    info: () => undefined,
+  }),
 } as unknown as RootLogger;
 
 // --- fixtures ---
@@ -330,6 +333,75 @@ describe('Config — replace (atomic persistence)', () => {
         // runtime test: pass an object with extra unknown keys (schema is strict)
       }),
     ).resolves.toBeDefined(); // empty config is valid
+  });
+});
+
+describe('Config — subscriptions', () => {
+  it('publishes only committed replacements', async () => {
+    const { module } = await setup();
+    const received: Readonly<FluidConfig>[] = [];
+    module.subscribe((config) => {
+      received.push(config);
+    });
+
+    const invalid = manualConfig();
+    invalid.modelSelection.chat = ['missing:chat:model'];
+    await expect(module.replace(invalid)).rejects.toBeInstanceOf(
+      ConfigValidationError,
+    );
+    const next = manualConfig('committed');
+    await module.replace(next);
+
+    expect(received).toEqual([next]);
+  });
+
+  it('supports unsubscribe and clears listeners on close', async () => {
+    const { module } = await setup();
+    let calls = 0;
+    const unsubscribe = module.subscribe(() => {
+      calls += 1;
+    });
+    unsubscribe();
+    await module.replace(manualConfig('ignored'));
+    module.subscribe(() => {
+      calls += 1;
+    });
+    await module.close();
+
+    expect(calls).toBe(0);
+  });
+
+  it('isolates synchronous and asynchronous listener failures', async () => {
+    const { module } = await setup();
+    let successfulCalls = 0;
+    module.subscribe(() => {
+      throw new Error('sync failure');
+    });
+    module.subscribe(async () => {
+      throw new Error('async failure');
+    });
+    module.subscribe(() => {
+      successfulCalls += 1;
+    });
+
+    await expect(module.replace(manualConfig('next'))).resolves.toBeDefined();
+    await Promise.resolve();
+    expect(successfulCalls).toBe(1);
+  });
+
+  it('does not await asynchronous listeners', async () => {
+    const { module } = await setup();
+    let release: (() => void) | undefined;
+    module.subscribe(
+      () =>
+        new Promise<void>((resolve) => {
+          release = resolve;
+        }),
+    );
+
+    await expect(module.replace(manualConfig('next'))).resolves.toBeDefined();
+    expect(release).toBeDefined();
+    release?.();
   });
 });
 

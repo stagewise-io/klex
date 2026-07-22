@@ -29,11 +29,16 @@ export class ConfigValidationError extends Error {
   override readonly name = 'ConfigValidationError';
 }
 
+export type ConfigListener = (
+  config: Readonly<FluidConfig>,
+) => void | Promise<void>;
+
 export interface Config {
   start(): Promise<void>;
   close(): Promise<void>;
   get(): Readonly<FluidConfig>;
   replace(input: unknown): Promise<Readonly<FluidConfig>>;
+  subscribe(listener: ConfigListener): () => void;
   getModelSelection(purpose: ModelPurpose): readonly ModelId[];
   resolveModel(modelId: ModelId): ResolvedModelConfig;
   getMcpServers(): Readonly<Record<string, McpServerConfig>>;
@@ -47,6 +52,7 @@ export interface ConfigDependencies {
 class ConfigModule implements Config {
   private config: FluidConfig | null = null;
   private updateQueue: Promise<void> = Promise.resolve();
+  private readonly listeners = new Set<ConfigListener>();
 
   constructor(
     private readonly deps: {
@@ -102,6 +108,7 @@ class ConfigModule implements Config {
   }
 
   async close(): Promise<void> {
+    this.listeners.clear();
     this.config = null;
   }
 
@@ -116,6 +123,12 @@ class ConfigModule implements Config {
       () => undefined,
     );
     return update;
+  }
+
+  subscribe(listener: ConfigListener): () => void {
+    this.requireConfig();
+    this.listeners.add(listener);
+    return () => this.listeners.delete(listener);
   }
 
   getModelSelection(purpose: ModelPurpose): readonly ModelId[] {
@@ -195,7 +208,20 @@ class ConfigModule implements Config {
 
     this.config = config;
     this.deps.logger.info('Config updated');
+    this.publish(config);
     return config;
+  }
+
+  private publish(config: Readonly<FluidConfig>): void {
+    for (const listener of this.listeners) {
+      try {
+        void Promise.resolve(listener(config)).catch((error: unknown) => {
+          this.deps.logger.error({ error }, 'Config subscriber failed');
+        });
+      } catch (error) {
+        this.deps.logger.error({ error }, 'Config subscriber failed');
+      }
+    }
   }
 
   private parse(input: unknown): FluidConfig {

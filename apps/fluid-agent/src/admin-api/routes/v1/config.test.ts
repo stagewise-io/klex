@@ -51,6 +51,7 @@ function configWith(replace: Config['replace']): Config {
     close: async () => undefined,
     get: () => source,
     replace,
+    subscribe: () => () => undefined,
     getModelSelection: (purpose) => source.modelSelection[purpose],
     resolveModel: () => {
       throw new Error('Not used');

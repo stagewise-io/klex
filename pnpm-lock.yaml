@@ -290,6 +290,28 @@ importers:
         specifier: 4.4.3
         version: 4.4.3
 
+  packages/mcp-gateway-core:
+    dependencies:
+      '@modelcontextprotocol/core':
+        specifier: 2.0.0-beta.4
+        version: 2.0.0-beta.4
+      zod:
+        specifier: 4.4.3
+        version: 4.4.3
+    devDependencies:
+      '@stagewise/typescript-config':
+        specifier: workspace:*
+        version: link:../typescript-config
+      '@types/node':
+        specifier: 24.10.1
+        version: 24.10.1
+      typescript:
+        specifier: 7.0.2
+        version: 7.0.2
+      vitest:
+        specifier: 4.1.10
+        version: 4.1.10(@types/node@24.10.1)(vite@8.1.5(@types/node@24.10.1)(esbuild@0.28.1)(jiti@2.6.1)(tsx@4.23.1)(yaml@2.9.0))
+
   packages/mcp-ws-transport:
     dependencies:
       '@modelcontextprotocol/sdk':

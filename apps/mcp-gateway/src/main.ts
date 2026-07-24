@@ -1,5 +1,5 @@
 import { createLogger } from '@stagewise/logger';
-import { createGatewayServer } from '@stagewise/mcp-gateway-node';
+import { createGatewayServer } from '@stagewise/mcp-gateway-sdk/server';
 
 import { createConfig } from '@/config';
 
@@ -16,37 +16,18 @@ async function main(): Promise<void> {
     port: config.port,
     authorization: {
       authorize: async (agent, environment) =>
-        agent.tenantId === config.tenantId &&
-        agent.agentId === config.agentId &&
-        environment.tenantId === config.tenantId &&
-        environment.environmentId === config.environmentId,
+        config.authorize(agent, environment),
     },
     authenticateAgent: async ({ request }) =>
-      bearer(request.headers.get('authorization')) === config.agentToken
-        ? {
-            kind: 'agent',
-            tenantId: config.tenantId,
-            agentId: config.agentId,
-          }
-        : undefined,
+      config.authenticateAgent(bearer(request.headers.get('authorization'))),
     authenticateEnvironment: async ({ request }) =>
-      bearer(request.headers.authorization) === config.environmentToken
-        ? {
-            kind: 'environment',
-            tenantId: config.tenantId,
-            environmentId: config.environmentId,
-          }
-        : undefined,
-    parseEnvironmentId: (value) => {
-      if (value !== config.environmentId)
-        throw new Error('Unknown environment');
-      return config.environmentId;
-    },
+      config.authenticateEnvironment(bearer(request.headers.authorization)),
+    parseEnvironmentId: (value) => config.parseEnvironmentId(value),
     hooks: {
-      onSessionOpened: (details) =>
-        logger.info(details, 'Gateway session opened'),
-      onSessionClosed: (details) =>
-        logger.info(details, 'Gateway session closed'),
+      onExchangeOpened: (details) =>
+        logger.info(details, 'Gateway exchange opened'),
+      onExchangeClosed: (details) =>
+        logger.info(details, 'Gateway exchange closed'),
       onError: ({ error }) => logger.error({ error }, 'Gateway error'),
     },
     onConnected: ({ principal }) =>

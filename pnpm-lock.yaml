@@ -120,13 +120,19 @@ importers:
       '@stagewise/logger':
         specifier: workspace:*
         version: link:../../packages/logger
-      '@stagewise/mcp-gateway-core':
+      '@stagewise/mcp-extension-fluid-events':
         specifier: workspace:*
-        version: link:../../packages/mcp-gateway-core
-      '@stagewise/mcp-gateway-node':
+        version: link:../../packages/mcp-extension-fluid-events
+      '@stagewise/mcp-gateway-sdk':
         specifier: workspace:*
-        version: link:../../packages/mcp-gateway-node
+        version: link:../../packages/mcp-gateway-sdk
     devDependencies:
+      '@modelcontextprotocol/client':
+        specifier: 2.0.0-beta.4
+        version: 2.0.0-beta.4
+      '@modelcontextprotocol/server':
+        specifier: 2.0.0-beta.4
+        version: 2.0.0-beta.4
       '@stagewise/typescript-config':
         specifier: workspace:*
         version: link:../../packages/typescript-config
@@ -142,46 +148,9 @@ importers:
       vitest:
         specifier: 4.1.10
         version: 4.1.10(@types/node@24.10.1)(vite@8.1.5(@types/node@24.10.1)(esbuild@0.28.1)(jiti@2.6.1)(tsx@4.23.1)(yaml@2.9.0))
-
-  apps/mcp-gateway-e2e:
-    dependencies:
-      '@modelcontextprotocol/client':
-        specifier: 2.0.0-beta.4
-        version: 2.0.0-beta.4
-      '@modelcontextprotocol/server':
-        specifier: 2.0.0-beta.4
-        version: 2.0.0-beta.4
-      '@stagewise/mcp-gateway-core':
-        specifier: workspace:*
-        version: link:../../packages/mcp-gateway-core
-      '@stagewise/mcp-gateway-daemon':
-        specifier: workspace:*
-        version: link:../../packages/mcp-gateway-daemon
-      '@stagewise/mcp-gateway-node':
-        specifier: workspace:*
-        version: link:../../packages/mcp-gateway-node
-      ws:
-        specifier: 8.18.1
-        version: 8.18.1
       zod:
         specifier: 4.4.3
         version: 4.4.3
-    devDependencies:
-      '@stagewise/typescript-config':
-        specifier: workspace:*
-        version: link:../../packages/typescript-config
-      '@types/node':
-        specifier: 24.10.1
-        version: 24.10.1
-      '@types/ws':
-        specifier: 8.18.1
-        version: 8.18.1
-      typescript:
-        specifier: 7.0.2
-        version: 7.0.2
-      vitest:
-        specifier: 4.1.10
-        version: 4.1.10(@types/node@24.10.1)(vite@8.1.5(@types/node@24.10.1)(esbuild@0.28.1)(jiti@2.6.1)(tsx@4.23.1)(yaml@2.9.0))
 
   mcp-servers/chat-simulator:
     dependencies:
@@ -358,70 +327,23 @@ importers:
         specifier: 4.4.3
         version: 4.4.3
 
-  packages/mcp-gateway-core:
+  packages/mcp-gateway-sdk:
     dependencies:
       '@modelcontextprotocol/core':
         specifier: 2.0.0-beta.4
         version: 2.0.0-beta.4
-      zod:
-        specifier: 4.4.3
-        version: 4.4.3
-    devDependencies:
-      '@stagewise/typescript-config':
-        specifier: workspace:*
-        version: link:../typescript-config
-      '@types/node':
-        specifier: 24.10.1
-        version: 24.10.1
-      typescript:
-        specifier: 7.0.2
-        version: 7.0.2
-      vitest:
-        specifier: 4.1.10
-        version: 4.1.10(@types/node@24.10.1)(vite@8.1.5(@types/node@24.10.1)(esbuild@0.28.1)(jiti@2.6.1)(tsx@4.23.1)(yaml@2.9.0))
-
-  packages/mcp-gateway-daemon:
-    dependencies:
-      '@modelcontextprotocol/server':
-        specifier: 2.0.0-beta.4
-        version: 2.0.0-beta.4
-      '@stagewise/mcp-gateway-core':
-        specifier: workspace:*
-        version: link:../mcp-gateway-core
-      ws:
-        specifier: 8.18.1
-        version: 8.18.1
-    devDependencies:
-      '@stagewise/typescript-config':
-        specifier: workspace:*
-        version: link:../typescript-config
-      '@types/node':
-        specifier: 24.10.1
-        version: 24.10.1
-      '@types/ws':
-        specifier: 8.18.1
-        version: 8.18.1
-      typescript:
-        specifier: 7.0.2
-        version: 7.0.2
-      vitest:
-        specifier: 4.1.10
-        version: 4.1.10(@types/node@24.10.1)(vite@8.1.5(@types/node@24.10.1)(esbuild@0.28.1)(jiti@2.6.1)(tsx@4.23.1)(yaml@2.9.0))
-
-  packages/mcp-gateway-node:
-    dependencies:
       '@modelcontextprotocol/node':
         specifier: 2.0.0-beta.4
         version: 2.0.0-beta.4(@modelcontextprotocol/server@2.0.0-beta.4)(hono@4.12.30)
       '@modelcontextprotocol/server':
         specifier: 2.0.0-beta.4
         version: 2.0.0-beta.4
-      '@stagewise/mcp-gateway-core':
-        specifier: workspace:*
-        version: link:../mcp-gateway-core
       ws:
         specifier: 8.18.1
         version: 8.18.1
+      zod:
+        specifier: 4.4.3
+        version: 4.4.3
     devDependencies:
       '@stagewise/typescript-config':
         specifier: workspace:*

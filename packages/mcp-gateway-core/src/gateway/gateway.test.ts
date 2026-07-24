@@ -128,12 +128,13 @@ describe('gateway', () => {
     const request = { jsonrpc: '2.0' as const, id: 1, method: 'tools/list' };
     const response = { jsonrpc: '2.0' as const, id: 1, result: {} };
 
-    await session.send(request);
+    await session.send(request, { relatedRequestId: 1 });
     connection.emit({
       version: 1,
       type: 'session.message',
       sessionId: session.id,
       message: response,
+      options: { relatedRequestId: 1 },
     });
 
     expect(connection.sent.at(-1)).toEqual({
@@ -141,8 +142,9 @@ describe('gateway', () => {
       type: 'session.message',
       sessionId: session.id,
       message: request,
+      options: { relatedRequestId: 1 },
     });
-    expect(received).toHaveBeenCalledWith(response);
+    expect(received).toHaveBeenCalledWith(response, { relatedRequestId: 1 });
   });
 
   it('isolates simultaneous sessions', async () => {
@@ -163,7 +165,7 @@ describe('gateway', () => {
     });
 
     expect(firstReceived).not.toHaveBeenCalled();
-    expect(secondReceived).toHaveBeenCalledWith(message);
+    expect(secondReceived).toHaveBeenCalledWith(message, undefined);
   });
 
   it('closes one session without affecting another', async () => {

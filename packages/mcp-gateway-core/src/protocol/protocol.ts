@@ -1,4 +1,7 @@
-import { JSONRPCMessageSchema } from '@modelcontextprotocol/core';
+import {
+  JSONRPCMessageSchema,
+  RequestIdSchema,
+} from '@modelcontextprotocol/core';
 import { z } from 'zod';
 
 declare const gatewaySessionIdBrand: unique symbol;
@@ -21,11 +24,16 @@ export interface SessionOpenedFrame {
   readonly sessionId: GatewaySessionId;
 }
 
+export interface GatewayMessageOptions {
+  readonly relatedRequestId?: z.infer<typeof RequestIdSchema>;
+}
+
 export interface SessionMessageFrame {
   readonly version: typeof GATEWAY_PROTOCOL_VERSION;
   readonly type: 'session.message';
   readonly sessionId: GatewaySessionId;
   readonly message: z.infer<typeof JSONRPCMessageSchema>;
+  readonly options?: GatewayMessageOptions;
 }
 
 export interface SessionCloseFrame {
@@ -71,9 +79,16 @@ const SessionOpenedFrameSchema = FrameBaseSchema.extend({
   type: z.literal('session.opened'),
 }).strict();
 
+const GatewayMessageOptionsSchema = z
+  .object({
+    relatedRequestId: RequestIdSchema.optional(),
+  })
+  .strict();
+
 const SessionMessageFrameSchema = FrameBaseSchema.extend({
   type: z.literal('session.message'),
   message: JSONRPCMessageSchema,
+  options: GatewayMessageOptionsSchema.optional(),
 }).strict();
 
 const SessionCloseFrameSchema = FrameBaseSchema.extend({

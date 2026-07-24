@@ -19,7 +19,13 @@ const message = {
 describe('gateway protocol', () => {
   it.each<GatewayToEnvironmentFrame>([
     { version: 1, type: 'session.open', sessionId },
-    { version: 1, type: 'session.message', sessionId, message },
+    {
+      version: 1,
+      type: 'session.message',
+      sessionId,
+      message,
+      options: { relatedRequestId: 1 },
+    },
     { version: 1, type: 'session.close', sessionId },
   ])('round-trips gateway frame $type', (frame) => {
     expect(decodeGatewayToEnvironmentFrame(encodeGatewayFrame(frame))).toEqual(
@@ -29,7 +35,13 @@ describe('gateway protocol', () => {
 
   it.each([
     { version: 1, type: 'session.opened', sessionId },
-    { version: 1, type: 'session.message', sessionId, message },
+    {
+      version: 1,
+      type: 'session.message',
+      sessionId,
+      message,
+      options: { relatedRequestId: 'request-1' },
+    },
     { version: 1, type: 'session.close', sessionId },
   ])('round-trips environment frame $type', (frame) => {
     expect(decodeEnvironmentToGatewayFrame(JSON.stringify(frame))).toEqual(
@@ -69,6 +81,20 @@ describe('gateway protocol', () => {
           type: 'session.message',
           sessionId,
           message: { hello: 'world' },
+        }),
+      ),
+    ).toThrow();
+  });
+
+  it('rejects invalid message options', () => {
+    expect(() =>
+      decodeGatewayToEnvironmentFrame(
+        JSON.stringify({
+          version: 1,
+          type: 'session.message',
+          sessionId,
+          message,
+          options: { unexpected: true },
         }),
       ),
     ).toThrow();

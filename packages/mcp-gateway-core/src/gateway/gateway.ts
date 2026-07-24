@@ -11,6 +11,7 @@ import type {
 import {
   createGatewaySessionId,
   GATEWAY_PROTOCOL_VERSION,
+  type GatewayMessageOptions,
   type GatewaySessionId,
   type SessionMessageFrame,
 } from '../protocol/index.js';
@@ -19,8 +20,10 @@ export type GatewayMessage = SessionMessageFrame['message'];
 
 export interface GatewaySession {
   readonly id: GatewaySessionId;
-  send(message: GatewayMessage): Promise<void>;
-  onMessage(handler: (message: GatewayMessage) => void): Unsubscribe;
+  send(message: GatewayMessage, options?: GatewayMessageOptions): Promise<void>;
+  onMessage(
+    handler: (message: GatewayMessage, options?: GatewayMessageOptions) => void,
+  ): Unsubscribe;
   onClose(handler: (cause?: Error) => void): Unsubscribe;
   close(): Promise<void>;
 }
@@ -61,7 +64,9 @@ class SessionModule implements GatewaySession {
 
   readonly #registration: Registration;
   readonly #onEnded: () => void;
-  readonly #messageHandlers = new Set<(message: GatewayMessage) => void>();
+  readonly #messageHandlers = new Set<
+    (message: GatewayMessage, options?: GatewayMessageOptions) => void
+  >();
   readonly #closeHandlers = new Set<(cause?: Error) => void>();
   #closed = false;
 
@@ -75,17 +80,23 @@ class SessionModule implements GatewaySession {
     this.#onEnded = onEnded;
   }
 
-  async send(message: GatewayMessage): Promise<void> {
+  async send(
+    message: GatewayMessage,
+    options?: GatewayMessageOptions,
+  ): Promise<void> {
     if (this.#closed) throw new Error('Gateway session is closed');
     await this.#registration.connection.send({
       version: GATEWAY_PROTOCOL_VERSION,
       type: 'session.message',
       sessionId: this.id,
       message,
+      ...(options ? { options } : {}),
     });
   }
 
-  onMessage(handler: (message: GatewayMessage) => void): Unsubscribe {
+  onMessage(
+    handler: (message: GatewayMessage, options?: GatewayMessageOptions) => void,
+  ): Unsubscribe {
     this.#messageHandlers.add(handler);
     return () => this.#messageHandlers.delete(handler);
   }
@@ -105,9 +116,9 @@ class SessionModule implements GatewaySession {
     });
   }
 
-  receive(message: GatewayMessage): void {
+  receive(message: GatewayMessage, options?: GatewayMessageOptions): void {
     if (this.#closed) return;
-    for (const handler of this.#messageHandlers) handler(message);
+    for (const handler of this.#messageHandlers) handler(message, options);
   }
 
   end(cause?: Error): void {
@@ -183,7 +194,8 @@ class GatewayModule implements Gateway {
           return;
         }
 
-        if (frame.type === 'session.message') session.receive(frame.message);
+        if (frame.type === 'session.message')
+          session.receive(frame.message, frame.options);
         else session.end(frame.reason ? new Error(frame.reason) : undefined);
       }),
       connection.onClose((cause) => {

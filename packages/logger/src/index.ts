@@ -1,4 +1,6 @@
 import { type ILogObj, type TLogLevelName, Logger as TslogLogger } from 'tslog';
+import { otlpBatchBody, otlpFormat } from 'tslog/otel';
+import { httpTransport } from 'tslog/transports/http';
 
 export type RootLogger = TslogLogger<ILogObj>;
 
@@ -17,10 +19,14 @@ export interface LoggerOptions {
     keys?: string[];
     caseInsensitive?: boolean;
   };
+  otel?: {
+    url: string;
+    resourceAttributes: Record<string, unknown>;
+  };
 }
 
 export function createLogger(opts?: LoggerOptions): RootLogger {
-  return new TslogLogger<ILogObj>({
+  const logger = new TslogLogger<ILogObj>({
     name: opts?.name,
     minLevel: opts?.minLevel ?? 'INFO',
     type: opts?.type ?? 'pretty',
@@ -37,4 +43,16 @@ export function createLogger(opts?: LoggerOptions): RootLogger {
         }
       : undefined,
   });
+
+  if (opts?.otel) {
+    logger.attachTransport(
+      httpTransport({
+        url: opts.otel.url,
+        format: otlpFormat({ resource: opts.otel.resourceAttributes }),
+        encodeBody: otlpBatchBody,
+      }),
+    );
+  }
+
+  return logger;
 }

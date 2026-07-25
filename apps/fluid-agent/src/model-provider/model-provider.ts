@@ -75,12 +75,12 @@ class ModelProviderModule implements ModelProvider {
     this.providerCache.set(cacheKey, { provider, configSignature });
 
     if (cached) {
-      this.deps.logger.info(
+      this.deps.logger.debug(
         { cacheKey },
         'ModelProvider re-instantiated provider (config changed)',
       );
     } else {
-      this.deps.logger.info(
+      this.deps.logger.debug(
         { cacheKey },
         'ModelProvider instantiated provider',
       );

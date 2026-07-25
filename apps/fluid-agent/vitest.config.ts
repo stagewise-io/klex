@@ -8,4 +8,16 @@ export default defineConfig({
       '@': fileURLToPath(new URL('./src/', import.meta.url)),
     },
   },
+  test: {
+    coverage: {
+      provider: 'istanbul',
+      reporter: ['text', 'html'],
+      include: ['src/**/*.ts'],
+      exclude: [
+        'src/**/*.test.ts',
+        'src/**/index.ts',
+        'src/**/test-helpers.ts',
+      ],
+    },
+  },
 });

@@ -5,11 +5,37 @@ import { createConfig } from '@/config';
 import { createMcp } from '@/mcp';
 import { createModelProvider } from '@/model-provider';
 import { createChatSession } from '@/session/chat';
+import type { SessionHooks } from '@/session/types';
+import { createTracing } from '@/tracing';
 
-const logger = createLogger({ name: 'fluid-agent' });
+import { createRouter } from './router';
+import { SessionInboxPriority } from './session/inbox';
+
+const logger = createLogger({
+  name: 'fluid-agent',
+  otel: {
+    url: 'http://localhost:4318/v1/logs',
+    resourceAttributes: {
+      'deployment.environment': 'development',
+      'service.name': 'fluid-agent',
+      'service.namespace': 'stagewise',
+    },
+  },
+});
 
 async function main(): Promise<void> {
   logger.info('Fluid Agent v1.0.0');
+
+  const tracing = createTracing({
+    logging: logger,
+    otlpUrl: 'http://localhost:4318/v1/traces',
+    serviceName: 'fluid-agent',
+    resourceAttributes: {
+      'deployment.environment': 'development',
+      'service.namespace': 'stagewise',
+    },
+  });
+  await tracing.start();
 
   const config = createConfig({
     logging: logger,
@@ -18,16 +44,24 @@ async function main(): Promise<void> {
   const adminApi = createAdminApi({ logging: logger, config });
   const modelProvider = createModelProvider({ logging: logger, config });
   const mcp = createMcp({ logging: logger, config });
-  const session = createChatSession({
+
+  const router = createRouter({
     logging: logger,
-    config,
-    modelProvider,
-    toolProvider: mcp,
+    createChatSession: (hooks: SessionHooks) =>
+      createChatSession({
+        logging: logger,
+        config: config,
+        modelProvider: modelProvider,
+        toolProvider: mcp,
+        extensionFactories: [],
+        hooks,
+      }),
   });
+  await router.start();
 
   const started: { close(): Promise<void> }[] = [];
   try {
-    for (const resource of [config, adminApi, modelProvider, mcp, session]) {
+    for (const resource of [config, adminApi, modelProvider, mcp]) {
       await resource.start();
       started.push(resource);
     }
@@ -35,14 +69,30 @@ async function main(): Promise<void> {
     await closeReverse(started);
     throw error;
   }
+  await router.start();
 
-  session.sendMessage('Hello there!');
+  // Send a test message into the primary session via the router
+  router.sendInput({
+    sourceEnv: 'chatApp',
+    priority: SessionInboxPriority.Medium,
+    context: {
+      sourceEnv: 'chatApp',
+      metadata: {
+        chatId: '95g8743',
+        senderId: 'u4987tzrh4',
+        timestamp: new Date().toISOString(),
+      },
+      content: [{ type: 'text', text: 'Hey there! Who are you?' }], // TODO Add a real message here
+    },
+  });
 
   let shuttingDown = false;
   const shutdown = async () => {
     if (shuttingDown) return;
     shuttingDown = true;
+    await router.close();
     await closeReverse(started);
+    await tracing.close();
     await logger[Symbol.asyncDispose]();
     process.exit(0);
   };

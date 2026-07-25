@@ -13,7 +13,11 @@ import type {
 import { createModelProvider } from './model-provider';
 
 const logging = {
-  child: () => ({ info: () => undefined }) as unknown as ModuleLogger,
+  child: () =>
+    ({
+      info: () => undefined,
+      debug: () => undefined,
+    }) as unknown as ModuleLogger,
 } as unknown as RootLogger;
 
 // --- mocks ---

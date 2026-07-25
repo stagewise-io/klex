@@ -1,13 +1,37 @@
+import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 import type { BuildOptions } from 'esbuild';
 import * as esbuild from 'esbuild';
 
+/**
+ * esbuild plugin that resolves the `@/` import alias to `./src/`,
+ * matching the tsconfig `paths` configuration.
+ * Necessary because esbuild's `alias` option rejects keys containing `/`.
+ * Delegates to esbuild's native resolver so directory → index.ts
+ * and extension resolution work as expected.
+ */
+const aliasPlugin: esbuild.Plugin = {
+  name: 'alias-at',
+  setup(build) {
+    build.onResolve({ filter: /^@\// }, async (args) => {
+      const resolvedPath = path.resolve(
+        import.meta.dirname,
+        'src',
+        args.path.slice(2),
+      );
+      return build.resolve(resolvedPath, {
+        resolveDir: import.meta.dirname,
+        importer: args.importer,
+        kind: args.kind,
+      });
+    });
+  },
+};
+
 const sharedOptions: BuildOptions = {
   tsconfig: 'tsconfig.json',
-  alias: {
-    '@': './src',
-  },
+  plugins: [aliasPlugin],
   bundle: true,
   platform: 'node',
   target: 'node22',

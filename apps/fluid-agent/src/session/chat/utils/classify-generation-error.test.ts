@@ -1,4 +1,14 @@
-import { APICallError, EmptyResponseBodyError } from 'ai';
+import {
+  APICallError,
+  EmptyResponseBodyError,
+  InvalidResponseDataError,
+  JSONParseError,
+  LoadAPIKeyError,
+  NoContentGeneratedError,
+  NoOutputGeneratedError,
+  NoSuchModelError,
+  UnsupportedFunctionalityError,
+} from 'ai';
 import { describe, expect, it } from 'vitest';
 
 import { classifyGenerationError } from './classify-generation-error';
@@ -76,13 +86,24 @@ describe('classifyGenerationError', () => {
       expect(result.reason).toContain('400');
     });
 
-    it('classifies 401 as non-model error', () => {
+    it('classifies 401 as model error (auth failure triggers fallback)', () => {
       const error = makeApiError({
         message: 'Unauthorized',
         statusCode: 401,
       });
       const result = classifyGenerationError(error);
-      expect(result.isModelError).toBe(false);
+      expect(result.isModelError).toBe(true);
+      expect(result.reason).toContain('401');
+    });
+
+    it('classifies 403 as model error (auth failure triggers fallback)', () => {
+      const error = makeApiError({
+        message: 'Forbidden',
+        statusCode: 403,
+      });
+      const result = classifyGenerationError(error);
+      expect(result.isModelError).toBe(true);
+      expect(result.reason).toContain('403');
     });
 
     it('classifies retryable error without status code as model error', () => {
@@ -103,6 +124,79 @@ describe('classifyGenerationError', () => {
       const result = classifyGenerationError(error);
       expect(result.isModelError).toBe(false);
       expect(result.reason).toContain('non-retryable');
+    });
+  });
+
+  describe('NoOutputGeneratedError', () => {
+    it('classifies as model error', () => {
+      const error = new NoOutputGeneratedError({
+        message: 'No output generated. Check the stream for errors.',
+      });
+      const result = classifyGenerationError(error);
+      expect(result.isModelError).toBe(true);
+      expect(result.reason).toContain('no output generated');
+    });
+  });
+
+  describe('NoContentGeneratedError', () => {
+    it('classifies as model error', () => {
+      const error = new NoContentGeneratedError({});
+      const result = classifyGenerationError(error);
+      expect(result.isModelError).toBe(true);
+      expect(result.reason).toContain('no content generated');
+    });
+  });
+
+  describe('LoadAPIKeyError', () => {
+    it('classifies as model error', () => {
+      const error = new LoadAPIKeyError({ message: 'API key not found' });
+      const result = classifyGenerationError(error);
+      expect(result.isModelError).toBe(true);
+      expect(result.reason).toContain('load API key');
+    });
+  });
+
+  describe('NoSuchModelError', () => {
+    it('classifies as model error', () => {
+      const error = new NoSuchModelError({
+        modelId: 'gpt-99',
+        modelType: 'languageModel',
+      });
+      const result = classifyGenerationError(error);
+      expect(result.isModelError).toBe(true);
+      expect(result.reason).toContain('no such model');
+    });
+  });
+
+  describe('JSONParseError', () => {
+    it('classifies as model error', () => {
+      const error = new JSONParseError({
+        text: 'invalid',
+        cause: new SyntaxError('Unexpected token'),
+      });
+      const result = classifyGenerationError(error);
+      expect(result.isModelError).toBe(true);
+      expect(result.reason).toContain('JSON parse');
+    });
+  });
+
+  describe('InvalidResponseDataError', () => {
+    it('classifies as model error', () => {
+      const error = new InvalidResponseDataError({ data: null });
+      const result = classifyGenerationError(error);
+      expect(result.isModelError).toBe(true);
+      expect(result.reason).toContain('invalid response data');
+    });
+  });
+
+  describe('UnsupportedFunctionalityError', () => {
+    it('classifies as model error', () => {
+      const error = new UnsupportedFunctionalityError({
+        functionality: 'tool calling',
+      });
+      const result = classifyGenerationError(error);
+      expect(result.isModelError).toBe(true);
+      expect(result.reason).toContain('unsupported functionality');
     });
   });
 

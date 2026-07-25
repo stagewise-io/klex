@@ -1,25 +1,53 @@
 import { randomUUID } from 'node:crypto';
 
 import { type Context, context, type Span, trace } from '@opentelemetry/api';
-import { getToolName, isToolUIPart, type LanguageModel } from 'ai';
+import { isToolUIPart, type LanguageModel, type ModelMessage } from 'ai';
 
 import type { ModuleLogger } from '@stagewise/logger';
 
-import type { ModelId } from '@/config';
 import type { ModelProvider } from '@/model-provider';
 import { type SessionInboxBuffer, SessionInboxPriority } from '@/session/inbox';
 import type { AgentTools } from '@/session/tools';
 import type { ExtendedUIMessage } from '@/session/types';
 
 import type { ExtensionHandler } from '../extension-handler';
+import type { TransformationFlags } from '../extensions/extension-api';
 import { checkAndFixHistory } from '../utils/check-and-fix-history';
-import { classifyGenerationError } from '../utils/classify-generation-error';
 import { convertToModelMessagesExtended } from '../utils/convert-to-model-messages';
-import { drainInbox } from '../utils/drain-inbox';
-import { executeTool } from '../utils/execute-tool';
-import { repairPartialMessage } from '../utils/repair-partial-message';
-import { runStreamedGeneration } from '../utils/run-streamed-generation';
+import { inboxDrainAttributes } from '../utils/inbox-drain-attributes';
+import type { ModelFallbackManager } from '../utils/model-fallback-manager';
+import { startChildSpan, tracer } from '../utils/tracing';
+import {
+  createGenerationRunner,
+  type GenerationRunner,
+} from './generation-runner';
 
+/**
+ * Dependencies required to run a single step within a turn.
+ *
+ * The `messages` array is shared by reference across Session, Turn, and
+ * Step. This is an intentional design choice. The critical window —
+ * extension processing and model generation — operates on a
+ * `structuredClone` copy, so extension mutations and model outputs
+ * cannot corrupt the original array during generation.
+ *
+ * The original array is only mutated in synchronous, sequential code:
+ * - Inbox drain (at the start of each layer: Turn drains Low, Step
+ *   drains Medium)
+ * - `checkAndFixHistory` (before the clone)
+ * - Continue injection (between steps, synchronous)
+ * - Response push (after generation completes, synchronous)
+ *
+ * No concurrent mutations occur because the session loop is
+ * single-threaded: turns run sequentially, steps run sequentially within
+ * a turn, and generation is awaited before the response is pushed.
+ *
+ * The `fallbackManager` is the same instance across the entire session —
+ * it tracks model fallback state and cooldown. Passing it as a unit
+ * (rather than individual closures) ensures the call-order protocol
+ * between `getChatModelId`, `fallbackToNextModel`, and
+ * `recordSuccessfulGeneration` is enforced by the manager's encapsulation.
+ */
 export interface StepDependencies {
   logger: ModuleLogger;
   turnContext: Context;
@@ -28,380 +56,293 @@ export interface StepDependencies {
   extensionHandler: ExtensionHandler;
   tools: AgentTools;
   modelProvider: ModelProvider;
-  getChatModelId: () => ModelId;
-  getModelFallbackIndex: () => number;
-  fallbackToNextModel: () => void;
+  fallbackManager: ModelFallbackManager;
+  sessionId: string;
 }
 
 export interface StepResult {
-  /** True if generation was executed (not skipped). */
-  hadGeneration: boolean;
-  /** True if the turn must run another step regardless of normal conditions. */
+  /** True if the turn should run another step after this one. */
+  shouldContinue: boolean;
+  /** True if the turn must inject a "Continue." message before the next step. */
   forceNextStep: boolean;
+  /**
+   * True if the step failed with a fatal (non-recoverable) error, e.g.
+   * a 400 bad request or an invalid prompt. The session should be
+   * terminated rather than retried.
+   */
+  fatalError: boolean;
+  /** Human-readable reason for the fatal error, if fatalError is true. */
+  fatalErrorReason: string | null;
+  /**
+   * True if generation was attempted but all retries were exhausted
+   * without producing any usable output. Distinct from shouldContinue=false
+   * (which means no generation was attempted or generation succeeded). The
+   * turn uses this to report completeFailure to the session for backoff.
+   */
+  generationFailed: boolean;
 }
 
 export interface Step {
-  /**
-   * Runs the step. Returns a StepResult indicating whether generation
-   * occurred and whether the next step must be forced.
-   */
   run(): Promise<StepResult>;
-  abortGeneration(): void;
+  abortGeneration(reason?: string): void;
 }
 
 class StepModule implements Step {
   private readonly id = randomUUID();
 
-  private readonly stepSpan: Span;
+  private stepSpan: Span | null = null;
+  private stepContext: Context | null = null;
 
-  private readonly stepContext: Context;
-
-  private generationAbortController: AbortController | null = null;
+  private generationRunner: GenerationRunner | null = null;
 
   constructor(private readonly deps: StepDependencies) {
-    this.stepSpan = trace.getTracer('fluid-agent').startSpan(
-      'step',
-      {
-        attributes: {
-          'step.id': this.id,
-          'step.messageCount': deps.messages.length,
-        },
-      },
-      deps.turnContext,
-    );
-    this.stepContext = trace.setSpan(deps.turnContext, this.stepSpan);
-
     deps.logger.trace('START_STEP', { id: this.id });
   }
 
   async run(): Promise<StepResult> {
-    return context.with(this.stepContext, async () => {
-      // 2.2.2: fetch inbox
-      const drained = drainInbox(
-        this.deps.inbox,
-        this.deps.messages,
-        SessionInboxPriority.Medium,
-        this.deps.logger,
-      );
-      this.stepSpan.addEvent('step.inbox_drained', {
-        'inbox.minPriority': 'medium',
-        'inbox.total': drained.total,
-        'inbox.low': drained.byPriority.low,
-        'inbox.medium': drained.byPriority.medium,
-        'inbox.high': drained.byPriority.high,
-      });
+    // Lazy span creation: spans are created at run() time to prevent
+    // span leaks if run() is never called (e.g. abort before execution).
+    this.stepSpan = tracer.startSpan(
+      'step',
+      {
+        attributes: {
+          'step.id': this.id,
+          'step.messageCount': this.deps.messages.length,
+        },
+      },
+      this.deps.turnContext,
+    );
+    this.stepContext = trace.setSpan(this.deps.turnContext, this.stepSpan);
 
-      // 2.2.3: check if the step can be executed — trace the decision
-      const decisionSpan = trace.getTracer('fluid-agent').startSpan(
-        'step.decision',
-        {
+    try {
+      return await context.with(this.stepContext, async () => {
+        const stepSpan = this.stepSpan!;
+
+        // 2.2.2: fetch inbox
+        const drained = this.deps.inbox.drain(
+          this.deps.messages,
+          SessionInboxPriority.Medium,
+          this.deps.logger,
+        );
+        stepSpan.addEvent(
+          'step.inbox_drained',
+          inboxDrainAttributes(drained, 'medium'),
+        );
+
+        // 2.2.3: check if the step can be executed — trace the decision
+        const decisionSpan = startChildSpan('step.decision', {
           attributes: {
             'step.id': this.id,
             'step.messageCount': this.deps.messages.length,
           },
-        },
-        this.stepContext,
-      );
-
-      const canRunStep = this.canStepBeExecuted();
-      const lastMsg = this.deps.messages[this.deps.messages.length - 1];
-      const lastRole = lastMsg?.role ?? 'none';
-      const lastMsgHasToolCalls =
-        lastMsg?.role === 'assistant' &&
-        lastMsg.parts.some((p) => isToolUIPart(p));
-
-      let decisionReason: string;
-      if (canRunStep) {
-        decisionReason =
-          lastRole === 'user'
-            ? 'last message is user input'
-            : 'last assistant message has all tool calls resolved';
-      } else {
-        decisionReason =
-          lastRole === 'none'
-            ? 'no messages in history'
-            : lastRole === 'assistant' && !lastMsgHasToolCalls
-              ? 'last assistant message has no tool calls'
-              : 'last assistant message has unresolved tool calls';
-      }
-
-      decisionSpan.setAttributes({
-        'decision.canRunStep': canRunStep,
-        'decision.reason': decisionReason,
-        'decision.lastMessageRole': lastRole,
-        'decision.lastMessageHasToolCalls': lastMsgHasToolCalls,
-      });
-      decisionSpan.addEvent('decision.evaluated', {
-        'decision.result': canRunStep ? 'proceed' : 'skip',
-        'decision.reason': decisionReason,
-      });
-      decisionSpan.end();
-
-      this.deps.logger.info(
-        { stepId: this.id, canRunStep, reason: decisionReason, lastRole },
-        'Step decision',
-      );
-
-      if (!canRunStep) {
-        this.stepSpan.setAttribute('step.skipped', true);
-        this.stepSpan.setAttribute('step.skipReason', decisionReason);
-        this.stepSpan.addEvent('step.skipped', { reason: decisionReason });
-        this.stepSpan.end();
-        return { hadGeneration: false, forceNextStep: false };
-      }
-
-      // Make sure the history is in a functional state
-      checkAndFixHistory(this.deps.messages);
-
-      // 2.2.4 - 2.2.6: Create copy of history and run processing
-      const messagesCopy = structuredClone(this.deps.messages);
-      this.deps.extensionHandler.onHistoryPreProcessing(messagesCopy);
-      const modelMessages = await convertToModelMessagesExtended(messagesCopy);
-      this.deps.extensionHandler.onHistoryPostProcessing(modelMessages);
-
-      this.stepSpan.addEvent('step.history_prepared', {
-        'step.messageCount': modelMessages.length,
-      });
-
-      // 2.2.7: Pick right model
-      const model = await this.getModel();
-      this.stepSpan.setAttribute('step.modelId', this.deps.getChatModelId());
-      this.stepSpan.setAttribute(
-        'step.modelFallbackIndex',
-        this.deps.getModelFallbackIndex(),
-      );
-
-      // Track dispatched tool calls to prevent duplicate execution.
-      // A tool call is dispatched at most once — only when it reaches
-      // 'input-available' state and hasn't been dispatched yet.
-      const dispatchedToolCallIds = new Set<string>();
-      // Track in-flight tool executions to await before step finishes
-      const toolExecutions: Promise<void>[] = [];
-      // Latest message from the stream — used to sweep for tool calls
-      // that were fully streamed but not yet dispatched (e.g. on abort)
-      let latestMessage: ExtendedUIMessage | null = null;
-
-      // Separate abort controller for tool executions. Tools must always
-      // run to completion even if the generation is aborted — the generation
-      // abort only stops the stream, not in-flight or pending tool calls.
-      const toolAbortController = new AbortController();
-
-      /**
-       * Dispatch a single tool call for execution if it hasn't been
-       * dispatched yet. Called both during streaming (via onUpdate) and
-       * after generation completes/aborts (via the post-generation sweep).
-       *
-       * Guards (at-most-once execution):
-       * - Not a tool UI part → skip
-       * - Provider-executed → skip
-       * - Not in 'input-available' state → skip (already executing or done)
-       * - Already in dispatchedToolCallIds → skip (race protection)
-       */
-      const dispatchToolCall = (
-        part: ExtendedUIMessage['parts'][number],
-      ): void => {
-        if (!isToolUIPart(part)) return;
-        if (part.providerExecuted) return;
-        if (part.state !== 'input-available') return;
-        if (dispatchedToolCallIds.has(part.toolCallId)) return;
-
-        // Mark as dispatched before starting execution to prevent races
-        dispatchedToolCallIds.add(part.toolCallId);
-
-        const toolName = getToolName(part);
-        this.deps.logger.info(
-          { toolName, toolCallId: part.toolCallId, input: part.input },
-          'Tool execution started',
-        );
-
-        const toolSpan = trace.getTracer('fluid-agent').startSpan(
-          `tool.${toolName}`,
-          {
-            attributes: {
-              'tool.name': toolName,
-              'tool.callId': part.toolCallId,
-              'tool.input': JSON.stringify(part.input),
-            },
-          },
-          context.active(),
-        );
-
-        toolExecutions.push(
-          executeTool(part, this.deps.tools, {
-            toolCallId: part.toolCallId,
-            messages: modelMessages,
-            // biome-ignore lint/suspicious/noExplicitAny: executeTool util has incorrect context typing
-            context: undefined as any,
-            abortSignal: toolAbortController.signal,
-          })
-            .then(() => {
-              // biome-ignore lint/suspicious/noExplicitAny: executeTool mutates part state in place, TS can't track it
-              const p = part as any;
-              toolSpan.setAttribute('tool.state', p.state);
-              if (p.state === 'output-available' && p.output !== undefined) {
-                toolSpan.setAttribute('tool.output', JSON.stringify(p.output));
-              }
-              toolSpan.end();
-              this.deps.logger.info(
-                {
-                  toolName,
-                  toolCallId: part.toolCallId,
-                  input: p.input,
-                  output: p.output,
-                  state: p.state,
-                },
-                'Tool execution finished',
-              );
-            })
-            .catch((error) => {
-              toolSpan.setAttribute('tool.error', String(error));
-              toolSpan.end();
-              this.deps.logger.error(
-                {
-                  toolName,
-                  toolCallId: part.toolCallId,
-                  input: part.input,
-                  error,
-                },
-                'Tool execution failed',
-              );
-            }),
-        );
-      };
-
-      // 2.2.8: Run generation process
-      let forceNextStep = false;
-
-      try {
-        const generationAbortController = new AbortController();
-        this.generationAbortController = generationAbortController;
-
-        const response = await runStreamedGeneration({
-          model,
-          modelMessages,
-          tools: this.deps.tools,
-          abortSignal: generationAbortController.signal,
-          logger: this.deps.logger,
-          getChatModelId: this.deps.getChatModelId,
-          onUpdate: (msg) => {
-            latestMessage = msg;
-            for (const part of msg.parts) {
-              dispatchToolCall(part);
-            }
-          },
         });
-        latestMessage = response.message;
-        this.stepSpan.addEvent('step.generation_finished', {
-          'generation.finishReason': response.finishReason,
-          'generation.usage.inputTokens': response.usage.inputTokens,
-          'generation.usage.outputTokens': response.usage.outputTokens,
-        });
-        this.stepSpan.setAttribute('step.finishReason', response.finishReason);
-        this.stepSpan.setAttribute(
-          'step.toolCallCount',
-          dispatchedToolCallIds.size,
-        );
 
-        if (
-          response.finishReason === 'stop' ||
-          response.finishReason === 'tool-calls'
-        ) {
-          this.deps.messages.push(response.message);
+        const canRunStep = this.canStepBeExecuted();
+        const lastMsg = this.deps.messages[this.deps.messages.length - 1];
+        const lastRole = lastMsg?.role ?? 'none';
+        const lastMsgHasToolCalls =
+          lastMsg?.role === 'assistant' &&
+          lastMsg.parts.some((p) => isToolUIPart(p));
+
+        let decisionReason: string;
+        if (canRunStep) {
+          decisionReason =
+            lastRole === 'user'
+              ? 'last message is user input'
+              : 'last assistant message has all tool calls resolved';
         } else {
-          // Non-good finish reason — salvage whatever we can and force
-          // the turn to run another step.
-          if (repairPartialMessage(response.message)) {
-            this.deps.messages.push(response.message);
-            this.stepSpan.setAttribute('step.salvaged', true);
-          } else {
-            this.stepSpan.setAttribute('step.salvageFailed', true);
-          }
-
-          // If the model itself reported an error, classify it and
-          // trigger model fallback when the error is model-related.
-          if (response.finishReason === 'error') {
-            const classification = classifyGenerationError(response.error);
-            this.stepSpan.setAttribute(
-              'step.errorClassification',
-              classification.reason,
-            );
-            if (classification.isModelError) {
-              this.deps.fallbackToNextModel();
-              this.stepSpan.setAttribute('step.modelFallbackTriggered', true);
-            }
-          }
-
-          forceNextStep = true;
-        }
-      } catch (e) {
-        this.stepSpan.recordException(e as Error);
-        this.stepSpan.setAttribute('step.error', String(e));
-        this.deps.logger.error('Generation failed', e);
-
-        // Salvage the partial message from streaming if possible.
-        if (latestMessage && repairPartialMessage(latestMessage)) {
-          this.deps.messages.push(latestMessage);
-          this.stepSpan.setAttribute('step.salvaged', true);
+          decisionReason =
+            lastRole === 'none'
+              ? 'no messages in history'
+              : lastRole === 'assistant' && !lastMsgHasToolCalls
+                ? 'last assistant message has no tool calls'
+                : 'last assistant message has unresolved tool calls';
         }
 
-        // Classify the error and trigger model fallback if model-related.
-        const classification = classifyGenerationError(e);
-        this.stepSpan.setAttribute(
-          'step.errorClassification',
-          classification.reason,
-        );
-        if (classification.isModelError) {
-          this.deps.fallbackToNextModel();
-          this.stepSpan.setAttribute('step.modelFallbackTriggered', true);
-        }
-
-        forceNextStep = true;
-      }
-
-      // 2.2.9: Sweep the final message for any tool calls that were fully
-      // streamed but not yet dispatched (e.g. due to abort mid-stream).
-      // This ensures every tool call that reached 'input-available' state
-      // is executed exactly once, regardless of whether generation completed
-      // normally or was aborted.
-      const preSweepCount = dispatchedToolCallIds.size;
-      if (latestMessage) {
-        for (const part of latestMessage.parts) {
-          dispatchToolCall(part);
-        }
-      }
-      const sweptToolCount = dispatchedToolCallIds.size - preSweepCount;
-      if (sweptToolCount > 0) {
-        this.stepSpan.addEvent('step.tools_swept', {
-          'step.sweptToolCount': sweptToolCount,
+        decisionSpan.setAttributes({
+          'decision.canRunStep': canRunStep,
+          'decision.reason': decisionReason,
+          'decision.lastMessageRole': lastRole,
+          'decision.lastMessageHasToolCalls': lastMsgHasToolCalls,
         });
-        this.deps.logger.info(
-          { stepId: this.id, sweptToolCount },
-          'Post-generation tool sweep dispatched additional tool calls',
+        decisionSpan.addEvent('decision.evaluated', {
+          'decision.result': canRunStep ? 'proceed' : 'skip',
+          'decision.reason': decisionReason,
+        });
+        decisionSpan.end();
+
+        this.deps.logger.debug(
+          { stepId: this.id, canRunStep, reason: decisionReason, lastRole },
+          'Step decision',
         );
-      }
 
-      // Wait for all in-flight tool executions to finish before step ends.
-      // This includes tools dispatched during streaming AND tools dispatched
-      // in the post-generation sweep. Tools always run to completion even if
-      // the generation was aborted (toolAbortController is never aborted).
-      await Promise.all(toolExecutions);
-      this.stepSpan.addEvent('step.tools_settled', {
-        'step.toolCallCount': toolExecutions.length,
+        if (!canRunStep) {
+          stepSpan.setAttribute('step.skipped', true);
+          stepSpan.setAttribute('step.skipReason', decisionReason);
+          stepSpan.addEvent('step.skipped', { reason: decisionReason });
+          return {
+            shouldContinue: false,
+            forceNextStep: false,
+            fatalError: false,
+            fatalErrorReason: null,
+            generationFailed: false,
+          };
+        }
+
+        // 2.2.4 - 2.2.6: History preparation pipeline. A single span covers
+        // the entire pipeline (repair → copy → pre-process → convert →
+        // post-process) with events marking each stage. This gives one
+        // contiguous trace segment for the transformation with clear
+        // sub-step timing via event timestamps.
+        const transformSpan = startChildSpan('history_transformation', {
+          attributes: {
+            'history.inputMessageCount': this.deps.messages.length,
+          },
+        });
+
+        // --- Stage 1: Repair ---
+        transformSpan.addEvent('history_repair.start', {
+          'history_repair.messageCount': this.deps.messages.length,
+        });
+        const repairResult = checkAndFixHistory(this.deps.messages);
+        transformSpan.setAttribute(
+          'history_repair.fixedCount',
+          repairResult.repaired.length,
+        );
+        if (repairResult.repaired.length > 0) {
+          try {
+            transformSpan.setAttribute(
+              'history_repair.details',
+              JSON.stringify(repairResult.repaired),
+            );
+          } catch {
+            // Serialization may fail — skip silently.
+          }
+          this.deps.logger.warn(
+            { stepId: this.id, repairCount: repairResult.repaired.length },
+            'History fixes applied',
+          );
+        }
+        transformSpan.addEvent('history_repair.end', {
+          'history_repair.fixedCount': repairResult.repaired.length,
+        });
+
+        // --- Stage 2: Copy ---
+        transformSpan.addEvent('history_copy.start');
+        const messagesCopy = structuredClone(this.deps.messages);
+        transformSpan.addEvent('history_copy.end', {
+          'history_copy.messageCount': messagesCopy.length,
+        });
+
+        // --- Stage 3: Pre-process (extensions) ---
+        transformSpan.addEvent('history_pre_process.start');
+        const preResult =
+          await this.deps.extensionHandler.onHistoryPreProcessing(messagesCopy);
+        transformSpan.setAttribute(
+          'history_pre_process.messageCount',
+          preResult.history.length,
+        );
+        transformSpan.setAttribute(
+          'history_pre_process.hasCompacted',
+          preResult.flags.hasCompacted === true,
+        );
+        transformSpan.addEvent('history_pre_process.end', {
+          'history_pre_process.messageCount': preResult.history.length,
+          'history_pre_process.hasCompacted':
+            preResult.flags.hasCompacted === true,
+        });
+
+        // --- Stage 4: Convert to model messages ---
+        transformSpan.addEvent('history_convert.start');
+        let modelMessages: ModelMessage[] =
+          await convertToModelMessagesExtended(preResult.history);
+        transformSpan.addEvent('history_convert.end', {
+          'history_convert.outputMessageCount': modelMessages.length,
+        });
+
+        // --- Stage 5: Post-process (extensions) ---
+        transformSpan.addEvent('history_post_process.start');
+        const postResult =
+          await this.deps.extensionHandler.onHistoryPostProcessing(
+            modelMessages,
+          );
+        transformSpan.setAttribute(
+          'history_post_process.messageCount',
+          postResult.history.length,
+        );
+        transformSpan.addEvent('history_post_process.end', {
+          'history_post_process.messageCount': postResult.history.length,
+        });
+
+        modelMessages = postResult.history;
+        const compacted = preResult.flags.hasCompacted === true;
+
+        transformSpan.setAttribute(
+          'history_transformation.outputMessageCount',
+          modelMessages.length,
+        );
+        transformSpan.end();
+
+        stepSpan.addEvent('step.history_prepared', {
+          'step.messageCount': modelMessages.length,
+        });
+
+        // 2.2.7: Pick right model
+        let model: LanguageModel;
+        {
+          const modelSpan = startChildSpan('fetch_model', {
+            attributes: {
+              'model.id': this.deps.fallbackManager.getChatModelId(),
+              'model.fallbackIndex':
+                this.deps.fallbackManager.getFallbackIndex(),
+            },
+          });
+          model = await this.getModel();
+          modelSpan.end();
+        }
+        stepSpan.setAttribute(
+          'step.modelId',
+          this.deps.fallbackManager.getChatModelId(),
+        );
+        stepSpan.setAttribute(
+          'step.modelFallbackIndex',
+          this.deps.fallbackManager.getFallbackIndex(),
+        );
+
+        // 2.2.8: Run generation via the GenerationRunner.
+        // The runner owns the retry loop, model fallback, error
+        // classification, message salvage, stream progress tracking,
+        // and tool dispatch coordination.
+        const runner = createGenerationRunner({
+          logger: this.deps.logger,
+          sessionId: this.deps.sessionId,
+          stepSpan,
+          modelMessages,
+          messages: this.deps.messages,
+          tools: this.deps.tools,
+          modelProvider: this.deps.modelProvider,
+          fallbackManager: this.deps.fallbackManager,
+          compacted,
+          model,
+        });
+        this.generationRunner = runner;
+
+        try {
+          return await runner.run();
+        } finally {
+          this.generationRunner = null;
+        }
       });
-
-      this.stepSpan.setAttribute('step.forceNextStep', forceNextStep);
-      if (forceNextStep) {
-        this.stepSpan.addEvent('step.force_continue', {});
-      }
-
-      this.deps.logger.trace('FINISH_STEP', { id: this.id, forceNextStep });
-      this.stepSpan.end();
-      return { hadGeneration: true, forceNextStep };
-    });
+    } finally {
+      this.stepSpan?.end();
+    }
   }
 
-  abortGeneration(): void {
-    this.generationAbortController?.abort();
+  abortGeneration(reason?: string): void {
+    this.generationRunner?.abort(reason);
+    this.stepSpan?.addEvent('step.generation_aborted', {
+      'step.abortReason': reason ?? 'unknown',
+    });
   }
 
   // ---------------------------------------------------------------------------
@@ -435,7 +376,7 @@ class StepModule implements Step {
   // ---------------------------------------------------------------------------
 
   private async getModel(): Promise<LanguageModel> {
-    const modelId = this.deps.getChatModelId();
+    const modelId = this.deps.fallbackManager.getChatModelId();
     return this.deps.modelProvider.get(modelId);
   }
 }

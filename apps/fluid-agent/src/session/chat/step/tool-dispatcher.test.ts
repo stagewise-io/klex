@@ -1,0 +1,369 @@
+import { randomUUID } from 'node:crypto';
+
+import type { Tool, ToolUIPart } from 'ai';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+import type { AgentTools, AgentUITools } from '@/session/tools';
+import type { ExtendedUIMessage } from '@/session/types';
+
+import { testLogger as logger } from '../test-helpers';
+import { ToolDispatcher } from './tool-dispatcher';
+
+// --- mocks ---
+
+vi.mock('../utils/tracing', () => ({
+  startChildSpan: vi.fn(() => ({
+    setAttribute: vi.fn(),
+    setAttributes: vi.fn(),
+    addEvent: vi.fn(),
+    end: vi.fn(),
+    recordException: vi.fn(),
+  })),
+  tracer: {
+    startSpan: vi.fn(() => ({
+      setAttribute: vi.fn(),
+      end: vi.fn(),
+      addEvent: vi.fn(),
+    })),
+  },
+}));
+
+// --- helpers ---
+
+function makeToolPart(
+  toolCallId: string,
+  state = 'input-available',
+  toolName = 'testTool',
+): ExtendedUIMessage['parts'][number] {
+  return {
+    type: `tool-${toolName}` as never,
+    toolCallId,
+    state,
+    input: { query: 'test' },
+    providerExecuted: false,
+  } as ExtendedUIMessage['parts'][number];
+}
+
+function makeAssistantMessage(
+  parts: ExtendedUIMessage['parts'] = [],
+): ExtendedUIMessage {
+  return {
+    id: randomUUID(),
+    role: 'assistant',
+    parts,
+  } as ExtendedUIMessage;
+}
+
+function makeDispatcher(tools = {} as AgentTools): ToolDispatcher {
+  return new ToolDispatcher({
+    logger,
+    tools,
+    modelMessages: [],
+  });
+}
+
+function makeTools(
+  execute?: Tool['execute'],
+  toolName = 'testTool',
+): AgentTools {
+  return {
+    [toolName]: execute ? { execute } : {},
+  } as unknown as AgentTools;
+}
+
+/** Cast a broad part to a tool part for field assertions after execution. */
+function asToolPart(
+  part: ExtendedUIMessage['parts'][number],
+): ToolUIPart<AgentUITools> {
+  return part as ToolUIPart<AgentUITools>;
+}
+
+// --- tests ---
+
+describe('ToolDispatcher — at-most-once execution', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('dispatches a tool call in input-available state', async () => {
+    const execute = vi.fn().mockResolvedValue('result');
+    const dispatcher = makeDispatcher(makeTools(execute));
+    const part = makeToolPart('call-1');
+
+    dispatcher.onUpdate(makeAssistantMessage([part]));
+    await dispatcher.settle();
+
+    expect(execute).toHaveBeenCalledOnce();
+    expect(dispatcher.dispatchedCount).toBe(1);
+    const toolPart = asToolPart(part);
+    expect(toolPart.state).toBe('output-available');
+    expect(toolPart.output).toBe('result');
+  });
+
+  it('does NOT dispatch the same tool call twice (same message)', async () => {
+    const execute = vi.fn().mockResolvedValue('result');
+    const dispatcher = makeDispatcher(makeTools(execute));
+    const part = makeToolPart('call-1');
+    const msg = makeAssistantMessage([part]);
+
+    dispatcher.onUpdate(msg);
+    dispatcher.onUpdate(msg);
+    await dispatcher.settle();
+
+    expect(execute).toHaveBeenCalledOnce();
+    expect(dispatcher.dispatchedCount).toBe(1);
+  });
+
+  it('does NOT dispatch the same tool call twice (sweep after streaming)', async () => {
+    const execute = vi.fn().mockResolvedValue('result');
+    const dispatcher = makeDispatcher(makeTools(execute));
+    const part = makeToolPart('call-1');
+    const msg = makeAssistantMessage([part]);
+
+    dispatcher.onUpdate(msg);
+    dispatcher.sweep(msg);
+    await dispatcher.settle();
+
+    expect(execute).toHaveBeenCalledOnce();
+    expect(dispatcher.dispatchedCount).toBe(1);
+  });
+});
+
+describe('ToolDispatcher — guard checks', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('skips non-tool parts', async () => {
+    const execute = vi.fn();
+    const dispatcher = makeDispatcher(makeTools(execute));
+    dispatcher.onUpdate(
+      makeAssistantMessage([{ type: 'text', text: 'hello' } as never]),
+    );
+    await dispatcher.settle();
+
+    expect(execute).not.toHaveBeenCalled();
+    expect(dispatcher.dispatchedCount).toBe(0);
+  });
+
+  it('skips provider-executed tools', async () => {
+    const execute = vi.fn();
+    const dispatcher = makeDispatcher(makeTools(execute));
+    const part = makeToolPart('call-1');
+    (part as { providerExecuted: boolean }).providerExecuted = true;
+
+    dispatcher.onUpdate(makeAssistantMessage([part]));
+    await dispatcher.settle();
+
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  it('skips tool calls not in input-available state', async () => {
+    const execute = vi.fn();
+    const dispatcher = makeDispatcher(makeTools(execute));
+    const part = makeToolPart('call-1', 'input-streaming');
+
+    dispatcher.onUpdate(makeAssistantMessage([part]));
+    await dispatcher.settle();
+
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  it('skips tool calls in output-available state', async () => {
+    const execute = vi.fn();
+    const dispatcher = makeDispatcher(makeTools(execute));
+    const part = makeToolPart('call-1', 'output-available');
+
+    dispatcher.onUpdate(makeAssistantMessage([part]));
+    await dispatcher.settle();
+
+    expect(execute).not.toHaveBeenCalled();
+  });
+});
+
+describe('ToolDispatcher — sweep', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('dispatches tool calls not seen during streaming', async () => {
+    const execute = vi.fn().mockResolvedValue('result');
+    const dispatcher = makeDispatcher(makeTools(execute));
+    const part = makeToolPart('call-1');
+    const msg = makeAssistantMessage([part]);
+
+    // No onUpdate call — sweep finds it
+    const swept = dispatcher.sweep(msg);
+    await dispatcher.settle();
+
+    expect(swept).toBe(1);
+    expect(execute).toHaveBeenCalledOnce();
+  });
+
+  it('returns 0 when message is null', async () => {
+    const dispatcher = makeDispatcher();
+    expect(dispatcher.sweep(null)).toBe(0);
+  });
+
+  it('does not re-dispatch tool calls already seen during streaming', async () => {
+    const execute = vi.fn().mockResolvedValue('result');
+    const dispatcher = makeDispatcher(makeTools(execute));
+    const part = makeToolPart('call-1');
+    const msg = makeAssistantMessage([part]);
+
+    dispatcher.onUpdate(msg);
+    const swept = dispatcher.sweep(msg);
+    await dispatcher.settle();
+
+    expect(swept).toBe(0);
+    expect(execute).toHaveBeenCalledOnce();
+  });
+});
+
+describe('ToolDispatcher — settle', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('waits for all in-flight tool executions', async () => {
+    const execute = vi.fn(async () => {
+      await new Promise((r) => setTimeout(r, 20));
+      return 'done';
+    });
+    const dispatcher = makeDispatcher(makeTools(execute));
+    dispatcher.onUpdate(
+      makeAssistantMessage([makeToolPart('call-1'), makeToolPart('call-2')]),
+    );
+
+    // Tools are in-flight but not yet complete
+    expect(dispatcher.inFlightCount).toBe(2);
+
+    await dispatcher.settle();
+
+    expect(execute).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('ToolDispatcher — abort separation', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('tool abort signal is not aborted by default', () => {
+    const dispatcher = makeDispatcher();
+    expect(dispatcher.toolAbortSignal.aborted).toBe(false);
+  });
+
+  it('abortTools aborts the tool abort signal', () => {
+    const dispatcher = makeDispatcher();
+    dispatcher.abortTools();
+    expect(dispatcher.toolAbortSignal.aborted).toBe(true);
+  });
+});
+
+describe('ToolDispatcher — execution outcomes', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('executes directly from input-available without an approval-requested intermediate state', async () => {
+    let seenState: string | undefined;
+    const execute = vi.fn(async () => {
+      seenState = asToolPart(part).state;
+      return 'result';
+    });
+    const dispatcher = makeDispatcher(makeTools(execute));
+    const part = makeToolPart('call-1');
+
+    dispatcher.onUpdate(makeAssistantMessage([part]));
+    await dispatcher.settle();
+
+    expect(seenState).toBe('input-available');
+    expect(asToolPart(part).approval).toBeUndefined();
+  });
+
+  it('sets output-available and stores output on success', async () => {
+    const execute = vi.fn().mockResolvedValue({ data: 42 });
+    const dispatcher = makeDispatcher(makeTools(execute));
+    const part = makeToolPart('call-1');
+
+    dispatcher.onUpdate(makeAssistantMessage([part]));
+    await dispatcher.settle();
+
+    const toolPart = asToolPart(part);
+    expect(toolPart.state).toBe('output-available');
+    expect(toolPart.output).toEqual({ data: 42 });
+  });
+
+  it('passes input and toolOptions to execute', async () => {
+    const execute = vi.fn().mockResolvedValue('ok');
+    const dispatcher = makeDispatcher(makeTools(execute));
+    const part = makeToolPart('call-1');
+
+    dispatcher.onUpdate(makeAssistantMessage([part]));
+    await dispatcher.settle();
+
+    expect(execute).toHaveBeenCalledWith(
+      { query: 'test' },
+      expect.objectContaining({
+        toolCallId: 'call-1',
+        messages: [],
+        abortSignal: expect.any(AbortSignal),
+      }),
+    );
+  });
+
+  it('sets output-error with truncated message when execute throws', async () => {
+    const longMessage = 'x'.repeat(600);
+    const execute = vi.fn().mockRejectedValue(new Error(longMessage));
+    const dispatcher = makeDispatcher(makeTools(execute));
+    const part = makeToolPart('call-1');
+
+    dispatcher.onUpdate(makeAssistantMessage([part]));
+    await dispatcher.settle();
+
+    const toolPart = asToolPart(part);
+    expect(toolPart.state).toBe('output-error');
+    expect(toolPart.errorText).toHaveLength(512);
+    expect(toolPart.errorText).toBe('x'.repeat(512));
+  });
+
+  it('sets output-error with generic message when non-Error is thrown', async () => {
+    const execute = vi.fn().mockRejectedValue('string error');
+    const dispatcher = makeDispatcher(makeTools(execute));
+    const part = makeToolPart('call-1');
+
+    dispatcher.onUpdate(makeAssistantMessage([part]));
+    await dispatcher.settle();
+
+    const toolPart = asToolPart(part);
+    expect(toolPart.state).toBe('output-error');
+    expect(toolPart.errorText).toBe(
+      'An unknown error happened during tool execution. Please try again.',
+    );
+  });
+
+  it('sets output-error when tool has no execute function', async () => {
+    const dispatcher = makeDispatcher(makeTools(undefined));
+    const part = makeToolPart('call-1');
+
+    dispatcher.onUpdate(makeAssistantMessage([part]));
+    await dispatcher.settle();
+
+    const toolPart = asToolPart(part);
+    expect(toolPart.state).toBe('output-error');
+    expect(toolPart.errorText).toBe('The tool is not implemented.');
+  });
+
+  it('logs and records error when tool is not found', async () => {
+    const dispatcher = makeDispatcher({} as AgentTools);
+    const part = makeToolPart('call-1', 'input-available', 'nonexistent');
+
+    dispatcher.onUpdate(makeAssistantMessage([part]));
+    await dispatcher.settle();
+
+    // Error is caught and logged — part state remains input-available
+    // since the throw happens before Object.assign
+    expect(dispatcher.dispatchedCount).toBe(1);
+  });
+});

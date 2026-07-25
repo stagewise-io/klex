@@ -9,11 +9,13 @@ import {
   MAX_GATEWAY_CHUNK_BYTES,
 } from '../../../core/index.js';
 
-export interface BearerCredential {
-  readonly type: 'bearer';
-  readonly token: string;
+export interface GatewayDaemonConnection {
+  readonly url: URL | string;
+  readonly headers?: Readonly<Record<string, string>>;
 }
-export type AuthorizationProvider = () => string | Promise<string>;
+export type GatewayDaemonConnectionProvider = () =>
+  | GatewayDaemonConnection
+  | Promise<GatewayDaemonConnection>;
 export interface GatewayDaemonReconnectOptions {
   readonly initialDelayMs?: number;
   readonly maximumDelayMs?: number;
@@ -31,8 +33,7 @@ export type GatewayDaemonState =
   | 'reconnecting'
   | 'closed';
 export interface GatewayDaemonOptions {
-  readonly gatewayUrl: URL | string;
-  readonly credential: BearerCredential | AuthorizationProvider;
+  readonly connection: GatewayDaemonConnectionProvider;
   readonly handler: GatewayEnvironmentHandler;
   readonly reconnect?: false | GatewayDaemonReconnectOptions;
 }
@@ -60,8 +61,7 @@ const DEFAULT_RECONNECT: ReconnectPolicy = {
 };
 
 class GatewayDaemonModule implements GatewayDaemon {
-  readonly #url: URL;
-  readonly #authorization: AuthorizationProvider;
+  readonly #connection: GatewayDaemonConnectionProvider;
   readonly #handler: GatewayEnvironmentHandler;
   readonly #reconnect: ReconnectPolicy | false;
   readonly #exchanges = new Map<GatewayExchangeId, VirtualExchange>();
@@ -77,11 +77,7 @@ class GatewayDaemonModule implements GatewayDaemon {
   #resolveRetry?: () => void;
 
   constructor(options: GatewayDaemonOptions) {
-    this.#url = new URL(options.gatewayUrl);
-    if (this.#url.protocol !== 'ws:' && this.#url.protocol !== 'wss:') {
-      throw new TypeError('Gateway URL must use ws: or wss:');
-    }
-    this.#authorization = normalizeCredential(options.credential);
+    this.#connection = options.connection;
     this.#handler = options.handler;
     this.#reconnect = normalizeReconnect(options.reconnect);
   }
@@ -124,9 +120,13 @@ class GatewayDaemonModule implements GatewayDaemon {
   }
 
   async #connect(): Promise<void> {
-    const authorization = validateAuthorization(await this.#authorization());
+    const connection = await this.#connection();
+    const url = new URL(connection.url);
+    if (url.protocol !== 'ws:' && url.protocol !== 'wss:') {
+      throw new TypeError('Gateway URL must use ws: or wss:');
+    }
     if (this.#closed) throw new Error('Daemon is closed');
-    const socket = new WebSocket(this.#url, { headers: { authorization } });
+    const socket = new WebSocket(url, { headers: connection.headers });
     this.#socket = socket;
     socket.on('message', (data, isBinary) =>
       this.#queueDispatch(socket, data, isBinary),
@@ -346,18 +346,6 @@ export function createGatewayDaemon(
   options: GatewayDaemonOptions,
 ): GatewayDaemon {
   return new GatewayDaemonModule(options);
-}
-function normalizeCredential(
-  credential: BearerCredential | AuthorizationProvider,
-): AuthorizationProvider {
-  if (typeof credential === 'function') return credential;
-  return () => `Bearer ${credential.token}`;
-}
-function validateAuthorization(value: string): string {
-  if (!/^Bearer [^\s]+$/.test(value)) {
-    throw new TypeError('Authorization must be a non-empty Bearer credential');
-  }
-  return value;
 }
 function normalizeReconnect(
   reconnect: GatewayDaemonOptions['reconnect'],

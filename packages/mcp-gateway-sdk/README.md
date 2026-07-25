@@ -53,8 +53,12 @@ const mcp = createMcpHandler(
 );
 
 const daemon = createGatewayDaemon({
-  gatewayUrl: 'wss://gateway.example.com/environment',
-  credential: { type: 'bearer', token: process.env.GATEWAY_TOKEN ?? '' },
+  connection: () => ({
+    url: 'wss://gateway.example.com/environment',
+    headers: {
+      authorization: `Bearer ${process.env.GATEWAY_TOKEN ?? ''}`,
+    },
+  }),
   handler: {
     fetch: mcp.fetch,
     close: () => mcp.close(),
@@ -64,7 +68,17 @@ const daemon = createGatewayDaemon({
 await daemon.start();
 ```
 
-The daemon reconstructs requests, invokes `handler.fetch`, streams response bytes with bounded relay frames, propagates cancellation, refreshes authentication on reconnect, and closes the handler exactly once.
+The daemon reconstructs requests, invokes `handler.fetch`, streams response bytes with bounded relay frames, propagates cancellation, and closes the handler exactly once. It calls `connection` before every initial connection and reconnect, so the host can provide fresh URLs or headers for each attempt.
+
+For a hosted deployment, the provider can obtain a short-lived connection URL without coupling the SDK to a ticket format:
+
+```ts
+connection: async () => ({
+  url: await platform.obtainEnvironmentConnectionUrl(),
+})
+```
+
+The hosting platform owns ticket minting, expiry, replay prevention, and validation in `authenticateEnvironment`; the SDK only opens the returned WebSocket URL.
 
 Long-lived MCP responses, including subscription streams and server notifications, remain ordinary response bodies. Concurrent exchanges are isolated and multiplexed over one environment WebSocket.
 

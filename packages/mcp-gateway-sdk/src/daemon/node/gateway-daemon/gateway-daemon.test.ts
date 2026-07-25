@@ -54,8 +54,10 @@ function open(
 }
 function daemon(url: URL, handler: GatewayEnvironmentHandler): GatewayDaemon {
   const value = createGatewayDaemon({
-    gatewayUrl: url,
-    credential: { type: 'bearer', token: 'secret' },
+    connection: () => ({
+      url,
+      headers: { authorization: 'Bearer secret' },
+    }),
     handler,
     reconnect: { initialDelayMs: 5, maximumDelayMs: 10, jitter: 0 },
   });
@@ -129,20 +131,26 @@ describe('GatewayDaemon', () => {
     await vi.waitFor(() => expect(signal?.aborted).toBe(true));
   });
 
-  it('refreshes authorization, drops exchanges on reconnect, and closes handler once', async () => {
+  it('resolves each connection, drops exchanges on reconnect, and closes handler once', async () => {
     const { server, url } = await createServer();
-    const headers: string[] = [];
-    let token = 0;
+    const requests: Array<{ authorization: string; url: string }> = [];
+    let attempt = 0;
     server.on('connection', (_socket, request) =>
-      headers.push(String(request.headers.authorization)),
+      requests.push({
+        authorization: String(request.headers.authorization),
+        url: request.url ?? '',
+      }),
     );
     const handler = {
       fetch: async () => new Response(new ReadableStream({ start() {} })),
       close: vi.fn(async () => undefined),
     };
+    const connection = vi.fn(async () => ({
+      url: new URL(`?ticket=ticket-${++attempt}`, url),
+      headers: { authorization: `Bearer token-${attempt}` },
+    }));
     const active = createGatewayDaemon({
-      gatewayUrl: url,
-      credential: async () => `Bearer token-${++token}`,
+      connection,
       handler,
       reconnect: { initialDelayMs: 5, maximumDelayMs: 5, jitter: 0 },
     });
@@ -153,31 +161,47 @@ describe('GatewayDaemon', () => {
     frame(socket, open(createGatewayExchangeId('stale')));
     await nextFrame(socket);
     socket.terminate();
-    await vi.waitFor(() => expect(headers).toHaveLength(2));
+    await vi.waitFor(() => expect(requests).toHaveLength(2));
+    expect(connection).toHaveBeenCalledTimes(2);
+    expect(requests).toEqual([
+      {
+        authorization: 'Bearer token-1',
+        url: '/environment?ticket=ticket-1',
+      },
+      {
+        authorization: 'Bearer token-2',
+        url: '/environment?ticket=ticket-2',
+      },
+    ]);
     expect(active.activeExchangeCount).toBe(0);
     await active.close();
     await active.close();
     expect(handler.close).toHaveBeenCalledOnce();
   });
 
-  it('rejects invalid credentials and closes during reconnect backoff', async () => {
+  it('rejects invalid connection URLs and closes during reconnect backoff', async () => {
     const { server, url } = await createServer();
     const handler = {
       fetch: async () => new Response(),
       close: vi.fn(async () => undefined),
     };
-    const invalid = createGatewayDaemon({
-      gatewayUrl: url,
-      credential: { type: 'bearer', token: '' },
+    const malformed = createGatewayDaemon({
+      connection: () => ({ url: 'not a url' }),
       handler,
     });
-    await expect(invalid.start()).rejects.toThrow('non-empty Bearer');
-    await invalid.close();
+    await expect(malformed.start()).rejects.toThrow('Invalid URL');
+    await malformed.close();
+
+    const unsupported = createGatewayDaemon({
+      connection: () => ({ url: 'https://gateway.example.com/environment' }),
+      handler,
+    });
+    await expect(unsupported.start()).rejects.toThrow('ws: or wss:');
+    await unsupported.close();
 
     const accepted = once(server, 'connection');
     const active = createGatewayDaemon({
-      gatewayUrl: url,
-      credential: { type: 'bearer', token: 'secret' },
+      connection: () => ({ url }),
       handler: {
         fetch: async () => new Response(),
         close: async () => undefined,

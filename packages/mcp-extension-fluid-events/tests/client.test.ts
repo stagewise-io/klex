@@ -34,6 +34,14 @@ function fakeClient() {
           },
         };
       }
+      if (method === 'subscriptions/listen') {
+        await handlers.get('notifications/subscriptions/acknowledged')?.({
+          notifications: {
+            [FLUID_EVENTS_EXTENSION_ID]: { afterCursor: 'cursor-2' },
+          },
+        });
+        return new Promise(() => undefined);
+      }
       if (method === 'io.stagewise.fluid/events/get') {
         return { events: [event], nextCursor: 'cursor-2', hasMore: false };
       }
@@ -67,19 +75,38 @@ describe('Fluid Events client', () => {
     });
   });
 
-  it('discovers support and exposes acknowledged subscriptions', async () => {
-    const { client, handlers } = fakeClient();
+  it('keeps a subscription request alive after acknowledgement', async () => {
+    const { client, requests } = fakeClient();
     const fluid = registerFluidEventsClient(client);
     expect(await fluid.serverSupportsFluidEvents()).toBe(true);
-    await fluid.listen({ afterCursor: 'cursor-2' });
-    await handlers.get('notifications/subscriptions/acknowledged')?.({
-      notifications: {
-        [FLUID_EVENTS_EXTENSION_ID]: { afterCursor: 'cursor-2' },
-      },
-    });
+    await fluid.listen(
+      { afterCursor: 'cursor-2' },
+      { request: { timeout: 5_000 } },
+    );
     expect(fluid.acknowledgedSubscription()).toEqual({
       afterCursor: 'cursor-2',
     });
+    const listenRequests = requests.filter(
+      (request) =>
+        (request as { method?: string }).method === 'subscriptions/listen',
+    );
+    expect(listenRequests).toHaveLength(1);
+    expect(client.request).toHaveBeenCalledWith(
+      expect.objectContaining({
+        method: 'subscriptions/listen',
+        params: expect.objectContaining({
+          notifications: {
+            [FLUID_EVENTS_EXTENSION_ID]: { afterCursor: 'cursor-2' },
+          },
+        }),
+      }),
+      expect.anything(),
+      expect.objectContaining({
+        timeout: 5_000,
+        resetTimeoutOnProgress: true,
+        onprogress: expect.any(Function),
+      }),
+    );
   });
 
   it('caches lazy discovery across concurrent operations', async () => {

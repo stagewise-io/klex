@@ -163,13 +163,21 @@ class FluidEventsHttpSubscriptionManagerModule
       return jsonRpcError(null, -32_602, 'Invalid Fluid Events subscription');
     }
 
-    return this.#createStream(id, subscription.data, signal);
+    return this.#createStream(
+      id,
+      subscription.data,
+      signal,
+      typeof metadata === 'object' && metadata !== null
+        ? (metadata as { progressToken?: string | number }).progressToken
+        : undefined,
+    );
   }
 
   #createStream(
     id: string | number,
     subscription: FluidEventsSubscription,
     signal: AbortSignal,
+    progressToken?: string | number,
   ): Response {
     const encoder = new TextEncoder();
     let subscriber: Subscriber;
@@ -223,10 +231,17 @@ class FluidEventsHttpSubscriptionManagerModule
         });
 
         if (this.#keepAliveMs > 0) {
-          keepAlive = setInterval(
-            () => writeFrame(': keepalive\n\n'),
-            this.#keepAliveMs,
-          );
+          keepAlive = setInterval(() => {
+            if (progressToken === undefined) {
+              writeFrame(': keepalive\n\n');
+              return;
+            }
+            write({
+              jsonrpc: '2.0',
+              method: 'notifications/progress',
+              params: { progressToken, progress: Date.now() },
+            });
+          }, this.#keepAliveMs);
           keepAlive.unref?.();
         }
 

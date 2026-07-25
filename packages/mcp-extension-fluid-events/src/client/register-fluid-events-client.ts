@@ -88,6 +88,7 @@ export function registerFluidEventsClient(
   let discoveryCapabilities: FluidEventsCapabilities | undefined;
   let discoveryRequest: Promise<ServerDiscoverResult> | undefined;
   let acknowledged: FluidEventsSubscription | undefined;
+  let resolveAcknowledgement: (() => void) | undefined;
 
   const markServerSupport = (): void => {
     discoveryCapabilities = withFluidEventsCapability({});
@@ -160,6 +161,8 @@ export function registerFluidEventsClient(
     (params) => {
       markServerSupport();
       acknowledged = params.notifications['io.stagewise.fluid/events'];
+      resolveAcknowledgement?.();
+      resolveAcknowledgement = undefined;
     },
   );
 
@@ -189,7 +192,10 @@ export function registerFluidEventsClient(
     },
     async listen(subscription, requestOptions) {
       await requireServerSupport(requestOptions);
-      await client.request(
+      const acknowledgement = new Promise<void>((resolve) => {
+        resolveAcknowledgement = resolve;
+      });
+      const request = client.request(
         {
           method: SUBSCRIPTIONS_LISTEN_METHOD,
           params: paramsWithCapability(
@@ -202,8 +208,20 @@ export function registerFluidEventsClient(
           ),
         },
         SubscriptionsListenResultSchema,
-        requestOptions?.request,
+        {
+          ...requestOptions?.request,
+          onprogress: requestOptions?.request?.onprogress ?? (() => undefined),
+          resetTimeoutOnProgress: true,
+        },
       );
+      await Promise.race([
+        acknowledgement,
+        request.then(() => undefined),
+      ]).catch((error) => {
+        resolveAcknowledgement = undefined;
+        throw error;
+      });
+      void request.catch(() => undefined);
     },
     serverSupportsFluidEvents,
     acknowledgedSubscription: () => acknowledged,

@@ -16,10 +16,20 @@ const event = {
 
 function listenRequest(
   id: string | number = 1,
-  options: { capability?: boolean; subscription?: unknown } = {},
+  options: {
+    capability?: boolean;
+    progressToken?: string | number;
+    subscription?: unknown;
+  } = {},
 ): Request {
   const metadata =
-    options.capability === false ? {} : withFluidEventsClientCapability({});
+    options.capability === false
+      ? {}
+      : withFluidEventsClientCapability(
+          options.progressToken === undefined
+            ? {}
+            : { progressToken: options.progressToken },
+        );
   return new Request('http://localhost/mcp', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -115,6 +125,28 @@ describe('Fluid Events HTTP subscriptions', () => {
     });
     await reader.cancel();
     expect(manager.subscriberCount).toBe(0);
+  });
+
+  it('emits MCP progress keepalives when requested', async () => {
+    vi.useFakeTimers();
+    const manager = createFluidEventsHttpSubscriptionManager(
+      async () => Response.json({}),
+      { keepAliveMs: 1_000 },
+    );
+    const response = await manager.fetch(
+      listenRequest('subscription-1', { progressToken: 42 }),
+    );
+    const reader = response.body?.getReader();
+    if (reader === undefined) throw new Error('Missing response body');
+    await readSseMessage(reader);
+
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(await readSseMessage(reader)).toMatchObject({
+      method: 'notifications/progress',
+      params: { progressToken: 42 },
+    });
+    await reader.cancel();
+    vi.useRealTimers();
   });
 
   it('publishes to multiple subscribers and closes gracefully', async () => {

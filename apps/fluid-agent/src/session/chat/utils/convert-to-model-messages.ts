@@ -8,23 +8,43 @@ import {
 import type { CustomUIDataParts, ExtendedUIMessage } from '@/session/types';
 
 /**
- * Implements an extended "convertToModelMessages" function that converts a list of messages into the format expected by the model.
+ * Converts UI messages into the format expected by the model.
  *
+ * Strips `data-continue` parts from all user messages except the last
+ * user message. Continue messages accumulate during salvage loops; only
+ * the most recent one is meaningful to the model. Messages that become
+ * empty after stripping are dropped entirely to avoid sending empty
+ * user messages to the model API.
  */
 export const convertToModelMessagesExtended = async (
   messages: ExtendedUIMessage[],
 ): ReturnType<typeof convertToModelMessages> => {
-  // Convert the messages using the original function
-  const modelMessages = await convertToModelMessages<ExtendedUIMessage>(
-    messages,
-    {
-      convertDataPart: convertCustomDataParts,
-    },
-  );
+  let lastUserMsgIdx = -1;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i]!.role === 'user') {
+      lastUserMsgIdx = i;
+      break;
+    }
+  }
 
-  // Add any additional processing or transformations here if needed
+  const filtered =
+    lastUserMsgIdx === -1
+      ? messages
+      : messages.flatMap((msg, i) => {
+          if (
+            msg.role !== 'user' ||
+            i === lastUserMsgIdx ||
+            !msg.parts.some((p) => p.type === 'data-continue')
+          ) {
+            return [msg];
+          }
+          const parts = msg.parts.filter((p) => p.type !== 'data-continue');
+          return parts.length > 0 ? [{ ...msg, parts }] : [];
+        });
 
-  return modelMessages;
+  return convertToModelMessages<ExtendedUIMessage>(filtered, {
+    convertDataPart: convertCustomDataParts,
+  });
 };
 
 const convertCustomDataParts = (

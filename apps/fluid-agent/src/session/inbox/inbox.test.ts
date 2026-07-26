@@ -87,6 +87,27 @@ describe('Inbox — send', () => {
     expect(onNewEvent).toHaveBeenNthCalledWith(2, SessionInboxPriority.Medium);
     expect(onNewEvent).toHaveBeenNthCalledWith(3, SessionInboxPriority.High);
   });
+
+  it('buffers the event even if onNewEvent throws', () => {
+    onNewEvent.mockImplementation(() => {
+      throw new Error('callback explosion');
+    });
+    expect(() => inbox.send(low('survivor'))).not.toThrow();
+    expect(inbox.getEvents(SessionInboxPriority.Low)).toHaveLength(1);
+  });
+
+  it('logs the error when onNewEvent throws and a logger is provided', () => {
+    const errorLogger = vi.fn();
+    const logger = {
+      error: errorLogger,
+    } as unknown as import('@stagewise/logger').ModuleLogger;
+    onNewEvent.mockImplementation(() => {
+      throw new Error('callback explosion');
+    });
+    const throwingInbox = createInbox({ onNewEvent, logger });
+    expect(() => throwingInbox.send(low('survivor'))).not.toThrow();
+    expect(errorLogger).toHaveBeenCalledOnce();
+  });
 });
 
 describe('Inbox — getEvents', () => {

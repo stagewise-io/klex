@@ -95,6 +95,16 @@ describe('checkAndFixHistory', () => {
     );
   });
 
+  it('does not modify approval-responded tool calls', () => {
+    const history = [
+      makeMessage('assistant', [makeToolPart('approval-responded')]),
+    ];
+    checkAndFixHistory(history);
+    expect((history[0]!.parts[0] as Record<string, unknown>).state).toBe(
+      'approval-responded',
+    );
+  });
+
   it('does not modify non-tool parts', () => {
     const history = [
       makeMessage('user', [makeTextPart('hello')]),

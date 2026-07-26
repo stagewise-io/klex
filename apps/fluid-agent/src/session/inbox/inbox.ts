@@ -162,6 +162,8 @@ export interface SessionInboxBuffer extends SessionInbox {
 export interface InboxDependencies {
   /** Called whenever a new event or message is pushed into the inbox. */
   onNewEvent: (priority: SessionInboxPriority) => void;
+  /** Optional logger for recording unexpected errors from the callback. */
+  logger?: ModuleLogger;
 }
 
 /**
@@ -182,7 +184,7 @@ class InboxModule implements SessionInboxBuffer {
   send(event: SessionInboxEvent): void {
     if (this.closed) throw new SessionInboxClosedError();
     this.events.push(event);
-    this.deps.onNewEvent(event.priority);
+    this.notifyNewEvent(event.priority);
   }
 
   sendMessage(
@@ -191,11 +193,28 @@ class InboxModule implements SessionInboxBuffer {
   ): void {
     if (this.closed) throw new SessionInboxClosedError();
     this.messages.push({ priority, message });
-    this.deps.onNewEvent(priority);
+    this.notifyNewEvent(priority);
   }
 
   close(): void {
     this.closed = true;
+  }
+
+  /**
+   * Notifies the session that new input arrived. The event/message is
+   * already buffered at this point, so a throwing callback must not
+   * reject the sender — the loop will drain the buffer on its next
+   * iteration regardless.
+   */
+  private notifyNewEvent(priority: SessionInboxPriority): void {
+    try {
+      this.deps.onNewEvent(priority);
+    } catch (err) {
+      this.deps.logger?.error(
+        { priority: SessionInboxPriority[priority], err },
+        'Inbox onNewEvent callback threw — event is buffered, will be drained on next loop iteration',
+      );
+    }
   }
 
   drain(

@@ -289,6 +289,11 @@ export class GenerationRunner {
     });
   }
 
+  /** Abort all in-flight tool executions. Use during session shutdown. */
+  abortTools(): void {
+    this.toolDispatcher?.abortTools();
+  }
+
   // ---------------------------------------------------------------------------
   // Generation failure handling
   // ---------------------------------------------------------------------------

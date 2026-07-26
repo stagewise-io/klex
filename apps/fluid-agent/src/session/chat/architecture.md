@@ -14,7 +14,7 @@ Router
 
 Owns message history, inbox, extension handler, fallback manager, backoff manager, and the run loop. Lives for the application lifetime (or until a fatal error self-terminates it). Exposes `status: 'active' | 'terminated'` so the router can detect dead sessions and replace them.
 
-**Loop:** processes one turn per iteration. If a turn fails completely (all models exhausted) and no new inbox input arrives, applies exponential backoff before retrying. Fatal errors (400, `InvalidPromptError`) terminate the session immediately.
+**Loop:** processes one turn per iteration. If a turn fails completely (all models exhausted) and no new inbox input arrives, applies exponential backoff before retrying. Fatal errors (e.g. 400, invalid prompt) terminate the session immediately.
 
 ## Inbox
 
@@ -32,17 +32,17 @@ Drains low-priority inbox, then runs steps sequentially until no more generation
 
 ## Step
 
-Coordinator: inbox drain (medium) → decision (can a step run?) → history transformation (clone → extension pre-process → convert to ModelMessages → extension post-process) → model fetch → delegate to GenerationRunner.
+Coordinator: inbox drain (medium) → history repair → decision (can a step run?) → history transformation (clone → extension pre-process → convert to ModelMessages → extension post-process) → model fetch → delegate to GenerationRunner.
 
 The `messages[]` array is shared by reference across Session/Turn/Step. The critical window (extension processing + generation) operates on a `structuredClone` copy, so mutations can't corrupt the original. The original is only mutated in synchronous sequential code (inbox drain, history repair, Continue injection, response push).
 
 ## GenerationRunner
 
-Owns the retry loop (`MAX_GENERATION_ATTEMPTS = 20`), model fallback, error classification, message salvage, stream progress tracking, and the ToolDispatcher. On failure, `decideOutcome` (pure) maps classification + content state to a coarse outcome, then `applyOutcome` performs side effects (span attrs, salvage, fallback) and refines it.
+Owns the retry loop, model fallback, error classification, message salvage, stream progress tracking, and the ToolDispatcher. On failure, `decideOutcome` (pure) maps classification + content state to a coarse outcome, then `applyOutcome` performs side effects (span attrs, salvage, fallback) and refines it.
 
 ## ToolDispatcher
 
-At-most-once tool execution via `dispatchedToolCallIds` Set. Owns tool lookup, execution, and in-place state mutation (`input-available` → `output-available` / `output-error`). Decoupled from generation abort (separate `toolAbortController`). Post-generation sweep catches tool calls that reached `input-available` after the stream ended.
+At-most-once tool execution via `dispatchedToolCallIds` Set. Owns tool lookup, execution, and in-place state mutation (`input-available` → `output-available` / `output-error`). Decoupled from generation abort (separate `toolAbortController`). Post-generation sweep catches tool calls that reached `input-available` after the stream ended. Tool execution is bounded by a configurable timeout (default 30 s).
 
 ## Extensions
 
@@ -53,4 +53,5 @@ Hook into history transformation (`onHistoryPreProcessing`, `onHistoryPostProces
 - **Model errors** (5xx, 429, timeouts, `NoOutputGeneratedError`) → fallback to next model, retry.
 - **Fatal errors** (400, `InvalidPromptError`) → terminate session.
 - **Salvage** — partial content with repairable issues → push to history, force next step.
-- **Backoff** — all models exhausted, no new input → exponential backoff with immediate-retry budget (3 attempts). New inbox input interrupts the wait.
+- **Backoff** — all models exhausted, no new input → exponential backoff. New inbox input interrupts the wait.
+- **Loop guard** — the `runLoop` is wrapped in a top-level try/catch/finally that resets `loopActive` and triggers clean termination on any unhandled error.

@@ -1,6 +1,7 @@
 import { createLogger } from '@stagewise/logger';
 
 import { createAdminApi } from '@/admin-api';
+import { type CliOptions, parseCliArgs } from '@/cli';
 import { createConfig } from '@/config';
 import { createInMemoryFluidEventInbox } from '@/fluid-event-inbox';
 import { createMcp } from '@/mcp';
@@ -38,9 +39,11 @@ async function main(): Promise<void> {
   });
   await tracing.start();
 
+  const cli: CliOptions = parseCliArgs(process.argv.slice(2));
+
   const config = createConfig({
     logging: logger,
-    dataDirectory: process.env.FLUID_DATA_DIR ?? process.cwd(),
+    dataDirectory: cli.dataDirectory,
   });
   const adminApi = createAdminApi({ logging: logger, config });
   const modelProvider = createModelProvider({ logging: logger, config });
@@ -59,8 +62,6 @@ async function main(): Promise<void> {
         hooks,
       }),
   });
-  await router.start();
-
   const started: { close(): Promise<void> }[] = [];
   try {
     for (const resource of [config, adminApi, modelProvider, mcp]) {

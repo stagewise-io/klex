@@ -70,11 +70,22 @@ async function restartAgent(): Promise<void> {
 
   child = spawn(
     process.execPath,
-    ['--env-file=../../.env', 'dist/main.js', ...process.argv.slice(2)],
+    [
+      '--env-file-if-exists=../../.env',
+      'dist/main.js',
+      ...process.argv.slice(2),
+    ],
     { stdio: 'inherit' },
   );
   child.once('error', (error) => {
     console.error('Failed to start fluid-agent', error);
+  });
+  child.once('exit', (code, signal) => {
+    if (!shuttingDown && code !== 0) {
+      console.error(
+        `fluid-agent exited unexpectedly (code=${code}, signal=${signal})`,
+      );
+    }
   });
 }
 

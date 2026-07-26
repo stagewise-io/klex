@@ -50,8 +50,12 @@ while (true) {
   if (!page.hasMore) break;
 }
 
-await events.listen({ afterCursor: cursor });
+const subscription = await events.listen({ afterCursor: cursor });
+subscription.closed.catch(() => reconnect());
 ```
+
+`listen()` resolves after the server acknowledges the subscription. Its `closed`
+promise settles when the long-lived request later completes or fails.
 
 The application owns durable event and cursor storage. It must deduplicate by
 `eventId`, acknowledge only after persistence, and repeat retrieval after a

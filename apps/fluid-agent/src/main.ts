@@ -2,6 +2,7 @@ import { createLogger } from '@stagewise/logger';
 
 import { createAdminApi } from '@/admin-api';
 import { createConfig } from '@/config';
+import { createInMemoryFluidEventInbox } from '@/fluid-event-inbox';
 import { createMcp } from '@/mcp';
 import { createModelProvider } from '@/model-provider';
 import { createChatSession } from '@/session/chat';
@@ -43,7 +44,8 @@ async function main(): Promise<void> {
   });
   const adminApi = createAdminApi({ logging: logger, config });
   const modelProvider = createModelProvider({ logging: logger, config });
-  const mcp = createMcp({ logging: logger, config });
+  const fluidEventInbox = createInMemoryFluidEventInbox();
+  const mcp = createMcp({ logging: logger, config, fluidEventInbox });
 
   const router = createRouter({
     logging: logger,

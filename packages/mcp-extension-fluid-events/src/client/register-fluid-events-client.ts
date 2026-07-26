@@ -50,6 +50,10 @@ export interface FluidEventsRequestOptions {
   request?: RequestOptions;
 }
 
+export interface FluidEventsSubscriptionHandle {
+  readonly closed: Promise<void>;
+}
+
 export interface RegisteredFluidEventsClient {
   discover(options?: FluidEventsRequestOptions): Promise<ServerDiscoverResult>;
   getEvents(
@@ -63,7 +67,7 @@ export interface RegisteredFluidEventsClient {
   listen(
     subscription: FluidEventsSubscription,
     options?: FluidEventsRequestOptions,
-  ): Promise<void>;
+  ): Promise<FluidEventsSubscriptionHandle>;
   serverSupportsFluidEvents(
     options?: FluidEventsRequestOptions,
   ): Promise<boolean>;
@@ -214,14 +218,13 @@ export function registerFluidEventsClient(
           resetTimeoutOnProgress: true,
         },
       );
-      await Promise.race([
-        acknowledgement,
-        request.then(() => undefined),
-      ]).catch((error) => {
+      const closed = request.then(() => undefined);
+      void closed.catch(() => undefined);
+      await Promise.race([acknowledgement, closed]).catch((error) => {
         resolveAcknowledgement = undefined;
         throw error;
       });
-      void request.catch(() => undefined);
+      return { closed };
     },
     serverSupportsFluidEvents,
     acknowledgedSubscription: () => acknowledged,

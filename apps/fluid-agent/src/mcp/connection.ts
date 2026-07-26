@@ -7,6 +7,7 @@ import {
 } from '@modelcontextprotocol/client';
 import { StdioClientTransport } from '@modelcontextprotocol/client/stdio';
 
+import type { FluidEventNotification } from '@stagewise/mcp-extension-fluid-events';
 import {
   type RegisteredFluidEventsClient,
   registerFluidEventsClient,
@@ -33,6 +34,10 @@ export interface ConnectMcpServerOptions {
   config: McpServerConfig;
   signal: AbortSignal;
   onToolsChanged(connection: McpConnection): void;
+  onFluidEvent(
+    connection: McpConnection,
+    notification: FluidEventNotification,
+  ): void | Promise<void>;
   onDisconnect(connection: McpConnection): void;
 }
 
@@ -105,7 +110,11 @@ export async function connectMcpServer(
       },
     },
   );
-  const fluidEvents = registerFluidEventsClient(client);
+  const fluidEvents = registerFluidEventsClient(client, {
+    onEvent: async (notification) => {
+      if (connection) await options.onFluidEvent(connection, notification);
+    },
+  });
   const transport = createTransport(options.config);
   client.onclose = () => {
     if (connection && !expectedClose) options.onDisconnect(connection);

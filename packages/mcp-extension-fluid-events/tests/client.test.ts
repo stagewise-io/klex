@@ -75,14 +75,15 @@ describe('Fluid Events client', () => {
     });
   });
 
-  it('keeps a subscription request alive after acknowledgement', async () => {
+  it('exposes subscription closure after acknowledgement', async () => {
     const { client, requests } = fakeClient();
     const fluid = registerFluidEventsClient(client);
     expect(await fluid.serverSupportsFluidEvents()).toBe(true);
-    await fluid.listen(
+    const subscription = await fluid.listen(
       { afterCursor: 'cursor-2' },
       { request: { timeout: 5_000 } },
     );
+    expect(subscription.closed).toBeInstanceOf(Promise);
     expect(fluid.acknowledgedSubscription()).toEqual({
       afterCursor: 'cursor-2',
     });

@@ -66,7 +66,7 @@ class ChatSessionModule implements AgentSession {
   private _status: SessionStatus = 'active';
 
   /** Prevents double-close (terminate() + router close()). */
-  private closeInProgress = false;
+  private closePromise: Promise<void> | null = null;
 
   /**
    * Resolves when new inbox input arrives during a backoff wait.
@@ -380,34 +380,40 @@ class ChatSessionModule implements AgentSession {
   }
 
   async close(): Promise<void> {
-    if (this.closeInProgress) return;
-    this.closeInProgress = true;
+    if (this.closePromise) return this.closePromise;
     this._status = 'terminated';
 
-    // Close the inbox first — no new input can enter the session after
-    // this point. Any concurrent send() calls will throw
-    // SessionInboxClosedError.
-    this.sessionInbox.close();
+    this.closePromise = (async () => {
+      // Close the inbox first — no new input can enter the session after
+      // this point. Any concurrent send() calls will throw
+      // SessionInboxClosedError.
+      this.sessionInbox.close();
 
-    // Abort in-flight generation and tool execution so that pending
-    // network requests and background tasks are cancelled immediately.
-    this.currentTurn?.abortGeneration('session_shutdown');
-    this.currentTurn?.abortTools();
+      // Abort in-flight generation and tool execution so that pending
+      // network requests and background tasks are cancelled immediately.
+      this.currentTurn?.abortGeneration('session_shutdown');
+      this.currentTurn?.abortTools();
 
-    // Interrupt any pending backoff wait so the loop can exit promptly.
-    this.backoffInterrupt?.();
+      // Interrupt any pending backoff wait so the loop can exit promptly.
+      this.backoffInterrupt?.();
 
-    await this.deps.javaScriptTool.close();
-    this.sessionSpan.addEvent('session.closed', {
-      'session.id': this.sessionId,
-      'session.messageCount': this.messages.length,
-    });
-    this.sessionSpan.setAttribute('session.closedAt', new Date().toISOString());
-    this.sessionSpan.end();
-    this.deps.logger.info(
-      { sessionId: this.sessionId },
-      'Session closed — session span ended',
-    );
+      await this.deps.javaScriptTool.close();
+      this.sessionSpan.addEvent('session.closed', {
+        'session.id': this.sessionId,
+        'session.messageCount': this.messages.length,
+      });
+      this.sessionSpan.setAttribute(
+        'session.closedAt',
+        new Date().toISOString(),
+      );
+      this.sessionSpan.end();
+      this.deps.logger.info(
+        { sessionId: this.sessionId },
+        'Session closed — session span ended',
+      );
+    })();
+
+    return this.closePromise;
   }
 
   /**

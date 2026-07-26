@@ -6,12 +6,10 @@ import { createConfig } from '@/config';
 import { createInMemoryFluidEventInbox } from '@/fluid-event-inbox';
 import { createMcp } from '@/mcp';
 import { createModelProvider } from '@/model-provider';
+import { createRouter } from '@/router';
 import { createChatSession } from '@/session/chat';
 import type { SessionHooks } from '@/session/types';
 import { createTracing } from '@/tracing';
-
-import { createRouter } from './router';
-import { SessionInboxPriority } from './session/inbox';
 
 const logger = createLogger({
   name: 'fluid-agent',
@@ -52,6 +50,7 @@ async function main(): Promise<void> {
 
   const router = createRouter({
     logging: logger,
+    mcp,
     createChatSession: (hooks: SessionHooks) =>
       createChatSession({
         logging: logger,
@@ -73,21 +72,6 @@ async function main(): Promise<void> {
     throw error;
   }
   await router.start();
-
-  // Send a test message into the primary session via the router
-  router.sendInput({
-    sourceEnv: 'chatApp',
-    priority: SessionInboxPriority.Medium,
-    context: {
-      sourceEnv: 'chatApp',
-      metadata: {
-        chatId: '95g8743',
-        senderId: 'u4987tzrh4',
-        timestamp: new Date().toISOString(),
-      },
-      content: [{ type: 'text', text: 'Hey there! Who are you?' }], // TODO Add a real message here
-    },
-  });
 
   let shuttingDown = false;
   const shutdown = async () => {

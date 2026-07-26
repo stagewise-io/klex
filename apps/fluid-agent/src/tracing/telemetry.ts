@@ -126,8 +126,13 @@ function msToSeconds(ms: number | undefined): number | undefined {
   return ms == null ? undefined : ms / 1_000;
 }
 
-/** Records an error on a span, including the OTel `error.type` attribute. */
-function recordErrorOnSpan(span: Span, error: unknown): void {
+/**
+ * Records an error on a span, including the OTel `error.type` attribute.
+ *
+ * Sets `error.type`, records the exception, and marks the span status as
+ * ERROR so that failing operations are visible in tracing backends.
+ */
+export function recordErrorOnSpan(span: Span, error: unknown): void {
   let errorType: string | undefined;
   if (error instanceof Error) {
     errorType = error.name;

@@ -5,11 +5,17 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { AgentTools, AgentUITools } from '@/session/tools';
 import type { ExtendedUIMessage } from '@/session/types';
+// Re-import the mocked function so tests can assert it was called.
+import { recordErrorOnSpan } from '@/tracing';
 
 import { testLogger as logger } from '../test-helpers';
 import { ToolDispatcher } from './tool-dispatcher';
 
 // --- mocks ---
+
+vi.mock('@/tracing', () => ({
+  recordErrorOnSpan: vi.fn(),
+}));
 
 vi.mock('../utils/tracing', () => ({
   startChildSpan: vi.fn(() => ({
@@ -18,6 +24,7 @@ vi.mock('../utils/tracing', () => ({
     addEvent: vi.fn(),
     end: vi.fn(),
     recordException: vi.fn(),
+    setStatus: vi.fn(),
   })),
   tracer: {
     startSpan: vi.fn(() => ({
@@ -369,6 +376,44 @@ describe('ToolDispatcher — execution outcomes', () => {
     // Error is caught and logged — part state remains input-available
     // since the throw happens before Object.assign
     expect(dispatcher.dispatchedCount).toBe(1);
+  });
+
+  it('records error.type on the span when execute throws (output-error)', async () => {
+    const execute = vi.fn().mockRejectedValue(new Error('boom'));
+    const dispatcher = makeDispatcher(makeTools(execute));
+    const part = makeToolPart('call-1');
+
+    dispatcher.onUpdate(makeAssistantMessage([part]));
+    await dispatcher.settle();
+
+    // executeTool swallows the error and sets output-error state, so
+    // the promise resolves. recordErrorOnSpan must still be called so
+    // the trace surfaces the error with error.type.
+    expect(asToolPart(part).state).toBe('output-error');
+    expect(recordErrorOnSpan).toHaveBeenCalled();
+  });
+
+  it('records error.type on the span when tool has no execute function', async () => {
+    const dispatcher = makeDispatcher(makeTools(undefined));
+    const part = makeToolPart('call-1');
+
+    dispatcher.onUpdate(makeAssistantMessage([part]));
+    await dispatcher.settle();
+
+    expect(asToolPart(part).state).toBe('output-error');
+    expect(recordErrorOnSpan).toHaveBeenCalled();
+  });
+
+  it('does NOT record error when tool succeeds', async () => {
+    const execute = vi.fn().mockResolvedValue('ok');
+    const dispatcher = makeDispatcher(makeTools(execute));
+    const part = makeToolPart('call-1');
+
+    dispatcher.onUpdate(makeAssistantMessage([part]));
+    await dispatcher.settle();
+
+    expect(asToolPart(part).state).toBe('output-available');
+    expect(recordErrorOnSpan).not.toHaveBeenCalled();
   });
 });
 

@@ -11,6 +11,7 @@ import type { ModuleLogger } from '@stagewise/logger';
 
 import type { AgentTools, AgentUITools } from '@/session/tools';
 import type { ExtendedUIMessage } from '@/session/types';
+import { recordErrorOnSpan } from '@/tracing';
 
 import { startChildSpan } from '../utils/tracing';
 
@@ -155,6 +156,14 @@ export class ToolDispatcher {
               'gen_ai.tool.output',
               JSON.stringify(p.output),
             );
+          } else if (p.state === 'output-error') {
+            // executeTool swallows tool errors and converts them to
+            // output-error state, so the promise resolves. Record the
+            // error on the span here so the trace surfaces it.
+            recordErrorOnSpan(
+              toolSpan,
+              new Error(p.errorText ?? 'Tool execution failed'),
+            );
           }
           toolSpan.end();
           this.deps.logger.debug(
@@ -169,7 +178,9 @@ export class ToolDispatcher {
           );
         })
         .catch((error) => {
-          toolSpan.setAttribute('gen_ai.tool.error', String(error));
+          // Only reached for unexpected errors that escape executeTool
+          // (e.g. tool not found, internal assertion failures).
+          recordErrorOnSpan(toolSpan, error);
           toolSpan.end();
           this.deps.logger.error(
             {

@@ -1,5 +1,6 @@
 import type { ModuleLogger, RootLogger } from '@stagewise/logger';
 
+import type { Mcp, McpFluidEvent } from '@/mcp';
 import { type SessionInboxEvent, SessionInboxPriority } from '@/session/inbox';
 import type {
   AgentSession,
@@ -9,6 +10,7 @@ import type {
 
 export interface RouterDependencies {
   logging: RootLogger;
+  mcp: Mcp;
   createChatSession: (hooks: SessionHooks) => AgentSession;
 }
 
@@ -27,10 +29,12 @@ export interface Router {
 class RouterModule implements Router {
   private session: AgentSession | null = null;
   private started = false;
+  private fluidEventUnsub: (() => void) | undefined;
 
   constructor(
     private readonly deps: {
       logger: ModuleLogger;
+      mcp: Mcp;
       createChatSession: (hooks: SessionHooks) => AgentSession;
     },
   ) {}
@@ -40,12 +44,19 @@ class RouterModule implements Router {
 
     this.session = this.createSession();
 
+    this.fluidEventUnsub = this.deps.mcp.onFluidEvent((ev) => {
+      this.handleFluidEvent(ev);
+    });
+
     this.started = true;
     this.deps.logger.info('Router started');
   }
 
   async close(): Promise<void> {
     if (!this.started) return;
+
+    this.fluidEventUnsub?.();
+    this.fluidEventUnsub = undefined;
 
     if (this.session) {
       await this.session.close();
@@ -85,6 +96,33 @@ class RouterModule implements Router {
   // ---------------------------------------------------------------------------
 
   /**
+   * Converts a Fluid Event from an MCP server into a session inbox event
+   * and forwards it to the primary session.
+   *
+   * - `sourceEnv` ← `event.sourceId`
+   * - `metadata`  ← `{ type, createdAt }`
+   * - `content`   ← payload serialized as a single text part
+   */
+  private handleFluidEvent(ev: McpFluidEvent): void {
+    const { event, namespace } = ev;
+    const inboxEvent: SessionInboxEvent = {
+      sourceEnv: event.sourceId,
+      priority: SessionInboxPriority.Medium,
+      context: {
+        sourceEnv: event.sourceId,
+        metadata: {
+          eventId: event.eventId,
+          namespace,
+          type: event.type,
+          createdAt: event.createdAt,
+        },
+        content: [{ type: 'text', text: JSON.stringify(event.payload) }],
+      },
+    };
+    this.sendInput(inboxEvent);
+  }
+
+  /**
    * Creates a new session and wires the `onTerminated` hook so the router
    * is notified proactively when the session self-terminates.
    */
@@ -93,6 +131,12 @@ class RouterModule implements Router {
       onTerminated: (info) => this.handleTerminated(info),
     };
     const session = this.deps.createChatSession(hooks);
+    void session.start().catch((error) => {
+      this.deps.logger.error(
+        { error },
+        'Session start failed — tools may be unavailable',
+      );
+    });
     this.session = session;
     return session;
   }
@@ -135,6 +179,7 @@ export function createRouter(deps: RouterDependencies): Router {
       name: 'router',
       bindings: { module: 'router' },
     }),
+    mcp: deps.mcp,
     createChatSession: deps.createChatSession,
   });
 }

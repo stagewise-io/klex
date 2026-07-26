@@ -65,6 +65,9 @@ class ChatSessionModule implements AgentSession {
 
   private _status: SessionStatus = 'active';
 
+  /** Prevents double-close (terminate() + router close()). */
+  private closePromise: Promise<void> | null = null;
+
   /**
    * Resolves when new inbox input arrives during a backoff wait.
    * Set to null when no wait is in progress.
@@ -127,6 +130,7 @@ class ChatSessionModule implements AgentSession {
 
     this.sessionInbox = createInbox({
       onNewEvent: this.onNewInboxEvent,
+      logger: this.deps.logger,
     });
 
     // Create the extension deps — functions that let extensions interoperate
@@ -192,122 +196,154 @@ class ChatSessionModule implements AgentSession {
 
     let needsBackoffRetry = false;
 
-    while (true) {
-      // If the inbox is empty AND we're not in a backoff retry cycle,
-      // go idle.
-      if (this.sessionInbox.isEmpty() && !needsBackoffRetry) {
-        this.loopActive = false;
-        this.sessionSpan.addEvent('session.idle', {
-          'session.id': this.sessionId,
+    try {
+      while (true) {
+        // If the session has been terminated (e.g. via close()), stop
+        // looping immediately. This check is especially important when
+        // close() interrupts a backoff wait — the loop wakes up and must
+        // exit rather than starting another turn.
+        if (this._status === 'terminated') {
+          this.deps.logger.info(
+            { sessionId: this.sessionId },
+            'Session terminated — stopping loop',
+          );
+          return;
+        }
+
+        // If the inbox is empty AND we're not in a backoff retry cycle,
+        // go idle.
+        if (this.sessionInbox.isEmpty() && !needsBackoffRetry) {
+          this.sessionSpan.addEvent('session.idle', {
+            'session.id': this.sessionId,
+          });
+          this.deps.logger.info(
+            { sessionId: this.sessionId },
+            'Session idle — inbox empty',
+          );
+          return;
+        }
+
+        // Run exactly one turn per iteration. The turn drains inbox input
+        // and runs steps until no more generation is needed.
+        //
+        // If we're in a backoff retry cycle, the turn will run even though
+        // the inbox may be empty — it retries generation with the existing
+        // messages. The turn's step will find the last assistant message
+        // (or a "Continue." message from the prior forceNextStep) and retry.
+        const turn = createTurn({
+          logger: this.deps.logger,
+          sessionId: this.sessionId,
+          sessionContext: this.sessionContext,
+          sessionSpan: this.sessionSpan,
+          messages: this.messages,
+          inbox: this.sessionInbox,
+          extensionHandler: this.extensionHandler,
+          tools: this.deps.tools,
+          modelProvider: this.deps.modelProvider,
+          fallbackManager: this.fallbackManager,
+          forceContinue: needsBackoffRetry,
         });
-        this.deps.logger.info(
-          { sessionId: this.sessionId },
-          'Session idle — inbox empty',
-        );
-        return;
-      }
+        this.currentTurn = turn;
 
-      // Run exactly one turn per iteration. The turn drains inbox input
-      // and runs steps until no more generation is needed.
-      //
-      // If we're in a backoff retry cycle, the turn will run even though
-      // the inbox may be empty — it retries generation with the existing
-      // messages. The turn's step will find the last assistant message
-      // (or a "Continue." message from the prior forceNextStep) and retry.
-      const turn = createTurn({
-        logger: this.deps.logger,
-        sessionId: this.sessionId,
-        sessionContext: this.sessionContext,
-        sessionSpan: this.sessionSpan,
-        messages: this.messages,
-        inbox: this.sessionInbox,
-        extensionHandler: this.extensionHandler,
-        tools: this.deps.tools,
-        modelProvider: this.deps.modelProvider,
-        fallbackManager: this.fallbackManager,
-        forceContinue: needsBackoffRetry,
-      });
-      this.currentTurn = turn;
+        let turnResult: TurnResult;
+        try {
+          turnResult = await turn.run();
+        } finally {
+          this.currentTurn = null;
+        }
 
-      let turnResult: TurnResult;
-      try {
-        turnResult = await turn.run();
-      } finally {
-        this.currentTurn = null;
-      }
+        // Fatal error — terminate the session.
+        if (turnResult.fatalError) {
+          this.deps.logger.error(
+            { sessionId: this.sessionId },
+            'Fatal turn error — terminating session',
+          );
+          this.sessionSpan.addEvent('session.fatal_error', {
+            'session.id': this.sessionId,
+          });
+          this.sessionSpan.setAttribute('session.terminated', true);
+          await this.terminate(turnResult.fatalErrorReason ?? 'unknown');
+          return;
+        }
 
-      // Fatal error — terminate the session.
-      if (turnResult.fatalError) {
-        this.deps.logger.error(
-          { sessionId: this.sessionId },
-          'Fatal turn error — terminating session',
-        );
-        this.sessionSpan.addEvent('session.fatal_error', {
-          'session.id': this.sessionId,
-        });
-        this.sessionSpan.setAttribute('session.terminated', true);
-        this.loopActive = false;
-        await this.terminate(turnResult.fatalErrorReason ?? 'unknown');
-        return;
-      }
+        // Track success/failure for backoff.
+        if (turnResult.completeFailure) {
+          this.backoffManager.recordFailure();
+          needsBackoffRetry = true;
+        } else {
+          this.backoffManager.recordSuccess();
+          needsBackoffRetry = false;
+        }
 
-      // Track success/failure for backoff.
-      if (turnResult.completeFailure) {
-        this.backoffManager.recordFailure();
-        needsBackoffRetry = true;
-      } else {
-        this.backoffManager.recordSuccess();
-        needsBackoffRetry = false;
-      }
+        // If the turn succeeded or was a no-op, loop back to the top
+        // to check for more inbox input or go idle.
+        if (!needsBackoffRetry) {
+          continue;
+        }
 
-      // If the turn succeeded or was a no-op, loop back to the top
-      // to check for more inbox input or go idle.
-      if (!needsBackoffRetry) {
-        continue;
-      }
+        // Turn failed completely — apply backoff before next iteration.
+        const delay = this.backoffManager.getDelay();
 
-      // Turn failed completely — apply backoff before next iteration.
-      const delay = this.backoffManager.getDelay();
+        if (delay === 0) {
+          // Immediate retry (within the configured immediate-retry budget).
+          this.deps.logger.warn(
+            {
+              sessionId: this.sessionId,
+              consecutiveFailures: this.backoffManager.getConsecutiveFailures(),
+            },
+            'All models failed — retrying immediately (within immediate retry budget)',
+          );
+          this.sessionSpan.addEvent('session.backoff_immediate_retry', {
+            'session.consecutiveFailures':
+              this.backoffManager.getConsecutiveFailures(),
+          });
+          continue;
+        }
 
-      if (delay === 0) {
-        // Immediate retry (within the configured immediate-retry budget).
         this.deps.logger.warn(
           {
             sessionId: this.sessionId,
             consecutiveFailures: this.backoffManager.getConsecutiveFailures(),
+            delayMs: delay,
           },
-          'All models failed — retrying immediately (within immediate retry budget)',
+          'All models failed — waiting before retry (exponential backoff)',
         );
-        this.sessionSpan.addEvent('session.backoff_immediate_retry', {
+        this.sessionSpan.addEvent('session.backoff_wait', {
           'session.consecutiveFailures':
             this.backoffManager.getConsecutiveFailures(),
+          'session.backoffDelayMs': delay,
         });
-        continue;
-      }
 
-      this.deps.logger.warn(
-        {
-          sessionId: this.sessionId,
-          consecutiveFailures: this.backoffManager.getConsecutiveFailures(),
-          delayMs: delay,
-        },
-        'All models failed — waiting before retry (exponential backoff)',
+        // Wait for the delay, interruptible by new inbox input.
+        const interrupted = await this.waitForBackoff(delay);
+        if (interrupted) {
+          this.deps.logger.debug(
+            { sessionId: this.sessionId },
+            'Backoff wait interrupted by new inbox input',
+          );
+          this.sessionSpan.addEvent('session.backoff_interrupted', {});
+        }
+      }
+    } catch (error) {
+      this.deps.logger.error(
+        { sessionId: this.sessionId, error },
+        'Unhandled error in session loop — terminating session',
       );
-      this.sessionSpan.addEvent('session.backoff_wait', {
-        'session.consecutiveFailures':
-          this.backoffManager.getConsecutiveFailures(),
-        'session.backoffDelayMs': delay,
+      this.sessionSpan.addEvent('session.unhandled_error', {
+        'session.id': this.sessionId,
+        error: String(error),
       });
-
-      // Wait for the delay, interruptible by new inbox input.
-      const interrupted = await this.waitForBackoff(delay);
-      if (interrupted) {
-        this.deps.logger.debug(
-          { sessionId: this.sessionId },
-          'Backoff wait interrupted by new inbox input',
+      this.sessionSpan.setAttribute('session.terminated', true);
+      try {
+        await this.terminate('unhandled_loop_error');
+      } catch (terminateError) {
+        this.deps.logger.error(
+          { sessionId: this.sessionId, error: terminateError },
+          'Failed to terminate session after unhandled loop error',
         );
-        this.sessionSpan.addEvent('session.backoff_interrupted', {});
       }
+    } finally {
+      this.loopActive = false;
     }
   }
 
@@ -344,24 +380,40 @@ class ChatSessionModule implements AgentSession {
   }
 
   async close(): Promise<void> {
+    if (this.closePromise) return this.closePromise;
     this._status = 'terminated';
 
-    // Close the inbox first — no new input can enter the session after
-    // this point. Any concurrent send() calls will throw
-    // SessionInboxClosedError.
-    this.sessionInbox.close();
+    this.closePromise = (async () => {
+      // Close the inbox first — no new input can enter the session after
+      // this point. Any concurrent send() calls will throw
+      // SessionInboxClosedError.
+      this.sessionInbox.close();
 
-    await this.deps.javaScriptTool.close();
-    this.sessionSpan.addEvent('session.closed', {
-      'session.id': this.sessionId,
-      'session.messageCount': this.messages.length,
-    });
-    this.sessionSpan.setAttribute('session.closedAt', new Date().toISOString());
-    this.sessionSpan.end();
-    this.deps.logger.info(
-      { sessionId: this.sessionId },
-      'Session closed — session span ended',
-    );
+      // Abort in-flight generation and tool execution so that pending
+      // network requests and background tasks are cancelled immediately.
+      this.currentTurn?.abortGeneration('session_shutdown');
+      this.currentTurn?.abortTools();
+
+      // Interrupt any pending backoff wait so the loop can exit promptly.
+      this.backoffInterrupt?.();
+
+      await this.deps.javaScriptTool.close();
+      this.sessionSpan.addEvent('session.closed', {
+        'session.id': this.sessionId,
+        'session.messageCount': this.messages.length,
+      });
+      this.sessionSpan.setAttribute(
+        'session.closedAt',
+        new Date().toISOString(),
+      );
+      this.sessionSpan.end();
+      this.deps.logger.info(
+        { sessionId: this.sessionId },
+        'Session closed — session span ended',
+      );
+    })();
+
+    return this.closePromise;
   }
 
   /**

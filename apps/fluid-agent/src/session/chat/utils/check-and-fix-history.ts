@@ -35,7 +35,8 @@ export const checkAndFixHistory = (
           !(
             p.state === 'output-available' ||
             p.state === 'output-denied' ||
-            p.state === 'output-error'
+            p.state === 'output-error' ||
+            p.state === 'approval-responded'
           )
         ) {
           const previousState = p.state;

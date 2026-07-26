@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 
 import { context } from '@opentelemetry/api';
+import { isToolUIPart } from 'ai';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { SessionInboxPriority } from '@/session/inbox';
@@ -14,7 +15,10 @@ import {
   makeInbox,
   makeModelProvider,
 } from '../test-helpers';
-import { checkAndFixHistory } from '../utils/check-and-fix-history';
+import {
+  checkAndFixHistory,
+  type HistoryRepairInfo,
+} from '../utils/check-and-fix-history';
 import { convertToModelMessagesExtended } from '../utils/convert-to-model-messages';
 import {
   createGenerationRunner,
@@ -70,6 +74,7 @@ vi.mock('./generation-runner', () => ({
   createGenerationRunner: vi.fn(() => ({
     run: vi.fn(async () => SUCCESS_RESULT),
     abort: vi.fn(),
+    abortTools: vi.fn(),
   })),
 }));
 vi.mock('../utils/check-and-fix-history', () => ({
@@ -140,7 +145,40 @@ describe('Step — decision: skip', () => {
     expect(createGenerationRunner).not.toHaveBeenCalled();
   });
 
-  it('returns { shouldContinue: false } when last assistant message has unresolved tool calls', async () => {
+  it('proceeds when last assistant has unresolved tool calls — checkAndFixHistory repairs them first', async () => {
+    // checkAndFixHistory runs before the step decision and converts
+    // intermediate states (input-streaming, input-available) to
+    // output-error. This prevents a stale tool call from permanently
+    // sticking the session.
+    vi.mocked(checkAndFixHistory).mockImplementation((history) => {
+      const repaired: HistoryRepairInfo[] = [];
+      for (const msg of history) {
+        for (const p of msg.parts) {
+          if (
+            isToolUIPart(p) &&
+            p.state !== 'output-available' &&
+            p.state !== 'output-denied' &&
+            p.state !== 'output-error'
+          ) {
+            const prev = p.state;
+            (p as any).state = 'output-error';
+            (p as any).errorText =
+              'The tool call was not executed for unknown reasons. Try again.';
+            repaired.push({
+              messageId: msg.id,
+              partType: p.type,
+              toolCallId: p.toolCallId,
+              previousState: prev,
+              newState: 'output-error',
+              errorText:
+                'The tool call was not executed for unknown reasons. Try again.',
+            });
+          }
+        }
+      }
+      return { repaired };
+    });
+
     const step = createStep(
       makeDeps({
         messages: [
@@ -150,14 +188,10 @@ describe('Step — decision: skip', () => {
       }),
     );
     const result = await step.run();
-    expect(result).toEqual({
-      shouldContinue: false,
-      forceNextStep: false,
-      fatalError: false,
-      fatalErrorReason: null,
-      generationFailed: false,
-    });
-    expect(createGenerationRunner).not.toHaveBeenCalled();
+
+    expect(result.shouldContinue).toBe(true);
+    expect(createGenerationRunner).toHaveBeenCalledOnce();
+    expect(checkAndFixHistory).toHaveBeenCalled();
   });
 });
 
@@ -223,7 +257,39 @@ describe('Step — decision: proceed', () => {
     expect(createGenerationRunner).toHaveBeenCalledOnce();
   });
 
-  it('does not proceed when last assistant has mixed resolved and unresolved tool calls', async () => {
+  it('proceeds when last assistant has mixed resolved and unresolved tool calls — repair fixes the unresolved ones', async () => {
+    // Same as above: checkAndFixHistory runs before the decision and
+    // converts the input-streaming part to output-error, so all tool
+    // calls end up resolved and the step proceeds.
+    vi.mocked(checkAndFixHistory).mockImplementation((history) => {
+      const repaired: HistoryRepairInfo[] = [];
+      for (const msg of history) {
+        for (const p of msg.parts) {
+          if (
+            isToolUIPart(p) &&
+            p.state !== 'output-available' &&
+            p.state !== 'output-denied' &&
+            p.state !== 'output-error'
+          ) {
+            const prev = p.state;
+            (p as any).state = 'output-error';
+            (p as any).errorText =
+              'The tool call was not executed for unknown reasons. Try again.';
+            repaired.push({
+              messageId: msg.id,
+              partType: p.type,
+              toolCallId: p.toolCallId,
+              previousState: prev,
+              newState: 'output-error',
+              errorText:
+                'The tool call was not executed for unknown reasons. Try again.',
+            });
+          }
+        }
+      }
+      return { repaired };
+    });
+
     const step = createStep(
       makeDeps({
         messages: [
@@ -237,8 +303,8 @@ describe('Step — decision: proceed', () => {
     );
     const result = await step.run();
 
-    expect(result.shouldContinue).toBe(false);
-    expect(createGenerationRunner).not.toHaveBeenCalled();
+    expect(result.shouldContinue).toBe(true);
+    expect(createGenerationRunner).toHaveBeenCalledOnce();
   });
 });
 
@@ -465,6 +531,7 @@ describe('Step — GenerationRunner result passthrough', () => {
     vi.mocked(createGenerationRunner).mockReturnValue({
       run: vi.fn(async () => genResult),
       abort: vi.fn(),
+      abortTools: vi.fn(),
     } as never);
 
     const step = createStep(makeDeps({ messages: [makeUserMessage()] }));
@@ -484,6 +551,7 @@ describe('Step — GenerationRunner result passthrough', () => {
     vi.mocked(createGenerationRunner).mockReturnValue({
       run: vi.fn(async () => genResult),
       abort: vi.fn(),
+      abortTools: vi.fn(),
     } as never);
 
     const step = createStep(makeDeps({ messages: [makeUserMessage()] }));
@@ -511,6 +579,7 @@ describe('Step — abort', () => {
           }),
       ),
       abort: abortFn,
+      abortTools: vi.fn(),
     } as never);
 
     const step = createStep(makeDeps({ messages: [makeUserMessage()] }));
@@ -525,8 +594,39 @@ describe('Step — abort', () => {
     await runPromise;
   });
 
+  it('delegates abortTools to the GenerationRunner', async () => {
+    const abortToolsFn = vi.fn();
+    let resolveRun: ((v: StepResult) => void) | undefined;
+    vi.mocked(createGenerationRunner).mockReturnValue({
+      run: vi.fn(
+        () =>
+          new Promise((resolve) => {
+            resolveRun = resolve;
+          }),
+      ),
+      abort: vi.fn(),
+      abortTools: abortToolsFn,
+    } as never);
+
+    const step = createStep(makeDeps({ messages: [makeUserMessage()] }));
+    const runPromise = step.run();
+
+    await new Promise((r) => setTimeout(r, 10));
+    step.abortTools();
+
+    expect(abortToolsFn).toHaveBeenCalledOnce();
+
+    resolveRun?.(SUCCESS_RESULT as StepResult);
+    await runPromise;
+  });
+
   it('does not throw when abortGeneration is called before run starts', () => {
     const step = createStep(makeDeps({ messages: [] }));
     expect(() => step.abortGeneration()).not.toThrow();
+  });
+
+  it('does not throw when abortTools is called before run starts', () => {
+    const step = createStep(makeDeps({ messages: [] }));
+    expect(() => step.abortTools()).not.toThrow();
   });
 });

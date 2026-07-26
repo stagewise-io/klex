@@ -11,8 +11,18 @@ import type { ModuleLogger } from '@stagewise/logger';
 
 import type { AgentTools, AgentUITools } from '@/session/tools';
 import type { ExtendedUIMessage } from '@/session/types';
+import { recordErrorOnSpan } from '@/tracing';
 
 import { startChildSpan } from '../utils/tracing';
+
+/**
+ * Default per-tool execution timeout in milliseconds (5 minutes).
+ *
+ * Tools that exceed this are force-terminated and marked as
+ * `output-error`. This prevents a single unresponsive tool from
+ * stalling the entire session loop indefinitely.
+ */
+const DEFAULT_TOOL_TIMEOUT_MS = 30 * 1000;
 
 /**
  * Owns at-most-once tool dispatch, tool execution, in-flight tracking, and
@@ -37,8 +47,14 @@ export class ToolDispatcher {
       logger: ModuleLogger;
       tools: AgentTools;
       modelMessages: ModelMessage[];
+      /** Per-tool execution timeout in ms. Defaults to 5 minutes. */
+      toolTimeoutMs?: number;
     },
   ) {}
+
+  private get toolTimeoutMs(): number {
+    return this.deps.toolTimeoutMs ?? DEFAULT_TOOL_TIMEOUT_MS;
+  }
 
   /** Number of tool calls dispatched so far. */
   get dispatchedCount(): number {
@@ -140,6 +156,14 @@ export class ToolDispatcher {
               'gen_ai.tool.output',
               JSON.stringify(p.output),
             );
+          } else if (p.state === 'output-error') {
+            // executeTool swallows tool errors and converts them to
+            // output-error state, so the promise resolves. Record the
+            // error on the span here so the trace surfaces it.
+            recordErrorOnSpan(
+              toolSpan,
+              new Error(p.errorText ?? 'Tool execution failed'),
+            );
           }
           toolSpan.end();
           this.deps.logger.debug(
@@ -154,7 +178,9 @@ export class ToolDispatcher {
           );
         })
         .catch((error) => {
-          toolSpan.setAttribute('gen_ai.tool.error', String(error));
+          // Only reached for unexpected errors that escape executeTool
+          // (e.g. tool not found, internal assertion failures).
+          recordErrorOnSpan(toolSpan, error);
           toolSpan.end();
           this.deps.logger.error(
             {
@@ -187,23 +213,42 @@ export class ToolDispatcher {
     }
 
     if (tool.execute) {
+      // Combine the session-level abort signal with a per-execution
+      // timeout so that a hanging tool is force-terminated rather than
+      // blocking the session loop indefinitely.
+      const timeoutController = new AbortController();
+      const timeoutTimer = setTimeout(
+        () => timeoutController.abort(),
+        this.toolTimeoutMs,
+      );
+      const combinedSignal = AbortSignal.any([
+        this.toolAbortController.signal,
+        timeoutController.signal,
+      ]);
+
       try {
         const output = await tool.execute(part.input, {
           toolCallId: part.toolCallId,
           messages: this.deps.modelMessages,
           // biome-ignore lint/suspicious/noExplicitAny: tool execute context typing is too generic for our internal types
           context: undefined as any,
-          abortSignal: this.toolAbortController.signal,
+          abortSignal: combinedSignal,
         });
         Object.assign(part, { output, state: 'output-available' });
       } catch (e) {
+        const isTimeout =
+          timeoutController.signal.aborted &&
+          !this.toolAbortController.signal.aborted;
         Object.assign(part, {
           state: 'output-error',
-          errorText:
-            e instanceof Error
+          errorText: isTimeout
+            ? `Tool execution timed out after ${this.toolTimeoutMs}ms.`
+            : e instanceof Error
               ? e.message.slice(0, 512)
               : 'An unknown error happened during tool execution. Please try again.',
         });
+      } finally {
+        clearTimeout(timeoutTimer);
       }
     } else {
       Object.assign(part, {

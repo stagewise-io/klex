@@ -225,6 +225,161 @@ describe('convertCustomDataParts — data-continue', () => {
   });
 });
 
+describe('convertToModelMessagesExtended — data-continue filtering', () => {
+  it('strips data-continue parts from all user messages except the last user message', async () => {
+    const messages = [
+      makeMessage([makeContinuePart(), { type: 'text', text: 'earlier' }]),
+      makeMessage([{ type: 'text', text: 'assistant response' }], 'assistant'),
+      makeMessage([makeContinuePart(), { type: 'text', text: 'real input' }]),
+    ];
+
+    await convertToModelMessagesExtended(messages);
+
+    const passedMessages = vi.mocked(convertToModelMessages).mock.calls[
+      vi.mocked(convertToModelMessages).mock.calls.length - 1
+    ]![0] as ExtendedUIMessage[];
+
+    // All 3 messages preserved — no merging or dropping
+    expect(passedMessages).toHaveLength(3);
+    // First user message: data-continue stripped, text part remains
+    expect(
+      passedMessages[0]!.parts.some((p) => p.type === 'data-continue'),
+    ).toBe(false);
+    expect(passedMessages[0]!.parts.some((p) => p.type === 'text')).toBe(true);
+    // Assistant message: unchanged
+    expect(passedMessages[1]!.role).toBe('assistant');
+    // Last user message: data-continue preserved
+    expect(
+      passedMessages[2]!.parts.some((p) => p.type === 'data-continue'),
+    ).toBe(true);
+  });
+
+  it('keeps multiple older user messages separate after stripping', async () => {
+    const messages = [
+      makeMessage([makeContinuePart(), { type: 'text', text: 'first' }]),
+      makeMessage([makeContinuePart(), { type: 'text', text: 'second' }]),
+      makeMessage([makeContinuePart(), { type: 'text', text: 'third' }]),
+    ];
+
+    await convertToModelMessagesExtended(messages);
+
+    const passedMessages = vi.mocked(convertToModelMessages).mock.calls[
+      vi.mocked(convertToModelMessages).mock.calls.length - 1
+    ]![0] as ExtendedUIMessage[];
+
+    // All 3 messages preserved as separate messages
+    expect(passedMessages).toHaveLength(3);
+    // Each has its text part, no data-continue
+    expect(passedMessages[0]!.parts).toEqual([{ type: 'text', text: 'first' }]);
+    expect(passedMessages[1]!.parts).toEqual([
+      { type: 'text', text: 'second' },
+    ]);
+    // Last user message keeps its data-continue
+    expect(
+      passedMessages[2]!.parts.some((p) => p.type === 'data-continue'),
+    ).toBe(true);
+    expect(passedMessages[2]!.parts.some((p) => p.type === 'text')).toBe(true);
+  });
+
+  it('preserves all parts when no data-continue parts exist', async () => {
+    const messages = [
+      makeMessage([{ type: 'text', text: 'hello' }]),
+      makeMessage([{ type: 'text', text: 'response' }], 'assistant'),
+    ];
+
+    await convertToModelMessagesExtended(messages);
+
+    const passedMessages = vi.mocked(convertToModelMessages).mock.calls[
+      vi.mocked(convertToModelMessages).mock.calls.length - 1
+    ]![0] as ExtendedUIMessage[];
+
+    expect(passedMessages[0]!.parts).toHaveLength(1);
+    expect(passedMessages[0]!.parts[0]).toMatchObject({
+      type: 'text',
+      text: 'hello',
+    });
+  });
+
+  it('preserves data-continue when it is in the last user message', async () => {
+    const messages = [
+      makeMessage([{ type: 'text', text: 'earlier' }]),
+      makeMessage([makeContinuePart()]),
+    ];
+
+    await convertToModelMessagesExtended(messages);
+
+    const passedMessages = vi.mocked(convertToModelMessages).mock.calls[
+      vi.mocked(convertToModelMessages).mock.calls.length - 1
+    ]![0] as ExtendedUIMessage[];
+
+    // Last user message keeps its data-continue
+    expect(
+      passedMessages[1]!.parts.some((p) => p.type === 'data-continue'),
+    ).toBe(true);
+  });
+
+  it('leaves messages untouched when there are no user messages', async () => {
+    const messages = [
+      makeMessage([{ type: 'text', text: 'response' }], 'assistant'),
+    ];
+
+    await convertToModelMessagesExtended(messages);
+
+    const passedMessages = vi.mocked(convertToModelMessages).mock.calls[
+      vi.mocked(convertToModelMessages).mock.calls.length - 1
+    ]![0] as ExtendedUIMessage[];
+
+    expect(passedMessages).toHaveLength(1);
+    expect(passedMessages[0]!.parts).toHaveLength(1);
+  });
+
+  it('drops user messages that become empty after continue stripping', async () => {
+    const messages = [
+      makeMessage([makeContinuePart()]),
+      makeMessage([{ type: 'text', text: 'response' }], 'assistant'),
+      makeMessage([makeContinuePart()]),
+    ];
+
+    await convertToModelMessagesExtended(messages);
+
+    const passedMessages = vi.mocked(convertToModelMessages).mock.calls[
+      vi.mocked(convertToModelMessages).mock.calls.length - 1
+    ]![0] as ExtendedUIMessage[];
+
+    // First user message had only a data-continue part — dropped entirely.
+    // Last user message keeps its data-continue.
+    expect(passedMessages).toHaveLength(2);
+    expect(passedMessages[0]!.role).toBe('assistant');
+    expect(
+      passedMessages[1]!.parts.some((p) => p.type === 'data-continue'),
+    ).toBe(true);
+  });
+
+  it('preserves non-continue parts when stripping from older user messages', async () => {
+    const messages = [
+      makeMessage([makeContinuePart(), { type: 'text', text: 'real text' }]),
+      makeMessage([makeContinuePart()]),
+    ];
+
+    await convertToModelMessagesExtended(messages);
+
+    const passedMessages = vi.mocked(convertToModelMessages).mock.calls[
+      vi.mocked(convertToModelMessages).mock.calls.length - 1
+    ]![0] as ExtendedUIMessage[];
+
+    // First user message: continue stripped, text part remains
+    expect(passedMessages[0]!.parts).toHaveLength(1);
+    expect(passedMessages[0]!.parts[0]).toMatchObject({
+      type: 'text',
+      text: 'real text',
+    });
+    // Last user message: unchanged
+    expect(
+      passedMessages[1]!.parts.some((p) => p.type === 'data-continue'),
+    ).toBe(true);
+  });
+});
+
 describe('convertCustomDataParts — unknown part types', () => {
   function getConvertDataPart() {
     const calls = vi.mocked(convertToModelMessages).mock.calls;

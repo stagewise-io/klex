@@ -62,6 +62,12 @@ export interface AgentSession {
   readonly status: SessionStatus;
 
   /**
+   * Start the session — spins up owned resources (e.g. the JavaScript
+   * sandbox worker). Called by the router after creation. Idempotent.
+   */
+  start(): Promise<void>;
+
+  /**
    * Gracefully shut down the session — ends the session trace span and
    * releases any resources. Called by the router during shutdown.
    *

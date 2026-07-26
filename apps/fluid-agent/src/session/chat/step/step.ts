@@ -85,6 +85,8 @@ export interface StepResult {
 export interface Step {
   run(): Promise<StepResult>;
   abortGeneration(reason?: string): void;
+  /** Abort all in-flight tool executions. Use during session shutdown. */
+  abortTools(): void;
 }
 
 class StepModule implements Step {
@@ -128,6 +130,24 @@ class StepModule implements Step {
           'step.inbox_drained',
           inboxDrainAttributes(drained, 'medium'),
         );
+
+        // 2.2.2.1: Repair history before making any step decision.
+        // This ensures that any tool calls left in an intermediate state
+        // (e.g. `input-available` from a crashed prior step) are resolved
+        // to `output-error` before `canStepBeExecuted` evaluates them.
+        // Without this, a stale tool call would cause `canStepBeExecuted`
+        // to return false, skipping the step and permanently stucking the
+        // session.
+        const repairResult = checkAndFixHistory(this.deps.messages);
+        if (repairResult.repaired.length > 0) {
+          stepSpan.addEvent('step.history_repaired', {
+            'step.repairCount': repairResult.repaired.length,
+          });
+          this.deps.logger.warn(
+            { stepId: this.id, repairCount: repairResult.repaired.length },
+            'History fixes applied before step decision',
+          );
+        }
 
         // 2.2.3: check if the step can be executed — trace the decision
         const decisionSpan = startChildSpan('step.decision', {
@@ -190,51 +210,27 @@ class StepModule implements Step {
         }
 
         // 2.2.4 - 2.2.6: History preparation pipeline. A single span covers
-        // the entire pipeline (repair → copy → pre-process → convert →
-        // post-process) with events marking each stage. This gives one
-        // contiguous trace segment for the transformation with clear
-        // sub-step timing via event timestamps.
+        // the entire pipeline (copy → pre-process → convert → post-process)
+        // with events marking each stage. This gives one contiguous trace
+        // segment for the transformation with clear sub-step timing via
+        // event timestamps. History repair is performed earlier (before
+        // the step decision) so that `canStepBeExecuted` sees a clean
+        // state.
         const transformSpan = startChildSpan('history_transformation', {
           attributes: {
             'history.inputMessageCount': this.deps.messages.length,
+            'history.repairCount': repairResult.repaired.length,
           },
         });
 
-        // --- Stage 1: Repair ---
-        transformSpan.addEvent('history_repair.start', {
-          'history_repair.messageCount': this.deps.messages.length,
-        });
-        const repairResult = checkAndFixHistory(this.deps.messages);
-        transformSpan.setAttribute(
-          'history_repair.fixedCount',
-          repairResult.repaired.length,
-        );
-        if (repairResult.repaired.length > 0) {
-          try {
-            transformSpan.setAttribute(
-              'history_repair.details',
-              JSON.stringify(repairResult.repaired),
-            );
-          } catch {
-            // Serialization may fail — skip silently.
-          }
-          this.deps.logger.warn(
-            { stepId: this.id, repairCount: repairResult.repaired.length },
-            'History fixes applied',
-          );
-        }
-        transformSpan.addEvent('history_repair.end', {
-          'history_repair.fixedCount': repairResult.repaired.length,
-        });
-
-        // --- Stage 2: Copy ---
+        // --- Stage 1: Copy ---
         transformSpan.addEvent('history_copy.start');
         const messagesCopy = structuredClone(this.deps.messages);
         transformSpan.addEvent('history_copy.end', {
           'history_copy.messageCount': messagesCopy.length,
         });
 
-        // --- Stage 3: Pre-process (extensions) ---
+        // --- Stage 2: Pre-process (extensions) ---
         transformSpan.addEvent('history_pre_process.start');
         const preResult =
           await this.deps.extensionHandler.onHistoryPreProcessing(messagesCopy);
@@ -252,7 +248,7 @@ class StepModule implements Step {
             preResult.flags.hasCompacted === true,
         });
 
-        // --- Stage 4: Convert to model messages ---
+        // --- Stage 3: Convert to model messages ---
         transformSpan.addEvent('history_convert.start');
         let modelMessages: ModelMessage[] =
           await convertToModelMessagesExtended(preResult.history);
@@ -260,7 +256,7 @@ class StepModule implements Step {
           'history_convert.outputMessageCount': modelMessages.length,
         });
 
-        // --- Stage 5: Post-process (extensions) ---
+        // --- Stage 4: Post-process (extensions) ---
         transformSpan.addEvent('history_post_process.start');
         const postResult =
           await this.deps.extensionHandler.onHistoryPostProcessing(
@@ -343,6 +339,10 @@ class StepModule implements Step {
     this.stepSpan?.addEvent('step.generation_aborted', {
       'step.abortReason': reason ?? 'unknown',
     });
+  }
+
+  abortTools(): void {
+    this.generationRunner?.abortTools();
   }
 
   // ---------------------------------------------------------------------------

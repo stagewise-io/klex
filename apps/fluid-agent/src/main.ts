@@ -1,16 +1,15 @@
 import { createLogger } from '@stagewise/logger';
 
 import { createAdminApi } from '@/admin-api';
+import { type CliOptions, parseCliArgs } from '@/cli';
 import { createConfig } from '@/config';
 import { createInMemoryFluidEventInbox } from '@/fluid-event-inbox';
 import { createMcp } from '@/mcp';
 import { createModelProvider } from '@/model-provider';
+import { createRouter } from '@/router';
 import { createChatSession } from '@/session/chat';
 import type { SessionHooks } from '@/session/types';
 import { createTracing } from '@/tracing';
-
-import { createRouter } from './router';
-import { SessionInboxPriority } from './session/inbox';
 
 const logger = createLogger({
   name: 'fluid-agent',
@@ -38,9 +37,11 @@ async function main(): Promise<void> {
   });
   await tracing.start();
 
+  const cli: CliOptions = parseCliArgs(process.argv.slice(2));
+
   const config = createConfig({
     logging: logger,
-    dataDirectory: process.env.FLUID_DATA_DIR ?? process.cwd(),
+    dataDirectory: cli.dataDirectory,
   });
   const adminApi = createAdminApi({ logging: logger, config });
   const modelProvider = createModelProvider({ logging: logger, config });
@@ -49,6 +50,7 @@ async function main(): Promise<void> {
 
   const router = createRouter({
     logging: logger,
+    mcp,
     createChatSession: (hooks: SessionHooks) =>
       createChatSession({
         logging: logger,
@@ -59,8 +61,6 @@ async function main(): Promise<void> {
         hooks,
       }),
   });
-  await router.start();
-
   const started: { close(): Promise<void> }[] = [];
   try {
     for (const resource of [config, adminApi, modelProvider, mcp]) {
@@ -72,21 +72,6 @@ async function main(): Promise<void> {
     throw error;
   }
   await router.start();
-
-  // Send a test message into the primary session via the router
-  router.sendInput({
-    sourceEnv: 'chatApp',
-    priority: SessionInboxPriority.Medium,
-    context: {
-      sourceEnv: 'chatApp',
-      metadata: {
-        chatId: '95g8743',
-        senderId: 'u4987tzrh4',
-        timestamp: new Date().toISOString(),
-      },
-      content: [{ type: 'text', text: 'Hey there! Who are you?' }], // TODO Add a real message here
-    },
-  });
 
   let shuttingDown = false;
   const shutdown = async () => {

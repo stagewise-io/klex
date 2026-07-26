@@ -57,6 +57,7 @@ function makeMockStep(overrides: Partial<StepResult> = {}, delay = 0) {
       return runResult;
     }),
     abortGeneration: vi.fn(),
+    abortTools: vi.fn(),
   };
 }
 
@@ -149,6 +150,31 @@ describe('Turn — abort', () => {
     // After run completes, currentStep is null — should be a no-op
     expect(() => turn.abortGeneration()).not.toThrow();
     expect(step.abortGeneration).not.toHaveBeenCalled();
+  });
+
+  it('delegates abortTools to the current step', async () => {
+    const step = makeMockStep({}, 50);
+    vi.mocked(createStep).mockReturnValue(step);
+
+    const turn = createTurn(makeDeps());
+    const runPromise = turn.run();
+
+    await new Promise((r) => setTimeout(r, 10));
+    turn.abortTools();
+    await runPromise;
+
+    expect(step.abortTools).toHaveBeenCalledOnce();
+  });
+
+  it('does not call abortTools on a null current step (after loop ends)', async () => {
+    const step = makeMockStep();
+    vi.mocked(createStep).mockReturnValue(step);
+
+    const turn = createTurn(makeDeps());
+    await turn.run();
+
+    expect(() => turn.abortTools()).not.toThrow();
+    expect(step.abortTools).not.toHaveBeenCalled();
   });
 });
 

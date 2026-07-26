@@ -54,6 +54,8 @@ export interface TurnResult {
 export interface Turn {
   run(): Promise<TurnResult>;
   abortGeneration(reason?: string): void;
+  /** Abort all in-flight tool executions. Use during session shutdown. */
+  abortTools(): void;
 }
 
 class TurnModule implements Turn {
@@ -220,6 +222,10 @@ class TurnModule implements Turn {
 
   abortGeneration(reason?: string): void {
     this.currentStep?.abortGeneration(reason);
+  }
+
+  abortTools(): void {
+    this.currentStep?.abortTools();
   }
 }
 

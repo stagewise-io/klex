@@ -5,11 +5,17 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { AgentTools, AgentUITools } from '@/session/tools';
 import type { ExtendedUIMessage } from '@/session/types';
+// Re-import the mocked function so tests can assert it was called.
+import { recordErrorOnSpan } from '@/tracing';
 
 import { testLogger as logger } from '../test-helpers';
 import { ToolDispatcher } from './tool-dispatcher';
 
 // --- mocks ---
+
+vi.mock('@/tracing', () => ({
+  recordErrorOnSpan: vi.fn(),
+}));
 
 vi.mock('../utils/tracing', () => ({
   startChildSpan: vi.fn(() => ({
@@ -18,6 +24,7 @@ vi.mock('../utils/tracing', () => ({
     addEvent: vi.fn(),
     end: vi.fn(),
     recordException: vi.fn(),
+    setStatus: vi.fn(),
   })),
   tracer: {
     startSpan: vi.fn(() => ({
@@ -54,11 +61,15 @@ function makeAssistantMessage(
   } as ExtendedUIMessage;
 }
 
-function makeDispatcher(tools = {} as AgentTools): ToolDispatcher {
+function makeDispatcher(
+  tools = {} as AgentTools,
+  toolTimeoutMs?: number,
+): ToolDispatcher {
   return new ToolDispatcher({
     logger,
     tools,
     modelMessages: [],
+    toolTimeoutMs,
   });
 }
 
@@ -365,5 +376,129 @@ describe('ToolDispatcher — execution outcomes', () => {
     // Error is caught and logged — part state remains input-available
     // since the throw happens before Object.assign
     expect(dispatcher.dispatchedCount).toBe(1);
+  });
+
+  it('records error.type on the span when execute throws (output-error)', async () => {
+    const execute = vi.fn().mockRejectedValue(new Error('boom'));
+    const dispatcher = makeDispatcher(makeTools(execute));
+    const part = makeToolPart('call-1');
+
+    dispatcher.onUpdate(makeAssistantMessage([part]));
+    await dispatcher.settle();
+
+    // executeTool swallows the error and sets output-error state, so
+    // the promise resolves. recordErrorOnSpan must still be called so
+    // the trace surfaces the error with error.type.
+    expect(asToolPart(part).state).toBe('output-error');
+    expect(recordErrorOnSpan).toHaveBeenCalled();
+  });
+
+  it('records error.type on the span when tool has no execute function', async () => {
+    const dispatcher = makeDispatcher(makeTools(undefined));
+    const part = makeToolPart('call-1');
+
+    dispatcher.onUpdate(makeAssistantMessage([part]));
+    await dispatcher.settle();
+
+    expect(asToolPart(part).state).toBe('output-error');
+    expect(recordErrorOnSpan).toHaveBeenCalled();
+  });
+
+  it('does NOT record error when tool succeeds', async () => {
+    const execute = vi.fn().mockResolvedValue('ok');
+    const dispatcher = makeDispatcher(makeTools(execute));
+    const part = makeToolPart('call-1');
+
+    dispatcher.onUpdate(makeAssistantMessage([part]));
+    await dispatcher.settle();
+
+    expect(asToolPart(part).state).toBe('output-available');
+    expect(recordErrorOnSpan).not.toHaveBeenCalled();
+  });
+});
+
+describe('ToolDispatcher — execution timeout', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('force-terminates a tool that exceeds the timeout', async () => {
+    vi.useFakeTimers();
+
+    const execute = vi.fn(
+      (_input, opts) =>
+        new Promise((_resolve, reject) => {
+          opts.abortSignal?.addEventListener('abort', () =>
+            reject(new Error('aborted')),
+          );
+        }),
+    );
+    const dispatcher = makeDispatcher(makeTools(execute), 100);
+    const part = makeToolPart('call-1');
+
+    dispatcher.onUpdate(makeAssistantMessage([part]));
+
+    // Advance past the timeout
+    const settlePromise = dispatcher.settle();
+    vi.advanceTimersByTime(101);
+    await settlePromise;
+
+    const toolPart = asToolPart(part);
+    expect(toolPart.state).toBe('output-error');
+    expect(toolPart.errorText).toContain('timed out');
+
+    vi.useRealTimers();
+  });
+
+  it('does not timeout tools that complete within the deadline', async () => {
+    vi.useFakeTimers();
+
+    const execute = vi.fn(async () => {
+      await new Promise((r) => setTimeout(r, 50));
+      return 'done';
+    });
+    const dispatcher = makeDispatcher(makeTools(execute), 500);
+    const part = makeToolPart('call-1');
+
+    dispatcher.onUpdate(makeAssistantMessage([part]));
+
+    const settlePromise = dispatcher.settle();
+    vi.advanceTimersByTime(60);
+    await settlePromise;
+
+    const toolPart = asToolPart(part);
+    expect(toolPart.state).toBe('output-available');
+    expect(toolPart.output).toBe('done');
+
+    vi.useRealTimers();
+  });
+
+  it('distinguishes timeout errors from session abort errors', async () => {
+    vi.useFakeTimers();
+
+    const execute = vi.fn(
+      (_input, opts) =>
+        new Promise((_resolve, reject) => {
+          opts.abortSignal?.addEventListener('abort', () =>
+            reject(new Error('aborted')),
+          );
+        }),
+    );
+    const dispatcher = makeDispatcher(makeTools(execute), 100);
+    const part = makeToolPart('call-1');
+
+    dispatcher.onUpdate(makeAssistantMessage([part]));
+
+    // Abort the session-level signal (not the timeout)
+    dispatcher.abortTools();
+    await dispatcher.settle();
+
+    const toolPart = asToolPart(part);
+    expect(toolPart.state).toBe('output-error');
+    // Should NOT say "timed out" since it was a session abort
+    expect(toolPart.errorText).not.toContain('timed out');
+    expect(toolPart.errorText).toBe('aborted');
+
+    vi.useRealTimers();
   });
 });

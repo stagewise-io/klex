@@ -212,15 +212,16 @@ class JavaScriptToolModule implements JavaScriptTool {
   private async invalidateWorker(): Promise<void> {
     const worker = this.worker;
     this.worker = undefined;
+    // Capture and clear temp-dir ownership synchronously before awaiting
+    // terminate(). A fatal execution fires invalidateWorker() without
+    // awaiting it (see finish() in runExecution). The queue then advances to
+    // the next execution, which calls ensureWorker() and assigns a new
+    // temp dir to this.workerTempDir. If we read this.workerTempDir after
+    // the await, we would delete the replacement worker's directory.
+    const tempDir = this.workerTempDir;
+    this.workerTempDir = undefined;
     if (worker) await worker.terminate();
-    this.cleanupWorkerTempDir();
-  }
-
-  private cleanupWorkerTempDir(): void {
-    if (this.workerTempDir) {
-      rmSync(this.workerTempDir, { recursive: true, force: true });
-      this.workerTempDir = undefined;
-    }
+    if (tempDir) rmSync(tempDir, { recursive: true, force: true });
   }
 
   private async executeNow(input: JavaScriptExecution): Promise<JsonValue> {

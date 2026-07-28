@@ -31,6 +31,11 @@ export interface ToolDescription {
 export interface ToolRequestContext {
   executionId: string;
   signal: AbortSignal;
+  /**
+   * UUID of the session that initiated the tool request, when available.
+   * Used for associating MCP tool calls with sessions in observability.
+   */
+  sessionId?: string;
 }
 
 export interface ToolProvider {

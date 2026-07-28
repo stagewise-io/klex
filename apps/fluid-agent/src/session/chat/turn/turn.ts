@@ -49,6 +49,10 @@ export interface TurnResult {
    * in which case the session is terminated).
    */
   completeFailure: boolean;
+  /** Total number of steps executed in this turn. */
+  stepCount: number;
+  /** Token usage from the last successful generation in this turn, if any. */
+  usage: { inputTokens: number; outputTokens: number } | null;
 }
 
 export interface Turn {
@@ -93,6 +97,8 @@ class TurnModule implements Turn {
     let fatalErrorReason: string | null = null;
     let hadAnySuccess = false;
     let hadAnyFailure = false;
+    let lastUsage: { inputTokens: number; outputTokens: number } | null = null;
+    let totalStepCount = 0;
 
     try {
       await context.with(this.turnContext, async () => {
@@ -116,6 +122,7 @@ class TurnModule implements Turn {
           fatalError: false,
           fatalErrorReason: null,
           generationFailed: false,
+          usage: null,
         };
         let stepCount = 0;
         const MAX_STEPS_PER_TURN = 20;
@@ -164,6 +171,10 @@ class TurnModule implements Turn {
             this.currentStep = null;
           }
           stepCount++;
+          totalStepCount = stepCount;
+          if (stepResult.usage) {
+            lastUsage = stepResult.usage;
+          }
 
           // Fatal error — stop the turn immediately.
           if (stepResult.fatalError) {
@@ -217,6 +228,8 @@ class TurnModule implements Turn {
       fatalError,
       fatalErrorReason,
       completeFailure: hadAnyFailure && !hadAnySuccess,
+      stepCount: totalStepCount,
+      usage: lastUsage,
     };
   }
 

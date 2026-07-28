@@ -73,6 +73,18 @@ function createMockConfig(
     getModelSelection: () => [],
     resolveModel: resolveModelImpl,
     getMcpServers: () => ({}),
+    addMcpServer: async () => {
+      throw new Error('Not used in model provider tests');
+    },
+    updateMcpServer: async () => {
+      throw new Error('Not used in model provider tests');
+    },
+    removeMcpServer: async () => {
+      throw new Error('Not used in model provider tests');
+    },
+    updateModelSelection: async () => {
+      throw new Error('Not used in model provider tests');
+    },
   };
 }
 

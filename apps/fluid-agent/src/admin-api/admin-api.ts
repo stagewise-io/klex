@@ -3,12 +3,16 @@ import { type ServerType, serve } from '@hono/node-server';
 import type { ModuleLogger, RootLogger } from '@stagewise/logger';
 
 import type { Config } from '@/config';
+import type { Mcp } from '@/mcp';
+import type { Router } from '@/router';
 
 import { createAdminApp } from './server';
 
 export interface AdminApiDependencies {
   logging: RootLogger;
   config: Config;
+  mcp: Mcp;
+  router: Router;
 }
 
 export interface AdminApi {
@@ -24,6 +28,8 @@ class AdminApiModule implements AdminApi {
     private readonly deps: {
       logger: ModuleLogger;
       config: Config;
+      mcp: Mcp;
+      router: Router;
     },
   ) {}
 
@@ -33,6 +39,8 @@ class AdminApiModule implements AdminApi {
 
     const app = createAdminApp({
       config: this.deps.config,
+      mcp: this.deps.mcp,
+      router: this.deps.router,
       logger: this.deps.logger,
     });
 
@@ -67,5 +75,7 @@ export function createAdminApi(deps: AdminApiDependencies): AdminApi {
       bindings: { module: 'admin-api' },
     }),
     config: deps.config,
+    mcp: deps.mcp,
+    router: deps.router,
   });
 }

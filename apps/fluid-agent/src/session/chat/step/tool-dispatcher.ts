@@ -11,6 +11,7 @@ import type { ModuleLogger } from '@stagewise/logger';
 
 import type { AgentTools, AgentUITools } from '@/session/tools';
 import type { ExtendedUIMessage } from '@/session/types';
+import type { ToolRequestContext } from '@/tool-provider';
 import { recordErrorOnSpan } from '@/tracing';
 
 import { startChildSpan } from '../utils/tracing';
@@ -49,6 +50,8 @@ export class ToolDispatcher {
       modelMessages: ModelMessage[];
       /** Per-tool execution timeout in ms. Defaults to 5 minutes. */
       toolTimeoutMs?: number;
+      /** UUID of the session that owns this dispatcher. */
+      sessionId: string;
     },
   ) {}
 
@@ -227,11 +230,16 @@ export class ToolDispatcher {
       ]);
 
       try {
+        const context: ToolRequestContext = {
+          executionId: part.toolCallId,
+          signal: combinedSignal,
+          sessionId: this.deps.sessionId,
+        };
         const output = await tool.execute(part.input, {
           toolCallId: part.toolCallId,
           messages: this.deps.modelMessages,
-          // biome-ignore lint/suspicious/noExplicitAny: tool execute context typing is too generic for our internal types
-          context: undefined as any,
+          // biome-ignore lint/suspicious/noExplicitAny: AI SDK tool execute context typing is too generic for our internal ToolRequestContext
+          context: context as any,
           abortSignal: combinedSignal,
         });
         Object.assign(part, { output, state: 'output-available' });

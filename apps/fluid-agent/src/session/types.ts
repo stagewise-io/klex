@@ -13,6 +13,63 @@ import type { AgentUITools } from './tools';
 export type SessionStatus = 'active' | 'terminated';
 
 /**
+ * Fine-grained runtime state of a session, queryable for observability.
+ *
+ * - `working` — a turn is currently executing (generation in progress).
+ * - `retrying` — all models failed; waiting in exponential backoff before retry.
+ * - `success` — the most recent turn completed successfully.
+ * - `idle` — inbox is empty; no turn is active.
+ * - `terminated` — the session has shut down (fatal error or graceful close).
+ */
+export type SessionRuntimeState =
+  | 'working'
+  | 'retrying'
+  | 'success'
+  | 'idle'
+  | 'terminated';
+
+/** Active model information for a session. */
+export interface SessionModelInfo {
+  /** The model ID currently in use (may be a fallback model). */
+  id: string;
+  /** True when the session is on a fallback model (fallbackIndex > 0). */
+  isFallback: boolean;
+  /** Current fallback index (0 = default model). */
+  fallbackIndex: number;
+}
+
+/** Token usage for a single generation or cumulative across a session. */
+export interface SessionTokenUsage {
+  inputTokens: number;
+  outputTokens: number;
+}
+
+/** Aggregated session information exposed for observability. */
+export interface SessionInfo {
+  /** Unique session identifier (UUID). */
+  id: string;
+  /** Coarse lifecycle status. */
+  status: SessionStatus;
+  /** Fine-grained runtime state. */
+  runtimeState: SessionRuntimeState;
+  /** Currently active model and fallback state. */
+  model: SessionModelInfo;
+  /** Token consumption (latest generation + cumulative total). */
+  tokens: {
+    latest: SessionTokenUsage | null;
+    total: SessionTokenUsage;
+  };
+  /** Total number of turns completed. */
+  turns: number;
+  /** Total number of steps executed across all turns. */
+  steps: number;
+  /** Number of messages in the session history. */
+  messageCount: number;
+  /** ISO timestamp of session creation. */
+  createdAt: string;
+}
+
+/**
  * Information passed to {@link SessionHooks.onTerminated} when a session
  * shuts itself down (e.g. fatal error). The router uses this to create a
  * replacement session and optionally preserve history.
@@ -60,6 +117,13 @@ export interface AgentSession {
    * and may replace a terminated session.
    */
   readonly status: SessionStatus;
+
+  /**
+   * Returns aggregated observability information for this session.
+   * Includes runtime state, active model, token consumption, and
+   * turn/step counts.
+   */
+  getSessionInfo(): SessionInfo;
 
   /**
    * Start the session — spins up owned resources (e.g. the JavaScript

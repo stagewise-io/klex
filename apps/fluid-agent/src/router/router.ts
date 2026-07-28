@@ -5,6 +5,7 @@ import { type SessionInboxEvent, SessionInboxPriority } from '@/session/inbox';
 import type {
   AgentSession,
   SessionHooks,
+  SessionInfo,
   SessionTerminationInfo,
 } from '@/session/types';
 
@@ -24,6 +25,11 @@ export interface Router {
    * primary session.
    */
   sendInput(event: SessionInboxEvent): void;
+
+  /**
+   * Returns observability info for all live sessions.
+   */
+  getSessions(): SessionInfo[];
 }
 
 class RouterModule implements Router {
@@ -89,6 +95,12 @@ class RouterModule implements Router {
     );
 
     session.inbox.send(event);
+  }
+
+  getSessions(): SessionInfo[] {
+    const session = this.session;
+    if (!session) return [];
+    return [session.getSessionInfo()];
   }
 
   // ---------------------------------------------------------------------------

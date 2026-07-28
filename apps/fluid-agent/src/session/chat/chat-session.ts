@@ -16,6 +16,8 @@ import type {
   AgentSession,
   ExtendedUIMessage,
   SessionHooks,
+  SessionInfo,
+  SessionRuntimeState,
   SessionStatus,
 } from '@/session/types';
 import type { ToolProvider } from '@/tool-provider';
@@ -80,6 +82,23 @@ class ChatSessionModule implements AgentSession {
 
   private readonly sessionContext: Context;
 
+  // --- Observability tracking ---
+
+  private runtimeState: SessionRuntimeState = 'idle';
+
+  private turnCount = 0;
+
+  private stepCount = 0;
+
+  private latestUsage: { inputTokens: number; outputTokens: number } | null =
+    null;
+
+  private totalInputTokens = 0;
+
+  private totalOutputTokens = 0;
+
+  private readonly createdAt: string;
+
   constructor(
     private readonly deps: {
       logger: ModuleLogger;
@@ -104,6 +123,11 @@ class ChatSessionModule implements AgentSession {
       },
     });
     this.sessionContext = trace.setSpan(context.active(), this.sessionSpan);
+    this.createdAt = new Date().toISOString();
+
+    // Thread the session ID into the JavaScript tool so MCP tool calls
+    // can be associated with this session in observability.
+    deps.javaScriptTool.sessionId = this.sessionId;
 
     this.fallbackManager = new ModelFallbackManager({
       logger: this.deps.logger,
@@ -194,6 +218,8 @@ class ChatSessionModule implements AgentSession {
     if (this.loopActive) return;
     this.loopActive = true;
 
+    this.runtimeState = 'working';
+
     let needsBackoffRetry = false;
 
     try {
@@ -213,6 +239,7 @@ class ChatSessionModule implements AgentSession {
         // If the inbox is empty AND we're not in a backoff retry cycle,
         // go idle.
         if (this.sessionInbox.isEmpty() && !needsBackoffRetry) {
+          this.runtimeState = 'idle';
           this.sessionSpan.addEvent('session.idle', {
             'session.id': this.sessionId,
           });
@@ -252,8 +279,20 @@ class ChatSessionModule implements AgentSession {
           this.currentTurn = null;
         }
 
+        // Update observability counters.
+        this.turnCount++;
+        this.stepCount += turnResult.stepCount;
+        if (turnResult.usage) {
+          this.latestUsage = turnResult.usage;
+          this.totalInputTokens += turnResult.usage.inputTokens;
+          this.totalOutputTokens += turnResult.usage.outputTokens;
+        } else {
+          this.latestUsage = null;
+        }
+
         // Fatal error — terminate the session.
         if (turnResult.fatalError) {
+          this.runtimeState = 'terminated';
           this.deps.logger.error(
             { sessionId: this.sessionId },
             'Fatal turn error — terminating session',
@@ -268,9 +307,11 @@ class ChatSessionModule implements AgentSession {
 
         // Track success/failure for backoff.
         if (turnResult.completeFailure) {
+          this.runtimeState = 'retrying';
           this.backoffManager.recordFailure();
           needsBackoffRetry = true;
         } else {
+          this.runtimeState = 'success';
           this.backoffManager.recordSuccess();
           needsBackoffRetry = false;
         }
@@ -300,6 +341,7 @@ class ChatSessionModule implements AgentSession {
           continue;
         }
 
+        this.runtimeState = 'retrying';
         this.deps.logger.warn(
           {
             sessionId: this.sessionId,
@@ -379,9 +421,38 @@ class ChatSessionModule implements AgentSession {
     return this._status;
   }
 
+  public getSessionInfo(): SessionInfo {
+    const modelId = this.fallbackManager.getChatModelId();
+    const fallbackIndex = this.fallbackManager.getFallbackIndex();
+
+    return {
+      id: this.sessionId,
+      status: this._status,
+      runtimeState:
+        this._status === 'terminated' ? 'terminated' : this.runtimeState,
+      model: {
+        id: modelId,
+        isFallback: fallbackIndex > 0,
+        fallbackIndex,
+      },
+      tokens: {
+        latest: this.latestUsage,
+        total: {
+          inputTokens: this.totalInputTokens,
+          outputTokens: this.totalOutputTokens,
+        },
+      },
+      turns: this.turnCount,
+      steps: this.stepCount,
+      messageCount: this.messages.length,
+      createdAt: this.createdAt,
+    };
+  }
+
   async close(): Promise<void> {
     if (this.closePromise) return this.closePromise;
     this._status = 'terminated';
+    this.runtimeState = 'terminated';
 
     this.closePromise = (async () => {
       // Close the inbox first — no new input can enter the session after

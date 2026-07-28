@@ -1,0 +1,28 @@
+{
+  "name": "@stagewise/windows-use",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Gateway-connected Windows computer-use environment",
+  "main": "./dist/main.js",
+  "scripts": {
+    "build": "node build.mjs",
+    "dev": "tsx src/main.ts",
+    "start": "node dist/main.js",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@stagewise/logger": "workspace:*",
+    "@stagewise/mcp-gateway-sdk": "workspace:*"
+  },
+  "devDependencies": {
+    "@stagewise/typescript-config": "workspace:*",
+    "@types/node": "24.10.1",
+    "esbuild": "0.28.1",
+    "tsx": "4.23.1",
+    "typescript": "7.0.2",
+    "vitest": "4.1.10"
+  },
+  "packageManager": "pnpm@10.30.3"
+}

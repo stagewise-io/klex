@@ -80,6 +80,8 @@ export interface StepResult {
    * turn uses this to report completeFailure to the session for backoff.
    */
   generationFailed: boolean;
+  /** Token usage from the successful generation, if any. */
+  usage: { inputTokens: number; outputTokens: number } | null;
 }
 
 export interface Step {
@@ -206,6 +208,7 @@ class StepModule implements Step {
             fatalError: false,
             fatalErrorReason: null,
             generationFailed: false,
+            usage: null,
           };
         }
 

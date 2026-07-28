@@ -30,6 +30,8 @@ export interface GenerationRunnerResult {
   fatalErrorReason: string | null;
   /** True if generation was attempted but all retries exhausted without usable output. */
   generationFailed: boolean;
+  /** Token usage from the successful generation, if any. */
+  usage: { inputTokens: number; outputTokens: number } | null;
 }
 
 export interface GenerationRunnerDependencies {
@@ -82,6 +84,7 @@ export class GenerationRunner {
       logger: this.deps.logger,
       tools: this.deps.tools,
       modelMessages: this.deps.modelMessages,
+      sessionId: this.deps.sessionId,
     });
     this.toolDispatcher = toolDispatcher;
 
@@ -96,6 +99,7 @@ export class GenerationRunner {
     let generationFailed = false;
 
     let model = this.deps.model;
+    let lastUsage: { inputTokens: number; outputTokens: number } | null = null;
 
     while (attempt < MAX_GENERATION_ATTEMPTS) {
       attempt++;
@@ -166,6 +170,10 @@ export class GenerationRunner {
         ) {
           messages.push(response.message);
           fallbackManager.recordSuccessfulGeneration();
+          lastUsage = {
+            inputTokens: response.usage.inputTokens ?? 0,
+            outputTokens: response.usage.outputTokens ?? 0,
+          };
           // outcome stays 'done' — will break below.
         } else {
           // Non-good finish — classify only on 'error' finish reason.
@@ -245,6 +253,7 @@ export class GenerationRunner {
         fatalError: false,
         fatalErrorReason: null,
         generationFailed: true,
+        usage: null,
       };
     }
 
@@ -279,6 +288,7 @@ export class GenerationRunner {
       fatalError,
       fatalErrorReason,
       generationFailed,
+      usage: lastUsage,
     };
   }
 

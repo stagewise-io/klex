@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto';
+
 import type { ModuleLogger, RootLogger } from '@stagewise/logger';
 import type {
   FluidEvent,
@@ -44,10 +46,64 @@ export type McpFluidEventListener = (
   event: McpFluidEvent,
 ) => void | Promise<void>;
 
+/**
+ * Connection status of an MCP server.
+ * - `connected` — connection is active and tools are available.
+ * - `connecting` — a connection attempt is in progress.
+ * - `error` — the connection failed and is awaiting retry.
+ * - `disconnected` — the server is not configured or was removed.
+ */
+export type McpConnectionStatus =
+  | 'connected'
+  | 'connecting'
+  | 'error'
+  | 'disconnected';
+
+/** A single MCP server with its config and connection status. */
+export interface McpServerInfo {
+  /** Unique namespace / server name. */
+  name: string;
+  /** Current connection status. */
+  status: McpConnectionStatus;
+  /** Number of tools exposed by this server (0 if not connected). */
+  toolCount: number;
+  /** Whether the server supports Fluid Events. */
+  supportsFluidEvents: boolean;
+  /** Server type: stdio or http. */
+  transport: 'stdio' | 'http';
+}
+
+/** Record of a tool call made to an MCP server. */
+export interface McpToolCallRecord {
+  /** Unique record ID. */
+  id: string;
+  /** MCP server namespace. */
+  namespace: string;
+  /** Tool name that was called. */
+  toolName: string;
+  /** Input arguments passed to the tool. */
+  input: JsonObject;
+  /** Result returned by the tool (null if the call has not completed yet). */
+  result: JsonValue | null;
+  /** True if the tool call resulted in an error. */
+  isError: boolean;
+  /** Session ID that initiated the call, if known. */
+  sessionId: string | null;
+  /** ISO timestamp when the call was initiated. */
+  startedAt: string;
+  /** ISO timestamp when the call completed, if it has. */
+  finishedAt: string | null;
+}
+
 export interface Mcp extends ToolProvider {
   start(): Promise<void>;
   onFluidEvent(listener: McpFluidEventListener): () => void;
   close(): Promise<void>;
+
+  /** Returns the current status of all configured MCP servers. */
+  getServerStatuses(): McpServerInfo[];
+  /** Returns the recorded history of tool calls to MCP servers. */
+  getToolCallHistory(): McpToolCallRecord[];
 }
 
 export interface McpDependencies {
@@ -80,6 +136,15 @@ class McpModule implements Mcp {
   private unsubscribe: (() => void) | undefined;
   private reconcileQueue: Promise<void> = Promise.resolve();
   private reconcileAbort: AbortController | undefined;
+
+  /** Names of servers currently attempting to connect. */
+  private readonly connectingServers = new Set<string>();
+  /** Names of servers whose last connection attempt failed. */
+  private readonly erroredServers = new Set<string>();
+  /** Recorded tool call history (newest first). */
+  private readonly toolCallHistory: McpToolCallRecord[] = [];
+  /** Maximum number of tool call records to keep. */
+  private static readonly MAX_TOOL_CALL_HISTORY = 500;
 
   constructor(
     private readonly deps: {
@@ -139,6 +204,8 @@ class McpModule implements Mcp {
     await Promise.allSettled(
       connections.map((connection) => connection.close()),
     );
+    this.connectingServers.clear();
+    this.erroredServers.clear();
     this.deps.logger.info('MCP stopped');
   }
 
@@ -189,8 +256,33 @@ class McpModule implements Mcp {
     context: ToolRequestContext,
   ): Promise<JsonValue> {
     const { connection, tool } = this.getTool(reference);
-    const result = await connection.invoke(tool, input, context.signal);
-    return normalizeCallToolResult(result);
+    const record: McpToolCallRecord = {
+      id: randomUUID(),
+      namespace: reference.namespace,
+      toolName: reference.name,
+      input: structuredClone(input),
+      result: null,
+      isError: false,
+      sessionId: context.sessionId ?? null,
+      startedAt: new Date().toISOString(),
+      finishedAt: null,
+    };
+    this.addToolCallRecord(record);
+    try {
+      const result = await connection.invoke(tool, input, context.signal);
+      const normalized = normalizeCallToolResult(result);
+      record.result = normalized;
+      record.isError = Boolean(result.isError);
+      record.finishedAt = new Date().toISOString();
+      return normalized;
+    } catch (error) {
+      record.isError = true;
+      record.result = {
+        error: error instanceof Error ? error.message : String(error),
+      };
+      record.finishedAt = new Date().toISOString();
+      throw error;
+    }
   }
 
   private getTool(reference: ToolReference) {
@@ -235,6 +327,8 @@ class McpModule implements Mcp {
       this.connections.delete(namespace);
       this.signatures.delete(namespace);
       this.stopEventWorker(namespace);
+      this.erroredServers.delete(namespace);
+      this.connectingServers.delete(namespace);
       const reason = next ? 'configuration-changed' : 'configuration-removed';
       await this.deps.fluidEventInbox.reset(namespace);
       await connection.close().catch((error: unknown) => {
@@ -250,6 +344,8 @@ class McpModule implements Mcp {
     await Promise.all(
       Object.entries(servers).map(async ([namespace, config]) => {
         if (this.connections.has(namespace)) return;
+        this.connectingServers.add(namespace);
+        this.erroredServers.delete(namespace);
         try {
           const connection = await this.deps.connect({
             namespace,
@@ -285,6 +381,8 @@ class McpModule implements Mcp {
           this.connections.set(namespace, connection);
           this.signatures.set(namespace, signature(config));
           this.clearRetry(namespace);
+          this.connectingServers.delete(namespace);
+          this.erroredServers.delete(namespace);
           this.publishRegistry();
           if (connection.supportsFluidEvents) this.startEventWorker(connection);
           this.deps.logger.info(
@@ -296,7 +394,9 @@ class McpModule implements Mcp {
             'MCP server connected',
           );
         } catch (error) {
+          this.connectingServers.delete(namespace);
           if (!controller.signal.aborted) {
+            this.erroredServers.add(namespace);
             this.deps.logger.error(
               { error, namespace },
               'MCP connection failed',
@@ -525,6 +625,7 @@ class McpModule implements Mcp {
     if (timer) clearTimeout(timer);
     this.retryTimers.delete(namespace);
     this.retryAttempts.delete(namespace);
+    this.erroredServers.delete(namespace);
   }
 
   private clearRetries(): void {
@@ -535,6 +636,61 @@ class McpModule implements Mcp {
 
   private publishRegistry(): void {
     this.registry = buildMcpRegistry(this.connections);
+  }
+
+  getServerStatuses(): McpServerInfo[] {
+    const configured = this.deps.config.getMcpServers();
+    const allNames = new Set<string>([
+      ...Object.keys(configured),
+      ...this.connections.keys(),
+      ...this.connectingServers,
+      ...this.erroredServers,
+    ]);
+    const statuses: McpServerInfo[] = [];
+    for (const name of [...allNames].sort()) {
+      const connection = this.connections.get(name);
+      const config = configured[name];
+      const transport: 'stdio' | 'http' = config
+        ? 'command' in config
+          ? 'stdio'
+          : 'http'
+        : this.connections.has(name)
+          ? 'http'
+          : 'http';
+      let status: McpConnectionStatus;
+      if (connection) {
+        status = 'connected';
+      } else if (this.connectingServers.has(name)) {
+        status = 'connecting';
+      } else if (this.erroredServers.has(name)) {
+        status = 'error';
+      } else if (config) {
+        status = 'connecting';
+      } else {
+        status = 'disconnected';
+      }
+      statuses.push({
+        name,
+        status,
+        toolCount: connection ? connection.tools.length : 0,
+        supportsFluidEvents: connection
+          ? connection.supportsFluidEvents
+          : false,
+        transport,
+      });
+    }
+    return statuses;
+  }
+
+  getToolCallHistory(): McpToolCallRecord[] {
+    return [...this.toolCallHistory];
+  }
+
+  private addToolCallRecord(record: McpToolCallRecord): void {
+    this.toolCallHistory.unshift(record);
+    if (this.toolCallHistory.length > McpModule.MAX_TOOL_CALL_HISTORY) {
+      this.toolCallHistory.length = McpModule.MAX_TOOL_CALL_HISTORY;
+    }
   }
 }
 

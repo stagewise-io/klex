@@ -66,6 +66,7 @@ const SUCCESS_RESULT: GenerationRunnerResult = {
   fatalError: false,
   fatalErrorReason: null,
   generationFailed: false,
+  usage: null,
 };
 
 // --- mocks ---
@@ -121,6 +122,7 @@ describe('Step — decision: skip', () => {
       fatalError: false,
       fatalErrorReason: null,
       generationFailed: false,
+      usage: null,
     });
     expect(createGenerationRunner).not.toHaveBeenCalled();
   });
@@ -141,6 +143,7 @@ describe('Step — decision: skip', () => {
       fatalError: false,
       fatalErrorReason: null,
       generationFailed: false,
+      usage: null,
     });
     expect(createGenerationRunner).not.toHaveBeenCalled();
   });
@@ -527,6 +530,7 @@ describe('Step — GenerationRunner result passthrough', () => {
       fatalError: false,
       fatalErrorReason: null,
       generationFailed: false,
+      usage: null,
     };
     vi.mocked(createGenerationRunner).mockReturnValue({
       run: vi.fn(async () => genResult),
@@ -547,6 +551,7 @@ describe('Step — GenerationRunner result passthrough', () => {
       fatalError: false,
       fatalErrorReason: null,
       generationFailed: true,
+      usage: null,
     };
     vi.mocked(createGenerationRunner).mockReturnValue({
       run: vi.fn(async () => genResult),

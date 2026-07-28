@@ -54,6 +54,8 @@ export interface JavaScriptTool {
   reset(): Promise<void>;
   readonly tools: ToolSet;
   close(): Promise<void>;
+  /** Sets the session ID for associating tool calls with sessions. */
+  sessionId: string | undefined;
 }
 
 export interface JavaScriptToolDependencies {
@@ -68,6 +70,7 @@ class JavaScriptToolModule implements JavaScriptTool {
   private queue: Promise<void> = Promise.resolve();
   private started = false;
   private closed = false;
+  sessionId: string | undefined;
 
   readonly tools = {
     runJavascript: {
@@ -213,7 +216,11 @@ class JavaScriptToolModule implements JavaScriptTool {
     const abort = new AbortController();
     const onAbort = () => abort.abort(input.signal?.reason);
     input.signal?.addEventListener('abort', onAbort, { once: true });
-    const context = { executionId, signal: abort.signal };
+    const context = {
+      executionId,
+      signal: abort.signal,
+      ...(this.sessionId ? { sessionId: this.sessionId } : {}),
+    };
     this.activeAbort = abort;
     try {
       const snapshot = await this.deps.provider.snapshot(context);
@@ -317,7 +324,10 @@ class JavaScriptToolModule implements JavaScriptTool {
           invalidate(new Error('Provider request limit exceeded'));
           return;
         }
-        void this.dispatch(message.request, contextFrom(executionId, abort))
+        void this.dispatch(
+          message.request,
+          contextFrom(executionId, abort, this.sessionId),
+        )
           .then((result) => {
             if (settled) return;
             assertJsonValue(result);
@@ -393,8 +403,13 @@ class JavaScriptToolModule implements JavaScriptTool {
 function contextFrom(
   executionId: string,
   abort: AbortController,
+  sessionId?: string,
 ): ToolRequestContext {
-  return { executionId, signal: abort.signal };
+  return {
+    executionId,
+    signal: abort.signal,
+    ...(sessionId ? { sessionId } : {}),
+  };
 }
 
 function resolveWorkerUrl(): URL {

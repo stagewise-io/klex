@@ -43,7 +43,6 @@ async function main(): Promise<void> {
     logging: logger,
     dataDirectory: cli.dataDirectory,
   });
-  const adminApi = createAdminApi({ logging: logger, config });
   const modelProvider = createModelProvider({ logging: logger, config });
   const fluidEventInbox = createInMemoryFluidEventInbox();
   const mcp = createMcp({ logging: logger, config, fluidEventInbox });
@@ -61,6 +60,7 @@ async function main(): Promise<void> {
         hooks,
       }),
   });
+  const adminApi = createAdminApi({ logging: logger, config, mcp, router });
   const started: { close(): Promise<void> }[] = [];
   try {
     for (const resource of [config, adminApi, modelProvider, mcp]) {

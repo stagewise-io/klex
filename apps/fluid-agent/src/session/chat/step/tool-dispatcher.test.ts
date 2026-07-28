@@ -70,6 +70,7 @@ function makeDispatcher(
     tools,
     modelMessages: [],
     toolTimeoutMs,
+    sessionId: 'test-session-id',
   });
 }
 

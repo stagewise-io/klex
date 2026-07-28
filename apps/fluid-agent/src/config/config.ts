@@ -14,6 +14,7 @@ import {
   type McpServerConfig,
   type ModelId,
   type ModelPurpose,
+  type ModelSelection,
   resolvePresetEndpoint,
 } from './types';
 
@@ -42,6 +43,22 @@ export interface Config {
   getModelSelection(purpose: ModelPurpose): readonly ModelId[];
   resolveModel(modelId: ModelId): ResolvedModelConfig;
   getMcpServers(): Readonly<Record<string, McpServerConfig>>;
+  /** Creates a new MCP server. Throws if the name already exists. */
+  addMcpServer(
+    name: string,
+    server: McpServerConfig,
+  ): Promise<Readonly<FluidConfig>>;
+  /** Updates (replaces) an existing MCP server by name. Throws if not found. */
+  updateMcpServer(
+    name: string,
+    server: McpServerConfig,
+  ): Promise<Readonly<FluidConfig>>;
+  /** Removes a single MCP server by name. Throws if not found. */
+  removeMcpServer(name: string): Promise<Readonly<FluidConfig>>;
+  /** Updates the model selection section of the config. */
+  updateModelSelection(
+    selection: ModelSelection,
+  ): Promise<Readonly<FluidConfig>>;
 }
 
 export interface ConfigDependencies {
@@ -188,6 +205,49 @@ class ConfigModule implements Config {
     return this.requireConfig().mcpServers;
   }
 
+  async addMcpServer(
+    name: string,
+    server: McpServerConfig,
+  ): Promise<Readonly<FluidConfig>> {
+    const current = this.requireConfig();
+    if (current.mcpServers[name]) {
+      throw new ConfigValidationError(`MCP server '${name}' already exists`);
+    }
+    const updated: FluidConfig = {
+      ...current,
+      mcpServers: { ...current.mcpServers, [name]: server },
+    };
+    return this.replace(updated);
+  }
+
+  async updateMcpServer(
+    name: string,
+    server: McpServerConfig,
+  ): Promise<Readonly<FluidConfig>> {
+    const current = this.requireConfig();
+    if (!current.mcpServers[name]) {
+      throw new ConfigValidationError(`MCP server '${name}' not found`);
+    }
+    const updated: FluidConfig = {
+      ...current,
+      mcpServers: { ...current.mcpServers, [name]: server },
+    };
+    return this.replace(updated);
+  }
+
+  async removeMcpServer(name: string): Promise<Readonly<FluidConfig>> {
+    const current = this.requireConfig();
+    if (!current.mcpServers[name]) {
+      throw new ConfigValidationError(`MCP server '${name}' not found`);
+    }
+    const { [name]: _removed, ...remaining } = current.mcpServers;
+    const updated: FluidConfig = {
+      ...current,
+      mcpServers: remaining,
+    };
+    return this.replace(updated);
+  }
+
   private async replaceNow(input: unknown): Promise<Readonly<FluidConfig>> {
     this.requireConfig();
     const config = this.parse(input);
@@ -247,6 +307,17 @@ class ConfigModule implements Config {
     }
 
     return config;
+  }
+
+  async updateModelSelection(
+    selection: ModelSelection,
+  ): Promise<Readonly<FluidConfig>> {
+    const current = this.requireConfig();
+    const updated: FluidConfig = {
+      ...current,
+      modelSelection: selection,
+    };
+    return this.replace(updated);
   }
 
   private requireConfig(): FluidConfig {

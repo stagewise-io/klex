@@ -14,7 +14,12 @@ const event = {
   payload: { exitCode: 1 },
 };
 
-function fakeClient() {
+function fakeClient(
+  options: {
+    era?: 'legacy' | 'modern';
+    capabilities?: Record<string, unknown>;
+  } = {},
+) {
   const handlers = new Map<string, (value: unknown) => unknown>();
   const requests: unknown[] = [];
   const client = {
@@ -47,9 +52,13 @@ function fakeClient() {
       }
       return {};
     }),
-    getServerCapabilities: () => ({
-      extensions: { [FLUID_EVENTS_EXTENSION_ID]: {} },
-    }),
+    getProtocolEra: () => options.era,
+    getServerCapabilities: vi.fn(
+      () =>
+        options.capabilities ?? {
+          extensions: { [FLUID_EVENTS_EXTENSION_ID]: {} },
+        },
+    ),
   } as unknown as FluidEventsClientProtocol;
   return { client, handlers, requests };
 }
@@ -62,7 +71,7 @@ describe('Fluid Events client', () => {
       { cursor: 'durable-cursor', limit: 10 },
       { metadata: { trace: 'trace-1' } },
     );
-    expect(requests[1]).toMatchObject({
+    expect(requests[0]).toMatchObject({
       params: {
         cursor: 'durable-cursor',
         _meta: {
@@ -110,13 +119,42 @@ describe('Fluid Events client', () => {
     );
   });
 
-  it('caches lazy discovery across concurrent operations', async () => {
-    const { client, requests } = fakeClient();
+  it('uses established modern capabilities without rediscovery', async () => {
+    const { client, requests } = fakeClient({ era: 'modern' });
+    const fluid = registerFluidEventsClient(client);
+    expect(await fluid.serverSupportsFluidEvents()).toBe(true);
+    expect(
+      requests.filter(
+        (request) =>
+          (request as { method: string }).method === 'server/discover',
+      ),
+    ).toHaveLength(0);
+  });
+
+  it('returns false for unsupported legacy servers without discovery', async () => {
+    const { client, requests } = fakeClient({
+      era: 'legacy',
+      capabilities: {},
+    });
+    const fluid = registerFluidEventsClient(client);
+    expect(await fluid.serverSupportsFluidEvents()).toBe(false);
+    expect(requests).toHaveLength(0);
+  });
+
+  it('uses advertised support for legacy servers without discovery', async () => {
+    const { client, requests } = fakeClient({ era: 'legacy' });
+    const fluid = registerFluidEventsClient(client);
+    expect(await fluid.serverSupportsFluidEvents()).toBe(true);
+    expect(requests).toHaveLength(0);
+  });
+
+  it('caches lazy discovery before protocol state is available', async () => {
+    const { client, requests } = fakeClient({ capabilities: undefined });
+    vi.mocked(client.getServerCapabilities).mockReturnValue(undefined);
     const fluid = registerFluidEventsClient(client);
     await Promise.all([
       fluid.serverSupportsFluidEvents(),
-      fluid.getEvents(),
-      fluid.listen({}),
+      fluid.serverSupportsFluidEvents(),
     ]);
     expect(
       requests.filter(

@@ -110,6 +110,7 @@ export interface McpDependencies {
   logging: RootLogger;
   config: Config;
   fluidEventInbox: FluidEventInbox;
+  connect?: McpConnectionFactory;
 }
 
 interface FluidEventWorker {
@@ -162,16 +163,13 @@ class McpModule implements Mcp {
       this.clearRetries();
       this.scheduleReconcile(config.mcpServers);
     });
+    const configuredServerCount = Object.keys(
+      this.deps.config.getMcpServers(),
+    ).length;
     this.scheduleReconcile(this.deps.config.getMcpServers());
-    await this.reconcileQueue;
     this.deps.logger.info(
-      {
-        configuredServerCount: Object.keys(this.deps.config.getMcpServers())
-          .length,
-        connectedServerCount: this.connections.size,
-        toolCount: countMcpTools(this.registry),
-      },
-      'MCP initial reconciliation completed',
+      { configuredServerCount },
+      'MCP started; environment reconciliation continues in background',
     );
   }
 
@@ -192,11 +190,14 @@ class McpModule implements Mcp {
     this.unsubscribe?.();
     this.unsubscribe = undefined;
     this.reconcileAbort?.abort();
+    this.reconcileAbort = undefined;
     this.clearRetries();
     for (const namespace of [...this.eventWorkers.keys()]) {
       this.stopEventWorker(namespace);
     }
-    await this.reconcileQueue.catch(() => undefined);
+    // Detach the handled queue rather than waiting for a connection factory that
+    // ignores abort. Generation checks close any connection that resolves late.
+    this.reconcileQueue = Promise.resolve();
     const connections = [...this.connections.values()];
     this.connections.clear();
     this.signatures.clear();
@@ -702,7 +703,7 @@ export function createMcp(deps: McpDependencies): Mcp {
     }),
     config: deps.config,
     fluidEventInbox: deps.fluidEventInbox,
-    connect: connectMcpServer,
+    connect: deps.connect ?? connectMcpServer,
   });
 }
 

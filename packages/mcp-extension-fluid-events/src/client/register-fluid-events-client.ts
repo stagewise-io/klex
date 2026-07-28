@@ -33,6 +33,7 @@ import type {
 
 export type FluidEventsClientProtocol = Pick<
   Client,
+  | 'getProtocolEra'
   | 'getServerCapabilities'
   | 'registerCapabilities'
   | 'request'
@@ -125,14 +126,18 @@ export function registerFluidEventsClient(
   const serverSupportsFluidEvents = async (
     requestOptions?: FluidEventsRequestOptions,
   ): Promise<boolean> => {
-    if (discoveryCapabilities === undefined) {
-      try {
-        await discover(requestOptions);
-      } catch (error) {
-        const initialization = client.getServerCapabilities();
-        if (initialization === undefined) throw error;
-      }
+    const initialization = client.getServerCapabilities();
+    if (
+      discoveryCapabilities !== undefined ||
+      client.getProtocolEra() !== undefined ||
+      initialization !== undefined
+    ) {
+      return resolveServerFluidEventsSupport({
+        discovery: discoveryCapabilities,
+        initialization,
+      });
     }
+    await discover(requestOptions);
     return resolveServerFluidEventsSupport({
       discovery: discoveryCapabilities,
       initialization: client.getServerCapabilities(),

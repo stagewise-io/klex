@@ -121,10 +121,18 @@ type ModelPurpose = keyof ModelSelection;
 
 // MCP server config (standard mcp.json shape)
 
+const mcpVersionNegotiationSchema = z.union([
+  z.enum(['legacy', 'auto']),
+  z.object({ pin: z.string().min(1) }).strict(),
+]);
+
+type McpVersionNegotiation = z.infer<typeof mcpVersionNegotiationSchema>;
+
 const stdioServerConfigSchema = z.object({
   command: z.string(),
   args: z.array(z.string()).optional(),
   env: z.record(z.string(), z.string()).optional(),
+  versionNegotiation: mcpVersionNegotiationSchema.optional(),
 });
 
 type StdioServerConfig = z.infer<typeof stdioServerConfigSchema>;
@@ -132,6 +140,7 @@ type StdioServerConfig = z.infer<typeof stdioServerConfigSchema>;
 const httpServerConfigSchema = z.object({
   url: z.url(),
   headers: z.record(z.string(), z.string()).optional(),
+  versionNegotiation: mcpVersionNegotiationSchema.optional(),
 });
 
 type HttpServerConfig = z.infer<typeof httpServerConfigSchema>;
@@ -158,6 +167,7 @@ export type {
   FluidConfig,
   HttpServerConfig,
   McpServerConfig,
+  McpVersionNegotiation,
   ModelId,
   ModelPurpose,
   ModelSelection,

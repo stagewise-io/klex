@@ -587,4 +587,41 @@ describe('Config — getMcpServers', () => {
     const { module } = await setup();
     expect(module.getMcpServers()).toEqual({});
   });
+
+  it.each([
+    ['legacy', 'legacy'],
+    ['auto', 'auto'],
+    ['pinned', { pin: '2026-07-28' }],
+  ] as const)('accepts %s MCP version negotiation', async (_label, mode) => {
+    const config = manualConfig();
+    config.mcpServers.remote = {
+      url: 'https://example.com/mcp',
+      versionNegotiation: mode,
+    };
+    const { module } = await setup(config);
+    expect(module.getMcpServers().remote?.versionNegotiation).toEqual(mode);
+  });
+
+  it('keeps omitted MCP version negotiation valid', async () => {
+    const config = manualConfig();
+    config.mcpServers.local = { command: 'mcp-server' };
+    const { module } = await setup(config);
+    expect(module.getMcpServers().local?.versionNegotiation).toBeUndefined();
+  });
+
+  it.each([{}, { pin: '' }, 'modern'])(
+    'rejects invalid MCP version negotiation: %j',
+    async (versionNegotiation) => {
+      const config = manualConfig() as unknown as Record<string, unknown>;
+      const mcpServers = config.mcpServers as Record<string, unknown>;
+      mcpServers.remote = {
+        url: 'https://example.com/mcp',
+        versionNegotiation,
+      };
+      const { module } = await setup();
+      await expect(module.replace(config)).rejects.toBeInstanceOf(
+        ConfigValidationError,
+      );
+    },
+  );
 });

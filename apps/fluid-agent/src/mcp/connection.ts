@@ -4,6 +4,7 @@ import {
   type Tool as McpToolDefinition,
   StreamableHTTPClientTransport,
   type Transport,
+  type VersionNegotiationOptions,
 } from '@modelcontextprotocol/client';
 import { StdioClientTransport } from '@modelcontextprotocol/client/stdio';
 
@@ -92,7 +93,7 @@ export async function connectMcpServer(
   const client = new Client(
     { name: 'fluid-agent', version: '1.0.0' },
     {
-      versionNegotiation: { mode: 'auto' },
+      versionNegotiation: resolveVersionNegotiation(options.config),
       listChanged: {
         tools: {
           onChanged: (error, _tool) => {
@@ -150,6 +151,12 @@ export async function connectMcpServer(
   } finally {
     options.signal.removeEventListener('abort', onAbort);
   }
+}
+
+export function resolveVersionNegotiation(
+  config: McpServerConfig,
+): VersionNegotiationOptions {
+  return { mode: config.versionNegotiation ?? 'auto' };
 }
 
 function createTransport(config: McpServerConfig): Transport {

@@ -28,7 +28,6 @@ import {
 import {
   buildMcpRegistry,
   canonicalConfigSignature,
-  countMcpTools,
   type McpRegistry,
   normalizeCallToolResult,
 } from './registry';
@@ -121,27 +120,30 @@ interface FluidEventWorker {
   recovered: boolean;
 }
 
+interface McpConnectionAttempt {
+  controller: AbortController;
+}
+
+interface McpServerRuntime {
+  namespace: string;
+  config: McpServerConfig;
+  signature: string;
+  status: Exclude<McpConnectionStatus, 'disconnected'>;
+  connection?: McpConnection;
+  attempt?: McpConnectionAttempt;
+  retryAttempt: number;
+  retryTimer?: ReturnType<typeof setTimeout>;
+  resetPending: boolean;
+}
+
 class McpModule implements Mcp {
-  private readonly connections = new Map<string, McpConnection>();
-  private readonly signatures = new Map<string, string>();
+  private readonly servers = new Map<string, McpServerRuntime>();
+  private readonly inboxResets = new Map<string, Promise<void>>();
   private readonly eventWorkers = new Map<string, FluidEventWorker>();
   private readonly eventListeners = new Set<McpFluidEventListener>();
-  private readonly retryAttempts = new Map<string, number>();
-  private readonly retryTimers = new Map<
-    string,
-    ReturnType<typeof setTimeout>
-  >();
   private registry: McpRegistry = new Map();
   private started = false;
-  private generation = 0;
   private unsubscribe: (() => void) | undefined;
-  private reconcileQueue: Promise<void> = Promise.resolve();
-  private reconcileAbort: AbortController | undefined;
-
-  /** Names of servers currently attempting to connect. */
-  private readonly connectingServers = new Set<string>();
-  /** Names of servers whose last connection attempt failed. */
-  private readonly erroredServers = new Set<string>();
   /** Recorded tool call history (newest first). */
   private readonly toolCallHistory: McpToolCallRecord[] = [];
   /** Maximum number of tool call records to keep. */
@@ -160,7 +162,6 @@ class McpModule implements Mcp {
     if (this.started) return;
     this.started = true;
     this.unsubscribe = this.deps.config.subscribe((config) => {
-      this.clearRetries();
       this.scheduleReconcile(config.mcpServers);
     });
     const configuredServerCount = Object.keys(
@@ -186,27 +187,16 @@ class McpModule implements Mcp {
   async close(): Promise<void> {
     if (!this.started) return;
     this.started = false;
-    this.generation += 1;
     this.unsubscribe?.();
     this.unsubscribe = undefined;
-    this.reconcileAbort?.abort();
-    this.reconcileAbort = undefined;
-    this.clearRetries();
-    for (const namespace of [...this.eventWorkers.keys()]) {
-      this.stopEventWorker(namespace);
-    }
-    // Detach the handled queue rather than waiting for a connection factory that
-    // ignores abort. Generation checks close any connection that resolves late.
-    this.reconcileQueue = Promise.resolve();
-    const connections = [...this.connections.values()];
-    this.connections.clear();
-    this.signatures.clear();
+    const connections = [...this.servers.values()].flatMap((runtime) => {
+      const connection = this.invalidateRuntime(runtime);
+      return connection ? [connection] : [];
+    });
     this.publishRegistry();
     await Promise.allSettled(
       connections.map((connection) => connection.close()),
     );
-    this.connectingServers.clear();
-    this.erroredServers.clear();
     this.deps.logger.info('MCP stopped');
   }
 
@@ -300,120 +290,220 @@ class McpModule implements Mcp {
     servers: Readonly<Record<string, McpServerConfig>>,
   ): void {
     if (!this.started) return;
-    const snapshot = structuredClone(servers);
-    this.reconcileAbort?.abort();
-    this.reconcileQueue = this.reconcileQueue
-      .catch(() => undefined)
-      .then(() => this.reconcile(snapshot))
-      .catch((error: unknown) => {
-        this.deps.logger.error({ error }, 'MCP reconciliation failed');
-      });
+    this.reconcile(structuredClone(servers));
   }
 
-  private async reconcile(
-    servers: Readonly<Record<string, McpServerConfig>>,
-  ): Promise<void> {
+  private reconcile(servers: Readonly<Record<string, McpServerConfig>>): void {
     if (!this.started) return;
-    const generation = ++this.generation;
-    const controller = new AbortController();
-    this.reconcileAbort = controller;
     this.deps.logger.debug(
       { configuredServerCount: Object.keys(servers).length },
       'MCP reconciliation started',
     );
 
-    for (const [namespace, connection] of [...this.connections]) {
-      const next = servers[namespace];
-      if (next && this.signatures.get(namespace) === signature(next)) continue;
-      this.connections.delete(namespace);
-      this.signatures.delete(namespace);
-      this.stopEventWorker(namespace);
-      this.erroredServers.delete(namespace);
-      this.connectingServers.delete(namespace);
+    const resetNamespaces = new Set<string>();
+    for (const runtime of [...this.servers.values()]) {
+      const next = servers[runtime.namespace];
+      if (next && runtime.signature === signature(next)) continue;
       const reason = next ? 'configuration-changed' : 'configuration-removed';
-      await this.deps.fluidEventInbox.reset(namespace);
-      await connection.close().catch((error: unknown) => {
-        this.deps.logger.warn(
-          { error, namespace },
-          'MCP connection close failed',
-        );
-      });
-      this.deps.logger.info({ namespace, reason }, 'MCP server disconnected');
+      if (next) resetNamespaces.add(runtime.namespace);
+      const connection = this.invalidateRuntime(runtime);
+      if (connection) this.closeConnection(connection, runtime.namespace);
+      if (!next) this.resetRemovedNamespace(runtime.namespace);
+      this.deps.logger.info(
+        { namespace: runtime.namespace, reason },
+        'MCP server disconnected',
+      );
     }
     this.publishRegistry();
 
-    await Promise.all(
-      Object.entries(servers).map(async ([namespace, config]) => {
-        if (this.connections.has(namespace)) return;
-        this.connectingServers.add(namespace);
-        this.erroredServers.delete(namespace);
-        try {
-          const connection = await this.deps.connect({
-            namespace,
-            config,
-            signal: controller.signal,
-            onToolsChanged: (changed) => {
-              if (this.connections.get(namespace) !== changed) return;
-              this.publishRegistry();
-              this.deps.logger.info(
-                { namespace, toolCount: changed.tools.length },
-                'MCP server tools updated',
-              );
-            },
-            onFluidEvent: (changed, notification) =>
-              this.enqueueFluidEvent(changed, notification),
-            onDisconnect: (disconnected) => {
-              if (this.connections.get(namespace) !== disconnected) return;
-              this.connections.delete(namespace);
-              this.signatures.delete(namespace);
-              this.stopEventWorker(namespace);
-              this.publishRegistry();
-              this.deps.logger.warn(
-                { namespace },
-                'MCP server disconnected unexpectedly',
-              );
-              this.scheduleReconnect(namespace, config);
-            },
-          });
-          if (!this.started || generation !== this.generation) {
-            await connection.close();
-            return;
-          }
-          this.connections.set(namespace, connection);
-          this.signatures.set(namespace, signature(config));
-          this.clearRetry(namespace);
-          this.connectingServers.delete(namespace);
-          this.erroredServers.delete(namespace);
-          this.publishRegistry();
-          if (connection.supportsFluidEvents) this.startEventWorker(connection);
-          this.deps.logger.info(
-            {
-              namespace,
-              toolCount: connection.tools.length,
-              supportsFluidEvents: connection.supportsFluidEvents,
-            },
-            'MCP server connected',
-          );
-        } catch (error) {
-          this.connectingServers.delete(namespace);
-          if (!controller.signal.aborted) {
-            this.erroredServers.add(namespace);
-            this.deps.logger.error(
-              { error, namespace },
-              'MCP connection failed',
-            );
-            this.scheduleReconnect(namespace, config);
-          }
-        }
-      }),
-    );
+    for (const [namespace, config] of Object.entries(servers)) {
+      if (this.servers.has(namespace)) continue;
+      const runtime: McpServerRuntime = {
+        namespace,
+        config,
+        signature: signature(config),
+        status: 'connecting',
+        retryAttempt: 0,
+        resetPending: resetNamespaces.has(namespace),
+      };
+      this.servers.set(namespace, runtime);
+      this.activateRuntime(runtime);
+    }
+
     this.deps.logger.debug(
-      {
-        connectedServerCount: this.connections.size,
-        toolCount: countMcpTools(this.registry),
-      },
+      { configuredServerCount: this.servers.size },
       'MCP reconciliation completed',
     );
+  }
+
+  private activateRuntime(runtime: McpServerRuntime): void {
+    if (
+      !this.isCurrentRuntime(runtime) ||
+      runtime.connection ||
+      runtime.attempt
+    )
+      return;
+    runtime.status = 'connecting';
+    const pendingReset = runtime.resetPending
+      ? this.resetInbox(runtime.namespace)
+      : this.inboxResets.get(runtime.namespace);
+    if (!pendingReset) {
+      this.connectRuntime(runtime);
+      return;
+    }
+    void pendingReset
+      .then(() => {
+        if (!this.isCurrentRuntime(runtime)) return;
+        runtime.resetPending = false;
+        this.connectRuntime(runtime);
+      })
+      .catch((error: unknown) => {
+        if (!this.isCurrentRuntime(runtime)) return;
+        runtime.resetPending = true;
+        runtime.status = 'error';
+        this.deps.logger.error(
+          { error, namespace: runtime.namespace },
+          'MCP Fluid Event inbox reset failed',
+        );
+        this.scheduleReconnect(runtime);
+      });
+  }
+
+  private connectRuntime(runtime: McpServerRuntime): void {
+    if (
+      !this.isCurrentRuntime(runtime) ||
+      runtime.connection ||
+      runtime.attempt
+    )
+      return;
+    const attempt: McpConnectionAttempt = {
+      controller: new AbortController(),
+    };
+    runtime.attempt = attempt;
+    runtime.status = 'connecting';
+    void this.deps
+      .connect({
+        namespace: runtime.namespace,
+        config: runtime.config,
+        signal: attempt.controller.signal,
+        onToolsChanged: (changed) => {
+          if (!this.isCurrentConnection(runtime, changed)) return;
+          this.publishRegistry();
+          this.deps.logger.info(
+            { namespace: runtime.namespace, toolCount: changed.tools.length },
+            'MCP server tools updated',
+          );
+        },
+        onFluidEvent: (changed, notification) =>
+          this.enqueueFluidEvent(changed, notification),
+        onDisconnect: (disconnected) => {
+          if (!this.isCurrentConnection(runtime, disconnected)) return;
+          runtime.connection = undefined;
+          runtime.status = 'error';
+          this.stopEventWorker(runtime.namespace);
+          this.publishRegistry();
+          this.deps.logger.warn(
+            { namespace: runtime.namespace },
+            'MCP server disconnected unexpectedly',
+          );
+          this.scheduleReconnect(runtime);
+        },
+      })
+      .then((connection) => {
+        if (!this.isCurrentAttempt(runtime, attempt)) {
+          this.closeConnection(connection, runtime.namespace);
+          return;
+        }
+        runtime.attempt = undefined;
+        runtime.connection = connection;
+        runtime.status = 'connected';
+        this.clearRetry(runtime);
+        this.publishRegistry();
+        if (connection.supportsFluidEvents) this.startEventWorker(connection);
+        this.deps.logger.info(
+          {
+            namespace: runtime.namespace,
+            toolCount: connection.tools.length,
+            supportsFluidEvents: connection.supportsFluidEvents,
+          },
+          'MCP server connected',
+        );
+      })
+      .catch((error: unknown) => {
+        if (!this.isCurrentAttempt(runtime, attempt)) return;
+        runtime.attempt = undefined;
+        runtime.status = 'error';
+        this.deps.logger.error(
+          { error, namespace: runtime.namespace },
+          'MCP connection failed',
+        );
+        this.scheduleReconnect(runtime);
+      });
+  }
+
+  private invalidateRuntime(
+    runtime: McpServerRuntime,
+  ): McpConnection | undefined {
+    if (this.servers.get(runtime.namespace) === runtime)
+      this.servers.delete(runtime.namespace);
+    runtime.attempt?.controller.abort();
+    runtime.attempt = undefined;
+    this.clearRetry(runtime);
+    this.stopEventWorker(runtime.namespace);
+    const connection = runtime.connection;
+    runtime.connection = undefined;
+    return connection;
+  }
+
+  private isCurrentRuntime(runtime: McpServerRuntime): boolean {
+    return this.started && this.servers.get(runtime.namespace) === runtime;
+  }
+
+  private isCurrentAttempt(
+    runtime: McpServerRuntime,
+    attempt: McpConnectionAttempt,
+  ): boolean {
+    return this.isCurrentRuntime(runtime) && runtime.attempt === attempt;
+  }
+
+  private isCurrentConnection(
+    runtime: McpServerRuntime,
+    connection: McpConnection,
+  ): boolean {
+    return this.isCurrentRuntime(runtime) && runtime.connection === connection;
+  }
+
+  private closeConnection(connection: McpConnection, namespace: string): void {
+    void connection.close().catch((error: unknown) => {
+      this.deps.logger.warn(
+        { error, namespace },
+        'MCP connection close failed',
+      );
+    });
+  }
+
+  private resetRemovedNamespace(namespace: string): void {
+    void this.resetInbox(namespace).catch((error: unknown) => {
+      this.deps.logger.warn(
+        { error, namespace },
+        'MCP Fluid Event inbox reset failed for removed server',
+      );
+    });
+  }
+
+  private resetInbox(namespace: string): Promise<void> {
+    const previous = this.inboxResets.get(namespace) ?? Promise.resolve();
+    const reset = previous
+      .catch(() => undefined)
+      .then(() => this.deps.fluidEventInbox.reset(namespace));
+    this.inboxResets.set(namespace, reset);
+    void reset
+      .finally(() => {
+        if (this.inboxResets.get(namespace) === reset)
+          this.inboxResets.delete(namespace);
+      })
+      .catch(() => undefined);
+    return reset;
   }
 
   private startEventWorker(connection: McpConnection): void {
@@ -600,84 +690,61 @@ class McpModule implements Mcp {
     return (
       this.started &&
       !worker.controller.signal.aborted &&
-      this.connections.get(worker.connection.namespace) === worker.connection &&
+      this.servers.get(worker.connection.namespace)?.connection ===
+        worker.connection &&
       this.eventWorkers.get(worker.connection.namespace) === worker
     );
   }
 
-  private scheduleReconnect(namespace: string, config: McpServerConfig): void {
-    if (!this.started || this.retryTimers.has(namespace)) return;
-    const current = this.deps.config.getMcpServers()[namespace];
-    if (!current || signature(current) !== signature(config)) return;
-    const attempt = (this.retryAttempts.get(namespace) ?? 0) + 1;
-    this.retryAttempts.set(namespace, attempt);
-    const delay = Math.min(RETRY_INITIAL_MS * 2 ** (attempt - 1), RETRY_MAX_MS);
+  private scheduleReconnect(runtime: McpServerRuntime): void {
+    if (!this.isCurrentRuntime(runtime) || runtime.retryTimer) return;
+    runtime.retryAttempt += 1;
+    const delay = Math.min(
+      RETRY_INITIAL_MS * 2 ** (runtime.retryAttempt - 1),
+      RETRY_MAX_MS,
+    );
     const timer = setTimeout(() => {
-      this.retryTimers.delete(namespace);
-      if (!this.started || this.connections.has(namespace)) return;
-      this.scheduleReconcile(this.deps.config.getMcpServers());
+      if (!this.isCurrentRuntime(runtime) || runtime.retryTimer !== timer)
+        return;
+      runtime.retryTimer = undefined;
+      this.activateRuntime(runtime);
     }, delay);
     timer.unref?.();
-    this.retryTimers.set(namespace, timer);
+    runtime.retryTimer = timer;
   }
 
-  private clearRetry(namespace: string): void {
-    const timer = this.retryTimers.get(namespace);
-    if (timer) clearTimeout(timer);
-    this.retryTimers.delete(namespace);
-    this.retryAttempts.delete(namespace);
-    this.erroredServers.delete(namespace);
-  }
-
-  private clearRetries(): void {
-    for (const namespace of [...this.retryTimers.keys()]) {
-      this.clearRetry(namespace);
-    }
+  private clearRetry(runtime: McpServerRuntime): void {
+    if (runtime.retryTimer) clearTimeout(runtime.retryTimer);
+    runtime.retryTimer = undefined;
+    runtime.retryAttempt = 0;
   }
 
   private publishRegistry(): void {
-    this.registry = buildMcpRegistry(this.connections);
+    const connections = new Map<string, McpConnection>();
+    for (const runtime of this.servers.values()) {
+      if (runtime.connection)
+        connections.set(runtime.namespace, runtime.connection);
+    }
+    this.registry = buildMcpRegistry(connections);
   }
 
   getServerStatuses(): McpServerInfo[] {
     const configured = this.deps.config.getMcpServers();
     const allNames = new Set<string>([
       ...Object.keys(configured),
-      ...this.connections.keys(),
-      ...this.connectingServers,
-      ...this.erroredServers,
+      ...this.servers.keys(),
     ]);
     const statuses: McpServerInfo[] = [];
     for (const name of [...allNames].sort()) {
-      const connection = this.connections.get(name);
-      const config = configured[name];
-      const transport: 'stdio' | 'http' = config
-        ? 'command' in config
-          ? 'stdio'
-          : 'http'
-        : this.connections.has(name)
-          ? 'http'
-          : 'http';
-      let status: McpConnectionStatus;
-      if (connection) {
-        status = 'connected';
-      } else if (this.connectingServers.has(name)) {
-        status = 'connecting';
-      } else if (this.erroredServers.has(name)) {
-        status = 'error';
-      } else if (config) {
-        status = 'connecting';
-      } else {
-        status = 'disconnected';
-      }
+      const runtime = this.servers.get(name);
+      const config = configured[name] ?? runtime?.config;
+      const connection = runtime?.connection;
       statuses.push({
         name,
-        status,
-        toolCount: connection ? connection.tools.length : 0,
-        supportsFluidEvents: connection
-          ? connection.supportsFluidEvents
-          : false,
-        transport,
+        status: runtime?.status ?? 'disconnected',
+        toolCount: connection?.tools.length ?? 0,
+        supportsFluidEvents: connection?.supportsFluidEvents ?? false,
+        transport: config && 'command' in config ? 'stdio' : 'http',
       });
     }
     return statuses;

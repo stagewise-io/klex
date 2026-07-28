@@ -237,20 +237,20 @@ describe('convertToModelMessagesExtended — data-continue filtering', () => {
 
     const passedMessages = vi.mocked(convertToModelMessages).mock.calls[
       vi.mocked(convertToModelMessages).mock.calls.length - 1
-    ]![0] as ExtendedUIMessage[];
+    ]?.[0] as ExtendedUIMessage[];
 
     // All 3 messages preserved — no merging or dropping
     expect(passedMessages).toHaveLength(3);
     // First user message: data-continue stripped, text part remains
     expect(
-      passedMessages[0]!.parts.some((p) => p.type === 'data-continue'),
+      passedMessages[0]?.parts.some((p) => p.type === 'data-continue'),
     ).toBe(false);
-    expect(passedMessages[0]!.parts.some((p) => p.type === 'text')).toBe(true);
+    expect(passedMessages[0]?.parts.some((p) => p.type === 'text')).toBe(true);
     // Assistant message: unchanged
-    expect(passedMessages[1]!.role).toBe('assistant');
+    expect(passedMessages[1]?.role).toBe('assistant');
     // Last user message: data-continue preserved
     expect(
-      passedMessages[2]!.parts.some((p) => p.type === 'data-continue'),
+      passedMessages[2]?.parts.some((p) => p.type === 'data-continue'),
     ).toBe(true);
   });
 
@@ -265,20 +265,20 @@ describe('convertToModelMessagesExtended — data-continue filtering', () => {
 
     const passedMessages = vi.mocked(convertToModelMessages).mock.calls[
       vi.mocked(convertToModelMessages).mock.calls.length - 1
-    ]![0] as ExtendedUIMessage[];
+    ]?.[0] as ExtendedUIMessage[];
 
     // All 3 messages preserved as separate messages
     expect(passedMessages).toHaveLength(3);
     // Each has its text part, no data-continue
-    expect(passedMessages[0]!.parts).toEqual([{ type: 'text', text: 'first' }]);
-    expect(passedMessages[1]!.parts).toEqual([
+    expect(passedMessages[0]?.parts).toEqual([{ type: 'text', text: 'first' }]);
+    expect(passedMessages[1]?.parts).toEqual([
       { type: 'text', text: 'second' },
     ]);
     // Last user message keeps its data-continue
     expect(
-      passedMessages[2]!.parts.some((p) => p.type === 'data-continue'),
+      passedMessages[2]?.parts.some((p) => p.type === 'data-continue'),
     ).toBe(true);
-    expect(passedMessages[2]!.parts.some((p) => p.type === 'text')).toBe(true);
+    expect(passedMessages[2]?.parts.some((p) => p.type === 'text')).toBe(true);
   });
 
   it('preserves all parts when no data-continue parts exist', async () => {
@@ -291,10 +291,10 @@ describe('convertToModelMessagesExtended — data-continue filtering', () => {
 
     const passedMessages = vi.mocked(convertToModelMessages).mock.calls[
       vi.mocked(convertToModelMessages).mock.calls.length - 1
-    ]![0] as ExtendedUIMessage[];
+    ]?.[0] as ExtendedUIMessage[];
 
-    expect(passedMessages[0]!.parts).toHaveLength(1);
-    expect(passedMessages[0]!.parts[0]).toMatchObject({
+    expect(passedMessages[0]?.parts).toHaveLength(1);
+    expect(passedMessages[0]?.parts[0]).toMatchObject({
       type: 'text',
       text: 'hello',
     });
@@ -310,11 +310,11 @@ describe('convertToModelMessagesExtended — data-continue filtering', () => {
 
     const passedMessages = vi.mocked(convertToModelMessages).mock.calls[
       vi.mocked(convertToModelMessages).mock.calls.length - 1
-    ]![0] as ExtendedUIMessage[];
+    ]?.[0] as ExtendedUIMessage[];
 
     // Last user message keeps its data-continue
     expect(
-      passedMessages[1]!.parts.some((p) => p.type === 'data-continue'),
+      passedMessages[1]?.parts.some((p) => p.type === 'data-continue'),
     ).toBe(true);
   });
 
@@ -327,10 +327,10 @@ describe('convertToModelMessagesExtended — data-continue filtering', () => {
 
     const passedMessages = vi.mocked(convertToModelMessages).mock.calls[
       vi.mocked(convertToModelMessages).mock.calls.length - 1
-    ]![0] as ExtendedUIMessage[];
+    ]?.[0] as ExtendedUIMessage[];
 
     expect(passedMessages).toHaveLength(1);
-    expect(passedMessages[0]!.parts).toHaveLength(1);
+    expect(passedMessages[0]?.parts).toHaveLength(1);
   });
 
   it('drops user messages that become empty after continue stripping', async () => {
@@ -344,14 +344,14 @@ describe('convertToModelMessagesExtended — data-continue filtering', () => {
 
     const passedMessages = vi.mocked(convertToModelMessages).mock.calls[
       vi.mocked(convertToModelMessages).mock.calls.length - 1
-    ]![0] as ExtendedUIMessage[];
+    ]?.[0] as ExtendedUIMessage[];
 
     // First user message had only a data-continue part — dropped entirely.
     // Last user message keeps its data-continue.
     expect(passedMessages).toHaveLength(2);
-    expect(passedMessages[0]!.role).toBe('assistant');
+    expect(passedMessages[0]?.role).toBe('assistant');
     expect(
-      passedMessages[1]!.parts.some((p) => p.type === 'data-continue'),
+      passedMessages[1]?.parts.some((p) => p.type === 'data-continue'),
     ).toBe(true);
   });
 
@@ -365,17 +365,17 @@ describe('convertToModelMessagesExtended — data-continue filtering', () => {
 
     const passedMessages = vi.mocked(convertToModelMessages).mock.calls[
       vi.mocked(convertToModelMessages).mock.calls.length - 1
-    ]![0] as ExtendedUIMessage[];
+    ]?.[0] as ExtendedUIMessage[];
 
     // First user message: continue stripped, text part remains
-    expect(passedMessages[0]!.parts).toHaveLength(1);
-    expect(passedMessages[0]!.parts[0]).toMatchObject({
+    expect(passedMessages[0]?.parts).toHaveLength(1);
+    expect(passedMessages[0]?.parts[0]).toMatchObject({
       type: 'text',
       text: 'real text',
     });
     // Last user message: unchanged
     expect(
-      passedMessages[1]!.parts.some((p) => p.type === 'data-continue'),
+      passedMessages[1]?.parts.some((p) => p.type === 'data-continue'),
     ).toBe(true);
   });
 });

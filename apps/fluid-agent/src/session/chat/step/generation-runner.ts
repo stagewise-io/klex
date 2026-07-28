@@ -1,5 +1,3 @@
-import { randomUUID } from 'node:crypto';
-
 import type { Span } from '@opentelemetry/api';
 import type { LanguageModel, ModelMessage } from 'ai';
 
@@ -259,7 +257,6 @@ export class GenerationRunner {
 
     // Post-generation tool sweep: catch tool calls that were fully
     // streamed but not yet dispatched (e.g. due to abort mid-stream).
-    const preSweepCount = toolDispatcher.dispatchedCount;
     const sweptToolCount = toolDispatcher.sweep(latestMessage);
     if (sweptToolCount > 0) {
       stepSpan.addEvent('step.tools_swept', {

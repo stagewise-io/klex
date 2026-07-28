@@ -66,7 +66,6 @@ class TurnModule implements Turn {
   private readonly id = randomUUID();
 
   private turnSpan: Span | null = null;
-  private turnContext: Context | null = null;
 
   private currentStep: Step | null = null;
 
@@ -75,7 +74,7 @@ class TurnModule implements Turn {
   async run(): Promise<TurnResult> {
     // Lazy span creation: spans are created at run() time to prevent
     // span leaks if run() is never called.
-    this.turnSpan = tracer.startSpan(
+    const turnSpan = tracer.startSpan(
       'turn',
       {
         attributes: {
@@ -86,7 +85,8 @@ class TurnModule implements Turn {
       },
       this.deps.sessionContext,
     );
-    this.turnContext = trace.setSpan(this.deps.sessionContext, this.turnSpan);
+    this.turnSpan = turnSpan;
+    const turnContext = trace.setSpan(this.deps.sessionContext, turnSpan);
 
     this.deps.sessionSpan.addEvent('session.turn_started', {
       'turn.id': this.id,
@@ -101,9 +101,7 @@ class TurnModule implements Turn {
     let totalStepCount = 0;
 
     try {
-      await context.with(this.turnContext, async () => {
-        const turnSpan = this.turnSpan!;
-
+      await context.with(turnContext, async () => {
         // 2.1: Fetch inbox for low, medium and high prio inputs
         const drainedLow = this.deps.inbox.drain(
           this.deps.messages,
@@ -154,7 +152,7 @@ class TurnModule implements Turn {
 
           const step = createStep({
             logger: this.deps.logger,
-            turnContext: this.turnContext!,
+            turnContext,
             messages: this.deps.messages,
             inbox: this.deps.inbox,
             extensionHandler: this.deps.extensionHandler,

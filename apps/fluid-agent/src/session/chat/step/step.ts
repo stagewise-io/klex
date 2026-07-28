@@ -11,7 +11,6 @@ import type { AgentTools } from '@/session/tools';
 import type { ExtendedUIMessage } from '@/session/types';
 
 import type { ExtensionHandler } from '../extension-handler';
-import type { TransformationFlags } from '../extensions/extension-api';
 import { checkAndFixHistory } from '../utils/check-and-fix-history';
 import { convertToModelMessagesExtended } from '../utils/convert-to-model-messages';
 import { inboxDrainAttributes } from '../utils/inbox-drain-attributes';
@@ -106,7 +105,7 @@ class StepModule implements Step {
   async run(): Promise<StepResult> {
     // Lazy span creation: spans are created at run() time to prevent
     // span leaks if run() is never called (e.g. abort before execution).
-    this.stepSpan = tracer.startSpan(
+    const stepSpan = tracer.startSpan(
       'step',
       {
         attributes: {
@@ -116,12 +115,11 @@ class StepModule implements Step {
       },
       this.deps.turnContext,
     );
-    this.stepContext = trace.setSpan(this.deps.turnContext, this.stepSpan);
+    this.stepSpan = stepSpan;
+    this.stepContext = trace.setSpan(this.deps.turnContext, stepSpan);
 
     try {
       return await context.with(this.stepContext, async () => {
-        const stepSpan = this.stepSpan!;
-
         // 2.2.2: fetch inbox
         const drained = this.deps.inbox.drain(
           this.deps.messages,

@@ -5,6 +5,7 @@ import { HTTPException } from 'hono/http-exception';
  * Shared validation hook for test apps.
  * Formats Zod validation errors as `{ error: string }` with 400 status.
  */
+// biome-ignore lint/suspicious/noExplicitAny: Hook generic parameters are opaque validation types
 export const validationHook: Hook<any, any, any, any> = (result, c) => {
   if (!result.success) {
     const message = result.error.issues

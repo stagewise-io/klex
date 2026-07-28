@@ -35,6 +35,7 @@ export interface AdminAppDependencies {
   logger: ModuleLogger;
 }
 
+// biome-ignore lint/suspicious/noExplicitAny: Hook generic parameters are opaque validation types
 const validationHook: Hook<any, any, any, any> = (result, c) => {
   if (!result.success) {
     const message = result.error.issues

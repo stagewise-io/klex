@@ -89,8 +89,8 @@ describe('sessions routes', () => {
     const app = createApp(routerWith(sessions));
     const response = await app.request('/v1/sessions');
     const body = (await response.json()) as { sessions: SessionInfo[] };
-    expect(body.sessions[0]!.model.isFallback).toBe(true);
-    expect(body.sessions[0]!.model.fallbackIndex).toBe(2);
+    expect(body.sessions[0]?.model.isFallback).toBe(true);
+    expect(body.sessions[0]?.model.fallbackIndex).toBe(2);
   });
 
   it('reflects terminated status and runtime state', async () => {
@@ -103,8 +103,8 @@ describe('sessions routes', () => {
     const app = createApp(routerWith(sessions));
     const response = await app.request('/v1/sessions');
     const body = (await response.json()) as { sessions: SessionInfo[] };
-    expect(body.sessions[0]!.status).toBe('terminated');
-    expect(body.sessions[0]!.runtimeState).toBe('terminated');
+    expect(body.sessions[0]?.status).toBe('terminated');
+    expect(body.sessions[0]?.runtimeState).toBe('terminated');
   });
 
   it('reflects null latest usage when no generation has occurred', async () => {
@@ -119,8 +119,8 @@ describe('sessions routes', () => {
     const app = createApp(routerWith(sessions));
     const response = await app.request('/v1/sessions');
     const body = (await response.json()) as { sessions: SessionInfo[] };
-    expect(body.sessions[0]!.tokens.latest).toBeNull();
-    expect(body.sessions[0]!.tokens.total).toEqual({
+    expect(body.sessions[0]?.tokens.latest).toBeNull();
+    expect(body.sessions[0]?.tokens.total).toEqual({
       inputTokens: 0,
       outputTokens: 0,
     });

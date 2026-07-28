@@ -269,7 +269,7 @@ export const getMcpToolCallHistoryRoute = createRoute({
 export function getMcpToolCallHistory(
   deps: McpRouteDependencies,
 ): RouteHandler<typeof getMcpToolCallHistoryRoute> {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  // biome-ignore lint/suspicious/noExplicitAny: RouteHandler generic causes TS2589 type instantiation depth exceeded
   return ((c: any) => {
     const { name } = c.req.valid('param') as { name: string };
     const history = deps.mcp.getToolCallHistory();

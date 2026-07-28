@@ -1,10 +1,11 @@
-import { Hono } from 'hono';
+import type { OpenAPIHono } from '@hono/zod-openapi';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { Router } from '@/router';
 import type { SessionInfo } from '@/session/types';
 
-import { getSessions } from './sessions';
+import { getSessions, sessionsRoute } from './sessions';
+import { setupTestApp } from './test-utils';
 
 function makeSessionInfo(overrides: Partial<SessionInfo> = {}): SessionInfo {
   return {
@@ -28,10 +29,10 @@ function makeSessionInfo(overrides: Partial<SessionInfo> = {}): SessionInfo {
   };
 }
 
-function createApp(router: Router): Hono {
-  const app = new Hono();
-  app.get('/v1/sessions', getSessions({ router }));
-  return app;
+function createApp(router: Router): OpenAPIHono {
+  return setupTestApp((app) => {
+    app.openapi(sessionsRoute, getSessions({ router }));
+  });
 }
 
 function routerWith(sessions: SessionInfo[]): Router {

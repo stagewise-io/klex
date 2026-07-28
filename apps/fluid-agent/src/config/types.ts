@@ -175,4 +175,4 @@ export type {
   ProviderPreset,
   StdioServerConfig,
 };
-export { mcpServerConfigSchema, modelSelectionSchema };
+export { mcpServerConfigSchema, modelIdSchema, modelSelectionSchema };

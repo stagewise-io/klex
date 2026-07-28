@@ -1,5 +1,9 @@
 import { randomUUID } from 'node:crypto';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { getAsset, isSea } from 'node:sea';
+import { pathToFileURL } from 'node:url';
 import { Worker } from 'node:worker_threads';
 
 import type { ToolSet } from 'ai';
@@ -64,6 +68,7 @@ export interface JavaScriptToolDependencies {
 
 class JavaScriptToolModule implements JavaScriptTool {
   private worker: Worker | undefined;
+  private workerTempDir: string | undefined;
   private activeAbort: AbortController | undefined;
   private queue: Promise<void> = Promise.resolve();
   private started = false;
@@ -157,7 +162,11 @@ class JavaScriptToolModule implements JavaScriptTool {
 
   private async ensureWorker(): Promise<Worker> {
     if (this.worker) return this.worker;
-    const worker = new Worker(this.deps.workerUrl ?? resolveWorkerUrl(), {
+    const { url, tempDir } = this.deps.workerUrl
+      ? { url: this.deps.workerUrl, tempDir: undefined }
+      : resolveWorkerUrl();
+    this.workerTempDir = tempDir;
+    const worker = new Worker(url, {
       resourceLimits: {
         maxOldGenerationSizeMb: JAVASCRIPT_SANDBOX_LIMITS.workerOldGenerationMb,
         stackSizeMb: JAVASCRIPT_SANDBOX_LIMITS.workerStackMb,
@@ -203,7 +212,16 @@ class JavaScriptToolModule implements JavaScriptTool {
   private async invalidateWorker(): Promise<void> {
     const worker = this.worker;
     this.worker = undefined;
+    // Capture and clear temp-dir ownership synchronously before awaiting
+    // terminate(). A fatal execution fires invalidateWorker() without
+    // awaiting it (see finish() in runExecution). The queue then advances to
+    // the next execution, which calls ensureWorker() and assigns a new
+    // temp dir to this.workerTempDir. If we read this.workerTempDir after
+    // the await, we would delete the replacement worker's directory.
+    const tempDir = this.workerTempDir;
+    this.workerTempDir = undefined;
     if (worker) await worker.terminate();
+    if (tempDir) rmSync(tempDir, { recursive: true, force: true });
   }
 
   private async executeNow(input: JavaScriptExecution): Promise<JsonValue> {
@@ -397,14 +415,17 @@ function contextFrom(
   return { executionId, signal: abort.signal };
 }
 
-function resolveWorkerUrl(): URL {
+function resolveWorkerUrl(): { url: URL; tempDir?: string } {
   if (isSea()) {
     const source = getAsset('javascript-sandbox-worker.js', 'utf8');
-    return new URL(
-      `data:text/javascript;base64,${Buffer.from(source).toString('base64')}`,
-    );
+    // Node's Worker constructor rejects data: URLs (ERR_WORKER_PATH).
+    // Write the embedded worker to a temp .mjs file so it can be loaded as ESM.
+    const dir = mkdtempSync(join(tmpdir(), 'fluid-agent-worker-'));
+    const workerPath = join(dir, 'javascript-sandbox-worker.mjs');
+    writeFileSync(workerPath, source, 'utf8');
+    return { url: pathToFileURL(workerPath), tempDir: dir };
   }
-  return new URL('./javascript-sandbox-worker.js', import.meta.url);
+  return { url: new URL('./javascript-sandbox-worker.js', import.meta.url) };
 }
 
 export function createJavaScriptTool(

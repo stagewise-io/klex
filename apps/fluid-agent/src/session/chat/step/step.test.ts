@@ -4,7 +4,6 @@ import { context } from '@opentelemetry/api';
 import { isToolUIPart } from 'ai';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { SessionInboxPriority } from '@/session/inbox';
 import type { AgentTools } from '@/session/tools';
 import type { ExtendedUIMessage } from '@/session/types';
 
@@ -164,8 +163,8 @@ describe('Step — decision: skip', () => {
             p.state !== 'output-error'
           ) {
             const prev = p.state;
-            (p as any).state = 'output-error';
-            (p as any).errorText =
+            (p as Record<string, unknown>).state = 'output-error';
+            (p as Record<string, unknown>).errorText =
               'The tool call was not executed for unknown reasons. Try again.';
             repaired.push({
               messageId: msg.id,
@@ -275,8 +274,8 @@ describe('Step — decision: proceed', () => {
             p.state !== 'output-error'
           ) {
             const prev = p.state;
-            (p as any).state = 'output-error';
-            (p as any).errorText =
+            (p as Record<string, unknown>).state = 'output-error';
+            (p as Record<string, unknown>).errorText =
               'The tool call was not executed for unknown reasons. Try again.';
             repaired.push({
               messageId: msg.id,

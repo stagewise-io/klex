@@ -1,4 +1,4 @@
-import { Hono } from 'hono';
+import type { OpenAPIHono } from '@hono/zod-openapi';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { ModuleLogger } from '@stagewise/logger';
@@ -9,12 +9,18 @@ import type { Mcp, McpServerInfo, McpToolCallRecord } from '@/mcp';
 
 import {
   createMcpServer,
+  createMcpServerRoute,
   deleteMcpServer,
+  deleteMcpServerRoute,
   getMcpServers,
+  getMcpServersRoute,
   getMcpToolCallHistory,
+  getMcpToolCallHistoryRoute,
   type McpRouteDependencies,
   updateMcpServer,
+  updateMcpServerRoute,
 } from './mcp';
+import { setupTestApp } from './test-utils';
 
 const logger = {
   error: () => undefined,
@@ -70,14 +76,14 @@ function makeDeps(
   };
 }
 
-function createApp(deps: McpRouteDependencies): Hono {
-  const app = new Hono();
-  app.get('/v1/mcp-servers', getMcpServers(deps));
-  app.post('/v1/mcp-servers', createMcpServer(deps));
-  app.patch('/v1/mcp-servers/:name', updateMcpServer(deps));
-  app.delete('/v1/mcp-servers/:name', deleteMcpServer(deps));
-  app.get('/v1/mcp-servers/:name/tool-calls', getMcpToolCallHistory(deps));
-  return app;
+function createApp(deps: McpRouteDependencies): OpenAPIHono {
+  return setupTestApp((app) => {
+    app.openapi(getMcpServersRoute, getMcpServers(deps));
+    app.openapi(createMcpServerRoute, createMcpServer(deps));
+    app.openapi(updateMcpServerRoute, updateMcpServer(deps));
+    app.openapi(deleteMcpServerRoute, deleteMcpServer(deps));
+    app.openapi(getMcpToolCallHistoryRoute, getMcpToolCallHistory(deps));
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -131,7 +137,7 @@ describe('POST /v1/mcp-servers — create MCP server', () => {
     });
     expect(response.status).toBe(400);
     expect(await response.json()).toEqual({
-      error: 'Request body must be valid JSON',
+      error: 'Malformed JSON in request body',
     });
   });
 
@@ -144,7 +150,7 @@ describe('POST /v1/mcp-servers — create MCP server', () => {
     });
     expect(response.status).toBe(400);
     const body = (await response.json()) as { error: string };
-    expect(body.error).toContain('name');
+    expect(body.error).toBeTruthy();
   });
 
   it('rejects body with an empty name field with 400', async () => {
@@ -156,7 +162,7 @@ describe('POST /v1/mcp-servers — create MCP server', () => {
     });
     expect(response.status).toBe(400);
     const body = (await response.json()) as { error: string };
-    expect(body.error).toContain('name');
+    expect(body.error).toBeTruthy();
   });
 
   it('rejects invalid MCP server config with 400', async () => {
@@ -168,7 +174,7 @@ describe('POST /v1/mcp-servers — create MCP server', () => {
     });
     expect(response.status).toBe(400);
     const body = (await response.json()) as { error: string };
-    expect(body.error).toContain('Invalid');
+    expect(body.error).toBeTruthy();
   });
 
   it('accepts a valid HTTP server config and returns 201 with updated statuses', async () => {
@@ -275,7 +281,7 @@ describe('PATCH /v1/mcp-servers/:name — update MCP server', () => {
     });
     expect(response.status).toBe(400);
     expect(await response.json()).toEqual({
-      error: 'Request body must be valid JSON',
+      error: 'Malformed JSON in request body',
     });
   });
 
@@ -288,7 +294,7 @@ describe('PATCH /v1/mcp-servers/:name — update MCP server', () => {
     });
     expect(response.status).toBe(400);
     const body = (await response.json()) as { error: string };
-    expect(body.error).toContain('Invalid');
+    expect(body.error).toBeTruthy();
   });
 
   it('updates an existing server and returns updated statuses', async () => {

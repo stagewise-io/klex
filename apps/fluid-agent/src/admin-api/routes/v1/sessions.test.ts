@@ -1,10 +1,11 @@
-import { Hono } from 'hono';
+import type { OpenAPIHono } from '@hono/zod-openapi';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { Router } from '@/router';
 import type { SessionInfo } from '@/session/types';
 
-import { getSessions } from './sessions';
+import { getSessions, sessionsRoute } from './sessions';
+import { setupTestApp } from './test-utils';
 
 function makeSessionInfo(overrides: Partial<SessionInfo> = {}): SessionInfo {
   return {
@@ -28,10 +29,10 @@ function makeSessionInfo(overrides: Partial<SessionInfo> = {}): SessionInfo {
   };
 }
 
-function createApp(router: Router): Hono {
-  const app = new Hono();
-  app.get('/v1/sessions', getSessions({ router }));
-  return app;
+function createApp(router: Router): OpenAPIHono {
+  return setupTestApp((app) => {
+    app.openapi(sessionsRoute, getSessions({ router }));
+  });
 }
 
 function routerWith(sessions: SessionInfo[]): Router {
@@ -88,8 +89,8 @@ describe('sessions routes', () => {
     const app = createApp(routerWith(sessions));
     const response = await app.request('/v1/sessions');
     const body = (await response.json()) as { sessions: SessionInfo[] };
-    expect(body.sessions[0]!.model.isFallback).toBe(true);
-    expect(body.sessions[0]!.model.fallbackIndex).toBe(2);
+    expect(body.sessions[0]?.model.isFallback).toBe(true);
+    expect(body.sessions[0]?.model.fallbackIndex).toBe(2);
   });
 
   it('reflects terminated status and runtime state', async () => {
@@ -102,8 +103,8 @@ describe('sessions routes', () => {
     const app = createApp(routerWith(sessions));
     const response = await app.request('/v1/sessions');
     const body = (await response.json()) as { sessions: SessionInfo[] };
-    expect(body.sessions[0]!.status).toBe('terminated');
-    expect(body.sessions[0]!.runtimeState).toBe('terminated');
+    expect(body.sessions[0]?.status).toBe('terminated');
+    expect(body.sessions[0]?.runtimeState).toBe('terminated');
   });
 
   it('reflects null latest usage when no generation has occurred', async () => {
@@ -118,8 +119,8 @@ describe('sessions routes', () => {
     const app = createApp(routerWith(sessions));
     const response = await app.request('/v1/sessions');
     const body = (await response.json()) as { sessions: SessionInfo[] };
-    expect(body.sessions[0]!.tokens.latest).toBeNull();
-    expect(body.sessions[0]!.tokens.total).toEqual({
+    expect(body.sessions[0]?.tokens.latest).toBeNull();
+    expect(body.sessions[0]?.tokens.total).toEqual({
       inputTokens: 0,
       outputTokens: 0,
     });

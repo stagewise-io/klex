@@ -26,7 +26,7 @@ export interface GenerationErrorClassification {
 /** A constructor function for an AI SDK error class. */
 type ErrorConstructor =
   | (abstract new (
-      ...args: any[]
+      ...args: unknown[]
     ) => Error)
   | { isInstance: (e: unknown) => boolean };
 

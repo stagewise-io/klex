@@ -42,7 +42,7 @@ describe('checkAndFixHistory', () => {
       makeMessage('assistant', [makeToolPart('input-streaming')]),
     ];
     checkAndFixHistory(history);
-    const part = history[0]!.parts[0] as Record<string, unknown>;
+    const part = history[0]?.parts[0] as Record<string, unknown>;
     expect(part.state).toBe('output-error');
     expect(part.errorText).toBe(
       'The tool call was not executed for unknown reasons. Try again.',
@@ -54,7 +54,7 @@ describe('checkAndFixHistory', () => {
       makeMessage('assistant', [makeToolPart('input-available')]),
     ];
     checkAndFixHistory(history);
-    expect((history[0]!.parts[0] as Record<string, unknown>).state).toBe(
+    expect((history[0]?.parts[0] as Record<string, unknown>)?.state).toBe(
       'output-error',
     );
   });
@@ -64,7 +64,7 @@ describe('checkAndFixHistory', () => {
       makeMessage('assistant', [makeToolPart('approval-requested')]),
     ];
     checkAndFixHistory(history);
-    expect((history[0]!.parts[0] as Record<string, unknown>).state).toBe(
+    expect((history[0]?.parts[0] as Record<string, unknown>)?.state).toBe(
       'output-error',
     );
   });
@@ -74,7 +74,7 @@ describe('checkAndFixHistory', () => {
       makeMessage('assistant', [makeToolPart('output-available')]),
     ];
     checkAndFixHistory(history);
-    expect((history[0]!.parts[0] as Record<string, unknown>).state).toBe(
+    expect((history[0]?.parts[0] as Record<string, unknown>)?.state).toBe(
       'output-available',
     );
   });
@@ -82,7 +82,7 @@ describe('checkAndFixHistory', () => {
   it('does not modify output-error tool calls', () => {
     const history = [makeMessage('assistant', [makeToolPart('output-error')])];
     checkAndFixHistory(history);
-    expect((history[0]!.parts[0] as Record<string, unknown>).state).toBe(
+    expect((history[0]?.parts[0] as Record<string, unknown>)?.state).toBe(
       'output-error',
     );
   });
@@ -90,7 +90,7 @@ describe('checkAndFixHistory', () => {
   it('does not modify output-denied tool calls', () => {
     const history = [makeMessage('assistant', [makeToolPart('output-denied')])];
     checkAndFixHistory(history);
-    expect((history[0]!.parts[0] as Record<string, unknown>).state).toBe(
+    expect((history[0]?.parts[0] as Record<string, unknown>)?.state).toBe(
       'output-denied',
     );
   });
@@ -100,7 +100,7 @@ describe('checkAndFixHistory', () => {
       makeMessage('assistant', [makeToolPart('approval-responded')]),
     ];
     checkAndFixHistory(history);
-    expect((history[0]!.parts[0] as Record<string, unknown>).state).toBe(
+    expect((history[0]?.parts[0] as Record<string, unknown>)?.state).toBe(
       'approval-responded',
     );
   });
@@ -111,8 +111,8 @@ describe('checkAndFixHistory', () => {
       makeMessage('assistant', [makeTextPart('response')]),
     ];
     checkAndFixHistory(history);
-    expect(history[0]!.parts[0]).toEqual(makeTextPart('hello'));
-    expect(history[1]!.parts[0]).toEqual(makeTextPart('response'));
+    expect(history[0]?.parts[0]).toEqual(makeTextPart('hello'));
+    expect(history[1]?.parts[0]).toEqual(makeTextPart('response'));
   });
 
   it('handles mixed tool and text parts in the same message', () => {
@@ -124,11 +124,11 @@ describe('checkAndFixHistory', () => {
       ]),
     ];
     checkAndFixHistory(history);
-    expect(history[0]!.parts[0]).toEqual(makeTextPart('response'));
-    expect((history[0]!.parts[1] as Record<string, unknown>).state).toBe(
+    expect(history[0]?.parts[0]).toEqual(makeTextPart('response'));
+    expect((history[0]?.parts[1] as Record<string, unknown>)?.state).toBe(
       'output-error',
     );
-    expect((history[0]!.parts[2] as Record<string, unknown>).state).toBe(
+    expect((history[0]?.parts[2] as Record<string, unknown>)?.state).toBe(
       'output-available',
     );
   });
@@ -151,13 +151,13 @@ describe('checkAndFixHistory', () => {
       makeMessage('assistant', [makeToolPart('approval-requested', 'call-3')]),
     ];
     checkAndFixHistory(history);
-    expect((history[0]!.parts[0] as Record<string, unknown>).state).toBe(
+    expect((history[0]?.parts[0] as Record<string, unknown>)?.state).toBe(
       'output-error',
     );
-    expect((history[0]!.parts[1] as Record<string, unknown>).state).toBe(
+    expect((history[0]?.parts[1] as Record<string, unknown>)?.state).toBe(
       'output-error',
     );
-    expect((history[1]!.parts[0] as Record<string, unknown>).state).toBe(
+    expect((history[1]?.parts[0] as Record<string, unknown>)?.state).toBe(
       'output-error',
     );
   });

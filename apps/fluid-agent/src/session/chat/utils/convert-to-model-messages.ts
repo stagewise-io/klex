@@ -21,7 +21,7 @@ export const convertToModelMessagesExtended = async (
 ): ReturnType<typeof convertToModelMessages> => {
   let lastUserMsgIdx = -1;
   for (let i = messages.length - 1; i >= 0; i--) {
-    if (messages[i]!.role === 'user') {
+    if (messages[i]?.role === 'user') {
       lastUserMsgIdx = i;
       break;
     }

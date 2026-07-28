@@ -72,9 +72,9 @@ function toolsToDefinitions(
     const t = tool as Record<string, unknown>;
     return {
       name,
-      description: t['description'],
-      inputSchema: t['inputSchema'],
-      outputSchema: t['outputSchema'],
+      description: t.description,
+      inputSchema: t.inputSchema,
+      outputSchema: t.outputSchema,
     };
   });
 }
@@ -319,8 +319,8 @@ class FluidTelemetry implements Telemetry {
     if (tools != null) {
       for (const [name, tool] of Object.entries(tools)) {
         const t = tool as Record<string, unknown>;
-        if (typeof t['description'] === 'string') {
-          toolDescriptions.set(name, t['description']);
+        if (typeof t.description === 'string') {
+          toolDescriptions.set(name, t.description);
         }
       }
     }
@@ -548,10 +548,10 @@ class FluidTelemetry implements Telemetry {
           content: textEndEvent.content,
         };
         if (textEndEvent.text) {
-          outputMessage['text'] = textEndEvent.text;
+          outputMessage.text = textEndEvent.text;
         }
         if (textEndEvent.toolCalls && textEndEvent.toolCalls.length > 0) {
-          outputMessage['toolCalls'] = textEndEvent.toolCalls;
+          outputMessage.toolCalls = textEndEvent.toolCalls;
         }
         const outputMessages = serializeJson([outputMessage]);
         if (outputMessages != null) {

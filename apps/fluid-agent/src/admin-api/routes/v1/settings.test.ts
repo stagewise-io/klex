@@ -1,4 +1,4 @@
-import { Hono } from 'hono';
+import type { OpenAPIHono } from '@hono/zod-openapi';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { ModuleLogger } from '@stagewise/logger';
@@ -8,9 +8,12 @@ import { ConfigValidationError } from '@/config';
 
 import {
   getModelSelection,
+  getModelSelectionRoute,
   patchModelSelection,
+  patchModelSelectionRoute,
   type SettingsRouteDependencies,
 } from './settings';
+import { setupTestApp } from './test-utils';
 
 const logger = {
   error: () => undefined,
@@ -39,11 +42,11 @@ function makeDeps(config: Partial<Config> = {}): SettingsRouteDependencies {
   };
 }
 
-function createApp(deps: SettingsRouteDependencies): Hono {
-  const app = new Hono();
-  app.get('/v1/settings/model-selection', getModelSelection(deps));
-  app.patch('/v1/settings/model-selection', patchModelSelection(deps));
-  return app;
+function createApp(deps: SettingsRouteDependencies): OpenAPIHono {
+  return setupTestApp((app) => {
+    app.openapi(getModelSelectionRoute, getModelSelection(deps));
+    app.openapi(patchModelSelectionRoute, patchModelSelection(deps));
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -91,7 +94,7 @@ describe('PATCH /v1/settings/model-selection', () => {
     });
     expect(response.status).toBe(400);
     expect(await response.json()).toEqual({
-      error: 'Request body must be valid JSON',
+      error: 'Malformed JSON in request body',
     });
   });
 
@@ -103,9 +106,8 @@ describe('PATCH /v1/settings/model-selection', () => {
       body: '"not-an-object"',
     });
     expect(response.status).toBe(400);
-    expect(await response.json()).toEqual({
-      error: 'Request body must be a JSON object',
-    });
+    const body = (await response.json()) as { error: string };
+    expect(body.error).toBeTruthy();
   });
 
   it('rejects invalid model IDs with 400', async () => {

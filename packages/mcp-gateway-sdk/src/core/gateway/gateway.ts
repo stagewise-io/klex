@@ -77,8 +77,10 @@ class ExchangeModule implements GatewayExchange {
   readonly #onEnded: () => void;
   readonly #chunkHandlers = new Set<(data: string) => void>();
   readonly #closeHandlers = new Set<(cause?: Error) => void>();
+  readonly #pendingChunks: string[] = [];
   #opened = false;
   #closed = false;
+  #closeCause: Error | undefined;
 
   constructor(
     id: GatewayExchangeId,
@@ -94,10 +96,15 @@ class ExchangeModule implements GatewayExchange {
 
   onChunk(handler: (data: string) => void): Unsubscribe {
     this.#chunkHandlers.add(handler);
+    for (const data of this.#pendingChunks.splice(0)) handler(data);
     return () => this.#chunkHandlers.delete(handler);
   }
 
   onClose(handler: (cause?: Error) => void): Unsubscribe {
+    if (this.#closed) {
+      handler(this.#closeCause);
+      return () => undefined;
+    }
     this.#closeHandlers.add(handler);
     return () => this.#closeHandlers.delete(handler);
   }
@@ -120,12 +127,17 @@ class ExchangeModule implements GatewayExchange {
 
   chunk(data: string): void {
     if (this.#closed || !this.#opened) return;
+    if (this.#chunkHandlers.size === 0) {
+      this.#pendingChunks.push(data);
+      return;
+    }
     for (const handler of this.#chunkHandlers) handler(data);
   }
 
   end(cause?: Error): void {
     if (this.#closed) return;
     this.#closed = true;
+    this.#closeCause = cause;
     this.#onEnded();
     if (!this.#opened)
       this.#response.reject(

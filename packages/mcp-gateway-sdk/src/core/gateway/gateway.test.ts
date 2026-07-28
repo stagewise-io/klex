@@ -122,6 +122,46 @@ describe('gateway', () => {
     expect(closed).toHaveBeenCalledWith(undefined);
   });
 
+  it('replays response frames received before consumers subscribe', async () => {
+    const { gateway, connection } = setup();
+    const opening = gateway.openExchange(agent, environmentId, request);
+    await vi.waitFor(() =>
+      expect(connection.sent.at(-1)?.type).toBe('exchange.open'),
+    );
+    const frame = connection.sent.at(-1);
+    if (frame?.type !== 'exchange.open')
+      throw new Error('Expected exchange.open');
+
+    connection.emit({
+      version: 2,
+      type: 'exchange.opened',
+      exchangeId: frame.exchangeId,
+      status: 200,
+      statusText: 'OK',
+      headers: {},
+    });
+    connection.emit({
+      version: 2,
+      type: 'exchange.chunk',
+      exchangeId: frame.exchangeId,
+      data: btoa('fast response'),
+    });
+    connection.emit({
+      version: 2,
+      type: 'exchange.close',
+      exchangeId: frame.exchangeId,
+    });
+
+    const exchange = await opening;
+    const chunk = vi.fn();
+    const closed = vi.fn();
+    exchange.onChunk(chunk);
+    exchange.onClose(closed);
+
+    expect(chunk).toHaveBeenCalledWith(btoa('fast response'));
+    expect(closed).toHaveBeenCalledWith(undefined);
+  });
+
   it('rejects unavailable and unauthorized environments', async () => {
     const unavailable = createGateway({
       authorization: { authorize: async () => true },

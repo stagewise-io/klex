@@ -92,7 +92,7 @@ Startup order:
 2. Wait for its `/mcp` endpoint to respond.
 3. Connect the gateway daemon over outbound WebSocket.
 
-Shutdown reverses that order. A Windows-MCP exit after startup is fatal and stops the host. Gateway connection loss is handled by the SDK's reconnect policy.
+Shutdown reverses that order. On Windows, the host terminates the complete Windows-MCP process tree so `uvx` cannot leave an orphaned server holding the loopback port. A Windows-MCP exit after startup is fatal and stops the host. Gateway connection loss is handled by the SDK's reconnect policy.
 
 ## Initial limitations
 

@@ -29,6 +29,7 @@ async function shutdown(error?: Error): Promise<void> {
     logger.error({ error: closeError }, 'Windows-use shutdown failed');
   });
   await logger[Symbol.asyncDispose]();
+  process.exit();
 }
 
 process.on('SIGINT', () => void shutdown());

@@ -61,6 +61,26 @@ describe('WindowsMcpProcess', () => {
     expect(child.kill).toHaveBeenCalledOnce();
   });
 
+  it('delegates shutdown to the process-tree terminator', async () => {
+    const child = fakeChild();
+    const terminateProcessTree = vi.fn(async () => undefined);
+    const process = createWindowsMcpProcess({
+      command: 'uvx',
+      port: 8123,
+      logging: createLogger({ type: 'hidden' }),
+      spawn: () => child as never,
+      fetch: async () => new Response(),
+      terminateProcessTree,
+    });
+    await process.start();
+
+    await process.close();
+
+    expect(terminateProcessTree).toHaveBeenCalledOnce();
+    expect(terminateProcessTree).toHaveBeenCalledWith(child);
+    expect(child.kill).not.toHaveBeenCalled();
+  });
+
   it('rolls back when readiness fails', async () => {
     const child = fakeChild();
     const process = createWindowsMcpProcess({

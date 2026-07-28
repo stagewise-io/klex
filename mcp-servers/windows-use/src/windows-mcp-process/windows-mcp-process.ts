@@ -10,6 +10,7 @@ export interface WindowsMcpProcessOptions {
   readonly readinessIntervalMs?: number;
   readonly spawn?: typeof spawnWindowsMcp;
   readonly fetch?: typeof globalThis.fetch;
+  readonly terminateProcessTree?: typeof terminateProcessTree;
   readonly onUnexpectedExit?: (error: Error) => void;
 }
 
@@ -32,6 +33,7 @@ interface WindowsMcpProcessDependencies {
   readonly readinessIntervalMs: number;
   readonly spawn: SpawnWindowsMcp;
   readonly fetch: typeof globalThis.fetch;
+  readonly terminateProcessTree: typeof terminateProcessTree;
   readonly onUnexpectedExit?: (error: Error) => void;
 }
 
@@ -133,17 +135,7 @@ class WindowsMcpProcessModule implements WindowsMcpProcess {
     this.#child = undefined;
     this.#started = false;
     if (!child || child.exitCode !== null) return;
-    await new Promise<void>((resolve) => {
-      const timeout = setTimeout(() => child.kill('SIGKILL'), 5_000);
-      child.once('exit', () => {
-        clearTimeout(timeout);
-        resolve();
-      });
-      if (!child.kill('SIGTERM')) {
-        clearTimeout(timeout);
-        resolve();
-      }
-    });
+    await this.#dependencies.terminateProcessTree(child);
   }
 
   #pipeDiagnostics(
@@ -177,6 +169,7 @@ export function createWindowsMcpProcess(
     readinessIntervalMs: options.readinessIntervalMs ?? 250,
     spawn: options.spawn ?? spawnWindowsMcp,
     fetch: options.fetch ?? globalThis.fetch,
+    terminateProcessTree: options.terminateProcessTree ?? terminateProcessTree,
     ...(options.onUnexpectedExit
       ? { onUnexpectedExit: options.onUnexpectedExit }
       : {}),
@@ -191,6 +184,74 @@ function spawnWindowsMcp(
     shell: false,
     stdio: ['pipe', 'pipe', 'pipe'],
     windowsHide: true,
+  });
+}
+
+async function terminateProcessTree(
+  child: ChildProcessWithoutNullStreams,
+): Promise<void> {
+  if (process.platform === 'win32') {
+    await terminateWindowsProcessTree(child);
+    return;
+  }
+  await terminateSingleProcess(child);
+}
+
+async function terminateWindowsProcessTree(
+  child: ChildProcessWithoutNullStreams,
+): Promise<void> {
+  const pid = child.pid;
+  if (pid === undefined) {
+    await terminateSingleProcess(child);
+    return;
+  }
+  const taskkill = spawn('taskkill.exe', ['/PID', String(pid), '/T', '/F'], {
+    shell: false,
+    stdio: 'ignore',
+    windowsHide: true,
+  });
+  const exitCode = await new Promise<number | null>((resolve, reject) => {
+    taskkill.once('error', reject);
+    taskkill.once('exit', resolve);
+  });
+  if (exitCode !== 0 && child.exitCode === null) {
+    throw new Error(
+      `Failed to terminate Windows-MCP process tree (${exitCode})`,
+    );
+  }
+  await waitForExit(child, 5_000);
+}
+
+async function terminateSingleProcess(
+  child: ChildProcessWithoutNullStreams,
+): Promise<void> {
+  await new Promise<void>((resolve) => {
+    const timeout = setTimeout(() => child.kill('SIGKILL'), 5_000);
+    child.once('exit', () => {
+      clearTimeout(timeout);
+      resolve();
+    });
+    if (!child.kill('SIGTERM')) {
+      clearTimeout(timeout);
+      resolve();
+    }
+  });
+}
+
+async function waitForExit(
+  child: ChildProcessWithoutNullStreams,
+  timeoutMs: number,
+): Promise<void> {
+  if (child.exitCode !== null) return;
+  await new Promise<void>((resolve, reject) => {
+    const timeout = setTimeout(
+      () => reject(new Error('Timed out terminating Windows-MCP process tree')),
+      timeoutMs,
+    );
+    child.once('exit', () => {
+      clearTimeout(timeout);
+      resolve();
+    });
   });
 }
 

@@ -1,0 +1,14 @@
+name: Build Windows-MCP
+
+on:
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  placeholder:
+    name: Select the windows-use branch when dispatching
+    runs-on: ubuntu-latest
+    steps:
+      - name: Explain placeholder
+        run: echo "Dispatch this workflow with the windows-use branch selected to run the full Windows build."

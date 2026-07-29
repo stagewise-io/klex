@@ -1,9 +1,17 @@
+import { dirname, join } from 'node:path';
+import { isSea } from 'node:sea';
+
 import { createLogger } from '@stagewise/logger';
 
 import { createConfig } from '@/config';
 import { createWindowsUse } from '@/windows-use';
 
-const config = createConfig();
+const configPath =
+  process.env.WINDOWS_USE_CONFIG ??
+  (isSea()
+    ? join(dirname(process.execPath), 'windows-use.config.json')
+    : undefined);
+const config = createConfig(process.env, configPath);
 const logger = createLogger({
   name: 'windows-use',
   minLevel: config.logLevel,

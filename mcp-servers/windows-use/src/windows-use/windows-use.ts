@@ -42,6 +42,7 @@ class WindowsUseModule implements WindowsUse {
     const createDaemon = options.createDaemon ?? createGatewayDaemon;
     this.#process = createProcess({
       command: options.config.windowsMcpCommand,
+      launchMode: options.config.windowsMcpLaunchMode,
       port: options.config.windowsMcpPort,
       logging: options.logging,
       onUnexpectedExit: (error) => options.onFatal?.(error),

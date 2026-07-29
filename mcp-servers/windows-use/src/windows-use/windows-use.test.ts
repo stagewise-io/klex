@@ -18,6 +18,7 @@ const config: WindowsUseConfig = {
   gatewayUrl: new URL('wss://gateway.example.com/environment'),
   gatewayToken: 'secret',
   windowsMcpCommand: 'uvx',
+  windowsMcpLaunchMode: 'uvx',
   windowsMcpPort: 8123,
   logLevel: 'INFO',
 };
@@ -98,7 +99,11 @@ describe('WindowsUse', () => {
     await app.start();
 
     expect(processOptions).toEqual(
-      expect.objectContaining({ command: 'uvx', port: 8123 }),
+      expect.objectContaining({
+        command: 'uvx',
+        launchMode: 'uvx',
+        port: 8123,
+      }),
     );
     expect(daemonOptions?.connection()).toEqual({
       url: config.gatewayUrl,

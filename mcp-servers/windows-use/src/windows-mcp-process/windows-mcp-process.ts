@@ -4,6 +4,7 @@ import type { ModuleLogger, RootLogger } from '@stagewise/logger';
 
 export interface WindowsMcpProcessOptions {
   readonly command: string;
+  readonly launchMode: 'executable' | 'uvx';
   readonly port: number;
   readonly logging: RootLogger;
   readonly readinessTimeoutMs?: number;
@@ -27,6 +28,7 @@ type SpawnWindowsMcp = (
 
 interface WindowsMcpProcessDependencies {
   readonly command: string;
+  readonly launchMode: 'executable' | 'uvx';
   readonly port: number;
   readonly logger: ModuleLogger;
   readonly readinessTimeoutMs: number;
@@ -69,7 +71,7 @@ class WindowsMcpProcessModule implements WindowsMcpProcess {
 
   async #start(): Promise<void> {
     const args = [
-      'windows-mcp',
+      ...(this.#dependencies.launchMode === 'uvx' ? ['windows-mcp'] : []),
       'serve',
       '--transport',
       'streamable-http',
@@ -160,6 +162,7 @@ export function createWindowsMcpProcess(
 ): WindowsMcpProcess {
   return new WindowsMcpProcessModule({
     command: options.command,
+    launchMode: options.launchMode,
     port: options.port,
     logger: options.logging.child({
       name: 'windows-mcp-process',

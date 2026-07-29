@@ -2,17 +2,20 @@ import { fileURLToPath } from 'node:url';
 
 import { build } from 'esbuild';
 
+const isSea = process.argv.includes('--sea');
+
 await build({
   entryPoints: ['src/main.ts'],
   bundle: true,
   platform: 'node',
-  format: 'esm',
+  format: isSea ? 'cjs' : 'esm',
   target: 'node22',
   outfile: 'dist/main.js',
-  packages: 'external',
+  packages: isSea ? 'bundle' : 'external',
   alias: {
     '@': fileURLToPath(new URL('./src/', import.meta.url)),
   },
-  sourcemap: true,
+  sourcemap: !isSea,
+  minify: isSea,
   legalComments: 'none',
 });

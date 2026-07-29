@@ -4,7 +4,7 @@ Minimal Windows environment host that supervises Windows-MCP and exposes its Str
 
 ## Architecture
 
-One Node.js process starts `uvx windows-mcp` as its only child process. The gateway daemon runs in-process and forwards tunneled HTTP exchanges to `http://127.0.0.1:8123/mcp`. The host waits for Windows-MCP readiness before connecting to the gateway.
+One Node.js process starts Windows-MCP as its only child process. Development mode invokes `uvx windows-mcp`; the portable bundle invokes the adjacent frozen `windows-mcp.exe` directly. The gateway daemon runs in-process and forwards tunneled HTTP exchanges to `http://127.0.0.1:8123/mcp`. The host waits for Windows-MCP readiness before connecting to the gateway.
 
 This package is Windows-specific. The separate `mcp-servers/computer` package remains platform agnostic.
 
@@ -25,6 +25,7 @@ Copy `.env.example` outside version control or provide these variables through t
 - `GATEWAY_URL` — required `ws:` or `wss:` gateway environment endpoint, normally ending in `/environment`.
 - `GATEWAY_TOKEN` — required bearer token for the configured environment principal.
 - `WINDOWS_MCP_COMMAND` — optional executable path; defaults to `uvx`.
+- `WINDOWS_MCP_LAUNCH_MODE` — optional `uvx` or `executable`; defaults to `uvx` for development.
 - `WINDOWS_MCP_PORT` — optional loopback port; defaults to `8123`.
 - `LOG_LEVEL` — optional logger level; defaults to `INFO`.
 
@@ -83,6 +84,26 @@ Validate:
 pnpm --filter @stagewise/windows-use typecheck
 pnpm --filter @stagewise/windows-use test
 ```
+
+## Portable Windows distribution
+
+The reproducible PyInstaller project in `packaging/windows-mcp/` builds the frozen Windows-MCP child. The Windows Use SEA build embeds the Node.js host into `stagewise-windows-use.exe`, and `packaging/windows-use/assemble.ps1` combines both outputs into one portable ZIP.
+
+The assembled bundle reads `windows-use.config.json` next to the host executable. Relative `windowsMcpCommand` paths are resolved from that configuration file, and environment variables override matching JSON values. Edit only the gateway URL and environment token for the normal portable test.
+
+On a Windows x64 build machine, first build Windows-MCP and then assemble the complete distribution:
+
+```powershell
+pnpm install --frozen-lockfile
+./mcp-servers/windows-use/packaging/windows-mcp/build.ps1
+./mcp-servers/windows-use/packaging/windows-use/assemble.ps1
+```
+
+The output is `packaging/windows-use/artifacts/stagewise-windows-use-win-x64.zip`. The GitHub Actions workflow builds and uploads the same complete bundle after signing both primary executables, smoke-testing the frozen Windows-MCP child, and verifying the final staged Authenticode signatures.
+
+Release workflow builds use Azure Trusted Signing for `stagewise-windows-use.exe` and `windows-mcp/windows-mcp.exe`. The workflow reads non-sensitive Azure configuration from variables in the protected `windows-use-release` GitHub Environment and reads only `AZURE_CLIENT_SECRET` from its environment secrets. Local builds remain unsigned when signing configuration is absent. Azure credentials and generated signing metadata must never be committed.
+
+This milestone is a portable test distribution. It is not an installer, service, tray application, enrollment flow, or automatic updater.
 
 ## Lifecycle
 

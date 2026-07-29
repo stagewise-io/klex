@@ -33,6 +33,7 @@ describe('WindowsMcpProcess', () => {
     const spawn = vi.fn(() => child as never);
     const process = createWindowsMcpProcess({
       command: 'uvx',
+      launchMode: 'uvx',
       port: 8123,
       logging: createLogger({ type: 'hidden' }),
       spawn,
@@ -61,11 +62,39 @@ describe('WindowsMcpProcess', () => {
     expect(child.kill).toHaveBeenCalledOnce();
   });
 
+  it('launches a packaged executable without the uvx package prefix', async () => {
+    const child = fakeChild();
+    const spawn = vi.fn(() => child as never);
+    const process = createWindowsMcpProcess({
+      command: 'C:\\bundle\\windows-mcp.exe',
+      launchMode: 'executable',
+      port: 8123,
+      logging: createLogger({ type: 'hidden' }),
+      spawn,
+      fetch: async () => new Response(),
+    });
+
+    await process.start();
+
+    expect(spawn).toHaveBeenCalledWith('C:\\bundle\\windows-mcp.exe', [
+      'serve',
+      '--transport',
+      'streamable-http',
+      '--stateless-http',
+      '--host',
+      '127.0.0.1',
+      '--port',
+      '8123',
+    ]);
+    await process.close();
+  });
+
   it('delegates shutdown to the process-tree terminator', async () => {
     const child = fakeChild();
     const terminateProcessTree = vi.fn(async () => undefined);
     const process = createWindowsMcpProcess({
       command: 'uvx',
+      launchMode: 'uvx',
       port: 8123,
       logging: createLogger({ type: 'hidden' }),
       spawn: () => child as never,
@@ -85,6 +114,7 @@ describe('WindowsMcpProcess', () => {
     const child = fakeChild();
     const process = createWindowsMcpProcess({
       command: 'uvx',
+      launchMode: 'uvx',
       port: 8123,
       logging: createLogger({ type: 'hidden' }),
       readinessTimeoutMs: 5,
@@ -106,6 +136,7 @@ describe('WindowsMcpProcess', () => {
     const onUnexpectedExit = vi.fn();
     const process = createWindowsMcpProcess({
       command: 'uvx',
+      launchMode: 'uvx',
       port: 8123,
       logging: createLogger({ type: 'hidden' }),
       spawn: () => child as never,

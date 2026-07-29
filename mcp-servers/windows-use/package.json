@@ -7,6 +7,7 @@
   "main": "./dist/main.js",
   "scripts": {
     "build": "node build.mjs",
+    "build:exe": "node build.mjs --sea && node scripts/package-exe.mjs",
     "dev": "tsx src/main.ts",
     "start": "node dist/main.js",
     "typecheck": "tsc --noEmit",
@@ -20,6 +21,7 @@
     "@stagewise/typescript-config": "workspace:*",
     "@types/node": "24.10.1",
     "esbuild": "0.28.1",
+    "postject": "1.0.0-alpha.6",
     "tsx": "4.23.1",
     "typescript": "7.0.2",
     "vitest": "4.1.10"

@@ -298,6 +298,9 @@ class ChatSessionModule implements AgentSession {
                     maxOutputTokens: args.maxOutputTokens,
                     maxRetries: args.maxRetries ?? 0,
                     telemetry: { isEnabled: true, functionId },
+                    runtimeContext: {
+                      'conversation.modelId': modelId,
+                    },
                   }
                 : {
                     model,
@@ -308,6 +311,9 @@ class ChatSessionModule implements AgentSession {
                     maxOutputTokens: args.maxOutputTokens,
                     maxRetries: args.maxRetries ?? 0,
                     telemetry: { isEnabled: true, functionId },
+                    runtimeContext: {
+                      'conversation.modelId': modelId,
+                    },
                   },
             );
 

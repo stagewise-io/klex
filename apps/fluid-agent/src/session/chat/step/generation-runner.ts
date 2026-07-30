@@ -340,11 +340,16 @@ export class GenerationRunner {
     // Content produced (even partial) — salvage, force next step.
     if (hasContent) return 'salvage';
 
-    // No content + model error — needs fallback + wrap-around check.
-    if (classification?.isModelError) return 'model_error';
-
-    // No content, non-model error or non-error finish — nothing to salvage.
-    return 'generation_failed';
+    // No content + non-fatal → treat as model error to trigger fallback.
+    // Unknown error types (DNS failures, custom provider errors, non-standard
+    // HTTP codes, etc.) that don't match known AI SDK patterns would
+    // otherwise fall through to generation_failed, preventing fallback from
+    // ever being attempted — the session would retry the same bad model
+    // forever via backoff. If all models are exhausted, the wrap-around
+    // check in applyOutcome produces generation_failed anyway, so
+    // defaulting to model_error ensures we actually try fallback models
+    // before giving up.
+    return 'model_error';
   }
 
   /**

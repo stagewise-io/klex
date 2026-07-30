@@ -420,7 +420,7 @@ describe('Inbox — drain: native messages', () => {
     const result = inbox.drain([], SessionInboxPriority.Low, drainLogger);
 
     expect(result.nativeMessages).toBe(1);
-    expect(result.total).toBe(0);
+    expect(result.total).toBe(1);
   });
 
   it('appends native messages before context events', () => {
@@ -442,6 +442,19 @@ describe('Inbox — drain: native messages', () => {
     expect(messages[1]?.role).toBe('user');
     expect(messages[1]?.parts).toHaveLength(1);
     expect(messages[1]?.parts[0]).toMatchObject({ type: 'data-context' });
+  });
+
+  it('total includes both events and native messages', () => {
+    const inbox = createInbox({ onNewEvent: vi.fn() });
+    inbox.send(low('ctx-1'));
+    inbox.send(medium('ctx-2'));
+    inbox.sendMessage(makeMessage('native-1'), SessionInboxPriority.Low);
+    inbox.sendMessage(makeMessage('native-2'), SessionInboxPriority.Low);
+
+    const result = inbox.drain([], SessionInboxPriority.Low, drainLogger);
+
+    expect(result.total).toBe(4);
+    expect(result.nativeMessages).toBe(2);
   });
 
   it('leaves messages array untouched when no events and no native messages', () => {

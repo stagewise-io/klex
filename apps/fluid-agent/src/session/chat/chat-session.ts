@@ -798,7 +798,7 @@ class ChatSessionModule implements AgentSession {
       'Session self-terminated — firing onTerminated hook',
     );
 
-    this.deps.hooks?.onTerminated?.({
+    await this.deps.hooks?.onTerminated?.({
       sessionId: this.sessionId,
       reason,
       pendingEvents,

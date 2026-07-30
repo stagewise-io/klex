@@ -60,16 +60,12 @@ function makeContinuePart(): ExtendedUIMessage['parts'][number] {
 // --- transformer fixtures ---
 
 /**
- * Extension-registered transformers only.
- * Core types (`context`, `continue`) are handled by built-in
- * transformers in the converter and must NOT appear here.
+ * Empty transformer map for tests that only exercise core types
+ * (`context`, `continue`) or message filtering. Core types are
+ * handled by built-in transformers and never touch this map.
  */
 function makeTransformers(): DataPartTransformers {
-  return {
-    'context-summary': (data) => [
-      { type: 'text', text: `<summary>${data.summary}</summary>` },
-    ],
-  } as DataPartTransformers;
+  return {} as DataPartTransformers;
 }
 
 function getConvertDataPart() {
@@ -197,19 +193,25 @@ describe('makeConvertDataPart — data-context', () => {
   });
 });
 
-describe('makeConvertDataPart — data-context-summary', () => {
-  it('converts data-context-summary to XML text with summary tag', async () => {
-    const messages = [
-      makeMessage([makeContextSummaryPart('Earlier conversation about X')]),
-    ];
-    await convertToModelMessagesExtended(messages, makeTransformers());
+describe('makeConvertDataPart — non-core dispatch', () => {
+  it('dispatches non-core data parts to extension-registered transformers', async () => {
+    const transformer = vi.fn((data: { summary: string }) => [
+      { type: 'text', text: `DISPATCHED:${data.summary}` },
+    ]);
+    const transformers = {
+      'context-summary': transformer,
+    } as unknown as DataPartTransformers;
+    const messages = [makeMessage([makeContextSummaryPart('test summary')])];
+    await convertToModelMessagesExtended(messages, transformers);
     const convert = getConvertDataPart();
-    const result = convert(
-      makeContextSummaryPart('Earlier conversation about X'),
-    ) as { type: string; text: string };
+    const result = convert(makeContextSummaryPart('test summary')) as {
+      type: string;
+      text: string;
+    };
 
-    expect(result.type).toBe('text');
-    expect(result.text).toBe('<summary>Earlier conversation about X</summary>');
+    expect(transformer).toHaveBeenCalledOnce();
+    expect(transformer).toHaveBeenCalledWith({ summary: 'test summary' });
+    expect(result).toEqual({ type: 'text', text: 'DISPATCHED:test summary' });
   });
 });
 

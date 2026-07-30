@@ -36,9 +36,11 @@ export interface GenerationRunnerDependencies {
   tools: AgentTools;
   fallbackManager: ModelFallbackManager;
   /**
-   * The fallback index at the start of the turn. Used for turn-level
-   * wrap-around detection — since model fallback now spans multiple
-   * steps, wrap-around must be relative to the turn's starting model.
+   * The fallback index at the start of the turn. Previously used for
+   * turn-level wrap-around detection; now retained for observability
+   * and potential future use. The fallback loop no longer terminates
+   * on wrap-around — the session-level backoff loop handles continuous
+   * retry across all configured models.
    */
   turnInitialFallbackIndex: number;
   compacted: boolean;
@@ -51,15 +53,21 @@ type GenerationOutcome =
   | 'done'
   | 'fatal'
   | 'salvage'
+  | 'aborted'
   | 'fallback_new_step'
   | 'generation_failed';
 
 /**
  * Coarse decision from {@link decideOutcome}. Refined to a
  * {@link GenerationOutcome} by {@link applyOutcome} after performing side
- * effects (e.g. model fallback wrap-around check).
+ * effects (e.g. model fallback).
  */
-type CoarseOutcome = 'fatal' | 'salvage' | 'model_error' | 'generation_failed';
+type CoarseOutcome =
+  | 'fatal'
+  | 'salvage'
+  | 'aborted'
+  | 'model_error'
+  | 'generation_failed';
 
 /**
  * Runs the generation retry loop for a single step.
@@ -181,7 +189,8 @@ export class GenerationRunner {
           lastModelId = fallbackManager.getChatModelId();
           // outcome stays 'done' — will break below.
         } else {
-          // Non-good finish — classify only on 'error' finish reason.
+          // Non-good finish — check for abort first, then classify.
+          const isAborted = generationAbortController.signal.aborted;
           const classification =
             response.finishReason === 'error'
               ? classifyGenerationError(response.error)
@@ -189,7 +198,11 @@ export class GenerationRunner {
           lastClassification = classification;
           const hasContent =
             response.message !== null && response.message.parts.length > 0;
-          const coarse = this.decideOutcome(classification, hasContent);
+          const coarse = this.decideOutcome(
+            classification,
+            hasContent,
+            isAborted,
+          );
           outcome = this.applyOutcome(
             coarse,
             attempt,
@@ -204,11 +217,16 @@ export class GenerationRunner {
         stepSpan.setAttribute('step.error', String(e));
         this.deps.logger.error({ attempt }, 'Generation failed', e);
 
+        const isAborted = generationAbortController.signal.aborted;
         const classification = classifyGenerationError(e);
         lastClassification = classification;
         const hasContent =
           latestMessage !== null && latestMessage.parts.length > 0;
-        const coarse = this.decideOutcome(classification, hasContent);
+        const coarse = this.decideOutcome(
+          classification,
+          hasContent,
+          isAborted,
+        );
         outcome = this.applyOutcome(
           coarse,
           attempt,
@@ -227,6 +245,15 @@ export class GenerationRunner {
       }
       if (outcome === 'salvage') {
         forceNextStep = true;
+        break;
+      }
+      if (outcome === 'aborted') {
+        // Abort is not a failure — the generation was intentionally
+        // cancelled (inbox interrupt, session shutdown, etc.). Salvage
+        // any partial content and stop the step without triggering
+        // fallback or marking the step as failed.
+        forceNextStep =
+          latestMessage !== null && latestMessage.parts.length > 0;
         break;
       }
       if (outcome === 'generation_failed') {
@@ -333,7 +360,12 @@ export class GenerationRunner {
   private decideOutcome(
     classification: GenerationErrorClassification | null,
     hasContent: boolean,
+    isAborted: boolean,
   ): CoarseOutcome {
+    // Abort — never trigger fallback. Salvage partial content if any,
+    // otherwise stop cleanly.
+    if (isAborted || classification?.isAbort) return 'aborted';
+
     // Fatal — terminate immediately, no salvage.
     if (classification?.isFatal) return 'fatal';
 
@@ -341,23 +373,20 @@ export class GenerationRunner {
     if (hasContent) return 'salvage';
 
     // No content + non-fatal → treat as model error to trigger fallback.
-    // Unknown error types (DNS failures, custom provider errors, non-standard
-    // HTTP codes, etc.) that don't match known AI SDK patterns would
-    // otherwise fall through to generation_failed, preventing fallback from
-    // ever being attempted — the session would retry the same bad model
-    // forever via backoff. If all models are exhausted, the wrap-around
-    // check in applyOutcome produces generation_failed anyway, so
-    // defaulting to model_error ensures we actually try fallback models
-    // before giving up.
+    // The session-level backoff loop handles continuous retry across all
+    // configured models with exponential backoff.
     return 'model_error';
   }
 
   /**
    * Performs side effects for a coarse outcome (span attributes, message
    * salvage + push, model fallback) and returns the refined
-   * {@link GenerationOutcome}. The `model_error` coarse outcome is refined
-   * to either `fallback_new_step` or `generation_failed` depending on whether
-   * all models have been tried (wrap-around check after advancing).
+   * {@link GenerationOutcome}.
+   *
+   * The `model_error` coarse outcome always advances the fallback manager
+   * and returns `fallback_new_step`. The session-level backoff loop
+   * handles continuous retry across all configured models with
+   * exponential backoff — no wrap-around termination here.
    */
   private applyOutcome(
     coarse: CoarseOutcome,
@@ -382,6 +411,22 @@ export class GenerationRunner {
         return 'fatal';
       }
 
+      case 'aborted': {
+        stepSpan.setAttribute('step.aborted', true);
+        if (message && message.parts.length > 0) {
+          const salvaged = this.traceMessageRepair(message, trigger, attempt);
+          if (salvaged) {
+            messages.push(message);
+            stepSpan.setAttribute('step.salvaged', true);
+          }
+        }
+        this.deps.logger.info(
+          { attempt, reason: classification?.reason ?? 'aborted' },
+          'Generation aborted — not triggering fallback',
+        );
+        return 'aborted';
+      }
+
       case 'salvage': {
         if (message) {
           const salvaged = this.traceMessageRepair(message, trigger, attempt);
@@ -402,21 +447,6 @@ export class GenerationRunner {
       case 'model_error': {
         fallbackManager.fallbackToNextModel();
         stepSpan.setAttribute('step.modelFallbackTriggered', true);
-
-        // All models tried — wrapped back to the turn's starting index.
-        if (
-          fallbackManager.getFallbackIndex() ===
-          this.deps.turnInitialFallbackIndex
-        ) {
-          stepSpan.addEvent('step.models_exhausted', {
-            'generation.attempt': attempt,
-          });
-          this.deps.logger.error(
-            { attempt, reason: classification?.reason },
-            'All models exhausted — stopping step',
-          );
-          return 'generation_failed';
-        }
 
         stepSpan.addEvent('step.fallback_new_step', {
           'error.classification': classification?.reason,

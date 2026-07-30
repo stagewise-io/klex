@@ -171,6 +171,9 @@ describe('runStreamedGeneration — success', () => {
     expect(arg.model).toBe(model);
     expect(arg.messages).toBe(modelMessages);
     expect(arg.abortSignal).toBe(abortSignal);
+    // No chunk timeout — it kills long generations when the model
+    // pauses between chunks.
+    expect(arg.timeout).toBeUndefined();
   });
 
   it('passes sessionId and compacted via runtimeContext to streamText', async () => {

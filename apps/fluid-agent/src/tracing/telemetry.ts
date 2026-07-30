@@ -254,6 +254,21 @@ class FluidTelemetry implements Telemetry {
         : undefined;
     const requestModel = fullModelId ?? genEvent.modelId;
 
+    // Parse the fluid-agent fullModelId (format: providerId:endpointId:modelId
+    // or providerId:modelId) to extract individual components for trace
+    // metadata. This lets traces be filtered/grouped by provider and endpoint.
+    const modelParts = fullModelId?.split(':') ?? [];
+    const providerId = modelParts.length >= 2 ? modelParts[0] : undefined;
+    // When 3 parts: providerId:endpointId:modelId
+    // When 2 parts: providerId:modelId (preset, no endpoint)
+    const endpointId = modelParts.length >= 3 ? modelParts[1] : undefined;
+    const modelIdOnly =
+      modelParts.length >= 3
+        ? modelParts[2]
+        : modelParts.length === 2
+          ? modelParts[1]
+          : undefined;
+
     const spanName = `generate_content ${requestModel}`;
 
     const attributes: Attributes = {
@@ -264,6 +279,19 @@ class FluidTelemetry implements Telemetry {
       'gen_ai.request.stream': genEvent.operationId === 'ai.streamText',
       'gen_ai.agent.name': genEvent.functionId,
     };
+
+    // Fluid-agent-specific metadata: provider and endpoint IDs from the
+    // full model ID. These allow traces to be filtered by provider/endpoint
+    // in the tracing backend.
+    if (providerId != null) {
+      attributes['fluid.model.provider_id'] = providerId;
+    }
+    if (endpointId != null) {
+      attributes['fluid.model.endpoint_id'] = endpointId;
+    }
+    if (modelIdOnly != null) {
+      attributes['fluid.model.model_id'] = modelIdOnly;
+    }
 
     // Conversation metadata from runtimeContext.
     if (conversationId != null) {
@@ -591,6 +619,36 @@ class FluidTelemetry implements Telemetry {
       code: SpanStatusCode.ERROR,
       message: 'Generation aborted',
     });
+
+    // Record partial output from completed steps so traces show what
+    // was generated before the abort. Each step's text, tool calls, and
+    // content are serialized into gen_ai.output.messages.
+    if (state.recordOutputs && event.steps.length > 0) {
+      const outputMessages = event.steps.map((step) => {
+        const msg: Record<string, unknown> = {
+          role: 'assistant',
+          content: step.content,
+          text: step.text,
+        };
+        if (step.toolCalls && step.toolCalls.length > 0) {
+          msg.toolCalls = step.toolCalls;
+        }
+        return msg;
+      });
+      const serialized = serializeJson(outputMessages);
+      if (serialized != null) {
+        state.rootSpan.setAttribute('gen_ai.output.messages', serialized);
+      }
+    }
+
+    // Record abort reason if available.
+    if (event.reason != null) {
+      const reasonStr =
+        event.reason instanceof Error
+          ? `${event.reason.name}: ${event.reason.message}`
+          : String(event.reason);
+      state.rootSpan.setAttribute('gen_ai.abort.reason', reasonStr);
+    }
 
     // End any open tool spans.
     for (const { span } of state.toolSpans.values()) {

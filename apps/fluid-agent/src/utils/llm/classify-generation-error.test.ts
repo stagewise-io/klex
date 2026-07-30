@@ -13,6 +13,16 @@ import { describe, expect, it } from 'vitest';
 
 import { classifyGenerationError } from './classify-generation-error';
 
+/** Creates a DOMException-like AbortError. */
+function makeAbortError(
+  name = 'AbortError',
+  message = 'The operation was aborted',
+): Error {
+  const err = new Error(message);
+  err.name = name;
+  return err;
+}
+
 /** Creates an APICallError with the required fields pre-filled. */
 function makeApiError(opts: {
   message: string;
@@ -31,17 +41,20 @@ describe('classifyGenerationError', () => {
     it('classifies null as model error', () => {
       const result = classifyGenerationError(null);
       expect(result.isModelError).toBe(true);
+      expect(result.isAbort).toBe(false);
       expect(result.reason).toBe('model reported error without details');
     });
 
     it('classifies undefined as model error', () => {
       const result = classifyGenerationError(undefined);
       expect(result.isModelError).toBe(true);
+      expect(result.isAbort).toBe(false);
     });
 
     it('classifies string as model error', () => {
       const result = classifyGenerationError('rate limit exceeded');
       expect(result.isModelError).toBe(true);
+      expect(result.isAbort).toBe(false);
       expect(result.reason).toContain('rate limit exceeded');
     });
   });
@@ -249,13 +262,72 @@ describe('classifyGenerationError', () => {
       const error = new Error('something went wrong');
       const result = classifyGenerationError(error);
       expect(result.isModelError).toBe(false);
+      expect(result.isAbort).toBe(false);
       expect(result.reason).toBe('unknown error');
     });
 
     it('classifies non-Error object as non-model error', () => {
       const result = classifyGenerationError({ foo: 'bar' });
       expect(result.isModelError).toBe(false);
+      expect(result.isAbort).toBe(false);
       expect(result.reason).toBe('unknown error');
+    });
+  });
+
+  describe('abort errors', () => {
+    it('classifies AbortError as abort (not model error)', () => {
+      const error = makeAbortError('AbortError');
+      const result = classifyGenerationError(error);
+      expect(result.isAbort).toBe(true);
+      expect(result.isModelError).toBe(false);
+      expect(result.isFatal).toBe(false);
+      expect(result.reason).toBe('generation aborted');
+    });
+
+    it('classifies TimeoutError as abort (from setAbortTimeout)', () => {
+      const error = makeAbortError(
+        'TimeoutError',
+        'Chunk timeout of 10000ms exceeded',
+      );
+      const result = classifyGenerationError(error);
+      expect(result.isAbort).toBe(true);
+      expect(result.isModelError).toBe(false);
+    });
+
+    it('classifies error with "aborted" in message as abort', () => {
+      const error = new Error('This operation was aborted');
+      const result = classifyGenerationError(error);
+      expect(result.isAbort).toBe(true);
+      expect(result.isModelError).toBe(false);
+    });
+
+    it('classifies DOMException AbortError as abort', () => {
+      const error = new DOMException('The operation was aborted', 'AbortError');
+      const result = classifyGenerationError(error);
+      expect(result.isAbort).toBe(true);
+      expect(result.isModelError).toBe(false);
+    });
+
+    it('classifies NoOutputGeneratedError wrapping AbortError as abort', () => {
+      const abortError = makeAbortError('AbortError');
+      const error = new NoOutputGeneratedError({
+        message: 'No output generated.',
+        cause: abortError,
+      });
+      const result = classifyGenerationError(error);
+      expect(result.isAbort).toBe(true);
+      expect(result.isModelError).toBe(false);
+      expect(result.reason).toContain('aborted');
+    });
+
+    it('does NOT classify timeout network error as abort (different from abort signal)', () => {
+      // A plain "timeout" string in the message without an abort signal
+      // is a network-level timeout, not an abort. It should be treated as
+      // a model error (retryable), not an abort.
+      const error = new Error('Request timeout after 30000ms');
+      const result = classifyGenerationError(error);
+      expect(result.isAbort).toBe(false);
+      expect(result.isModelError).toBe(true);
     });
   });
 });

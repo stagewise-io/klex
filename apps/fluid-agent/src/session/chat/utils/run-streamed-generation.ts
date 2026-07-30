@@ -78,9 +78,6 @@ export async function runStreamedGeneration(
       'conversation.modelId': params.getChatModelId(),
     },
     abortSignal: params.abortSignal,
-    timeout: {
-      chunkMs: 10000,
-    },
     maxRetries: 0,
     messages: params.modelMessages,
   });

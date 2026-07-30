@@ -244,7 +244,7 @@ class InboxModule implements SessionInboxBuffer {
     logger.debug(
       {
         minPriority: SessionInboxPriority[minPriority],
-        total: events.length,
+        total: events.length + nativeMessages.length,
         low: byPriority.low,
         medium: byPriority.medium,
         high: byPriority.high,
@@ -256,7 +256,7 @@ class InboxModule implements SessionInboxBuffer {
     span.end();
 
     return {
-      total: events.length,
+      total: events.length + nativeMessages.length,
       byPriority,
       nativeMessages: nativeMessages.length,
       before: { events: beforeEvents, messages: beforeMessages },

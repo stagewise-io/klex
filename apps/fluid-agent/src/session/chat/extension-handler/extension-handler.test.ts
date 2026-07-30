@@ -98,7 +98,6 @@ function factoryWith(
   return {
     identifier: id,
     create: () => ({
-      identifier: id,
       onStepStart: overrides.onStepStart,
       historyTransformer: overrides.historyTransformer,
       contextTransformer: overrides.contextTransformer,
@@ -162,7 +161,7 @@ describe('ExtensionHandler — factory', () => {
   it('throws on duplicate extension identifiers', () => {
     const dup: ExtensionFactory = {
       identifier: 'io.stagewise/duplicate',
-      create: () => ({ identifier: 'io.stagewise/duplicate' }),
+      create: () => ({}),
     };
     expect(() =>
       createExtensionHandler({
@@ -172,26 +171,13 @@ describe('ExtensionHandler — factory', () => {
     ).toThrow(/Duplicate extension identifier/);
   });
 
-  it('throws when extension identifier does not match factory identifier', () => {
-    const mismatched: ExtensionFactory = {
-      identifier: 'io.stagewise/factory-id',
-      create: () => ({ identifier: 'io.stagewise/wrong-id' }),
-    };
-    expect(() =>
-      createExtensionHandler({
-        factories: [mismatched],
-        ...HANDLER_OPTS,
-      }),
-    ).toThrow(/Extension identifier mismatch/);
-  });
-
   it('provides session-scoped getDataDir by default', () => {
     let receivedDeps: ExtensionDeps | null = null;
     const factory: ExtensionFactory = {
       identifier: 'io.stagewise/getdatadir-test',
       create: (deps) => {
         receivedDeps = deps;
-        return { identifier: 'io.stagewise/getdatadir-test' };
+        return {};
       },
     };
     createExtensionHandler({
@@ -209,7 +195,7 @@ describe('ExtensionHandler — factory', () => {
       identifier: 'io.stagewise/getdatadir-global',
       create: (deps) => {
         receivedDeps = deps;
-        return { identifier: 'io.stagewise/getdatadir-global' };
+        return {};
       },
     };
     createExtensionHandler({
@@ -985,7 +971,7 @@ describe('ExtensionHandler — generateText wrapper trace attribution', () => {
       identifier: 'io.stagewise/trace-test',
       create: (d) => {
         receivedDeps = d;
-        return { identifier: 'io.stagewise/trace-test' };
+        return {};
       },
     };
 
@@ -1012,7 +998,7 @@ describe('ExtensionHandler — generateText wrapper trace attribution', () => {
       identifier: 'io.stagewise/no-leak',
       create: (d) => {
         receivedDeps = d;
-        return { identifier: 'io.stagewise/no-leak' };
+        return {};
       },
     };
 
@@ -1043,7 +1029,7 @@ describe('ExtensionHandler — generateText wrapper trace attribution', () => {
       identifier: id,
       create: (d) => {
         depsMap.set(id, d);
-        return { identifier: id };
+        return {};
       },
     });
 
@@ -1078,7 +1064,7 @@ describe('ExtensionHandler — generateText wrapper trace attribution', () => {
       identifier: 'io.stagewise/args-passthrough',
       create: (d) => {
         receivedDeps = d;
-        return { identifier: 'io.stagewise/args-passthrough' };
+        return {};
       },
     };
 
@@ -1111,7 +1097,7 @@ describe('ExtensionHandler — generateText wrapper trace attribution', () => {
       identifier: 'io.stagewise/usage-test',
       create: (d) => {
         receivedDeps = d;
-        return { identifier: 'io.stagewise/usage-test' };
+        return {};
       },
     };
 
@@ -1158,7 +1144,7 @@ describe('ExtensionHandler — generateText wrapper trace attribution', () => {
       identifier: 'io.stagewise/usage-fail',
       create: (d) => {
         receivedDeps = d;
-        return { identifier: 'io.stagewise/usage-fail' };
+        return {};
       },
     };
 

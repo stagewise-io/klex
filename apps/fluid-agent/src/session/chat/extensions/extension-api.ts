@@ -230,15 +230,6 @@ export interface StepCompleteEvent {
 
 export interface Extension {
   /**
-   * Unique identifier in reverse-domain notation
-   * (e.g. `"io.stagewise/context-compaction"`).
-   *
-   * Must match the identifier declared on the {@link ExtensionFactory}.
-   * The handler enforces uniqueness at registration time.
-   */
-  readonly identifier: string;
-
-  /**
    * Called at the very beginning of each step — before inbox drain,
    * history repair, or the step decision. This is a fire-and-observe
    * lifecycle notification, not a transformer: it cannot influence
@@ -253,11 +244,6 @@ export interface Extension {
    * recording step-start telemetry.
    */
   onStepStart?: () => void | Promise<void>;
-
-  /**
-   * Optional human-readable name shown in UIs and logs.
-   */
-  readonly displayName?: string;
 
   /**
    * Transforms the UI message history before it is converted to model
@@ -406,8 +392,6 @@ export interface ExtensionFactory {
 
   /**
    * Creates the extension instance with the provided dependencies.
-   * The returned extension's `identifier` must match this factory's
-   * `identifier`.
    */
   create: (deps: ExtensionDeps) => Extension;
 }

@@ -83,6 +83,8 @@ class ConfigModule implements Config {
   private config: FluidConfig | null = null;
   private updateQueue: Promise<void> = Promise.resolve();
   private readonly listeners = new Set<ConfigListener>();
+  /** Tracks models already warned about missing contextSize. */
+  private readonly warnedMissingContextSize = new Set<ModelId>();
 
   constructor(
     private readonly deps: {
@@ -183,7 +185,11 @@ class ConfigModule implements Config {
         provider.knownModels,
         localModelId,
       );
-      if (contextSize === undefined) {
+      if (
+        contextSize === undefined &&
+        !this.warnedMissingContextSize.has(modelId)
+      ) {
+        this.warnedMissingContextSize.add(modelId);
         this.deps.logger.warn(
           { modelId, providerId },
           `Model ${modelId} does not specify contextSize — defaulting to ${DEFAULT_CONTEXT_SIZE}. Explicit contextSize is preferred.`,
@@ -217,7 +223,11 @@ class ConfigModule implements Config {
     }
 
     const contextSize = resolveContextSize(endpoint.knownModels, localModelId);
-    if (contextSize === undefined) {
+    if (
+      contextSize === undefined &&
+      !this.warnedMissingContextSize.has(modelId)
+    ) {
+      this.warnedMissingContextSize.add(modelId);
       this.deps.logger.warn(
         { modelId, providerId },
         `Model ${modelId} does not specify contextSize — defaulting to ${DEFAULT_CONTEXT_SIZE}. Explicit contextSize is preferred.`,

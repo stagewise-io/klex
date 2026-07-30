@@ -238,7 +238,7 @@ describe('makeConvertDataPart — data-continue', () => {
 });
 
 describe('convertToModelMessagesExtended — data-continue filtering', () => {
-  it('strips data-continue parts from all user messages except the last user message', async () => {
+  it('strips data-continue from older user messages but preserves in last when preceded by assistant text-only', async () => {
     const messages = [
       makeMessage([makeContinuePart(), { type: 'text', text: 'earlier' }]),
       makeMessage([{ type: 'text', text: 'assistant response' }], 'assistant'),
@@ -281,16 +281,12 @@ describe('convertToModelMessagesExtended — data-continue filtering', () => {
 
     // All 3 messages preserved as separate messages
     expect(passedMessages).toHaveLength(3);
-    // Each has its text part, no data-continue
+    // Continue is stripped from all — no assistant message precedes the last
     expect(passedMessages[0]?.parts).toEqual([{ type: 'text', text: 'first' }]);
     expect(passedMessages[1]?.parts).toEqual([
       { type: 'text', text: 'second' },
     ]);
-    // Last user message keeps its data-continue
-    expect(
-      passedMessages[2]?.parts.some((p) => p.type === 'data-continue'),
-    ).toBe(true);
-    expect(passedMessages[2]?.parts.some((p) => p.type === 'text')).toBe(true);
+    expect(passedMessages[2]?.parts).toEqual([{ type: 'text', text: 'third' }]);
   });
 
   it('preserves all parts when no data-continue parts exist', async () => {
@@ -312,9 +308,10 @@ describe('convertToModelMessagesExtended — data-continue filtering', () => {
     });
   });
 
-  it('preserves data-continue when it is in the last user message', async () => {
+  it('preserves data-continue when last message is assistant without tool calls', async () => {
     const messages = [
       makeMessage([{ type: 'text', text: 'earlier' }]),
+      makeMessage([{ type: 'text', text: 'response' }], 'assistant'),
       makeMessage([makeContinuePart()]),
     ];
 
@@ -324,9 +321,9 @@ describe('convertToModelMessagesExtended — data-continue filtering', () => {
       vi.mocked(convertToModelMessages).mock.calls.length - 1
     ]?.[0] as ExtendedUIMessage[];
 
-    // Last user message keeps its data-continue
+    // Last user message keeps its data-continue (preceding is assistant text-only)
     expect(
-      passedMessages[1]?.parts.some((p) => p.type === 'data-continue'),
+      passedMessages[2]?.parts.some((p) => p.type === 'data-continue'),
     ).toBe(true);
   });
 
@@ -367,7 +364,7 @@ describe('convertToModelMessagesExtended — data-continue filtering', () => {
     ).toBe(true);
   });
 
-  it('preserves non-continue parts when stripping from older user messages', async () => {
+  it('strips data-continue from all user messages when no assistant precedes', async () => {
     const messages = [
       makeMessage([makeContinuePart(), { type: 'text', text: 'real text' }]),
       makeMessage([makeContinuePart()]),
@@ -385,10 +382,45 @@ describe('convertToModelMessagesExtended — data-continue filtering', () => {
       type: 'text',
       text: 'real text',
     });
-    // Last user message: unchanged
+    // Last user message: only had continue — dropped entirely
+    expect(passedMessages).toHaveLength(1);
+  });
+
+  it('strips data-continue when preceding assistant has tool calls', async () => {
+    const messages = [
+      makeMessage([{ type: 'text', text: 'do something' }]),
+      makeMessage(
+        [
+          { type: 'text', text: 'calling tool' },
+          {
+            type: 'tool-someTool' as never,
+            toolCallId: 'call-1',
+            state: 'input-available',
+            input: {},
+            providerExecuted: false,
+          } as never,
+        ],
+        'assistant',
+      ),
+      makeMessage([makeContinuePart()]),
+    ];
+
+    await convertToModelMessagesExtended(messages, makeTransformers());
+
+    const passedMessages = vi.mocked(convertToModelMessages).mock.calls[
+      vi.mocked(convertToModelMessages).mock.calls.length - 1
+    ]?.[0] as ExtendedUIMessage[];
+
+    // Continue is stripped from last user message because preceding assistant
+    // has tool calls — tool results prompt continuation naturally.
+    // The last user message had only Continue, so it's dropped entirely.
+    expect(passedMessages).toHaveLength(2);
+    expect(passedMessages[1]?.role).toBe('assistant');
     expect(
-      passedMessages[1]?.parts.some((p) => p.type === 'data-continue'),
-    ).toBe(true);
+      passedMessages.some((m) =>
+        m.parts.some((p) => p.type === 'data-continue'),
+      ),
+    ).toBe(false);
   });
 });
 

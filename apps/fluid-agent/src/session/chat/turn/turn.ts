@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 
 import { type Context, context, type Span, trace } from '@opentelemetry/api';
+import { isToolUIPart } from 'ai';
 
 import type { ModuleLogger } from '@stagewise/logger';
 
@@ -146,8 +147,16 @@ class TurnModule implements Turn {
 
         while (stepResult.shouldContinue && stepCount < MAX_STEPS_PER_TURN) {
           if (needsContinue) {
+            // Continue is only useful when the last message is an assistant
+            // message without tool calls — the model needs an explicit prompt
+            // to continue a text-only response. If the last message is a user
+            // message, an assistant with tool calls (tool results prompt
+            // continuation naturally), or anything else, Continue is redundant.
             const lastMsg = this.deps.messages[this.deps.messages.length - 1];
-            if (lastMsg?.role !== 'user') {
+            const shouldInject =
+              lastMsg?.role === 'assistant' &&
+              !lastMsg.parts.some((p) => isToolUIPart(p));
+            if (shouldInject) {
               this.deps.messages.push({
                 id: randomUUID(),
                 role: 'user',

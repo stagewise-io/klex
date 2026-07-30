@@ -192,7 +192,7 @@ describe('Turn — force continue (unified)', () => {
     vi.clearAllMocks();
   });
 
-  it('injects a "Continue." user message when forceNextStep is true and last message is not user', async () => {
+  it('injects a "Continue." user message when forceNextStep is true and last message is assistant text-only', async () => {
     // Step 1: generation with forceNextStep=true (e.g. truncated output)
     // Step 2: no generation — loop ends
     const step1 = makeMockStep({ shouldContinue: true, forceNextStep: true });
@@ -219,6 +219,40 @@ describe('Turn — force continue (unified)', () => {
     expect(continueMsg).toBeDefined();
   });
 
+  it('does not inject "Continue." when last message is assistant with tool calls', async () => {
+    const step1 = makeMockStep({ shouldContinue: true, forceNextStep: true });
+    const step2 = makeMockStep({ shouldContinue: false });
+    vi.mocked(createStep).mockReturnValueOnce(step1).mockReturnValueOnce(step2);
+
+    const messages: ExtendedUIMessage[] = [
+      { id: 'u1', role: 'user', parts: [{ type: 'text', text: 'hello' }] },
+      {
+        id: 'a1',
+        role: 'assistant',
+        parts: [
+          { type: 'text', text: 'calling tool' },
+          {
+            type: 'tool-someTool' as never,
+            toolCallId: 'call-1',
+            state: 'input-available',
+            input: {},
+            providerExecuted: false,
+          } as never,
+        ],
+      },
+    ] as ExtendedUIMessage[];
+
+    const turn = createTurn(makeDeps({ messages }));
+    await turn.run();
+
+    // Tool results prompt continuation naturally — no Continue needed
+    const continueMsg = messages.find(
+      (m) =>
+        m.role === 'user' && m.parts.some((p) => p.type === 'data-continue'),
+    );
+    expect(continueMsg).toBeUndefined();
+  });
+
   it('does not inject "Continue." when forceNextStep is false', async () => {
     const step1 = makeMockStep({ shouldContinue: true });
     const step2 = makeMockStep({ shouldContinue: false });
@@ -238,7 +272,7 @@ describe('Turn — force continue (unified)', () => {
     expect(continueMsg).toBeUndefined();
   });
 
-  it('does not inject "Continue." when last message is already a user message', async () => {
+  it('does not inject "Continue." when last message is a user message', async () => {
     const step1 = makeMockStep({ shouldContinue: true, forceNextStep: true });
     const step2 = makeMockStep({ shouldContinue: false });
     vi.mocked(createStep).mockReturnValueOnce(step1).mockReturnValueOnce(step2);
@@ -510,7 +544,7 @@ describe('Turn — forceContinue (backoff retry)', () => {
     vi.clearAllMocks();
   });
 
-  it('injects a "Continue." message when forceContinue is true and last message is not user', async () => {
+  it('injects a "Continue." message when forceContinue is true and last message is assistant text-only', async () => {
     const step = makeMockStep({ shouldContinue: true });
     vi.mocked(createStep).mockReturnValue(step);
 

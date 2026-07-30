@@ -45,7 +45,7 @@ async function jsonRpc(
         _meta: {
           'io.modelcontextprotocol/clientCapabilities': {
             extensions: {
-              'io.stagewise.fluid/events': {},
+              'io.stagewise/push-notifications': {},
             },
           },
         },
@@ -67,11 +67,11 @@ describe('chat simulator', () => {
       status: 'ok',
     });
     expect(await (await app.request('/')).text()).toContain(
-      'Fluid Chat Simulator',
+      'Klex Chat Simulator',
     );
   });
 
-  it('validates and stores browser messages as Fluid Events', async () => {
+  it('validates and stores browser messages as Push Notifications', async () => {
     const { app } = setup();
     const invalid = await app.request('/api/messages', {
       method: 'POST',
@@ -92,7 +92,7 @@ describe('chat simulator', () => {
     ]);
 
     const events = await jsonRpc(app, {
-      method: 'io.stagewise.fluid/events/get',
+      method: 'io.stagewise/push-notifications/get',
       params: { cursor: '0' },
     });
     expect(events).toMatchObject({

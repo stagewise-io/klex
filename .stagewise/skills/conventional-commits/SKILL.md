@@ -39,7 +39,7 @@ chore: remove LICENSE file
 
 Summary + bullets — summary alone insufficient:
 ```
-feat(fluid-agent): add tslog logger and admin server
+feat(klex): add tslog logger and admin server
 
 - Add logger factory with tslog v5
 - Add AdminAPI module with Hono server on port 2706
@@ -49,7 +49,7 @@ feat(fluid-agent): add tslog logger and admin server
 
 Too verbose — don't do this:
 ```
-feat(fluid-agent): add tslog logger and admin server
+feat(klex): add tslog logger and admin server
 
 This commit introduces a new logging system based on tslog v5
 which provides structured logging with child loggers for each

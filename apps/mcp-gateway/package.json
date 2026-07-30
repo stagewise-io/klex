@@ -14,7 +14,7 @@
   },
   "dependencies": {
     "@stagewise/logger": "workspace:*",
-    "@stagewise/mcp-extension-fluid-events": "workspace:*",
+    "@stagewise/mcp-extension-push-notifications": "workspace:*",
     "@stagewise/mcp-gateway-sdk": "workspace:*"
   },
   "devDependencies": {

@@ -109,7 +109,7 @@ async function jsonRpc(
           ...(typeof body.params === 'object' ? body.params : {}),
           _meta: {
             'io.modelcontextprotocol/clientCapabilities': {
-              extensions: { 'io.stagewise.fluid/events': {} },
+              extensions: { 'io.stagewise/push-notifications': {} },
             },
           },
         },
@@ -232,7 +232,7 @@ describe('MCP contract', () => {
     try {
       expect(
         await jsonRpc(mcp, {
-          method: 'io.stagewise.fluid/events/get',
+          method: 'io.stagewise/push-notifications/get',
           params: { cursor: '0' },
         }),
       ).toMatchObject({

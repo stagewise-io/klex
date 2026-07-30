@@ -4,7 +4,7 @@ export function renderChatPage(): string {
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Fluid Chat Simulator</title>
+  <title>Klex Chat Simulator</title>
   <style>
     :root { font: 13px/1.4 Arial, Helvetica, sans-serif; color: #000; background: #fff; }
     * { box-sizing: border-box; }
@@ -29,7 +29,7 @@ export function renderChatPage(): string {
 </head>
 <body>
   <main>
-    <header><h1>Fluid Chat Simulator</h1><p>Local environment · MCP endpoint at /mcp</p></header>
+    <header><h1>Klex Chat Simulator</h1><p>Local environment · MCP endpoint at /mcp</p></header>
     <section id="messages" aria-live="polite"><p class="empty">No messages yet.</p></section>
     <form id="composer"><textarea id="input" maxlength="4000" placeholder="Send a message…" aria-label="Message" required></textarea><button>Send</button></form>
   </main>

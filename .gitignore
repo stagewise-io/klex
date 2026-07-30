@@ -10,5 +10,5 @@ coverage/
 mcp-gateway.config.json
 .DS_Store
 
-.fluid.json
+.klex.json
 .data/

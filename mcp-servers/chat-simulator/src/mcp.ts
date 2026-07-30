@@ -2,23 +2,23 @@ import { createMcpHandler, McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod/v4';
 
 import {
-  createFluidEventsHttpSubscriptionManager,
-  type FluidEventsHttpSubscriptionManager,
-  registerFluidEventsServer,
-} from '@stagewise/mcp-extension-fluid-events/server';
+  createPushNotificationsHttpSubscriptionManager,
+  type PushNotificationsHttpSubscriptionManager,
+  registerPushNotificationsServer,
+} from '@stagewise/mcp-extension-push-notifications/server';
 
 import type { ChatStore } from './chat-store.js';
 import { MAX_MESSAGE_LENGTH } from './chat-store.js';
 
 export interface ChatMcp {
   fetch(request: Request): Promise<Response>;
-  publishUserEvent: FluidEventsHttpSubscriptionManager['publish'];
+  publishUserEvent: PushNotificationsHttpSubscriptionManager['publish'];
   close(): Promise<void>;
 }
 
 class ChatMcpModule implements ChatMcp {
   readonly #handler: ReturnType<typeof createMcpHandler>;
-  readonly #subscriptions: FluidEventsHttpSubscriptionManager;
+  readonly #subscriptions: PushNotificationsHttpSubscriptionManager;
 
   constructor(store: ChatStore) {
     this.#handler = createMcpHandler(
@@ -42,7 +42,7 @@ class ChatMcpModule implements ChatMcp {
             };
           },
         );
-        registerFluidEventsServer(server.server, {
+        registerPushNotificationsServer(server.server, {
           getEvents: ({ cursor, limit }) => store.getEvents({ cursor, limit }),
           acknowledgeEvents: ({ eventIds }) =>
             store.acknowledgeEvents(eventIds),
@@ -51,7 +51,7 @@ class ChatMcpModule implements ChatMcp {
       },
       { legacy: 'stateless' },
     );
-    this.#subscriptions = createFluidEventsHttpSubscriptionManager(
+    this.#subscriptions = createPushNotificationsHttpSubscriptionManager(
       this.#handler.fetch,
     );
   }
@@ -60,8 +60,9 @@ class ChatMcpModule implements ChatMcp {
     return this.#subscriptions.fetch(request);
   }
 
-  publishUserEvent: FluidEventsHttpSubscriptionManager['publish'] = (params) =>
-    this.#subscriptions.publish(params);
+  publishUserEvent: PushNotificationsHttpSubscriptionManager['publish'] = (
+    params,
+  ) => this.#subscriptions.publish(params);
 
   async close(): Promise<void> {
     this.#subscriptions.close();

@@ -36,7 +36,7 @@ importers:
         specifier: 4.1.10
         version: 4.1.10(@opentelemetry/api@1.9.1)(@types/node@26.1.1)(@vitest/coverage-istanbul@4.1.10)(@vitest/coverage-v8@4.1.10)(vite@8.1.5(@types/node@26.1.1)(esbuild@0.28.1)(jiti@2.6.1)(tsx@4.23.1)(yaml@2.9.0))
 
-  apps/fluid-agent:
+  apps/klex:
     dependencies:
       '@ai-sdk/anthropic':
         specifier: 4.0.16
@@ -83,9 +83,9 @@ importers:
       '@stagewise/logger':
         specifier: workspace:*
         version: link:../../packages/logger
-      '@stagewise/mcp-extension-fluid-events':
+      '@stagewise/mcp-extension-push-notifications':
         specifier: workspace:*
-        version: link:../../packages/mcp-extension-fluid-events
+        version: link:../../packages/mcp-extension-push-notifications
       ai:
         specifier: 7.0.31
         version: 7.0.31(zod@4.4.3)
@@ -141,9 +141,9 @@ importers:
       '@stagewise/logger':
         specifier: workspace:*
         version: link:../../packages/logger
-      '@stagewise/mcp-extension-fluid-events':
+      '@stagewise/mcp-extension-push-notifications':
         specifier: workspace:*
-        version: link:../../packages/mcp-extension-fluid-events
+        version: link:../../packages/mcp-extension-push-notifications
       '@stagewise/mcp-gateway-sdk':
         specifier: workspace:*
         version: link:../../packages/mcp-gateway-sdk
@@ -187,9 +187,9 @@ importers:
       '@stagewise/logger':
         specifier: workspace:*
         version: link:../../packages/logger
-      '@stagewise/mcp-extension-fluid-events':
+      '@stagewise/mcp-extension-push-notifications':
         specifier: workspace:*
-        version: link:../../packages/mcp-extension-fluid-events
+        version: link:../../packages/mcp-extension-push-notifications
       hono:
         specifier: 4.12.30
         version: 4.12.30
@@ -230,9 +230,9 @@ importers:
       '@stagewise/logger':
         specifier: workspace:*
         version: link:../../packages/logger
-      '@stagewise/mcp-extension-fluid-events':
+      '@stagewise/mcp-extension-push-notifications':
         specifier: workspace:*
-        version: link:../../packages/mcp-extension-fluid-events
+        version: link:../../packages/mcp-extension-push-notifications
       hono:
         specifier: 4.12.30
         version: 4.12.30
@@ -270,9 +270,9 @@ importers:
       '@stagewise/logger':
         specifier: workspace:*
         version: link:../../packages/logger
-      '@stagewise/mcp-extension-fluid-events':
+      '@stagewise/mcp-extension-push-notifications':
         specifier: workspace:*
-        version: link:../../packages/mcp-extension-fluid-events
+        version: link:../../packages/mcp-extension-push-notifications
       grammy:
         specifier: 1.38.3
         version: 1.38.3
@@ -334,7 +334,7 @@ importers:
         specifier: 7.0.2
         version: 7.0.2
 
-  packages/mcp-extension-fluid-events:
+  packages/mcp-extension-push-notifications:
     devDependencies:
       '@modelcontextprotocol/client':
         specifier: 2.0.0-beta.4

@@ -3,12 +3,12 @@ import { randomUUID } from 'node:crypto';
 import type { Tool, ToolUIPart } from 'ai';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { AgentTools, AgentUITools } from '@/session/tools';
-import type { ExtendedUIMessage } from '@/session/types';
 // Re-import the mocked function so tests can assert it was called.
 import { recordErrorOnSpan } from '@/tracing';
 
+import type { ExtendedUIMessage } from '../message-types';
 import { testLogger as logger } from '../test-helpers';
+import type { AgentTools, AgentUITools } from '../tools';
 import { ToolDispatcher } from './tool-dispatcher';
 
 // --- mocks ---

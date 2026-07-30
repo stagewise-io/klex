@@ -1,11 +1,10 @@
 import { context, trace } from '@opentelemetry/api';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { SessionInboxPriority } from '@/session/inbox';
-import type { AgentTools } from '@/session/tools';
-import type { ExtendedUIMessage } from '@/session/types';
-
-import { createStep, type StepResult } from '../step';
+import type { StepCompleteEvent } from '../extensions/extension-api';
+import { SessionInboxPriority } from '../inbox';
+import type { ExtendedUIMessage } from '../message-types';
+import { createStep } from '../step';
 import {
   testLogger as logger,
   makeExtensionHandler,
@@ -13,6 +12,7 @@ import {
   makeInbox,
   makeModelProvider,
 } from '../test-helpers';
+import type { AgentTools } from '../tools';
 import { createTurn, type TurnDependencies } from './turn';
 
 // --- mocks (hoisted by vitest) ---
@@ -41,7 +41,7 @@ function makeDeps(overrides: Partial<TurnDependencies> = {}): TurnDependencies {
 }
 
 /** Standard no-op step result — tests override individual fields as needed. */
-const NOOP_RESULT: StepResult = {
+const NOOP_RESULT: StepCompleteEvent = {
   shouldContinue: false,
   forceNextStep: false,
   fatalError: false,
@@ -51,8 +51,8 @@ const NOOP_RESULT: StepResult = {
   toolCalls: [],
 };
 
-function makeMockStep(overrides: Partial<StepResult> = {}, delay = 0) {
-  const runResult: StepResult = { ...NOOP_RESULT, ...overrides };
+function makeMockStep(overrides: Partial<StepCompleteEvent> = {}, delay = 0) {
+  const runResult: StepCompleteEvent = { ...NOOP_RESULT, ...overrides };
   return {
     run: vi.fn(async () => {
       if (delay > 0) await new Promise((r) => setTimeout(r, delay));

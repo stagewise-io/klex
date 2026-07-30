@@ -9,8 +9,9 @@ import type {
 import type { ModuleLogger } from '@stagewise/logger';
 
 import type { Config, ModelId } from '@/config';
-import type { SessionInbox } from '@/session/inbox';
-import type { CustomUIDataParts, ExtendedUIMessage } from '@/session/types';
+
+import type { ChatSessionInbox } from '../inbox';
+import type { CustomUIDataParts, ExtendedUIMessage } from '../message-types';
 
 /**
  * A transformer that converts a custom data part into model message parts.
@@ -36,6 +37,12 @@ export type DataPartTransformers = Partial<{
 export interface TransformationFlags {
   /** The history was compacted (e.g. summaries replaced older messages). */
   hasCompacted?: boolean;
+  /**
+   * True when one or more extensions' transformers threw an error.
+   * The caller must treat the context as potentially corrupted and
+   * cancel the step — generation should not proceed on uncertain data.
+   */
+  hasTransformerError?: boolean;
 }
 
 /**
@@ -155,6 +162,12 @@ export interface Extension {
    * messages. Extensions are called in order; each receives the output
    * of the previous one. Flags from all extensions are merged (OR
    * semantics).
+   *
+   * If a transformer throws, the error is caught and logged, and the
+   * pipeline continues with the current history unchanged — one
+   * extension's failure does not cancel subsequent extensions. However,
+   * the `hasTransformerError` flag is set, and the step caller will
+   * cancel the step because context integrity cannot be guaranteed.
    */
   historyTransformer?: (
     history: ExtendedUIMessage[],
@@ -164,6 +177,12 @@ export interface Extension {
    * Transforms the model messages after conversion from UI messages.
    * Extensions are called in order; each receives the output of the
    * previous one. Flags from all extensions are merged (OR semantics).
+   *
+   * If a transformer throws, the error is caught and logged, and the
+   * pipeline continues with the current history unchanged — one
+   * extension's failure does not cancel subsequent extensions. However,
+   * the `hasTransformerError` flag is set, and the step caller will
+   * cancel the step because context integrity cannot be guaranteed.
    */
   contextTransformer?: (
     history: ModelMessage[],
@@ -217,7 +236,7 @@ export interface ExtensionDeps {
    * Access to the session inbox, allowing you to send context events or
    * native messages into the session.
    */
-  inbox: SessionInbox;
+  inbox: ChatSessionInbox;
 
   /**
    * Access to the application config — model selections, providers, etc.

@@ -6,8 +6,7 @@ import { getToolName, isToolUIPart, type TextPart } from 'ai';
 import type {
   ContextSummaryDataUIPart,
   ExtendedUIMessage,
-} from '@/session/types';
-
+} from '../../message-types';
 import { startChildSpan } from '../../utils/tracing';
 import type {
   Extension,

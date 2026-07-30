@@ -8,7 +8,7 @@ import { InMemoryToolProvider } from './in-memory-tool-provider.fixture';
 import { createJavaScriptTool } from './javascript';
 
 const workerUrl = new URL(
-  '../../../../dist/javascript-sandbox-worker.js',
+  '../../../../../dist/javascript-sandbox-worker.js',
   import.meta.url,
 );
 const logging = {

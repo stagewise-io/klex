@@ -62,7 +62,7 @@ export function createBuildOptions(isSea: boolean): {
     },
     worker: {
       ...sharedOptions,
-      entryPoints: ['src/session/tools/javascript/worker-entry.ts'],
+      entryPoints: ['src/session/chat/tools/javascript/worker-entry.ts'],
       outfile: 'dist/javascript-sandbox-worker.js',
       format: 'esm',
     },

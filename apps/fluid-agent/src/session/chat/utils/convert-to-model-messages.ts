@@ -5,7 +5,7 @@ import {
   type TextPart,
 } from 'ai';
 
-import type { CustomUIDataParts, ExtendedUIMessage } from '@/session/types';
+import type { CustomUIDataParts, ExtendedUIMessage } from '../message-types';
 
 /**
  * Converts UI messages into the format expected by the model.

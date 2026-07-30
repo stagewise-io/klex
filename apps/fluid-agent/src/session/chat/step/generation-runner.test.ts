@@ -7,10 +7,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ModuleLogger } from '@stagewise/logger';
 
 import type { ModelProvider } from '@/model-provider';
-import type { AgentTools } from '@/session/tools';
-import type { ExtendedUIMessage } from '@/session/types';
 
+import type { ExtendedUIMessage } from '../message-types';
 import { testLogger as logger, makeModelProvider } from '../test-helpers';
+import type { AgentTools } from '../tools';
 import { ModelFallbackManager } from '../utils/model-fallback-manager';
 import { repairPartialMessage } from '../utils/repair-partial-message';
 import {

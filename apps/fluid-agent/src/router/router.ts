@@ -164,7 +164,6 @@ class RouterModule implements Router {
         sessionId: info.sessionId,
         reason: info.reason,
         pendingEvents: info.pendingEvents.length,
-        pendingMessages: info.pendingMessages.length,
       },
       'Session self-terminated — creating replacement and re-dispatching pending input',
     );
@@ -172,16 +171,8 @@ class RouterModule implements Router {
     // Create the replacement session (registered with fresh hooks).
     const replacement = this.createSession();
 
-    // Re-dispatch pending native messages first (preserving arrival order),
-    // then pending context events. The original priority is lost when
-    // draining, so we re-send at Medium (normal user input priority).
-    const defaultPriority: SessionInboxPriority = SessionInboxPriority.Medium;
-    for (const msg of info.pendingMessages) {
-      replacement.inbox.sendMessage(msg, defaultPriority);
-    }
-    for (const event of info.pendingEvents) {
-      replacement.inbox.send(event);
-    }
+    // Re-dispatch pending inbox events so the user does not lose input.
+    replacement.restorePendingEvents(info.pendingEvents);
   }
 }
 

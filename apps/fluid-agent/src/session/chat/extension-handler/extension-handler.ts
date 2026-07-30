@@ -2,8 +2,6 @@ import { join } from 'node:path';
 
 import type { ModelMessage } from 'ai';
 
-import type { ExtendedUIMessage } from '@/session/types';
-
 import type {
   BaseExtensionDeps,
   DataPartTransformers,
@@ -14,6 +12,7 @@ import type {
   StepCompleteHookResult,
   TransformationFlags,
 } from '../extensions/extension-api';
+import type { ExtendedUIMessage } from '../message-types';
 
 /**
  * Normalizes a transformation hook return value into `{ history, flags }`.
@@ -40,6 +39,8 @@ function mergeFlags(
 ): TransformationFlags {
   return {
     hasCompacted: accumulated.hasCompacted || incoming.hasCompacted,
+    hasTransformerError:
+      accumulated.hasTransformerError || incoming.hasTransformerError,
   };
 }
 
@@ -51,6 +52,11 @@ export interface ExtensionHandler {
    * Run `historyTransformer` across all extensions in order.
    * Each extension receives the output history of the previous one.
    * Flags from all extensions are merged (OR semantics).
+   *
+   * If an extension's transformer throws, the error is caught, logged,
+   * and the pipeline continues with the current history unchanged.
+   * The `hasTransformerError` flag is set in the returned flags so the
+   * caller can cancel the step — context integrity cannot be guaranteed.
    */
   runHistoryTransformers: (
     history: ExtendedUIMessage[],
@@ -60,6 +66,11 @@ export interface ExtensionHandler {
    * Run `contextTransformer` across all extensions in order.
    * Each extension receives the output history of the previous one.
    * Flags from all extensions are merged (OR semantics).
+   *
+   * If an extension's transformer throws, the error is caught, logged,
+   * and the pipeline continues with the current history unchanged.
+   * The `hasTransformerError` flag is set in the returned flags so the
+   * caller can cancel the step — context integrity cannot be guaranteed.
    */
   runContextTransformers: (
     history: ModelMessage[],
@@ -158,10 +169,18 @@ class ExtensionHandlerModule implements ExtensionHandler {
 
     for (const ext of this.extensions) {
       if (!ext.historyTransformer) continue;
-      const result = await ext.historyTransformer(currentHistory);
-      const normalized = normalizeResult(result);
-      currentHistory = normalized.history;
-      flags = mergeFlags(flags, normalized.flags);
+      try {
+        const result = await ext.historyTransformer(currentHistory);
+        const normalized = normalizeResult(result);
+        currentHistory = normalized.history;
+        flags = mergeFlags(flags, normalized.flags);
+      } catch (error) {
+        this.extensionDeps.logger.error(
+          { error, extensionIdentifier: ext.identifier },
+          'Extension historyTransformer failed — skipping, pipeline continues',
+        );
+        flags = mergeFlags(flags, { hasTransformerError: true });
+      }
     }
 
     return { history: currentHistory, flags };
@@ -175,10 +194,18 @@ class ExtensionHandlerModule implements ExtensionHandler {
 
     for (const ext of this.extensions) {
       if (!ext.contextTransformer) continue;
-      const result = await ext.contextTransformer(currentHistory);
-      const normalized = normalizeResult(result);
-      currentHistory = normalized.history;
-      flags = mergeFlags(flags, normalized.flags);
+      try {
+        const result = await ext.contextTransformer(currentHistory);
+        const normalized = normalizeResult(result);
+        currentHistory = normalized.history;
+        flags = mergeFlags(flags, normalized.flags);
+      } catch (error) {
+        this.extensionDeps.logger.error(
+          { error, extensionIdentifier: ext.identifier },
+          'Extension contextTransformer failed — skipping, pipeline continues',
+        );
+        flags = mergeFlags(flags, { hasTransformerError: true });
+      }
     }
 
     return { history: currentHistory, flags };

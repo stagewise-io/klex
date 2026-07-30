@@ -1,4 +1,4 @@
-import type { DrainInboxResult } from '@/session/inbox';
+import type { DrainInboxResult } from '../inbox';
 
 /**
  * Builds the standard set of span attributes for an inbox drain event.

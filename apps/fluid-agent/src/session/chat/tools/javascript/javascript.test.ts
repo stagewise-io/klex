@@ -9,7 +9,7 @@ const logging = {
   child: () => ({ info: () => undefined }) as unknown as ModuleLogger,
 } as unknown as RootLogger;
 const workerUrl = new URL(
-  '../../../../dist/javascript-sandbox-worker.js',
+  '../../../../../dist/javascript-sandbox-worker.js',
   import.meta.url,
 );
 

@@ -4,10 +4,8 @@ import { context } from '@opentelemetry/api';
 import { isToolUIPart } from 'ai';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { AgentTools } from '@/session/tools';
-import type { ExtendedUIMessage } from '@/session/types';
-
 import type { StepCompleteEvent } from '../extensions/extension-api';
+import type { ExtendedUIMessage } from '../message-types';
 import {
   testLogger as logger,
   makeExtensionHandler,
@@ -15,13 +13,14 @@ import {
   makeInbox,
   makeModelProvider,
 } from '../test-helpers';
+import type { AgentTools } from '../tools';
 import {
   checkAndFixHistory,
   type HistoryRepairInfo,
 } from '../utils/check-and-fix-history';
 import { convertToModelMessagesExtended } from '../utils/convert-to-model-messages';
 import { createGenerationRunner } from './generation-runner';
-import { createStep, type StepDependencies, type StepResult } from './step';
+import { createStep, type StepDependencies } from './step';
 
 // --- helpers ---
 
@@ -407,6 +406,87 @@ describe('Step — extension handler hooks', () => {
   });
 });
 
+describe('Step — transformer error cancellation', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    setupDefaultMocks();
+  });
+
+  it('cancels the step with fatalError when runHistoryTransformers sets hasTransformerError', async () => {
+    const extensionHandler = makeExtensionHandler();
+    extensionHandler.runHistoryTransformers.mockResolvedValue({
+      history: [],
+      flags: { hasTransformerError: true },
+    });
+
+    const step = createStep(
+      makeDeps({
+        messages: [makeUserMessage()],
+        extensionHandler: extensionHandler as never,
+      }),
+    );
+    const result = await step.run();
+
+    expect(result.fatalError).toBe(true);
+    expect(result.shouldContinue).toBe(false);
+    expect(result.generation).toBeNull();
+    expect(createGenerationRunner).not.toHaveBeenCalled();
+    // Hooks still fire on the cancel path.
+    expect(extensionHandler.runStepCompleteHooks).toHaveBeenCalledOnce();
+    expect(extensionHandler.runContextTransformers).not.toHaveBeenCalled();
+  });
+
+  it('cancels the step with fatalError when runContextTransformers sets hasTransformerError', async () => {
+    const extensionHandler = makeExtensionHandler();
+    extensionHandler.runHistoryTransformers.mockResolvedValue({
+      history: [],
+      flags: {},
+    });
+    extensionHandler.runContextTransformers.mockResolvedValue({
+      history: [],
+      flags: { hasTransformerError: true },
+    });
+
+    const step = createStep(
+      makeDeps({
+        messages: [makeUserMessage()],
+        extensionHandler: extensionHandler as never,
+      }),
+    );
+    const result = await step.run();
+
+    expect(result.fatalError).toBe(true);
+    expect(result.shouldContinue).toBe(false);
+    expect(result.generation).toBeNull();
+    expect(createGenerationRunner).not.toHaveBeenCalled();
+    // Hooks still fire on the cancel path.
+    expect(extensionHandler.runStepCompleteHooks).toHaveBeenCalledOnce();
+  });
+
+  it('does not cancel when hasTransformerError is false/undefined', async () => {
+    const extensionHandler = makeExtensionHandler();
+    extensionHandler.runHistoryTransformers.mockResolvedValue({
+      history: [],
+      flags: {},
+    });
+    extensionHandler.runContextTransformers.mockResolvedValue({
+      history: [],
+      flags: {},
+    });
+
+    const step = createStep(
+      makeDeps({
+        messages: [makeUserMessage()],
+        extensionHandler: extensionHandler as never,
+      }),
+    );
+    const result = await step.run();
+
+    expect(result.fatalError).toBe(false);
+    expect(createGenerationRunner).toHaveBeenCalledOnce();
+  });
+});
+
 describe('Step — compacted flag propagation', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -581,7 +661,7 @@ describe('Step — abort', () => {
 
   it('delegates abort to the GenerationRunner', async () => {
     const abortFn = vi.fn();
-    let resolveRun: ((v: StepResult) => void) | undefined;
+    let resolveRun: ((v: StepCompleteEvent) => void) | undefined;
     vi.mocked(createGenerationRunner).mockReturnValue({
       run: vi.fn(
         () =>
@@ -601,13 +681,13 @@ describe('Step — abort', () => {
 
     expect(abortFn).toHaveBeenCalledWith('test-abort');
 
-    resolveRun?.(SUCCESS_RESULT as StepResult);
+    resolveRun?.(SUCCESS_RESULT as StepCompleteEvent);
     await runPromise;
   });
 
   it('delegates abortTools to the GenerationRunner', async () => {
     const abortToolsFn = vi.fn();
-    let resolveRun: ((v: StepResult) => void) | undefined;
+    let resolveRun: ((v: StepCompleteEvent) => void) | undefined;
     vi.mocked(createGenerationRunner).mockReturnValue({
       run: vi.fn(
         () =>
@@ -627,7 +707,7 @@ describe('Step — abort', () => {
 
     expect(abortToolsFn).toHaveBeenCalledOnce();
 
-    resolveRun?.(SUCCESS_RESULT as StepResult);
+    resolveRun?.(SUCCESS_RESULT as StepCompleteEvent);
     await runPromise;
   });
 

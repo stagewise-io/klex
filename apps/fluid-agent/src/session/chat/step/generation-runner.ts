@@ -11,8 +11,6 @@ import {
 import type { ModuleLogger } from '@stagewise/logger';
 
 import type { ModelProvider } from '@/model-provider';
-import type { AgentTools } from '@/session/tools';
-import type { ExtendedUIMessage } from '@/session/types';
 import {
   classifyGenerationError,
   type GenerationErrorClassification,
@@ -22,14 +20,13 @@ import type {
   StepCompleteEvent,
   ToolCallInfo,
 } from '../extensions/extension-api';
+import type { ExtendedUIMessage } from '../message-types';
+import type { AgentTools } from '../tools';
 import type { ModelFallbackManager } from '../utils/model-fallback-manager';
 import { repairPartialMessage } from '../utils/repair-partial-message';
 import { runStreamedGeneration } from '../utils/run-streamed-generation';
 import { startChildSpan } from '../utils/tracing';
 import { ToolDispatcher } from './tool-dispatcher';
-
-/** Re-exported so callers can import the result type from the runner. */
-export type { StepCompleteEvent as GenerationRunnerResult } from '../extensions/extension-api';
 
 export interface GenerationRunnerDependencies {
   logger: ModuleLogger;

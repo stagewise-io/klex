@@ -7,15 +7,9 @@ import type { ModuleLogger, RootLogger } from '@stagewise/logger';
 
 import type { Config, ModelId } from '@/config';
 import type { ModelProvider } from '@/model-provider';
-import type { AgentTools } from '@/session/tools';
-import {
-  createJavaScriptTool,
-  type JavaScriptTool,
-} from '@/session/tools/javascript';
-import { getMemoryTools } from '@/session/tools/memory';
+import type { SessionInboxEvent } from '@/session/inbox';
 import type {
   AgentSession,
-  ExtendedUIMessage,
   SessionHooks,
   SessionInfo,
   SessionRuntimeState,
@@ -25,12 +19,6 @@ import type { ToolProvider } from '@/tool-provider';
 import { tryModelsWithFallback } from '@/utils/llm';
 
 import {
-  createInbox,
-  type SessionInbox,
-  type SessionInboxBuffer,
-  SessionInboxPriority,
-} from '../inbox';
-import {
   createExtensionHandler,
   type ExtensionHandler,
 } from './extension-handler';
@@ -38,6 +26,16 @@ import type {
   BaseExtensionDeps,
   ExtensionFactory,
 } from './extensions/extension-api';
+import {
+  createInbox,
+  type SessionInbox,
+  type SessionInboxBuffer,
+  SessionInboxPriority,
+} from './inbox';
+import type { ExtendedUIMessage } from './message-types';
+import type { AgentTools } from './tools';
+import { createJavaScriptTool, type JavaScriptTool } from './tools/javascript';
+import { getMemoryTools } from './tools/memory';
 import { createTurn, type Turn, type TurnResult } from './turn';
 import { BackoffManager } from './utils/backoff-manager';
 import { ModelFallbackManager } from './utils/model-fallback-manager';
@@ -552,13 +550,10 @@ class ChatSessionModule implements AgentSession {
     // while we drain what's already buffered.
     this.sessionInbox.close();
 
-    // Drain remaining inbox content so the router can re-dispatch it
-    // to the replacement session. getEvents/getMessages(Low) drains all
-    // priorities. These methods are safe to call after close().
+    // Drain remaining inbox events so the router can re-dispatch them
+    // to the replacement session. getEvents(Low) drains all priorities.
+    // Safe to call after close().
     const pendingEvents = this.sessionInbox.getEvents(SessionInboxPriority.Low);
-    const pendingMessages = this.sessionInbox.getMessages(
-      SessionInboxPriority.Low,
-    );
 
     // Now perform the standard close (span end, status update, etc.).
     // close() will call sessionInbox.close() again — that's a no-op.
@@ -568,7 +563,6 @@ class ChatSessionModule implements AgentSession {
       {
         sessionId: this.sessionId,
         pendingEvents: pendingEvents.length,
-        pendingMessages: pendingMessages.length,
       },
       'Session self-terminated — firing onTerminated hook',
     );
@@ -576,10 +570,19 @@ class ChatSessionModule implements AgentSession {
     this.deps.hooks?.onTerminated?.({
       sessionId: this.sessionId,
       reason,
-      finalMessages: [...this.messages],
       pendingEvents,
-      pendingMessages,
     });
+  }
+
+  restorePendingEvents(events: SessionInboxEvent[]): void {
+    for (const event of events) {
+      try {
+        this.sessionInbox.send(event);
+      } catch {
+        // Inbox may have been closed between event recovery and send.
+        // Drop silently — the router will not retry.
+      }
+    }
   }
 }
 

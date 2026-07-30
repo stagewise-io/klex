@@ -56,6 +56,18 @@ export interface ExtensionHandler {
   readonly extensions: readonly Extension[];
 
   /**
+   * Run `onStepStart` across all extensions **in parallel** via
+   * `Promise.allSettled`. The step waits for all hooks to settle
+   * before proceeding.
+   *
+   * This is a fire-and-observe lifecycle notification — hooks cannot
+   * influence what the model sees or cancel the step. Errors from
+   * individual extensions are caught, logged, and do not break other
+   * hooks.
+   */
+  runStepStartHooks: () => Promise<void>;
+
+  /**
    * Run `historyTransformer` across all extensions in order.
    * Each extension receives the output history of the previous one.
    * Flags from all extensions are merged (OR semantics).
@@ -129,6 +141,29 @@ class ExtensionHandlerModule implements ExtensionHandler {
   readonly extensions: readonly Extension[];
 
   private readonly extensionDeps: BaseExtensionDeps;
+
+  async runStepStartHooks(): Promise<void> {
+    const extensions = this.extensions.filter((ext) => ext.onStepStart);
+
+    if (extensions.length === 0) return;
+
+    const results = await Promise.allSettled(
+      extensions.map(async (ext) => ext.onStepStart!()),
+    );
+
+    for (let i = 0; i < results.length; i++) {
+      const settled = results[i]!;
+      if (settled.status === 'rejected') {
+        this.extensionDeps.logger.error(
+          {
+            error: settled.reason,
+            extensionIdentifier: extensions[i]!.identifier,
+          },
+          'Extension onStepStart hook failed',
+        );
+      }
+    }
+  }
 
   constructor(deps: {
     factories: ExtensionFactory[];

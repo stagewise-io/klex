@@ -112,6 +112,11 @@ class StepModule implements Step {
 
     try {
       return await context.with(this.stepContext, async () => {
+        // 2.2.1: Notify extensions that a step is starting. This fires
+        // before any processing — inbox drain, history repair, or the
+        // step decision — so extensions can reset per-step state.
+        await this.deps.extensionHandler.runStepStartHooks();
+
         // 2.2.2: fetch inbox
         const drained = this.deps.inbox.drain(
           this.deps.messages,

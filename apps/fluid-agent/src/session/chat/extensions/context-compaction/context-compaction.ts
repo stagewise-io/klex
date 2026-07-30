@@ -55,16 +55,16 @@ export const MIN_MESSAGES_AFTER_SUMMARY = 2;
 export const MIN_MESSAGES_BEFORE_SUMMARY_BY_ROLE = 2;
 
 /**
- * Hysteresis margin applied to the post-compaction baseline. After a
- * successful compaction, the baseline is inflated by this fraction so
- * that small fluctuations around the compacted context size do not
- * immediately re-trigger compaction. Only genuine *new* growth beyond
- * the baseline plus this margin will cause the next compaction.
+ * Hysteresis margin for post-compaction re-triggering. After a
+ * successful compaction, the inputTokens of the first subsequent
+ * step become the post-compaction baseline. The next compaction
+ * only triggers when the latest step's inputTokens exceed this
+ * baseline by at least this fraction (0.1 = 10% growth), preventing
+ * repeated compaction of a context that is already compact but
+ * still large. Both the absolute threshold AND this hysteresis
+ * check must be satisfied to trigger.
  */
 export const COMPACTION_HYSTERESIS_RATIO = 0.1;
-
-/** Rough estimate of characters per token for baseline estimation. */
-const CHARS_PER_TOKEN = 4;
 
 /** Max chars kept from user/assistant text parts. */
 const TEXT_TRUNCATE_LIMIT = 500;
@@ -79,19 +79,53 @@ class ContextCompactionExt implements Extension {
   readonly identifier = 'io.stagewise/context-compaction';
   readonly displayName = 'Context Compaction';
 
-  private accumulatedTokens = 0;
+  /**
+   * inputTokens from the most recent step — used as a proxy for
+   * current context size. Unlike a cumulative sum (which grows
+   * quadratically because each step's inputTokens includes the
+   * full history), this reflects the actual context consumption at
+   * the latest point in time.
+   */
+  private lastStepInputTokens = 0;
+
+  /**
+   * After a successful compaction, the inputTokens of the first
+   * subsequent step are captured as the post-compaction baseline.
+   * The next compaction requires the latest step's inputTokens to
+   * exceed this baseline by at least {@link COMPACTION_HYSTERESIS_RATIO},
+   * preventing immediate re-compaction of an already-compact context.
+   * Set to 0 before the first compaction or after a failed/skipped
+   * compaction (no baseline → only the absolute threshold applies).
+   */
+  private postCompactionBaseline = 0;
+
+  /**
+   * Set to true after a successful compaction. The next
+   * {@link onStepComplete} call captures inputTokens as the new
+   * postCompactionBaseline and clears this flag. This ensures the
+   * baseline reflects the actual compacted context size as measured
+   * by the model, not a pre-compaction estimate.
+   */
+  private awaitingPostCompactionBaseline = false;
+
   private compacting = false;
   private cachedThreshold: number | null = null;
+
   /**
-   * Token baseline set after a successful compaction. Represents the
-   * estimated token cost of the compacted history (keepBefore + summary).
-   * The next compaction only triggers when accumulatedTokens exceeds
-   * baseline + threshold, preventing repeated compaction of a context
-   * that is already compact but still large.
+   * Per-step flag set by `historyTransformer` when the summary was
+   * actually applied (slicing occurred). Reset to `false` in
+   * `onStepStart` at the beginning of each step. Checked by
+   * `onStepComplete` before capturing the post-compaction baseline —
+   * if the summary wasn't applied, the baseline capture is deferred
+   * to a future step where the transformer does apply it.
    */
-  private compactionBaseline = 0;
+  private summaryAppliedThisStep = false;
 
   constructor(private readonly deps: ExtensionDeps) {}
+
+  onStepStart(): void {
+    this.summaryAppliedThisStep = false;
+  }
 
   /**
    * Computes the compaction threshold as the minimum of
@@ -171,9 +205,14 @@ class ContextCompactionExt implements Extension {
 
     if (cutoffIndex === -1) {
       // No summary has enough messages after it to be a viable cutoff.
-      // Still mark as compacted since summaries exist in the history.
+      // Still mark as compacted since summaries exist in the history,
+      // but the summary was NOT applied — don't set the flag.
       return { history, flags: { hasCompacted: true } };
     }
+
+    // The summary is being applied — record this so `onStepComplete`
+    // knows the compacted history was actually used by the model.
+    this.summaryAppliedThisStep = true;
 
     // Slice from the cutoff summary. Strip any other summary messages
     // from the result so only the cutoff summary remains — multiple
@@ -230,23 +269,61 @@ class ContextCompactionExt implements Extension {
   async onStepComplete(event: StepCompleteEvent): Promise<void> {
     if (event.generation === null) return;
 
-    const usage = event.generation.usage;
-    const stepTokens = (usage.inputTokens ?? 0) + (usage.outputTokens ?? 0);
-    this.accumulatedTokens += stepTokens;
+    const inputTokens = event.generation.usage.inputTokens ?? 0;
+    this.lastStepInputTokens = inputTokens;
 
+    // After a successful compaction, the first subsequent step where
+    // the summary was ACTUALLY applied by the history transformer
+    // establishes the post-compaction baseline. This is the actual
+    // measured context size after compaction — more accurate than
+    // any estimate. We skip the trigger check for this step because
+    // it IS the baseline: there is nothing to compare against.
+    //
+    // If the summary was not applied (not enough messages after it
+    // yet), we keep awaiting — the baseline is deferred to a future
+    // step where the transformer does apply the summary.
+    if (this.awaitingPostCompactionBaseline) {
+      if (!this.summaryAppliedThisStep) {
+        this.deps.logger.debug(
+          { inputTokens },
+          'Awaiting baseline but summary was not applied this step — deferring',
+        );
+        return;
+      }
+      this.postCompactionBaseline = inputTokens;
+      this.awaitingPostCompactionBaseline = false;
+      this.deps.logger.info(
+        { postCompactionBaseline: this.postCompactionBaseline },
+        'Post-compaction baseline established from first step where summary was applied',
+      );
+      return;
+    }
+
+    // Trigger compaction only when BOTH conditions are met:
+    //   1. inputTokens >= absolute threshold (50% of context window)
+    //   2. inputTokens >= baseline * (1 + hysteresis) — at least 10%
+    //      growth above the post-compaction baseline (if a baseline
+    //      exists; before the first compaction, only condition 1
+    //      applies since baseline is 0 → hysteresis threshold is 0).
     const threshold = this.getCompactionThreshold();
+    const hysteresisThreshold =
+      this.postCompactionBaseline > 0
+        ? this.postCompactionBaseline * (1 + COMPACTION_HYSTERESIS_RATIO)
+        : 0;
+
     if (
-      this.accumulatedTokens - this.compactionBaseline >= threshold &&
-      !this.compacting
+      !this.compacting &&
+      this.lastStepInputTokens >= threshold &&
+      this.lastStepInputTokens >= hysteresisThreshold
     ) {
       this.deps.logger.info(
         {
-          accumulatedTokens: this.accumulatedTokens,
-          baseline: this.compactionBaseline,
-          growthAboveBaseline: this.accumulatedTokens - this.compactionBaseline,
+          lastStepInputTokens: this.lastStepInputTokens,
+          postCompactionBaseline: this.postCompactionBaseline,
           threshold,
+          hysteresisThreshold,
         },
-        'Token threshold exceeded — triggering compaction',
+        'Context size threshold exceeded — triggering compaction',
       );
       void this.runCompaction();
     }
@@ -255,20 +332,13 @@ class ContextCompactionExt implements Extension {
   private async runCompaction(): Promise<void> {
     this.compacting = true;
 
-    // Capture the token count at the start of this compaction run.
-    // New steps may accumulate tokens while compaction is in flight —
-    // those should NOT be discarded on success, otherwise a slow
-    // compaction followed by nearly a threshold's worth of new steps
-    // would delay the next compaction by another full threshold.
-    const tokensAtStart = this.accumulatedTokens;
-
     let span: Span | null = null;
     let success = false;
     try {
       span = startChildSpan('context_compaction', {
         attributes: {
-          'compaction.accumulatedTokens': this.accumulatedTokens,
-          'compaction.baseline': this.compactionBaseline,
+          'compaction.lastStepInputTokens': this.lastStepInputTokens,
+          'compaction.postCompactionBaseline': this.postCompactionBaseline,
           'compaction.threshold': this.getCompactionThreshold(),
         },
       });
@@ -285,22 +355,22 @@ class ContextCompactionExt implements Extension {
       span?.addEvent('compaction.error', { error: String(error) });
     } finally {
       this.compacting = false;
-      // On successful compaction, set the baseline to the estimated
-      // token cost of the compacted history (plus hysteresis margin).
-      // This prevents immediate re-triggering when the compacted
-      // context is still large. On skip or failure, keep the counter
-      // unchanged so the next step can re-trigger.
       if (success) {
-        const compactedTokens = this.estimateCompactedContextTokens();
-        this.compactionBaseline = Math.floor(
-          compactedTokens * (1 + COMPACTION_HYSTERESIS_RATIO),
-        );
-        // Preserve tokens that accumulated during compaction, but
-        // re-anchor them relative to the new baseline.
-        const inflightTokens = this.accumulatedTokens - tokensAtStart;
-        this.accumulatedTokens = this.compactionBaseline + inflightTokens;
-        span?.setAttribute('compaction.compactedTokens', compactedTokens);
-        span?.setAttribute('compaction.newBaseline', this.compactionBaseline);
+        // Mark that the next step should establish the post-compaction
+        // baseline. We don't set the baseline here because the actual
+        // context size after compaction is only known once the model
+        // processes the compacted history — measured by the next
+        // step's inputTokens.
+        this.awaitingPostCompactionBaseline = true;
+        this.postCompactionBaseline = 0;
+        span?.setAttribute('compaction.awaitingBaseline', true);
+      } else {
+        // On failure or skip, reset the baseline so the next step
+        // can re-trigger without hysteresis (only the absolute
+        // threshold applies). If compaction didn't happen, there's
+        // no compacted context to use as a reference point.
+        this.postCompactionBaseline = 0;
+        this.awaitingPostCompactionBaseline = false;
       }
       span?.end();
     }
@@ -308,6 +378,12 @@ class ContextCompactionExt implements Extension {
 
   private async runCompactionInner(span: Span): Promise<boolean> {
     let modelIds = this.deps.config.getModelSelection('compaction');
+
+    // Tracks whether modelIds was already set to chat models because
+    // no compaction models were configured. When true, the post-failure
+    // chat-model fallback is skipped — retrying with the same models
+    // that just failed would be a wasted API call.
+    let usedChatFallback = false;
 
     if (modelIds.length === 0) {
       const chatModelIds = this.deps.config.getModelSelection('chat');
@@ -323,6 +399,7 @@ class ContextCompactionExt implements Extension {
       );
       span.addEvent('compaction.fallback_to_chat_models');
       modelIds = chatModelIds;
+      usedChatFallback = true;
     }
 
     span.setAttribute('compaction.modelCount', modelIds.length);
@@ -381,33 +458,38 @@ class ContextCompactionExt implements Extension {
     });
 
     if (!result.success) {
-      // All compaction models failed — try chat models as a last resort.
-      const chatModelIds = this.deps.config.getModelSelection('chat');
-      if (chatModelIds.length > 0) {
-        this.deps.logger.warn(
-          'All compaction models failed — falling back to chat models',
-        );
-        span.addEvent('compaction.fallback_to_chat_models_after_failure');
-        const fallbackResult = await this.deps.generateText({
-          modelIds: chatModelIds,
-          system: compactionPrompt,
-          prompt: transcript,
-        });
-
-        if (!fallbackResult.success) {
-          span.addEvent('compaction.failed', {
-            reason: 'all-models-failed-including-chat',
-            failureReason: fallbackResult.failureReason,
-            failureDetails: fallbackResult.failureDetails ?? '',
+      // All compaction models failed — try chat models as a last
+      // resort, but only if we haven't already fallen back to chat
+      // models above (no compaction models configured). Retrying with
+      // the same chat models that just failed would be a wasted call.
+      if (!usedChatFallback) {
+        const chatModelIds = this.deps.config.getModelSelection('chat');
+        if (chatModelIds.length > 0) {
+          this.deps.logger.warn(
+            'All compaction models failed — falling back to chat models',
+          );
+          span.addEvent('compaction.fallback_to_chat_models_after_failure');
+          const fallbackResult = await this.deps.generateText({
+            modelIds: chatModelIds,
+            system: compactionPrompt,
+            prompt: transcript,
           });
-          return false;
-        }
 
-        return this.injectSummary(
-          fallbackResult.text,
-          lastSliceMessageId,
-          span,
-        );
+          if (!fallbackResult.success) {
+            span.addEvent('compaction.failed', {
+              reason: 'all-models-failed-including-chat',
+              failureReason: fallbackResult.failureReason,
+              failureDetails: fallbackResult.failureDetails ?? '',
+            });
+            return false;
+          }
+
+          return this.injectSummary(
+            fallbackResult.text,
+            lastSliceMessageId,
+            span,
+          );
+        }
       }
 
       span.addEvent('compaction.failed', {
@@ -464,54 +546,6 @@ class ContextCompactionExt implements Extension {
       'History compacted and summary injected after last slice message',
     );
     return true;
-  }
-
-  /**
-   * Estimates the token cost of the compacted history that
-   * {@link historyTransformer} will produce: the `keepBefore` messages
-   * plus the summary message. Uses the same XML transcript
-   * representation as the compaction prompt and a rough chars-per-token
-   * heuristic. This is intentionally approximate — it only needs to be
-   * good enough to prevent repeated compaction of an already-compact
-   * context.
-   */
-  private estimateCompactedContextTokens(): number {
-    const history = this.deps.getHistory();
-
-    // Find the newest summary — this is what historyTransformer will use
-    // as the cutoff.
-    const lastSummaryIndex = history.findIndex((m) =>
-      m.parts.some((p) => p.type === 'data-context-summary'),
-    );
-    if (lastSummaryIndex === -1) return 0;
-
-    // Replicate the keepBefore logic from historyTransformer:
-    // up to MIN_MESSAGES_BEFORE_SUMMARY_BY_ROLE messages of each role
-    // immediately preceding the cutoff summary.
-    const beforeCutoff = history.slice(0, lastSummaryIndex);
-    const minPerRole = MIN_MESSAGES_BEFORE_SUMMARY_BY_ROLE;
-    const keepBefore: ExtendedUIMessage[] = [];
-    let userCount = 0;
-    let assistantCount = 0;
-
-    for (let i = beforeCutoff.length - 1; i >= 0; i--) {
-      const msg = beforeCutoff[i]!;
-      if (msg.parts.some((p) => p.type === 'data-context-summary')) continue;
-      if (msg.role === 'user' && userCount < minPerRole) {
-        keepBefore.unshift(msg);
-        userCount++;
-      } else if (msg.role === 'assistant' && assistantCount < minPerRole) {
-        keepBefore.unshift(msg);
-        assistantCount++;
-      }
-      if (userCount >= minPerRole && assistantCount >= minPerRole) break;
-    }
-
-    const summaryMessage = history[lastSummaryIndex]!;
-    const compactedHistory = [...keepBefore, summaryMessage];
-    const transcript = transformHistoryForCompaction(compactedHistory);
-
-    return Math.ceil(transcript.length / CHARS_PER_TOKEN);
   }
 }
 

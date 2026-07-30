@@ -8,7 +8,7 @@
   "scripts": {
     "build": "node build.mjs",
     "build:exe": "node build.mjs --sea && node scripts/package-exe.mjs",
-    "dev": "tsx src/main.ts",
+    "dev": "tsx --env-file ../../.env src/main.ts",
     "start": "node dist/main.js",
     "typecheck": "tsc --noEmit",
     "test": "vitest run"

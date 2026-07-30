@@ -6,7 +6,11 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import type { RootLogger } from '@stagewise/logger';
 
-import { ConfigValidationError, createConfig } from './config';
+import {
+  ConfigValidationError,
+  createConfig,
+  DEFAULT_CONTEXT_SIZE,
+} from './config';
 import type { FluidConfig, ProviderPreset } from './types';
 
 const directories: string[] = [];
@@ -274,6 +278,93 @@ describe('Config — resolveModel (mixed providers)', () => {
     expect(module.getModelSelection('memory')).toEqual([
       'local:api:test-model',
     ]);
+  });
+});
+
+describe('Config — context size resolution', () => {
+  it('resolves contextSize from preset provider knownModels', async () => {
+    const config = presetConfig();
+    const provider = config.providers['my-openai'];
+    if (!provider || !('preset' in provider))
+      throw new Error('Expected preset provider');
+    provider.knownModels = {
+      'gpt-4o': { contextSize: 128_000 },
+    };
+    const { module } = await setup(config);
+    expect(module.resolveModel('my-openai:gpt-4o').contextSize).toBe(128_000);
+  });
+
+  it('resolves contextSize from manual endpoint knownModels', async () => {
+    const config = manualConfig();
+    const local = config.providers.local;
+    if (!local || !('endpoints' in local))
+      throw new Error('Expected manual provider');
+    local.endpoints.chat!.knownModels = {
+      'model:8b': { contextSize: 8_192 },
+    };
+    const { module } = await setup(config);
+    expect(module.resolveModel('local:chat:model:8b').contextSize).toBe(8_192);
+  });
+
+  it('defaults to DEFAULT_CONTEXT_SIZE when contextSize is absent', async () => {
+    const { module } = await setup(presetConfig());
+    expect(module.resolveModel('my-openai:gpt-4o').contextSize).toBe(
+      DEFAULT_CONTEXT_SIZE,
+    );
+  });
+
+  it('defaults to DEFAULT_CONTEXT_SIZE when knownModels is absent', async () => {
+    const { module } = await setup(manualConfig());
+    expect(module.resolveModel('local:chat:model:8b').contextSize).toBe(
+      DEFAULT_CONTEXT_SIZE,
+    );
+  });
+
+  it('getModelContextSize returns the resolved context size', async () => {
+    const config = presetConfig();
+    const provider = config.providers['my-openai'];
+    if (!provider || !('preset' in provider))
+      throw new Error('Expected preset provider');
+    provider.knownModels = {
+      'gpt-4o': { contextSize: 64_000 },
+    };
+    const { module } = await setup(config);
+    expect(module.getModelContextSize('my-openai:gpt-4o')).toBe(64_000);
+  });
+
+  it('getModelContextSize returns DEFAULT_CONTEXT_SIZE for unknown model metadata', async () => {
+    const { module } = await setup(presetConfig());
+    expect(module.getModelContextSize('my-openai:gpt-999')).toBe(
+      DEFAULT_CONTEXT_SIZE,
+    );
+  });
+
+  it('accepts displayName in knownModels entries', async () => {
+    const config = presetConfig();
+    const provider = config.providers['my-openai'];
+    if (!provider || !('preset' in provider))
+      throw new Error('Expected preset provider');
+    provider.knownModels = {
+      'gpt-4o': { displayName: 'GPT-4o', contextSize: 128_000 },
+    };
+    const { module } = await setup(config);
+    expect(module.resolveModel('my-openai:gpt-4o').contextSize).toBe(128_000);
+  });
+
+  it('resolves contextSize independently per endpoint in manual providers', async () => {
+    const config = mixedConfig();
+    const local = config.providers.local;
+    if (!local || !('endpoints' in local))
+      throw new Error('Expected manual provider');
+    local.endpoints.chat!.knownModels = { 'model:8b': { contextSize: 4_096 } };
+    local.endpoints.api!.knownModels = {
+      'test-model': { contextSize: 32_768 },
+    };
+    const { module } = await setup(config);
+    expect(module.resolveModel('local:chat:model:8b').contextSize).toBe(4_096);
+    expect(module.resolveModel('local:api:test-model').contextSize).toBe(
+      32_768,
+    );
   });
 });
 

@@ -10,9 +10,10 @@ import type {
   Extension,
   ExtensionDeps,
   ExtensionFactory,
+  StepCompleteEvent,
+  StepCompleteHookResult,
   TransformationFlags,
 } from '../extensions/extension-api';
-import type { GenerationRunnerResult } from '../step/generation-runner';
 
 /**
  * Normalizes a transformation hook return value into `{ history, flags }`.
@@ -47,38 +48,46 @@ export interface ExtensionHandler {
   readonly extensions: readonly Extension[];
 
   /**
-   * Run `onHistoryPreProcessing` across all extensions in order (2.2.4).
+   * Run `historyTransformer` across all extensions in order.
    * Each extension receives the output history of the previous one.
    * Flags from all extensions are merged (OR semantics).
    */
-  onHistoryPreProcessing: (
+  runHistoryTransformers: (
     history: ExtendedUIMessage[],
   ) => Promise<{ history: ExtendedUIMessage[]; flags: TransformationFlags }>;
 
   /**
-   * Run `onHistoryPostProcessing` across all extensions in order (2.2.6).
+   * Run `contextTransformer` across all extensions in order.
    * Each extension receives the output history of the previous one.
    * Flags from all extensions are merged (OR semantics).
    */
-  onHistoryPostProcessing: (
+  runContextTransformers: (
     history: ModelMessage[],
   ) => Promise<{ history: ModelMessage[]; flags: TransformationFlags }>;
 
   /**
-   * Collect and merge all `dataPartTransformers` from all extensions (2.2.5).
+   * Collect and merge all `dataPartTransformers` from all extensions.
    * Throws if two extensions register a transformer for the same data part
    * type — only one converter per type is allowed.
    */
   getDataPartTransformers: () => DataPartTransformers;
 
   /**
-   * Run `onStepComplete` across all extensions in order.
+   * Run `onStepComplete` across all extensions **in parallel** via
+   * `Promise.allSettled`. The step waits for all hooks to settle
+   * before continuing.
    *
-   * Each extension receives a copy of the full GenerationRunnerResult.
-   * Errors from individual extensions are caught and logged — one
-   * extension's hook failure does not break the step.
+   * Each extension receives a structured clone of the
+   * {@link StepCompleteEvent}. Errors from individual extensions are
+   * caught, logged, and do not break the step — one extension's hook
+   * failure does not affect others.
+   *
+   * If any extension returns `{ stop: true }`, the returned object
+   * will have `stop: true` and the first non-empty `stopReason`.
    */
-  onStepComplete: (result: GenerationRunnerResult) => Promise<void>;
+  runStepCompleteHooks: (
+    event: StepCompleteEvent,
+  ) => Promise<{ stop: boolean; stopReason: string | null }>;
 }
 
 export interface ExtensionHandlerDependencies {
@@ -141,15 +150,15 @@ class ExtensionHandlerModule implements ExtensionHandler {
     });
   }
 
-  async onHistoryPreProcessing(
+  async runHistoryTransformers(
     history: ExtendedUIMessage[],
   ): Promise<{ history: ExtendedUIMessage[]; flags: TransformationFlags }> {
     let currentHistory = history;
     let flags: TransformationFlags = {};
 
     for (const ext of this.extensions) {
-      if (!ext.onHistoryPreProcessing) continue;
-      const result = await ext.onHistoryPreProcessing(currentHistory);
+      if (!ext.historyTransformer) continue;
+      const result = await ext.historyTransformer(currentHistory);
       const normalized = normalizeResult(result);
       currentHistory = normalized.history;
       flags = mergeFlags(flags, normalized.flags);
@@ -158,15 +167,15 @@ class ExtensionHandlerModule implements ExtensionHandler {
     return { history: currentHistory, flags };
   }
 
-  async onHistoryPostProcessing(
+  async runContextTransformers(
     history: ModelMessage[],
   ): Promise<{ history: ModelMessage[]; flags: TransformationFlags }> {
     let currentHistory = history;
     let flags: TransformationFlags = {};
 
     for (const ext of this.extensions) {
-      if (!ext.onHistoryPostProcessing) continue;
-      const result = await ext.onHistoryPostProcessing(currentHistory);
+      if (!ext.contextTransformer) continue;
+      const result = await ext.contextTransformer(currentHistory);
       const normalized = normalizeResult(result);
       currentHistory = normalized.history;
       flags = mergeFlags(flags, normalized.flags);
@@ -201,21 +210,49 @@ class ExtensionHandlerModule implements ExtensionHandler {
     return merged as unknown as DataPartTransformers;
   }
 
-  async onStepComplete(result: GenerationRunnerResult): Promise<void> {
-    for (const ext of this.extensions) {
-      if (!ext.onStepComplete) continue;
-      try {
-        // Pass a shallow copy to each extension so mutations don't
-        // propagate to other extensions or the caller.
-        await ext.onStepComplete({ ...result });
-      } catch (error) {
-        // One extension's hook failure must not break the step.
+  async runStepCompleteHooks(
+    event: StepCompleteEvent,
+  ): Promise<{ stop: boolean; stopReason: string | null }> {
+    const hooks = this.extensions
+      .filter((ext) => ext.onStepComplete)
+      .map((ext) => ext.onStepComplete!);
+
+    if (hooks.length === 0) {
+      return { stop: false, stopReason: null };
+    }
+
+    // Launch all hooks in parallel, each with its own structured clone
+    // so mutations don't leak between extensions or back to the caller.
+    // The async wrapper ensures synchronous throws become rejected promises
+    // that Promise.allSettled can catch.
+    const results = await Promise.allSettled(
+      hooks.map(async (hook) => hook(structuredClone(event))),
+    );
+
+    let stop = false;
+    let stopReason: string | null = null;
+
+    for (let i = 0; i < results.length; i++) {
+      const settled = results[i]!;
+      if (settled.status === 'rejected') {
+        // Log the error but don't break — other hooks already ran in parallel.
         this.extensionDeps.logger.error(
-          { error },
+          { error: settled.reason, extensionIndex: i },
           'Extension onStepComplete hook failed',
         );
+        continue;
+      }
+
+      const hookResult = settled.value as StepCompleteHookResult;
+      if (hookResult && typeof hookResult === 'object' && hookResult.stop) {
+        stop = true;
+        if (stopReason === null && hookResult.stopReason) {
+          stopReason = hookResult.stopReason;
+        }
       }
     }
+
+    return { stop, stopReason };
   }
 }
 

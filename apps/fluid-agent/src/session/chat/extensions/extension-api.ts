@@ -1,12 +1,16 @@
-import type { FilePart, ModelMessage, TextPart } from 'ai';
+import type {
+  FilePart,
+  FinishReason,
+  LanguageModelUsage,
+  ModelMessage,
+  TextPart,
+} from 'ai';
 
 import type { ModuleLogger } from '@stagewise/logger';
 
 import type { Config, ModelId } from '@/config';
 import type { SessionInbox } from '@/session/inbox';
 import type { CustomUIDataParts, ExtendedUIMessage } from '@/session/types';
-
-import type { GenerationRunnerResult } from '../step/generation-runner';
 
 /**
  * A transformer that converts a custom data part into model message parts.
@@ -39,13 +43,97 @@ export interface TransformationFlags {
  * the transformed history directly (shorthand) or an object containing the
  * history plus flags describing what the transformation did.
  */
-export type PreProcessingResult =
+export type HistoryProcessingResult =
   | ExtendedUIMessage[]
   | { history: ExtendedUIMessage[]; flags: TransformationFlags };
 
-export type PostProcessingResult =
+export type ContextProcessingResult =
   | ModelMessage[]
   | { history: ModelMessage[]; flags: TransformationFlags };
+
+// ---------------------------------------------------------------------------
+// Step event types
+// ---------------------------------------------------------------------------
+
+/**
+ * Information about a single tool call that was dispatched during a step.
+ * Extracted from the assistant message's tool UI parts after all tool
+ * executions have settled.
+ */
+export interface ToolCallInfo {
+  toolCallId: string;
+  toolName: string;
+  input: unknown;
+  state: 'output-available' | 'output-error' | 'output-denied';
+  /** Present when `state` is `'output-available'`. */
+  output?: unknown;
+  /** Present when `state` is `'output-error'`. */
+  errorText?: string;
+}
+
+/**
+ * Metadata about the model generation that occurred during a step.
+ * `null` when no generation happened (skipped step, fatal error, or
+ * all generation attempts exhausted without usable output).
+ */
+export interface GenerationInfo {
+  /** The model ID that produced the output. */
+  modelId: string;
+  /** The finish reason reported by the model. */
+  finishReason: FinishReason;
+  /** Full token usage from the provider, including cache/reasoning details. */
+  usage: LanguageModelUsage;
+}
+
+/**
+ * A comprehensive event describing everything that happened during a step.
+ *
+ * Extensions receive a structured clone of this object in
+ * {@link Extension.onStepComplete}. The event is guaranteed to fire on
+ * every step completion — whether the step was skipped, produced a
+ * successful generation, salvaged partial output, or failed.
+ */
+export interface StepCompleteEvent {
+  /** True if the turn should run another step after this one. */
+  shouldContinue: boolean;
+  /** True if the turn must inject a "Continue." message before the next step. */
+  forceNextStep: boolean;
+  /**
+   * True if the step failed with a fatal (non-recoverable) error, e.g.
+   * a 400 bad request or an invalid prompt. The session should be
+   * terminated rather than retried.
+   */
+  fatalError: boolean;
+  /** Human-readable reason for the fatal error, if fatalError is true. */
+  fatalErrorReason: string | null;
+  /**
+   * True if generation was attempted but all retries were exhausted
+   * without producing any usable output.
+   */
+  generationFailed: boolean;
+  /**
+   * Generation metadata — null when no generation happened (skipped step,
+   * fatal error, or all attempts exhausted).
+   */
+  generation: GenerationInfo | null;
+  /** Tool calls dispatched and settled during this step — empty when no generation. */
+  toolCalls: ToolCallInfo[];
+}
+
+/**
+ * Return value of the {@link Extension.onStepComplete} hook.
+ *
+ * - `void` — the extension observed the event but does not want to
+ *   influence control flow.
+ * - `{ stop: true, stopReason }` — request the agent to stop after this
+ *   step. The handler collects stop signals from all extensions in
+ *   parallel; if any extension requests a stop, `shouldContinue` is set
+ *   to `false` on the event returned by the step.
+ */
+export type StepCompleteHookResult = void | {
+  stop?: boolean;
+  stopReason?: string;
+};
 
 export interface Extension {
   /**
@@ -62,23 +150,42 @@ export interface Extension {
    */
   readonly displayName?: string;
 
-  onHistoryPreProcessing?: (
+  /**
+   * Transforms the UI message history before it is converted to model
+   * messages. Extensions are called in order; each receives the output
+   * of the previous one. Flags from all extensions are merged (OR
+   * semantics).
+   */
+  historyTransformer?: (
     history: ExtendedUIMessage[],
-  ) => PreProcessingResult | Promise<PreProcessingResult>;
-
-  onHistoryPostProcessing?: (
-    history: ModelMessage[],
-  ) => PostProcessingResult | Promise<PostProcessingResult>;
+  ) => HistoryProcessingResult | Promise<HistoryProcessingResult>;
 
   /**
-   * Called after each generation step completes (success or failure).
-   * Receives a shallow copy of the full GenerationRunnerResult — the
-   * extension decides what to use (usage, text, toolCalls, etc.).
-   *
-   * Errors thrown by extensions are caught and logged by the
-   * ExtensionHandler — one extension's failure does not break the step.
+   * Transforms the model messages after conversion from UI messages.
+   * Extensions are called in order; each receives the output of the
+   * previous one. Flags from all extensions are merged (OR semantics).
    */
-  onStepComplete?: (result: GenerationRunnerResult) => void | Promise<void>;
+  contextTransformer?: (
+    history: ModelMessage[],
+  ) => ContextProcessingResult | Promise<ContextProcessingResult>;
+
+  /**
+   * Called after each step completes — whether the step was skipped,
+   * produced a successful generation, salvaged partial output, or
+   * failed. Receives a structured clone of the full
+   * {@link StepCompleteEvent}.
+   *
+   * All extensions' hooks are called in parallel via
+   * `Promise.allSettled`. The step waits for all hooks to settle
+   * before returning. Errors from individual hooks are caught and
+   * logged — one extension's hook failure does not break the step.
+   *
+   * Return `{ stop: true }` to request that the agent stops after
+   * this step.
+   */
+  onStepComplete?: (
+    event: StepCompleteEvent,
+  ) => StepCompleteHookResult | Promise<StepCompleteHookResult>;
 
   dataPartTransformers?: DataPartTransformers;
 }

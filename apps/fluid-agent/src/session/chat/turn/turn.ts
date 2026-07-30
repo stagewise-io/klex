@@ -10,7 +10,7 @@ import type { AgentTools } from '@/session/tools';
 import type { ExtendedUIMessage } from '@/session/types';
 
 import type { ExtensionHandler } from '../extension-handler';
-import { createStep, type Step, type StepResult } from '../step';
+import { createStep, type Step, type StepCompleteEvent } from '../step';
 import { inboxDrainAttributes } from '../utils/inbox-drain-attributes';
 import type { ModelFallbackManager } from '../utils/model-fallback-manager';
 import { tracer } from '../utils/tracing';
@@ -114,13 +114,14 @@ class TurnModule implements Turn {
         );
 
         // 2.2: Run steps until no more generation is needed
-        let stepResult: StepResult = {
+        let stepResult: StepCompleteEvent = {
           shouldContinue: true,
           forceNextStep: false,
           fatalError: false,
           fatalErrorReason: null,
           generationFailed: false,
-          usage: null,
+          generation: null,
+          toolCalls: [],
         };
         let stepCount = 0;
         const MAX_STEPS_PER_TURN = 20;
@@ -170,8 +171,11 @@ class TurnModule implements Turn {
           }
           stepCount++;
           totalStepCount = stepCount;
-          if (stepResult.usage) {
-            lastUsage = stepResult.usage;
+          if (stepResult.generation?.usage) {
+            lastUsage = {
+              inputTokens: stepResult.generation.usage.inputTokens ?? 0,
+              outputTokens: stepResult.generation.usage.outputTokens ?? 0,
+            };
           }
 
           // Fatal error — stop the turn immediately.

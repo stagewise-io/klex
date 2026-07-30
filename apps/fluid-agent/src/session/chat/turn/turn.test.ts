@@ -47,7 +47,8 @@ const NOOP_RESULT: StepResult = {
   fatalError: false,
   fatalErrorReason: null,
   generationFailed: false,
-  usage: null,
+  generation: null,
+  toolCalls: [],
 };
 
 function makeMockStep(overrides: Partial<StepResult> = {}, delay = 0) {

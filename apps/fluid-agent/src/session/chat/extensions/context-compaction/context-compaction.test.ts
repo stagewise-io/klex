@@ -1,10 +1,11 @@
 import { randomUUID } from 'node:crypto';
 
+import type { LanguageModelUsage } from 'ai';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { ExtendedUIMessage } from '@/session/types';
 
-import type { ExtensionDeps } from '../extension-api';
+import type { ExtensionDeps, StepCompleteEvent } from '../extension-api';
 import {
   CONTEXT_SIZE_THRESHOLD_RATIO,
   createContextCompactionExt,
@@ -35,26 +36,29 @@ beforeEach(() => {
 
 // --- helpers ---
 
-function makeUsage(
-  input: number,
-  output: number,
-): { inputTokens: number; outputTokens: number } {
+function makeUsage(input: number, output: number): LanguageModelUsage {
   return {
     inputTokens: input,
     outputTokens: output,
-  };
+  } as LanguageModelUsage;
 }
 
-function makeResult(
-  usage: { inputTokens: number; outputTokens: number } | null,
-) {
+function makeResult(usage: LanguageModelUsage | null): StepCompleteEvent {
   return {
     shouldContinue: true,
     forceNextStep: false,
     fatalError: false,
     fatalErrorReason: null,
     generationFailed: usage === null,
-    usage,
+    generation:
+      usage === null
+        ? null
+        : {
+            modelId: 'test-model',
+            finishReason: 'stop',
+            usage,
+          },
+    toolCalls: [],
   };
 }
 
@@ -1233,7 +1237,7 @@ describe('ContextCompactionExt — history transformation', () => {
   });
 });
 
-describe('ContextCompactionExt — onHistoryPreProcessing', () => {
+describe('ContextCompactionExt — historyTransformer', () => {
   it('slices from last summary when enough messages follow it', () => {
     const history = [
       makeTextMessage('user', 'old1'),
@@ -1244,7 +1248,7 @@ describe('ContextCompactionExt — onHistoryPreProcessing', () => {
     ];
 
     const ext = createContextCompactionExt.create(makeDeps());
-    const result = ext.onHistoryPreProcessing!(history);
+    const result = ext.historyTransformer!(history);
 
     expect(Array.isArray(result)).toBe(false);
     const obj = result as {
@@ -1266,7 +1270,7 @@ describe('ContextCompactionExt — onHistoryPreProcessing', () => {
     ];
 
     const ext = createContextCompactionExt.create(makeDeps());
-    const result = ext.onHistoryPreProcessing!(history);
+    const result = ext.historyTransformer!(history);
 
     expect(Array.isArray(result)).toBe(true);
     expect(result).toHaveLength(2);
@@ -1285,7 +1289,7 @@ describe('ContextCompactionExt — onHistoryPreProcessing', () => {
     ];
 
     const ext = createContextCompactionExt.create(makeDeps());
-    const result = ext.onHistoryPreProcessing!(history);
+    const result = ext.historyTransformer!(history);
 
     expect(Array.isArray(result)).toBe(false);
     const obj = result as {
@@ -1321,7 +1325,7 @@ describe('ContextCompactionExt — onHistoryPreProcessing', () => {
     // summary1 has 1 message after it, summary2 has 0 — both below threshold
 
     const ext = createContextCompactionExt.create(makeDeps());
-    const result = ext.onHistoryPreProcessing!(history);
+    const result = ext.historyTransformer!(history);
 
     expect(Array.isArray(result)).toBe(false);
     const obj = result as {
@@ -1349,7 +1353,7 @@ describe('ContextCompactionExt — onHistoryPreProcessing', () => {
     // The newest qualifying summary (mid summary) should be the cutoff
 
     const ext = createContextCompactionExt.create(makeDeps());
-    const result = ext.onHistoryPreProcessing!(history);
+    const result = ext.historyTransformer!(history);
 
     expect(Array.isArray(result)).toBe(false);
     const obj = result as {

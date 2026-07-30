@@ -7,6 +7,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AgentTools } from '@/session/tools';
 import type { ExtendedUIMessage } from '@/session/types';
 
+import type { StepCompleteEvent } from '../extensions/extension-api';
 import {
   testLogger as logger,
   makeExtensionHandler,
@@ -19,10 +20,7 @@ import {
   type HistoryRepairInfo,
 } from '../utils/check-and-fix-history';
 import { convertToModelMessagesExtended } from '../utils/convert-to-model-messages';
-import {
-  createGenerationRunner,
-  type GenerationRunnerResult,
-} from './generation-runner';
+import { createGenerationRunner } from './generation-runner';
 import { createStep, type StepDependencies, type StepResult } from './step';
 
 // --- helpers ---
@@ -59,13 +57,14 @@ function makeUserMessage(text = 'hello'): ExtendedUIMessage {
   } as ExtendedUIMessage;
 }
 
-const SUCCESS_RESULT: GenerationRunnerResult = {
+const SUCCESS_RESULT: StepCompleteEvent = {
   shouldContinue: true,
   forceNextStep: false,
   fatalError: false,
   fatalErrorReason: null,
   generationFailed: false,
-  usage: null,
+  generation: null,
+  toolCalls: [],
 };
 
 // --- mocks ---
@@ -121,7 +120,8 @@ describe('Step — decision: skip', () => {
       fatalError: false,
       fatalErrorReason: null,
       generationFailed: false,
-      usage: null,
+      generation: null,
+      toolCalls: [],
     });
     expect(createGenerationRunner).not.toHaveBeenCalled();
   });
@@ -142,7 +142,8 @@ describe('Step — decision: skip', () => {
       fatalError: false,
       fatalErrorReason: null,
       generationFailed: false,
-      usage: null,
+      generation: null,
+      toolCalls: [],
     });
     expect(createGenerationRunner).not.toHaveBeenCalled();
   });
@@ -316,9 +317,9 @@ describe('Step — extension handler hooks', () => {
     setupDefaultMocks();
   });
 
-  it('calls onHistoryPreProcessing with a structuredClone of the messages', async () => {
+  it('calls runHistoryTransformers with a structuredClone of the messages', async () => {
     const extensionHandler = makeExtensionHandler();
-    extensionHandler.onHistoryPreProcessing.mockImplementation(
+    extensionHandler.runHistoryTransformers.mockImplementation(
       async (h: ExtendedUIMessage[]) => {
         // Mutate the input — should NOT affect the original
         h.push(makeUserMessage('injected'));
@@ -335,7 +336,7 @@ describe('Step — extension handler hooks', () => {
     );
     await step.run();
 
-    expect(extensionHandler.onHistoryPreProcessing).toHaveBeenCalledOnce();
+    expect(extensionHandler.runHistoryTransformers).toHaveBeenCalledOnce();
     // Original must not be mutated
     expect(originalMessages).toHaveLength(1);
     expect(originalMessages[0]?.parts[0]).toEqual({
@@ -344,9 +345,9 @@ describe('Step — extension handler hooks', () => {
     });
   });
 
-  it('calls onHistoryPostProcessing with the converted model messages', async () => {
+  it('calls runContextTransformers with the converted model messages', async () => {
     const extensionHandler = makeExtensionHandler();
-    extensionHandler.onHistoryPostProcessing.mockResolvedValue({
+    extensionHandler.runContextTransformers.mockResolvedValue({
       history: [],
       flags: {},
     });
@@ -359,13 +360,13 @@ describe('Step — extension handler hooks', () => {
     );
     await step.run();
 
-    expect(extensionHandler.onHistoryPostProcessing).toHaveBeenCalledOnce();
+    expect(extensionHandler.runContextTransformers).toHaveBeenCalledOnce();
   });
 
-  it('uses the history from onHistoryPreProcessing for conversion', async () => {
+  it('uses the history from runHistoryTransformers for conversion', async () => {
     const extensionHandler = makeExtensionHandler();
     const preProcessedHistory = [makeUserMessage('pre-processed')];
-    extensionHandler.onHistoryPreProcessing.mockResolvedValue({
+    extensionHandler.runHistoryTransformers.mockResolvedValue({
       history: preProcessedHistory,
       flags: {},
     });
@@ -383,12 +384,12 @@ describe('Step — extension handler hooks', () => {
     );
   });
 
-  it('uses the model messages from onHistoryPostProcessing for generation', async () => {
+  it('uses the model messages from runContextTransformers for generation', async () => {
     const extensionHandler = makeExtensionHandler();
     const postProcessedMessages = [
       { role: 'user', content: [{ type: 'text', text: 'post' }] },
     ] as never;
-    extensionHandler.onHistoryPostProcessing.mockResolvedValue({
+    extensionHandler.runContextTransformers.mockResolvedValue({
       history: postProcessedMessages,
       flags: {},
     });
@@ -414,7 +415,7 @@ describe('Step — compacted flag propagation', () => {
 
   it('passes compacted=false to GenerationRunner when no extension flag is set', async () => {
     const extensionHandler = makeExtensionHandler();
-    extensionHandler.onHistoryPreProcessing.mockResolvedValue({
+    extensionHandler.runHistoryTransformers.mockResolvedValue({
       history: [],
       flags: {},
     });
@@ -431,9 +432,9 @@ describe('Step — compacted flag propagation', () => {
     expect(createCall?.compacted).toBe(false);
   });
 
-  it('passes compacted=true when onHistoryPreProcessing sets hasCompacted flag', async () => {
+  it('passes compacted=true when runHistoryTransformers sets hasCompacted flag', async () => {
     const extensionHandler = makeExtensionHandler();
-    extensionHandler.onHistoryPreProcessing.mockResolvedValue({
+    extensionHandler.runHistoryTransformers.mockResolvedValue({
       history: [],
       flags: { hasCompacted: true },
     });
@@ -486,7 +487,7 @@ describe('Step — structuredClone isolation', () => {
     const originalMessages = [makeUserMessage('hello')];
     const extensionHandler = makeExtensionHandler();
 
-    extensionHandler.onHistoryPreProcessing.mockImplementation(
+    extensionHandler.runHistoryTransformers.mockImplementation(
       async (h: ExtendedUIMessage[]) => {
         h.push(makeUserMessage('injected by extension'));
         return { history: h, flags: {} };
@@ -523,13 +524,18 @@ describe('Step — GenerationRunner result passthrough', () => {
   });
 
   it('returns the GenerationRunner result directly', async () => {
-    const genResult: GenerationRunnerResult = {
+    const genResult: StepCompleteEvent = {
       shouldContinue: true,
       forceNextStep: true,
       fatalError: false,
       fatalErrorReason: null,
       generationFailed: false,
-      usage: null,
+      generation: {
+        modelId: 'test-model',
+        finishReason: 'stop',
+        usage: { inputTokens: 100, outputTokens: 50 } as never,
+      },
+      toolCalls: [],
     };
     vi.mocked(createGenerationRunner).mockReturnValue({
       run: vi.fn(async () => genResult),
@@ -544,13 +550,14 @@ describe('Step — GenerationRunner result passthrough', () => {
   });
 
   it('returns generationFailed result from GenerationRunner', async () => {
-    const genResult: GenerationRunnerResult = {
+    const genResult: StepCompleteEvent = {
       shouldContinue: false,
       forceNextStep: false,
       fatalError: false,
       fatalErrorReason: null,
       generationFailed: true,
-      usage: null,
+      generation: null,
+      toolCalls: [],
     };
     vi.mocked(createGenerationRunner).mockReturnValue({
       run: vi.fn(async () => genResult),

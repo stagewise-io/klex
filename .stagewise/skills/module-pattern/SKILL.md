@@ -1,11 +1,11 @@
 ---
 name: module-pattern
-description: Rules for building, naming, and importing modules in fluid-agent. Use when creating modules, adding files to existing modules, writing cross-module imports, or setting up import paths.
+description: Rules for building, naming, and importing modules in klex. Use when creating modules, adding files to existing modules, writing cross-module imports, or setting up import paths.
 ---
 
 # Module Pattern
 
-Apply to every module in fluid-agent. No exceptions.
+Apply to every module in klex. No exceptions.
 
 ## File structure
 

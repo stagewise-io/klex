@@ -1,11 +1,11 @@
 ---
 name: import-style
-description: Rules for ordering, grouping, and styling import statements in fluid-agent. Use when writing, modifying, or reviewing any import declaration.
+description: Rules for ordering, grouping, and styling import statements in klex. Use when writing, modifying, or reviewing any import declaration.
 ---
 
 # Import Style
 
-Apply to every TypeScript file in fluid-agent. No exceptions.
+Apply to every TypeScript file in klex. No exceptions.
 
 ## Order
 

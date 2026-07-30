@@ -6,7 +6,7 @@
       "tenantId": "local",
       "agents": [
         {
-          "agentId": "fluid-agent",
+          "agentId": "klex",
           "token": "REPLACE_WITH_A_UNIQUE_AGENT_TOKEN",
           "environmentGrants": ["macbook", "linux-vm"]
         },

@@ -1,6 +1,6 @@
 # Telegram MCP Server
 
-Minimal text-only Telegram bot channel using grammY. Allowlisted private messages become Fluid Events; agents reply through one MCP tool.
+Minimal text-only Telegram bot channel using grammY. Allowlisted private messages become Push Notifications; agents reply through one MCP tool.
 
 ## Setup
 

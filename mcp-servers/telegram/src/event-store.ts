@@ -1,8 +1,8 @@
 import type {
-  FluidEvent,
-  FluidEventNotificationParams,
   GetEventsResult,
-} from '@stagewise/mcp-extension-fluid-events';
+  PushNotification,
+  PushNotificationNotificationParams,
+} from '@stagewise/mcp-extension-push-notifications';
 
 import type { InboundTextMessage } from './telegram.js';
 
@@ -10,7 +10,7 @@ const DEFAULT_PAGE_SIZE = 100;
 const MAX_PAGE_SIZE = 1_000;
 
 export interface EventStore {
-  append(message: InboundTextMessage): FluidEventNotificationParams;
+  append(message: InboundTextMessage): PushNotificationNotificationParams;
   page(options?: { cursor?: string; limit?: number }): GetEventsResult;
   acknowledge(eventIds: string[]): void;
   close(): void;
@@ -31,12 +31,12 @@ export class UnknownEventError extends Error {
 }
 
 class EventStoreModule implements EventStore {
-  readonly #events: FluidEvent[] = [];
+  readonly #events: PushNotification[] = [];
   readonly #eventIds = new Set<string>();
   readonly #acknowledged = new Set<string>();
 
-  append(message: InboundTextMessage): FluidEventNotificationParams {
-    const event: FluidEvent = {
+  append(message: InboundTextMessage): PushNotificationNotificationParams {
+    const event: PushNotification = {
       eventId: `telegram:${message.botId}:update:${message.updateId}`,
       sourceId: `telegram:${message.botId}`,
       type: 'chat.message.received',
@@ -102,7 +102,7 @@ class EventStoreModule implements EventStore {
     return position;
   }
 
-  #copy(event: FluidEvent): FluidEvent {
+  #copy(event: PushNotification): PushNotification {
     return { ...event, payload: { ...event.payload } };
   }
 }

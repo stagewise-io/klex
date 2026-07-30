@@ -1,7 +1,7 @@
 # Chat Simulator
 
 Local chat environment for testing an agent through MCP. User messages become
-durable Fluid Events. Agent replies are sent with one MCP tool and appear in the
+durable Push Notifications. Agent replies are sent with one MCP tool and appear in the
 browser.
 
 ## Run
@@ -44,7 +44,7 @@ Configure the agent's MCP client with:
 http://localhost:8787/mcp
 ```
 
-The server supports the legacy MCP handshake and advertises the Fluid Events
+The server supports the legacy MCP handshake and advertises the Push Notifications
 extension through capability discovery.
 
 ## Agent contract
@@ -65,7 +65,7 @@ A message entered in the browser produces this event:
 ```
 
 Retrieve and acknowledge events with
-`@stagewise/mcp-extension-fluid-events/client`. Use `eventId` as the
+`@stagewise/mcp-extension-push-notifications/client`. Use `eventId` as the
 deduplication key and treat the cursor as opaque.
 
 The server exposes one tool:
@@ -84,7 +84,7 @@ await mcpClient.callTool({
 1. Start the simulator and the agent.
 2. Open the browser UI.
 3. Enter a user message.
-4. Confirm that the agent receives a `chat.message.received` Fluid Event.
+4. Confirm that the agent receives a `chat.message.received` Push Notification.
 5. Confirm that the agent persists and acknowledges the event.
 6. Have the agent call `sendMessage`.
 7. Confirm that the reply appears in the browser.
@@ -96,5 +96,5 @@ The simulator keeps messages, events, cursors, and acknowledgements in memory.
 Restarting it clears all state. It has no authentication and is intended only for
 trusted development environments.
 
-See the [Fluid Events client guide](../../packages/mcp-extension-fluid-events/README.md#client)
+See the [Push Notifications client guide](../../packages/mcp-extension-push-notifications/README.md#client)
 for connection, recovery, acknowledgement, and subscription examples.

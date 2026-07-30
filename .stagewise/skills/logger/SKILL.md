@@ -1,11 +1,11 @@
 ---
 name: logger
-description: Rules for using tslog v5 in fluid-agent. Use when creating, modifying, or reviewing logging code, module factories, or logger configuration.
+description: Rules for using tslog v5 in klex. Use when creating, modifying, or reviewing logging code, module factories, or logger configuration.
 ---
 
 # Logger Rules
 
-Apply to all logging in fluid-agent. No exceptions.
+Apply to all logging in klex. No exceptions.
 
 ## Types
 

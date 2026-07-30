@@ -2,10 +2,10 @@ import { createMcpHandler, McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod/v4';
 
 import {
-  createFluidEventsHttpSubscriptionManager,
-  type FluidEventsHttpSubscriptionManager,
-  registerFluidEventsServer,
-} from '@stagewise/mcp-extension-fluid-events/server';
+  createPushNotificationsHttpSubscriptionManager,
+  type PushNotificationsHttpSubscriptionManager,
+  registerPushNotificationsServer,
+} from '@stagewise/mcp-extension-push-notifications/server';
 
 import type { EventStore } from './event-store.js';
 import type { TelegramChannel } from './telegram.js';
@@ -14,13 +14,13 @@ export const MAX_MESSAGE_LENGTH = 4_000;
 
 export interface TelegramMcp {
   fetch(request: Request): Promise<Response>;
-  publish: FluidEventsHttpSubscriptionManager['publish'];
+  publish: PushNotificationsHttpSubscriptionManager['publish'];
   close(): Promise<void>;
 }
 
 class TelegramMcpModule implements TelegramMcp {
   readonly #handler: ReturnType<typeof createMcpHandler>;
-  readonly #subscriptions: FluidEventsHttpSubscriptionManager;
+  readonly #subscriptions: PushNotificationsHttpSubscriptionManager;
 
   constructor(channel: TelegramChannel, eventStore: EventStore) {
     this.#handler = createMcpHandler(
@@ -48,7 +48,7 @@ class TelegramMcpModule implements TelegramMcp {
             };
           },
         );
-        registerFluidEventsServer(server.server, {
+        registerPushNotificationsServer(server.server, {
           getEvents: ({ cursor, limit }) => eventStore.page({ cursor, limit }),
           acknowledgeEvents: ({ eventIds }) => eventStore.acknowledge(eventIds),
         });
@@ -56,7 +56,7 @@ class TelegramMcpModule implements TelegramMcp {
       },
       { legacy: 'stateless' },
     );
-    this.#subscriptions = createFluidEventsHttpSubscriptionManager(
+    this.#subscriptions = createPushNotificationsHttpSubscriptionManager(
       this.#handler.fetch,
     );
   }
@@ -65,7 +65,7 @@ class TelegramMcpModule implements TelegramMcp {
     return this.#subscriptions.fetch(request);
   }
 
-  publish: FluidEventsHttpSubscriptionManager['publish'] = (params) =>
+  publish: PushNotificationsHttpSubscriptionManager['publish'] = (params) =>
     this.#subscriptions.publish(params);
 
   async close(): Promise<void> {

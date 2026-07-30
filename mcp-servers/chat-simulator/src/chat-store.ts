@@ -1,10 +1,10 @@
 import { randomUUID } from 'node:crypto';
 
 import type {
-  FluidEvent,
-  FluidEventNotificationParams,
   GetEventsResult,
-} from '@stagewise/mcp-extension-fluid-events';
+  PushNotification,
+  PushNotificationNotificationParams,
+} from '@stagewise/mcp-extension-push-notifications';
 
 export const MAX_MESSAGE_LENGTH = 4_000;
 const DEFAULT_PAGE_SIZE = 100;
@@ -19,7 +19,7 @@ export interface ChatMessage {
 
 export interface UserMessageResult {
   message: ChatMessage;
-  notification: FluidEventNotificationParams;
+  notification: PushNotificationNotificationParams;
 }
 
 export interface ChatStore {
@@ -55,7 +55,7 @@ export class UnknownEventError extends Error {
 
 class ChatStoreModule implements ChatStore {
   readonly #messages: ChatMessage[] = [];
-  readonly #events: FluidEvent[] = [];
+  readonly #events: PushNotification[] = [];
   readonly #eventIds = new Set<string>();
   readonly #acknowledged = new Set<string>();
   readonly #listeners = new Set<(message: ChatMessage) => void>();
@@ -66,7 +66,7 @@ class ChatStoreModule implements ChatStore {
 
   addUserMessage(input: string): UserMessageResult {
     const message = this.#createMessage('user', input);
-    const event: FluidEvent = {
+    const event: PushNotification = {
       eventId: randomUUID(),
       sourceId: 'chat-simulator:local',
       type: 'chat.message.received',

@@ -1,6 +1,7 @@
 import { convertToModelMessages } from 'ai';
 import { describe, expect, it, vi } from 'vitest';
 
+import type { DataPartTransformers } from '../extensions/extension-api';
 import type { ExtendedUIMessage } from '../message-types';
 import { convertToModelMessagesExtended } from './convert-to-model-messages';
 
@@ -56,12 +57,45 @@ function makeContinuePart(): ExtendedUIMessage['parts'][number] {
   } as ExtendedUIMessage['parts'][number];
 }
 
+// --- transformer fixtures ---
+
+/** Transformers matching the production core-data-parts + context-compaction extensions. */
+function makeTransformers(): DataPartTransformers {
+  return {
+    context: (data) => [
+      {
+        type: 'text',
+        text: `<context source-env="${data.sourceEnv}"><metadata>${Object.entries(
+          data.metadata,
+        )
+          .map(([k, v]) => `<${k} value="${v.toString()}"/>`)
+          .join(
+            '',
+          )}</metadata><content>${data.content.map((p) => (p.type === 'text' ? p.text : '')).join(' ')}</content></context>`,
+      },
+    ],
+    'context-summary': (data) => [
+      { type: 'text', text: `<summary>${data.summary}</summary>` },
+    ],
+    continue: () => [{ type: 'text', text: 'Continue.' }],
+  } as DataPartTransformers;
+}
+
+function getConvertDataPart() {
+  const calls = vi.mocked(convertToModelMessages).mock.calls;
+  const lastCall = calls[calls.length - 1];
+  return lastCall?.[1]?.convertDataPart as (
+    part: ExtendedUIMessage['parts'][number],
+  ) => unknown;
+}
+
 // --- tests ---
 
 describe('convertToModelMessagesExtended', () => {
-  it('delegates to convertToModelMessages with the messages', async () => {
+  it('delegates to convertToModelMessages with the messages and transformers', async () => {
     const messages = [makeMessage([{ type: 'text', text: 'hello' }])];
-    await convertToModelMessagesExtended(messages);
+    const transformers = makeTransformers();
+    await convertToModelMessagesExtended(messages, transformers);
     expect(convertToModelMessages).toHaveBeenCalledWith(messages, {
       convertDataPart: expect.any(Function),
     });
@@ -72,22 +106,17 @@ describe('convertToModelMessagesExtended', () => {
     vi.mocked(convertToModelMessages).mockResolvedValue([
       { role: 'user', content: [{ type: 'text', text: 'hello' }] },
     ] as never);
-    const result = await convertToModelMessagesExtended(messages);
+    const result = await convertToModelMessagesExtended(
+      messages,
+      makeTransformers(),
+    );
     expect(result).toEqual([
       { role: 'user', content: [{ type: 'text', text: 'hello' }] },
     ]);
   });
 });
 
-describe('convertCustomDataParts — data-context', () => {
-  function getConvertDataPart() {
-    const calls = vi.mocked(convertToModelMessages).mock.calls;
-    const lastCall = calls[calls.length - 1];
-    return lastCall?.[1]?.convertDataPart as (
-      part: ExtendedUIMessage['parts'][number],
-    ) => unknown;
-  }
-
+describe('makeConvertDataPart — data-context', () => {
   it('converts data-context to XML text with sourceEnv, metadata, and content', async () => {
     const messages = [
       makeMessage([
@@ -96,7 +125,7 @@ describe('convertCustomDataParts — data-context', () => {
         ]),
       ]),
     ];
-    await convertToModelMessagesExtended(messages);
+    await convertToModelMessagesExtended(messages, makeTransformers());
     const convert = getConvertDataPart();
     const result = convert(
       makeContextPart('slack', { channel: 'general', priority: 1 }, [
@@ -124,7 +153,7 @@ describe('convertCustomDataParts — data-context', () => {
         ]),
       ]),
     ];
-    await convertToModelMessagesExtended(messages);
+    await convertToModelMessagesExtended(messages, makeTransformers());
     const convert = getConvertDataPart();
     const result = convert(
       makeContextPart('email', {}, [
@@ -144,7 +173,7 @@ describe('convertCustomDataParts — data-context', () => {
         ]),
       ]),
     ];
-    await convertToModelMessagesExtended(messages);
+    await convertToModelMessagesExtended(messages, makeTransformers());
     const convert = getConvertDataPart();
     const result = convert(
       makeContextPart('webhook', { urgent: true }, [
@@ -165,7 +194,7 @@ describe('convertCustomDataParts — data-context', () => {
     const messages = [
       makeMessage([makeContextPart('media', {}, [imageContent])]),
     ];
-    await convertToModelMessagesExtended(messages);
+    await convertToModelMessagesExtended(messages, makeTransformers());
     const convert = getConvertDataPart();
     const result = convert(makeContextPart('media', {}, [imageContent])) as {
       type: string;
@@ -177,20 +206,12 @@ describe('convertCustomDataParts — data-context', () => {
   });
 });
 
-describe('convertCustomDataParts — data-context-summary', () => {
-  function getConvertDataPart() {
-    const calls = vi.mocked(convertToModelMessages).mock.calls;
-    const lastCall = calls[calls.length - 1];
-    return lastCall?.[1]?.convertDataPart as (
-      part: ExtendedUIMessage['parts'][number],
-    ) => unknown;
-  }
-
+describe('makeConvertDataPart — data-context-summary', () => {
   it('converts data-context-summary to XML text with summary tag', async () => {
     const messages = [
       makeMessage([makeContextSummaryPart('Earlier conversation about X')]),
     ];
-    await convertToModelMessagesExtended(messages);
+    await convertToModelMessagesExtended(messages, makeTransformers());
     const convert = getConvertDataPart();
     const result = convert(
       makeContextSummaryPart('Earlier conversation about X'),
@@ -201,18 +222,10 @@ describe('convertCustomDataParts — data-context-summary', () => {
   });
 });
 
-describe('convertCustomDataParts — data-continue', () => {
-  function getConvertDataPart() {
-    const calls = vi.mocked(convertToModelMessages).mock.calls;
-    const lastCall = calls[calls.length - 1];
-    return lastCall?.[1]?.convertDataPart as (
-      part: ExtendedUIMessage['parts'][number],
-    ) => unknown;
-  }
-
+describe('makeConvertDataPart — data-continue', () => {
   it('converts data-continue to text part with content "Continue."', async () => {
     const messages = [makeMessage([makeContinuePart()])];
-    await convertToModelMessagesExtended(messages);
+    await convertToModelMessagesExtended(messages, makeTransformers());
     const convert = getConvertDataPart();
     const result = convert(makeContinuePart()) as {
       type: string;
@@ -232,7 +245,7 @@ describe('convertToModelMessagesExtended — data-continue filtering', () => {
       makeMessage([makeContinuePart(), { type: 'text', text: 'real input' }]),
     ];
 
-    await convertToModelMessagesExtended(messages);
+    await convertToModelMessagesExtended(messages, makeTransformers());
 
     const passedMessages = vi.mocked(convertToModelMessages).mock.calls[
       vi.mocked(convertToModelMessages).mock.calls.length - 1
@@ -260,7 +273,7 @@ describe('convertToModelMessagesExtended — data-continue filtering', () => {
       makeMessage([makeContinuePart(), { type: 'text', text: 'third' }]),
     ];
 
-    await convertToModelMessagesExtended(messages);
+    await convertToModelMessagesExtended(messages, makeTransformers());
 
     const passedMessages = vi.mocked(convertToModelMessages).mock.calls[
       vi.mocked(convertToModelMessages).mock.calls.length - 1
@@ -286,7 +299,7 @@ describe('convertToModelMessagesExtended — data-continue filtering', () => {
       makeMessage([{ type: 'text', text: 'response' }], 'assistant'),
     ];
 
-    await convertToModelMessagesExtended(messages);
+    await convertToModelMessagesExtended(messages, makeTransformers());
 
     const passedMessages = vi.mocked(convertToModelMessages).mock.calls[
       vi.mocked(convertToModelMessages).mock.calls.length - 1
@@ -305,7 +318,7 @@ describe('convertToModelMessagesExtended — data-continue filtering', () => {
       makeMessage([makeContinuePart()]),
     ];
 
-    await convertToModelMessagesExtended(messages);
+    await convertToModelMessagesExtended(messages, makeTransformers());
 
     const passedMessages = vi.mocked(convertToModelMessages).mock.calls[
       vi.mocked(convertToModelMessages).mock.calls.length - 1
@@ -322,7 +335,7 @@ describe('convertToModelMessagesExtended — data-continue filtering', () => {
       makeMessage([{ type: 'text', text: 'response' }], 'assistant'),
     ];
 
-    await convertToModelMessagesExtended(messages);
+    await convertToModelMessagesExtended(messages, makeTransformers());
 
     const passedMessages = vi.mocked(convertToModelMessages).mock.calls[
       vi.mocked(convertToModelMessages).mock.calls.length - 1
@@ -339,7 +352,7 @@ describe('convertToModelMessagesExtended — data-continue filtering', () => {
       makeMessage([makeContinuePart()]),
     ];
 
-    await convertToModelMessagesExtended(messages);
+    await convertToModelMessagesExtended(messages, makeTransformers());
 
     const passedMessages = vi.mocked(convertToModelMessages).mock.calls[
       vi.mocked(convertToModelMessages).mock.calls.length - 1
@@ -360,7 +373,7 @@ describe('convertToModelMessagesExtended — data-continue filtering', () => {
       makeMessage([makeContinuePart()]),
     ];
 
-    await convertToModelMessagesExtended(messages);
+    await convertToModelMessagesExtended(messages, makeTransformers());
 
     const passedMessages = vi.mocked(convertToModelMessages).mock.calls[
       vi.mocked(convertToModelMessages).mock.calls.length - 1
@@ -379,20 +392,13 @@ describe('convertToModelMessagesExtended — data-continue filtering', () => {
   });
 });
 
-describe('convertCustomDataParts — unknown part types', () => {
-  function getConvertDataPart() {
-    const calls = vi.mocked(convertToModelMessages).mock.calls;
-    const lastCall = calls[calls.length - 1];
-    return lastCall?.[1]?.convertDataPart as (
-      part: ExtendedUIMessage['parts'][number],
-    ) => unknown;
-  }
-
-  it('returns undefined for unrecognized data part types', async () => {
+describe('makeConvertDataPart — unregistered part types', () => {
+  it('returns undefined for part types with no registered transformer', async () => {
     const messages = [
       makeMessage([{ type: 'data-unknown', data: {} } as never]),
     ];
-    await convertToModelMessagesExtended(messages);
+    // Empty transformers — no type is registered
+    await convertToModelMessagesExtended(messages, {});
     const convert = getConvertDataPart();
     const result = convert({ type: 'data-unknown', data: {} } as never);
     expect(result).toBeUndefined();

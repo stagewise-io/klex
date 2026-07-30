@@ -328,8 +328,13 @@ class StepModule implements Step {
 
         // --- Stage 3: Convert to model messages ---
         transformSpan.addEvent('history_convert.start');
+        const dataPartTransformers =
+          this.deps.extensionHandler.getDataPartTransformers();
         let modelMessages: ModelMessage[] =
-          await convertToModelMessagesExtended(preResult.history);
+          await convertToModelMessagesExtended(
+            preResult.history,
+            dataPartTransformers,
+          );
         transformSpan.addEvent('history_convert.end', {
           'history_convert.outputMessageCount': modelMessages.length,
         });

@@ -15,6 +15,7 @@ import {
   FALLBACK_COMPACTION_THRESHOLD,
   MAX_COMPACTION_THRESHOLD,
   MIN_MESSAGES_AFTER_SUMMARY,
+  MIN_MESSAGES_BEFORE_SUMMARY_BY_ROLE,
 } from './context-compaction';
 
 // --- mocks ---
@@ -1301,11 +1302,16 @@ describe('ContextCompactionExt — historyTransformer', () => {
       flags: { hasCompacted: boolean };
     };
     expect(obj.flags.hasCompacted).toBe(true);
-    // History starts from the summary message
+    // Only 1 user message before the summary — kept as pre-summary context
     expect(obj.history[0]!.parts[0]).toMatchObject({
+      type: 'text',
+      text: 'old1',
+    });
+    // Summary is at index 1
+    expect(obj.history[1]!.parts[0]).toMatchObject({
       type: 'data-context-summary',
     });
-    expect(obj.history).toHaveLength(4); // summary + new1 + new2 + new3
+    expect(obj.history).toHaveLength(5); // old1 + summary + new1 + new2 + new3
   });
 
   it('returns full history when no summary exists', () => {
@@ -1342,13 +1348,18 @@ describe('ContextCompactionExt — historyTransformer', () => {
       flags: { hasCompacted: boolean };
     };
     expect(obj.flags.hasCompacted).toBe(true);
-    // Should use the older summary, not the newer one
+    // Only 1 user message before the older summary — kept as pre-summary
     expect(obj.history[0]!.parts[0]).toMatchObject({
+      type: 'text',
+      text: 'old1',
+    });
+    // Summary is at index 1
+    expect(obj.history[1]!.parts[0]).toMatchObject({
       type: 'data-context-summary',
       data: { summary: 'older summary' },
     });
-    // Should include the mid messages but NOT the newer summary or recent1
-    expect(obj.history).toHaveLength(5); // older summary + mid1 + mid2 + mid3 + recent1
+    // old1 + older summary + mid1 + mid2 + mid3 + recent1 (newer summary stripped)
+    expect(obj.history).toHaveLength(6);
     // The newer summary should be stripped (it's not the cutoff)
     expect(
       obj.history.some((m) =>
@@ -1405,10 +1416,142 @@ describe('ContextCompactionExt — historyTransformer', () => {
       history: ExtendedUIMessage[];
       flags: { hasCompacted: boolean };
     };
-    // Cutoff is mid summary (newer, has >= 2 messages after it)
+    // Pre-summary messages: walking back from mid summary (index 5),
+    // skipping old summary: msg3 (user), msg2 (assistant), msg1 (user)
+    // → 2 users + 1 assistant kept (only 1 assistant available before cutoff)
     expect(obj.history[0]!.parts[0]).toMatchObject({
+      type: 'text',
+      text: 'msg1',
+    });
+    expect(obj.history[1]!.parts[0]).toMatchObject({
+      type: 'text',
+      text: 'msg2',
+    });
+    expect(obj.history[2]!.parts[0]).toMatchObject({
+      type: 'text',
+      text: 'msg3',
+    });
+    // Cutoff summary at index 3
+    expect(obj.history[3]!.parts[0]).toMatchObject({
       type: 'data-context-summary',
       data: { summary: 'mid summary' },
+    });
+    // Only one summary in the result
+    const summaryCount = obj.history.filter((m) =>
+      m.parts.some((p) => p.type === 'data-context-summary'),
+    ).length;
+    expect(summaryCount).toBe(1);
+  });
+
+  it('retains at least 2 user and 2 assistant messages before the cutoff summary', () => {
+    const history = [
+      makeTextMessage('user', 'u1'),
+      makeTextMessage('assistant', 'a1'),
+      makeTextMessage('user', 'u2'),
+      makeTextMessage('assistant', 'a2'),
+      makeTextMessage('user', 'u3'),
+      makeSummaryMessage('summary'),
+      makeTextMessage('user', 'new1'),
+      makeTextMessage('assistant', 'new2'),
+    ];
+
+    const ext = createContextCompactionExt.create(makeDeps());
+    const result = ext.historyTransformer!(history);
+
+    const obj = result as {
+      history: ExtendedUIMessage[];
+      flags: { hasCompacted: boolean };
+    };
+    // The last 2 users (u2, u3) and last 2 assistants (a1, a2) before
+    // the summary should be retained in chronological order.
+    expect(obj.history[0]!.parts[0]).toMatchObject({
+      type: 'text',
+      text: 'a1',
+    });
+    expect(obj.history[1]!.parts[0]).toMatchObject({
+      type: 'text',
+      text: 'u2',
+    });
+    expect(obj.history[2]!.parts[0]).toMatchObject({
+      type: 'text',
+      text: 'a2',
+    });
+    expect(obj.history[3]!.parts[0]).toMatchObject({
+      type: 'text',
+      text: 'u3',
+    });
+    expect(obj.history[4]!.parts[0]).toMatchObject({
+      type: 'data-context-summary',
+    });
+    expect(obj.history).toHaveLength(7); // a1, u2, a2, u3, summary, new1, new2
+  });
+
+  it('does not require a full 2+2 if fewer are available before the summary', () => {
+    const history = [
+      makeTextMessage('user', 'only-user'),
+      makeSummaryMessage('summary'),
+      makeTextMessage('user', 'new1'),
+      makeTextMessage('assistant', 'new2'),
+    ];
+
+    const ext = createContextCompactionExt.create(makeDeps());
+    const result = ext.historyTransformer!(history);
+
+    const obj = result as {
+      history: ExtendedUIMessage[];
+      flags: { hasCompacted: boolean };
+    };
+    // Only 1 user message available before summary — kept as-is
+    expect(obj.history[0]!.parts[0]).toMatchObject({
+      type: 'text',
+      text: 'only-user',
+    });
+    expect(obj.history[1]!.parts[0]).toMatchObject({
+      type: 'data-context-summary',
+    });
+    expect(obj.history).toHaveLength(4); // only-user + summary + new1 + new2
+  });
+
+  it('skips other summary messages when collecting pre-summary context', () => {
+    const history = [
+      makeSummaryMessage('first summary'),
+      makeTextMessage('user', 'u1'),
+      makeTextMessage('assistant', 'a1'),
+      makeTextMessage('user', 'u2'),
+      makeTextMessage('assistant', 'a2'),
+      makeSummaryMessage('second summary'),
+      makeTextMessage('user', 'new1'),
+      makeTextMessage('assistant', 'new2'),
+    ];
+
+    const ext = createContextCompactionExt.create(makeDeps());
+    const result = ext.historyTransformer!(history);
+
+    const obj = result as {
+      history: ExtendedUIMessage[];
+      flags: { hasCompacted: boolean };
+    };
+    // Cutoff is "second summary". Pre-summary messages walk back from
+    // index 5, skipping "first summary": u2, a2, u1, a1 (2 users, 2 assistants).
+    expect(obj.history[0]!.parts[0]).toMatchObject({
+      type: 'text',
+      text: 'u1',
+    });
+    expect(obj.history[1]!.parts[0]).toMatchObject({
+      type: 'text',
+      text: 'a1',
+    });
+    expect(obj.history[2]!.parts[0]).toMatchObject({
+      type: 'text',
+      text: 'u2',
+    });
+    expect(obj.history[3]!.parts[0]).toMatchObject({
+      type: 'text',
+      text: 'a2',
+    });
+    expect(obj.history[4]!.parts[0]).toMatchObject({
+      type: 'data-context-summary',
+      data: { summary: 'second summary' },
     });
     // Only one summary in the result
     const summaryCount = obj.history.filter((m) =>

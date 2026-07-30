@@ -5,6 +5,7 @@ import { type Context, context, type Span, trace } from '@opentelemetry/api';
 import type { ModuleLogger } from '@stagewise/logger';
 
 import type { ModelProvider } from '@/model-provider';
+import type { Usage } from '@/session/types';
 
 import type { ExtensionHandler } from '../extension-handler';
 import { type SessionInboxBuffer, SessionInboxPriority } from '../inbox';
@@ -14,6 +15,7 @@ import type { AgentTools } from '../tools';
 import { inboxDrainAttributes } from '../utils/inbox-drain-attributes';
 import type { ModelFallbackManager } from '../utils/model-fallback-manager';
 import { tracer } from '../utils/tracing';
+import { extractUsage } from '../utils/usage';
 
 export interface TurnDependencies {
   logger: ModuleLogger;
@@ -52,7 +54,7 @@ export interface TurnResult {
   /** Total number of steps executed in this turn. */
   stepCount: number;
   /** Token usage from the last successful generation in this turn, if any. */
-  usage: { inputTokens: number; outputTokens: number } | null;
+  usage: Usage | null;
 }
 
 export interface Turn {
@@ -97,7 +99,7 @@ class TurnModule implements Turn {
     let fatalErrorReason: string | null = null;
     let hadAnySuccess = false;
     let hadAnyFailure = false;
-    let lastUsage: { inputTokens: number; outputTokens: number } | null = null;
+    let lastUsage: Usage | null = null;
     let totalStepCount = 0;
 
     try {
@@ -172,10 +174,7 @@ class TurnModule implements Turn {
           stepCount++;
           totalStepCount = stepCount;
           if (stepResult.generation?.usage) {
-            lastUsage = {
-              inputTokens: stepResult.generation.usage.inputTokens ?? 0,
-              outputTokens: stepResult.generation.usage.outputTokens ?? 0,
-            };
+            lastUsage = extractUsage(stepResult.generation.usage);
           }
 
           // Fatal error — stop the turn immediately.

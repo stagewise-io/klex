@@ -35,10 +35,21 @@ export interface SessionModelInfo {
   fallbackIndex: number;
 }
 
-/** Token usage for a single generation or cumulative across a session. */
-export interface SessionTokenUsage {
+/**
+ * Token usage with cache breakdown. Used for both per-generation (latest)
+ * and cumulative (total) usage tracking.
+ */
+export interface Usage {
   inputTokens: number;
   outputTokens: number;
+  inputCacheWriteTokens: number;
+  inputCacheReadTokens: number;
+}
+
+/** A latest + total usage pair. */
+export interface UsagePair {
+  latest: Usage | null;
+  total: Usage;
 }
 
 /** Aggregated session information exposed for observability. */
@@ -51,10 +62,10 @@ export interface SessionInfo {
   runtimeState: SessionRuntimeState;
   /** Currently active model and fallback state. */
   model: SessionModelInfo;
-  /** Token consumption (latest generation + cumulative total). */
-  tokens: {
-    latest: SessionTokenUsage | null;
-    total: SessionTokenUsage;
+  /** Token usage broken down by chat generations and per-extension calls. */
+  usage: {
+    chat: UsagePair;
+    extensions: Record<string, UsagePair>;
   };
   /** Total number of turns completed. */
   turns: number;

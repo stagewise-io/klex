@@ -23,7 +23,12 @@ const noopDeps: BaseExtensionDeps = {
     close: vi.fn(),
   },
   config: { get: () => ({}) } as unknown as BaseExtensionDeps['config'],
-  generateTextWithFallback: vi.fn(() => Promise.resolve(null)),
+  generateText: vi.fn(() =>
+    Promise.resolve({
+      success: false as const,
+      failureReason: 'no-models' as const,
+    }),
+  ),
   logger: {
     info: vi.fn(),
     warn: vi.fn(),
@@ -720,5 +725,49 @@ describe('ExtensionHandler — runStepCompleteHooks', () => {
     const result = await handler.runStepCompleteHooks(stepEvent);
     expect(result.stop).toBe(false);
     expect(result.stopReason).toBeNull();
+  });
+
+  it('preserves `this` binding for class-based extensions', async () => {
+    // Regression: extracting the method reference (ext.onStepComplete)
+    // and calling it as a bare function loses `this`, causing
+    // "Cannot read properties of undefined" for any extension that
+    // relies on instance state.
+    vi.clearAllMocks();
+
+    class StatefulExtension implements Extension {
+      readonly identifier = 'test.example/stateful';
+      readonly displayName = 'Stateful';
+      private accumulatedTokens = 0;
+
+      onStepComplete(event: StepCompleteEvent) {
+        const usage = event.generation?.usage;
+        if (usage) {
+          this.accumulatedTokens +=
+            (usage.inputTokens ?? 0) + (usage.outputTokens ?? 0);
+        }
+      }
+
+      getAccumulatedTokens() {
+        return this.accumulatedTokens;
+      }
+    }
+
+    const ext = new StatefulExtension();
+    const factory: ExtensionFactory = {
+      identifier: 'test.example/stateful',
+      create: () => ext,
+    };
+
+    const handler = createExtensionHandler({
+      factories: [factory],
+      ...HANDLER_OPTS,
+    });
+
+    await handler.runStepCompleteHooks(stepEvent);
+
+    // If `this` was undefined, onStepComplete would have thrown and
+    // accumulatedTokens would still be 0.
+    expect(ext.getAccumulatedTokens()).toBe(150);
+    expect(noopDeps.logger.error).not.toHaveBeenCalled();
   });
 });

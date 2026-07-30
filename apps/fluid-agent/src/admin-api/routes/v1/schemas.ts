@@ -38,12 +38,21 @@ const sessionModelInfoSchema = z
   })
   .openapi('SessionModelInfo');
 
-const sessionTokenUsageSchema = z
+const usageSchema = z
   .object({
     inputTokens: z.number().int().min(0),
     outputTokens: z.number().int().min(0),
+    inputCacheWriteTokens: z.number().int().min(0),
+    inputCacheReadTokens: z.number().int().min(0),
   })
-  .openapi('SessionTokenUsage');
+  .openapi('Usage');
+
+const usagePairSchema = z
+  .object({
+    latest: usageSchema.nullable(),
+    total: usageSchema,
+  })
+  .openapi('UsagePair');
 
 const sessionInfoSchema = z
   .object({
@@ -51,9 +60,9 @@ const sessionInfoSchema = z
     status: sessionStatusSchema,
     runtimeState: sessionRuntimeStateSchema,
     model: sessionModelInfoSchema,
-    tokens: z.object({
-      latest: sessionTokenUsageSchema.nullable(),
-      total: sessionTokenUsageSchema,
+    usage: z.object({
+      chat: usagePairSchema,
+      extensions: z.record(z.string(), usagePairSchema),
     }),
     turns: z.number().int().min(0),
     steps: z.number().int().min(0),

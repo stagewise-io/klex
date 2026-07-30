@@ -9,11 +9,11 @@ import {
 
 import type { ModuleLogger } from '@stagewise/logger';
 
-import type { AgentTools, AgentUITools } from '@/session/tools';
-import type { ExtendedUIMessage } from '@/session/types';
 import type { ToolRequestContext } from '@/tool-provider';
 import { recordErrorOnSpan } from '@/tracing';
 
+import type { ExtendedUIMessage } from '../message-types';
+import type { AgentTools, AgentUITools } from '../tools';
 import { startChildSpan } from '../utils/tracing';
 
 /**

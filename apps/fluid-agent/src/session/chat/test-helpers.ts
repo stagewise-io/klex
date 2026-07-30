@@ -4,8 +4,8 @@ import { vi } from 'vitest';
 
 import type { ModuleLogger } from '@stagewise/logger';
 
-import type { DrainInboxResult, SessionInboxBuffer } from '@/session/inbox';
-import type { ExtendedUIMessage } from '@/session/types';
+import type { DrainInboxResult, SessionInboxBuffer } from './inbox';
+import type { ExtendedUIMessage } from './message-types';
 
 export const testLogger: ModuleLogger = {
   trace: vi.fn(),

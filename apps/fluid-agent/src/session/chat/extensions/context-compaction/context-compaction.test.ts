@@ -3,8 +3,7 @@ import { randomUUID } from 'node:crypto';
 import type { LanguageModelUsage } from 'ai';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { ExtendedUIMessage } from '@/session/types';
-
+import type { ExtendedUIMessage } from '../../message-types';
 import type { ExtensionDeps, StepCompleteEvent } from '../extension-api';
 import {
   CONTEXT_SIZE_THRESHOLD_RATIO,

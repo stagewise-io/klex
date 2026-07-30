@@ -1,8 +1,6 @@
 import type { ModelMessage } from 'ai';
 import { describe, expect, it, vi } from 'vitest';
 
-import type { ExtendedUIMessage } from '@/session/types';
-
 import type {
   BaseExtensionDeps,
   DataPartTransformers,
@@ -11,6 +9,7 @@ import type {
   ExtensionFactory,
   StepCompleteEvent,
 } from '../extensions/extension-api';
+import type { ExtendedUIMessage } from '../message-types';
 import { createExtensionHandler } from './extension-handler';
 
 // --- fixtures ---
@@ -275,6 +274,48 @@ describe('ExtensionHandler — runHistoryTransformers', () => {
     expect(result.flags).toEqual({});
   });
 
+  it('catches and logs errors from a failing transformer without breaking the pipeline', async () => {
+    const hook1 = vi.fn((h: ExtendedUIMessage[]) => [
+      ...h,
+      makeMessage('ext1'),
+    ]);
+    const hook2 = vi.fn(() => {
+      throw new Error('historyTransformer failed');
+    });
+    const hook3 = vi.fn((h: ExtendedUIMessage[]) => [
+      ...h,
+      makeMessage('ext3'),
+    ]);
+
+    const handler = createExtensionHandler({
+      factories: [
+        factoryWith({ historyTransformer: hook1 }),
+        factoryWith({ historyTransformer: hook2 }),
+        factoryWith({ historyTransformer: hook3 }),
+      ],
+      ...HANDLER_OPTS,
+    });
+
+    const result = await handler.runHistoryTransformers([makeMessage('orig')]);
+
+    expect(hook1).toHaveBeenCalledOnce();
+    expect(hook2).toHaveBeenCalledOnce();
+    expect(hook3).toHaveBeenCalledOnce();
+    // hook2 failed, so hook3 receives the output of hook1 (unchanged).
+    expect(hook3).toHaveBeenCalledExactlyOnceWith([
+      makeMessage('orig'),
+      makeMessage('ext1'),
+    ]);
+    expect(result.history).toEqual([
+      makeMessage('orig'),
+      makeMessage('ext1'),
+      makeMessage('ext3'),
+    ]);
+    expect(noopDeps.logger.error).toHaveBeenCalled();
+    // The caller must cancel the step because context integrity is uncertain.
+    expect(result.flags.hasTransformerError).toBe(true);
+  });
+
   it('merges hasCompacted flags across extensions (OR semantics)', async () => {
     const hook1 = vi.fn((h: ExtendedUIMessage[]) => ({
       history: h,
@@ -362,6 +403,52 @@ describe('ExtensionHandler — runContextTransformers', () => {
     ] as ModelMessage[]);
 
     expect(hook1).toHaveBeenCalledOnce();
+  });
+
+  it('catches and logs errors from a failing transformer without breaking the pipeline', async () => {
+    const hook1 = vi.fn((h: ModelMessage[]) => [
+      ...h,
+      {
+        role: 'user',
+        content: [{ type: 'text', text: 'ext1' }],
+      } as ModelMessage,
+    ]);
+    const hook2 = vi.fn(() => {
+      throw new Error('contextTransformer failed');
+    });
+    const hook3 = vi.fn((h: ModelMessage[]) => [
+      ...h,
+      {
+        role: 'user',
+        content: [{ type: 'text', text: 'ext3' }],
+      } as ModelMessage,
+    ]);
+
+    const handler = createExtensionHandler({
+      factories: [
+        factoryWith({ contextTransformer: hook1 }),
+        factoryWith({ contextTransformer: hook2 }),
+        factoryWith({ contextTransformer: hook3 }),
+      ],
+      ...HANDLER_OPTS,
+    });
+
+    const result = await handler.runContextTransformers([
+      { role: 'user', content: [{ type: 'text', text: 'orig' }] },
+    ] as ModelMessage[]);
+
+    expect(hook1).toHaveBeenCalledOnce();
+    expect(hook2).toHaveBeenCalledOnce();
+    expect(hook3).toHaveBeenCalledOnce();
+    // hook2 failed, so hook3 receives the output of hook1 (unchanged).
+    expect(result.history).toHaveLength(3);
+    expect(result.history[2]).toEqual({
+      role: 'user',
+      content: [{ type: 'text', text: 'ext3' }],
+    });
+    expect(noopDeps.logger.error).toHaveBeenCalled();
+    // The caller must cancel the step because context integrity is uncertain.
+    expect(result.flags.hasTransformerError).toBe(true);
   });
 });
 

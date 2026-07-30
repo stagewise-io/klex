@@ -14,9 +14,9 @@ import {
 import type { ModuleLogger } from '@stagewise/logger';
 
 import type { ModelId } from '@/config';
-import type { AgentTools } from '@/session/tools';
-import type { ExtendedUIMessage } from '@/session/types';
 
+import type { ExtendedUIMessage } from '../message-types';
+import type { AgentTools } from '../tools';
 import systemPrompt from './system-prompt.md';
 import { toolsWithoutExecute } from './tools-without-execute';
 

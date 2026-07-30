@@ -1,8 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { ExtendedUIMessage } from '@/session/types';
+import type { ExtendedUIMessage } from '@/session/chat/message-types';
 
-import { testLogger as drainLogger } from '../chat/test-helpers';
+import { testLogger as drainLogger } from '../test-helpers';
 import {
   createInbox,
   type SessionInboxBuffer,

@@ -1,8 +1,7 @@
 import { convertToModelMessages } from 'ai';
 import { describe, expect, it, vi } from 'vitest';
 
-import type { ExtendedUIMessage } from '@/session/types';
-
+import type { ExtendedUIMessage } from '../message-types';
 import { convertToModelMessagesExtended } from './convert-to-model-messages';
 
 // --- mocks ---

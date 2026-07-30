@@ -5,12 +5,12 @@ import { type Context, context, type Span, trace } from '@opentelemetry/api';
 import type { ModuleLogger } from '@stagewise/logger';
 
 import type { ModelProvider } from '@/model-provider';
-import { type SessionInboxBuffer, SessionInboxPriority } from '@/session/inbox';
-import type { AgentTools } from '@/session/tools';
-import type { ExtendedUIMessage } from '@/session/types';
 
 import type { ExtensionHandler } from '../extension-handler';
+import { type SessionInboxBuffer, SessionInboxPriority } from '../inbox';
+import type { ExtendedUIMessage } from '../message-types';
 import { createStep, type Step, type StepCompleteEvent } from '../step';
+import type { AgentTools } from '../tools';
 import { inboxDrainAttributes } from '../utils/inbox-drain-attributes';
 import type { ModelFallbackManager } from '../utils/model-fallback-manager';
 import { tracer } from '../utils/tracing';

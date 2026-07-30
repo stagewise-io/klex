@@ -1,7 +1,7 @@
 import { type DynamicToolUIPart, isToolUIPart, type ToolUIPart } from 'ai';
 
-import type { AgentUITools } from '@/session/tools';
-import type { ExtendedUIMessage } from '@/session/types';
+import type { ExtendedUIMessage } from '../message-types';
+import type { AgentUITools } from '../tools';
 
 const UNFINISHED_TOOL_ERROR_TEXT =
   'The tool call was not executed for unknown reasons. Try again.';

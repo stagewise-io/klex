@@ -1,6 +1,6 @@
 import { isToolUIPart } from 'ai';
 
-import type { ExtendedUIMessage } from '@/session/types';
+import type { ExtendedUIMessage } from '../message-types';
 
 /**
  * Repairs a partial message that was sent due to stop token or any other failure reason in-place.

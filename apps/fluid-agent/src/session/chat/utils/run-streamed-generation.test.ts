@@ -6,10 +6,9 @@ import {
 } from 'ai';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { AgentTools } from '@/session/tools';
-import type { ExtendedUIMessage } from '@/session/types';
-
+import type { ExtendedUIMessage } from '../message-types';
 import { testLogger as logger } from '../test-helpers';
+import type { AgentTools } from '../tools';
 import { runStreamedGeneration } from './run-streamed-generation';
 
 // --- mocks (hoisted by vitest) ---

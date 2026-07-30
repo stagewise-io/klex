@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import type { ExtendedUIMessage } from '@/session/types';
-
+import type { ExtendedUIMessage } from '../message-types';
 import { checkAndFixHistory } from './check-and-fix-history';
 
 // --- fixtures ---

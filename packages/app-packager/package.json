@@ -1,0 +1,37 @@
+{
+  "name": "@stagewise/app-packager",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "sideEffects": false,
+  "description": "Cross-platform Node SEA packaging and executable signing tools",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "bin": {
+    "app-packager": "./dist/cli/cli.js"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "clean": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\"",
+    "build": "pnpm run clean && tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "postject": "1.0.0-alpha.6"
+  },
+  "devDependencies": {
+    "@stagewise/typescript-config": "workspace:*",
+    "@types/node": "24.10.1",
+    "typescript": "7.0.2",
+    "vitest": "4.1.10"
+  },
+  "packageManager": "pnpm@10.30.3"
+}

@@ -45,8 +45,6 @@ function mergeFlags(
 ): TransformationFlags {
   return {
     hasCompacted: accumulated.hasCompacted || incoming.hasCompacted,
-    hasTransformerError:
-      accumulated.hasTransformerError || incoming.hasTransformerError,
   };
 }
 
@@ -71,10 +69,9 @@ export interface ExtensionHandler {
    * Each extension receives the output history of the previous one.
    * Flags from all extensions are merged (OR semantics).
    *
-   * If an extension's transformer throws, the error is caught, logged,
-   * and the pipeline continues with the current history unchanged.
-   * The `hasTransformerError` flag is set in the returned flags so the
-   * caller can cancel the step — context integrity cannot be guaranteed.
+   * If an extension's transformer throws, the error is caught, logged
+   * with the extension identifier, and re-thrown — the caller (step)
+   * must catch it and abort the step. No subsequent transformers run.
    */
   runHistoryTransformers: (
     history: ExtendedUIMessage[],
@@ -86,10 +83,9 @@ export interface ExtensionHandler {
    * Each extension receives the output history of the previous one.
    * Flags from all extensions are merged (OR semantics).
    *
-   * If an extension's transformer throws, the error is caught, logged,
-   * and the pipeline continues with the current history unchanged.
-   * The `hasTransformerError` flag is set in the returned flags so the
-   * caller can cancel the step — context integrity cannot be guaranteed.
+   * If an extension's transformer throws, the error is caught, logged
+   * with the extension identifier, and re-thrown — the caller (step)
+   * must catch it and abort the step. No subsequent transformers run.
    */
   runContextTransformers: (
     history: ModelMessage[],
@@ -243,9 +239,9 @@ class ExtensionHandlerModule implements ExtensionHandler {
       } catch (error) {
         this.extensionDeps.logger.error(
           { error, extensionIdentifier: this.identifiersByExtension.get(ext) },
-          'Extension historyTransformer failed — skipping, pipeline continues',
+          'Extension historyTransformer failed — aborting transformation',
         );
-        flags = mergeFlags(flags, { hasTransformerError: true });
+        throw error;
       }
     }
 
@@ -269,9 +265,9 @@ class ExtensionHandlerModule implements ExtensionHandler {
       } catch (error) {
         this.extensionDeps.logger.error(
           { error, extensionIdentifier: this.identifiersByExtension.get(ext) },
-          'Extension contextTransformer failed — skipping, pipeline continues',
+          'Extension contextTransformer failed — aborting transformation',
         );
-        flags = mergeFlags(flags, { hasTransformerError: true });
+        throw error;
       }
     }
 

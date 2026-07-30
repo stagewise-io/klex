@@ -320,7 +320,7 @@ describe('ExtensionHandler — runHistoryTransformers', () => {
     expect(result.flags).toEqual({});
   });
 
-  it('catches and logs errors from a failing transformer without breaking the pipeline', async () => {
+  it('logs and re-throws errors from a failing transformer, aborting the pipeline', async () => {
     const hook1 = vi.fn((h: ExtendedUIMessage[]) => [
       ...h,
       makeMessage('ext1'),
@@ -342,27 +342,15 @@ describe('ExtensionHandler — runHistoryTransformers', () => {
       ...HANDLER_OPTS,
     });
 
-    const result = await handler.runHistoryTransformers(
-      [makeMessage('orig')],
-      mockResolvedModel,
-    );
+    await expect(
+      handler.runHistoryTransformers([makeMessage('orig')], mockResolvedModel),
+    ).rejects.toThrow('historyTransformer failed');
 
     expect(hook1).toHaveBeenCalledOnce();
     expect(hook2).toHaveBeenCalledOnce();
-    expect(hook3).toHaveBeenCalledOnce();
-    // hook2 failed, so hook3 receives the output of hook1 (unchanged).
-    expect(hook3).toHaveBeenCalledExactlyOnceWith(
-      [makeMessage('orig'), makeMessage('ext1')],
-      mockResolvedModel,
-    );
-    expect(result.history).toEqual([
-      makeMessage('orig'),
-      makeMessage('ext1'),
-      makeMessage('ext3'),
-    ]);
+    // hook3 never runs — pipeline aborts on the first error.
+    expect(hook3).not.toHaveBeenCalled();
     expect(noopDeps.logger.error).toHaveBeenCalled();
-    // The caller must cancel the step because context integrity is uncertain.
-    expect(result.flags.hasTransformerError).toBe(true);
   });
 
   it('merges hasCompacted flags across extensions (OR semantics)', async () => {
@@ -481,7 +469,7 @@ describe('ExtensionHandler — runContextTransformers', () => {
     expect(hook1).toHaveBeenCalledOnce();
   });
 
-  it('catches and logs errors from a failing transformer without breaking the pipeline', async () => {
+  it('logs and re-throws errors from a failing transformer, aborting the pipeline', async () => {
     const hook1 = vi.fn((h: ModelMessage[]) => [
       ...h,
       {
@@ -509,25 +497,20 @@ describe('ExtensionHandler — runContextTransformers', () => {
       ...HANDLER_OPTS,
     });
 
-    const result = await handler.runContextTransformers(
-      [
-        { role: 'user', content: [{ type: 'text', text: 'orig' }] },
-      ] as ModelMessage[],
-      mockResolvedModel,
-    );
+    await expect(
+      handler.runContextTransformers(
+        [
+          { role: 'user', content: [{ type: 'text', text: 'orig' }] },
+        ] as ModelMessage[],
+        mockResolvedModel,
+      ),
+    ).rejects.toThrow('contextTransformer failed');
 
     expect(hook1).toHaveBeenCalledOnce();
     expect(hook2).toHaveBeenCalledOnce();
-    expect(hook3).toHaveBeenCalledOnce();
-    // hook2 failed, so hook3 receives the output of hook1 (unchanged).
-    expect(result.history).toHaveLength(3);
-    expect(result.history[2]).toEqual({
-      role: 'user',
-      content: [{ type: 'text', text: 'ext3' }],
-    });
+    // hook3 never runs — pipeline aborts on the first error.
+    expect(hook3).not.toHaveBeenCalled();
     expect(noopDeps.logger.error).toHaveBeenCalled();
-    // The caller must cancel the step because context integrity is uncertain.
-    expect(result.flags.hasTransformerError).toBe(true);
   });
 
   it('forwards the ResolvedModel argument to each extension transformer', async () => {

@@ -38,12 +38,6 @@ export type DataPartTransformers = Partial<{
 export interface TransformationFlags {
   /** The history was compacted (e.g. summaries replaced older messages). */
   hasCompacted?: boolean;
-  /**
-   * True when one or more extensions' transformers threw an error.
-   * The caller must treat the context as potentially corrupted and
-   * cancel the step — generation should not proceed on uncertain data.
-   */
-  hasTransformerError?: boolean;
 }
 
 /**
@@ -251,11 +245,9 @@ export interface Extension {
    * of the previous one. Flags from all extensions are merged (OR
    * semantics).
    *
-   * If a transformer throws, the error is caught and logged, and the
-   * pipeline continues with the current history unchanged — one
-   * extension's failure does not cancel subsequent extensions. However,
-   * the `hasTransformerError` flag is set, and the step caller will
-   * cancel the step because context integrity cannot be guaranteed.
+   * If a transformer throws, the error is caught, logged with the
+   * extension identifier, and re-thrown — the step aborts immediately
+   * and no subsequent transformers run.
    */
   historyTransformer?: (
     history: ExtendedUIMessage[],
@@ -267,11 +259,9 @@ export interface Extension {
    * Extensions are called in order; each receives the output of the
    * previous one. Flags from all extensions are merged (OR semantics).
    *
-   * If a transformer throws, the error is caught and logged, and the
-   * pipeline continues with the current history unchanged — one
-   * extension's failure does not cancel subsequent extensions. However,
-   * the `hasTransformerError` flag is set, and the step caller will
-   * cancel the step because context integrity cannot be guaranteed.
+   * If a transformer throws, the error is caught, logged with the
+   * extension identifier, and re-thrown — the step aborts immediately
+   * and no subsequent transformers run.
    */
   contextTransformer?: (
     history: ModelMessage[],

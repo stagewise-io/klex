@@ -467,12 +467,11 @@ describe('Step — transformer error cancellation', () => {
     setupDefaultMocks();
   });
 
-  it('cancels the step with fatalError when runHistoryTransformers sets hasTransformerError', async () => {
+  it('cancels the step with fatalError when runHistoryTransformers throws', async () => {
     const extensionHandler = makeExtensionHandler();
-    extensionHandler.runHistoryTransformers.mockResolvedValue({
-      history: [],
-      flags: { hasTransformerError: true },
-    });
+    extensionHandler.runHistoryTransformers.mockRejectedValue(
+      new Error('history transformer failed'),
+    );
 
     const step = createStep(
       makeDeps({
@@ -491,16 +490,15 @@ describe('Step — transformer error cancellation', () => {
     expect(extensionHandler.runContextTransformers).not.toHaveBeenCalled();
   });
 
-  it('cancels the step with fatalError when runContextTransformers sets hasTransformerError', async () => {
+  it('cancels the step with fatalError when runContextTransformers throws', async () => {
     const extensionHandler = makeExtensionHandler();
     extensionHandler.runHistoryTransformers.mockResolvedValue({
       history: [],
       flags: {},
     });
-    extensionHandler.runContextTransformers.mockResolvedValue({
-      history: [],
-      flags: { hasTransformerError: true },
-    });
+    extensionHandler.runContextTransformers.mockRejectedValue(
+      new Error('context transformer failed'),
+    );
 
     const step = createStep(
       makeDeps({
@@ -518,7 +516,7 @@ describe('Step — transformer error cancellation', () => {
     expect(extensionHandler.runStepCompleteHooks).toHaveBeenCalledOnce();
   });
 
-  it('does not cancel when hasTransformerError is false/undefined', async () => {
+  it('does not cancel when transformers succeed', async () => {
     const extensionHandler = makeExtensionHandler();
     extensionHandler.runHistoryTransformers.mockResolvedValue({
       history: [],

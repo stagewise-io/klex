@@ -24,7 +24,7 @@ export interface Router {
    * which session receives it. Currently always routes to the single
    * primary session.
    */
-  sendInput(event: SessionInboxEvent): void;
+  sendInput(event: SessionInboxEvent): Promise<void>;
 
   /**
    * Returns observability info for all live sessions.
@@ -48,7 +48,7 @@ class RouterModule implements Router {
   async start(): Promise<void> {
     if (this.started) return;
 
-    this.session = this.createSession();
+    this.session = await this.createSession();
 
     this.fluidEventUnsub = this.deps.mcp.onFluidEvent((ev) => {
       this.handleFluidEvent(ev);
@@ -74,7 +74,7 @@ class RouterModule implements Router {
     this.deps.logger.info('Router stopped');
   }
 
-  sendInput(event: SessionInboxEvent): void {
+  async sendInput(event: SessionInboxEvent): Promise<void> {
     let session = this.session;
 
     // If the session terminated itself (e.g. fatal error), replace it
@@ -85,8 +85,7 @@ class RouterModule implements Router {
         { reason: session ? 'terminated' : 'not_found' },
         'Session unavailable — creating replacement',
       );
-      session = this.createSession();
-      this.session = session;
+      session = await this.createSession();
     }
 
     this.deps.logger.debug(
@@ -131,25 +130,30 @@ class RouterModule implements Router {
         content: [{ type: 'text', text: JSON.stringify(event.payload) }],
       },
     };
-    this.sendInput(inboxEvent);
+    void this.sendInput(inboxEvent);
   }
 
   /**
-   * Creates a new session and wires the `onTerminated` hook so the router
-   * is notified proactively when the session self-terminates.
+   * Creates a new session, awaits its startup, and wires the
+   * `onTerminated` hook so the router is notified proactively when the
+   * session self-terminates.
+   *
+   * `this.session` is assigned synchronously before `await session.start()`
+   * so that a concurrent `sendInput` call sees the new session and does
+   * not create a duplicate.
    */
-  private createSession(): AgentSession {
+  private async createSession(): Promise<AgentSession> {
     const hooks: SessionHooks = {
       onTerminated: (info) => this.handleTerminated(info),
     };
     const session = this.deps.createChatSession(hooks);
-    void session.start().catch((error) => {
+    this.session = session;
+    await session.start().catch((error) => {
       this.deps.logger.error(
         { error },
         'Session start failed — tools may be unavailable',
       );
     });
-    this.session = session;
     return session;
   }
 
@@ -158,7 +162,7 @@ class RouterModule implements Router {
    * replacement session and re-dispatches any pending inbox content
    * so the user does not lose input.
    */
-  private handleTerminated(info: SessionTerminationInfo): void {
+  private async handleTerminated(info: SessionTerminationInfo): Promise<void> {
     this.deps.logger.warn(
       {
         sessionId: info.sessionId,
@@ -169,7 +173,9 @@ class RouterModule implements Router {
     );
 
     // Create the replacement session (registered with fresh hooks).
-    const replacement = this.createSession();
+    // Awaiting ensures the session is fully started before pending events
+    // are restored — no race between inbox delivery and resource startup.
+    const replacement = await this.createSession();
 
     // Re-dispatch pending inbox events so the user does not lose input.
     replacement.restorePendingEvents(info.pendingEvents);

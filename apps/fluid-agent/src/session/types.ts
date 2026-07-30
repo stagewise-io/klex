@@ -104,7 +104,7 @@ export interface SessionHooks {
    * Called when a session self-terminates (e.g. fatal generation error).
    * NOT called during router-initiated graceful shutdown.
    */
-  onTerminated?(info: SessionTerminationInfo): void;
+  onTerminated?(info: SessionTerminationInfo): void | Promise<void>;
 }
 
 /**

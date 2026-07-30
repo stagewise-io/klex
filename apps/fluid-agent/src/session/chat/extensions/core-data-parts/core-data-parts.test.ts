@@ -1,8 +1,14 @@
+import type { TextPart } from 'ai';
 import { describe, expect, it } from 'vitest';
 
 import type { ContextDataUIPart } from '@/session/inbox';
 
 import { createCoreDataPartsExt } from './core-data-parts';
+
+/** Narrows a TextPart | FilePart[] to TextPart[] and extracts text. */
+function toText(parts: { type: string; text?: string }[]): string {
+  return parts.map((p) => (p.type === 'text' ? (p.text ?? '') : '')).join('');
+}
 
 describe('CoreDataPartsExt', () => {
   const ext = createCoreDataPartsExt.create({} as never);
@@ -23,14 +29,15 @@ describe('CoreDataPartsExt', () => {
     const result = transformer!(data);
     expect(result).toHaveLength(1);
     expect(result[0]!.type).toBe('text');
-    expect(result[0]!.text).toContain('<context source-env="slack">');
-    expect(result[0]!.text).toContain('<metadata>');
-    expect(result[0]!.text).toContain('channel');
-    expect(result[0]!.text).toContain('general');
-    expect(result[0]!.text).toContain('priority');
-    expect(result[0]!.text).toContain('1');
-    expect(result[0]!.text).toContain('<content>hello</content>');
-    expect(result[0]!.text).toContain('</context>');
+    const text = (result[0] as TextPart).text;
+    expect(text).toContain('<context source-env="slack">');
+    expect(text).toContain('<metadata>');
+    expect(text).toContain('channel');
+    expect(text).toContain('general');
+    expect(text).toContain('priority');
+    expect(text).toContain('1');
+    expect(text).toContain('<content>hello</content>');
+    expect(text).toContain('</context>');
   });
 
   it('joins multiple text content parts with spaces', () => {
@@ -44,7 +51,9 @@ describe('CoreDataPartsExt', () => {
       ],
     };
     const result = transformer!(data);
-    expect(result[0]!.text).toContain('<content>first second</content>');
+    expect((result[0] as TextPart).text).toContain(
+      '<content>first second</content>',
+    );
   });
 
   it('serializes boolean metadata values', () => {
@@ -55,8 +64,9 @@ describe('CoreDataPartsExt', () => {
       content: [{ type: 'text', text: 'alert' }],
     };
     const result = transformer!(data);
-    expect(result[0]!.text).toContain('urgent');
-    expect(result[0]!.text).toContain('true');
+    const text = (result[0] as TextPart).text;
+    expect(text).toContain('urgent');
+    expect(text).toContain('true');
   });
 
   it('returns empty string for non-text content parts', () => {
@@ -73,7 +83,7 @@ describe('CoreDataPartsExt', () => {
       ],
     };
     const result = transformer!(data);
-    expect(result[0]!.text).toContain('<content></content>');
+    expect((result[0] as TextPart).text).toContain('<content></content>');
   });
 
   it('converts data-continue to text "Continue."', () => {

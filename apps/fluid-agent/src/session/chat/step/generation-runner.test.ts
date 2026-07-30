@@ -125,7 +125,11 @@ describe('GenerationRunner — success', () => {
     expect(result.forceNextStep).toBe(false);
     expect(result.fatalError).toBe(false);
     expect(result.generationFailed).toBe(false);
-    expect(result.usage).toEqual({ inputTokens: 10, outputTokens: 5 });
+    expect(result.generation).not.toBeNull();
+    expect(result.generation!.usage).toEqual({
+      inputTokens: 10,
+      outputTokens: 5,
+    });
   });
 
   it('returns shouldContinue=true on tool-calls finish reason', async () => {
@@ -138,7 +142,10 @@ describe('GenerationRunner — success', () => {
 
     expect(result.shouldContinue).toBe(true);
     expect(result.forceNextStep).toBe(false);
-    expect(result.usage).toEqual({ inputTokens: 10, outputTokens: 5 });
+    expect(result.generation!.usage).toEqual({
+      inputTokens: 10,
+      outputTokens: 5,
+    });
   });
 
   it('pushes the response message and records successful generation', async () => {
@@ -239,7 +246,7 @@ describe('GenerationRunner — non-good finish reasons', () => {
     expect(result.generationFailed).toBe(true);
     expect(result.forceNextStep).toBe(false);
     expect(result.fatalError).toBe(false);
-    expect(result.usage).toBeNull();
+    expect(result.generation).toBeNull();
   });
 });
 
@@ -315,7 +322,7 @@ describe('GenerationRunner — error finish reason with model fallback', () => {
     expect(fallbackSpy).not.toHaveBeenCalled();
     expect(result.fatalError).toBe(true);
     expect(result.forceNextStep).toBe(false);
-    expect(result.usage).toBeNull();
+    expect(result.generation).toBeNull();
     expect(messages).toHaveLength(0);
   });
 
@@ -353,7 +360,7 @@ describe('GenerationRunner — error finish reason with model fallback', () => {
     expect(result.generationFailed).toBe(true);
     expect(result.forceNextStep).toBe(false);
     expect(result.fatalError).toBe(false);
-    expect(result.usage).toBeNull();
+    expect(result.generation).toBeNull();
   });
 });
 

@@ -8,13 +8,13 @@ import type {
   ExtendedUIMessage,
 } from '@/session/types';
 
-import type { GenerationRunnerResult } from '../../step/generation-runner';
 import { startChildSpan } from '../../utils/tracing';
 import type {
   Extension,
   ExtensionDeps,
   ExtensionFactory,
-  PreProcessingResult,
+  HistoryProcessingResult,
+  StepCompleteEvent,
 } from '../extension-api';
 import compactionPrompt from './compaction-prompt.md';
 
@@ -118,7 +118,7 @@ class ContextCompactionExt implements Extension {
 
     return this.cachedThreshold;
   }
-  onHistoryPreProcessing(history: ExtendedUIMessage[]): PreProcessingResult {
+  historyTransformer(history: ExtendedUIMessage[]): HistoryProcessingResult {
     // Collect indices of all summary messages (newest first).
     const summaryIndices: number[] = [];
     for (let i = history.length - 1; i >= 0; i--) {
@@ -171,11 +171,11 @@ class ContextCompactionExt implements Extension {
     ],
   };
 
-  async onStepComplete(result: GenerationRunnerResult): Promise<void> {
-    if (result.usage === null) return;
+  async onStepComplete(event: StepCompleteEvent): Promise<void> {
+    if (event.generation === null) return;
 
-    const stepTokens =
-      (result.usage.inputTokens ?? 0) + (result.usage.outputTokens ?? 0);
+    const usage = event.generation.usage;
+    const stepTokens = (usage.inputTokens ?? 0) + (usage.outputTokens ?? 0);
     this.accumulatedTokens += stepTokens;
 
     const threshold = this.getCompactionThreshold();

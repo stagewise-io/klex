@@ -465,7 +465,7 @@ function resolveAuthEnvVars(endpoint: EndpointConfig): EndpointConfig {
 }
 
 /**
- * Looks up the `contextSize` for a model in a provider's optional `models`
+ * Looks up the `contextSize` for a model in an optional `knownModels`
  * record. Returns `undefined` when the model or its `contextSize` is not
  * declared — callers should default to {@link DEFAULT_CONTEXT_SIZE}.
  */

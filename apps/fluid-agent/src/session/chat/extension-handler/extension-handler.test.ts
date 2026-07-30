@@ -9,8 +9,8 @@ import type {
   Extension,
   ExtensionDeps,
   ExtensionFactory,
+  StepCompleteEvent,
 } from '../extensions/extension-api';
-import type { GenerationRunnerResult } from '../step/generation-runner';
 import { createExtensionHandler } from './extension-handler';
 
 // --- fixtures ---
@@ -59,8 +59,8 @@ function factoryWith(
     identifier: id,
     create: () => ({
       identifier: id,
-      onHistoryPreProcessing: overrides.onHistoryPreProcessing,
-      onHistoryPostProcessing: overrides.onHistoryPostProcessing,
+      historyTransformer: overrides.historyTransformer,
+      contextTransformer: overrides.contextTransformer,
       onStepComplete: overrides.onStepComplete,
       dataPartTransformers: overrides.dataPartTransformers,
     }),
@@ -75,9 +75,10 @@ describe('ExtensionHandler — factory', () => {
       factories: [],
       ...HANDLER_OPTS,
     });
-    expect(typeof handler.onHistoryPreProcessing).toBe('function');
-    expect(typeof handler.onHistoryPostProcessing).toBe('function');
+    expect(typeof handler.runHistoryTransformers).toBe('function');
+    expect(typeof handler.runContextTransformers).toBe('function');
     expect(typeof handler.getDataPartTransformers).toBe('function');
+    expect(typeof handler.runStepCompleteHooks).toBe('function');
   });
 
   it('instantiates all extensions from the provided factories', () => {
@@ -180,14 +181,14 @@ describe('ExtensionHandler — factory', () => {
   });
 });
 
-describe('ExtensionHandler — onHistoryPreProcessing', () => {
+describe('ExtensionHandler — runHistoryTransformers', () => {
   it('returns the history unchanged with empty flags when no extensions define the hook', async () => {
     const handler = createExtensionHandler({
       factories: [factoryWith({})],
       ...HANDLER_OPTS,
     });
     const history = [makeMessage('a')];
-    const result = await handler.onHistoryPreProcessing(history);
+    const result = await handler.runHistoryTransformers(history);
     expect(result.history).toEqual(history);
     expect(result.flags).toEqual({});
   });
@@ -204,13 +205,13 @@ describe('ExtensionHandler — onHistoryPreProcessing', () => {
 
     const handler = createExtensionHandler({
       factories: [
-        factoryWith({ onHistoryPreProcessing: hook1 }),
-        factoryWith({ onHistoryPreProcessing: hook2 }),
+        factoryWith({ historyTransformer: hook1 }),
+        factoryWith({ historyTransformer: hook2 }),
       ],
       ...HANDLER_OPTS,
     });
 
-    const result = await handler.onHistoryPreProcessing([makeMessage('orig')]);
+    const result = await handler.runHistoryTransformers([makeMessage('orig')]);
 
     expect(hook1).toHaveBeenCalledExactlyOnceWith([makeMessage('orig')]);
     expect(hook2).toHaveBeenCalledExactlyOnceWith([
@@ -234,14 +235,14 @@ describe('ExtensionHandler — onHistoryPreProcessing', () => {
 
     const handler = createExtensionHandler({
       factories: [
-        factoryWith({ onHistoryPreProcessing: hook1 }),
+        factoryWith({ historyTransformer: hook1 }),
         factoryWith({}), // no hook
-        factoryWith({ onHistoryPreProcessing: hook3 }),
+        factoryWith({ historyTransformer: hook3 }),
       ],
       ...HANDLER_OPTS,
     });
 
-    await handler.onHistoryPreProcessing([makeMessage('orig')]);
+    await handler.runHistoryTransformers([makeMessage('orig')]);
 
     expect(hook1).toHaveBeenCalledOnce();
     expect(hook3).toHaveBeenCalledOnce();
@@ -254,22 +255,22 @@ describe('ExtensionHandler — onHistoryPreProcessing', () => {
     ]);
 
     const handler = createExtensionHandler({
-      factories: [factoryWith({ onHistoryPreProcessing: hook })],
+      factories: [factoryWith({ historyTransformer: hook })],
       ...HANDLER_OPTS,
     });
 
-    const result = await handler.onHistoryPreProcessing([makeMessage('orig')]);
+    const result = await handler.runHistoryTransformers([makeMessage('orig')]);
     expect(result.history).toEqual([makeMessage('orig'), makeMessage('async')]);
   });
 
   it('normalizes shorthand return (array only) into { history, flags }', async () => {
     const hook = vi.fn((h: ExtendedUIMessage[]) => h);
     const handler = createExtensionHandler({
-      factories: [factoryWith({ onHistoryPreProcessing: hook })],
+      factories: [factoryWith({ historyTransformer: hook })],
       ...HANDLER_OPTS,
     });
     const history = [makeMessage('a')];
-    const result = await handler.onHistoryPreProcessing(history);
+    const result = await handler.runHistoryTransformers(history);
     expect(result.history).toBe(history);
     expect(result.flags).toEqual({});
   });
@@ -286,18 +287,18 @@ describe('ExtensionHandler — onHistoryPreProcessing', () => {
 
     const handler = createExtensionHandler({
       factories: [
-        factoryWith({ onHistoryPreProcessing: hook1 }),
-        factoryWith({ onHistoryPreProcessing: hook2 }),
+        factoryWith({ historyTransformer: hook1 }),
+        factoryWith({ historyTransformer: hook2 }),
       ],
       ...HANDLER_OPTS,
     });
 
-    const result = await handler.onHistoryPreProcessing([makeMessage('a')]);
+    const result = await handler.runHistoryTransformers([makeMessage('a')]);
     expect(result.flags.hasCompacted).toBe(true);
   });
 });
 
-describe('ExtensionHandler — onHistoryPostProcessing', () => {
+describe('ExtensionHandler — runContextTransformers', () => {
   it('returns the history unchanged with empty flags when no extensions define the hook', async () => {
     const handler = createExtensionHandler({
       factories: [factoryWith({})],
@@ -306,7 +307,7 @@ describe('ExtensionHandler — onHistoryPostProcessing', () => {
     const history: ModelMessage[] = [
       { role: 'user', content: [{ type: 'text', text: 'a' }] },
     ];
-    const result = await handler.onHistoryPostProcessing(history);
+    const result = await handler.runContextTransformers(history);
     expect(result.history).toEqual(history);
     expect(result.flags).toEqual({});
   });
@@ -329,13 +330,13 @@ describe('ExtensionHandler — onHistoryPostProcessing', () => {
 
     const handler = createExtensionHandler({
       factories: [
-        factoryWith({ onHistoryPostProcessing: hook1 }),
-        factoryWith({ onHistoryPostProcessing: hook2 }),
+        factoryWith({ contextTransformer: hook1 }),
+        factoryWith({ contextTransformer: hook2 }),
       ],
       ...HANDLER_OPTS,
     });
 
-    const result = await handler.onHistoryPostProcessing([
+    const result = await handler.runContextTransformers([
       { role: 'user', content: [{ type: 'text', text: 'orig' }] },
     ] as ModelMessage[]);
 
@@ -350,13 +351,13 @@ describe('ExtensionHandler — onHistoryPostProcessing', () => {
 
     const handler = createExtensionHandler({
       factories: [
-        factoryWith({ onHistoryPostProcessing: hook1 }),
+        factoryWith({ contextTransformer: hook1 }),
         factoryWith({}), // no hook
       ],
       ...HANDLER_OPTS,
     });
 
-    await handler.onHistoryPostProcessing([
+    await handler.runContextTransformers([
       { role: 'user', content: [{ type: 'text', text: 'a' }] },
     ] as ModelMessage[]);
 
@@ -440,28 +441,36 @@ describe('ExtensionHandler — getDataPartTransformers', () => {
   });
 });
 
-describe('ExtensionHandler — onStepComplete', () => {
-  const stepResult: GenerationRunnerResult = {
+describe('ExtensionHandler — runStepCompleteHooks', () => {
+  const stepEvent: StepCompleteEvent = {
     shouldContinue: true,
     forceNextStep: false,
     fatalError: false,
     fatalErrorReason: null,
     generationFailed: false,
-    usage: {
-      inputTokens: 100,
-      outputTokens: 50,
+    generation: {
+      modelId: 'test-model',
+      finishReason: 'stop',
+      usage: {
+        inputTokens: 100,
+        outputTokens: 50,
+      } as never,
     },
+    toolCalls: [],
   };
 
-  it('is a no-op when no extensions define the hook', async () => {
+  it('returns { stop: false, stopReason: null } when no extensions define the hook', async () => {
     const handler = createExtensionHandler({
       factories: [factoryWith({})],
       ...HANDLER_OPTS,
     });
-    await expect(handler.onStepComplete(stepResult)).resolves.toBeUndefined();
+    await expect(handler.runStepCompleteHooks(stepEvent)).resolves.toEqual({
+      stop: false,
+      stopReason: null,
+    });
   });
 
-  it('calls onStepComplete on each extension in order', async () => {
+  it('calls onStepComplete on each extension', async () => {
     const hook1 = vi.fn(() => {});
     const hook2 = vi.fn(() => {});
 
@@ -473,14 +482,14 @@ describe('ExtensionHandler — onStepComplete', () => {
       ...HANDLER_OPTS,
     });
 
-    await handler.onStepComplete(stepResult);
+    await handler.runStepCompleteHooks(stepEvent);
 
-    // Each hook receives a shallow copy with the same values.
+    // Each hook receives a structured clone with the same values.
     expect(hook1).toHaveBeenCalledExactlyOnceWith(
-      expect.objectContaining(stepResult),
+      expect.objectContaining(stepEvent),
     );
     expect(hook2).toHaveBeenCalledExactlyOnceWith(
-      expect.objectContaining(stepResult),
+      expect.objectContaining(stepEvent),
     );
   });
 
@@ -497,7 +506,7 @@ describe('ExtensionHandler — onStepComplete', () => {
       ...HANDLER_OPTS,
     });
 
-    await handler.onStepComplete(stepResult);
+    await handler.runStepCompleteHooks(stepEvent);
 
     expect(hook1).toHaveBeenCalledOnce();
     expect(hook3).toHaveBeenCalledOnce();
@@ -513,20 +522,25 @@ describe('ExtensionHandler — onStepComplete', () => {
       ...HANDLER_OPTS,
     });
 
-    await handler.onStepComplete(stepResult);
+    await handler.runStepCompleteHooks(stepEvent);
     expect(hook).toHaveBeenCalledOnce();
   });
 
-  it('passes a shallow copy so extensions cannot mutate the original result', async () => {
-    const hook1 = vi.fn((result: GenerationRunnerResult) => {
-      // Mutate the result — this should NOT affect the original.
-      result.shouldContinue = false;
-      result.usage = { inputTokens: 999, outputTokens: 999 };
+  it('passes a structured clone so extensions cannot mutate the original event or affect following extensions', async () => {
+    const hook1 = vi.fn((event: StepCompleteEvent) => {
+      // Mutate both top-level and nested fields. A shallow copy would
+      // leak the nested mutation to the original and to hook2.
+      event.shouldContinue = false;
+      event.generation!.usage.inputTokens = 999;
+      event.generation!.usage.outputTokens = 999;
     });
-    const hook2 = vi.fn((result: GenerationRunnerResult) => {
-      // Should see the original, unmutated values.
-      expect(result.shouldContinue).toBe(true);
-      expect(result.usage).toEqual({ inputTokens: 100, outputTokens: 50 });
+    const hook2 = vi.fn((event: StepCompleteEvent) => {
+      // Should see the original, unmutated values — including nested.
+      expect(event.shouldContinue).toBe(true);
+      expect(event.generation!.usage).toEqual({
+        inputTokens: 100,
+        outputTokens: 50,
+      });
     });
 
     const handler = createExtensionHandler({
@@ -537,16 +551,19 @@ describe('ExtensionHandler — onStepComplete', () => {
       ...HANDLER_OPTS,
     });
 
-    await handler.onStepComplete(stepResult);
+    await handler.runStepCompleteHooks(stepEvent);
 
     // The original object passed to the handler is unmutated.
-    expect(stepResult.shouldContinue).toBe(true);
-    expect(stepResult.usage).toEqual({ inputTokens: 100, outputTokens: 50 });
+    expect(stepEvent.shouldContinue).toBe(true);
+    expect(stepEvent.generation!.usage).toEqual({
+      inputTokens: 100,
+      outputTokens: 50,
+    });
     expect(hook1).toHaveBeenCalledOnce();
     expect(hook2).toHaveBeenCalledOnce();
   });
 
-  it('catches and logs errors from individual extensions without breaking the chain', async () => {
+  it('catches and logs errors from individual extensions without breaking other hooks', async () => {
     const hook1 = vi.fn(() => {
       throw new Error('hook1 failed');
     });
@@ -560,10 +577,61 @@ describe('ExtensionHandler — onStepComplete', () => {
       ...HANDLER_OPTS,
     });
 
-    await handler.onStepComplete(stepResult);
+    await handler.runStepCompleteHooks(stepEvent);
 
     expect(hook1).toHaveBeenCalledOnce();
     expect(hook2).toHaveBeenCalledOnce();
     expect(noopDeps.logger.error).toHaveBeenCalled();
+  });
+
+  it('returns stop: true when an extension returns { stop: true }', async () => {
+    const hook1 = vi.fn(() => ({ stop: true, stopReason: 'done' }));
+    const hook2 = vi.fn(() => {});
+
+    const handler = createExtensionHandler({
+      factories: [
+        factoryWith({ onStepComplete: hook1 }),
+        factoryWith({ onStepComplete: hook2 }),
+      ],
+      ...HANDLER_OPTS,
+    });
+
+    const result = await handler.runStepCompleteHooks(stepEvent);
+    expect(result.stop).toBe(true);
+    expect(result.stopReason).toBe('done');
+  });
+
+  it('returns stop: true when any one extension in a batch requests it', async () => {
+    const hook1 = vi.fn(() => {});
+    const hook2 = vi.fn(() => ({ stop: true, stopReason: 'limit reached' }));
+
+    const handler = createExtensionHandler({
+      factories: [
+        factoryWith({ onStepComplete: hook1 }),
+        factoryWith({ onStepComplete: hook2 }),
+      ],
+      ...HANDLER_OPTS,
+    });
+
+    const result = await handler.runStepCompleteHooks(stepEvent);
+    expect(result.stop).toBe(true);
+    expect(result.stopReason).toBe('limit reached');
+  });
+
+  it('returns stop: false when no extension requests a stop', async () => {
+    const hook1 = vi.fn(() => {});
+    const hook2 = vi.fn(() => ({}));
+
+    const handler = createExtensionHandler({
+      factories: [
+        factoryWith({ onStepComplete: hook1 }),
+        factoryWith({ onStepComplete: hook2 }),
+      ],
+      ...HANDLER_OPTS,
+    });
+
+    const result = await handler.runStepCompleteHooks(stepEvent);
+    expect(result.stop).toBe(false);
+    expect(result.stopReason).toBeNull();
   });
 });

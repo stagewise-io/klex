@@ -1,5 +1,12 @@
 import type { Span } from '@opentelemetry/api';
-import type { LanguageModel, ModelMessage } from 'ai';
+import {
+  type FinishReason,
+  getToolName,
+  isToolUIPart,
+  type LanguageModel,
+  type LanguageModelUsage,
+  type ModelMessage,
+} from 'ai';
 
 import type { ModuleLogger } from '@stagewise/logger';
 
@@ -11,26 +18,18 @@ import {
   type GenerationErrorClassification,
 } from '@/utils/llm';
 
+import type {
+  StepCompleteEvent,
+  ToolCallInfo,
+} from '../extensions/extension-api';
 import type { ModelFallbackManager } from '../utils/model-fallback-manager';
 import { repairPartialMessage } from '../utils/repair-partial-message';
 import { runStreamedGeneration } from '../utils/run-streamed-generation';
 import { startChildSpan } from '../utils/tracing';
 import { ToolDispatcher } from './tool-dispatcher';
 
-export interface GenerationRunnerResult {
-  /** True if the turn should run another step after this one. */
-  shouldContinue: boolean;
-  /** True if the turn must inject a "Continue." message before the next step. */
-  forceNextStep: boolean;
-  /** True if the step failed with a fatal (non-recoverable) error. */
-  fatalError: boolean;
-  /** Human-readable reason for the fatal error, if fatalError is true. */
-  fatalErrorReason: string | null;
-  /** True if generation was attempted but all retries exhausted without usable output. */
-  generationFailed: boolean;
-  /** Token usage from the successful generation, if any. */
-  usage: { inputTokens: number; outputTokens: number } | null;
-}
+/** Re-exported so callers can import the result type from the runner. */
+export type { StepCompleteEvent as GenerationRunnerResult } from '../extensions/extension-api';
 
 export interface GenerationRunnerDependencies {
   logger: ModuleLogger;
@@ -75,7 +74,7 @@ export class GenerationRunner {
 
   constructor(private readonly deps: GenerationRunnerDependencies) {}
 
-  async run(): Promise<GenerationRunnerResult> {
+  async run(): Promise<StepCompleteEvent> {
     const { stepSpan, fallbackManager, messages } = this.deps;
 
     const toolDispatcher = new ToolDispatcher({
@@ -97,7 +96,9 @@ export class GenerationRunner {
     let generationFailed = false;
 
     let model = this.deps.model;
-    let lastUsage: { inputTokens: number; outputTokens: number } | null = null;
+    let lastUsage: LanguageModelUsage | null = null;
+    let lastFinishReason: FinishReason | null = null;
+    let lastModelId: string | null = null;
 
     while (attempt < MAX_GENERATION_ATTEMPTS) {
       attempt++;
@@ -168,10 +169,9 @@ export class GenerationRunner {
         ) {
           messages.push(response.message);
           fallbackManager.recordSuccessfulGeneration();
-          lastUsage = {
-            inputTokens: response.usage.inputTokens ?? 0,
-            outputTokens: response.usage.outputTokens ?? 0,
-          };
+          lastUsage = response.usage;
+          lastFinishReason = response.finishReason;
+          lastModelId = fallbackManager.getChatModelId();
           // outcome stays 'done' — will break below.
         } else {
           // Non-good finish — classify only on 'error' finish reason.
@@ -251,7 +251,8 @@ export class GenerationRunner {
         fatalError: false,
         fatalErrorReason: null,
         generationFailed: true,
-        usage: null,
+        generation: null,
+        toolCalls: [],
       };
     }
 
@@ -274,6 +275,10 @@ export class GenerationRunner {
       'step.toolCallCount': toolDispatcher.inFlightCount,
     });
 
+    // Extract ToolCallInfo[] from the latest assistant message after all
+    // tools have settled. Only includes tool calls in a terminal state.
+    const toolCalls = extractToolCalls(latestMessage);
+
     stepSpan.setAttribute('step.forceNextStep', forceNextStep);
     if (forceNextStep) {
       stepSpan.addEvent('step.force_continue', {});
@@ -285,7 +290,15 @@ export class GenerationRunner {
       fatalError,
       fatalErrorReason,
       generationFailed,
-      usage: lastUsage,
+      generation:
+        lastUsage !== null && lastFinishReason !== null && lastModelId !== null
+          ? {
+              modelId: lastModelId,
+              finishReason: lastFinishReason,
+              usage: lastUsage,
+            }
+          : null,
+      toolCalls,
     };
   }
 
@@ -437,6 +450,41 @@ export class GenerationRunner {
     span.end();
     return salvaged;
   }
+}
+
+/**
+ * Extracts settled tool call information from an assistant message's parts.
+ * Only includes tool UI parts in a terminal state (`output-available`,
+ * `output-error`, or `output-denied`). Returns an empty array when the
+ * message is null or contains no settled tool calls.
+ */
+function extractToolCalls(message: ExtendedUIMessage | null): ToolCallInfo[] {
+  if (!message) return [];
+  const toolCalls: ToolCallInfo[] = [];
+  for (const part of message.parts) {
+    if (!isToolUIPart(part)) continue;
+    if (
+      part.state !== 'output-available' &&
+      part.state !== 'output-error' &&
+      part.state !== 'output-denied'
+    ) {
+      continue;
+    }
+    const info: ToolCallInfo = {
+      toolCallId: part.toolCallId,
+      toolName: getToolName(part),
+      input: part.input,
+      state: part.state,
+    };
+    if (part.state === 'output-available' && part.output !== undefined) {
+      info.output = part.output;
+    }
+    if (part.state === 'output-error' && part.errorText !== undefined) {
+      info.errorText = part.errorText;
+    }
+    toolCalls.push(info);
+  }
+  return toolCalls;
 }
 
 /**

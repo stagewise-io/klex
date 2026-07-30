@@ -11,6 +11,7 @@ import type { AgentTools } from '@/session/tools';
 import type { ExtendedUIMessage } from '@/session/types';
 
 import type { ExtensionHandler } from '../extension-handler';
+import type { StepCompleteEvent } from '../extensions/extension-api';
 import { checkAndFixHistory } from '../utils/check-and-fix-history';
 import { convertToModelMessagesExtended } from '../utils/convert-to-model-messages';
 import { inboxDrainAttributes } from '../utils/inbox-drain-attributes';
@@ -59,32 +60,14 @@ export interface StepDependencies {
   sessionId: string;
 }
 
-export interface StepResult {
-  /** True if the turn should run another step after this one. */
-  shouldContinue: boolean;
-  /** True if the turn must inject a "Continue." message before the next step. */
-  forceNextStep: boolean;
-  /**
-   * True if the step failed with a fatal (non-recoverable) error, e.g.
-   * a 400 bad request or an invalid prompt. The session should be
-   * terminated rather than retried.
-   */
-  fatalError: boolean;
-  /** Human-readable reason for the fatal error, if fatalError is true. */
-  fatalErrorReason: string | null;
-  /**
-   * True if generation was attempted but all retries were exhausted
-   * without producing any usable output. Distinct from shouldContinue=false
-   * (which means no generation was attempted or generation succeeded). The
-   * turn uses this to report completeFailure to the session for backoff.
-   */
-  generationFailed: boolean;
-  /** Token usage from the successful generation, if any. */
-  usage: { inputTokens: number; outputTokens: number } | null;
-}
+// Re-export so callers can import the step result type from the step module.
+export type {
+  StepCompleteEvent,
+  StepCompleteEvent as StepResult,
+} from '../extensions/extension-api';
 
 export interface Step {
-  run(): Promise<StepResult>;
+  run(): Promise<StepCompleteEvent>;
   abortGeneration(reason?: string): void;
   /** Abort all in-flight tool executions. Use during session shutdown. */
   abortTools(): void;
@@ -102,7 +85,7 @@ class StepModule implements Step {
     deps.logger.trace('START_STEP', { id: this.id });
   }
 
-  async run(): Promise<StepResult> {
+  async run(): Promise<StepCompleteEvent> {
     // Lazy span creation: spans are created at run() time to prevent
     // span leaks if run() is never called (e.g. abort before execution).
     const stepSpan = tracer.startSpan(
@@ -200,14 +183,20 @@ class StepModule implements Step {
           stepSpan.setAttribute('step.skipped', true);
           stepSpan.setAttribute('step.skipReason', decisionReason);
           stepSpan.addEvent('step.skipped', { reason: decisionReason });
-          return {
+
+          // Fire onStepComplete even on the skip path so extensions
+          // receive a consistent callback for every step outcome.
+          const skipEvent: StepCompleteEvent = {
             shouldContinue: false,
             forceNextStep: false,
             fatalError: false,
             fatalErrorReason: null,
             generationFailed: false,
-            usage: null,
+            generation: null,
+            toolCalls: [],
           };
+          await this.deps.extensionHandler.runStepCompleteHooks(skipEvent);
+          return skipEvent;
         }
 
         // 2.2.4 - 2.2.6: History preparation pipeline. A single span covers
@@ -231,10 +220,10 @@ class StepModule implements Step {
           'history_copy.messageCount': messagesCopy.length,
         });
 
-        // --- Stage 2: Pre-process (extensions) ---
+        // --- Stage 2: History transformers (extensions) ---
         transformSpan.addEvent('history_pre_process.start');
         const preResult =
-          await this.deps.extensionHandler.onHistoryPreProcessing(messagesCopy);
+          await this.deps.extensionHandler.runHistoryTransformers(messagesCopy);
         transformSpan.setAttribute(
           'history_pre_process.messageCount',
           preResult.history.length,
@@ -257,10 +246,10 @@ class StepModule implements Step {
           'history_convert.outputMessageCount': modelMessages.length,
         });
 
-        // --- Stage 4: Post-process (extensions) ---
+        // --- Stage 4: Context transformers (extensions) ---
         transformSpan.addEvent('history_post_process.start');
         const postResult =
-          await this.deps.extensionHandler.onHistoryPostProcessing(
+          await this.deps.extensionHandler.runContextTransformers(
             modelMessages,
           );
         transformSpan.setAttribute(
@@ -327,8 +316,14 @@ class StepModule implements Step {
         try {
           const result = await runner.run();
           // Notify extensions that a step completed. The handler catches
-          // per-extension errors, so this won't break the turn.
-          await this.deps.extensionHandler.onStepComplete(result);
+          // per-extension errors and runs all hooks in parallel, so this
+          // won't break the turn.
+          const hookResult =
+            await this.deps.extensionHandler.runStepCompleteHooks(result);
+          // If any extension requested a stop, override shouldContinue.
+          if (hookResult.stop) {
+            result.shouldContinue = false;
+          }
           return result;
         } finally {
           this.generationRunner = null;

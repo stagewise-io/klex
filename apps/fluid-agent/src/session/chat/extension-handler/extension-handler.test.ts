@@ -1,5 +1,8 @@
+import { context, trace } from '@opentelemetry/api';
+import { AsyncHooksContextManager } from '@opentelemetry/context-async-hooks';
+import { BasicTracerProvider } from '@opentelemetry/sdk-trace-base';
 import type { ModelMessage } from 'ai';
-import { describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import type {
   BaseExtensionDeps,
@@ -7,10 +10,37 @@ import type {
   Extension,
   ExtensionDeps,
   ExtensionFactory,
+  GenerateTextArgs,
+  GenerateTextResult,
+  ResolvedModel,
   StepCompleteEvent,
 } from '../extensions/extension-api';
 import type { ExtendedUIMessage } from '../message-types';
+import { getExtensionIdentifier } from '../utils/tracing';
 import { createExtensionHandler } from './extension-handler';
+
+// --- OTel setup for trace-attribution tests ---
+//
+// The default NoopContextManager does not propagate context across
+// `context.with` blocks. Register a real AsyncHooksContextManager so
+// that context propagation (used by the generateText wrapper to set the
+// extension identifier) works in tests.
+let contextManager: AsyncHooksContextManager | undefined;
+
+beforeAll(() => {
+  contextManager = new AsyncHooksContextManager();
+  contextManager.enable();
+  context.setGlobalContextManager(contextManager);
+
+  // Register a basic tracer provider so that `context.with` with a span
+  // context does not throw when the tracer is accessed.
+  const provider = new BasicTracerProvider();
+  trace.setGlobalTracerProvider(provider);
+});
+
+afterAll(() => {
+  contextManager?.disable();
+});
 
 // --- fixtures ---
 
@@ -42,6 +72,12 @@ const HANDLER_OPTS = {
   extensionDeps: noopDeps,
   dataDirectory: '/tmp/test-agent-data',
   sessionId: 'session-123',
+};
+
+const mockResolvedModel: ResolvedModel = {
+  modelId: 'remote:gpt-4o',
+  displayName: 'GPT-4o',
+  contextSize: 128_000,
 };
 
 function makeMessage(text: string): ExtendedUIMessage {
@@ -192,7 +228,10 @@ describe('ExtensionHandler — runHistoryTransformers', () => {
       ...HANDLER_OPTS,
     });
     const history = [makeMessage('a')];
-    const result = await handler.runHistoryTransformers(history);
+    const result = await handler.runHistoryTransformers(
+      history,
+      mockResolvedModel,
+    );
     expect(result.history).toEqual(history);
     expect(result.flags).toEqual({});
   });
@@ -215,13 +254,19 @@ describe('ExtensionHandler — runHistoryTransformers', () => {
       ...HANDLER_OPTS,
     });
 
-    const result = await handler.runHistoryTransformers([makeMessage('orig')]);
+    const result = await handler.runHistoryTransformers(
+      [makeMessage('orig')],
+      mockResolvedModel,
+    );
 
-    expect(hook1).toHaveBeenCalledExactlyOnceWith([makeMessage('orig')]);
-    expect(hook2).toHaveBeenCalledExactlyOnceWith([
-      makeMessage('orig'),
-      makeMessage('ext1'),
-    ]);
+    expect(hook1).toHaveBeenCalledExactlyOnceWith(
+      [makeMessage('orig')],
+      mockResolvedModel,
+    );
+    expect(hook2).toHaveBeenCalledExactlyOnceWith(
+      [makeMessage('orig'), makeMessage('ext1')],
+      mockResolvedModel,
+    );
     expect(result.history).toEqual([
       makeMessage('orig'),
       makeMessage('ext1'),
@@ -246,7 +291,10 @@ describe('ExtensionHandler — runHistoryTransformers', () => {
       ...HANDLER_OPTS,
     });
 
-    await handler.runHistoryTransformers([makeMessage('orig')]);
+    await handler.runHistoryTransformers(
+      [makeMessage('orig')],
+      mockResolvedModel,
+    );
 
     expect(hook1).toHaveBeenCalledOnce();
     expect(hook3).toHaveBeenCalledOnce();
@@ -263,7 +311,10 @@ describe('ExtensionHandler — runHistoryTransformers', () => {
       ...HANDLER_OPTS,
     });
 
-    const result = await handler.runHistoryTransformers([makeMessage('orig')]);
+    const result = await handler.runHistoryTransformers(
+      [makeMessage('orig')],
+      mockResolvedModel,
+    );
     expect(result.history).toEqual([makeMessage('orig'), makeMessage('async')]);
   });
 
@@ -274,7 +325,10 @@ describe('ExtensionHandler — runHistoryTransformers', () => {
       ...HANDLER_OPTS,
     });
     const history = [makeMessage('a')];
-    const result = await handler.runHistoryTransformers(history);
+    const result = await handler.runHistoryTransformers(
+      history,
+      mockResolvedModel,
+    );
     expect(result.history).toBe(history);
     expect(result.flags).toEqual({});
   });
@@ -301,16 +355,19 @@ describe('ExtensionHandler — runHistoryTransformers', () => {
       ...HANDLER_OPTS,
     });
 
-    const result = await handler.runHistoryTransformers([makeMessage('orig')]);
+    const result = await handler.runHistoryTransformers(
+      [makeMessage('orig')],
+      mockResolvedModel,
+    );
 
     expect(hook1).toHaveBeenCalledOnce();
     expect(hook2).toHaveBeenCalledOnce();
     expect(hook3).toHaveBeenCalledOnce();
     // hook2 failed, so hook3 receives the output of hook1 (unchanged).
-    expect(hook3).toHaveBeenCalledExactlyOnceWith([
-      makeMessage('orig'),
-      makeMessage('ext1'),
-    ]);
+    expect(hook3).toHaveBeenCalledExactlyOnceWith(
+      [makeMessage('orig'), makeMessage('ext1')],
+      mockResolvedModel,
+    );
     expect(result.history).toEqual([
       makeMessage('orig'),
       makeMessage('ext1'),
@@ -339,8 +396,26 @@ describe('ExtensionHandler — runHistoryTransformers', () => {
       ...HANDLER_OPTS,
     });
 
-    const result = await handler.runHistoryTransformers([makeMessage('a')]);
+    const result = await handler.runHistoryTransformers(
+      [makeMessage('a')],
+      mockResolvedModel,
+    );
     expect(result.flags.hasCompacted).toBe(true);
+  });
+
+  it('forwards the ResolvedModel argument to each extension transformer', async () => {
+    const hook = vi.fn((h: ExtendedUIMessage[]) => h);
+    const handler = createExtensionHandler({
+      factories: [factoryWith({ historyTransformer: hook })],
+      ...HANDLER_OPTS,
+    });
+
+    await handler.runHistoryTransformers([makeMessage('a')], mockResolvedModel);
+
+    expect(hook).toHaveBeenCalledExactlyOnceWith(
+      [makeMessage('a')],
+      mockResolvedModel,
+    );
   });
 });
 
@@ -353,7 +428,10 @@ describe('ExtensionHandler — runContextTransformers', () => {
     const history: ModelMessage[] = [
       { role: 'user', content: [{ type: 'text', text: 'a' }] },
     ];
-    const result = await handler.runContextTransformers(history);
+    const result = await handler.runContextTransformers(
+      history,
+      mockResolvedModel,
+    );
     expect(result.history).toEqual(history);
     expect(result.flags).toEqual({});
   });
@@ -382,9 +460,12 @@ describe('ExtensionHandler — runContextTransformers', () => {
       ...HANDLER_OPTS,
     });
 
-    const result = await handler.runContextTransformers([
-      { role: 'user', content: [{ type: 'text', text: 'orig' }] },
-    ] as ModelMessage[]);
+    const result = await handler.runContextTransformers(
+      [
+        { role: 'user', content: [{ type: 'text', text: 'orig' }] },
+      ] as ModelMessage[],
+      mockResolvedModel,
+    );
 
     expect(result.history).toHaveLength(3);
     expect(result.flags).toEqual({});
@@ -403,9 +484,12 @@ describe('ExtensionHandler — runContextTransformers', () => {
       ...HANDLER_OPTS,
     });
 
-    await handler.runContextTransformers([
-      { role: 'user', content: [{ type: 'text', text: 'a' }] },
-    ] as ModelMessage[]);
+    await handler.runContextTransformers(
+      [
+        { role: 'user', content: [{ type: 'text', text: 'a' }] },
+      ] as ModelMessage[],
+      mockResolvedModel,
+    );
 
     expect(hook1).toHaveBeenCalledOnce();
   });
@@ -438,9 +522,12 @@ describe('ExtensionHandler — runContextTransformers', () => {
       ...HANDLER_OPTS,
     });
 
-    const result = await handler.runContextTransformers([
-      { role: 'user', content: [{ type: 'text', text: 'orig' }] },
-    ] as ModelMessage[]);
+    const result = await handler.runContextTransformers(
+      [
+        { role: 'user', content: [{ type: 'text', text: 'orig' }] },
+      ] as ModelMessage[],
+      mockResolvedModel,
+    );
 
     expect(hook1).toHaveBeenCalledOnce();
     expect(hook2).toHaveBeenCalledOnce();
@@ -454,6 +541,28 @@ describe('ExtensionHandler — runContextTransformers', () => {
     expect(noopDeps.logger.error).toHaveBeenCalled();
     // The caller must cancel the step because context integrity is uncertain.
     expect(result.flags.hasTransformerError).toBe(true);
+  });
+
+  it('forwards the ResolvedModel argument to each extension transformer', async () => {
+    const hook = vi.fn((h: ModelMessage[]) => h);
+    const handler = createExtensionHandler({
+      factories: [factoryWith({ contextTransformer: hook })],
+      ...HANDLER_OPTS,
+    });
+
+    await handler.runContextTransformers(
+      [
+        { role: 'user', content: [{ type: 'text', text: 'a' }] },
+      ] as ModelMessage[],
+      mockResolvedModel,
+    );
+
+    expect(hook).toHaveBeenCalledExactlyOnceWith(
+      [
+        { role: 'user', content: [{ type: 'text', text: 'a' }] },
+      ] as ModelMessage[],
+      mockResolvedModel,
+    );
   });
 });
 
@@ -549,6 +658,7 @@ describe('ExtensionHandler — runStepCompleteHooks', () => {
       } as never,
     },
     toolCalls: [],
+    modelFallbackOccurred: false,
   };
 
   it('returns { stop: false, stopReason: null } when no extensions define the hook', async () => {
@@ -769,5 +879,232 @@ describe('ExtensionHandler — runStepCompleteHooks', () => {
     // accumulatedTokens would still be 0.
     expect(ext.getAccumulatedTokens()).toBe(150);
     expect(noopDeps.logger.error).not.toHaveBeenCalled();
+  });
+});
+
+describe('ExtensionHandler — generateText wrapper trace attribution', () => {
+  /**
+   * Builds a fresh set of deps with a spied generateText that captures
+   * the extension identifier from the OTel context at call time.
+   */
+  function depsWithCapture(): {
+    deps: BaseExtensionDeps;
+    capturedIds: () => (string | undefined)[];
+    generateTextSpy: ReturnType<typeof vi.fn>;
+  } {
+    const captured: (string | undefined)[] = [];
+    const generateTextSpy = vi.fn((_args: GenerateTextArgs) => {
+      captured.push(getExtensionIdentifier());
+      return Promise.resolve({
+        success: true as const,
+        text: 'ok',
+        modelId: 'test-model',
+        usage: { inputTokens: 10, outputTokens: 5 },
+      });
+    });
+    const deps: BaseExtensionDeps = {
+      ...noopDeps,
+      generateText:
+        generateTextSpy as unknown as BaseExtensionDeps['generateText'],
+    };
+    return { deps, capturedIds: () => captured, generateTextSpy };
+  }
+
+  it('sets the extension identifier in the OTel context for generateText calls', async () => {
+    const { deps, capturedIds } = depsWithCapture();
+
+    let receivedDeps: ExtensionDeps | null = null;
+    const factory: ExtensionFactory = {
+      identifier: 'io.stagewise/trace-test',
+      create: (d) => {
+        receivedDeps = d;
+        return { identifier: 'io.stagewise/trace-test' };
+      },
+    };
+
+    createExtensionHandler({
+      factories: [factory],
+      extensionDeps: deps,
+      dataDirectory: '/tmp/test',
+      sessionId: 's1',
+    });
+
+    await receivedDeps!.generateText({
+      modelIds: ['test:model'],
+      prompt: 'hello',
+    });
+
+    expect(capturedIds()).toEqual(['io.stagewise/trace-test']);
+  });
+
+  it('does not leak the identifier outside the generateText call', async () => {
+    const { deps } = depsWithCapture();
+
+    let receivedDeps: ExtensionDeps | null = null;
+    const factory: ExtensionFactory = {
+      identifier: 'io.stagewise/no-leak',
+      create: (d) => {
+        receivedDeps = d;
+        return { identifier: 'io.stagewise/no-leak' };
+      },
+    };
+
+    createExtensionHandler({
+      factories: [factory],
+      extensionDeps: deps,
+      dataDirectory: '/tmp/test',
+      sessionId: 's1',
+    });
+
+    // Before the call — no identifier in the ambient context.
+    expect(getExtensionIdentifier()).toBeUndefined();
+
+    await receivedDeps!.generateText({
+      modelIds: ['test:model'],
+      prompt: 'hello',
+    });
+
+    // After the call — still no identifier in the ambient context.
+    expect(getExtensionIdentifier()).toBeUndefined();
+  });
+
+  it('sets the correct identifier per extension when multiple extensions call generateText', async () => {
+    const { deps, capturedIds } = depsWithCapture();
+
+    const depsMap = new Map<string, ExtensionDeps>();
+    const makeFactory = (id: string): ExtensionFactory => ({
+      identifier: id,
+      create: (d) => {
+        depsMap.set(id, d);
+        return { identifier: id };
+      },
+    });
+
+    createExtensionHandler({
+      factories: [
+        makeFactory('io.stagewise/ext-a'),
+        makeFactory('io.stagewise/ext-b'),
+      ],
+      extensionDeps: deps,
+      dataDirectory: '/tmp/test',
+      sessionId: 's1',
+    });
+
+    // Call generateText from ext-a, then ext-b.
+    await depsMap.get('io.stagewise/ext-a')!.generateText({
+      modelIds: ['test:a'],
+      prompt: 'a',
+    });
+    await depsMap.get('io.stagewise/ext-b')!.generateText({
+      modelIds: ['test:b'],
+      prompt: 'b',
+    });
+
+    expect(capturedIds()).toEqual(['io.stagewise/ext-a', 'io.stagewise/ext-b']);
+  });
+
+  it('passes the original args through to the underlying generateText unchanged', async () => {
+    const { deps, generateTextSpy } = depsWithCapture();
+
+    let receivedDeps: ExtensionDeps | null = null;
+    const factory: ExtensionFactory = {
+      identifier: 'io.stagewise/args-passthrough',
+      create: (d) => {
+        receivedDeps = d;
+        return { identifier: 'io.stagewise/args-passthrough' };
+      },
+    };
+
+    createExtensionHandler({
+      factories: [factory],
+      extensionDeps: deps,
+      dataDirectory: '/tmp/test',
+      sessionId: 's1',
+    });
+
+    const args: GenerateTextArgs = {
+      modelIds: ['test:model-1', 'test:model-2'],
+      system: 'you are a test',
+      prompt: 'say hello',
+      temperature: 0.7,
+      maxOutputTokens: 100,
+    };
+
+    await receivedDeps!.generateText(args);
+
+    expect(generateTextSpy).toHaveBeenCalledExactlyOnceWith(args);
+  });
+
+  it('still invokes onExtensionUsage on success', async () => {
+    const onExtensionUsage = vi.fn();
+    const { deps } = depsWithCapture();
+
+    let receivedDeps: ExtensionDeps | null = null;
+    const factory: ExtensionFactory = {
+      identifier: 'io.stagewise/usage-test',
+      create: (d) => {
+        receivedDeps = d;
+        return { identifier: 'io.stagewise/usage-test' };
+      },
+    };
+
+    createExtensionHandler({
+      factories: [factory],
+      extensionDeps: deps,
+      dataDirectory: '/tmp/test',
+      sessionId: 's1',
+      onExtensionUsage,
+    });
+
+    await receivedDeps!.generateText({
+      modelIds: ['test:m'],
+      prompt: 'hi',
+    });
+
+    expect(onExtensionUsage).toHaveBeenCalledExactlyOnceWith(
+      'io.stagewise/usage-test',
+      {
+        inputTokens: 10,
+        outputTokens: 5,
+        inputCacheWriteTokens: 0,
+        inputCacheReadTokens: 0,
+      },
+    );
+  });
+
+  it('does not invoke onExtensionUsage when generateText fails', async () => {
+    const onExtensionUsage = vi.fn();
+    const failingGenText = vi.fn((_args: GenerateTextArgs) =>
+      Promise.resolve({
+        success: false as const,
+        failureReason: 'all-models-failed' as const,
+      } satisfies GenerateTextResult),
+    );
+    const deps: BaseExtensionDeps = {
+      ...noopDeps,
+      generateText:
+        failingGenText as unknown as BaseExtensionDeps['generateText'],
+    };
+
+    let receivedDeps: ExtensionDeps | null = null;
+    const factory: ExtensionFactory = {
+      identifier: 'io.stagewise/usage-fail',
+      create: (d) => {
+        receivedDeps = d;
+        return { identifier: 'io.stagewise/usage-fail' };
+      },
+    };
+
+    createExtensionHandler({
+      factories: [factory],
+      extensionDeps: deps,
+      dataDirectory: '/tmp/test',
+      sessionId: 's1',
+      onExtensionUsage,
+    });
+
+    await receivedDeps!.generateText({ modelIds: ['test:m'], prompt: 'hi' });
+
+    expect(onExtensionUsage).not.toHaveBeenCalled();
   });
 });

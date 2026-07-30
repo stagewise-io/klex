@@ -6,10 +6,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { ModuleLogger } from '@stagewise/logger';
 
-import type { ModelProvider } from '@/model-provider';
-
 import type { ExtendedUIMessage } from '../message-types';
-import { testLogger as logger, makeModelProvider } from '../test-helpers';
+import { testLogger as logger } from '../test-helpers';
 import type { AgentTools } from '../tools';
 import { ModelFallbackManager } from '../utils/model-fallback-manager';
 import { repairPartialMessage } from '../utils/repair-partial-message';
@@ -91,8 +89,8 @@ function makeDeps(
     modelMessages: [] as ModelMessage[],
     messages: [],
     tools: {} as AgentTools,
-    modelProvider: makeModelProvider() as unknown as ModelProvider,
     fallbackManager: makeFallbackManager(),
+    turnInitialFallbackIndex: 0,
     compacted: false,
     model: {} as LanguageModel,
     ...overrides,
@@ -342,8 +340,8 @@ describe('GenerationRunner — error finish reason with model fallback', () => {
   });
 
   it('returns generationFailed when all models exhausted (no content, model error)', async () => {
-    // 2 models: fallback wraps after 2 calls. Real manager handles index.
-    const fallbackManager = makeFallbackManager(['model-a', 'model-b']);
+    // 1 model: fallback wraps immediately (0→0), so only 1 call before generation_failed
+    const fallbackManager = makeFallbackManager(['model-a']);
 
     vi.mocked(runStreamedGeneration).mockResolvedValue(
       makeGenResult(
@@ -356,11 +354,12 @@ describe('GenerationRunner — error finish reason with model fallback', () => {
     const runner = new GenerationRunner(makeDeps({ fallbackManager }));
     const result = await runner.run();
 
-    expect(runStreamedGeneration).toHaveBeenCalledTimes(2);
+    expect(runStreamedGeneration).toHaveBeenCalledTimes(1);
     expect(result.generationFailed).toBe(true);
     expect(result.forceNextStep).toBe(false);
     expect(result.fatalError).toBe(false);
     expect(result.generation).toBeNull();
+    expect(result.modelFallbackOccurred).toBe(false);
   });
 });
 
@@ -370,7 +369,7 @@ describe('GenerationRunner — generation exception handling', () => {
     setupDefaultMocks();
   });
 
-  it('catches thrown 5xx API error, triggers fallback, succeeds on retry', async () => {
+  it('catches thrown 5xx API error, triggers fallback_new_step (no in-loop retry)', async () => {
     const fallbackManager = makeFallbackManager(['model-a', 'model-b']);
     const fallbackSpy = vi.spyOn(fallbackManager, 'fallbackToNextModel');
 
@@ -378,43 +377,34 @@ describe('GenerationRunner — generation exception handling', () => {
       message: 'Service Unavailable',
       statusCode: 503,
     });
-    let calls = 0;
-    vi.mocked(runStreamedGeneration).mockImplementation(async () => {
-      calls++;
-      if (calls === 1) throw apiError;
-      return makeGenResult(
-        makeAssistantMessage([{ type: 'text', text: 'retry response' }]),
-        'stop',
-      );
-    });
+    vi.mocked(runStreamedGeneration).mockRejectedValue(apiError);
 
     const runner = new GenerationRunner(makeDeps({ fallbackManager }));
     const result = await runner.run();
 
+    expect(runStreamedGeneration).toHaveBeenCalledTimes(1);
     expect(fallbackSpy).toHaveBeenCalledOnce();
     expect(result.shouldContinue).toBe(true);
     expect(result.forceNextStep).toBe(false);
+    expect(result.modelFallbackOccurred).toBe(true);
+    expect(result.generation).toBeNull();
   });
 
-  it('catches thrown network error, triggers fallback, succeeds on retry', async () => {
+  it('catches thrown network error, triggers fallback_new_step (no in-loop retry)', async () => {
     const fallbackManager = makeFallbackManager(['model-a', 'model-b']);
     const fallbackSpy = vi.spyOn(fallbackManager, 'fallbackToNextModel');
 
-    let calls = 0;
-    vi.mocked(runStreamedGeneration).mockImplementation(async () => {
-      calls++;
-      if (calls === 1) throw new Error('Request timeout after 30000ms');
-      return makeGenResult(
-        makeAssistantMessage([{ type: 'text', text: 'retry response' }]),
-        'stop',
-      );
-    });
+    vi.mocked(runStreamedGeneration).mockRejectedValue(
+      new Error('Request timeout after 30000ms'),
+    );
 
     const runner = new GenerationRunner(makeDeps({ fallbackManager }));
     const result = await runner.run();
 
+    expect(runStreamedGeneration).toHaveBeenCalledTimes(1);
     expect(fallbackSpy).toHaveBeenCalledOnce();
     expect(result.shouldContinue).toBe(true);
+    expect(result.modelFallbackOccurred).toBe(true);
   });
 
   it('catches thrown 400 API error as fatal without triggering fallback', async () => {
@@ -456,7 +446,8 @@ describe('GenerationRunner — models-exhausted and attempt cap', () => {
   });
 
   it('returns generationFailed when all models exhausted via exception (no content)', async () => {
-    const fallbackManager = makeFallbackManager(['model-a', 'model-b']);
+    // 1 model: fallback wraps immediately (0→0), so only 1 call before generation_failed
+    const fallbackManager = makeFallbackManager(['model-a']);
 
     vi.mocked(runStreamedGeneration).mockRejectedValue(
       makeApiError({ message: 'Service Unavailable', statusCode: 503 }),
@@ -465,8 +456,90 @@ describe('GenerationRunner — models-exhausted and attempt cap', () => {
     const runner = new GenerationRunner(makeDeps({ fallbackManager }));
     const result = await runner.run();
 
-    expect(runStreamedGeneration).toHaveBeenCalledTimes(2);
+    expect(runStreamedGeneration).toHaveBeenCalledTimes(1);
     expect(result.generationFailed).toBe(true);
+    expect(result.modelFallbackOccurred).toBe(false);
+  });
+});
+
+describe('GenerationRunner — fallback_new_step and wrap-around', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    setupDefaultMocks();
+  });
+
+  it('returns modelFallbackOccurred when model error occurs and not all models exhausted', async () => {
+    const fallbackManager = makeFallbackManager(['model-a', 'model-b']);
+
+    vi.mocked(runStreamedGeneration).mockResolvedValue(
+      makeGenResult(
+        makeAssistantMessage(),
+        'error',
+        makeApiError({ message: 'Service Unavailable', statusCode: 503 }),
+      ),
+    );
+
+    const runner = new GenerationRunner(makeDeps({ fallbackManager }));
+    const result = await runner.run();
+
+    expect(runStreamedGeneration).toHaveBeenCalledTimes(1);
+    expect(result.shouldContinue).toBe(true);
+    expect(result.modelFallbackOccurred).toBe(true);
+    expect(result.generation).toBeNull();
+  });
+
+  it('uses turnInitialFallbackIndex for wrap-around detection', async () => {
+    // 2 models: indices 0, 1. Start at turn-level index 1.
+    // After fallbackToNextModel() from index 1, we wrap to 0.
+    // 0 !== 1 (turnInitialFallbackIndex), so no wrap-around → fallback_new_step.
+    const fallbackManager = makeFallbackManager(['model-a', 'model-b']);
+    // Advance to index 1 so the turn starts there.
+    fallbackManager.fallbackToNextModel();
+    expect(fallbackManager.getFallbackIndex()).toBe(1);
+
+    vi.mocked(runStreamedGeneration).mockResolvedValue(
+      makeGenResult(
+        makeAssistantMessage(),
+        'error',
+        makeApiError({ message: 'Service Unavailable', statusCode: 503 }),
+      ),
+    );
+
+    const runner = new GenerationRunner(
+      makeDeps({ fallbackManager, turnInitialFallbackIndex: 1 }),
+    );
+    const result = await runner.run();
+
+    // 1 call, fallback wraps from 1→0. 0 !== 1, so fallback_new_step.
+    expect(runStreamedGeneration).toHaveBeenCalledTimes(1);
+    expect(result.modelFallbackOccurred).toBe(true);
+    expect(fallbackManager.getFallbackIndex()).toBe(0);
+  });
+
+  it('detects wrap-around when fallbackIndex returns to turnInitialFallbackIndex', async () => {
+    // 2 models: indices 0, 1. Start at turn-level index 0.
+    // After fallbackToNextModel() from index 0, we go to 1.
+    // 1 !== 0, so fallback_new_step (not generation_failed).
+    // A second step starting at index 1 would then wrap to 0 === 0 → generation_failed.
+    // Here we test the single-step behavior: starting at 0, 2 models → fallback_new_step.
+    const fallbackManager = makeFallbackManager(['model-a', 'model-b']);
+
+    vi.mocked(runStreamedGeneration).mockResolvedValue(
+      makeGenResult(
+        makeAssistantMessage(),
+        'error',
+        makeApiError({ message: 'Service Unavailable', statusCode: 503 }),
+      ),
+    );
+
+    const runner = new GenerationRunner(
+      makeDeps({ fallbackManager, turnInitialFallbackIndex: 0 }),
+    );
+    const result = await runner.run();
+
+    expect(runStreamedGeneration).toHaveBeenCalledTimes(1);
+    expect(result.modelFallbackOccurred).toBe(true);
+    expect(fallbackManager.getFallbackIndex()).toBe(1);
   });
 });
 
@@ -496,19 +569,13 @@ describe('GenerationRunner — exception with partial content salvages', () => {
     expect(messages).toContain(partialMsg);
   });
 
-  it('falls back to next model on timeout exception when no partial content exists', async () => {
+  it('returns modelFallbackOccurred on timeout exception when no partial content exists', async () => {
     const fallbackManager = makeFallbackManager(['model-a', 'model-b']);
     const fallbackSpy = vi.spyOn(fallbackManager, 'fallbackToNextModel');
 
-    const completeMsg = makeAssistantMessage([
-      { type: 'text', text: 'complete' },
-    ]);
-    let calls = 0;
-    vi.mocked(runStreamedGeneration).mockImplementation(async () => {
-      calls++;
-      if (calls === 1) throw new Error('Request timeout after 30000ms');
-      return makeGenResult(completeMsg, 'stop');
-    });
+    vi.mocked(runStreamedGeneration).mockRejectedValue(
+      new Error('Request timeout after 30000ms'),
+    );
 
     const messages: ExtendedUIMessage[] = [];
     const runner = new GenerationRunner(
@@ -516,11 +583,12 @@ describe('GenerationRunner — exception with partial content salvages', () => {
     );
     const result = await runner.run();
 
-    expect(runStreamedGeneration).toHaveBeenCalledTimes(2);
+    expect(runStreamedGeneration).toHaveBeenCalledTimes(1);
     expect(fallbackSpy).toHaveBeenCalledOnce();
     expect(result.shouldContinue).toBe(true);
     expect(result.forceNextStep).toBe(false);
-    expect(messages).toContain(completeMsg);
+    expect(result.modelFallbackOccurred).toBe(true);
+    expect(messages).toHaveLength(0);
   });
 
   it('does not retry on timeout exception when partial content exists (salvages instead)', async () => {

@@ -16,6 +16,8 @@
   },
   "devDependencies": {
     "@jitl/quickjs-singlefile-mjs-debug-sync": "0.32.0",
+    "@opentelemetry/context-async-hooks": "2.9.0",
+    "@opentelemetry/sdk-trace-base": "2.9.0",
     "@stagewise/app-packager": "workspace:*",
     "@stagewise/typescript-config": "workspace:*",
     "@types/node": "26.1.1",

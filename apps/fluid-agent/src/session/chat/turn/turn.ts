@@ -4,6 +4,7 @@ import { type Context, context, type Span, trace } from '@opentelemetry/api';
 
 import type { ModuleLogger } from '@stagewise/logger';
 
+import type { Config } from '@/config';
 import type { ModelProvider } from '@/model-provider';
 import type { Usage } from '@/session/types';
 
@@ -28,6 +29,7 @@ export interface TurnDependencies {
   tools: AgentTools;
   modelProvider: ModelProvider;
   fallbackManager: ModelFallbackManager;
+  config: Config;
   /**
    * When true, the turn injects a "Continue." user message before the
    * first step if the last message is not already a user message. Used by
@@ -124,9 +126,16 @@ class TurnModule implements Turn {
           generationFailed: false,
           generation: null,
           toolCalls: [],
+          modelFallbackOccurred: false,
         };
         let stepCount = 0;
         const MAX_STEPS_PER_TURN = 20;
+
+        // Capture the fallback index at the start of the turn for
+        // turn-level wrap-around detection. Model fallback now spans
+        // multiple steps, so wrap-around must be relative to this index.
+        const turnInitialFallbackIndex =
+          this.deps.fallbackManager.getFallbackIndex();
 
         // Unified "Continue." injection: a single needsContinue flag is
         // set by either the session's backoff retry (forceContinue) or
@@ -162,6 +171,8 @@ class TurnModule implements Turn {
             tools: this.deps.tools,
             modelProvider: this.deps.modelProvider,
             fallbackManager: this.deps.fallbackManager,
+            config: this.deps.config,
+            turnInitialFallbackIndex,
             sessionId: this.deps.sessionId,
           });
           this.currentStep = step;
@@ -189,10 +200,14 @@ class TurnModule implements Turn {
           }
 
           // Track whether any step succeeded or failed.
-          if (stepResult.shouldContinue && !stepResult.forceNextStep) {
+          if (
+            stepResult.shouldContinue &&
+            !stepResult.forceNextStep &&
+            !stepResult.modelFallbackOccurred
+          ) {
             hadAnySuccess = true;
           }
-          if (stepResult.generationFailed) {
+          if (stepResult.generationFailed || stepResult.modelFallbackOccurred) {
             hadAnyFailure = true;
           }
 

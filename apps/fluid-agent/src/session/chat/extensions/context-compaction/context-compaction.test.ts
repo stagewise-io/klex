@@ -10,6 +10,7 @@ import type {
   StepCompleteEvent,
 } from '../extension-api';
 import {
+  COMPACTION_HYSTERESIS_RATIO,
   CONTEXT_SIZE_THRESHOLD_RATIO,
   createContextCompactionExt,
   FALLBACK_COMPACTION_THRESHOLD,
@@ -38,6 +39,12 @@ beforeEach(() => {
   vi.clearAllMocks();
 });
 
+const MOCK_MODEL = {
+  modelId: 'test:model',
+  displayName: 'Test Model',
+  contextSize: 128_000,
+} as const;
+
 // --- helpers ---
 
 function makeUsage(input: number, output: number): LanguageModelUsage {
@@ -63,6 +70,7 @@ function makeResult(usage: LanguageModelUsage | null): StepCompleteEvent {
             usage,
           },
     toolCalls: [],
+    modelFallbackOccurred: false,
   };
 }
 
@@ -1294,7 +1302,7 @@ describe('ContextCompactionExt — historyTransformer', () => {
     ];
 
     const ext = createContextCompactionExt.create(makeDeps());
-    const result = ext.historyTransformer!(history);
+    const result = ext.historyTransformer!(history, MOCK_MODEL);
 
     expect(Array.isArray(result)).toBe(false);
     const obj = result as {
@@ -1321,7 +1329,7 @@ describe('ContextCompactionExt — historyTransformer', () => {
     ];
 
     const ext = createContextCompactionExt.create(makeDeps());
-    const result = ext.historyTransformer!(history);
+    const result = ext.historyTransformer!(history, MOCK_MODEL);
 
     expect(Array.isArray(result)).toBe(true);
     expect(result).toHaveLength(2);
@@ -1340,7 +1348,7 @@ describe('ContextCompactionExt — historyTransformer', () => {
     ];
 
     const ext = createContextCompactionExt.create(makeDeps());
-    const result = ext.historyTransformer!(history);
+    const result = ext.historyTransformer!(history, MOCK_MODEL);
 
     expect(Array.isArray(result)).toBe(false);
     const obj = result as {
@@ -1381,7 +1389,7 @@ describe('ContextCompactionExt — historyTransformer', () => {
     // summary1 has 1 message after it, summary2 has 0 — both below threshold
 
     const ext = createContextCompactionExt.create(makeDeps());
-    const result = ext.historyTransformer!(history);
+    const result = ext.historyTransformer!(history, MOCK_MODEL);
 
     expect(Array.isArray(result)).toBe(false);
     const obj = result as {
@@ -1409,7 +1417,7 @@ describe('ContextCompactionExt — historyTransformer', () => {
     // The newest qualifying summary (mid summary) should be the cutoff
 
     const ext = createContextCompactionExt.create(makeDeps());
-    const result = ext.historyTransformer!(history);
+    const result = ext.historyTransformer!(history, MOCK_MODEL);
 
     expect(Array.isArray(result)).toBe(false);
     const obj = result as {
@@ -1456,7 +1464,7 @@ describe('ContextCompactionExt — historyTransformer', () => {
     ];
 
     const ext = createContextCompactionExt.create(makeDeps());
-    const result = ext.historyTransformer!(history);
+    const result = ext.historyTransformer!(history, MOCK_MODEL);
 
     const obj = result as {
       history: ExtendedUIMessage[];
@@ -1495,7 +1503,7 @@ describe('ContextCompactionExt — historyTransformer', () => {
     ];
 
     const ext = createContextCompactionExt.create(makeDeps());
-    const result = ext.historyTransformer!(history);
+    const result = ext.historyTransformer!(history, MOCK_MODEL);
 
     const obj = result as {
       history: ExtendedUIMessage[];
@@ -1525,7 +1533,7 @@ describe('ContextCompactionExt — historyTransformer', () => {
     ];
 
     const ext = createContextCompactionExt.create(makeDeps());
-    const result = ext.historyTransformer!(history);
+    const result = ext.historyTransformer!(history, MOCK_MODEL);
 
     const obj = result as {
       history: ExtendedUIMessage[];
@@ -1569,5 +1577,236 @@ describe('ContextCompactionExt — historyTransformer', () => {
     expect(result).toEqual([
       { type: 'text', text: '<summary>test summary</summary>' },
     ]);
+  });
+});
+
+describe('ContextCompactionExt — post-compaction baseline & hysteresis', () => {
+  it('does not re-trigger compaction immediately after a successful compaction with a large summary', async () => {
+    // History with a previous summary and enough messages to produce
+    // a non-trivial keepBefore + summary baseline.
+    const longText = 'x'.repeat(4000);
+    const historyWithSummary = [
+      makeTextMessage('user', longText),
+      makeTextMessage('assistant', longText),
+      makeSummaryMessage('A'.repeat(800)),
+      makeTextMessage('user', 'Hello'),
+      makeTextMessage('assistant', 'Hi there'),
+    ];
+
+    let callCount = 0;
+    const deps = makeDeps({
+      getHistory: vi.fn(() => historyWithSummary),
+      generateText: vi.fn().mockImplementation(() => {
+        callCount++;
+        // First compaction produces a summary. Subsequent calls (if any)
+        // also produce summaries.
+        return Promise.resolve(genSuccess('B'.repeat(2000)));
+      }),
+    });
+
+    const ext = createContextCompactionExt.create(deps);
+
+    // Trigger compaction.
+    await ext.onStepComplete!(
+      makeResult(makeUsage(FALLBACK_COMPACTION_THRESHOLD, 0)),
+    );
+    await flushMicrotasks();
+
+    expect(callCount).toBe(1);
+
+    // The next step has a large inputTokens (the compacted context is
+    // still big). Without the baseline, this would immediately
+    // re-trigger compaction. With the baseline + hysteresis, it should
+    // NOT re-trigger because the growth above baseline is small.
+    // Use a token count that's large but within the baseline + threshold.
+    await ext.onStepComplete!(makeResult(makeUsage(500, 0)));
+    await flushMicrotasks();
+
+    expect(callCount).toBe(1);
+  });
+
+  it('re-triggers compaction only when new growth exceeds baseline + threshold', async () => {
+    const longText = 'x'.repeat(4000);
+    const historyWithSummary = [
+      makeTextMessage('user', longText),
+      makeTextMessage('assistant', longText),
+      makeSummaryMessage('A'.repeat(800)),
+      makeTextMessage('user', 'Hello'),
+      makeTextMessage('assistant', 'Hi there'),
+    ];
+
+    let callCount = 0;
+    const deps = makeDeps({
+      getHistory: vi.fn(() => historyWithSummary),
+      generateText: vi.fn().mockImplementation(() => {
+        callCount++;
+        return Promise.resolve(genSuccess('New summary'));
+      }),
+    });
+
+    const ext = createContextCompactionExt.create(deps);
+
+    // First compaction.
+    await ext.onStepComplete!(
+      makeResult(makeUsage(FALLBACK_COMPACTION_THRESHOLD, 0)),
+    );
+    await flushMicrotasks();
+    expect(callCount).toBe(1);
+
+    // Now accumulate enough new tokens to exceed the baseline + threshold.
+    // The baseline is estimated from keepBefore + summary transcript.
+    // We add FALLBACK_COMPACTION_THRESHOLD + a generous margin to ensure
+    // we exceed baseline + threshold regardless of the exact estimate.
+    await ext.onStepComplete!(
+      makeResult(makeUsage(FALLBACK_COMPACTION_THRESHOLD + 50_000, 0)),
+    );
+    await flushMicrotasks();
+
+    expect(callCount).toBe(2);
+  });
+
+  it('sets compactionBaseline to estimated compacted tokens * (1 + hysteresis) after success', async () => {
+    // Use a history where the compacted context (keepBefore + summary)
+    // has a predictable transcript length.
+    const summaryText = 'test summary content';
+    const historyWithSummary = [
+      makeTextMessage('user', 'hello'),
+      makeTextMessage('assistant', 'hi'),
+      makeSummaryMessage(summaryText),
+      makeTextMessage('user', 'Hello'),
+      makeTextMessage('assistant', 'Hi there'),
+    ];
+
+    const deps = makeDeps({
+      getHistory: vi.fn(() => historyWithSummary),
+      generateText: vi.fn().mockResolvedValue(genSuccess('New summary')),
+    });
+
+    const ext = createContextCompactionExt.create(deps);
+
+    // Trigger compaction.
+    await ext.onStepComplete!(
+      makeResult(makeUsage(FALLBACK_COMPACTION_THRESHOLD, 0)),
+    );
+    await flushMicrotasks();
+
+    // After compaction, the next step should not re-trigger even with
+    // a moderately large inputTokens, because the baseline absorbs it.
+    // We verify by checking that a single moderate step does NOT trigger.
+    vi.mocked(deps.generateText)!.mockClear();
+    vi.mocked(deps.generateText)!.mockResolvedValue(genSuccess('Summary2'));
+
+    // A step with tokens equal to the estimated baseline should not trigger.
+    // The baseline is roughly ceil(transcriptLength / 4) * 1.1.
+    // The transcript for keepBefore (2 short messages) + summary is small,
+    // so even 500 tokens should be well above it. But the threshold is
+    // 10_000, so 500 tokens of growth above baseline is still far below
+    // threshold. This should NOT trigger.
+    await ext.onStepComplete!(makeResult(makeUsage(500, 0)));
+    await flushMicrotasks();
+
+    expect(deps.generateText).not.toHaveBeenCalled();
+  });
+
+  it('does not set baseline on failed compaction (allows immediate re-trigger)', async () => {
+    const historyWithSummary = [
+      makeTextMessage('user', 'Hello'),
+      makeTextMessage('assistant', 'Hi there'),
+      makeSummaryMessage('old summary'),
+      makeTextMessage('user', 'new message'),
+      makeTextMessage('assistant', 'reply'),
+    ];
+
+    // Configure models so compaction models exist but chat models do
+    // not — this prevents the fallback-to-chat-models path, so a
+    // single failed generateText call means one compaction attempt.
+    const deps = makeDeps({
+      getHistory: vi.fn(() => historyWithSummary),
+      config: {
+        getModelSelection: vi.fn((purpose: string) =>
+          purpose === 'compaction' ? ['remote:gpt-4o'] : [],
+        ),
+        getModelContextSize: vi.fn(() => 20_000),
+      } as unknown as ExtensionDeps['config'],
+      generateText: vi.fn().mockResolvedValue(genFailure()),
+    });
+
+    const ext = createContextCompactionExt.create(deps);
+
+    // Trigger compaction — it will fail (no chat fallback).
+    await ext.onStepComplete!(
+      makeResult(makeUsage(FALLBACK_COMPACTION_THRESHOLD, 0)),
+    );
+    await flushMicrotasks();
+
+    expect(deps.generateText).toHaveBeenCalledTimes(1);
+
+    // Another step should re-trigger because compaction failed and
+    // no baseline was set.
+    vi.mocked(deps.generateText)!.mockClear();
+    vi.mocked(deps.generateText)!.mockResolvedValue(genFailure());
+
+    await ext.onStepComplete!(makeResult(makeUsage(1, 0)));
+    await flushMicrotasks();
+
+    // Should have re-triggered (accumulatedTokens is still above threshold,
+    // baseline is still 0).
+    expect(deps.generateText).toHaveBeenCalledTimes(1);
+  });
+
+  it('preserves inflight tokens relative to the new baseline after compaction', async () => {
+    const longText = 'x'.repeat(4000);
+    const historyWithSummary = [
+      makeTextMessage('user', longText),
+      makeTextMessage('assistant', longText),
+      makeSummaryMessage('A'.repeat(800)),
+      makeTextMessage('user', 'Hello'),
+      makeTextMessage('assistant', 'Hi there'),
+    ];
+
+    let resolveGenerate!: (v: ReturnType<typeof genSuccess>) => void;
+    const deps = makeDeps({
+      getHistory: vi.fn(() => historyWithSummary),
+      generateText: vi.fn().mockReturnValue(
+        new Promise((resolve) => {
+          resolveGenerate = resolve as typeof resolveGenerate;
+        }) as never,
+      ),
+    });
+
+    const ext = createContextCompactionExt.create(deps);
+
+    // Trigger compaction.
+    await ext.onStepComplete!(
+      makeResult(makeUsage(FALLBACK_COMPACTION_THRESHOLD, 0)),
+    );
+    await flushMicrotasks();
+
+    // Accumulate tokens while compaction is in flight.
+    const inflightTokens = 3_000;
+    await ext.onStepComplete!(makeResult(makeUsage(inflightTokens, 0)));
+    await flushMicrotasks();
+
+    // Complete compaction.
+    resolveGenerate(genSuccess('New summary'));
+    await flushMicrotasks();
+
+    // After compaction, accumulatedTokens = baseline + inflightTokens.
+    // The next compaction should trigger when growth above baseline
+    // exceeds threshold, i.e. when additional tokens push
+    // accumulatedTokens - baseline >= threshold.
+    // Since inflightTokens < threshold, adding 1 token should NOT trigger.
+    vi.mocked(deps.generateText)!.mockClear();
+    vi.mocked(deps.generateText)!.mockResolvedValue(genSuccess('Summary2'));
+
+    await ext.onStepComplete!(makeResult(makeUsage(1, 0)));
+    await flushMicrotasks();
+    expect(deps.generateText).not.toHaveBeenCalled();
+
+    // Add enough to exceed: remaining = threshold - inflightTokens - 1
+    const remaining = FALLBACK_COMPACTION_THRESHOLD - inflightTokens - 1;
+    await ext.onStepComplete!(makeResult(makeUsage(remaining, 0)));
+    await flushMicrotasks();
+    expect(deps.generateText).toHaveBeenCalledTimes(1);
   });
 });

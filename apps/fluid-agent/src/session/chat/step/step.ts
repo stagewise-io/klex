@@ -5,10 +5,14 @@ import { isToolUIPart, type LanguageModel, type ModelMessage } from 'ai';
 
 import type { ModuleLogger } from '@stagewise/logger';
 
+import type { Config } from '@/config';
 import type { ModelProvider } from '@/model-provider';
 
 import type { ExtensionHandler } from '../extension-handler';
-import type { StepCompleteEvent } from '../extensions/extension-api';
+import type {
+  ResolvedModel,
+  StepCompleteEvent,
+} from '../extensions/extension-api';
 import { type SessionInboxBuffer, SessionInboxPriority } from '../inbox';
 import type { ExtendedUIMessage } from '../message-types';
 import type { AgentTools } from '../tools';
@@ -57,6 +61,14 @@ export interface StepDependencies {
   tools: AgentTools;
   modelProvider: ModelProvider;
   fallbackManager: ModelFallbackManager;
+  config: Config;
+  /**
+   * The fallback index at the start of the turn. Used by the generation
+   * runner for turn-level wrap-around detection — since model fallback
+   * now spans multiple steps, wrap-around must be relative to the turn's
+   * starting model, not the step's.
+   */
+  turnInitialFallbackIndex: number;
   sessionId: string;
 }
 
@@ -191,12 +203,46 @@ class StepModule implements Step {
             generationFailed: false,
             generation: null,
             toolCalls: [],
+            modelFallbackOccurred: false,
           };
           await this.deps.extensionHandler.runStepCompleteHooks(skipEvent);
           return skipEvent;
         }
 
-        // 2.2.4 - 2.2.6: History preparation pipeline. A single span covers
+        // 2.2.4: Fetch the model BEFORE the transformation pipeline so
+        // that extension transformers receive model metadata (displayName,
+        // contextSize) and can make model-aware decisions. The transformed
+        // data is bound to this specific model's capabilities.
+        let model: LanguageModel;
+        let resolvedModel: ResolvedModel;
+        {
+          const modelSpan = startChildSpan('fetch_model', {
+            attributes: {
+              'model.id': this.deps.fallbackManager.getChatModelId(),
+              'model.fallbackIndex':
+                this.deps.fallbackManager.getFallbackIndex(),
+            },
+          });
+          const modelId = this.deps.fallbackManager.getChatModelId();
+          model = await this.getModel();
+          const resolved = this.deps.config.resolveModel(modelId);
+          resolvedModel = {
+            modelId,
+            displayName: resolved.displayName,
+            contextSize: resolved.contextSize,
+          };
+          modelSpan.end();
+        }
+        stepSpan.setAttribute(
+          'step.modelId',
+          this.deps.fallbackManager.getChatModelId(),
+        );
+        stepSpan.setAttribute(
+          'step.modelFallbackIndex',
+          this.deps.fallbackManager.getFallbackIndex(),
+        );
+
+        // 2.2.5 - 2.2.7: History preparation pipeline. A single span covers
         // the entire pipeline (copy → pre-process → convert → post-process)
         // with events marking each stage. This gives one contiguous trace
         // segment for the transformation with clear sub-step timing via
@@ -220,7 +266,10 @@ class StepModule implements Step {
         // --- Stage 2: History transformers (extensions) ---
         transformSpan.addEvent('history_pre_process.start');
         const preResult =
-          await this.deps.extensionHandler.runHistoryTransformers(messagesCopy);
+          await this.deps.extensionHandler.runHistoryTransformers(
+            messagesCopy,
+            resolvedModel,
+          );
         transformSpan.setAttribute(
           'history_pre_process.messageCount',
           preResult.history.length,
@@ -266,6 +315,7 @@ class StepModule implements Step {
             generationFailed: false,
             generation: null,
             toolCalls: [],
+            modelFallbackOccurred: false,
           };
           await this.deps.extensionHandler.runStepCompleteHooks(cancelEvent);
           return cancelEvent;
@@ -284,6 +334,7 @@ class StepModule implements Step {
         const postResult =
           await this.deps.extensionHandler.runContextTransformers(
             modelMessages,
+            resolvedModel,
           );
         transformSpan.setAttribute(
           'history_post_process.messageCount',
@@ -324,6 +375,7 @@ class StepModule implements Step {
             generationFailed: false,
             generation: null,
             toolCalls: [],
+            modelFallbackOccurred: false,
           };
           await this.deps.extensionHandler.runStepCompleteHooks(cancelEvent);
           return cancelEvent;
@@ -342,28 +394,6 @@ class StepModule implements Step {
           'step.messageCount': modelMessages.length,
         });
 
-        // 2.2.7: Pick right model
-        let model: LanguageModel;
-        {
-          const modelSpan = startChildSpan('fetch_model', {
-            attributes: {
-              'model.id': this.deps.fallbackManager.getChatModelId(),
-              'model.fallbackIndex':
-                this.deps.fallbackManager.getFallbackIndex(),
-            },
-          });
-          model = await this.getModel();
-          modelSpan.end();
-        }
-        stepSpan.setAttribute(
-          'step.modelId',
-          this.deps.fallbackManager.getChatModelId(),
-        );
-        stepSpan.setAttribute(
-          'step.modelFallbackIndex',
-          this.deps.fallbackManager.getFallbackIndex(),
-        );
-
         // 2.2.8: Run generation via the GenerationRunner.
         // The runner owns the retry loop, model fallback, error
         // classification, message salvage, stream progress tracking,
@@ -375,8 +405,8 @@ class StepModule implements Step {
           modelMessages,
           messages: this.deps.messages,
           tools: this.deps.tools,
-          modelProvider: this.deps.modelProvider,
           fallbackManager: this.deps.fallbackManager,
+          turnInitialFallbackIndex: this.deps.turnInitialFallbackIndex,
           compacted,
           model,
         });

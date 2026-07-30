@@ -60,6 +60,26 @@ export type ContextProcessingResult =
   | { history: ModelMessage[]; flags: TransformationFlags };
 
 // ---------------------------------------------------------------------------
+// Resolved model metadata
+// ---------------------------------------------------------------------------
+
+/**
+ * Lightweight model metadata passed to extension transformers so they can
+ * make model-aware decisions during history/context transformation.
+ *
+ * Contains only what extensions need — no provider credentials or endpoint
+ * details are exposed.
+ */
+export interface ResolvedModel {
+  /** Full model ID (e.g. `"remote:gpt-4o"`). */
+  modelId: ModelId;
+  /** Human-readable name from `knownModels`, if declared. */
+  displayName?: string;
+  /** Resolved context size in tokens (defaults to `DEFAULT_CONTEXT_SIZE`). */
+  contextSize: number;
+}
+
+// ---------------------------------------------------------------------------
 // Extension generation API
 // ---------------------------------------------------------------------------
 
@@ -199,6 +219,13 @@ export interface StepCompleteEvent {
   generation: GenerationInfo | null;
   /** Tool calls dispatched and settled during this step — empty when no generation. */
   toolCalls: ToolCallInfo[];
+  /**
+   * True when the generation runner detected a model error (no content)
+   * and advanced the fallback manager. The turn should create a new step
+   * that re-fetches the model and re-runs the transformation pipeline,
+   * since transformations are bound to specific model capabilities.
+   */
+  modelFallbackOccurred: boolean;
 }
 
 /**
@@ -245,6 +272,7 @@ export interface Extension {
    */
   historyTransformer?: (
     history: ExtendedUIMessage[],
+    model: ResolvedModel,
   ) => HistoryProcessingResult | Promise<HistoryProcessingResult>;
 
   /**
@@ -260,6 +288,7 @@ export interface Extension {
    */
   contextTransformer?: (
     history: ModelMessage[],
+    model: ResolvedModel,
   ) => ContextProcessingResult | Promise<ContextProcessingResult>;
 
   /**

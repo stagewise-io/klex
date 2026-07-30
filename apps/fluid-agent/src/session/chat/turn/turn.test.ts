@@ -36,6 +36,12 @@ function makeDeps(overrides: Partial<TurnDependencies> = {}): TurnDependencies {
     tools: {} as AgentTools,
     modelProvider: makeModelProvider() as never,
     fallbackManager: makeFallbackManager() as never,
+    config: {
+      resolveModel: vi.fn(() => ({
+        modelId: 'test:model',
+        contextSize: 128_000,
+      })),
+    } as never,
     ...overrides,
   };
 }
@@ -49,6 +55,7 @@ const NOOP_RESULT: StepCompleteEvent = {
   generationFailed: false,
   generation: null,
   toolCalls: [],
+  modelFallbackOccurred: false,
 };
 
 function makeMockStep(overrides: Partial<StepCompleteEvent> = {}, delay = 0) {
@@ -346,6 +353,155 @@ describe('Turn — fatal error handling', () => {
 
     expect(result.fatalError).toBe(false);
     expect(result.completeFailure).toBe(false);
+  });
+});
+
+describe('Turn — modelFallbackOccurred handling', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('continues to next step when modelFallbackOccurred is true', async () => {
+    const step1 = makeMockStep({
+      shouldContinue: true,
+      modelFallbackOccurred: true,
+    });
+    const step2 = makeMockStep({ shouldContinue: false });
+    vi.mocked(createStep).mockReturnValueOnce(step1).mockReturnValueOnce(step2);
+
+    const turn = createTurn(makeDeps());
+    await turn.run();
+
+    expect(step1.run).toHaveBeenCalledOnce();
+    expect(step2.run).toHaveBeenCalledOnce();
+    expect(createStep).toHaveBeenCalledTimes(2);
+  });
+
+  it('counts modelFallbackOccurred as failure for completeFailure', async () => {
+    // Only step: modelFallbackOccurred with shouldContinue=true.
+    // Loop continues, then next step returns shouldContinue=false (no generation).
+    // Since no step succeeded cleanly, completeFailure should be true.
+    const step1 = makeMockStep({
+      shouldContinue: true,
+      modelFallbackOccurred: true,
+    });
+    const step2 = makeMockStep({ shouldContinue: false });
+    vi.mocked(createStep).mockReturnValueOnce(step1).mockReturnValueOnce(step2);
+
+    const turn = createTurn(makeDeps());
+    const result = await turn.run();
+
+    expect(result.completeFailure).toBe(true);
+  });
+
+  it('does not inject Continue. when modelFallbackOccurred is true', async () => {
+    const step1 = makeMockStep({
+      shouldContinue: true,
+      modelFallbackOccurred: true,
+    });
+    const step2 = makeMockStep({ shouldContinue: false });
+    vi.mocked(createStep).mockReturnValueOnce(step1).mockReturnValueOnce(step2);
+
+    const messages: ExtendedUIMessage[] = [
+      { id: 'u1', role: 'user', parts: [{ type: 'text', text: 'hello' }] },
+      {
+        id: 'a1',
+        role: 'assistant',
+        parts: [{ type: 'text', text: 'hi' }],
+      },
+    ] as ExtendedUIMessage[];
+
+    const turn = createTurn(makeDeps({ messages }));
+    await turn.run();
+
+    const continueMsg = messages.find(
+      (m) =>
+        m.role === 'user' && m.parts.some((p) => p.type === 'data-continue'),
+    );
+    expect(continueMsg).toBeUndefined();
+  });
+
+  it('passes turnInitialFallbackIndex (captured at turn start) to every createStep call', async () => {
+    // Use a stateful fallback manager so getFallbackIndex reflects advances.
+    let index = 1;
+    const fallbackManager = {
+      getChatModelId: vi.fn(() => 'test:model' as never),
+      getFallbackIndex: vi.fn(() => index),
+      fallbackToNextModel: vi.fn(() => {
+        index = (index + 1) % 2;
+      }),
+      recordSuccessfulGeneration: vi.fn(),
+    } as never;
+
+    const step1 = makeMockStep({ shouldContinue: false });
+    vi.mocked(createStep).mockReturnValue(step1);
+
+    const turn = createTurn(
+      makeDeps({ fallbackManager: fallbackManager as never }),
+    );
+    await turn.run();
+
+    for (const call of vi.mocked(createStep).mock.calls) {
+      expect(call[0]?.turnInitialFallbackIndex).toBe(1);
+    }
+  });
+
+  it('runs a second step with the fallback model after modelFallbackOccurred and reports success', async () => {
+    // Step 1: model error → fallback to next model, modelFallbackOccurred.
+    // Step 2: clean success (shouldContinue: true, no flags) with the new model.
+    // Step 3: natural end (shouldContinue: false).
+    const step1 = makeMockStep({
+      shouldContinue: true,
+      modelFallbackOccurred: true,
+    });
+    const step2 = makeMockStep({
+      shouldContinue: true,
+      generation: {
+        modelId: 'model-b',
+        finishReason: 'stop',
+        usage: { inputTokens: 10, outputTokens: 5 } as never,
+      },
+    });
+    const step3 = makeMockStep({ shouldContinue: false });
+    vi.mocked(createStep)
+      .mockReturnValueOnce(step1)
+      .mockReturnValueOnce(step2)
+      .mockReturnValueOnce(step3);
+
+    const turn = createTurn(makeDeps());
+    const result = await turn.run();
+
+    expect(createStep).toHaveBeenCalledTimes(3);
+    // Step 1 failed (fallback), step 2 succeeded → not a complete failure.
+    expect(result.completeFailure).toBe(false);
+    expect(result.fatalError).toBe(false);
+  });
+
+  it('stops after all models exhausted across multiple fallback steps (turn-level wrap-around)', async () => {
+    // 2 models. Step 1 fails with fallback (index 0→1).
+    // Step 2: generation runner detects wrap-around (index 1→0 ===
+    // turnInitialFallbackIndex 0) and returns generationFailed.
+    // The turn stops because shouldContinue is false.
+    const fallbackManager = makeFallbackManager();
+
+    const step1 = makeMockStep({
+      shouldContinue: true,
+      modelFallbackOccurred: true,
+    });
+    const step2 = makeMockStep({
+      shouldContinue: false,
+      generationFailed: true,
+    });
+    vi.mocked(createStep).mockReturnValueOnce(step1).mockReturnValueOnce(step2);
+
+    const turn = createTurn(
+      makeDeps({ fallbackManager: fallbackManager as never }),
+    );
+    const result = await turn.run();
+
+    expect(createStep).toHaveBeenCalledTimes(2);
+    // No step succeeded → complete failure.
+    expect(result.completeFailure).toBe(true);
   });
 });
 

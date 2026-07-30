@@ -348,7 +348,42 @@ describe('Config — context size resolution', () => {
       'gpt-4o': { displayName: 'GPT-4o', contextSize: 128_000 },
     };
     const { module } = await setup(config);
-    expect(module.resolveModel('my-openai:gpt-4o').contextSize).toBe(128_000);
+    const resolved = module.resolveModel('my-openai:gpt-4o');
+    expect(resolved.contextSize).toBe(128_000);
+    expect(resolved.displayName).toBe('GPT-4o');
+  });
+
+  it('resolves displayName from manual endpoint knownModels', async () => {
+    const config = manualConfig();
+    const local = config.providers.local;
+    if (!local || !('endpoints' in local))
+      throw new Error('Expected manual provider');
+    local.endpoints.chat!.knownModels = {
+      'model:8b': { displayName: 'Local 8B', contextSize: 8_192 },
+    };
+    const { module } = await setup(config);
+    expect(module.resolveModel('local:chat:model:8b').displayName).toBe(
+      'Local 8B',
+    );
+  });
+
+  it('returns displayName undefined when not declared in knownModels', async () => {
+    const config = presetConfig();
+    const provider = config.providers['my-openai'];
+    if (!provider || !('preset' in provider))
+      throw new Error('Expected preset provider');
+    provider.knownModels = {
+      'gpt-4o': { contextSize: 128_000 },
+    };
+    const { module } = await setup(config);
+    expect(module.resolveModel('my-openai:gpt-4o').displayName).toBeUndefined();
+  });
+
+  it('returns displayName undefined when knownModels is absent', async () => {
+    const { module } = await setup(manualConfig());
+    expect(
+      module.resolveModel('local:chat:model:8b').displayName,
+    ).toBeUndefined();
   });
 
   it('resolves contextSize independently per endpoint in manual providers', async () => {

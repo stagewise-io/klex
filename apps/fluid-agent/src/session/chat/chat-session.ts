@@ -42,7 +42,7 @@ import { getMemoryTools } from './tools/memory';
 import { createTurn, type Turn, type TurnResult } from './turn';
 import { BackoffManager } from './utils/backoff-manager';
 import { ModelFallbackManager } from './utils/model-fallback-manager';
-import { tracer } from './utils/tracing';
+import { getExtensionIdentifier, tracer } from './utils/tracing';
 import { extractUsage } from './utils/usage';
 
 export interface ChatSessionDependencies {
@@ -236,6 +236,14 @@ class ChatSessionModule implements AgentSession {
   ): Promise<GenerateTextResult> {
     const { modelIds } = args;
 
+    // Read the extension identifier from the OTel context. The extension
+    // handler wrapper sets it before calling this method so that the trace
+    // span's gen_ai.agent.name is attributed as "extension:{identifier}".
+    const extensionIdentifier = getExtensionIdentifier();
+    const functionId = extensionIdentifier
+      ? `extension:${extensionIdentifier}`
+      : 'extension';
+
     // Start a child span under the session span so every extension-initiated
     // generation appears in the session trace tree. The AI SDK's own internal
     // telemetry spans also nest under this span because we run the call inside
@@ -288,7 +296,7 @@ class ChatSessionModule implements AgentSession {
                     temperature: args.temperature,
                     maxOutputTokens: args.maxOutputTokens,
                     maxRetries: args.maxRetries ?? 0,
-                    telemetry: { isEnabled: true, functionId: 'extension' },
+                    telemetry: { isEnabled: true, functionId },
                   }
                 : {
                     model,
@@ -298,7 +306,7 @@ class ChatSessionModule implements AgentSession {
                     temperature: args.temperature,
                     maxOutputTokens: args.maxOutputTokens,
                     maxRetries: args.maxRetries ?? 0,
-                    telemetry: { isEnabled: true, functionId: 'extension' },
+                    telemetry: { isEnabled: true, functionId },
                   },
             );
 
@@ -454,6 +462,7 @@ class ChatSessionModule implements AgentSession {
           tools: this.deps.tools,
           modelProvider: this.deps.modelProvider,
           fallbackManager: this.fallbackManager,
+          config: this.deps.config,
           forceContinue: needsBackoffRetry,
         });
         this.currentTurn = turn;

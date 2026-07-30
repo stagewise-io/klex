@@ -1,5 +1,6 @@
 import { join } from 'node:path';
 
+import { context } from '@opentelemetry/api';
 import type { ModelMessage } from 'ai';
 
 import type { Usage } from '@/session/types';
@@ -11,11 +12,13 @@ import type {
   ExtensionDeps,
   ExtensionFactory,
   GenerateTextResult,
+  ResolvedModel,
   StepCompleteEvent,
   StepCompleteHookResult,
   TransformationFlags,
 } from '../extensions/extension-api';
 import type { ExtendedUIMessage } from '../message-types';
+import { withExtensionIdentifier } from '../utils/tracing';
 import { extractUsage } from '../utils/usage';
 
 /**
@@ -64,6 +67,7 @@ export interface ExtensionHandler {
    */
   runHistoryTransformers: (
     history: ExtendedUIMessage[],
+    model: ResolvedModel,
   ) => Promise<{ history: ExtendedUIMessage[]; flags: TransformationFlags }>;
 
   /**
@@ -78,6 +82,7 @@ export interface ExtensionHandler {
    */
   runContextTransformers: (
     history: ModelMessage[],
+    model: ResolvedModel,
   ) => Promise<{ history: ModelMessage[]; flags: TransformationFlags }>;
 
   /**
@@ -161,21 +166,23 @@ class ExtensionHandlerModule implements ExtensionHandler {
                 'extensions',
                 factory.identifier,
               ),
-        // Wrap generateText so the session can track per-extension usage.
-        // The wrapper calls the original proxy and, on success, notifies
-        // the session with the extracted Usage data.
-        generateText: onExtensionUsage
-          ? async (args) => {
-              const result: GenerateTextResult = await baseGenerateText(args);
-              if (result.success) {
-                onExtensionUsage(
-                  factory.identifier,
-                  extractUsage(result.usage),
-                );
-              }
-              return result;
-            }
-          : baseGenerateText,
+        // Wrap generateText to set the extension identifier in the OTel
+        // context (used for trace attribution as gen_ai.agent.name =
+        // "extension:{identifier}") and to track per-extension token usage
+        // on success.
+        generateText: async (args) => {
+          const ctx = withExtensionIdentifier(
+            context.active(),
+            factory.identifier,
+          );
+          const result: GenerateTextResult = await context.with(ctx, () =>
+            baseGenerateText(args),
+          );
+          if (result.success && onExtensionUsage) {
+            onExtensionUsage(factory.identifier, extractUsage(result.usage));
+          }
+          return result;
+        },
       };
 
       const ext = factory.create(scopedDeps);
@@ -192,6 +199,7 @@ class ExtensionHandlerModule implements ExtensionHandler {
 
   async runHistoryTransformers(
     history: ExtendedUIMessage[],
+    model: ResolvedModel,
   ): Promise<{ history: ExtendedUIMessage[]; flags: TransformationFlags }> {
     let currentHistory = history;
     let flags: TransformationFlags = {};
@@ -199,7 +207,7 @@ class ExtensionHandlerModule implements ExtensionHandler {
     for (const ext of this.extensions) {
       if (!ext.historyTransformer) continue;
       try {
-        const result = await ext.historyTransformer(currentHistory);
+        const result = await ext.historyTransformer(currentHistory, model);
         const normalized = normalizeResult(result);
         currentHistory = normalized.history;
         flags = mergeFlags(flags, normalized.flags);
@@ -217,6 +225,7 @@ class ExtensionHandlerModule implements ExtensionHandler {
 
   async runContextTransformers(
     history: ModelMessage[],
+    model: ResolvedModel,
   ): Promise<{ history: ModelMessage[]; flags: TransformationFlags }> {
     let currentHistory = history;
     let flags: TransformationFlags = {};
@@ -224,7 +233,7 @@ class ExtensionHandlerModule implements ExtensionHandler {
     for (const ext of this.extensions) {
       if (!ext.contextTransformer) continue;
       try {
-        const result = await ext.contextTransformer(currentHistory);
+        const result = await ext.contextTransformer(currentHistory, model);
         const normalized = normalizeResult(result);
         currentHistory = normalized.history;
         flags = mergeFlags(flags, normalized.flags);

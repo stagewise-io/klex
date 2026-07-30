@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 
 import { context } from '@opentelemetry/api';
-import { isToolUIPart } from 'ai';
+import { isToolUIPart, type LanguageModel } from 'ai';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { StepCompleteEvent } from '../extensions/extension-api';
@@ -64,6 +64,7 @@ const SUCCESS_RESULT: StepCompleteEvent = {
   generationFailed: false,
   generation: null,
   toolCalls: [],
+  modelFallbackOccurred: false,
 };
 
 // --- mocks ---
@@ -92,6 +93,14 @@ function makeDeps(overrides: Partial<StepDependencies> = {}): StepDependencies {
     tools: {} as AgentTools,
     modelProvider: makeModelProvider() as never,
     fallbackManager: makeFallbackManager() as never,
+    config: {
+      resolveModel: vi.fn(() => ({
+        modelId: 'test:model',
+        displayName: 'Test Model',
+        contextSize: 128_000,
+      })),
+    } as never,
+    turnInitialFallbackIndex: 0,
     sessionId: 'test-session-id',
     ...overrides,
   };
@@ -121,6 +130,7 @@ describe('Step — decision: skip', () => {
       generationFailed: false,
       generation: null,
       toolCalls: [],
+      modelFallbackOccurred: false,
     });
     expect(createGenerationRunner).not.toHaveBeenCalled();
   });
@@ -143,6 +153,7 @@ describe('Step — decision: skip', () => {
       generationFailed: false,
       generation: null,
       toolCalls: [],
+      modelFallbackOccurred: false,
     });
     expect(createGenerationRunner).not.toHaveBeenCalled();
   });
@@ -555,6 +566,130 @@ describe('Step — model selection', () => {
     expect(fallbackManager.getChatModelId).toHaveBeenCalled();
     expect(modelProvider.get).toHaveBeenCalledWith('model:claude-3');
   });
+
+  it('fetches the model BEFORE calling runHistoryTransformers', async () => {
+    const extensionHandler = makeExtensionHandler();
+    const modelProvider = makeModelProvider();
+    const fallbackManager = makeFallbackManager();
+    fallbackManager.getChatModelId.mockReturnValue('model:claude-3' as never);
+
+    const callOrder: string[] = [];
+    modelProvider.get.mockImplementation(async () => {
+      callOrder.push('modelProvider.get');
+      return {} as LanguageModel;
+    });
+    extensionHandler.runHistoryTransformers.mockImplementation(
+      async (h: ExtendedUIMessage[]) => {
+        callOrder.push('runHistoryTransformers');
+        return { history: h, flags: {} };
+      },
+    );
+
+    const step = createStep(
+      makeDeps({
+        messages: [makeUserMessage()],
+        modelProvider: modelProvider as never,
+        fallbackManager: fallbackManager as never,
+        extensionHandler: extensionHandler as never,
+      }),
+    );
+    await step.run();
+
+    expect(callOrder.indexOf('modelProvider.get')).toBeLessThan(
+      callOrder.indexOf('runHistoryTransformers'),
+    );
+  });
+});
+
+describe('Step — ResolvedModel passing', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    setupDefaultMocks();
+  });
+
+  it('passes the correct ResolvedModel to runHistoryTransformers', async () => {
+    const extensionHandler = makeExtensionHandler();
+    const fallbackManager = makeFallbackManager();
+    fallbackManager.getChatModelId.mockReturnValue('remote:gpt-4o' as never);
+    const config = {
+      resolveModel: vi.fn(() => ({
+        modelId: 'remote:gpt-4o',
+        displayName: 'GPT-4o',
+        contextSize: 128_000,
+      })),
+    } as never;
+
+    const step = createStep(
+      makeDeps({
+        messages: [makeUserMessage()],
+        extensionHandler: extensionHandler as never,
+        fallbackManager: fallbackManager as never,
+        config,
+      }),
+    );
+    await step.run();
+
+    expect(extensionHandler.runHistoryTransformers).toHaveBeenCalledOnce();
+    const [, modelArg] = extensionHandler.runHistoryTransformers.mock.calls[0]!;
+    expect(modelArg).toEqual({
+      modelId: 'remote:gpt-4o',
+      displayName: 'GPT-4o',
+      contextSize: 128_000,
+    });
+  });
+
+  it('passes the same ResolvedModel to runContextTransformers', async () => {
+    const extensionHandler = makeExtensionHandler();
+    const fallbackManager = makeFallbackManager();
+    fallbackManager.getChatModelId.mockReturnValue('remote:gpt-4o' as never);
+    const config = {
+      resolveModel: vi.fn(() => ({
+        modelId: 'remote:gpt-4o',
+        displayName: 'GPT-4o',
+        contextSize: 128_000,
+      })),
+    } as never;
+
+    const step = createStep(
+      makeDeps({
+        messages: [makeUserMessage()],
+        extensionHandler: extensionHandler as never,
+        fallbackManager: fallbackManager as never,
+        config,
+      }),
+    );
+    await step.run();
+
+    expect(extensionHandler.runContextTransformers).toHaveBeenCalledOnce();
+    const [, modelArg] = extensionHandler.runContextTransformers.mock.calls[0]!;
+    expect(modelArg).toEqual({
+      modelId: 'remote:gpt-4o',
+      displayName: 'GPT-4o',
+      contextSize: 128_000,
+    });
+  });
+});
+
+describe('Step — generation runner deps', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    setupDefaultMocks();
+  });
+
+  it('passes turnInitialFallbackIndex and model to createGenerationRunner, not modelProvider', async () => {
+    const step = createStep(
+      makeDeps({
+        messages: [makeUserMessage()],
+        turnInitialFallbackIndex: 2,
+      }),
+    );
+    await step.run();
+
+    const createCall = vi.mocked(createGenerationRunner).mock.calls[0]?.[0];
+    expect(createCall?.turnInitialFallbackIndex).toBe(2);
+    expect(createCall?.model).toBeDefined();
+    expect(createCall).not.toHaveProperty('modelProvider');
+  });
 });
 
 describe('Step — structuredClone isolation', () => {
@@ -616,6 +751,7 @@ describe('Step — GenerationRunner result passthrough', () => {
         usage: { inputTokens: 100, outputTokens: 50 } as never,
       },
       toolCalls: [],
+      modelFallbackOccurred: false,
     };
     vi.mocked(createGenerationRunner).mockReturnValue({
       run: vi.fn(async () => genResult),
@@ -638,6 +774,7 @@ describe('Step — GenerationRunner result passthrough', () => {
       generationFailed: true,
       generation: null,
       toolCalls: [],
+      modelFallbackOccurred: false,
     };
     vi.mocked(createGenerationRunner).mockReturnValue({
       run: vi.fn(async () => genResult),

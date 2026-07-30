@@ -39,10 +39,10 @@ export function makeInbox(): SessionInboxBuffer {
 export function makeExtensionHandler() {
   return {
     extensions: [],
-    runHistoryTransformers: vi.fn((h: ExtendedUIMessage[]) =>
+    runHistoryTransformers: vi.fn((h: ExtendedUIMessage[], _model: never) =>
       Promise.resolve({ history: h, flags: {} }),
     ),
-    runContextTransformers: vi.fn((h: never[]) =>
+    runContextTransformers: vi.fn((h: never[], _model: never) =>
       Promise.resolve({ history: h, flags: {} }),
     ),
     runStepCompleteHooks: vi.fn(() =>

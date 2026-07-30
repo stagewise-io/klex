@@ -10,7 +10,6 @@ import {
 
 import type { ModuleLogger } from '@stagewise/logger';
 
-import type { ModelProvider } from '@/model-provider';
 import {
   classifyGenerationError,
   type GenerationErrorClassification,
@@ -35,8 +34,13 @@ export interface GenerationRunnerDependencies {
   modelMessages: ModelMessage[];
   messages: ExtendedUIMessage[];
   tools: AgentTools;
-  modelProvider: ModelProvider;
   fallbackManager: ModelFallbackManager;
+  /**
+   * The fallback index at the start of the turn. Used for turn-level
+   * wrap-around detection — since model fallback now spans multiple
+   * steps, wrap-around must be relative to the turn's starting model.
+   */
+  turnInitialFallbackIndex: number;
   compacted: boolean;
   /** Initial model to use for the first attempt. */
   model: LanguageModel;
@@ -47,7 +51,7 @@ type GenerationOutcome =
   | 'done'
   | 'fatal'
   | 'salvage'
-  | 'fallback_retry'
+  | 'fallback_new_step'
   | 'generation_failed';
 
 /**
@@ -64,6 +68,12 @@ type CoarseOutcome = 'fatal' | 'salvage' | 'model_error' | 'generation_failed';
  * stream progress tracking, and tool dispatch coordination. The Step creates
  * a GenerationRunner after preparing the history and fetching the initial
  * model, then delegates to {@link run}.
+ *
+ * When a model error occurs with no content, the runner advances the
+ * fallback manager and returns with `modelFallbackOccurred: true` instead
+ * of retrying in-loop. The turn creates a new step that re-runs the
+ * transformation pipeline with the new model, since transformations are
+ * bound to specific model capabilities.
  */
 export class GenerationRunner {
   private generationAbortController: AbortController | null = null;
@@ -85,14 +95,14 @@ export class GenerationRunner {
     let latestMessage: ExtendedUIMessage | null = null;
 
     const MAX_GENERATION_ATTEMPTS = 20;
-    const initialFallbackIndex = fallbackManager.getFallbackIndex();
     let attempt = 0;
     let forceNextStep = false;
     let fatalError = false;
     let fatalErrorReason: string | null = null;
     let generationFailed = false;
+    let modelFallbackOccurred = false;
 
-    let model = this.deps.model;
+    const model = this.deps.model;
     let lastUsage: LanguageModelUsage | null = null;
     let lastFinishReason: FinishReason | null = null;
     let lastModelId: string | null = null;
@@ -183,7 +193,6 @@ export class GenerationRunner {
           outcome = this.applyOutcome(
             coarse,
             attempt,
-            initialFallbackIndex,
             classification,
             response.message,
             response.finishReason,
@@ -203,7 +212,6 @@ export class GenerationRunner {
         outcome = this.applyOutcome(
           coarse,
           attempt,
-          initialFallbackIndex,
           classification,
           latestMessage,
           'exception',
@@ -225,11 +233,10 @@ export class GenerationRunner {
         generationFailed = true;
         break;
       }
-      // fallback_retry — refresh model and continue.
-      model = await this.deps.modelProvider.get(
-        fallbackManager.getChatModelId(),
-      );
-      stepSpan.setAttribute('step.modelId', fallbackManager.getChatModelId());
+      // fallback_new_step — break out so the turn creates a new step
+      // that re-fetches the model and re-runs the transformation pipeline.
+      modelFallbackOccurred = true;
+      break;
     }
 
     // If the retry loop exited due to hitting the attempt cap (not via
@@ -250,6 +257,7 @@ export class GenerationRunner {
         generationFailed: true,
         generation: null,
         toolCalls: [],
+        modelFallbackOccurred: false,
       };
     }
 
@@ -296,6 +304,7 @@ export class GenerationRunner {
             }
           : null,
       toolCalls,
+      modelFallbackOccurred,
     };
   }
 
@@ -342,13 +351,12 @@ export class GenerationRunner {
    * Performs side effects for a coarse outcome (span attributes, message
    * salvage + push, model fallback) and returns the refined
    * {@link GenerationOutcome}. The `model_error` coarse outcome is refined
-   * to either `fallback_retry` or `generation_failed` depending on whether
+   * to either `fallback_new_step` or `generation_failed` depending on whether
    * all models have been tried (wrap-around check after advancing).
    */
   private applyOutcome(
     coarse: CoarseOutcome,
     attempt: number,
-    initialFallbackIndex: number,
     classification: GenerationErrorClassification | null,
     message: ExtendedUIMessage | null,
     trigger: string,
@@ -390,8 +398,11 @@ export class GenerationRunner {
         fallbackManager.fallbackToNextModel();
         stepSpan.setAttribute('step.modelFallbackTriggered', true);
 
-        // All models tried — wrapped back to the starting index.
-        if (fallbackManager.getFallbackIndex() === initialFallbackIndex) {
+        // All models tried — wrapped back to the turn's starting index.
+        if (
+          fallbackManager.getFallbackIndex() ===
+          this.deps.turnInitialFallbackIndex
+        ) {
           stepSpan.addEvent('step.models_exhausted', {
             'generation.attempt': attempt,
           });
@@ -402,15 +413,15 @@ export class GenerationRunner {
           return 'generation_failed';
         }
 
-        stepSpan.addEvent('step.fallback_retry', {
+        stepSpan.addEvent('step.fallback_new_step', {
           'error.classification': classification?.reason,
           'generation.attempt': attempt,
         });
         this.deps.logger.debug(
           { attempt, reason: classification?.reason },
-          'No content received, falling back to next model',
+          'No content received, falling back to next model in a new step',
         );
-        return 'fallback_retry';
+        return 'fallback_new_step';
       }
 
       case 'generation_failed': {

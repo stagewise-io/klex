@@ -21,7 +21,7 @@ import compactionPrompt from './compaction-prompt.md';
  * Hard upper bound for the compaction threshold in tokens. The dynamic
  * threshold will never exceed this value regardless of model context sizes.
  */
-export const MAX_COMPACTION_THRESHOLD = 200_000;
+export const MAX_COMPACTION_THRESHOLD = 100_000;
 
 /**
  * Fraction of the model's max context size at which compaction triggers.
@@ -54,6 +54,18 @@ export const MIN_MESSAGES_AFTER_SUMMARY = 2;
  */
 export const MIN_MESSAGES_BEFORE_SUMMARY_BY_ROLE = 2;
 
+/**
+ * Hysteresis margin applied to the post-compaction baseline. After a
+ * successful compaction, the baseline is inflated by this fraction so
+ * that small fluctuations around the compacted context size do not
+ * immediately re-trigger compaction. Only genuine *new* growth beyond
+ * the baseline plus this margin will cause the next compaction.
+ */
+export const COMPACTION_HYSTERESIS_RATIO = 0.1;
+
+/** Rough estimate of characters per token for baseline estimation. */
+const CHARS_PER_TOKEN = 4;
+
 /** Max chars kept from user/assistant text parts. */
 const TEXT_TRUNCATE_LIMIT = 500;
 /** Max chars kept from tool output. */
@@ -70,6 +82,14 @@ class ContextCompactionExt implements Extension {
   private accumulatedTokens = 0;
   private compacting = false;
   private cachedThreshold: number | null = null;
+  /**
+   * Token baseline set after a successful compaction. Represents the
+   * estimated token cost of the compacted history (keepBefore + summary).
+   * The next compaction only triggers when accumulatedTokens exceeds
+   * baseline + threshold, preventing repeated compaction of a context
+   * that is already compact but still large.
+   */
+  private compactionBaseline = 0;
 
   constructor(private readonly deps: ExtensionDeps) {}
 
@@ -215,10 +235,15 @@ class ContextCompactionExt implements Extension {
     this.accumulatedTokens += stepTokens;
 
     const threshold = this.getCompactionThreshold();
-    if (this.accumulatedTokens >= threshold && !this.compacting) {
+    if (
+      this.accumulatedTokens - this.compactionBaseline >= threshold &&
+      !this.compacting
+    ) {
       this.deps.logger.info(
         {
           accumulatedTokens: this.accumulatedTokens,
+          baseline: this.compactionBaseline,
+          growthAboveBaseline: this.accumulatedTokens - this.compactionBaseline,
           threshold,
         },
         'Token threshold exceeded — triggering compaction',
@@ -243,6 +268,7 @@ class ContextCompactionExt implements Extension {
       span = startChildSpan('context_compaction', {
         attributes: {
           'compaction.accumulatedTokens': this.accumulatedTokens,
+          'compaction.baseline': this.compactionBaseline,
           'compaction.threshold': this.getCompactionThreshold(),
         },
       });
@@ -259,13 +285,22 @@ class ContextCompactionExt implements Extension {
       span?.addEvent('compaction.error', { error: String(error) });
     } finally {
       this.compacting = false;
-      // Only reset accumulated tokens on successful compaction.
-      // On skip or failure, keep the counter so the next step can
-      // re-trigger — the history still needs compaction.
+      // On successful compaction, set the baseline to the estimated
+      // token cost of the compacted history (plus hysteresis margin).
+      // This prevents immediate re-triggering when the compacted
+      // context is still large. On skip or failure, keep the counter
+      // unchanged so the next step can re-trigger.
       if (success) {
-        // Subtract only the tokens captured when this run started,
-        // preserving any that accumulated during compaction.
-        this.accumulatedTokens -= tokensAtStart;
+        const compactedTokens = this.estimateCompactedContextTokens();
+        this.compactionBaseline = Math.floor(
+          compactedTokens * (1 + COMPACTION_HYSTERESIS_RATIO),
+        );
+        // Preserve tokens that accumulated during compaction, but
+        // re-anchor them relative to the new baseline.
+        const inflightTokens = this.accumulatedTokens - tokensAtStart;
+        this.accumulatedTokens = this.compactionBaseline + inflightTokens;
+        span?.setAttribute('compaction.compactedTokens', compactedTokens);
+        span?.setAttribute('compaction.newBaseline', this.compactionBaseline);
       }
       span?.end();
     }
@@ -429,6 +464,54 @@ class ContextCompactionExt implements Extension {
       'History compacted and summary injected after last slice message',
     );
     return true;
+  }
+
+  /**
+   * Estimates the token cost of the compacted history that
+   * {@link historyTransformer} will produce: the `keepBefore` messages
+   * plus the summary message. Uses the same XML transcript
+   * representation as the compaction prompt and a rough chars-per-token
+   * heuristic. This is intentionally approximate — it only needs to be
+   * good enough to prevent repeated compaction of an already-compact
+   * context.
+   */
+  private estimateCompactedContextTokens(): number {
+    const history = this.deps.getHistory();
+
+    // Find the newest summary — this is what historyTransformer will use
+    // as the cutoff.
+    const lastSummaryIndex = history.findIndex((m) =>
+      m.parts.some((p) => p.type === 'data-context-summary'),
+    );
+    if (lastSummaryIndex === -1) return 0;
+
+    // Replicate the keepBefore logic from historyTransformer:
+    // up to MIN_MESSAGES_BEFORE_SUMMARY_BY_ROLE messages of each role
+    // immediately preceding the cutoff summary.
+    const beforeCutoff = history.slice(0, lastSummaryIndex);
+    const minPerRole = MIN_MESSAGES_BEFORE_SUMMARY_BY_ROLE;
+    const keepBefore: ExtendedUIMessage[] = [];
+    let userCount = 0;
+    let assistantCount = 0;
+
+    for (let i = beforeCutoff.length - 1; i >= 0; i--) {
+      const msg = beforeCutoff[i]!;
+      if (msg.parts.some((p) => p.type === 'data-context-summary')) continue;
+      if (msg.role === 'user' && userCount < minPerRole) {
+        keepBefore.unshift(msg);
+        userCount++;
+      } else if (msg.role === 'assistant' && assistantCount < minPerRole) {
+        keepBefore.unshift(msg);
+        assistantCount++;
+      }
+      if (userCount >= minPerRole && assistantCount >= minPerRole) break;
+    }
+
+    const summaryMessage = history[lastSummaryIndex]!;
+    const compactedHistory = [...keepBefore, summaryMessage];
+    const transcript = transformHistoryForCompaction(compactedHistory);
+
+    return Math.ceil(transcript.length / CHARS_PER_TOKEN);
   }
 }
 

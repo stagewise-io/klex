@@ -31,6 +31,8 @@ export interface ResolvedModelConfig {
   endpoint: EndpointConfig;
   isPreset: boolean;
   contextSize: number;
+  /** Human-readable name from knownModels, if declared. */
+  displayName?: string;
 }
 
 export class ConfigValidationError extends Error {
@@ -202,6 +204,7 @@ class ConfigModule implements Config {
         endpoint: resolveAuthEnvVars(endpoint),
         isPreset: true,
         contextSize: contextSize ?? DEFAULT_CONTEXT_SIZE,
+        displayName: resolveDisplayName(provider.knownModels, localModelId),
       };
     }
 
@@ -241,6 +244,7 @@ class ConfigModule implements Config {
       endpoint: resolveAuthEnvVars(endpoint),
       isPreset: false,
       contextSize: contextSize ?? DEFAULT_CONTEXT_SIZE,
+      displayName: resolveDisplayName(endpoint.knownModels, localModelId),
     };
   }
 
@@ -484,6 +488,18 @@ function resolveContextSize(
   localModelId: string,
 ): number | undefined {
   return models?.[localModelId]?.contextSize;
+}
+
+/**
+ * Looks up the `displayName` for a model in an optional `knownModels`
+ * record. Returns `undefined` when the model or its `displayName` is not
+ * declared.
+ */
+function resolveDisplayName(
+  models: Record<string, { displayName?: string }> | undefined,
+  localModelId: string,
+): string | undefined {
+  return models?.[localModelId]?.displayName;
 }
 
 export function createConfig(deps: ConfigDependencies): Config {

@@ -105,6 +105,9 @@ importers:
       '@jitl/quickjs-singlefile-mjs-debug-sync':
         specifier: 0.32.0
         version: 0.32.0
+      '@stagewise/app-packager':
+        specifier: workspace:*
+        version: link:../../packages/app-packager
       '@stagewise/typescript-config':
         specifier: workspace:*
         version: link:../../packages/typescript-config
@@ -117,9 +120,6 @@ importers:
       esbuild:
         specifier: 0.28.1
         version: 0.28.1
-      postject:
-        specifier: 1.0.0-alpha.6
-        version: 1.0.0-alpha.6
       rimraf:
         specifier: 6.1.3
         version: 6.1.3

@@ -1,10 +1,11 @@
 import { randomUUID } from 'node:crypto';
 
 import { type Context, context, type Span, trace } from '@opentelemetry/api';
+import { generateText } from 'ai';
 
 import type { ModuleLogger, RootLogger } from '@stagewise/logger';
 
-import type { Config } from '@/config';
+import type { Config, ModelId } from '@/config';
 import type { ModelProvider } from '@/model-provider';
 import type { AgentTools } from '@/session/tools';
 import {
@@ -21,6 +22,7 @@ import type {
   SessionStatus,
 } from '@/session/types';
 import type { ToolProvider } from '@/tool-provider';
+import { tryModelsWithFallback } from '@/utils/llm';
 
 import {
   createInbox,
@@ -33,7 +35,7 @@ import {
   type ExtensionHandler,
 } from './extension-handler';
 import type {
-  ExtensionDeps,
+  BaseExtensionDeps,
   ExtensionFactory,
 } from './extensions/extension-api';
 import { createTurn, type Turn, type TurnResult } from './turn';
@@ -47,6 +49,8 @@ export interface ChatSessionDependencies {
   config: Config;
   toolProvider: ToolProvider;
   extensionFactories: ExtensionFactory[];
+  /** Root data directory of the agent. Used for extension data dirs. */
+  dataDirectory: string;
   hooks?: SessionHooks;
 }
 
@@ -105,6 +109,7 @@ class ChatSessionModule implements AgentSession {
       logging: RootLogger;
       modelProvider: ModelProvider;
       config: Config;
+      dataDirectory: string;
       javaScriptTool: JavaScriptTool;
       tools: AgentTools;
       extensionFactories: ExtensionFactory[];
@@ -158,21 +163,68 @@ class ChatSessionModule implements AgentSession {
     });
 
     // Create the extension deps — functions that let extensions interoperate
-    // with this session asynchronously.
-    const extensionDeps: ExtensionDeps = {
+    // with this session asynchronously. getDataDir is injected per-extension
+    // by the ExtensionHandler, not here.
+    const extensionDeps: BaseExtensionDeps = {
       getHistory: () => [...this.messages],
+      insertMessageAfter: (afterMessageId, message) => {
+        // Reject inserts once the session is terminated so an
+        // outstanding extension task (e.g. compaction) can't mutate
+        // the final history of a closed session.
+        if (this._status === 'terminated') return false;
+        const index = this.messages.findIndex((m) => m.id === afterMessageId);
+        if (index === -1) return false;
+        this.messages.splice(index + 1, 0, message);
+        return true;
+      },
       inbox: this.sessionInbox,
+      config: this.deps.config,
+      generateTextWithFallback: (args) => this.generateTextWithFallback(args),
+      logger: this.deps.logger,
     };
 
     this.extensionHandler = createExtensionHandler({
       factories: deps.extensionFactories,
       extensionDeps,
+      dataDirectory: this.deps.dataDirectory,
+      sessionId: this.sessionId,
     });
   }
 
   async start(): Promise<void> {
     await this.deps.javaScriptTool.start();
     this.deps.logger.info('ChatSession started');
+  }
+
+  // ---------------------------------------------------------------------------
+  // Extension AI proxy — routes generation calls through the session so
+  // that AI usage can be tracked at the session level.
+  // ---------------------------------------------------------------------------
+
+  private async generateTextWithFallback(args: {
+    modelIds: readonly ModelId[];
+    system: string;
+    prompt: string;
+  }): Promise<string | null> {
+    return tryModelsWithFallback(
+      args.modelIds,
+      this.deps.modelProvider,
+      (model, modelId) =>
+        generateText({
+          model,
+          system: args.system,
+          prompt: args.prompt,
+          maxRetries: 0,
+          telemetry: {
+            isEnabled: true,
+            functionId: 'context-compaction',
+          },
+          runtimeContext: {
+            'compaction.modelId': modelId,
+          },
+        }).then((r) => r.text),
+      { logger: this.deps.logger, label: 'compaction' },
+    );
   }
 
   // ---------------------------------------------------------------------------
@@ -544,6 +596,7 @@ export function createChatSession(deps: ChatSessionDependencies): AgentSession {
     logging: deps.logging,
     modelProvider: deps.modelProvider,
     config: deps.config,
+    dataDirectory: deps.dataDirectory,
     javaScriptTool,
     tools: {
       ...getMemoryTools(),

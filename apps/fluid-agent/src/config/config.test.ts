@@ -14,6 +14,7 @@ const logging = {
   child: () => ({
     error: () => undefined,
     info: () => undefined,
+    warn: () => undefined,
   }),
 } as unknown as RootLogger;
 
@@ -34,7 +35,7 @@ function manualConfig(modelId = 'model:8b'): FluidConfig {
     },
     modelSelection: {
       chat: [`local:chat:${modelId}`],
-      compression: [],
+      compaction: [],
       memory: [],
     },
     mcpServers: {},
@@ -55,7 +56,7 @@ function presetConfig(
     },
     modelSelection: {
       chat: [`${providerId}:${modelId}`],
-      compression: [],
+      compaction: [],
       memory: [],
     },
     mcpServers: {},
@@ -86,7 +87,7 @@ function mixedConfig(): FluidConfig {
     },
     modelSelection: {
       chat: ['remote:gpt-4o'],
-      compression: ['local:chat:model:8b'],
+      compaction: ['local:chat:model:8b'],
       memory: ['local:api:test-model'],
     },
     mcpServers: {},
@@ -267,7 +268,7 @@ describe('Config — resolveModel (mixed providers)', () => {
   it('getModelSelection returns correct arrays per purpose', async () => {
     const { module } = await setup(mixedConfig());
     expect(module.getModelSelection('chat')).toEqual(['remote:gpt-4o']);
-    expect(module.getModelSelection('compression')).toEqual([
+    expect(module.getModelSelection('compaction')).toEqual([
       'local:chat:model:8b',
     ]);
     expect(module.getModelSelection('memory')).toEqual([
@@ -327,7 +328,7 @@ describe('Config — replace (atomic persistence)', () => {
     await expect(
       module.replace({
         providers: {},
-        modelSelection: { chat: [], compression: [], memory: [] },
+        modelSelection: { chat: [], compaction: [], memory: [] },
         mcpServers: {},
         // missing modelSelection.chat — but TS prevents this at compile time;
         // runtime test: pass an object with extra unknown keys (schema is strict)

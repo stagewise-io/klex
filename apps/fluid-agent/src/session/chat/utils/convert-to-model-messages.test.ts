@@ -41,11 +41,11 @@ function makeContextPart(
   } as ExtendedUIMessage['parts'][number];
 }
 
-function makeHistorySummaryPart(
+function makeContextSummaryPart(
   summary: string,
 ): ExtendedUIMessage['parts'][number] {
   return {
-    type: 'data-history-summary',
+    type: 'data-context-summary',
     data: { summary },
   } as ExtendedUIMessage['parts'][number];
 }
@@ -178,7 +178,7 @@ describe('convertCustomDataParts — data-context', () => {
   });
 });
 
-describe('convertCustomDataParts — data-history-summary', () => {
+describe('convertCustomDataParts — data-context-summary', () => {
   function getConvertDataPart() {
     const calls = vi.mocked(convertToModelMessages).mock.calls;
     const lastCall = calls[calls.length - 1];
@@ -187,14 +187,14 @@ describe('convertCustomDataParts — data-history-summary', () => {
     ) => unknown;
   }
 
-  it('converts data-history-summary to XML text with summary tag', async () => {
+  it('converts data-context-summary to XML text with summary tag', async () => {
     const messages = [
-      makeMessage([makeHistorySummaryPart('Earlier conversation about X')]),
+      makeMessage([makeContextSummaryPart('Earlier conversation about X')]),
     ];
     await convertToModelMessagesExtended(messages);
     const convert = getConvertDataPart();
     const result = convert(
-      makeHistorySummaryPart('Earlier conversation about X'),
+      makeContextSummaryPart('Earlier conversation about X'),
     ) as { type: string; text: string };
 
     expect(result.type).toBe('text');

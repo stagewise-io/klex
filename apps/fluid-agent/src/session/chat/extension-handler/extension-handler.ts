@@ -1,14 +1,18 @@
+import { join } from 'node:path';
+
 import type { ModelMessage } from 'ai';
 
 import type { ExtendedUIMessage } from '@/session/types';
 
 import type {
+  BaseExtensionDeps,
   DataPartTransformers,
   Extension,
   ExtensionDeps,
   ExtensionFactory,
   TransformationFlags,
 } from '../extensions/extension-api';
+import type { GenerationRunnerResult } from '../step/generation-runner';
 
 /**
  * Normalizes a transformation hook return value into `{ history, flags }`.
@@ -66,23 +70,75 @@ export interface ExtensionHandler {
    * type — only one converter per type is allowed.
    */
   getDataPartTransformers: () => DataPartTransformers;
+
+  /**
+   * Run `onStepComplete` across all extensions in order.
+   *
+   * Each extension receives a copy of the full GenerationRunnerResult.
+   * Errors from individual extensions are caught and logged — one
+   * extension's hook failure does not break the step.
+   */
+  onStepComplete: (result: GenerationRunnerResult) => Promise<void>;
 }
 
 export interface ExtensionHandlerDependencies {
   factories: ExtensionFactory[];
-  extensionDeps: ExtensionDeps;
+  extensionDeps: BaseExtensionDeps;
+  /** Root data directory of the agent. */
+  dataDirectory: string;
+  /** ID of the session that owns these extensions. */
+  sessionId: string;
 }
 
 class ExtensionHandlerModule implements ExtensionHandler {
   readonly extensions: readonly Extension[];
 
+  private readonly extensionDeps: BaseExtensionDeps;
+
   constructor(deps: {
     factories: ExtensionFactory[];
-    extensionDeps: ExtensionDeps;
+    extensionDeps: BaseExtensionDeps;
+    dataDirectory: string;
+    sessionId: string;
   }) {
-    this.extensions = deps.factories.map((factory) =>
-      factory(deps.extensionDeps),
-    );
+    this.extensionDeps = deps.extensionDeps;
+
+    // Enforce identifier uniqueness before instantiating anything.
+    const seen = new Set<string>();
+    for (const factory of deps.factories) {
+      if (seen.has(factory.identifier)) {
+        throw new Error(
+          `Duplicate extension identifier: "${factory.identifier}" — extension identifiers must be unique.`,
+        );
+      }
+      seen.add(factory.identifier);
+    }
+
+    this.extensions = deps.factories.map((factory) => {
+      const scopedDeps: ExtensionDeps = {
+        ...deps.extensionDeps,
+        getDataDir: (global = false) =>
+          global
+            ? join(deps.dataDirectory, 'extensions', factory.identifier)
+            : join(
+                deps.dataDirectory,
+                'sessions',
+                deps.sessionId,
+                'extensions',
+                factory.identifier,
+              ),
+      };
+
+      const ext = factory.create(scopedDeps);
+
+      if (ext.identifier !== factory.identifier) {
+        throw new Error(
+          `Extension identifier mismatch: factory declares "${factory.identifier}" but the created extension reports "${ext.identifier}".`,
+        );
+      }
+
+      return ext;
+    });
   }
 
   async onHistoryPreProcessing(
@@ -144,6 +200,23 @@ class ExtensionHandlerModule implements ExtensionHandler {
 
     return merged as unknown as DataPartTransformers;
   }
+
+  async onStepComplete(result: GenerationRunnerResult): Promise<void> {
+    for (const ext of this.extensions) {
+      if (!ext.onStepComplete) continue;
+      try {
+        // Pass a shallow copy to each extension so mutations don't
+        // propagate to other extensions or the caller.
+        await ext.onStepComplete({ ...result });
+      } catch (error) {
+        // One extension's hook failure must not break the step.
+        this.extensionDeps.logger.error(
+          { error },
+          'Extension onStepComplete hook failed',
+        );
+      }
+    }
+  }
 }
 
 export function createExtensionHandler(
@@ -152,5 +225,7 @@ export function createExtensionHandler(
   return new ExtensionHandlerModule({
     factories: deps.factories,
     extensionDeps: deps.extensionDeps,
+    dataDirectory: deps.dataDirectory,
+    sessionId: deps.sessionId,
   });
 }

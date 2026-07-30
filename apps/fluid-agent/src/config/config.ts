@@ -18,12 +18,19 @@ import {
   resolvePresetEndpoint,
 } from './types';
 
+/**
+ * Default context size (in tokens) assumed when a model definition does
+ * not specify an explicit `contextSize`.
+ */
+export const DEFAULT_CONTEXT_SIZE = 200_000;
+
 export interface ResolvedModelConfig {
   providerId: string;
   endpointId: string;
   modelId: string;
   endpoint: EndpointConfig;
   isPreset: boolean;
+  contextSize: number;
 }
 
 export class ConfigValidationError extends Error {
@@ -42,6 +49,12 @@ export interface Config {
   subscribe(listener: ConfigListener): () => void;
   getModelSelection(purpose: ModelPurpose): readonly ModelId[];
   resolveModel(modelId: ModelId): ResolvedModelConfig;
+  /**
+   * Returns the context size (in tokens) for a given model ID. If the
+   * model definition does not specify `contextSize`, returns
+   * {@link DEFAULT_CONTEXT_SIZE}.
+   */
+  getModelContextSize(modelId: ModelId): number;
   getMcpServers(): Readonly<Record<string, McpServerConfig>>;
   /** Creates a new MCP server. Throws if the name already exists. */
   addMcpServer(
@@ -166,12 +179,20 @@ class ConfigModule implements Config {
     if ('preset' in provider) {
       const localModelId = rest;
       const endpoint = resolvePresetEndpoint(provider.preset, provider.auth);
+      const contextSize = resolveContextSize(provider.models, localModelId);
+      if (contextSize === undefined) {
+        this.deps.logger.warn(
+          { modelId, providerId },
+          `Model ${modelId} does not specify contextSize — defaulting to ${DEFAULT_CONTEXT_SIZE}. Explicit contextSize is preferred.`,
+        );
+      }
       return {
         providerId,
         endpointId: provider.preset,
         modelId: localModelId,
         endpoint: resolveAuthEnvVars(endpoint),
         isPreset: true,
+        contextSize: contextSize ?? DEFAULT_CONTEXT_SIZE,
       };
     }
 
@@ -192,13 +213,26 @@ class ConfigModule implements Config {
       );
     }
 
+    const contextSize = resolveContextSize(provider.models, localModelId);
+    if (contextSize === undefined) {
+      this.deps.logger.warn(
+        { modelId, providerId },
+        `Model ${modelId} does not specify contextSize — defaulting to ${DEFAULT_CONTEXT_SIZE}. Explicit contextSize is preferred.`,
+      );
+    }
+
     return {
       providerId,
       endpointId,
       modelId: localModelId,
       endpoint: resolveAuthEnvVars(endpoint),
       isPreset: false,
+      contextSize: contextSize ?? DEFAULT_CONTEXT_SIZE,
     };
+  }
+
+  getModelContextSize(modelId: ModelId): number {
+    return this.resolveModel(modelId).contextSize;
   }
 
   getMcpServers(): Readonly<Record<string, McpServerConfig>> {
@@ -425,6 +459,18 @@ function resolveAuthEnvVars(endpoint: EndpointConfig): EndpointConfig {
     auth.apiKey = resolveEnvVar(auth.apiKey);
   }
   return { ...endpoint, auth };
+}
+
+/**
+ * Looks up the `contextSize` for a model in a provider's optional `models`
+ * record. Returns `undefined` when the model or its `contextSize` is not
+ * declared — callers should default to {@link DEFAULT_CONTEXT_SIZE}.
+ */
+function resolveContextSize(
+  models: Record<string, { contextSize?: number }> | undefined,
+  localModelId: string,
+): number | undefined {
+  return models?.[localModelId]?.contextSize;
 }
 
 export function createConfig(deps: ConfigDependencies): Config {

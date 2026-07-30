@@ -22,7 +22,7 @@ export const getModelSelectionRoute = createRoute({
   tags: ['Settings'],
   summary: 'Get model selection',
   description:
-    'Returns the current model selection for chat, compression, and memory purposes.',
+    'Returns the current model selection for chat, compaction, and memory purposes.',
   responses: {
     200: {
       content: {
@@ -92,7 +92,7 @@ export function patchModelSelection(
     const current = deps.config.get().modelSelection;
     const merged = {
       chat: patch.chat ?? current.chat,
-      compression: patch.compression ?? current.compression,
+      compaction: patch.compaction ?? current.compaction,
       memory: patch.memory ?? current.memory,
     } as ModelSelection;
 

@@ -6,11 +6,11 @@ import type { ModuleLogger } from '@stagewise/logger';
 import type { ModelProvider } from '@/model-provider';
 import type { AgentTools } from '@/session/tools';
 import type { ExtendedUIMessage } from '@/session/types';
-
 import {
   classifyGenerationError,
   type GenerationErrorClassification,
-} from '../utils/classify-generation-error';
+} from '@/utils/llm';
+
 import type { ModelFallbackManager } from '../utils/model-fallback-manager';
 import { repairPartialMessage } from '../utils/repair-partial-message';
 import { runStreamedGeneration } from '../utils/run-streamed-generation';

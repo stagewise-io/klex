@@ -86,18 +86,30 @@ export function resolvePresetEndpoint(
   };
 }
 
+// Model definition: optional per-model metadata inside a provider
+
+const modelDefinitionSchema = z
+  .object({
+    contextSize: z.number().int().positive().optional(),
+  })
+  .strict();
+
+type ModelDefinition = z.infer<typeof modelDefinitionSchema>;
+
 // Provider config: a named provider with either a preset or manual endpoints
 
 const presetProviderSchema = z
   .object({
     preset: providerPresetSchema,
     auth: endpointAuthSchema,
+    models: z.record(z.string(), modelDefinitionSchema).optional(),
   })
   .strict();
 
 const manualProviderSchema = z
   .object({
     endpoints: z.record(z.string(), endpointConfigSchema),
+    models: z.record(z.string(), modelDefinitionSchema).optional(),
   })
   .strict();
 
@@ -112,7 +124,7 @@ type ProviderConfig = z.infer<typeof providerConfigSchema>;
 
 const modelSelectionSchema = z.object({
   chat: z.array(modelIdSchema),
-  compression: z.array(modelIdSchema),
+  compaction: z.array(modelIdSchema),
   memory: z.array(modelIdSchema),
 });
 
@@ -168,6 +180,7 @@ export type {
   HttpServerConfig,
   McpServerConfig,
   McpVersionNegotiation,
+  ModelDefinition,
   ModelId,
   ModelPurpose,
   ModelSelection,

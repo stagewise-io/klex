@@ -325,7 +325,11 @@ class StepModule implements Step {
         this.generationRunner = runner;
 
         try {
-          return await runner.run();
+          const result = await runner.run();
+          // Notify extensions that a step completed. The handler catches
+          // per-extension errors, so this won't break the turn.
+          await this.deps.extensionHandler.onStepComplete(result);
+          return result;
         } finally {
           this.generationRunner = null;
         }

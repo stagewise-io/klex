@@ -8,6 +8,7 @@ import { createMcp } from '@/mcp';
 import { createModelProvider } from '@/model-provider';
 import { createRouter } from '@/router';
 import { createChatSession } from '@/session/chat';
+import { createContextCompactionExt } from '@/session/chat/extensions/context-compaction';
 import type { SessionHooks } from '@/session/types';
 import { createTracing } from '@/tracing';
 
@@ -56,7 +57,8 @@ async function main(): Promise<void> {
         config: config,
         modelProvider: modelProvider,
         toolProvider: mcp,
-        extensionFactories: [],
+        extensionFactories: [createContextCompactionExt],
+        dataDirectory: cli.dataDirectory,
         hooks,
       }),
   });

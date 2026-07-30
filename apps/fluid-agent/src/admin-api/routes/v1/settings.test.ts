@@ -21,7 +21,7 @@ const logger = {
 
 const baseSelection: ModelSelection = {
   chat: ['openai:gpt-4o'],
-  compression: ['openai:gpt-4o-mini'],
+  compaction: ['openai:gpt-4o-mini'],
   memory: ['anthropic:claude-3-haiku'],
 };
 
@@ -64,7 +64,7 @@ describe('GET /v1/settings/model-selection', () => {
   it('returns all three purposes', async () => {
     const selection: ModelSelection = {
       chat: ['provider:endpoint:model-a', 'provider:endpoint:model-b'],
-      compression: ['provider:endpoint:model-c'],
+      compaction: ['provider:endpoint:model-c'],
       memory: [],
     };
     const app = createApp(
@@ -75,7 +75,7 @@ describe('GET /v1/settings/model-selection', () => {
     const response = await app.request('/v1/settings/model-selection');
     const body = (await response.json()) as ModelSelection;
     expect(body.chat).toEqual(selection.chat);
-    expect(body.compression).toEqual(selection.compression);
+    expect(body.compaction).toEqual(selection.compaction);
     expect(body.memory).toEqual(selection.memory);
   });
 });
@@ -140,19 +140,19 @@ describe('PATCH /v1/settings/model-selection', () => {
     expect(response.status).toBe(200);
     expect(updateFn).toHaveBeenCalledWith({
       chat: ['anthropic:claude-3-opus'],
-      compression: baseSelection.compression,
+      compaction: baseSelection.compaction,
       memory: baseSelection.memory,
     });
     const body = (await response.json()) as ModelSelection;
     expect(body.chat).toEqual(['anthropic:claude-3-opus']);
-    expect(body.compression).toEqual(baseSelection.compression);
+    expect(body.compaction).toEqual(baseSelection.compaction);
     expect(body.memory).toEqual(baseSelection.memory);
   });
 
   it('updates all fields at once', async () => {
     const newSelection: ModelSelection = {
       chat: ['google:gemini-pro'],
-      compression: ['google:gemini-flash'],
+      compaction: ['google:gemini-flash'],
       memory: ['openai:gpt-4o-mini'],
     };
     const updatedConfig: FluidConfig = {

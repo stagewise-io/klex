@@ -228,21 +228,6 @@ export interface StepCompleteEvent {
   modelFallbackOccurred: boolean;
 }
 
-/**
- * Return value of the {@link Extension.onStepComplete} hook.
- *
- * - `void` — the extension observed the event but does not want to
- *   influence control flow.
- * - `{ stop: true, stopReason }` — request the agent to stop after this
- *   step. The handler collects stop signals from all extensions in
- *   parallel; if any extension requests a stop, `shouldContinue` is set
- *   to `false` on the event returned by the step.
- */
-export type StepCompleteHookResult = void | {
-  stop?: boolean;
-  stopReason?: string;
-};
-
 export interface Extension {
   /**
    * Unique identifier in reverse-domain notation
@@ -313,17 +298,14 @@ export interface Extension {
    * failed. Receives a structured clone of the full
    * {@link StepCompleteEvent}.
    *
-   * All extensions' hooks are called in parallel via
-   * `Promise.allSettled`. The step waits for all hooks to settle
-   * before returning. Errors from individual hooks are caught and
-   * logged — one extension's hook failure does not break the step.
-   *
-   * Return `{ stop: true }` to request that the agent stops after
-   * this step.
+   * This is a fire-and-observe lifecycle notification — it cannot
+   * influence control flow. All extensions' hooks are called in
+   * parallel via `Promise.allSettled`. The step waits for all hooks
+   * to settle before returning. Errors from individual hooks are
+   * caught and logged — one extension's hook failure does not break
+   * the step.
    */
-  onStepComplete?: (
-    event: StepCompleteEvent,
-  ) => StepCompleteHookResult | Promise<StepCompleteHookResult>;
+  onStepComplete?: (event: StepCompleteEvent) => void | Promise<void>;
 
   dataPartTransformers?: DataPartTransformers;
 }

@@ -427,12 +427,7 @@ class StepModule implements Step {
           // Notify extensions that a step completed. The handler catches
           // per-extension errors and runs all hooks in parallel, so this
           // won't break the turn.
-          const hookResult =
-            await this.deps.extensionHandler.runStepCompleteHooks(result);
-          // If any extension requested a stop, override shouldContinue.
-          if (hookResult.stop) {
-            result.shouldContinue = false;
-          }
+          await this.deps.extensionHandler.runStepCompleteHooks(result);
           return result;
         } finally {
           this.generationRunner = null;

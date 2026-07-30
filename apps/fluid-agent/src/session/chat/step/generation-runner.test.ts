@@ -234,11 +234,16 @@ describe('GenerationRunner — non-good finish reasons', () => {
   });
 
   it('returns generationFailed=true when non-error finish has no parts', async () => {
+    // With the default fallback behavior, a no-content non-fatal finish
+    // triggers model_error → fallback. Use a 1-model fallback manager so
+    // the wrap-around check immediately produces generation_failed.
+    const fallbackManager = makeFallbackManager(['model-a']);
+
     vi.mocked(runStreamedGeneration).mockResolvedValue(
       makeGenResult(makeAssistantMessage(), 'length'),
     );
 
-    const runner = new GenerationRunner(makeDeps());
+    const runner = new GenerationRunner(makeDeps({ fallbackManager }));
     const result = await runner.run();
 
     expect(result.generationFailed).toBe(true);

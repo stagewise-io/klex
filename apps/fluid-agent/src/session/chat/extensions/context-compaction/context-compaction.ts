@@ -73,9 +73,6 @@ const CONTEXT_TRUNCATE_LIMIT = 200;
 const SUMMARY_TRUNCATE_LIMIT = 800;
 
 class ContextCompactionExt implements Extension {
-  readonly identifier = 'io.stagewise/context-compaction';
-  readonly displayName = 'Context Compaction';
-
   /**
    * inputTokens from the most recent step — used as a proxy for
    * current context size. Unlike a cumulative sum (which grows

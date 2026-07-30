@@ -135,6 +135,8 @@ class ExtensionHandlerModule implements ExtensionHandler {
   readonly extensions: readonly Extension[];
 
   private readonly extensionDeps: BaseExtensionDeps;
+  /** Maps each extension instance to its factory identifier for logging. */
+  private readonly identifiersByExtension: Map<Extension, string>;
 
   async runStepStartHooks(): Promise<void> {
     const extensions = this.extensions.filter((ext) => ext.onStepStart);
@@ -151,7 +153,9 @@ class ExtensionHandlerModule implements ExtensionHandler {
         this.extensionDeps.logger.error(
           {
             error: settled.reason,
-            extensionIdentifier: extensions[i]!.identifier,
+            extensionIdentifier: this.identifiersByExtension.get(
+              extensions[i]!,
+            ),
           },
           'Extension onStepStart hook failed',
         );
@@ -181,6 +185,8 @@ class ExtensionHandlerModule implements ExtensionHandler {
 
     const baseGenerateText = deps.extensionDeps.generateText;
     const onExtensionUsage = deps.onExtensionUsage;
+
+    this.identifiersByExtension = new Map();
 
     this.extensions = deps.factories.map((factory) => {
       const scopedDeps: ExtensionDeps = {
@@ -215,13 +221,7 @@ class ExtensionHandlerModule implements ExtensionHandler {
       };
 
       const ext = factory.create(scopedDeps);
-
-      if (ext.identifier !== factory.identifier) {
-        throw new Error(
-          `Extension identifier mismatch: factory declares "${factory.identifier}" but the created extension reports "${ext.identifier}".`,
-        );
-      }
-
+      this.identifiersByExtension.set(ext, factory.identifier);
       return ext;
     });
   }
@@ -242,7 +242,7 @@ class ExtensionHandlerModule implements ExtensionHandler {
         flags = mergeFlags(flags, normalized.flags);
       } catch (error) {
         this.extensionDeps.logger.error(
-          { error, extensionIdentifier: ext.identifier },
+          { error, extensionIdentifier: this.identifiersByExtension.get(ext) },
           'Extension historyTransformer failed — skipping, pipeline continues',
         );
         flags = mergeFlags(flags, { hasTransformerError: true });
@@ -268,7 +268,7 @@ class ExtensionHandlerModule implements ExtensionHandler {
         flags = mergeFlags(flags, normalized.flags);
       } catch (error) {
         this.extensionDeps.logger.error(
-          { error, extensionIdentifier: ext.identifier },
+          { error, extensionIdentifier: this.identifiersByExtension.get(ext) },
           'Extension contextTransformer failed — skipping, pipeline continues',
         );
         flags = mergeFlags(flags, { hasTransformerError: true });
@@ -330,7 +330,9 @@ class ExtensionHandlerModule implements ExtensionHandler {
         this.extensionDeps.logger.error(
           {
             error: settled.reason,
-            extensionIdentifier: extensions[i]!.identifier,
+            extensionIdentifier: this.identifiersByExtension.get(
+              extensions[i]!,
+            ),
           },
           'Extension onStepComplete hook failed',
         );

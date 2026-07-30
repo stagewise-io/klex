@@ -45,6 +45,15 @@ export const FALLBACK_COMPACTION_THRESHOLD = 10_000;
  */
 export const MIN_MESSAGES_AFTER_SUMMARY = 2;
 
+/**
+ * Minimum number of messages of each role (user, assistant) to retain
+ * BEFORE the cutoff summary in the transformed history. This ensures the
+ * model always has some real conversation context preceding the summary,
+ * rather than the summary appearing as the first message after the system
+ * prompt.
+ */
+export const MIN_MESSAGES_BEFORE_SUMMARY_BY_ROLE = 2;
+
 /** Max chars kept from user/assistant text parts. */
 const TEXT_TRUNCATE_LIMIT = 500;
 /** Max chars kept from tool output. */
@@ -156,8 +165,35 @@ class ContextCompactionExt implements Extension {
         !msg.parts.some((p) => p.type === 'data-context-summary'),
     );
 
+    // Collect up to MIN_MESSAGES_BEFORE_SUMMARY_BY_ROLE messages of each
+    // role from the messages immediately preceding the cutoff summary.
+    // This guarantees the model sees some real conversation before the
+    // summary, rather than the summary being the first message after the
+    // system prompt. Walk backwards from the cutoff to pick the most
+    // recent messages of each role.
+    const beforeCutoff = history.slice(0, cutoffIndex);
+    const minPerRole = MIN_MESSAGES_BEFORE_SUMMARY_BY_ROLE;
+    const keepBefore: ExtendedUIMessage[] = [];
+    let userCount = 0;
+    let assistantCount = 0;
+
+    for (let i = beforeCutoff.length - 1; i >= 0; i--) {
+      const msg = beforeCutoff[i]!;
+      // Skip other summary messages — they're already represented by the
+      // cutoff summary.
+      if (msg.parts.some((p) => p.type === 'data-context-summary')) continue;
+      if (msg.role === 'user' && userCount < minPerRole) {
+        keepBefore.unshift(msg);
+        userCount++;
+      } else if (msg.role === 'assistant' && assistantCount < minPerRole) {
+        keepBefore.unshift(msg);
+        assistantCount++;
+      }
+      if (userCount >= minPerRole && assistantCount >= minPerRole) break;
+    }
+
     return {
-      history: filtered,
+      history: [...keepBefore, ...filtered],
       flags: { hasCompacted: true },
     };
   }

@@ -75,6 +75,7 @@ export async function runStreamedGeneration(
     runtimeContext: {
       'conversation.id': params.sessionId,
       'conversation.compacted': params.compacted,
+      'conversation.modelId': params.getChatModelId(),
     },
     abortSignal: params.abortSignal,
     timeout: {

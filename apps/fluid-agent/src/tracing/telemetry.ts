@@ -170,6 +170,8 @@ interface CallState {
   conversationId: string | undefined;
   /** Whether the history was compacted — set as gen_ai.conversation.compacted. */
   compacted: boolean | undefined;
+  /** Full fluid-agent modelId (providerId:endpointId:modelId) from runtimeContext. */
+  fullModelId: string | undefined;
   /** Tool descriptions keyed by tool name, extracted from the tool set in onStart. */
   toolDescriptions: Map<string, string | undefined>;
 }
@@ -230,7 +232,6 @@ class FluidTelemetry implements Telemetry {
     const genEvent = event as InferTelemetryEvent<GenerateTextStartEvent>;
 
     const providerName = mapProviderName(genEvent.provider);
-    const spanName = `generate_content ${genEvent.modelId}`;
 
     // Extract conversation metadata from runtimeContext.
     const runtimeContext = genEvent.runtimeContext as
@@ -244,12 +245,22 @@ class FluidTelemetry implements Telemetry {
       typeof runtimeContext?.['conversation.compacted'] === 'boolean'
         ? (runtimeContext['conversation.compacted'] as boolean)
         : undefined;
+    // The full fluid-agent modelId (providerId:endpointId:modelId) is passed
+    // via runtimeContext by the session. Fall back to the AI SDK's internal
+    // model name if not provided (e.g. third-party callers).
+    const fullModelId =
+      typeof runtimeContext?.['conversation.modelId'] === 'string'
+        ? (runtimeContext['conversation.modelId'] as string)
+        : undefined;
+    const requestModel = fullModelId ?? genEvent.modelId;
+
+    const spanName = `generate_content ${requestModel}`;
 
     const attributes: Attributes = {
       'gen_ai.operation.name': 'generate_content',
       'gen_ai.system': providerName,
       'gen_ai.provider.name': providerName,
-      'gen_ai.request.model': genEvent.modelId,
+      'gen_ai.request.model': requestModel,
       'gen_ai.request.stream': genEvent.operationId === 'ai.streamText',
       'gen_ai.agent.name': genEvent.functionId,
     };
@@ -335,6 +346,7 @@ class FluidTelemetry implements Telemetry {
       operationId: genEvent.operationId,
       conversationId,
       compacted,
+      fullModelId,
       toolDescriptions,
     });
   }
@@ -382,7 +394,9 @@ class FluidTelemetry implements Telemetry {
 
     span.setAttributes({
       'gen_ai.response.id': event.responseId,
-      'gen_ai.response.model': event.modelId,
+      // Use the full fluid-agent modelId if available; fall back to the
+      // AI SDK's internal response model name.
+      'gen_ai.response.model': state.fullModelId ?? event.modelId,
     });
 
     // Performance attributes — only available at model-call end.

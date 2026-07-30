@@ -204,6 +204,7 @@ describe('runStreamedGeneration — success', () => {
     expect(arg.runtimeContext).toEqual({
       'conversation.id': 'session-uuid-123',
       'conversation.compacted': true,
+      'conversation.modelId': 'test:model',
     });
   });
 

@@ -254,6 +254,22 @@ export interface Extension {
   readonly identifier: string;
 
   /**
+   * Called at the very beginning of each step — before inbox drain,
+   * history repair, or the step decision. This is a fire-and-observe
+   * lifecycle notification, not a transformer: it cannot influence
+   * what the model sees or cancel the step.
+   *
+   * All extensions' hooks are called in parallel via
+   * `Promise.allSettled`. The step waits for all hooks to settle
+   * before proceeding. Errors from individual hooks are caught and
+   * logged — one extension's hook failure does not break the step.
+   *
+   * Typical uses: resetting per-step flags, preparing caches, or
+   * recording step-start telemetry.
+   */
+  onStepStart?: () => void | Promise<void>;
+
+  /**
    * Optional human-readable name shown in UIs and logs.
    */
   readonly displayName?: string;

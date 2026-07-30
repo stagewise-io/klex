@@ -99,6 +99,7 @@ function factoryWith(
     identifier: id,
     create: () => ({
       identifier: id,
+      onStepStart: overrides.onStepStart,
       historyTransformer: overrides.historyTransformer,
       contextTransformer: overrides.contextTransformer,
       onStepComplete: overrides.onStepComplete,
@@ -639,6 +640,124 @@ describe('ExtensionHandler — getDataPartTransformers', () => {
     const first = handler.getDataPartTransformers();
     const second = handler.getDataPartTransformers();
     expect(first).toEqual(second);
+  });
+});
+
+describe('ExtensionHandler — runStepStartHooks', () => {
+  it('returns void when no extensions define the hook', async () => {
+    const handler = createExtensionHandler({
+      factories: [factoryWith({})],
+      ...HANDLER_OPTS,
+    });
+    await expect(handler.runStepStartHooks()).resolves.toBeUndefined();
+  });
+
+  it('calls onStepStart on each extension that defines it', async () => {
+    const hook1 = vi.fn(() => {});
+    const hook2 = vi.fn(() => {});
+
+    const handler = createExtensionHandler({
+      factories: [
+        factoryWith({ onStepStart: hook1 }),
+        factoryWith({ onStepStart: hook2 }),
+      ],
+      ...HANDLER_OPTS,
+    });
+
+    await handler.runStepStartHooks();
+
+    expect(hook1).toHaveBeenCalledOnce();
+    expect(hook2).toHaveBeenCalledOnce();
+  });
+
+  it('skips extensions that do not define the hook', async () => {
+    const hook1 = vi.fn(() => {});
+    const hook3 = vi.fn(() => {});
+
+    const handler = createExtensionHandler({
+      factories: [
+        factoryWith({ onStepStart: hook1 }),
+        factoryWith({}),
+        factoryWith({ onStepStart: hook3 }),
+      ],
+      ...HANDLER_OPTS,
+    });
+
+    await handler.runStepStartHooks();
+
+    expect(hook1).toHaveBeenCalledOnce();
+    expect(hook3).toHaveBeenCalledOnce();
+  });
+
+  it('supports async hooks', async () => {
+    const hook = vi.fn(async () => {
+      await new Promise((r) => setTimeout(r, 10));
+    });
+
+    const handler = createExtensionHandler({
+      factories: [factoryWith({ onStepStart: hook })],
+      ...HANDLER_OPTS,
+    });
+
+    await handler.runStepStartHooks();
+    expect(hook).toHaveBeenCalledOnce();
+  });
+
+  it('catches and logs errors from individual extensions without breaking other hooks', async () => {
+    vi.clearAllMocks();
+    const hook1 = vi.fn(() => {
+      throw new Error('hook1 failed');
+    });
+    const hook2 = vi.fn(() => {});
+
+    const handler = createExtensionHandler({
+      factories: [
+        factoryWith({ onStepStart: hook1 }),
+        factoryWith({ onStepStart: hook2 }),
+      ],
+      ...HANDLER_OPTS,
+    });
+
+    await handler.runStepStartHooks();
+
+    expect(hook1).toHaveBeenCalledOnce();
+    expect(hook2).toHaveBeenCalledOnce();
+    expect(noopDeps.logger.error).toHaveBeenCalled();
+  });
+
+  it('preserves `this` binding for class-based extensions', async () => {
+    vi.clearAllMocks();
+
+    class StatefulExtension implements Extension {
+      readonly identifier = 'test.example/start-stateful';
+      readonly displayName = 'StartStateful';
+      private stepCount = 0;
+
+      onStepStart() {
+        this.stepCount++;
+      }
+
+      getStepCount() {
+        return this.stepCount;
+      }
+    }
+
+    const ext = new StatefulExtension();
+    const factory: ExtensionFactory = {
+      identifier: 'test.example/start-stateful',
+      create: () => ext,
+    };
+
+    const handler = createExtensionHandler({
+      factories: [factory],
+      ...HANDLER_OPTS,
+    });
+
+    await handler.runStepStartHooks();
+    await handler.runStepStartHooks();
+
+    expect(ext.getStepCount()).toBe(2);
+    expect(noopDeps.logger.error).not.toHaveBeenCalled();
   });
 });
 

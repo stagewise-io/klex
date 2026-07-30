@@ -327,6 +327,49 @@ describe('Step — extension handler hooks', () => {
     setupDefaultMocks();
   });
 
+  it('calls runStepStartHooks at the very beginning of run()', async () => {
+    const extensionHandler = makeExtensionHandler();
+    const callOrder: string[] = [];
+    extensionHandler.runStepStartHooks.mockImplementation(async () => {
+      callOrder.push('runStepStartHooks');
+    });
+    extensionHandler.runHistoryTransformers.mockImplementation(
+      async (h: ExtendedUIMessage[]) => {
+        callOrder.push('runHistoryTransformers');
+        return { history: h, flags: {} };
+      },
+    );
+
+    const step = createStep(
+      makeDeps({
+        messages: [makeUserMessage()],
+        extensionHandler: extensionHandler as never,
+      }),
+    );
+    await step.run();
+
+    expect(extensionHandler.runStepStartHooks).toHaveBeenCalledOnce();
+    expect(callOrder.indexOf('runStepStartHooks')).toBeLessThan(
+      callOrder.indexOf('runHistoryTransformers'),
+    );
+  });
+
+  it('calls runStepStartHooks even when the step is skipped', async () => {
+    const extensionHandler = makeExtensionHandler();
+
+    const step = createStep(
+      makeDeps({
+        messages: [],
+        extensionHandler: extensionHandler as never,
+      }),
+    );
+    await step.run();
+
+    expect(extensionHandler.runStepStartHooks).toHaveBeenCalledOnce();
+    expect(extensionHandler.runStepCompleteHooks).toHaveBeenCalledOnce();
+    expect(extensionHandler.runHistoryTransformers).not.toHaveBeenCalled();
+  });
+
   it('calls runHistoryTransformers with a structuredClone of the messages', async () => {
     const extensionHandler = makeExtensionHandler();
     extensionHandler.runHistoryTransformers.mockImplementation(

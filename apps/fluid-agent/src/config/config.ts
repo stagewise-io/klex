@@ -179,7 +179,10 @@ class ConfigModule implements Config {
     if ('preset' in provider) {
       const localModelId = rest;
       const endpoint = resolvePresetEndpoint(provider.preset, provider.auth);
-      const contextSize = resolveContextSize(provider.models, localModelId);
+      const contextSize = resolveContextSize(
+        provider.knownModels,
+        localModelId,
+      );
       if (contextSize === undefined) {
         this.deps.logger.warn(
           { modelId, providerId },
@@ -213,7 +216,7 @@ class ConfigModule implements Config {
       );
     }
 
-    const contextSize = resolveContextSize(provider.models, localModelId);
+    const contextSize = resolveContextSize(endpoint.knownModels, localModelId);
     if (contextSize === undefined) {
       this.deps.logger.warn(
         { modelId, providerId },

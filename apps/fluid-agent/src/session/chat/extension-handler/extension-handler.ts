@@ -14,7 +14,6 @@ import type {
   GenerateTextResult,
   ResolvedModel,
   StepCompleteEvent,
-  StepCompleteHookResult,
   TransformationFlags,
 } from '../extensions/extension-api';
 import type { ExtendedUIMessage } from '../message-types';
@@ -113,13 +112,8 @@ export interface ExtensionHandler {
    * {@link StepCompleteEvent}. Errors from individual extensions are
    * caught, logged, and do not break the step — one extension's hook
    * failure does not affect others.
-   *
-   * If any extension returns `{ stop: true }`, the returned object
-   * will have `stop: true` and the first non-empty `stopReason`.
    */
-  runStepCompleteHooks: (
-    event: StepCompleteEvent,
-  ) => Promise<{ stop: boolean; stopReason: string | null }>;
+  runStepCompleteHooks: (event: StepCompleteEvent) => Promise<void>;
 }
 
 export interface ExtensionHandlerDependencies {
@@ -310,14 +304,10 @@ class ExtensionHandlerModule implements ExtensionHandler {
     return merged as unknown as DataPartTransformers;
   }
 
-  async runStepCompleteHooks(
-    event: StepCompleteEvent,
-  ): Promise<{ stop: boolean; stopReason: string | null }> {
+  async runStepCompleteHooks(event: StepCompleteEvent): Promise<void> {
     const extensions = this.extensions.filter((ext) => ext.onStepComplete);
 
-    if (extensions.length === 0) {
-      return { stop: false, stopReason: null };
-    }
+    if (extensions.length === 0) return;
 
     // Launch all hooks in parallel, each with its own structured clone
     // so mutations don't leak between extensions or back to the caller.
@@ -333,9 +323,6 @@ class ExtensionHandlerModule implements ExtensionHandler {
       ),
     );
 
-    let stop = false;
-    let stopReason: string | null = null;
-
     for (let i = 0; i < results.length; i++) {
       const settled = results[i]!;
       if (settled.status === 'rejected') {
@@ -347,19 +334,8 @@ class ExtensionHandlerModule implements ExtensionHandler {
           },
           'Extension onStepComplete hook failed',
         );
-        continue;
-      }
-
-      const hookResult = settled.value as StepCompleteHookResult;
-      if (hookResult && typeof hookResult === 'object' && hookResult.stop) {
-        stop = true;
-        if (stopReason === null && hookResult.stopReason) {
-          stopReason = hookResult.stopReason;
-        }
       }
     }
-
-    return { stop, stopReason };
   }
 }
 

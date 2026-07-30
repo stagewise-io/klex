@@ -780,15 +780,14 @@ describe('ExtensionHandler — runStepCompleteHooks', () => {
     modelFallbackOccurred: false,
   };
 
-  it('returns { stop: false, stopReason: null } when no extensions define the hook', async () => {
+  it('resolves with void when no extensions define the hook', async () => {
     const handler = createExtensionHandler({
       factories: [factoryWith({})],
       ...HANDLER_OPTS,
     });
-    await expect(handler.runStepCompleteHooks(stepEvent)).resolves.toEqual({
-      stop: false,
-      stopReason: null,
-    });
+    await expect(
+      handler.runStepCompleteHooks(stepEvent),
+    ).resolves.toBeUndefined();
   });
 
   it('calls onStepComplete on each extension', async () => {
@@ -903,57 +902,6 @@ describe('ExtensionHandler — runStepCompleteHooks', () => {
     expect(hook1).toHaveBeenCalledOnce();
     expect(hook2).toHaveBeenCalledOnce();
     expect(noopDeps.logger.error).toHaveBeenCalled();
-  });
-
-  it('returns stop: true when an extension returns { stop: true }', async () => {
-    const hook1 = vi.fn(() => ({ stop: true, stopReason: 'done' }));
-    const hook2 = vi.fn(() => {});
-
-    const handler = createExtensionHandler({
-      factories: [
-        factoryWith({ onStepComplete: hook1 }),
-        factoryWith({ onStepComplete: hook2 }),
-      ],
-      ...HANDLER_OPTS,
-    });
-
-    const result = await handler.runStepCompleteHooks(stepEvent);
-    expect(result.stop).toBe(true);
-    expect(result.stopReason).toBe('done');
-  });
-
-  it('returns stop: true when any one extension in a batch requests it', async () => {
-    const hook1 = vi.fn(() => {});
-    const hook2 = vi.fn(() => ({ stop: true, stopReason: 'limit reached' }));
-
-    const handler = createExtensionHandler({
-      factories: [
-        factoryWith({ onStepComplete: hook1 }),
-        factoryWith({ onStepComplete: hook2 }),
-      ],
-      ...HANDLER_OPTS,
-    });
-
-    const result = await handler.runStepCompleteHooks(stepEvent);
-    expect(result.stop).toBe(true);
-    expect(result.stopReason).toBe('limit reached');
-  });
-
-  it('returns stop: false when no extension requests a stop', async () => {
-    const hook1 = vi.fn(() => {});
-    const hook2 = vi.fn(() => ({}));
-
-    const handler = createExtensionHandler({
-      factories: [
-        factoryWith({ onStepComplete: hook1 }),
-        factoryWith({ onStepComplete: hook2 }),
-      ],
-      ...HANDLER_OPTS,
-    });
-
-    const result = await handler.runStepCompleteHooks(stepEvent);
-    expect(result.stop).toBe(false);
-    expect(result.stopReason).toBeNull();
   });
 
   it('preserves `this` binding for class-based extensions', async () => {

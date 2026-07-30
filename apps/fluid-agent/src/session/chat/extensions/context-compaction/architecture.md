@@ -92,7 +92,7 @@ class MyExtension implements Extension {
 
   // Optional: observe every step completion.
   async onStepComplete(event) {
-    // Can return { stop: true, stopReason: '...' } to halt the turn.
+    // Fire-and-observe — cannot influence control flow.
   }
 
   // Optional: convert custom UI data parts to model content.
@@ -238,7 +238,7 @@ sequenceDiagram
 
     Step->>Handler: runStepCompleteHooks(event)
     Handler->>Ext: onStepComplete(event)
-    Ext-->>Handler: { stop? }
+    Ext-->>Handler: void
   end
 
   Note over Handler: Phase 3 — Teardown
@@ -286,10 +286,7 @@ flowchart TD
   CheckPost -->|Yes| CancelPost["Cancel step: fatalError"]
   CheckPost -->|No| GenRun["Generation + tool dispatch"]
   GenRun --> StageHooks["Fire runStepCompleteHooks (result event)"]
-  StageHooks --> ApplyStop{"Any extension returned stop?"}
-  ApplyStop -->|Yes| SetStop["shouldContinue = false"]
-  ApplyStop -->|No| StepEnd2["Return StepCompleteEvent"]
-  SetStop --> StepEnd2
+  StageHooks --> StepEnd2["Return StepCompleteEvent"]
   CancelPre --> StepEnd
   CancelPost --> StepEnd
 ```
@@ -322,9 +319,7 @@ flowchart TD
 
 **Error handling:** If a hook throws (synchronously or asynchronously), the error is caught and logged. One extension's failure does **not** break other hooks — all hooks are guaranteed to run. Hook errors do **not** cancel the step.
 
-**Stop signal:** If any extension returns `{ stop: true, stopReason }`, the returned object has `stop: true` and the first non-empty `stopReason`. The step sets `shouldContinue = false` on its result event, halting the turn.
-
-**Return:** `{ stop: boolean; stopReason: string | null }`.
+**Return:** `void`.
 
 ### `getDataPartTransformers()`
 

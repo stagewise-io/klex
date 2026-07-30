@@ -278,11 +278,11 @@ flowchart TD
   SkipCancel --> StepEnd["Return StepCompleteEvent"]
   Decision -->|Yes| Copy["structuredClone(messages)"]
   Copy --> Stage2["Stage 2: runHistoryTransformers"]
-  Stage2 --> CheckPre{"hasTransformerError?"}
+  Stage2 --> CheckPre{"Transformer throws?"}
   CheckPre -->|Yes| CancelPre["Cancel step: fatalError"]
   CheckPre -->|No| Convert["Convert UI → model messages"]
   Convert --> Stage4["Stage 4: runContextTransformers"]
-  Stage4 --> CheckPost{"hasTransformerError?"}
+  Stage4 --> CheckPost{"Transformer throws?"}
   CheckPost -->|Yes| CancelPost["Cancel step: fatalError"]
   CheckPost -->|No| GenRun["Generation + tool dispatch"]
   GenRun --> StageHooks["Fire runStepCompleteHooks (result event)"]
@@ -297,11 +297,11 @@ flowchart TD
 
 **How:** Extensions are called **sequentially** in registration order. Each receives the output of the previous extension. This is a pipeline — the output of one feeds the input of the next.
 
-**Error handling:** If a transformer throws, the error is caught, logged with the extension identifier, and the pipeline continues with the current history **unchanged** (the failing extension's transformation is skipped). The `hasTransformerError` flag is set in the returned `TransformationFlags`.
+**Error handling:** If a transformer throws, the error is caught, logged with the extension identifier, and re-thrown. The pipeline **aborts immediately** — no subsequent transformers run.
 
-**Step cancellation:** If `hasTransformerError` is set, the step is cancelled with `fatalError: true` before generation. Context integrity cannot be guaranteed after a transformer failure.
+**Step cancellation:** The step catches the re-thrown error and cancels with `fatalError: true`. The session terminates gracefully — the app process keeps running, but this session cannot recover. Transformer failures are deterministic (pure data transformations with no transient failure modes), so retrying with identical inputs would produce the same error.
 
-**Return:** `{ history, flags }` where flags are merged across all extensions with OR semantics (`hasCompacted`, `hasTransformerError`).
+**Return:** `{ history, flags }` where flags are merged across all extensions with OR semantics (`hasCompacted`).
 
 ### `runContextTransformers(history)`
 
@@ -349,8 +349,8 @@ interface StepCompleteEvent {
 
 | Hook type | Dispatch | One extension throws | Effect on others | Effect on step |
 |-----------|----------|---------------------|-------------------|----------------|
-| `historyTransformer` | Sequential pipeline | Caught, logged, skipped | Next extension gets unchanged history | Step cancelled (`fatalError`) |
-| `contextTransformer` | Sequential pipeline | Caught, logged, skipped | Next extension gets unchanged history | Step cancelled (`fatalError`) |
+| `historyTransformer` | Sequential pipeline | Caught, logged, re-thrown | Pipeline aborts — subsequent transformers do not run | Step cancelled (`fatalError`) |
+| `contextTransformer` | Sequential pipeline | Caught, logged, re-thrown | Pipeline aborts — subsequent transformers do not run | Step cancelled (`fatalError`) |
 | `onStepComplete` | Parallel (`allSettled`) | Caught, logged | Other hooks unaffected | No effect — step already done |
 
-The core principle: **every extension gets called, no matter what**. For transformers, the error is contained but the step is cancelled because context integrity is uncertain. For callbacks, the error is contained and the step proceeds normally — callbacks are observers.
+The core principle: **transformer failures are fatal to the session, callback failures are contained**. For transformers, the error is caught and re-thrown to abort the pipeline immediately, then the step is cancelled with `fatalError` because context integrity is uncertain and the failure is deterministic (retrying identical inputs yields the same result). For callbacks, the error is contained and the step proceeds normally — callbacks are observers.

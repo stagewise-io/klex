@@ -12,6 +12,7 @@ import type { ExtensionHandler } from '../extension-handler';
 import type {
   ResolvedModel,
   StepCompleteEvent,
+  TransformationFlags,
 } from '../extensions/extension-api';
 import { type SessionInboxBuffer, SessionInboxPriority } from '../inbox';
 import type { ExtendedUIMessage } from '../message-types';
@@ -270,34 +271,17 @@ class StepModule implements Step {
 
         // --- Stage 2: History transformers (extensions) ---
         transformSpan.addEvent('history_pre_process.start');
-        const preResult =
-          await this.deps.extensionHandler.runHistoryTransformers(
+        let preResult: {
+          history: ExtendedUIMessage[];
+          flags: TransformationFlags;
+        };
+        try {
+          preResult = await this.deps.extensionHandler.runHistoryTransformers(
             messagesCopy,
             resolvedModel,
           );
-        transformSpan.setAttribute(
-          'history_pre_process.messageCount',
-          preResult.history.length,
-        );
-        transformSpan.setAttribute(
-          'history_pre_process.hasCompacted',
-          preResult.flags.hasCompacted === true,
-        );
-        transformSpan.setAttribute(
-          'history_pre_process.hasTransformerError',
-          preResult.flags.hasTransformerError === true,
-        );
-        transformSpan.addEvent('history_pre_process.end', {
-          'history_pre_process.messageCount': preResult.history.length,
-          'history_pre_process.hasCompacted':
-            preResult.flags.hasCompacted === true,
-          'history_pre_process.hasTransformerError':
-            preResult.flags.hasTransformerError === true,
-        });
-
-        // If any history transformer failed, context integrity cannot be
-        // guaranteed — cancel the step before generation.
-        if (preResult.flags.hasTransformerError) {
+        } catch (error) {
+          transformSpan.setAttribute('history_pre_process.error', true);
           transformSpan.end();
           stepSpan.setAttribute('step.cancelled', true);
           stepSpan.setAttribute(
@@ -308,7 +292,7 @@ class StepModule implements Step {
             reason: 'history transformer error',
           });
           this.deps.logger.error(
-            { stepId: this.id },
+            { stepId: this.id, error },
             'Step cancelled: history transformer failed, context integrity cannot be guaranteed',
           );
           const cancelEvent: StepCompleteEvent = {
@@ -325,6 +309,19 @@ class StepModule implements Step {
           await this.deps.extensionHandler.runStepCompleteHooks(cancelEvent);
           return cancelEvent;
         }
+        transformSpan.setAttribute(
+          'history_pre_process.messageCount',
+          preResult.history.length,
+        );
+        transformSpan.setAttribute(
+          'history_pre_process.hasCompacted',
+          preResult.flags.hasCompacted === true,
+        );
+        transformSpan.addEvent('history_pre_process.end', {
+          'history_pre_process.messageCount': preResult.history.length,
+          'history_pre_process.hasCompacted':
+            preResult.flags.hasCompacted === true,
+        });
 
         // --- Stage 3: Convert to model messages ---
         transformSpan.addEvent('history_convert.start');
@@ -341,28 +338,17 @@ class StepModule implements Step {
 
         // --- Stage 4: Context transformers (extensions) ---
         transformSpan.addEvent('history_post_process.start');
-        const postResult =
-          await this.deps.extensionHandler.runContextTransformers(
+        let postResult: {
+          history: ModelMessage[];
+          flags: TransformationFlags;
+        };
+        try {
+          postResult = await this.deps.extensionHandler.runContextTransformers(
             modelMessages,
             resolvedModel,
           );
-        transformSpan.setAttribute(
-          'history_post_process.messageCount',
-          postResult.history.length,
-        );
-        transformSpan.setAttribute(
-          'history_post_process.hasTransformerError',
-          postResult.flags.hasTransformerError === true,
-        );
-        transformSpan.addEvent('history_post_process.end', {
-          'history_post_process.messageCount': postResult.history.length,
-          'history_post_process.hasTransformerError':
-            postResult.flags.hasTransformerError === true,
-        });
-
-        // If any context transformer failed, context integrity cannot be
-        // guaranteed — cancel the step before generation.
-        if (postResult.flags.hasTransformerError) {
+        } catch (error) {
+          transformSpan.setAttribute('history_post_process.error', true);
           transformSpan.end();
           stepSpan.setAttribute('step.cancelled', true);
           stepSpan.setAttribute(
@@ -373,7 +359,7 @@ class StepModule implements Step {
             reason: 'context transformer error',
           });
           this.deps.logger.error(
-            { stepId: this.id },
+            { stepId: this.id, error },
             'Step cancelled: context transformer failed, context integrity cannot be guaranteed',
           );
           const cancelEvent: StepCompleteEvent = {
@@ -390,6 +376,13 @@ class StepModule implements Step {
           await this.deps.extensionHandler.runStepCompleteHooks(cancelEvent);
           return cancelEvent;
         }
+        transformSpan.setAttribute(
+          'history_post_process.messageCount',
+          postResult.history.length,
+        );
+        transformSpan.addEvent('history_post_process.end', {
+          'history_post_process.messageCount': postResult.history.length,
+        });
 
         modelMessages = postResult.history;
         const compacted = preResult.flags.hasCompacted === true;

@@ -433,10 +433,22 @@ class McpModule implements Mcp {
         if (!this.isCurrentAttempt(runtime, attempt)) return;
         runtime.attempt = undefined;
         runtime.status = 'error';
-        this.deps.logger.error(
-          { error, namespace: runtime.namespace },
-          'MCP connection failed',
-        );
+        const isRetry = runtime.retryAttempt > 0;
+        if (isRetry) {
+          this.deps.logger.debug(
+            {
+              error,
+              namespace: runtime.namespace,
+              retryAttempt: runtime.retryAttempt,
+            },
+            'MCP connection retry failed',
+          );
+        } else {
+          this.deps.logger.warn(
+            { error, namespace: runtime.namespace },
+            'MCP connection failed — will retry with exponential backoff',
+          );
+        }
         this.scheduleReconnect(runtime);
       });
   }

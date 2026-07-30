@@ -87,7 +87,7 @@ pnpm --filter @stagewise/windows-use test
 
 ## Portable Windows distribution
 
-The reproducible PyInstaller project in `packaging/windows-mcp/` builds the frozen Windows-MCP child. The Windows Use SEA build embeds the Node.js host into `stagewise-windows-use.exe`, and `packaging/windows-use/assemble.ps1` combines both outputs into one portable ZIP.
+The reproducible PyInstaller project in `packaging/windows-mcp/` builds the frozen Windows-MCP child. The Windows Use host is bundled with esbuild and passed to `@stagewise/app-packager`, which creates the Node.js SEA executable, prepares it for injection, signs and verifies it when configured, and reports artifact metadata. `packaging/windows-use/assemble.ps1` combines `stagewise-windows-use.exe` with the frozen child in one portable ZIP.
 
 The assembled bundle reads `windows-use.config.json` next to the host executable. Relative `windowsMcpCommand` paths are resolved from that configuration file, and environment variables override matching JSON values. Edit only the gateway URL and environment token for the normal portable test.
 
@@ -101,7 +101,7 @@ pnpm install --frozen-lockfile
 
 The output is `packaging/windows-use/artifacts/stagewise-windows-use-win-x64.zip`. The GitHub Actions workflow builds and uploads the same complete bundle after signing both primary executables, smoke-testing the frozen Windows-MCP child, and verifying the final staged Authenticode signatures.
 
-Release workflow builds use Azure Trusted Signing for `stagewise-windows-use.exe` and `windows-mcp/windows-mcp.exe`. The workflow reads non-sensitive Azure configuration from variables in the protected `windows-use-release` GitHub Environment and reads only `AZURE_CLIENT_SECRET` from its environment secrets. Local builds remain unsigned when signing configuration is absent. Azure credentials and generated signing metadata must never be committed.
+Release workflow builds use Azure Trusted Signing for `stagewise-windows-use.exe` and `windows-mcp/windows-mcp.exe`. The host uses the shared app-packager signing implementation; the separately frozen Python child continues to use `packaging/sign-windows-executable.ps1`. The workflow reads non-sensitive Azure configuration from variables in the protected `windows-use-release` GitHub Environment and reads only `AZURE_CLIENT_SECRET` from its environment secrets. `WINDOWS_SIGNING_REQUIRED=true` makes absent signing configuration fatal in release builds. Local builds use optional mode and remain unsigned when all signing configuration is absent; partial configuration is rejected. Azure credentials and generated signing metadata must never be committed.
 
 This milestone is a portable test distribution. It is not an installer, service, tray application, enrollment flow, or automatic updater.
 

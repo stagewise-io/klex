@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 
+import { realpathSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { parseArgs } from 'node:util';
 
 import type { AppPackagerConfig, SigningMode } from '../config/index.js';
@@ -132,7 +133,16 @@ function formatError(error: unknown): string {
   return `app-packager: ${messages.join(': ')}`;
 }
 
-const entryPoint = process.argv[1];
-if (entryPoint && import.meta.url === pathToFileURL(entryPoint).href) {
+export function isMainModule(
+  entryPoint: string | undefined,
+  moduleUrl: string = import.meta.url,
+): boolean {
+  return (
+    entryPoint !== undefined &&
+    realpathSync(entryPoint) === realpathSync(fileURLToPath(moduleUrl))
+  );
+}
+
+if (isMainModule(process.argv[1])) {
   process.exitCode = await runCli(process.argv.slice(2));
 }

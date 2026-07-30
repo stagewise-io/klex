@@ -15,8 +15,8 @@ import {
   createContextCompactionExt,
   FALLBACK_COMPACTION_THRESHOLD,
   MAX_COMPACTION_THRESHOLD,
-  MIN_MESSAGES_AFTER_SUMMARY,
-  MIN_MESSAGES_BEFORE_SUMMARY_BY_ROLE,
+  MIN_ASSISTANT_MESSAGES_AFTER_SUMMARY,
+  MIN_USER_MESSAGES_AFTER_SUMMARY,
 } from './context-compaction';
 
 // --- mocks ---
@@ -226,14 +226,16 @@ async function simulateStep(
 }
 
 /**
- * History with a summary and enough messages after it (≥2) that the
- * historyTransformer will apply the summary (set `summaryAppliedThisStep`).
+ * History with a summary and enough messages after it (≥2 user, ≥1
+ * assistant) that the historyTransformer will apply the summary
+ * (set `summaryAppliedThisStep`).
  */
 function historyWithAppliedSummary(): ExtendedUIMessage[] {
   return [
     makeSummaryMessage('compacted summary'),
     makeTextMessage('user', 'new message 1'),
     makeTextMessage('assistant', 'new response 1'),
+    makeTextMessage('user', 'new message 2'),
   ];
 }
 
@@ -1430,16 +1432,15 @@ describe('ContextCompactionExt — historyTransformer', () => {
       flags: { hasCompacted: boolean };
     };
     expect(obj.flags.hasCompacted).toBe(true);
-    // Only 1 user message before the summary — kept as pre-summary context
+    // No messages before the summary are retained
     expect(obj.history[0]!.parts[0]).toMatchObject({
-      type: 'text',
-      text: 'old1',
-    });
-    // Summary is at index 1
-    expect(obj.history[1]!.parts[0]).toMatchObject({
       type: 'data-context-summary',
     });
-    expect(obj.history).toHaveLength(5); // old1 + summary + new1 + new2 + new3
+    expect(obj.history[1]!.parts[0]).toMatchObject({
+      type: 'text',
+      text: 'new1',
+    });
+    expect(obj.history).toHaveLength(4); // summary + new1 + new2 + new3
   });
 
   it('returns full history when no summary exists', () => {
@@ -1464,7 +1465,7 @@ describe('ContextCompactionExt — historyTransformer', () => {
       makeTextMessage('user', 'mid3'),
       makeSummaryMessage('newer summary'),
       makeTextMessage('user', 'recent1'),
-      // only 1 message after newer summary — below threshold
+      // only 1 user + 0 assistants after newer summary — below threshold
     ];
 
     const ext = createContextCompactionExt.create(makeDeps());
@@ -1476,18 +1477,13 @@ describe('ContextCompactionExt — historyTransformer', () => {
       flags: { hasCompacted: boolean };
     };
     expect(obj.flags.hasCompacted).toBe(true);
-    // Only 1 user message before the older summary — kept as pre-summary
+    // No messages before the older summary are retained
     expect(obj.history[0]!.parts[0]).toMatchObject({
-      type: 'text',
-      text: 'old1',
-    });
-    // Summary is at index 1
-    expect(obj.history[1]!.parts[0]).toMatchObject({
       type: 'data-context-summary',
       data: { summary: 'older summary' },
     });
-    // old1 + older summary + mid1 + mid2 + mid3 + recent1 (newer summary stripped)
-    expect(obj.history).toHaveLength(6);
+    // older summary + mid1 + mid2 + mid3 + recent1 (newer summary stripped)
+    expect(obj.history).toHaveLength(5);
     // The newer summary should be stripped (it's not the cutoff)
     expect(
       obj.history.some((m) =>
@@ -1506,7 +1502,8 @@ describe('ContextCompactionExt — historyTransformer', () => {
       makeSummaryMessage('summary1'),
       makeSummaryMessage('summary2'),
     ];
-    // summary1 has 1 message after it, summary2 has 0 — both below threshold
+    // summary1 has 0 user + 0 assistant after it (summary2 skipped),
+    // summary2 has 0 — both below threshold
 
     const ext = createContextCompactionExt.create(makeDeps());
     const result = ext.historyTransformer!(history, MOCK_MODEL);
@@ -1532,8 +1529,8 @@ describe('ContextCompactionExt — historyTransformer', () => {
       makeTextMessage('assistant', 'msg5'),
       makeTextMessage('user', 'msg6'),
     ];
-    // old summary has 7 messages after it (>= 2) — it qualifies
-    // mid summary has 3 messages after it (>= 2) — it's newer and also qualifies
+    // old summary has 4 users + 2 assistants after it — qualifies
+    // mid summary has 2 users + 1 assistant after it — qualifies and is newer
     // The newest qualifying summary (mid summary) should be the cutoff
 
     const ext = createContextCompactionExt.create(makeDeps());
@@ -1544,34 +1541,32 @@ describe('ContextCompactionExt — historyTransformer', () => {
       history: ExtendedUIMessage[];
       flags: { hasCompacted: boolean };
     };
-    // Pre-summary messages: walking back from mid summary (index 5),
-    // skipping old summary: msg3 (user), msg2 (assistant), msg1 (user)
-    // → 2 users + 1 assistant kept (only 1 assistant available before cutoff)
+    // No messages before the cutoff summary are retained
     expect(obj.history[0]!.parts[0]).toMatchObject({
-      type: 'text',
-      text: 'msg1',
+      type: 'data-context-summary',
+      data: { summary: 'mid summary' },
     });
     expect(obj.history[1]!.parts[0]).toMatchObject({
       type: 'text',
-      text: 'msg2',
+      text: 'msg4',
     });
     expect(obj.history[2]!.parts[0]).toMatchObject({
       type: 'text',
-      text: 'msg3',
+      text: 'msg5',
     });
-    // Cutoff summary at index 3
     expect(obj.history[3]!.parts[0]).toMatchObject({
-      type: 'data-context-summary',
-      data: { summary: 'mid summary' },
+      type: 'text',
+      text: 'msg6',
     });
     // Only one summary in the result
     const summaryCount = obj.history.filter((m) =>
       m.parts.some((p) => p.type === 'data-context-summary'),
     ).length;
     expect(summaryCount).toBe(1);
+    expect(obj.history).toHaveLength(4); // mid summary + msg4 + msg5 + msg6
   });
 
-  it('retains at least 2 user and 2 assistant messages before the cutoff summary', () => {
+  it('does not retain any messages before the cutoff summary', () => {
     const history = [
       makeTextMessage('user', 'u1'),
       makeTextMessage('assistant', 'a1'),
@@ -1581,6 +1576,7 @@ describe('ContextCompactionExt — historyTransformer', () => {
       makeSummaryMessage('summary'),
       makeTextMessage('user', 'new1'),
       makeTextMessage('assistant', 'new2'),
+      makeTextMessage('user', 'new3'),
     ];
 
     const ext = createContextCompactionExt.create(makeDeps());
@@ -1590,102 +1586,92 @@ describe('ContextCompactionExt — historyTransformer', () => {
       history: ExtendedUIMessage[];
       flags: { hasCompacted: boolean };
     };
-    // The last 2 users (u2, u3) and last 2 assistants (a1, a2) before
-    // the summary should be retained in chronological order.
+    // Result starts with the summary — nothing before it is kept
     expect(obj.history[0]!.parts[0]).toMatchObject({
-      type: 'text',
-      text: 'a1',
-    });
-    expect(obj.history[1]!.parts[0]).toMatchObject({
-      type: 'text',
-      text: 'u2',
-    });
-    expect(obj.history[2]!.parts[0]).toMatchObject({
-      type: 'text',
-      text: 'a2',
-    });
-    expect(obj.history[3]!.parts[0]).toMatchObject({
-      type: 'text',
-      text: 'u3',
-    });
-    expect(obj.history[4]!.parts[0]).toMatchObject({
       type: 'data-context-summary',
     });
-    expect(obj.history).toHaveLength(7); // a1, u2, a2, u3, summary, new1, new2
+    expect(obj.history).toHaveLength(4); // summary + new1 + new2 + new3
+    // No pre-summary messages in the result
+    expect(
+      obj.history.some((m) =>
+        m.parts.some(
+          (p) =>
+            p.type === 'text' &&
+            ['u1', 'a1', 'u2', 'a2', 'u3'].includes(
+              (p as { text: string }).text,
+            ),
+        ),
+      ),
+    ).toBe(false);
   });
 
-  it('does not require a full 2+2 if fewer are available before the summary', () => {
+  it('does not apply summary when fewer than 2 user messages follow it', () => {
     const history = [
-      makeTextMessage('user', 'only-user'),
+      makeTextMessage('user', 'before'),
       makeSummaryMessage('summary'),
-      makeTextMessage('user', 'new1'),
-      makeTextMessage('assistant', 'new2'),
+      makeTextMessage('user', 'only-user'),
+      makeTextMessage('assistant', 'only-assistant'),
+      // 1 user + 1 assistant — not enough users (need 2)
     ];
 
     const ext = createContextCompactionExt.create(makeDeps());
     const result = ext.historyTransformer!(history, MOCK_MODEL);
 
+    expect(Array.isArray(result)).toBe(false);
     const obj = result as {
       history: ExtendedUIMessage[];
       flags: { hasCompacted: boolean };
     };
-    // Only 1 user message available before summary — kept as-is
-    expect(obj.history[0]!.parts[0]).toMatchObject({
-      type: 'text',
-      text: 'only-user',
-    });
-    expect(obj.history[1]!.parts[0]).toMatchObject({
-      type: 'data-context-summary',
-    });
-    expect(obj.history).toHaveLength(4); // only-user + summary + new1 + new2
+    expect(obj.flags.hasCompacted).toBe(true);
+    // Summary not applied — full history returned
+    expect(obj.history).toHaveLength(4);
   });
 
-  it('skips other summary messages when collecting pre-summary context', () => {
+  it('does not apply summary when fewer than 1 assistant message follows it', () => {
     const history = [
-      makeSummaryMessage('first summary'),
-      makeTextMessage('user', 'u1'),
-      makeTextMessage('assistant', 'a1'),
-      makeTextMessage('user', 'u2'),
-      makeTextMessage('assistant', 'a2'),
-      makeSummaryMessage('second summary'),
-      makeTextMessage('user', 'new1'),
-      makeTextMessage('assistant', 'new2'),
+      makeSummaryMessage('summary'),
+      makeTextMessage('user', 'user1'),
+      makeTextMessage('user', 'user2'),
+      // 2 users + 0 assistants — not enough assistants (need 1)
     ];
 
     const ext = createContextCompactionExt.create(makeDeps());
     const result = ext.historyTransformer!(history, MOCK_MODEL);
 
+    expect(Array.isArray(result)).toBe(false);
     const obj = result as {
       history: ExtendedUIMessage[];
       flags: { hasCompacted: boolean };
     };
-    // Cutoff is "second summary". Pre-summary messages walk back from
-    // index 5, skipping "first summary": u2, a2, u1, a1 (2 users, 2 assistants).
+    expect(obj.flags.hasCompacted).toBe(true);
+    // Summary not applied — full history returned
+    expect(obj.history).toHaveLength(3);
+  });
+
+  it('applies summary when exactly 2 user and 1 assistant messages follow it', () => {
+    const history = [
+      makeTextMessage('user', 'old'),
+      makeSummaryMessage('summary'),
+      makeTextMessage('user', 'user1'),
+      makeTextMessage('assistant', 'assistant1'),
+      makeTextMessage('user', 'user2'),
+      // exactly 2 users + 1 assistant — meets threshold
+    ];
+
+    const ext = createContextCompactionExt.create(makeDeps());
+    const result = ext.historyTransformer!(history, MOCK_MODEL);
+
+    expect(Array.isArray(result)).toBe(false);
+    const obj = result as {
+      history: ExtendedUIMessage[];
+      flags: { hasCompacted: boolean };
+    };
+    expect(obj.flags.hasCompacted).toBe(true);
+    // Summary applied — nothing before it kept
     expect(obj.history[0]!.parts[0]).toMatchObject({
-      type: 'text',
-      text: 'u1',
-    });
-    expect(obj.history[1]!.parts[0]).toMatchObject({
-      type: 'text',
-      text: 'a1',
-    });
-    expect(obj.history[2]!.parts[0]).toMatchObject({
-      type: 'text',
-      text: 'u2',
-    });
-    expect(obj.history[3]!.parts[0]).toMatchObject({
-      type: 'text',
-      text: 'a2',
-    });
-    expect(obj.history[4]!.parts[0]).toMatchObject({
       type: 'data-context-summary',
-      data: { summary: 'second summary' },
     });
-    // Only one summary in the result
-    const summaryCount = obj.history.filter((m) =>
-      m.parts.some((p) => p.type === 'data-context-summary'),
-    ).length;
-    expect(summaryCount).toBe(1);
+    expect(obj.history).toHaveLength(4); // summary + user1 + assistant1 + user2
   });
 
   it('dataPartTransformers converts context-summary to <summary> text', () => {
@@ -1885,8 +1871,8 @@ describe('ContextCompactionExt — post-compaction baseline & hysteresis', () =>
     await flushMicrotasks();
     expect(deps.generateText).toHaveBeenCalledTimes(1);
 
-    // Post-compaction step: summary exists but has only 1 message
-    // after it — below MIN_MESSAGES_AFTER_SUMMARY. The transformer
+    // Post-compaction step: summary exists but has only 1 user + 0
+    // assistants after it — below MIN_USER_MESSAGES_AFTER_SUMMARY. The transformer
     // does NOT apply the summary, so the baseline is deferred.
     vi.mocked(deps.generateText)!.mockClear();
     await simulateStep(

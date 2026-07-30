@@ -38,21 +38,18 @@ export const CONTEXT_SIZE_THRESHOLD_RATIO = 0.5;
 export const FALLBACK_COMPACTION_THRESHOLD = 10_000;
 
 /**
- * Minimum number of messages that must exist after a summary before it
- * is applied during history preprocessing. If a newer summary has fewer
- * messages after it than this threshold, it is skipped and an older
+ * Minimum number of user messages that must exist after a summary before
+ * it is applied during history preprocessing. If a newer summary has fewer
+ * user messages after it than this threshold, it is skipped and an older
  * summary is used instead.
  */
-export const MIN_MESSAGES_AFTER_SUMMARY = 2;
+export const MIN_USER_MESSAGES_AFTER_SUMMARY = 2;
 
 /**
- * Minimum number of messages of each role (user, assistant) to retain
- * BEFORE the cutoff summary in the transformed history. This ensures the
- * model always has some real conversation context preceding the summary,
- * rather than the summary appearing as the first message after the system
- * prompt.
+ * Minimum number of assistant messages that must exist after a summary
+ * before it is applied during history preprocessing.
  */
-export const MIN_MESSAGES_BEFORE_SUMMARY_BY_ROLE = 2;
+export const MIN_ASSISTANT_MESSAGES_AFTER_SUMMARY = 1;
 
 /**
  * Hysteresis margin for post-compaction re-triggering. After a
@@ -192,12 +189,20 @@ class ContextCompactionExt implements Extension {
 
     if (summaryIndices.length === 0) return history;
 
-    // Walk summaries from newest to oldest. The first summary that has
-    // enough messages after it is the cutoff point.
+    // Walk summaries from newest to oldest. The first summary that
+    // has enough user and assistant messages after it is the cutoff
+    // point. No messages before the cutoff summary are retained —
+    // the summary replaces all preceding history.
     let cutoffIndex = -1;
     for (const idx of summaryIndices) {
-      const messagesAfter = history.length - idx - 1;
-      if (messagesAfter >= MIN_MESSAGES_AFTER_SUMMARY) {
+      const { userCount, assistantCount } = countMessagesByRoleAfter(
+        history,
+        idx,
+      );
+      if (
+        userCount >= MIN_USER_MESSAGES_AFTER_SUMMARY &&
+        assistantCount >= MIN_ASSISTANT_MESSAGES_AFTER_SUMMARY
+      ) {
         cutoffIndex = idx;
         break;
       }
@@ -216,7 +221,8 @@ class ContextCompactionExt implements Extension {
 
     // Slice from the cutoff summary. Strip any other summary messages
     // from the result so only the cutoff summary remains — multiple
-    // summaries in the context would confuse the model.
+    // summaries in the context would confuse the model. No messages
+    // before the summary are retained.
     const sliced = history.slice(cutoffIndex);
     const filtered = sliced.filter(
       (msg, i) =>
@@ -224,35 +230,8 @@ class ContextCompactionExt implements Extension {
         !msg.parts.some((p) => p.type === 'data-context-summary'),
     );
 
-    // Collect up to MIN_MESSAGES_BEFORE_SUMMARY_BY_ROLE messages of each
-    // role from the messages immediately preceding the cutoff summary.
-    // This guarantees the model sees some real conversation before the
-    // summary, rather than the summary being the first message after the
-    // system prompt. Walk backwards from the cutoff to pick the most
-    // recent messages of each role.
-    const beforeCutoff = history.slice(0, cutoffIndex);
-    const minPerRole = MIN_MESSAGES_BEFORE_SUMMARY_BY_ROLE;
-    const keepBefore: ExtendedUIMessage[] = [];
-    let userCount = 0;
-    let assistantCount = 0;
-
-    for (let i = beforeCutoff.length - 1; i >= 0; i--) {
-      const msg = beforeCutoff[i]!;
-      // Skip other summary messages — they're already represented by the
-      // cutoff summary.
-      if (msg.parts.some((p) => p.type === 'data-context-summary')) continue;
-      if (msg.role === 'user' && userCount < minPerRole) {
-        keepBefore.unshift(msg);
-        userCount++;
-      } else if (msg.role === 'assistant' && assistantCount < minPerRole) {
-        keepBefore.unshift(msg);
-        assistantCount++;
-      }
-      if (userCount >= minPerRole && assistantCount >= minPerRole) break;
-    }
-
     return {
-      history: [...keepBefore, ...filtered],
+      history: filtered,
       flags: { hasCompacted: true },
     };
   }
@@ -653,6 +632,26 @@ function partToXml(part: ExtendedUIMessage['parts'][number]): string {
 
   // Skip: data-continue and any unknown parts
   return '';
+}
+
+/**
+ * Counts non-summary user and assistant messages after the given
+ * index in the history. Summary messages are excluded from the
+ * count because they will be stripped from the transformed result.
+ */
+function countMessagesByRoleAfter(
+  history: ExtendedUIMessage[],
+  index: number,
+): { userCount: number; assistantCount: number } {
+  let userCount = 0;
+  let assistantCount = 0;
+  for (let i = index + 1; i < history.length; i++) {
+    const msg = history[i]!;
+    if (msg.parts.some((p) => p.type === 'data-context-summary')) continue;
+    if (msg.role === 'user') userCount++;
+    else if (msg.role === 'assistant') assistantCount++;
+  }
+  return { userCount, assistantCount };
 }
 
 /**

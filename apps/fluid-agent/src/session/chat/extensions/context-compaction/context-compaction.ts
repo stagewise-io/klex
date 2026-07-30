@@ -458,10 +458,21 @@ class ContextCompactionExt implements Extension {
     });
 
     if (!result.success) {
-      // All compaction models failed — try chat models as a last
-      // resort, but only if we haven't already fallen back to chat
-      // models above (no compaction models configured). Retrying with
-      // the same chat models that just failed would be a wasted call.
+      if (result.failureReason === 'content-filter') {
+        this.deps.logger.warn(
+          { failureDetails: result.failureDetails },
+          'Compaction models returned content-filter — refusing to inject refusal text as summary',
+        );
+        span.addEvent('compaction.content_filter', {
+          failureDetails: result.failureDetails ?? '',
+        });
+      }
+
+      // All compaction models failed (or content-filtered) — try
+      // chat models as a last resort, but only if we haven't already
+      // fallen back to chat models above (no compaction models
+      // configured). Retrying with the same chat models that just
+      // failed would be a wasted call.
       if (!usedChatFallback) {
         const chatModelIds = this.deps.config.getModelSelection('chat');
         if (chatModelIds.length > 0) {
@@ -476,6 +487,11 @@ class ContextCompactionExt implements Extension {
           });
 
           if (!fallbackResult.success) {
+            if (fallbackResult.failureReason === 'content-filter') {
+              this.deps.logger.warn(
+                'Chat model fallback also returned content-filter — compaction aborted',
+              );
+            }
             span.addEvent('compaction.failed', {
               reason: 'all-models-failed-including-chat',
               failureReason: fallbackResult.failureReason,

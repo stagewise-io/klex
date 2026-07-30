@@ -282,6 +282,7 @@ class ChatSessionModule implements AgentSession {
         }
 
         const failures: string[] = [];
+        let contentFilterCount = 0;
 
         for (const modelId of modelIds) {
           try {
@@ -312,6 +313,26 @@ class ChatSessionModule implements AgentSession {
 
             // Per-extension usage tracking is handled by the
             // onExtensionUsage callback in the extension handler wrapper.
+
+            // The AI SDK does not throw for content-filter responses —
+            // it returns a result with finishReason: 'content-filter' and
+            // the refusal text as result.text. Intercept this so the
+            // extension sees a structured failure instead of a fake
+            // success with useless refusal text.
+            if (result.finishReason === 'content-filter') {
+              const msg = `${modelId}: content-filter response`;
+              failures.push(msg);
+              contentFilterCount++;
+              this.deps.logger.warn(
+                { modelId, finishReason: result.finishReason },
+                'Extension generateText returned content-filter — trying next model',
+              );
+              span.addEvent('gen.model_content_filter', {
+                'gen.modelId': modelId,
+                'gen.finishReason': result.finishReason,
+              });
+              continue;
+            }
 
             span.setAttribute('gen.outcome', 'success');
             span.setAttribute('gen.modelId', modelId);
@@ -354,13 +375,24 @@ class ChatSessionModule implements AgentSession {
           }
         }
 
-        span.setAttribute('gen.outcome', 'all-models-failed');
+        const allContentFilter =
+          contentFilterCount > 0 && contentFilterCount === modelIds.length;
+
+        span.setAttribute(
+          'gen.outcome',
+          allContentFilter ? 'content-filter' : 'all-models-failed',
+        );
         span.setAttribute('gen.failureDetails', failures.join('; '));
-        span.addEvent('gen.all_models_failed');
+        span.setAttribute('gen.contentFilterCount', contentFilterCount);
+        span.addEvent('gen.all_models_failed', {
+          allContentFilter,
+        });
 
         return {
           success: false as const,
-          failureReason: 'all-models-failed' as const,
+          failureReason: allContentFilter
+            ? ('content-filter' as const)
+            : ('all-models-failed' as const),
           failureDetails: failures.join('; '),
         };
       });

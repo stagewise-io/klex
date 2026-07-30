@@ -693,6 +693,72 @@ describe('ContextCompactionExt — runCompaction', () => {
     expect(deps.insertMessageAfter).not.toHaveBeenCalled();
   });
 
+  it('tries chat-model fallback when compaction models return content-filter, then injects summary', async () => {
+    // Compaction models content-filter → fallback to chat models → success.
+    // The extension must NOT inject the refusal text; it must try the
+    // fallback and inject the real summary instead.
+    const deps = makeDeps({
+      getHistory: vi.fn(() => [
+        makeTextMessage('user', 'Hello'),
+        makeTextMessage('assistant', 'Hi'),
+      ]),
+      config: {
+        getModelSelection: vi.fn((key: string) =>
+          key === 'compaction' ? ['remote:claude-sonnet'] : ['remote:gpt-4o'],
+        ),
+        getModelContextSize: vi.fn(() => 20_000),
+      } as unknown as ExtensionDeps['config'],
+      generateText: vi
+        .fn()
+        .mockResolvedValueOnce(genFailure('content-filter'))
+        .mockResolvedValueOnce(genSuccess('Real summary from fallback')),
+    });
+
+    const ext = createContextCompactionExt.create(deps);
+    await ext.onStepComplete!(
+      makeResult(makeUsage(FALLBACK_COMPACTION_THRESHOLD, 0)),
+    );
+    await flushMicrotasks();
+
+    expect(deps.generateText).toHaveBeenCalledTimes(2);
+    expect(deps.insertMessageAfter).toHaveBeenCalledTimes(1);
+    const [, message] = vi.mocked(deps.insertMessageAfter)!.mock.calls[0]!;
+    expect(message.parts[0]).toMatchObject({
+      type: 'data-context-summary',
+      data: { summary: 'Real summary from fallback' },
+    });
+  });
+
+  it('fails gracefully when both compaction and chat models return content-filter', async () => {
+    // All models content-filter → no summary injected, no throw.
+    const deps = makeDeps({
+      getHistory: vi.fn(() => [
+        makeTextMessage('user', 'Hello'),
+        makeTextMessage('assistant', 'Hi'),
+      ]),
+      config: {
+        getModelSelection: vi.fn((key: string) =>
+          key === 'compaction' ? ['remote:claude-sonnet'] : ['remote:gpt-4o'],
+        ),
+        getModelContextSize: vi.fn(() => 20_000),
+      } as unknown as ExtensionDeps['config'],
+      generateText: vi.fn().mockResolvedValue(genFailure('content-filter')),
+    });
+
+    const ext = createContextCompactionExt.create(deps);
+    await ext.onStepComplete!(
+      makeResult(makeUsage(FALLBACK_COMPACTION_THRESHOLD, 0)),
+    );
+    await flushMicrotasks();
+
+    expect(deps.generateText).toHaveBeenCalledTimes(2);
+    expect(deps.insertMessageAfter).not.toHaveBeenCalled();
+    // Should have warned about content-filter
+    expect(deps.logger.warn).toHaveBeenCalledWith(
+      'Chat model fallback also returned content-filter — compaction aborted',
+    );
+  });
+
   it('inserts summary after the last message of the compaction slice', async () => {
     const history = [
       makeTextMessage('user', 'Old message 1'),

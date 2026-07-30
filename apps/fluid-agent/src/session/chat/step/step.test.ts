@@ -434,6 +434,7 @@ describe('Step — extension handler hooks', () => {
 
     expect(convertToModelMessagesExtended).toHaveBeenCalledWith(
       preProcessedHistory,
+      expect.anything(),
     );
   });
 

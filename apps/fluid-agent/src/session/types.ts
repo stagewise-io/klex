@@ -155,7 +155,7 @@ export type ContinueDataUIPart = Record<string, never>;
 /**
  * Custom data part that stores a history summary of the chat session. This is used to provide context to the agent about what has happened in the session so far.
  */
-export type HistorySummaryDataUIPart = {
+export type ContextSummaryDataUIPart = {
   /**
    * A summary of the things that happened
    */
@@ -190,7 +190,7 @@ export type ContextDataUIPart = {
 };
 
 export type CustomUIDataParts = {
-  'history-summary': HistorySummaryDataUIPart;
+  'context-summary': ContextSummaryDataUIPart;
   context: ContextDataUIPart;
   continue: ContinueDataUIPart;
 };

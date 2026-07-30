@@ -4,22 +4,40 @@ import { describe, expect, it, vi } from 'vitest';
 import type { ExtendedUIMessage } from '@/session/types';
 
 import type {
+  BaseExtensionDeps,
   DataPartTransformers,
   Extension,
   ExtensionDeps,
   ExtensionFactory,
 } from '../extensions/extension-api';
+import type { GenerationRunnerResult } from '../step/generation-runner';
 import { createExtensionHandler } from './extension-handler';
 
 // --- fixtures ---
 
-const noopDeps: ExtensionDeps = {
+const noopDeps: BaseExtensionDeps = {
   getHistory: () => [],
+  insertMessageAfter: vi.fn(() => true),
   inbox: {
     send: vi.fn(),
     sendMessage: vi.fn(),
     close: vi.fn(),
   },
+  config: { get: () => ({}) } as unknown as BaseExtensionDeps['config'],
+  generateTextWithFallback: vi.fn(() => Promise.resolve(null)),
+  logger: {
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+    debug: vi.fn(),
+    trace: vi.fn(),
+  } as unknown as BaseExtensionDeps['logger'],
+};
+
+const HANDLER_OPTS = {
+  extensionDeps: noopDeps,
+  dataDirectory: '/tmp/test-agent-data',
+  sessionId: 'session-123',
 };
 
 function makeMessage(text: string): ExtendedUIMessage {
@@ -30,15 +48,23 @@ function makeMessage(text: string): ExtendedUIMessage {
   } as ExtendedUIMessage;
 }
 
+let factoryIdCounter = 0;
+
 /** Creates a factory that returns a partial extension with spied hooks. */
 function factoryWith(
   overrides: Partial<Extension> & { _spy?: boolean } = {},
 ): ExtensionFactory {
-  return () => ({
-    onHistoryPreProcessing: overrides.onHistoryPreProcessing,
-    onHistoryPostProcessing: overrides.onHistoryPostProcessing,
-    dataPartTransformers: overrides.dataPartTransformers,
-  });
+  const id = `test.example/ext-${++factoryIdCounter}`;
+  return {
+    identifier: id,
+    create: () => ({
+      identifier: id,
+      onHistoryPreProcessing: overrides.onHistoryPreProcessing,
+      onHistoryPostProcessing: overrides.onHistoryPostProcessing,
+      onStepComplete: overrides.onStepComplete,
+      dataPartTransformers: overrides.dataPartTransformers,
+    }),
+  };
 }
 
 // --- tests ---
@@ -47,7 +73,7 @@ describe('ExtensionHandler — factory', () => {
   it('returns an object implementing ExtensionHandler', () => {
     const handler = createExtensionHandler({
       factories: [],
-      extensionDeps: noopDeps,
+      ...HANDLER_OPTS,
     });
     expect(typeof handler.onHistoryPreProcessing).toBe('function');
     expect(typeof handler.onHistoryPostProcessing).toBe('function');
@@ -55,22 +81,30 @@ describe('ExtensionHandler — factory', () => {
   });
 
   it('instantiates all extensions from the provided factories', () => {
-    const factory1 = vi.fn(factoryWith({}));
-    const factory2 = vi.fn(factoryWith({}));
+    const f1 = factoryWith({});
+    const f2 = factoryWith({});
+    const create1 = vi.fn(f1.create);
+    const create2 = vi.fn(f2.create);
 
     createExtensionHandler({
-      factories: [factory1, factory2],
-      extensionDeps: noopDeps,
+      factories: [
+        { identifier: f1.identifier, create: create1 },
+        { identifier: f2.identifier, create: create2 },
+      ],
+      ...HANDLER_OPTS,
     });
 
-    expect(factory1).toHaveBeenCalledExactlyOnceWith(noopDeps);
-    expect(factory2).toHaveBeenCalledExactlyOnceWith(noopDeps);
+    expect(create1).toHaveBeenCalledOnce();
+    expect(create2).toHaveBeenCalledOnce();
+    // Each factory receives deps that include getDataDir
+    const deps1 = create1.mock.calls[0]![0];
+    expect(typeof deps1.getDataDir).toBe('function');
   });
 
   it('exposes the instantiated extensions as a readonly array', () => {
     const handler = createExtensionHandler({
       factories: [factoryWith({}), factoryWith({})],
-      extensionDeps: noopDeps,
+      ...HANDLER_OPTS,
     });
     expect(handler.extensions).toHaveLength(2);
   });
@@ -78,9 +112,71 @@ describe('ExtensionHandler — factory', () => {
   it('works with zero factories', () => {
     const handler = createExtensionHandler({
       factories: [],
-      extensionDeps: noopDeps,
+      ...HANDLER_OPTS,
     });
     expect(handler.extensions).toHaveLength(0);
+  });
+
+  it('throws on duplicate extension identifiers', () => {
+    const dup: ExtensionFactory = {
+      identifier: 'io.stagewise/duplicate',
+      create: () => ({ identifier: 'io.stagewise/duplicate' }),
+    };
+    expect(() =>
+      createExtensionHandler({
+        factories: [dup, dup],
+        ...HANDLER_OPTS,
+      }),
+    ).toThrow(/Duplicate extension identifier/);
+  });
+
+  it('throws when extension identifier does not match factory identifier', () => {
+    const mismatched: ExtensionFactory = {
+      identifier: 'io.stagewise/factory-id',
+      create: () => ({ identifier: 'io.stagewise/wrong-id' }),
+    };
+    expect(() =>
+      createExtensionHandler({
+        factories: [mismatched],
+        ...HANDLER_OPTS,
+      }),
+    ).toThrow(/Extension identifier mismatch/);
+  });
+
+  it('provides session-scoped getDataDir by default', () => {
+    let receivedDeps: ExtensionDeps | null = null;
+    const factory: ExtensionFactory = {
+      identifier: 'io.stagewise/getdatadir-test',
+      create: (deps) => {
+        receivedDeps = deps;
+        return { identifier: 'io.stagewise/getdatadir-test' };
+      },
+    };
+    createExtensionHandler({
+      factories: [factory],
+      ...HANDLER_OPTS,
+    });
+    expect(receivedDeps!.getDataDir()).toBe(
+      '/tmp/test-agent-data/sessions/session-123/extensions/io.stagewise/getdatadir-test',
+    );
+  });
+
+  it('provides global getDataDir when global=true', () => {
+    let receivedDeps: ExtensionDeps | null = null;
+    const factory: ExtensionFactory = {
+      identifier: 'io.stagewise/getdatadir-global',
+      create: (deps) => {
+        receivedDeps = deps;
+        return { identifier: 'io.stagewise/getdatadir-global' };
+      },
+    };
+    createExtensionHandler({
+      factories: [factory],
+      ...HANDLER_OPTS,
+    });
+    expect(receivedDeps!.getDataDir(true)).toBe(
+      '/tmp/test-agent-data/extensions/io.stagewise/getdatadir-global',
+    );
   });
 });
 
@@ -88,7 +184,7 @@ describe('ExtensionHandler — onHistoryPreProcessing', () => {
   it('returns the history unchanged with empty flags when no extensions define the hook', async () => {
     const handler = createExtensionHandler({
       factories: [factoryWith({})],
-      extensionDeps: noopDeps,
+      ...HANDLER_OPTS,
     });
     const history = [makeMessage('a')];
     const result = await handler.onHistoryPreProcessing(history);
@@ -111,7 +207,7 @@ describe('ExtensionHandler — onHistoryPreProcessing', () => {
         factoryWith({ onHistoryPreProcessing: hook1 }),
         factoryWith({ onHistoryPreProcessing: hook2 }),
       ],
-      extensionDeps: noopDeps,
+      ...HANDLER_OPTS,
     });
 
     const result = await handler.onHistoryPreProcessing([makeMessage('orig')]);
@@ -142,7 +238,7 @@ describe('ExtensionHandler — onHistoryPreProcessing', () => {
         factoryWith({}), // no hook
         factoryWith({ onHistoryPreProcessing: hook3 }),
       ],
-      extensionDeps: noopDeps,
+      ...HANDLER_OPTS,
     });
 
     await handler.onHistoryPreProcessing([makeMessage('orig')]);
@@ -159,7 +255,7 @@ describe('ExtensionHandler — onHistoryPreProcessing', () => {
 
     const handler = createExtensionHandler({
       factories: [factoryWith({ onHistoryPreProcessing: hook })],
-      extensionDeps: noopDeps,
+      ...HANDLER_OPTS,
     });
 
     const result = await handler.onHistoryPreProcessing([makeMessage('orig')]);
@@ -170,7 +266,7 @@ describe('ExtensionHandler — onHistoryPreProcessing', () => {
     const hook = vi.fn((h: ExtendedUIMessage[]) => h);
     const handler = createExtensionHandler({
       factories: [factoryWith({ onHistoryPreProcessing: hook })],
-      extensionDeps: noopDeps,
+      ...HANDLER_OPTS,
     });
     const history = [makeMessage('a')];
     const result = await handler.onHistoryPreProcessing(history);
@@ -193,7 +289,7 @@ describe('ExtensionHandler — onHistoryPreProcessing', () => {
         factoryWith({ onHistoryPreProcessing: hook1 }),
         factoryWith({ onHistoryPreProcessing: hook2 }),
       ],
-      extensionDeps: noopDeps,
+      ...HANDLER_OPTS,
     });
 
     const result = await handler.onHistoryPreProcessing([makeMessage('a')]);
@@ -205,7 +301,7 @@ describe('ExtensionHandler — onHistoryPostProcessing', () => {
   it('returns the history unchanged with empty flags when no extensions define the hook', async () => {
     const handler = createExtensionHandler({
       factories: [factoryWith({})],
-      extensionDeps: noopDeps,
+      ...HANDLER_OPTS,
     });
     const history: ModelMessage[] = [
       { role: 'user', content: [{ type: 'text', text: 'a' }] },
@@ -236,7 +332,7 @@ describe('ExtensionHandler — onHistoryPostProcessing', () => {
         factoryWith({ onHistoryPostProcessing: hook1 }),
         factoryWith({ onHistoryPostProcessing: hook2 }),
       ],
-      extensionDeps: noopDeps,
+      ...HANDLER_OPTS,
     });
 
     const result = await handler.onHistoryPostProcessing([
@@ -257,7 +353,7 @@ describe('ExtensionHandler — onHistoryPostProcessing', () => {
         factoryWith({ onHistoryPostProcessing: hook1 }),
         factoryWith({}), // no hook
       ],
-      extensionDeps: noopDeps,
+      ...HANDLER_OPTS,
     });
 
     await handler.onHistoryPostProcessing([
@@ -272,7 +368,7 @@ describe('ExtensionHandler — getDataPartTransformers', () => {
   it('returns an empty object when no extensions define transformers', () => {
     const handler = createExtensionHandler({
       factories: [factoryWith({}), factoryWith({})],
-      extensionDeps: noopDeps,
+      ...HANDLER_OPTS,
     });
     expect(handler.getDataPartTransformers()).toEqual({});
   });
@@ -287,7 +383,7 @@ describe('ExtensionHandler — getDataPartTransformers', () => {
       context: transformer1,
     } as unknown as DataPartTransformers;
     const transformers2 = {
-      'history-summary': transformer2,
+      'context-summary': transformer2,
     } as unknown as DataPartTransformers;
 
     const handler = createExtensionHandler({
@@ -295,12 +391,12 @@ describe('ExtensionHandler — getDataPartTransformers', () => {
         factoryWith({ dataPartTransformers: transformers1 }),
         factoryWith({ dataPartTransformers: transformers2 }),
       ],
-      extensionDeps: noopDeps,
+      ...HANDLER_OPTS,
     });
 
     const merged = handler.getDataPartTransformers();
     expect(merged.context).toBe(transformer1);
-    expect(merged['history-summary']).toBe(transformer2);
+    expect(merged['context-summary']).toBe(transformer2);
   });
 
   it('throws when two extensions register a transformer for the same type', () => {
@@ -319,7 +415,7 @@ describe('ExtensionHandler — getDataPartTransformers', () => {
         factoryWith({ dataPartTransformers: transformers1 }),
         factoryWith({ dataPartTransformers: transformers2 }),
       ],
-      extensionDeps: noopDeps,
+      ...HANDLER_OPTS,
     });
 
     expect(() => handler.getDataPartTransformers()).toThrow(
@@ -335,11 +431,139 @@ describe('ExtensionHandler — getDataPartTransformers', () => {
 
     const handler = createExtensionHandler({
       factories: [factoryWith({ dataPartTransformers: transformers })],
-      extensionDeps: noopDeps,
+      ...HANDLER_OPTS,
     });
 
     const first = handler.getDataPartTransformers();
     const second = handler.getDataPartTransformers();
     expect(first).toEqual(second);
+  });
+});
+
+describe('ExtensionHandler — onStepComplete', () => {
+  const stepResult: GenerationRunnerResult = {
+    shouldContinue: true,
+    forceNextStep: false,
+    fatalError: false,
+    fatalErrorReason: null,
+    generationFailed: false,
+    usage: {
+      inputTokens: 100,
+      outputTokens: 50,
+    },
+  };
+
+  it('is a no-op when no extensions define the hook', async () => {
+    const handler = createExtensionHandler({
+      factories: [factoryWith({})],
+      ...HANDLER_OPTS,
+    });
+    await expect(handler.onStepComplete(stepResult)).resolves.toBeUndefined();
+  });
+
+  it('calls onStepComplete on each extension in order', async () => {
+    const hook1 = vi.fn(() => {});
+    const hook2 = vi.fn(() => {});
+
+    const handler = createExtensionHandler({
+      factories: [
+        factoryWith({ onStepComplete: hook1 }),
+        factoryWith({ onStepComplete: hook2 }),
+      ],
+      ...HANDLER_OPTS,
+    });
+
+    await handler.onStepComplete(stepResult);
+
+    // Each hook receives a shallow copy with the same values.
+    expect(hook1).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining(stepResult),
+    );
+    expect(hook2).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining(stepResult),
+    );
+  });
+
+  it('skips extensions that do not define the hook', async () => {
+    const hook1 = vi.fn(() => {});
+    const hook3 = vi.fn(() => {});
+
+    const handler = createExtensionHandler({
+      factories: [
+        factoryWith({ onStepComplete: hook1 }),
+        factoryWith({}),
+        factoryWith({ onStepComplete: hook3 }),
+      ],
+      ...HANDLER_OPTS,
+    });
+
+    await handler.onStepComplete(stepResult);
+
+    expect(hook1).toHaveBeenCalledOnce();
+    expect(hook3).toHaveBeenCalledOnce();
+  });
+
+  it('supports async hooks', async () => {
+    const hook = vi.fn(async () => {
+      await new Promise((r) => setTimeout(r, 10));
+    });
+
+    const handler = createExtensionHandler({
+      factories: [factoryWith({ onStepComplete: hook })],
+      ...HANDLER_OPTS,
+    });
+
+    await handler.onStepComplete(stepResult);
+    expect(hook).toHaveBeenCalledOnce();
+  });
+
+  it('passes a shallow copy so extensions cannot mutate the original result', async () => {
+    const hook1 = vi.fn((result: GenerationRunnerResult) => {
+      // Mutate the result — this should NOT affect the original.
+      result.shouldContinue = false;
+      result.usage = { inputTokens: 999, outputTokens: 999 };
+    });
+    const hook2 = vi.fn((result: GenerationRunnerResult) => {
+      // Should see the original, unmutated values.
+      expect(result.shouldContinue).toBe(true);
+      expect(result.usage).toEqual({ inputTokens: 100, outputTokens: 50 });
+    });
+
+    const handler = createExtensionHandler({
+      factories: [
+        factoryWith({ onStepComplete: hook1 }),
+        factoryWith({ onStepComplete: hook2 }),
+      ],
+      ...HANDLER_OPTS,
+    });
+
+    await handler.onStepComplete(stepResult);
+
+    // The original object passed to the handler is unmutated.
+    expect(stepResult.shouldContinue).toBe(true);
+    expect(stepResult.usage).toEqual({ inputTokens: 100, outputTokens: 50 });
+    expect(hook1).toHaveBeenCalledOnce();
+    expect(hook2).toHaveBeenCalledOnce();
+  });
+
+  it('catches and logs errors from individual extensions without breaking the chain', async () => {
+    const hook1 = vi.fn(() => {
+      throw new Error('hook1 failed');
+    });
+    const hook2 = vi.fn(() => {});
+
+    const handler = createExtensionHandler({
+      factories: [
+        factoryWith({ onStepComplete: hook1 }),
+        factoryWith({ onStepComplete: hook2 }),
+      ],
+      ...HANDLER_OPTS,
+    });
+
+    await handler.onStepComplete(stepResult);
+
+    expect(hook1).toHaveBeenCalledOnce();
+    expect(hook2).toHaveBeenCalledOnce();
+    expect(noopDeps.logger.error).toHaveBeenCalled();
   });
 });

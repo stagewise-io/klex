@@ -64,7 +64,7 @@ const convertCustomDataParts = (
       type: 'text',
       text: `<context source-env="${part.data.sourceEnv}"><metadata>${metadata}</metadata><content>${content}</content></context>`,
     };
-  } else if (part.type === 'data-history-summary') {
+  } else if (part.type === 'data-context-summary') {
     return {
       type: 'text',
       text: `<summary>${part.data.summary}</summary>`,

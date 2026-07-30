@@ -72,6 +72,7 @@ function createMockConfig(
     subscribe: () => () => undefined,
     getModelSelection: () => [],
     resolveModel: resolveModelImpl,
+    getModelContextSize: () => 200_000,
     getMcpServers: () => ({}),
     addMcpServer: async () => {
       throw new Error('Not used in model provider tests');
@@ -106,6 +107,7 @@ function resolved(
     modelId: overrides.modelId,
     endpoint,
     isPreset: overrides.isPreset ?? false,
+    contextSize: overrides.contextSize ?? 200_000,
   };
 }
 

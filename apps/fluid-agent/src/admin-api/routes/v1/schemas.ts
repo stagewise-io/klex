@@ -157,7 +157,7 @@ const modelIdSchema = z
 const modelSelectionSchema = z
   .object({
     chat: z.array(modelIdSchema),
-    compression: z.array(modelIdSchema),
+    compaction: z.array(modelIdSchema),
     memory: z.array(modelIdSchema),
   })
   .openapi('ModelSelection');
@@ -165,7 +165,7 @@ const modelSelectionSchema = z
 const modelSelectionPatchSchema = z
   .object({
     chat: z.array(modelIdSchema).optional(),
-    compression: z.array(modelIdSchema).optional(),
+    compaction: z.array(modelIdSchema).optional(),
     memory: z.array(modelIdSchema).optional(),
   })
   .openapi('ModelSelectionPatch');

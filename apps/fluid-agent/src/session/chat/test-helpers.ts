@@ -45,6 +45,7 @@ export function makeExtensionHandler() {
     onHistoryPostProcessing: vi.fn((h: never[]) =>
       Promise.resolve({ history: h, flags: {} }),
     ),
+    onStepComplete: vi.fn(() => Promise.resolve()),
     getDataPartTransformers: vi.fn(() => ({})),
   };
 }

@@ -90,11 +90,17 @@ export function resolvePresetEndpoint(
 
 const modelDefinitionSchema = z
   .object({
+    displayName: z.string().optional(),
     contextSize: z.number().int().positive().optional(),
   })
   .strict();
 
 type ModelDefinition = z.infer<typeof modelDefinitionSchema>;
+
+// Manual endpoint: endpoint config with optional known model metadata
+const manualEndpointSchema = endpointConfigSchema.extend({
+  knownModels: z.record(z.string(), modelDefinitionSchema).optional(),
+});
 
 // Provider config: a named provider with either a preset or manual endpoints
 
@@ -102,14 +108,13 @@ const presetProviderSchema = z
   .object({
     preset: providerPresetSchema,
     auth: endpointAuthSchema,
-    models: z.record(z.string(), modelDefinitionSchema).optional(),
+    knownModels: z.record(z.string(), modelDefinitionSchema).optional(),
   })
   .strict();
 
 const manualProviderSchema = z
   .object({
-    endpoints: z.record(z.string(), endpointConfigSchema),
-    models: z.record(z.string(), modelDefinitionSchema).optional(),
+    endpoints: z.record(z.string(), manualEndpointSchema),
   })
   .strict();
 

@@ -2,17 +2,21 @@ import { join } from 'node:path';
 
 import type { ModelMessage } from 'ai';
 
+import type { Usage } from '@/session/types';
+
 import type {
   BaseExtensionDeps,
   DataPartTransformers,
   Extension,
   ExtensionDeps,
   ExtensionFactory,
+  GenerateTextResult,
   StepCompleteEvent,
   StepCompleteHookResult,
   TransformationFlags,
 } from '../extensions/extension-api';
 import type { ExtendedUIMessage } from '../message-types';
+import { extractUsage } from '../utils/usage';
 
 /**
  * Normalizes a transformation hook return value into `{ history, flags }`.
@@ -108,6 +112,12 @@ export interface ExtensionHandlerDependencies {
   dataDirectory: string;
   /** ID of the session that owns these extensions. */
   sessionId: string;
+  /**
+   * Called after an extension's `generateText` call succeeds, with the
+   * extracted usage data. Used by the session to track per-extension
+   * token consumption separately from chat usage.
+   */
+  onExtensionUsage?: (identifier: string, usage: Usage) => void;
 }
 
 class ExtensionHandlerModule implements ExtensionHandler {
@@ -120,6 +130,7 @@ class ExtensionHandlerModule implements ExtensionHandler {
     extensionDeps: BaseExtensionDeps;
     dataDirectory: string;
     sessionId: string;
+    onExtensionUsage?: (identifier: string, usage: Usage) => void;
   }) {
     this.extensionDeps = deps.extensionDeps;
 
@@ -134,6 +145,9 @@ class ExtensionHandlerModule implements ExtensionHandler {
       seen.add(factory.identifier);
     }
 
+    const baseGenerateText = deps.extensionDeps.generateText;
+    const onExtensionUsage = deps.onExtensionUsage;
+
     this.extensions = deps.factories.map((factory) => {
       const scopedDeps: ExtensionDeps = {
         ...deps.extensionDeps,
@@ -147,6 +161,21 @@ class ExtensionHandlerModule implements ExtensionHandler {
                 'extensions',
                 factory.identifier,
               ),
+        // Wrap generateText so the session can track per-extension usage.
+        // The wrapper calls the original proxy and, on success, notifies
+        // the session with the extracted Usage data.
+        generateText: onExtensionUsage
+          ? async (args) => {
+              const result: GenerateTextResult = await baseGenerateText(args);
+              if (result.success) {
+                onExtensionUsage(
+                  factory.identifier,
+                  extractUsage(result.usage),
+                );
+              }
+              return result;
+            }
+          : baseGenerateText,
       };
 
       const ext = factory.create(scopedDeps);
@@ -240,11 +269,9 @@ class ExtensionHandlerModule implements ExtensionHandler {
   async runStepCompleteHooks(
     event: StepCompleteEvent,
   ): Promise<{ stop: boolean; stopReason: string | null }> {
-    const hooks = this.extensions
-      .filter((ext) => ext.onStepComplete)
-      .map((ext) => ext.onStepComplete!);
+    const extensions = this.extensions.filter((ext) => ext.onStepComplete);
 
-    if (hooks.length === 0) {
+    if (extensions.length === 0) {
       return { stop: false, stopReason: null };
     }
 
@@ -252,8 +279,14 @@ class ExtensionHandlerModule implements ExtensionHandler {
     // so mutations don't leak between extensions or back to the caller.
     // The async wrapper ensures synchronous throws become rejected promises
     // that Promise.allSettled can catch.
+    //
+    // Each hook is called on its extension instance (ext.onStepComplete!)
+    // rather than extracting the method reference — this preserves the
+    // `this` binding for class-based extensions that rely on instance state.
     const results = await Promise.allSettled(
-      hooks.map(async (hook) => hook(structuredClone(event))),
+      extensions.map(async (ext) =>
+        ext.onStepComplete!(structuredClone(event)),
+      ),
     );
 
     let stop = false;
@@ -264,7 +297,10 @@ class ExtensionHandlerModule implements ExtensionHandler {
       if (settled.status === 'rejected') {
         // Log the error but don't break — other hooks already ran in parallel.
         this.extensionDeps.logger.error(
-          { error: settled.reason, extensionIndex: i },
+          {
+            error: settled.reason,
+            extensionIdentifier: extensions[i]!.identifier,
+          },
           'Extension onStepComplete hook failed',
         );
         continue;
@@ -291,5 +327,6 @@ export function createExtensionHandler(
     extensionDeps: deps.extensionDeps,
     dataDirectory: deps.dataDirectory,
     sessionId: deps.sessionId,
+    onExtensionUsage: deps.onExtensionUsage,
   });
 }

@@ -4,6 +4,7 @@ import type {
   LanguageModelUsage,
   ModelMessage,
   TextPart,
+  ToolSet,
 } from 'ai';
 
 import type { ModuleLogger } from '@stagewise/logger';
@@ -57,6 +58,79 @@ export type HistoryProcessingResult =
 export type ContextProcessingResult =
   | ModelMessage[]
   | { history: ModelMessage[]; flags: TransformationFlags };
+
+// ---------------------------------------------------------------------------
+// Extension generation API
+// ---------------------------------------------------------------------------
+
+/**
+ * Arguments for {@link ExtensionDeps.generateText}.
+ *
+ * Either `prompt` (single-turn) or `messages` (multi-turn) must be provided.
+ * Both are passed through to the AI SDK's `generateText`.
+ */
+export interface GenerateTextArgs {
+  /** Ordered list of model IDs to try. First success wins. */
+  modelIds: readonly ModelId[];
+  /** System prompt. */
+  system?: string;
+  /** User prompt for single-turn generation. */
+  prompt?: string;
+  /** Multi-turn message history. */
+  messages?: ModelMessage[];
+  /** Tools available to the model during generation. */
+  tools?: ToolSet;
+  /** Sampling temperature (provider-specific range, typically 0–2). */
+  temperature?: number;
+  /** Maximum number of tokens to generate. */
+  maxOutputTokens?: number;
+  /** Max retries per model (default 0 — the fallback list handles retries). */
+  maxRetries?: number;
+}
+
+/**
+ * Successful generation result.
+ */
+export interface GenerateTextSuccess {
+  /** The generated text. */
+  text: string;
+  /** The model ID that produced the output. */
+  modelId: string;
+  /** Token usage from the successful generation, including cache details. */
+  usage: LanguageModelUsage;
+}
+
+/**
+ * Structured failure reason — a literal so extensions can compare
+ * without parsing free-form strings. Mirrors the AI SDK's `FinishReason`
+ * approach of small enumerable values.
+ */
+export type GenerateTextFailureReason =
+  /** No model IDs were provided. */
+  | 'no-models'
+  /** Every model in the fallback list threw an error. */
+  | 'all-models-failed'
+  /** The model returned a content-filter finish reason. */
+  | 'content-filter'
+  /** Catch-all for unexpected failures. */
+  | 'other';
+
+/**
+ * Failed generation result — all models in the fallback list failed.
+ */
+export interface GenerateTextFailure {
+  /** Structured reason for the failure — comparable as a literal. */
+  failureReason: GenerateTextFailureReason;
+  /** Human-readable details (per-model error messages). */
+  failureDetails?: string;
+}
+
+/**
+ * Discriminated union result of {@link ExtensionDeps.generateText}.
+ */
+export type GenerateTextResult =
+  | ({ success: true } & GenerateTextSuccess)
+  | ({ success: false } & GenerateTextFailure);
 
 // ---------------------------------------------------------------------------
 // Step event types
@@ -248,13 +322,16 @@ export interface ExtensionDeps {
    * that AI usage can be tracked at the session level. Tries each model ID
    * in order until one succeeds.
    *
-   * @returns The generated text, or `null` if all models failed.
+   * Supports both single-turn (`system` + `prompt`) and multi-turn
+   * (`messages`) generation, optional tools, and standard generation
+   * parameters. Usage from the successful call is accumulated into the
+   * session's token counters.
+   *
+   * @returns A discriminated union — `{ success: true, text, modelId, usage }`
+   *          on success, or `{ success: false, failureReason }` when all
+   *          models failed.
    */
-  generateTextWithFallback: (args: {
-    modelIds: readonly ModelId[];
-    system: string;
-    prompt: string;
-  }) => Promise<string | null>;
+  generateText: (args: GenerateTextArgs) => Promise<GenerateTextResult>;
 
   /**
    * Module-scoped logger for the extension.

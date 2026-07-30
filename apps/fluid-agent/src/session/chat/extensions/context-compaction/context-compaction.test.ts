@@ -4,7 +4,11 @@ import type { LanguageModelUsage } from 'ai';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { ExtendedUIMessage } from '../../message-types';
-import type { ExtensionDeps, StepCompleteEvent } from '../extension-api';
+import type {
+  ExtensionDeps,
+  GenerateTextFailureReason,
+  StepCompleteEvent,
+} from '../extension-api';
 import {
   CONTEXT_SIZE_THRESHOLD_RATIO,
   createContextCompactionExt,
@@ -144,7 +148,7 @@ function makeDeps(overrides?: Partial<ExtensionDeps>): ExtensionDeps {
       getModelSelection: vi.fn(() => ['remote:gpt-4o']),
       getModelContextSize: vi.fn(() => 20_000),
     } as unknown as ExtensionDeps['config'],
-    generateTextWithFallback: vi.fn().mockResolvedValue(null),
+    generateText: vi.fn().mockResolvedValue(genFailure()),
     logger: {
       info: vi.fn(),
       warn: vi.fn(),
@@ -155,6 +159,40 @@ function makeDeps(overrides?: Partial<ExtensionDeps>): ExtensionDeps {
     getDataDir: vi.fn(() => '/tmp/test-ext-data'),
     ...overrides,
   };
+}
+
+/** Builds a successful generateText result with zero-usage. */
+function genSuccess(text: string): {
+  success: true;
+  text: string;
+  modelId: string;
+  usage: LanguageModelUsage;
+} {
+  return {
+    success: true,
+    text,
+    modelId: 'test-model',
+    usage: {
+      inputTokens: 0,
+      outputTokens: 0,
+      inputTokenDetails: {
+        noCacheTokens: 0,
+        cacheReadTokens: 0,
+        cacheWriteTokens: 0,
+      },
+      outputTokenDetails: { textTokens: 0, reasoningTokens: 0 },
+      totalTokens: 0,
+    } as LanguageModelUsage,
+  };
+}
+
+/** Builds a failed generateText result. */
+function genFailure(reason: GenerateTextFailureReason = 'all-models-failed'): {
+  success: false;
+  failureReason: GenerateTextFailureReason;
+  failureDetails?: string;
+} {
+  return { success: false as const, failureReason: reason };
 }
 
 /** Flushes pending microtasks so fire-and-forget compaction can run. */
@@ -173,7 +211,7 @@ describe('ContextCompactionExt — onStepComplete token accumulation', () => {
     await ext.onStepComplete!(makeResult(makeUsage(200, 100)));
 
     // Not enough to trigger — no compaction call
-    expect(deps.generateTextWithFallback).not.toHaveBeenCalled();
+    expect(deps.generateText).not.toHaveBeenCalled();
   });
 
   it('skips accumulation when usage is null (failed generation)', async () => {
@@ -183,7 +221,7 @@ describe('ContextCompactionExt — onStepComplete token accumulation', () => {
     await ext.onStepComplete!(makeResult(null));
     await ext.onStepComplete!(makeResult(null));
 
-    expect(deps.generateTextWithFallback).not.toHaveBeenCalled();
+    expect(deps.generateText).not.toHaveBeenCalled();
   });
 
   it('does not trigger compaction when below threshold', async () => {
@@ -195,7 +233,7 @@ describe('ContextCompactionExt — onStepComplete token accumulation', () => {
     await ext.onStepComplete!(makeResult(makeUsage(half - 50, 0)));
     await ext.onStepComplete!(makeResult(makeUsage(half - 50, 0))); // total = threshold - 100
 
-    expect(deps.generateTextWithFallback).not.toHaveBeenCalled();
+    expect(deps.generateText).not.toHaveBeenCalled();
   });
 
   it('preserves tokens accumulated during compaction (does not reset to 0)', async () => {
@@ -207,8 +245,10 @@ describe('ContextCompactionExt — onStepComplete token accumulation', () => {
     });
 
     // Make compaction slow so we can accumulate tokens while it runs.
-    let resolveGenerate!: (v: string | null) => void;
-    vi.mocked(deps.generateTextWithFallback)!.mockReturnValue(
+    let resolveGenerate!: (
+      v: ReturnType<typeof genSuccess> | ReturnType<typeof genFailure>,
+    ) => void;
+    vi.mocked(deps.generateText)!.mockReturnValue(
       new Promise((resolve) => {
         resolveGenerate = resolve;
       }) as never,
@@ -228,31 +268,31 @@ describe('ContextCompactionExt — onStepComplete token accumulation', () => {
     await flushMicrotasks();
 
     // Only one compaction call — second was suppressed by compacting flag
-    expect(deps.generateTextWithFallback).toHaveBeenCalledTimes(1);
+    expect(deps.generateText).toHaveBeenCalledTimes(1);
 
     // Complete the compaction
-    resolveGenerate('Summary');
+    resolveGenerate(genSuccess('Summary'));
     await flushMicrotasks();
 
     // Now a small step that brings us back over threshold should trigger
     // again. If the fix is wrong (resets to 0), we'd need the full
     // threshold again. With the fix, only `threshold - inflightTokens`
     // more tokens are needed.
-    vi.mocked(deps.generateTextWithFallback)!.mockClear();
-    vi.mocked(deps.generateTextWithFallback)!.mockResolvedValue('Summary2');
+    vi.mocked(deps.generateText)!.mockClear();
+    vi.mocked(deps.generateText)!.mockResolvedValue(genSuccess('Summary2'));
 
     // Add just 1 token — total is now inflightTokens + 1, still below
     // threshold, so no compaction yet.
     await ext.onStepComplete!(makeResult(makeUsage(1, 0)));
     await flushMicrotasks();
-    expect(deps.generateTextWithFallback).not.toHaveBeenCalled();
+    expect(deps.generateText).not.toHaveBeenCalled();
 
     // Add enough to exceed threshold: remaining = threshold - inflightTokens - 1
     const remaining = FALLBACK_COMPACTION_THRESHOLD - inflightTokens - 1;
     await ext.onStepComplete!(makeResult(makeUsage(remaining, 0)));
     await flushMicrotasks();
 
-    expect(deps.generateTextWithFallback).toHaveBeenCalledTimes(1);
+    expect(deps.generateText).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -264,7 +304,7 @@ describe('ContextCompactionExt — compaction trigger', () => {
         makeTextMessage('user', 'Hello'),
         makeTextMessage('assistant', 'Hi there'),
       ]),
-      generateTextWithFallback: vi.fn().mockResolvedValue('New summary'),
+      generateText: vi.fn().mockResolvedValue(genSuccess('New summary')),
     });
 
     const ext = createContextCompactionExt.create(deps);
@@ -273,7 +313,7 @@ describe('ContextCompactionExt — compaction trigger', () => {
     );
     await flushMicrotasks();
 
-    expect(deps.generateTextWithFallback).toHaveBeenCalledTimes(1);
+    expect(deps.generateText).toHaveBeenCalledTimes(1);
   });
 
   it('does not trigger concurrent compaction', async () => {
@@ -284,9 +324,11 @@ describe('ContextCompactionExt — compaction trigger', () => {
       ]),
     });
 
-    // Make generateTextWithFallback slow so compaction stays in flight
-    let resolveGenerate!: (v: string | null) => void;
-    vi.mocked(deps.generateTextWithFallback)!.mockReturnValue(
+    // Make generateText slow so compaction stays in flight
+    let resolveGenerate!: (
+      v: ReturnType<typeof genSuccess> | ReturnType<typeof genFailure>,
+    ) => void;
+    vi.mocked(deps.generateText)!.mockReturnValue(
       new Promise((resolve) => {
         resolveGenerate = resolve;
       }) as never,
@@ -304,11 +346,11 @@ describe('ContextCompactionExt — compaction trigger', () => {
     );
     await flushMicrotasks();
 
-    // Only one generateTextWithFallback call — second was suppressed
-    expect(deps.generateTextWithFallback).toHaveBeenCalledTimes(1);
+    // Only one generateText call — second was suppressed
+    expect(deps.generateText).toHaveBeenCalledTimes(1);
 
     // Release the pending compaction
-    resolveGenerate('Summary');
+    resolveGenerate(genSuccess('Summary'));
     await flushMicrotasks();
   });
 
@@ -318,7 +360,7 @@ describe('ContextCompactionExt — compaction trigger', () => {
         makeTextMessage('user', 'Hello'),
         makeTextMessage('assistant', 'Hi there'),
       ]),
-      generateTextWithFallback: vi.fn().mockResolvedValue('New summary'),
+      generateText: vi.fn().mockResolvedValue(genSuccess('New summary')),
     });
 
     const ext = createContextCompactionExt.create(deps);
@@ -328,22 +370,22 @@ describe('ContextCompactionExt — compaction trigger', () => {
     await flushMicrotasks();
 
     // After compaction completes, another small step should NOT trigger
-    vi.mocked(deps.generateTextWithFallback)!.mockClear();
+    vi.mocked(deps.generateText)!.mockClear();
     await ext.onStepComplete!(makeResult(makeUsage(100, 50)));
     await flushMicrotasks();
 
-    expect(deps.generateTextWithFallback).not.toHaveBeenCalled();
+    expect(deps.generateText).not.toHaveBeenCalled();
   });
 });
 
 describe('ContextCompactionExt — runCompaction', () => {
-  it('calls generateTextWithFallback with compaction model IDs and system prompt', async () => {
+  it('calls generateText with compaction model IDs and system prompt', async () => {
     const deps = makeDeps({
       getHistory: vi.fn(() => [
         makeTextMessage('user', 'Hello'),
         makeTextMessage('assistant', 'Hi'),
       ]),
-      generateTextWithFallback: vi.fn().mockResolvedValue('Summary text'),
+      generateText: vi.fn().mockResolvedValue(genSuccess('Summary text')),
     });
 
     const ext = createContextCompactionExt.create(deps);
@@ -352,8 +394,8 @@ describe('ContextCompactionExt — runCompaction', () => {
     );
     await flushMicrotasks();
 
-    expect(deps.generateTextWithFallback).toHaveBeenCalledTimes(1);
-    const args = vi.mocked(deps.generateTextWithFallback)!.mock.calls[0]![0];
+    expect(deps.generateText).toHaveBeenCalledTimes(1);
+    const args = vi.mocked(deps.generateText)!.mock.calls[0]![0];
     expect(args.modelIds).toEqual(['remote:gpt-4o']);
     expect(args.system).toBe(
       'You are a summarizer. Summarize the conversation.',
@@ -371,9 +413,9 @@ describe('ContextCompactionExt — runCompaction', () => {
         getModelSelection: vi.fn(() => ['remote:gpt-4o', 'remote:claude']),
         getModelContextSize: vi.fn(() => 20_000),
       } as unknown as ExtensionDeps['config'],
-      generateTextWithFallback: vi
+      generateText: vi
         .fn()
-        .mockResolvedValue('Summary from fallback'),
+        .mockResolvedValue(genSuccess('Summary from fallback')),
     });
 
     const ext = createContextCompactionExt.create(deps);
@@ -383,9 +425,9 @@ describe('ContextCompactionExt — runCompaction', () => {
     await flushMicrotasks();
 
     // The extension delegates to the proxy once — per-model retry is
-    // handled inside the session's generateTextWithFallback.
-    expect(deps.generateTextWithFallback).toHaveBeenCalledTimes(1);
-    const args = vi.mocked(deps.generateTextWithFallback)!.mock.calls[0]![0];
+    // handled inside the session's generateText.
+    expect(deps.generateText).toHaveBeenCalledTimes(1);
+    const args = vi.mocked(deps.generateText)!.mock.calls[0]![0];
     expect(args.modelIds).toEqual(['remote:gpt-4o', 'remote:claude']);
     expect(deps.insertMessageAfter).toHaveBeenCalledTimes(1);
   });
@@ -397,7 +439,7 @@ describe('ContextCompactionExt — runCompaction', () => {
     ];
     const deps = makeDeps({
       getHistory: vi.fn(() => history),
-      generateTextWithFallback: vi.fn().mockResolvedValue('Compressed summary'),
+      generateText: vi.fn().mockResolvedValue(genSuccess('Compressed summary')),
     });
 
     const ext = createContextCompactionExt.create(deps);
@@ -424,10 +466,10 @@ describe('ContextCompactionExt — runCompaction', () => {
         makeTextMessage('user', 'Hello'),
         makeTextMessage('assistant', 'Hi'),
       ]),
-      generateTextWithFallback: vi
+      generateText: vi
         .fn()
         .mockResolvedValue(
-          'The user said hello and the assistant greeted them.',
+          genSuccess('The user said hello and the assistant greeted them.'),
         ),
     });
 
@@ -465,7 +507,7 @@ describe('ContextCompactionExt — runCompaction', () => {
     );
     await flushMicrotasks();
 
-    expect(deps.generateTextWithFallback).not.toHaveBeenCalled();
+    expect(deps.generateText).not.toHaveBeenCalled();
     expect(deps.insertMessageAfter).not.toHaveBeenCalled();
     expect(deps.logger.warn).toHaveBeenCalled();
   });
@@ -484,7 +526,7 @@ describe('ContextCompactionExt — runCompaction', () => {
         getModelSelection,
         getModelContextSize: vi.fn(() => 20_000),
       } as unknown as ExtensionDeps['config'],
-      generateTextWithFallback: vi.fn().mockResolvedValue('Chat model summary'),
+      generateText: vi.fn().mockResolvedValue(genSuccess('Chat model summary')),
     });
 
     const ext = createContextCompactionExt.create(deps);
@@ -495,8 +537,8 @@ describe('ContextCompactionExt — runCompaction', () => {
 
     expect(getModelSelection).toHaveBeenCalledWith('compaction');
     expect(getModelSelection).toHaveBeenCalledWith('chat');
-    expect(deps.generateTextWithFallback).toHaveBeenCalledTimes(1);
-    const args = vi.mocked(deps.generateTextWithFallback)!.mock.calls[0]![0];
+    expect(deps.generateText).toHaveBeenCalledTimes(1);
+    const args = vi.mocked(deps.generateText)!.mock.calls[0]![0];
     expect(args.modelIds).toEqual(['remote:gpt-4o']);
     expect(deps.insertMessageAfter).toHaveBeenCalledTimes(1);
     expect(deps.logger.warn).toHaveBeenCalledWith(
@@ -515,7 +557,7 @@ describe('ContextCompactionExt — runCompaction', () => {
     );
     await flushMicrotasks();
 
-    expect(deps.generateTextWithFallback).not.toHaveBeenCalled();
+    expect(deps.generateText).not.toHaveBeenCalled();
     expect(deps.insertMessageAfter).not.toHaveBeenCalled();
   });
 
@@ -525,9 +567,9 @@ describe('ContextCompactionExt — runCompaction', () => {
         makeSummaryMessage('old summary'),
         makeTextMessage('user', 'Only one message'),
       ]),
-      generateTextWithFallback: vi
+      generateText: vi
         .fn()
-        .mockResolvedValue('Summary of single message'),
+        .mockResolvedValue(genSuccess('Summary of single message')),
     });
 
     const ext = createContextCompactionExt.create(deps);
@@ -536,7 +578,7 @@ describe('ContextCompactionExt — runCompaction', () => {
     );
     await flushMicrotasks();
 
-    expect(deps.generateTextWithFallback).toHaveBeenCalledTimes(1);
+    expect(deps.generateText).toHaveBeenCalledTimes(1);
     expect(deps.insertMessageAfter).toHaveBeenCalledTimes(1);
   });
 
@@ -558,9 +600,9 @@ describe('ContextCompactionExt — runCompaction', () => {
 
     // First call (compaction models) returns null — all failed.
     // Second call (chat models) returns a summary.
-    vi.mocked(deps.generateTextWithFallback)!
-      .mockResolvedValueOnce(null)
-      .mockResolvedValueOnce('Chat fallback summary');
+    vi.mocked(deps.generateText)!
+      .mockResolvedValueOnce(genFailure())
+      .mockResolvedValueOnce(genSuccess('Chat fallback summary'));
 
     const ext = createContextCompactionExt.create(deps);
     await ext.onStepComplete!(
@@ -568,7 +610,7 @@ describe('ContextCompactionExt — runCompaction', () => {
     );
     await flushMicrotasks();
 
-    expect(deps.generateTextWithFallback).toHaveBeenCalledTimes(2);
+    expect(deps.generateText).toHaveBeenCalledTimes(2);
     expect(deps.insertMessageAfter).toHaveBeenCalledTimes(1);
     const [, message] = vi.mocked(deps.insertMessageAfter)!.mock.calls[0]!;
     expect(message.parts[0]).toMatchObject({
@@ -587,7 +629,7 @@ describe('ContextCompactionExt — runCompaction', () => {
         getModelSelection: vi.fn(() => ['remote:gpt-4o']),
         getModelContextSize: vi.fn(() => 20_000),
       } as unknown as ExtensionDeps['config'],
-      generateTextWithFallback: vi.fn().mockResolvedValue(null),
+      generateText: vi.fn().mockResolvedValue(genFailure()),
     });
 
     const ext = createContextCompactionExt.create(deps);
@@ -596,9 +638,9 @@ describe('ContextCompactionExt — runCompaction', () => {
     );
     await flushMicrotasks();
 
-    // generateTextWithFallback was called for compaction models, then
+    // generateText was called for compaction models, then
     // again for chat models — both returned null.
-    expect(deps.generateTextWithFallback).toHaveBeenCalledTimes(2);
+    expect(deps.generateText).toHaveBeenCalledTimes(2);
     expect(deps.insertMessageAfter).not.toHaveBeenCalled();
   });
 
@@ -612,9 +654,9 @@ describe('ContextCompactionExt — runCompaction', () => {
     ];
     const deps = makeDeps({
       getHistory: vi.fn(() => history),
-      generateTextWithFallback: vi
+      generateText: vi
         .fn()
-        .mockResolvedValue('Summary of new messages'),
+        .mockResolvedValue(genSuccess('Summary of new messages')),
     });
 
     const ext = createContextCompactionExt.create(deps);
@@ -635,7 +677,7 @@ describe('ContextCompactionExt — runCompaction', () => {
         makeTextMessage('assistant', 'Hi'),
       ]),
       insertMessageAfter: vi.fn(() => false),
-      generateTextWithFallback: vi.fn().mockResolvedValue('Summary'),
+      generateText: vi.fn().mockResolvedValue(genSuccess('Summary')),
     });
 
     const ext = createContextCompactionExt.create(deps);
@@ -656,7 +698,7 @@ describe('ContextCompactionExt — compacting flag safety', () => {
         makeTextMessage('user', 'Hello'),
         makeTextMessage('assistant', 'Hi'),
       ]),
-      generateTextWithFallback: vi.fn().mockResolvedValue('Summary'),
+      generateText: vi.fn().mockResolvedValue(genSuccess('Summary')),
     });
 
     const ext = createContextCompactionExt.create(deps);
@@ -673,7 +715,7 @@ describe('ContextCompactionExt — compacting flag safety', () => {
     );
     await flushMicrotasks();
 
-    expect(deps.generateTextWithFallback).toHaveBeenCalledTimes(2);
+    expect(deps.generateText).toHaveBeenCalledTimes(2);
     expect(deps.insertMessageAfter).toHaveBeenCalledTimes(2);
   });
 
@@ -702,13 +744,13 @@ describe('ContextCompactionExt — compacting flag safety', () => {
       makeTextMessage('user', 'Hello'),
       makeTextMessage('assistant', 'Hi'),
     ]);
-    vi.mocked(deps.generateTextWithFallback)!.mockResolvedValue('Summary');
+    vi.mocked(deps.generateText)!.mockResolvedValue(genSuccess('Summary'));
     await ext.onStepComplete!(
       makeResult(makeUsage(FALLBACK_COMPACTION_THRESHOLD, 0)),
     );
     await flushMicrotasks();
 
-    expect(deps.generateTextWithFallback).toHaveBeenCalledTimes(1);
+    expect(deps.generateText).toHaveBeenCalledTimes(1);
     expect(deps.insertMessageAfter).toHaveBeenCalledTimes(1);
   });
 
@@ -719,7 +761,7 @@ describe('ContextCompactionExt — compacting flag safety', () => {
         makeTextMessage('assistant', 'Hi'),
       ]),
       // All models fail — proxy returns null
-      generateTextWithFallback: vi.fn().mockResolvedValue(null),
+      generateText: vi.fn().mockResolvedValue(genFailure()),
     });
 
     const ext = createContextCompactionExt.create(deps);
@@ -733,7 +775,7 @@ describe('ContextCompactionExt — compacting flag safety', () => {
 
     // Second trigger with just 1 new token — should still fire because
     // accumulated tokens were NOT reset after the failure.
-    vi.mocked(deps.generateTextWithFallback)!.mockResolvedValue('Summary');
+    vi.mocked(deps.generateText)!.mockResolvedValue(genSuccess('Summary'));
     await ext.onStepComplete!(makeResult(makeUsage(1, 0)));
     await flushMicrotasks();
 
@@ -756,7 +798,7 @@ describe('ContextCompactionExt — threshold computation', () => {
         makeTextMessage('user', 'Hello'),
         makeTextMessage('assistant', 'Hi'),
       ]),
-      generateTextWithFallback: vi.fn().mockResolvedValue('Summary'),
+      generateText: vi.fn().mockResolvedValue(genSuccess('Summary')),
     });
 
     const ext = createContextCompactionExt.create(deps);
@@ -764,22 +806,23 @@ describe('ContextCompactionExt — threshold computation', () => {
     // Just below threshold — no compaction
     await ext.onStepComplete!(makeResult(makeUsage(expectedThreshold - 1, 0)));
     await flushMicrotasks();
-    expect(deps.generateTextWithFallback).not.toHaveBeenCalled();
+    expect(deps.generateText).not.toHaveBeenCalled();
 
     // At threshold — compaction triggers
     await ext.onStepComplete!(makeResult(makeUsage(1, 0)));
     await flushMicrotasks();
-    expect(deps.generateTextWithFallback).toHaveBeenCalledTimes(1);
+    expect(deps.generateText).toHaveBeenCalledTimes(1);
   });
 
-  it('uses the smallest context size among all configured chat and compaction models', async () => {
+  it('uses the smallest context size among configured chat models only', async () => {
     const getModelSelection = vi.fn((key: string) => {
-      if (key === 'chat') return ['remote:gpt-4o'];
+      if (key === 'chat') return ['remote:gpt-4o', 'remote:gemini'];
       return ['remote:claude'];
     });
     const getModelContextSize = vi.fn((modelId: string) => {
       if (modelId === 'remote:gpt-4o') return 60_000;
-      return 20_000; // claude has smaller context
+      if (modelId === 'remote:gemini') return 40_000; // smallest chat model
+      return 20_000; // compaction model — should be ignored
     });
     const deps = makeDeps({
       config: {
@@ -790,18 +833,21 @@ describe('ContextCompactionExt — threshold computation', () => {
         makeTextMessage('user', 'Hello'),
         makeTextMessage('assistant', 'Hi'),
       ]),
-      generateTextWithFallback: vi.fn().mockResolvedValue('Summary'),
+      generateText: vi.fn().mockResolvedValue(genSuccess('Summary')),
     });
 
     const ext = createContextCompactionExt.create(deps);
 
-    // Threshold = min(20_000 * 0.5, 200_000) = 10_000
-    // If it used the max (60_000) instead: threshold would be 30_000
-    await ext.onStepComplete!(
-      makeResult(makeUsage(FALLBACK_COMPACTION_THRESHOLD, 0)),
-    );
+    // Threshold = min(40_000 * 0.5, 200_000) = 20_000
+    // If it incorrectly included compaction models: threshold would be 10_000
+    // If it used the max chat model: threshold would be 30_000
+    await ext.onStepComplete!(makeResult(makeUsage(19_999, 0)));
     await flushMicrotasks();
-    expect(deps.generateTextWithFallback).toHaveBeenCalledTimes(1);
+    expect(deps.generateText).not.toHaveBeenCalled();
+
+    await ext.onStepComplete!(makeResult(makeUsage(1, 0)));
+    await flushMicrotasks();
+    expect(deps.generateText).toHaveBeenCalledTimes(1);
   });
 
   it('caps threshold at MAX_COMPACTION_THRESHOLD', async () => {
@@ -815,7 +861,7 @@ describe('ContextCompactionExt — threshold computation', () => {
         makeTextMessage('user', 'Hello'),
         makeTextMessage('assistant', 'Hi'),
       ]),
-      generateTextWithFallback: vi.fn().mockResolvedValue('Summary'),
+      generateText: vi.fn().mockResolvedValue(genSuccess('Summary')),
     });
 
     const ext = createContextCompactionExt.create(deps);
@@ -825,7 +871,7 @@ describe('ContextCompactionExt — threshold computation', () => {
       makeResult(makeUsage(MAX_COMPACTION_THRESHOLD, 0)),
     );
     await flushMicrotasks();
-    expect(deps.generateTextWithFallback).toHaveBeenCalledTimes(1);
+    expect(deps.generateText).toHaveBeenCalledTimes(1);
   });
 
   it('caches the threshold for the extension lifetime', async () => {
@@ -839,7 +885,7 @@ describe('ContextCompactionExt — threshold computation', () => {
         makeTextMessage('user', 'Hello'),
         makeTextMessage('assistant', 'Hi'),
       ]),
-      generateTextWithFallback: vi.fn().mockResolvedValue('Summary'),
+      generateText: vi.fn().mockResolvedValue(genSuccess('Summary')),
     });
 
     const ext = createContextCompactionExt.create(deps);
@@ -853,7 +899,7 @@ describe('ContextCompactionExt — threshold computation', () => {
 
     // Reset mock and trigger again — threshold should be cached
     getModelContextSize.mockClear();
-    vi.mocked(deps.generateTextWithFallback)!.mockClear();
+    vi.mocked(deps.generateText)!.mockClear();
     await ext.onStepComplete!(makeResult(makeUsage(15_000, 0)));
     await flushMicrotasks();
 
@@ -876,7 +922,7 @@ describe('ContextCompactionExt — threshold computation', () => {
         makeTextMessage('user', 'Hello'),
         makeTextMessage('assistant', 'Hi'),
       ]),
-      generateTextWithFallback: vi.fn().mockResolvedValue('Summary'),
+      generateText: vi.fn().mockResolvedValue(genSuccess('Summary')),
     });
 
     const ext = createContextCompactionExt.create(deps);
@@ -885,7 +931,7 @@ describe('ContextCompactionExt — threshold computation', () => {
     // Threshold = min(30_000 * 0.5, 200_000) = 15_000
     await ext.onStepComplete!(makeResult(makeUsage(15_000, 0)));
     await flushMicrotasks();
-    expect(deps.generateTextWithFallback).toHaveBeenCalledTimes(1);
+    expect(deps.generateText).toHaveBeenCalledTimes(1);
   });
 
   it('falls back to FALLBACK_COMPACTION_THRESHOLD when all context sizes fail', async () => {
@@ -900,7 +946,7 @@ describe('ContextCompactionExt — threshold computation', () => {
         makeTextMessage('user', 'Hello'),
         makeTextMessage('assistant', 'Hi'),
       ]),
-      generateTextWithFallback: vi.fn().mockResolvedValue('Summary'),
+      generateText: vi.fn().mockResolvedValue(genSuccess('Summary')),
     });
 
     const ext = createContextCompactionExt.create(deps);
@@ -909,7 +955,7 @@ describe('ContextCompactionExt — threshold computation', () => {
       makeResult(makeUsage(FALLBACK_COMPACTION_THRESHOLD, 0)),
     );
     await flushMicrotasks();
-    expect(deps.generateTextWithFallback).toHaveBeenCalledTimes(1);
+    expect(deps.generateText).toHaveBeenCalledTimes(1);
   });
 
   it('skips compaction when no models are configured despite threshold fallback', async () => {
@@ -933,7 +979,7 @@ describe('ContextCompactionExt — threshold computation', () => {
     // Threshold falls back to FALLBACK_COMPACTION_THRESHOLD, so
     // compaction is triggered, but runCompactionInner skips because
     // no models are configured.
-    expect(deps.generateTextWithFallback).not.toHaveBeenCalled();
+    expect(deps.generateText).not.toHaveBeenCalled();
     expect(deps.insertMessageAfter).not.toHaveBeenCalled();
     expect(deps.logger.warn).toHaveBeenCalledWith(
       'No compaction or chat models configured — skipping',
@@ -948,7 +994,7 @@ describe('ContextCompactionExt — history transformation', () => {
         makeTextMessage('user', 'Hello world'),
         makeTextMessage('assistant', 'Hi there'),
       ]),
-      generateTextWithFallback: vi.fn().mockResolvedValue('Summary'),
+      generateText: vi.fn().mockResolvedValue(genSuccess('Summary')),
     });
 
     const ext = createContextCompactionExt.create(deps);
@@ -957,7 +1003,7 @@ describe('ContextCompactionExt — history transformation', () => {
     );
     await flushMicrotasks();
 
-    const prompt = vi.mocked(deps.generateTextWithFallback)!.mock.calls[0]![0]
+    const prompt = vi.mocked(deps.generateText)!.mock.calls[0]![0]
       .prompt as string;
     expect(prompt).toContain('<msg role="user"><text>Hello world</text></msg>');
     expect(prompt).toContain(
@@ -972,7 +1018,7 @@ describe('ContextCompactionExt — history transformation', () => {
         makeTextMessage('user', longText),
         makeTextMessage('assistant', 'OK'),
       ]),
-      generateTextWithFallback: vi.fn().mockResolvedValue('Summary'),
+      generateText: vi.fn().mockResolvedValue(genSuccess('Summary')),
     });
 
     const ext = createContextCompactionExt.create(deps);
@@ -981,7 +1027,7 @@ describe('ContextCompactionExt — history transformation', () => {
     );
     await flushMicrotasks();
 
-    const prompt = vi.mocked(deps.generateTextWithFallback)!.mock.calls[0]![0]
+    const prompt = vi.mocked(deps.generateText)!.mock.calls[0]![0]
       .prompt as string;
     const line = prompt.split('\n')[0]!;
     expect(line).toContain('<text>');
@@ -996,7 +1042,7 @@ describe('ContextCompactionExt — history transformation', () => {
         makeToolCallMessage('readFile', { path: '/foo.ts' }),
         makeTextMessage('assistant', 'OK'),
       ]),
-      generateTextWithFallback: vi.fn().mockResolvedValue('Summary'),
+      generateText: vi.fn().mockResolvedValue(genSuccess('Summary')),
     });
 
     const ext = createContextCompactionExt.create(deps);
@@ -1005,7 +1051,7 @@ describe('ContextCompactionExt — history transformation', () => {
     );
     await flushMicrotasks();
 
-    const prompt = vi.mocked(deps.generateTextWithFallback)!.mock.calls[0]![0]
+    const prompt = vi.mocked(deps.generateText)!.mock.calls[0]![0]
       .prompt as string;
     expect(prompt).toContain('<tool name="readFile" />');
     // Tool input should NOT be included in the XML output
@@ -1022,7 +1068,7 @@ describe('ContextCompactionExt — history transformation', () => {
         ),
         makeTextMessage('assistant', 'OK'),
       ]),
-      generateTextWithFallback: vi.fn().mockResolvedValue('Summary'),
+      generateText: vi.fn().mockResolvedValue(genSuccess('Summary')),
     });
 
     const ext = createContextCompactionExt.create(deps);
@@ -1031,7 +1077,7 @@ describe('ContextCompactionExt — history transformation', () => {
     );
     await flushMicrotasks();
 
-    const prompt = vi.mocked(deps.generateTextWithFallback)!.mock.calls[0]![0]
+    const prompt = vi.mocked(deps.generateText)!.mock.calls[0]![0]
       .prompt as string;
     expect(prompt).toContain(
       '<tool name="readFile"><output>file contents here</output></tool>',
@@ -1050,7 +1096,7 @@ describe('ContextCompactionExt — history transformation', () => {
         ),
         makeTextMessage('assistant', 'OK'),
       ]),
-      generateTextWithFallback: vi.fn().mockResolvedValue('Summary'),
+      generateText: vi.fn().mockResolvedValue(genSuccess('Summary')),
     });
 
     const ext = createContextCompactionExt.create(deps);
@@ -1059,7 +1105,7 @@ describe('ContextCompactionExt — history transformation', () => {
     );
     await flushMicrotasks();
 
-    const prompt = vi.mocked(deps.generateTextWithFallback)!.mock.calls[0]![0]
+    const prompt = vi.mocked(deps.generateText)!.mock.calls[0]![0]
       .prompt as string;
     expect(prompt).toContain(
       '<tool name="readFile"><error>File not found</error></tool>',
@@ -1072,7 +1118,7 @@ describe('ContextCompactionExt — history transformation', () => {
         makeContextMessage('browser', 'Page title: Example'),
         makeTextMessage('assistant', 'OK'),
       ]),
-      generateTextWithFallback: vi.fn().mockResolvedValue('Summary'),
+      generateText: vi.fn().mockResolvedValue(genSuccess('Summary')),
     });
 
     const ext = createContextCompactionExt.create(deps);
@@ -1081,7 +1127,7 @@ describe('ContextCompactionExt — history transformation', () => {
     );
     await flushMicrotasks();
 
-    const prompt = vi.mocked(deps.generateTextWithFallback)!.mock.calls[0]![0]
+    const prompt = vi.mocked(deps.generateText)!.mock.calls[0]![0]
       .prompt as string;
     expect(prompt).toContain(
       '<ctx env="browser"><text>Page title: Example</text></ctx>',
@@ -1107,7 +1153,7 @@ describe('ContextCompactionExt — history transformation', () => {
 
     const deps = makeDeps({
       getHistory: vi.fn(() => [msg, makeTextMessage('assistant', 'done')]),
-      generateTextWithFallback: vi.fn().mockResolvedValue('Summary'),
+      generateText: vi.fn().mockResolvedValue(genSuccess('Summary')),
     });
 
     const ext = createContextCompactionExt.create(deps);
@@ -1116,7 +1162,7 @@ describe('ContextCompactionExt — history transformation', () => {
     );
     await flushMicrotasks();
 
-    const prompt = vi.mocked(deps.generateTextWithFallback)!.mock.calls[0]![0]
+    const prompt = vi.mocked(deps.generateText)!.mock.calls[0]![0]
       .prompt as string;
     const firstLine = prompt.split('\n')[0]!;
     expect(firstLine).toContain('<msg role="assistant">');
@@ -1143,7 +1189,7 @@ describe('ContextCompactionExt — history transformation', () => {
         msg,
         makeTextMessage('assistant', 'response'),
       ]),
-      generateTextWithFallback: vi.fn().mockResolvedValue('Summary'),
+      generateText: vi.fn().mockResolvedValue(genSuccess('Summary')),
     });
 
     const ext = createContextCompactionExt.create(deps);
@@ -1152,7 +1198,7 @@ describe('ContextCompactionExt — history transformation', () => {
     );
     await flushMicrotasks();
 
-    const prompt = vi.mocked(deps.generateTextWithFallback)!.mock.calls[0]![0]
+    const prompt = vi.mocked(deps.generateText)!.mock.calls[0]![0]
       .prompt as string;
     expect(prompt).toContain('actual text');
     // Previous summary should be included in a <summary> tag
@@ -1167,7 +1213,7 @@ describe('ContextCompactionExt — history transformation', () => {
         makeTextMessage('user', 'a < b & c > d "e" \'f\''),
         makeTextMessage('assistant', 'OK'),
       ]),
-      generateTextWithFallback: vi.fn().mockResolvedValue('Summary'),
+      generateText: vi.fn().mockResolvedValue(genSuccess('Summary')),
     });
 
     const ext = createContextCompactionExt.create(deps);
@@ -1176,7 +1222,7 @@ describe('ContextCompactionExt — history transformation', () => {
     );
     await flushMicrotasks();
 
-    const prompt = vi.mocked(deps.generateTextWithFallback)!.mock.calls[0]![0]
+    const prompt = vi.mocked(deps.generateText)!.mock.calls[0]![0]
       .prompt as string;
     expect(prompt).toContain(
       'a &lt; b &amp; c &gt; d &quot;e&quot; &apos;f&apos;',
@@ -1194,7 +1240,7 @@ describe('ContextCompactionExt — history transformation', () => {
         ),
         makeTextMessage('assistant', 'OK'),
       ]),
-      generateTextWithFallback: vi.fn().mockResolvedValue('Summary'),
+      generateText: vi.fn().mockResolvedValue(genSuccess('Summary')),
     });
 
     const ext = createContextCompactionExt.create(deps);
@@ -1203,7 +1249,7 @@ describe('ContextCompactionExt — history transformation', () => {
     );
     await flushMicrotasks();
 
-    const prompt = vi.mocked(deps.generateTextWithFallback)!.mock.calls[0]![0]
+    const prompt = vi.mocked(deps.generateText)!.mock.calls[0]![0]
       .prompt as string;
     expect(prompt).toContain('<tool name="readFile"><denied /></tool>');
   });
@@ -1221,7 +1267,7 @@ describe('ContextCompactionExt — history transformation', () => {
         ),
         makeTextMessage('assistant', 'OK'),
       ]),
-      generateTextWithFallback: vi.fn().mockResolvedValue('Summary'),
+      generateText: vi.fn().mockResolvedValue(genSuccess('Summary')),
     });
 
     const ext = createContextCompactionExt.create(deps);
@@ -1230,7 +1276,7 @@ describe('ContextCompactionExt — history transformation', () => {
     );
     await flushMicrotasks();
 
-    const prompt = vi.mocked(deps.generateTextWithFallback)!.mock.calls[0]![0]
+    const prompt = vi.mocked(deps.generateText)!.mock.calls[0]![0]
       .prompt as string;
     expect(prompt).toContain('&quot;lines&quot;:42');
   });

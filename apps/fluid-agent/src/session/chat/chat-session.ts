@@ -14,9 +14,10 @@ import type {
   SessionInfo,
   SessionRuntimeState,
   SessionStatus,
+  Usage,
+  UsagePair,
 } from '@/session/types';
 import type { ToolProvider } from '@/tool-provider';
-import { tryModelsWithFallback } from '@/utils/llm';
 
 import {
   createExtensionHandler,
@@ -25,6 +26,8 @@ import {
 import type {
   BaseExtensionDeps,
   ExtensionFactory,
+  GenerateTextArgs,
+  GenerateTextResult,
 } from './extensions/extension-api';
 import {
   createInbox,
@@ -40,6 +43,7 @@ import { createTurn, type Turn, type TurnResult } from './turn';
 import { BackoffManager } from './utils/backoff-manager';
 import { ModelFallbackManager } from './utils/model-fallback-manager';
 import { tracer } from './utils/tracing';
+import { extractUsage } from './utils/usage';
 
 export interface ChatSessionDependencies {
   logging: RootLogger;
@@ -92,12 +96,20 @@ class ChatSessionModule implements AgentSession {
 
   private stepCount = 0;
 
-  private latestUsage: { inputTokens: number; outputTokens: number } | null =
-    null;
+  // --- Chat usage tracking ---
 
-  private totalInputTokens = 0;
+  private latestChatUsage: Usage | null = null;
 
-  private totalOutputTokens = 0;
+  private totalChatUsage: Usage = {
+    inputTokens: 0,
+    outputTokens: 0,
+    inputCacheWriteTokens: 0,
+    inputCacheReadTokens: 0,
+  };
+
+  // --- Per-extension usage tracking ---
+
+  private extensionUsage: Map<string, UsagePair> = new Map();
 
   private readonly createdAt: string;
 
@@ -177,7 +189,7 @@ class ChatSessionModule implements AgentSession {
       },
       inbox: this.sessionInbox,
       config: this.deps.config,
-      generateTextWithFallback: (args) => this.generateTextWithFallback(args),
+      generateText: (args) => this.generateTextForExtension(args),
       logger: this.deps.logger,
     };
 
@@ -186,6 +198,26 @@ class ChatSessionModule implements AgentSession {
       extensionDeps,
       dataDirectory: this.deps.dataDirectory,
       sessionId: this.sessionId,
+      onExtensionUsage: (identifier, usage) => {
+        const existing = this.extensionUsage.get(identifier);
+        if (existing) {
+          existing.latest = usage;
+          existing.total = {
+            inputTokens: existing.total.inputTokens + usage.inputTokens,
+            outputTokens: existing.total.outputTokens + usage.outputTokens,
+            inputCacheWriteTokens:
+              existing.total.inputCacheWriteTokens +
+              usage.inputCacheWriteTokens,
+            inputCacheReadTokens:
+              existing.total.inputCacheReadTokens + usage.inputCacheReadTokens,
+          };
+        } else {
+          this.extensionUsage.set(identifier, {
+            latest: usage,
+            total: { ...usage },
+          });
+        }
+      },
     });
   }
 
@@ -199,30 +231,134 @@ class ChatSessionModule implements AgentSession {
   // that AI usage can be tracked at the session level.
   // ---------------------------------------------------------------------------
 
-  private async generateTextWithFallback(args: {
-    modelIds: readonly ModelId[];
-    system: string;
-    prompt: string;
-  }): Promise<string | null> {
-    return tryModelsWithFallback(
-      args.modelIds,
-      this.deps.modelProvider,
-      (model, modelId) =>
-        generateText({
-          model,
-          system: args.system,
-          prompt: args.prompt,
-          maxRetries: 0,
-          telemetry: {
-            isEnabled: true,
-            functionId: 'context-compaction',
-          },
-          runtimeContext: {
-            'compaction.modelId': modelId,
-          },
-        }).then((r) => r.text),
-      { logger: this.deps.logger, label: 'compaction' },
+  private async generateTextForExtension(
+    args: GenerateTextArgs,
+  ): Promise<GenerateTextResult> {
+    const { modelIds } = args;
+
+    // Start a child span under the session span so every extension-initiated
+    // generation appears in the session trace tree. The AI SDK's own internal
+    // telemetry spans also nest under this span because we run the call inside
+    // a context.with block with the session context as parent.
+    const span = tracer.startSpan(
+      'generate_content',
+      {
+        attributes: {
+          'gen.extension': true,
+          'gen.modelIds': modelIds.join(','),
+          'gen.modelCount': modelIds.length,
+          'gen.systemProvided': args.system != null,
+          'gen.promptProvided': args.prompt != null,
+          'gen.messagesProvided': args.messages != null,
+          'gen.messageCount': args.messages?.length ?? 0,
+          'gen.promptLength': args.prompt?.length ?? 0,
+          'gen.toolsProvided': args.tools != null,
+          'gen.toolNames': args.tools ? Object.keys(args.tools).join(',') : '',
+          'gen.temperature': args.temperature,
+          'gen.maxOutputTokens': args.maxOutputTokens,
+          'gen.maxRetries': args.maxRetries ?? 0,
+        },
+      },
+      this.sessionContext,
     );
+
+    try {
+      return await context.with(this.sessionContext, async () => {
+        if (modelIds.length === 0) {
+          span.addEvent('gen.no_models');
+          span.setAttribute('gen.outcome', 'no-models');
+          return {
+            success: false as const,
+            failureReason: 'no-models' as const,
+          };
+        }
+
+        const failures: string[] = [];
+
+        for (const modelId of modelIds) {
+          try {
+            const model = await this.deps.modelProvider.get(modelId);
+            const result = await generateText(
+              args.messages
+                ? {
+                    model,
+                    system: args.system,
+                    messages: args.messages,
+                    tools: args.tools,
+                    temperature: args.temperature,
+                    maxOutputTokens: args.maxOutputTokens,
+                    maxRetries: args.maxRetries ?? 0,
+                    telemetry: { isEnabled: true, functionId: 'extension' },
+                  }
+                : {
+                    model,
+                    system: args.system,
+                    prompt: args.prompt ?? '',
+                    tools: args.tools,
+                    temperature: args.temperature,
+                    maxOutputTokens: args.maxOutputTokens,
+                    maxRetries: args.maxRetries ?? 0,
+                    telemetry: { isEnabled: true, functionId: 'extension' },
+                  },
+            );
+
+            // Per-extension usage tracking is handled by the
+            // onExtensionUsage callback in the extension handler wrapper.
+
+            span.setAttribute('gen.outcome', 'success');
+            span.setAttribute('gen.modelId', modelId);
+            span.setAttribute('gen.finishReason', result.finishReason);
+            span.setAttribute(
+              'gen.usage.inputTokens',
+              result.usage.inputTokens ?? 0,
+            );
+            span.setAttribute(
+              'gen.usage.outputTokens',
+              result.usage.outputTokens ?? 0,
+            );
+            span.setAttribute(
+              'gen.usage.totalTokens',
+              result.usage.totalTokens ?? 0,
+            );
+            span.setAttribute('gen.outputLength', result.text.length);
+            span.addEvent('gen.success', {
+              'gen.modelId': modelId,
+              'gen.finishReason': result.finishReason,
+            });
+
+            return {
+              success: true as const,
+              text: result.text,
+              modelId,
+              usage: result.usage,
+            };
+          } catch (error) {
+            const msg = error instanceof Error ? error.message : String(error);
+            failures.push(`${modelId}: ${msg}`);
+            this.deps.logger.warn(
+              { error, modelId },
+              'Extension generateText model failed — trying next',
+            );
+            span.addEvent('gen.model_failed', {
+              'gen.modelId': modelId,
+              'gen.error': msg,
+            });
+          }
+        }
+
+        span.setAttribute('gen.outcome', 'all-models-failed');
+        span.setAttribute('gen.failureDetails', failures.join('; '));
+        span.addEvent('gen.all_models_failed');
+
+        return {
+          success: false as const,
+          failureReason: 'all-models-failed' as const,
+          failureDetails: failures.join('; '),
+        };
+      });
+    } finally {
+      span.end();
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -333,11 +469,21 @@ class ChatSessionModule implements AgentSession {
         this.turnCount++;
         this.stepCount += turnResult.stepCount;
         if (turnResult.usage) {
-          this.latestUsage = turnResult.usage;
-          this.totalInputTokens += turnResult.usage.inputTokens;
-          this.totalOutputTokens += turnResult.usage.outputTokens;
+          this.latestChatUsage = turnResult.usage;
+          this.totalChatUsage = {
+            inputTokens:
+              this.totalChatUsage.inputTokens + turnResult.usage.inputTokens,
+            outputTokens:
+              this.totalChatUsage.outputTokens + turnResult.usage.outputTokens,
+            inputCacheWriteTokens:
+              this.totalChatUsage.inputCacheWriteTokens +
+              turnResult.usage.inputCacheWriteTokens,
+            inputCacheReadTokens:
+              this.totalChatUsage.inputCacheReadTokens +
+              turnResult.usage.inputCacheReadTokens,
+          };
         } else {
-          this.latestUsage = null;
+          this.latestChatUsage = null;
         }
 
         // Fatal error — terminate the session.
@@ -475,6 +621,15 @@ class ChatSessionModule implements AgentSession {
     const modelId = this.fallbackManager.getChatModelId();
     const fallbackIndex = this.fallbackManager.getFallbackIndex();
 
+    // Build per-extension usage snapshot.
+    const extensions: Record<string, UsagePair> = {};
+    for (const [identifier, pair] of this.extensionUsage) {
+      extensions[identifier] = {
+        latest: pair.latest,
+        total: { ...pair.total },
+      };
+    }
+
     return {
       id: this.sessionId,
       status: this._status,
@@ -485,12 +640,12 @@ class ChatSessionModule implements AgentSession {
         isFallback: fallbackIndex > 0,
         fallbackIndex,
       },
-      tokens: {
-        latest: this.latestUsage,
-        total: {
-          inputTokens: this.totalInputTokens,
-          outputTokens: this.totalOutputTokens,
+      usage: {
+        chat: {
+          latest: this.latestChatUsage,
+          total: { ...this.totalChatUsage },
         },
+        extensions,
       },
       turns: this.turnCount,
       steps: this.stepCount,

@@ -75,42 +75,43 @@ class ContextCompactionExt implements Extension {
   private getCompactionThreshold(): number {
     if (this.cachedThreshold !== null) return this.cachedThreshold;
 
-    const modelIds = [
-      ...this.deps.config.getModelSelection('chat'),
-      ...this.deps.config.getModelSelection('compaction'),
-    ];
+    const modelIds = [...this.deps.config.getModelSelection('chat')];
 
     if (modelIds.length === 0) {
       this.cachedThreshold = FALLBACK_COMPACTION_THRESHOLD;
       return this.cachedThreshold;
     }
 
-    let minContextSize = Infinity;
+    let contextSize = Infinity;
+    // We take the lowest context size of all configured models as a base
+    // for calculating the relative limit.
     for (const modelId of modelIds) {
       try {
         const ctxSize = this.deps.config.getModelContextSize(modelId);
-        if (ctxSize < minContextSize) minContextSize = ctxSize;
+        if (ctxSize < contextSize) contextSize = ctxSize;
       } catch {
         // Model resolution failed — skip this model.
       }
     }
 
-    if (minContextSize === Infinity) {
+    if (contextSize === Infinity) {
       this.cachedThreshold = FALLBACK_COMPACTION_THRESHOLD;
       return this.cachedThreshold;
     }
 
     const dynamicThreshold = Math.floor(
-      minContextSize * CONTEXT_SIZE_THRESHOLD_RATIO,
+      contextSize * CONTEXT_SIZE_THRESHOLD_RATIO,
     );
     this.cachedThreshold = Math.min(dynamicThreshold, MAX_COMPACTION_THRESHOLD);
 
     this.deps.logger.info(
       {
         threshold: this.cachedThreshold,
-        minContextSize,
-        maxThreshold: MAX_COMPACTION_THRESHOLD,
-        ratio: CONTEXT_SIZE_THRESHOLD_RATIO,
+        modelContextSize: contextSize,
+        config: {
+          maxTokenThreshold: MAX_COMPACTION_THRESHOLD,
+          relativeThresholdRatio: CONTEXT_SIZE_THRESHOLD_RATIO,
+        },
       },
       'Compaction threshold computed from model context sizes',
     );
@@ -302,13 +303,13 @@ class ContextCompactionExt implements Extension {
     const lastSliceMessageId = slice[slice.length - 1]!.id;
     span.setAttribute('compaction.lastSliceMessageId', lastSliceMessageId);
 
-    const summary = await this.deps.generateTextWithFallback({
+    const result = await this.deps.generateText({
       modelIds,
       system: compactionPrompt,
       prompt: transcript,
     });
 
-    if (summary === null) {
+    if (!result.success) {
       // All compaction models failed — try chat models as a last resort.
       const chatModelIds = this.deps.config.getModelSelection('chat');
       if (chatModelIds.length > 0) {
@@ -316,27 +317,37 @@ class ContextCompactionExt implements Extension {
           'All compaction models failed — falling back to chat models',
         );
         span.addEvent('compaction.fallback_to_chat_models_after_failure');
-        const fallbackSummary = await this.deps.generateTextWithFallback({
+        const fallbackResult = await this.deps.generateText({
           modelIds: chatModelIds,
           system: compactionPrompt,
           prompt: transcript,
         });
 
-        if (fallbackSummary === null) {
+        if (!fallbackResult.success) {
           span.addEvent('compaction.failed', {
             reason: 'all-models-failed-including-chat',
+            failureReason: fallbackResult.failureReason,
+            failureDetails: fallbackResult.failureDetails ?? '',
           });
           return false;
         }
 
-        return this.injectSummary(fallbackSummary, lastSliceMessageId, span);
+        return this.injectSummary(
+          fallbackResult.text,
+          lastSliceMessageId,
+          span,
+        );
       }
 
-      span.addEvent('compaction.failed', { reason: 'all-models-failed' });
+      span.addEvent('compaction.failed', {
+        reason: 'all-models-failed',
+        failureReason: result.failureReason,
+        failureDetails: result.failureDetails ?? '',
+      });
       return false;
     }
 
-    return this.injectSummary(summary, lastSliceMessageId, span);
+    return this.injectSummary(result.text, lastSliceMessageId, span);
   }
 
   /**

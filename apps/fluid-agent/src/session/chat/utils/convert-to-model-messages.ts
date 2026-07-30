@@ -6,6 +6,8 @@ import {
   type TextPart,
 } from 'ai';
 
+import type { ContextDataUIPart } from '@/session/inbox';
+
 import type { DataPartTransformers } from '../extensions/extension-api';
 import type { CustomUIDataParts, ExtendedUIMessage } from '../message-types';
 
@@ -21,12 +23,16 @@ import type { CustomUIDataParts, ExtendedUIMessage } from '../message-types';
  * Messages that become empty after stripping are dropped entirely to
  * avoid sending empty user messages to the model API.
  *
- * Custom data parts are converted using the transformers registered by
- * extensions (collected via `ExtensionHandler.getDataPartTransformers`).
+ * Custom data parts are converted using built-in transformers for the
+ * core types (`data-context`, `data-continue`) and extension-registered
+ * transformers for any additional types. Core type transformers cannot
+ * be overridden by extensions — the built-in conversion always applies.
  * Parts whose type has no registered transformer are dropped (the AI
  * SDK's `convertDataPart` returns `undefined`).
  *
- * @param transformers Merged data-part transformers from all extensions.
+ * @param transformers Merged data-part transformers from extensions.
+ *   Core types (`context`, `continue`) are always handled by built-in
+ *   transformers and are ignored if present here.
  */
 export const convertToModelMessagesExtended = async (
   messages: ExtendedUIMessage[],
@@ -80,15 +86,54 @@ export const convertToModelMessagesExtended = async (
   });
 };
 
+// ---------------------------------------------------------------------------
+// Built-in core data part transformers
+//
+// `context` and `continue` are core session concepts defined in
+// `message-types.ts`. Their transformations are non-negotiable — if they
+// were missing, MCP context events and continuation signals would be
+// silently dropped. Extensions cannot override these.
+// ---------------------------------------------------------------------------
+
+/** Transforms a `data-context` part into `<context>` XML for the model. */
+function convertContextPart(data: ContextDataUIPart): TextPart[] {
+  const metadata = Object.entries(data.metadata)
+    .map(([k, v]) => `<${k} value="${v.toString()}"/>`)
+    .join('');
+  const content = data.content
+    .map((p) => (p.type === 'text' ? p.text : ''))
+    .join(' ');
+
+  return [
+    {
+      type: 'text',
+      text: `<context source-env="${data.sourceEnv}"><metadata>${metadata}</metadata><content>${content}</content></context>`,
+    },
+  ];
+}
+
+/** Transforms a `data-continue` part into the literal text `"Continue."`. */
+function convertContinuePart(): TextPart[] {
+  return [{ type: 'text', text: 'Continue.' }];
+}
+
+/** Core data part keys that are always handled by built-in transformers. */
+const CORE_DATA_PART_KEYS = new Set<keyof CustomUIDataParts>([
+  'context',
+  'continue',
+]);
+
 /**
- * Builds a `convertDataPart` callback for the AI SDK from the
- * extension-registered transformers.
+ * Builds a `convertDataPart` callback for the AI SDK.
+ *
+ * Core data part types (`context`, `continue`) are always handled by
+ * built-in transformers — extension-registered transformers for these
+ * keys are ignored. All other custom types are dispatched to the
+ * extension-registered transformer map.
  *
  * The AI SDK calls this function for each custom data part in a message.
  * The part's `type` is `data-{key}` (e.g. `data-context`); we strip the
- * `data-` prefix to look up the corresponding transformer in the
- * `DataPartTransformers` map (whose keys are `CustomUIDataParts` keys
- * without the prefix).
+ * `data-` prefix to look up the corresponding transformer.
  *
  * The extension API returns `(TextPart | FilePart)[]` to allow future
  * multi-part conversions, but the AI SDK's `convertDataPart` accepts
@@ -101,6 +146,18 @@ function makeConvertDataPart(
   return (part) => {
     // Strip the `data-` prefix to get the CustomUIDataParts key.
     const key = part.type.replace(/^data-/, '') as keyof CustomUIDataParts;
+
+    // Core types are always handled by built-in transformers.
+    if (key === 'context') {
+      const result = convertContextPart(part.data as ContextDataUIPart);
+      return result.length > 0 ? result[0] : undefined;
+    }
+    if (key === 'continue') {
+      const result = convertContinuePart();
+      return result.length > 0 ? result[0] : undefined;
+    }
+
+    // Non-core types: dispatch to extension-registered transformers.
     const transformer = transformers[key];
     if (!transformer) return undefined;
 

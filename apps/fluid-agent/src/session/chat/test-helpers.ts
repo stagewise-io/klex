@@ -46,9 +46,7 @@ export function makeExtensionHandler() {
     runContextTransformers: vi.fn((h: never[], _model: never) =>
       Promise.resolve({ history: h, flags: {} }),
     ),
-    runStepCompleteHooks: vi.fn(() =>
-      Promise.resolve({ stop: false, stopReason: null }),
-    ),
+    runStepCompleteHooks: vi.fn(() => Promise.resolve()),
     getDataPartTransformers: vi.fn(() => ({})),
   };
 }

@@ -59,25 +59,16 @@ function makeContinuePart(): ExtendedUIMessage['parts'][number] {
 
 // --- transformer fixtures ---
 
-/** Transformers matching the production core-data-parts + context-compaction extensions. */
+/**
+ * Extension-registered transformers only.
+ * Core types (`context`, `continue`) are handled by built-in
+ * transformers in the converter and must NOT appear here.
+ */
 function makeTransformers(): DataPartTransformers {
   return {
-    context: (data) => [
-      {
-        type: 'text',
-        text: `<context source-env="${data.sourceEnv}"><metadata>${Object.entries(
-          data.metadata,
-        )
-          .map(([k, v]) => `<${k} value="${v.toString()}"/>`)
-          .join(
-            '',
-          )}</metadata><content>${data.content.map((p) => (p.type === 'text' ? p.text : '')).join(' ')}</content></context>`,
-      },
-    ],
     'context-summary': (data) => [
       { type: 'text', text: `<summary>${data.summary}</summary>` },
     ],
-    continue: () => [{ type: 'text', text: 'Continue.' }],
   } as DataPartTransformers;
 }
 
@@ -234,6 +225,49 @@ describe('makeConvertDataPart — data-continue', () => {
 
     expect(result.type).toBe('text');
     expect(result.text).toBe('Continue.');
+  });
+});
+
+describe('makeConvertDataPart — core type override prevention', () => {
+  it('ignores extension-registered context transformer and uses built-in', async () => {
+    const messages = [
+      makeMessage([
+        makeContextPart('slack', { channel: 'general' }, [
+          { type: 'text', text: 'hello' },
+        ]),
+      ]),
+    ];
+    // Extension tries to register a transformer for `context` — must be ignored.
+    const transformers = {
+      context: () => [{ type: 'text', text: 'OVERRIDDEN' }],
+    } as unknown as DataPartTransformers;
+    await convertToModelMessagesExtended(messages, transformers);
+    const convert = getConvertDataPart();
+    const result = convert(
+      makeContextPart('slack', { channel: 'general' }, [
+        { type: 'text', text: 'hello' },
+      ]),
+    ) as { type: string; text: string };
+
+    expect(result.text).toContain('<context source-env="slack">');
+    expect(result.text).not.toBe('OVERRIDDEN');
+  });
+
+  it('ignores extension-registered continue transformer and uses built-in', async () => {
+    const messages = [makeMessage([makeContinuePart()])];
+    // Extension tries to register a transformer for `continue` — must be ignored.
+    const transformers = {
+      continue: () => [{ type: 'text', text: 'OVERRIDDEN' }],
+    } as unknown as DataPartTransformers;
+    await convertToModelMessagesExtended(messages, transformers);
+    const convert = getConvertDataPart();
+    const result = convert(makeContinuePart()) as {
+      type: string;
+      text: string;
+    };
+
+    expect(result.text).toBe('Continue.');
+    expect(result.text).not.toBe('OVERRIDDEN');
   });
 });
 

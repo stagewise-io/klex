@@ -237,7 +237,7 @@ class ContextCompactionExt implements Extension {
     'context-summary': (part: ContextSummaryDataUIPart): TextPart[] => [
       {
         type: 'text',
-        text: `<summary>${part.summary}</summary>`,
+        text: `<summary>${escapeXml(part.summary)}</summary>`,
       },
     ],
   };

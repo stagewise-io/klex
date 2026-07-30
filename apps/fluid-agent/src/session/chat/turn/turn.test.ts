@@ -511,10 +511,10 @@ describe('Turn — modelFallbackOccurred handling', () => {
     expect(result.fatalError).toBe(false);
   });
 
-  it('stops after all models exhausted across multiple fallback steps (turn-level wrap-around)', async () => {
-    // 2 models. Step 1 fails with fallback (index 0→1).
-    // Step 2: generation runner detects wrap-around (index 1→0 ===
-    // turnInitialFallbackIndex 0) and returns generationFailed.
+  it('stops when a step returns generationFailed (e.g. attempt cap reached)', async () => {
+    // Step 1 fails with fallback (index 0→1).
+    // Step 2: generation runner returns generationFailed because the
+    // session-level attempt cap was reached (no wrap-around termination).
     // The turn stops because shouldContinue is false.
     const fallbackManager = makeFallbackManager();
 

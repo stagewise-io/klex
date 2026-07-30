@@ -233,10 +233,11 @@ describe('GenerationRunner — non-good finish reasons', () => {
     expect(messages).toHaveLength(0);
   });
 
-  it('returns generationFailed=true when non-error finish has no parts', async () => {
-    // With the default fallback behavior, a no-content non-fatal finish
-    // triggers model_error → fallback. Use a 1-model fallback manager so
-    // the wrap-around check immediately produces generation_failed.
+  it('returns modelFallbackOccurred=true when non-error finish has no parts', async () => {
+    // With the wrap-around check removed, a no-content non-fatal finish
+    // triggers model_error → fallback_new_step. Even with a single model,
+    // the fallback manager wraps around but the runner no longer
+    // terminates — the session-level backoff loop handles retry limits.
     const fallbackManager = makeFallbackManager(['model-a']);
 
     vi.mocked(runStreamedGeneration).mockResolvedValue(
@@ -246,7 +247,8 @@ describe('GenerationRunner — non-good finish reasons', () => {
     const runner = new GenerationRunner(makeDeps({ fallbackManager }));
     const result = await runner.run();
 
-    expect(result.generationFailed).toBe(true);
+    expect(result.modelFallbackOccurred).toBe(true);
+    expect(result.generationFailed).toBe(false);
     expect(result.forceNextStep).toBe(false);
     expect(result.fatalError).toBe(false);
     expect(result.generation).toBeNull();
@@ -286,7 +288,8 @@ describe('GenerationRunner — error finish reason with model fallback', () => {
   });
 
   it('triggers fallback on 429 API error', async () => {
-    // 1 model: fallback wraps immediately (0→0), so only 1 call before generation_failed
+    // 1 model: fallback wraps around but no longer terminates —
+    // the session loop handles retry limits via backoff.
     const fallbackManager = makeFallbackManager(['model-a']);
     const fallbackSpy = vi.spyOn(fallbackManager, 'fallbackToNextModel');
 
@@ -299,9 +302,11 @@ describe('GenerationRunner — error finish reason with model fallback', () => {
     );
 
     const runner = new GenerationRunner(makeDeps({ fallbackManager }));
-    await runner.run();
+    const result = await runner.run();
 
     expect(fallbackSpy).toHaveBeenCalledOnce();
+    expect(result.modelFallbackOccurred).toBe(true);
+    expect(result.generationFailed).toBe(false);
   });
 
   it('does NOT trigger fallback on 400 API error (fatal)', async () => {
@@ -330,7 +335,8 @@ describe('GenerationRunner — error finish reason with model fallback', () => {
   });
 
   it('triggers fallback when error is null (no details)', async () => {
-    // 1 model: fallback wraps immediately, so only 1 call before generation_failed
+    // 1 model: fallback wraps around but no longer terminates —
+    // the session loop handles retry limits via backoff.
     const fallbackManager = makeFallbackManager(['model-a']);
     const fallbackSpy = vi.spyOn(fallbackManager, 'fallbackToNextModel');
 
@@ -339,13 +345,15 @@ describe('GenerationRunner — error finish reason with model fallback', () => {
     );
 
     const runner = new GenerationRunner(makeDeps({ fallbackManager }));
-    await runner.run();
+    const result = await runner.run();
 
     expect(fallbackSpy).toHaveBeenCalledOnce();
+    expect(result.modelFallbackOccurred).toBe(true);
   });
 
-  it('returns generationFailed when all models exhausted (no content, model error)', async () => {
-    // 1 model: fallback wraps immediately (0→0), so only 1 call before generation_failed
+  it('returns modelFallbackOccurred when all models exhausted (no content, model error)', async () => {
+    // 1 model: fallback wraps around but no longer terminates —
+    // the session loop handles retry limits via backoff.
     const fallbackManager = makeFallbackManager(['model-a']);
 
     vi.mocked(runStreamedGeneration).mockResolvedValue(
@@ -360,11 +368,11 @@ describe('GenerationRunner — error finish reason with model fallback', () => {
     const result = await runner.run();
 
     expect(runStreamedGeneration).toHaveBeenCalledTimes(1);
-    expect(result.generationFailed).toBe(true);
+    expect(result.modelFallbackOccurred).toBe(true);
+    expect(result.generationFailed).toBe(false);
     expect(result.forceNextStep).toBe(false);
     expect(result.fatalError).toBe(false);
     expect(result.generation).toBeNull();
-    expect(result.modelFallbackOccurred).toBe(false);
   });
 });
 
@@ -450,8 +458,9 @@ describe('GenerationRunner — models-exhausted and attempt cap', () => {
     setupDefaultMocks();
   });
 
-  it('returns generationFailed when all models exhausted via exception (no content)', async () => {
-    // 1 model: fallback wraps immediately (0→0), so only 1 call before generation_failed
+  it('returns modelFallbackOccurred when all models exhausted via exception (no content)', async () => {
+    // 1 model: fallback wraps around but no longer terminates —
+    // the session loop handles retry limits via backoff.
     const fallbackManager = makeFallbackManager(['model-a']);
 
     vi.mocked(runStreamedGeneration).mockRejectedValue(
@@ -462,18 +471,18 @@ describe('GenerationRunner — models-exhausted and attempt cap', () => {
     const result = await runner.run();
 
     expect(runStreamedGeneration).toHaveBeenCalledTimes(1);
-    expect(result.generationFailed).toBe(true);
-    expect(result.modelFallbackOccurred).toBe(false);
+    expect(result.modelFallbackOccurred).toBe(true);
+    expect(result.generationFailed).toBe(false);
   });
 });
 
-describe('GenerationRunner — fallback_new_step and wrap-around', () => {
+describe('GenerationRunner — fallback_new_step (no wrap-around termination)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     setupDefaultMocks();
   });
 
-  it('returns modelFallbackOccurred when model error occurs and not all models exhausted', async () => {
+  it('returns modelFallbackOccurred when model error occurs', async () => {
     const fallbackManager = makeFallbackManager(['model-a', 'model-b']);
 
     vi.mocked(runStreamedGeneration).mockResolvedValue(
@@ -490,43 +499,14 @@ describe('GenerationRunner — fallback_new_step and wrap-around', () => {
     expect(runStreamedGeneration).toHaveBeenCalledTimes(1);
     expect(result.shouldContinue).toBe(true);
     expect(result.modelFallbackOccurred).toBe(true);
+    expect(result.generationFailed).toBe(false);
     expect(result.generation).toBeNull();
   });
 
-  it('uses turnInitialFallbackIndex for wrap-around detection', async () => {
-    // 2 models: indices 0, 1. Start at turn-level index 1.
-    // After fallbackToNextModel() from index 1, we wrap to 0.
-    // 0 !== 1 (turnInitialFallbackIndex), so no wrap-around → fallback_new_step.
-    const fallbackManager = makeFallbackManager(['model-a', 'model-b']);
-    // Advance to index 1 so the turn starts there.
-    fallbackManager.fallbackToNextModel();
-    expect(fallbackManager.getFallbackIndex()).toBe(1);
-
-    vi.mocked(runStreamedGeneration).mockResolvedValue(
-      makeGenResult(
-        makeAssistantMessage(),
-        'error',
-        makeApiError({ message: 'Service Unavailable', statusCode: 503 }),
-      ),
-    );
-
-    const runner = new GenerationRunner(
-      makeDeps({ fallbackManager, turnInitialFallbackIndex: 1 }),
-    );
-    const result = await runner.run();
-
-    // 1 call, fallback wraps from 1→0. 0 !== 1, so fallback_new_step.
-    expect(runStreamedGeneration).toHaveBeenCalledTimes(1);
-    expect(result.modelFallbackOccurred).toBe(true);
-    expect(fallbackManager.getFallbackIndex()).toBe(0);
-  });
-
-  it('detects wrap-around when fallbackIndex returns to turnInitialFallbackIndex', async () => {
-    // 2 models: indices 0, 1. Start at turn-level index 0.
-    // After fallbackToNextModel() from index 0, we go to 1.
-    // 1 !== 0, so fallback_new_step (not generation_failed).
-    // A second step starting at index 1 would then wrap to 0 === 0 → generation_failed.
-    // Here we test the single-step behavior: starting at 0, 2 models → fallback_new_step.
+  it('advances fallback index on model error', async () => {
+    // 2 models: indices 0, 1. After fallbackToNextModel() from index 0,
+    // we go to 1. No wrap-around termination — the session loop handles
+    // retry limits.
     const fallbackManager = makeFallbackManager(['model-a', 'model-b']);
 
     vi.mocked(runStreamedGeneration).mockResolvedValue(
@@ -544,6 +524,7 @@ describe('GenerationRunner — fallback_new_step and wrap-around', () => {
 
     expect(runStreamedGeneration).toHaveBeenCalledTimes(1);
     expect(result.modelFallbackOccurred).toBe(true);
+    expect(result.generationFailed).toBe(false);
     expect(fallbackManager.getFallbackIndex()).toBe(1);
   });
 });
@@ -714,5 +695,92 @@ describe('GenerationRunner — abort', () => {
     // Tool dispatcher's abort signal should NOT be aborted
     // (we can't directly check it, but the test verifies no crash
     // and tools settle properly)
+  });
+});
+
+describe('GenerationRunner — abort does not trigger fallback', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    setupDefaultMocks();
+  });
+
+  it('does NOT trigger model fallback when generation is aborted with no content', async () => {
+    const fallbackManager = makeFallbackManager(['model-a', 'model-b']);
+    const fallbackSpy = vi.spyOn(fallbackManager, 'fallbackToNextModel');
+
+    // Simulate an abort: runStreamedGeneration resolves with error finish
+    // reason and the abort signal is set.
+    vi.mocked(runStreamedGeneration).mockImplementation(async (params) => {
+      // Abort the signal before returning
+      params.abortSignal.addEventListener('abort', () => {});
+      // Simulate the abort by returning an error finish with no content
+      return makeGenResult(
+        makeAssistantMessage(),
+        'error',
+        new Error('aborted'),
+      );
+    });
+
+    const runner = new GenerationRunner(makeDeps({ fallbackManager }));
+    // Abort before running so the signal is already aborted
+    runner.abort();
+    const result = await runner.run();
+
+    expect(fallbackSpy).not.toHaveBeenCalled();
+    expect(result.modelFallbackOccurred).toBe(false);
+    expect(result.generationFailed).toBe(false);
+    expect(result.fatalError).toBe(false);
+  });
+
+  it('salvages partial content when generation is aborted with content', async () => {
+    const fallbackManager = makeFallbackManager(['model-a', 'model-b']);
+    const fallbackSpy = vi.spyOn(fallbackManager, 'fallbackToNextModel');
+
+    const partialMsg = makeAssistantMessage([
+      { type: 'text', text: 'partial' },
+    ]);
+    vi.mocked(runStreamedGeneration).mockImplementation(async (params) => {
+      params.onUpdate(partialMsg);
+      return makeGenResult(partialMsg, 'error', new Error('aborted'));
+    });
+    vi.mocked(repairPartialMessage).mockReturnValue(true);
+
+    const messages: ExtendedUIMessage[] = [];
+    const runner = new GenerationRunner(
+      makeDeps({ messages, fallbackManager }),
+    );
+    // Abort before running
+    runner.abort();
+    const result = await runner.run();
+
+    expect(fallbackSpy).not.toHaveBeenCalled();
+    expect(result.modelFallbackOccurred).toBe(false);
+    expect(result.forceNextStep).toBe(true);
+    expect(result.fatalError).toBe(false);
+    expect(messages).toContain(partialMsg);
+  });
+
+  it('does NOT trigger fallback on AbortError thrown by streamText', async () => {
+    const fallbackManager = makeFallbackManager(['model-a', 'model-b']);
+    const fallbackSpy = vi.spyOn(fallbackManager, 'fallbackToNextModel');
+
+    const abortError = new Error('The operation was aborted');
+    abortError.name = 'AbortError';
+
+    vi.mocked(runStreamedGeneration).mockImplementation(async (params) => {
+      // Simulate the abort signal firing and an AbortError being thrown
+      params.onUpdate(makeAssistantMessage());
+      throw abortError;
+    });
+
+    const runner = new GenerationRunner(makeDeps({ fallbackManager }));
+    // Abort so the signal is set
+    runner.abort();
+    const result = await runner.run();
+
+    expect(fallbackSpy).not.toHaveBeenCalled();
+    expect(result.modelFallbackOccurred).toBe(false);
+    expect(result.generationFailed).toBe(false);
+    expect(result.fatalError).toBe(false);
   });
 });

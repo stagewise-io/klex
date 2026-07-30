@@ -45,6 +45,12 @@ import { ModelFallbackManager } from './utils/model-fallback-manager';
 import { getExtensionIdentifier, tracer } from './utils/tracing';
 import { extractUsage } from './utils/usage';
 
+/**
+ * Maximum consecutive complete-failure turns before the session terminates.
+ * Prevents infinite retry loops when all models are unavailable.
+ */
+const MAX_CONSECUTIVE_FAILURES = 5;
+
 export interface ChatSessionDependencies {
   logging: RootLogger;
   modelProvider: ModelProvider;
@@ -553,6 +559,29 @@ class ChatSessionModule implements AgentSession {
           this.runtimeState = 'retrying';
           this.backoffManager.recordFailure();
           needsBackoffRetry = true;
+
+          // Terminate after too many consecutive failures to prevent
+          // infinite retry loops.
+          if (
+            this.backoffManager.getConsecutiveFailures() >=
+            MAX_CONSECUTIVE_FAILURES
+          ) {
+            this.deps.logger.error(
+              {
+                sessionId: this.sessionId,
+                consecutiveFailures:
+                  this.backoffManager.getConsecutiveFailures(),
+              },
+              'Max consecutive failures reached — terminating session',
+            );
+            this.sessionSpan.addEvent('session.max_failures_exceeded', {
+              'session.consecutiveFailures':
+                this.backoffManager.getConsecutiveFailures(),
+            });
+            this.sessionSpan.setAttribute('session.terminated', true);
+            await this.terminate('max_consecutive_failures');
+            return;
+          }
         } else {
           this.runtimeState = 'success';
           this.backoffManager.recordSuccess();

@@ -11,6 +11,30 @@ import {
   UnsupportedFunctionalityError,
 } from 'ai';
 
+/**
+ * Checks whether an error is an abort error. Abort errors are produced by:
+ * - `AbortController.abort()` → `DOMException` with name `'AbortError'`
+ * - `AbortSignal.timeout()` → `DOMException` with name `'TimeoutError'`
+ *   (also caught here because timeout-aborted signals produce abort-like
+ *   behavior in the streaming layer)
+ * - Node.js native `AbortError` (name property check)
+ */
+function isAbortError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  // Standard DOMException-based abort (browser + Node 18+).
+  if (error.name === 'AbortError') return true;
+  // TimeoutError from AbortSignal.timeout / setAbortTimeout — these
+  // abort the stream via the abort controller, so treat as abort.
+  if (error.name === 'TimeoutError') return true;
+  // Some Node.js environments produce errors with 'aborted' in the
+  // message when an AbortSignal fires during fetch.
+  const msg = error.message.toLowerCase();
+  if (msg.includes('aborted') || msg.includes('this operation was aborted')) {
+    return true;
+  }
+  return false;
+}
+
 export interface GenerationErrorClassification {
   isModelError: boolean;
   /**
@@ -20,6 +44,13 @@ export interface GenerationErrorClassification {
    * fix a malformed request.
    */
   isFatal: boolean;
+  /**
+   * True when the error was caused by an abort (AbortError, DOMException
+   * with name 'AbortError', or a signal-aborted timeout). Aborts are
+   * user-initiated or system-initiated interruptions, not model failures
+   * — they must NOT trigger model fallback.
+   */
+  isAbort: boolean;
   reason: string;
 }
 
@@ -54,6 +85,7 @@ const SIMPLE_CLASSIFIERS: Array<{
     result: {
       isModelError: true,
       isFatal: false,
+      isAbort: false,
       reason: 'empty response body',
     },
   },
@@ -62,6 +94,7 @@ const SIMPLE_CLASSIFIERS: Array<{
     result: {
       isModelError: true,
       isFatal: false,
+      isAbort: false,
       reason: 'no content generated',
     },
   },
@@ -70,22 +103,34 @@ const SIMPLE_CLASSIFIERS: Array<{
     result: {
       isModelError: true,
       isFatal: false,
+      isAbort: false,
       reason: 'failed to load API key',
     },
   },
   {
     cls: NoSuchModelError,
-    result: { isModelError: true, isFatal: false, reason: 'no such model' },
+    result: {
+      isModelError: true,
+      isFatal: false,
+      isAbort: false,
+      reason: 'no such model',
+    },
   },
   {
     cls: JSONParseError,
-    result: { isModelError: true, isFatal: false, reason: 'JSON parse error' },
+    result: {
+      isModelError: true,
+      isFatal: false,
+      isAbort: false,
+      reason: 'JSON parse error',
+    },
   },
   {
     cls: InvalidResponseDataError,
     result: {
       isModelError: true,
       isFatal: false,
+      isAbort: false,
       reason: 'invalid response data',
     },
   },
@@ -94,6 +139,7 @@ const SIMPLE_CLASSIFIERS: Array<{
     result: {
       isModelError: false,
       isFatal: true,
+      isAbort: false,
       reason: 'invalid prompt error',
     },
   },
@@ -102,6 +148,7 @@ const SIMPLE_CLASSIFIERS: Array<{
     result: {
       isModelError: true,
       isFatal: false,
+      isAbort: false,
       reason: 'unsupported functionality',
     },
   },
@@ -130,6 +177,7 @@ export function classifyGenerationError(
     return {
       isModelError: true,
       isFatal: false,
+      isAbort: false,
       reason: 'model reported error without details',
     };
   }
@@ -139,7 +187,23 @@ export function classifyGenerationError(
     return {
       isModelError: true,
       isFatal: false,
+      isAbort: false,
       reason: `model error: ${error}`,
+    };
+  }
+
+  // Abort detection — check before all other classifiers so that aborts
+  // are never misclassified as model errors. Aborts can be triggered by:
+  // - User-initiated cancellation (AbortController.abort())
+  // - Session shutdown
+  // - Inbox interrupt (high-priority event preempts current generation)
+  // Aborts must NOT trigger model fallback.
+  if (isAbortError(error)) {
+    return {
+      isModelError: false,
+      isFatal: false,
+      isAbort: true,
+      reason: 'generation aborted',
     };
   }
 
@@ -150,6 +214,7 @@ export function classifyGenerationError(
         return {
           isModelError: true,
           isFatal: false,
+          isAbort: false,
           reason: `server error (${error.statusCode})`,
         };
       }
@@ -160,6 +225,7 @@ export function classifyGenerationError(
         return {
           isModelError: true,
           isFatal: false,
+          isAbort: false,
           reason: `authentication error (${error.statusCode})`,
         };
       }
@@ -171,6 +237,7 @@ export function classifyGenerationError(
         return {
           isModelError: false,
           isFatal: true,
+          isAbort: false,
           reason: `bad request (${error.statusCode})`,
         };
       }
@@ -178,6 +245,7 @@ export function classifyGenerationError(
         return {
           isModelError: false,
           isFatal: false,
+          isAbort: false,
           reason: `client error (${error.statusCode})`,
         };
       }
@@ -186,12 +254,14 @@ export function classifyGenerationError(
       return {
         isModelError: true,
         isFatal: false,
+        isAbort: false,
         reason: 'retryable API error',
       };
     }
     return {
       isModelError: false,
       isFatal: false,
+      isAbort: false,
       reason: 'non-retryable API error',
     };
   }
@@ -213,6 +283,7 @@ export function classifyGenerationError(
     return {
       isModelError: true,
       isFatal: false,
+      isAbort: false,
       reason: 'no output generated',
     };
   }
@@ -237,6 +308,7 @@ export function classifyGenerationError(
       return {
         isModelError: true,
         isFatal: false,
+        isAbort: false,
         reason: `network error: ${error.message}`,
       };
     }
@@ -245,6 +317,7 @@ export function classifyGenerationError(
   return {
     isModelError: false,
     isFatal: false,
+    isAbort: false,
     reason: 'unknown error',
   };
 }

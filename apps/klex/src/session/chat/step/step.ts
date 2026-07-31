@@ -231,11 +231,11 @@ class StepModule implements Step {
           });
           const modelId = this.deps.fallbackManager.getChatModelId();
           model = await this.getModel();
-          const resolved = this.deps.config.resolveModel(modelId);
+          const info = this.deps.config.resolveModelInfo(modelId);
           resolvedModel = {
             modelId,
-            displayName: resolved.displayName,
-            contextSize: resolved.contextSize,
+            displayName: info.displayName,
+            contextSize: info.contextSize,
           };
           modelSpan.end();
         }

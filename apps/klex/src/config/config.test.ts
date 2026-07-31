@@ -13,8 +13,11 @@ import {
   DEFAULT_CONTEXT_SIZE,
 } from './config';
 import {
+  type EndpointConfig,
   type KlexConfig,
   klexConfigSchema,
+  type ModelDefinition,
+  type ProviderConfig,
   type ProviderPreset,
 } from './types';
 
@@ -893,4 +896,455 @@ describe('Config — getMcpServers', () => {
       );
     },
   );
+});
+
+function noSelectionConfig(providers: KlexConfig['providers']): KlexConfig {
+  return {
+    providers,
+    modelSelection: { chat: [], compaction: [], memory: [] },
+    mcpServers: {},
+  };
+}
+
+describe('Config — provider CRUD', () => {
+  const newPresetProvider: ProviderConfig = {
+    preset: 'anthropic',
+    auth: { apiKey: 'sk-new' },
+  };
+
+  const newManualProvider: ProviderConfig = {
+    endpoints: {
+      api: {
+        url: 'http://localhost:9000/v1',
+        format: 'chat-completions',
+        auth: {},
+      },
+    },
+  };
+
+  it('addProvider adds a new preset provider', async () => {
+    const { module } = await setup();
+    await module.addProvider('new-openai', newPresetProvider);
+    const provider = module.get().providers['new-openai'];
+    expect(provider).toBeDefined();
+    expect(provider && 'preset' in provider ? provider.preset : '').toBe(
+      'anthropic',
+    );
+  });
+
+  it('addProvider adds a new manual provider', async () => {
+    const { module } = await setup();
+    await module.addProvider('new-local', newManualProvider);
+    const provider = module.get().providers['new-local'];
+    expect(provider).toBeDefined();
+    expect(
+      provider && 'endpoints' in provider ? provider.endpoints.api : null,
+    ).toBeDefined();
+  });
+
+  it('addProvider rejects duplicate name', async () => {
+    const { module } = await setup();
+    await expect(
+      module.addProvider('local', newManualProvider),
+    ).rejects.toBeInstanceOf(ConfigValidationError);
+  });
+
+  it('updateProvider replaces a preset provider with a manual provider', async () => {
+    const { module } = await setup(
+      noSelectionConfig({
+        'my-openai': { preset: 'openai', auth: { apiKey: 'sk-test' } },
+      }),
+    );
+    await module.updateProvider('my-openai', newManualProvider);
+    const provider = module.get().providers['my-openai'];
+    expect(provider).toBeDefined();
+    expect(
+      provider && 'endpoints' in provider ? provider.endpoints.api : null,
+    ).toBeDefined();
+  });
+
+  it('updateProvider rejects unknown provider', async () => {
+    const { module } = await setup();
+    await expect(
+      module.updateProvider('nonexistent', newPresetProvider),
+    ).rejects.toBeInstanceOf(ConfigValidationError);
+  });
+
+  it('removeProvider deletes the provider', async () => {
+    const { module } = await setup(
+      noSelectionConfig({
+        remote: { preset: 'openai', auth: { apiKey: 'sk-test' } },
+        local: {
+          endpoints: {
+            chat: {
+              url: 'http://localhost:11434/v1',
+              format: 'chat-completions',
+              auth: {},
+            },
+          },
+        },
+      }),
+    );
+    await module.removeProvider('remote');
+    expect(module.get().providers['remote']).toBeUndefined();
+  });
+
+  it('removeProvider cascades — deletes all endpoints within the provider', async () => {
+    const { module } = await setup(
+      noSelectionConfig({
+        remote: { preset: 'openai', auth: { apiKey: 'sk-test' } },
+        local: {
+          endpoints: {
+            chat: {
+              url: 'http://localhost:11434/v1',
+              format: 'chat-completions',
+              auth: {},
+            },
+            api: {
+              url: 'http://localhost:8080/v1',
+              format: 'open-responses',
+              auth: { apiKey: 'local-key' },
+            },
+          },
+        },
+      }),
+    );
+    await module.removeProvider('local');
+    expect(module.get().providers['local']).toBeUndefined();
+  });
+
+  it('removeProvider rejects unknown provider', async () => {
+    const { module } = await setup();
+    await expect(module.removeProvider('nonexistent')).rejects.toBeInstanceOf(
+      ConfigValidationError,
+    );
+  });
+
+  it('removeProvider rejects when model selection still references the provider', async () => {
+    const { module } = await setup();
+    // manualConfig has modelSelection.chat = ['local:chat:model:8b']
+    await expect(module.removeProvider('local')).rejects.toBeInstanceOf(
+      ConfigValidationError,
+    );
+  });
+});
+
+describe('Config — endpoint CRUD', () => {
+  const newEndpoint: EndpointConfig = {
+    url: 'http://localhost:7000/v1',
+    format: 'open-responses',
+    auth: { apiKey: 'endpoint-key' },
+  };
+
+  it('addEndpoint adds an endpoint to a manual provider', async () => {
+    const { module } = await setup();
+    await module.addEndpoint('local', 'new-ep', newEndpoint);
+    const provider = module.get().providers['local'];
+    expect(
+      provider && 'endpoints' in provider ? provider.endpoints['new-ep'] : null,
+    ).toBeDefined();
+  });
+
+  it('addEndpoint rejects unknown provider', async () => {
+    const { module } = await setup();
+    await expect(
+      module.addEndpoint('nonexistent', 'ep', newEndpoint),
+    ).rejects.toBeInstanceOf(ConfigValidationError);
+  });
+
+  it('addEndpoint rejects preset providers', async () => {
+    const { module } = await setup(presetConfig());
+    await expect(
+      module.addEndpoint('my-openai', 'ep', newEndpoint),
+    ).rejects.toBeInstanceOf(ConfigValidationError);
+  });
+
+  it('addEndpoint rejects duplicate endpoint name', async () => {
+    const { module } = await setup(mixedConfig());
+    await expect(
+      module.addEndpoint('local', 'chat', newEndpoint),
+    ).rejects.toBeInstanceOf(ConfigValidationError);
+  });
+
+  it('updateEndpoint replaces the endpoint config', async () => {
+    const { module } = await setup();
+    await module.updateEndpoint('local', 'chat', newEndpoint);
+    const provider = module.get().providers['local'];
+    const ep =
+      provider && 'endpoints' in provider ? provider.endpoints['chat'] : null;
+    expect(ep?.url).toBe('http://localhost:7000/v1');
+    expect(ep?.format).toBe('open-responses');
+  });
+
+  it('updateEndpoint rejects unknown provider', async () => {
+    const { module } = await setup();
+    await expect(
+      module.updateEndpoint('nonexistent', 'ep', newEndpoint),
+    ).rejects.toBeInstanceOf(ConfigValidationError);
+  });
+
+  it('updateEndpoint rejects unknown endpoint', async () => {
+    const { module } = await setup();
+    await expect(
+      module.updateEndpoint('local', 'nonexistent', newEndpoint),
+    ).rejects.toBeInstanceOf(ConfigValidationError);
+  });
+
+  it('updateEndpoint rejects preset providers', async () => {
+    const { module } = await setup(presetConfig());
+    await expect(
+      module.updateEndpoint('my-openai', 'ep', newEndpoint),
+    ).rejects.toBeInstanceOf(ConfigValidationError);
+  });
+
+  it('removeEndpoint removes an endpoint from a manual provider', async () => {
+    const { module } = await setup(
+      noSelectionConfig({
+        local: {
+          endpoints: {
+            chat: {
+              url: 'http://localhost:11434/v1',
+              format: 'chat-completions',
+              auth: {},
+            },
+            api: {
+              url: 'http://localhost:8080/v1',
+              format: 'open-responses',
+              auth: { apiKey: 'local-key' },
+            },
+          },
+        },
+      }),
+    );
+    await module.removeEndpoint('local', 'chat');
+    const provider = module.get().providers['local'];
+    expect(
+      provider && 'endpoints' in provider ? provider.endpoints['chat'] : null,
+    ).toBeUndefined();
+  });
+
+  it('removeEndpoint rejects unknown provider', async () => {
+    const { module } = await setup();
+    await expect(
+      module.removeEndpoint('nonexistent', 'ep'),
+    ).rejects.toBeInstanceOf(ConfigValidationError);
+  });
+
+  it('removeEndpoint rejects unknown endpoint', async () => {
+    const { module } = await setup();
+    await expect(
+      module.removeEndpoint('local', 'nonexistent'),
+    ).rejects.toBeInstanceOf(ConfigValidationError);
+  });
+
+  it('removeEndpoint rejects preset providers', async () => {
+    const { module } = await setup(presetConfig());
+    await expect(
+      module.removeEndpoint('my-openai', 'ep'),
+    ).rejects.toBeInstanceOf(ConfigValidationError);
+  });
+
+  it('removeEndpoint rejects when model selection still references the endpoint', async () => {
+    const { module } = await setup();
+    // manualConfig has modelSelection.chat = ['local:chat:model:8b']
+    await expect(module.removeEndpoint('local', 'chat')).rejects.toBeInstanceOf(
+      ConfigValidationError,
+    );
+  });
+});
+
+describe('Config — known model CRUD', () => {
+  const modelDef: ModelDefinition = {
+    displayName: 'Test Model',
+    contextSize: 128_000,
+  };
+
+  // --- Preset provider known models ---
+
+  it('addKnownModel adds a model to a preset provider', async () => {
+    const { module } = await setup(presetConfig());
+    await module.addKnownModel('my-openai', 'gpt-4o-mini', modelDef);
+    const provider = module.get().providers['my-openai']!;
+    if (!('preset' in provider)) throw new Error('Expected preset provider');
+    expect(provider.knownModels?.['gpt-4o-mini']).toEqual(modelDef);
+  });
+
+  it('addKnownModel rejects endpointName on preset provider', async () => {
+    const { module } = await setup(presetConfig());
+    await expect(
+      module.addKnownModel('my-openai', 'gpt-4o', modelDef, 'default'),
+    ).rejects.toBeInstanceOf(ConfigValidationError);
+  });
+
+  it('addKnownModel rejects duplicate modelId on preset provider', async () => {
+    const { module } = await setup(presetConfig());
+    // presetConfig has modelSelection.chat = ['my-openai:gpt-4o'] but
+    // knownModels is not populated — add one first, then duplicate
+    await module.addKnownModel('my-openai', 'gpt-4o', modelDef);
+    await expect(
+      module.addKnownModel('my-openai', 'gpt-4o', modelDef),
+    ).rejects.toBeInstanceOf(ConfigValidationError);
+  });
+
+  it('updateKnownModel updates a preset provider model', async () => {
+    const { module } = await setup(presetConfig());
+    await module.addKnownModel('my-openai', 'gpt-4o', modelDef);
+    await module.updateKnownModel('my-openai', 'gpt-4o', {
+      displayName: 'Updated',
+      contextSize: 64_000,
+    });
+    const provider = module.get().providers['my-openai']!;
+    if (!('preset' in provider)) throw new Error('Expected preset provider');
+    expect(provider.knownModels?.['gpt-4o']).toEqual({
+      displayName: 'Updated',
+      contextSize: 64_000,
+    });
+  });
+
+  it('updateKnownModel rejects unknown model on preset provider', async () => {
+    const { module } = await setup(presetConfig());
+    await expect(
+      module.updateKnownModel('my-openai', 'nonexistent', modelDef),
+    ).rejects.toBeInstanceOf(ConfigValidationError);
+  });
+
+  it('removeKnownModel removes a preset provider model', async () => {
+    const { module } = await setup(presetConfig());
+    await module.addKnownModel('my-openai', 'gpt-4o', modelDef);
+    await module.removeKnownModel('my-openai', 'gpt-4o');
+    const provider = module.get().providers['my-openai']!;
+    if (!('preset' in provider)) throw new Error('Expected preset provider');
+    expect(provider.knownModels?.['gpt-4o']).toBeUndefined();
+  });
+
+  it('removeKnownModel rejects unknown model on preset provider', async () => {
+    const { module } = await setup(presetConfig());
+    await expect(
+      module.removeKnownModel('my-openai', 'nonexistent'),
+    ).rejects.toBeInstanceOf(ConfigValidationError);
+  });
+
+  // --- Manual provider known models ---
+
+  it('addKnownModel adds a model to a manual provider endpoint', async () => {
+    const { module } = await setup();
+    await module.addKnownModel('local', 'llama3', modelDef, 'chat');
+    const provider = module.get().providers['local']!;
+    if (!('endpoints' in provider)) throw new Error('Expected manual provider');
+    expect(provider.endpoints['chat']!.knownModels?.['llama3']).toEqual(
+      modelDef,
+    );
+  });
+
+  it('addKnownModel rejects missing endpointName on manual provider', async () => {
+    const { module } = await setup();
+    await expect(
+      module.addKnownModel('local', 'llama3', modelDef),
+    ).rejects.toBeInstanceOf(ConfigValidationError);
+  });
+
+  it('addKnownModel rejects unknown endpoint on manual provider', async () => {
+    const { module } = await setup();
+    await expect(
+      module.addKnownModel('local', 'llama3', modelDef, 'nonexistent'),
+    ).rejects.toBeInstanceOf(ConfigValidationError);
+  });
+
+  it('addKnownModel rejects duplicate modelId on manual provider endpoint', async () => {
+    const { module } = await setup();
+    await module.addKnownModel('local', 'llama3', modelDef, 'chat');
+    await expect(
+      module.addKnownModel('local', 'llama3', modelDef, 'chat'),
+    ).rejects.toBeInstanceOf(ConfigValidationError);
+  });
+
+  it('addKnownModel allows same modelId on different endpoints', async () => {
+    const { module } = await setup(
+      noSelectionConfig({
+        local: {
+          endpoints: {
+            chat: {
+              url: 'http://localhost:11434/v1',
+              format: 'chat-completions',
+              auth: {},
+            },
+            api: {
+              url: 'http://localhost:8080/v1',
+              format: 'open-responses',
+              auth: { apiKey: 'local-key' },
+            },
+          },
+        },
+      }),
+    );
+    await module.addKnownModel('local', 'llama3', modelDef, 'chat');
+    await module.addKnownModel('local', 'llama3', modelDef, 'api');
+    const provider = module.get().providers['local']!;
+    if (!('endpoints' in provider)) throw new Error('Expected manual provider');
+    expect(provider.endpoints['chat']!.knownModels?.['llama3']).toBeDefined();
+    expect(provider.endpoints['api']!.knownModels?.['llama3']).toBeDefined();
+  });
+
+  it('updateKnownModel updates a manual provider endpoint model', async () => {
+    const { module } = await setup();
+    await module.addKnownModel('local', 'llama3', modelDef, 'chat');
+    await module.updateKnownModel(
+      'local',
+      'llama3',
+      { displayName: 'Updated', contextSize: 64_000 },
+      'chat',
+    );
+    const provider = module.get().providers['local']!;
+    if (!('endpoints' in provider)) throw new Error('Expected manual provider');
+    expect(provider.endpoints['chat']!.knownModels?.['llama3']).toEqual({
+      displayName: 'Updated',
+      contextSize: 64_000,
+    });
+  });
+
+  it('updateKnownModel rejects unknown model on manual provider endpoint', async () => {
+    const { module } = await setup();
+    await expect(
+      module.updateKnownModel('local', 'nonexistent', modelDef, 'chat'),
+    ).rejects.toBeInstanceOf(ConfigValidationError);
+  });
+
+  it('removeKnownModel removes a manual provider endpoint model', async () => {
+    const { module } = await setup();
+    await module.addKnownModel('local', 'llama3', modelDef, 'chat');
+    await module.removeKnownModel('local', 'llama3', 'chat');
+    const provider = module.get().providers['local']!;
+    if (!('endpoints' in provider)) throw new Error('Expected manual provider');
+    expect(provider.endpoints['chat']!.knownModels?.['llama3']).toBeUndefined();
+  });
+
+  it('removeKnownModel rejects unknown model on manual provider endpoint', async () => {
+    const { module } = await setup();
+    await expect(
+      module.removeKnownModel('local', 'nonexistent', 'chat'),
+    ).rejects.toBeInstanceOf(ConfigValidationError);
+  });
+
+  // --- Common error cases ---
+
+  it('addKnownModel rejects unknown provider', async () => {
+    const { module } = await setup();
+    await expect(
+      module.addKnownModel('nonexistent', 'model', modelDef),
+    ).rejects.toBeInstanceOf(ConfigValidationError);
+  });
+
+  it('updateKnownModel rejects unknown provider', async () => {
+    const { module } = await setup();
+    await expect(
+      module.updateKnownModel('nonexistent', 'model', modelDef),
+    ).rejects.toBeInstanceOf(ConfigValidationError);
+  });
+
+  it('removeKnownModel rejects unknown provider', async () => {
+    const { module } = await setup();
+    await expect(
+      module.removeKnownModel('nonexistent', 'model'),
+    ).rejects.toBeInstanceOf(ConfigValidationError);
+  });
 });

@@ -17,6 +17,7 @@ import {
   type ModelInputCapabilities,
   type ModelPurpose,
   type ModelSelection,
+  type ProviderConfig,
   resolvePresetEndpoint,
 } from './types';
 
@@ -93,6 +94,55 @@ export interface Config {
   /** Updates the model selection section of the config. */
   updateModelSelection(
     selection: ModelSelection,
+  ): Promise<Readonly<KlexConfig>>;
+  /** Creates a new provider. Throws if the name already exists. */
+  addProvider(
+    name: string,
+    provider: ProviderConfig,
+  ): Promise<Readonly<KlexConfig>>;
+  /** Updates (replaces) an existing provider by name. Throws if not found. */
+  updateProvider(
+    name: string,
+    provider: ProviderConfig,
+  ): Promise<Readonly<KlexConfig>>;
+  /** Removes a provider and all its endpoints. Throws if not found. */
+  removeProvider(name: string): Promise<Readonly<KlexConfig>>;
+  /** Creates a new endpoint on a manual provider. Throws if provider not found, is preset, or endpoint exists. */
+  addEndpoint(
+    providerName: string,
+    endpointName: string,
+    endpoint: EndpointConfig,
+  ): Promise<Readonly<KlexConfig>>;
+  /** Updates an endpoint on a manual provider. Throws if provider/endpoint not found or is preset. */
+  updateEndpoint(
+    providerName: string,
+    endpointName: string,
+    endpoint: EndpointConfig,
+  ): Promise<Readonly<KlexConfig>>;
+  /** Removes an endpoint from a manual provider. Throws if provider/endpoint not found or is preset. */
+  removeEndpoint(
+    providerName: string,
+    endpointName: string,
+  ): Promise<Readonly<KlexConfig>>;
+  /** Adds a known model to a provider. For preset providers, omit endpointName. For manual providers, endpointName is required. Throws on duplicate modelId. */
+  addKnownModel(
+    providerName: string,
+    modelId: string,
+    definition: ModelDefinition,
+    endpointName?: string,
+  ): Promise<Readonly<KlexConfig>>;
+  /** Updates a known model definition. For manual providers, endpointName is required. Throws if not found. */
+  updateKnownModel(
+    providerName: string,
+    modelId: string,
+    definition: ModelDefinition,
+    endpointName?: string,
+  ): Promise<Readonly<KlexConfig>>;
+  /** Removes a known model. For manual providers, endpointName is required. Throws if not found. */
+  removeKnownModel(
+    providerName: string,
+    modelId: string,
+    endpointName?: string,
   ): Promise<Readonly<KlexConfig>>;
 }
 
@@ -418,6 +468,368 @@ class ConfigModule implements Config {
     const updated: KlexConfig = {
       ...current,
       modelSelection: selection,
+    };
+    return this.replace(updated);
+  }
+
+  async addProvider(
+    name: string,
+    provider: ProviderConfig,
+  ): Promise<Readonly<KlexConfig>> {
+    const current = this.requireConfig();
+    if (current.providers[name]) {
+      throw new ConfigValidationError(`Provider '${name}' already exists`);
+    }
+    const updated: KlexConfig = {
+      ...current,
+      providers: { ...current.providers, [name]: provider },
+    };
+    return this.replace(updated);
+  }
+
+  async updateProvider(
+    name: string,
+    provider: ProviderConfig,
+  ): Promise<Readonly<KlexConfig>> {
+    const current = this.requireConfig();
+    if (!current.providers[name]) {
+      throw new ConfigValidationError(`Provider '${name}' not found`);
+    }
+    const updated: KlexConfig = {
+      ...current,
+      providers: { ...current.providers, [name]: provider },
+    };
+    return this.replace(updated);
+  }
+
+  async removeProvider(name: string): Promise<Readonly<KlexConfig>> {
+    const current = this.requireConfig();
+    if (!current.providers[name]) {
+      throw new ConfigValidationError(`Provider '${name}' not found`);
+    }
+    const { [name]: _removed, ...remaining } = current.providers;
+    const updated: KlexConfig = {
+      ...current,
+      providers: remaining,
+    };
+    return this.replace(updated);
+  }
+
+  async addEndpoint(
+    providerName: string,
+    endpointName: string,
+    endpoint: EndpointConfig,
+  ): Promise<Readonly<KlexConfig>> {
+    const current = this.requireConfig();
+    const provider = current.providers[providerName];
+    if (!provider) {
+      throw new ConfigValidationError(`Provider '${providerName}' not found`);
+    }
+    if ('preset' in provider) {
+      throw new ConfigValidationError(
+        `Cannot add endpoints to preset provider '${providerName}'`,
+      );
+    }
+    if (provider.endpoints[endpointName]) {
+      throw new ConfigValidationError(
+        `Endpoint '${endpointName}' already exists in provider '${providerName}'`,
+      );
+    }
+    const updated: KlexConfig = {
+      ...current,
+      providers: {
+        ...current.providers,
+        [providerName]: {
+          endpoints: { ...provider.endpoints, [endpointName]: endpoint },
+        },
+      },
+    };
+    return this.replace(updated);
+  }
+
+  async updateEndpoint(
+    providerName: string,
+    endpointName: string,
+    endpoint: EndpointConfig,
+  ): Promise<Readonly<KlexConfig>> {
+    const current = this.requireConfig();
+    const provider = current.providers[providerName];
+    if (!provider) {
+      throw new ConfigValidationError(`Provider '${providerName}' not found`);
+    }
+    if ('preset' in provider) {
+      throw new ConfigValidationError(
+        `Cannot update endpoints on preset provider '${providerName}'`,
+      );
+    }
+    if (!provider.endpoints[endpointName]) {
+      throw new ConfigValidationError(
+        `Endpoint '${endpointName}' not found in provider '${providerName}'`,
+      );
+    }
+    const updated: KlexConfig = {
+      ...current,
+      providers: {
+        ...current.providers,
+        [providerName]: {
+          endpoints: { ...provider.endpoints, [endpointName]: endpoint },
+        },
+      },
+    };
+    return this.replace(updated);
+  }
+
+  async removeEndpoint(
+    providerName: string,
+    endpointName: string,
+  ): Promise<Readonly<KlexConfig>> {
+    const current = this.requireConfig();
+    const provider = current.providers[providerName];
+    if (!provider) {
+      throw new ConfigValidationError(`Provider '${providerName}' not found`);
+    }
+    if ('preset' in provider) {
+      throw new ConfigValidationError(
+        `Cannot remove endpoints from preset provider '${providerName}'`,
+      );
+    }
+    if (!provider.endpoints[endpointName]) {
+      throw new ConfigValidationError(
+        `Endpoint '${endpointName}' not found in provider '${providerName}'`,
+      );
+    }
+    const { [endpointName]: _removed, ...remainingEndpoints } =
+      provider.endpoints;
+    const updated: KlexConfig = {
+      ...current,
+      providers: {
+        ...current.providers,
+        [providerName]: {
+          endpoints: remainingEndpoints,
+        },
+      },
+    };
+    return this.replace(updated);
+  }
+
+  async addKnownModel(
+    providerName: string,
+    modelId: string,
+    definition: ModelDefinition,
+    endpointName?: string,
+  ): Promise<Readonly<KlexConfig>> {
+    const current = this.requireConfig();
+    const provider = current.providers[providerName];
+    if (!provider) {
+      throw new ConfigValidationError(`Provider '${providerName}' not found`);
+    }
+
+    if ('preset' in provider) {
+      if (endpointName !== undefined) {
+        throw new ConfigValidationError(
+          `Preset provider '${providerName}' does not support endpoint-scoped known models`,
+        );
+      }
+      const existing = provider.knownModels ?? {};
+      if (existing[modelId]) {
+        throw new ConfigValidationError(
+          `Model '${modelId}' already exists in provider '${providerName}'`,
+        );
+      }
+      const updated: KlexConfig = {
+        ...current,
+        providers: {
+          ...current.providers,
+          [providerName]: {
+            ...provider,
+            knownModels: { ...existing, [modelId]: definition },
+          },
+        },
+      };
+      return this.replace(updated);
+    }
+
+    // Manual provider — endpointName is required
+    if (!endpointName) {
+      throw new ConfigValidationError(
+        `Manual provider '${providerName}' requires an endpoint name for known models`,
+      );
+    }
+    const endpoint = provider.endpoints[endpointName];
+    if (!endpoint) {
+      throw new ConfigValidationError(
+        `Endpoint '${endpointName}' not found in provider '${providerName}'`,
+      );
+    }
+    const existing = endpoint.knownModels ?? {};
+    if (existing[modelId]) {
+      throw new ConfigValidationError(
+        `Model '${modelId}' already exists in endpoint '${endpointName}' of provider '${providerName}'`,
+      );
+    }
+    const updated: KlexConfig = {
+      ...current,
+      providers: {
+        ...current.providers,
+        [providerName]: {
+          endpoints: {
+            ...provider.endpoints,
+            [endpointName]: {
+              ...endpoint,
+              knownModels: { ...existing, [modelId]: definition },
+            },
+          },
+        },
+      },
+    };
+    return this.replace(updated);
+  }
+
+  async updateKnownModel(
+    providerName: string,
+    modelId: string,
+    definition: ModelDefinition,
+    endpointName?: string,
+  ): Promise<Readonly<KlexConfig>> {
+    const current = this.requireConfig();
+    const provider = current.providers[providerName];
+    if (!provider) {
+      throw new ConfigValidationError(`Provider '${providerName}' not found`);
+    }
+
+    if ('preset' in provider) {
+      if (endpointName !== undefined) {
+        throw new ConfigValidationError(
+          `Preset provider '${providerName}' does not support endpoint-scoped known models`,
+        );
+      }
+      const existing = provider.knownModels ?? {};
+      if (!existing[modelId]) {
+        throw new ConfigValidationError(
+          `Model '${modelId}' not found in provider '${providerName}'`,
+        );
+      }
+      const updated: KlexConfig = {
+        ...current,
+        providers: {
+          ...current.providers,
+          [providerName]: {
+            ...provider,
+            knownModels: { ...existing, [modelId]: definition },
+          },
+        },
+      };
+      return this.replace(updated);
+    }
+
+    // Manual provider — endpointName is required
+    if (!endpointName) {
+      throw new ConfigValidationError(
+        `Manual provider '${providerName}' requires an endpoint name for known models`,
+      );
+    }
+    const endpoint = provider.endpoints[endpointName];
+    if (!endpoint) {
+      throw new ConfigValidationError(
+        `Endpoint '${endpointName}' not found in provider '${providerName}'`,
+      );
+    }
+    const existing = endpoint.knownModels ?? {};
+    if (!existing[modelId]) {
+      throw new ConfigValidationError(
+        `Model '${modelId}' not found in endpoint '${endpointName}' of provider '${providerName}'`,
+      );
+    }
+    const updated: KlexConfig = {
+      ...current,
+      providers: {
+        ...current.providers,
+        [providerName]: {
+          endpoints: {
+            ...provider.endpoints,
+            [endpointName]: {
+              ...endpoint,
+              knownModels: { ...existing, [modelId]: definition },
+            },
+          },
+        },
+      },
+    };
+    return this.replace(updated);
+  }
+
+  async removeKnownModel(
+    providerName: string,
+    modelId: string,
+    endpointName?: string,
+  ): Promise<Readonly<KlexConfig>> {
+    const current = this.requireConfig();
+    const provider = current.providers[providerName];
+    if (!provider) {
+      throw new ConfigValidationError(`Provider '${providerName}' not found`);
+    }
+
+    if ('preset' in provider) {
+      if (endpointName !== undefined) {
+        throw new ConfigValidationError(
+          `Preset provider '${providerName}' does not support endpoint-scoped known models`,
+        );
+      }
+      const existing = provider.knownModels ?? {};
+      if (!existing[modelId]) {
+        throw new ConfigValidationError(
+          `Model '${modelId}' not found in provider '${providerName}'`,
+        );
+      }
+      const { [modelId]: _removed, ...remaining } = existing;
+      const updated: KlexConfig = {
+        ...current,
+        providers: {
+          ...current.providers,
+          [providerName]: {
+            ...provider,
+            knownModels:
+              Object.keys(remaining).length > 0 ? remaining : undefined,
+          },
+        },
+      };
+      return this.replace(updated);
+    }
+
+    // Manual provider — endpointName is required
+    if (!endpointName) {
+      throw new ConfigValidationError(
+        `Manual provider '${providerName}' requires an endpoint name for known models`,
+      );
+    }
+    const endpoint = provider.endpoints[endpointName];
+    if (!endpoint) {
+      throw new ConfigValidationError(
+        `Endpoint '${endpointName}' not found in provider '${providerName}'`,
+      );
+    }
+    const existing = endpoint.knownModels ?? {};
+    if (!existing[modelId]) {
+      throw new ConfigValidationError(
+        `Model '${modelId}' not found in endpoint '${endpointName}' of provider '${providerName}'`,
+      );
+    }
+    const { [modelId]: _removed, ...remaining } = existing;
+    const updated: KlexConfig = {
+      ...current,
+      providers: {
+        ...current.providers,
+        [providerName]: {
+          endpoints: {
+            ...provider.endpoints,
+            [endpointName]: {
+              ...endpoint,
+              knownModels:
+                Object.keys(remaining).length > 0 ? remaining : undefined,
+            },
+          },
+        },
+      },
     };
     return this.replace(updated);
   }

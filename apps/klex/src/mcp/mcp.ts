@@ -161,8 +161,8 @@ class McpModule implements Mcp {
   async start(): Promise<void> {
     if (this.started) return;
     this.started = true;
-    this.unsubscribe = this.deps.config.subscribe((config) => {
-      this.scheduleReconcile(config.mcpServers);
+    this.unsubscribe = this.deps.config.subscribe(() => {
+      this.scheduleReconcile(this.deps.config.getMcpServers());
     });
     const configuredServerCount = Object.keys(
       this.deps.config.getMcpServers(),

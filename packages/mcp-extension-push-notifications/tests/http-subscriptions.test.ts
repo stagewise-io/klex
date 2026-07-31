@@ -21,6 +21,7 @@ function listenRequest(
     consumerKey?: string;
     progressToken?: string | number;
     subscription?: unknown;
+    signal?: AbortSignal;
   } = {},
 ): Request {
   const metadata =
@@ -39,6 +40,7 @@ function listenRequest(
         ? {}
         : { 'X-Consumer-Key': options.consumerKey }),
     },
+    signal: options.signal,
     body: JSON.stringify({
       jsonrpc: '2.0',
       id,
@@ -190,6 +192,65 @@ describe('Push Notifications HTTP subscriptions', () => {
     manager.publish('agent-a', { event });
     expect(await readSseMessage(second)).toMatchObject({ params: { event } });
     await second.cancel();
+  });
+
+  it('reports subscription lifecycle across replacement, abort, and shutdown', async () => {
+    const changes: Array<[string, boolean]> = [];
+    const manager = createPushNotificationsHttpSubscriptionManager(
+      async () => Response.json({}),
+      {
+        keepAliveMs: 0,
+        resolveConsumerKey: (request) =>
+          request.headers.get('X-Consumer-Key') ?? 'agent-a',
+        onSubscriptionStateChanged: (consumerKey, active) => {
+          changes.push([consumerKey, active]);
+        },
+      },
+    );
+
+    const first = await subscribe(manager, 1, 'agent-a');
+    const second = await subscribe(manager, 2, 'agent-a');
+    expect(changes).toEqual([
+      ['agent-a', true],
+      ['agent-a', false],
+      ['agent-a', true],
+    ]);
+
+    const controller = new AbortController();
+    const response = await manager.fetch(
+      listenRequest(3, {
+        consumerKey: 'agent-b',
+        signal: controller.signal,
+      }),
+    );
+    const third = response.body?.getReader();
+    if (third === undefined) throw new Error('Missing response body');
+    await readSseMessage(third);
+    controller.abort();
+    await vi.waitFor(() => expect(manager.subscriberCount).toBe(1));
+    expect(changes.at(-1)).toEqual(['agent-b', false]);
+
+    manager.close();
+    expect(changes.at(-1)).toEqual(['agent-a', false]);
+    await first.cancel();
+    await second.cancel();
+  });
+
+  it('isolates lifecycle callback failures from protocol handling', async () => {
+    const manager = createPushNotificationsHttpSubscriptionManager(
+      async () => Response.json({}),
+      {
+        keepAliveMs: 0,
+        resolveConsumerKey: () => 'agent-a',
+        onSubscriptionStateChanged: () => {
+          throw new Error('observer failed');
+        },
+      },
+    );
+    const reader = await subscribe(manager, 1, 'agent-a');
+    expect(manager.subscriberCount).toBe(1);
+    await reader.cancel();
+    expect(manager.subscriberCount).toBe(0);
   });
 
   it('emits MCP progress keepalives and closes gracefully', async () => {

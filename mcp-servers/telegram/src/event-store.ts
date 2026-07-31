@@ -9,8 +9,13 @@ import type { InboundTextMessage } from './telegram.js';
 const DEFAULT_PAGE_SIZE = 100;
 const MAX_PAGE_SIZE = 1_000;
 
+export interface AppendResult {
+  notification: PushNotificationNotificationParams;
+  isNew: boolean;
+}
+
 export interface EventStore {
-  append(message: InboundTextMessage): PushNotificationNotificationParams;
+  append(message: InboundTextMessage): AppendResult;
   page(options?: { limit?: number }): GetEventsResult;
   acknowledge(eventIds: string[]): void;
   close(): void;
@@ -20,7 +25,7 @@ class EventStoreModule implements EventStore {
   readonly #events: PushNotification[] = [];
   readonly #acknowledged = new Set<string>();
 
-  append(message: InboundTextMessage): PushNotificationNotificationParams {
+  append(message: InboundTextMessage): AppendResult {
     const event: PushNotification = {
       eventId: `telegram:${message.botId}:update:${message.updateId}`,
       sourceId: `telegram:${message.botId}`,
@@ -37,9 +42,11 @@ class EventStoreModule implements EventStore {
     const existing = this.#events.find(
       (candidate) => candidate.eventId === event.eventId,
     );
-    if (existing) return { event: this.#copy(existing) };
+    if (existing) {
+      return { notification: { event: this.#copy(existing) }, isNew: false };
+    }
     this.#events.push(event);
-    return { event: this.#copy(event) };
+    return { notification: { event: this.#copy(event) }, isNew: true };
   }
 
   page(options: { limit?: number } = {}): GetEventsResult {
@@ -58,7 +65,10 @@ class EventStoreModule implements EventStore {
   }
 
   acknowledge(eventIds: string[]): void {
-    for (const eventId of eventIds) this.#acknowledged.add(eventId);
+    const knownEventIds = new Set(this.#events.map((event) => event.eventId));
+    for (const eventId of eventIds) {
+      if (knownEventIds.has(eventId)) this.#acknowledged.add(eventId);
+    }
   }
 
   close(): void {

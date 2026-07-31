@@ -36,6 +36,7 @@ export interface PushNotificationsHttpSubscriptionManagerOptions {
   resolveConsumerKey(request: Request): string | Promise<string>;
   keepAliveMs?: number;
   maxSubscriptions?: number;
+  onSubscriptionStateChanged?: (consumerKey: string, active: boolean) => void;
 }
 
 interface Subscriber {
@@ -69,6 +70,10 @@ class PushNotificationsHttpSubscriptionManagerModule
   readonly #keepAliveMs: number;
   readonly #maxSubscriptions: number;
   readonly #resolveConsumerKey: (request: Request) => string | Promise<string>;
+  readonly #onSubscriptionStateChanged?: (
+    consumerKey: string,
+    active: boolean,
+  ) => void;
   readonly #subscribers = new Map<string, Subscriber>();
   #closed = false;
 
@@ -80,6 +85,7 @@ class PushNotificationsHttpSubscriptionManagerModule
     this.#keepAliveMs = options.keepAliveMs ?? 15_000;
     this.#maxSubscriptions = options.maxSubscriptions ?? 128;
     this.#resolveConsumerKey = options.resolveConsumerKey;
+    this.#onSubscriptionStateChanged = options.onSubscriptionStateChanged;
   }
 
   get subscriberCount(): number {
@@ -254,6 +260,7 @@ class PushNotificationsHttpSubscriptionManagerModule
           removeAbort?.();
           if (this.#subscribers.get(consumerKey) === subscriber) {
             this.#subscribers.delete(consumerKey);
+            this.#notifySubscriptionState(consumerKey, false);
           }
           try {
             controller.close();
@@ -263,6 +270,7 @@ class PushNotificationsHttpSubscriptionManagerModule
         subscriber = { id, consumerKey, subscription, write, close };
         this.#subscribers.get(consumerKey)?.close(true);
         this.#subscribers.set(consumerKey, subscriber);
+        this.#notifySubscriptionState(consumerKey, true);
         write({
           jsonrpc: '2.0',
           method: SUBSCRIPTIONS_ACKNOWLEDGED_METHOD,
@@ -304,6 +312,12 @@ class PushNotificationsHttpSubscriptionManagerModule
         'X-Accel-Buffering': 'no',
       },
     });
+  }
+
+  #notifySubscriptionState(consumerKey: string, active: boolean): void {
+    try {
+      this.#onSubscriptionStateChanged?.(consumerKey, active);
+    } catch {}
   }
 
   #hasPushNotificationsFilter(body: object): boolean {

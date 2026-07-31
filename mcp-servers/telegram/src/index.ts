@@ -3,44 +3,40 @@ import { Hono } from 'hono';
 
 import { createLogger, type LogLevel } from '@stagewise/logger';
 
-import { createEventStore } from './event-store.js';
-import { createTelegramMcp } from './mcp.js';
-import { createTelegramChannel } from './telegram.js';
+import { createTelegramRuntimeManager } from './runtime-manager/index.js';
 
 const port = parsePort(process.env.PORT ?? '8789');
-const token = required('TELEGRAM_BOT_TOKEN');
-const allowedUserIds = parseUserIds(required('TELEGRAM_ALLOWED_USER_IDS'));
 const logLevel = parseLogLevel(process.env.LOG_LEVEL ?? 'INFO');
 const logger = createLogger({
   name: 'telegram',
   minLevel: logLevel,
   mask: {
-    keys: ['password', 'apiKey', 'authorization', 'token', 'prompt'],
+    keys: [
+      'password',
+      'apiKey',
+      'authorization',
+      'token',
+      'prompt',
+      'x-telegram-bot-token',
+      'x-telegram-allowed-user-ids',
+    ],
     caseInsensitive: true,
   },
 });
 
-const eventStore = createEventStore();
-let mcp: ReturnType<typeof createTelegramMcp> | undefined;
-const channel = createTelegramChannel({
-  token,
-  allowedUserIds,
+const runtimes = createTelegramRuntimeManager({
   logging: logger,
-  onMessage(message) {
-    const notification = eventStore.append(message);
-    mcp?.publish(notification);
-  },
+  idleTimeoutMs: parsePositiveInteger(
+    process.env.TELEGRAM_RUNTIME_IDLE_TIMEOUT_MS ?? '5000',
+    'TELEGRAM_RUNTIME_IDLE_TIMEOUT_MS',
+  ),
 });
-mcp = createTelegramMcp(channel, eventStore);
 
 const app = new Hono();
 app.get('/health', (context) =>
-  context.json({ status: 'ok', telegram: channel.status() }),
+  context.json({ status: 'ok', ...runtimes.health() }),
 );
-app.all('/mcp', async (context) => {
-  if (!mcp) return context.text('MCP unavailable', 503);
-  return mcp.fetch(context.req.raw);
-});
+app.all('/mcp', (context) => runtimes.fetch(context.req.raw));
 
 const server = serve({ fetch: app.fetch, port }, (address) => {
   logger.info({ port: address.port }, 'Telegram MCP server listening');
@@ -52,9 +48,7 @@ async function shutdown(signal: string): Promise<void> {
   shuttingDown = true;
   logger.info({ signal }, 'Shutting down Telegram MCP server');
   server.close();
-  await mcp?.close();
-  await channel.close();
-  eventStore.close();
+  await runtimes.close();
 }
 
 for (const signal of ['SIGINT', 'SIGTERM'] as const) {
@@ -63,32 +57,16 @@ for (const signal of ['SIGINT', 'SIGTERM'] as const) {
   });
 }
 
-try {
-  await channel.start();
-} catch (error) {
-  logger.fatal({ error }, 'Telegram MCP server failed to start');
-  await shutdown('startup-failure');
-  throw error;
-}
-
-function required(name: string): string {
-  const value = process.env[name]?.trim();
-  if (!value) throw new Error(`Missing ${name}`);
-  return value;
-}
-
-function parseUserIds(value: string): ReadonlySet<string> {
-  const ids = value.split(',').map((id) => id.trim());
-  if (ids.some((id) => !/^\d+$/.test(id))) {
-    throw new Error('TELEGRAM_ALLOWED_USER_IDS must contain numeric IDs');
-  }
-  return new Set(ids);
-}
-
 function parsePort(value: string): number {
+  const parsed = parsePositiveInteger(value, 'PORT');
+  if (parsed > 65_535) throw new Error('Invalid PORT');
+  return parsed;
+}
+
+function parsePositiveInteger(value: string, name: string): number {
   const parsed = Number(value);
-  if (!Number.isInteger(parsed) || parsed < 1 || parsed > 65_535) {
-    throw new Error(`Invalid PORT: ${value}`);
+  if (!Number.isInteger(parsed) || parsed < 1) {
+    throw new Error(`Invalid ${name}`);
   }
   return parsed;
 }

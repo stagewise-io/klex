@@ -723,6 +723,63 @@ describe('Config — getMcpServers', () => {
     );
   });
 
+  it('resolves environment references in MCP HTTP headers without mutating persisted config', async () => {
+    process.env.KLEX_TEST_MCP_TOKEN = 'resolved-secret';
+    try {
+      const config = manualConfig();
+      config.mcpServers.remote = {
+        url: 'https://example.com/mcp',
+        headers: {
+          Authorization: '{env:KLEX_TEST_MCP_TOKEN}',
+          'X-Literal': 'literal-value',
+        },
+      };
+      const { module } = await setup(config);
+
+      expect(module.getMcpServers().remote).toMatchObject({
+        headers: {
+          Authorization: 'resolved-secret',
+          'X-Literal': 'literal-value',
+        },
+      });
+      expect(module.get().mcpServers.remote).toMatchObject({
+        headers: { Authorization: '{env:KLEX_TEST_MCP_TOKEN}' },
+      });
+    } finally {
+      delete process.env.KLEX_TEST_MCP_TOKEN;
+    }
+  });
+
+  it('rejects unresolved environment references when MCP servers are consumed', async () => {
+    const config = manualConfig();
+    config.mcpServers.remote = {
+      url: 'https://example.com/mcp',
+      headers: { Authorization: '{env:KLEX_TEST_MISSING_MCP_TOKEN}' },
+    };
+    const { module } = await setup(config);
+
+    expect(() => module.getMcpServers()).toThrow(
+      'Environment variable KLEX_TEST_MISSING_MCP_TOKEN is not set',
+    );
+  });
+
+  it('returns defensive MCP server copies', async () => {
+    const config = manualConfig();
+    config.mcpServers.remote = {
+      url: 'https://example.com/mcp',
+      headers: { 'X-Test': 'original' },
+    };
+    const { module } = await setup(config);
+    const servers = module.getMcpServers();
+    const remote = servers.remote;
+    if (remote && 'url' in remote && remote.headers) {
+      remote.headers['X-Test'] = 'changed';
+    }
+    expect(module.getMcpServers().remote).toMatchObject({
+      headers: { 'X-Test': 'original' },
+    });
+  });
+
   it('returns empty record when no MCP servers configured', async () => {
     const { module } = await setup();
     expect(module.getMcpServers()).toEqual({});

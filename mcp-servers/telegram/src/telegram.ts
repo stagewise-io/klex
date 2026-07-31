@@ -22,6 +22,7 @@ export interface TelegramChannel {
     replyToMessageId?: string;
   }): Promise<{ messageId: string }>;
   status(): TelegramStatus;
+  updateAllowedUserIds(allowedUserIds: ReadonlySet<string>): void;
   close(): Promise<void>;
 }
 
@@ -58,7 +59,7 @@ export interface TelegramChannelDependencies {
 
 class TelegramChannelModule implements TelegramChannel {
   readonly #token: string;
-  readonly #allowedUserIds: ReadonlySet<string>;
+  #allowedUserIds: ReadonlySet<string>;
   readonly #logger;
   readonly #onMessage: TelegramChannelDependencies['onMessage'];
   readonly #botFactory: NonNullable<TelegramChannelDependencies['botFactory']>;
@@ -68,7 +69,7 @@ class TelegramChannelModule implements TelegramChannel {
 
   constructor(deps: TelegramChannelDependencies) {
     this.#token = deps.token;
-    this.#allowedUserIds = deps.allowedUserIds;
+    this.#allowedUserIds = new Set(deps.allowedUserIds);
     this.#logger = deps.logging.child({
       name: 'telegram-channel',
       bindings: { module: 'telegram-channel' },
@@ -87,10 +88,10 @@ class TelegramChannelModule implements TelegramChannel {
       const identity = await bot.getMe();
       bot.onText((message) => this.#handleText(String(identity.id), message));
       this.#state = 'connected';
-      void bot.start().catch((error: unknown) => {
+      void bot.start().catch(() => {
         if (!this.#started) return;
         this.#state = 'disconnected';
-        this.#logger.error({ error }, 'Telegram polling failed');
+        this.#logger.error({}, 'Telegram polling failed');
       });
       this.#logger.info({ botId: identity.id }, 'Telegram connected');
     } catch (error) {
@@ -115,16 +116,25 @@ class TelegramChannelModule implements TelegramChannel {
     const replyToMessageId = input.replyToMessageId
       ? parseInteger(input.replyToMessageId, 'replyToMessageId')
       : undefined;
-    const messageId = await this.#bot.sendText(
-      input.chatId,
-      input.message,
-      replyToMessageId,
-    );
-    return { messageId: String(messageId) };
+    try {
+      const messageId = await this.#bot.sendText(
+        input.chatId,
+        input.message,
+        replyToMessageId,
+      );
+      return { messageId: String(messageId) };
+    } catch {
+      this.#logger.warn({}, 'Telegram message delivery failed');
+      throw new Error('Telegram message delivery failed');
+    }
   }
 
   status(): TelegramStatus {
     return this.#state;
+  }
+
+  updateAllowedUserIds(allowedUserIds: ReadonlySet<string>): void {
+    this.#allowedUserIds = new Set(allowedUserIds);
   }
 
   async close(): Promise<void> {

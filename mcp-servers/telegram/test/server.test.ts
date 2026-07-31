@@ -132,8 +132,10 @@ describe('event store', () => {
       text: 'hello',
       receivedAt: '2026-01-01T00:00:00.000Z',
     };
-    const notification = store.append(message);
-    store.append(message);
+    const first = store.append(message);
+    const duplicatePending = store.append(message);
+    expect(first.isNew).toBe(true);
+    expect(duplicatePending.isNew).toBe(false);
     expect(store.page()).toMatchObject({
       events: [
         {
@@ -144,9 +146,14 @@ describe('event store', () => {
       ],
       hasMore: false,
     });
-    store.acknowledge([notification.event.eventId]);
+    store.acknowledge([first.notification.event.eventId]);
     expect(store.page()).toEqual({ events: [], hasMore: false });
-    expect(() => store.acknowledge([notification.event.eventId])).not.toThrow();
+    const duplicateAcknowledged = store.append(message);
+    expect(duplicateAcknowledged.isNew).toBe(false);
+    expect(store.page()).toEqual({ events: [], hasMore: false });
+    expect(() =>
+      store.acknowledge([first.notification.event.eventId]),
+    ).not.toThrow();
     expect(() => store.acknowledge(['unknown'])).not.toThrow();
   });
 
@@ -164,10 +171,10 @@ describe('event store', () => {
     store.append({ ...message, updateId: '11' });
 
     expect(store.page({ limit: 1 })).toMatchObject({
-      events: [{ eventId: first.event.eventId }],
+      events: [{ eventId: first.notification.event.eventId }],
       hasMore: true,
     });
-    store.acknowledge([first.event.eventId]);
+    store.acknowledge([first.notification.event.eventId]);
     expect(store.page({ limit: 1 })).toMatchObject({
       events: [{ eventId: 'telegram:77:update:11' }],
       hasMore: false,
@@ -214,6 +221,28 @@ describe('Telegram channel', () => {
     expect(fake.sends).toEqual([
       { chatId: '40', message: 'reply', replyToMessageId: 20 },
     ]);
+  });
+
+  it('applies allowlist replacements to inbound and outbound messages', async () => {
+    const received: unknown[] = [];
+    const { channel, fake } = await createStartedChannel(
+      createFakeBot(),
+      (message) => {
+        received.push(message);
+      },
+    );
+
+    channel.updateAllowedUserIds(new Set(['41']));
+    await fake.emit({ senderId: 40, chatId: 40 });
+    await fake.emit({ senderId: 41, chatId: 41 });
+    await expect(
+      channel.sendText({ chatId: '40', message: 'blocked' }),
+    ).rejects.toThrow('not allowed');
+    await expect(
+      channel.sendText({ chatId: '41', message: 'allowed' }),
+    ).resolves.toEqual({ messageId: '99' });
+    expect(received).toHaveLength(1);
+    expect(received[0]).toMatchObject({ senderId: '41', chatId: '41' });
   });
 
   it('validates identity and keeps lifecycle idempotent', async () => {

@@ -288,7 +288,17 @@ class ConfigModule implements Config {
   }
 
   getMcpServers(): Readonly<Record<string, McpServerConfig>> {
-    return this.requireConfig().mcpServers;
+    const servers = structuredClone(this.requireConfig().mcpServers);
+    for (const server of Object.values(servers)) {
+      if (!('url' in server) || server.headers === undefined) continue;
+      server.headers = Object.fromEntries(
+        Object.entries(server.headers).map(([name, value]) => [
+          name,
+          resolveEnvVar(value),
+        ]),
+      ) as Record<string, string>;
+    }
+    return servers;
   }
 
   async addMcpServer(

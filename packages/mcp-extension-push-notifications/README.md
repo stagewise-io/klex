@@ -70,6 +70,9 @@ The HTTP manager requires a trusted consumer-key resolver and targeted publicati
 ```ts
 const subscriptions = createPushNotificationsHttpSubscriptionManager(mcp.fetch, {
   resolveConsumerKey: (request) => authenticatedConsumerKey(request),
+  onSubscriptionStateChanged: (consumerKey, active) => {
+    updateConsumerActivity(consumerKey, active);
+  },
 });
 
 app.all('/mcp', (context) => subscriptions.fetch(context.req.raw));
@@ -78,7 +81,7 @@ await store.append(consumerKey, event);
 subscriptions.publish(consumerKey, { event });
 ```
 
-Only one active live subscription is retained per consumer key; a new subscription replaces the previous stream. The key is derived from authentication context and never accepted from a Push Notifications payload.
+Only one active live subscription is retained per consumer key; a new subscription replaces the previous stream. The key is derived from authentication context and never accepted from a Push Notifications payload. The optional lifecycle callback reports installation and removal of the active stream; observer failures are isolated from protocol handling.
 
 ## Capabilities and schemas
 

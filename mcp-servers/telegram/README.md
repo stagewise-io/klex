@@ -1,35 +1,52 @@
 # Telegram MCP Server
 
-Minimal text-only Telegram bot channel using grammY. Allowlisted private messages become Push Notifications; agents reply through one MCP tool.
+An ephemeral, text-only Telegram bridge using grammY. Allowlisted private messages become Push Notifications; agents reply through one MCP tool.
 
-## Setup
+## Start the proxy
 
-Create a bot with `@BotFather`, then run:
+The process starts without Telegram credentials:
 
 ```sh
-TELEGRAM_BOT_TOKEN='123:secret' \
-TELEGRAM_ALLOWED_USER_IDS='123456789' \
 pnpm --filter @stagewise/telegram dev
 ```
 
-Treat the token as a password. Before starting this server, send `/start` to the bot and retrieve one update directly from the Bot API:
-
-```sh
-read -s TELEGRAM_BOT_TOKEN
-curl "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/getUpdates"
-unset TELEGRAM_BOT_TOKEN
-```
-
-Use the numeric `result[].message.from.id` value for `TELEGRAM_ALLOWED_USER_IDS`. Do not run `getUpdates` while this server is polling: Telegram permits only one update consumer per bot token. A user must send `/start` before the bot can DM them.
-
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `TELEGRAM_BOT_TOKEN` | required | BotFather token |
-| `TELEGRAM_ALLOWED_USER_IDS` | required | Comma-separated numeric sender IDs |
 | `PORT` | `8789` | HTTP port |
 | `LOG_LEVEL` | `INFO` | Structured log threshold |
+| `TELEGRAM_RUNTIME_IDLE_TIMEOUT_MS` | `5000` | Grace period before an unsubscribed runtime is destroyed |
 
-Use `http://localhost:8789/mcp`. `GET /health` reports `starting`, `connected`, or `disconnected`.
+`GET /health` is credential-free and reports only aggregate runtime counts. It never reports bot identities, tokens, allowlists, or runtime keys.
+
+## Connect an agent
+
+Every request to `http://localhost:8789/mcp` must include:
+
+- `X-Telegram-Bot-Token`: the BotFather token. `Authorization: Bearer <token>` is also accepted.
+- `X-Telegram-Allowed-User-Ids`: a comma-separated list of positive numeric Telegram user IDs.
+
+Klex can resolve credentials from its environment without storing their values in configuration:
+
+```json
+{
+  "transport": "http",
+  "url": "http://localhost:8789/mcp",
+  "headers": {
+    "X-Telegram-Bot-Token": "{env:TELEGRAM_BOT_TOKEN}",
+    "X-Telegram-Allowed-User-Ids": "{env:TELEGRAM_ALLOWED_USER_IDS}"
+  }
+}
+```
+
+Treat the bot token as a password. Send `/start` to the bot before expecting it to message a user. Telegram permits only one long-polling consumer per bot token.
+
+## Runtime model
+
+The proxy derives an opaque, process-local runtime key from each token. Distinct tokens receive isolated Telegram pollers, MCP handlers, event queues, acknowledgements, tools, and allowlists. Concurrent requests for the same token reuse one runtime and cannot start duplicate pollers.
+
+An active Push Notifications subscription keeps its runtime alive. After the subscription disconnects, the runtime remains available for the configured grace period, then closes its MCP handler and Telegram poller and deletes its token, allowlist, pending events, and acknowledgement state. Reconnecting after cleanup creates a fresh runtime.
+
+Requests using the same bot token intentionally share one runtime. The latest authenticated request replaces that runtime's allowlist, and only one active Push Notifications subscription is retained for its fixed internal consumer. Use distinct bot tokens when agents require isolation.
 
 ## Contract
 
@@ -48,12 +65,10 @@ await mcpClient.callTool({
 });
 ```
 
-Messages must contain 1–4,000 characters. Outbound `chatId` must also appear in `TELEGRAM_ALLOWED_USER_IDS`; this text-only private-DM server cannot message arbitrary chats.
+Messages must contain 1–4,000 characters. The outbound `chatId` must be in the runtime's current allowlist. Only allowlisted, non-bot, private plain-text messages are accepted; groups, media, edits, reactions, formatting, and webhooks are not supported.
 
-## Pending queue
+## Pending queue guarantees
 
-The server exposes the oldest unacknowledged notifications in bounded pages. Acknowledged notifications disappear immediately, and repeated or unknown acknowledgements succeed. Live delivery and pending retrieval use one fixed `local-agent` consumer identity.
+Pending retrieval is bounded and oldest-first. Acknowledgements are idempotent and immediately hide matching events. Duplicate Telegram updates are suppressed while the runtime exists, including after acknowledgement.
 
-## Deliberate limits
-
-Only allowlisted, non-bot, private plain-text messages are accepted. Groups, media, commands, formatting, webhooks, edits, reactions, retries, and multiple bots are unsupported. The notification queue and acknowledgement state are in memory and disappear on restart. The fixed local consumer identity is intended for one trusted development agent; authenticated hosted identity and durable per-binding storage are not implemented. Long polling permits only one running consumer per bot token.
+These guarantees are runtime-scoped, not durable. Destroying a runtime or restarting the proxy discards its queue and acknowledgement tombstones. A later runtime may therefore receive an upstream Telegram update again.

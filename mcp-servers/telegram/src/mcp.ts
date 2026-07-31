@@ -19,11 +19,19 @@ export interface TelegramMcp {
   close(): Promise<void>;
 }
 
+export interface TelegramMcpOptions {
+  onSubscriptionStateChanged?: (active: boolean) => void;
+}
+
 class TelegramMcpModule implements TelegramMcp {
   readonly #handler: ReturnType<typeof createMcpHandler>;
   readonly #subscriptions: PushNotificationsHttpSubscriptionManager;
 
-  constructor(channel: TelegramChannel, eventStore: EventStore) {
+  constructor(
+    channel: TelegramChannel,
+    eventStore: EventStore,
+    options: TelegramMcpOptions,
+  ) {
     this.#handler = createMcpHandler(
       () => {
         const server = new McpServer(
@@ -59,7 +67,11 @@ class TelegramMcpModule implements TelegramMcp {
     );
     this.#subscriptions = createPushNotificationsHttpSubscriptionManager(
       this.#handler.fetch,
-      { resolveConsumerKey: () => 'local-agent' },
+      {
+        resolveConsumerKey: () => 'runtime-agent',
+        onSubscriptionStateChanged: (_consumerKey, active) =>
+          options.onSubscriptionStateChanged?.(active),
+      },
     );
   }
 
@@ -68,7 +80,7 @@ class TelegramMcpModule implements TelegramMcp {
   }
 
   publish(params: PushNotificationNotificationParams): void {
-    this.#subscriptions.publish('local-agent', params);
+    this.#subscriptions.publish('runtime-agent', params);
   }
 
   async close(): Promise<void> {
@@ -80,6 +92,7 @@ class TelegramMcpModule implements TelegramMcp {
 export function createTelegramMcp(
   channel: TelegramChannel,
   eventStore: EventStore,
+  options: TelegramMcpOptions = {},
 ): TelegramMcp {
-  return new TelegramMcpModule(channel, eventStore);
+  return new TelegramMcpModule(channel, eventStore, options);
 }

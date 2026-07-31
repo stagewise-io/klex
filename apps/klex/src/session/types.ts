@@ -75,6 +75,10 @@ export interface SessionInfo {
   messageCount: number;
   /** ISO timestamp of session creation. */
   createdAt: string;
+  /** Short unique identifier used by the routing LLM to reference this session. */
+  shortId: string;
+  /** Current activity summary, updated by the routing LLM. null when no summary has been set. */
+  summary: string | null;
 }
 
 /**
@@ -143,4 +147,16 @@ export interface AgentSession {
    * input.
    */
   restorePendingEvents(events: SessionInboxEvent[]): void;
+
+  /**
+   * Sets the short unique ID assigned by the router. Called once after
+   * creation.
+   */
+  setShortId(shortId: string): void;
+
+  /**
+   * Updates the session summary. Called by the router after a routing
+   * LLM decision.
+   */
+  setSummary(summary: string | null): void;
 }

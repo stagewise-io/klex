@@ -1023,9 +1023,9 @@ describe('Config — provider CRUD', () => {
   it('removeProvider rejects when model selection still references the provider', async () => {
     const { module } = await setup();
     // manualConfig has modelSelection.chat = ['local:chat:model:8b']
-    await expect(module.removeProvider('local')).rejects.toBeInstanceOf(
-      ConfigValidationError,
-    );
+    await expect(module.removeProvider('local')).rejects.toMatchObject({
+      code: 'referential_integrity',
+    });
   });
 });
 
@@ -1147,9 +1147,9 @@ describe('Config — endpoint CRUD', () => {
   it('removeEndpoint rejects when model selection still references the endpoint', async () => {
     const { module } = await setup();
     // manualConfig has modelSelection.chat = ['local:chat:model:8b']
-    await expect(module.removeEndpoint('local', 'chat')).rejects.toBeInstanceOf(
-      ConfigValidationError,
-    );
+    await expect(module.removeEndpoint('local', 'chat')).rejects.toMatchObject({
+      code: 'referential_integrity',
+    });
   });
 });
 

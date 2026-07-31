@@ -131,7 +131,9 @@ export function createProvider(
       return c.json({ providers: getProviderList(deps) }, 201);
     } catch (error) {
       if (error instanceof ConfigValidationError) {
-        return c.json({ error: error.message }, 409);
+        if (error.code === 'already_exists')
+          return c.json({ error: error.message }, 409);
+        return c.json({ error: error.message }, 400);
       }
       deps.logger.error({ error }, 'Provider create failed');
       return c.json({ error: 'Failed to create provider' }, 500);
@@ -212,7 +214,9 @@ export function updateProvider(
       return c.json({ providers: getProviderList(deps) }, 200);
     } catch (error) {
       if (error instanceof ConfigValidationError) {
-        return c.json({ error: error.message }, 404);
+        if (error.code === 'not_found')
+          return c.json({ error: error.message }, 404);
+        return c.json({ error: error.message }, 400);
       }
       deps.logger.error({ error }, 'Provider update failed');
       return c.json({ error: 'Failed to update provider' }, 500);
@@ -239,11 +243,24 @@ export const deleteProviderRoute = createRoute({
       },
       description: 'Provider removed — returns updated provider list',
     },
+    400: {
+      content: {
+        'application/json': { schema: errorResponseSchema },
+      },
+      description: 'Validation error',
+    },
     404: {
       content: {
         'application/json': { schema: errorResponseSchema },
       },
       description: 'Provider not found',
+    },
+    409: {
+      content: {
+        'application/json': { schema: errorResponseSchema },
+      },
+      description:
+        'Provider is referenced by model selection and cannot be deleted',
     },
     500: {
       content: {
@@ -265,7 +282,11 @@ export function deleteProvider(
       return c.json({ providers: getProviderList(deps) }, 200);
     } catch (error) {
       if (error instanceof ConfigValidationError) {
-        return c.json({ error: error.message }, 404);
+        if (error.code === 'not_found')
+          return c.json({ error: error.message }, 404);
+        if (error.code === 'referential_integrity')
+          return c.json({ error: error.message }, 409);
+        return c.json({ error: error.message }, 400);
       }
       deps.logger.error({ error }, 'Provider delete failed');
       return c.json({ error: 'Failed to delete provider' }, 500);
@@ -410,14 +431,11 @@ export function createEndpoint(
       return c.json({ endpoints: getEndpointList(deps, name) }, 201);
     } catch (error) {
       if (error instanceof ConfigValidationError) {
-        const message = error.message;
-        if (message.includes('not found')) {
-          return c.json({ error: message }, 404);
-        }
-        if (message.includes('preset')) {
-          return c.json({ error: message }, 400);
-        }
-        return c.json({ error: message }, 409);
+        if (error.code === 'not_found')
+          return c.json({ error: error.message }, 404);
+        if (error.code === 'already_exists')
+          return c.json({ error: error.message }, 409);
+        return c.json({ error: error.message }, 400);
       }
       deps.logger.error({ error }, 'Endpoint create failed');
       return c.json({ error: 'Failed to create endpoint' }, 500);
@@ -512,7 +530,9 @@ export function updateEndpoint(
       return c.json({ endpoints: getEndpointList(deps, name) }, 200);
     } catch (error) {
       if (error instanceof ConfigValidationError) {
-        return c.json({ error: error.message }, 404);
+        if (error.code === 'not_found')
+          return c.json({ error: error.message }, 404);
+        return c.json({ error: error.message }, 400);
       }
       deps.logger.error({ error }, 'Endpoint update failed');
       return c.json({ error: 'Failed to update endpoint' }, 500);
@@ -542,13 +562,20 @@ export const deleteEndpointRoute = createRoute({
       content: {
         'application/json': { schema: errorResponseSchema },
       },
-      description: 'Provider is a preset',
+      description: 'Provider is a preset or validation error',
     },
     404: {
       content: {
         'application/json': { schema: errorResponseSchema },
       },
       description: 'Provider or endpoint not found',
+    },
+    409: {
+      content: {
+        'application/json': { schema: errorResponseSchema },
+      },
+      description:
+        'Endpoint is referenced by model selection and cannot be deleted',
     },
     500: {
       content: {
@@ -570,11 +597,11 @@ export function deleteEndpoint(
       return c.json({ endpoints: getEndpointList(deps, name) }, 200);
     } catch (error) {
       if (error instanceof ConfigValidationError) {
-        const message = error.message;
-        if (message.includes('preset')) {
-          return c.json({ error: message }, 400);
-        }
-        return c.json({ error: message }, 404);
+        if (error.code === 'not_found')
+          return c.json({ error: error.message }, 404);
+        if (error.code === 'referential_integrity')
+          return c.json({ error: error.message }, 409);
+        return c.json({ error: error.message }, 400);
       }
       deps.logger.error({ error }, 'Endpoint delete failed');
       return c.json({ error: 'Failed to delete endpoint' }, 500);
@@ -751,14 +778,11 @@ export function createKnownModel(
       return c.json({ models }, 201);
     } catch (error) {
       if (error instanceof ConfigValidationError) {
-        const message = error.message;
-        if (message.includes('already exists')) {
-          return c.json({ error: message }, 409);
-        }
-        if (message.includes('not found')) {
-          return c.json({ error: message }, 404);
-        }
-        return c.json({ error: message }, 400);
+        if (error.code === 'not_found')
+          return c.json({ error: error.message }, 404);
+        if (error.code === 'already_exists')
+          return c.json({ error: error.message }, 409);
+        return c.json({ error: error.message }, 400);
       }
       deps.logger.error({ error }, 'Known model create failed');
       return c.json({ error: 'Failed to create known model' }, 500);
@@ -900,7 +924,9 @@ export function updateKnownModel(
       return c.json({ models }, 200);
     } catch (error) {
       if (error instanceof ConfigValidationError) {
-        return c.json({ error: error.message }, 404);
+        if (error.code === 'not_found')
+          return c.json({ error: error.message }, 404);
+        return c.json({ error: error.message }, 400);
       }
       deps.logger.error({ error }, 'Known model update failed');
       return c.json({ error: 'Failed to update known model' }, 500);
@@ -1012,7 +1038,9 @@ export function deleteKnownModel(
       return c.json({ models }, 200);
     } catch (error) {
       if (error instanceof ConfigValidationError) {
-        return c.json({ error: error.message }, 404);
+        if (error.code === 'not_found')
+          return c.json({ error: error.message }, 404);
+        return c.json({ error: error.message }, 400);
       }
       deps.logger.error({ error }, 'Known model delete failed');
       return c.json({ error: 'Failed to delete known model' }, 500);
@@ -1060,6 +1088,7 @@ function mergeProviderPatch(
     if (patch.endpoints !== undefined) {
       throw new ConfigValidationError(
         `Cannot add endpoints to preset provider — preset providers do not support manual endpoints`,
+        { code: 'type_mismatch' },
       );
     }
     return {
@@ -1071,6 +1100,7 @@ function mergeProviderPatch(
   if (patch.preset !== undefined || patch.auth !== undefined) {
     throw new ConfigValidationError(
       `Cannot set preset or auth on manual provider — manual providers use endpoints instead`,
+      { code: 'type_mismatch' },
     );
   }
   return {

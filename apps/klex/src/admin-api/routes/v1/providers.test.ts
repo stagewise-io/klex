@@ -220,7 +220,9 @@ describe('POST /v1/providers — create provider', () => {
     const app = createApp(
       makeDeps({
         addProvider: vi.fn(async () => {
-          throw new ConfigValidationError("Provider 'exists' already exists");
+          throw new ConfigValidationError("Provider 'exists' already exists", {
+            code: 'already_exists',
+          });
         }),
       }),
     );
@@ -348,7 +350,9 @@ describe('PATCH /v1/providers/:name — update provider', () => {
         },
       }),
       updateProvider: vi.fn(async () => {
-        throw new ConfigValidationError("Provider 'missing' not found");
+        throw new ConfigValidationError("Provider 'missing' not found", {
+          code: 'not_found',
+        });
       }),
     });
     const app = createApp(deps);
@@ -453,7 +457,9 @@ describe('DELETE /v1/providers/:name — delete provider', () => {
     const app = createApp(
       makeDeps({
         removeProvider: vi.fn(async () => {
-          throw new ConfigValidationError("Provider 'missing' not found");
+          throw new ConfigValidationError("Provider 'missing' not found", {
+            code: 'not_found',
+          });
         }),
       }),
     );
@@ -463,6 +469,25 @@ describe('DELETE /v1/providers/:name — delete provider', () => {
     expect(response.status).toBe(404);
     const body = (await response.json()) as { error: string };
     expect(body.error).toContain('not found');
+  });
+
+  it('returns 409 when provider is referenced by model selection', async () => {
+    const app = createApp(
+      makeDeps({
+        removeProvider: vi.fn(async () => {
+          throw new ConfigValidationError(
+            "Cannot delete provider 'my-openai' because it is still referenced by model selection 'chat'",
+            { code: 'referential_integrity' },
+          );
+        }),
+      }),
+    );
+    const response = await app.request('/v1/providers/my-openai', {
+      method: 'DELETE',
+    });
+    expect(response.status).toBe(409);
+    const body = (await response.json()) as { error: string };
+    expect(body.error).toContain('referenced by model selection');
   });
 
   it('maps unexpected errors to 500', async () => {
@@ -543,6 +568,7 @@ describe('POST /v1/providers/:name/endpoints — create endpoint', () => {
         addEndpoint: vi.fn(async () => {
           throw new ConfigValidationError(
             "Cannot add endpoints to preset provider 'my-openai'",
+            { code: 'type_mismatch' },
           );
         }),
       }),
@@ -566,7 +592,9 @@ describe('POST /v1/providers/:name/endpoints — create endpoint', () => {
     const app = createApp(
       makeDeps({
         addEndpoint: vi.fn(async () => {
-          throw new ConfigValidationError("Provider 'nonexistent' not found");
+          throw new ConfigValidationError("Provider 'nonexistent' not found", {
+            code: 'not_found',
+          });
         }),
       }),
     );
@@ -589,6 +617,7 @@ describe('POST /v1/providers/:name/endpoints — create endpoint', () => {
         addEndpoint: vi.fn(async () => {
           throw new ConfigValidationError(
             "Endpoint 'chat' already exists in provider 'local'",
+            { code: 'already_exists' },
           );
         }),
       }),
@@ -721,6 +750,7 @@ describe('DELETE /v1/providers/:name/endpoints/:endpointName — delete endpoint
         removeEndpoint: vi.fn(async () => {
           throw new ConfigValidationError(
             "Endpoint 'missing' not found in provider 'local'",
+            { code: 'not_found' },
           );
         }),
       }),
@@ -740,6 +770,7 @@ describe('DELETE /v1/providers/:name/endpoints/:endpointName — delete endpoint
         removeEndpoint: vi.fn(async () => {
           throw new ConfigValidationError(
             "Cannot remove endpoints from preset provider 'my-openai'",
+            { code: 'type_mismatch' },
           );
         }),
       }),
@@ -751,6 +782,25 @@ describe('DELETE /v1/providers/:name/endpoints/:endpointName — delete endpoint
       },
     );
     expect(response.status).toBe(400);
+  });
+
+  it('returns 409 when endpoint is referenced by model selection', async () => {
+    const app = createApp(
+      makeDeps({
+        removeEndpoint: vi.fn(async () => {
+          throw new ConfigValidationError(
+            "Cannot delete endpoint 'local:chat' because it is still referenced by model selection 'chat'",
+            { code: 'referential_integrity' },
+          );
+        }),
+      }),
+    );
+    const response = await app.request('/v1/providers/local/endpoints/chat', {
+      method: 'DELETE',
+    });
+    expect(response.status).toBe(409);
+    const body = (await response.json()) as { error: string };
+    expect(body.error).toContain('referenced by model selection');
   });
 
   it('maps unexpected errors to 500', async () => {
@@ -924,6 +974,7 @@ describe('POST /v1/providers/:name/known-models — add known model', () => {
         addKnownModel: vi.fn(async () => {
           throw new ConfigValidationError(
             "Model 'gpt-4o' already exists in provider 'my-openai'",
+            { code: 'already_exists' },
           );
         }),
       }),

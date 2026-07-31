@@ -57,7 +57,24 @@ export interface ModelInfo {
   inputCapabilities: ModelInputCapabilities;
 }
 
+export type ConfigValidationErrorCode =
+  | 'not_found'
+  | 'already_exists'
+  | 'type_mismatch'
+  | 'referential_integrity'
+  | 'validation';
+
 export class ConfigValidationError extends Error {
+  readonly code: ConfigValidationErrorCode;
+
+  constructor(
+    message: string,
+    options?: ErrorOptions & { code?: ConfigValidationErrorCode },
+  ) {
+    super(message, options);
+    this.code = options?.code ?? 'validation';
+  }
+
   override readonly name = 'ConfigValidationError';
 }
 
@@ -442,7 +459,10 @@ class ConfigModule implements Config {
       config = klexConfigSchema.parse(input);
     } catch (error) {
       if (error instanceof ZodError) {
-        throw new ConfigValidationError(error.message, { cause: error });
+        throw new ConfigValidationError(error.message, {
+          cause: error,
+          code: 'validation',
+        });
       }
       throw error;
     }
@@ -454,7 +474,7 @@ class ConfigModule implements Config {
       if (error instanceof ConfigValidationError) throw error;
       throw new ConfigValidationError(
         error instanceof Error ? error.message : 'Invalid config',
-        { cause: error },
+        { cause: error, code: 'validation' },
       );
     }
 
@@ -478,7 +498,9 @@ class ConfigModule implements Config {
   ): Promise<Readonly<KlexConfig>> {
     const current = this.requireConfig();
     if (current.providers[name]) {
-      throw new ConfigValidationError(`Provider '${name}' already exists`);
+      throw new ConfigValidationError(`Provider '${name}' already exists`, {
+        code: 'already_exists',
+      });
     }
     const updated: KlexConfig = {
       ...current,
@@ -493,7 +515,9 @@ class ConfigModule implements Config {
   ): Promise<Readonly<KlexConfig>> {
     const current = this.requireConfig();
     if (!current.providers[name]) {
-      throw new ConfigValidationError(`Provider '${name}' not found`);
+      throw new ConfigValidationError(`Provider '${name}' not found`, {
+        code: 'not_found',
+      });
     }
     const updated: KlexConfig = {
       ...current,
@@ -505,7 +529,21 @@ class ConfigModule implements Config {
   async removeProvider(name: string): Promise<Readonly<KlexConfig>> {
     const current = this.requireConfig();
     if (!current.providers[name]) {
-      throw new ConfigValidationError(`Provider '${name}' not found`);
+      throw new ConfigValidationError(`Provider '${name}' not found`, {
+        code: 'not_found',
+      });
+    }
+    // Check referential integrity before removal
+    for (const [purpose, modelIds] of Object.entries(current.modelSelection)) {
+      for (const modelId of modelIds) {
+        const { providerId } = splitProviderId(modelId);
+        if (providerId === name) {
+          throw new ConfigValidationError(
+            `Cannot delete provider '${name}' because it is still referenced by model selection '${purpose}'`,
+            { code: 'referential_integrity' },
+          );
+        }
+      }
     }
     const { [name]: _removed, ...remaining } = current.providers;
     const updated: KlexConfig = {
@@ -523,16 +561,20 @@ class ConfigModule implements Config {
     const current = this.requireConfig();
     const provider = current.providers[providerName];
     if (!provider) {
-      throw new ConfigValidationError(`Provider '${providerName}' not found`);
+      throw new ConfigValidationError(`Provider '${providerName}' not found`, {
+        code: 'not_found',
+      });
     }
     if ('preset' in provider) {
       throw new ConfigValidationError(
         `Cannot add endpoints to preset provider '${providerName}'`,
+        { code: 'type_mismatch' },
       );
     }
     if (provider.endpoints[endpointName]) {
       throw new ConfigValidationError(
         `Endpoint '${endpointName}' already exists in provider '${providerName}'`,
+        { code: 'already_exists' },
       );
     }
     const updated: KlexConfig = {
@@ -555,16 +597,20 @@ class ConfigModule implements Config {
     const current = this.requireConfig();
     const provider = current.providers[providerName];
     if (!provider) {
-      throw new ConfigValidationError(`Provider '${providerName}' not found`);
+      throw new ConfigValidationError(`Provider '${providerName}' not found`, {
+        code: 'not_found',
+      });
     }
     if ('preset' in provider) {
       throw new ConfigValidationError(
         `Cannot update endpoints on preset provider '${providerName}'`,
+        { code: 'type_mismatch' },
       );
     }
     if (!provider.endpoints[endpointName]) {
       throw new ConfigValidationError(
         `Endpoint '${endpointName}' not found in provider '${providerName}'`,
+        { code: 'not_found' },
       );
     }
     const updated: KlexConfig = {
@@ -586,17 +632,36 @@ class ConfigModule implements Config {
     const current = this.requireConfig();
     const provider = current.providers[providerName];
     if (!provider) {
-      throw new ConfigValidationError(`Provider '${providerName}' not found`);
+      throw new ConfigValidationError(`Provider '${providerName}' not found`, {
+        code: 'not_found',
+      });
     }
     if ('preset' in provider) {
       throw new ConfigValidationError(
         `Cannot remove endpoints from preset provider '${providerName}'`,
+        { code: 'type_mismatch' },
       );
     }
     if (!provider.endpoints[endpointName]) {
       throw new ConfigValidationError(
         `Endpoint '${endpointName}' not found in provider '${providerName}'`,
+        { code: 'not_found' },
       );
+    }
+    // Check referential integrity before removal
+    for (const [purpose, modelIds] of Object.entries(current.modelSelection)) {
+      for (const modelId of modelIds) {
+        const { providerId, rest } = splitProviderId(modelId);
+        if (providerId === providerName) {
+          const colon = rest.indexOf(':');
+          if (colon !== -1 && rest.slice(0, colon) === endpointName) {
+            throw new ConfigValidationError(
+              `Cannot delete endpoint '${providerName}:${endpointName}' because it is still referenced by model selection '${purpose}'`,
+              { code: 'referential_integrity' },
+            );
+          }
+        }
+      }
     }
     const { [endpointName]: _removed, ...remainingEndpoints } =
       provider.endpoints;
@@ -621,19 +686,23 @@ class ConfigModule implements Config {
     const current = this.requireConfig();
     const provider = current.providers[providerName];
     if (!provider) {
-      throw new ConfigValidationError(`Provider '${providerName}' not found`);
+      throw new ConfigValidationError(`Provider '${providerName}' not found`, {
+        code: 'not_found',
+      });
     }
 
     if ('preset' in provider) {
       if (endpointName !== undefined) {
         throw new ConfigValidationError(
           `Preset provider '${providerName}' does not support endpoint-scoped known models`,
+          { code: 'type_mismatch' },
         );
       }
       const existing = provider.knownModels ?? {};
       if (existing[modelId]) {
         throw new ConfigValidationError(
           `Model '${modelId}' already exists in provider '${providerName}'`,
+          { code: 'already_exists' },
         );
       }
       const updated: KlexConfig = {
@@ -653,18 +722,21 @@ class ConfigModule implements Config {
     if (!endpointName) {
       throw new ConfigValidationError(
         `Manual provider '${providerName}' requires an endpoint name for known models`,
+        { code: 'type_mismatch' },
       );
     }
     const endpoint = provider.endpoints[endpointName];
     if (!endpoint) {
       throw new ConfigValidationError(
         `Endpoint '${endpointName}' not found in provider '${providerName}'`,
+        { code: 'not_found' },
       );
     }
     const existing = endpoint.knownModels ?? {};
     if (existing[modelId]) {
       throw new ConfigValidationError(
         `Model '${modelId}' already exists in endpoint '${endpointName}' of provider '${providerName}'`,
+        { code: 'already_exists' },
       );
     }
     const updated: KlexConfig = {
@@ -694,19 +766,23 @@ class ConfigModule implements Config {
     const current = this.requireConfig();
     const provider = current.providers[providerName];
     if (!provider) {
-      throw new ConfigValidationError(`Provider '${providerName}' not found`);
+      throw new ConfigValidationError(`Provider '${providerName}' not found`, {
+        code: 'not_found',
+      });
     }
 
     if ('preset' in provider) {
       if (endpointName !== undefined) {
         throw new ConfigValidationError(
           `Preset provider '${providerName}' does not support endpoint-scoped known models`,
+          { code: 'type_mismatch' },
         );
       }
       const existing = provider.knownModels ?? {};
       if (!existing[modelId]) {
         throw new ConfigValidationError(
           `Model '${modelId}' not found in provider '${providerName}'`,
+          { code: 'not_found' },
         );
       }
       const updated: KlexConfig = {
@@ -726,18 +802,21 @@ class ConfigModule implements Config {
     if (!endpointName) {
       throw new ConfigValidationError(
         `Manual provider '${providerName}' requires an endpoint name for known models`,
+        { code: 'type_mismatch' },
       );
     }
     const endpoint = provider.endpoints[endpointName];
     if (!endpoint) {
       throw new ConfigValidationError(
         `Endpoint '${endpointName}' not found in provider '${providerName}'`,
+        { code: 'not_found' },
       );
     }
     const existing = endpoint.knownModels ?? {};
     if (!existing[modelId]) {
       throw new ConfigValidationError(
         `Model '${modelId}' not found in endpoint '${endpointName}' of provider '${providerName}'`,
+        { code: 'not_found' },
       );
     }
     const updated: KlexConfig = {
@@ -766,19 +845,23 @@ class ConfigModule implements Config {
     const current = this.requireConfig();
     const provider = current.providers[providerName];
     if (!provider) {
-      throw new ConfigValidationError(`Provider '${providerName}' not found`);
+      throw new ConfigValidationError(`Provider '${providerName}' not found`, {
+        code: 'not_found',
+      });
     }
 
     if ('preset' in provider) {
       if (endpointName !== undefined) {
         throw new ConfigValidationError(
           `Preset provider '${providerName}' does not support endpoint-scoped known models`,
+          { code: 'type_mismatch' },
         );
       }
       const existing = provider.knownModels ?? {};
       if (!existing[modelId]) {
         throw new ConfigValidationError(
           `Model '${modelId}' not found in provider '${providerName}'`,
+          { code: 'not_found' },
         );
       }
       const { [modelId]: _removed, ...remaining } = existing;
@@ -800,18 +883,21 @@ class ConfigModule implements Config {
     if (!endpointName) {
       throw new ConfigValidationError(
         `Manual provider '${providerName}' requires an endpoint name for known models`,
+        { code: 'type_mismatch' },
       );
     }
     const endpoint = provider.endpoints[endpointName];
     if (!endpoint) {
       throw new ConfigValidationError(
         `Endpoint '${endpointName}' not found in provider '${providerName}'`,
+        { code: 'not_found' },
       );
     }
     const existing = endpoint.knownModels ?? {};
     if (!existing[modelId]) {
       throw new ConfigValidationError(
         `Model '${modelId}' not found in endpoint '${endpointName}' of provider '${providerName}'`,
+        { code: 'not_found' },
       );
     }
     const { [modelId]: _removed, ...remaining } = existing;
@@ -874,8 +960,9 @@ class ConfigModule implements Config {
         const { providerId, rest } = splitProviderId(modelId);
         const provider = config.providers[providerId];
         if (!provider) {
-          throw new Error(
+          throw new ConfigValidationError(
             `Model selection ${purpose} references unknown provider ${providerId}`,
+            { code: 'referential_integrity' },
           );
         }
 
@@ -886,16 +973,18 @@ class ConfigModule implements Config {
 
         const colon = rest.indexOf(':');
         if (colon === -1) {
-          throw new Error(
+          throw new ConfigValidationError(
             `Model selection ${purpose} references provider ${providerId} without an endpoint ID; use ${providerId}:endpointId:modelId format`,
+            { code: 'referential_integrity' },
           );
         }
 
         const endpointId = rest.slice(0, colon);
         const endpoint = provider.endpoints[endpointId];
         if (!endpoint) {
-          throw new Error(
+          throw new ConfigValidationError(
             `Model selection ${purpose} references unknown endpoint ${providerId}:${endpointId}`,
+            { code: 'referential_integrity' },
           );
         }
       }

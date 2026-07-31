@@ -9,7 +9,7 @@ import {
 import type { ContextDataUIPart } from '@/session/inbox';
 
 import type { DataPartTransformers } from '../extensions/extension-api';
-import type { CustomUIDataParts, ExtendedUIMessage } from '../message-types';
+import type { ExtendedUIMessage } from '../message-types';
 
 /**
  * Converts UI messages into the format expected by the model.
@@ -117,12 +117,6 @@ function convertContinuePart(): TextPart[] {
   return [{ type: 'text', text: 'Continue.' }];
 }
 
-/** Core data part keys that are always handled by built-in transformers. */
-const CORE_DATA_PART_KEYS = new Set<keyof CustomUIDataParts>([
-  'context',
-  'continue',
-]);
-
 /**
  * Builds a `convertDataPart` callback for the AI SDK.
  *
@@ -142,10 +136,12 @@ const CORE_DATA_PART_KEYS = new Set<keyof CustomUIDataParts>([
  */
 function makeConvertDataPart(
   transformers: DataPartTransformers,
-): (part: DataUIPart<CustomUIDataParts>) => TextPart | FilePart | undefined {
+): (
+  part: DataUIPart<Record<string, unknown>>,
+) => TextPart | FilePart | undefined {
   return (part) => {
-    // Strip the `data-` prefix to get the CustomUIDataParts key.
-    const key = part.type.replace(/^data-/, '') as keyof CustomUIDataParts;
+    // Strip the `data-` prefix to get the data part key.
+    const key = part.type.replace(/^data-/, '');
 
     // Core types are always handled by built-in transformers.
     if (key === 'context') {
@@ -161,12 +157,7 @@ function makeConvertDataPart(
     const transformer = transformers[key];
     if (!transformer) return undefined;
 
-    // The mapped type makes per-key call structurally impossible —
-    // cast through a loose function type to invoke the transformer.
-    const fn = transformer as (
-      data: typeof part.data,
-    ) => (TextPart | FilePart)[];
-    const result = fn(part.data);
+    const result = transformer(part.data);
     return result.length > 0 ? result[0] : undefined;
   };
 }

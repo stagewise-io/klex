@@ -130,7 +130,6 @@ class TurnModule implements Turn {
           modelFallbackOccurred: false,
         };
         let stepCount = 0;
-        const MAX_STEPS_PER_TURN = 20;
 
         // Capture the fallback index at the start of the turn for
         // turn-level wrap-around detection. Model fallback now spans
@@ -145,7 +144,7 @@ class TurnModule implements Turn {
         // next step.
         let needsContinue = this.deps.forceContinue ?? false;
 
-        while (stepResult.shouldContinue && stepCount < MAX_STEPS_PER_TURN) {
+        while (stepResult.shouldContinue) {
           if (needsContinue) {
             // Continue is only useful when the last message is an assistant
             // message without tool calls — the model needs an explicit prompt
@@ -224,14 +223,6 @@ class TurnModule implements Turn {
           if (stepResult.forceNextStep) {
             needsContinue = true;
           }
-        }
-
-        if (stepCount >= MAX_STEPS_PER_TURN) {
-          turnSpan.setAttribute('turn.stepCapReached', true);
-          this.deps.logger.error(
-            { turnId: this.id, stepCount },
-            'Turn exceeded max steps — stopping to prevent infinite loop',
-          );
         }
 
         turnSpan.setAttribute('turn.stepCount', stepCount);

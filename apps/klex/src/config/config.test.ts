@@ -551,6 +551,111 @@ describe('Config — replace (atomic persistence)', () => {
   });
 });
 
+describe('Config — mutate', () => {
+  it('applies transform and returns updated config', async () => {
+    const { module } = await setup(
+      noSelectionConfig({
+        remote: { preset: 'openai', auth: { apiKey: 'sk-test' } },
+      }),
+    );
+    const result = await module.mutate((current) => ({
+      ...current,
+      providers: {
+        ...current.providers,
+        local: {
+          endpoints: {
+            chat: {
+              url: 'http://localhost:11434/v1',
+              format: 'chat-completions',
+              auth: {},
+            },
+          },
+        },
+      },
+    }));
+    expect(result.providers.local).toBeDefined();
+    expect(result.providers.remote).toBeDefined();
+    expect(module.get().providers.local).toBeDefined();
+  });
+
+  it('sees latest state after a previous mutation', async () => {
+    const { module } = await setup(
+      noSelectionConfig({
+        remote: { preset: 'openai', auth: { apiKey: 'sk-test' } },
+      }),
+    );
+    await module.mutate((current) => ({
+      ...current,
+      providers: {
+        ...current.providers,
+        first: { preset: 'openai', auth: { apiKey: 'sk-1' } },
+      },
+    }));
+    const result = await module.mutate((current) => ({
+      ...current,
+      providers: {
+        ...current.providers,
+        second: { preset: 'anthropic', auth: { apiKey: 'sk-2' } },
+      },
+    }));
+    expect(result.providers.first).toBeDefined();
+    expect(result.providers.second).toBeDefined();
+    expect(module.get().providers.first).toBeDefined();
+    expect(module.get().providers.second).toBeDefined();
+  });
+
+  it('serializes concurrent mutations', async () => {
+    const { module } = await setup(
+      noSelectionConfig({
+        remote: { preset: 'openai', auth: { apiKey: 'sk-test' } },
+      }),
+    );
+    await Promise.all([
+      module.mutate((current) => ({
+        ...current,
+        providers: {
+          ...current.providers,
+          a: { preset: 'openai', auth: { apiKey: 'sk-a' } },
+        },
+      })),
+      module.mutate((current) => ({
+        ...current,
+        providers: {
+          ...current.providers,
+          b: { preset: 'openai', auth: { apiKey: 'sk-b' } },
+        },
+      })),
+    ]);
+    expect(module.get().providers.a).toBeDefined();
+    expect(module.get().providers.b).toBeDefined();
+  });
+
+  it('propagates ConfigValidationError from transform', async () => {
+    const { module } = await setup();
+    await expect(
+      module.mutate(() => {
+        throw new ConfigValidationError('test error', { code: 'not_found' });
+      }),
+    ).rejects.toBeInstanceOf(ConfigValidationError);
+    // State should be unchanged
+    expect(module.get()).toEqual(manualConfig());
+  });
+
+  it('validates result through replaceNow', async () => {
+    const { module } = await setup();
+    await expect(
+      module.mutate((current) => ({
+        ...current,
+        modelSelection: {
+          ...current.modelSelection,
+          chat: ['nonexistent:chat:model'],
+        },
+      })),
+    ).rejects.toBeInstanceOf(ConfigValidationError);
+    expect(module.get()).toEqual(manualConfig());
+  });
+});
+
 describe('Config — subscriptions', () => {
   it('publishes only committed replacements', async () => {
     const { module } = await setup();
@@ -629,9 +734,9 @@ describe('Config — validation', () => {
       throw new Error('Expected fixture provider with endpoints');
     // biome-ignore lint/style/noNonNullAssertion: guarded by throw above
     local.endpoints.chat!.auth.apiKey = '[REDACTED]';
-    await expect(module.replace(config)).rejects.toBeInstanceOf(
-      ConfigValidationError,
-    );
+    await expect(module.replace(config)).rejects.toMatchObject({
+      code: 'validation',
+    });
   });
 
   it('rejects redaction markers in preset provider apiKey', async () => {
@@ -641,9 +746,9 @@ describe('Config — validation', () => {
     if (!provider || !('preset' in provider))
       throw new Error('Expected preset provider');
     provider.auth.apiKey = '[REDACTED]';
-    await expect(module.replace(config)).rejects.toBeInstanceOf(
-      ConfigValidationError,
-    );
+    await expect(module.replace(config)).rejects.toMatchObject({
+      code: 'validation',
+    });
   });
 
   it('rejects redaction markers in custom header values', async () => {
@@ -654,9 +759,9 @@ describe('Config — validation', () => {
       throw new Error('Expected fixture provider with endpoints');
     // biome-ignore lint/style/noNonNullAssertion: guarded by throw above
     local.endpoints.chat!.auth.headers = { 'X-Custom': '[REDACTED]' };
-    await expect(module.replace(config)).rejects.toBeInstanceOf(
-      ConfigValidationError,
-    );
+    await expect(module.replace(config)).rejects.toMatchObject({
+      code: 'validation',
+    });
   });
 
   it('rejects redaction markers in MCP HTTP server headers', async () => {
@@ -666,9 +771,9 @@ describe('Config — validation', () => {
       url: 'https://example.com/mcp',
       headers: { Authorization: '[REDACTED]' },
     };
-    await expect(module.replace(config)).rejects.toBeInstanceOf(
-      ConfigValidationError,
-    );
+    await expect(module.replace(config)).rejects.toMatchObject({
+      code: 'validation',
+    });
   });
 
   it('rejects model selection referencing unknown provider', async () => {

@@ -78,6 +78,9 @@ function makeDeps(config: Partial<Config> = {}): ProviderRouteDependencies {
   return {
     config: {
       get: () => baseConfig,
+      mutate: vi.fn(async (fn: (cfg: KlexConfig) => KlexConfig) =>
+        fn(baseConfig),
+      ),
       addProvider: vi.fn(async () => baseConfig),
       updateProvider: vi.fn(async () => baseConfig),
       removeProvider: vi.fn(async () => baseConfig),
@@ -135,6 +138,34 @@ describe('GET /v1/providers — list providers', () => {
     const response = await app.request('/v1/providers');
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({ providers: [] });
+  });
+
+  it('redacts API keys in preset provider responses', async () => {
+    const app = createApp(makeDeps());
+    const response = await app.request('/v1/providers');
+    const body = (await response.json()) as {
+      providers: Array<Record<string, unknown>>;
+    };
+    const preset = body.providers.find((p) => 'preset' in p);
+    expect(preset).toBeDefined();
+    expect((preset!.auth as Record<string, unknown>).apiKey).toBe('[REDACTED]');
+  });
+
+  it('redacts API keys in manual provider endpoint responses', async () => {
+    const app = createApp(makeDeps());
+    const response = await app.request('/v1/providers');
+    const body = (await response.json()) as {
+      providers: Array<Record<string, unknown>>;
+    };
+    const manual = body.providers.find((p) => 'endpoints' in p);
+    expect(manual).toBeDefined();
+    const endpoints = manual!.endpoints as Record<
+      string,
+      Record<string, unknown>
+    >;
+    const api = endpoints.api as { auth: { apiKey?: string } } | undefined;
+    expect(api).toBeDefined();
+    expect(api!.auth.apiKey).toBe('[REDACTED]');
   });
 });
 
@@ -283,26 +314,35 @@ describe('PATCH /v1/providers/:name — update provider', () => {
   });
 
   it('updates preset provider auth and returns 200', async () => {
-    const updateProviderFn = vi.fn(async () => baseConfig);
-    const app = createApp(makeDeps({ updateProvider: updateProviderFn }));
+    const mutateFn = vi.fn(async (fn: (cfg: KlexConfig) => KlexConfig) =>
+      fn(baseConfig),
+    );
+    const app = createApp(makeDeps({ mutate: mutateFn }));
     const response = await app.request('/v1/providers/my-openai', {
       method: 'PATCH',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ auth: { apiKey: 'sk-updated' } }),
     });
     expect(response.status).toBe(200);
-    expect(updateProviderFn).toHaveBeenCalledWith('my-openai', {
-      preset: 'openai',
-      auth: { apiKey: 'sk-updated' },
-      knownModels: {
-        'gpt-4o': { displayName: 'GPT-4o', contextSize: 128_000 },
-      },
+    expect(mutateFn).toHaveBeenCalled();
+    const result = (await mutateFn.mock.results[0]!.value) as KlexConfig;
+    const provider = result.providers['my-openai']! as {
+      preset: string;
+      auth: { apiKey?: string };
+      knownModels?: Record<string, unknown>;
+    };
+    expect(provider.preset).toBe('openai');
+    expect(provider.auth?.apiKey).toBe('sk-updated');
+    expect(provider.knownModels).toEqual({
+      'gpt-4o': { displayName: 'GPT-4o', contextSize: 128_000 },
     });
   });
 
-  it('updates manual provider endpoints and returns 200', async () => {
-    const updateProviderFn = vi.fn(async () => baseConfig);
-    const app = createApp(makeDeps({ updateProvider: updateProviderFn }));
+  it('merges new endpoints with existing ones on manual provider', async () => {
+    const mutateFn = vi.fn(async (fn: (cfg: KlexConfig) => KlexConfig) =>
+      fn(baseConfig),
+    );
+    const app = createApp(makeDeps({ mutate: mutateFn }));
     const response = await app.request('/v1/providers/local', {
       method: 'PATCH',
       headers: { 'content-type': 'application/json' },
@@ -317,15 +357,13 @@ describe('PATCH /v1/providers/:name — update provider', () => {
       }),
     });
     expect(response.status).toBe(200);
-    expect(updateProviderFn).toHaveBeenCalledWith('local', {
-      endpoints: {
-        new: {
-          url: 'http://localhost:9999/v1',
-          format: 'messages',
-          auth: {},
-        },
-      },
-    });
+    const result = (await mutateFn.mock.results[0]!.value) as KlexConfig;
+    const provider = result.providers.local! as {
+      endpoints: Record<string, unknown>;
+    };
+    expect(provider.endpoints).toHaveProperty('chat');
+    expect(provider.endpoints).toHaveProperty('api');
+    expect(provider.endpoints).toHaveProperty('new');
   });
 
   it('returns 404 for unknown provider', async () => {
@@ -341,21 +379,7 @@ describe('PATCH /v1/providers/:name — update provider', () => {
   });
 
   it('maps ConfigValidationError to 404', async () => {
-    const deps = makeDeps({
-      get: () => ({
-        ...baseConfig,
-        providers: {
-          ...baseConfig.providers,
-          missing: { preset: 'openai', auth: { apiKey: 'sk' } },
-        },
-      }),
-      updateProvider: vi.fn(async () => {
-        throw new ConfigValidationError("Provider 'missing' not found", {
-          code: 'not_found',
-        });
-      }),
-    });
-    const app = createApp(deps);
+    const app = createApp(makeDeps());
     const response = await app.request('/v1/providers/missing', {
       method: 'PATCH',
       headers: { 'content-type': 'application/json' },
@@ -367,7 +391,7 @@ describe('PATCH /v1/providers/:name — update provider', () => {
   it('maps unexpected errors to 500', async () => {
     const app = createApp(
       makeDeps({
-        updateProvider: vi.fn(async () => {
+        mutate: vi.fn(async () => {
           throw new Error('disk full');
         }),
       }),
@@ -534,6 +558,17 @@ describe('GET /v1/providers/:name/endpoints — list endpoints', () => {
     const response = await app.request('/v1/providers/nonexistent/endpoints');
     expect(response.status).toBe(404);
   });
+
+  it('redacts API keys in endpoint responses', async () => {
+    const app = createApp(makeDeps());
+    const response = await app.request('/v1/providers/local/endpoints');
+    const body = (await response.json()) as {
+      endpoints: Array<Record<string, unknown>>;
+    };
+    const api = body.endpoints.find((e) => e.name === 'api');
+    expect(api).toBeDefined();
+    expect((api!.auth as Record<string, unknown>).apiKey).toBe('[REDACTED]');
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -655,19 +690,44 @@ describe('POST /v1/providers/:name/endpoints — create endpoint', () => {
 
 describe('PATCH /v1/providers/:name/endpoints/:endpointName — update endpoint', () => {
   it('updates an endpoint and returns 200', async () => {
-    const updateEndpointFn = vi.fn(async () => baseConfig);
-    const app = createApp(makeDeps({ updateEndpoint: updateEndpointFn }));
+    const mutateFn = vi.fn(async (fn: (cfg: KlexConfig) => KlexConfig) =>
+      fn(baseConfig),
+    );
+    const app = createApp(makeDeps({ mutate: mutateFn }));
     const response = await app.request('/v1/providers/local/endpoints/chat', {
       method: 'PATCH',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ url: 'http://localhost:9999/v1' }),
     });
     expect(response.status).toBe(200);
-    expect(updateEndpointFn).toHaveBeenCalledWith('local', 'chat', {
-      url: 'http://localhost:9999/v1',
-      format: 'chat-completions',
-      auth: {},
+    expect(mutateFn).toHaveBeenCalled();
+    const result = (await mutateFn.mock.results[0]!.value) as KlexConfig;
+    const provider = result.providers.local! as {
+      endpoints: Record<string, { url: string; format: string }>;
+    };
+    const ep = provider.endpoints.chat!;
+    expect(ep.url).toBe('http://localhost:9999/v1');
+    expect(ep.format).toBe('chat-completions');
+  });
+
+  it('preserves knownModels when patching an endpoint', async () => {
+    const mutateFn = vi.fn(async (fn: (cfg: KlexConfig) => KlexConfig) =>
+      fn(baseConfig),
+    );
+    const app = createApp(makeDeps({ mutate: mutateFn }));
+    const response = await app.request('/v1/providers/local/endpoints/chat', {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ url: 'http://localhost:9999/v1' }),
     });
+    expect(response.status).toBe(200);
+    const result = (await mutateFn.mock.results[0]!.value) as KlexConfig;
+    const provider = result.providers.local! as {
+      endpoints: Record<string, { knownModels?: Record<string, unknown> }>;
+    };
+    const ep = provider.endpoints.chat!;
+    expect(ep.knownModels).toBeDefined();
+    expect(ep.knownModels).toHaveProperty('model:8b');
   });
 
   it('returns 404 for unknown endpoint', async () => {
@@ -712,7 +772,7 @@ describe('PATCH /v1/providers/:name/endpoints/:endpointName — update endpoint'
   it('maps unexpected errors to 500', async () => {
     const app = createApp(
       makeDeps({
-        updateEndpoint: vi.fn(async () => {
+        mutate: vi.fn(async () => {
           throw new Error('disk full');
         }),
       }),
@@ -864,6 +924,14 @@ describe('GET /v1/providers/:name/known-models — list known models', () => {
     );
     expect(response.status).toBe(404);
   });
+
+  it('returns 404 for unknown endpoint query param on manual provider', async () => {
+    const app = createApp(makeDeps());
+    const response = await app.request(
+      '/v1/providers/local/known-models?endpointName=nonexistent',
+    );
+    expect(response.status).toBe(404);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -923,6 +991,7 @@ describe('POST /v1/providers/:name/known-models — add known model', () => {
       body: JSON.stringify({
         modelId: 'gpt-4o',
         endpointName: 'default',
+        displayName: 'Test',
       }),
     });
     expect(response.status).toBe(400);
@@ -935,7 +1004,7 @@ describe('POST /v1/providers/:name/known-models — add known model', () => {
     const response = await app.request('/v1/providers/local/known-models', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ modelId: 'llama3' }),
+      body: JSON.stringify({ modelId: 'llama3', displayName: 'Test' }),
     });
     expect(response.status).toBe(400);
     const body = (await response.json()) as { error: string };
@@ -950,6 +1019,7 @@ describe('POST /v1/providers/:name/known-models — add known model', () => {
       body: JSON.stringify({
         modelId: 'llama3',
         endpointName: 'nonexistent',
+        displayName: 'Test',
       }),
     });
     expect(response.status).toBe(404);
@@ -962,7 +1032,7 @@ describe('POST /v1/providers/:name/known-models — add known model', () => {
       {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ modelId: 'gpt-4o' }),
+        body: JSON.stringify({ modelId: 'gpt-4o', displayName: 'Test' }),
       },
     );
     expect(response.status).toBe(404);
@@ -982,7 +1052,7 @@ describe('POST /v1/providers/:name/known-models — add known model', () => {
     const response = await app.request('/v1/providers/my-openai/known-models', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ modelId: 'gpt-4o' }),
+      body: JSON.stringify({ modelId: 'gpt-4o', displayName: 'Test' }),
     });
     expect(response.status).toBe(409);
   });
@@ -996,6 +1066,16 @@ describe('POST /v1/providers/:name/known-models — add known model', () => {
     });
     expect(response.status).toBe(400);
   });
+
+  it('rejects body with neither displayName nor contextSize with 400', async () => {
+    const app = createApp(makeDeps());
+    const response = await app.request('/v1/providers/my-openai/known-models', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ modelId: 'gpt-4o' }),
+    });
+    expect(response.status).toBe(400);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -1004,8 +1084,10 @@ describe('POST /v1/providers/:name/known-models — add known model', () => {
 
 describe('PATCH /v1/providers/:name/known-models/:modelId — update known model', () => {
   it('updates a preset provider model without endpointName', async () => {
-    const updateKnownModelFn = vi.fn(async () => baseConfig);
-    const app = createApp(makeDeps({ updateKnownModel: updateKnownModelFn }));
+    const mutateFn = vi.fn(async (fn: (cfg: KlexConfig) => KlexConfig) =>
+      fn(baseConfig),
+    );
+    const app = createApp(makeDeps({ mutate: mutateFn }));
     const response = await app.request(
       '/v1/providers/my-openai/known-models/gpt-4o',
       {
@@ -1015,17 +1097,25 @@ describe('PATCH /v1/providers/:name/known-models/:modelId — update known model
       },
     );
     expect(response.status).toBe(200);
-    expect(updateKnownModelFn).toHaveBeenCalledWith(
-      'my-openai',
-      'gpt-4o',
-      { displayName: 'GPT-4o Updated', contextSize: 128_000 },
-      undefined,
-    );
+    expect(mutateFn).toHaveBeenCalled();
+    const result = (await mutateFn.mock.results[0]!.value) as KlexConfig;
+    const provider = result.providers['my-openai']! as {
+      knownModels?: Record<
+        string,
+        { displayName?: string; contextSize?: number }
+      >;
+    };
+    expect(provider.knownModels?.['gpt-4o']).toEqual({
+      displayName: 'GPT-4o Updated',
+      contextSize: 128_000,
+    });
   });
 
   it('updates a manual provider model with endpointName query param', async () => {
-    const updateKnownModelFn = vi.fn(async () => baseConfig);
-    const app = createApp(makeDeps({ updateKnownModel: updateKnownModelFn }));
+    const mutateFn = vi.fn(async (fn: (cfg: KlexConfig) => KlexConfig) =>
+      fn(baseConfig),
+    );
+    const app = createApp(makeDeps({ mutate: mutateFn }));
     const response = await app.request(
       '/v1/providers/local/known-models/model:8b?endpointName=chat',
       {
@@ -1035,12 +1125,24 @@ describe('PATCH /v1/providers/:name/known-models/:modelId — update known model
       },
     );
     expect(response.status).toBe(200);
-    expect(updateKnownModelFn).toHaveBeenCalledWith(
-      'local',
-      'model:8b',
-      { displayName: 'Model 8B', contextSize: 64_000 },
-      'chat',
-    );
+    expect(mutateFn).toHaveBeenCalled();
+    const result = (await mutateFn.mock.results[0]!.value) as KlexConfig;
+    const provider = result.providers.local! as {
+      endpoints: Record<
+        string,
+        {
+          knownModels?: Record<
+            string,
+            { displayName?: string; contextSize?: number }
+          >;
+        }
+      >;
+    };
+    const ep = provider.endpoints.chat!;
+    expect(ep.knownModels?.['model:8b']).toEqual({
+      displayName: 'Model 8B',
+      contextSize: 64_000,
+    });
   });
 
   it('rejects endpointName query on preset provider with 400', async () => {

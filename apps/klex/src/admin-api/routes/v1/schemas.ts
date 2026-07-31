@@ -287,6 +287,9 @@ const createKnownModelBodySchema = z
     displayName: z.string().optional(),
     contextSize: z.number().int().positive().optional(),
   })
+  .refine((d) => d.displayName !== undefined || d.contextSize !== undefined, {
+    message: 'At least one of displayName or contextSize must be provided',
+  })
   .openapi('CreateKnownModelBody');
 
 const updateKnownModelBodySchema = z

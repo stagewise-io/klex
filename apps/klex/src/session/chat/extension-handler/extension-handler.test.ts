@@ -114,6 +114,7 @@ function factoryWith(
       contextTransformer: overrides.contextTransformer,
       onStepComplete: overrides.onStepComplete,
       dataPartTransformers: overrides.dataPartTransformers,
+      introspect: overrides.introspect,
     }),
   };
 }
@@ -130,6 +131,7 @@ describe('ExtensionHandler — factory', () => {
     expect(typeof handler.runContextTransformers).toBe('function');
     expect(typeof handler.getDataPartTransformers).toBe('function');
     expect(typeof handler.runStepCompleteHooks).toBe('function');
+    expect(typeof handler.getExtensionState).toBe('function');
   });
 
   it('instantiates all extensions from the provided factories', () => {
@@ -926,6 +928,134 @@ describe('ExtensionHandler — runStepCompleteHooks', () => {
     // accumulatedTokens would still be 0.
     expect(ext.getAccumulatedTokens()).toBe(150);
     expect(noopDeps.logger.error).not.toHaveBeenCalled();
+  });
+});
+
+describe('ExtensionHandler — getExtensionState', () => {
+  it('returns undefined for an unknown extension ID', async () => {
+    const handler = createExtensionHandler({
+      factories: [factoryWith({})],
+      ...HANDLER_OPTS,
+    });
+    const state = await handler.getExtensionState('io.stagewise/nonexistent');
+    expect(state).toBeUndefined();
+  });
+
+  it('returns null for an extension without introspect()', async () => {
+    const factory: ExtensionFactory = {
+      identifier: 'io.stagewise/no-introspect',
+      create: () => ({}),
+    };
+    const handler = createExtensionHandler({
+      factories: [factory],
+      ...HANDLER_OPTS,
+    });
+    const state = await handler.getExtensionState('io.stagewise/no-introspect');
+    expect(state).toBeNull();
+  });
+
+  it('returns the state from a sync introspect()', async () => {
+    const factory: ExtensionFactory = {
+      identifier: 'io.stagewise/sync-state',
+      create: () => ({
+        introspect: () => ({ count: 42, label: 'active' }),
+      }),
+    };
+    const handler = createExtensionHandler({
+      factories: [factory],
+      ...HANDLER_OPTS,
+    });
+    const state = await handler.getExtensionState('io.stagewise/sync-state');
+    expect(state).toEqual({ count: 42, label: 'active' });
+  });
+
+  it('returns the state from an async introspect()', async () => {
+    const factory: ExtensionFactory = {
+      identifier: 'io.stagewise/async-state',
+      create: () => ({
+        introspect: () => Promise.resolve({ pending: 3, completed: 10 }),
+      }),
+    };
+    const handler = createExtensionHandler({
+      factories: [factory],
+      ...HANDLER_OPTS,
+    });
+    const state = await handler.getExtensionState('io.stagewise/async-state');
+    expect(state).toEqual({ pending: 3, completed: 10 });
+  });
+
+  it('returns the correct state when multiple extensions are registered', async () => {
+    const f1: ExtensionFactory = {
+      identifier: 'io.stagewise/ext-a',
+      create: () => ({ introspect: () => ({ name: 'A' }) }),
+    };
+    const f2: ExtensionFactory = {
+      identifier: 'io.stagewise/ext-b',
+      create: () => ({ introspect: () => ({ name: 'B' }) }),
+    };
+    const handler = createExtensionHandler({
+      factories: [f1, f2],
+      ...HANDLER_OPTS,
+    });
+    expect(await handler.getExtensionState('io.stagewise/ext-a')).toEqual({
+      name: 'A',
+    });
+    expect(await handler.getExtensionState('io.stagewise/ext-b')).toEqual({
+      name: 'B',
+    });
+  });
+
+  it('returns null for an extension without introspect among multiple', async () => {
+    const f1: ExtensionFactory = {
+      identifier: 'io.stagewise/with-state',
+      create: () => ({ introspect: () => ({ ok: true }) }),
+    };
+    const f2: ExtensionFactory = {
+      identifier: 'io.stagewise/without-state',
+      create: () => ({}),
+    };
+    const handler = createExtensionHandler({
+      factories: [f1, f2],
+      ...HANDLER_OPTS,
+    });
+    expect(await handler.getExtensionState('io.stagewise/with-state')).toEqual({
+      ok: true,
+    });
+    expect(
+      await handler.getExtensionState('io.stagewise/without-state'),
+    ).toBeNull();
+  });
+
+  it('returns undefined for all extensions when none are registered', async () => {
+    const handler = createExtensionHandler({
+      factories: [],
+      ...HANDLER_OPTS,
+    });
+    expect(
+      await handler.getExtensionState('io.stagewise/anything'),
+    ).toBeUndefined();
+  });
+
+  it('logs and re-throws when introspect() throws', async () => {
+    const factory: ExtensionFactory = {
+      identifier: 'io.stagewise/throws',
+      create: () => ({
+        introspect: () => {
+          throw new Error('boom');
+        },
+      }),
+    };
+    const handler = createExtensionHandler({
+      factories: [factory],
+      ...HANDLER_OPTS,
+    });
+    await expect(
+      handler.getExtensionState('io.stagewise/throws'),
+    ).rejects.toThrow('boom');
+    expect(noopDeps.logger.error).toHaveBeenCalledExactlyOnceWith(
+      { error: expect.any(Error), extensionIdentifier: 'io.stagewise/throws' },
+      'Extension introspect() failed',
+    );
   });
 });
 

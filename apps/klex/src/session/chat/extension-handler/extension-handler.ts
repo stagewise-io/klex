@@ -140,6 +140,15 @@ export interface ExtensionHandler {
    * failure does not affect others.
    */
   runStepCompleteHooks: (event: StepCompleteEvent) => Promise<void>;
+
+  /**
+   * Returns the state of a single extension identified by `extensionId`.
+   * Returns `null` if the extension does not implement `introspect()`,
+   * or `undefined` if the extension is not registered.
+   */
+  getExtensionState: (
+    extensionId: string,
+  ) => Promise<Record<string, unknown> | null | undefined>;
 }
 
 export interface ExtensionHandlerDependencies {
@@ -401,6 +410,25 @@ class ExtensionHandlerModule implements ExtensionHandler {
           'Extension onStepComplete hook failed',
         );
       }
+    }
+  }
+
+  async getExtensionState(
+    extensionId: string,
+  ): Promise<Record<string, unknown> | null | undefined> {
+    const ext = this.extensions.find(
+      (e) => this.identifiersByExtension.get(e) === extensionId,
+    );
+    if (!ext) return undefined;
+    if (!ext.introspect) return null;
+    try {
+      return await ext.introspect();
+    } catch (error) {
+      this.extensionDeps.logger.error(
+        { error, extensionIdentifier: extensionId },
+        'Extension introspect() failed',
+      );
+      throw error;
     }
   }
 }

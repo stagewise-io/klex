@@ -153,6 +153,18 @@ const mcpServerNameParamSchema = z.object({
   name: z.string().min(1),
 });
 
+// --- Extensions ---
+
+const extensionStateParamSchema = z.object({
+  sessionId: z.string().min(1),
+  extensionId: z.string().min(1),
+});
+
+const extensionStateResponseSchema = z
+  .record(z.string(), z.unknown())
+  .nullable()
+  .openapi('ExtensionStateResponse');
+
 // --- Settings / Model Selection ---
 
 const modelIdSchema = z
@@ -182,6 +194,8 @@ const modelSelectionPatchSchema = z
 export {
   createMcpServerBodySchema,
   errorResponseSchema,
+  extensionStateParamSchema,
+  extensionStateResponseSchema,
   healthResponseSchema,
   mcpServerNameParamSchema,
   mcpServersResponseSchema,

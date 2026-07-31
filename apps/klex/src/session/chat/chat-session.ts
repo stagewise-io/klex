@@ -816,6 +816,12 @@ class ChatSessionModule implements AgentSession {
       }
     }
   }
+
+  async getExtensionState(
+    extensionId: string,
+  ): Promise<Record<string, unknown> | null | undefined> {
+    return this.extensionHandler.getExtensionState(extensionId);
+  }
 }
 
 export function createChatSession(deps: ChatSessionDependencies): AgentSession {

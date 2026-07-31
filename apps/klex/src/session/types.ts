@@ -108,6 +108,22 @@ export interface SessionHooks {
 }
 
 /**
+ * Provides per-extension state for the admin API. Implemented by the
+ * router, which validates the session and delegates to the session's
+ * extension handler.
+ *
+ * Returns the extension's JSON-serializable state, `null` if the
+ * extension does not implement `introspect()`, or `undefined` if the
+ * session or extension was not found.
+ */
+export interface ExtensionStateProvider {
+  getExtensionState(
+    sessionId: string,
+    extensionId: string,
+  ): Promise<Record<string, unknown> | null | undefined>;
+}
+
+/**
  * This is the interface that AgentSessions must implement in order to become
  * controllable by the Router.
  */
@@ -151,4 +167,13 @@ export interface AgentSession {
    * input.
    */
   restorePendingEvents(events: SessionInboxEvent[]): void;
+
+  /**
+   * Returns the state of a single extension identified by `extensionId`,
+   * or `null` if the extension does not implement `introspect()`, or
+   * `undefined` if the extension is not registered in this session.
+   */
+  getExtensionState(
+    extensionId: string,
+  ): Promise<Record<string, unknown> | null | undefined>;
 }

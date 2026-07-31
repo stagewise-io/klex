@@ -136,7 +136,7 @@ importers:
         specifier: 7.0.2
         version: 7.0.2
 
-  apps/mcp-gateway:
+  apps/mcp-proxy:
     dependencies:
       '@stagewise/logger':
         specifier: workspace:*
@@ -144,9 +144,9 @@ importers:
       '@stagewise/mcp-extension-push-notifications':
         specifier: workspace:*
         version: link:../../packages/mcp-extension-push-notifications
-      '@stagewise/mcp-gateway-sdk':
+      '@stagewise/mcp-proxy-sdk':
         specifier: workspace:*
-        version: link:../../packages/mcp-gateway-sdk
+        version: link:../../packages/mcp-proxy-sdk
     devDependencies:
       '@modelcontextprotocol/client':
         specifier: 2.0.0-beta.4
@@ -367,7 +367,7 @@ importers:
         specifier: 4.4.3
         version: 4.4.3
 
-  packages/mcp-gateway-sdk:
+  packages/mcp-proxy-sdk:
     dependencies:
       '@modelcontextprotocol/node':
         specifier: 2.0.0-beta.4

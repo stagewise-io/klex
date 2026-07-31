@@ -7,7 +7,7 @@ coverage/
 .env
 .env.*
 !.env.example
-mcp-gateway.config.json
+mcp-proxy.config.json
 .DS_Store
 
 .klex.json

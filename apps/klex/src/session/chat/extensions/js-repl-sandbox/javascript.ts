@@ -78,7 +78,7 @@ class JavaScriptToolModule implements JavaScriptTool {
   sessionId: string | undefined;
 
   readonly tools = {
-    runJavascript: {
+    runInSandbox: {
       inputSchema: z.object({
         code: z
           .string()

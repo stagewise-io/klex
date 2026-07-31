@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 
-import type { Tool, ToolUIPart } from 'ai';
+import type { DynamicToolUIPart, Tool } from 'ai';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 // Re-import the mocked function so tests can assert it was called.
@@ -8,7 +8,7 @@ import { recordErrorOnSpan } from '@/tracing';
 
 import type { ExtendedUIMessage } from '../message-types';
 import { testLogger as logger } from '../test-helpers';
-import type { AgentTools, AgentUITools } from '../tools';
+import type { AgentTools } from '../tools';
 import { ToolDispatcher } from './tool-dispatcher';
 
 // --- mocks ---
@@ -86,8 +86,8 @@ function makeTools(
 /** Cast a broad part to a tool part for field assertions after execution. */
 function asToolPart(
   part: ExtendedUIMessage['parts'][number],
-): ToolUIPart<AgentUITools> {
-  return part as ToolUIPart<AgentUITools>;
+): DynamicToolUIPart {
+  return part as DynamicToolUIPart;
 }
 
 // --- tests ---

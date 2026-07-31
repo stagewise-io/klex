@@ -1,9 +1,15 @@
-import type { InferUITools } from 'ai';
+import type { ToolSet } from 'ai';
 
-import type { JavaScriptTool } from './javascript';
-import type { getMemoryTools } from './memory';
+/**
+ * Runtime tool set. All tools are provided by extensions — there are no
+ * hardcoded core tools. The `ToolSet` base keeps the merge assignable to
+ * AI SDK functions that accept a `ToolSet`.
+ */
+export type AgentTools = ToolSet;
 
-export type AgentTools = ReturnType<typeof getMemoryTools> &
-  JavaScriptTool['tools'];
-
-export type AgentUITools = InferUITools<AgentTools>;
+/**
+ * Statically-typed UI tool parts. No core tools are registered statically —
+ * all extension-provided tools are dynamically discovered at runtime and
+ * flow through `DynamicToolUIPart` in message history.
+ */
+export type AgentUITools = Record<string, never>;

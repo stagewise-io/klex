@@ -3,11 +3,12 @@ import { createLogger } from '@stagewise/logger';
 import { createAdminApi } from '@/admin-api';
 import { type CliOptions, parseCliArgs } from '@/cli';
 import { createConfig } from '@/config';
-import { createMcp } from '@/mcp';
+import { createMcp, type Mcp } from '@/mcp';
 import { createModelProvider } from '@/model-provider';
 import { createRouter } from '@/router';
 import { createChatSession } from '@/session/chat';
 import { createContextCompactionExt } from '@/session/chat/extensions/context-compaction';
+import { createJsReplSandboxExt } from '@/session/chat/extensions/js-repl-sandbox';
 import type { SessionHooks } from '@/session/types';
 import { createTracing } from '@/tracing';
 
@@ -49,13 +50,16 @@ async function main(): Promise<void> {
   const router = createRouter({
     logging: logger,
     mcp,
-    createChatSession: (hooks: SessionHooks) =>
+    createChatSession: (hooks: SessionHooks, mcp: Mcp) =>
       createChatSession({
         logging: logger,
         config: config,
         modelProvider: modelProvider,
-        toolProvider: mcp,
-        extensionFactories: [createContextCompactionExt],
+        mcp,
+        extensionFactories: [
+          createJsReplSandboxExt,
+          createContextCompactionExt,
+        ],
         dataDirectory: cli.dataDirectory,
         hooks,
       }),

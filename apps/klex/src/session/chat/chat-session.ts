@@ -6,6 +6,7 @@ import { generateText } from 'ai';
 import type { ModuleLogger, RootLogger } from '@stagewise/logger';
 
 import type { Config, ModelId } from '@/config';
+import type { Mcp } from '@/mcp';
 import type { ModelProvider } from '@/model-provider';
 import type { SessionInboxEvent } from '@/session/inbox';
 import type {
@@ -17,7 +18,6 @@ import type {
   Usage,
   UsagePair,
 } from '@/session/types';
-import type { ToolProvider } from '@/tool-provider';
 
 import {
   createExtensionHandler,
@@ -37,8 +37,6 @@ import {
 } from './inbox';
 import type { ExtendedUIMessage } from './message-types';
 import type { AgentTools } from './tools';
-import { createJavaScriptTool, type JavaScriptTool } from './tools/javascript';
-import { getMemoryTools } from './tools/memory';
 import { createTurn, type Turn, type TurnResult } from './turn';
 import { BackoffManager } from './utils/backoff-manager';
 import { ModelFallbackManager } from './utils/model-fallback-manager';
@@ -55,7 +53,7 @@ export interface ChatSessionDependencies {
   logging: RootLogger;
   modelProvider: ModelProvider;
   config: Config;
-  toolProvider: ToolProvider;
+  mcp: Mcp;
   extensionFactories: ExtensionFactory[];
   /** Root data directory of the agent. Used for extension data dirs. */
   dataDirectory: string;
@@ -119,6 +117,8 @@ class ChatSessionModule implements AgentSession {
 
   private readonly createdAt: string;
 
+  private readonly tools: AgentTools;
+
   constructor(
     private readonly deps: {
       logger: ModuleLogger;
@@ -126,8 +126,7 @@ class ChatSessionModule implements AgentSession {
       modelProvider: ModelProvider;
       config: Config;
       dataDirectory: string;
-      javaScriptTool: JavaScriptTool;
-      tools: AgentTools;
+      mcp: Mcp;
       extensionFactories: ExtensionFactory[];
       hooks?: SessionHooks;
     },
@@ -145,10 +144,6 @@ class ChatSessionModule implements AgentSession {
     });
     this.sessionContext = trace.setSpan(context.active(), this.sessionSpan);
     this.createdAt = new Date().toISOString();
-
-    // Thread the session ID into the JavaScript tool so MCP tool calls
-    // can be associated with this session in observability.
-    deps.javaScriptTool.sessionId = this.sessionId;
 
     this.fallbackManager = new ModelFallbackManager({
       logger: this.deps.logger,
@@ -197,6 +192,9 @@ class ChatSessionModule implements AgentSession {
       config: this.deps.config,
       generateText: (args) => this.generateTextForExtension(args),
       logger: this.deps.logger,
+      logging: this.deps.logging,
+      mcp: this.deps.mcp,
+      sessionId: this.sessionId,
     };
 
     this.extensionHandler = createExtensionHandler({
@@ -225,10 +223,13 @@ class ChatSessionModule implements AgentSession {
         }
       },
     });
+
+    // All tools are provided by extensions.
+    this.tools = this.extensionHandler.getTools() as AgentTools;
   }
 
   async start(): Promise<void> {
-    await this.deps.javaScriptTool.start();
+    await this.extensionHandler.start();
     this.deps.logger.info('ChatSession started');
   }
 
@@ -503,7 +504,7 @@ class ChatSessionModule implements AgentSession {
           messages: this.messages,
           inbox: this.sessionInbox,
           extensionHandler: this.extensionHandler,
-          tools: this.deps.tools,
+          tools: this.tools,
           modelProvider: this.deps.modelProvider,
           fallbackManager: this.fallbackManager,
           config: this.deps.config,
@@ -749,7 +750,7 @@ class ChatSessionModule implements AgentSession {
       // Interrupt any pending backoff wait so the loop can exit promptly.
       this.backoffInterrupt?.();
 
-      await this.deps.javaScriptTool.close();
+      await this.extensionHandler.close();
       this.sessionSpan.addEvent('session.closed', {
         'session.id': this.sessionId,
         'session.messageCount': this.messages.length,
@@ -818,10 +819,6 @@ class ChatSessionModule implements AgentSession {
 }
 
 export function createChatSession(deps: ChatSessionDependencies): AgentSession {
-  const javaScriptTool = createJavaScriptTool({
-    logging: deps.logging,
-    provider: deps.toolProvider,
-  });
   return new ChatSessionModule({
     logger: deps.logging.child({
       name: 'chat-session',
@@ -831,11 +828,7 @@ export function createChatSession(deps: ChatSessionDependencies): AgentSession {
     modelProvider: deps.modelProvider,
     config: deps.config,
     dataDirectory: deps.dataDirectory,
-    javaScriptTool,
-    tools: {
-      ...getMemoryTools(),
-      ...javaScriptTool.tools,
-    },
+    mcp: deps.mcp,
     extensionFactories: deps.extensionFactories,
     hooks: deps.hooks,
   });

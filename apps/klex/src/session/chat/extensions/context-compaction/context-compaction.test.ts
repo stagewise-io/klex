@@ -141,7 +141,7 @@ function makeSummaryMessage(summary: string): ExtendedUIMessage {
         data: { summary },
       },
     ],
-  } as ExtendedUIMessage;
+  } as unknown as ExtendedUIMessage;
 }
 
 function makeDeps(overrides?: Partial<ExtensionDeps>): ExtensionDeps {
@@ -168,9 +168,14 @@ function makeDeps(overrides?: Partial<ExtensionDeps>): ExtensionDeps {
       debug: vi.fn(),
       trace: vi.fn(),
     } as unknown as ExtensionDeps['logger'],
+    logging: {
+      child: () => ({ info: vi.fn() }) as unknown as ExtensionDeps['logger'],
+    } as unknown as ExtensionDeps['logging'],
+    mcp: {} as unknown as ExtensionDeps['mcp'],
+    sessionId: 'test-session-id',
     getDataDir: vi.fn(() => '/tmp/test-ext-data'),
     ...overrides,
-  };
+  } as ExtensionDeps;
 }
 
 /** Builds a successful generateText result with zero-usage. */
@@ -1530,8 +1535,8 @@ describe('ContextCompactionExt — historyTransformer', () => {
       obj.history.some((m) =>
         m.parts.some(
           (p) =>
-            p.type === 'data-context-summary' &&
-            (p as { data: { summary: string } }).data.summary ===
+            (p as { type: string }).type === 'data-context-summary' &&
+            (p as unknown as { data: { summary: string } }).data.summary ===
               'newer summary',
         ),
       ),
@@ -1601,7 +1606,9 @@ describe('ContextCompactionExt — historyTransformer', () => {
     });
     // Only one summary in the result
     const summaryCount = obj.history.filter((m) =>
-      m.parts.some((p) => p.type === 'data-context-summary'),
+      m.parts.some(
+        (p) => (p as { type: string }).type === 'data-context-summary',
+      ),
     ).length;
     expect(summaryCount).toBe(1);
     expect(obj.history).toHaveLength(4); // mid summary + msg4 + msg5 + msg6

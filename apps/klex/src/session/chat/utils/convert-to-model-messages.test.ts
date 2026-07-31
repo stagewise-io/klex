@@ -47,7 +47,7 @@ function makeContextSummaryPart(
   return {
     type: 'data-context-summary',
     data: { summary },
-  } as ExtendedUIMessage['parts'][number];
+  } as unknown as ExtendedUIMessage['parts'][number];
 }
 
 function makeContinuePart(): ExtendedUIMessage['parts'][number] {

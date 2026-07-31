@@ -72,7 +72,7 @@ function createMockConfig(
     subscribe: () => () => undefined,
     getModelSelection: () => [],
     resolveModel: resolveModelImpl,
-    getModelContextSize: () => 200_000,
+    resolveModelInfo: () => ({ contextSize: 200_000, displayName: undefined }),
     getMcpServers: () => ({}),
     addMcpServer: async () => {
       throw new Error('Not used in model provider tests');

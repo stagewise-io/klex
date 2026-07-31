@@ -282,7 +282,7 @@ describe('Config — resolveModel (mixed providers)', () => {
   });
 });
 
-describe('Config — context size resolution', () => {
+describe('Config — resolveModelInfo', () => {
   it('resolves contextSize from preset provider knownModels', async () => {
     const config = presetConfig();
     const provider = config.providers['my-openai'];
@@ -292,7 +292,9 @@ describe('Config — context size resolution', () => {
       'gpt-4o': { contextSize: 128_000 },
     };
     const { module } = await setup(config);
-    expect(module.resolveModel('my-openai:gpt-4o').contextSize).toBe(128_000);
+    expect(module.resolveModelInfo('my-openai:gpt-4o').contextSize).toBe(
+      128_000,
+    );
   });
 
   it('resolves contextSize from manual endpoint knownModels', async () => {
@@ -304,24 +306,26 @@ describe('Config — context size resolution', () => {
       'model:8b': { contextSize: 8_192 },
     };
     const { module } = await setup(config);
-    expect(module.resolveModel('local:chat:model:8b').contextSize).toBe(8_192);
+    expect(module.resolveModelInfo('local:chat:model:8b').contextSize).toBe(
+      8_192,
+    );
   });
 
   it('defaults to DEFAULT_CONTEXT_SIZE when contextSize is absent', async () => {
     const { module } = await setup(presetConfig());
-    expect(module.resolveModel('my-openai:gpt-4o').contextSize).toBe(
+    expect(module.resolveModelInfo('my-openai:gpt-4o').contextSize).toBe(
       DEFAULT_CONTEXT_SIZE,
     );
   });
 
   it('defaults to DEFAULT_CONTEXT_SIZE when knownModels is absent', async () => {
     const { module } = await setup(manualConfig());
-    expect(module.resolveModel('local:chat:model:8b').contextSize).toBe(
+    expect(module.resolveModelInfo('local:chat:model:8b').contextSize).toBe(
       DEFAULT_CONTEXT_SIZE,
     );
   });
 
-  it('getModelContextSize returns the resolved context size', async () => {
+  it('resolveModelInfo returns the resolved context size', async () => {
     const config = presetConfig();
     const provider = config.providers['my-openai'];
     if (!provider || !('preset' in provider))
@@ -330,12 +334,14 @@ describe('Config — context size resolution', () => {
       'gpt-4o': { contextSize: 64_000 },
     };
     const { module } = await setup(config);
-    expect(module.getModelContextSize('my-openai:gpt-4o')).toBe(64_000);
+    expect(module.resolveModelInfo('my-openai:gpt-4o').contextSize).toBe(
+      64_000,
+    );
   });
 
-  it('getModelContextSize returns DEFAULT_CONTEXT_SIZE for unknown model metadata', async () => {
+  it('resolveModelInfo returns DEFAULT_CONTEXT_SIZE for unknown model metadata', async () => {
     const { module } = await setup(presetConfig());
-    expect(module.getModelContextSize('my-openai:gpt-999')).toBe(
+    expect(module.resolveModelInfo('my-openai:gpt-999').contextSize).toBe(
       DEFAULT_CONTEXT_SIZE,
     );
   });
@@ -349,9 +355,9 @@ describe('Config — context size resolution', () => {
       'gpt-4o': { displayName: 'GPT-4o', contextSize: 128_000 },
     };
     const { module } = await setup(config);
-    const resolved = module.resolveModel('my-openai:gpt-4o');
-    expect(resolved.contextSize).toBe(128_000);
-    expect(resolved.displayName).toBe('GPT-4o');
+    const info = module.resolveModelInfo('my-openai:gpt-4o');
+    expect(info.contextSize).toBe(128_000);
+    expect(info.displayName).toBe('GPT-4o');
   });
 
   it('resolves displayName from manual endpoint knownModels', async () => {
@@ -363,7 +369,7 @@ describe('Config — context size resolution', () => {
       'model:8b': { displayName: 'Local 8B', contextSize: 8_192 },
     };
     const { module } = await setup(config);
-    expect(module.resolveModel('local:chat:model:8b').displayName).toBe(
+    expect(module.resolveModelInfo('local:chat:model:8b').displayName).toBe(
       'Local 8B',
     );
   });
@@ -377,13 +383,15 @@ describe('Config — context size resolution', () => {
       'gpt-4o': { contextSize: 128_000 },
     };
     const { module } = await setup(config);
-    expect(module.resolveModel('my-openai:gpt-4o').displayName).toBeUndefined();
+    expect(
+      module.resolveModelInfo('my-openai:gpt-4o').displayName,
+    ).toBeUndefined();
   });
 
   it('returns displayName undefined when knownModels is absent', async () => {
     const { module } = await setup(manualConfig());
     expect(
-      module.resolveModel('local:chat:model:8b').displayName,
+      module.resolveModelInfo('local:chat:model:8b').displayName,
     ).toBeUndefined();
   });
 
@@ -397,8 +405,10 @@ describe('Config — context size resolution', () => {
       'test-model': { contextSize: 32_768 },
     };
     const { module } = await setup(config);
-    expect(module.resolveModel('local:chat:model:8b').contextSize).toBe(4_096);
-    expect(module.resolveModel('local:api:test-model').contextSize).toBe(
+    expect(module.resolveModelInfo('local:chat:model:8b').contextSize).toBe(
+      4_096,
+    );
+    expect(module.resolveModelInfo('local:api:test-model').contextSize).toBe(
       32_768,
     );
   });

@@ -144,7 +144,7 @@ class ContextCompactionExt implements Extension {
     // for calculating the relative limit.
     for (const modelId of modelIds) {
       try {
-        const ctxSize = this.deps.config.getModelContextSize(modelId);
+        const ctxSize = this.deps.config.resolveModelInfo(modelId).contextSize;
         if (ctxSize < contextSize) contextSize = ctxSize;
       } catch {
         // Model resolution failed — skip this model.

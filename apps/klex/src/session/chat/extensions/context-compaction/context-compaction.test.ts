@@ -155,7 +155,10 @@ function makeDeps(overrides?: Partial<ExtensionDeps>): ExtensionDeps {
     },
     config: {
       getModelSelection: vi.fn(() => ['remote:gpt-4o']),
-      getModelContextSize: vi.fn(() => 20_000),
+      resolveModelInfo: vi.fn(() => ({
+        contextSize: 20_000,
+        displayName: undefined,
+      })),
     } as unknown as ExtensionDeps['config'],
     generateText: vi.fn().mockResolvedValue(genFailure()),
     logger: {
@@ -432,7 +435,10 @@ describe('ContextCompactionExt — runCompaction', () => {
       ]),
       config: {
         getModelSelection: vi.fn(() => ['remote:gpt-4o', 'remote:claude']),
-        getModelContextSize: vi.fn(() => 20_000),
+        resolveModelInfo: vi.fn(() => ({
+          contextSize: 20_000,
+          displayName: undefined,
+        })),
       } as unknown as ExtensionDeps['config'],
       generateText: vi
         .fn()
@@ -518,7 +524,10 @@ describe('ContextCompactionExt — runCompaction', () => {
       ]),
       config: {
         getModelSelection: vi.fn(() => []),
-        getModelContextSize: vi.fn(() => 20_000),
+        resolveModelInfo: vi.fn(() => ({
+          contextSize: 20_000,
+          displayName: undefined,
+        })),
       } as unknown as ExtensionDeps['config'],
     });
 
@@ -545,7 +554,10 @@ describe('ContextCompactionExt — runCompaction', () => {
       ]),
       config: {
         getModelSelection,
-        getModelContextSize: vi.fn(() => 20_000),
+        resolveModelInfo: vi.fn(() => ({
+          contextSize: 20_000,
+          displayName: undefined,
+        })),
       } as unknown as ExtensionDeps['config'],
       generateText: vi.fn().mockResolvedValue(genSuccess('Chat model summary')),
     });
@@ -615,7 +627,10 @@ describe('ContextCompactionExt — runCompaction', () => {
       ]),
       config: {
         getModelSelection,
-        getModelContextSize: vi.fn(() => 20_000),
+        resolveModelInfo: vi.fn(() => ({
+          contextSize: 20_000,
+          displayName: undefined,
+        })),
       } as unknown as ExtensionDeps['config'],
     });
 
@@ -648,7 +663,10 @@ describe('ContextCompactionExt — runCompaction', () => {
       ]),
       config: {
         getModelSelection: vi.fn(() => ['remote:gpt-4o']),
-        getModelContextSize: vi.fn(() => 20_000),
+        resolveModelInfo: vi.fn(() => ({
+          contextSize: 20_000,
+          displayName: undefined,
+        })),
       } as unknown as ExtensionDeps['config'],
       generateText: vi.fn().mockResolvedValue(genFailure()),
     });
@@ -678,7 +696,10 @@ describe('ContextCompactionExt — runCompaction', () => {
         getModelSelection: vi.fn((key: string) =>
           key === 'compaction' ? [] : ['remote:gpt-4o'],
         ),
-        getModelContextSize: vi.fn(() => 20_000),
+        resolveModelInfo: vi.fn(() => ({
+          contextSize: 20_000,
+          displayName: undefined,
+        })),
       } as unknown as ExtensionDeps['config'],
       generateText: vi.fn().mockResolvedValue(genFailure()),
     });
@@ -708,7 +729,10 @@ describe('ContextCompactionExt — runCompaction', () => {
         getModelSelection: vi.fn((key: string) =>
           key === 'compaction' ? ['remote:claude-sonnet'] : ['remote:gpt-4o'],
         ),
-        getModelContextSize: vi.fn(() => 20_000),
+        resolveModelInfo: vi.fn(() => ({
+          contextSize: 20_000,
+          displayName: undefined,
+        })),
       } as unknown as ExtensionDeps['config'],
       generateText: vi
         .fn()
@@ -742,7 +766,10 @@ describe('ContextCompactionExt — runCompaction', () => {
         getModelSelection: vi.fn((key: string) =>
           key === 'compaction' ? ['remote:claude-sonnet'] : ['remote:gpt-4o'],
         ),
-        getModelContextSize: vi.fn(() => 20_000),
+        resolveModelInfo: vi.fn(() => ({
+          contextSize: 20_000,
+          displayName: undefined,
+        })),
       } as unknown as ExtensionDeps['config'],
       generateText: vi.fn().mockResolvedValue(genFailure('content-filter')),
     });
@@ -921,7 +948,10 @@ describe('ContextCompactionExt — threshold computation', () => {
     const deps = makeDeps({
       config: {
         getModelSelection: vi.fn(() => ['remote:gpt-4o']),
-        getModelContextSize: vi.fn(() => ctxSize),
+        resolveModelInfo: vi.fn(() => ({
+          contextSize: ctxSize,
+          displayName: undefined,
+        })),
       } as unknown as ExtensionDeps['config'],
       getHistory: vi.fn(() => [
         makeTextMessage('user', 'Hello'),
@@ -949,15 +979,17 @@ describe('ContextCompactionExt — threshold computation', () => {
       if (key === 'chat') return ['remote:gpt-4o', 'remote:gemini'];
       return ['remote:claude'];
     });
-    const getModelContextSize = vi.fn((modelId: string) => {
-      if (modelId === 'remote:gpt-4o') return 60_000;
-      if (modelId === 'remote:gemini') return 40_000; // smallest chat model
-      return 20_000; // compaction model — should be ignored
+    const resolveModelInfo = vi.fn((modelId: string) => {
+      if (modelId === 'remote:gpt-4o')
+        return { contextSize: 60_000, displayName: undefined };
+      if (modelId === 'remote:gemini')
+        return { contextSize: 40_000, displayName: undefined }; // smallest chat model
+      return { contextSize: 20_000, displayName: undefined }; // compaction model — should be ignored
     });
     const deps = makeDeps({
       config: {
         getModelSelection,
-        getModelContextSize,
+        resolveModelInfo,
       } as unknown as ExtensionDeps['config'],
       getHistory: vi.fn(() => [
         makeTextMessage('user', 'Hello'),
@@ -986,7 +1018,10 @@ describe('ContextCompactionExt — threshold computation', () => {
     const deps = makeDeps({
       config: {
         getModelSelection: vi.fn(() => ['remote:gpt-4o']),
-        getModelContextSize: vi.fn(() => hugeCtxSize),
+        resolveModelInfo: vi.fn(() => ({
+          contextSize: hugeCtxSize,
+          displayName: undefined,
+        })),
       } as unknown as ExtensionDeps['config'],
       getHistory: vi.fn(() => [
         makeTextMessage('user', 'Hello'),
@@ -1006,11 +1041,14 @@ describe('ContextCompactionExt — threshold computation', () => {
   });
 
   it('caches the threshold for the extension lifetime', async () => {
-    const getModelContextSize = vi.fn(() => 30_000);
+    const resolveModelInfo = vi.fn(() => ({
+      contextSize: 30_000,
+      displayName: undefined,
+    }));
     const deps = makeDeps({
       config: {
         getModelSelection: vi.fn(() => ['remote:gpt-4o']),
-        getModelContextSize,
+        resolveModelInfo,
       } as unknown as ExtensionDeps['config'],
       getHistory: vi.fn(() => [
         makeTextMessage('user', 'Hello'),
@@ -1026,28 +1064,28 @@ describe('ContextCompactionExt — threshold computation', () => {
       makeResult(makeUsage(15_000, 0)), // 30_000 * 0.5 = 15_000
     );
     await flushMicrotasks();
-    expect(getModelContextSize).toHaveBeenCalled();
+    expect(resolveModelInfo).toHaveBeenCalled();
 
     // Reset mock and trigger again — threshold should be cached
-    getModelContextSize.mockClear();
+    resolveModelInfo.mockClear();
     vi.mocked(deps.generateText)!.mockClear();
     await ext.onStepComplete!(makeResult(makeUsage(15_000, 0)));
     await flushMicrotasks();
 
-    // getModelContextSize should NOT have been called again
-    expect(getModelContextSize).not.toHaveBeenCalled();
+    // resolveModelInfo should NOT have been called again
+    expect(resolveModelInfo).not.toHaveBeenCalled();
   });
 
   it('skips models whose context size cannot be resolved', async () => {
     const getModelSelection = vi.fn(() => ['remote:gpt-4o', 'remote:claude']);
-    const getModelContextSize = vi.fn((modelId: string) => {
+    const resolveModelInfo = vi.fn((modelId: string) => {
       if (modelId === 'remote:gpt-4o') throw new Error('unknown model');
-      return 30_000; // claude resolves fine
+      return { contextSize: 30_000, displayName: undefined }; // claude resolves fine
     });
     const deps = makeDeps({
       config: {
         getModelSelection,
-        getModelContextSize,
+        resolveModelInfo,
       } as unknown as ExtensionDeps['config'],
       getHistory: vi.fn(() => [
         makeTextMessage('user', 'Hello'),
@@ -1069,7 +1107,7 @@ describe('ContextCompactionExt — threshold computation', () => {
     const deps = makeDeps({
       config: {
         getModelSelection: vi.fn(() => ['remote:gpt-4o']),
-        getModelContextSize: vi.fn(() => {
+        resolveModelInfo: vi.fn(() => {
           throw new Error('resolution failed');
         }),
       } as unknown as ExtensionDeps['config'],
@@ -1093,7 +1131,10 @@ describe('ContextCompactionExt — threshold computation', () => {
     const deps = makeDeps({
       config: {
         getModelSelection: vi.fn(() => []),
-        getModelContextSize: vi.fn(() => 20_000),
+        resolveModelInfo: vi.fn(() => ({
+          contextSize: 20_000,
+          displayName: undefined,
+        })),
       } as unknown as ExtensionDeps['config'],
       getHistory: vi.fn(() => [
         makeTextMessage('user', 'Hello'),
@@ -1810,7 +1851,10 @@ describe('ContextCompactionExt — post-compaction baseline & hysteresis', () =>
         getModelSelection: vi.fn((purpose: string) =>
           purpose === 'compaction' ? ['remote:gpt-4o'] : [],
         ),
-        getModelContextSize: vi.fn(() => 20_000),
+        resolveModelInfo: vi.fn(() => ({
+          contextSize: 20_000,
+          displayName: undefined,
+        })),
       } as unknown as ExtensionDeps['config'],
       generateText: vi.fn().mockResolvedValue(genFailure()),
     });

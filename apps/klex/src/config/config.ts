@@ -12,6 +12,7 @@ import {
   type KlexConfig,
   klexConfigSchema,
   type McpServerConfig,
+  type ModelDefinition,
   type ModelId,
   type ModelPurpose,
   type ModelSelection,
@@ -40,6 +41,17 @@ export interface ResolvedModelConfig {
   displayName?: string;
 }
 
+/**
+ * Model metadata with fallbacks applied. Every consumer of model info
+ * gets this — no need to handle missing fields individually.
+ */
+export interface ModelInfo {
+  /** Resolved context size in tokens (defaults to {@link DEFAULT_CONTEXT_SIZE}). */
+  contextSize: number;
+  /** Human-readable name from `knownModels`, if declared. */
+  displayName: string | undefined;
+}
+
 export class ConfigValidationError extends Error {
   override readonly name = 'ConfigValidationError';
 }
@@ -57,11 +69,10 @@ export interface Config {
   getModelSelection(purpose: ModelPurpose): readonly ModelId[];
   resolveModel(modelId: ModelId): ResolvedModelConfig;
   /**
-   * Returns the context size (in tokens) for a given model ID. If the
-   * model definition does not specify `contextSize`, returns
-   * {@link DEFAULT_CONTEXT_SIZE}.
+   * Returns all model metadata for a given model ID with fallbacks
+   * applied (e.g. `contextSize` defaults to {@link DEFAULT_CONTEXT_SIZE}).
    */
-  getModelContextSize(modelId: ModelId): number;
+  resolveModelInfo(modelId: ModelId): ModelInfo;
   getMcpServers(): Readonly<Record<string, McpServerConfig>>;
   /** Creates a new MCP server. Throws if the name already exists. */
   addMcpServer(
@@ -185,31 +196,26 @@ class ConfigModule implements Config {
       );
     }
 
+    let knownModels: Record<string, ModelDefinition> | undefined;
+    let localModelId: string;
+
     if ('preset' in provider) {
-      const localModelId = rest;
+      localModelId = rest;
+      knownModels = provider.knownModels;
       const endpoint = resolvePresetEndpoint(provider.preset, provider.auth);
-      const contextSize = resolveContextSize(
-        provider.knownModels,
+      const info = this.resolveMetadata(
+        modelId,
+        providerId,
+        knownModels,
         localModelId,
       );
-      if (
-        contextSize === undefined &&
-        !this.warnedMissingContextSize.has(modelId)
-      ) {
-        this.warnedMissingContextSize.add(modelId);
-        this.deps.logger.warn(
-          { modelId, providerId },
-          `Model ${modelId} does not specify contextSize — defaulting to ${DEFAULT_CONTEXT_SIZE}. Explicit contextSize is preferred.`,
-        );
-      }
       return {
         providerId,
         endpointId: provider.preset,
         modelId: localModelId,
         endpoint: resolveAuthEnvVars(endpoint),
         isPreset: true,
-        contextSize: contextSize ?? DEFAULT_CONTEXT_SIZE,
-        displayName: resolveDisplayName(provider.knownModels, localModelId),
+        ...info,
       };
     }
 
@@ -221,7 +227,7 @@ class ConfigModule implements Config {
     }
 
     const endpointId = rest.slice(0, colon);
-    const localModelId = rest.slice(colon + 1);
+    localModelId = rest.slice(colon + 1);
     const endpoint = provider.endpoints[endpointId];
 
     if (!endpoint) {
@@ -230,7 +236,40 @@ class ConfigModule implements Config {
       );
     }
 
-    const contextSize = resolveContextSize(endpoint.knownModels, localModelId);
+    knownModels = endpoint.knownModels;
+    const info = this.resolveMetadata(
+      modelId,
+      providerId,
+      knownModels,
+      localModelId,
+    );
+    return {
+      providerId,
+      endpointId,
+      modelId: localModelId,
+      endpoint: resolveAuthEnvVars(endpoint),
+      isPreset: false,
+      ...info,
+    };
+  }
+
+  resolveModelInfo(modelId: ModelId): ModelInfo {
+    const { contextSize, displayName } = this.resolveModel(modelId);
+    return { contextSize, displayName };
+  }
+
+  /**
+   * Resolves metadata (contextSize + displayName) from `knownModels`,
+   * applying the {@link DEFAULT_CONTEXT_SIZE} fallback and warning.
+   */
+  private resolveMetadata(
+    modelId: ModelId,
+    providerId: string,
+    knownModels: Record<string, ModelDefinition> | undefined,
+    localModelId: string,
+  ): ModelInfo {
+    const def = knownModels?.[localModelId];
+    const contextSize = def?.contextSize;
     if (
       contextSize === undefined &&
       !this.warnedMissingContextSize.has(modelId)
@@ -243,18 +282,9 @@ class ConfigModule implements Config {
     }
 
     return {
-      providerId,
-      endpointId,
-      modelId: localModelId,
-      endpoint: resolveAuthEnvVars(endpoint),
-      isPreset: false,
       contextSize: contextSize ?? DEFAULT_CONTEXT_SIZE,
-      displayName: resolveDisplayName(endpoint.knownModels, localModelId),
+      displayName: def?.displayName,
     };
-  }
-
-  getModelContextSize(modelId: ModelId): number {
-    return this.resolveModel(modelId).contextSize;
   }
 
   getMcpServers(): Readonly<Record<string, McpServerConfig>> {
@@ -481,30 +511,6 @@ function resolveAuthEnvVars(endpoint: EndpointConfig): EndpointConfig {
     auth.apiKey = resolveEnvVar(auth.apiKey);
   }
   return { ...endpoint, auth };
-}
-
-/**
- * Looks up the `contextSize` for a model in an optional `knownModels`
- * record. Returns `undefined` when the model or its `contextSize` is not
- * declared — callers should default to {@link DEFAULT_CONTEXT_SIZE}.
- */
-function resolveContextSize(
-  models: Record<string, { contextSize?: number }> | undefined,
-  localModelId: string,
-): number | undefined {
-  return models?.[localModelId]?.contextSize;
-}
-
-/**
- * Looks up the `displayName` for a model in an optional `knownModels`
- * record. Returns `undefined` when the model or its `displayName` is not
- * declared.
- */
-function resolveDisplayName(
-  models: Record<string, { displayName?: string }> | undefined,
-  localModelId: string,
-): string | undefined {
-  return models?.[localModelId]?.displayName;
 }
 
 export function createConfig(deps: ConfigDependencies): Config {

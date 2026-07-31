@@ -24,6 +24,11 @@ import {
  */
 export const DEFAULT_CONTEXT_SIZE = 200_000;
 
+/**
+ * File name used for the persisted agent configuration file.
+ */
+export const CONFIG_FILE_NAME = 'config.json';
+
 export interface ResolvedModelConfig {
   providerId: string;
   endpointId: string;
@@ -508,6 +513,6 @@ export function createConfig(deps: ConfigDependencies): Config {
       name: 'config',
       bindings: { module: 'config' },
     }),
-    configPath: join(deps.dataDirectory, 'config.json'),
+    configPath: join(deps.dataDirectory, CONFIG_FILE_NAME),
   });
 }

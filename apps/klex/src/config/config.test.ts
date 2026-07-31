@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import type { RootLogger } from '@stagewise/logger';
 
 import {
+  CONFIG_FILE_NAME,
   ConfigValidationError,
   createConfig,
   DEFAULT_CONTEXT_SIZE,
@@ -102,7 +103,7 @@ async function setup(config = manualConfig()) {
   const directory = await mkdtemp(join(tmpdir(), 'klex-config-'));
   directories.push(directory);
   await writeFile(
-    join(directory, 'config.json'),
+    join(directory, CONFIG_FILE_NAME),
     `${JSON.stringify(config, null, 2)}\n`,
   );
   const module = createConfig({ logging, dataDirectory: directory });
@@ -131,7 +132,7 @@ describe('Config — lifecycle', () => {
   it('throws if config file is not valid JSON', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'klex-config-'));
     directories.push(dir);
-    await writeFile(join(dir, 'config.json'), '{ not json');
+    await writeFile(join(dir, CONFIG_FILE_NAME), '{ not json');
     const module = createConfig({ logging, dataDirectory: dir });
     await expect(module.start()).rejects.toThrow(/not valid JSON/);
   });
@@ -140,7 +141,7 @@ describe('Config — lifecycle', () => {
     const dir = await mkdtemp(join(tmpdir(), 'klex-config-'));
     directories.push(dir);
     await writeFile(
-      join(dir, 'config.json'),
+      join(dir, CONFIG_FILE_NAME),
       '{"providers": {}, "modelSelection": {}, "mcpServers": {}}',
     );
     const module = createConfig({ logging, dataDirectory: dir });
@@ -412,13 +413,13 @@ describe('Config — replace (atomic persistence)', () => {
 
     expect(module.get()).toEqual(next);
     expect(
-      JSON.parse(await readFile(join(directory, 'config.json'), 'utf8')),
+      JSON.parse(await readFile(join(directory, CONFIG_FILE_NAME), 'utf8')),
     ).toEqual(next);
   });
 
   it('leaves prior state and file intact after invalid replacement', async () => {
     const { directory, module } = await setup();
-    const before = await readFile(join(directory, 'config.json'), 'utf8');
+    const before = await readFile(join(directory, CONFIG_FILE_NAME), 'utf8');
     const invalid = manualConfig();
     invalid.modelSelection.chat = ['missing:chat:model'];
 
@@ -426,7 +427,9 @@ describe('Config — replace (atomic persistence)', () => {
       ConfigValidationError,
     );
     expect(module.get()).toEqual(manualConfig());
-    expect(await readFile(join(directory, 'config.json'), 'utf8')).toBe(before);
+    expect(await readFile(join(directory, CONFIG_FILE_NAME), 'utf8')).toBe(
+      before,
+    );
   });
 
   it('serializes concurrent replacements', async () => {
@@ -438,7 +441,7 @@ describe('Config — replace (atomic persistence)', () => {
 
     expect(module.get()).toEqual(second);
     expect(
-      JSON.parse(await readFile(join(directory, 'config.json'), 'utf8')),
+      JSON.parse(await readFile(join(directory, CONFIG_FILE_NAME), 'utf8')),
     ).toEqual(second);
   });
 

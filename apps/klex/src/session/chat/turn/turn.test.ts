@@ -349,7 +349,10 @@ describe('Turn — fatal error handling', () => {
 
   it('returns completeFailure=false when at least one step succeeds', async () => {
     const successStep = makeMockStep({ shouldContinue: true });
-    vi.mocked(createStep).mockReturnValue(successStep);
+    const endStep = makeMockStep({ shouldContinue: false });
+    vi.mocked(createStep)
+      .mockReturnValueOnce(successStep)
+      .mockReturnValueOnce(endStep);
 
     const turn = createTurn(makeDeps());
     const result = await turn.run();
@@ -545,8 +548,9 @@ describe('Turn — forceContinue (backoff retry)', () => {
   });
 
   it('injects a "Continue." message when forceContinue is true and last message is assistant text-only', async () => {
-    const step = makeMockStep({ shouldContinue: true });
-    vi.mocked(createStep).mockReturnValue(step);
+    const step1 = makeMockStep({ shouldContinue: true });
+    const step2 = makeMockStep({ shouldContinue: false });
+    vi.mocked(createStep).mockReturnValueOnce(step1).mockReturnValueOnce(step2);
 
     const messages: ExtendedUIMessage[] = [
       { id: 'u1', role: 'user', parts: [{ type: 'text', text: 'hello' }] },
@@ -564,8 +568,9 @@ describe('Turn — forceContinue (backoff retry)', () => {
   });
 
   it('does not inject "Continue." when forceContinue is true but last message is already user', async () => {
-    const step = makeMockStep({ shouldContinue: true });
-    vi.mocked(createStep).mockReturnValue(step);
+    const step1 = makeMockStep({ shouldContinue: true });
+    const step2 = makeMockStep({ shouldContinue: false });
+    vi.mocked(createStep).mockReturnValueOnce(step1).mockReturnValueOnce(step2);
 
     const messages: ExtendedUIMessage[] = [
       { id: 'u1', role: 'user', parts: [{ type: 'text', text: 'hello' }] },
@@ -582,8 +587,9 @@ describe('Turn — forceContinue (backoff retry)', () => {
   });
 
   it('does not inject "Continue." when forceContinue is not set', async () => {
-    const step = makeMockStep({ shouldContinue: true });
-    vi.mocked(createStep).mockReturnValue(step);
+    const step1 = makeMockStep({ shouldContinue: true });
+    const step2 = makeMockStep({ shouldContinue: false });
+    vi.mocked(createStep).mockReturnValueOnce(step1).mockReturnValueOnce(step2);
 
     const messages: ExtendedUIMessage[] = [
       { id: 'u1', role: 'user', parts: [{ type: 'text', text: 'hello' }] },

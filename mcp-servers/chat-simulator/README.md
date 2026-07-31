@@ -64,9 +64,10 @@ A message entered in the browser produces this event:
 }
 ```
 
-Retrieve and acknowledge events with
+Retrieve pending events and acknowledge them with
 `@stagewise/mcp-extension-push-notifications/client`. Use `eventId` as the
-deduplication key and treat the cursor as opaque.
+deduplication key. Acknowledged events immediately disappear from pending
+retrieval; repeated acknowledgements are safe.
 
 The server exposes one tool:
 
@@ -88,13 +89,13 @@ await mcpClient.callTool({
 5. Confirm that the agent persists and acknowledges the event.
 6. Have the agent call `sendMessage`.
 7. Confirm that the reply appears in the browser.
-8. Restart the agent and verify that already persisted events are deduplicated.
+8. Restart the agent and verify that acknowledged events are not delivered again.
 
 ## Limitations
 
-The simulator keeps messages, events, cursors, and acknowledgements in memory.
-Restarting it clears all state. It has no authentication and is intended only for
-trusted development environments.
+The simulator keeps messages, pending events, and acknowledgements in memory.
+Restarting it clears all state. It uses one fixed local consumer identity, has no
+authentication, and is intended only for trusted development environments.
 
 See the [Push Notifications client guide](../../packages/mcp-extension-push-notifications/README.md#client)
 for connection, recovery, acknowledgement, and subscription examples.

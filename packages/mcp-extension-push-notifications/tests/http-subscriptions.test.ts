@@ -18,6 +18,7 @@ function listenRequest(
   id: string | number = 1,
   options: {
     capability?: boolean;
+    consumerKey?: string;
     progressToken?: string | number;
     subscription?: unknown;
   } = {},
@@ -32,21 +33,38 @@ function listenRequest(
         );
   return new Request('http://localhost/mcp', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      ...(options.consumerKey === undefined
+        ? {}
+        : { 'X-Consumer-Key': options.consumerKey }),
+    },
     body: JSON.stringify({
       jsonrpc: '2.0',
       id,
       method: 'subscriptions/listen',
       params: {
         notifications: {
-          [PUSH_NOTIFICATIONS_EXTENSION_ID]: options.subscription ?? {
-            afterCursor: '0',
-          },
+          [PUSH_NOTIFICATIONS_EXTENSION_ID]: options.subscription ?? {},
         },
         _meta: metadata,
       },
     }),
   });
+}
+
+function createManager(options: { keepAliveMs?: number } = {}) {
+  return createPushNotificationsHttpSubscriptionManager(
+    async () => Response.json({}),
+    {
+      ...options,
+      resolveConsumerKey: (request) => {
+        const key = request.headers.get('X-Consumer-Key');
+        if (!key) throw new Error('Unauthenticated');
+        return key;
+      },
+    },
+  );
 }
 
 async function readSseMessage(
@@ -67,10 +85,24 @@ async function readSseMessage(
   return JSON.parse(data);
 }
 
+async function subscribe(
+  manager: ReturnType<typeof createManager>,
+  id: string | number,
+  consumerKey: string,
+): Promise<ReadableStreamDefaultReader<Uint8Array>> {
+  const response = await manager.fetch(listenRequest(id, { consumerKey }));
+  const reader = response.body?.getReader();
+  if (reader === undefined) throw new Error('Missing response body');
+  await readSseMessage(reader);
+  return reader;
+}
+
 describe('Push Notifications HTTP subscriptions', () => {
   it('delegates unrelated requests unchanged', async () => {
     const delegate = vi.fn(async () => new Response('delegated'));
-    const manager = createPushNotificationsHttpSubscriptionManager(delegate);
+    const manager = createPushNotificationsHttpSubscriptionManager(delegate, {
+      resolveConsumerKey: () => 'unused',
+    });
     const request = new Request('http://localhost/mcp', {
       method: 'POST',
       body: JSON.stringify({ method: 'tools/list' }),
@@ -80,44 +112,48 @@ describe('Push Notifications HTTP subscriptions', () => {
     expect(delegate).toHaveBeenCalledWith(request);
   });
 
-  it('rejects invalid filters and missing capabilities', async () => {
-    const manager = createPushNotificationsHttpSubscriptionManager(async () =>
-      Response.json({}),
-    );
+  it('rejects invalid filters, missing capabilities, and unresolved consumers', async () => {
+    const manager = createManager();
     const invalid = await manager.fetch(
-      listenRequest(1, { subscription: { afterCursor: 5 } }),
+      listenRequest(1, {
+        consumerKey: 'agent-a',
+        subscription: { afterCursor: 'removed' },
+      }),
     );
     expect(await invalid.json()).toMatchObject({ error: { code: -32602 } });
 
     const missing = await manager.fetch(
-      listenRequest(2, { capability: false }),
+      listenRequest(2, { capability: false, consumerKey: 'agent-a' }),
     );
     expect(await missing.json()).toMatchObject({ error: { code: -32003 } });
+
+    const unresolved = await manager.fetch(listenRequest(3));
+    expect(await unresolved.json()).toMatchObject({ error: { code: -32001 } });
   });
 
-  it('acknowledges first and stamps published events', async () => {
-    const manager = createPushNotificationsHttpSubscriptionManager(async () =>
-      Response.json({}),
+  it('acknowledges first and stamps cursor-free published events', async () => {
+    const manager = createManager();
+    const response = await manager.fetch(
+      listenRequest('subscription-1', { consumerKey: 'agent-a' }),
     );
-    const response = await manager.fetch(listenRequest('subscription-1'));
     const reader = response.body?.getReader();
     if (reader === undefined) throw new Error('Missing response body');
 
     expect(await readSseMessage(reader)).toMatchObject({
       method: 'notifications/subscriptions/acknowledged',
       params: {
+        notifications: { [PUSH_NOTIFICATIONS_EXTENSION_ID]: {} },
         _meta: {
           'io.modelcontextprotocol/subscriptionId': 'subscription-1',
         },
       },
     });
 
-    manager.publish({ event, cursor: '1' });
+    manager.publish('agent-a', { event });
     expect(await readSseMessage(reader)).toMatchObject({
       method: 'io.stagewise/push-notifications/event',
       params: {
         event,
-        cursor: '1',
         _meta: {
           'io.modelcontextprotocol/subscriptionId': 'subscription-1',
         },
@@ -127,14 +163,43 @@ describe('Push Notifications HTTP subscriptions', () => {
     expect(manager.subscriberCount).toBe(0);
   });
 
-  it('emits MCP progress keepalives when requested', async () => {
+  it('routes events only to the targeted consumer', async () => {
+    const manager = createManager({ keepAliveMs: 0 });
+    const first = await subscribe(manager, 1, 'agent-a');
+    const second = await subscribe(manager, 2, 'agent-b');
+
+    manager.publish('agent-a', { event });
+    expect(await readSseMessage(first)).toMatchObject({ params: { event } });
+    expect(manager.subscriberCount).toBe(2);
+
+    await first.cancel();
+    await second.cancel();
+  });
+
+  it('replaces the active subscription for the same consumer', async () => {
+    const manager = createManager({ keepAliveMs: 0 });
+    const first = await subscribe(manager, 1, 'agent-a');
+    const second = await subscribe(manager, 2, 'agent-a');
+
+    expect(await readSseMessage(first)).toMatchObject({
+      id: 1,
+      result: { resultType: 'complete' },
+    });
+    expect(manager.subscriberCount).toBe(1);
+
+    manager.publish('agent-a', { event });
+    expect(await readSseMessage(second)).toMatchObject({ params: { event } });
+    await second.cancel();
+  });
+
+  it('emits MCP progress keepalives and closes gracefully', async () => {
     vi.useFakeTimers();
-    const manager = createPushNotificationsHttpSubscriptionManager(
-      async () => Response.json({}),
-      { keepAliveMs: 1_000 },
-    );
+    const manager = createManager({ keepAliveMs: 1_000 });
     const response = await manager.fetch(
-      listenRequest('subscription-1', { progressToken: 42 }),
+      listenRequest('subscription-1', {
+        consumerKey: 'agent-a',
+        progressToken: 42,
+      }),
     );
     const reader = response.body?.getReader();
     if (reader === undefined) throw new Error('Missing response body');
@@ -145,39 +210,13 @@ describe('Push Notifications HTTP subscriptions', () => {
       method: 'notifications/progress',
       params: { progressToken: 42 },
     });
-    await reader.cancel();
-    vi.useRealTimers();
-  });
-
-  it('publishes to multiple subscribers and closes gracefully', async () => {
-    const manager = createPushNotificationsHttpSubscriptionManager(
-      async () => Response.json({}),
-      { keepAliveMs: 0 },
-    );
-    const first = (await manager.fetch(listenRequest(1))).body?.getReader();
-    const second = (await manager.fetch(listenRequest(2))).body?.getReader();
-    if (first === undefined || second === undefined) {
-      throw new Error('Missing response body');
-    }
-    await Promise.all([readSseMessage(first), readSseMessage(second)]);
-    expect(manager.subscriberCount).toBe(2);
-
-    manager.publish({ event, cursor: '1' });
-    const notifications = await Promise.all([
-      readSseMessage(first),
-      readSseMessage(second),
-    ]);
-    expect(notifications).toHaveLength(2);
 
     manager.close();
-    expect(await readSseMessage(first)).toMatchObject({
-      id: 1,
-      result: { resultType: 'complete' },
-    });
-    expect(await readSseMessage(second)).toMatchObject({
-      id: 2,
+    expect(await readSseMessage(reader)).toMatchObject({
+      id: 'subscription-1',
       result: { resultType: 'complete' },
     });
     expect(manager.subscriberCount).toBe(0);
+    vi.useRealTimers();
   });
 });

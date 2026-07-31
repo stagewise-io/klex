@@ -42,13 +42,13 @@ function fakeClient(
       if (method === 'subscriptions/listen') {
         await handlers.get('notifications/subscriptions/acknowledged')?.({
           notifications: {
-            [PUSH_NOTIFICATIONS_EXTENSION_ID]: { afterCursor: 'cursor-2' },
+            [PUSH_NOTIFICATIONS_EXTENSION_ID]: {},
           },
         });
         return new Promise(() => undefined);
       }
       if (method === 'io.stagewise/push-notifications/get') {
-        return { events: [event], nextCursor: 'cursor-2', hasMore: false };
+        return { events: [event], hasMore: false };
       }
       return {};
     }),
@@ -67,13 +67,10 @@ describe('Push Notifications client', () => {
   it('injects per-request capability while preserving metadata', async () => {
     const { client, requests } = fakeClient();
     const klex = registerPushNotificationsClient(client);
-    await klex.getEvents(
-      { cursor: 'durable-cursor', limit: 10 },
-      { metadata: { trace: 'trace-1' } },
-    );
+    await klex.getEvents({ limit: 10 }, { metadata: { trace: 'trace-1' } });
     expect(requests[0]).toMatchObject({
       params: {
-        cursor: 'durable-cursor',
+        limit: 10,
         _meta: {
           trace: 'trace-1',
           'io.modelcontextprotocol/clientCapabilities': {
@@ -88,14 +85,11 @@ describe('Push Notifications client', () => {
     const { client, requests } = fakeClient();
     const klex = registerPushNotificationsClient(client);
     expect(await klex.serverSupportsPushNotifications()).toBe(true);
-    const subscription = await klex.listen(
-      { afterCursor: 'cursor-2' },
-      { request: { timeout: 5_000 } },
-    );
-    expect(subscription.closed).toBeInstanceOf(Promise);
-    expect(klex.acknowledgedSubscription()).toEqual({
-      afterCursor: 'cursor-2',
+    const subscription = await klex.listen(undefined, {
+      request: { timeout: 5_000 },
     });
+    expect(subscription.closed).toBeInstanceOf(Promise);
+    expect(klex.acknowledgedSubscription()).toEqual({});
     const listenRequests = requests.filter(
       (request) =>
         (request as { method?: string }).method === 'subscriptions/listen',
@@ -106,7 +100,7 @@ describe('Push Notifications client', () => {
         method: 'subscriptions/listen',
         params: expect.objectContaining({
           notifications: {
-            [PUSH_NOTIFICATIONS_EXTENSION_ID]: { afterCursor: 'cursor-2' },
+            [PUSH_NOTIFICATIONS_EXTENSION_ID]: {},
           },
         }),
       }),
@@ -168,10 +162,7 @@ describe('Push Notifications client', () => {
     const { client, handlers } = fakeClient();
     const onEvent = vi.fn();
     registerPushNotificationsClient(client, { onEvent });
-    await handlers.get('io.stagewise/push-notifications/event')?.({
-      event,
-      cursor: 'cursor-2',
-    });
+    await handlers.get('io.stagewise/push-notifications/event')?.({ event });
     expect(onEvent).toHaveBeenCalledOnce();
     expect(client.request).not.toHaveBeenCalled();
   });

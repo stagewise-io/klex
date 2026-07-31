@@ -38,7 +38,7 @@ describe('Push Notifications server', () => {
   it('requires per-request capability by default', async () => {
     const { server, handlers } = fakeServer(true);
     registerPushNotificationsServer(server, {
-      getEvents: () => ({ events: [], nextCursor: 'cursor-1', hasMore: false }),
+      getEvents: () => ({ events: [], hasMore: false }),
       acknowledgeEvents: () => undefined,
     });
     await expect(
@@ -60,7 +60,6 @@ describe('Push Notifications server', () => {
       {
         getEvents: () => ({
           events: [],
-          nextCursor: 'cursor-1',
           hasMore: false,
         }),
         acknowledgeEvents: () => undefined,
@@ -71,7 +70,6 @@ describe('Push Notifications server', () => {
       handlers.get('io.stagewise/push-notifications/get')?.({}, {}),
     ).resolves.toEqual({
       events: [],
-      nextCursor: 'cursor-1',
       hasMore: false,
     });
   });
@@ -80,7 +78,6 @@ describe('Push Notifications server', () => {
     const { server, handlers } = fakeServer();
     const getEvents = vi.fn(() => ({
       events: [],
-      nextCursor: 'cursor-1',
       hasMore: false,
     }));
     const acknowledgeEvents = vi.fn();
@@ -91,7 +88,7 @@ describe('Push Notifications server', () => {
       },
     };
     await handlers.get('io.stagewise/push-notifications/get')?.(
-      { cursor: 'persistent-cursor', _meta: metadata },
+      { limit: 10, _meta: metadata },
       context,
     );
     await handlers.get('io.stagewise/push-notifications/ack')?.(
@@ -99,7 +96,7 @@ describe('Push Notifications server', () => {
       context,
     );
     expect(getEvents).toHaveBeenCalledWith(
-      expect.objectContaining({ cursor: 'persistent-cursor' }),
+      expect.objectContaining({ limit: 10 }),
       context,
     );
     expect(acknowledgeEvents).toHaveBeenCalledWith(
@@ -111,7 +108,7 @@ describe('Push Notifications server', () => {
   it('rejects a push without negotiated client support', async () => {
     const { server } = fakeServer();
     const klex = registerPushNotificationsServer(server, {
-      getEvents: () => ({ events: [], nextCursor: 'cursor-1', hasMore: false }),
+      getEvents: () => ({ events: [], hasMore: false }),
       acknowledgeEvents: () => undefined,
     });
     await expect(
@@ -123,7 +120,6 @@ describe('Push Notifications server', () => {
           createdAt: '2026-07-20T10:30:00.000Z',
           payload: {},
         },
-        cursor: 'cursor-1',
       }),
     ).rejects.toBeInstanceOf(PushNotificationsProtocolError);
   });

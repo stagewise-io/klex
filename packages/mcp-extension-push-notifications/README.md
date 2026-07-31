@@ -1,113 +1,88 @@
 # MCP Push Notifications Extension
 
-Typed schemas and client/server facades for the durable Push Notifications extension to
-the Model Context Protocol.
+Typed schemas and client/server facades for identity-scoped durable Push Notifications in the Model Context Protocol.
 
 **Extension identifier:** `io.stagewise/push-notifications`
 
-## Protocol
+## Delivery model
 
-- `io.stagewise/push-notifications/get` retrieves durable events after an opaque cursor.
-- `io.stagewise/push-notifications/ack` records acceptance after durable client storage.
+- `io.stagewise/push-notifications/get` retrieves pending unacknowledged events for the authenticated consumer.
+- `io.stagewise/push-notifications/ack` records durable client acceptance and removes events from the pending view.
 - `io.stagewise/push-notifications/event` provides optional low-latency delivery.
 
-Delivery is at least once. Clients deduplicate by `eventId`. Notifications are a
-latency optimization; cursor-based retrieval is the recovery mechanism. See the
-[specification](./specification/draft/events.md) for the complete contract.
+Delivery is at least once. Servers persist before publishing. Clients accept and deduplicate by `eventId` before acknowledging. Live delivery is a latency optimization; pending retrieval is recovery. This extension is a durable queue, not a replayable historical event stream.
 
 ## Client
 
-Register the extension before connecting the MCP client.
+Register before connecting:
 
 ```ts
-import { registerPushNotificationsClient } from '@stagewise/mcp-extension-push-notifications/client';
-
 const events = registerPushNotificationsClient(mcpClient, {
   async onEvent({ params }) {
-    await inbox.store(params.event, params.cursor);
-    await events.acknowledgeEvents({ eventIds: [params.event.eventId] });
+    const accepted = await inbox.commit([params.event]);
+    if (accepted) await events.acknowledgeEvents({ eventIds: [params.event.eventId] });
   },
 });
 ```
 
-Retrieve all available pages on startup and after reconnecting. Commit each page
-and its `nextCursor` atomically before acknowledging it.
+Subscribe first, then drain pending pages:
 
 ```ts
-let cursor = await inbox.readCursor();
+const subscription = await events.listen();
 
 while (true) {
-  const page = await events.getEvents({ cursor, limit: 100 });
-  await inbox.storePage(page.events, page.nextCursor);
-
+  const page = await events.getEvents({ limit: 100 });
+  await inbox.commit(page.events);
   if (page.events.length > 0) {
     await events.acknowledgeEvents({
       eventIds: page.events.map((event) => event.eventId),
     });
   }
-
-  cursor = page.nextCursor;
   if (!page.hasMore) break;
 }
 
-const subscription = await events.listen({ afterCursor: cursor });
 subscription.closed.catch(() => reconnect());
 ```
 
-`listen()` resolves after the server acknowledges the subscription. Its `closed`
-promise settles when the long-lived request later completes or fails.
+A lost acknowledgement can cause the same events to return again. `eventId` is the idempotency key. `listen()` resolves after subscription acknowledgement; `closed` settles when the long-lived request completes or fails.
 
-The application owns durable event and cursor storage. It must deduplicate by
-`eventId`, acknowledge only after persistence, and repeat retrieval after a
-subscription or connection loss. Notifications reduce latency; retrieval remains
-the recovery path.
+## Server facade
 
-Every facade request declares the client capability. Server support is discovered
-lazily and cached. Use `serverSupportsPushNotifications()` only when explicit branching
-is needed.
-
-## Server
+Storage and consumer resolution remain application concerns:
 
 ```ts
-import { registerPushNotificationsServer } from '@stagewise/mcp-extension-push-notifications/server';
-
 const events = registerPushNotificationsServer(mcpServer, {
-  getEvents: ({ cursor, limit }) => eventStore.page({ cursor, limit }),
-  acknowledgeEvents: ({ eventIds }) => eventStore.acknowledge(eventIds),
+  getEvents: ({ limit }, context) => store.pending(consumerFrom(context), limit),
+  acknowledgeEvents: ({ eventIds }, context) =>
+    store.acknowledge(consumerFrom(context), eventIds),
 });
 
-await eventStore.persist(event);
-await events.sendEvent({ event, cursor: event.cursor }, { metadata: requestMeta });
+await store.append(consumerKey, event);
+await events.sendEvent({ event }, { metadata: requestMeta });
 ```
 
-The facade never stores events, cursors, subscriptions, or acknowledgements.
-Applications own durability. Initialization-time client capability compatibility
-is disabled by default and can be enabled with
-`acceptInitializationCapabilities: true`.
+Acknowledgement is idempotent. Acknowledged IDs disappear immediately from pending retrieval. Retention of payloads and acknowledgement tombstones is server policy.
 
-For modern HTTP servers, wrap the MCP handler once so extension subscriptions
-have a long-lived delivery path:
+## HTTP subscriptions
+
+The HTTP manager requires a trusted consumer-key resolver and targeted publication:
 
 ```ts
-const mcp = createMcpHandler(createServer);
-const subscriptions = createPushNotificationsHttpSubscriptionManager(mcp.fetch);
+const subscriptions = createPushNotificationsHttpSubscriptionManager(mcp.fetch, {
+  resolveConsumerKey: (request) => authenticatedConsumerKey(request),
+});
 
 app.all('/mcp', (context) => subscriptions.fetch(context.req.raw));
 
-await eventStore.persist(event);
-subscriptions.publish({ event, cursor: event.cursor });
+await store.append(consumerKey, event);
+subscriptions.publish(consumerKey, { event });
 ```
 
-The HTTP manager owns active SSE delivery only. The application still owns event
-persistence, cursors, acknowledgements, and deduplication.
+Only one active live subscription is retained per consumer key; a new subscription replaces the previous stream. The key is derived from authentication context and never accepted from a Push Notifications payload.
 
-Register each facade once per MCP protocol instance. Duplicate handler registration
-is rejected by the underlying SDK rather than silently overwriting handlers.
+## Capabilities and schemas
 
-## Schema generation and verification
-
-`src/spec.types.ts` is the source of truth. Generated Zod schemas live in
-`src/generated/`; the package-level `schema.json` is publishable.
+Every facade request declares the client capability. Server support is discovered lazily and cached. `src/spec.types.ts` is the source of truth; generated Zod schemas and `schema.json` must remain fresh.
 
 ```sh
 pnpm generate:schemas
@@ -116,3 +91,5 @@ pnpm typecheck
 pnpm test
 pnpm build
 ```
+
+See `specification/draft/events.md` for the normative contract.

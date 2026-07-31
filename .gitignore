@@ -12,3 +12,4 @@ mcp-proxy.config.json
 
 .klex.json
 .data/
+apps/klex/config.json

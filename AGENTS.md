@@ -29,7 +29,7 @@ channel or environment
   -> channel or environment
 ```
 
-Push Notifications use at-least-once delivery. Persist before ack. Deduplicate by `eventId`. Notifications are fast path; cursor retrieval is recovery path. The application owns durable event and cursor storage.
+Push Notifications use at-least-once delivery. The server owns an identity-scoped pending queue. Clients subscribe before draining pending notifications, persist before ack, and deduplicate by `eventId`. Live notifications are the fast path; pending retrieval is the recovery path.
 
 ## No user-facing sessions
 
@@ -52,9 +52,9 @@ Incoming messages become Push Notifications. Agent replies by calling channel to
 ## Code boundaries
 
 - `apps/klex/`: brain, memory, routing, MCP clients, config, admin plane.
-- `apps/klex/src/mcp/`: MCP client layer. Owns connection lifecycle, tool registry, and the push-notification inbox (cursor tracking + dedup) as an internal submodule. Exposes `onPushNotification()` to the router — no external inbox wiring.
+- `apps/klex/src/mcp/`: MCP client layer. Owns connection lifecycle, tool registry, subscribe-before-drain recovery, and process-local `eventId` deduplication as an internal submodule. Exposes `onPushNotification()` to the router — no external inbox wiring.
 - `mcp-servers/`: external channels and work environments.
-- `packages/mcp-extension-push-notifications/`: durable event protocol and SDK helpers.
+- `packages/mcp-extension-push-notifications/`: identity-scoped pending-queue protocol and SDK helpers.
 - `packages/`: shared protocol and runtime libraries.
 
 Keep protocol packages free of application storage policy. Keep environment-specific actions out of agent core.

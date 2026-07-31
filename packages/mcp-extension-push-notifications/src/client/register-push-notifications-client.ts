@@ -68,7 +68,7 @@ export interface RegisteredPushNotificationsClient {
     options?: PushNotificationsRequestOptions,
   ): Promise<void>;
   listen(
-    subscription: PushNotificationsSubscription,
+    subscription?: PushNotificationsSubscription,
     options?: PushNotificationsRequestOptions,
   ): Promise<PushNotificationsSubscriptionHandle>;
   serverSupportsPushNotifications(
@@ -203,7 +203,7 @@ export function registerPushNotificationsClient(
         requestOptions?.request,
       );
     },
-    async listen(subscription, requestOptions) {
+    async listen(subscription = {}, requestOptions) {
       await requireServerSupport(requestOptions);
       const acknowledgement = new Promise<void>((resolve) => {
         resolveAcknowledgement = resolve;

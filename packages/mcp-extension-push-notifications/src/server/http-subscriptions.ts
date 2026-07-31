@@ -24,18 +24,23 @@ export type PushNotificationsFetch = (request: Request) => Promise<Response>;
 
 export interface PushNotificationsHttpSubscriptionManager {
   fetch(request: Request): Promise<Response>;
-  publish(params: PushNotificationNotificationParams): void;
+  publish(
+    consumerKey: string,
+    params: PushNotificationNotificationParams,
+  ): void;
   close(): void;
   readonly subscriberCount: number;
 }
 
 export interface PushNotificationsHttpSubscriptionManagerOptions {
+  resolveConsumerKey(request: Request): string | Promise<string>;
   keepAliveMs?: number;
   maxSubscriptions?: number;
 }
 
 interface Subscriber {
   id: string | number;
+  consumerKey: string;
   subscription: PushNotificationsSubscription;
   write(message: unknown): void;
   close(graceful: boolean): void;
@@ -63,7 +68,8 @@ class PushNotificationsHttpSubscriptionManagerModule
   readonly #delegate: PushNotificationsFetch;
   readonly #keepAliveMs: number;
   readonly #maxSubscriptions: number;
-  readonly #subscribers = new Set<Subscriber>();
+  readonly #resolveConsumerKey: (request: Request) => string | Promise<string>;
+  readonly #subscribers = new Map<string, Subscriber>();
   #closed = false;
 
   constructor(
@@ -73,6 +79,7 @@ class PushNotificationsHttpSubscriptionManagerModule
     this.#delegate = delegate;
     this.#keepAliveMs = options.keepAliveMs ?? 15_000;
     this.#maxSubscriptions = options.maxSubscriptions ?? 128;
+    this.#resolveConsumerKey = options.resolveConsumerKey;
   }
 
   get subscriberCount(): number {
@@ -99,39 +106,44 @@ class PushNotificationsHttpSubscriptionManagerModule
       return this.#delegate(request);
     }
 
-    return this.#listen(body, request.signal);
+    return this.#listen(body, request);
   }
 
-  publish(input: PushNotificationNotificationParams): void {
+  publish(
+    consumerKey: string,
+    input: PushNotificationNotificationParams,
+  ): void {
     const params = PushNotificationNotificationParamsSchema.parse(input);
-    for (const subscriber of this.#subscribers) {
-      subscriber.write({
-        jsonrpc: '2.0',
-        method: PUSH_NOTIFICATIONS_NOTIFICATION_METHOD,
-        params: {
-          ...params,
-          _meta: {
-            ...params._meta,
-            [SUBSCRIPTION_ID_META_KEY]: subscriber.id,
-          },
+    const subscriber = this.#subscribers.get(consumerKey);
+    if (!subscriber) return;
+    subscriber.write({
+      jsonrpc: '2.0',
+      method: PUSH_NOTIFICATIONS_NOTIFICATION_METHOD,
+      params: {
+        ...params,
+        _meta: {
+          ...params._meta,
+          [SUBSCRIPTION_ID_META_KEY]: subscriber.id,
         },
-      });
-    }
+      },
+    });
   }
 
   close(): void {
     if (this.#closed) return;
     this.#closed = true;
-    for (const subscriber of [...this.#subscribers]) subscriber.close(true);
+    for (const subscriber of [...this.#subscribers.values()]) {
+      subscriber.close(true);
+    }
   }
 
-  #listen(body: unknown, signal: AbortSignal): Response {
+  async #listen(body: unknown, request: Request): Promise<Response> {
     if (this.#closed) {
       return jsonRpcError(null, -32_603, 'Subscription manager is closed');
     }
 
-    const request = SubscriptionsListenRequestSchema.safeParse(body);
-    if (!request.success) {
+    const parsedRequest = SubscriptionsListenRequestSchema.safeParse(body);
+    if (!parsedRequest.success) {
       const id = this.#requestId(body);
       return jsonRpcError(
         id,
@@ -142,7 +154,7 @@ class PushNotificationsHttpSubscriptionManagerModule
 
     const id = this.#requestId(body);
     const subscriptionValue =
-      request.data.params.notifications[PUSH_NOTIFICATIONS_EXTENSION_ID];
+      parsedRequest.data.params.notifications[PUSH_NOTIFICATIONS_EXTENSION_ID];
     const subscription =
       PushNotificationsSubscriptionSchema.safeParse(subscriptionValue);
     if (!subscription.success) {
@@ -153,7 +165,7 @@ class PushNotificationsHttpSubscriptionManagerModule
       );
     }
 
-    const metadata = request.data.params._meta;
+    const metadata = parsedRequest.data.params._meta;
     if (
       typeof metadata !== 'object' ||
       metadata === null ||
@@ -165,10 +177,6 @@ class PushNotificationsHttpSubscriptionManagerModule
       return jsonRpcError(id, error.code, error.message, error.data);
     }
 
-    if (this.#subscribers.size >= this.#maxSubscriptions) {
-      return jsonRpcError(id, -32_603, 'Subscription limit reached');
-    }
-
     if (id === null) {
       return jsonRpcError(
         null,
@@ -177,10 +185,26 @@ class PushNotificationsHttpSubscriptionManagerModule
       );
     }
 
+    let consumerKey: string;
+    try {
+      consumerKey = await this.#resolveConsumerKey(request);
+      if (consumerKey.length === 0) throw new Error('Empty consumer key');
+    } catch {
+      return jsonRpcError(id, -32_001, 'Unable to resolve consumer identity');
+    }
+
+    if (
+      !this.#subscribers.has(consumerKey) &&
+      this.#subscribers.size >= this.#maxSubscriptions
+    ) {
+      return jsonRpcError(id, -32_603, 'Subscription limit reached');
+    }
+
     return this.#createStream(
       id,
+      consumerKey,
       subscription.data,
-      signal,
+      request.signal,
       typeof metadata === 'object' && metadata !== null
         ? (metadata as { progressToken?: string | number }).progressToken
         : undefined,
@@ -189,6 +213,7 @@ class PushNotificationsHttpSubscriptionManagerModule
 
   #createStream(
     id: string | number,
+    consumerKey: string,
     subscription: PushNotificationsSubscription,
     signal: AbortSignal,
     progressToken?: string | number,
@@ -227,14 +252,17 @@ class PushNotificationsHttpSubscriptionManagerModule
           ended = true;
           if (keepAlive !== undefined) clearInterval(keepAlive);
           removeAbort?.();
-          this.#subscribers.delete(subscriber);
+          if (this.#subscribers.get(consumerKey) === subscriber) {
+            this.#subscribers.delete(consumerKey);
+          }
           try {
             controller.close();
           } catch {}
         };
 
-        subscriber = { id, subscription, write, close };
-        this.#subscribers.add(subscriber);
+        subscriber = { id, consumerKey, subscription, write, close };
+        this.#subscribers.get(consumerKey)?.close(true);
+        this.#subscribers.set(consumerKey, subscriber);
         write({
           jsonrpc: '2.0',
           method: SUBSCRIPTIONS_ACKNOWLEDGED_METHOD,
@@ -301,7 +329,7 @@ class PushNotificationsHttpSubscriptionManagerModule
 
 export function createPushNotificationsHttpSubscriptionManager(
   delegate: PushNotificationsFetch,
-  options: PushNotificationsHttpSubscriptionManagerOptions = {},
+  options: PushNotificationsHttpSubscriptionManagerOptions,
 ): PushNotificationsHttpSubscriptionManager {
   return new PushNotificationsHttpSubscriptionManagerModule(delegate, options);
 }

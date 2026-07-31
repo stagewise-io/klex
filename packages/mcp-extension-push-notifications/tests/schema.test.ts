@@ -36,14 +36,12 @@ const getRequest = {
   id: 1,
   method: 'io.stagewise/push-notifications/get',
   params: {
-    cursor: '01JZ8F2X3A',
     limit: 100,
   },
 };
 
 const getResult = {
   events: [event],
-  nextCursor: '01JZ8F4Q2M',
   hasMore: false,
 };
 
@@ -61,7 +59,6 @@ const notification = {
   method: 'io.stagewise/push-notifications/event',
   params: {
     event,
-    cursor: '01JZ8F4Q2M',
   },
 };
 
@@ -110,7 +107,7 @@ describe('Push notification envelope', () => {
         method: 'subscriptions/listen',
         params: {
           notifications: {
-            'io.stagewise/push-notifications': { afterCursor: 'cursor' },
+            'io.stagewise/push-notifications': {},
           },
         },
       }),
@@ -121,7 +118,7 @@ describe('Push notification envelope', () => {
         method: 'notifications/subscriptions/acknowledged',
         params: {
           notifications: {
-            'io.stagewise/push-notifications': { afterCursor: 'cursor' },
+            'io.stagewise/push-notifications': {},
           },
         },
       }),
@@ -151,11 +148,18 @@ describe('retrieval', () => {
     }
   });
 
-  it('requires the page cursor fields', () => {
+  it('does not expose cursor fields', () => {
+    expect(GetEventsResultSchema.parse(getResult)).not.toHaveProperty(
+      'nextCursor',
+    );
     expect(
-      GetEventsResultSchema.safeParse({ events: [event], hasMore: false })
-        .success,
-    ).toBe(false);
+      GetEventsRequestSchema.parse({
+        ...getRequest,
+        params: { cursor: 'ignored-extension-field', limit: 1 },
+      }),
+    ).toMatchObject({
+      params: { cursor: 'ignored-extension-field', limit: 1 },
+    });
   });
 });
 
@@ -184,20 +188,15 @@ describe('notifications and subscriptions', () => {
     );
   });
 
-  it('rejects notification payloads without a cursor', () => {
+  it('accepts cursor-free notifications', () => {
     expect(
-      PushNotificationNotificationSchema.safeParse({
-        ...notification,
-        params: { event },
-      }).success,
-    ).toBe(false);
+      PushNotificationNotificationSchema.parse(notification),
+    ).not.toHaveProperty('params.cursor');
   });
 
-  it('accepts requested and acknowledged subscription cursors', () => {
+  it('accepts empty requested and acknowledged subscriptions', () => {
     const filter = {
-      'io.stagewise/push-notifications': {
-        afterCursor: '01JZ8F2X3A',
-      },
+      'io.stagewise/push-notifications': {},
     };
     expect(
       PushNotificationsSubscriptionNotificationsSchema.parse(filter),

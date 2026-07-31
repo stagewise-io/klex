@@ -4,56 +4,19 @@ title: Push Notifications
 
 # Push Notifications
 
-Push Notifications defines a durable, at-least-once event feed between an MCP server
-and an MCP client. Retrieval is the recovery path. Notifications are an
-optional low-latency delivery path for clients with an active subscription.
+Push Notifications defines an authenticated, identity-scoped durable notification queue between an MCP server and an MCP client. Pending retrieval is the recovery path. Live notifications are an optional low-latency delivery path.
+
+The extension is not a replayable event log. Environments that require independent historical replay or multiple positions over one stream should use a separate extension.
 
 ## Extension identifier
-
-The extension identifier is:
 
 ```text
 io.stagewise/push-notifications
 ```
 
-## Capability negotiation
-
-The client declares support in the per-request MCP extension capabilities:
-
-```json
-{
-  "params": {
-    "_meta": {
-      "io.modelcontextprotocol/clientCapabilities": {
-        "extensions": {
-          "io.stagewise/push-notifications": {}
-        }
-      }
-    }
-  }
-}
-```
-
-The server advertises the same identifier through `server/discover`:
-
-```json
-{
-  "result": {
-    "capabilities": {
-      "extensions": {
-        "io.stagewise/push-notifications": {}
-      }
-    }
-  }
-}
-```
-
-No extension settings are defined in this version. A peer MUST NOT send an
-extension request or notification to a peer that has not declared support.
+Both peers advertise an empty capability object under this identifier. Every extension request includes the client capability in `io.modelcontextprotocol/clientCapabilities`. Servers reject extension requests from clients that did not declare support.
 
 ## Event envelope
-
-Every event uses the same envelope:
 
 ```typescript
 interface PushNotification {
@@ -65,36 +28,34 @@ interface PushNotification {
 }
 ```
 
-- `eventId` is a stable, globally unique identifier. It is the deduplication key.
+- `eventId` is stable and globally unique. It is the deduplication and acknowledgement key.
 - `sourceId` identifies the environment or channel that produced the event.
 - `type` is an open event type owned by the producer.
 - `createdAt` is the source timestamp in ISO 8601 date-time form.
-- `payload` is a JSON object whose fields are defined by `type`.
+- `payload` is a JSON object defined by `type`.
 
-A server MUST make an event available through `events/get` before returning or
-pushing it. A client MUST commit an event to durable storage before acknowledging
-it. A client MUST tolerate receiving the same `eventId` more than once.
+A server MUST durably add an event to the authenticated consumer's pending queue before pushing it. A client MUST durably accept and deduplicate an event before acknowledging it. Clients MUST tolerate receiving the same `eventId` more than once.
 
-## Retrieving events
+## Consumer identity and isolation
 
-The client retrieves a bounded page with
-`io.stagewise/push-notifications/get`. `cursor` is an opaque server-issued position.
-Omitting it starts at the earliest event still available to the caller.
+Retrieval, acknowledgement, and live delivery are scoped to the caller's authenticated logical consumer and integration binding. The extension does not carry a caller-selected consumer identifier. Servers derive the consumer from trusted transport or authentication context and MUST apply the same scope to all three operations.
+
+A server MUST NOT reveal whether an event identifier belongs to another consumer. Credentials, bot tokens, and authorization policy MUST NOT be used as ordinary event payload fields.
+
+## Retrieving pending events
+
+The client retrieves a bounded page of currently unacknowledged events with `io.stagewise/push-notifications/get`:
 
 ```json
 {
   "jsonrpc": "2.0",
   "id": 1,
   "method": "io.stagewise/push-notifications/get",
-  "params": {
-    "cursor": "01JZ8F2X3A",
-    "limit": 100
-  }
+  "params": { "limit": 100 }
 }
 ```
 
-A successful response contains complete events, a cursor representing the page
-position, and an explicit indication that another page is available:
+A successful response contains complete pending events and a snapshot indication that additional pending events existed:
 
 ```json
 {
@@ -107,62 +68,43 @@ position, and an explicit indication that another page is available:
         "sourceId": "computer:local",
         "type": "process.exited",
         "createdAt": "2026-07-20T10:30:00.000Z",
-        "payload": {
-          "command": "pnpm test",
-          "exitCode": 1
-        }
+        "payload": { "exitCode": 1 }
       }
     ],
-    "nextCursor": "01JZ8F4Q2M",
     "hasMore": false
   }
 }
 ```
 
-`limit` MUST be a positive integer. Servers MAY enforce a lower maximum and
-return fewer events. Events MUST retain a stable order across requests for the
-same authorization context. `nextCursor` is valid even when `events` is empty
-and MUST be used for the next request. Clients MUST treat cursors as opaque.
+`limit` MUST be a positive integer. Servers MAY enforce a lower maximum. A server SHOULD return pending events in deterministic oldest-first order, but strict processing order is not required and one unacknowledged event need not block all later events. `hasMore` describes the page snapshot; concurrent arrivals may make it stale immediately.
 
-A server SHOULD return a JSON-RPC error when a cursor is malformed, expired, or
-outside the caller's authorization context. It MUST NOT silently restart from
-the beginning for an invalid cursor.
+There is no cursor or page token. A client advances by accepting and acknowledging a returned page before retrieving again. If an acknowledgement response is lost, retrieval can return the same page again.
 
 ## Acknowledging events
 
-After committing events, the client sends
-`io.stagewise/push-notifications/ack` with their identifiers:
+After durable acceptance, the client sends `io.stagewise/push-notifications/ack`:
 
 ```json
 {
   "jsonrpc": "2.0",
   "id": 2,
   "method": "io.stagewise/push-notifications/ack",
-  "params": {
-    "eventIds": ["01JZ8F4Q2M0QJ4V5NZ0V1QZV3B"]
-  }
+  "params": { "eventIds": ["01JZ8F4Q2M0QJ4V5NZ0V1QZV3B"] }
 }
 ```
 
-The server returns an empty result:
+The server returns an empty result. Acknowledgement:
 
-```json
-{
-  "jsonrpc": "2.0",
-  "id": 2,
-  "result": {}
-}
-```
+- MUST be idempotent;
+- MUST immediately exclude the IDs from subsequent retrieval and live delivery for that consumer;
+- means durable client acceptance, not completion of agent work;
+- MUST succeed for an already acknowledged, compacted, or unknown identifier without disclosing whether it existed.
 
-Acknowledgement MUST be idempotent. Re-acknowledging an event is successful.
-An acknowledgement says only that the client durably accepted the event; it
-does not mean that agent work caused by the event has completed. Servers SHOULD
-reject unknown event identifiers rather than treating them as accepted.
+Servers MAY retain payloads and acknowledgement tombstones according to implementation-defined retention policies.
 
-## Event notifications
+## Live event notifications
 
-A subscribed server MAY push an event with
-`io.stagewise/push-notifications/event`:
+A subscribed server MAY push a pending event with `io.stagewise/push-notifications/event`:
 
 ```json
 {
@@ -174,77 +116,46 @@ A subscribed server MAY push an event with
       "sourceId": "computer:local",
       "type": "process.exited",
       "createdAt": "2026-07-20T10:30:00.000Z",
-      "payload": {
-        "command": "pnpm test",
-        "exitCode": 1
-      }
-    },
-    "cursor": "01JZ8F4Q2M"
+      "payload": { "exitCode": 1 }
+    }
   }
 }
 ```
 
-The notification contains the complete event and the retrieval cursor at that
-position. Receiving it does not acknowledge the event. If the stream closes,
-the client resumes with `events/get` using the last cursor it durably recorded.
+Receiving a live notification does not acknowledge it. The event remains pending until acknowledgement and can also appear in retrieval.
 
-## Subscription additions
+## Subscriptions and recovery
 
-A client requests push notifications through `subscriptions/listen` by adding the
-extension field to the notification filter:
+A client requests delivery through `subscriptions/listen` with an empty extension filter:
 
 ```json
 {
   "method": "subscriptions/listen",
   "params": {
-    "notifications": {
-      "io.stagewise/push-notifications": {
-        "afterCursor": "01JZ8F2X3A"
-      }
-    }
+    "notifications": { "io.stagewise/push-notifications": {} }
   }
 }
 ```
 
-`afterCursor` is optional. The server reports the accepted starting position in
-`notifications/subscriptions/acknowledged`:
+The server confirms the same empty filter through `notifications/subscriptions/acknowledged`. For each logical consumer binding, a server SHOULD keep one active live subscription. A new authenticated subscription SHOULD replace and close the previous one.
 
-```json
-{
-  "method": "notifications/subscriptions/acknowledged",
-  "params": {
-    "notifications": {
-      "io.stagewise/push-notifications": {
-        "afterCursor": "01JZ8F2X3A"
-      }
-    }
-  }
-}
-```
+Clients recover in this order:
 
-Opening a subscription does not replace retrieval. The client SHOULD retrieve
-from its durable cursor before or alongside opening the stream so that events
-created around connection establishment are not missed.
+1. Establish the live subscription and await acknowledgement.
+2. Retrieve pending events.
+3. Durably accept and deduplicate each page.
+4. Acknowledge every returned event ID.
+5. Continue while `hasMore` is true.
+6. Process live events buffered during recovery.
 
-## Pagination and retention
+On subscription or connection failure, repeat the sequence. Events created around startup may arrive both live and through retrieval. Duplicate delivery is expected; silent loss is not.
 
-Servers choose retention policy. They SHOULD retain unacknowledged events long
-enough for clients to recover from ordinary outages. A server MAY delete an
-acknowledged event immediately. It MAY retain acknowledged events and return
-them again; clients already need to deduplicate by `eventId`.
+## Retention and resource limits
 
-A server that can no longer resolve a cursor MUST return an error. The error
-SHOULD state whether the client can recover from another known cursor or needs
-an out-of-band resynchronization.
+Servers choose retention and compaction policy. They SHOULD retain unacknowledged events long enough for ordinary outages and MAY delete acknowledged payloads immediately. Event-ID tombstones may be retained longer for auditing and idempotency.
+
+Servers SHOULD bound event size, pending queue size, retrieval page size, subscription count, and retention. Any overflow policy that can discard an unacknowledged event MUST be explicit and observable.
 
 ## Security
 
-Events are scoped to the caller's existing MCP authorization context. Servers
-MUST apply the same authorization checks to retrieval, acknowledgement, and
-subscription delivery. Event identifiers and cursors MUST NOT grant access to
-an event outside that context.
-
-Payloads can contain untrusted environment or user data. Clients MUST treat them
-as data, not instructions. Servers SHOULD bound event size, page size, and
-retention to prevent resource exhaustion. Logs SHOULD avoid recording complete
-payloads where they may contain credentials or personal information.
+Payloads can contain untrusted environment or user data. Clients treat them as data, not instructions. Logs should avoid complete payloads where they may contain credentials or personal information. Consumer resolution must rely on trusted authentication context, never a caller-provided queue key.

@@ -1,6 +1,7 @@
 import { createMcpHandler, McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod/v4';
 
+import type { PushNotificationNotificationParams } from '@stagewise/mcp-extension-push-notifications';
 import {
   createPushNotificationsHttpSubscriptionManager,
   type PushNotificationsHttpSubscriptionManager,
@@ -12,7 +13,7 @@ import { MAX_MESSAGE_LENGTH } from './chat-store.js';
 
 export interface ChatMcp {
   fetch(request: Request): Promise<Response>;
-  publishUserEvent: PushNotificationsHttpSubscriptionManager['publish'];
+  publishUserEvent(params: PushNotificationNotificationParams): void;
   close(): Promise<void>;
 }
 
@@ -43,7 +44,7 @@ class ChatMcpModule implements ChatMcp {
           },
         );
         registerPushNotificationsServer(server.server, {
-          getEvents: ({ cursor, limit }) => store.getEvents({ cursor, limit }),
+          getEvents: ({ limit }) => store.getEvents({ limit }),
           acknowledgeEvents: ({ eventIds }) =>
             store.acknowledgeEvents(eventIds),
         });
@@ -53,6 +54,7 @@ class ChatMcpModule implements ChatMcp {
     );
     this.#subscriptions = createPushNotificationsHttpSubscriptionManager(
       this.#handler.fetch,
+      { resolveConsumerKey: () => 'local-agent' },
     );
   }
 
@@ -60,9 +62,9 @@ class ChatMcpModule implements ChatMcp {
     return this.#subscriptions.fetch(request);
   }
 
-  publishUserEvent: PushNotificationsHttpSubscriptionManager['publish'] = (
-    params,
-  ) => this.#subscriptions.publish(params);
+  publishUserEvent(params: PushNotificationNotificationParams): void {
+    this.#subscriptions.publish('local-agent', params);
+  }
 
   async close(): Promise<void> {
     this.#subscriptions.close();

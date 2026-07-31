@@ -137,9 +137,6 @@
         {
           "type": "object",
           "properties": {
-            "cursor": {
-              "type": "string"
-            },
             "limit": {
               "type": "integer",
               "exclusiveMinimum": 0,
@@ -184,9 +181,6 @@
             {
               "type": "object",
               "properties": {
-                "cursor": {
-                  "type": "string"
-                },
                 "limit": {
                   "type": "integer",
                   "exclusiveMinimum": 0,
@@ -259,14 +253,11 @@
                 "additionalProperties": false
               }
             },
-            "nextCursor": {
-              "type": "string"
-            },
             "hasMore": {
               "type": "boolean"
             }
           },
-          "required": ["events", "nextCursor", "hasMore"],
+          "required": ["events", "hasMore"],
           "additionalProperties": false
         }
       ],
@@ -478,12 +469,9 @@
                 "payload"
               ],
               "additionalProperties": false
-            },
-            "cursor": {
-              "type": "string"
             }
           },
-          "required": ["event", "cursor"],
+          "required": ["event"],
           "additionalProperties": false
         }
       ],
@@ -594,12 +582,9 @@
                     "payload"
                   ],
                   "additionalProperties": false
-                },
-                "cursor": {
-                  "type": "string"
                 }
               },
-              "required": ["event", "cursor"],
+              "required": ["event"],
               "additionalProperties": false
             }
           ]
@@ -842,12 +827,12 @@
       "properties": {
         "io.stagewise/push-notifications": {
           "type": "object",
-          "properties": {
-            "afterCursor": {
-              "type": "string"
-            }
+          "propertyNames": {
+            "type": "string"
           },
-          "additionalProperties": false
+          "additionalProperties": {
+            "not": {}
+          }
         }
       },
       "additionalProperties": false
@@ -858,12 +843,12 @@
       "properties": {
         "io.stagewise/push-notifications": {
           "type": "object",
-          "properties": {
-            "afterCursor": {
-              "type": "string"
-            }
+          "propertyNames": {
+            "type": "string"
           },
-          "additionalProperties": false
+          "additionalProperties": {
+            "not": {}
+          }
         }
       },
       "additionalProperties": false
@@ -871,12 +856,12 @@
     "PushNotificationsSubscription": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "type": "object",
-      "properties": {
-        "afterCursor": {
-          "type": "string"
-        }
+      "propertyNames": {
+        "type": "string"
       },
-      "additionalProperties": false
+      "additionalProperties": {
+        "not": {}
+      }
     },
     "ServerDiscoverRequest": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -1016,12 +1001,12 @@
                       "properties": {
                         "io.stagewise/push-notifications": {
                           "type": "object",
-                          "properties": {
-                            "afterCursor": {
-                              "type": "string"
-                            }
+                          "propertyNames": {
+                            "type": "string"
                           },
-                          "additionalProperties": false
+                          "additionalProperties": {
+                            "not": {}
+                          }
                         }
                       },
                       "additionalProperties": false
@@ -1086,12 +1071,12 @@
                       "properties": {
                         "io.stagewise/push-notifications": {
                           "type": "object",
-                          "properties": {
-                            "afterCursor": {
-                              "type": "string"
-                            }
+                          "propertyNames": {
+                            "type": "string"
                           },
-                          "additionalProperties": false
+                          "additionalProperties": {
+                            "not": {}
+                          }
                         }
                       },
                       "additionalProperties": false

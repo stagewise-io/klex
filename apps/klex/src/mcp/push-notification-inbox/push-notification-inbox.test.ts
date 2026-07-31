@@ -17,41 +17,27 @@ describe('In-memory Push Notification inbox', () => {
     const inbox = createInMemoryPushNotificationInbox();
     const second = { ...event, eventId: 'event-2' };
 
-    await expect(
-      inbox.commit('chat', [event, second, event], 'cursor-3'),
-    ).resolves.toEqual([event, second]);
-    await expect(inbox.commit('chat', [event], 'cursor-4')).resolves.toEqual(
-      [],
+    await expect(inbox.commit('chat', [event, second, event])).resolves.toEqual(
+      [event, second],
     );
-    await expect(inbox.readCursor('chat')).resolves.toBe('cursor-4');
+    await expect(inbox.commit('chat', [event])).resolves.toEqual([]);
   });
 
   it('isolates event identifiers by namespace', async () => {
     const inbox = createInMemoryPushNotificationInbox();
 
-    await expect(inbox.commit('chat-a', [event], '1')).resolves.toEqual([
-      event,
-    ]);
-    await expect(inbox.commit('chat-b', [event], '1')).resolves.toEqual([
-      event,
-    ]);
-  });
-
-  it('updates cursors for empty pages', async () => {
-    const inbox = createInMemoryPushNotificationInbox();
-
-    await inbox.commit('chat', [], 'cursor-empty');
-    await expect(inbox.readCursor('chat')).resolves.toBe('cursor-empty');
+    await expect(inbox.commit('chat-a', [event])).resolves.toEqual([event]);
+    await expect(inbox.commit('chat-b', [event])).resolves.toEqual([event]);
   });
 
   it('does not expose mutable stored events', async () => {
     const inbox = createInMemoryPushNotificationInbox();
     const input = structuredClone(event);
-    const accepted = await inbox.commit('chat', [input], '1');
+    const accepted = await inbox.commit('chat', [input]);
 
     input.payload.message = 'changed input';
     if (accepted[0]) accepted[0].payload.message = 'changed result';
 
-    await expect(inbox.commit('chat', [event], '2')).resolves.toEqual([]);
+    await expect(inbox.commit('chat', [event])).resolves.toEqual([]);
   });
 });

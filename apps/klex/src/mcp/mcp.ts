@@ -135,12 +135,10 @@ interface McpServerRuntime {
   attempt?: McpConnectionAttempt;
   retryAttempt: number;
   retryTimer?: ReturnType<typeof setTimeout>;
-  resetPending: boolean;
 }
 
 class McpModule implements Mcp {
   private readonly servers = new Map<string, McpServerRuntime>();
-  private readonly inboxResets = new Map<string, Promise<void>>();
   private readonly eventWorkers = new Map<string, PushNotificationWorker>();
   private readonly eventListeners = new Set<McpPushNotificationListener>();
   private registry: McpRegistry = new Map();
@@ -302,15 +300,12 @@ class McpModule implements Mcp {
       'MCP reconciliation started',
     );
 
-    const resetNamespaces = new Set<string>();
     for (const runtime of [...this.servers.values()]) {
       const next = servers[runtime.namespace];
       if (next && runtime.signature === signature(next)) continue;
       const reason = next ? 'configuration-changed' : 'configuration-removed';
-      if (next) resetNamespaces.add(runtime.namespace);
       const connection = this.invalidateRuntime(runtime);
       if (connection) this.closeConnection(connection, runtime.namespace);
-      if (!next) this.resetRemovedNamespace(runtime.namespace);
       this.deps.logger.info(
         { namespace: runtime.namespace, reason },
         'MCP server disconnected',
@@ -326,7 +321,6 @@ class McpModule implements Mcp {
         signature: signature(config),
         status: 'connecting',
         retryAttempt: 0,
-        resetPending: resetNamespaces.has(namespace),
       };
       this.servers.set(namespace, runtime);
       this.activateRuntime(runtime);
@@ -346,29 +340,7 @@ class McpModule implements Mcp {
     )
       return;
     runtime.status = 'connecting';
-    const pendingReset = runtime.resetPending
-      ? this.resetInbox(runtime.namespace)
-      : this.inboxResets.get(runtime.namespace);
-    if (!pendingReset) {
-      this.connectRuntime(runtime);
-      return;
-    }
-    void pendingReset
-      .then(() => {
-        if (!this.isCurrentRuntime(runtime)) return;
-        runtime.resetPending = false;
-        this.connectRuntime(runtime);
-      })
-      .catch((error: unknown) => {
-        if (!this.isCurrentRuntime(runtime)) return;
-        runtime.resetPending = true;
-        runtime.status = 'error';
-        this.deps.logger.error(
-          { error, namespace: runtime.namespace },
-          'MCP Push Notification inbox reset failed',
-        );
-        this.scheduleReconnect(runtime);
-      });
+    this.connectRuntime(runtime);
   }
 
   private connectRuntime(runtime: McpServerRuntime): void {
@@ -497,30 +469,6 @@ class McpModule implements Mcp {
     });
   }
 
-  private resetRemovedNamespace(namespace: string): void {
-    void this.resetInbox(namespace).catch((error: unknown) => {
-      this.deps.logger.warn(
-        { error, namespace },
-        'MCP Push Notification inbox reset failed for removed server',
-      );
-    });
-  }
-
-  private resetInbox(namespace: string): Promise<void> {
-    const previous = this.inboxResets.get(namespace) ?? Promise.resolve();
-    const reset = previous
-      .catch(() => undefined)
-      .then(() => this.deps.pushNotificationInbox.reset(namespace));
-    this.inboxResets.set(namespace, reset);
-    void reset
-      .finally(() => {
-        if (this.inboxResets.get(namespace) === reset)
-          this.inboxResets.delete(namespace);
-      })
-      .catch(() => undefined);
-    return reset;
-  }
-
   private startEventWorker(connection: McpConnection): void {
     this.stopEventWorker(connection.namespace);
     const worker: PushNotificationWorker = {
@@ -539,14 +487,11 @@ class McpModule implements Mcp {
     while (this.isCurrentWorker(worker)) {
       try {
         worker.recovered = false;
-        const cursor = await this.deps.pushNotificationInbox.readCursor(
-          worker.connection.namespace,
-        );
         const subscription = await worker.connection.pushNotifications.listen(
-          cursor === undefined ? {} : { afterCursor: cursor },
+          undefined,
           { request: { signal: worker.controller.signal } },
         );
-        await this.recoverEvents(worker, cursor);
+        await this.recoverEvents(worker);
         worker.recovered = true;
         this.drainNotifications(worker);
         attempt = 0;
@@ -570,26 +515,22 @@ class McpModule implements Mcp {
     }
   }
 
-  private async recoverEvents(
-    worker: PushNotificationWorker,
-    initialCursor: string | undefined,
-  ): Promise<void> {
-    let cursor = initialCursor;
+  private async recoverEvents(worker: PushNotificationWorker): Promise<void> {
     while (this.isCurrentWorker(worker)) {
       const page = await worker.connection.pushNotifications.getEvents(
-        {
-          ...(cursor === undefined ? {} : { cursor }),
-          limit: EVENT_PAGE_SIZE,
-        },
+        { limit: EVENT_PAGE_SIZE },
         { request: { signal: worker.controller.signal } },
       );
+      if (page.events.length === 0 && page.hasMore) {
+        throw new Error(
+          'Push Notifications returned an empty non-terminal page',
+        );
+      }
       await this.commitEvents(
         worker,
         page.events,
-        page.nextCursor,
         page.events.map((event) => event.eventId),
       );
-      cursor = page.nextCursor;
       if (!page.hasMore) return;
     }
   }
@@ -612,7 +553,6 @@ class McpModule implements Mcp {
           this.commitEvents(
             worker,
             [notification.params.event],
-            notification.params.cursor,
             [notification.params.event.eventId],
           ),
         )
@@ -629,14 +569,12 @@ class McpModule implements Mcp {
   private async commitEvents(
     worker: PushNotificationWorker,
     events: readonly PushNotification[],
-    nextCursor: string,
     eventIds: string[],
   ): Promise<void> {
     if (!this.isCurrentWorker(worker)) return;
     const accepted = await this.deps.pushNotificationInbox.commit(
       worker.connection.namespace,
       events,
-      nextCursor,
     );
     for (const event of accepted)
       await this.publishPushNotification(worker, event);

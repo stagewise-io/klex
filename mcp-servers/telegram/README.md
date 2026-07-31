@@ -50,6 +50,10 @@ await mcpClient.callTool({
 
 Messages must contain 1–4,000 characters. Outbound `chatId` must also appear in `TELEGRAM_ALLOWED_USER_IDS`; this text-only private-DM server cannot message arbitrary chats.
 
+## Pending queue
+
+The server exposes the oldest unacknowledged notifications in bounded pages. Acknowledged notifications disappear immediately, and repeated or unknown acknowledgements succeed. Live delivery and pending retrieval use one fixed `local-agent` consumer identity.
+
 ## Deliberate limits
 
-Only allowlisted, non-bot, private plain-text messages are accepted. Groups, media, commands, formatting, webhooks, edits, reactions, retries, and multiple bots are unsupported. The event feed is in memory and disappears on restart. Long polling permits only one running consumer per bot token.
+Only allowlisted, non-bot, private plain-text messages are accepted. Groups, media, commands, formatting, webhooks, edits, reactions, retries, and multiple bots are unsupported. The notification queue and acknowledgement state are in memory and disappear on restart. The fixed local consumer identity is intended for one trusted development agent; authenticated hosted identity and durable per-binding storage are not implemented. Long polling permits only one running consumer per bot token.

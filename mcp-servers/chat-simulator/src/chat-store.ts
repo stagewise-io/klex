@@ -26,7 +26,7 @@ export interface ChatStore {
   listMessages(): ChatMessage[];
   addUserMessage(input: string): UserMessageResult;
   addAgentMessage(input: string): ChatMessage;
-  getEvents(options?: { cursor?: string; limit?: number }): GetEventsResult;
+  getEvents(options?: { limit?: number }): GetEventsResult;
   acknowledgeEvents(eventIds: string[]): void;
   subscribe(listener: (message: ChatMessage) => void): () => void;
   close(): void;
@@ -39,24 +39,9 @@ export class InvalidMessageError extends Error {
   }
 }
 
-export class InvalidCursorError extends Error {
-  constructor(cursor: string) {
-    super(`Invalid event cursor: ${cursor}`);
-    this.name = 'InvalidCursorError';
-  }
-}
-
-export class UnknownEventError extends Error {
-  constructor(eventId: string) {
-    super(`Unknown event: ${eventId}`);
-    this.name = 'UnknownEventError';
-  }
-}
-
 class ChatStoreModule implements ChatStore {
   readonly #messages: ChatMessage[] = [];
   readonly #events: PushNotification[] = [];
-  readonly #eventIds = new Set<string>();
   readonly #acknowledged = new Set<string>();
   readonly #listeners = new Set<(message: ChatMessage) => void>();
 
@@ -75,13 +60,11 @@ class ChatStoreModule implements ChatStore {
     };
     this.#messages.push(message);
     this.#events.push(event);
-    this.#eventIds.add(event.eventId);
     this.#emit(message);
     return {
       message: { ...message },
       notification: {
         event: { ...event },
-        cursor: String(this.#events.length),
       },
     };
   }
@@ -93,26 +76,20 @@ class ChatStoreModule implements ChatStore {
     return { ...message };
   }
 
-  getEvents(
-    options: { cursor?: string; limit?: number } = {},
-  ): GetEventsResult {
-    const position = this.#parseCursor(options.cursor ?? '0');
+  getEvents(options: { limit?: number } = {}): GetEventsResult {
     const limit = Math.min(options.limit ?? DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE);
-    const events = this.#events
-      .slice(position, position + limit)
-      .map((event) => ({ ...event, payload: { ...event.payload } }));
-    const nextPosition = position + events.length;
+    const pending = this.#events.filter(
+      (event) => !this.#acknowledged.has(event.eventId),
+    );
     return {
-      events,
-      nextCursor: String(nextPosition),
-      hasMore: nextPosition < this.#events.length,
+      events: pending
+        .slice(0, limit)
+        .map((event) => ({ ...event, payload: { ...event.payload } })),
+      hasMore: pending.length > limit,
     };
   }
 
   acknowledgeEvents(eventIds: string[]): void {
-    for (const eventId of eventIds) {
-      if (!this.#eventIds.has(eventId)) throw new UnknownEventError(eventId);
-    }
     for (const eventId of eventIds) this.#acknowledged.add(eventId);
   }
 
@@ -139,15 +116,6 @@ class ChatStoreModule implements ChatStore {
       message,
       createdAt: new Date().toISOString(),
     };
-  }
-
-  #parseCursor(cursor: string): number {
-    if (!/^(0|[1-9]\d*)$/.test(cursor)) throw new InvalidCursorError(cursor);
-    const position = Number(cursor);
-    if (!Number.isSafeInteger(position) || position > this.#events.length) {
-      throw new InvalidCursorError(cursor);
-    }
-    return position;
   }
 
   #emit(message: ChatMessage): void {

@@ -2,11 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import { createLogger } from '@stagewise/logger';
 
-import {
-  createEventStore,
-  InvalidCursorError,
-  UnknownEventError,
-} from '../src/event-store.js';
+import { createEventStore } from '../src/event-store.js';
 import { createTelegramMcp } from '../src/mcp.js';
 import {
   createTelegramChannel,
@@ -125,7 +121,7 @@ async function jsonRpc(
 }
 
 describe('event store', () => {
-  it('deduplicates, pages, and acknowledges events', () => {
+  it('deduplicates and hides acknowledged events', () => {
     const store = createEventStore();
     const message = {
       botId: '77',
@@ -146,13 +142,36 @@ describe('event store', () => {
           payload: { updateId: '10', message: 'hello' },
         },
       ],
-      nextCursor: '1',
       hasMore: false,
     });
     store.acknowledge([notification.event.eventId]);
+    expect(store.page()).toEqual({ events: [], hasMore: false });
     expect(() => store.acknowledge([notification.event.eventId])).not.toThrow();
-    expect(() => store.page({ cursor: 'invalid' })).toThrow(InvalidCursorError);
-    expect(() => store.acknowledge(['unknown'])).toThrow(UnknownEventError);
+    expect(() => store.acknowledge(['unknown'])).not.toThrow();
+  });
+
+  it('pages over the oldest unacknowledged events without cursors', () => {
+    const store = createEventStore();
+    const message = {
+      botId: '77',
+      messageId: '20',
+      chatId: '30',
+      senderId: '40',
+      text: 'hello',
+      receivedAt: '2026-01-01T00:00:00.000Z',
+    };
+    const first = store.append({ ...message, updateId: '10' });
+    store.append({ ...message, updateId: '11' });
+
+    expect(store.page({ limit: 1 })).toMatchObject({
+      events: [{ eventId: first.event.eventId }],
+      hasMore: true,
+    });
+    store.acknowledge([first.event.eventId]);
+    expect(store.page({ limit: 1 })).toMatchObject({
+      events: [{ eventId: 'telegram:77:update:11' }],
+      hasMore: false,
+    });
   });
 });
 
@@ -233,7 +252,7 @@ describe('MCP contract', () => {
       expect(
         await jsonRpc(mcp, {
           method: 'io.stagewise/push-notifications/get',
-          params: { cursor: '0' },
+          params: { limit: 100 },
         }),
       ).toMatchObject({
         result: { events: [{ payload: { message: 'hello' } }] },

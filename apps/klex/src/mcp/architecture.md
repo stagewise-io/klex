@@ -2,62 +2,71 @@
 
 ## Role
 
-The MCP module is the environment boundary between the agent core and all external MCP servers. It owns:
+The MCP module is the environment boundary between the agent core and external MCP servers. It owns:
 
-- **Connection lifecycle** — connects, reconciles, retries, and disconnects MCP servers based on config.
+- **Connection lifecycle** — connects, reconciles, retries, and disconnects configured MCP servers.
 - **Tool registry** — builds and publishes a live tool registry from connected servers.
-- **Push-notification inbox** — cursor tracking and dedup for push notifications, as an internal submodule.
+- **Push Notification worker** — subscribes, drains server-managed pending queues, deduplicates, and acknowledges.
+- **Push Notification inbox** — process-local `eventId` deduplication scoped by MCP namespace.
 
-The module exposes `onPushNotification()` to the router. No external code creates or wires the inbox.
+The module exposes `onPushNotification()` to the router. External code does not create or wire the inbox.
 
 ## Submodules
 
-```
+```text
 McpModule
-  ├─ push-notification-inbox/   (cursor + dedup, in-memory)
-  ├─ connection.ts              (transport: stdio + http)
+  ├─ push-notification-inbox/   (eventId deduplication, in-memory)
+  ├─ connection.ts              (stdio and HTTP transports)
   └─ registry.ts                (tool registry builder)
 ```
 
-## Push Notification Flow
+## Push Notification flow
 
-```
-MCP server
-  -> notification arrives (fast path) or cursor retrieval (recovery path)
-  -> push-notification-inbox.commit() (dedup by eventId, advance cursor)
+```text
+MCP server durable pending queue
+  -> establish live subscription and await acknowledgement
+  -> retrieve oldest pending notifications in bounded pages
+  -> push-notification-inbox.commit() (deduplicate by namespace + eventId)
   -> publishPushNotification() -> listeners (router)
-  -> ack events back to server
+  -> acknowledge all accepted or duplicate event IDs
+  -> continue live delivery
 ```
 
-- **Notifications** — real-time push from the server via the push-notifications MCP extension. Fast path.
-- **Cursor retrieval** — on (re)connect, the event worker replays missed events from the last cursor. Recovery path.
-- **At-least-once delivery** — the inbox deduplicates by `eventId`. Ack happens after commit.
-- **Per-namespace cursors** — each MCP server namespace has its own cursor and seen-eventId set.
+- **Live notifications** are the low-latency path.
+- **Pending retrieval** is the startup and reconnection recovery path.
+- **Subscribe before drain** closes the connection-boundary race. Events created during recovery can arrive by both paths.
+- **At-least-once delivery** means duplicates are normal. The inbox suppresses duplicate publication by `eventId`.
+- **Persist before acknowledgement** remains the safety boundary. The current inbox is in-memory, so it is suitable for development but not the final durable acceptance store.
+- **Server-owned progress** means Klex stores no cursor. Acknowledged events disappear from the server's pending view.
 
-## Connection Lifecycle
+If retrieval returns `hasMore: true` with an empty page, the worker fails the attempt instead of spinning. Acknowledgements retry with exponential backoff. A subscription failure restarts the complete subscribe-then-drain sequence.
 
-```
+## Connection lifecycle
+
+```text
 config update
-  -> reconcile (diff old vs new server configs)
-  -> for removed/changed: invalidate runtime, close connection, reset inbox
-  -> for added/changed: create runtime, activateRuntime()
-  -> activateRuntime: reset inbox (if pending) -> connectRuntime()
-  -> connectRuntime: connect via transport, register callbacks
-  -> on connect: publish registry, start event worker (if supported)
-  -> on disconnect: stop worker, schedule reconnect with exponential backoff
+  -> reconcile configured servers
+  -> removed or changed: invalidate runtime and close connection
+  -> added or changed: create runtime and activateRuntime()
+  -> connectRuntime: connect via transport and register callbacks
+  -> on connect: publish registry and start event worker when supported
+  -> event worker: subscribe -> drain pending -> process live events
+  -> on disconnect: stop worker and schedule reconnect with exponential backoff
 ```
 
 Key invariants:
-- Only one active connection per namespace at a time.
-- Config changes reset the inbox for the affected namespace before reconnecting.
-- Late connections (from a superseded attempt) are closed immediately.
+
+- Only one active connection exists per namespace.
+- Only the current connection can own the namespace's event worker.
+- Late connections from superseded attempts close immediately.
+- A server configuration change does not reset a client cursor because no cursor exists.
 
 ## Interface to Router
 
-The router subscribes via `mcp.onPushNotification(listener)` and receives `McpPushNotification` objects (`{ namespace, event }`). The router converts these into `SessionInboxEvent`s and feeds them to the session inbox.
+The router subscribes through `mcp.onPushNotification(listener)` and receives `McpPushNotification` objects containing `{ namespace, event }`. It converts them into session-inbox events.
 
-The router never touches the push-notification inbox directly.
+The router never accesses the Push Notification inbox directly.
 
 ## Interface to Main
 
-`createMcp({ logging, config })` — that's it. The module spawns its own inbox internally. No inbox parameter, no external wiring.
+`createMcp({ logging, config })` composes the module and its inbox. No external inbox wiring is required.

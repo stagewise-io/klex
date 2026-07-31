@@ -93,7 +93,7 @@ describe('chat simulator', () => {
 
     const events = await jsonRpc(app, {
       method: 'io.stagewise/push-notifications/get',
-      params: { cursor: '0' },
+      params: { limit: 100 },
     });
     expect(events).toMatchObject({
       result: {
@@ -103,6 +103,78 @@ describe('chat simulator', () => {
             payload: { message: 'hello' },
           },
         ],
+        hasMore: false,
+      },
+    });
+  });
+
+  it('hides acknowledged events and accepts repeated or unknown acknowledgements', async () => {
+    const { app } = setup();
+    await app.request('/api/messages', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message: 'hello' }),
+    });
+    const pending = (await jsonRpc(app, {
+      method: 'io.stagewise/push-notifications/get',
+      params: { limit: 1 },
+    })) as { result: { events: Array<{ eventId: string }> } };
+    const eventId = pending.result.events[0]?.eventId;
+    expect(eventId).toBeDefined();
+
+    for (const eventIds of [[eventId], [eventId], ['unknown-event']]) {
+      const acknowledged = await jsonRpc(app, {
+        method: 'io.stagewise/push-notifications/ack',
+        params: { eventIds },
+      });
+      expect(acknowledged).toMatchObject({ result: {} });
+    }
+
+    const drained = await jsonRpc(app, {
+      method: 'io.stagewise/push-notifications/get',
+      params: { limit: 1 },
+    });
+    expect(drained).toMatchObject({
+      result: { events: [], hasMore: false },
+    });
+  });
+
+  it('pages over the oldest unacknowledged events without cursors', async () => {
+    const { app } = setup();
+    for (const message of ['first', 'second', 'third']) {
+      await app.request('/api/messages', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message }),
+      });
+    }
+
+    const first = (await jsonRpc(app, {
+      method: 'io.stagewise/push-notifications/get',
+      params: { limit: 2 },
+    })) as {
+      result: {
+        events: Array<{ eventId: string; payload: { message: string } }>;
+        hasMore: boolean;
+      };
+    };
+    expect(first.result.events.map((event) => event.payload.message)).toEqual([
+      'first',
+      'second',
+    ]);
+    expect(first.result.hasMore).toBe(true);
+    await jsonRpc(app, {
+      method: 'io.stagewise/push-notifications/ack',
+      params: { eventIds: first.result.events.map((event) => event.eventId) },
+    });
+
+    const second = await jsonRpc(app, {
+      method: 'io.stagewise/push-notifications/get',
+      params: { limit: 2 },
+    });
+    expect(second).toMatchObject({
+      result: {
+        events: [{ payload: { message: 'third' } }],
         hasMore: false,
       },
     });

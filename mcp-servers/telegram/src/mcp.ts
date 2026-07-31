@@ -1,6 +1,7 @@
 import { createMcpHandler, McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod/v4';
 
+import type { PushNotificationNotificationParams } from '@stagewise/mcp-extension-push-notifications';
 import {
   createPushNotificationsHttpSubscriptionManager,
   type PushNotificationsHttpSubscriptionManager,
@@ -14,7 +15,7 @@ export const MAX_MESSAGE_LENGTH = 4_000;
 
 export interface TelegramMcp {
   fetch(request: Request): Promise<Response>;
-  publish: PushNotificationsHttpSubscriptionManager['publish'];
+  publish(params: PushNotificationNotificationParams): void;
   close(): Promise<void>;
 }
 
@@ -49,7 +50,7 @@ class TelegramMcpModule implements TelegramMcp {
           },
         );
         registerPushNotificationsServer(server.server, {
-          getEvents: ({ cursor, limit }) => eventStore.page({ cursor, limit }),
+          getEvents: ({ limit }) => eventStore.page({ limit }),
           acknowledgeEvents: ({ eventIds }) => eventStore.acknowledge(eventIds),
         });
         return server;
@@ -58,6 +59,7 @@ class TelegramMcpModule implements TelegramMcp {
     );
     this.#subscriptions = createPushNotificationsHttpSubscriptionManager(
       this.#handler.fetch,
+      { resolveConsumerKey: () => 'local-agent' },
     );
   }
 
@@ -65,8 +67,9 @@ class TelegramMcpModule implements TelegramMcp {
     return this.#subscriptions.fetch(request);
   }
 
-  publish: PushNotificationsHttpSubscriptionManager['publish'] = (params) =>
-    this.#subscriptions.publish(params);
+  publish(params: PushNotificationNotificationParams): void {
+    this.#subscriptions.publish('local-agent', params);
+  }
 
   async close(): Promise<void> {
     this.#subscriptions.close();

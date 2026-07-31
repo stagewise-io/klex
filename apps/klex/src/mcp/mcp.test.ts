@@ -1,6 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { RootLogger } from '@stagewise/logger';
+import type {
+  PushNotification,
+  PushNotificationNotification,
+} from '@stagewise/mcp-extension-push-notifications';
 
 import type {
   Config,
@@ -24,6 +28,14 @@ const logging = {
     warn: () => undefined,
   }),
 } as unknown as RootLogger;
+
+const pushNotification: PushNotification = {
+  eventId: 'event-1',
+  sourceId: 'chat:local',
+  type: 'chat.message.received',
+  createdAt: '2026-07-20T10:30:00.000Z',
+  payload: { message: 'hello' },
+};
 
 const toolContext = {
   executionId: 'test',
@@ -71,6 +83,16 @@ function connection(namespace: string): McpConnection {
     pushNotifications: {},
     invoke: vi.fn(),
     close: vi.fn(async () => undefined),
+  } as unknown as McpConnection;
+}
+
+function pushNotificationConnection(
+  pushNotifications: Record<string, unknown>,
+): McpConnection {
+  return {
+    ...connection('chat'),
+    supportsPushNotifications: true,
+    pushNotifications,
   } as unknown as McpConnection;
 }
 
@@ -131,6 +153,104 @@ describe('MCP Push Notification subscriptions', () => {
     await mcp.start();
     await mcp.close();
     expect(listener).not.toHaveBeenCalled();
+  });
+});
+
+describe('MCP Push Notification worker', () => {
+  it('subscribes before draining and acknowledges after publication', async () => {
+    const order: string[] = [];
+    const closed = deferred<void>();
+    const server = pushNotificationConnection({
+      listen: vi.fn(async () => {
+        order.push('listen');
+        return { closed: closed.promise };
+      }),
+      getEvents: vi.fn(async () => {
+        order.push('get');
+        return { events: [pushNotification], hasMore: false };
+      }),
+      acknowledgeEvents: vi.fn(async () => {
+        order.push('ack');
+      }),
+    });
+    const { mcp } = setup(
+      { chat: { url: 'https://chat.example/mcp' } },
+      async () => server,
+    );
+    mcp.onPushNotification(() => {
+      order.push('publish');
+    });
+
+    await mcp.start();
+    await vi.waitFor(() => expect(order).toContain('ack'));
+    expect(order).toEqual(['listen', 'get', 'publish', 'ack']);
+    await mcp.close();
+  });
+
+  it('retries acknowledgement without republishing the event', async () => {
+    vi.useFakeTimers();
+    const closed = deferred<void>();
+    const acknowledgeEvents = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('temporary failure'))
+      .mockResolvedValue(undefined);
+    const server = pushNotificationConnection({
+      listen: vi.fn(async () => ({ closed: closed.promise })),
+      getEvents: vi.fn(async () => ({
+        events: [pushNotification],
+        hasMore: false,
+      })),
+      acknowledgeEvents,
+    });
+    const { mcp } = setup(
+      { chat: { url: 'https://chat.example/mcp' } },
+      async () => server,
+    );
+    const listener = vi.fn();
+    mcp.onPushNotification(listener);
+
+    await mcp.start();
+    await vi.waitFor(() => expect(acknowledgeEvents).toHaveBeenCalledOnce());
+    await vi.advanceTimersByTimeAsync(1_000);
+    await vi.waitFor(() => expect(acknowledgeEvents).toHaveBeenCalledTimes(2));
+    expect(listener).toHaveBeenCalledOnce();
+    await mcp.close();
+  });
+
+  it('deduplicates a live event received during pending recovery', async () => {
+    const pendingPage = deferred<{
+      events: PushNotification[];
+      hasMore: boolean;
+    }>();
+    const closed = deferred<void>();
+    let connectOptions: ConnectMcpServerOptions | undefined;
+    const acknowledgeEvents = vi.fn(async () => undefined);
+    const server = pushNotificationConnection({
+      listen: vi.fn(async () => ({ closed: closed.promise })),
+      getEvents: vi.fn(async () => pendingPage.promise),
+      acknowledgeEvents,
+    });
+    const { mcp } = setup(
+      { chat: { url: 'https://chat.example/mcp' } },
+      async (options) => {
+        connectOptions = options;
+        return server;
+      },
+    );
+    const listener = vi.fn();
+    mcp.onPushNotification(listener);
+
+    await mcp.start();
+    await vi.waitFor(() => expect(connectOptions).toBeDefined());
+    await connectOptions?.onPushNotification(server, {
+      method: 'io.stagewise/push-notifications/event',
+      params: { event: pushNotification },
+    } as PushNotificationNotification);
+    pendingPage.resolve({ events: [pushNotification], hasMore: false });
+
+    await vi.waitFor(() => expect(acknowledgeEvents).toHaveBeenCalledTimes(2));
+    expect(listener).toHaveBeenCalledTimes(1);
+    await mcp.close();
   });
 });
 

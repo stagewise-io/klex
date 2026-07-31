@@ -54,32 +54,26 @@ export interface PushNotification {
   payload: { [key: string]: JSONValue };
 }
 
-/** Parameters for retrieving a page of durable events. */
+/** Parameters for retrieving pending durable events. */
 export interface GetEventsParams {
   [key: string]: unknown;
-
-  /** Opaque server-issued position. Omit to start at the earliest retained event. */
-  cursor?: string;
 
   /** Requested maximum page size. Must be a positive integer. */
   limit?: number;
 }
 
-/** Retrieves a bounded page from the durable event feed. */
+/** Retrieves a bounded page of events pending for the authenticated consumer. */
 export interface GetEventsRequest extends JSONRPCRequest {
   method: 'io.stagewise/push-notifications/get';
   params: GetEventsParams;
 }
 
-/** Result of retrieving a page from the durable event feed. */
+/** Result of retrieving pending events for the authenticated consumer. */
 export type GetEventsResult = Result & {
-  /** Complete events in stable feed order. */
+  /** Complete pending events in deterministic server order. */
   events: PushNotification[];
 
-  /** Opaque position to use for the next retrieval or subscription. */
-  nextCursor: string;
-
-  /** Whether another page is currently available after nextCursor. */
+  /** Whether additional pending events were available when this page was read. */
   hasMore: boolean;
 };
 
@@ -102,11 +96,8 @@ export type AcknowledgeEventsResult = Result;
 
 /** Parameters sent with a subscribed push notification. */
 export type PushNotificationNotificationParams = NotificationParams & {
-  /** Complete durable event. */
+  /** Complete durable event already pending for the authenticated consumer. */
   event: PushNotification;
-
-  /** Opaque retrieval position at this event. */
-  cursor: string;
 };
 
 /** Optional low-latency delivery of an event already available through retrieval. */
@@ -115,11 +106,8 @@ export interface PushNotificationNotification extends JSONRPCNotification {
   params: PushNotificationNotificationParams;
 }
 
-/** Push Notifications addition to a subscriptions/listen notification filter. */
-export interface PushNotificationsSubscription {
-  /** Opaque cursor after which notifications should begin. */
-  afterCursor?: string;
-}
+/** Empty Push Notifications subscriptions/listen notification filter. */
+export type PushNotificationsSubscription = Record<string, never>;
 
 /** Extension-owned fields added to subscriptions/listen notifications. */
 export interface PushNotificationsSubscriptionNotifications {

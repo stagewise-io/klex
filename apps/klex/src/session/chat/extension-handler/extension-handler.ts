@@ -1,7 +1,7 @@
 import { join } from 'node:path';
 
 import { context } from '@opentelemetry/api';
-import type { ModelMessage } from 'ai';
+import type { ModelMessage, ToolSet } from 'ai';
 
 import type { Usage } from '@/session/types';
 
@@ -63,6 +63,36 @@ export interface ExtensionHandler {
    * hooks.
    */
   runStepStartHooks: () => Promise<void>;
+
+  /**
+   * Call `onStart` on all extensions that define it, sequentially in
+   * factory order. Used during session startup to initialize owned
+   * resources (workers, connections, etc.).
+   *
+   * If a hook throws, startup aborts immediately and the error
+   * propagates to the caller.
+   */
+  start: () => Promise<void>;
+
+  /**
+   * Call `onClose` on all extensions that define it, sequentially in
+   * reverse factory order (LIFO). Used during session shutdown to
+   * release owned resources.
+   *
+   * Errors are caught and logged per-extension — cleanup is best-effort
+   * and one extension's failure does not prevent others from closing.
+   */
+  close: () => Promise<void>;
+
+  /**
+   * Collect and merge `getTools()` return values from all extensions
+   * that define the method. The merged `ToolSet` is combined with core
+   * session tools and passed to the LLM.
+   *
+   * Throws if two extensions provide a tool with the same name —
+   * tool names must be unique across all extensions.
+   */
+  getTools: () => ToolSet;
 
   /**
    * Run `historyTransformer` across all extensions in order.
@@ -134,31 +164,6 @@ class ExtensionHandlerModule implements ExtensionHandler {
   /** Maps each extension instance to its factory identifier for logging. */
   private readonly identifiersByExtension: Map<Extension, string>;
 
-  async runStepStartHooks(): Promise<void> {
-    const extensions = this.extensions.filter((ext) => ext.onStepStart);
-
-    if (extensions.length === 0) return;
-
-    const results = await Promise.allSettled(
-      extensions.map(async (ext) => ext.onStepStart!()),
-    );
-
-    for (let i = 0; i < results.length; i++) {
-      const settled = results[i]!;
-      if (settled.status === 'rejected') {
-        this.extensionDeps.logger.error(
-          {
-            error: settled.reason,
-            extensionIdentifier: this.identifiersByExtension.get(
-              extensions[i]!,
-            ),
-          },
-          'Extension onStepStart hook failed',
-        );
-      }
-    }
-  }
-
   constructor(deps: {
     factories: ExtensionFactory[];
     extensionDeps: BaseExtensionDeps;
@@ -222,6 +227,74 @@ class ExtensionHandlerModule implements ExtensionHandler {
     });
   }
 
+  async runStepStartHooks(): Promise<void> {
+    const extensions = this.extensions.filter((ext) => ext.onStepStart);
+
+    if (extensions.length === 0) return;
+
+    const results = await Promise.allSettled(
+      extensions.map(async (ext) => ext.onStepStart!()),
+    );
+
+    for (let i = 0; i < results.length; i++) {
+      const settled = results[i]!;
+      if (settled.status === 'rejected') {
+        this.extensionDeps.logger.error(
+          {
+            error: settled.reason,
+            extensionIdentifier: this.identifiersByExtension.get(
+              extensions[i]!,
+            ),
+          },
+          'Extension onStepStart hook failed',
+        );
+      }
+    }
+  }
+
+  async start(): Promise<void> {
+    for (const ext of this.extensions) {
+      if (!ext.onStart) continue;
+      await ext.onStart();
+    }
+  }
+
+  async close(): Promise<void> {
+    // Close in reverse factory order (LIFO) — mirrors resource cleanup.
+    for (let i = this.extensions.length - 1; i >= 0; i--) {
+      const ext = this.extensions[i]!;
+      if (!ext.onClose) continue;
+      try {
+        await ext.onClose();
+      } catch (error) {
+        this.extensionDeps.logger.error(
+          { error, extensionIdentifier: this.identifiersByExtension.get(ext) },
+          'Extension onClose hook failed',
+        );
+      }
+    }
+  }
+
+  getTools(): ToolSet {
+    const merged: Record<string, ToolSet[keyof ToolSet]> = {};
+
+    for (const ext of this.extensions) {
+      if (!ext.getTools) continue;
+      const tools = ext.getTools();
+
+      for (const [name, tool] of Object.entries(tools)) {
+        if (merged[name]) {
+          throw new Error(
+            `Duplicate tool name "${name}" — tool names must be unique across all extensions.`,
+          );
+        }
+        merged[name] = tool;
+      }
+    }
+
+    return merged as ToolSet;
+  }
+
   async runHistoryTransformers(
     history: ExtendedUIMessage[],
     model: ResolvedModel,
@@ -275,12 +348,7 @@ class ExtensionHandlerModule implements ExtensionHandler {
   }
 
   getDataPartTransformers(): DataPartTransformers {
-    // Accumulate in a loose record — the mapped type makes per-key
-    // assignment structurally impossible, so we cast the final result.
-    const merged = {} as Record<
-      string,
-      DataPartTransformers[keyof DataPartTransformers]
-    >;
+    const merged: DataPartTransformers = {};
 
     for (const ext of this.extensions) {
       if (!ext.dataPartTransformers) continue;
@@ -297,7 +365,7 @@ class ExtensionHandlerModule implements ExtensionHandler {
       }
     }
 
-    return merged as unknown as DataPartTransformers;
+    return merged;
   }
 
   async runStepCompleteHooks(event: StepCompleteEvent): Promise<void> {

@@ -3,19 +3,32 @@ import { randomUUID } from 'node:crypto';
 import { context, type Span, trace } from '@opentelemetry/api';
 import { getToolName, isToolUIPart, type TextPart } from 'ai';
 
-import type {
-  ContextSummaryDataUIPart,
-  ExtendedUIMessage,
-} from '../../message-types';
+import type { ExtendedUIMessage } from '../../message-types';
 import { startChildSpan } from '../../utils/tracing';
-import type {
-  Extension,
-  ExtensionDeps,
-  ExtensionFactory,
-  HistoryProcessingResult,
-  StepCompleteEvent,
+import {
+  createDataPart,
+  type DataPartTransformers,
+  dataPartTransformer,
+  type Extension,
+  type ExtensionDeps,
+  type ExtensionFactory,
+  type HistoryProcessingResult,
+  isDataPartOf,
+  type StepCompleteEvent,
 } from '../extension-api';
 import compactionPrompt from './compaction-prompt.md';
+
+/**
+ * Custom data part that stores a history summary of the chat session.
+ * This type is local to the extension — it is NOT registered in the
+ * central `CustomUIDataParts` map.
+ */
+export type ContextSummaryDataUIPart = {
+  summary: string;
+};
+
+/** Data part key used by this extension. */
+const SUMMARY_KEY = 'context-summary';
 
 /**
  * Hard upper bound for the compaction threshold in tokens. The dynamic
@@ -179,7 +192,7 @@ class ContextCompactionExt implements Extension {
     // Collect indices of all summary messages (newest first).
     const summaryIndices: number[] = [];
     for (let i = history.length - 1; i >= 0; i--) {
-      if (history[i]!.parts.some((p) => p.type === 'data-context-summary')) {
+      if (history[i]!.parts.some((p) => isDataPartOf(SUMMARY_KEY, p))) {
         summaryIndices.push(i);
       }
     }
@@ -224,7 +237,7 @@ class ContextCompactionExt implements Extension {
     const filtered = sliced.filter(
       (msg, i) =>
         i === 0 || // always keep the cutoff summary (first element)
-        !msg.parts.some((p) => p.type === 'data-context-summary'),
+        !msg.parts.some((p) => isDataPartOf(SUMMARY_KEY, p)),
     );
 
     return {
@@ -233,13 +246,13 @@ class ContextCompactionExt implements Extension {
     };
   }
 
-  dataPartTransformers = {
-    'context-summary': (part: ContextSummaryDataUIPart): TextPart[] => [
+  dataPartTransformers: DataPartTransformers = {
+    [SUMMARY_KEY]: dataPartTransformer<ContextSummaryDataUIPart>((data) => [
       {
         type: 'text',
-        text: `<summary>${escapeXml(part.summary)}</summary>`,
+        text: `<summary>${escapeXml(data.summary)}</summary>`,
       },
-    ],
+    ]),
   };
 
   async onStepComplete(event: StepCompleteEvent): Promise<void> {
@@ -386,7 +399,7 @@ class ContextCompactionExt implements Extension {
     // compaction model has access to the previous summary as context.
     // If there is no summary, compact the entire history.
     const lastSummaryIndex = history.findLastIndex((m) =>
-      m.parts.some((p) => p.type === 'data-context-summary'),
+      m.parts.some((p) => isDataPartOf(SUMMARY_KEY, p)),
     );
     const sliceStart = lastSummaryIndex === -1 ? 0 : lastSummaryIndex;
     const slice = history.slice(sliceStart);
@@ -504,16 +517,11 @@ class ContextCompactionExt implements Extension {
     anchorId: string,
     span: Span,
   ): Promise<boolean> {
-    const summaryMessage: ExtendedUIMessage = {
+    const summaryMessage = {
       id: randomUUID(),
       role: 'assistant',
-      parts: [
-        {
-          type: 'data-context-summary',
-          data: { summary },
-        },
-      ],
-    };
+      parts: [createDataPart(SUMMARY_KEY, { summary })],
+    } as unknown as ExtendedUIMessage;
 
     // Insert the summary directly after the last message that was part
     // of the compaction slice — not at the end of history, which may
@@ -592,8 +600,9 @@ function partToXml(part: ExtendedUIMessage['parts'][number]): string {
     return `<text>${escapeXml(truncate(part.text, TEXT_TRUNCATE_LIMIT))}</text>`;
   }
 
-  if (part.type === 'data-context-summary') {
-    return `<summary>${escapeXml(truncate(part.data.summary, SUMMARY_TRUNCATE_LIMIT))}</summary>`;
+  if (isDataPartOf(SUMMARY_KEY, part)) {
+    const { summary } = (part as { data: ContextSummaryDataUIPart }).data;
+    return `<summary>${escapeXml(truncate(summary, SUMMARY_TRUNCATE_LIMIT))}</summary>`;
   }
 
   if (part.type === 'data-context') {
@@ -644,7 +653,7 @@ function countMessagesByRoleAfter(
   let assistantCount = 0;
   for (let i = index + 1; i < history.length; i++) {
     const msg = history[i]!;
-    if (msg.parts.some((p) => p.type === 'data-context-summary')) continue;
+    if (msg.parts.some((p) => isDataPartOf(SUMMARY_KEY, p))) continue;
     if (msg.role === 'user') userCount++;
     else if (msg.role === 'assistant') assistantCount++;
   }

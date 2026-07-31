@@ -508,6 +508,6 @@ export function createConfig(deps: ConfigDependencies): Config {
       name: 'config',
       bindings: { module: 'config' },
     }),
-    configPath: join(deps.dataDirectory, '.klex.json'),
+    configPath: join(deps.dataDirectory, 'config.json'),
   });
 }

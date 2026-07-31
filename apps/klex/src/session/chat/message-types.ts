@@ -17,17 +17,14 @@ export type UIMessageMetadata = Record<string, never>;
 export type ContinueDataUIPart = Record<string, never>;
 
 /**
- * Custom data part that stores a history summary of the chat session. This is used to provide context to the agent about what has happened in the session so far.
+ * Core custom data part types. Only types that are fundamental to the
+ * session itself live here — extension-defined data parts are NOT
+ * registered centrally. Extensions define their own part types locally
+ * and use the helpers from `extension-api.ts` (`createDataPart`,
+ * `isDataPartOf`, `dataPartTransformer`) for type-safe creation,
+ * consumption, and transformation.
  */
-export type ContextSummaryDataUIPart = {
-  /**
-   * A summary of the things that happened
-   */
-  summary: string;
-};
-
 export type CustomUIDataParts = {
-  'context-summary': ContextSummaryDataUIPart;
   context: ContextDataUIPart;
   continue: ContinueDataUIPart;
 };

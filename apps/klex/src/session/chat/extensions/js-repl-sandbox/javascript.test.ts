@@ -27,11 +27,11 @@ describe('JavaScriptTool', () => {
     await javaScriptTool.close();
   });
 
-  it('exposes only runJavascript and delegates execution', async () => {
-    expect(Object.keys(javaScriptTool.tools)).toEqual(['runJavascript']);
-    const runJavascript = javaScriptTool.tools.runJavascript;
-    expect(runJavascript).toBeDefined();
-    const execute = runJavascript?.execute as
+  it('exposes only runInSandbox and delegates execution', async () => {
+    expect(Object.keys(javaScriptTool.tools)).toEqual(['runInSandbox']);
+    const runInSandbox = javaScriptTool.tools.runInSandbox;
+    expect(runInSandbox).toBeDefined();
+    const execute = runInSandbox?.execute as
       | ((input: { code: string }, options: object) => Promise<unknown>)
       | undefined;
     expect(execute).toBeDefined();

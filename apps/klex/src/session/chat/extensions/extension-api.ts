@@ -7,29 +7,90 @@ import type {
   ToolSet,
 } from 'ai';
 
-import type { ModuleLogger } from '@stagewise/logger';
+import type { ModuleLogger, RootLogger } from '@stagewise/logger';
 
 import type { Config, ModelId } from '@/config';
+import type { Mcp } from '@/mcp';
 
 import type { ChatSessionInbox } from '../inbox';
-import type { CustomUIDataParts, ExtendedUIMessage } from '../message-types';
+import type { ExtendedUIMessage } from '../message-types';
+
+// ---------------------------------------------------------------------------
+// Extension data part helpers
+//
+// Extensions define their own data part types locally — there is no central
+// registry. These helpers provide compile-time safety for creating,
+// identifying, and transforming extension-defined data parts without
+// adding them to `CustomUIDataParts` in `message-types.ts`.
+// ---------------------------------------------------------------------------
 
 /**
- * A transformer that converts a custom data part into model message parts.
+ * Creates a type-safe `data-{type}` UI part for an extension-defined data
+ * part type. The runtime shape is `{ type: 'data-{KEY}', data: DATA }`,
+ * which the AI SDK recognises as a `DataUIPart`. Since the part type is
+ * not in the central `CustomUIDataParts` map, a cast through `never` is
+ * needed to satisfy `ExtendedUIMessage['parts'][number]`.
  *
- * One transformer per data part type. Duplicate registration for the same
- * type crashes at registration time.
+ * @example
+ * type SummaryPart = { summary: string };
+ * const summaryMsg = createDataPart('context-summary', { summary: '...' });
  */
-export type DataPartTransformer<K extends keyof CustomUIDataParts> = (
-  data: CustomUIDataParts[K],
+export function createDataPart<KEY extends string, DATA>(
+  key: KEY,
+  data: DATA,
+): { type: `data-${KEY}`; data: DATA } {
+  return { type: `data-${key}`, data } as { type: `data-${KEY}`; data: DATA };
+}
+
+/**
+ * A type guard that narrows a message part to an extension-defined data
+ * part. Use in `historyTransformer` or `onStepComplete` to inspect parts
+ * by their `data-{key}` type string.
+ *
+ * @example
+ * if (isDataPartOf('context-summary', part)) {
+ *   part.data.summary  // string, type-safe
+ * }
+ */
+export function isDataPartOf<KEY extends string, DATA>(
+  key: KEY,
+  part: { type: string },
+): part is { type: `data-${KEY}`; data: DATA } {
+  return part.type === `data-${key}`;
+}
+
+/**
+ * A typed data-part transformer. Extensions use this instead of bare
+ * functions to get compile-time safety on the input shape.
+ *
+ * @example
+ * const summaryTransformer = dataPartTransformer<SummaryPart>(
+ *   (data) => [{ type: 'text', text: `<summary>${data.summary}</summary>` }],
+ * );
+ */
+export function dataPartTransformer<DATA>(
+  fn: (data: DATA) => (TextPart | FilePart)[],
+): (data: unknown) => (TextPart | FilePart)[] {
+  return (data: unknown) => fn(data as DATA);
+}
+
+/**
+ * A runtime data-part transformer. Each extension provides a record of
+ * these keyed by their part type string. The handler merges them across
+ * extensions and the converter dispatches by the `data-{key}` prefix.
+ *
+ * Keys are arbitrary strings — there is no central type map. Extensions
+ * use `dataPartTransformer<T>()` to get type safety on the data shape.
+ */
+export type RuntimeDataPartTransformer = (
+  data: unknown,
 ) => (TextPart | FilePart)[];
 
 /**
- * Maps each custom data part type to its transformer. All entries optional.
+ * Maps data part type keys to their transformers. Keys are arbitrary
+ * strings (e.g. `'context-summary'`) — not limited to `CustomUIDataParts`.
  */
-export type DataPartTransformers = Partial<{
-  [K in keyof CustomUIDataParts]: DataPartTransformer<K>;
-}>;
+export type DataPartTransformers = Record<string, RuntimeDataPartTransformer>;
 
 /**
  * Flags that an extension can set when transforming history, describing
@@ -237,6 +298,38 @@ export interface Extension {
    * Typical uses: resetting per-step flags, preparing caches, or
    * recording step-start telemetry.
    */
+  /**
+   * Called once when the session starts, before the first step.
+   * Extensions use this to initialize owned resources (e.g. starting
+   * a worker, opening a connection).
+   *
+   * Hooks are called sequentially in factory order. If a hook throws,
+   * startup aborts immediately and the error propagates to the caller.
+   */
+  onStart?: () => Promise<void>;
+
+  /**
+   * Called once when the session closes, after the last step completes.
+   * Extensions use this to release owned resources (e.g. stopping a
+   * worker, closing a connection).
+   *
+   * Hooks are called sequentially in reverse factory order (LIFO).
+   * Errors are caught and logged per-extension — cleanup is best-effort
+   * and one extension's failure does not prevent others from closing.
+   */
+  onClose?: () => Promise<void>;
+
+  /**
+   * Returns the tools this extension provides to the LLM.
+   *
+   * Called once during session construction, after all extensions have
+   * been instantiated but before the first step. The returned `ToolSet`
+   * is merged with tools from all other extensions and with core session
+   * tools. Tool names must be unique across all extensions — a duplicate
+   * throws at registration time.
+   */
+  getTools?: () => ToolSet;
+
   onStepStart?: () => void | Promise<void>;
 
   /**
@@ -340,6 +433,25 @@ export interface ExtensionDeps {
    * Module-scoped logger for the extension.
    */
   logger: ModuleLogger;
+
+  /**
+   * The root logger, allowing extensions to create their own child
+   * loggers for sub-components (e.g. a worker or background task).
+   */
+  logging: RootLogger;
+
+  /**
+   * The MCP module — client for all MCP servers the session has access
+   * to. Extends `ToolProvider` with push notifications, server statuses,
+   * and tool call history. Extensions can use the full MCP surface.
+   */
+  mcp: Mcp;
+
+  /**
+   * UUID of the session that owns this extension. Used for
+   * observability correlation.
+   */
+  sessionId: string;
 
   /**
    * Returns an absolute path to a directory the calling extension can

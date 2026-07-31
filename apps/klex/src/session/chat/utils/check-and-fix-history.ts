@@ -1,7 +1,6 @@
-import { type DynamicToolUIPart, isToolUIPart, type ToolUIPart } from 'ai';
+import { type DynamicToolUIPart, isToolUIPart } from 'ai';
 
 import type { ExtendedUIMessage } from '../message-types';
-import type { AgentUITools } from '../tools';
 
 const UNFINISHED_TOOL_ERROR_TEXT =
   'The tool call was not executed for unknown reasons. Try again.';
@@ -40,10 +39,8 @@ export const checkAndFixHistory = (
           )
         ) {
           const previousState = p.state;
-          (p as DynamicToolUIPart | ToolUIPart<AgentUITools>).state =
-            'output-error';
-          (p as DynamicToolUIPart | ToolUIPart<AgentUITools>).errorText =
-            UNFINISHED_TOOL_ERROR_TEXT;
+          (p as DynamicToolUIPart).state = 'output-error';
+          (p as DynamicToolUIPart).errorText = UNFINISHED_TOOL_ERROR_TEXT;
           repaired.push({
             messageId: msg.id,
             partType: p.type,

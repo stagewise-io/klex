@@ -1,8 +1,10 @@
 import { context, trace } from '@opentelemetry/api';
 import { AsyncHooksContextManager } from '@opentelemetry/context-async-hooks';
 import { BasicTracerProvider } from '@opentelemetry/sdk-trace-base';
-import type { ModelMessage } from 'ai';
+import type { ModelMessage, ToolSet } from 'ai';
+import { tool } from 'ai';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { z } from 'zod';
 
 import type {
   BaseExtensionDeps,
@@ -66,6 +68,11 @@ const noopDeps: BaseExtensionDeps = {
     debug: vi.fn(),
     trace: vi.fn(),
   } as unknown as BaseExtensionDeps['logger'],
+  logging: {
+    child: () => noopDeps.logger,
+  } as unknown as BaseExtensionDeps['logging'],
+  mcp: {} as unknown as BaseExtensionDeps['mcp'],
+  sessionId: 'test-session-id',
 };
 
 const HANDLER_OPTS = {
@@ -98,6 +105,9 @@ function factoryWith(
   return {
     identifier: id,
     create: () => ({
+      onStart: overrides.onStart,
+      onClose: overrides.onClose,
+      getTools: overrides.getTools,
       onStepStart: overrides.onStepStart,
       historyTransformer: overrides.historyTransformer,
       contextTransformer: overrides.contextTransformer,
@@ -1142,5 +1152,229 @@ describe('ExtensionHandler — generateText wrapper trace attribution', () => {
     await receivedDeps!.generateText({ modelIds: ['test:m'], prompt: 'hi' });
 
     expect(onExtensionUsage).not.toHaveBeenCalled();
+  });
+});
+
+// --- start / close / getTools lifecycle ---
+
+describe('ExtensionHandler — start()', () => {
+  it('calls onStart in factory order', async () => {
+    const calls: string[] = [];
+    const f1 = factoryWith({
+      onStart: async () => {
+        calls.push('f1');
+      },
+    });
+    const f2 = factoryWith({
+      onStart: async () => {
+        calls.push('f2');
+      },
+    });
+
+    const handler = createExtensionHandler({
+      ...HANDLER_OPTS,
+      factories: [f1, f2],
+    });
+
+    await handler.start();
+
+    expect(calls).toEqual(['f1', 'f2']);
+  });
+
+  it('skips extensions without onStart', async () => {
+    const calls: string[] = [];
+    const f1 = factoryWith({
+      onStart: async () => {
+        calls.push('f1');
+      },
+    });
+    const f2 = factoryWith({});
+
+    const handler = createExtensionHandler({
+      ...HANDLER_OPTS,
+      factories: [f1, f2],
+    });
+
+    await handler.start();
+
+    expect(calls).toEqual(['f1']);
+  });
+
+  it('does nothing when no extensions define onStart', async () => {
+    const handler = createExtensionHandler({
+      ...HANDLER_OPTS,
+      factories: [factoryWith({}), factoryWith({})],
+    });
+
+    await expect(handler.start()).resolves.toBeUndefined();
+  });
+
+  it('propagates the first error and stops calling subsequent extensions', async () => {
+    const calls: string[] = [];
+    const f1 = factoryWith({
+      onStart: async () => {
+        calls.push('f1');
+        throw new Error('boom');
+      },
+    });
+    const f2 = factoryWith({
+      onStart: async () => {
+        calls.push('f2');
+      },
+    });
+
+    const handler = createExtensionHandler({
+      ...HANDLER_OPTS,
+      factories: [f1, f2],
+    });
+
+    await expect(handler.start()).rejects.toThrow('boom');
+    expect(calls).toEqual(['f1']);
+  });
+});
+
+describe('ExtensionHandler — close()', () => {
+  it('calls onClose in reverse factory order (LIFO)', async () => {
+    const calls: string[] = [];
+    const f1 = factoryWith({
+      onClose: async () => {
+        calls.push('f1');
+      },
+    });
+    const f2 = factoryWith({
+      onClose: async () => {
+        calls.push('f2');
+      },
+    });
+
+    const handler = createExtensionHandler({
+      ...HANDLER_OPTS,
+      factories: [f1, f2],
+    });
+
+    await handler.close();
+
+    expect(calls).toEqual(['f2', 'f1']);
+  });
+
+  it('skips extensions without onClose', async () => {
+    const calls: string[] = [];
+    const f1 = factoryWith({});
+    const f2 = factoryWith({
+      onClose: async () => {
+        calls.push('f2');
+      },
+    });
+
+    const handler = createExtensionHandler({
+      ...HANDLER_OPTS,
+      factories: [f1, f2],
+    });
+
+    await handler.close();
+
+    expect(calls).toEqual(['f2']);
+  });
+
+  it('logs errors from individual extensions but continues closing others', async () => {
+    const calls: string[] = [];
+    const f1 = factoryWith({
+      onClose: async () => {
+        calls.push('f1');
+      },
+    });
+    const f2 = factoryWith({
+      onClose: async () => {
+        calls.push('f2');
+        throw new Error('close-boom');
+      },
+    });
+
+    const handler = createExtensionHandler({
+      ...HANDLER_OPTS,
+      factories: [f1, f2],
+    });
+
+    await handler.close();
+
+    expect(calls).toEqual(['f2', 'f1']);
+    expect(noopDeps.logger.error).toHaveBeenCalled();
+  });
+
+  it('does nothing when no extensions define onClose', async () => {
+    const handler = createExtensionHandler({
+      ...HANDLER_OPTS,
+      factories: [factoryWith({}), factoryWith({})],
+    });
+
+    await expect(handler.close()).resolves.toBeUndefined();
+  });
+});
+
+describe('ExtensionHandler — getTools()', () => {
+  const dummyTool = tool({
+    description: 'dummy',
+    inputSchema: z.object({}),
+    execute: async () => 'ok' as const,
+  });
+
+  it('merges tools from all extensions that define getTools', () => {
+    const t1 = tool({
+      description: 't1',
+      inputSchema: z.object({}),
+      execute: async () => '1' as const,
+    });
+    const t2 = tool({
+      description: 't2',
+      inputSchema: z.object({}),
+      execute: async () => '2' as const,
+    });
+
+    const handler = createExtensionHandler({
+      ...HANDLER_OPTS,
+      factories: [
+        factoryWith({ getTools: () => ({ tool1: t1 }) }),
+        factoryWith({ getTools: () => ({ tool2: t2 }) }),
+      ],
+    });
+
+    const tools = handler.getTools();
+
+    expect(Object.keys(tools).sort()).toEqual(['tool1', 'tool2']);
+  });
+
+  it('skips extensions without getTools', () => {
+    const handler = createExtensionHandler({
+      ...HANDLER_OPTS,
+      factories: [
+        factoryWith({}),
+        factoryWith({ getTools: () => ({ dummy: dummyTool }) }),
+      ],
+    });
+
+    const tools = handler.getTools();
+
+    expect(Object.keys(tools)).toEqual(['dummy']);
+  });
+
+  it('returns empty object when no extensions define getTools', () => {
+    const handler = createExtensionHandler({
+      ...HANDLER_OPTS,
+      factories: [factoryWith({}), factoryWith({})],
+    });
+
+    expect(handler.getTools()).toEqual({});
+  });
+
+  it('throws on duplicate tool names', () => {
+    const handler = createExtensionHandler({
+      ...HANDLER_OPTS,
+      factories: [
+        factoryWith({ getTools: () => ({ dup: dummyTool }) }),
+        factoryWith({ getTools: () => ({ dup: dummyTool }) }),
+      ],
+    });
+
+    expect(() => handler.getTools()).toThrow('Duplicate tool name "dup"');
   });
 });

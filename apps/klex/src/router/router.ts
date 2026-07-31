@@ -12,7 +12,7 @@ import type {
 export interface RouterDependencies {
   logging: RootLogger;
   mcp: Mcp;
-  createChatSession: (hooks: SessionHooks) => AgentSession;
+  createChatSession: (hooks: SessionHooks, mcp: Mcp) => AgentSession;
 }
 
 export interface Router {
@@ -41,7 +41,7 @@ class RouterModule implements Router {
     private readonly deps: {
       logger: ModuleLogger;
       mcp: Mcp;
-      createChatSession: (hooks: SessionHooks) => AgentSession;
+      createChatSession: (hooks: SessionHooks, mcp: Mcp) => AgentSession;
     },
   ) {}
 
@@ -146,7 +146,7 @@ class RouterModule implements Router {
     const hooks: SessionHooks = {
       onTerminated: (info) => this.handleTerminated(info),
     };
-    const session = this.deps.createChatSession(hooks);
+    const session = this.deps.createChatSession(hooks, this.deps.mcp);
     this.session = session;
     await session.start().catch((error) => {
       this.deps.logger.error(

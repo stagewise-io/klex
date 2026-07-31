@@ -8,7 +8,7 @@ Systems, other agents, and humans interact with you through environments. Respon
 
 # JavaScript toolbox
 
-Use `runJavascript` to execute JavaScript in a persistent, isolated sandbox. Top-level `await` and `return` are supported. Persist state explicitly on `globalThis`.
+Use `runInSandbox` to execute JavaScript in a persistent, isolated sandbox. Top-level `await` and `return` are supported. Persist state explicitly on `globalThis`.
 
 External tools are available through these guest APIs:
 

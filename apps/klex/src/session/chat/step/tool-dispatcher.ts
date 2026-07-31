@@ -4,7 +4,6 @@ import {
   getToolName,
   isToolUIPart,
   type Tool,
-  type ToolUIPart,
 } from 'ai';
 
 import type { ModuleLogger } from '@stagewise/logger';
@@ -13,7 +12,7 @@ import type { ToolRequestContext } from '@/tool-provider';
 import { recordErrorOnSpan } from '@/tracing';
 
 import type { ExtendedUIMessage } from '../message-types';
-import type { AgentTools, AgentUITools } from '../tools';
+import type { AgentTools } from '../tools';
 import { startChildSpan } from '../utils/tracing';
 
 /**
@@ -149,7 +148,7 @@ export class ToolDispatcher {
     });
 
     this.toolExecutions.push(
-      this.executeTool(part, toolName)
+      this.executeTool(part as DynamicToolUIPart, toolName)
         .then(() => {
           // biome-ignore lint/suspicious/noExplicitAny: execution mutates part state in place, TS can't track it
           const p = part as any;
@@ -204,7 +203,7 @@ export class ToolDispatcher {
    * changes are visible in the message's parts array.
    */
   private async executeTool(
-    part: ToolUIPart<AgentUITools> | DynamicToolUIPart,
+    part: DynamicToolUIPart,
     toolName: string,
   ): Promise<void> {
     const tool = (this.deps.tools as Record<string, Tool | undefined>)[

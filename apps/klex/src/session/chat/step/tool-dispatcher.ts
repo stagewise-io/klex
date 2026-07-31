@@ -9,11 +9,10 @@ import {
 import type { ModuleLogger } from '@stagewise/logger';
 
 import type { ToolRequestContext } from '@/tool-provider';
-import { recordErrorOnSpan } from '@/tracing';
+import { recordErrorOnSpan, startChildSpan } from '@/tracing';
 
 import type { ExtendedUIMessage } from '../message-types';
-import type { AgentTools } from '../tools';
-import { startChildSpan } from '../utils/tracing';
+import type { AgentTools, AgentUITools } from '../tools';
 
 /**
  * Default per-tool execution timeout in milliseconds (5 minutes).

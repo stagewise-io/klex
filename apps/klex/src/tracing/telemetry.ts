@@ -4,6 +4,7 @@ import {
   context,
   type Span,
   SpanKind,
+  type SpanOptions,
   SpanStatusCode,
   type Tracer,
   trace,
@@ -28,6 +29,58 @@ import type {
 // that the `ai` package does not export directly.
 type TelemetryStartEvent = Parameters<NonNullable<Telemetry['onStart']>>[0];
 type TelemetryEndEvent = Parameters<NonNullable<Telemetry['onEnd']>>[0];
+
+// ---------------------------------------------------------------------------
+// Shared tracer & span utilities
+// ---------------------------------------------------------------------------
+
+/**
+ * Shared app-wide tracer. All modules (router, session, extensions, etc.)
+ * create spans through this tracer so they share the same instrumentation
+ * scope and trace hierarchy.
+ *
+ * Use {@link startChildSpan} inside a `context.with` block (or {@link withSpan})
+ * to create spans that nest under the ambient context. Use `tracer.startSpan`
+ * directly only when you need to pass an explicit parent context.
+ */
+export const tracer = trace.getTracer('klex');
+
+/**
+ * Starts a child span under the currently active OTel context.
+ *
+ * This is the idiomatic way to create spans inside a `context.with` block:
+ * the `context.with` establishes the parent span as ambient, and
+ * `startChildSpan` nests under it automatically. Callers must ensure they
+ * are inside a `context.with` block — otherwise the span will have no parent.
+ */
+export function startChildSpan(name: string, options?: SpanOptions): Span {
+  return tracer.startSpan(name, options, context.active());
+}
+
+/**
+ * Runs an async function with the given span set as the active OTel context.
+ *
+ * The caller is responsible for ending the span (typically in a `finally`
+ * block) and recording any errors via {@link recordErrorOnSpan}. This helper
+ * only establishes the context so that child spans (e.g. internal HTTP spans)
+ * nest correctly under the given span.
+ *
+ * @example
+ * ```ts
+ * const span = startChildSpan('my.operation', { attributes: { ... } });
+ * try {
+ *   const result = await withSpan(span, async () => doWork());
+ *   span.setAttributes({ ... });
+ * } catch (error) {
+ *   recordErrorOnSpan(span, error);
+ * } finally {
+ *   span.end();
+ * }
+ * ```
+ */
+export function withSpan<T>(span: Span, fn: () => Promise<T>): Promise<T> {
+  return context.with(trace.setSpan(context.active(), span), fn);
+}
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -83,7 +136,7 @@ function toolsToDefinitions(
  * Maps AI SDK provider identifiers to OTel semantic convention `gen_ai.system`
  * values.
  */
-function mapProviderName(provider: string): string {
+export function mapProviderName(provider: string): string {
   const lower = provider.toLowerCase();
   const prefixes: [string, string][] = [
     ['google.vertex', 'gcp.vertex_ai'],

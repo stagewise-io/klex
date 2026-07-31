@@ -1,5 +1,7 @@
 import { randomUUID } from 'node:crypto';
 
+import { SpanKind } from '@opentelemetry/api';
+
 import type { ModuleLogger, RootLogger } from '@stagewise/logger';
 
 import type { Config } from '@/config';
@@ -17,6 +19,7 @@ import type {
   SessionInfo,
   SessionTerminationInfo,
 } from '@/session/types';
+import { recordErrorOnSpan, tracer } from '@/tracing';
 
 import {
   callRoutingLlm,
@@ -213,61 +216,115 @@ class RouterModule implements Router {
   /**
    * Routes an event to the appropriate session using the routing LLM.
    * Serialized via routingQueue to prevent race conditions.
+   *
+   * The entire routing operation is wrapped in a `router.route` span that
+   * records the active session list, the LLM routing decision (if any),
+   * and the final dispatch target — providing full observability into the
+   * routing process.
    */
   private async routeAndDispatch(event: SessionInboxEvent): Promise<void> {
     const routingInfo = this.buildSessionRoutingInfo();
     const routingModels = this.deps.config.getModelSelection('routing');
 
-    let decision: RoutingDecision | null = null;
-    try {
-      decision = await callRoutingLlm({
-        logger: this.deps.logger,
-        modelProvider: this.deps.modelProvider,
-        routingModels,
-        sessions: routingInfo,
-        eventMetadata: event.context.metadata,
-        sourceEnv: event.sourceEnv,
-      });
-    } catch (error) {
-      this.deps.logger.error(
-        { error },
-        'Routing LLM call threw unexpectedly — using fallback routing',
-      );
-    }
-
-    const { entry, priority, summary } = this.resolveTarget(decision);
-
-    // Update summary if the LLM provided one.
-    if (summary != null) {
-      entry.summary = summary;
-      entry.session.setSummary(summary);
-    }
-
-    // If the session terminated itself, create a replacement.
-    if (entry.session.status === 'terminated') {
-      this.deps.logger.warn(
-        { shortId: entry.shortId },
-        'Target session terminated — creating replacement',
-      );
-      this.sessions.delete(entry.shortId);
-      const replacement = await this.createSession();
-      replacement.session.restorePendingEvents([]);
-      event.priority = priority;
-      replacement.session.inbox.send(event);
-      return;
-    }
-
-    event.priority = priority;
-    entry.session.inbox.send(event);
-
-    this.deps.logger.debug(
-      {
-        sourceEnv: event.sourceEnv,
-        shortId: entry.shortId,
-        priority: SessionInboxPriority[priority],
+    const span = tracer.startSpan('router.route', {
+      attributes: {
+        'klex.router.source_env': event.sourceEnv,
+        'klex.router.session_count': routingInfo.length,
+        'klex.router.sessions': JSON.stringify(
+          routingInfo.map((s) => ({ shortId: s.shortId, status: s.status })),
+        ),
+        'klex.router.routing_models': routingModels.join(','),
+        'klex.router.has_routing_models': routingModels.length > 0,
       },
-      'Router dispatched input to session',
-    );
+      kind: SpanKind.INTERNAL,
+    });
+
+    try {
+      let decision: RoutingDecision | null = null;
+      try {
+        decision = await callRoutingLlm({
+          logger: this.deps.logger,
+          modelProvider: this.deps.modelProvider,
+          routingModels,
+          sessions: routingInfo,
+          eventMetadata: event.context.metadata,
+          sourceEnv: event.sourceEnv,
+        });
+      } catch (error) {
+        this.deps.logger.error(
+          { error },
+          'Routing LLM call threw unexpectedly — using fallback routing',
+        );
+      }
+
+      // Record the routing decision on the span.
+      if (decision) {
+        span.setAttributes({
+          'klex.router.decision.choice': decision.sessionChoice,
+          'klex.router.decision.priority': decision.priority,
+        });
+        if (decision.sessionId != null) {
+          span.setAttribute(
+            'klex.router.decision.session_id',
+            decision.sessionId,
+          );
+        }
+        if (decision.summary != null) {
+          span.setAttribute('klex.router.decision.summary', decision.summary);
+        }
+      } else {
+        span.setAttribute('klex.router.decision.choice', 'fallback');
+      }
+
+      const { entry, priority, summary } = this.resolveTarget(decision);
+
+      // Record the final dispatch target.
+      span.setAttributes({
+        'klex.router.target_short_id': entry.shortId,
+        'klex.router.target_priority': SessionInboxPriority[priority],
+        'klex.router.target_is_new_session':
+          decision?.sessionChoice === 'new' ||
+          (decision?.sessionChoice === 'existing' &&
+            !this.sessions.has(decision.sessionId ?? '')),
+      });
+
+      // Update summary if the LLM provided one.
+      if (summary != null) {
+        entry.summary = summary;
+        entry.session.setSummary(summary);
+      }
+
+      // If the session terminated itself, create a replacement.
+      if (entry.session.status === 'terminated') {
+        this.deps.logger.warn(
+          { shortId: entry.shortId },
+          'Target session terminated — creating replacement',
+        );
+        this.sessions.delete(entry.shortId);
+        const replacement = await this.createSession();
+        replacement.session.restorePendingEvents([]);
+        event.priority = priority;
+        replacement.session.inbox.send(event);
+        return;
+      }
+
+      event.priority = priority;
+      entry.session.inbox.send(event);
+
+      this.deps.logger.debug(
+        {
+          sourceEnv: event.sourceEnv,
+          shortId: entry.shortId,
+          priority: SessionInboxPriority[priority],
+        },
+        'Router dispatched input to session',
+      );
+    } catch (error) {
+      recordErrorOnSpan(span, error);
+      throw error;
+    } finally {
+      span.end();
+    }
   }
 
   /**

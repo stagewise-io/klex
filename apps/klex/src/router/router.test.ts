@@ -22,8 +22,21 @@ vi.mock('./routing-decision', () => ({
   callRoutingLlm: vi.fn(),
 }));
 
-const { mockRandomUUID } = vi.hoisted(() => ({
+const { mockRandomUUID, mockSpan } = vi.hoisted(() => ({
   mockRandomUUID: vi.fn(),
+  mockSpan: {
+    setAttributes: vi.fn(),
+    setAttribute: vi.fn(),
+    recordException: vi.fn(),
+    setStatus: vi.fn(),
+    end: vi.fn(),
+    spanContext: () => ({ traceId: 't', spanId: 's', traceFlags: 0 }),
+  },
+}));
+
+vi.mock('@/tracing', () => ({
+  tracer: { startSpan: () => mockSpan },
+  recordErrorOnSpan: vi.fn(),
 }));
 
 vi.mock('node:crypto', () => ({

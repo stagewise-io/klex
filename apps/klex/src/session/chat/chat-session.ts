@@ -20,6 +20,7 @@ import type {
   Usage,
   UsagePair,
 } from '@/session/types';
+import { tracer } from '@/tracing';
 
 import {
   createExtensionHandler,
@@ -42,7 +43,8 @@ import type { AgentTools } from './tools';
 import { createTurn, type Turn, type TurnResult } from './turn';
 import { BackoffManager } from './utils/backoff-manager';
 import { ModelFallbackManager } from './utils/model-fallback-manager';
-import { getExtensionIdentifier, tracer } from './utils/tracing';
+import { getExtensionIdentifier } from './utils/tracing';
+import { extractUsage } from './utils/usage';
 
 /**
  * Maximum consecutive complete-failure turns before the session terminates.

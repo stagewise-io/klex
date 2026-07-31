@@ -8,8 +8,16 @@ import { callRoutingLlm } from './routing-decision';
 
 // --- mocks ---
 
-const { generateObjectMock } = vi.hoisted(() => ({
+const { generateObjectMock, mockSpan } = vi.hoisted(() => ({
   generateObjectMock: vi.fn(),
+  mockSpan: {
+    setAttributes: vi.fn(),
+    setAttribute: vi.fn(),
+    recordException: vi.fn(),
+    setStatus: vi.fn(),
+    end: vi.fn(),
+    spanContext: () => ({ traceId: 't', spanId: 's', traceFlags: 0 }),
+  },
 }));
 
 vi.mock('ai', () => ({
@@ -18,6 +26,13 @@ vi.mock('ai', () => ({
 
 vi.mock('./routing-system-prompt.md', () => ({
   default: 'mock routing system prompt',
+}));
+
+vi.mock('@/tracing', () => ({
+  tracer: { startSpan: () => mockSpan },
+  mapProviderName: (p: string) => p,
+  recordErrorOnSpan: vi.fn(),
+  withSpan: (_span: unknown, fn: () => Promise<unknown>) => fn(),
 }));
 
 beforeEach(() => {
@@ -71,7 +86,11 @@ function makeParams(
 }
 
 function genSuccess(obj: Record<string, unknown>) {
-  return { object: obj };
+  return {
+    object: obj,
+    finishReason: 'stop',
+    usage: { inputTokens: 10, outputTokens: 5 },
+  };
 }
 
 // --- tests ---

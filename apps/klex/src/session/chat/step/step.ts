@@ -8,6 +8,7 @@ import type { ModuleLogger } from '@stagewise/logger';
 
 import { type Config, modelIdFromEntry } from '@/config';
 import type { ModelProvider } from '@/model-provider';
+import { startChildSpan, tracer } from '@/tracing';
 
 import type { ExtensionHandler } from '../extension-handler';
 import type {
@@ -22,7 +23,6 @@ import { checkAndFixHistory } from '../utils/check-and-fix-history';
 import { convertToModelMessagesExtended } from '../utils/convert-to-model-messages';
 import { inboxDrainAttributes } from '../utils/inbox-drain-attributes';
 import type { ModelFallbackManager } from '../utils/model-fallback-manager';
-import { startChildSpan, tracer } from '../utils/tracing';
 import {
   createGenerationRunner,
   type GenerationRunner,

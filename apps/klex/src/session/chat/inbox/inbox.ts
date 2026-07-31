@@ -9,9 +9,9 @@ import {
   type SessionInboxEvent,
   SessionInboxPriority,
 } from '@/session/inbox';
+import { tracer } from '@/tracing';
 
 import type { ExtendedUIMessage } from '../message-types';
-import { tracer } from '../utils/tracing';
 
 export type { SessionInbox, SessionInboxEvent };
 // Re-export router-facing types for convenience — chat-internal consumers

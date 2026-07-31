@@ -148,18 +148,195 @@ const modelSelectionPatchSchema = z
   })
   .openapi('ModelSelectionPatch');
 
+// --- Providers ---
+
+const apiFormatSchema = z
+  .enum([
+    'openai',
+    'anthropic',
+    'google',
+    'chat-completions',
+    'open-responses',
+    'messages',
+  ])
+  .openapi('ApiFormat');
+
+const endpointAuthSchema = z
+  .object({
+    apiKey: z.string().optional(),
+    headers: z.record(z.string(), z.string()).optional(),
+  })
+  .openapi('EndpointAuth');
+
+const endpointConfigSchema = z
+  .object({
+    url: z.url(),
+    format: apiFormatSchema,
+    auth: endpointAuthSchema,
+  })
+  .openapi('EndpointConfig');
+
+const providerPresetSchema = z
+  .enum(['openai', 'anthropic', 'google'])
+  .openapi('ProviderPreset');
+
+const providerResponseSchema = z
+  .union([
+    z.object({
+      name: z.string(),
+      preset: providerPresetSchema,
+      auth: endpointAuthSchema,
+    }),
+    z.object({
+      name: z.string(),
+      endpoints: z.record(z.string(), endpointConfigSchema),
+    }),
+  ])
+  .openapi('Provider');
+
+const providersResponseSchema = z
+  .object({
+    providers: z.array(providerResponseSchema),
+  })
+  .openapi('ProvidersResponse');
+
+const createProviderBodySchema = z
+  .union([
+    z.object({
+      name: z.string().min(1),
+      preset: providerPresetSchema,
+      auth: endpointAuthSchema,
+    }),
+    z.object({
+      name: z.string().min(1),
+      endpoints: z.record(z.string(), endpointConfigSchema),
+    }),
+  ])
+  .openapi('CreateProviderBody');
+
+const updateProviderBodySchema = z
+  .object({
+    preset: providerPresetSchema.optional(),
+    auth: endpointAuthSchema.optional(),
+    endpoints: z.record(z.string(), endpointConfigSchema).optional(),
+  })
+  .openapi('UpdateProviderBody');
+
+const providerNameParamSchema = z.object({
+  name: z.string().min(1),
+});
+
+const endpointWithNameSchema = z
+  .object({
+    name: z.string(),
+    url: z.url(),
+    format: apiFormatSchema,
+    auth: endpointAuthSchema,
+  })
+  .openapi('EndpointWithName');
+
+const endpointsResponseSchema = z
+  .object({
+    endpoints: z.array(endpointWithNameSchema),
+  })
+  .openapi('EndpointsResponse');
+
+const createEndpointBodySchema = z
+  .object({
+    name: z.string().min(1),
+    url: z.url(),
+    format: apiFormatSchema,
+    auth: endpointAuthSchema,
+  })
+  .openapi('CreateEndpointBody');
+
+const updateEndpointBodySchema = z
+  .object({
+    url: z.url().optional(),
+    format: apiFormatSchema.optional(),
+    auth: endpointAuthSchema.optional(),
+  })
+  .openapi('UpdateEndpointBody');
+
+const endpointNameParamSchema = z.object({
+  name: z.string().min(1),
+  endpointName: z.string().min(1),
+});
+
+// --- Known Models ---
+
+const knownModelSchema = z
+  .object({
+    modelId: z.string().min(1),
+    endpointName: z.string().optional(),
+    displayName: z.string().optional(),
+    contextSize: z.number().int().positive().optional(),
+  })
+  .openapi('KnownModel');
+
+const knownModelsResponseSchema = z
+  .object({
+    models: z.array(knownModelSchema),
+  })
+  .openapi('KnownModelsResponse');
+
+const createKnownModelBodySchema = z
+  .object({
+    modelId: z.string().min(1),
+    endpointName: z.string().min(1).optional(),
+    displayName: z.string().optional(),
+    contextSize: z.number().int().positive().optional(),
+  })
+  .openapi('CreateKnownModelBody');
+
+const updateKnownModelBodySchema = z
+  .object({
+    displayName: z.string().optional(),
+    contextSize: z.number().int().positive().optional(),
+  })
+  .openapi('UpdateKnownModelBody');
+
+const knownModelIdParamSchema = z.object({
+  name: z.string().min(1),
+  modelId: z.string().min(1),
+});
+
+const knownModelQuerySchema = z.object({
+  endpointName: z.string().min(1).optional(),
+});
+
 export {
+  apiFormatSchema,
+  createEndpointBodySchema,
+  createKnownModelBodySchema,
   createMcpServerBodySchema,
+  createProviderBodySchema,
+  endpointAuthSchema,
+  endpointConfigSchema,
+  endpointNameParamSchema,
+  endpointsResponseSchema,
+  endpointWithNameSchema,
   errorResponseSchema,
   healthResponseSchema,
   introspectionChildSchema,
   introspectionNodeSchema,
   introspectionPathParamsSchema,
+  knownModelIdParamSchema,
+  knownModelQuerySchema,
+  knownModelSchema,
+  knownModelsResponseSchema,
   mcpServerNameParamSchema,
   mcpServersResponseSchema,
   modelIdSchema,
   modelSelectionPatchSchema,
   modelSelectionSchema,
+  providerNameParamSchema,
+  providerPresetSchema,
+  providerResponseSchema,
+  providersResponseSchema,
   toolCallHistoryResponseSchema,
+  updateEndpointBodySchema,
+  updateKnownModelBodySchema,
   updateMcpServerBodySchema,
+  updateProviderBodySchema,
 };

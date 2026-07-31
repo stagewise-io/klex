@@ -90,6 +90,33 @@ function createMockConfig(
     updateModelSelection: async () => {
       throw new Error('Not used in model provider tests');
     },
+    addProvider: async () => {
+      throw new Error('Not used in model provider tests');
+    },
+    updateProvider: async () => {
+      throw new Error('Not used in model provider tests');
+    },
+    removeProvider: async () => {
+      throw new Error('Not used in model provider tests');
+    },
+    addEndpoint: async () => {
+      throw new Error('Not used in model provider tests');
+    },
+    updateEndpoint: async () => {
+      throw new Error('Not used in model provider tests');
+    },
+    removeEndpoint: async () => {
+      throw new Error('Not used in model provider tests');
+    },
+    addKnownModel: async () => {
+      throw new Error('Not used in model provider tests');
+    },
+    updateKnownModel: async () => {
+      throw new Error('Not used in model provider tests');
+    },
+    removeKnownModel: async () => {
+      throw new Error('Not used in model provider tests');
+    },
   };
 }
 

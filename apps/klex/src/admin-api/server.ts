@@ -26,6 +26,32 @@ import {
   updateMcpServerRoute,
 } from './routes/v1/mcp';
 import {
+  createEndpoint,
+  createEndpointRoute,
+  createKnownModel,
+  createKnownModelRoute,
+  createProvider,
+  createProviderRoute,
+  deleteEndpoint,
+  deleteEndpointRoute,
+  deleteKnownModel,
+  deleteKnownModelRoute,
+  deleteProvider,
+  deleteProviderRoute,
+  getEndpoints,
+  getEndpointsRoute,
+  getKnownModels,
+  getKnownModelsRoute,
+  getProviders,
+  getProvidersRoute,
+  updateEndpoint,
+  updateEndpointRoute,
+  updateKnownModel,
+  updateKnownModelRoute,
+  updateProvider,
+  updateProviderRoute,
+} from './routes/v1/providers';
+import {
   getModelSelection,
   getModelSelectionRoute,
   patchModelSelection,
@@ -89,6 +115,20 @@ export function createAdminApp(deps: AdminAppDependencies): OpenAPIHono {
   app.openapi(updateMcpServerRoute, updateMcpServer(deps));
   app.openapi(deleteMcpServerRoute, deleteMcpServer(deps));
   app.openapi(getMcpToolCallHistoryRoute, getMcpToolCallHistory(deps));
+
+  // Providers
+  app.openapi(getProvidersRoute, getProviders(deps));
+  app.openapi(createProviderRoute, createProvider(deps));
+  app.openapi(updateProviderRoute, updateProvider(deps));
+  app.openapi(deleteProviderRoute, deleteProvider(deps));
+  app.openapi(getEndpointsRoute, getEndpoints(deps));
+  app.openapi(createEndpointRoute, createEndpoint(deps));
+  app.openapi(updateEndpointRoute, updateEndpoint(deps));
+  app.openapi(deleteEndpointRoute, deleteEndpoint(deps));
+  app.openapi(getKnownModelsRoute, getKnownModels(deps));
+  app.openapi(createKnownModelRoute, createKnownModel(deps));
+  app.openapi(updateKnownModelRoute, updateKnownModel(deps));
+  app.openapi(deleteKnownModelRoute, deleteKnownModel(deps));
 
   // OpenAPI spec endpoint
   app.doc('/v1/openapi.json', {

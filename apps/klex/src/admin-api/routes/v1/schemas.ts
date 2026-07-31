@@ -148,6 +148,19 @@ const modelSelectionPatchSchema = z
   })
   .openapi('ModelSelectionPatch');
 
+const modelSelectionWarningSchema = z
+  .object({
+    modelId: z.string(),
+    message: z.string(),
+  })
+  .openapi('ModelSelectionWarning');
+
+const modelSelectionPatchResponseSchema = modelSelectionSchema
+  .extend({
+    warnings: z.array(modelSelectionWarningSchema),
+  })
+  .openapi('ModelSelectionPatchResponse');
+
 // --- Providers ---
 
 const apiFormatSchema = z
@@ -331,8 +344,10 @@ export {
   mcpServerNameParamSchema,
   mcpServersResponseSchema,
   modelIdSchema,
+  modelSelectionPatchResponseSchema,
   modelSelectionPatchSchema,
   modelSelectionSchema,
+  modelSelectionWarningSchema,
   providerNameParamSchema,
   providerPresetSchema,
   providerResponseSchema,

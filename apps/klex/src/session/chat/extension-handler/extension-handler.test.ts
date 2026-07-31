@@ -1059,6 +1059,57 @@ describe('ExtensionHandler — getExtensionState', () => {
   });
 });
 
+describe('ExtensionHandler — getExtensions', () => {
+  it('returns an empty object when no extensions are registered', () => {
+    const handler = createExtensionHandler({
+      factories: [],
+      ...HANDLER_OPTS,
+    });
+    expect(handler.getExtensions()).toEqual({});
+  });
+
+  it('returns all extension identifiers with display names when declared', () => {
+    const f1: ExtensionFactory = {
+      identifier: 'io.stagewise/ext-a',
+      displayName: 'Extension A',
+      create: () => ({}),
+    };
+    const f2: ExtensionFactory = {
+      identifier: 'io.stagewise/ext-b',
+      displayName: 'Extension B',
+      create: () => ({}),
+    };
+    const handler = createExtensionHandler({
+      factories: [f1, f2],
+      ...HANDLER_OPTS,
+    });
+    expect(handler.getExtensions()).toEqual({
+      'io.stagewise/ext-a': { displayName: 'Extension A' },
+      'io.stagewise/ext-b': { displayName: 'Extension B' },
+    });
+  });
+
+  it('returns entries without displayName when the factory omits it', () => {
+    const f1: ExtensionFactory = {
+      identifier: 'io.stagewise/with-name',
+      displayName: 'Named',
+      create: () => ({}),
+    };
+    const f2: ExtensionFactory = {
+      identifier: 'io.stagewise/no-name',
+      create: () => ({}),
+    };
+    const handler = createExtensionHandler({
+      factories: [f1, f2],
+      ...HANDLER_OPTS,
+    });
+    expect(handler.getExtensions()).toEqual({
+      'io.stagewise/with-name': { displayName: 'Named' },
+      'io.stagewise/no-name': {},
+    });
+  });
+});
+
 describe('ExtensionHandler — generateText wrapper trace attribution', () => {
   /**
    * Builds a fresh set of deps with a spied generateText that captures

@@ -379,6 +379,15 @@ export interface Extension {
   onStepComplete?: (event: StepCompleteEvent) => void | Promise<void>;
 
   dataPartTransformers?: DataPartTransformers;
+
+  /**
+   * Optionally return a JSON-serializable state object describing the
+   * extension's current internal state. Exposed via the admin API at
+   * `GET /v1/sessions/:sessionId/extensions/:extensionId/state`.
+   *
+   * If not implemented, the state endpoint returns `null`.
+   */
+  introspect?: () => Record<string, unknown> | Promise<Record<string, unknown>>;
 }
 
 export interface ExtensionDeps {
@@ -470,18 +479,18 @@ export interface ExtensionDeps {
 }
 
 /**
- * The descriptor passed to the extension handler when registering an
- * extension. The handler reads {@link identifier} and {@link displayName}
- * upfront to set up per-extension dependencies (like `getDataDir`) and
- * enforce identifier uniqueness before the factory is invoked.
- */
-/**
  * The base dependencies the session provides to every extension.
  * The handler augments these with a per-extension `getDataDir` before
  * passing them to each factory.
  */
 export type BaseExtensionDeps = Omit<ExtensionDeps, 'getDataDir'>;
 
+/**
+ * The descriptor passed to the extension handler when registering an
+ * extension. The handler reads {@link identifier} and {@link displayName}
+ * upfront to set up per-extension dependencies (like `getDataDir`) and
+ * enforce identifier uniqueness before the factory is invoked.
+ */
 export interface ExtensionFactory {
   /**
    * Unique identifier in reverse-domain notation

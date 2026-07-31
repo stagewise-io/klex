@@ -10,6 +10,7 @@ import {
 } from '@/session/inbox';
 import type {
   AgentSession,
+  ExtensionStateProvider,
   SessionHooks,
   SessionInfo,
   SessionTerminationInfo,
@@ -21,7 +22,7 @@ export interface RouterDependencies {
   createChatSession: (hooks: SessionHooks, mcp: Mcp) => AgentSession;
 }
 
-export interface Router {
+export interface Router extends ExtensionStateProvider {
   start(): Promise<void>;
   close(): Promise<void>;
 
@@ -106,6 +107,16 @@ class RouterModule implements Router {
     const session = this.session;
     if (!session) return [];
     return [session.getSessionInfo()];
+  }
+
+  async getExtensionState(
+    sessionId: string,
+    extensionId: string,
+  ): Promise<Record<string, unknown> | null | undefined> {
+    const session = this.session;
+    if (!session || session.status === 'terminated') return undefined;
+    if (session.getSessionInfo().id !== sessionId) return undefined;
+    return session.getExtensionState(extensionId);
   }
 
   // ---------------------------------------------------------------------------

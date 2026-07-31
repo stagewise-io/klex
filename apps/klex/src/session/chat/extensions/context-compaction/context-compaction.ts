@@ -117,6 +117,7 @@ class ContextCompactionExt implements Extension {
 
   private compacting = false;
   private cachedThreshold: number | null = null;
+  private latestSummary: string | null = null;
 
   /**
    * Per-step flag set by `historyTransformer` when the summary was
@@ -243,6 +244,13 @@ class ContextCompactionExt implements Extension {
     return {
       history: filtered,
       flags: { hasCompacted: true },
+    };
+  }
+
+  introspect(): Record<string, unknown> {
+    return {
+      status: this.compacting ? 'compacting' : 'idle',
+      latestSummary: this.latestSummary,
     };
   }
 
@@ -539,6 +547,7 @@ class ContextCompactionExt implements Extension {
       return false;
     }
 
+    this.latestSummary = summary;
     span.setAttribute('compaction.summaryLength', summary.length);
     span.addEvent('compaction.summary_injected');
     this.deps.logger.info(

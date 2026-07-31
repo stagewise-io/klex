@@ -8,6 +8,7 @@ import type {
   Extension,
   ExtensionDeps,
   GenerateTextFailureReason,
+  GenerateTextResult,
   StepCompleteEvent,
 } from '../extension-api';
 import {
@@ -2043,5 +2044,87 @@ describe('ContextCompactionExt — post-compaction baseline & hysteresis', () =>
     await simulateStep(ext, historyWithDeferredSummary(), 50_000);
     await flushMicrotasks();
     expect(deps.generateText).not.toHaveBeenCalled();
+  });
+});
+
+describe('ContextCompactionExt — introspection', () => {
+  it('reports idle status and null latestSummary before any compaction', () => {
+    const ext = createContextCompactionExt.create(makeDeps());
+    expect(ext.introspect!()).toEqual({
+      status: 'idle',
+      latestSummary: null,
+    });
+  });
+
+  it('reports compacting status during an in-flight compaction', async () => {
+    let resolveGen: (value: GenerateTextResult) => void = () => {};
+    const pendingPromise = new Promise<GenerateTextResult>((resolve) => {
+      resolveGen = resolve;
+    });
+    const deps = makeDeps({
+      getHistory: vi.fn(() => [
+        makeTextMessage('user', 'Hello'),
+        makeTextMessage('assistant', 'Hi'),
+      ]),
+      generateText: vi.fn(() => pendingPromise),
+    });
+
+    const ext = createContextCompactionExt.create(deps);
+    await ext.onStepComplete!(
+      makeResult(makeUsage(FALLBACK_COMPACTION_THRESHOLD, 0)),
+    );
+    // Compaction is now in-flight (generateText hasn't resolved).
+    await flushMicrotasks();
+
+    expect(ext.introspect!()).toEqual({
+      status: 'compacting',
+      latestSummary: null,
+    });
+
+    // Clean up — let the pending compaction finish.
+    resolveGen(genSuccess('late summary'));
+    await flushMicrotasks();
+  });
+
+  it('reports latestSummary after a successful compaction', async () => {
+    const deps = makeDeps({
+      getHistory: vi.fn(() => [
+        makeTextMessage('user', 'Hello'),
+        makeTextMessage('assistant', 'Hi'),
+      ]),
+      generateText: vi.fn().mockResolvedValue(genSuccess('The summary text')),
+    });
+
+    const ext = createContextCompactionExt.create(deps);
+    await ext.onStepComplete!(
+      makeResult(makeUsage(FALLBACK_COMPACTION_THRESHOLD, 0)),
+    );
+    await flushMicrotasks();
+
+    expect(ext.introspect!()).toEqual({
+      status: 'idle',
+      latestSummary: 'The summary text',
+    });
+  });
+
+  it('reports null latestSummary when compaction fails', async () => {
+    const deps = makeDeps({
+      getHistory: vi.fn(() => [
+        makeTextMessage('user', 'Hello'),
+        makeTextMessage('assistant', 'Hi'),
+      ]),
+      generateText: vi.fn().mockResolvedValue(genFailure()),
+    });
+
+    const ext = createContextCompactionExt.create(deps);
+    await ext.onStepComplete!(
+      makeResult(makeUsage(FALLBACK_COMPACTION_THRESHOLD, 0)),
+    );
+    await flushMicrotasks();
+
+    expect(ext.introspect!()).toEqual({
+      status: 'idle',
+      latestSummary: null,
+    });
   });
 });

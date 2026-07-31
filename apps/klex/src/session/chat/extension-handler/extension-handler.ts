@@ -149,6 +149,12 @@ export interface ExtensionHandler {
   getExtensionState: (
     extensionId: string,
   ) => Promise<Record<string, unknown> | null | undefined>;
+
+  /**
+   * Returns a map of all loaded extension identifiers to their display
+   * name (if declared by the factory).
+   */
+  getExtensions: () => Record<string, { displayName?: string }>;
 }
 
 export interface ExtensionHandlerDependencies {
@@ -172,6 +178,9 @@ class ExtensionHandlerModule implements ExtensionHandler {
   private readonly extensionDeps: BaseExtensionDeps;
   /** Maps each extension instance to its factory identifier for logging. */
   private readonly identifiersByExtension: Map<Extension, string>;
+
+  /** Maps each extension identifier to its factory-declared display name. */
+  private readonly displayNamesByIdentifier: Map<string, string | undefined>;
 
   constructor(deps: {
     factories: ExtensionFactory[];
@@ -197,6 +206,7 @@ class ExtensionHandlerModule implements ExtensionHandler {
     const onExtensionUsage = deps.onExtensionUsage;
 
     this.identifiersByExtension = new Map();
+    this.displayNamesByIdentifier = new Map();
 
     this.extensions = deps.factories.map((factory) => {
       const scopedDeps: ExtensionDeps = {
@@ -232,6 +242,10 @@ class ExtensionHandlerModule implements ExtensionHandler {
 
       const ext = factory.create(scopedDeps);
       this.identifiersByExtension.set(ext, factory.identifier);
+      this.displayNamesByIdentifier.set(
+        factory.identifier,
+        factory.displayName,
+      );
       return ext;
     });
   }
@@ -411,6 +425,14 @@ class ExtensionHandlerModule implements ExtensionHandler {
         );
       }
     }
+  }
+
+  getExtensions(): Record<string, { displayName?: string }> {
+    const result: Record<string, { displayName?: string }> = {};
+    for (const [identifier, displayName] of this.displayNamesByIdentifier) {
+      result[identifier] = displayName ? { displayName } : {};
+    }
+    return result;
   }
 
   async getExtensionState(

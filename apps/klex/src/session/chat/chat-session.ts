@@ -822,6 +822,10 @@ class ChatSessionModule implements AgentSession {
   ): Promise<Record<string, unknown> | null | undefined> {
     return this.extensionHandler.getExtensionState(extensionId);
   }
+
+  getExtensions(): Record<string, { displayName?: string }> {
+    return this.extensionHandler.getExtensions();
+  }
 }
 
 export function createChatSession(deps: ChatSessionDependencies): AgentSession {

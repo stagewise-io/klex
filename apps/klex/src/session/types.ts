@@ -124,6 +124,17 @@ export interface ExtensionStateProvider {
 }
 
 /**
+ * Provides the list of loaded extensions for the admin API. Implemented
+ * by the router, which validates the session and delegates to the
+ * session's extension handler.
+ */
+export interface ExtensionListProvider {
+  getExtensions(
+    sessionId: string,
+  ): Record<string, { displayName?: string }> | undefined;
+}
+
+/**
  * This is the interface that AgentSessions must implement in order to become
  * controllable by the Router.
  */
@@ -176,4 +187,11 @@ export interface AgentSession {
   getExtensionState(
     extensionId: string,
   ): Promise<Record<string, unknown> | null | undefined>;
+
+  /**
+   * Returns a map of all loaded extension identifiers to their display
+   * name (if declared by the factory), or `undefined` if the session
+   * is not found.
+   */
+  getExtensions(): Record<string, { displayName?: string }>;
 }

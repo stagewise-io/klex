@@ -4,6 +4,8 @@ import type { Router } from '@/router';
 
 import {
   errorResponseSchema,
+  extensionListParamSchema,
+  extensionListResponseSchema,
   extensionStateParamSchema,
   extensionStateResponseSchema,
 } from './schemas';
@@ -62,4 +64,47 @@ export function getExtensionState(
 
     return c.json(state, 200);
   }) as RouteHandler<typeof extensionStateRoute>;
+}
+
+export const extensionListRoute = createRoute({
+  method: 'get',
+  path: '/v1/sessions/{sessionId}/extensions',
+  tags: ['Extensions'],
+  summary: 'List loaded extensions',
+  description:
+    'Returns all extensions loaded in a specific session, keyed by extension identifier. Each entry optionally includes the display name declared by the factory.',
+  request: {
+    params: extensionListParamSchema,
+  },
+  responses: {
+    200: {
+      content: {
+        'application/json': { schema: extensionListResponseSchema },
+      },
+      description: 'Map of extension identifiers to extension info',
+    },
+    404: {
+      content: {
+        'application/json': { schema: errorResponseSchema },
+      },
+      description: 'Session not found',
+    },
+  },
+});
+
+export function getExtensionList(
+  deps: ExtensionRouteDependencies,
+): RouteHandler<typeof extensionListRoute> {
+  // biome-ignore lint/suspicious/noExplicitAny: RouteHandler generic causes TS2589 type instantiation depth exceeded
+  return (async (c: any) => {
+    const { sessionId } = c.req.valid('param') as { sessionId: string };
+
+    const extensions = deps.router.getExtensions(sessionId);
+
+    if (extensions === undefined) {
+      return c.json({ error: 'Session not found' }, 404);
+    }
+
+    return c.json(extensions, 200);
+  }) as RouteHandler<typeof extensionListRoute>;
 }

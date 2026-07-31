@@ -7,7 +7,12 @@ import type { Config } from '@/config';
 import type { Mcp } from '@/mcp';
 import type { Router } from '@/router';
 
-import { extensionStateRoute, getExtensionState } from './routes/v1/extensions';
+import {
+  extensionListRoute,
+  extensionStateRoute,
+  getExtensionList,
+  getExtensionState,
+} from './routes/v1/extensions';
 import { getHealth, healthRoute } from './routes/v1/health';
 import {
   createMcpServer,
@@ -75,6 +80,7 @@ export function createAdminApp(deps: AdminAppDependencies): OpenAPIHono {
   app.openapi(sessionsRoute, getSessions({ router: deps.router }));
 
   // Extensions
+  app.openapi(extensionListRoute, getExtensionList({ router: deps.router }));
   app.openapi(extensionStateRoute, getExtensionState({ router: deps.router }));
 
   // MCP Servers

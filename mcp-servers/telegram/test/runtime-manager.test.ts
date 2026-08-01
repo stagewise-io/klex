@@ -228,7 +228,7 @@ describe('Telegram runtime manager', () => {
   });
 
   it('isolates pending queues, acknowledgements, and tools by token', async () => {
-    type Raw = Parameters<Parameters<TelegramBot['onText']>[0]>[0];
+    type Raw = Parameters<Parameters<TelegramBot['onMessage']>[0]>[0];
     const bots = new Map<
       string,
       {
@@ -252,8 +252,14 @@ describe('Telegram runtime manager', () => {
             }
             return { id: botId };
           },
-          onText(value) {
+          onMessage(value) {
             listener = value;
+          },
+          async downloadFile() {
+            return {
+              status: 'included',
+              bytes: new Uint8Array([1, 2, 3]),
+            };
           },
           start: async () => undefined,
           stop,
@@ -276,6 +282,7 @@ describe('Telegram runtime manager', () => {
     await rpc(manager, 'token-a', '40', 'tools/list', {});
     await rpc(manager, 'token-b', '50', 'tools/list', {});
     await bots.get('token-a')?.emit({
+      kind: 'text',
       updateId: 10,
       messageId: 20,
       chatId: 40,
@@ -286,6 +293,7 @@ describe('Telegram runtime manager', () => {
       date: 1_700_000_000,
     });
     await bots.get('token-b')?.emit({
+      kind: 'text',
       updateId: 11,
       messageId: 21,
       chatId: 50,
@@ -344,18 +352,30 @@ describe('Telegram runtime manager', () => {
     if (!reader) throw new Error('Missing subscription response body');
     await readSseMessage(reader);
     await bots.get('token-a')?.emit({
+      kind: 'photo',
       updateId: 12,
       messageId: 22,
       chatId: 40,
       chatType: 'private',
       senderId: 40,
       senderIsBot: false,
-      text: 'live a',
+      fileId: 'photo-a',
+      fileSize: 3,
+      caption: 'live photo a',
       date: 1_700_000_002,
     });
     expect(await readSseMessage(reader)).toMatchObject({
       method: 'io.stagewise/push-notifications/event',
-      params: { event: { eventId: 'telegram:77:update:12' } },
+      params: {
+        event: {
+          eventId: 'telegram:77:update:12',
+          content: [
+            { type: 'text', text: 'live photo a' },
+            { type: 'image', data: 'AQID', mimeType: 'image/jpeg' },
+          ],
+          data: { mediaKind: 'photo', mediaStatus: 'included' },
+        },
+      },
     });
     await reader.cancel();
 
@@ -370,6 +390,7 @@ describe('Telegram runtime manager', () => {
       eventIds: ['telegram:77:update:10', 'telegram:77:update:12'],
     });
     await bots.get('token-a')?.emit({
+      kind: 'text',
       updateId: 10,
       messageId: 20,
       chatId: 40,

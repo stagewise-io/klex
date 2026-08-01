@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createLogger } from '@stagewise/logger';
 
@@ -6,25 +6,59 @@ import { createEventStore } from '../src/event-store.js';
 import { createTelegramMcp } from '../src/mcp.js';
 import {
   createTelegramChannel,
+  downloadTelegramFile,
+  type RawTelegramMessage,
+  selectLargestPhoto,
   type TelegramBot,
   type TelegramChannel,
+  type TelegramFileDownloadResult,
 } from '../src/telegram.js';
 
 const logging = createLogger({ type: 'hidden' });
 const channels: TelegramChannel[] = [];
 
+const textMessage = {
+  botId: '77',
+  updateId: '10',
+  messageId: '20',
+  chatId: '30',
+  senderId: '40',
+  kind: 'text' as const,
+  text: 'hello',
+  receivedAt: '2026-01-01T00:00:00.000Z',
+};
+
+const photoMessage = {
+  botId: '77',
+  updateId: '11',
+  messageId: '21',
+  chatId: '30',
+  senderId: '40',
+  kind: 'photo' as const,
+  caption: 'caption',
+  mimeType: 'image/jpeg',
+  mediaData: 'AQID',
+  mediaSize: 3,
+  mediaStatus: 'included' as const,
+  receivedAt: '2026-01-01T00:00:01.000Z',
+};
+
 afterEach(async () => {
   for (const channel of channels.splice(0)) await channel.close();
+  vi.useRealTimers();
 });
 
 function createFakeBot(getMeError?: Error) {
-  type Raw = Parameters<Parameters<TelegramBot['onText']>[0]>[0];
-  let listener: ((message: Raw) => void | Promise<void>) | undefined;
+  let listener:
+    | ((message: RawTelegramMessage) => void | Promise<void>)
+    | undefined;
   const sends: {
     chatId: string;
     message: string;
     replyToMessageId?: number;
   }[] = [];
+  const downloadCalls: string[] = [];
+  const downloads = new Map<string, TelegramFileDownloadResult>();
   let startCount = 0;
   let stopCount = 0;
   const bot: TelegramBot = {
@@ -32,8 +66,17 @@ function createFakeBot(getMeError?: Error) {
       if (getMeError) throw getMeError;
       return { id: 77 };
     },
-    onText(value) {
+    onMessage(value) {
       listener = value;
+    },
+    async downloadFile({ fileId }) {
+      downloadCalls.push(fileId);
+      return (
+        downloads.get(fileId) ?? {
+          status: 'included',
+          bytes: new Uint8Array([1, 2, 3]),
+        }
+      );
     },
     async start() {
       startCount += 1;
@@ -50,8 +93,11 @@ function createFakeBot(getMeError?: Error) {
   return {
     bot,
     sends,
-    emit(message: Partial<Raw> = {}) {
+    downloadCalls,
+    downloads,
+    emit(message: Partial<RawTelegramMessage> = {}) {
       return listener?.({
+        kind: 'text',
         updateId: 10,
         messageId: 20,
         chatId: 30,
@@ -61,7 +107,7 @@ function createFakeBot(getMeError?: Error) {
         text: ' hello ',
         date: 1_700_000_000,
         ...message,
-      });
+      } as RawTelegramMessage);
     },
     startCount: () => startCount,
     stopCount: () => stopCount,
@@ -73,6 +119,7 @@ async function createStartedChannel(
   onMessage: Parameters<
     typeof createTelegramChannel
   >[0]['onMessage'] = () => {},
+  options: { mediaMaxBytes?: number; mediaDownloadTimeoutMs?: number } = {},
 ) {
   const channel = createTelegramChannel({
     token: 'test-token',
@@ -80,6 +127,7 @@ async function createStartedChannel(
     logging,
     onMessage,
     botFactory: () => fake.bot,
+    ...options,
   });
   channels.push(channel);
   await channel.start();
@@ -121,85 +169,72 @@ async function jsonRpc(
 }
 
 describe('event store', () => {
-  it('deduplicates and hides acknowledged events', () => {
+  it('deduplicates text events, pages oldest first, and deep-clones results', () => {
     const store = createEventStore();
-    const message = {
-      botId: '77',
-      updateId: '10',
-      messageId: '20',
-      chatId: '30',
-      senderId: '40',
-      text: 'hello',
-      receivedAt: '2026-01-01T00:00:00.000Z',
-    };
-    const first = store.append(message);
-    const duplicatePending = store.append(message);
+    const first = store.append(textMessage);
     expect(first.isNew).toBe(true);
-    expect(duplicatePending.isNew).toBe(false);
-    expect(store.page()).toMatchObject({
+    expect(store.append(textMessage).isNew).toBe(false);
+    store.append({ ...textMessage, updateId: '12' });
+    expect(store.page({ limit: 1 })).toMatchObject({
       events: [
         {
           eventId: 'telegram:77:update:10',
-          sourceId: 'telegram:77',
           content: [{ type: 'text', text: 'hello' }],
-          data: {
-            messageId: '20',
-            updateId: '10',
-            chatId: '30',
-            senderId: '40',
-          },
+          data: { messageId: '20', chatId: '30', senderId: '40' },
         },
       ],
-      hasMore: false,
+      hasMore: true,
     });
-    const pageEvent = store.page().events[0];
-    if (pageEvent?.content[0]?.type === 'text') {
-      pageEvent.content[0].text = 'changed';
-    }
-    if (pageEvent?.data) pageEvent.data.messageId = 'changed';
+    const event = store.page().events[0];
+    if (event?.content[0]?.type === 'text') event.content[0].text = 'changed';
+    if (event?.data) event.data.messageId = 'changed';
     expect(store.page().events[0]).toMatchObject({
       content: [{ type: 'text', text: 'hello' }],
       data: { messageId: '20' },
     });
 
     store.acknowledge([first.notification.event.eventId]);
-    expect(store.page()).toEqual({ events: [], hasMore: false });
-    const duplicateAcknowledged = store.append(message);
-    expect(duplicateAcknowledged.isNew).toBe(false);
-    expect(store.page()).toEqual({ events: [], hasMore: false });
-    expect(() =>
-      store.acknowledge([first.notification.event.eventId]),
-    ).not.toThrow();
+    expect(store.append(textMessage).isNew).toBe(false);
     expect(() => store.acknowledge(['unknown'])).not.toThrow();
+    store.close();
+    expect(store.page()).toEqual({ events: [], hasMore: false });
   });
 
-  it('pages over the oldest unacknowledged events without cursors', () => {
-    const store = createEventStore();
-    const message = {
-      botId: '77',
-      messageId: '20',
-      chatId: '30',
-      senderId: '40',
-      text: 'hello',
-      receivedAt: '2026-01-01T00:00:00.000Z',
-    };
-    const first = store.append({ ...message, updateId: '10' });
-    store.append({ ...message, updateId: '11' });
+  it('stores multimodal blocks, applies queue budget, and releases it on ack', () => {
+    const store = createEventStore({ pendingMediaMaxBytes: 3 });
+    const first = store.append(photoMessage);
+    expect(store.page().events[0]).toMatchObject({
+      content: [
+        { type: 'text', text: 'caption' },
+        { type: 'image', data: 'AQID', mimeType: 'image/jpeg' },
+      ],
+      data: {
+        mediaKind: 'photo',
+        mediaStatus: 'included',
+        mediaSize: 3,
+      },
+    });
+    store.append({ ...photoMessage, updateId: '12', kind: 'voice' });
+    expect(store.page().events[1]).toMatchObject({
+      content: [
+        { type: 'text', text: 'caption' },
+        { type: 'text', text: expect.stringContaining('pending media budget') },
+      ],
+      data: { mediaKind: 'voice', mediaStatus: 'omitted_queue_budget' },
+    });
 
-    expect(store.page({ limit: 1 })).toMatchObject({
-      events: [{ eventId: first.notification.event.eventId }],
-      hasMore: true,
-    });
     store.acknowledge([first.notification.event.eventId]);
-    expect(store.page({ limit: 1 })).toMatchObject({
-      events: [{ eventId: 'telegram:77:update:11' }],
-      hasMore: false,
+    store.append({ ...photoMessage, updateId: '13', kind: 'audio' });
+    expect(store.page().events[1]).toMatchObject({
+      content: [{ type: 'text' }, { type: 'audio', data: 'AQID' }],
+      data: { mediaStatus: 'included' },
     });
+    expect(store.append(photoMessage).isNew).toBe(false);
   });
 });
 
 describe('Telegram channel', () => {
-  it('accepts only allowlisted private user text', async () => {
+  it('accepts allowlisted private text and filters rejected senders', async () => {
     const received: unknown[] = [];
     const { fake } = await createStartedChannel(createFakeBot(), (message) => {
       received.push(message);
@@ -216,14 +251,100 @@ describe('Telegram channel', () => {
         messageId: '20',
         chatId: '30',
         senderId: '40',
+        kind: 'text',
         text: 'hello',
         receivedAt: '2023-11-14T22:13:20.000Z',
       },
     ]);
   });
 
-  it('sends only to allowlisted chats with an optional native reply', async () => {
-    const { channel, fake } = await createStartedChannel();
+  it('downloads photos, audio, and voice with ordered captions', async () => {
+    const received: unknown[] = [];
+    const { fake } = await createStartedChannel(createFakeBot(), (message) => {
+      received.push(message);
+    });
+    await fake.emit({
+      kind: 'photo',
+      fileId: 'largest-photo',
+      fileSize: 3,
+      caption: ' caption ',
+    });
+    await fake.emit({
+      kind: 'audio',
+      updateId: 11,
+      fileId: 'audio',
+      mimeType: 'audio/mpeg',
+    });
+    await fake.emit({ kind: 'voice', updateId: 12, fileId: 'voice' });
+    expect(fake.downloadCalls).toEqual(['largest-photo', 'audio', 'voice']);
+    expect(received).toMatchObject([
+      {
+        kind: 'photo',
+        caption: 'caption',
+        mimeType: 'image/jpeg',
+        mediaData: 'AQID',
+        mediaSize: 3,
+        mediaStatus: 'included',
+      },
+      {
+        kind: 'audio',
+        mimeType: 'audio/mpeg',
+        mediaStatus: 'included',
+      },
+      { kind: 'voice', mimeType: 'audio/ogg', mediaStatus: 'included' },
+    ]);
+  });
+
+  it('omits rejected media without disrupting later updates', async () => {
+    const received: unknown[] = [];
+    const fake = createFakeBot();
+    fake.downloads.set('failed', { status: 'omitted_download_failed' });
+    const started = await createStartedChannel(
+      fake,
+      (message) => {
+        received.push(message);
+      },
+      { mediaMaxBytes: 3 },
+    );
+    await started.fake.emit({
+      kind: 'photo',
+      fileId: 'large',
+      fileSize: 4,
+    });
+    await started.fake.emit({
+      kind: 'audio',
+      updateId: 11,
+      fileId: 'unsupported',
+      mimeType: 'application/octet-stream',
+    });
+    await started.fake.emit({
+      kind: 'voice',
+      updateId: 12,
+      fileId: 'failed',
+    });
+    await started.fake.emit({ updateId: 13, text: 'still works' });
+    expect(fake.downloadCalls).toEqual(['failed']);
+    expect(received).toMatchObject([
+      { mediaStatus: 'omitted_too_large' },
+      { mediaStatus: 'omitted_unsupported_type' },
+      { mediaStatus: 'omitted_download_failed' },
+      { kind: 'text', text: 'still works' },
+    ]);
+  });
+
+  it('does not download media rejected by chat and sender filters', async () => {
+    const fake = createFakeBot();
+    await createStartedChannel(fake);
+    await fake.emit({ kind: 'photo', fileId: 'group', chatType: 'group' });
+    await fake.emit({ kind: 'voice', fileId: 'bot', senderIsBot: true });
+    await fake.emit({ kind: 'audio', fileId: 'blocked', senderId: 41 });
+    expect(fake.downloadCalls).toEqual([]);
+  });
+
+  it('sends only to allowlisted chats and keeps lifecycle idempotent', async () => {
+    const fake = createFakeBot();
+    const { channel } = await createStartedChannel(fake);
+    await channel.start();
     await expect(
       channel.sendText({ chatId: '41', message: 'blocked' }),
     ).rejects.toThrow('not allowed');
@@ -234,42 +355,17 @@ describe('Telegram channel', () => {
         replyToMessageId: '20',
       }),
     ).resolves.toEqual({ messageId: '99' });
-    expect(fake.sends).toEqual([
-      { chatId: '40', message: 'reply', replyToMessageId: 20 },
-    ]);
-  });
-
-  it('applies allowlist replacements to inbound and outbound messages', async () => {
-    const received: unknown[] = [];
-    const { channel, fake } = await createStartedChannel(
-      createFakeBot(),
-      (message) => {
-        received.push(message);
-      },
-    );
-
     channel.updateAllowedUserIds(new Set(['41']));
-    await fake.emit({ senderId: 40, chatId: 40 });
-    await fake.emit({ senderId: 41, chatId: 41 });
     await expect(
       channel.sendText({ chatId: '40', message: 'blocked' }),
     ).rejects.toThrow('not allowed');
-    await expect(
-      channel.sendText({ chatId: '41', message: 'allowed' }),
-    ).resolves.toEqual({ messageId: '99' });
-    expect(received).toHaveLength(1);
-    expect(received[0]).toMatchObject({ senderId: '41', chatId: '41' });
-  });
-
-  it('validates identity and keeps lifecycle idempotent', async () => {
-    const fake = createFakeBot();
-    const { channel } = await createStartedChannel(fake);
-    await channel.start();
     await channel.close();
     await channel.close();
     expect(fake.startCount()).toBe(1);
     expect(fake.stopCount()).toBe(1);
+  });
 
+  it('reports identity failures without starting a runtime', async () => {
     const failed = createTelegramChannel({
       token: 'bad',
       allowedUserIds: new Set(['40']),
@@ -282,8 +378,116 @@ describe('Telegram channel', () => {
   });
 });
 
+describe('Telegram file downloader', () => {
+  it('selects the largest Telegram photo variant', () => {
+    expect(
+      selectLargestPhoto([
+        { file_id: 'small', file_size: 1 },
+        { file_id: 'large', file_size: 3 },
+      ]),
+    ).toEqual({ file_id: 'large', file_size: 3 });
+  });
+
+  it('streams bounded bytes and never returns the credential-bearing URL', async () => {
+    const requested: string[] = [];
+    const result = await downloadTelegramFile({
+      token: 'private-token',
+      fileId: 'file-id',
+      maxBytes: 3,
+      timeoutMs: 1_000,
+      getFile: async () => ({ file_path: 'voice/file.ogg', file_size: 3 }),
+      fetchFile: (async (url: string | URL | Request) => {
+        requested.push(String(url));
+        return new Response(new Uint8Array([1, 2, 3]));
+      }) as typeof fetch,
+    });
+    expect(result).toEqual({
+      status: 'included',
+      bytes: new Uint8Array([1, 2, 3]),
+    });
+    expect(requested[0]).toContain('private-token');
+    expect(JSON.stringify(result)).not.toContain('private-token');
+    expect(JSON.stringify(result)).not.toContain('voice/file.ogg');
+  });
+
+  it('rejects declared and streamed oversize files', async () => {
+    const fetchFile = vi.fn(
+      async () => new Response(new Uint8Array([1, 2, 3, 4])),
+    );
+    await expect(
+      downloadTelegramFile({
+        token: 'token',
+        fileId: 'declared',
+        maxBytes: 3,
+        timeoutMs: 1_000,
+        getFile: async () => ({ file_path: 'path', file_size: 4 }),
+        fetchFile: fetchFile as typeof fetch,
+      }),
+    ).resolves.toEqual({ status: 'omitted_too_large' });
+    expect(fetchFile).not.toHaveBeenCalled();
+
+    await expect(
+      downloadTelegramFile({
+        token: 'token',
+        fileId: 'streamed',
+        maxBytes: 3,
+        timeoutMs: 1_000,
+        getFile: async () => ({ file_path: 'path' }),
+        fetchFile: fetchFile as typeof fetch,
+      }),
+    ).resolves.toEqual({ status: 'omitted_too_large' });
+  });
+
+  it('turns timeout and lookup failures into sanitized failures', async () => {
+    vi.useFakeTimers();
+    const timeout = downloadTelegramFile({
+      token: 'private-token',
+      fileId: 'file-id',
+      maxBytes: 3,
+      timeoutMs: 10,
+      getFile: async () => new Promise(() => {}),
+      fetchFile: vi.fn() as typeof fetch,
+    });
+    await vi.advanceTimersByTimeAsync(10);
+    await expect(timeout).resolves.toEqual({
+      status: 'omitted_download_failed',
+    });
+
+    const stalledStream = downloadTelegramFile({
+      token: 'private-token',
+      fileId: 'file-id',
+      maxBytes: 3,
+      timeoutMs: 10,
+      getFile: async () => ({ file_path: 'path' }),
+      fetchFile: (async () =>
+        new Response(
+          new ReadableStream<Uint8Array>({
+            pull() {},
+          }),
+        )) as typeof fetch,
+    });
+    await vi.advanceTimersByTimeAsync(10);
+    await expect(stalledStream).resolves.toEqual({
+      status: 'omitted_download_failed',
+    });
+
+    await expect(
+      downloadTelegramFile({
+        token: 'private-token',
+        fileId: 'file-id',
+        maxBytes: 3,
+        timeoutMs: 10,
+        getFile: async () => {
+          throw new Error('private-token path');
+        },
+        fetchFile: vi.fn() as typeof fetch,
+      }),
+    ).resolves.toEqual({ status: 'omitted_download_failed' });
+  });
+});
+
 describe('MCP contract', () => {
-  it('retrieves events and delegates sendMessage', async () => {
+  it('retrieves multimodal events and keeps sendMessage text-only', async () => {
     const store = createEventStore();
     const { channel, fake } = await createStartedChannel(
       createFakeBot(),
@@ -291,7 +495,11 @@ describe('MCP contract', () => {
         store.append(message);
       },
     );
-    await fake.emit();
+    await fake.emit({
+      kind: 'photo',
+      fileId: 'photo',
+      caption: 'caption',
+    });
     const mcp = createTelegramMcp(channel, store);
     try {
       expect(
@@ -303,13 +511,11 @@ describe('MCP contract', () => {
         result: {
           events: [
             {
-              content: [{ type: 'text', text: 'hello' }],
-              data: {
-                messageId: '20',
-                updateId: '10',
-                chatId: '30',
-                senderId: '40',
-              },
+              content: [
+                { type: 'text', text: 'caption' },
+                { type: 'image', data: 'AQID', mimeType: 'image/jpeg' },
+              ],
+              data: { mediaKind: 'photo', mediaStatus: 'included' },
             },
           ],
         },

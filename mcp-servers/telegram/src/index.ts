@@ -30,6 +30,18 @@ const runtimes = createTelegramRuntimeManager({
     process.env.TELEGRAM_RUNTIME_IDLE_TIMEOUT_MS ?? '5000',
     'TELEGRAM_RUNTIME_IDLE_TIMEOUT_MS',
   ),
+  mediaMaxBytes: parsePositiveInteger(
+    process.env.TELEGRAM_MEDIA_MAX_BYTES ?? '10485760',
+    'TELEGRAM_MEDIA_MAX_BYTES',
+  ),
+  pendingMediaMaxBytes: parsePositiveInteger(
+    process.env.TELEGRAM_PENDING_MEDIA_MAX_BYTES ?? '52428800',
+    'TELEGRAM_PENDING_MEDIA_MAX_BYTES',
+  ),
+  mediaDownloadTimeoutMs: parsePositiveInteger(
+    process.env.TELEGRAM_MEDIA_DOWNLOAD_TIMEOUT_MS ?? '15000',
+    'TELEGRAM_MEDIA_DOWNLOAD_TIMEOUT_MS',
+  ),
 });
 
 const app = new Hono();

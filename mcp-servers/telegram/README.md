@@ -1,6 +1,6 @@
 # Telegram MCP Server
 
-An ephemeral, text-only Telegram bridge using grammY. Allowlisted private messages become Push Notifications; agents reply through one MCP tool.
+An ephemeral Telegram bridge using grammY. Allowlisted private text, photo, audio, and voice messages become Push Notifications; agents reply through one text-only MCP tool.
 
 ## Start the proxy
 
@@ -15,8 +15,11 @@ pnpm --filter @stagewise/telegram dev
 | `PORT` | `8789` | HTTP port |
 | `LOG_LEVEL` | `INFO` | Structured log threshold |
 | `TELEGRAM_RUNTIME_IDLE_TIMEOUT_MS` | `5000` | Grace period before an unsubscribed runtime is destroyed |
+| `TELEGRAM_MEDIA_MAX_BYTES` | `10485760` | Maximum decoded bytes accepted for one media file |
+| `TELEGRAM_PENDING_MEDIA_MAX_BYTES` | `52428800` | Maximum decoded media bytes retained by one runtime's pending queue |
+| `TELEGRAM_MEDIA_DOWNLOAD_TIMEOUT_MS` | `15000` | Deadline for Telegram file lookup and download |
 
-`GET /health` is credential-free and reports only aggregate runtime counts. It never reports bot identities, tokens, allowlists, or runtime keys.
+All size and timeout settings must be positive integers. `GET /health` is credential-free and reports only aggregate runtime counts. It never reports bot identities, tokens, allowlists, or runtime keys.
 
 ## Connect an agent
 
@@ -44,13 +47,35 @@ Treat the bot token as a password. Send `/start` to the bot before expecting it 
 
 The proxy derives an opaque, process-local runtime key from each token. Distinct tokens receive isolated Telegram pollers, MCP handlers, event queues, acknowledgements, tools, and allowlists. Concurrent requests for the same token reuse one runtime and cannot start duplicate pollers.
 
-An active Push Notifications subscription keeps its runtime alive. After the subscription disconnects, the runtime remains available for the configured grace period, then closes its MCP handler and Telegram poller and deletes its token, allowlist, pending events, and acknowledgement state. Reconnecting after cleanup creates a fresh runtime.
+An active Push Notifications subscription keeps its runtime alive. After the subscription disconnects, the runtime remains available for the configured grace period, then closes its MCP handler and Telegram poller and deletes its token, allowlist, pending event bodies, media byte accounting, and deduplication tombstones. Reconnecting after cleanup creates a fresh runtime.
 
 Requests using the same bot token intentionally share one runtime. The latest authenticated request replaces that runtime's allowlist, and only one active Push Notifications subscription is retained for its fixed internal consumer. Use distinct bot tokens when agents require isolation.
 
-## Contract
+## Inbound contract
 
-Inbound events use `sourceId: "telegram:<botId>"` and type `chat.message.received`. The message body is a canonical MCP text block in `content`; `data` contains `messageId`, `updateId`, `chatId`, and `senderId`. Event IDs are deterministic from the bot and update IDs. This server currently emits only text content blocks.
+Inbound events use `sourceId: "telegram:<botId>"` and type `chat.message.received`. `data` always contains `messageId`, `updateId`, `chatId`, and `senderId`. Event IDs are deterministic from the bot and update IDs.
+
+Supported allowlisted, non-bot, private messages are:
+
+- Plain text as one MCP text content block.
+- Photos as an inline base64 MCP image block with `image/jpeg` MIME type. The largest Telegram photo variant is selected.
+- Telegram audio as an inline base64 MCP audio block using its declared `audio/*` MIME type.
+- Telegram voice as an inline base64 MCP audio block, defaulting to `audio/ogg` when Telegram omits the MIME type.
+
+A non-empty media caption is a text block immediately before the media block. Each Telegram update is one notification. Album/media-group entries remain independent notifications and are not aggregated.
+
+Successful media events add `mediaKind`, `mediaStatus: "included"`, and `mediaSize` to `data`. Media that exceeds a limit, has an unsupported MIME declaration, fails to download, or exceeds the runtime's pending-media budget becomes a small text-only notification instead. Its `mediaStatus` is one of:
+
+- `omitted_too_large`
+- `omitted_unsupported_type`
+- `omitted_download_failed`
+- `omitted_queue_budget`
+
+Documents, video, video notes, animation, stickers, edits, reactions, groups, and webhooks are not supported. Current Klex model conversion preserves notifications but drops non-text content before model invocation; agent-side image/audio understanding is a separate change.
+
+Treat received content, base64 data, MIME declarations, captions, and structured data as untrusted input. Bot tokens, Telegram file identifiers, file paths, and credential-bearing download URLs are never emitted in notifications, MCP results, or logs.
+
+## Outbound text
 
 Send text with:
 
@@ -65,10 +90,12 @@ await mcpClient.callTool({
 });
 ```
 
-Messages must contain 1–4,000 characters. The outbound `chatId` must be in the runtime's current allowlist. Only allowlisted, non-bot, private plain-text messages are accepted; groups, media, edits, reactions, formatting, and webhooks are not supported.
+Messages must contain 1–4,000 characters. The outbound `chatId` must be in the runtime's current allowlist. Outbound images and audio are not supported.
 
 ## Pending queue guarantees
 
-Pending retrieval is bounded and oldest-first. Acknowledgements are idempotent and immediately hide matching events. Duplicate Telegram updates are suppressed while the runtime exists, including after acknowledgement.
+Pending retrieval is bounded and oldest-first. Acknowledgements are idempotent, immediately hide matching events, and release complete media bodies. Lightweight event-ID tombstones continue suppressing duplicate Telegram updates while the runtime exists.
 
-These guarantees are runtime-scoped, not durable. Destroying a runtime or restarting the proxy discards its queue and acknowledgement tombstones. A later runtime may therefore receive an upstream Telegram update again.
+Pending decoded media is bounded per runtime. If accepting media would exceed that budget, the queue stores an omission notification instead of the base64 body. General text-event count backpressure is not provided.
+
+These guarantees are runtime-scoped, not durable. Destroying a runtime or restarting the proxy discards its queue and deduplication tombstones. A later runtime may therefore receive an upstream Telegram update again.

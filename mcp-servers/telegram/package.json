@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Text-only Telegram MCP server",
+  "description": "Ephemeral Telegram MCP server with inbound image and audio support",
   "scripts": {
     "build": "node build.mjs",
     "dev": "tsx watch --env-file=../../.env src/index.ts",

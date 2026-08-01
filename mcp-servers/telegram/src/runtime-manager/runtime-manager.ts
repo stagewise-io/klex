@@ -2,7 +2,11 @@ import { createHmac, randomBytes } from 'node:crypto';
 
 import type { ModuleLogger, RootLogger } from '@stagewise/logger';
 
-import { createEventStore, type EventStore } from '../event-store.js';
+import {
+  createEventStore,
+  type EventStore,
+  type EventStoreOptions,
+} from '../event-store.js';
 import {
   createTelegramMcp,
   type TelegramMcp,
@@ -33,7 +37,10 @@ export interface TelegramRuntimeManagerDependencies {
   logging: RootLogger;
   processSecret?: Uint8Array;
   idleTimeoutMs?: number;
-  createEventStore?: () => EventStore;
+  mediaMaxBytes?: number;
+  pendingMediaMaxBytes?: number;
+  mediaDownloadTimeoutMs?: number;
+  createEventStore?: (options: EventStoreOptions) => EventStore;
   createChannel?: (deps: TelegramChannelDependencies) => TelegramChannel;
   createMcp?: (
     channel: TelegramChannel,
@@ -52,13 +59,19 @@ export interface TelegramRuntimeManager {
 }
 
 const DEFAULT_IDLE_TIMEOUT_MS = 5_000;
+const DEFAULT_MEDIA_MAX_BYTES = 10 * 1024 * 1024;
+const DEFAULT_PENDING_MEDIA_MAX_BYTES = 50 * 1024 * 1024;
+const DEFAULT_MEDIA_DOWNLOAD_TIMEOUT_MS = 15_000;
 
 class TelegramRuntimeManagerModule implements TelegramRuntimeManager {
   readonly #logging: RootLogger;
   readonly #logger: ModuleLogger;
   readonly #processSecret: Uint8Array;
   readonly #idleTimeoutMs: number;
-  readonly #createEventStore: () => EventStore;
+  readonly #mediaMaxBytes: number;
+  readonly #pendingMediaMaxBytes: number;
+  readonly #mediaDownloadTimeoutMs: number;
+  readonly #createEventStore: (options: EventStoreOptions) => EventStore;
   readonly #createChannel: (
     deps: TelegramChannelDependencies,
   ) => TelegramChannel;
@@ -79,6 +92,11 @@ class TelegramRuntimeManagerModule implements TelegramRuntimeManager {
     });
     this.#processSecret = deps.processSecret ?? randomBytes(32);
     this.#idleTimeoutMs = deps.idleTimeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS;
+    this.#mediaMaxBytes = deps.mediaMaxBytes ?? DEFAULT_MEDIA_MAX_BYTES;
+    this.#pendingMediaMaxBytes =
+      deps.pendingMediaMaxBytes ?? DEFAULT_PENDING_MEDIA_MAX_BYTES;
+    this.#mediaDownloadTimeoutMs =
+      deps.mediaDownloadTimeoutMs ?? DEFAULT_MEDIA_DOWNLOAD_TIMEOUT_MS;
     this.#createEventStore = deps.createEventStore ?? createEventStore;
     this.#createChannel = deps.createChannel ?? createTelegramChannel;
     this.#createMcp = deps.createMcp ?? createTelegramMcp;
@@ -169,12 +187,16 @@ class TelegramRuntimeManagerModule implements TelegramRuntimeManager {
     key: string,
     credentials: TelegramCredentials,
   ): Promise<TelegramRuntime> {
-    const eventStore = this.#createEventStore();
+    const eventStore = this.#createEventStore({
+      pendingMediaMaxBytes: this.#pendingMediaMaxBytes,
+    });
     let mcp: TelegramMcp | undefined;
     const channel = this.#createChannel({
       token: credentials.botToken,
       allowedUserIds: credentials.allowedUserIds,
       logging: this.#logging,
+      mediaMaxBytes: this.#mediaMaxBytes,
+      mediaDownloadTimeoutMs: this.#mediaDownloadTimeoutMs,
       onMessage: (message) => {
         const result = eventStore.append(message);
         if (result.isNew) mcp?.publish(result.notification);

@@ -14,6 +14,7 @@ import { createImageInputOptimizerExt } from '@/session/chat/extensions/image-in
 import { createJsReplSandboxExt } from '@/session/chat/extensions/js-repl-sandbox';
 import { createRemindersExt } from '@/session/chat/extensions/reminders';
 import { createSoulExt } from '@/session/chat/extensions/soul';
+import { createRealtimeMediaRuntime } from '@/session/realtime';
 import type { SessionHooks } from '@/session/types';
 import {
   createTelemetryManager,
@@ -51,73 +52,94 @@ async function main(): Promise<void> {
   await tracing.start();
 
   const cli: CliOptions = parseCliArgs(process.argv.slice(2));
-
   const config = createConfig({
     logging: logger,
     dataDirectory: cli.dataDirectory,
   });
-  const modelProvider = createModelProvider({ logging: logger, config });
-  const mcp = createMcp({ logging: logger, config });
-  const introspector = createIntrospector({ logging: logger });
-
-  const router = createRouter({
-    logging: logger,
-    mcp,
-    introspection: introspector,
-    createChatSession: (
-      hooks: SessionHooks,
-      introspectionScope,
-      router: RouterApi,
-    ) =>
-      createChatSession({
-        logging: logger,
-        config: config,
-        modelProvider: modelProvider,
-        mcp,
-        router,
-        extensionFactories: [
-          createSoulExt,
-          createJsReplSandboxExt,
-          createContextCompactionExt,
-          createImageInputOptimizerExt,
-          createAudioInputOptimizerExt,
-          createRemindersExt,
-        ],
-        dataDirectory: cli.dataDirectory,
-        hooks,
-        introspectionScope,
-      }),
-  });
-  const adminApi = createAdminApi({
-    logging: logger,
-    config,
-    mcp,
-    introspector,
-  });
-  const telemetryManager = createTelemetryManager({
-    logging: logger,
-    config,
-    spanProcessor,
-  });
   const started: { close(): Promise<void> }[] = [];
+  let router: ReturnType<typeof createRouter> | undefined;
+
   try {
-    for (const resource of [config, adminApi, modelProvider, mcp]) {
+    await config.start();
+    started.push(config);
+
+    const realtimeMediaEnabled = config.get().realtime.mode === 'loopback';
+    const modelProvider = createModelProvider({ logging: logger, config });
+    const mcp = createMcp({ logging: logger, config, realtimeMediaEnabled });
+    const introspector = createIntrospector({ logging: logger });
+
+    router = createRouter({
+      logging: logger,
+      mcp,
+      introspection: introspector,
+      createChatSession: (
+        hooks: SessionHooks,
+        introspectionScope,
+        router: RouterApi,
+      ) =>
+        createChatSession({
+          logging: logger,
+          config,
+          modelProvider,
+          mcp,
+          router,
+          extensionFactories: [
+            createSoulExt,
+            createJsReplSandboxExt,
+            createContextCompactionExt,
+            createImageInputOptimizerExt,
+            createAudioInputOptimizerExt,
+            createRemindersExt,
+          ],
+          dataDirectory: cli.dataDirectory,
+          hooks,
+          introspectionScope,
+        }),
+    });
+    const adminApi = createAdminApi({
+      logging: logger,
+      config,
+      mcp,
+      introspector,
+    });
+    const telemetryManager = createTelemetryManager({
+      logging: logger,
+      config,
+      spanProcessor,
+    });
+    const realtimeMedia = createRealtimeMediaRuntime({
+      logging: logger,
+      mcp,
+      enabled: realtimeMediaEnabled,
+    });
+
+    for (const resource of [adminApi, modelProvider]) {
       await resource.start();
       started.push(resource);
     }
+    await realtimeMedia.start();
+    try {
+      await mcp.start();
+    } catch (error) {
+      await realtimeMedia.close();
+      throw error;
+    }
+    started.push(mcp, realtimeMedia);
     await telemetryManager.start();
     started.push(telemetryManager);
+    await router.start();
   } catch (error) {
+    await router?.close();
     await closeReverse(started);
     throw error;
   }
-  await router.start();
 
+  const runningRouter = router;
   let shuttingDown = false;
   const shutdown = async () => {
     if (shuttingDown) return;
     shuttingDown = true;
-    await router.close();
+    await runningRouter.close();
     await closeReverse(started);
     await tracing.close();
     await logger[Symbol.asyncDispose]();

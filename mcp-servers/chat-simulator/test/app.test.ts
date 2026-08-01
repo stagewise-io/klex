@@ -309,7 +309,7 @@ describe('chat simulator', () => {
 
   it('requires realtime capability metadata', async () => {
     const { app, mcp } = setup();
-    const offer = mcp.createRealtimeOffer();
+    const offer = await mcp.createRealtimeOffer();
     const response = await app.request('/mcp', {
       method: 'POST',
       headers: {
@@ -320,7 +320,7 @@ describe('chat simulator', () => {
         jsonrpc: '2.0',
         id: 1,
         method: 'io.stagewise/realtime-media/reject',
-        params: { sessionId: offer.sessionId },
+        params: { sessionId: offer.session.sessionId },
       }),
     });
     expect(await response.text()).toContain('-32003');

@@ -243,11 +243,21 @@ const telemetryConfigSchema = z.object({
   level: telemetryLevelSchema,
 });
 
+const realtimeConfigSchema = z
+  .object({
+    mode: z.enum(['disabled', 'loopback']),
+  })
+  .default({ mode: 'disabled' });
+
+type RealtimeConfig = z.infer<typeof realtimeConfigSchema>;
+type RealtimeMode = RealtimeConfig['mode'];
+
 const klexConfigSchema = z.object({
   providers: z.record(z.string(), providerConfigSchema),
   modelSelection: modelSelectionSchema,
   mcpServers: z.record(z.string(), mcpServerConfigSchema),
   telemetry: telemetryConfigSchema.optional(),
+  realtime: realtimeConfigSchema,
 });
 
 type KlexConfig = z.infer<typeof klexConfigSchema>;
@@ -269,6 +279,8 @@ export type {
   ModelSelectionEntry,
   ProviderConfig,
   ProviderPreset,
+  RealtimeConfig,
+  RealtimeMode,
   StdioServerConfig,
   TelemetryLevel,
 };
@@ -278,5 +290,6 @@ export {
   modelIdFromEntry,
   modelIdSchema,
   modelSelectionSchema,
+  realtimeConfigSchema,
   telemetryLevelSchema,
 };

@@ -11,6 +11,34 @@ import {
 } from '@stagewise/app-packager';
 
 const ROOT = resolve(import.meta.dirname, '..');
+const require = createRequire(import.meta.url);
+const LIVEKIT_BINDING_PACKAGES: Partial<
+  Record<NodeJS.Platform, Partial<Record<string, string>>>
+> = {
+  darwin: {
+    arm64: '@livekit/rtc-ffi-bindings-darwin-arm64',
+    x64: '@livekit/rtc-ffi-bindings-darwin-x64',
+  },
+  linux: {
+    arm64: '@livekit/rtc-ffi-bindings-linux-arm64-gnu',
+    x64: '@livekit/rtc-ffi-bindings-linux-x64-gnu',
+  },
+  win32: {
+    x64: '@livekit/rtc-ffi-bindings-win32-x64-msvc',
+  },
+};
+
+export function resolveLiveKitNativeAddon(
+  platform: NodeJS.Platform = process.platform,
+  architecture: string = process.arch,
+): string {
+  const packageName = LIVEKIT_BINDING_PACKAGES[platform]?.[architecture];
+  if (!packageName)
+    throw new Error(
+      `LiveKit does not support executable packaging for ${platform}-${architecture}`,
+    );
+  return require.resolve(packageName);
+}
 
 export interface KlexAgentPackagingOptions {
   readonly environment?: NodeJS.ProcessEnv;
@@ -36,6 +64,7 @@ export function createKlexAgentPackagerConfig(
     outputDirectory: 'dist',
     assets: {
       'javascript-sandbox-worker.js': 'dist/javascript-sandbox-worker.js',
+      'livekit-rtc.node': resolveLiveKitNativeAddon(),
     },
     useCodeCache: true,
     signing: { mode: 'optional' },

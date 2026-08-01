@@ -86,11 +86,10 @@ export function createBuildOptions(isSea: boolean): {
       // Normal Node builds resolve dependencies from node_modules. Bundling them
       // into ESM breaks packages that use runtime CommonJS requires.
       packages: isSea ? 'bundle' : 'external',
-      // Bundle JS into the SEA blob. Native packages (sharp, ffmpeg-static,
-      // ffprobe-static) are virtualized by nativeShimPlugin — their JS and
-      // native binaries are copied beside the executable during packaging
-      // (see package-exe.ts → copyNativeAssets).
+      // Bundle JS into the SEA blob. Native packages are loaded from copied
+      // on-disk assets, while foreign LiveKit bindings remain unresolved.
       ...(isSea ? { plugins: [aliasPlugin, nativeShimPlugin] } : {}),
+      external: isSea ? ['@livekit/rtc-ffi-bindings-*'] : undefined,
     },
     worker: {
       ...sharedOptions,

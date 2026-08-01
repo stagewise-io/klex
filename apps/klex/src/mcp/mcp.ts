@@ -61,6 +61,15 @@ export type McpRealtimeMediaNotificationListener = (
   event: McpRealtimeMediaNotification,
 ) => void | Promise<void>;
 
+export interface McpRealtimeMediaAvailability {
+  namespace: string;
+  available: boolean;
+}
+
+export type McpRealtimeMediaAvailabilityListener = (
+  event: McpRealtimeMediaAvailability,
+) => void | Promise<void>;
+
 /**
  * Connection status of an MCP server.
  * - `connected` — connection is active and tools are available.
@@ -118,6 +127,9 @@ export interface Mcp extends ToolProvider {
   onRealtimeMediaNotification(
     listener: McpRealtimeMediaNotificationListener,
   ): () => void;
+  onRealtimeMediaAvailability(
+    listener: McpRealtimeMediaAvailabilityListener,
+  ): () => void;
   acceptRealtimeMediaSession(
     namespace: string,
     sessionId: string,
@@ -138,6 +150,7 @@ export interface Mcp extends ToolProvider {
 export interface McpDependencies {
   logging: RootLogger;
   config: Config;
+  realtimeMediaEnabled?: boolean;
   connect?: McpConnectionFactory;
 }
 
@@ -176,6 +189,9 @@ class McpModule implements Mcp {
   private readonly realtimeWorkers = new Map<string, RealtimeMediaWorker>();
   private readonly realtimeListeners =
     new Set<McpRealtimeMediaNotificationListener>();
+  private readonly realtimeAvailabilityListeners =
+    new Set<McpRealtimeMediaAvailabilityListener>();
+  private readonly realtimeAvailableNamespaces = new Set<string>();
   private registry: McpRegistry = new Map();
   private started = false;
   private unsubscribe: (() => void) | undefined;
@@ -189,6 +205,7 @@ class McpModule implements Mcp {
       logger: ModuleLogger;
       config: Config;
       pushNotificationInbox: PushNotificationInbox;
+      realtimeMediaEnabled: boolean;
       connect: McpConnectionFactory;
     },
   ) {}
@@ -228,6 +245,18 @@ class McpModule implements Mcp {
       if (!subscribed) return;
       subscribed = false;
       this.realtimeListeners.delete(listener);
+    };
+  }
+
+  onRealtimeMediaAvailability(
+    listener: McpRealtimeMediaAvailabilityListener,
+  ): () => void {
+    this.realtimeAvailabilityListeners.add(listener);
+    let subscribed = true;
+    return () => {
+      if (!subscribed) return;
+      subscribed = false;
+      this.realtimeAvailabilityListeners.delete(listener);
     };
   }
 
@@ -434,6 +463,7 @@ class McpModule implements Mcp {
         namespace: runtime.namespace,
         config: runtime.config,
         signal: attempt.controller.signal,
+        realtimeMediaEnabled: this.deps.realtimeMediaEnabled,
         onToolsChanged: (changed) => {
           if (!this.isCurrentConnection(runtime, changed)) return;
           this.publishRegistry();
@@ -731,15 +761,21 @@ class McpModule implements Mcp {
     );
   }
 
-  private requireRealtimeConnection(namespace: string): McpConnection {
+  private requireRealtimeConnection(namespace: string): McpConnection & {
+    realtimeMedia: NonNullable<McpConnection['realtimeMedia']>;
+  } {
+    if (!this.deps.realtimeMediaEnabled)
+      throw new Error('Realtime Media is disabled in Klex configuration');
     const connection = this.servers.get(namespace)?.connection;
     if (!connection) throw new Error(`MCP server is unavailable: ${namespace}`);
-    if (!connection.supportsRealtimeMedia) {
+    if (!connection.supportsRealtimeMedia || !connection.realtimeMedia) {
       throw new Error(
         `MCP server does not support Realtime Media: ${namespace}`,
       );
     }
-    return connection;
+    return connection as McpConnection & {
+      realtimeMedia: NonNullable<McpConnection['realtimeMedia']>;
+    };
   }
 
   private startRealtimeWorker(connection: McpConnection): void {
@@ -749,15 +785,18 @@ class McpModule implements Mcp {
       controller: new AbortController(),
     };
     this.realtimeWorkers.set(connection.namespace, worker);
+    this.publishRealtimeAvailability(connection.namespace, true);
     void this.runRealtimeWorker(worker);
   }
 
   private async runRealtimeWorker(worker: RealtimeMediaWorker): Promise<void> {
     try {
-      const subscription = await worker.connection.realtimeMedia.listen(
-        undefined,
-        { request: { signal: worker.controller.signal } },
-      );
+      const realtimeMedia = worker.connection.realtimeMedia;
+      if (!realtimeMedia)
+        throw new Error('Realtime Media client is unavailable');
+      const subscription = await realtimeMedia.listen(undefined, {
+        request: { signal: worker.controller.signal },
+      });
       await subscription.closed;
       if (this.isCurrentRealtimeWorker(worker)) {
         throw new Error('Realtime Media subscription closed');
@@ -806,6 +845,27 @@ class McpModule implements Mcp {
     if (!worker) return;
     this.realtimeWorkers.delete(namespace);
     worker.controller.abort();
+    this.publishRealtimeAvailability(namespace, false);
+  }
+
+  private publishRealtimeAvailability(
+    namespace: string,
+    available: boolean,
+  ): void {
+    const wasAvailable = this.realtimeAvailableNamespaces.has(namespace);
+    if (wasAvailable === available) return;
+    if (available) this.realtimeAvailableNamespaces.add(namespace);
+    else this.realtimeAvailableNamespaces.delete(namespace);
+    for (const listener of this.realtimeAvailabilityListeners) {
+      void Promise.resolve(listener({ namespace, available })).catch(
+        (error: unknown) => {
+          this.deps.logger.error(
+            { error, namespace },
+            'MCP Realtime Media availability listener failed',
+          );
+        },
+      );
+    }
   }
 
   private isCurrentRealtimeWorker(worker: RealtimeMediaWorker): boolean {
@@ -894,6 +954,7 @@ export function createMcp(deps: McpDependencies): Mcp {
     }),
     config: deps.config,
     pushNotificationInbox: createInMemoryPushNotificationInbox(),
+    realtimeMediaEnabled: deps.realtimeMediaEnabled ?? true,
     connect: deps.connect ?? connectMcpServer,
   });
 }

@@ -7,10 +7,19 @@ import { InvalidMessageError } from './chat-store.js';
 import type { ChatMcp } from './mcp.js';
 import { renderChatPage } from './ui.js';
 
-export function createApp(store: ChatStore, mcp: ChatMcp): Hono {
+export function createApp(
+  store: ChatStore,
+  mcp: ChatMcp,
+  realtimeClientScript = '',
+): Hono {
   const app = new Hono();
 
   app.get('/', (context) => context.html(renderChatPage()));
+  app.get('/realtime-client.js', (context) =>
+    context.body(realtimeClientScript, 200, {
+      'Content-Type': 'text/javascript; charset=utf-8',
+    }),
+  );
   app.get('/health', (context) => context.json({ status: 'ok' }));
   app.get('/api/messages', (context) =>
     context.json({ messages: store.listMessages() }),
@@ -36,9 +45,9 @@ export function createApp(store: ChatStore, mcp: ChatMcp): Hono {
       throw error;
     }
   });
-  app.post('/api/realtime/sessions', (context) => {
-    const offer = mcp.createRealtimeOffer();
-    return context.json({ session: offer }, 201);
+  app.post('/api/realtime/sessions', async (context) => {
+    const offer = await mcp.createRealtimeOffer();
+    return context.json(offer, 201);
   });
   app.delete('/api/realtime/sessions/:sessionId', (context) => {
     try {

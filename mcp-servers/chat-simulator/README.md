@@ -13,6 +13,15 @@ pnpm install
 pnpm --filter @stagewise/chat-simulator dev
 ```
 
+The development and start scripts load the repository-root `.env`. For a real
+local LiveKit loopback, configure:
+
+```dotenv
+LIVEKIT_URL=ws://127.0.0.1:7880
+LIVEKIT_API_KEY=devkey
+LIVEKIT_API_SECRET=secret
+```
+
 Open [http://localhost:8787](http://localhost:8787). Set `PORT` to use another
 port:
 
@@ -49,7 +58,7 @@ http://localhost:8787/mcp
 The server supports both the `2026-07-28` modern protocol and the legacy MCP
 handshake. MCP clients default to legacy negotiation, so clients that need
 Realtime Media's `subscriptions/listen` stream must opt into negotiation with
-`versionNegotiation: { mode: 'auto' }`. The server advertises the Push
+`versionNegotiation: 'auto'`. The server advertises the Push
 Notifications and Realtime Media extensions.
 
 ## Agent contract
@@ -92,10 +101,12 @@ The simulator also implements the control-plane-only
 stream, create an offer with `POST /api/realtime/sessions`, and use the MCP
 `accept`, `reject`, or `end` requests to exercise lifecycle behavior.
 
-Acceptance intentionally returns `wss://contract-only.livekit.invalid` with a
-non-connectable token. This fixture validates capability negotiation, expiry,
-idempotency, errors, and notification delivery only. It does not include
-LiveKit, microphone access, or audio transport.
+Without LiveKit environment variables, acceptance intentionally returns
+`wss://contract-only.livekit.invalid` with a non-connectable token so contract
+tests remain deterministic. With all three LiveKit variables configured, the
+simulator mints short-lived browser and Klex participant tokens for one room.
+Use **Start loopback call** in the browser UI to publish the microphone and play
+Klex's returned audio track. Use headphones to avoid acoustic feedback.
 
 ## E2E check
 

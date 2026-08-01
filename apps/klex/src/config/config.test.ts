@@ -55,6 +55,7 @@ function manualConfig(modelId = 'model:8b'): KlexConfig {
       audioListening: [],
     },
     mcpServers: {},
+    realtime: { mode: 'disabled' },
   };
 }
 
@@ -78,6 +79,7 @@ function presetConfig(
       audioListening: [],
     },
     mcpServers: {},
+    realtime: { mode: 'disabled' },
   };
 }
 
@@ -111,6 +113,7 @@ function mixedConfig(): KlexConfig {
       audioListening: [],
     },
     mcpServers: {},
+    realtime: { mode: 'disabled' },
   };
 }
 
@@ -135,6 +138,24 @@ afterEach(async () => {
 });
 
 // --- tests ---
+
+describe('Config — realtime mode', () => {
+  it('defaults legacy config input to disabled', () => {
+    const { realtime: _realtime, ...legacy } = manualConfig();
+    expect(klexConfigSchema.parse(legacy).realtime).toEqual({
+      mode: 'disabled',
+    });
+  });
+
+  it('accepts opt-in loopback mode', () => {
+    expect(
+      klexConfigSchema.parse({
+        ...manualConfig(),
+        realtime: { mode: 'loopback' },
+      }).realtime,
+    ).toEqual({ mode: 'loopback' });
+  });
+});
 
 describe('Config — lifecycle', () => {
   it('throws if config file does not exist', async () => {

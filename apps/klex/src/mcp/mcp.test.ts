@@ -115,6 +115,7 @@ function deferred<T>(): {
 function setup(
   servers: Record<string, McpServerConfig>,
   connect: McpConnectionFactory,
+  realtimeMediaEnabled = true,
 ) {
   const config = createConfigHarness(servers);
   return {
@@ -122,6 +123,7 @@ function setup(
     mcp: createMcp({
       logging,
       config: config.config,
+      realtimeMediaEnabled,
       connect,
     }),
   };
@@ -142,6 +144,27 @@ async function waitForNamespace(
     expect(await namespaceNames(mcp)).toContain(namespace);
   });
 }
+
+describe('MCP Realtime Media configuration', () => {
+  it('disables capability registration and lifecycle operations', async () => {
+    const options = deferred<ConnectMcpServerOptions>();
+    const { mcp } = setup(
+      { chat: { url: 'https://example.com/mcp' } },
+      async (value) => {
+        options.resolve(value);
+        return connection('chat');
+      },
+      false,
+    );
+
+    await mcp.start();
+    expect((await options.promise).realtimeMediaEnabled).toBe(false);
+    await expect(
+      mcp.acceptRealtimeMediaSession('chat', 'call-1'),
+    ).rejects.toThrow('Realtime Media is disabled in Klex configuration');
+    await mcp.close();
+  });
+});
 
 describe('MCP Push Notification subscriptions', () => {
   it('registers listeners and returns an idempotent unsubscribe function', async () => {
@@ -480,6 +503,113 @@ describe('MCP namespace isolation', () => {
     expect(reject).toHaveBeenCalledWith('session-2');
     expect(end).toHaveBeenCalledWith('session-1');
     await mcp.close();
+  });
+
+  it('publishes realtime availability transitions without duplicates', async () => {
+    let options: ConnectMcpServerOptions | undefined;
+    const connectionWithRealtime = {
+      ...connection('voice'),
+      supportsRealtimeMedia: true,
+      realtimeMedia: {
+        listen: vi.fn(async () => ({ closed: new Promise(() => undefined) })),
+      },
+    } as unknown as McpConnection;
+    const { mcp } = setup(
+      { voice: { url: 'https://voice.example/mcp' } },
+      async (input) => {
+        options = input;
+        return connectionWithRealtime;
+      },
+    );
+    const listener = vi.fn();
+    mcp.onRealtimeMediaAvailability(listener);
+
+    await mcp.start();
+    await vi.waitFor(() =>
+      expect(listener).toHaveBeenCalledWith({
+        namespace: 'voice',
+        available: true,
+      }),
+    );
+    options?.onDisconnect(connectionWithRealtime);
+    options?.onDisconnect(connectionWithRealtime);
+    await vi.waitFor(() =>
+      expect(listener).toHaveBeenLastCalledWith({
+        namespace: 'voice',
+        available: false,
+      }),
+    );
+    expect(listener.mock.calls).toEqual([
+      [{ namespace: 'voice', available: true }],
+      [{ namespace: 'voice', available: false }],
+    ]);
+    await mcp.close();
+  });
+
+  it('publishes unavailability when the realtime subscription fails', async () => {
+    const subscriptionClosed = deferred<void>();
+    const connectionWithRealtime = {
+      ...connection('voice'),
+      supportsRealtimeMedia: true,
+      realtimeMedia: {
+        listen: vi.fn(async () => ({ closed: subscriptionClosed.promise })),
+      },
+    } as unknown as McpConnection;
+    const { mcp } = setup(
+      { voice: { url: 'https://voice.example/mcp' } },
+      async () => connectionWithRealtime,
+    );
+    const listener = vi.fn();
+    mcp.onRealtimeMediaAvailability(listener);
+
+    await mcp.start();
+    await vi.waitFor(() => expect(listener).toHaveBeenCalledOnce());
+    subscriptionClosed.resolve();
+    await vi.waitFor(() => expect(listener).toHaveBeenCalledTimes(2));
+    expect(listener).toHaveBeenLastCalledWith({
+      namespace: 'voice',
+      available: false,
+    });
+    expect(connectionWithRealtime.close).toHaveBeenCalledOnce();
+    await mcp.close();
+  });
+
+  it('ignores stale realtime disconnect callbacks after replacement', async () => {
+    const connections: McpConnection[] = [];
+    const options: ConnectMcpServerOptions[] = [];
+    const { config, mcp } = setup(
+      { voice: { url: 'https://one.example/mcp' } },
+      async (input) => {
+        options.push(input);
+        const created = {
+          ...connection('voice'),
+          supportsRealtimeMedia: true,
+          realtimeMedia: {
+            listen: vi.fn(async () => ({
+              closed: new Promise(() => undefined),
+            })),
+          },
+        } as unknown as McpConnection;
+        connections.push(created);
+        return created;
+      },
+    );
+    const listener = vi.fn();
+    mcp.onRealtimeMediaAvailability(listener);
+
+    await mcp.start();
+    await vi.waitFor(() => expect(connections).toHaveLength(1));
+    await config.publish({ voice: { url: 'https://two.example/mcp' } });
+    await vi.waitFor(() => expect(connections).toHaveLength(2));
+    const callCount = listener.mock.calls.length;
+    options[0]?.onDisconnect(connections[0] as McpConnection);
+    await Promise.resolve();
+    expect(listener).toHaveBeenCalledTimes(callCount);
+    await mcp.close();
+    expect(listener).toHaveBeenLastCalledWith({
+      namespace: 'voice',
+      available: false,
+    });
   });
 
   it('closes a connection that resolves after non-blocking shutdown', async () => {

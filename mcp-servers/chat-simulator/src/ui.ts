@@ -9,7 +9,7 @@ export function renderChatPage(): string {
     :root { font: 13px/1.4 Arial, Helvetica, sans-serif; color: #000; background: #fff; }
     * { box-sizing: border-box; }
     body { margin: 0; min-height: 100vh; background: #fff; }
-    main { width: min(800px, 100%); min-height: 100vh; margin: 0 auto; display: grid; grid-template-rows: auto 1fr auto; }
+    main { width: min(800px, 100%); min-height: 100vh; margin: 0 auto; display: grid; grid-template-rows: auto auto 1fr auto; }
     header { padding: 10px 8px; border-bottom: 1px solid #aaa; }
     h1 { margin: 0; font-size: 14px; }
     header p { margin: 2px 0 0; color: #666; font-size: 11px; }
@@ -24,12 +24,16 @@ export function renderChatPage(): string {
     textarea { resize: vertical; min-height: 54px; max-height: 180px; padding: 3px; color: #000; background: #fff; border: 1px solid #777; border-radius: 0; font: inherit; }
     button { align-self: end; padding: 2px 8px; font: inherit; cursor: pointer; }
     button:disabled { cursor: default; }
+    #call { display: flex; align-items: center; gap: 6px; padding: 8px; border-bottom: 1px solid #aaa; }
+    #call-status { color: #666; font-size: 11px; }
+    #remote-audio { display: none; }
     #error { position: fixed; top: 8px; left: 50%; translate: -50% 0; padding: 4px 8px; border: 1px solid #900; background: #fff; color: #900; font-size: 12px; }
   </style>
 </head>
 <body>
   <main>
     <header><h1>Klex Chat Simulator</h1><p>Local environment · MCP endpoint at /mcp</p></header>
+    <section id="call" aria-label="Realtime loopback"><button id="start-call" type="button">Start loopback call</button><button id="stop-call" type="button" disabled>End call</button><span id="call-status">Idle</span><span id="remote-audio"></span></section>
     <section id="messages" aria-live="polite"><p class="empty">No messages yet.</p></section>
     <form id="composer"><textarea id="input" maxlength="4000" placeholder="Send a message…" aria-label="Message" required></textarea><button>Send</button></form>
   </main>
@@ -89,6 +93,7 @@ export function renderChatPage(): string {
     stream.addEventListener('message', (event) => append(JSON.parse(event.data)));
     stream.onerror = () => showError('Live connection interrupted; reconnecting…');
   </script>
+  <script src="/realtime-client.js" defer></script>
 </body>
 </html>`;
 }

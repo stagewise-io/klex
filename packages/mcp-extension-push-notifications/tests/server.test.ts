@@ -118,7 +118,7 @@ describe('Push Notifications server', () => {
           sourceId: 'computer:local',
           type: 'file.changed',
           createdAt: '2026-07-20T10:30:00.000Z',
-          payload: {},
+          content: [],
         },
       }),
     ).rejects.toBeInstanceOf(PushNotificationsProtocolError);

@@ -12,6 +12,28 @@ Typed schemas and client/server facades for identity-scoped durable Push Notific
 
 Delivery is at least once. Servers persist before publishing. Clients accept and deduplicate by `eventId` before acknowledging. Live delivery is a latency optimization; pending retrieval is recovery. This extension is a durable queue, not a replayable historical event stream.
 
+Every event carries ordered MCP `ContentBlock` values in `content` and may carry
+producer-owned JSON in `data`. The runtime schema is the canonical
+`ContentBlockSchema` from this package's pinned MCP SDK revision, so text, images,
+audio, embedded resources, and resource links use standard MCP representations.
+Transport support does not imply that every client or model can consume every
+content type.
+
+```ts
+const event = {
+  eventId: crypto.randomUUID(),
+  sourceId: 'chat:local',
+  type: 'chat.message.received',
+  createdAt: new Date().toISOString(),
+  content: [{ type: 'text', text: 'Hello' }],
+  data: { messageId: '42' },
+};
+```
+
+Small media may be carried inline as base64 MCP image/audio blocks. Larger or
+long-lived media should use MCP resource links whose authorization and retention
+match the event feed.
+
 ## Client
 
 Register before connecting:
@@ -45,6 +67,8 @@ subscription.closed.catch(() => reconnect());
 ```
 
 A lost acknowledgement can cause the same events to return again. `eventId` is the idempotency key. `listen()` resolves after subscription acknowledgement; `closed` settles when the long-lived request completes or fails.
+
+Clients must treat content, MIME declarations, linked resources, and event data as untrusted input.
 
 ## Server facade
 

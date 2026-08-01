@@ -9,7 +9,8 @@ const event: PushNotification = {
   sourceId: 'chat:local',
   type: 'chat.message.received',
   createdAt: '2026-07-20T10:30:00.000Z',
-  payload: { message: 'hello' },
+  content: [{ type: 'text', text: 'hello' }],
+  data: { messageId: 'message-1' },
 };
 
 describe('In-memory Push Notification inbox', () => {
@@ -35,8 +36,15 @@ describe('In-memory Push Notification inbox', () => {
     const input = structuredClone(event);
     const accepted = await inbox.commit('chat', [input]);
 
-    input.payload.message = 'changed input';
-    if (accepted[0]) accepted[0].payload.message = 'changed result';
+    if (input.content[0]?.type === 'text') {
+      input.content[0].text = 'changed input';
+    }
+    if (input.data) input.data.messageId = 'changed input';
+    const acceptedEvent = accepted[0];
+    if (acceptedEvent?.content[0]?.type === 'text') {
+      acceptedEvent.content[0].text = 'changed result';
+    }
+    if (acceptedEvent?.data) acceptedEvent.data.messageId = 'changed result';
 
     await expect(inbox.commit('chat', [event])).resolves.toEqual([]);
   });

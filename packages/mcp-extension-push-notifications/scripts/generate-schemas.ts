@@ -12,7 +12,7 @@ const generatedDirectory = join(sourceDirectory, 'generated');
 const generatedFile = join(generatedDirectory, 'schema.ts');
 const jsonSchemaFile = join(projectRoot, 'schema.json');
 
-const externalSchemas: string[] = [];
+const externalSchemas = ['ContentBlockSchema'];
 
 const check = process.argv.includes('--check');
 
@@ -41,6 +41,10 @@ function postProcess(content: string): string {
   output = output.replace(
     'eventIds: z.array(z.string())',
     'eventIds: z.array(z.string().min(1)).min(1)',
+  );
+  output = output.replace(
+    'data: z.record(z.string(), JSONValueSchema).optional()\n});',
+    'data: z.record(z.string(), JSONValueSchema).optional()\n}).strict();',
   );
   output = output.replaceAll('"', "'");
   output = output.replace(

@@ -11,7 +11,8 @@ const event = {
   sourceId: 'computer:local',
   type: 'process.exited',
   createdAt: '2026-07-20T10:30:00.000Z',
-  payload: { exitCode: 1 },
+  content: [{ type: 'text', text: 'Process exited' }],
+  data: { exitCode: 1 },
 };
 
 function fakeClient(

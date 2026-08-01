@@ -141,11 +141,27 @@ describe('event store', () => {
         {
           eventId: 'telegram:77:update:10',
           sourceId: 'telegram:77',
-          payload: { updateId: '10', message: 'hello' },
+          content: [{ type: 'text', text: 'hello' }],
+          data: {
+            messageId: '20',
+            updateId: '10',
+            chatId: '30',
+            senderId: '40',
+          },
         },
       ],
       hasMore: false,
     });
+    const pageEvent = store.page().events[0];
+    if (pageEvent?.content[0]?.type === 'text') {
+      pageEvent.content[0].text = 'changed';
+    }
+    if (pageEvent?.data) pageEvent.data.messageId = 'changed';
+    expect(store.page().events[0]).toMatchObject({
+      content: [{ type: 'text', text: 'hello' }],
+      data: { messageId: '20' },
+    });
+
     store.acknowledge([first.notification.event.eventId]);
     expect(store.page()).toEqual({ events: [], hasMore: false });
     const duplicateAcknowledged = store.append(message);
@@ -284,7 +300,19 @@ describe('MCP contract', () => {
           params: { limit: 100 },
         }),
       ).toMatchObject({
-        result: { events: [{ payload: { message: 'hello' } }] },
+        result: {
+          events: [
+            {
+              content: [{ type: 'text', text: 'hello' }],
+              data: {
+                messageId: '20',
+                updateId: '10',
+                chatId: '30',
+                senderId: '40',
+              },
+            },
+          ],
+        },
       });
       expect(
         await jsonRpc(mcp, {

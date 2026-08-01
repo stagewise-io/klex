@@ -50,7 +50,7 @@ Requests using the same bot token intentionally share one runtime. The latest au
 
 ## Contract
 
-Inbound events use `sourceId: "telegram:<botId>"`, type `chat.message.received`, and payload fields `messageId`, `updateId`, `chatId`, `senderId`, and `message`. Event IDs are deterministic from the bot and update IDs.
+Inbound events use `sourceId: "telegram:<botId>"` and type `chat.message.received`. The message body is a canonical MCP text block in `content`; `data` contains `messageId`, `updateId`, `chatId`, and `senderId`. Event IDs are deterministic from the bot and update IDs. This server currently emits only text content blocks.
 
 Send text with:
 

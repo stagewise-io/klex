@@ -31,12 +31,12 @@ class EventStoreModule implements EventStore {
       sourceId: `telegram:${message.botId}`,
       type: 'chat.message.received',
       createdAt: message.receivedAt,
-      payload: {
+      content: [{ type: 'text', text: message.text }],
+      data: {
         messageId: message.messageId,
         updateId: message.updateId,
         chatId: message.chatId,
         senderId: message.senderId,
-        message: message.text,
       },
     };
     const existing = this.#events.find(
@@ -77,7 +77,7 @@ class EventStoreModule implements EventStore {
   }
 
   #copy(event: PushNotification): PushNotification {
-    return { ...event, payload: { ...event.payload } };
+    return structuredClone(event);
   }
 }
 

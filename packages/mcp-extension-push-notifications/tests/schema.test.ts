@@ -22,7 +22,8 @@ const event = {
   sourceId: 'computer:local',
   type: 'process.exited',
   createdAt: '2026-07-20T10:30:00.000Z',
-  payload: {
+  content: [{ type: 'text', text: 'pnpm test exited with code 1' }],
+  data: {
     command: 'pnpm test',
     exitCode: 1,
     signal: null,
@@ -67,23 +68,57 @@ describe('Push notification envelope', () => {
     expect(PushNotificationSchema.parse(event)).toEqual(event);
   });
 
-  it('rejects non-object payloads and invalid timestamps', () => {
+  it('accepts canonical multimodal and resource content blocks', () => {
+    const content = [
+      { type: 'text', text: 'caption' },
+      { type: 'image', data: 'aW1hZ2U=', mimeType: 'image/png' },
+      { type: 'audio', data: 'YXVkaW8=', mimeType: 'audio/ogg' },
+      {
+        type: 'resource',
+        resource: { uri: 'file:///message.txt', text: 'embedded message' },
+      },
+      {
+        type: 'resource_link',
+        uri: 'mcp://telegram/file/1',
+        name: 'voice.ogg',
+        mimeType: 'audio/ogg',
+      },
+    ];
+    expect(PushNotificationSchema.parse({ ...event, content }).content).toEqual(
+      content,
+    );
     expect(
-      PushNotificationSchema.safeParse({ ...event, payload: 'failure' })
+      PushNotificationSchema.parse({ ...event, content: [] }).content,
+    ).toEqual([]);
+  });
+
+  it('rejects legacy and malformed event fields', () => {
+    const { content: _content, ...withoutContent } = event;
+    expect(PushNotificationSchema.safeParse(withoutContent).success).toBe(
+      false,
+    );
+    expect(
+      PushNotificationSchema.safeParse({ ...event, payload: { legacy: true } })
         .success,
+    ).toBe(false);
+    expect(
+      PushNotificationSchema.safeParse({
+        ...event,
+        content: [{ type: 'text' }],
+      }).success,
+    ).toBe(false);
+    expect(
+      PushNotificationSchema.safeParse({ ...event, data: 'failure' }).success,
+    ).toBe(false);
+    expect(
+      PushNotificationSchema.safeParse({
+        ...event,
+        data: { invalid: undefined },
+      }).success,
     ).toBe(false);
     expect(
       PushNotificationSchema.safeParse({ ...event, createdAt: 'last Tuesday' })
         .success,
-    ).toBe(false);
-  });
-
-  it('rejects non-JSON payload values', () => {
-    expect(
-      PushNotificationSchema.safeParse({
-        ...event,
-        payload: { invalid: undefined },
-      }).success,
     ).toBe(false);
   });
 

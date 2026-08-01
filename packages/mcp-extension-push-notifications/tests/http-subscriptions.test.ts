@@ -3,15 +3,16 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   createPushNotificationsHttpSubscriptionManager,
   PUSH_NOTIFICATIONS_EXTENSION_ID,
+  type PushNotification,
   withPushNotificationsClientCapability,
 } from '../src/index.js';
 
-const event = {
+const event: PushNotification = {
   eventId: 'event-1',
   sourceId: 'chat-simulator:local',
   type: 'chat.message.received',
   createdAt: '2026-07-20T10:30:00.000Z',
-  payload: { message: 'Hello' },
+  content: [{ type: 'text', text: 'Hello' }],
 };
 
 function listenRequest(

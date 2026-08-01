@@ -111,11 +111,33 @@ class RouterModule implements Router {
    * and forwards it to the primary session.
    *
    * - `sourceEnv` ← `event.sourceId`
-   * - `metadata`  ← `{ type, createdAt }`
-   * - `content`   ← payload serialized as a single text part
+   * - `metadata`  ← event identity, type, namespace, and timestamp
+   * - `content`   ← ordered MCP text blocks plus serialized event data
    */
   private handlePushNotification(ev: McpPushNotification): void {
     const { event, namespace } = ev;
+    const content = event.content.flatMap((block) =>
+      block.type === 'text'
+        ? [{ type: 'text' as const, text: block.text }]
+        : [],
+    );
+    if (event.data !== undefined) {
+      content.push({
+        type: 'text',
+        text: `Event data: ${stableJsonStringify(event.data)}`,
+      });
+    }
+
+    const unsupportedTypes = event.content
+      .filter((block) => block.type !== 'text')
+      .map((block) => block.type);
+    if (unsupportedTypes.length > 0) {
+      this.deps.logger.warn(
+        { eventId: event.eventId, contentTypes: unsupportedTypes },
+        'Router omitted unsupported Push Notification content blocks',
+      );
+    }
+
     const inboxEvent: SessionInboxEvent = {
       sourceEnv: event.sourceId,
       priority: SessionInboxPriority.Medium,
@@ -127,7 +149,7 @@ class RouterModule implements Router {
           type: event.type,
           createdAt: event.createdAt,
         },
-        content: [{ type: 'text', text: JSON.stringify(event.payload) }],
+        content,
       },
     };
     void this.sendInput(inboxEvent);
@@ -180,6 +202,19 @@ class RouterModule implements Router {
     // Re-dispatch pending inbox events so the user does not lose input.
     replacement.restorePendingEvents(info.pendingEvents);
   }
+}
+
+function stableJsonStringify(value: unknown): string {
+  const normalize = (input: unknown): unknown => {
+    if (Array.isArray(input)) return input.map(normalize);
+    if (typeof input !== 'object' || input === null) return input;
+    return Object.fromEntries(
+      Object.entries(input)
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([key, entry]) => [key, normalize(entry)]),
+    );
+  };
+  return JSON.stringify(normalize(value));
 }
 
 export function createRouter(deps: RouterDependencies): Router {

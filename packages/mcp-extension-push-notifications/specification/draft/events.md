@@ -24,7 +24,8 @@ interface PushNotification {
   sourceId: string;
   type: string;
   createdAt: string;
-  payload: Record<string, JSONValue>;
+  content: ContentBlock[];
+  data?: Record<string, JSONValue>;
 }
 ```
 
@@ -32,7 +33,16 @@ interface PushNotification {
 - `sourceId` identifies the environment or channel that produced the event.
 - `type` is an open event type owned by the producer.
 - `createdAt` is the source timestamp in ISO 8601 date-time form.
-- `payload` is a JSON object defined by `type`.
+- `content` is an ordered array using the canonical MCP `ContentBlock` definition
+  from the extension package's pinned MCP SDK revision. It MAY be empty.
+- `data` is optional JSON whose fields and semantics are defined by `type`.
+
+`content` supports the MCP text, image, audio, embedded-resource, and resource-link
+representations. A producer SHOULD inline only bounded media; base64 increases
+wire and storage size. Larger media SHOULD use a resource link. A linked resource
+MUST use the same authorization boundary as its event and SHOULD remain available
+for as long as the event can be recovered. Schema support for a content block does
+not imply that every client or downstream model can consume it.
 
 A server MUST durably add an event to the authenticated consumer's pending queue before pushing it. A client MUST durably accept and deduplicate an event before acknowledging it. Clients MUST tolerate receiving the same `eventId` more than once.
 
@@ -68,7 +78,16 @@ A successful response contains complete pending events and a snapshot indication
         "sourceId": "computer:local",
         "type": "process.exited",
         "createdAt": "2026-07-20T10:30:00.000Z",
-        "payload": { "exitCode": 1 }
+        "content": [
+          {
+            "type": "text",
+            "text": "pnpm test exited with code 1"
+          }
+        ],
+        "data": {
+          "command": "pnpm test",
+          "exitCode": 1
+        }
       }
     ],
     "hasMore": false
@@ -116,7 +135,16 @@ A subscribed server MAY push a pending event with `io.stagewise/push-notificatio
       "sourceId": "computer:local",
       "type": "process.exited",
       "createdAt": "2026-07-20T10:30:00.000Z",
-      "payload": { "exitCode": 1 }
+      "content": [
+        {
+          "type": "text",
+          "text": "pnpm test exited with code 1"
+        }
+      ],
+      "data": {
+        "command": "pnpm test",
+        "exitCode": 1
+      }
     }
   }
 }
@@ -158,4 +186,21 @@ Servers SHOULD bound event size, pending queue size, retrieval page size, subscr
 
 ## Security
 
-Payloads can contain untrusted environment or user data. Clients treat them as data, not instructions. Logs should avoid complete payloads where they may contain credentials or personal information. Consumer resolution must rely on trusted authentication context, never a caller-provided queue key.
+Events are scoped to the caller's existing MCP authorization context. Servers
+MUST apply the same authorization checks to retrieval, acknowledgement, and
+subscription delivery. Event identifiers MUST NOT grant access to an event outside
+that context. Consumer resolution MUST rely on trusted authentication context,
+never a caller-provided queue key.
+
+Content and event data can contain untrusted environment or user input. Clients
+MUST treat them as data, not instructions. MIME types, filenames, resource names,
+and resource metadata are untrusted declarations and MUST NOT bypass content
+inspection or authorization.
+
+Servers SHOULD bound decoded media size, encoded event size, page size, and
+retention to prevent resource exhaustion. They SHOULD account for base64
+amplification before accepting inline media. Resource links MUST NOT grant broader
+access than the containing event, and linked resources SHOULD remain resolvable
+for as long as retained events may be recovered. Logs SHOULD avoid recording
+complete content, data, or resource URIs where they may expose credentials,
+personal information, or sensitive media.

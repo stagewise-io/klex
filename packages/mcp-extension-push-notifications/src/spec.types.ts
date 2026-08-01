@@ -1,3 +1,5 @@
+import type { ContentBlock } from '@modelcontextprotocol/client';
+
 /**
  * MCP Push Notifications Extension Schema
  * Extension Identifier: io.stagewise/push-notifications
@@ -27,10 +29,10 @@ interface NotificationParams {
   _meta?: Record<string, unknown>;
 }
 
-/** JSON data accepted in an event payload. */
+/** JSON data accepted in event-specific structured data. */
 export type JSONPrimitive = string | number | boolean | null;
 
-/** JSON data accepted in an event payload. */
+/** JSON data accepted in event-specific structured data. */
 export type JSONValue =
   | JSONPrimitive
   | JSONValue[]
@@ -44,14 +46,17 @@ export interface PushNotification {
   /** Stable identifier for the environment or channel that produced the event. */
   sourceId: string;
 
-  /** Open event type whose payload contract is owned by the producer. */
+  /** Open event type whose data contract is owned by the producer. */
   type: string;
 
   /** ISO 8601 date-time at which the source created the event. */
   createdAt: string;
 
-  /** JSON object defined by the event type. */
-  payload: { [key: string]: JSONValue };
+  /** Ordered MCP content blocks carrying the event's interoperable content. */
+  content: ContentBlock[];
+
+  /** Optional structured JSON data defined by the event type. */
+  data?: { [key: string]: JSONValue };
 }
 
 /** Parameters for retrieving pending durable events. */

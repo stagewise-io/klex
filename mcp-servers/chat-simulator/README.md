@@ -57,9 +57,9 @@ A message entered in the browser produces this event:
   sourceId: 'chat-simulator:local',
   type: 'chat.message.received',
   createdAt: string,
-  payload: {
+  content: [{ type: 'text', text: string }],
+  data: {
     messageId: string,
-    message: string,
   },
 }
 ```

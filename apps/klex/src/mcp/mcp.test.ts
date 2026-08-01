@@ -34,7 +34,7 @@ const pushNotification: PushNotification = {
   sourceId: 'chat:local',
   type: 'chat.message.received',
   createdAt: '2026-07-20T10:30:00.000Z',
-  payload: { message: 'hello' },
+  content: [{ type: 'text', text: 'hello' }],
 };
 
 const toolContext = {

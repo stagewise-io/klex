@@ -56,7 +56,8 @@ class ChatStoreModule implements ChatStore {
       sourceId: 'chat-simulator:local',
       type: 'chat.message.received',
       createdAt: message.createdAt,
-      payload: { messageId: message.id, message: message.message },
+      content: [{ type: 'text', text: message.message }],
+      data: { messageId: message.id },
     };
     this.#messages.push(message);
     this.#events.push(event);
@@ -64,7 +65,7 @@ class ChatStoreModule implements ChatStore {
     return {
       message: { ...message },
       notification: {
-        event: { ...event },
+        event: structuredClone(event),
       },
     };
   }
@@ -82,9 +83,7 @@ class ChatStoreModule implements ChatStore {
       (event) => !this.#acknowledged.has(event.eventId),
     );
     return {
-      events: pending
-        .slice(0, limit)
-        .map((event) => ({ ...event, payload: { ...event.payload } })),
+      events: pending.slice(0, limit).map((event) => structuredClone(event)),
       hasMore: pending.length > limit,
     };
   }

@@ -100,7 +100,8 @@ describe('chat simulator', () => {
         events: [
           {
             type: 'chat.message.received',
-            payload: { message: 'hello' },
+            content: [{ type: 'text', text: 'hello' }],
+            data: { messageId: expect.any(String) },
           },
         ],
         hasMore: false,
@@ -154,11 +155,14 @@ describe('chat simulator', () => {
       params: { limit: 2 },
     })) as {
       result: {
-        events: Array<{ eventId: string; payload: { message: string } }>;
+        events: Array<{
+          eventId: string;
+          content: Array<{ type: 'text'; text: string }>;
+        }>;
         hasMore: boolean;
       };
     };
-    expect(first.result.events.map((event) => event.payload.message)).toEqual([
+    expect(first.result.events.map((event) => event.content[0]?.text)).toEqual([
       'first',
       'second',
     ]);
@@ -174,7 +178,7 @@ describe('chat simulator', () => {
     });
     expect(second).toMatchObject({
       result: {
-        events: [{ payload: { message: 'third' } }],
+        events: [{ content: [{ type: 'text', text: 'third' }] }],
         hasMore: false,
       },
     });

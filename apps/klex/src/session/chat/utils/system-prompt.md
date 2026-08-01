@@ -22,4 +22,4 @@ const result = await mcp[details.reference.namespace][details.reference.name]({
 return result;
 ```
 
-Use `output(value)` for one or more intermediate JSON emissions. A returned JSON value is appended after explicit emissions. The execution result is `null` for no emissions, the value itself for one emission, or an array for multiple emissions.
+Use normal `console.log(...data)` calls for captured textual output and `return` for structured JSON. Console lines are followed by the returned value. The execution result is `null` for no results, the value itself for one result, or an array for multiple results.

@@ -83,13 +83,13 @@ class JavaScriptToolModule implements JavaScriptTool {
         code: z
           .string()
           .describe(
-            'JavaScript code executed in an async QuickJS wrapper. Top-level await is supported. Return one JSON result or emit one or more JSON values with output().',
+            'JavaScript code executed in an async QuickJS wrapper. Top-level await is supported. Use console.log(...data) for captured text lines and return for a structured JSON result.',
           ),
       }),
       outputSchema: z
         .json()
         .describe(
-          'The JSON result emitted or returned by the executed code. Multiple emissions are returned as an array.',
+          'Captured console lines and the returned JSON value. Multiple results are returned as an array in execution order.',
         ),
       execute: async ({ code }, options) =>
         this.execute({ code, signal: options.abortSignal }),

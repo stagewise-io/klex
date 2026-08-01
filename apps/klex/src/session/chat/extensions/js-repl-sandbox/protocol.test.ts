@@ -11,7 +11,7 @@ describe('JavaScript sandbox protocol', () => {
       parseParentMessage({
         type: 'execute',
         executionId: 'execution-2',
-        source: 'output(null)',
+        source: 'console.log(null)',
         deadline: 1,
         snapshot: { namespaces: [] },
       }).type,

@@ -81,7 +81,7 @@ class PersistentQuickJsRuntimeModule implements PersistentQuickJsRuntime {
         );
         return promise;
       },
-      output: (value) => {
+      emit: (value) => {
         appendEmission(emissions, value, options.maximumOutputBytes);
       },
     };

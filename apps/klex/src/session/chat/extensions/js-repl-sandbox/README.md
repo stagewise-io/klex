@@ -41,7 +41,7 @@ tools.describe(
 
 mcp[namespace][capability](input: JsonObject): Promise<JsonValue>;
 
-output(value: JsonValue): void;
+console.log(...data: unknown[]): void;
 ```
 
 Use bracket notation for tool names so punctuation, dots, slashes, and other exact names are preserved:
@@ -59,28 +59,30 @@ The frozen `mcp`, `tools`, namespace, and wrapper objects are presentation APIs 
 
 ## Execution results
 
-Both `output(value)` and a non-`undefined` resolved return value emit JSON values. Returns are appended after preceding explicit outputs.
+Each `console.log(...data)` call produces one captured text line. Calls accept zero or more normal JavaScript values: arguments are rendered safely and joined with spaces, cycles and deep or large collections are visibly truncated, and getters are not invoked. A leading format string supports `%%`, `%s`, `%d`, `%i`, `%f`, `%o`, and `%O`. Console lines are buffered until execution completes; they do not stream.
 
-| Emissions | Result |
+A non-`undefined` resolved return value is appended after preceding console lines.
+
+| Results | Tool result |
 | --- | --- |
 | None, including implicit or explicit `undefined` return | `null` |
 | One | The value directly |
-| Two or more | An array in emission order |
+| Two or more | An array in execution order |
 
 ```js
-output('starting');
+console.log('starting %s', 'work');
 return { done: true };
 ```
 
 returns:
 
 ```json
-["starting", { "done": true }]
+["starting work", { "done": true }]
 ```
 
-`return null` emits JSON `null`; `return undefined` emits nothing. `output(undefined)` is invalid. Falling off the end emits nothing, and the last expression is not an implicit result.
+`console.log()` emits an empty string. `return null` emits JSON `null`; `return undefined` emits nothing. Falling off the end emits nothing, and the last expression is not an implicit result.
 
-Every emitted or returned value must be strict JSON: null, booleans, strings, finite numbers, arrays, or plain objects containing only strict JSON. Functions, symbols, bigint, `undefined`, non-finite numbers, cycles, and prototype-bearing objects fail serialization. If evaluation throws, collected emissions are discarded and the execution rejects.
+Only returned values must be strict JSON: null, booleans, strings, finite numbers, arrays, or plain objects containing only strict JSON. Functions, symbols, bigint, `undefined`, non-finite numbers, cycles, and prototype-bearing objects fail return serialization. Console arguments may contain these values because they are rendered as text. If evaluation throws, captured console lines are discarded and the execution rejects.
 
 ## Isolation and limits
 
@@ -98,4 +100,4 @@ Fixed limits are exported as `JAVASCRIPT_SANDBOX_LIMITS`:
 - 256 KiB normalized execution result.
 - 64 MiB Worker old-generation V8 heap and constrained Worker stack.
 
-The result limit applies to the normalized aggregate so repeated small `output()` calls cannot bypass it. JSON validation and byte limits are enforced at Worker and parent boundaries. Worker resource limits are defense in depth; QuickJS and the tool-provider boundary provide the primary guest isolation and authority control.
+The result limit applies to the normalized aggregate so repeated small `console.log()` calls cannot bypass it. JSON validation and byte limits are enforced at Worker and parent boundaries. Worker resource limits are defense in depth; QuickJS and the tool-provider boundary provide the primary guest isolation and authority control.

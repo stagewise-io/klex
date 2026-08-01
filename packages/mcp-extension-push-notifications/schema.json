@@ -254,10 +254,7 @@
                                   "type": "array",
                                   "items": {
                                     "type": "string",
-                                    "enum": [
-                                      "user",
-                                      "assistant"
-                                    ]
+                                    "enum": ["user", "assistant"]
                                   }
                                 },
                                 "priority": {
@@ -304,10 +301,7 @@
                                   "type": "array",
                                   "items": {
                                     "type": "string",
-                                    "enum": [
-                                      "user",
-                                      "assistant"
-                                    ]
+                                    "enum": ["user", "assistant"]
                                   }
                                 },
                                 "priority": {
@@ -354,10 +348,7 @@
                                   "type": "array",
                                   "items": {
                                     "type": "string",
-                                    "enum": [
-                                      "user",
-                                      "assistant"
-                                    ]
+                                    "enum": ["user", "assistant"]
                                   }
                                 },
                                 "priority": {
@@ -412,10 +403,7 @@
                                   },
                                   "theme": {
                                     "type": "string",
-                                    "enum": [
-                                      "light",
-                                      "dark"
-                                    ]
+                                    "enum": ["light", "dark"]
                                   }
                                 },
                                 "required": ["src"],
@@ -441,10 +429,7 @@
                                   "type": "array",
                                   "items": {
                                     "type": "string",
-                                    "enum": [
-                                      "user",
-                                      "assistant"
-                                    ]
+                                    "enum": ["user", "assistant"]
                                   }
                                 },
                                 "priority": {
@@ -537,10 +522,7 @@
                                   "type": "array",
                                   "items": {
                                     "type": "string",
-                                    "enum": [
-                                      "user",
-                                      "assistant"
-                                    ]
+                                    "enum": ["user", "assistant"]
                                   }
                                 },
                                 "priority": {
@@ -809,10 +791,7 @@
                                 "type": "array",
                                 "items": {
                                   "type": "string",
-                                  "enum": [
-                                    "user",
-                                    "assistant"
-                                  ]
+                                  "enum": ["user", "assistant"]
                                 }
                               },
                               "priority": {
@@ -859,10 +838,7 @@
                                 "type": "array",
                                 "items": {
                                   "type": "string",
-                                  "enum": [
-                                    "user",
-                                    "assistant"
-                                  ]
+                                  "enum": ["user", "assistant"]
                                 }
                               },
                               "priority": {
@@ -909,10 +885,7 @@
                                 "type": "array",
                                 "items": {
                                   "type": "string",
-                                  "enum": [
-                                    "user",
-                                    "assistant"
-                                  ]
+                                  "enum": ["user", "assistant"]
                                 }
                               },
                               "priority": {
@@ -967,10 +940,7 @@
                                 },
                                 "theme": {
                                   "type": "string",
-                                  "enum": [
-                                    "light",
-                                    "dark"
-                                  ]
+                                  "enum": ["light", "dark"]
                                 }
                               },
                               "required": ["src"],
@@ -996,10 +966,7 @@
                                 "type": "array",
                                 "items": {
                                   "type": "string",
-                                  "enum": [
-                                    "user",
-                                    "assistant"
-                                  ]
+                                  "enum": ["user", "assistant"]
                                 }
                               },
                               "priority": {
@@ -1092,10 +1059,7 @@
                                 "type": "array",
                                 "items": {
                                   "type": "string",
-                                  "enum": [
-                                    "user",
-                                    "assistant"
-                                  ]
+                                  "enum": ["user", "assistant"]
                                 }
                               },
                               "priority": {
@@ -1259,10 +1223,7 @@
                                     "type": "array",
                                     "items": {
                                       "type": "string",
-                                      "enum": [
-                                        "user",
-                                        "assistant"
-                                      ]
+                                      "enum": ["user", "assistant"]
                                     }
                                   },
                                   "priority": {
@@ -1309,10 +1270,7 @@
                                     "type": "array",
                                     "items": {
                                       "type": "string",
-                                      "enum": [
-                                        "user",
-                                        "assistant"
-                                      ]
+                                      "enum": ["user", "assistant"]
                                     }
                                   },
                                   "priority": {
@@ -1359,10 +1317,7 @@
                                     "type": "array",
                                     "items": {
                                       "type": "string",
-                                      "enum": [
-                                        "user",
-                                        "assistant"
-                                      ]
+                                      "enum": ["user", "assistant"]
                                     }
                                   },
                                   "priority": {
@@ -1417,10 +1372,7 @@
                                     },
                                     "theme": {
                                       "type": "string",
-                                      "enum": [
-                                        "light",
-                                        "dark"
-                                      ]
+                                      "enum": ["light", "dark"]
                                     }
                                   },
                                   "required": ["src"],
@@ -1446,10 +1398,7 @@
                                     "type": "array",
                                     "items": {
                                       "type": "string",
-                                      "enum": [
-                                        "user",
-                                        "assistant"
-                                      ]
+                                      "enum": ["user", "assistant"]
                                     }
                                   },
                                   "priority": {
@@ -1542,10 +1491,7 @@
                                     "type": "array",
                                     "items": {
                                       "type": "string",
-                                      "enum": [
-                                        "user",
-                                        "assistant"
-                                      ]
+                                      "enum": ["user", "assistant"]
                                     }
                                   },
                                   "priority": {
@@ -1684,10 +1630,7 @@
                         "type": "array",
                         "items": {
                           "type": "string",
-                          "enum": [
-                            "user",
-                            "assistant"
-                          ]
+                          "enum": ["user", "assistant"]
                         }
                       },
                       "priority": {
@@ -1734,10 +1677,7 @@
                         "type": "array",
                         "items": {
                           "type": "string",
-                          "enum": [
-                            "user",
-                            "assistant"
-                          ]
+                          "enum": ["user", "assistant"]
                         }
                       },
                       "priority": {
@@ -1784,10 +1724,7 @@
                         "type": "array",
                         "items": {
                           "type": "string",
-                          "enum": [
-                            "user",
-                            "assistant"
-                          ]
+                          "enum": ["user", "assistant"]
                         }
                       },
                       "priority": {
@@ -1842,10 +1779,7 @@
                         },
                         "theme": {
                           "type": "string",
-                          "enum": [
-                            "light",
-                            "dark"
-                          ]
+                          "enum": ["light", "dark"]
                         }
                       },
                       "required": ["src"],
@@ -1871,10 +1805,7 @@
                         "type": "array",
                         "items": {
                           "type": "string",
-                          "enum": [
-                            "user",
-                            "assistant"
-                          ]
+                          "enum": ["user", "assistant"]
                         }
                       },
                       "priority": {
@@ -1967,10 +1898,7 @@
                         "type": "array",
                         "items": {
                           "type": "string",
-                          "enum": [
-                            "user",
-                            "assistant"
-                          ]
+                          "enum": ["user", "assistant"]
                         }
                       },
                       "priority": {

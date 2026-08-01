@@ -46,30 +46,30 @@ describe('JavaScriptTool', () => {
   it('preserves globalThis values and functions across executions', async () => {
     await expect(
       javaScriptTool.execute({
-        code: `globalThis.secret = 41; globalThis.increment = value => value + 1; output(null)`,
+        code: `globalThis.secret = 41; globalThis.increment = value => value + 1`,
       }),
     ).resolves.toBeNull();
     await expect(
       javaScriptTool.execute({
-        code: `output(globalThis.increment(globalThis.secret))`,
+        code: `return globalThis.increment(globalThis.secret)`,
       }),
     ).resolves.toBe(42);
   });
 
   it('keeps top-level declarations execution-local', async () => {
-    await javaScriptTool.execute({ code: `const local = 1; output(local)` });
+    await javaScriptTool.execute({ code: `const local = 1; return local` });
     await expect(
-      javaScriptTool.execute({ code: `output(typeof local)` }),
+      javaScriptTool.execute({ code: `return typeof local` }),
     ).resolves.toBe('undefined');
   });
 
   it('preserves exact names and supports parallel provider calls', async () => {
     const result = await javaScriptTool.execute({
-      code: `output(await Promise.all([
+      code: `return await Promise.all([
         mcp['git.hub']['echo-value']({ value: 1 }),
         mcp.other.same({ value: 2 }),
         mcp['odd namespace']['slash/name']({ value: 3 }),
-      ]))`,
+      ])`,
     });
     expect(result).toMatchObject([
       { value: 1 },
@@ -80,7 +80,7 @@ describe('JavaScriptTool', () => {
 
   it('refreshes namespaces and rejects retained stale wrappers', async () => {
     await javaScriptTool.execute({
-      code: `globalThis.stale = mcp['stale.namespace']['temporary-tool']; output(null)`,
+      code: `globalThis.stale = mcp['stale.namespace']['temporary-tool']`,
     });
     provider.remove({
       namespace: 'stale.namespace',
@@ -88,21 +88,21 @@ describe('JavaScriptTool', () => {
     });
     await expect(
       javaScriptTool.execute({
-        code: `output({ current: typeof mcp['stale.namespace'], retained: typeof globalThis.stale })`,
+        code: `return { current: typeof mcp['stale.namespace'], retained: typeof globalThis.stale }`,
       }),
     ).resolves.toEqual({ current: 'undefined', retained: 'function' });
     await expect(
-      javaScriptTool.execute({ code: `output(await globalThis.stale({}))` }),
+      javaScriptTool.execute({ code: `return await globalThis.stale({})` }),
     ).rejects.toThrow(/unavailable/);
   });
 
   it('resets explicit state on demand', async () => {
     await javaScriptTool.execute({
-      code: `globalThis.secret = 1; output(null)`,
+      code: `globalThis.secret = 1`,
     });
     await javaScriptTool.reset();
     await expect(
-      javaScriptTool.execute({ code: `output(typeof globalThis.secret)` }),
+      javaScriptTool.execute({ code: `return typeof globalThis.secret` }),
     ).resolves.toBe('undefined');
   });
 
@@ -111,10 +111,10 @@ describe('JavaScriptTool', () => {
     await other.start();
     try {
       await javaScriptTool.execute({
-        code: `globalThis.secret = 1; output(null)`,
+        code: `globalThis.secret = 1`,
       });
       await expect(
-        other.execute({ code: `output(typeof globalThis.secret)` }),
+        other.execute({ code: `return typeof globalThis.secret` }),
       ).resolves.toBe('undefined');
     } finally {
       await other.close();
@@ -123,13 +123,13 @@ describe('JavaScriptTool', () => {
 
   it('serializes concurrent executions in FIFO order', async () => {
     await javaScriptTool.execute({
-      code: `globalThis.order = []; output(null)`,
+      code: `globalThis.order = []`,
     });
     const first = javaScriptTool.execute({
-      code: `globalThis.order.push(1); await mcp['git.hub'].wait({}); globalThis.order.push(2); output(globalThis.order)`,
+      code: `globalThis.order.push(1); await mcp['git.hub'].wait({}); globalThis.order.push(2); return globalThis.order`,
     });
     const second = javaScriptTool.execute({
-      code: `globalThis.order.push(3); output(globalThis.order)`,
+      code: `globalThis.order.push(3); return globalThis.order`,
     });
     await expect(first).resolves.toEqual([1, 2]);
     await expect(second).resolves.toEqual([1, 2, 3]);
@@ -137,52 +137,52 @@ describe('JavaScriptTool', () => {
 
   it('does not run a queued execution aborted before it starts', async () => {
     const active = javaScriptTool.execute({
-      code: `await mcp['git.hub'].wait({}); output(null)`,
+      code: `await mcp['git.hub'].wait({})`,
     });
     const controller = new AbortController();
     const queued = javaScriptTool.execute({
-      code: `globalThis.ran = true; output(null)`,
+      code: `globalThis.ran = true`,
       signal: controller.signal,
     });
     controller.abort(new Error('cancelled'));
     await active;
     await expect(queued).rejects.toThrow(/cancelled/);
     await expect(
-      javaScriptTool.execute({ code: `output(typeof globalThis.ran)` }),
+      javaScriptTool.execute({ code: `return typeof globalThis.ran` }),
     ).resolves.toBe('undefined');
   });
 
   it('recovers with an empty context after active cancellation', async () => {
     await javaScriptTool.execute({
-      code: `globalThis.secret = 1; output(null)`,
+      code: `globalThis.secret = 1`,
     });
     const controller = new AbortController();
     const execution = javaScriptTool.execute({
-      code: `await mcp['git.hub'].wait({}); output(null)`,
+      code: `await mcp['git.hub'].wait({})`,
       signal: controller.signal,
     });
     await new Promise((resolve) => setTimeout(resolve, 5));
     controller.abort(new Error('cancelled'));
     await expect(execution).rejects.toThrow(/cancelled/);
     await expect(
-      javaScriptTool.execute({ code: `output(typeof globalThis.secret)` }),
+      javaScriptTool.execute({ code: `return typeof globalThis.secret` }),
     ).resolves.toBe('undefined');
   });
 
   it('preserves state after ordinary guest and provider errors', async () => {
     await javaScriptTool.execute({
-      code: `globalThis.secret = 1; output(null)`,
+      code: `globalThis.secret = 1`,
     });
     await expect(
       javaScriptTool.execute({ code: `throw new Error('guest failure')` }),
     ).rejects.toThrow(/guest failure/);
     await expect(
       javaScriptTool.execute({
-        code: `output(await mcp['stale.namespace']['temporary-tool']({}))`,
+        code: `return await mcp['stale.namespace']['temporary-tool']({})`,
       }),
     ).resolves.toEqual({});
     await expect(
-      javaScriptTool.execute({ code: `output(globalThis.secret)` }),
+      javaScriptTool.execute({ code: `return globalThis.secret` }),
     ).resolves.toBe(1);
   });
 
@@ -194,18 +194,92 @@ describe('JavaScriptTool', () => {
       },
     );
 
-    it('returns one output directly', async () => {
-      await expect(javaScriptTool.execute({ code: 'output(1)' })).resolves.toBe(
-        1,
+    it('removes output and exposes a frozen console API', async () => {
+      await expect(
+        javaScriptTool.execute({
+          code: `return {
+            output: typeof output,
+            consoleFrozen: Object.isFrozen(console),
+            logFrozen: Object.isFrozen(console.log),
+            logType: typeof console.log,
+          }`,
+        }),
+      ).resolves.toEqual({
+        output: 'undefined',
+        consoleFrozen: true,
+        logFrozen: true,
+        logType: 'function',
+      });
+    });
+
+    it('captures zero and variadic console arguments', async () => {
+      await expect(
+        javaScriptTool.execute({
+          code: `console.log(); console.log('value', 1, true)`,
+        }),
+      ).resolves.toEqual(['', 'value 1 true']);
+    });
+
+    it('captures one console line directly', async () => {
+      await expect(
+        javaScriptTool.execute({ code: `console.log('value', 1)` }),
+      ).resolves.toBe('value 1');
+    });
+
+    it('aggregates console lines in order', async () => {
+      await expect(
+        javaScriptTool.execute({
+          code: `console.log('first'); console.log({ second: true })`,
+        }),
+      ).resolves.toEqual(['first', '{ second: true }']);
+    });
+
+    it('formats placeholders and preserves unused arguments', async () => {
+      await expect(
+        javaScriptTool.execute({
+          code: `console.log('text=%s int=%i float=%f object=%o %%', 'x', '12.9', '2.5', { ok: true }, 'tail')`,
+        }),
+      ).resolves.toBe('text=x int=12 float=2.5 object={ ok: true } % tail');
+    });
+
+    it('renders arbitrary JavaScript values as text', async () => {
+      await expect(
+        javaScriptTool.execute({
+          code: `console.log(undefined, 1n, Symbol('x'), function demo() {}, new Error('boom'), NaN, Infinity, [1, 'x'], { ok: true })`,
+        }),
+      ).resolves.toBe(
+        `undefined 1n Symbol(x) [Function: demo] Error: boom NaN Infinity [ 1, "x" ] { ok: true }`,
       );
     });
 
-    it('aggregates multiple outputs in order', async () => {
+    it('bounds inspection, marks cycles, and does not invoke getters', async () => {
       await expect(
         javaScriptTool.execute({
-          code: `output('first'); output({ second: true })`,
+          code: `
+            let getterCalls = 0;
+            const accessor = {};
+            Object.defineProperty(accessor, 'value', { enumerable: true, get() { getterCalls += 1; return 1; } });
+            const cyclic = {}; cyclic.self = cyclic;
+            const deep = { a: { b: { c: { d: { e: 1 } } } } };
+            console.log(accessor, cyclic, deep, Array.from({ length: 51 }, (_, index) => index));
+            return getterCalls;
+          `,
         }),
-      ).resolves.toEqual(['first', { second: true }]);
+      ).resolves.toEqual([
+        `{ value: [Getter] } { self: [Circular] } { a: { b: { c: { d: [Object] } } } } [ ${Array.from(
+          { length: 50 },
+          (_, index) => index,
+        ).join(', ')}, ... 1 more items ]`,
+        0,
+      ]);
+    });
+
+    it('contains inspection failures in the captured line', async () => {
+      await expect(
+        javaScriptTool.execute({
+          code: `console.log(new Proxy({}, { ownKeys() { throw new Error('nope'); } }))`,
+        }),
+      ).resolves.toBe('[Uninspectable: nope]');
     });
 
     it('treats a return value as the final emission', async () => {
@@ -214,7 +288,7 @@ describe('JavaScriptTool', () => {
       ).resolves.toEqual({ value: 1 });
       await expect(
         javaScriptTool.execute({
-          code: `output('starting'); return { done: true }`,
+          code: `console.log('starting'); return { done: true }`,
         }),
       ).resolves.toEqual(['starting', { done: true }]);
       await expect(
@@ -231,7 +305,6 @@ describe('JavaScriptTool', () => {
     });
 
     it.each([
-      'output(undefined)',
       'return () => undefined',
       'return 1n',
       'return Infinity',
@@ -243,7 +316,7 @@ describe('JavaScriptTool', () => {
     it('enforces the byte limit across aggregated emissions', async () => {
       await expect(
         javaScriptTool.execute({
-          code: `output('x'.repeat(140_000)); output('x'.repeat(140_000))`,
+          code: `console.log('x'.repeat(140_000)); console.log('x'.repeat(140_000))`,
         }),
       ).rejects.toThrow(/Output exceeds/);
     });
@@ -251,7 +324,7 @@ describe('JavaScriptTool', () => {
     it('discards partial emissions when execution fails', async () => {
       await expect(
         javaScriptTool.execute({
-          code: `output('partial'); throw new Error('failed')`,
+          code: `console.log('partial'); throw new Error('failed')`,
         }),
       ).rejects.toThrow(/failed/);
       await expect(javaScriptTool.execute({ code: 'return 3' })).resolves.toBe(
@@ -263,7 +336,7 @@ describe('JavaScriptTool', () => {
   it('does not expose ambient Node authority', async () => {
     await expect(
       javaScriptTool.execute({
-        code: `output({ process: typeof process, require: typeof require })`,
+        code: `return { process: typeof process, require: typeof require }`,
       }),
     ).resolves.toEqual({ process: 'undefined', require: 'undefined' });
   });

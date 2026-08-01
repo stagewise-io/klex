@@ -34,11 +34,11 @@ describe('packaged JavaScript sandbox Worker', () => {
     try {
       await expect(
         javaScriptTool.execute({
-          code: `globalThis.packaged = 41; output({
+          code: `globalThis.packaged = 41; return {
             value: await mcp['git.hub']['echo-value']({ packaged: true }),
             process: typeof process,
             require: typeof require,
-          })`,
+          }`,
         }),
       ).resolves.toEqual({
         value: { packaged: true },
@@ -49,11 +49,13 @@ describe('packaged JavaScript sandbox Worker', () => {
         javaScriptTool.execute({ code: `return globalThis.packaged + 1` }),
       ).resolves.toBe(42);
       await expect(
-        javaScriptTool.execute({ code: `output('first'); return 'second'` }),
+        javaScriptTool.execute({
+          code: `console.log('first'); return 'second'`,
+        }),
       ).resolves.toEqual(['first', 'second']);
       await javaScriptTool.reset();
       await expect(
-        javaScriptTool.execute({ code: `output(typeof globalThis.packaged)` }),
+        javaScriptTool.execute({ code: `return typeof globalThis.packaged` }),
       ).resolves.toBe('undefined');
     } finally {
       await javaScriptTool.close();

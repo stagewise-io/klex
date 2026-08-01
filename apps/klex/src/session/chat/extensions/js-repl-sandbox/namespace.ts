@@ -2,11 +2,12 @@ import type { QuickJSContext, QuickJSHandle } from 'quickjs-emscripten-core';
 
 import { assertJsonValue, type JsonValue } from '@/tool-provider';
 
+import { CONSOLE_FACTORY_SOURCE } from './console-format';
 import type { ProviderRequest, ToolSnapshotMessage } from './protocol';
 
 export interface NamespaceBridge {
   request(request: ProviderRequest): Promise<JsonValue>;
-  output(value: JsonValue): void;
+  emit(value: JsonValue): void;
 }
 
 export interface NamespaceController {
@@ -62,14 +63,7 @@ export function createNamespaceController(
     tools.dispose();
   }
 
-  const output = context.newFunction('output', (value) => {
-    const dumped = context.dump(value);
-    assertJsonValue(dumped);
-    requireBridge().output(dumped);
-  });
-  context.setProp(context.global, 'output', output);
-  freeze(context, output);
-  output.dispose();
+  installConsole(context, requireBridge);
 
   return {
     activate(snapshot, bridge) {
@@ -80,6 +74,35 @@ export function createNamespaceController(
       activeBridge = undefined;
     },
   };
+}
+
+function installConsole(
+  context: QuickJSContext,
+  requireBridge: () => NamespaceBridge,
+): void {
+  const emit = context.newFunction('emitConsoleLog', (value) => {
+    const dumped = context.dump(value);
+    if (typeof dumped !== 'string')
+      throw new TypeError('Console formatter must produce a string');
+    requireBridge().emit(dumped);
+  });
+  let factory: QuickJSHandle | undefined;
+  let consoleHandle: QuickJSHandle | undefined;
+  try {
+    factory = context.unwrapResult(
+      context.evalCode(CONSOLE_FACTORY_SOURCE, 'console-format.js', {
+        strict: true,
+      }),
+    );
+    consoleHandle = context.unwrapResult(
+      context.callFunction(factory, context.undefined, emit),
+    );
+    context.setProp(context.global, 'console', consoleHandle);
+  } finally {
+    consoleHandle?.dispose();
+    factory?.dispose();
+    emit.dispose();
+  }
 }
 
 function installMcpNamespace(

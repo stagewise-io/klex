@@ -86,6 +86,9 @@ importers:
       '@stagewise/mcp-extension-push-notifications':
         specifier: workspace:*
         version: link:../../packages/mcp-extension-push-notifications
+      '@stagewise/mcp-extension-realtime-media':
+        specifier: workspace:*
+        version: link:../../packages/mcp-extension-realtime-media
       ai:
         specifier: 7.0.31
         version: 7.0.31(zod@4.4.3)
@@ -257,6 +260,9 @@ importers:
       '@stagewise/mcp-extension-push-notifications':
         specifier: workspace:*
         version: link:../../packages/mcp-extension-push-notifications
+      '@stagewise/mcp-extension-realtime-media':
+        specifier: workspace:*
+        version: link:../../packages/mcp-extension-realtime-media
       hono:
         specifier: 4.12.30
         version: 4.12.30
@@ -264,6 +270,9 @@ importers:
         specifier: 4.4.3
         version: 4.4.3
     devDependencies:
+      '@modelcontextprotocol/client':
+        specifier: 2.0.0-beta.4
+        version: 2.0.0-beta.4
       '@stagewise/typescript-config':
         specifier: workspace:*
         version: link:../../packages/typescript-config
@@ -402,6 +411,39 @@ importers:
         version: 7.0.2
 
   packages/mcp-extension-push-notifications:
+    devDependencies:
+      '@modelcontextprotocol/client':
+        specifier: 2.0.0-beta.4
+        version: 2.0.0-beta.4
+      '@modelcontextprotocol/core':
+        specifier: 2.0.0-beta.4
+        version: 2.0.0-beta.4
+      '@modelcontextprotocol/server':
+        specifier: 2.0.0-beta.4
+        version: 2.0.0-beta.4
+      '@stagewise/typescript-config':
+        specifier: workspace:*
+        version: link:../typescript-config
+      '@types/node':
+        specifier: 24.10.1
+        version: 24.10.1
+      ts-to-zod:
+        specifier: 5.1.0
+        version: 5.1.0
+      tsx:
+        specifier: 4.23.1
+        version: 4.23.1
+      typescript:
+        specifier: 7.0.2
+        version: 7.0.2
+      vitest:
+        specifier: 4.1.10
+        version: 4.1.10(@opentelemetry/api@1.9.1)(@types/node@24.10.1)(@vitest/coverage-istanbul@4.1.10)(@vitest/coverage-v8@4.1.10)(vite@8.1.5(@types/node@24.10.1)(esbuild@0.28.1)(jiti@2.6.1)(tsx@4.23.1)(yaml@2.9.0))
+      zod:
+        specifier: 4.4.3
+        version: 4.4.3
+
+  packages/mcp-extension-realtime-media:
     devDependencies:
       '@modelcontextprotocol/client':
         specifier: 2.0.0-beta.4

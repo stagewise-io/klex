@@ -34,6 +34,7 @@ function makeServerInfo(overrides: Partial<McpServerInfo> = {}): McpServerInfo {
     status: 'connected',
     toolCount: 3,
     supportsPushNotifications: false,
+    supportsRealtimeMedia: false,
     transport: 'http',
     ...overrides,
   };

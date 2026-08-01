@@ -5,6 +5,10 @@ import type {
   PushNotification,
   PushNotificationNotification,
 } from '@stagewise/mcp-extension-push-notifications';
+import type {
+  AcceptRealtimeMediaSessionResult,
+  RealtimeMediaNotification,
+} from '@stagewise/mcp-extension-realtime-media';
 
 import type { Config, McpServerConfig } from '@/config';
 import {
@@ -48,6 +52,15 @@ export type McpPushNotificationListener = (
   event: McpPushNotification,
 ) => void | Promise<void>;
 
+export interface McpRealtimeMediaNotification {
+  namespace: string;
+  notification: RealtimeMediaNotification;
+}
+
+export type McpRealtimeMediaNotificationListener = (
+  event: McpRealtimeMediaNotification,
+) => void | Promise<void>;
+
 /**
  * Connection status of an MCP server.
  * - `connected` — connection is active and tools are available.
@@ -71,6 +84,8 @@ export interface McpServerInfo {
   toolCount: number;
   /** Whether the server supports Push Notifications. */
   supportsPushNotifications: boolean;
+  /** Whether the server supports Realtime Media. */
+  supportsRealtimeMedia: boolean;
   /** Server type: stdio or http. */
   transport: 'stdio' | 'http';
 }
@@ -100,6 +115,18 @@ export interface McpToolCallRecord {
 export interface Mcp extends ToolProvider {
   start(): Promise<void>;
   onPushNotification(listener: McpPushNotificationListener): () => void;
+  onRealtimeMediaNotification(
+    listener: McpRealtimeMediaNotificationListener,
+  ): () => void;
+  acceptRealtimeMediaSession(
+    namespace: string,
+    sessionId: string,
+  ): Promise<AcceptRealtimeMediaSessionResult>;
+  rejectRealtimeMediaSession(
+    namespace: string,
+    sessionId: string,
+  ): Promise<void>;
+  endRealtimeMediaSession(namespace: string, sessionId: string): Promise<void>;
   close(): Promise<void>;
 
   /** Returns the current status of all configured MCP servers. */
@@ -122,6 +149,11 @@ interface PushNotificationWorker {
   recovered: boolean;
 }
 
+interface RealtimeMediaWorker {
+  connection: McpConnection;
+  controller: AbortController;
+}
+
 interface McpConnectionAttempt {
   controller: AbortController;
 }
@@ -141,6 +173,9 @@ class McpModule implements Mcp {
   private readonly servers = new Map<string, McpServerRuntime>();
   private readonly eventWorkers = new Map<string, PushNotificationWorker>();
   private readonly eventListeners = new Set<McpPushNotificationListener>();
+  private readonly realtimeWorkers = new Map<string, RealtimeMediaWorker>();
+  private readonly realtimeListeners =
+    new Set<McpRealtimeMediaNotificationListener>();
   private registry: McpRegistry = new Map();
   private started = false;
   private unsubscribe: (() => void) | undefined;
@@ -182,6 +217,45 @@ class McpModule implements Mcp {
       subscribed = false;
       this.eventListeners.delete(listener);
     };
+  }
+
+  onRealtimeMediaNotification(
+    listener: McpRealtimeMediaNotificationListener,
+  ): () => void {
+    this.realtimeListeners.add(listener);
+    let subscribed = true;
+    return () => {
+      if (!subscribed) return;
+      subscribed = false;
+      this.realtimeListeners.delete(listener);
+    };
+  }
+
+  async acceptRealtimeMediaSession(
+    namespace: string,
+    sessionId: string,
+  ): Promise<AcceptRealtimeMediaSessionResult> {
+    return this.requireRealtimeConnection(namespace).realtimeMedia.accept(
+      sessionId,
+    );
+  }
+
+  async rejectRealtimeMediaSession(
+    namespace: string,
+    sessionId: string,
+  ): Promise<void> {
+    await this.requireRealtimeConnection(namespace).realtimeMedia.reject(
+      sessionId,
+    );
+  }
+
+  async endRealtimeMediaSession(
+    namespace: string,
+    sessionId: string,
+  ): Promise<void> {
+    await this.requireRealtimeConnection(namespace).realtimeMedia.end(
+      sessionId,
+    );
   }
 
   async close(): Promise<void> {
@@ -370,11 +444,14 @@ class McpModule implements Mcp {
         },
         onPushNotification: (changed, notification) =>
           this.enqueuePushNotification(changed, notification),
+        onRealtimeMediaNotification: (changed, notification) =>
+          this.publishRealtimeNotification(changed, notification),
         onDisconnect: (disconnected) => {
           if (!this.isCurrentConnection(runtime, disconnected)) return;
           runtime.connection = undefined;
           runtime.status = 'error';
           this.stopEventWorker(runtime.namespace);
+          this.stopRealtimeWorker(runtime.namespace);
           this.publishRegistry();
           this.deps.logger.warn(
             { namespace: runtime.namespace },
@@ -395,11 +472,14 @@ class McpModule implements Mcp {
         this.publishRegistry();
         if (connection.supportsPushNotifications)
           this.startEventWorker(connection);
+        if (connection.supportsRealtimeMedia)
+          this.startRealtimeWorker(connection);
         this.deps.logger.info(
           {
             namespace: runtime.namespace,
             toolCount: connection.tools.length,
             supportsPushNotifications: connection.supportsPushNotifications,
+            supportsRealtimeMedia: connection.supportsRealtimeMedia,
           },
           'MCP server connected',
         );
@@ -437,6 +517,7 @@ class McpModule implements Mcp {
     runtime.attempt = undefined;
     this.clearRetry(runtime);
     this.stopEventWorker(runtime.namespace);
+    this.stopRealtimeWorker(runtime.namespace);
     const connection = runtime.connection;
     runtime.connection = undefined;
     return connection;
@@ -650,6 +731,93 @@ class McpModule implements Mcp {
     );
   }
 
+  private requireRealtimeConnection(namespace: string): McpConnection {
+    const connection = this.servers.get(namespace)?.connection;
+    if (!connection) throw new Error(`MCP server is unavailable: ${namespace}`);
+    if (!connection.supportsRealtimeMedia) {
+      throw new Error(
+        `MCP server does not support Realtime Media: ${namespace}`,
+      );
+    }
+    return connection;
+  }
+
+  private startRealtimeWorker(connection: McpConnection): void {
+    this.stopRealtimeWorker(connection.namespace);
+    const worker: RealtimeMediaWorker = {
+      connection,
+      controller: new AbortController(),
+    };
+    this.realtimeWorkers.set(connection.namespace, worker);
+    void this.runRealtimeWorker(worker);
+  }
+
+  private async runRealtimeWorker(worker: RealtimeMediaWorker): Promise<void> {
+    try {
+      const subscription = await worker.connection.realtimeMedia.listen(
+        undefined,
+        { request: { signal: worker.controller.signal } },
+      );
+      await subscription.closed;
+      if (this.isCurrentRealtimeWorker(worker)) {
+        throw new Error('Realtime Media subscription closed');
+      }
+    } catch (error) {
+      if (!this.isCurrentRealtimeWorker(worker)) return;
+      const runtime = this.servers.get(worker.connection.namespace);
+      if (!runtime || runtime.connection !== worker.connection) return;
+      this.deps.logger.warn(
+        { error, namespace: worker.connection.namespace },
+        'Realtime Media subscription failed; reconnecting MCP server',
+      );
+      runtime.connection = undefined;
+      runtime.status = 'error';
+      this.stopRealtimeWorker(runtime.namespace);
+      this.stopEventWorker(runtime.namespace);
+      this.publishRegistry();
+      this.closeConnection(worker.connection, runtime.namespace);
+      this.scheduleReconnect(runtime);
+    }
+  }
+
+  private publishRealtimeNotification(
+    connection: McpConnection,
+    notification: RealtimeMediaNotification,
+  ): void {
+    const worker = this.realtimeWorkers.get(connection.namespace);
+    if (!worker || worker.connection !== connection) return;
+    for (const listener of this.realtimeListeners) {
+      void Promise.resolve(
+        listener({
+          namespace: connection.namespace,
+          notification: structuredClone(notification),
+        }),
+      ).catch((error: unknown) => {
+        this.deps.logger.error(
+          { error, namespace: connection.namespace },
+          'MCP Realtime Media listener failed',
+        );
+      });
+    }
+  }
+
+  private stopRealtimeWorker(namespace: string): void {
+    const worker = this.realtimeWorkers.get(namespace);
+    if (!worker) return;
+    this.realtimeWorkers.delete(namespace);
+    worker.controller.abort();
+  }
+
+  private isCurrentRealtimeWorker(worker: RealtimeMediaWorker): boolean {
+    return (
+      this.started &&
+      !worker.controller.signal.aborted &&
+      this.servers.get(worker.connection.namespace)?.connection ===
+        worker.connection &&
+      this.realtimeWorkers.get(worker.connection.namespace) === worker
+    );
+  }
+
   private scheduleReconnect(runtime: McpServerRuntime): void {
     if (!this.isCurrentRuntime(runtime) || runtime.retryTimer) return;
     runtime.retryAttempt += 1;
@@ -699,6 +867,7 @@ class McpModule implements Mcp {
         toolCount: connection?.tools.length ?? 0,
         supportsPushNotifications:
           connection?.supportsPushNotifications ?? false,
+        supportsRealtimeMedia: connection?.supportsRealtimeMedia ?? false,
         transport: config && 'command' in config ? 'stdio' : 'http',
       });
     }

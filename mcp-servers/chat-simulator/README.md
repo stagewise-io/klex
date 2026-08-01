@@ -36,6 +36,8 @@ pnpm --filter @stagewise/chat-simulator start
 | `POST /mcp` | Streamable HTTP MCP endpoint |
 | `GET /api/messages` | Current chat messages |
 | `POST /api/messages` | Add a user message |
+| `POST /api/realtime/sessions` | Create a contract-only incoming audio offer |
+| `DELETE /api/realtime/sessions/:sessionId` | End an offered or accepted session remotely |
 | `GET /api/stream` | Browser message stream |
 
 Configure the agent's MCP client with:
@@ -44,8 +46,11 @@ Configure the agent's MCP client with:
 http://localhost:8787/mcp
 ```
 
-The server supports the legacy MCP handshake and advertises the Push Notifications
-extension through capability discovery.
+The server supports both the `2026-07-28` modern protocol and the legacy MCP
+handshake. MCP clients default to legacy negotiation, so clients that need
+Realtime Media's `subscriptions/listen` stream must opt into negotiation with
+`versionNegotiation: { mode: 'auto' }`. The server advertises the Push
+Notifications and Realtime Media extensions.
 
 ## Agent contract
 
@@ -80,6 +85,18 @@ await mcpClient.callTool({
 
 `message` must contain between 1 and 4,000 characters after trimming.
 
+## Realtime Media contract fixture
+
+The simulator also implements the control-plane-only
+`io.stagewise/realtime-media` contract. Open a realtime `subscriptions/listen`
+stream, create an offer with `POST /api/realtime/sessions`, and use the MCP
+`accept`, `reject`, or `end` requests to exercise lifecycle behavior.
+
+Acceptance intentionally returns `wss://contract-only.livekit.invalid` with a
+non-connectable token. This fixture validates capability negotiation, expiry,
+idempotency, errors, and notification delivery only. It does not include
+LiveKit, microphone access, or audio transport.
+
 ## E2E check
 
 1. Start the simulator and the agent.
@@ -98,4 +115,5 @@ Restarting it clears all state. It uses one fixed local consumer identity, has n
 authentication, and is intended only for trusted development environments.
 
 See the [Push Notifications client guide](../../packages/mcp-extension-push-notifications/README.md#client)
-for connection, recovery, acknowledgement, and subscription examples.
+for durable event handling and the [Realtime Media extension](../../packages/mcp-extension-realtime-media/README.md)
+for the ephemeral audio-session control contract.

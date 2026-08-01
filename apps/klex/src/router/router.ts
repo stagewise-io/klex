@@ -5,6 +5,7 @@ import {
   type ContextDataUIPart,
   type SessionInboxEvent,
   SessionInboxPriority,
+  validateInlineAudio,
   validateInlineImage,
 } from '@/session/inbox';
 import type {
@@ -127,12 +128,38 @@ class RouterModule implements Router {
         content.push({ type: 'text', text: block.text });
         continue;
       }
-      if (block.type !== 'image') continue;
+      if (block.type === 'image') {
+        const validation = validateInlineImage(block.mimeType, block.data);
+        if (validation.valid) {
+          content.push({
+            type: 'image',
+            mimeType: block.mimeType,
+            data: block.data,
+          });
+          continue;
+        }
 
-      const validation = validateInlineImage(block.mimeType, block.data);
+        content.push({
+          type: 'text',
+          text: `<unsupported-image mime-type="${block.mimeType}" reason="${validation.reason}" />`,
+        });
+        this.deps.logger.warn(
+          {
+            eventId: event.eventId,
+            mimeType: block.mimeType,
+            reason: validation.reason,
+            decodedBytes: validation.decodedBytes,
+          },
+          'Router rejected invalid Push Notification image',
+        );
+        continue;
+      }
+      if (block.type !== 'audio') continue;
+
+      const validation = validateInlineAudio(block.mimeType, block.data);
       if (validation.valid) {
         content.push({
-          type: 'image',
+          type: 'audio',
           mimeType: block.mimeType,
           data: block.data,
         });
@@ -141,7 +168,7 @@ class RouterModule implements Router {
 
       content.push({
         type: 'text',
-        text: `<unsupported-image mime-type="${block.mimeType}" reason="${validation.reason}" />`,
+        text: `<unsupported-audio mime-type="${block.mimeType}" reason="${validation.reason}" />`,
       });
       this.deps.logger.warn(
         {
@@ -150,7 +177,7 @@ class RouterModule implements Router {
           reason: validation.reason,
           decodedBytes: validation.decodedBytes,
         },
-        'Router rejected invalid Push Notification image',
+        'Router rejected invalid Push Notification audio',
       );
     }
     if (event.data !== undefined) {
@@ -161,7 +188,12 @@ class RouterModule implements Router {
     }
 
     const unsupportedTypes = event.content
-      .filter((block) => block.type !== 'text' && block.type !== 'image')
+      .filter(
+        (block) =>
+          block.type !== 'text' &&
+          block.type !== 'image' &&
+          block.type !== 'audio',
+      )
       .map((block) => block.type);
     if (unsupportedTypes.length > 0) {
       this.deps.logger.warn(

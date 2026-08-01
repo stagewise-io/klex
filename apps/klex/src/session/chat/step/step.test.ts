@@ -689,7 +689,7 @@ describe('Step — ResolvedModel passing', () => {
     });
   });
 
-  it('recompiles canonical image history after an ordinary model fallback', async () => {
+  it('recompiles canonical media history after an ordinary model fallback', async () => {
     const fallbackManager = makeFallbackManager();
     let modelId = 'primary:text-only';
     fallbackManager.getChatModelId.mockImplementation(() => modelId as never);
@@ -699,13 +699,18 @@ describe('Step — ResolvedModel passing', () => {
     });
 
     const image = { type: 'image', mimeType: 'image/png', data: 'aW1hZ2U=' };
+    const audio = { type: 'audio', mimeType: 'audio/ogg', data: 'YXVkaW8=' };
     const messages = [
       {
         ...makeUserMessage(),
         parts: [
           {
             type: 'data-context',
-            data: { sourceEnv: 'telegram', metadata: {}, content: [image] },
+            data: {
+              sourceEnv: 'telegram',
+              metadata: {},
+              content: [image, audio],
+            },
           },
         ],
       } as ExtendedUIMessage,
@@ -716,7 +721,10 @@ describe('Step — ResolvedModel passing', () => {
         contextSize: 128_000,
         inputCapabilities:
           selectedModelId === 'fallback:vision'
-            ? { image: { mediaTypes: ['image/png'], maxBytes: 1_000_000 } }
+            ? {
+                image: { mediaTypes: ['image/png'], maxBytes: 1_000_000 },
+                audio: { mediaTypes: ['audio/ogg'], maxBytes: 1_000_000 },
+              }
             : {},
       })),
     } as never;
@@ -756,7 +764,7 @@ describe('Step — ResolvedModel passing', () => {
         expect.objectContaining({
           parts: [
             expect.objectContaining({
-              data: expect.objectContaining({ content: [image] }),
+              data: expect.objectContaining({ content: [image, audio] }),
             }),
           ],
         }),
@@ -766,6 +774,7 @@ describe('Step — ResolvedModel passing', () => {
         modelId: 'fallback:vision',
         inputCapabilities: {
           image: { mediaTypes: ['image/png'], maxBytes: 1_000_000 },
+          audio: { mediaTypes: ['audio/ogg'], maxBytes: 1_000_000 },
         },
       }),
     );

@@ -3,7 +3,11 @@ import { describe, expect, it, vi } from 'vitest';
 import type { RootLogger } from '@stagewise/logger';
 
 import type { Mcp, McpPushNotification } from '@/mcp';
-import { type SessionInboxEvent, SessionInboxPriority } from '@/session/inbox';
+import {
+  MAX_INLINE_AUDIO_BYTES,
+  type SessionInboxEvent,
+  SessionInboxPriority,
+} from '@/session/inbox';
 import type { AgentSession } from '@/session/types';
 
 import { createRouter } from './router';
@@ -74,6 +78,7 @@ describe('Router Push Notification adaptation', () => {
         content: [
           { type: 'text', text: 'first' },
           { type: 'image', data: 'aW1hZ2U=', mimeType: 'image/png' },
+          { type: 'audio', data: 'YXVkaW8=', mimeType: 'audio/ogg' },
           { type: 'text', text: 'second' },
         ],
         data: { senderId: '40', nested: { z: 2, a: 1 }, chatId: '30' },
@@ -95,6 +100,7 @@ describe('Router Push Notification adaptation', () => {
           content: [
             { type: 'text', text: 'first' },
             { type: 'image', data: 'aW1hZ2U=', mimeType: 'image/png' },
+            { type: 'audio', data: 'YXVkaW8=', mimeType: 'audio/ogg' },
             { type: 'text', text: 'second' },
             {
               type: 'text',
@@ -141,6 +147,58 @@ describe('Router Push Notification adaptation', () => {
     );
   });
 
+  it.each([
+    {
+      mimeType: 'text/plain',
+      data: 'YXVkaW8=',
+      reason: 'invalid-mime-type',
+      decodedBytes: undefined,
+    },
+    {
+      mimeType: 'audio/ogg',
+      data: 'secret-not-base64!',
+      reason: 'invalid-base64',
+      decodedBytes: undefined,
+    },
+    {
+      mimeType: 'audio/ogg',
+      data: Buffer.alloc(MAX_INLINE_AUDIO_BYTES + 1).toString('base64'),
+      reason: 'too-large',
+      decodedBytes: MAX_INLINE_AUDIO_BYTES + 1,
+    },
+  ])(
+    'degrades invalid audio with reason $reason without logging its data',
+    async ({ mimeType, data, reason, decodedBytes }) => {
+      const harness = setup();
+      await harness.router.start();
+
+      await harness.emit({
+        namespace: 'telegram',
+        event: {
+          ...envelope,
+          content: [{ type: 'audio', data, mimeType }],
+        },
+      });
+
+      expect(harness.sent[0]?.context.content).toEqual([
+        {
+          type: 'text',
+          text: `<unsupported-audio mime-type="${mimeType}" reason="${reason}" />`,
+        },
+      ]);
+      expect(harness.warn).toHaveBeenCalledWith(
+        {
+          eventId: 'event-1',
+          mimeType,
+          reason,
+          decodedBytes,
+        },
+        'Router rejected invalid Push Notification audio',
+      );
+      expect(JSON.stringify(harness.warn.mock.calls)).not.toContain(data);
+    },
+  );
+
   it('awaits session delivery before publication settles', async () => {
     const harness = setup();
     await harness.router.start();
@@ -172,13 +230,18 @@ describe('Router Push Notification adaptation', () => {
       namespace: 'telegram',
       event: {
         ...envelope,
-        content: [{ type: 'audio', data: 'YXVkaW8=', mimeType: 'audio/ogg' }],
+        content: [
+          {
+            type: 'resource',
+            resource: { uri: 'file:///message.txt', text: 'embedded message' },
+          },
+        ],
       },
     });
 
     expect(harness.sent[0]?.context.content).toEqual([]);
     expect(harness.warn).toHaveBeenCalledWith(
-      { eventId: 'event-1', contentTypes: ['audio'] },
+      { eventId: 'event-1', contentTypes: ['resource'] },
       'Router omitted unsupported Push Notification content blocks',
     );
   });

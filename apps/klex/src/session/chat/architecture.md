@@ -36,16 +36,16 @@ Coordinator: inbox drain (medium) → history repair → decision (can a step ru
 
 The `messages[]` array is shared by reference across Session/Turn/Step. The critical window (extension processing + generation) operates on a `structuredClone` copy, so mutations can't corrupt the original. The original is only mutated in synchronous sequential code (inbox drain, history repair, Continue injection, response push).
 
-## Native image input
+## Native media input
 
-The router maps valid inline MCP image blocks to canonical session content containing `mimeType` and base64 `data`. This representation is AI-SDK-independent, remains in canonical history, preserves its position relative to captions and other text, and is redacted from logs and tracing.
+The router maps valid inline MCP image and audio blocks to canonical session content containing `mimeType` and base64 `data`. This representation is AI-SDK-independent, remains in canonical history, preserves its position relative to captions and other text, and is redacted from logs and tracing. Inline media is bounded to 10 MiB at ingress.
 
 Core model-message conversion projects canonical context for the model already selected by the normal fallback order:
 
-- If that model declares a matching native image capability and the decoded image fits its byte limit, conversion emits an AI SDK UI file part, which becomes a model `FilePart`.
-- Otherwise conversion emits an explicit `<unsupported-image>` text marker without binary data. Images are never silently omitted.
+- If that model declares a matching native capability and the decoded media fits its byte limit, conversion emits an AI SDK UI file part, which becomes a model `FilePart`.
+- Otherwise conversion emits an explicit `<unsupported-image>` or `<unsupported-audio>` text marker without binary data. Media is never silently omitted.
 
-Image presence does not change model selection. A text-only primary model remains primary. Only an ordinary generation failure advances fallback; the next step then reprojects the untouched canonical history for the newly selected model, so an image-capable fallback can receive the original image.
+Media presence does not change model selection. A text-only primary model remains primary. Only an ordinary generation failure advances fallback; the next step then reprojects the untouched canonical history for the newly selected model, so a capable fallback can receive the original media.
 
 Declare native support on a `knownModels` entry:
 
@@ -55,12 +55,18 @@ Declare native support on a `knownModels` entry:
     "image": {
       "mediaTypes": ["image/jpeg", "image/png"],
       "maxBytes": 10485760
+    },
+    "audio": {
+      "mediaTypes": ["audio/mpeg", "audio/wav"],
+      "maxBytes": 10485760
     }
   }
 }
 ```
 
-Missing `inputCapabilities.image` means text-only. Klex does not infer capabilities from model names. Phase 1 validates MIME type, canonical base64, and decoded byte limits; it does not resize, re-encode, describe, or persist images and does not provide native audio/video input.
+Missing `inputCapabilities.image` or `inputCapabilities.audio` means that modality is unsupported. Klex does not infer capabilities from model names. MIME matching against the selected model's configured list is exact: `audio/ogg` is not sent to a model that declares only `audio/mpeg` and `audio/wav`. Telegram voice commonly arrives as `audio/ogg`, so it degrades explicitly unless the selected model accepts that exact MIME type.
+
+The core path validates MIME type, canonical base64, and decoded byte limits. It does not resize, re-encode, transcode, describe, transcribe, persist, or remotely fetch media. Deterministic format conversion and semantic fallback belong in separate future extensions.
 
 ## GenerationRunner
 

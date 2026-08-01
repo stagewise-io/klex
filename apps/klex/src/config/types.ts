@@ -97,9 +97,19 @@ const imageInputCapabilitySchema = z
   })
   .strict();
 
+const audioInputCapabilitySchema = z
+  .object({
+    mediaTypes: z
+      .array(z.string().regex(/^audio\/[a-z0-9][a-z0-9.+-]*$/i))
+      .nonempty(),
+    maxBytes: z.number().int().positive(),
+  })
+  .strict();
+
 const modelInputCapabilitiesSchema = z
   .object({
     image: imageInputCapabilitySchema.optional(),
+    audio: audioInputCapabilitySchema.optional(),
   })
   .strict();
 

@@ -36,6 +36,7 @@ function makeContextPart(
   content: (
     | { type: 'text'; text: string }
     | { type: 'image'; mimeType: string; data: string }
+    | { type: 'audio'; mimeType: string; data: string }
   )[],
 ): ExtendedUIMessage['parts'][number] {
   return {
@@ -112,11 +113,17 @@ describe('data-context materialization', () => {
     mimeType: 'image/png',
     data: 'aW1hZ2U=',
   };
+  const audio = {
+    type: 'audio' as const,
+    mimeType: 'audio/ogg',
+    data: 'YXVkaW8=',
+  };
 
-  it('materializes escaped metadata and ordered text around a native image', async () => {
+  it('materializes escaped metadata and ordered text around native media', async () => {
     const context = makeContextPart('telegram<&', { channel: 'a"b' }, [
       { type: 'text', text: 'caption <first>' },
       image,
+      audio,
       { type: 'text', text: 'after & last' },
     ]);
     const messages = [makeMessage([context])];
@@ -125,6 +132,7 @@ describe('data-context materialization', () => {
     await convertToModelMessagesExtended(messages, makeTransformers(), {
       inputCapabilities: {
         image: { mediaTypes: ['image/png'], maxBytes: 100 },
+        audio: { mediaTypes: ['audio/ogg'], maxBytes: 100 },
       },
     });
 
@@ -142,10 +150,65 @@ describe('data-context materialization', () => {
         mediaType: 'image/png',
         url: 'data:image/png;base64,aW1hZ2U=',
       },
+      {
+        type: 'file',
+        mediaType: 'audio/ogg',
+        url: 'data:audio/ogg;base64,YXVkaW8=',
+      },
       { type: 'text', text: 'after &amp; last' },
       { type: 'text', text: '</content></context>' },
     ]);
     expect(messages).toEqual(original);
+  });
+
+  it('matches image capabilities case-insensitively and emits a canonical MIME type', async () => {
+    await convertToModelMessagesExtended(
+      [
+        makeMessage([
+          makeContextPart('media', {}, [{ ...image, mimeType: 'IMAGE/PNG' }]),
+        ]),
+      ],
+      makeTransformers(),
+      {
+        inputCapabilities: {
+          image: { mediaTypes: ['Image/Png'], maxBytes: 100 },
+        },
+      },
+    );
+
+    const parts = vi
+      .mocked(convertToModelMessages)
+      .mock.calls.at(-1)?.[0][0]?.parts;
+    expect(parts).toContainEqual({
+      type: 'file',
+      mediaType: 'image/png',
+      url: 'data:image/png;base64,aW1hZ2U=',
+    });
+  });
+
+  it('matches audio capabilities case-insensitively and emits a canonical MIME type', async () => {
+    await convertToModelMessagesExtended(
+      [
+        makeMessage([
+          makeContextPart('media', {}, [{ ...audio, mimeType: 'AUDIO/OGG' }]),
+        ]),
+      ],
+      makeTransformers(),
+      {
+        inputCapabilities: {
+          audio: { mediaTypes: ['Audio/Ogg'], maxBytes: 100 },
+        },
+      },
+    );
+
+    const parts = vi
+      .mocked(convertToModelMessages)
+      .mock.calls.at(-1)?.[0][0]?.parts;
+    expect(parts).toContainEqual({
+      type: 'file',
+      mediaType: 'audio/ogg',
+      url: 'data:audio/ogg;base64,YXVkaW8=',
+    });
   });
 
   it('uses an explicit placeholder for a text-only model', async () => {
@@ -163,6 +226,27 @@ describe('data-context materialization', () => {
       text: '<unsupported-image mime-type="image/png" bytes="5" reason="model-does-not-support-images" />',
     });
     expect(JSON.stringify(parts)).not.toContain(image.data);
+  });
+
+  it('uses an explicit audio placeholder for a model without audio support', async () => {
+    await convertToModelMessagesExtended(
+      [makeMessage([makeContextPart('media', {}, [audio])])],
+      makeTransformers(),
+      {
+        inputCapabilities: {
+          image: { mediaTypes: ['image/png'], maxBytes: 100 },
+        },
+      },
+    );
+
+    const parts = vi
+      .mocked(convertToModelMessages)
+      .mock.calls.at(-1)?.[0][0]?.parts;
+    expect(parts).toContainEqual({
+      type: 'text',
+      text: '<unsupported-audio mime-type="audio/ogg" bytes="5" reason="model-does-not-support-audio" />',
+    });
+    expect(JSON.stringify(parts)).not.toContain(audio.data);
   });
 
   it.each([
@@ -188,6 +272,64 @@ describe('data-context materialization', () => {
         .mock.calls.at(-1)?.[0][0]?.parts;
       expect(JSON.stringify(parts)).toContain(`reason=\\"${expectedReason}\\"`);
       expect(JSON.stringify(parts)).not.toContain(image.data);
+    },
+  );
+
+  it.each([
+    {
+      capability: { mediaTypes: ['audio/mpeg'], maxBytes: 100 },
+      expectedReason: 'unsupported-media-type',
+    },
+    {
+      capability: { mediaTypes: ['audio/ogg'], maxBytes: 4 },
+      expectedReason: 'too-large',
+    },
+  ])(
+    'degrades audio outside selected-model constraints',
+    async ({ capability, expectedReason }) => {
+      await convertToModelMessagesExtended(
+        [makeMessage([makeContextPart('media', {}, [audio])])],
+        makeTransformers(),
+        { inputCapabilities: { audio: capability } },
+      );
+
+      const parts = vi
+        .mocked(convertToModelMessages)
+        .mock.calls.at(-1)?.[0][0]?.parts;
+      expect(JSON.stringify(parts)).toContain(`reason=\\"${expectedReason}\\"`);
+      expect(JSON.stringify(parts)).not.toContain(audio.data);
+    },
+  );
+
+  it.each([
+    { mimeType: 'text/plain', data: audio.data, reason: 'invalid-mime-type' },
+    {
+      mimeType: 'audio/ogg',
+      data: 'not valid base64!',
+      reason: 'invalid-base64',
+    },
+  ])(
+    'defensively degrades malformed audio with reason $reason',
+    async ({ mimeType, data, reason }) => {
+      await convertToModelMessagesExtended(
+        [
+          makeMessage([
+            makeContextPart('media', {}, [{ ...audio, mimeType, data }]),
+          ]),
+        ],
+        makeTransformers(),
+        {
+          inputCapabilities: {
+            audio: { mediaTypes: [mimeType], maxBytes: 100 },
+          },
+        },
+      );
+
+      const parts = vi
+        .mocked(convertToModelMessages)
+        .mock.calls.at(-1)?.[0][0]?.parts;
+      expect(JSON.stringify(parts)).toContain(reason);
+      expect(JSON.stringify(parts)).not.toContain(data);
     },
   );
 

@@ -198,22 +198,24 @@ class InboxModule implements SessionInboxBuffer {
     }
 
     // Record structure and media metadata without leaking binary bodies.
-    const pulled = {
-      events: events.map((e) => ({
-        sourceEnv: e.sourceEnv,
-        priority: SessionInboxPriority[e.priority],
-        context: redactMediaForTelemetry(e.context),
-      })),
-      nativeMessages: nativeMessages.map((m) => ({
-        id: m.id,
-        role: m.role,
-        parts: redactMediaForTelemetry(m.parts),
-      })),
-    };
+    // Telemetry projection must never prevent already-pulled inputs from being
+    // appended to session history.
     try {
+      const pulled = {
+        events: events.map((e) => ({
+          sourceEnv: e.sourceEnv,
+          priority: SessionInboxPriority[e.priority],
+          context: redactMediaForTelemetry(e.context),
+        })),
+        nativeMessages: nativeMessages.map((m) => ({
+          id: m.id,
+          role: m.role,
+          parts: redactMediaForTelemetry(m.parts),
+        })),
+      };
       span.setAttribute('inbox.drained.content', JSON.stringify(pulled));
     } catch {
-      // Serialization may fail for circular structures — skip silently.
+      // Projection or serialization may fail for unusual custom data parts.
     }
 
     span.setAttributes({
@@ -304,37 +306,45 @@ class InboxModule implements SessionInboxBuffer {
 }
 
 export function redactMediaForTelemetry(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(redactMediaForTelemetry);
+  return redactMediaValue(value, new WeakSet<object>());
+}
+
+function redactMediaValue(value: unknown, seen: WeakSet<object>): unknown {
   if (typeof value !== 'object' || value === null) return value;
+  if (seen.has(value)) return '[circular]';
+  seen.add(value);
+
+  if (Array.isArray(value)) {
+    return value.map((entry) => redactMediaValue(entry, seen));
+  }
 
   const record = value as Record<string, unknown>;
-  if (record.type === 'image' && typeof record.data === 'string') {
-    return {
-      ...record,
-      data: '[redacted]',
-      decodedBytes: getBase64DecodedBytes(record.data),
-    };
-  }
-  if (
+  const isInlineMedia =
+    (record.type === 'image' || record.type === 'audio') &&
+    typeof record.data === 'string';
+  const isDataFile =
     record.type === 'file' &&
     typeof record.url === 'string' &&
-    record.url.startsWith('data:')
-  ) {
-    const separator = record.url.indexOf(',');
-    const encoded = separator === -1 ? '' : record.url.slice(separator + 1);
-    return {
-      ...record,
-      url: '[redacted]',
-      decodedBytes: getBase64DecodedBytes(encoded),
-    };
+    record.url.startsWith('data:');
+
+  const projected = Object.fromEntries(
+    Object.entries(record).map(([key, entry]) => {
+      if (isInlineMedia && key === 'data') return [key, '[redacted]'];
+      if (isDataFile && key === 'url') return [key, '[redacted]'];
+      return [key, redactMediaValue(entry, seen)];
+    }),
+  );
+
+  if (isInlineMedia) {
+    projected.decodedBytes = getBase64DecodedBytes(record.data as string);
+  } else if (isDataFile) {
+    const url = record.url as string;
+    const separator = url.indexOf(',');
+    const encoded = separator === -1 ? '' : url.slice(separator + 1);
+    projected.decodedBytes = getBase64DecodedBytes(encoded);
   }
 
-  return Object.fromEntries(
-    Object.entries(record).map(([key, entry]) => [
-      key,
-      redactMediaForTelemetry(entry),
-    ]),
-  );
+  return projected;
 }
 
 export function createInbox(deps: InboxDependencies): SessionInboxBuffer {

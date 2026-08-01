@@ -399,7 +399,7 @@ describe('Config — resolveModelInfo', () => {
     ).toBeUndefined();
   });
 
-  it('resolves native image capabilities and normalizes absent capabilities', async () => {
+  it('resolves native media capabilities and normalizes absent capabilities', async () => {
     const config = presetConfig();
     const provider = config.providers['my-openai'];
     if (!provider || !('preset' in provider))
@@ -411,6 +411,10 @@ describe('Config — resolveModelInfo', () => {
             mediaTypes: ['image/png', 'image/jpeg'],
             maxBytes: 1_000_000,
           },
+          audio: {
+            mediaTypes: ['audio/mpeg', 'audio/wav'],
+            maxBytes: 2_000_000,
+          },
         },
       },
     };
@@ -420,6 +424,7 @@ describe('Config — resolveModelInfo', () => {
       module.resolveModelInfo('my-openai:gpt-4o').inputCapabilities,
     ).toEqual({
       image: { mediaTypes: ['image/png', 'image/jpeg'], maxBytes: 1_000_000 },
+      audio: { mediaTypes: ['audio/mpeg', 'audio/wav'], maxBytes: 2_000_000 },
     });
     expect(
       module.resolveModelInfo('my-openai:unknown').inputCapabilities,
@@ -445,13 +450,30 @@ describe('Config — resolveModelInfo', () => {
   });
 });
 
-describe('Config — image capability validation', () => {
+describe('Config — input capability validation', () => {
   it.each([
     { image: { mediaTypes: [], maxBytes: 100 } },
     { image: { mediaTypes: ['text/plain'], maxBytes: 100 } },
     { image: { mediaTypes: ['image/png'], maxBytes: 0 } },
     { image: { mediaTypes: ['image/png'], maxBytes: 100, extra: true } },
   ])('rejects malformed image capabilities: %j', (inputCapabilities) => {
+    const config = presetConfig();
+    const provider = config.providers['my-openai'];
+    if (!provider || !('preset' in provider))
+      throw new Error('Expected preset provider');
+    provider.knownModels = {
+      'gpt-4o': { inputCapabilities } as never,
+    };
+
+    expect(klexConfigSchema.safeParse(config).success).toBe(false);
+  });
+
+  it.each([
+    { audio: { mediaTypes: [], maxBytes: 100 } },
+    { audio: { mediaTypes: ['text/plain'], maxBytes: 100 } },
+    { audio: { mediaTypes: ['audio/mpeg'], maxBytes: 0 } },
+    { audio: { mediaTypes: ['audio/mpeg'], maxBytes: 100, extra: true } },
+  ])('rejects malformed audio capabilities: %j', (inputCapabilities) => {
     const config = presetConfig();
     const provider = config.providers['my-openai'];
     if (!provider || !('preset' in provider))

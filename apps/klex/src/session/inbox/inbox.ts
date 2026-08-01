@@ -15,8 +15,9 @@
  * at each step start for mid-turn arrivals.
  */
 export const MAX_INLINE_IMAGE_BYTES = 10 * 1024 * 1024;
+export const MAX_INLINE_AUDIO_BYTES = 10 * 1024 * 1024;
 
-export type InlineImageValidation =
+type InlineMediaValidation =
   | { valid: true; decodedBytes: number }
   | {
       valid: false;
@@ -24,13 +25,31 @@ export type InlineImageValidation =
       decodedBytes?: number;
     };
 
-const BASE64_PATTERN =
-  /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
+export type InlineImageValidation = InlineMediaValidation;
+export type InlineAudioValidation = InlineMediaValidation;
+
 const IMAGE_MIME_TYPE_PATTERN = /^image\/[a-z0-9][a-z0-9.+-]*$/i;
+const AUDIO_MIME_TYPE_PATTERN = /^audio\/[a-z0-9][a-z0-9.+-]*$/i;
 
 export function getBase64DecodedBytes(data: string): number | undefined {
-  if (data.length === 0 || !BASE64_PATTERN.test(data)) return undefined;
+  if (data.length === 0 || data.length % 4 !== 0) return undefined;
+
   const padding = data.endsWith('==') ? 2 : data.endsWith('=') ? 1 : 0;
+  const contentLength = data.length - padding;
+  for (let index = 0; index < contentLength; index++) {
+    const code = data.charCodeAt(index);
+    const valid =
+      (code >= 65 && code <= 90) ||
+      (code >= 97 && code <= 122) ||
+      (code >= 48 && code <= 57) ||
+      code === 43 ||
+      code === 47;
+    if (!valid) return undefined;
+  }
+
+  if (padding > 0 && !/^={1,2}$/.test(data.slice(contentLength))) {
+    return undefined;
+  }
   return (data.length / 4) * 3 - padding;
 }
 
@@ -40,7 +59,25 @@ export function validateInlineImage(
   data: string,
   maxBytes = MAX_INLINE_IMAGE_BYTES,
 ): InlineImageValidation {
-  if (!IMAGE_MIME_TYPE_PATTERN.test(mimeType)) {
+  return validateInlineMedia(mimeType, data, maxBytes, IMAGE_MIME_TYPE_PATTERN);
+}
+
+/** Validates canonical padded base64 audio data without decoding it. */
+export function validateInlineAudio(
+  mimeType: string,
+  data: string,
+  maxBytes = MAX_INLINE_AUDIO_BYTES,
+): InlineAudioValidation {
+  return validateInlineMedia(mimeType, data, maxBytes, AUDIO_MIME_TYPE_PATTERN);
+}
+
+function validateInlineMedia(
+  mimeType: string,
+  data: string,
+  maxBytes: number,
+  mimeTypePattern: RegExp,
+): InlineMediaValidation {
+  if (!mimeTypePattern.test(mimeType)) {
     return { valid: false, reason: 'invalid-mime-type' };
   }
   const decodedBytes = getBase64DecodedBytes(data);
@@ -83,7 +120,7 @@ export type ContextDataUIPart = {
     | { type: 'text'; text: string }
     | { type: 'image'; mimeType: string; data: string }
     | { type: 'video'; mimeType: string; url: string }
-    | { type: 'audio'; mimeType: string; url: string }
+    | { type: 'audio'; mimeType: string; data: string }
   )[];
 };
 

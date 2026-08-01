@@ -7,7 +7,12 @@ import {
   type TextPart,
 } from 'ai';
 
-import { type ContextDataUIPart, validateInlineImage } from '@/session/inbox';
+import {
+  type ContextDataUIPart,
+  MAX_INLINE_AUDIO_BYTES,
+  validateInlineAudio,
+  validateInlineImage,
+} from '@/session/inbox';
 
 import type {
   DataPartTransformers,
@@ -138,36 +143,73 @@ function materializeContextPart(
       parts.push({ type: 'text', text: escapeXml(content.text) });
       continue;
     }
-    if (content.type !== 'image') continue;
+    if (content.type === 'image') {
+      const imageCapability = resolvedModel.inputCapabilities.image;
+      const normalizedMimeType = content.mimeType.toLowerCase();
+      const validation = validateInlineImage(
+        content.mimeType,
+        content.data,
+        imageCapability?.maxBytes,
+      );
+      const mediaTypeSupported = imageCapability?.mediaTypes.some(
+        (mediaType) => mediaType.toLowerCase() === normalizedMimeType,
+      );
+      if (imageCapability && validation.valid && mediaTypeSupported) {
+        const file: FileUIPart = {
+          type: 'file',
+          mediaType: normalizedMimeType,
+          url: `data:${normalizedMimeType};base64,${content.data}`,
+        };
+        parts.push(file);
+        continue;
+      }
 
-    const imageCapability = resolvedModel.inputCapabilities.image;
-    const validation = validateInlineImage(
+      const reason = !imageCapability
+        ? 'model-does-not-support-images'
+        : !validation.valid
+          ? validation.reason
+          : 'unsupported-media-type';
+      const decodedBytes = validation.decodedBytes;
+      parts.push({
+        type: 'text',
+        text: `<unsupported-image mime-type="${escapeXml(content.mimeType)}"${decodedBytes === undefined ? '' : ` bytes="${decodedBytes}"`} reason="${reason}" />`,
+      });
+      continue;
+    }
+    if (content.type !== 'audio') continue;
+
+    const audioCapability = resolvedModel.inputCapabilities.audio;
+    const normalizedMimeType = content.mimeType.toLowerCase();
+    const validation = validateInlineAudio(
       content.mimeType,
       content.data,
-      imageCapability?.maxBytes,
+      Math.min(
+        MAX_INLINE_AUDIO_BYTES,
+        audioCapability?.maxBytes ?? MAX_INLINE_AUDIO_BYTES,
+      ),
     );
-    const mediaTypeSupported = imageCapability?.mediaTypes.includes(
-      content.mimeType,
+    const mediaTypeSupported = audioCapability?.mediaTypes.some(
+      (mediaType) => mediaType.toLowerCase() === normalizedMimeType,
     );
-    if (imageCapability && validation.valid && mediaTypeSupported) {
+    if (audioCapability && validation.valid && mediaTypeSupported) {
       const file: FileUIPart = {
         type: 'file',
-        mediaType: content.mimeType,
-        url: `data:${content.mimeType};base64,${content.data}`,
+        mediaType: normalizedMimeType,
+        url: `data:${normalizedMimeType};base64,${content.data}`,
       };
       parts.push(file);
       continue;
     }
 
-    const reason = !imageCapability
-      ? 'model-does-not-support-images'
+    const reason = !audioCapability
+      ? 'model-does-not-support-audio'
       : !validation.valid
         ? validation.reason
         : 'unsupported-media-type';
     const decodedBytes = validation.decodedBytes;
     parts.push({
       type: 'text',
-      text: `<unsupported-image mime-type="${escapeXml(content.mimeType)}"${decodedBytes === undefined ? '' : ` bytes="${decodedBytes}"`} reason="${reason}" />`,
+      text: `<unsupported-audio mime-type="${escapeXml(content.mimeType)}"${decodedBytes === undefined ? '' : ` bytes="${decodedBytes}"`} reason="${reason}" />`,
     });
   }
 

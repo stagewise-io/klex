@@ -1312,6 +1312,44 @@ describe('ContextCompactionExt — history transformation', () => {
     );
   });
 
+  it('represents audio context as a placeholder without binary data', async () => {
+    const audioData = 'YXVkaW8=';
+    const audioMessage = {
+      id: randomUUID(),
+      role: 'user',
+      parts: [
+        {
+          type: 'data-context',
+          data: {
+            sourceEnv: 'telegram',
+            metadata: {},
+            content: [
+              { type: 'audio', mimeType: 'audio/ogg', data: audioData },
+            ],
+          },
+        },
+      ],
+    } as ExtendedUIMessage;
+    const deps = makeDeps({
+      getHistory: vi.fn(() => [
+        audioMessage,
+        makeTextMessage('assistant', 'OK'),
+      ]),
+      generateText: vi.fn().mockResolvedValue(genSuccess('Summary')),
+    });
+
+    const ext = createContextCompactionExt.create(deps);
+    await ext.onStepComplete!(
+      makeResult(makeUsage(FALLBACK_COMPACTION_THRESHOLD, 0)),
+    );
+    await flushMicrotasks();
+
+    const prompt = vi.mocked(deps.generateText)!.mock.calls[0]![0]
+      .prompt as string;
+    expect(prompt).toContain('<ctx env="telegram"><audio /></ctx>');
+    expect(prompt).not.toContain(audioData);
+  });
+
   it('packs multiple parts inside a single <msg> tag', async () => {
     const msg: ExtendedUIMessage = {
       id: randomUUID(),

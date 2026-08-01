@@ -376,6 +376,43 @@ describe('Inbox — media handling', () => {
     expect(JSON.stringify(projected)).not.toContain(imageData);
   });
 
+  it('preserves canonical audio data while redacting telemetry projections', () => {
+    const audioData = 'YXVkaW8=';
+    const event: SessionInboxEvent = {
+      sourceEnv: 'telegram:1',
+      priority: SessionInboxPriority.Medium,
+      context: {
+        sourceEnv: 'telegram:1',
+        metadata: {},
+        content: [{ type: 'audio', mimeType: 'audio/ogg', data: audioData }],
+      },
+    };
+    const inbox = createInbox({ onNewEvent: vi.fn() });
+    inbox.send(event);
+    const messages: ExtendedUIMessage[] = [];
+
+    inbox.drain(messages, SessionInboxPriority.Low, drainLogger);
+
+    expect(messages[0]?.parts[0]).toMatchObject({
+      type: 'data-context',
+      data: { content: [{ type: 'audio', data: audioData }] },
+    });
+    const projected = redactMediaForTelemetry(event.context);
+    expect(projected).toEqual({
+      sourceEnv: 'telegram:1',
+      metadata: {},
+      content: [
+        {
+          type: 'audio',
+          mimeType: 'audio/ogg',
+          data: '[redacted]',
+          decodedBytes: 5,
+        },
+      ],
+    });
+    expect(JSON.stringify(projected)).not.toContain(audioData);
+  });
+
   it('redacts native file data URLs', () => {
     const projected = redactMediaForTelemetry([
       {
@@ -393,6 +430,19 @@ describe('Inbox — media handling', () => {
         decodedBytes: 5,
       },
     ]);
+  });
+
+  it('replaces circular references in telemetry projections', () => {
+    const circular: Record<string, unknown> = { type: 'data-custom' };
+    circular.self = circular;
+
+    const projected = redactMediaForTelemetry(circular);
+
+    expect(projected).toEqual({
+      type: 'data-custom',
+      self: '[circular]',
+    });
+    expect(() => JSON.stringify(projected)).not.toThrow();
   });
 });
 
@@ -470,6 +520,25 @@ describe('Inbox — drain: native messages', () => {
     expect(messages).toHaveLength(2);
     expect(messages[0]?.id).toBe('msg-a');
     expect(messages[1]?.id).toBe('msg-b');
+  });
+
+  it('delivers a native message with a circular custom data part', () => {
+    const circularPart: Record<string, unknown> = { type: 'data-custom' };
+    circularPart.self = circularPart;
+    const message = {
+      id: 'msg-circular',
+      role: 'user',
+      parts: [circularPart],
+    } as unknown as ExtendedUIMessage;
+    const inbox = createInbox({ onNewEvent: vi.fn() });
+    inbox.sendMessage(message, SessionInboxPriority.Low);
+    const messages: ExtendedUIMessage[] = [];
+
+    expect(() =>
+      inbox.drain(messages, SessionInboxPriority.Low, drainLogger),
+    ).not.toThrow();
+    expect(messages).toEqual([message]);
+    expect(inbox.isEmpty()).toBe(true);
   });
 
   it('reports the native message count in the result', () => {

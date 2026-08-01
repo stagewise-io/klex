@@ -43,6 +43,7 @@ const MOCK_MODEL = {
   modelId: 'test:model',
   displayName: 'Test Model',
   contextSize: 128_000,
+  inputCapabilities: {},
 } as const;
 
 // --- helpers ---

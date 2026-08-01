@@ -236,6 +236,7 @@ class StepModule implements Step {
             modelId,
             displayName: info.displayName,
             contextSize: info.contextSize,
+            inputCapabilities: info.inputCapabilities,
           };
           modelSpan.end();
         }
@@ -331,6 +332,7 @@ class StepModule implements Step {
           await convertToModelMessagesExtended(
             preResult.history,
             dataPartTransformers,
+            resolvedModel,
           );
         transformSpan.addEvent('history_convert.end', {
           'history_convert.outputMessageCount': modelMessages.length,

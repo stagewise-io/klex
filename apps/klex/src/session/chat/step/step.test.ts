@@ -94,10 +94,10 @@ function makeDeps(overrides: Partial<StepDependencies> = {}): StepDependencies {
     modelProvider: makeModelProvider() as never,
     fallbackManager: makeFallbackManager() as never,
     config: {
-      resolveModel: vi.fn(() => ({
-        modelId: 'test:model',
+      resolveModelInfo: vi.fn(() => ({
         displayName: 'Test Model',
         contextSize: 128_000,
+        inputCapabilities: {},
       })),
     } as never,
     turnInitialFallbackIndex: 0,
@@ -435,6 +435,10 @@ describe('Step — extension handler hooks', () => {
     expect(convertToModelMessagesExtended).toHaveBeenCalledWith(
       preProcessedHistory,
       expect.anything(),
+      expect.objectContaining({
+        modelId: 'test:model',
+        inputCapabilities: {},
+      }),
     );
   });
 
@@ -654,10 +658,12 @@ describe('Step — ResolvedModel passing', () => {
     const fallbackManager = makeFallbackManager();
     fallbackManager.getChatModelId.mockReturnValue('remote:gpt-4o' as never);
     const config = {
-      resolveModel: vi.fn(() => ({
-        modelId: 'remote:gpt-4o',
+      resolveModelInfo: vi.fn(() => ({
         displayName: 'GPT-4o',
         contextSize: 128_000,
+        inputCapabilities: {
+          image: { mediaTypes: ['image/png'], maxBytes: 1_000_000 },
+        },
       })),
     } as never;
 
@@ -677,7 +683,92 @@ describe('Step — ResolvedModel passing', () => {
       modelId: 'remote:gpt-4o',
       displayName: 'GPT-4o',
       contextSize: 128_000,
+      inputCapabilities: {
+        image: { mediaTypes: ['image/png'], maxBytes: 1_000_000 },
+      },
     });
+  });
+
+  it('recompiles canonical image history after an ordinary model fallback', async () => {
+    const fallbackManager = makeFallbackManager();
+    let modelId = 'primary:text-only';
+    fallbackManager.getChatModelId.mockImplementation(() => modelId as never);
+    fallbackManager.fallbackToNextModel.mockImplementation(() => {
+      modelId = 'fallback:vision';
+      return true;
+    });
+
+    const image = { type: 'image', mimeType: 'image/png', data: 'aW1hZ2U=' };
+    const messages = [
+      {
+        ...makeUserMessage(),
+        parts: [
+          {
+            type: 'data-context',
+            data: { sourceEnv: 'telegram', metadata: {}, content: [image] },
+          },
+        ],
+      } as ExtendedUIMessage,
+    ];
+    const config = {
+      resolveModelInfo: vi.fn((selectedModelId: string) => ({
+        displayName: selectedModelId,
+        contextSize: 128_000,
+        inputCapabilities:
+          selectedModelId === 'fallback:vision'
+            ? { image: { mediaTypes: ['image/png'], maxBytes: 1_000_000 } }
+            : {},
+      })),
+    } as never;
+
+    vi.mocked(createGenerationRunner).mockImplementationOnce(
+      () =>
+        ({
+          run: vi.fn(async () => {
+            fallbackManager.fallbackToNextModel();
+            return { ...SUCCESS_RESULT, modelFallbackOccurred: true };
+          }),
+          abort: vi.fn(),
+          abortTools: vi.fn(),
+        }) as never,
+    );
+
+    await createStep(
+      makeDeps({ messages, fallbackManager: fallbackManager as never, config }),
+    ).run();
+    await createStep(
+      makeDeps({ messages, fallbackManager: fallbackManager as never, config }),
+    ).run();
+
+    expect(fallbackManager.fallbackToNextModel).toHaveBeenCalledOnce();
+    expect(convertToModelMessagesExtended).toHaveBeenNthCalledWith(
+      1,
+      expect.any(Array),
+      expect.anything(),
+      expect.objectContaining({
+        modelId: 'primary:text-only',
+        inputCapabilities: {},
+      }),
+    );
+    expect(convertToModelMessagesExtended).toHaveBeenNthCalledWith(
+      2,
+      expect.arrayContaining([
+        expect.objectContaining({
+          parts: [
+            expect.objectContaining({
+              data: expect.objectContaining({ content: [image] }),
+            }),
+          ],
+        }),
+      ]),
+      expect.anything(),
+      expect.objectContaining({
+        modelId: 'fallback:vision',
+        inputCapabilities: {
+          image: { mediaTypes: ['image/png'], maxBytes: 1_000_000 },
+        },
+      }),
+    );
   });
 
   it('passes the same ResolvedModel to runContextTransformers', async () => {
@@ -685,10 +776,12 @@ describe('Step — ResolvedModel passing', () => {
     const fallbackManager = makeFallbackManager();
     fallbackManager.getChatModelId.mockReturnValue('remote:gpt-4o' as never);
     const config = {
-      resolveModel: vi.fn(() => ({
-        modelId: 'remote:gpt-4o',
+      resolveModelInfo: vi.fn(() => ({
         displayName: 'GPT-4o',
         contextSize: 128_000,
+        inputCapabilities: {
+          image: { mediaTypes: ['image/png'], maxBytes: 1_000_000 },
+        },
       })),
     } as never;
 
@@ -708,6 +801,9 @@ describe('Step — ResolvedModel passing', () => {
       modelId: 'remote:gpt-4o',
       displayName: 'GPT-4o',
       contextSize: 128_000,
+      inputCapabilities: {
+        image: { mediaTypes: ['image/png'], maxBytes: 1_000_000 },
+      },
     });
   });
 });

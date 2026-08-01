@@ -14,6 +14,45 @@
  * events are consumed at turn start, and Medium+High events are re-checked
  * at each step start for mid-turn arrivals.
  */
+export const MAX_INLINE_IMAGE_BYTES = 10 * 1024 * 1024;
+
+export type InlineImageValidation =
+  | { valid: true; decodedBytes: number }
+  | {
+      valid: false;
+      reason: 'invalid-base64' | 'invalid-mime-type' | 'too-large';
+      decodedBytes?: number;
+    };
+
+const BASE64_PATTERN =
+  /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
+const IMAGE_MIME_TYPE_PATTERN = /^image\/[a-z0-9][a-z0-9.+-]*$/i;
+
+export function getBase64DecodedBytes(data: string): number | undefined {
+  if (data.length === 0 || !BASE64_PATTERN.test(data)) return undefined;
+  const padding = data.endsWith('==') ? 2 : data.endsWith('=') ? 1 : 0;
+  return (data.length / 4) * 3 - padding;
+}
+
+/** Validates canonical padded base64 image data without decoding it. */
+export function validateInlineImage(
+  mimeType: string,
+  data: string,
+  maxBytes = MAX_INLINE_IMAGE_BYTES,
+): InlineImageValidation {
+  if (!IMAGE_MIME_TYPE_PATTERN.test(mimeType)) {
+    return { valid: false, reason: 'invalid-mime-type' };
+  }
+  const decodedBytes = getBase64DecodedBytes(data);
+  if (decodedBytes === undefined) {
+    return { valid: false, reason: 'invalid-base64' };
+  }
+  if (decodedBytes > maxBytes) {
+    return { valid: false, reason: 'too-large', decodedBytes };
+  }
+  return { valid: true, decodedBytes };
+}
+
 export enum SessionInboxPriority {
   Low = 0,
   Medium = 1,
@@ -42,7 +81,7 @@ export type ContextDataUIPart = {
    */
   content: (
     | { type: 'text'; text: string }
-    | { type: 'image'; mimeType: string; url: string }
+    | { type: 'image'; mimeType: string; data: string }
     | { type: 'video'; mimeType: string; url: string }
     | { type: 'audio'; mimeType: string; url: string }
   )[];

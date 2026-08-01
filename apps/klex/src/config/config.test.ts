@@ -12,7 +12,11 @@ import {
   createConfig,
   DEFAULT_CONTEXT_SIZE,
 } from './config';
-import type { KlexConfig, ProviderPreset } from './types';
+import {
+  type KlexConfig,
+  klexConfigSchema,
+  type ProviderPreset,
+} from './types';
 
 const directories: string[] = [];
 const logging = {
@@ -395,6 +399,33 @@ describe('Config — resolveModelInfo', () => {
     ).toBeUndefined();
   });
 
+  it('resolves native image capabilities and normalizes absent capabilities', async () => {
+    const config = presetConfig();
+    const provider = config.providers['my-openai'];
+    if (!provider || !('preset' in provider))
+      throw new Error('Expected preset provider');
+    provider.knownModels = {
+      'gpt-4o': {
+        inputCapabilities: {
+          image: {
+            mediaTypes: ['image/png', 'image/jpeg'],
+            maxBytes: 1_000_000,
+          },
+        },
+      },
+    };
+    const { module } = await setup(config);
+
+    expect(
+      module.resolveModelInfo('my-openai:gpt-4o').inputCapabilities,
+    ).toEqual({
+      image: { mediaTypes: ['image/png', 'image/jpeg'], maxBytes: 1_000_000 },
+    });
+    expect(
+      module.resolveModelInfo('my-openai:unknown').inputCapabilities,
+    ).toEqual({});
+  });
+
   it('resolves contextSize independently per endpoint in manual providers', async () => {
     const config = mixedConfig();
     const local = config.providers.local;
@@ -411,6 +442,25 @@ describe('Config — resolveModelInfo', () => {
     expect(module.resolveModelInfo('local:api:test-model').contextSize).toBe(
       32_768,
     );
+  });
+});
+
+describe('Config — image capability validation', () => {
+  it.each([
+    { image: { mediaTypes: [], maxBytes: 100 } },
+    { image: { mediaTypes: ['text/plain'], maxBytes: 100 } },
+    { image: { mediaTypes: ['image/png'], maxBytes: 0 } },
+    { image: { mediaTypes: ['image/png'], maxBytes: 100, extra: true } },
+  ])('rejects malformed image capabilities: %j', (inputCapabilities) => {
+    const config = presetConfig();
+    const provider = config.providers['my-openai'];
+    if (!provider || !('preset' in provider))
+      throw new Error('Expected preset provider');
+    provider.knownModels = {
+      'gpt-4o': { inputCapabilities } as never,
+    };
+
+    expect(klexConfigSchema.safeParse(config).success).toBe(false);
   });
 });
 

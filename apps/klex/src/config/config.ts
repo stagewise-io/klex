@@ -14,6 +14,7 @@ import {
   type McpServerConfig,
   type ModelDefinition,
   type ModelId,
+  type ModelInputCapabilities,
   type ModelPurpose,
   type ModelSelection,
   resolvePresetEndpoint,
@@ -39,6 +40,7 @@ export interface ResolvedModelConfig {
   contextSize: number;
   /** Human-readable name from knownModels, if declared. */
   displayName?: string;
+  inputCapabilities: ModelInputCapabilities;
 }
 
 /**
@@ -50,6 +52,8 @@ export interface ModelInfo {
   contextSize: number;
   /** Human-readable name from `knownModels`, if declared. */
   displayName: string | undefined;
+  /** Native input formats accepted by this model. */
+  inputCapabilities: ModelInputCapabilities;
 }
 
 export class ConfigValidationError extends Error {
@@ -254,8 +258,9 @@ class ConfigModule implements Config {
   }
 
   resolveModelInfo(modelId: ModelId): ModelInfo {
-    const { contextSize, displayName } = this.resolveModel(modelId);
-    return { contextSize, displayName };
+    const { contextSize, displayName, inputCapabilities } =
+      this.resolveModel(modelId);
+    return { contextSize, displayName, inputCapabilities };
   }
 
   /**
@@ -284,6 +289,7 @@ class ConfigModule implements Config {
     return {
       contextSize: contextSize ?? DEFAULT_CONTEXT_SIZE,
       displayName: def?.displayName,
+      inputCapabilities: def?.inputCapabilities ?? {},
     };
   }
 

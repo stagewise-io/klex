@@ -1,5 +1,7 @@
 import { Hono } from 'hono';
 
+import { RealtimeMediaProtocolError } from '@stagewise/mcp-extension-realtime-media/server';
+
 import type { ChatStore } from './chat-store.js';
 import { InvalidMessageError } from './chat-store.js';
 import type { ChatMcp } from './mcp.js';
@@ -30,6 +32,27 @@ export function createApp(store: ChatStore, mcp: ChatMcp): Hono {
     } catch (error) {
       if (error instanceof InvalidMessageError) {
         return context.json({ error: error.message }, 400);
+      }
+      throw error;
+    }
+  });
+  app.post('/api/realtime/sessions', (context) => {
+    const offer = mcp.createRealtimeOffer();
+    return context.json({ session: offer }, 201);
+  });
+  app.delete('/api/realtime/sessions/:sessionId', (context) => {
+    try {
+      const ended = mcp.endRealtimeSession(
+        context.req.param('sessionId'),
+        'remote-ended',
+      );
+      return context.json({ session: ended });
+    } catch (error) {
+      if (error instanceof RealtimeMediaProtocolError) {
+        return context.json(
+          { error: error.message, code: error.code, data: error.data },
+          409,
+        );
       }
       throw error;
     }

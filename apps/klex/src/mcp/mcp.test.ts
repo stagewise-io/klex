@@ -81,6 +81,8 @@ function connection(namespace: string): McpConnection {
     ],
     supportsPushNotifications: false,
     pushNotifications: {},
+    supportsRealtimeMedia: false,
+    realtimeMedia: {},
     invoke: vi.fn(),
     close: vi.fn(async () => undefined),
   } as unknown as McpConnection;
@@ -423,6 +425,60 @@ describe('MCP namespace isolation', () => {
     await vi.advanceTimersByTimeAsync(1_000);
     expect(attempts.get('failing')).toBe(2);
     expect(attempts.get('healthy')).toBe(1);
+    await mcp.close();
+  });
+
+  it('exposes realtime lifecycle operations and notifications by namespace', async () => {
+    let options: ConnectMcpServerOptions | undefined;
+    const accept = vi.fn(async () => ({
+      transport: {
+        profile: 'livekit-room' as const,
+        url: 'wss://livekit.example.com',
+        token: 'secret',
+      },
+    }));
+    const reject = vi.fn(async () => undefined);
+    const end = vi.fn(async () => undefined);
+    const realtimeConnection = {
+      ...connection('voice'),
+      supportsRealtimeMedia: true,
+      realtimeMedia: {
+        listen: vi.fn(async () => ({ closed: new Promise(() => undefined) })),
+        accept,
+        reject,
+        end,
+      },
+    } as unknown as McpConnection;
+    const connect = vi.fn(async (input: ConnectMcpServerOptions) => {
+      options = input;
+      return realtimeConnection;
+    });
+    const { mcp } = setup(
+      { voice: { url: 'https://voice.example/mcp' } },
+      connect,
+    );
+    const listener = vi.fn();
+    mcp.onRealtimeMediaNotification(listener);
+
+    await mcp.start();
+    await waitForNamespace(mcp, 'voice');
+    await options?.onRealtimeMediaNotification(realtimeConnection, {
+      jsonrpc: '2.0',
+      method: 'io.stagewise/realtime-media/session-offered',
+      params: {
+        sessionId: 'session-1',
+        expiresAt: '2026-08-01T18:00:00.000Z',
+      },
+    });
+    await vi.waitFor(() => expect(listener).toHaveBeenCalledOnce());
+    await expect(
+      mcp.acceptRealtimeMediaSession('voice', 'session-1'),
+    ).resolves.toMatchObject({ transport: { profile: 'livekit-room' } });
+    await mcp.rejectRealtimeMediaSession('voice', 'session-2');
+    await mcp.endRealtimeMediaSession('voice', 'session-1');
+    expect(accept).toHaveBeenCalledWith('session-1');
+    expect(reject).toHaveBeenCalledWith('session-2');
+    expect(end).toHaveBeenCalledWith('session-1');
     await mcp.close();
   });
 

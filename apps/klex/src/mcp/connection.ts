@@ -13,6 +13,11 @@ import {
   type RegisteredPushNotificationsClient,
   registerPushNotificationsClient,
 } from '@stagewise/mcp-extension-push-notifications/client';
+import type { RealtimeMediaNotification } from '@stagewise/mcp-extension-realtime-media';
+import {
+  type RegisteredRealtimeMediaClient,
+  registerRealtimeMediaClient,
+} from '@stagewise/mcp-extension-realtime-media/client';
 
 import type { McpServerConfig } from '@/config';
 import type { JsonObject } from '@/tool-provider';
@@ -22,6 +27,8 @@ export interface McpConnection {
   readonly tools: readonly McpToolDefinition[];
   readonly pushNotifications: RegisteredPushNotificationsClient;
   readonly supportsPushNotifications: boolean;
+  readonly realtimeMedia: RegisteredRealtimeMediaClient;
+  readonly supportsRealtimeMedia: boolean;
   invoke(
     tool: McpToolDefinition,
     input: JsonObject,
@@ -39,6 +46,10 @@ export interface ConnectMcpServerOptions {
     connection: McpConnection,
     notification: PushNotificationNotification,
   ): void | Promise<void>;
+  onRealtimeMediaNotification(
+    connection: McpConnection,
+    notification: RealtimeMediaNotification,
+  ): void | Promise<void>;
   onDisconnect(connection: McpConnection): void;
 }
 
@@ -54,6 +65,8 @@ class McpServerConnection implements McpConnection {
     private readonly client: Client,
     readonly pushNotifications: RegisteredPushNotificationsClient,
     readonly supportsPushNotifications: boolean,
+    readonly realtimeMedia: RegisteredRealtimeMediaClient,
+    readonly supportsRealtimeMedia: boolean,
     private currentTools: readonly McpToolDefinition[],
   ) {}
 
@@ -117,6 +130,12 @@ export async function connectMcpServer(
         await options.onPushNotification(connection, notification);
     },
   });
+  const realtimeMedia = registerRealtimeMediaClient(client, {
+    onNotification: async (notification) => {
+      if (connection)
+        await options.onRealtimeMediaNotification(connection, notification);
+    },
+  });
   const transport = createTransport(options.config);
   client.onclose = () => {
     if (connection && !expectedClose) options.onDisconnect(connection);
@@ -126,17 +145,23 @@ export async function connectMcpServer(
   options.signal.addEventListener('abort', onAbort, { once: true });
   try {
     await client.connect(transport, { signal: options.signal });
-    const [supportsPushNotifications, result] = await Promise.all([
-      pushNotifications.serverSupportsPushNotifications({
-        request: { signal: options.signal },
-      }),
-      client.listTools(undefined, { signal: options.signal }),
-    ]);
+    const [supportsPushNotifications, supportsRealtimeMedia, result] =
+      await Promise.all([
+        pushNotifications.serverSupportsPushNotifications({
+          request: { signal: options.signal },
+        }),
+        realtimeMedia.serverSupportsRealtimeMedia({
+          request: { signal: options.signal },
+        }),
+        client.listTools(undefined, { signal: options.signal }),
+      ]);
     connection = new McpServerConnection(
       options.namespace,
       client,
       pushNotifications,
       supportsPushNotifications,
+      realtimeMedia,
+      supportsRealtimeMedia,
       result.tools,
     );
     const originalClose = connection.close.bind(connection);

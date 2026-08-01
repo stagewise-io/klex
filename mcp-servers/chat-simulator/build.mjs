@@ -20,6 +20,18 @@ await build({
         import.meta.url,
       ),
     ),
+    '@stagewise/mcp-extension-realtime-media': fileURLToPath(
+      new URL(
+        '../../packages/mcp-extension-realtime-media/src/index.ts',
+        import.meta.url,
+      ),
+    ),
+    '@stagewise/mcp-extension-realtime-media/server': fileURLToPath(
+      new URL(
+        '../../packages/mcp-extension-realtime-media/src/server/index.ts',
+        import.meta.url,
+      ),
+    ),
   },
   sourcemap: true,
   legalComments: 'none',

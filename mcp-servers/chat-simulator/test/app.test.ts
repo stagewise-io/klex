@@ -1,4 +1,11 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import {
+  Client,
+  StreamableHTTPClientTransport,
+} from '@modelcontextprotocol/client';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+
+import type { RealtimeMediaNotification } from '@stagewise/mcp-extension-realtime-media';
+import { registerRealtimeMediaClient } from '@stagewise/mcp-extension-realtime-media/client';
 
 import { createApp } from '../src/app.js';
 import { type ChatStore, createChatStore } from '../src/chat-store.js';
@@ -46,6 +53,10 @@ async function jsonRpc(
           'io.modelcontextprotocol/clientCapabilities': {
             extensions: {
               'io.stagewise/push-notifications': {},
+              'io.stagewise/realtime-media': {
+                transports: ['livekit-room'],
+                media: ['audio'],
+              },
             },
           },
         },
@@ -182,6 +193,137 @@ describe('chat simulator', () => {
         hasMore: false,
       },
     });
+  });
+
+  it('negotiates the modern protocol and delivers realtime subscriptions', async () => {
+    const { app } = setup();
+    let resolveNotification:
+      | ((notification: RealtimeMediaNotification) => void)
+      | undefined;
+    const notification = new Promise<RealtimeMediaNotification>((resolve) => {
+      resolveNotification = resolve;
+    });
+    const client = new Client(
+      { name: 'chat-simulator-test', version: '1.0.0' },
+      { versionNegotiation: { mode: 'auto' } },
+    );
+    const realtime = registerRealtimeMediaClient(client, {
+      onNotification: (received) => resolveNotification?.(received),
+    });
+    const transport = new StreamableHTTPClientTransport(
+      new URL('http://chat-simulator.test/mcp'),
+      {
+        fetch: async (input, init) => app.fetch(new Request(input, init)),
+      },
+    );
+
+    try {
+      await client.connect(transport);
+      expect(client.getProtocolEra()).toBe('modern');
+      expect(await realtime.serverSupportsRealtimeMedia()).toBe(true);
+      const subscription = await realtime.listen();
+      const closed = subscription.closed.catch(() => undefined);
+
+      const created = await app.request('/api/realtime/sessions', {
+        method: 'POST',
+      });
+      expect(created.status).toBe(201);
+      const body = (await created.json()) as {
+        session: { sessionId: string };
+      };
+      await expect(notification).resolves.toMatchObject({
+        method: 'io.stagewise/realtime-media/session-offered',
+        params: { sessionId: body.session.sessionId },
+      });
+
+      await client.close();
+      await closed;
+    } finally {
+      await client.close().catch(() => undefined);
+    }
+  });
+
+  it('enforces the realtime offer lifecycle idempotently', async () => {
+    const { app } = setup();
+    const created = await app.request('/api/realtime/sessions', {
+      method: 'POST',
+    });
+    expect(created.status).toBe(201);
+    const body = (await created.json()) as {
+      session: { sessionId: string; expiresAt: string };
+    };
+    expect(body.session.expiresAt).toBeDefined();
+
+    const accept = () =>
+      jsonRpc(app, {
+        method: 'io.stagewise/realtime-media/accept',
+        params: { sessionId: body.session.sessionId },
+      });
+    const first = await accept();
+    const repeated = await accept();
+    expect(first).toMatchObject({
+      result: {
+        transport: {
+          profile: 'livekit-room',
+          url: 'wss://contract-only.livekit.invalid',
+        },
+      },
+    });
+    expect(repeated).toEqual(first);
+
+    const conflicting = await jsonRpc(app, {
+      method: 'io.stagewise/realtime-media/reject',
+      params: { sessionId: body.session.sessionId },
+    });
+    expect(conflicting).toMatchObject({ error: { code: -32_022 } });
+
+    await expect(
+      (
+        await app.request(`/api/realtime/sessions/${body.session.sessionId}`, {
+          method: 'DELETE',
+        })
+      ).status,
+    ).toBe(200);
+    const ended = await jsonRpc(app, {
+      method: 'io.stagewise/realtime-media/end',
+      params: { sessionId: body.session.sessionId },
+    });
+    expect(ended).toMatchObject({ result: {} });
+  });
+
+  it('rejects expired realtime offers', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-08-01T18:00:00.000Z'));
+    const { app } = setup();
+    const created = (await (
+      await app.request('/api/realtime/sessions', { method: 'POST' })
+    ).json()) as { session: { sessionId: string } };
+    await vi.advanceTimersByTimeAsync(30_001);
+    const accepted = await jsonRpc(app, {
+      method: 'io.stagewise/realtime-media/accept',
+      params: { sessionId: created.session.sessionId },
+    });
+    expect(accepted).toMatchObject({ error: { code: -32_021 } });
+    vi.useRealTimers();
+  });
+
+  it('requires realtime capability metadata', async () => {
+    const { app, mcp } = setup();
+    const offer = mcp.createRealtimeOffer();
+    const response = await app.request('/mcp', {
+      method: 'POST',
+      headers: {
+        Accept: 'application/json, text/event-stream',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'io.stagewise/realtime-media/reject',
+        params: { sessionId: offer.sessionId },
+      }),
+    });
+    expect(await response.text()).toContain('-32003');
   });
 
   it('exposes only the sendMessage tool for agent replies', async () => {

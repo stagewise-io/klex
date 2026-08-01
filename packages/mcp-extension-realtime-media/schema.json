@@ -1,0 +1,1111 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://stagewise.io/mcp/extensions/realtime-media/schema.json",
+  "title": "MCP Realtime Media Extension",
+  "description": "Protocol messages for the io.stagewise/realtime-media MCP extension.",
+  "$defs": {
+    "AcceptRealtimeMediaSessionRequest": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "jsonrpc": {
+          "type": "string",
+          "const": "2.0"
+        },
+        "id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "number"
+            }
+          ]
+        },
+        "method": {
+          "type": "string",
+          "const": "io.stagewise/realtime-media/accept"
+        },
+        "params": {
+          "type": "object",
+          "properties": {
+            "sessionId": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": ["sessionId"],
+          "additionalProperties": false
+        }
+      },
+      "required": ["jsonrpc", "id", "method", "params"],
+      "additionalProperties": false
+    },
+    "AcceptRealtimeMediaSessionResult": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "allOf": [
+        {
+          "type": "object",
+          "properties": {
+            "_meta": {
+              "type": "object",
+              "propertyNames": {
+                "type": "string"
+              },
+              "additionalProperties": {}
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "transport": {
+              "type": "object",
+              "properties": {
+                "profile": {
+                  "type": "string",
+                  "const": "livekit-room"
+                },
+                "url": {
+                  "type": "string",
+                  "format": "uri"
+                },
+                "token": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": ["profile", "url", "token"],
+              "additionalProperties": false
+            }
+          },
+          "required": ["transport"],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "EndRealtimeMediaSessionRequest": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "jsonrpc": {
+          "type": "string",
+          "const": "2.0"
+        },
+        "id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "number"
+            }
+          ]
+        },
+        "method": {
+          "type": "string",
+          "const": "io.stagewise/realtime-media/end"
+        },
+        "params": {
+          "type": "object",
+          "properties": {
+            "sessionId": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": ["sessionId"],
+          "additionalProperties": false
+        }
+      },
+      "required": ["jsonrpc", "id", "method", "params"],
+      "additionalProperties": false
+    },
+    "EndRealtimeMediaSessionResult": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "_meta": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {}
+        }
+      },
+      "additionalProperties": false
+    },
+    "LiveKitRoomTransportDescriptor": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "profile": {
+          "type": "string",
+          "const": "livekit-room"
+        },
+        "url": {
+          "type": "string",
+          "format": "uri"
+        },
+        "token": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": ["profile", "url", "token"],
+      "additionalProperties": false
+    },
+    "MissingRequiredClientCapabilityData": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "requiredCapabilities": {
+          "allOf": [
+            {
+              "type": "object",
+              "propertyNames": {
+                "type": "string"
+              },
+              "additionalProperties": {}
+            },
+            {
+              "type": "object",
+              "properties": {
+                "extensions": {
+                  "allOf": [
+                    {
+                      "type": "object",
+                      "propertyNames": {
+                        "type": "string"
+                      },
+                      "additionalProperties": {}
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "io.stagewise/realtime-media": {
+                          "type": "object",
+                          "properties": {
+                            "transports": {
+                              "type": "array",
+                              "prefixItems": [
+                                {
+                                  "type": "string",
+                                  "const": "livekit-room"
+                                }
+                              ]
+                            },
+                            "media": {
+                              "type": "array",
+                              "prefixItems": [
+                                {
+                                  "type": "string",
+                                  "const": "audio"
+                                }
+                              ]
+                            }
+                          },
+                          "required": ["transports", "media"],
+                          "additionalProperties": false
+                        }
+                      },
+                      "additionalProperties": false
+                    }
+                  ]
+                }
+              },
+              "additionalProperties": false
+            }
+          ]
+        }
+      },
+      "required": ["requiredCapabilities"],
+      "additionalProperties": false
+    },
+    "RealtimeMediaCapabilities": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "allOf": [
+        {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {}
+        },
+        {
+          "type": "object",
+          "properties": {
+            "extensions": {
+              "allOf": [
+                {
+                  "type": "object",
+                  "propertyNames": {
+                    "type": "string"
+                  },
+                  "additionalProperties": {}
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "io.stagewise/realtime-media": {
+                      "type": "object",
+                      "properties": {
+                        "transports": {
+                          "type": "array",
+                          "prefixItems": [
+                            {
+                              "type": "string",
+                              "const": "livekit-room"
+                            }
+                          ]
+                        },
+                        "media": {
+                          "type": "array",
+                          "prefixItems": [
+                            {
+                              "type": "string",
+                              "const": "audio"
+                            }
+                          ]
+                        }
+                      },
+                      "required": ["transports", "media"],
+                      "additionalProperties": false
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              ]
+            }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "RealtimeMediaClientCapabilitiesMeta": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "allOf": [
+        {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {}
+        },
+        {
+          "type": "object",
+          "properties": {
+            "io.modelcontextprotocol/clientCapabilities": {
+              "allOf": [
+                {
+                  "type": "object",
+                  "propertyNames": {
+                    "type": "string"
+                  },
+                  "additionalProperties": {}
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "extensions": {
+                      "allOf": [
+                        {
+                          "type": "object",
+                          "propertyNames": {
+                            "type": "string"
+                          },
+                          "additionalProperties": {}
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "io.stagewise/realtime-media": {
+                              "type": "object",
+                              "properties": {
+                                "transports": {
+                                  "type": "array",
+                                  "prefixItems": [
+                                    {
+                                      "type": "string",
+                                      "const": "livekit-room"
+                                    }
+                                  ]
+                                },
+                                "media": {
+                                  "type": "array",
+                                  "prefixItems": [
+                                    {
+                                      "type": "string",
+                                      "const": "audio"
+                                    }
+                                  ]
+                                }
+                              },
+                              "required": ["transports", "media"],
+                              "additionalProperties": false
+                            }
+                          },
+                          "additionalProperties": false
+                        }
+                      ]
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              ]
+            }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "RealtimeMediaExtensionCapabilities": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "allOf": [
+        {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {}
+        },
+        {
+          "type": "object",
+          "properties": {
+            "io.stagewise/realtime-media": {
+              "type": "object",
+              "properties": {
+                "transports": {
+                  "type": "array",
+                  "prefixItems": [
+                    {
+                      "type": "string",
+                      "const": "livekit-room"
+                    }
+                  ]
+                },
+                "media": {
+                  "type": "array",
+                  "prefixItems": [
+                    {
+                      "type": "string",
+                      "const": "audio"
+                    }
+                  ]
+                }
+              },
+              "required": ["transports", "media"],
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "RealtimeMediaExtensionCapability": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "transports": {
+          "type": "array",
+          "prefixItems": [
+            {
+              "type": "string",
+              "const": "livekit-room"
+            }
+          ]
+        },
+        "media": {
+          "type": "array",
+          "prefixItems": [
+            {
+              "type": "string",
+              "const": "audio"
+            }
+          ]
+        }
+      },
+      "required": ["transports", "media"],
+      "additionalProperties": false
+    },
+    "RealtimeMediaNotification": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "jsonrpc": {
+              "type": "string",
+              "const": "2.0"
+            },
+            "method": {
+              "type": "string",
+              "const": "io.stagewise/realtime-media/session-offered"
+            },
+            "params": {
+              "allOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "_meta": {
+                      "type": "object",
+                      "propertyNames": {
+                        "type": "string"
+                      },
+                      "additionalProperties": {}
+                    }
+                  },
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "sessionId": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "expiresAt": {
+                      "type": "string",
+                      "format": "date-time",
+                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$"
+                    }
+                  },
+                  "required": ["sessionId", "expiresAt"],
+                  "additionalProperties": false
+                }
+              ]
+            }
+          },
+          "required": ["jsonrpc", "method", "params"],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "jsonrpc": {
+              "type": "string",
+              "const": "2.0"
+            },
+            "method": {
+              "type": "string",
+              "const": "io.stagewise/realtime-media/session-ended"
+            },
+            "params": {
+              "allOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "_meta": {
+                      "type": "object",
+                      "propertyNames": {
+                        "type": "string"
+                      },
+                      "additionalProperties": {}
+                    }
+                  },
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "sessionId": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "reason": {
+                      "type": "string"
+                    }
+                  },
+                  "required": ["sessionId"],
+                  "additionalProperties": false
+                }
+              ]
+            }
+          },
+          "required": ["jsonrpc", "method", "params"],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "RealtimeMediaProtocolErrorData": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "kind": {
+          "anyOf": [
+            {
+              "type": "string",
+              "const": "unknown-session"
+            },
+            {
+              "type": "string",
+              "const": "expired-offer"
+            },
+            {
+              "type": "string",
+              "const": "invalid-state"
+            }
+          ]
+        },
+        "sessionId": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": ["kind", "sessionId"],
+      "additionalProperties": false
+    },
+    "RealtimeMediaProtocolErrorKind": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "anyOf": [
+        {
+          "type": "string",
+          "const": "unknown-session"
+        },
+        {
+          "type": "string",
+          "const": "expired-offer"
+        },
+        {
+          "type": "string",
+          "const": "invalid-state"
+        }
+      ]
+    },
+    "RealtimeMediaSessionEndedNotificationParams": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "allOf": [
+        {
+          "type": "object",
+          "properties": {
+            "_meta": {
+              "type": "object",
+              "propertyNames": {
+                "type": "string"
+              },
+              "additionalProperties": {}
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "sessionId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "reason": {
+              "type": "string"
+            }
+          },
+          "required": ["sessionId"],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "RealtimeMediaSessionEndedNotification": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "jsonrpc": {
+          "type": "string",
+          "const": "2.0"
+        },
+        "method": {
+          "type": "string",
+          "const": "io.stagewise/realtime-media/session-ended"
+        },
+        "params": {
+          "allOf": [
+            {
+              "type": "object",
+              "properties": {
+                "_meta": {
+                  "type": "object",
+                  "propertyNames": {
+                    "type": "string"
+                  },
+                  "additionalProperties": {}
+                }
+              },
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "sessionId": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "reason": {
+                  "type": "string"
+                }
+              },
+              "required": ["sessionId"],
+              "additionalProperties": false
+            }
+          ]
+        }
+      },
+      "required": ["jsonrpc", "method", "params"],
+      "additionalProperties": false
+    },
+    "RealtimeMediaSessionOfferedNotificationParams": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "allOf": [
+        {
+          "type": "object",
+          "properties": {
+            "_meta": {
+              "type": "object",
+              "propertyNames": {
+                "type": "string"
+              },
+              "additionalProperties": {}
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "sessionId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "expiresAt": {
+              "type": "string",
+              "format": "date-time",
+              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$"
+            }
+          },
+          "required": ["sessionId", "expiresAt"],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "RealtimeMediaSessionOfferedNotification": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "jsonrpc": {
+          "type": "string",
+          "const": "2.0"
+        },
+        "method": {
+          "type": "string",
+          "const": "io.stagewise/realtime-media/session-offered"
+        },
+        "params": {
+          "allOf": [
+            {
+              "type": "object",
+              "properties": {
+                "_meta": {
+                  "type": "object",
+                  "propertyNames": {
+                    "type": "string"
+                  },
+                  "additionalProperties": {}
+                }
+              },
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "sessionId": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "expiresAt": {
+                  "type": "string",
+                  "format": "date-time",
+                  "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$"
+                }
+              },
+              "required": ["sessionId", "expiresAt"],
+              "additionalProperties": false
+            }
+          ]
+        }
+      },
+      "required": ["jsonrpc", "method", "params"],
+      "additionalProperties": false
+    },
+    "RealtimeMediaSessionParams": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "sessionId": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": ["sessionId"],
+      "additionalProperties": false
+    },
+    "RealtimeMediaSubscriptionAcknowledgedNotifications": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "io.stagewise/realtime-media": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {
+            "not": {}
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "RealtimeMediaSubscriptionNotifications": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "io.stagewise/realtime-media": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {
+            "not": {}
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "RealtimeMediaSubscription": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "propertyNames": {
+        "type": "string"
+      },
+      "additionalProperties": {
+        "not": {}
+      }
+    },
+    "RejectRealtimeMediaSessionRequest": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "jsonrpc": {
+          "type": "string",
+          "const": "2.0"
+        },
+        "id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "number"
+            }
+          ]
+        },
+        "method": {
+          "type": "string",
+          "const": "io.stagewise/realtime-media/reject"
+        },
+        "params": {
+          "type": "object",
+          "properties": {
+            "sessionId": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": ["sessionId"],
+          "additionalProperties": false
+        }
+      },
+      "required": ["jsonrpc", "id", "method", "params"],
+      "additionalProperties": false
+    },
+    "RejectRealtimeMediaSessionResult": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "_meta": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {}
+        }
+      },
+      "additionalProperties": false
+    },
+    "ServerDiscoverRequest": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "jsonrpc": {
+          "type": "string",
+          "const": "2.0"
+        },
+        "id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "number"
+            }
+          ]
+        },
+        "method": {
+          "type": "string",
+          "const": "server/discover"
+        },
+        "params": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {}
+        }
+      },
+      "required": ["jsonrpc", "id", "method", "params"],
+      "additionalProperties": false
+    },
+    "ServerDiscoverResult": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "allOf": [
+        {
+          "type": "object",
+          "properties": {
+            "_meta": {
+              "type": "object",
+              "propertyNames": {
+                "type": "string"
+              },
+              "additionalProperties": {}
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "capabilities": {
+              "allOf": [
+                {
+                  "type": "object",
+                  "propertyNames": {
+                    "type": "string"
+                  },
+                  "additionalProperties": {}
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "extensions": {
+                      "allOf": [
+                        {
+                          "type": "object",
+                          "propertyNames": {
+                            "type": "string"
+                          },
+                          "additionalProperties": {}
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "io.stagewise/realtime-media": {
+                              "type": "object",
+                              "properties": {
+                                "transports": {
+                                  "type": "array",
+                                  "prefixItems": [
+                                    {
+                                      "type": "string",
+                                      "const": "livekit-room"
+                                    }
+                                  ]
+                                },
+                                "media": {
+                                  "type": "array",
+                                  "prefixItems": [
+                                    {
+                                      "type": "string",
+                                      "const": "audio"
+                                    }
+                                  ]
+                                }
+                              },
+                              "required": ["transports", "media"],
+                              "additionalProperties": false
+                            }
+                          },
+                          "additionalProperties": false
+                        }
+                      ]
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              ]
+            }
+          },
+          "required": ["capabilities"],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "SubscriptionsAcknowledgedNotification": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "jsonrpc": {
+          "type": "string",
+          "const": "2.0"
+        },
+        "method": {
+          "type": "string",
+          "const": "notifications/subscriptions/acknowledged"
+        },
+        "params": {
+          "allOf": [
+            {
+              "type": "object",
+              "properties": {
+                "_meta": {
+                  "type": "object",
+                  "propertyNames": {
+                    "type": "string"
+                  },
+                  "additionalProperties": {}
+                }
+              },
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "notifications": {
+                  "allOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "io.stagewise/realtime-media": {
+                          "type": "object",
+                          "propertyNames": {
+                            "type": "string"
+                          },
+                          "additionalProperties": {
+                            "not": {}
+                          }
+                        }
+                      },
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "propertyNames": {
+                        "type": "string"
+                      },
+                      "additionalProperties": {}
+                    }
+                  ]
+                }
+              },
+              "required": ["notifications"],
+              "additionalProperties": false
+            }
+          ]
+        }
+      },
+      "required": ["jsonrpc", "method", "params"],
+      "additionalProperties": false
+    },
+    "SubscriptionsListenRequest": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "jsonrpc": {
+          "type": "string",
+          "const": "2.0"
+        },
+        "id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "number"
+            }
+          ]
+        },
+        "method": {
+          "type": "string",
+          "const": "subscriptions/listen"
+        },
+        "params": {
+          "allOf": [
+            {
+              "type": "object",
+              "propertyNames": {
+                "type": "string"
+              },
+              "additionalProperties": {}
+            },
+            {
+              "type": "object",
+              "properties": {
+                "notifications": {
+                  "allOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "io.stagewise/realtime-media": {
+                          "type": "object",
+                          "propertyNames": {
+                            "type": "string"
+                          },
+                          "additionalProperties": {
+                            "not": {}
+                          }
+                        }
+                      },
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "propertyNames": {
+                        "type": "string"
+                      },
+                      "additionalProperties": {}
+                    }
+                  ]
+                }
+              },
+              "required": ["notifications"],
+              "additionalProperties": false
+            }
+          ]
+        }
+      },
+      "required": ["jsonrpc", "id", "method", "params"],
+      "additionalProperties": false
+    },
+    "SubscriptionsListenResult": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "_meta": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {}
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

@@ -11,6 +11,14 @@ The MCP module is the environment boundary between the agent core and external M
 
 The module exposes `onPushNotification()` to the router. External code does not create or wire the inbox.
 
+## Realtime Media boundary
+
+The MCP module also exposes the independent `io.stagewise/realtime-media`
+control-plane facade. It owns capability negotiation, an ephemeral notification
+stream, and namespace-addressed accept/reject/end calls. Realtime notifications
+never enter the durable Push Notification inbox. Media transport, LiveKit
+connections, and realtime model sessions remain outside this module.
+
 ## Submodules
 
 ```text

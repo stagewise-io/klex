@@ -15,9 +15,14 @@ The module exposes `onPushNotification()` to the router. External code does not 
 
 The MCP module also exposes the independent `io.stagewise/realtime-media`
 control-plane facade. It owns capability negotiation, an ephemeral notification
-stream, and namespace-addressed accept/reject/end calls. Realtime notifications
-never enter the durable Push Notification inbox. Media transport, LiveKit
-connections, and realtime model sessions remain outside this module.
+stream, namespace-addressed accept/reject/end calls, and process-local
+availability events for the current realtime worker. Realtime notifications and
+availability changes never enter the durable Push Notification inbox. Media
+transport, LiveKit connections, and realtime model sessions remain outside this
+module. Realtime capability registration is startup-gated: disabled mode does
+not advertise the extension, open its listener, or permit local lifecycle
+operations. Changing the mode requires a process restart because MCP
+capabilities are negotiated when connections are established.
 
 ## Submodules
 
@@ -27,6 +32,25 @@ McpModule
   ├─ connection.ts              (stdio and HTTP transports)
   └─ registry.ts                (tool registry builder)
 ```
+
+## Realtime Media flow
+
+```text
+current MCP connection
+  -> start ephemeral subscriptions/listen worker
+  -> publish namespace available
+  -> publish lifecycle notifications to realtime listeners
+  -> accept/reject/end by namespace
+  -> worker or connection stops
+  -> publish namespace unavailable
+  -> realtime coordinator terminates matching sessions
+```
+
+Availability is process-local and transition-based. Only the current connection
+can make a namespace available. Disconnect, configuration replacement,
+subscription failure, and shutdown make it unavailable. Stale callbacks and
+repeated invalidation do not republish a transition. The realtime coordinator
+borrows this facade; it does not own or close MCP connections.
 
 ## Push Notification flow
 
@@ -77,4 +101,6 @@ The router never accesses the Push Notification inbox directly.
 
 ## Interface to Main
 
-`createMcp({ logging, config })` composes the module and its inbox. No external inbox wiring is required.
+`createMcp({ logging, config, realtimeMediaEnabled })` composes the module and
+its inbox. Main resolves `realtimeMediaEnabled` from the persisted startup mode
+before MCP starts. No external inbox wiring is required.

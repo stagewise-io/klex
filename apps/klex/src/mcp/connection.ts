@@ -27,7 +27,7 @@ export interface McpConnection {
   readonly tools: readonly McpToolDefinition[];
   readonly pushNotifications: RegisteredPushNotificationsClient;
   readonly supportsPushNotifications: boolean;
-  readonly realtimeMedia: RegisteredRealtimeMediaClient;
+  readonly realtimeMedia: RegisteredRealtimeMediaClient | undefined;
   readonly supportsRealtimeMedia: boolean;
   invoke(
     tool: McpToolDefinition,
@@ -41,6 +41,7 @@ export interface ConnectMcpServerOptions {
   namespace: string;
   config: McpServerConfig;
   signal: AbortSignal;
+  realtimeMediaEnabled: boolean;
   onToolsChanged(connection: McpConnection): void;
   onPushNotification(
     connection: McpConnection,
@@ -65,7 +66,7 @@ class McpServerConnection implements McpConnection {
     private readonly client: Client,
     readonly pushNotifications: RegisteredPushNotificationsClient,
     readonly supportsPushNotifications: boolean,
-    readonly realtimeMedia: RegisteredRealtimeMediaClient,
+    readonly realtimeMedia: RegisteredRealtimeMediaClient | undefined,
     readonly supportsRealtimeMedia: boolean,
     private currentTools: readonly McpToolDefinition[],
   ) {}
@@ -130,12 +131,14 @@ export async function connectMcpServer(
         await options.onPushNotification(connection, notification);
     },
   });
-  const realtimeMedia = registerRealtimeMediaClient(client, {
-    onNotification: async (notification) => {
-      if (connection)
-        await options.onRealtimeMediaNotification(connection, notification);
-    },
-  });
+  const realtimeMedia = options.realtimeMediaEnabled
+    ? registerRealtimeMediaClient(client, {
+        onNotification: async (notification) => {
+          if (connection)
+            await options.onRealtimeMediaNotification(connection, notification);
+        },
+      })
+    : undefined;
   const transport = createTransport(options.config);
   client.onclose = () => {
     if (connection && !expectedClose) options.onDisconnect(connection);
@@ -150,9 +153,11 @@ export async function connectMcpServer(
         pushNotifications.serverSupportsPushNotifications({
           request: { signal: options.signal },
         }),
-        realtimeMedia.serverSupportsRealtimeMedia({
-          request: { signal: options.signal },
-        }),
+        realtimeMedia
+          ? realtimeMedia.serverSupportsRealtimeMedia({
+              request: { signal: options.signal },
+            })
+          : false,
         client.listTools(undefined, { signal: options.signal }),
       ]);
     connection = new McpServerConnection(

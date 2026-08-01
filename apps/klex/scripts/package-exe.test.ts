@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
-import { createKlexAgentPackagerConfig, packageKlexAgent } from './package-exe';
+import {
+  createKlexAgentPackagerConfig,
+  packageKlexAgent,
+  resolveLiveKitNativeAddon,
+} from './package-exe';
 
 describe('Klex Agent executable packaging', () => {
   it('defines the Klex Agent SEA inputs and macOS signing policy', () => {
@@ -16,6 +20,7 @@ describe('Klex Agent executable packaging', () => {
       outputDirectory: 'dist',
       assets: {
         'javascript-sandbox-worker.js': 'dist/javascript-sandbox-worker.js',
+        'livekit-rtc.node': resolveLiveKitNativeAddon(),
       },
       useCodeCache: true,
       signing: { mode: 'optional' },
@@ -28,6 +33,13 @@ describe('Klex Agent executable packaging', () => {
         },
       },
     });
+  });
+
+  it('resolves only supported host native addons', () => {
+    expect(resolveLiveKitNativeAddon()).toMatch(/rtc-node.*\.node$/);
+    expect(() => resolveLiveKitNativeAddon('aix', 'ppc64')).toThrow(
+      'LiveKit does not support executable packaging for aix-ppc64',
+    );
   });
 
   it('enables and staples notarization with complete credentials', () => {

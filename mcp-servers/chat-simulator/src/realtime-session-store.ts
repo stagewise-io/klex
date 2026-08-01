@@ -11,7 +11,9 @@ export const REALTIME_OFFER_TTL_MS = 30_000;
 
 export type RealtimeTransportDescriptorResolver = (
   sessionId: string,
-) => AcceptRealtimeMediaSessionResult;
+) =>
+  | AcceptRealtimeMediaSessionResult
+  | Promise<AcceptRealtimeMediaSessionResult>;
 
 type SessionState = 'offered' | 'accepted' | 'rejected' | 'ended' | 'expired';
 
@@ -21,6 +23,7 @@ interface RealtimeSession {
   expiresAt: string;
   state: SessionState;
   accepted?: AcceptRealtimeMediaSessionResult;
+  accepting?: Promise<AcceptRealtimeMediaSessionResult>;
 }
 
 export interface RealtimeSessionStore {
@@ -30,7 +33,7 @@ export interface RealtimeSessionStore {
   accept(
     consumerKey: string,
     sessionId: string,
-  ): AcceptRealtimeMediaSessionResult;
+  ): Promise<AcceptRealtimeMediaSessionResult>;
   reject(consumerKey: string, sessionId: string): void;
   end(consumerKey: string, sessionId: string): void;
   remoteEnd(
@@ -62,22 +65,33 @@ class RealtimeSessionStoreModule implements RealtimeSessionStore {
     return { sessionId: session.id, expiresAt: session.expiresAt };
   }
 
-  accept(
+  async accept(
     consumerKey: string,
     sessionId: string,
-  ): AcceptRealtimeMediaSessionResult {
+  ): Promise<AcceptRealtimeMediaSessionResult> {
     const session = this.#require(consumerKey, sessionId);
     this.#expire(session);
     if (session.state === 'expired')
       throw realtimeMediaSessionError('expired-offer', sessionId);
     if (session.state === 'accepted' && session.accepted)
-      return session.accepted;
+      return structuredClone(session.accepted);
+    if (session.accepting) return structuredClone(await session.accepting);
     if (session.state !== 'offered')
       throw realtimeMediaSessionError('invalid-state', sessionId);
-    const accepted = this.resolveTransport(sessionId);
-    session.state = 'accepted';
-    session.accepted = structuredClone(accepted);
-    return structuredClone(accepted);
+    session.accepting = Promise.resolve(this.resolveTransport(sessionId)).then(
+      (accepted) => {
+        session.state = 'accepted';
+        session.accepted = structuredClone(accepted);
+        session.accepting = undefined;
+        return accepted;
+      },
+    );
+    try {
+      return structuredClone(await session.accepting);
+    } catch (error) {
+      session.accepting = undefined;
+      throw error;
+    }
   }
 
   reject(consumerKey: string, sessionId: string): void {

@@ -3,6 +3,17 @@ import { fileURLToPath } from 'node:url';
 import { build } from 'esbuild';
 
 await build({
+  entryPoints: ['src/realtime-client.ts'],
+  bundle: true,
+  platform: 'browser',
+  format: 'iife',
+  target: 'es2022',
+  outfile: 'dist/realtime-client.js',
+  sourcemap: true,
+  legalComments: 'none',
+});
+
+await build({
   entryPoints: ['src/index.ts'],
   bundle: true,
   platform: 'node',

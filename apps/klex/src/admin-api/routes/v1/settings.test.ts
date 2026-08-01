@@ -66,6 +66,7 @@ const baseConfig: KlexConfig = {
   },
   modelSelection: baseSelection,
   mcpServers: {},
+  realtime: { mode: 'disabled' },
 };
 
 function makeDeps(config: Partial<Config> = {}): SettingsRouteDependencies {

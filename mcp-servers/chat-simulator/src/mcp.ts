@@ -8,6 +8,7 @@ import {
   registerPushNotificationsServer,
 } from '@stagewise/mcp-extension-push-notifications/server';
 import type {
+  AcceptRealtimeMediaSessionResult,
   RealtimeMediaSessionEndedNotificationParams,
   RealtimeMediaSessionOfferedNotificationParams,
 } from '@stagewise/mcp-extension-realtime-media';
@@ -26,10 +27,15 @@ import {
 
 const LOCAL_CONSUMER_KEY = 'local-agent';
 
+export interface RealtimeOfferResult {
+  session: RealtimeMediaSessionOfferedNotificationParams;
+  participant?: AcceptRealtimeMediaSessionResult;
+}
+
 export interface ChatMcp {
   fetch(request: Request): Promise<Response>;
   publishUserEvent(params: PushNotificationNotificationParams): void;
-  createRealtimeOffer(): RealtimeMediaSessionOfferedNotificationParams;
+  createRealtimeOffer(): Promise<RealtimeOfferResult>;
   endRealtimeSession(
     sessionId: string,
     reason?: string,
@@ -45,6 +51,9 @@ class ChatMcpModule implements ChatMcp {
   constructor(
     store: ChatStore,
     private readonly realtimeSessions: RealtimeSessionStore,
+    private readonly issueBrowserTransport?: (
+      sessionId: string,
+    ) => Promise<AcceptRealtimeMediaSessionResult>,
   ) {
     this.#handler = createMcpHandler(
       () => {
@@ -111,13 +120,14 @@ class ChatMcpModule implements ChatMcp {
     this.#pushSubscriptions.publish(LOCAL_CONSUMER_KEY, params);
   }
 
-  createRealtimeOffer(): RealtimeMediaSessionOfferedNotificationParams {
-    const offer = this.realtimeSessions.createOffer(LOCAL_CONSUMER_KEY);
+  async createRealtimeOffer(): Promise<RealtimeOfferResult> {
+    const session = this.realtimeSessions.createOffer(LOCAL_CONSUMER_KEY);
+    const participant = await this.issueBrowserTransport?.(session.sessionId);
     this.#realtimeSubscriptions.publishSessionOffered(
       LOCAL_CONSUMER_KEY,
-      offer,
+      session,
     );
-    return offer;
+    return { session, ...(participant ? { participant } : {}) };
   }
 
   endRealtimeSession(
@@ -144,6 +154,9 @@ class ChatMcpModule implements ChatMcp {
 export function createChatMcp(
   store: ChatStore,
   realtimeSessions: RealtimeSessionStore = createRealtimeSessionStore(),
+  issueBrowserTransport?: (
+    sessionId: string,
+  ) => Promise<AcceptRealtimeMediaSessionResult>,
 ): ChatMcp {
-  return new ChatMcpModule(store, realtimeSessions);
+  return new ChatMcpModule(store, realtimeSessions, issueBrowserTransport);
 }

@@ -94,6 +94,7 @@ describe('Router Push Notification adaptation', () => {
           },
           content: [
             { type: 'text', text: 'first' },
+            { type: 'image', data: 'aW1hZ2U=', mimeType: 'image/png' },
             { type: 'text', text: 'second' },
             {
               type: 'text',
@@ -103,10 +104,64 @@ describe('Router Push Notification adaptation', () => {
         },
       },
     ]);
+    expect(harness.warn).not.toHaveBeenCalled();
+  });
+
+  it('degrades invalid images without logging their data', async () => {
+    const harness = setup();
+    await harness.router.start();
+
+    await harness.emit({
+      namespace: 'telegram',
+      event: {
+        ...envelope,
+        content: [
+          { type: 'image', data: 'secret-not-base64!', mimeType: 'image/png' },
+        ],
+      },
+    });
+
+    expect(harness.sent[0]?.context.content).toEqual([
+      {
+        type: 'text',
+        text: '<unsupported-image mime-type="image/png" reason="invalid-base64" />',
+      },
+    ]);
     expect(harness.warn).toHaveBeenCalledWith(
-      { eventId: 'event-1', contentTypes: ['image'] },
-      'Router omitted unsupported Push Notification content blocks',
+      {
+        eventId: 'event-1',
+        mimeType: 'image/png',
+        reason: 'invalid-base64',
+        decodedBytes: undefined,
+      },
+      'Router rejected invalid Push Notification image',
     );
+    expect(JSON.stringify(harness.warn.mock.calls)).not.toContain(
+      'secret-not-base64!',
+    );
+  });
+
+  it('awaits session delivery before publication settles', async () => {
+    const harness = setup();
+    await harness.router.start();
+    let release: (() => void) | undefined;
+    const delivery = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    vi.spyOn(harness.router, 'sendInput').mockReturnValue(delivery);
+
+    let settled = false;
+    const publication = harness
+      .emit({ namespace: 'telegram', event: { ...envelope, content: [] } })
+      ?.then(() => {
+        settled = true;
+      });
+    await Promise.resolve();
+    expect(settled).toBe(false);
+
+    release?.();
+    await publication;
+    expect(settled).toBe(true);
   });
 
   it('handles missing data and explicitly omits unsupported content', async () => {

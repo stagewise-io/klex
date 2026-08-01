@@ -1,7 +1,12 @@
 import type { ModuleLogger, RootLogger } from '@stagewise/logger';
 
 import type { Mcp, McpPushNotification } from '@/mcp';
-import { type SessionInboxEvent, SessionInboxPriority } from '@/session/inbox';
+import {
+  type ContextDataUIPart,
+  type SessionInboxEvent,
+  SessionInboxPriority,
+  validateInlineImage,
+} from '@/session/inbox';
 import type {
   AgentSession,
   SessionHooks,
@@ -50,9 +55,9 @@ class RouterModule implements Router {
 
     this.session = await this.createSession();
 
-    this.pushNotificationUnsub = this.deps.mcp.onPushNotification((ev) => {
-      this.handlePushNotification(ev);
-    });
+    this.pushNotificationUnsub = this.deps.mcp.onPushNotification((ev) =>
+      this.handlePushNotification(ev),
+    );
 
     this.started = true;
     this.deps.logger.info('Router started');
@@ -114,13 +119,40 @@ class RouterModule implements Router {
    * - `metadata`  ← event identity, type, namespace, and timestamp
    * - `content`   ← ordered MCP text blocks plus serialized event data
    */
-  private handlePushNotification(ev: McpPushNotification): void {
+  private async handlePushNotification(ev: McpPushNotification): Promise<void> {
     const { event, namespace } = ev;
-    const content = event.content.flatMap((block) =>
-      block.type === 'text'
-        ? [{ type: 'text' as const, text: block.text }]
-        : [],
-    );
+    const content: ContextDataUIPart['content'] = [];
+    for (const block of event.content) {
+      if (block.type === 'text') {
+        content.push({ type: 'text', text: block.text });
+        continue;
+      }
+      if (block.type !== 'image') continue;
+
+      const validation = validateInlineImage(block.mimeType, block.data);
+      if (validation.valid) {
+        content.push({
+          type: 'image',
+          mimeType: block.mimeType,
+          data: block.data,
+        });
+        continue;
+      }
+
+      content.push({
+        type: 'text',
+        text: `<unsupported-image mime-type="${block.mimeType}" reason="${validation.reason}" />`,
+      });
+      this.deps.logger.warn(
+        {
+          eventId: event.eventId,
+          mimeType: block.mimeType,
+          reason: validation.reason,
+          decodedBytes: validation.decodedBytes,
+        },
+        'Router rejected invalid Push Notification image',
+      );
+    }
     if (event.data !== undefined) {
       content.push({
         type: 'text',
@@ -129,7 +161,7 @@ class RouterModule implements Router {
     }
 
     const unsupportedTypes = event.content
-      .filter((block) => block.type !== 'text')
+      .filter((block) => block.type !== 'text' && block.type !== 'image')
       .map((block) => block.type);
     if (unsupportedTypes.length > 0) {
       this.deps.logger.warn(
@@ -152,7 +184,7 @@ class RouterModule implements Router {
         content,
       },
     };
-    void this.sendInput(inboxEvent);
+    await this.sendInput(inboxEvent);
   }
 
   /**

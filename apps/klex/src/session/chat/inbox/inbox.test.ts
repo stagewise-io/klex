@@ -5,6 +5,7 @@ import type { ExtendedUIMessage } from '@/session/chat/message-types';
 import { testLogger as drainLogger } from '../test-helpers';
 import {
   createInbox,
+  redactMediaForTelemetry,
   type SessionInboxBuffer,
   type SessionInboxEvent,
   SessionInboxPriority,
@@ -334,6 +335,64 @@ describe('Inbox — drain: empty inbox', () => {
     inbox.drain(messages, SessionInboxPriority.High, drainLogger);
 
     expect(messages).toHaveLength(1);
+  });
+});
+
+describe('Inbox — media handling', () => {
+  it('preserves canonical image data while redacting telemetry projections', () => {
+    const imageData = 'aW1hZ2U=';
+    const event: SessionInboxEvent = {
+      sourceEnv: 'telegram:1',
+      priority: SessionInboxPriority.Medium,
+      context: {
+        sourceEnv: 'telegram:1',
+        metadata: {},
+        content: [{ type: 'image', mimeType: 'image/png', data: imageData }],
+      },
+    };
+    const inbox = createInbox({ onNewEvent: vi.fn() });
+    inbox.send(event);
+    const messages: ExtendedUIMessage[] = [];
+
+    inbox.drain(messages, SessionInboxPriority.Low, drainLogger);
+
+    expect(messages[0]?.parts[0]).toMatchObject({
+      type: 'data-context',
+      data: { content: [{ type: 'image', data: imageData }] },
+    });
+    const projected = redactMediaForTelemetry(event.context);
+    expect(projected).toEqual({
+      sourceEnv: 'telegram:1',
+      metadata: {},
+      content: [
+        {
+          type: 'image',
+          mimeType: 'image/png',
+          data: '[redacted]',
+          decodedBytes: 5,
+        },
+      ],
+    });
+    expect(JSON.stringify(projected)).not.toContain(imageData);
+  });
+
+  it('redacts native file data URLs', () => {
+    const projected = redactMediaForTelemetry([
+      {
+        type: 'file',
+        mediaType: 'image/png',
+        url: 'data:image/png;base64,aW1hZ2U=',
+      },
+    ]);
+    expect(JSON.stringify(projected)).not.toContain('aW1hZ2U=');
+    expect(projected).toEqual([
+      {
+        type: 'file',
+        mediaType: 'image/png',
+        url: '[redacted]',
+        decodedBytes: 5,
+      },
+    ]);
   });
 });
 

@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import type { ModuleLogger } from '@stagewise/logger';
 
 import {
+  getBase64DecodedBytes,
   type SessionInbox,
   SessionInboxClosedError,
   type SessionInboxEvent,
@@ -196,17 +197,17 @@ class InboxModule implements SessionInboxBuffer {
       else if (e.priority === SessionInboxPriority.High) byPriority.high++;
     }
 
-    // Record what was pulled from the inbox (including full content).
+    // Record structure and media metadata without leaking binary bodies.
     const pulled = {
       events: events.map((e) => ({
         sourceEnv: e.sourceEnv,
         priority: SessionInboxPriority[e.priority],
-        context: e.context,
+        context: redactMediaForTelemetry(e.context),
       })),
       nativeMessages: nativeMessages.map((m) => ({
         id: m.id,
         role: m.role,
-        parts: m.parts,
+        parts: redactMediaForTelemetry(m.parts),
       })),
     };
     try {
@@ -300,6 +301,40 @@ class InboxModule implements SessionInboxBuffer {
   isEmpty(): boolean {
     return this.events.length === 0 && this.messages.length === 0;
   }
+}
+
+export function redactMediaForTelemetry(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(redactMediaForTelemetry);
+  if (typeof value !== 'object' || value === null) return value;
+
+  const record = value as Record<string, unknown>;
+  if (record.type === 'image' && typeof record.data === 'string') {
+    return {
+      ...record,
+      data: '[redacted]',
+      decodedBytes: getBase64DecodedBytes(record.data),
+    };
+  }
+  if (
+    record.type === 'file' &&
+    typeof record.url === 'string' &&
+    record.url.startsWith('data:')
+  ) {
+    const separator = record.url.indexOf(',');
+    const encoded = separator === -1 ? '' : record.url.slice(separator + 1);
+    return {
+      ...record,
+      url: '[redacted]',
+      decodedBytes: getBase64DecodedBytes(encoded),
+    };
+  }
+
+  return Object.fromEntries(
+    Object.entries(record).map(([key, entry]) => [
+      key,
+      redactMediaForTelemetry(entry),
+    ]),
+  );
 }
 
 export function createInbox(deps: InboxDependencies): SessionInboxBuffer {

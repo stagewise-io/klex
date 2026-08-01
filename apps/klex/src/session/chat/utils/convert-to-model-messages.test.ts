@@ -33,7 +33,10 @@ function makeMessage(
 function makeContextPart(
   sourceEnv: string,
   metadata: Record<string, string | number | boolean>,
-  content: { type: 'text'; text: string }[],
+  content: (
+    | { type: 'text'; text: string }
+    | { type: 'image'; mimeType: string; data: string }
+  )[],
 ): ExtendedUIMessage['parts'][number] {
   return {
     type: 'data-context',
@@ -103,93 +106,113 @@ describe('convertToModelMessagesExtended', () => {
   });
 });
 
-describe('makeConvertDataPart — data-context', () => {
-  it('converts data-context to XML text with sourceEnv, metadata, and content', async () => {
-    const messages = [
-      makeMessage([
-        makeContextPart('slack', { channel: 'general', priority: 1 }, [
-          { type: 'text', text: 'hello' },
-        ]),
-      ]),
-    ];
-    await convertToModelMessagesExtended(messages, makeTransformers());
-    const convert = getConvertDataPart();
-    const result = convert(
-      makeContextPart('slack', { channel: 'general', priority: 1 }, [
-        { type: 'text', text: 'hello' },
-      ]),
-    ) as { type: string; text: string };
+describe('data-context materialization', () => {
+  const image = {
+    type: 'image' as const,
+    mimeType: 'image/png',
+    data: 'aW1hZ2U=',
+  };
 
-    expect(result.type).toBe('text');
-    expect(result.text).toContain('<context source-env="slack">');
-    expect(result.text).toContain('<metadata>');
-    expect(result.text).toContain('channel');
-    expect(result.text).toContain('general');
-    expect(result.text).toContain('priority');
-    expect(result.text).toContain('1');
-    expect(result.text).toContain('<content>hello</content>');
-    expect(result.text).toContain('</context>');
+  it('materializes escaped metadata and ordered text around a native image', async () => {
+    const context = makeContextPart('telegram<&', { channel: 'a"b' }, [
+      { type: 'text', text: 'caption <first>' },
+      image,
+      { type: 'text', text: 'after & last' },
+    ]);
+    const messages = [makeMessage([context])];
+    const original = structuredClone(messages);
+
+    await convertToModelMessagesExtended(messages, makeTransformers(), {
+      inputCapabilities: {
+        image: { mediaTypes: ['image/png'], maxBytes: 100 },
+      },
+    });
+
+    const materialized = vi
+      .mocked(convertToModelMessages)
+      .mock.calls.at(-1)?.[0];
+    expect(materialized?.[0]?.parts).toEqual([
+      {
+        type: 'text',
+        text: '<context source-env="telegram&lt;&amp;"><metadata><item key="channel" value="a&quot;b" /></metadata><content>',
+      },
+      { type: 'text', text: 'caption &lt;first&gt;' },
+      {
+        type: 'file',
+        mediaType: 'image/png',
+        url: 'data:image/png;base64,aW1hZ2U=',
+      },
+      { type: 'text', text: 'after &amp; last' },
+      { type: 'text', text: '</content></context>' },
+    ]);
+    expect(messages).toEqual(original);
   });
 
-  it('joins multiple text content parts with spaces', async () => {
-    const messages = [
-      makeMessage([
-        makeContextPart('email', {}, [
-          { type: 'text', text: 'first' },
-          { type: 'text', text: 'second' },
-        ]),
-      ]),
-    ];
-    await convertToModelMessagesExtended(messages, makeTransformers());
-    const convert = getConvertDataPart();
-    const result = convert(
-      makeContextPart('email', {}, [
-        { type: 'text', text: 'first' },
-        { type: 'text', text: 'second' },
-      ]),
-    ) as { type: string; text: string };
+  it('uses an explicit placeholder for a text-only model', async () => {
+    await convertToModelMessagesExtended(
+      [makeMessage([makeContextPart('media', {}, [image])])],
+      makeTransformers(),
+      { inputCapabilities: {} },
+    );
 
-    expect(result.text).toContain('<content>first second</content>');
+    const parts = vi
+      .mocked(convertToModelMessages)
+      .mock.calls.at(-1)?.[0][0]?.parts;
+    expect(parts).toContainEqual({
+      type: 'text',
+      text: '<unsupported-image mime-type="image/png" bytes="5" reason="model-does-not-support-images" />',
+    });
+    expect(JSON.stringify(parts)).not.toContain(image.data);
   });
 
-  it('serializes boolean metadata values', async () => {
-    const messages = [
-      makeMessage([
-        makeContextPart('webhook', { urgent: true }, [
-          { type: 'text', text: 'alert' },
+  it.each([
+    {
+      capability: { mediaTypes: ['image/jpeg'], maxBytes: 100 },
+      expectedReason: 'unsupported-media-type',
+    },
+    {
+      capability: { mediaTypes: ['image/png'], maxBytes: 4 },
+      expectedReason: 'too-large',
+    },
+  ])(
+    'degrades images outside selected-model constraints',
+    async ({ capability, expectedReason }) => {
+      await convertToModelMessagesExtended(
+        [makeMessage([makeContextPart('media', {}, [image])])],
+        makeTransformers(),
+        { inputCapabilities: { image: capability } },
+      );
+
+      const parts = vi
+        .mocked(convertToModelMessages)
+        .mock.calls.at(-1)?.[0][0]?.parts;
+      expect(JSON.stringify(parts)).toContain(`reason=\\"${expectedReason}\\"`);
+      expect(JSON.stringify(parts)).not.toContain(image.data);
+    },
+  );
+
+  it('defensively degrades malformed image data', async () => {
+    await convertToModelMessagesExtended(
+      [
+        makeMessage([
+          makeContextPart('media', {}, [
+            { ...image, data: 'not valid base64!' },
+          ]),
         ]),
-      ]),
-    ];
-    await convertToModelMessagesExtended(messages, makeTransformers());
-    const convert = getConvertDataPart();
-    const result = convert(
-      makeContextPart('webhook', { urgent: true }, [
-        { type: 'text', text: 'alert' },
-      ]),
-    ) as { type: string; text: string };
+      ],
+      makeTransformers(),
+      {
+        inputCapabilities: {
+          image: { mediaTypes: ['image/png'], maxBytes: 100 },
+        },
+      },
+    );
 
-    expect(result.text).toContain('urgent');
-    expect(result.text).toContain('true');
-  });
-
-  it('returns empty string for non-text content parts', async () => {
-    const imageContent = {
-      type: 'image',
-      mimeType: 'image/png',
-      url: 'https://example.com/img.png',
-    } as unknown as { type: 'text'; text: string };
-    const messages = [
-      makeMessage([makeContextPart('media', {}, [imageContent])]),
-    ];
-    await convertToModelMessagesExtended(messages, makeTransformers());
-    const convert = getConvertDataPart();
-    const result = convert(makeContextPart('media', {}, [imageContent])) as {
-      type: string;
-      text: string;
-    };
-
-    // Non-text content parts are currently dropped to empty string
-    expect(result.text).toContain('<content></content>');
+    const parts = vi
+      .mocked(convertToModelMessages)
+      .mock.calls.at(-1)?.[0][0]?.parts;
+    expect(JSON.stringify(parts)).toContain('invalid-base64');
+    expect(JSON.stringify(parts)).not.toContain('not valid base64!');
   });
 });
 
@@ -240,19 +263,22 @@ describe('makeConvertDataPart — core type override prevention', () => {
       ]),
     ];
     // Extension tries to register a transformer for `context` — must be ignored.
+    const contextTransformer = vi.fn(() => [
+      { type: 'text', text: 'OVERRIDDEN' },
+    ]);
     const transformers = {
-      context: () => [{ type: 'text', text: 'OVERRIDDEN' }],
+      context: contextTransformer,
     } as unknown as DataPartTransformers;
     await convertToModelMessagesExtended(messages, transformers);
-    const convert = getConvertDataPart();
-    const result = convert(
-      makeContextPart('slack', { channel: 'general' }, [
-        { type: 'text', text: 'hello' },
-      ]),
-    ) as { type: string; text: string };
 
-    expect(result.text).toContain('<context source-env="slack">');
-    expect(result.text).not.toBe('OVERRIDDEN');
+    const parts = vi
+      .mocked(convertToModelMessages)
+      .mock.calls.at(-1)?.[0][0]?.parts;
+    expect(parts?.[0]).toMatchObject({
+      type: 'text',
+      text: expect.stringContaining('<context source-env="slack">'),
+    });
+    expect(contextTransformer).not.toHaveBeenCalled();
   });
 
   it('ignores extension-registered continue transformer and uses built-in', async () => {

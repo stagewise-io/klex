@@ -85,6 +85,7 @@ const mockResolvedModel: ResolvedModel = {
   modelId: 'remote:gpt-4o',
   displayName: 'GPT-4o',
   contextSize: 128_000,
+  inputCapabilities: {},
 };
 
 function makeMessage(text: string): ExtendedUIMessage {

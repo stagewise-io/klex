@@ -9,7 +9,7 @@ import type {
 
 import type { ModuleLogger, RootLogger } from '@stagewise/logger';
 
-import type { Config, ModelId } from '@/config';
+import type { Config, ModelId, ModelInputCapabilities } from '@/config';
 import type { Mcp } from '@/mcp';
 
 import type { ChatSessionInbox } from '../inbox';
@@ -132,6 +132,8 @@ export interface ResolvedModel {
   displayName?: string;
   /** Resolved context size in tokens (defaults to `DEFAULT_CONTEXT_SIZE`). */
   contextSize: number;
+  /** Native input formats accepted by the selected model. */
+  inputCapabilities: ModelInputCapabilities;
 }
 
 // ---------------------------------------------------------------------------

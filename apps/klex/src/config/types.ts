@@ -88,13 +88,30 @@ export function resolvePresetEndpoint(
 
 // Model definition: optional per-model metadata inside a provider
 
+const imageInputCapabilitySchema = z
+  .object({
+    mediaTypes: z
+      .array(z.string().regex(/^image\/[a-z0-9][a-z0-9.+-]*$/i))
+      .nonempty(),
+    maxBytes: z.number().int().positive(),
+  })
+  .strict();
+
+const modelInputCapabilitiesSchema = z
+  .object({
+    image: imageInputCapabilitySchema.optional(),
+  })
+  .strict();
+
 const modelDefinitionSchema = z
   .object({
     displayName: z.string().optional(),
     contextSize: z.number().int().positive().optional(),
+    inputCapabilities: modelInputCapabilitiesSchema.optional(),
   })
   .strict();
 
+type ModelInputCapabilities = z.infer<typeof modelInputCapabilitiesSchema>;
 type ModelDefinition = z.infer<typeof modelDefinitionSchema>;
 
 // Manual endpoint: endpoint config with optional known model metadata
@@ -187,6 +204,7 @@ export type {
   McpVersionNegotiation,
   ModelDefinition,
   ModelId,
+  ModelInputCapabilities,
   ModelPurpose,
   ModelSelection,
   ProviderConfig,

@@ -1,5 +1,6 @@
 import type { ModuleLogger, RootLogger } from '@stagewise/logger';
 
+import type { IntrospectionScope } from '@/introspection';
 import type { Mcp, McpPushNotification } from '@/mcp';
 import {
   type ContextDataUIPart,
@@ -10,20 +11,21 @@ import {
 } from '@/session/inbox';
 import type {
   AgentSession,
-  ExtensionListProvider,
-  ExtensionStateProvider,
   SessionHooks,
-  SessionInfo,
   SessionTerminationInfo,
 } from '@/session/types';
 
 export interface RouterDependencies {
   logging: RootLogger;
   mcp: Mcp;
-  createChatSession: (hooks: SessionHooks, mcp: Mcp) => AgentSession;
+  introspection: IntrospectionScope;
+  createChatSession: (
+    hooks: SessionHooks,
+    introspectionScope: IntrospectionScope,
+  ) => AgentSession;
 }
 
-export interface Router extends ExtensionStateProvider, ExtensionListProvider {
+export interface Router {
   start(): Promise<void>;
   close(): Promise<void>;
 
@@ -33,28 +35,34 @@ export interface Router extends ExtensionStateProvider, ExtensionListProvider {
    * primary session.
    */
   sendInput(event: SessionInboxEvent): Promise<void>;
-
-  /**
-   * Returns observability info for all live sessions.
-   */
-  getSessions(): SessionInfo[];
 }
 
 class RouterModule implements Router {
   private session: AgentSession | null = null;
   private started = false;
   private pushNotificationUnsub: (() => void) | undefined;
+  private sessionsScope: IntrospectionScope | null = null;
 
   constructor(
     private readonly deps: {
       logger: ModuleLogger;
       mcp: Mcp;
-      createChatSession: (hooks: SessionHooks, mcp: Mcp) => AgentSession;
+      introspection: IntrospectionScope;
+      createChatSession: (
+        hooks: SessionHooks,
+        introspectionScope: IntrospectionScope,
+      ) => AgentSession;
     },
   ) {}
 
   async start(): Promise<void> {
     if (this.started) return;
+
+    // Register router state in the introspection tree.
+    this.deps.introspection
+      .child('router')
+      .introspect(() => ({ started: true }));
+    this.sessionsScope = this.deps.introspection.child('sessions');
 
     this.session = await this.createSession();
 
@@ -78,6 +86,7 @@ class RouterModule implements Router {
     }
     this.session = null;
 
+    this.sessionsScope = null;
     this.started = false;
     this.deps.logger.info('Router stopped');
   }
@@ -102,31 +111,6 @@ class RouterModule implements Router {
     );
 
     session.inbox.send(event);
-  }
-
-  getSessions(): SessionInfo[] {
-    const session = this.session;
-    if (!session) return [];
-    return [session.getSessionInfo()];
-  }
-
-  async getExtensionState(
-    sessionId: string,
-    extensionId: string,
-  ): Promise<Record<string, unknown> | null | undefined> {
-    const session = this.session;
-    if (!session || session.status === 'terminated') return undefined;
-    if (session.getSessionInfo().id !== sessionId) return undefined;
-    return session.getExtensionState(extensionId);
-  }
-
-  getExtensions(
-    sessionId: string,
-  ): Record<string, { displayName?: string }> | undefined {
-    const session = this.session;
-    if (!session || session.status === 'terminated') return undefined;
-    if (session.getSessionInfo().id !== sessionId) return undefined;
-    return session.getExtensions();
   }
 
   // ---------------------------------------------------------------------------
@@ -253,7 +237,10 @@ class RouterModule implements Router {
     const hooks: SessionHooks = {
       onTerminated: (info) => this.handleTerminated(info),
     };
-    const session = this.deps.createChatSession(hooks, this.deps.mcp);
+    const session = this.deps.createChatSession(
+      hooks,
+      this.sessionsScope ?? this.deps.introspection,
+    );
     this.session = session;
     await session.start().catch((error) => {
       this.deps.logger.error(
@@ -278,6 +265,9 @@ class RouterModule implements Router {
       },
       'Session self-terminated — creating replacement and re-dispatching pending input',
     );
+
+    // The terminated session has already removed itself from the
+    // introspection tree via its close() method.
 
     // Create the replacement session (registered with fresh hooks).
     // Awaiting ensures the session is fully started before pending events
@@ -309,6 +299,7 @@ export function createRouter(deps: RouterDependencies): Router {
       bindings: { module: 'router' },
     }),
     mcp: deps.mcp,
+    introspection: deps.introspection,
     createChatSession: deps.createChatSession,
   });
 }

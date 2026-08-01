@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { context } from '@opentelemetry/api';
 import type { ModelMessage, ToolSet } from 'ai';
 
+import type { IntrospectionScope } from '@/introspection';
 import type { Usage } from '@/session/types';
 
 import type {
@@ -140,21 +141,6 @@ export interface ExtensionHandler {
    * failure does not affect others.
    */
   runStepCompleteHooks: (event: StepCompleteEvent) => Promise<void>;
-
-  /**
-   * Returns the state of a single extension identified by `extensionId`.
-   * Returns `null` if the extension does not implement `introspect()`,
-   * or `undefined` if the extension is not registered.
-   */
-  getExtensionState: (
-    extensionId: string,
-  ) => Promise<Record<string, unknown> | null | undefined>;
-
-  /**
-   * Returns a map of all loaded extension identifiers to their display
-   * name (if declared by the factory).
-   */
-  getExtensions: () => Record<string, { displayName?: string }>;
 }
 
 export interface ExtensionHandlerDependencies {
@@ -164,6 +150,8 @@ export interface ExtensionHandlerDependencies {
   dataDirectory: string;
   /** ID of the session that owns these extensions. */
   sessionId: string;
+  /** Introspection scope for registering extension state. */
+  introspectionScope: IntrospectionScope;
   /**
    * Called after an extension's `generateText` call succeeds, with the
    * extracted usage data. Used by the session to track per-extension
@@ -187,6 +175,7 @@ class ExtensionHandlerModule implements ExtensionHandler {
     extensionDeps: BaseExtensionDeps;
     dataDirectory: string;
     sessionId: string;
+    introspectionScope: IntrospectionScope;
     onExtensionUsage?: (identifier: string, usage: Usage) => void;
   }) {
     this.extensionDeps = deps.extensionDeps;
@@ -246,6 +235,16 @@ class ExtensionHandlerModule implements ExtensionHandler {
         factory.identifier,
         factory.displayName,
       );
+
+      // Register extension state in the introspection tree if it
+      // implements introspect(). The closure captures `ext` so that
+      // `this` binding is preserved when introspect() is called lazily.
+      if (ext.introspect) {
+        deps.introspectionScope
+          .child(factory.identifier)
+          .introspect(() => ext.introspect!() as object | null);
+      }
+
       return ext;
     });
   }
@@ -426,33 +425,6 @@ class ExtensionHandlerModule implements ExtensionHandler {
       }
     }
   }
-
-  getExtensions(): Record<string, { displayName?: string }> {
-    const result: Record<string, { displayName?: string }> = {};
-    for (const [identifier, displayName] of this.displayNamesByIdentifier) {
-      result[identifier] = displayName ? { displayName } : {};
-    }
-    return result;
-  }
-
-  async getExtensionState(
-    extensionId: string,
-  ): Promise<Record<string, unknown> | null | undefined> {
-    const ext = this.extensions.find(
-      (e) => this.identifiersByExtension.get(e) === extensionId,
-    );
-    if (!ext) return undefined;
-    if (!ext.introspect) return null;
-    try {
-      return await ext.introspect();
-    } catch (error) {
-      this.extensionDeps.logger.error(
-        { error, extensionIdentifier: extensionId },
-        'Extension introspect() failed',
-      );
-      throw error;
-    }
-  }
 }
 
 export function createExtensionHandler(
@@ -463,6 +435,7 @@ export function createExtensionHandler(
     extensionDeps: deps.extensionDeps,
     dataDirectory: deps.dataDirectory,
     sessionId: deps.sessionId,
+    introspectionScope: deps.introspectionScope,
     onExtensionUsage: deps.onExtensionUsage,
   });
 }

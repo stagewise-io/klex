@@ -4,16 +4,15 @@ import { HTTPException } from 'hono/http-exception';
 import type { ModuleLogger } from '@stagewise/logger';
 
 import type { Config } from '@/config';
+import type { Introspector } from '@/introspection';
 import type { Mcp } from '@/mcp';
-import type { Router } from '@/router';
 
-import {
-  extensionListRoute,
-  extensionStateRoute,
-  getExtensionList,
-  getExtensionState,
-} from './routes/v1/extensions';
 import { getHealth, healthRoute } from './routes/v1/health';
+import {
+  getIntrospectionRoot,
+  introspectionRootRoute,
+  registerIntrospectionPathRoute,
+} from './routes/v1/introspection';
 import {
   createMcpServer,
   createMcpServerRoute,
@@ -26,7 +25,6 @@ import {
   updateMcpServer,
   updateMcpServerRoute,
 } from './routes/v1/mcp';
-import { getSessions, sessionsRoute } from './routes/v1/sessions';
 import {
   getModelSelection,
   getModelSelectionRoute,
@@ -37,7 +35,7 @@ import {
 export interface AdminAppDependencies {
   config: Config;
   mcp: Mcp;
-  router: Router;
+  introspector: Introspector;
   logger: ModuleLogger;
 }
 
@@ -76,12 +74,14 @@ export function createAdminApp(deps: AdminAppDependencies): OpenAPIHono {
   app.openapi(getModelSelectionRoute, getModelSelection(deps));
   app.openapi(patchModelSelectionRoute, patchModelSelection(deps));
 
-  // Sessions
-  app.openapi(sessionsRoute, getSessions({ router: deps.router }));
-
-  // Extensions
-  app.openapi(extensionListRoute, getExtensionList({ router: deps.router }));
-  app.openapi(extensionStateRoute, getExtensionState({ router: deps.router }));
+  // Introspection
+  app.openapi(
+    introspectionRootRoute,
+    getIntrospectionRoot({ introspector: deps.introspector }),
+  );
+  registerIntrospectionPathRoute(app, {
+    introspector: deps.introspector,
+  });
 
   // MCP Servers
   app.openapi(getMcpServersRoute, getMcpServers(deps));

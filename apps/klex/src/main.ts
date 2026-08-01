@@ -3,7 +3,8 @@ import { createLogger } from '@stagewise/logger';
 import { createAdminApi } from '@/admin-api';
 import { type CliOptions, parseCliArgs } from '@/cli';
 import { createConfig } from '@/config';
-import { createMcp, type Mcp } from '@/mcp';
+import { createIntrospector } from '@/introspection';
+import { createMcp } from '@/mcp';
 import { createModelProvider } from '@/model-provider';
 import { createRouter } from '@/router';
 import { createChatSession } from '@/session/chat';
@@ -46,11 +47,13 @@ async function main(): Promise<void> {
   });
   const modelProvider = createModelProvider({ logging: logger, config });
   const mcp = createMcp({ logging: logger, config });
+  const introspector = createIntrospector({ logging: logger });
 
   const router = createRouter({
     logging: logger,
     mcp,
-    createChatSession: (hooks: SessionHooks, mcp: Mcp) =>
+    introspection: introspector,
+    createChatSession: (hooks: SessionHooks, introspectionScope) =>
       createChatSession({
         logging: logger,
         config: config,
@@ -62,9 +65,15 @@ async function main(): Promise<void> {
         ],
         dataDirectory: cli.dataDirectory,
         hooks,
+        introspectionScope,
       }),
   });
-  const adminApi = createAdminApi({ logging: logger, config, mcp, router });
+  const adminApi = createAdminApi({
+    logging: logger,
+    config,
+    mcp,
+    introspector,
+  });
   const started: { close(): Promise<void> }[] = [];
   try {
     for (const resource of [config, adminApi, modelProvider, mcp]) {

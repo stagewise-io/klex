@@ -6,6 +6,7 @@ import { generateText } from 'ai';
 import type { ModuleLogger, RootLogger } from '@stagewise/logger';
 
 import type { Config, ModelId } from '@/config';
+import type { IntrospectionScope } from '@/introspection';
 import type { Mcp } from '@/mcp';
 import type { ModelProvider } from '@/model-provider';
 import type { SessionInboxEvent } from '@/session/inbox';
@@ -57,6 +58,8 @@ export interface ChatSessionDependencies {
   extensionFactories: ExtensionFactory[];
   /** Root data directory of the agent. Used for extension data dirs. */
   dataDirectory: string;
+  /** Parent introspection scope (the "sessions" group). The session creates its own child. */
+  introspectionScope: IntrospectionScope;
   hooks?: SessionHooks;
 }
 
@@ -128,6 +131,7 @@ class ChatSessionModule implements AgentSession {
       dataDirectory: string;
       mcp: Mcp;
       extensionFactories: ExtensionFactory[];
+      introspectionScope: IntrospectionScope;
       hooks?: SessionHooks;
     },
   ) {
@@ -173,6 +177,13 @@ class ChatSessionModule implements AgentSession {
       logger: this.deps.logger,
     });
 
+    // Register session state in the introspection tree.
+    // The parent scope is the "sessions" group — create a child for
+    // this specific session using its generated ID.
+    const sessionScope = deps.introspectionScope.child(this.sessionId);
+    sessionScope.introspect(() => this.getSessionInfo());
+    const extensionsScope = sessionScope.child('extensions');
+
     // Create the extension deps — functions that let extensions interoperate
     // with this session asynchronously. getDataDir is injected per-extension
     // by the ExtensionHandler, not here.
@@ -202,6 +213,7 @@ class ChatSessionModule implements AgentSession {
       extensionDeps,
       dataDirectory: this.deps.dataDirectory,
       sessionId: this.sessionId,
+      introspectionScope: extensionsScope,
       onExtensionUsage: (identifier, usage) => {
         const existing = this.extensionUsage.get(identifier);
         if (existing) {
@@ -760,6 +772,12 @@ class ChatSessionModule implements AgentSession {
         new Date().toISOString(),
       );
       this.sessionSpan.end();
+
+      // Remove this session from the introspection tree. The session
+      // registered itself as a child of the "sessions" scope in the
+      // constructor — it owns its own lifecycle in the tree.
+      this.deps.introspectionScope.removeChild(this.sessionId);
+
       this.deps.logger.info(
         { sessionId: this.sessionId },
         'Session closed — session span ended',
@@ -816,16 +834,6 @@ class ChatSessionModule implements AgentSession {
       }
     }
   }
-
-  async getExtensionState(
-    extensionId: string,
-  ): Promise<Record<string, unknown> | null | undefined> {
-    return this.extensionHandler.getExtensionState(extensionId);
-  }
-
-  getExtensions(): Record<string, { displayName?: string }> {
-    return this.extensionHandler.getExtensions();
-  }
 }
 
 export function createChatSession(deps: ChatSessionDependencies): AgentSession {
@@ -840,6 +848,7 @@ export function createChatSession(deps: ChatSessionDependencies): AgentSession {
     dataDirectory: deps.dataDirectory,
     mcp: deps.mcp,
     extensionFactories: deps.extensionFactories,
+    introspectionScope: deps.introspectionScope,
     hooks: deps.hooks,
   });
 }

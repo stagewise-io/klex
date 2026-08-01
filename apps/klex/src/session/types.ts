@@ -108,33 +108,6 @@ export interface SessionHooks {
 }
 
 /**
- * Provides per-extension state for the admin API. Implemented by the
- * router, which validates the session and delegates to the session's
- * extension handler.
- *
- * Returns the extension's JSON-serializable state, `null` if the
- * extension does not implement `introspect()`, or `undefined` if the
- * session or extension was not found.
- */
-export interface ExtensionStateProvider {
-  getExtensionState(
-    sessionId: string,
-    extensionId: string,
-  ): Promise<Record<string, unknown> | null | undefined>;
-}
-
-/**
- * Provides the list of loaded extensions for the admin API. Implemented
- * by the router, which validates the session and delegates to the
- * session's extension handler.
- */
-export interface ExtensionListProvider {
-  getExtensions(
-    sessionId: string,
-  ): Record<string, { displayName?: string }> | undefined;
-}
-
-/**
  * This is the interface that AgentSessions must implement in order to become
  * controllable by the Router.
  */
@@ -143,19 +116,11 @@ export interface AgentSession {
     send(event: SessionInboxEvent): void;
     close(): void;
   };
-
   /**
    * Current lifecycle status. The router checks this before sending input
    * and may replace a terminated session.
    */
   readonly status: SessionStatus;
-
-  /**
-   * Returns aggregated observability information for this session.
-   * Includes runtime state, active model, token consumption, and
-   * turn/step counts.
-   */
-  getSessionInfo(): SessionInfo;
 
   /**
    * Start the session — spins up owned resources (e.g. the JavaScript
@@ -178,20 +143,4 @@ export interface AgentSession {
    * input.
    */
   restorePendingEvents(events: SessionInboxEvent[]): void;
-
-  /**
-   * Returns the state of a single extension identified by `extensionId`,
-   * or `null` if the extension does not implement `introspect()`, or
-   * `undefined` if the extension is not registered in this session.
-   */
-  getExtensionState(
-    extensionId: string,
-  ): Promise<Record<string, unknown> | null | undefined>;
-
-  /**
-   * Returns a map of all loaded extension identifiers to their display
-   * name (if declared by the factory), or `undefined` if the session
-   * is not found.
-   */
-  getExtensions(): Record<string, { displayName?: string }>;
 }

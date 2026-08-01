@@ -6,6 +6,8 @@ import { tool } from 'ai';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 
+import type { IntrospectionScope } from '@/introspection';
+
 import type {
   BaseExtensionDeps,
   DataPartTransformers,
@@ -20,6 +22,41 @@ import type {
 import type { ExtendedUIMessage } from '../message-types';
 import { getExtensionIdentifier } from '../utils/tracing';
 import { createExtensionHandler } from './extension-handler';
+
+/** Creates a mock IntrospectionScope that tracks child/introspect calls. */
+function createMockScope(): IntrospectionScope & {
+  children: Map<string, ReturnType<typeof createMockScope>>;
+  introspectFn: ((...args: never[]) => unknown) | null;
+} {
+  const children = new Map<string, ReturnType<typeof createMockScope>>();
+  // Use a mutable holder so the getter on the returned object stays live.
+  const holder: { fn: ((...args: never[]) => unknown) | null } = { fn: null };
+  const scope: IntrospectionScope & {
+    children: Map<string, ReturnType<typeof createMockScope>>;
+    introspectFn: ((...args: never[]) => unknown) | null;
+  } = {
+    path: [],
+    introspect: vi.fn((fn: never) => {
+      holder.fn = fn;
+    }),
+    child: vi.fn((id: string) => {
+      if (children.has(id)) {
+        throw new Error(`Duplicate introspection child ID: "${id}"`);
+      }
+      const child = createMockScope();
+      children.set(id, child);
+      return child;
+    }),
+    removeChild: vi.fn((id: string) => {
+      children.delete(id);
+    }),
+    children,
+    get introspectFn() {
+      return holder.fn;
+    },
+  };
+  return scope;
+}
 
 // --- OTel setup for trace-attribution tests ---
 //
@@ -79,6 +116,7 @@ const HANDLER_OPTS = {
   extensionDeps: noopDeps,
   dataDirectory: '/tmp/test-agent-data',
   sessionId: 'session-123',
+  introspectionScope: createMockScope(),
 };
 
 const mockResolvedModel: ResolvedModel = {
@@ -131,7 +169,6 @@ describe('ExtensionHandler — factory', () => {
     expect(typeof handler.runContextTransformers).toBe('function');
     expect(typeof handler.getDataPartTransformers).toBe('function');
     expect(typeof handler.runStepCompleteHooks).toBe('function');
-    expect(typeof handler.getExtensionState).toBe('function');
   });
 
   it('instantiates all extensions from the provided factories', () => {
@@ -931,60 +968,9 @@ describe('ExtensionHandler — runStepCompleteHooks', () => {
   });
 });
 
-describe('ExtensionHandler — getExtensionState', () => {
-  it('returns undefined for an unknown extension ID', async () => {
-    const handler = createExtensionHandler({
-      factories: [factoryWith({})],
-      ...HANDLER_OPTS,
-    });
-    const state = await handler.getExtensionState('io.stagewise/nonexistent');
-    expect(state).toBeUndefined();
-  });
-
-  it('returns null for an extension without introspect()', async () => {
-    const factory: ExtensionFactory = {
-      identifier: 'io.stagewise/no-introspect',
-      create: () => ({}),
-    };
-    const handler = createExtensionHandler({
-      factories: [factory],
-      ...HANDLER_OPTS,
-    });
-    const state = await handler.getExtensionState('io.stagewise/no-introspect');
-    expect(state).toBeNull();
-  });
-
-  it('returns the state from a sync introspect()', async () => {
-    const factory: ExtensionFactory = {
-      identifier: 'io.stagewise/sync-state',
-      create: () => ({
-        introspect: () => ({ count: 42, label: 'active' }),
-      }),
-    };
-    const handler = createExtensionHandler({
-      factories: [factory],
-      ...HANDLER_OPTS,
-    });
-    const state = await handler.getExtensionState('io.stagewise/sync-state');
-    expect(state).toEqual({ count: 42, label: 'active' });
-  });
-
-  it('returns the state from an async introspect()', async () => {
-    const factory: ExtensionFactory = {
-      identifier: 'io.stagewise/async-state',
-      create: () => ({
-        introspect: () => Promise.resolve({ pending: 3, completed: 10 }),
-      }),
-    };
-    const handler = createExtensionHandler({
-      factories: [factory],
-      ...HANDLER_OPTS,
-    });
-    const state = await handler.getExtensionState('io.stagewise/async-state');
-    expect(state).toEqual({ pending: 3, completed: 10 });
-  });
-
-  it('returns the correct state when multiple extensions are registered', async () => {
+describe('ExtensionHandler — introspection scope registration', () => {
+  it('registers a child scope for each extension with introspect()', () => {
+    const scope = createMockScope();
     const f1: ExtensionFactory = {
       identifier: 'io.stagewise/ext-a',
       create: () => ({ introspect: () => ({ name: 'A' }) }),
@@ -993,19 +979,76 @@ describe('ExtensionHandler — getExtensionState', () => {
       identifier: 'io.stagewise/ext-b',
       create: () => ({ introspect: () => ({ name: 'B' }) }),
     };
-    const handler = createExtensionHandler({
+    createExtensionHandler({
       factories: [f1, f2],
-      ...HANDLER_OPTS,
+      extensionDeps: noopDeps,
+      dataDirectory: '/tmp/test',
+      sessionId: 's1',
+      introspectionScope: scope,
     });
-    expect(await handler.getExtensionState('io.stagewise/ext-a')).toEqual({
-      name: 'A',
-    });
-    expect(await handler.getExtensionState('io.stagewise/ext-b')).toEqual({
-      name: 'B',
-    });
+    expect(scope.children.has('io.stagewise/ext-a')).toBe(true);
+    expect(scope.children.has('io.stagewise/ext-b')).toBe(true);
   });
 
-  it('returns null for an extension without introspect among multiple', async () => {
+  it('does not register a child scope for extensions without introspect()', () => {
+    const scope = createMockScope();
+    const f1: ExtensionFactory = {
+      identifier: 'io.stagewise/no-introspect',
+      create: () => ({}),
+    };
+    createExtensionHandler({
+      factories: [f1],
+      extensionDeps: noopDeps,
+      dataDirectory: '/tmp/test',
+      sessionId: 's1',
+      introspectionScope: scope,
+    });
+    expect(scope.children.has('io.stagewise/no-introspect')).toBe(false);
+  });
+
+  it('registers a state provider that delegates to the extension introspect()', async () => {
+    const scope = createMockScope();
+    const factory: ExtensionFactory = {
+      identifier: 'io.stagewise/sync-state',
+      create: () => ({
+        introspect: () => ({ count: 42, label: 'active' }),
+      }),
+    };
+    createExtensionHandler({
+      factories: [factory],
+      extensionDeps: noopDeps,
+      dataDirectory: '/tmp/test',
+      sessionId: 's1',
+      introspectionScope: scope,
+    });
+    const childScope = scope.children.get('io.stagewise/sync-state')!;
+    expect(childScope.introspectFn).not.toBeNull();
+    const result = await childScope.introspectFn!();
+    expect(result).toEqual({ count: 42, label: 'active' });
+  });
+
+  it('registers a state provider for async introspect()', async () => {
+    const scope = createMockScope();
+    const factory: ExtensionFactory = {
+      identifier: 'io.stagewise/async-state',
+      create: () => ({
+        introspect: () => Promise.resolve({ pending: 3, completed: 10 }),
+      }),
+    };
+    createExtensionHandler({
+      factories: [factory],
+      extensionDeps: noopDeps,
+      dataDirectory: '/tmp/test',
+      sessionId: 's1',
+      introspectionScope: scope,
+    });
+    const childScope = scope.children.get('io.stagewise/async-state')!;
+    const result = await childScope.introspectFn!();
+    expect(result).toEqual({ pending: 3, completed: 10 });
+  });
+
+  it('registers only extensions with introspect() among mixed registrations', () => {
+    const scope = createMockScope();
     const f1: ExtensionFactory = {
       identifier: 'io.stagewise/with-state',
       create: () => ({ introspect: () => ({ ok: true }) }),
@@ -1014,99 +1057,27 @@ describe('ExtensionHandler — getExtensionState', () => {
       identifier: 'io.stagewise/without-state',
       create: () => ({}),
     };
-    const handler = createExtensionHandler({
+    createExtensionHandler({
       factories: [f1, f2],
-      ...HANDLER_OPTS,
+      extensionDeps: noopDeps,
+      dataDirectory: '/tmp/test',
+      sessionId: 's1',
+      introspectionScope: scope,
     });
-    expect(await handler.getExtensionState('io.stagewise/with-state')).toEqual({
-      ok: true,
-    });
-    expect(
-      await handler.getExtensionState('io.stagewise/without-state'),
-    ).toBeNull();
+    expect(scope.children.has('io.stagewise/with-state')).toBe(true);
+    expect(scope.children.has('io.stagewise/without-state')).toBe(false);
   });
 
-  it('returns undefined for all extensions when none are registered', async () => {
-    const handler = createExtensionHandler({
+  it('registers no children when no extensions are registered', () => {
+    const scope = createMockScope();
+    createExtensionHandler({
       factories: [],
-      ...HANDLER_OPTS,
+      extensionDeps: noopDeps,
+      dataDirectory: '/tmp/test',
+      sessionId: 's1',
+      introspectionScope: scope,
     });
-    expect(
-      await handler.getExtensionState('io.stagewise/anything'),
-    ).toBeUndefined();
-  });
-
-  it('logs and re-throws when introspect() throws', async () => {
-    const factory: ExtensionFactory = {
-      identifier: 'io.stagewise/throws',
-      create: () => ({
-        introspect: () => {
-          throw new Error('boom');
-        },
-      }),
-    };
-    const handler = createExtensionHandler({
-      factories: [factory],
-      ...HANDLER_OPTS,
-    });
-    await expect(
-      handler.getExtensionState('io.stagewise/throws'),
-    ).rejects.toThrow('boom');
-    expect(noopDeps.logger.error).toHaveBeenCalledExactlyOnceWith(
-      { error: expect.any(Error), extensionIdentifier: 'io.stagewise/throws' },
-      'Extension introspect() failed',
-    );
-  });
-});
-
-describe('ExtensionHandler — getExtensions', () => {
-  it('returns an empty object when no extensions are registered', () => {
-    const handler = createExtensionHandler({
-      factories: [],
-      ...HANDLER_OPTS,
-    });
-    expect(handler.getExtensions()).toEqual({});
-  });
-
-  it('returns all extension identifiers with display names when declared', () => {
-    const f1: ExtensionFactory = {
-      identifier: 'io.stagewise/ext-a',
-      displayName: 'Extension A',
-      create: () => ({}),
-    };
-    const f2: ExtensionFactory = {
-      identifier: 'io.stagewise/ext-b',
-      displayName: 'Extension B',
-      create: () => ({}),
-    };
-    const handler = createExtensionHandler({
-      factories: [f1, f2],
-      ...HANDLER_OPTS,
-    });
-    expect(handler.getExtensions()).toEqual({
-      'io.stagewise/ext-a': { displayName: 'Extension A' },
-      'io.stagewise/ext-b': { displayName: 'Extension B' },
-    });
-  });
-
-  it('returns entries without displayName when the factory omits it', () => {
-    const f1: ExtensionFactory = {
-      identifier: 'io.stagewise/with-name',
-      displayName: 'Named',
-      create: () => ({}),
-    };
-    const f2: ExtensionFactory = {
-      identifier: 'io.stagewise/no-name',
-      create: () => ({}),
-    };
-    const handler = createExtensionHandler({
-      factories: [f1, f2],
-      ...HANDLER_OPTS,
-    });
-    expect(handler.getExtensions()).toEqual({
-      'io.stagewise/with-name': { displayName: 'Named' },
-      'io.stagewise/no-name': {},
-    });
+    expect(scope.children.size).toBe(0);
   });
 });
 
@@ -1155,6 +1126,7 @@ describe('ExtensionHandler — generateText wrapper trace attribution', () => {
       extensionDeps: deps,
       dataDirectory: '/tmp/test',
       sessionId: 's1',
+      introspectionScope: createMockScope(),
     });
 
     await receivedDeps!.generateText({
@@ -1182,6 +1154,7 @@ describe('ExtensionHandler — generateText wrapper trace attribution', () => {
       extensionDeps: deps,
       dataDirectory: '/tmp/test',
       sessionId: 's1',
+      introspectionScope: createMockScope(),
     });
 
     // Before the call — no identifier in the ambient context.
@@ -1216,6 +1189,7 @@ describe('ExtensionHandler — generateText wrapper trace attribution', () => {
       extensionDeps: deps,
       dataDirectory: '/tmp/test',
       sessionId: 's1',
+      introspectionScope: createMockScope(),
     });
 
     // Call generateText from ext-a, then ext-b.
@@ -1248,6 +1222,7 @@ describe('ExtensionHandler — generateText wrapper trace attribution', () => {
       extensionDeps: deps,
       dataDirectory: '/tmp/test',
       sessionId: 's1',
+      introspectionScope: createMockScope(),
     });
 
     const args: GenerateTextArgs = {
@@ -1281,6 +1256,7 @@ describe('ExtensionHandler — generateText wrapper trace attribution', () => {
       extensionDeps: deps,
       dataDirectory: '/tmp/test',
       sessionId: 's1',
+      introspectionScope: createMockScope(),
       onExtensionUsage,
     });
 
@@ -1328,6 +1304,7 @@ describe('ExtensionHandler — generateText wrapper trace attribution', () => {
       extensionDeps: deps,
       dataDirectory: '/tmp/test',
       sessionId: 's1',
+      introspectionScope: createMockScope(),
       onExtensionUsage,
     });
 

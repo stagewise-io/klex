@@ -383,9 +383,10 @@ export interface Extension {
   /**
    * Optionally return a JSON-serializable state object describing the
    * extension's current internal state. Exposed via the admin API at
-   * `GET /v1/sessions/:sessionId/extensions/:extensionId/state`.
+   * `GET /v1/introspect/sessions/:sessionId/extensions/:extensionId`.
    *
-   * If not implemented, the state endpoint returns `null`.
+   * If not implemented, the introspection endpoint returns `null` for
+   * this extension's node.
    */
   introspect?: () => Record<string, unknown> | Promise<Record<string, unknown>>;
 }

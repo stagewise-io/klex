@@ -20,63 +20,6 @@ const healthResponseSchema = z
   })
   .openapi('HealthResponse');
 
-// --- Sessions ---
-
-const sessionStatusSchema = z
-  .enum(['active', 'terminated'])
-  .openapi('SessionStatus');
-
-const sessionRuntimeStateSchema = z
-  .enum(['working', 'retrying', 'success', 'idle', 'terminated'])
-  .openapi('SessionRuntimeState');
-
-const sessionModelInfoSchema = z
-  .object({
-    id: z.string(),
-    isFallback: z.boolean(),
-    fallbackIndex: z.number().int().min(0),
-  })
-  .openapi('SessionModelInfo');
-
-const usageSchema = z
-  .object({
-    inputTokens: z.number().int().min(0),
-    outputTokens: z.number().int().min(0),
-    inputCacheWriteTokens: z.number().int().min(0),
-    inputCacheReadTokens: z.number().int().min(0),
-  })
-  .openapi('Usage');
-
-const usagePairSchema = z
-  .object({
-    latest: usageSchema.nullable(),
-    total: usageSchema,
-  })
-  .openapi('UsagePair');
-
-const sessionInfoSchema = z
-  .object({
-    id: z.string().uuid(),
-    status: sessionStatusSchema,
-    runtimeState: sessionRuntimeStateSchema,
-    model: sessionModelInfoSchema,
-    usage: z.object({
-      chat: usagePairSchema,
-      extensions: z.record(z.string(), usagePairSchema),
-    }),
-    turns: z.number().int().min(0),
-    steps: z.number().int().min(0),
-    messageCount: z.number().int().min(0),
-    createdAt: z.string().datetime(),
-  })
-  .openapi('SessionInfo');
-
-const sessionsResponseSchema = z
-  .object({
-    sessions: z.array(sessionInfoSchema),
-  })
-  .openapi('SessionsResponse');
-
 // --- MCP ---
 
 const mcpConnectionStatusSchema = z
@@ -153,30 +96,31 @@ const mcpServerNameParamSchema = z.object({
   name: z.string().min(1),
 });
 
-// --- Extensions ---
+// --- Introspection ---
 
-const extensionListParamSchema = z.object({
-  sessionId: z.string().min(1),
+const introspectionChildSchema = z
+  .object({
+    id: z.string(),
+    hasState: z.boolean(),
+    hasChildren: z.boolean(),
+  })
+  .openapi('IntrospectionChild');
+
+const introspectionNodeSchema = z
+  .object({
+    path: z.array(z.string()),
+    state: z.record(z.string(), z.unknown()).nullable(),
+    children: z.array(introspectionChildSchema),
+  })
+  .openapi('IntrospectionNode');
+
+const introspectionPathParamsSchema = z.object({
+  path: z.string().min(1).openapi({
+    description:
+      'Slash-separated path segments for hierarchy traversal (e.g. "sessions" or "sessions/sess-001/extensions/io.stagewise%2Fcontext-compaction"). URL-encode slashes that are part of an individual segment ID (e.g. %2F in io.stagewise%2Fcontext-compaction).',
+    example: 'sessions/sess-001',
+  }),
 });
-
-const extensionListResponseSchema = z
-  .record(
-    z.string(),
-    z.object({
-      displayName: z.string().optional(),
-    }),
-  )
-  .openapi('ExtensionListResponse');
-
-const extensionStateParamSchema = z.object({
-  sessionId: z.string().min(1),
-  extensionId: z.string().min(1),
-});
-
-const extensionStateResponseSchema = z
-  .record(z.string(), z.unknown())
-  .nullable()
-  .openapi('ExtensionStateResponse');
 
 // --- Settings / Model Selection ---
 
@@ -207,18 +151,15 @@ const modelSelectionPatchSchema = z
 export {
   createMcpServerBodySchema,
   errorResponseSchema,
-  extensionListParamSchema,
-  extensionListResponseSchema,
-  extensionStateParamSchema,
-  extensionStateResponseSchema,
   healthResponseSchema,
+  introspectionChildSchema,
+  introspectionNodeSchema,
+  introspectionPathParamsSchema,
   mcpServerNameParamSchema,
   mcpServersResponseSchema,
   modelIdSchema,
   modelSelectionPatchSchema,
   modelSelectionSchema,
-  sessionInfoSchema,
-  sessionsResponseSchema,
   toolCallHistoryResponseSchema,
   updateMcpServerBodySchema,
 };

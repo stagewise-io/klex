@@ -11,6 +11,7 @@ import {
   type EndpointConfig,
   type KlexConfig,
   klexConfigSchema,
+  type ManualEndpoint,
   type McpServerConfig,
   type ModelDefinition,
   type ModelId,
@@ -259,7 +260,7 @@ class ConfigModule implements Config {
     const update = this.updateQueue.then(async () => {
       const current = this.requireConfig();
       const next = fn(current);
-      return this.replaceNow(next);
+      return this.replaceNow(next, false);
     });
     this.updateQueue = update.then(
       () => undefined,
@@ -400,54 +401,57 @@ class ConfigModule implements Config {
     name: string,
     server: McpServerConfig,
   ): Promise<Readonly<KlexConfig>> {
-    const current = this.requireConfig();
-    if (current.mcpServers[name]) {
-      throw new ConfigValidationError(`MCP server '${name}' already exists`, {
-        code: 'already_exists',
-      });
-    }
-    const updated: KlexConfig = {
-      ...current,
-      mcpServers: { ...current.mcpServers, [name]: server },
-    };
-    return this.replace(updated);
+    return this.mutate((current) => {
+      if (current.mcpServers[name]) {
+        throw new ConfigValidationError(`MCP server '${name}' already exists`, {
+          code: 'already_exists',
+        });
+      }
+      return {
+        ...current,
+        mcpServers: { ...current.mcpServers, [name]: server },
+      };
+    });
   }
 
   async updateMcpServer(
     name: string,
     server: McpServerConfig,
   ): Promise<Readonly<KlexConfig>> {
-    const current = this.requireConfig();
-    if (!current.mcpServers[name]) {
-      throw new ConfigValidationError(`MCP server '${name}' not found`, {
-        code: 'not_found',
-      });
-    }
-    const updated: KlexConfig = {
-      ...current,
-      mcpServers: { ...current.mcpServers, [name]: server },
-    };
-    return this.replace(updated);
+    return this.mutate((current) => {
+      if (!current.mcpServers[name]) {
+        throw new ConfigValidationError(`MCP server '${name}' not found`, {
+          code: 'not_found',
+        });
+      }
+      return {
+        ...current,
+        mcpServers: { ...current.mcpServers, [name]: server },
+      };
+    });
   }
 
   async removeMcpServer(name: string): Promise<Readonly<KlexConfig>> {
-    const current = this.requireConfig();
-    if (!current.mcpServers[name]) {
-      throw new ConfigValidationError(`MCP server '${name}' not found`, {
-        code: 'not_found',
-      });
-    }
-    const { [name]: _removed, ...remaining } = current.mcpServers;
-    const updated: KlexConfig = {
-      ...current,
-      mcpServers: remaining,
-    };
-    return this.replace(updated);
+    return this.mutate((current) => {
+      if (!current.mcpServers[name]) {
+        throw new ConfigValidationError(`MCP server '${name}' not found`, {
+          code: 'not_found',
+        });
+      }
+      const { [name]: _removed, ...remaining } = current.mcpServers;
+      return {
+        ...current,
+        mcpServers: remaining,
+      };
+    });
   }
 
-  private async replaceNow(input: unknown): Promise<Readonly<KlexConfig>> {
+  private async replaceNow(
+    input: unknown,
+    validateReferences = true,
+  ): Promise<Readonly<KlexConfig>> {
     this.requireConfig();
-    const config = this.parse(input);
+    const config = this.parse(input, validateReferences);
     const temporaryPath = `${this.deps.configPath}.${process.pid}.${randomUUID()}.tmp`;
 
     try {
@@ -481,7 +485,7 @@ class ConfigModule implements Config {
     }
   }
 
-  private parse(input: unknown): KlexConfig {
+  private parse(input: unknown, validateReferences = true): KlexConfig {
     let config: KlexConfig;
     try {
       config = klexConfigSchema.parse(input);
@@ -496,7 +500,9 @@ class ConfigModule implements Config {
     }
 
     try {
-      this.validateModelReferences(config);
+      if (validateReferences) {
+        this.validateModelReferences(config);
+      }
       this.validateAuth(config);
     } catch (error) {
       if (error instanceof ConfigValidationError) throw error;
@@ -611,7 +617,10 @@ class ConfigModule implements Config {
         providers: {
           ...current.providers,
           [providerName]: {
-            endpoints: { ...provider.endpoints, [endpointName]: endpoint },
+            endpoints: {
+              ...provider.endpoints,
+              [endpointName]: endpoint,
+            },
           },
         },
       };
@@ -637,18 +646,25 @@ class ConfigModule implements Config {
           { code: 'type_mismatch' },
         );
       }
-      if (!provider.endpoints[endpointName]) {
+      const ep = provider.endpoints[endpointName];
+      if (!ep) {
         throw new ConfigValidationError(
           `Endpoint '${endpointName}' not found in provider '${providerName}'`,
           { code: 'not_found' },
         );
       }
+      const merged: ManualEndpoint = {
+        ...endpoint,
+        ...('knownModels' in ep && ep.knownModels
+          ? { knownModels: ep.knownModels }
+          : {}),
+      };
       return {
         ...current,
         providers: {
           ...current.providers,
           [providerName]: {
-            endpoints: { ...provider.endpoints, [endpointName]: endpoint },
+            endpoints: { ...provider.endpoints, [endpointName]: merged },
           },
         },
       };

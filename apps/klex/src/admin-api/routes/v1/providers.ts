@@ -6,6 +6,7 @@ import type {
   Config,
   EndpointAuth,
   EndpointConfig,
+  ManualEndpoint,
   ModelDefinition,
   ProviderConfig,
 } from '@/config';
@@ -62,26 +63,7 @@ export function getProviders(
   deps: ProviderRouteDependencies,
 ): RouteHandler<typeof getProvidersRoute> {
   return (c) => {
-    const providers = deps.config.get().providers;
-    const list = Object.entries(providers).map(([name, provider]) => {
-      if ('preset' in provider) {
-        return {
-          name,
-          preset: provider.preset,
-          auth: redactAuth(provider.auth),
-        };
-      }
-      return {
-        name,
-        endpoints: Object.fromEntries(
-          Object.entries(provider.endpoints).map(([epName, ep]) => [
-            epName,
-            { ...ep, auth: redactAuth(ep.auth) },
-          ]),
-        ),
-      };
-    });
-    return c.json({ providers: list }, 200);
+    return c.json({ providers: getProviderList(deps) }, 200);
   };
 }
 
@@ -533,7 +515,7 @@ export function updateEndpoint(
           ...('knownModels' in ep && ep.knownModels
             ? { knownModels: ep.knownModels }
             : {}),
-        } as EndpointConfig;
+        } as ManualEndpoint;
         return {
           ...current,
           providers: {
@@ -549,8 +531,6 @@ export function updateEndpoint(
       if (error instanceof ConfigValidationError) {
         if (error.code === 'not_found')
           return c.json({ error: error.message }, 404);
-        if (error.code === 'type_mismatch')
-          return c.json({ error: error.message }, 400);
         return c.json({ error: error.message }, 400);
       }
       deps.logger.error({ error }, 'Endpoint update failed');
@@ -648,6 +628,12 @@ export const getKnownModelsRoute = createRoute({
       },
       description: 'List of known models',
     },
+    400: {
+      content: {
+        'application/json': { schema: errorResponseSchema },
+      },
+      description: 'endpointName provided for a preset provider',
+    },
     404: {
       content: {
         'application/json': { schema: errorResponseSchema },
@@ -667,6 +653,15 @@ export function getKnownModels(
 
     if (!provider) {
       return c.json({ error: `Provider '${name}' not found` }, 404);
+    }
+
+    if ('preset' in provider && query.endpointName !== undefined) {
+      return c.json(
+        {
+          error: `Preset provider '${name}' does not support endpoint-scoped known models — omit endpointName`,
+        },
+        400,
+      );
     }
 
     if (
@@ -746,41 +741,6 @@ export function createKnownModel(
   return async (c) => {
     const { name } = c.req.valid('param');
     const body = c.req.valid('json');
-
-    const provider = deps.config.get().providers[name];
-    if (!provider) {
-      return c.json({ error: `Provider '${name}' not found` }, 404);
-    }
-
-    // Validate endpointName presence against provider type
-    const isPreset = 'preset' in provider;
-    if (isPreset && body.endpointName !== undefined) {
-      return c.json(
-        {
-          error: `Preset provider '${name}' does not support endpoint-scoped known models — omit endpointName`,
-        },
-        400,
-      );
-    }
-    if (!isPreset && !body.endpointName) {
-      return c.json(
-        {
-          error: `Manual provider '${name}' requires endpointName for known models`,
-        },
-        400,
-      );
-    }
-    if (!isPreset && body.endpointName) {
-      const endpoint = provider.endpoints[body.endpointName];
-      if (!endpoint) {
-        return c.json(
-          {
-            error: `Endpoint '${body.endpointName}' not found in provider '${name}'`,
-          },
-          404,
-        );
-      }
-    }
 
     const definition: ModelDefinition = {
       ...(body.displayName !== undefined && { displayName: body.displayName }),
@@ -968,8 +928,6 @@ export function updateKnownModel(
       if (error instanceof ConfigValidationError) {
         if (error.code === 'not_found')
           return c.json({ error: error.message }, 404);
-        if (error.code === 'type_mismatch')
-          return c.json({ error: error.message }, 400);
         return c.json({ error: error.message }, 400);
       }
       deps.logger.error({ error }, 'Known model update failed');
@@ -1026,52 +984,6 @@ export function deleteKnownModel(
     const { name, modelId } = c.req.valid('param');
     const query = c.req.valid('query');
 
-    const provider = deps.config.get().providers[name];
-    if (!provider) {
-      return c.json({ error: `Provider '${name}' not found` }, 404);
-    }
-
-    // Validate endpointName presence against provider type
-    const isPreset = 'preset' in provider;
-    if (isPreset && query.endpointName !== undefined) {
-      return c.json(
-        {
-          error: `Preset provider '${name}' does not support endpoint-scoped known models — omit endpointName`,
-        },
-        400,
-      );
-    }
-    if (!isPreset && !query.endpointName) {
-      return c.json(
-        {
-          error: `Manual provider '${name}' requires endpointName query param for known models`,
-        },
-        400,
-      );
-    }
-
-    // Pre-check model existence for accurate 404 before calling config
-    const existing = lookupKnownModel(provider, modelId, query.endpointName);
-    if (!existing) {
-      if (!isPreset && query.endpointName) {
-        const endpoint = provider.endpoints[query.endpointName];
-        if (!endpoint) {
-          return c.json(
-            {
-              error: `Endpoint '${query.endpointName}' not found in provider '${name}'`,
-            },
-            404,
-          );
-        }
-      }
-      return c.json(
-        {
-          error: `Model '${modelId}' not found in ${isPreset ? `provider '${name}'` : `endpoint '${query.endpointName}' of provider '${name}'`}`,
-        },
-        404,
-      );
-    }
-
     try {
       await deps.config.removeKnownModel(name, modelId, query.endpointName);
       const models = collectKnownModels(
@@ -1120,7 +1032,7 @@ function getProviderList(deps: ProviderRouteDependencies) {
       endpoints: Object.fromEntries(
         Object.entries(provider.endpoints).map(([epName, ep]) => [
           epName,
-          { ...ep, auth: redactAuth(ep.auth) },
+          { url: ep.url, format: ep.format, auth: redactAuth(ep.auth) },
         ]),
       ),
     };
@@ -1170,10 +1082,21 @@ function mergeProviderPatch(
       { code: 'type_mismatch' },
     );
   }
+  const mergedEndpoints = patch.endpoints
+    ? Object.fromEntries(
+        Object.entries({ ...current.endpoints, ...patch.endpoints }).map(
+          ([epName, ep]) => {
+            const existing = current.endpoints[epName];
+            if (existing && existing.knownModels && !('knownModels' in ep)) {
+              return [epName, { ...ep, knownModels: existing.knownModels }];
+            }
+            return [epName, ep];
+          },
+        ),
+      )
+    : current.endpoints;
   return {
-    endpoints: patch.endpoints
-      ? { ...current.endpoints, ...patch.endpoints }
-      : current.endpoints,
+    endpoints: mergedEndpoints,
   };
 }
 

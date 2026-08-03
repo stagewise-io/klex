@@ -124,6 +124,8 @@ const modelDefinitionSchema = z
 type ModelInputCapabilities = z.infer<typeof modelInputCapabilitiesSchema>;
 type ModelDefinition = z.infer<typeof modelDefinitionSchema>;
 
+type ManualEndpoint = z.infer<typeof manualEndpointSchema>;
+
 // Manual endpoint: endpoint config with optional known model metadata
 const manualEndpointSchema = endpointConfigSchema.extend({
   knownModels: z.record(z.string(), modelDefinitionSchema).optional(),
@@ -210,6 +212,7 @@ export type {
   EndpointConfig,
   HttpServerConfig,
   KlexConfig,
+  ManualEndpoint,
   McpServerConfig,
   McpVersionNegotiation,
   ModelDefinition,

@@ -204,25 +204,27 @@ export function patchModelSelection(
 ): RouteHandler<typeof patchModelSelectionRoute> {
   return async (c) => {
     const patch = c.req.valid('json');
-    const current = deps.config.get();
-    const merged = {
-      chat: patch.chat ?? current.modelSelection.chat,
-      compaction: patch.compaction ?? current.modelSelection.compaction,
-      memory: patch.memory ?? current.modelSelection.memory,
-    } as ModelSelection;
 
+    let warnings: ModelSelectionWarning[] = [];
     try {
-      // Validate only the patched fields — preserved fields are already in
-      // the config and may reference providers/endpoints that were removed.
-      const patchSelection = {
-        chat: patch.chat ?? [],
-        compaction: patch.compaction ?? [],
-        memory: patch.memory ?? [],
-      } as ModelSelection;
-      const warnings = validateAndCollectWarnings(patchSelection, {
-        ...current,
+      const config = await deps.config.mutate((current) => {
+        const merged = {
+          chat: patch.chat ?? current.modelSelection.chat,
+          compaction: patch.compaction ?? current.modelSelection.compaction,
+          memory: patch.memory ?? current.modelSelection.memory,
+        } as ModelSelection;
+
+        // Validate only the patched fields — preserved fields are already in
+        // the config and may reference providers/endpoints that were removed.
+        const patchSelection = {
+          chat: patch.chat ?? [],
+          compaction: patch.compaction ?? [],
+          memory: patch.memory ?? [],
+        } as ModelSelection;
+        warnings = validateAndCollectWarnings(patchSelection, current);
+
+        return { ...current, modelSelection: merged };
       });
-      const config = await deps.config.updateModelSelection(merged);
       return c.json({ ...config.modelSelection, warnings }, 200);
     } catch (error) {
       if (error instanceof ConfigValidationError) {

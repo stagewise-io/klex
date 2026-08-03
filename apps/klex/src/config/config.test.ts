@@ -487,6 +487,74 @@ describe('Config — input capability validation', () => {
 
     expect(klexConfigSchema.safeParse(config).success).toBe(false);
   });
+
+  it('resolves image capability with dimension constraints from preset provider knownModels', async () => {
+    const config = presetConfig();
+    const provider = config.providers['my-openai'];
+    if (!provider || !('preset' in provider))
+      throw new Error('Expected preset provider');
+    provider.knownModels = {
+      'gpt-4o': {
+        contextSize: 128_000,
+        inputCapabilities: {
+          image: {
+            mediaTypes: ['image/png', 'image/jpeg'],
+            maxBytes: 1_000_000,
+            maxWidth: 1024,
+            maxHeight: 768,
+            maxTotalPixels: 500_000,
+          },
+        },
+      },
+    };
+    const { module } = await setup(config);
+    const caps = module.resolveModel('my-openai:gpt-4o').inputCapabilities;
+    expect(caps.image).toEqual({
+      mediaTypes: ['image/png', 'image/jpeg'],
+      maxBytes: 1_000_000,
+      maxWidth: 1024,
+      maxHeight: 768,
+      maxTotalPixels: 500_000,
+    });
+  });
+
+  it('resolves image capability with supports=false from manual endpoint knownModels', async () => {
+    const config = manualConfig();
+    const local = config.providers.local;
+    if (!local || !('endpoints' in local))
+      throw new Error('Expected manual provider');
+    local.endpoints.chat!.knownModels = {
+      'model:8b': {
+        contextSize: 8_192,
+        inputCapabilities: {},
+      },
+    };
+    const { module } = await setup(config);
+    expect(
+      module.resolveModel('local:chat:model:8b').inputCapabilities.image,
+    ).toBeUndefined();
+  });
+
+  it('returns inputCapabilities.image undefined when not declared', async () => {
+    const config = presetConfig();
+    const provider = config.providers['my-openai'];
+    if (!provider || !('preset' in provider))
+      throw new Error('Expected preset provider');
+    provider.knownModels = {
+      'gpt-4o': { contextSize: 128_000 },
+    };
+    const { module } = await setup(config);
+    expect(
+      module.resolveModel('my-openai:gpt-4o').inputCapabilities.image,
+    ).toBeUndefined();
+  });
+
+  it('returns inputCapabilities.image undefined when knownModels is absent', async () => {
+    const { module } = await setup(manualConfig());
+    expect(
+      module.resolveModel('local:chat:model:8b').inputCapabilities.image,
+    ).toBeUndefined();
+  });
 });
 
 describe('Config — replace (atomic persistence)', () => {

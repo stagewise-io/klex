@@ -791,6 +791,59 @@ describe('PATCH /v1/providers/:name/endpoints/:endpointName — update endpoint'
     expect(ep.knownModels).toHaveProperty('model:8b');
   });
 
+  it('merges auth headers when patching only auth', async () => {
+    const configWithHeaders: KlexConfig = {
+      providers: {
+        local: {
+          endpoints: {
+            chat: {
+              url: 'http://localhost:11434/v1',
+              format: 'chat-completions',
+              auth: {
+                apiKey: 'original-key',
+                headers: { 'X-Existing': 'old-value' },
+              },
+            },
+          },
+        },
+      },
+      modelSelection: { chat: [], compaction: [], memory: [] },
+      mcpServers: {},
+    };
+    const mutateFn = vi.fn(async (fn: (cfg: KlexConfig) => KlexConfig) =>
+      fn(configWithHeaders),
+    );
+    const app = createApp(
+      makeDeps({
+        mutate: mutateFn,
+        get: () => configWithHeaders,
+      }),
+    );
+    const response = await app.request('/v1/providers/local/endpoints/chat', {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        auth: { headers: { 'X-New': 'new-value' } },
+      }),
+    });
+    expect(response.status).toBe(200);
+    const result = (await mutateFn.mock.results[0]!.value) as KlexConfig;
+    const provider = result.providers.local! as {
+      endpoints: Record<
+        string,
+        { auth: { apiKey?: string; headers?: Record<string, string> } }
+      >;
+    };
+    const ep = provider.endpoints.chat!;
+    // Preserves existing apiKey when only headers are patched
+    expect(ep.auth.apiKey).toBe('original-key');
+    // Merges old and new headers
+    expect(ep.auth.headers).toEqual({
+      'X-Existing': 'old-value',
+      'X-New': 'new-value',
+    });
+  });
+
   it('returns 404 for unknown endpoint', async () => {
     const app = createApp(makeDeps());
     const response = await app.request(

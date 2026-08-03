@@ -50,6 +50,7 @@ export function createLogger(opts?: LoggerOptions): RootLogger {
         url: opts.otel.url,
         format: otlpFormat({ resource: opts.otel.resourceAttributes }),
         encodeBody: otlpBatchBody,
+        name: 'otlp',
       }),
     );
   }

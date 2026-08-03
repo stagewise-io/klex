@@ -9,8 +9,12 @@ import { ConfigValidationError } from '@/config';
 import {
   getModelSelection,
   getModelSelectionRoute,
+  getTelemetry,
+  getTelemetryRoute,
   patchModelSelection,
   patchModelSelectionRoute,
+  patchTelemetry,
+  patchTelemetryRoute,
   type SettingsRouteDependencies,
 } from './settings';
 import { setupTestApp } from './test-utils';
@@ -80,6 +84,8 @@ function createApp(deps: SettingsRouteDependencies): OpenAPIHono {
   return setupTestApp((app) => {
     app.openapi(getModelSelectionRoute, getModelSelection(deps));
     app.openapi(patchModelSelectionRoute, patchModelSelection(deps));
+    app.openapi(getTelemetryRoute, getTelemetry(deps));
+    app.openapi(patchTelemetryRoute, patchTelemetry(deps));
   });
 }
 
@@ -452,5 +458,111 @@ describe('PATCH /v1/settings/model-selection', () => {
       warnings: Array<{ modelId: string; message: string }>;
     };
     expect(body.warnings).toHaveLength(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// GET /v1/settings/telemetry
+// ---------------------------------------------------------------------------
+
+describe('GET /v1/settings/telemetry', () => {
+  it('returns the configured telemetry level', async () => {
+    const app = createApp(
+      makeDeps({
+        get: () => ({ ...baseConfig, telemetry: { level: 'reduced' } }),
+      }),
+    );
+    const response = await app.request('/v1/settings/telemetry');
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ level: 'reduced' });
+  });
+
+  it('returns the environment-aware default when not set', async () => {
+    const app = createApp(makeDeps());
+    const response = await app.request('/v1/settings/telemetry');
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as { level: string };
+    expect(['off', 'minimum', 'reduced', 'full']).toContain(body.level);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// PATCH /v1/settings/telemetry
+// ---------------------------------------------------------------------------
+
+describe('PATCH /v1/settings/telemetry', () => {
+  it('updates the telemetry level', async () => {
+    const mutateFn = vi.fn(async (fn: (cfg: KlexConfig) => KlexConfig) =>
+      fn(baseConfig),
+    );
+    const app = createApp(makeDeps({ mutate: mutateFn }));
+    const response = await app.request('/v1/settings/telemetry', {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ level: 'minimum' }),
+    });
+    expect(response.status).toBe(200);
+    expect(mutateFn).toHaveBeenCalledOnce();
+    expect(await response.json()).toEqual({ level: 'minimum' });
+  });
+
+  it('rejects invalid level with 400', async () => {
+    const app = createApp(makeDeps());
+    const response = await app.request('/v1/settings/telemetry', {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ level: 'verbose' }),
+    });
+    expect(response.status).toBe(400);
+  });
+
+  it('rejects malformed JSON with 400', async () => {
+    const app = createApp(makeDeps());
+    const response = await app.request('/v1/settings/telemetry', {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: '{invalid',
+    });
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({
+      error: 'Malformed JSON in request body',
+    });
+  });
+
+  it('maps ConfigValidationError to 400', async () => {
+    const app = createApp(
+      makeDeps({
+        mutate: vi.fn(async () => {
+          throw new ConfigValidationError('Invalid telemetry');
+        }),
+      }),
+    );
+    const response = await app.request('/v1/settings/telemetry', {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ level: 'off' }),
+    });
+    expect(response.status).toBe(400);
+    const body = (await response.json()) as { error: string };
+    expect(body.error).toContain('Invalid telemetry');
+  });
+
+  it('maps unexpected errors to 500', async () => {
+    const app = createApp(
+      makeDeps({
+        mutate: vi.fn(async () => {
+          throw new Error('disk full');
+        }),
+      }),
+    );
+    const response = await app.request('/v1/settings/telemetry', {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ level: 'off' }),
+    });
+    expect(response.status).toBe(500);
+    expect(await response.json()).toEqual({
+      error: 'Failed to update telemetry settings',
+    });
   });
 });

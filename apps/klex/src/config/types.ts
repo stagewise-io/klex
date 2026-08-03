@@ -204,10 +204,19 @@ const mcpServerConfigSchema = z.union([
 
 type McpServerConfig = z.infer<typeof mcpServerConfigSchema>;
 
-export const klexConfigSchema = z.object({
+const telemetryLevelSchema = z.enum(['off', 'minimum', 'reduced', 'full']);
+
+type TelemetryLevel = z.infer<typeof telemetryLevelSchema>;
+
+const telemetryConfigSchema = z.object({
+  level: telemetryLevelSchema,
+});
+
+const klexConfigSchema = z.object({
   providers: z.record(z.string(), providerConfigSchema),
   modelSelection: modelSelectionSchema,
   mcpServers: z.record(z.string(), mcpServerConfigSchema),
+  telemetry: telemetryConfigSchema.optional(),
 });
 
 type KlexConfig = z.infer<typeof klexConfigSchema>;
@@ -229,5 +238,12 @@ export type {
   ProviderConfig,
   ProviderPreset,
   StdioServerConfig,
+  TelemetryLevel,
 };
-export { mcpServerConfigSchema, modelIdSchema, modelSelectionSchema };
+export {
+  klexConfigSchema,
+  mcpServerConfigSchema,
+  modelIdSchema,
+  modelSelectionSchema,
+  telemetryLevelSchema,
+};

@@ -5,9 +5,11 @@ import type { ModuleLogger } from '@stagewise/logger';
 import {
   type Config,
   ConfigValidationError,
+  getDefaultTelemetryLevel,
   type KlexConfig,
   type ModelSelection,
   type ProviderConfig,
+  type TelemetryLevel,
 } from '@/config';
 
 import {
@@ -15,6 +17,8 @@ import {
   modelSelectionPatchResponseSchema,
   modelSelectionPatchSchema,
   modelSelectionSchema,
+  telemetrySettingsPatchSchema,
+  telemetrySettingsSchema,
 } from './schemas';
 
 export interface SettingsRouteDependencies {
@@ -232,6 +236,105 @@ export function patchModelSelection(
       }
       deps.logger.error({ error }, 'Model selection update failed');
       return c.json({ error: 'Failed to update model selection' }, 500);
+    }
+  };
+}
+
+// --- Telemetry settings ---
+
+export const getTelemetryRoute = createRoute({
+  method: 'get',
+  path: '/v1/settings/telemetry',
+  tags: ['Settings'],
+  summary: 'Get telemetry settings',
+  description:
+    'Returns the current telemetry level. When not explicitly set in config, the environment-aware default is returned.',
+  responses: {
+    200: {
+      content: {
+        'application/json': { schema: telemetrySettingsSchema },
+      },
+      description: 'Current telemetry settings',
+    },
+    500: {
+      content: {
+        'application/json': { schema: errorResponseSchema },
+      },
+      description: 'Internal server error',
+    },
+  },
+});
+
+export function getTelemetry(
+  deps: SettingsRouteDependencies,
+): RouteHandler<typeof getTelemetryRoute> {
+  return (c) => {
+    const level =
+      deps.config.get().telemetry?.level ?? getDefaultTelemetryLevel();
+    return c.json({ level }, 200);
+  };
+}
+
+export const patchTelemetryRoute = createRoute({
+  method: 'patch',
+  path: '/v1/settings/telemetry',
+  tags: ['Settings'],
+  summary: 'Update telemetry settings',
+  description:
+    'Updates the telemetry level. The change is persisted to config.json and applied at runtime through the telemetry manager.',
+  request: {
+    body: {
+      content: {
+        'application/json': { schema: telemetrySettingsPatchSchema },
+      },
+      required: true,
+    },
+  },
+  responses: {
+    200: {
+      content: {
+        'application/json': { schema: telemetrySettingsSchema },
+      },
+      description: 'Updated telemetry settings',
+    },
+    400: {
+      content: {
+        'application/json': { schema: errorResponseSchema },
+      },
+      description: 'Invalid telemetry level',
+    },
+    500: {
+      content: {
+        'application/json': { schema: errorResponseSchema },
+      },
+      description: 'Internal server error',
+    },
+  },
+});
+
+export function patchTelemetry(
+  deps: SettingsRouteDependencies,
+): RouteHandler<typeof patchTelemetryRoute> {
+  return async (c) => {
+    const patch = c.req.valid('json');
+
+    try {
+      const config = await deps.config.mutate((current) => {
+        const level: TelemetryLevel =
+          patch.level ?? current.telemetry?.level ?? getDefaultTelemetryLevel();
+        return {
+          ...current,
+          telemetry: { level },
+        };
+      });
+      const level = config.telemetry?.level ?? getDefaultTelemetryLevel();
+      return c.json({ level }, 200);
+    } catch (error) {
+      if (error instanceof ConfigValidationError) {
+        return c.json({ error: error.message }, 400);
+      }
+      deps.logger.error({ error }, 'Telemetry update failed');
+      return c.json({ error: 'Failed to update telemetry settings' }, 500);
     }
   };
 }

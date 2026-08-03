@@ -12,6 +12,10 @@ import { createContextCompactionExt } from '@/session/chat/extensions/context-co
 import { createJsReplSandboxExt } from '@/session/chat/extensions/js-repl-sandbox';
 import { createVisionInputOptimizerExt } from '@/session/chat/extensions/vision-input-optimizer';
 import type { SessionHooks } from '@/session/types';
+import {
+  createTelemetryManager,
+  createTelemetrySpanProcessor,
+} from '@/telemetry-manager';
 import { createTracing } from '@/tracing';
 
 const logger = createLogger({
@@ -26,6 +30,8 @@ const logger = createLogger({
   },
 });
 
+const spanProcessor = createTelemetrySpanProcessor();
+
 async function main(): Promise<void> {
   logger.info('Klex Agent v1.0.0');
 
@@ -37,6 +43,7 @@ async function main(): Promise<void> {
       'deployment.environment': 'development',
       'service.namespace': 'stagewise',
     },
+    spanProcessor,
   });
   await tracing.start();
 
@@ -76,12 +83,19 @@ async function main(): Promise<void> {
     mcp,
     introspector,
   });
+  const telemetryManager = createTelemetryManager({
+    logging: logger,
+    config,
+    spanProcessor,
+  });
   const started: { close(): Promise<void> }[] = [];
   try {
     for (const resource of [config, adminApi, modelProvider, mcp]) {
       await resource.start();
       started.push(resource);
     }
+    await telemetryManager.start();
+    started.push(telemetryManager);
   } catch (error) {
     await closeReverse(started);
     throw error;

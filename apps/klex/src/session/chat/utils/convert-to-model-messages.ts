@@ -2,22 +2,13 @@ import {
   convertToModelMessages,
   type DataUIPart,
   type FilePart,
-  type FileUIPart,
   isToolUIPart,
   type TextPart,
 } from 'ai';
 
-import {
-  type ContextDataUIPart,
-  MAX_INLINE_AUDIO_BYTES,
-  validateInlineAudio,
-  validateInlineImage,
-} from '@/session/inbox';
+import type { ContextDataUIPart } from '@/session/inbox';
 
-import type {
-  DataPartTransformers,
-  ResolvedModel,
-} from '../extensions/extension-api';
+import type { DataPartTransformers } from '../extensions/extension-api';
 import type { ExtendedUIMessage } from '../message-types';
 
 /**
@@ -46,11 +37,8 @@ import type { ExtendedUIMessage } from '../message-types';
 export const convertToModelMessagesExtended = async (
   messages: ExtendedUIMessage[],
   transformers: DataPartTransformers,
-  resolvedModel: Pick<ResolvedModel, 'inputCapabilities'> = {
-    inputCapabilities: {},
-  },
 ): ReturnType<typeof convertToModelMessages> => {
-  const materialized = materializeContextParts(messages, resolvedModel);
+  const materialized = materializeContextParts(messages);
   // Find the last user message index.
   let lastUserMsgIdx = -1;
   for (let i = materialized.length - 1; i >= 0; i--) {
@@ -110,118 +98,121 @@ export const convertToModelMessagesExtended = async (
 
 function materializeContextParts(
   messages: ExtendedUIMessage[],
-  resolvedModel: Pick<ResolvedModel, 'inputCapabilities'>,
 ): ExtendedUIMessage[] {
   return messages.map((message) => ({
     ...message,
     parts: message.parts.flatMap((part) => {
       if (part.type !== 'data-context') return [part];
-      return materializeContextPart(part.data, resolvedModel);
+      return materializeContextPart(part.data);
     }),
   }));
 }
 
 function materializeContextPart(
   data: ContextDataUIPart,
-  resolvedModel: Pick<ResolvedModel, 'inputCapabilities'>,
 ): ExtendedUIMessage['parts'] {
-  const metadata = Object.entries(data.metadata)
-    .map(
-      ([key, value]) =>
-        `<item key="${escapeXml(key)}" value="${escapeXml(String(value))}" />`,
-    )
-    .join('');
+  const metadata = escapeXmlText(JSON.stringify(data.metadata));
   const parts: ExtendedUIMessage['parts'] = [
     {
       type: 'text',
-      text: `<context source-env="${escapeXml(data.sourceEnv)}"><metadata>${metadata}</metadata><content>`,
+      text: `<context source-env="${escapeXmlAttr(data.sourceEnv)}"><metadata>${metadata}</metadata><content>`,
     },
   ];
 
   for (const content of data.content) {
     if (content.type === 'text') {
-      parts.push({ type: 'text', text: escapeXml(content.text) });
-      continue;
-    }
-    if (content.type === 'image') {
-      const imageCapability = resolvedModel.inputCapabilities.image;
-      const normalizedMimeType = content.mimeType.toLowerCase();
-      const validation = validateInlineImage(
-        content.mimeType,
-        content.data,
-        imageCapability?.maxBytes,
-      );
-      const mediaTypeSupported = imageCapability?.mediaTypes.some(
-        (mediaType) => mediaType.toLowerCase() === normalizedMimeType,
-      );
-      if (imageCapability && validation.valid && mediaTypeSupported) {
-        const file: FileUIPart = {
-          type: 'file',
-          mediaType: normalizedMimeType,
-          url: `data:${normalizedMimeType};base64,${content.data}`,
-        };
-        parts.push(file);
-        continue;
-      }
-
-      const reason = !imageCapability
-        ? 'model-does-not-support-images'
-        : !validation.valid
-          ? validation.reason
-          : 'unsupported-media-type';
-      const decodedBytes = validation.decodedBytes;
       parts.push({
         type: 'text',
-        text: `<unsupported-image mime-type="${escapeXml(content.mimeType)}"${decodedBytes === undefined ? '' : ` bytes="${decodedBytes}"`} reason="${reason}" />`,
+        text: `<text>${escapeXmlText(content.text)}</text>`,
       });
       continue;
     }
-    if (content.type !== 'audio') continue;
 
-    const audioCapability = resolvedModel.inputCapabilities.audio;
-    const normalizedMimeType = content.mimeType.toLowerCase();
-    const validation = validateInlineAudio(
-      content.mimeType,
-      content.data,
-      Math.min(
-        MAX_INLINE_AUDIO_BYTES,
-        audioCapability?.maxBytes ?? MAX_INLINE_AUDIO_BYTES,
-      ),
-    );
-    const mediaTypeSupported = audioCapability?.mediaTypes.some(
-      (mediaType) => mediaType.toLowerCase() === normalizedMimeType,
-    );
-    if (audioCapability && validation.valid && mediaTypeSupported) {
-      const file: FileUIPart = {
+    if (content.type === 'image') {
+      const normalizedMimeType = content.mimeType.toLowerCase();
+      parts.push({
+        type: 'text',
+        text: `<image>`,
+      });
+      parts.push({
         type: 'file',
         mediaType: normalizedMimeType,
         url: `data:${normalizedMimeType};base64,${content.data}`,
-      };
-      parts.push(file);
+      });
+      parts.push({ type: 'text', text: '</image>' });
       continue;
     }
 
-    const reason = !audioCapability
-      ? 'model-does-not-support-audio'
-      : !validation.valid
-        ? validation.reason
-        : 'unsupported-media-type';
-    const decodedBytes = validation.decodedBytes;
-    parts.push({
-      type: 'text',
-      text: `<unsupported-audio mime-type="${escapeXml(content.mimeType)}"${decodedBytes === undefined ? '' : ` bytes="${decodedBytes}"`} reason="${reason}" />`,
-    });
+    if (content.type === 'audio') {
+      const normalizedMimeType = content.mimeType.toLowerCase();
+      parts.push({
+        type: 'text',
+        text: `<audio>`,
+      });
+      parts.push({
+        type: 'file',
+        mediaType: normalizedMimeType,
+        url: `data:${normalizedMimeType};base64,${content.data}`,
+      });
+      parts.push({ type: 'text', text: '</audio>' });
+      continue;
+    }
+
+    if (content.type === 'resource_link') {
+      const attrs = [
+        `uri="${escapeXmlAttr(content.uri)}"`,
+        `name="${escapeXmlAttr(content.name)}"`,
+      ];
+      if (content.title) attrs.push(`title="${escapeXmlAttr(content.title)}"`);
+      if (content.description)
+        attrs.push(`description="${escapeXmlAttr(content.description)}"`);
+      if (content.mimeType)
+        attrs.push(`mime-type="${escapeXmlAttr(content.mimeType)}"`);
+      if (content.size !== undefined) attrs.push(`size="${content.size}"`);
+      parts.push({
+        type: 'text',
+        text: `<resource-link ${attrs.join(' ')} />`,
+      });
+      continue;
+    }
+
+    if (content.type === 'resource') {
+      const res = content.resource;
+      const attrs = [`uri="${escapeXmlAttr(res.uri)}"`];
+      if (res.mimeType)
+        attrs.push(`mime-type="${escapeXmlAttr(res.mimeType)}"`);
+      parts.push({
+        type: 'text',
+        text: `<resource ${attrs.join(' ')}>`,
+      });
+      if (res.text !== undefined) {
+        parts.push({
+          type: 'text',
+          text: `<text>${escapeXmlText(res.text)}</text>`,
+        });
+      } else if (res.blob !== undefined) {
+        parts.push({
+          type: 'text',
+          text: `<blob>${res.blob}</blob>`,
+        });
+      }
+      parts.push({ type: 'text', text: '</resource>' });
+    }
   }
 
   parts.push({ type: 'text', text: '</content></context>' });
   return parts;
 }
 
-function escapeXml(value: string): string {
+function escapeXmlText(value: string): string {
   return value
     .replaceAll('&', '&amp;')
     .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;')
+    .replaceAll('>', '&gt;');
+}
+
+function escapeXmlAttr(value: string): string {
+  return escapeXmlText(value)
     .replaceAll('"', '&quot;')
     .replaceAll("'", '&apos;');
 }

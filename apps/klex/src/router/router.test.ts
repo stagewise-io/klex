@@ -2,19 +2,25 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { RootLogger } from '@stagewise/logger';
 
+import type { IntrospectionScope } from '@/introspection';
 import type { Mcp, McpPushNotification } from '@/mcp';
-import {
-  MAX_INLINE_AUDIO_BYTES,
-  type SessionInboxEvent,
-  SessionInboxPriority,
-} from '@/session/inbox';
+import { type SessionInboxEvent, SessionInboxPriority } from '@/session/inbox';
 import type { AgentSession } from '@/session/types';
 
 import { createRouter } from './router';
 
+function createIntrospectionMock(): IntrospectionScope {
+  const make = (): IntrospectionScope => ({
+    path: [],
+    introspect: () => undefined,
+    child: () => make(),
+    removeChild: () => undefined,
+  });
+  return make();
+}
+
 function setup() {
   const sent: SessionInboxEvent[] = [];
-  const warn = vi.fn();
   let listener:
     | ((event: McpPushNotification) => void | Promise<void>)
     | undefined;
@@ -23,7 +29,7 @@ function setup() {
       debug: () => undefined,
       error: () => undefined,
       info: () => undefined,
-      warn,
+      warn: () => undefined,
     }),
   } as unknown as RootLogger;
   const mcp = {
@@ -45,6 +51,7 @@ function setup() {
   const router = createRouter({
     logging,
     mcp,
+    introspection: createIntrospectionMock(),
     createChatSession: () => session,
   });
 
@@ -55,7 +62,6 @@ function setup() {
     },
     router,
     sent,
-    warn,
   };
 }
 
@@ -67,7 +73,7 @@ const envelope = {
 };
 
 describe('Router Push Notification adaptation', () => {
-  it('preserves ordered text and deterministically serialized event data', async () => {
+  it('passes through content blocks without validation', async () => {
     const harness = setup();
     await harness.router.start();
 
@@ -87,117 +93,27 @@ describe('Router Push Notification adaptation', () => {
 
     expect(harness.sent).toEqual([
       {
-        sourceEnv: 'telegram:77',
+        sourceEnv: 'telegram',
         priority: SessionInboxPriority.Medium,
         context: {
-          sourceEnv: 'telegram:77',
+          sourceEnv: 'telegram',
           metadata: {
-            eventId: 'event-1',
-            namespace: 'telegram',
             type: 'chat.message.received',
             createdAt: '2026-07-20T10:30:00.000Z',
+            senderId: '40',
+            chatId: '30',
+            nested: { z: 2, a: 1 },
           },
           content: [
             { type: 'text', text: 'first' },
             { type: 'image', data: 'aW1hZ2U=', mimeType: 'image/png' },
             { type: 'audio', data: 'YXVkaW8=', mimeType: 'audio/ogg' },
             { type: 'text', text: 'second' },
-            {
-              type: 'text',
-              text: 'Event data: {"chatId":"30","nested":{"a":1,"z":2},"senderId":"40"}',
-            },
           ],
         },
       },
     ]);
-    expect(harness.warn).not.toHaveBeenCalled();
   });
-
-  it('degrades invalid images without logging their data', async () => {
-    const harness = setup();
-    await harness.router.start();
-
-    await harness.emit({
-      namespace: 'telegram',
-      event: {
-        ...envelope,
-        content: [
-          { type: 'image', data: 'secret-not-base64!', mimeType: 'image/png' },
-        ],
-      },
-    });
-
-    expect(harness.sent[0]?.context.content).toEqual([
-      {
-        type: 'text',
-        text: '<unsupported-image mime-type="image/png" reason="invalid-base64" />',
-      },
-    ]);
-    expect(harness.warn).toHaveBeenCalledWith(
-      {
-        eventId: 'event-1',
-        mimeType: 'image/png',
-        reason: 'invalid-base64',
-        decodedBytes: undefined,
-      },
-      'Router rejected invalid Push Notification image',
-    );
-    expect(JSON.stringify(harness.warn.mock.calls)).not.toContain(
-      'secret-not-base64!',
-    );
-  });
-
-  it.each([
-    {
-      mimeType: 'text/plain',
-      data: 'YXVkaW8=',
-      reason: 'invalid-mime-type',
-      decodedBytes: undefined,
-    },
-    {
-      mimeType: 'audio/ogg',
-      data: 'secret-not-base64!',
-      reason: 'invalid-base64',
-      decodedBytes: undefined,
-    },
-    {
-      mimeType: 'audio/ogg',
-      data: Buffer.alloc(MAX_INLINE_AUDIO_BYTES + 1).toString('base64'),
-      reason: 'too-large',
-      decodedBytes: MAX_INLINE_AUDIO_BYTES + 1,
-    },
-  ])(
-    'degrades invalid audio with reason $reason without logging its data',
-    async ({ mimeType, data, reason, decodedBytes }) => {
-      const harness = setup();
-      await harness.router.start();
-
-      await harness.emit({
-        namespace: 'telegram',
-        event: {
-          ...envelope,
-          content: [{ type: 'audio', data, mimeType }],
-        },
-      });
-
-      expect(harness.sent[0]?.context.content).toEqual([
-        {
-          type: 'text',
-          text: `<unsupported-audio mime-type="${mimeType}" reason="${reason}" />`,
-        },
-      ]);
-      expect(harness.warn).toHaveBeenCalledWith(
-        {
-          eventId: 'event-1',
-          mimeType,
-          reason,
-          decodedBytes,
-        },
-        'Router rejected invalid Push Notification audio',
-      );
-      expect(JSON.stringify(harness.warn.mock.calls)).not.toContain(data);
-    },
-  );
 
   it('awaits session delivery before publication settles', async () => {
     const harness = setup();
@@ -222,7 +138,42 @@ describe('Router Push Notification adaptation', () => {
     expect(settled).toBe(true);
   });
 
-  it('handles missing data and explicitly omits unsupported content', async () => {
+  it('maps resource_link blocks to resource_link content', async () => {
+    const harness = setup();
+    await harness.router.start();
+
+    await harness.emit({
+      namespace: 'telegram',
+      event: {
+        ...envelope,
+        content: [
+          {
+            type: 'resource_link',
+            uri: 'file:///message.txt',
+            name: 'message.txt',
+            title: 'Message',
+            description: 'An embedded text message',
+            mimeType: 'text/plain',
+            size: 42,
+          },
+        ],
+      },
+    });
+
+    expect(harness.sent[0]?.context.content).toEqual([
+      {
+        type: 'resource_link',
+        uri: 'file:///message.txt',
+        name: 'message.txt',
+        title: 'Message',
+        description: 'An embedded text message',
+        mimeType: 'text/plain',
+        size: 42,
+      },
+    ]);
+  });
+
+  it('maps embedded resource blocks with text contents', async () => {
     const harness = setup();
     await harness.router.start();
 
@@ -233,16 +184,76 @@ describe('Router Push Notification adaptation', () => {
         content: [
           {
             type: 'resource',
-            resource: { uri: 'file:///message.txt', text: 'embedded message' },
+            resource: {
+              uri: 'file:///message.txt',
+              mimeType: 'text/plain',
+              text: 'embedded message',
+            },
           },
         ],
       },
     });
 
+    expect(harness.sent[0]?.context.content).toEqual([
+      {
+        type: 'resource',
+        resource: {
+          uri: 'file:///message.txt',
+          mimeType: 'text/plain',
+          text: 'embedded message',
+        },
+      },
+    ]);
+  });
+
+  it('maps embedded resource blocks with blob contents', async () => {
+    const harness = setup();
+    await harness.router.start();
+
+    await harness.emit({
+      namespace: 'telegram',
+      event: {
+        ...envelope,
+        content: [
+          {
+            type: 'resource',
+            resource: {
+              uri: 'file:///image.png',
+              mimeType: 'image/png',
+              blob: 'aW1hZ2U=',
+            },
+          },
+        ],
+      },
+    });
+
+    expect(harness.sent[0]?.context.content).toEqual([
+      {
+        type: 'resource',
+        resource: {
+          uri: 'file:///image.png',
+          mimeType: 'image/png',
+          blob: 'aW1hZ2U=',
+        },
+      },
+    ]);
+  });
+
+  it('silently omits unknown content block types', async () => {
+    const harness = setup();
+    await harness.router.start();
+
+    await harness.emit({
+      namespace: 'telegram',
+      event: {
+        ...envelope,
+        content: [
+          // Simulate a future/unknown block type that the router doesn't know.
+          { type: 'unknown_future_type', data: 'x' } as never,
+        ],
+      },
+    });
+
     expect(harness.sent[0]?.context.content).toEqual([]);
-    expect(harness.warn).toHaveBeenCalledWith(
-      { eventId: 'event-1', contentTypes: ['resource'] },
-      'Router omitted unsupported Push Notification content blocks',
-    );
   });
 });

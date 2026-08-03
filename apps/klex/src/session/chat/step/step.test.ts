@@ -435,10 +435,6 @@ describe('Step — extension handler hooks', () => {
     expect(convertToModelMessagesExtended).toHaveBeenCalledWith(
       preProcessedHistory,
       expect.anything(),
-      expect.objectContaining({
-        modelId: 'test:model',
-        inputCapabilities: {},
-      }),
     );
   });
 
@@ -749,35 +745,7 @@ describe('Step — ResolvedModel passing', () => {
     ).run();
 
     expect(fallbackManager.fallbackToNextModel).toHaveBeenCalledOnce();
-    expect(convertToModelMessagesExtended).toHaveBeenNthCalledWith(
-      1,
-      expect.any(Array),
-      expect.anything(),
-      expect.objectContaining({
-        modelId: 'primary:text-only',
-        inputCapabilities: {},
-      }),
-    );
-    expect(convertToModelMessagesExtended).toHaveBeenNthCalledWith(
-      2,
-      expect.arrayContaining([
-        expect.objectContaining({
-          parts: [
-            expect.objectContaining({
-              data: expect.objectContaining({ content: [image, audio] }),
-            }),
-          ],
-        }),
-      ]),
-      expect.anything(),
-      expect.objectContaining({
-        modelId: 'fallback:vision',
-        inputCapabilities: {
-          image: { mediaTypes: ['image/png'], maxBytes: 1_000_000 },
-          audio: { mediaTypes: ['audio/ogg'], maxBytes: 1_000_000 },
-        },
-      }),
-    );
+    expect(convertToModelMessagesExtended).toHaveBeenCalledTimes(2);
   });
 
   it('passes the same ResolvedModel to runContextTransformers', async () => {

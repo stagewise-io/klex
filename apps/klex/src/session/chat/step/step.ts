@@ -332,7 +332,6 @@ class StepModule implements Step {
           await convertToModelMessagesExtended(
             preResult.history,
             dataPartTransformers,
-            resolvedModel,
           );
         transformSpan.addEvent('history_convert.end', {
           'history_convert.outputMessageCount': modelMessages.length,

@@ -5,6 +5,23 @@ import type { DataPartTransformers } from '../extensions/extension-api';
 import type { ExtendedUIMessage } from '../message-types';
 import { convertToModelMessagesExtended } from './convert-to-model-messages';
 
+// --- helpers ---
+
+/** Mirrors the converter's escapeXmlText for element-text expectations. */
+function escapeXmlText(value: string): string {
+  return value
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;');
+}
+
+/** Mirrors the converter's escapeXmlAttr for attribute-value expectations. */
+function escapeXmlAttr(value: string): string {
+  return escapeXmlText(value)
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&apos;');
+}
+
 // --- mocks ---
 
 vi.mock('ai', async (importOriginal) => {
@@ -37,6 +54,24 @@ function makeContextPart(
     | { type: 'text'; text: string }
     | { type: 'image'; mimeType: string; data: string }
     | { type: 'audio'; mimeType: string; data: string }
+    | {
+        type: 'resource_link';
+        uri: string;
+        name: string;
+        title?: string;
+        description?: string;
+        mimeType?: string;
+        size?: number;
+      }
+    | {
+        type: 'resource';
+        resource: {
+          uri: string;
+          mimeType?: string;
+          text?: string;
+          blob?: string;
+        };
+      }
   )[],
 ): ExtendedUIMessage['parts'][number] {
   return {
@@ -129,39 +164,40 @@ describe('data-context materialization', () => {
     const messages = [makeMessage([context])];
     const original = structuredClone(messages);
 
-    await convertToModelMessagesExtended(messages, makeTransformers(), {
-      inputCapabilities: {
-        image: { mediaTypes: ['image/png'], maxBytes: 100 },
-        audio: { mediaTypes: ['audio/ogg'], maxBytes: 100 },
-      },
-    });
+    await convertToModelMessagesExtended(messages, makeTransformers());
 
     const materialized = vi
       .mocked(convertToModelMessages)
       .mock.calls.at(-1)?.[0];
+    // Metadata is now an XML-escaped JSON dump
+    const expectedMetadata = escapeXmlText(JSON.stringify({ channel: 'a"b' }));
     expect(materialized?.[0]?.parts).toEqual([
       {
         type: 'text',
-        text: '<context source-env="telegram&lt;&amp;"><metadata><item key="channel" value="a&quot;b" /></metadata><content>',
+        text: `<context source-env="telegram&lt;&amp;"><metadata>${expectedMetadata}</metadata><content>`,
       },
-      { type: 'text', text: 'caption &lt;first&gt;' },
+      { type: 'text', text: '<text>caption &lt;first&gt;</text>' },
+      { type: 'text', text: '<image>' },
       {
         type: 'file',
         mediaType: 'image/png',
         url: 'data:image/png;base64,aW1hZ2U=',
       },
+      { type: 'text', text: '</image>' },
+      { type: 'text', text: '<audio>' },
       {
         type: 'file',
         mediaType: 'audio/ogg',
         url: 'data:audio/ogg;base64,YXVkaW8=',
       },
-      { type: 'text', text: 'after &amp; last' },
+      { type: 'text', text: '</audio>' },
+      { type: 'text', text: '<text>after &amp; last</text>' },
       { type: 'text', text: '</content></context>' },
     ]);
     expect(messages).toEqual(original);
   });
 
-  it('matches image capabilities case-insensitively and emits a canonical MIME type', async () => {
+  it('emits a canonical lowercase MIME type for images', async () => {
     await convertToModelMessagesExtended(
       [
         makeMessage([
@@ -169,11 +205,6 @@ describe('data-context materialization', () => {
         ]),
       ],
       makeTransformers(),
-      {
-        inputCapabilities: {
-          image: { mediaTypes: ['Image/Png'], maxBytes: 100 },
-        },
-      },
     );
 
     const parts = vi
@@ -186,7 +217,7 @@ describe('data-context materialization', () => {
     });
   });
 
-  it('matches audio capabilities case-insensitively and emits a canonical MIME type', async () => {
+  it('emits a canonical lowercase MIME type for audio', async () => {
     await convertToModelMessagesExtended(
       [
         makeMessage([
@@ -194,11 +225,6 @@ describe('data-context materialization', () => {
         ]),
       ],
       makeTransformers(),
-      {
-        inputCapabilities: {
-          audio: { mediaTypes: ['Audio/Ogg'], maxBytes: 100 },
-        },
-      },
     );
 
     const parts = vi
@@ -211,129 +237,64 @@ describe('data-context materialization', () => {
     });
   });
 
-  it('uses an explicit placeholder for a text-only model', async () => {
+  it('passes image data through regardless of model capabilities', async () => {
+    // The converter no longer gates images by model capabilities —
+    // the VisionInputOptimizer extension handles unsupported models,
+    // format conversion, and resizing at Stage 4.
     await convertToModelMessagesExtended(
       [makeMessage([makeContextPart('media', {}, [image])])],
       makeTransformers(),
-      { inputCapabilities: {} },
     );
 
     const parts = vi
       .mocked(convertToModelMessages)
       .mock.calls.at(-1)?.[0][0]?.parts;
     expect(parts).toContainEqual({
-      type: 'text',
-      text: '<unsupported-image mime-type="image/png" bytes="5" reason="model-does-not-support-images" />',
+      type: 'file',
+      mediaType: 'image/png',
+      url: 'data:image/png;base64,aW1hZ2U=',
     });
-    expect(JSON.stringify(parts)).not.toContain(image.data);
   });
 
-  it('uses an explicit audio placeholder for a model without audio support', async () => {
+  it('passes audio through regardless of model capabilities', async () => {
     await convertToModelMessagesExtended(
       [makeMessage([makeContextPart('media', {}, [audio])])],
       makeTransformers(),
-      {
-        inputCapabilities: {
-          image: { mediaTypes: ['image/png'], maxBytes: 100 },
-        },
-      },
     );
 
     const parts = vi
       .mocked(convertToModelMessages)
       .mock.calls.at(-1)?.[0][0]?.parts;
     expect(parts).toContainEqual({
-      type: 'text',
-      text: '<unsupported-audio mime-type="audio/ogg" bytes="5" reason="model-does-not-support-audio" />',
+      type: 'file',
+      mediaType: 'audio/ogg',
+      url: 'data:audio/ogg;base64,YXVkaW8=',
     });
-    expect(JSON.stringify(parts)).not.toContain(audio.data);
   });
 
-  it.each([
-    {
-      capability: { mediaTypes: ['image/jpeg'], maxBytes: 100 },
-      expectedReason: 'unsupported-media-type',
-    },
-    {
-      capability: { mediaTypes: ['image/png'], maxBytes: 4 },
-      expectedReason: 'too-large',
-    },
-  ])(
-    'degrades images outside selected-model constraints',
-    async ({ capability, expectedReason }) => {
-      await convertToModelMessagesExtended(
-        [makeMessage([makeContextPart('media', {}, [image])])],
-        makeTransformers(),
-        { inputCapabilities: { image: capability } },
-      );
-
-      const parts = vi
-        .mocked(convertToModelMessages)
-        .mock.calls.at(-1)?.[0][0]?.parts;
-      expect(JSON.stringify(parts)).toContain(`reason=\\"${expectedReason}\\"`);
-      expect(JSON.stringify(parts)).not.toContain(image.data);
-    },
-  );
-
-  it.each([
-    {
-      capability: { mediaTypes: ['audio/mpeg'], maxBytes: 100 },
-      expectedReason: 'unsupported-media-type',
-    },
-    {
-      capability: { mediaTypes: ['audio/ogg'], maxBytes: 4 },
-      expectedReason: 'too-large',
-    },
-  ])(
-    'degrades audio outside selected-model constraints',
-    async ({ capability, expectedReason }) => {
-      await convertToModelMessagesExtended(
-        [makeMessage([makeContextPart('media', {}, [audio])])],
-        makeTransformers(),
-        { inputCapabilities: { audio: capability } },
-      );
-
-      const parts = vi
-        .mocked(convertToModelMessages)
-        .mock.calls.at(-1)?.[0][0]?.parts;
-      expect(JSON.stringify(parts)).toContain(`reason=\\"${expectedReason}\\"`);
-      expect(JSON.stringify(parts)).not.toContain(audio.data);
-    },
-  );
-
-  it.each([
-    { mimeType: 'text/plain', data: audio.data, reason: 'invalid-mime-type' },
-    {
-      mimeType: 'audio/ogg',
-      data: 'not valid base64!',
-      reason: 'invalid-base64',
-    },
-  ])(
-    'defensively degrades malformed audio with reason $reason',
-    async ({ mimeType, data, reason }) => {
-      await convertToModelMessagesExtended(
-        [
-          makeMessage([
-            makeContextPart('media', {}, [{ ...audio, mimeType, data }]),
+  it('passes malformed audio through without validation', async () => {
+    await convertToModelMessagesExtended(
+      [
+        makeMessage([
+          makeContextPart('media', {}, [
+            { ...audio, data: 'not valid base64!' },
           ]),
-        ],
-        makeTransformers(),
-        {
-          inputCapabilities: {
-            audio: { mediaTypes: [mimeType], maxBytes: 100 },
-          },
-        },
-      );
+        ]),
+      ],
+      makeTransformers(),
+    );
 
-      const parts = vi
-        .mocked(convertToModelMessages)
-        .mock.calls.at(-1)?.[0][0]?.parts;
-      expect(JSON.stringify(parts)).toContain(reason);
-      expect(JSON.stringify(parts)).not.toContain(data);
-    },
-  );
+    const parts = vi
+      .mocked(convertToModelMessages)
+      .mock.calls.at(-1)?.[0][0]?.parts;
+    expect(parts).toContainEqual({
+      type: 'file',
+      mediaType: 'audio/ogg',
+      url: 'data:audio/ogg;base64,not valid base64!',
+    });
+  });
 
-  it('defensively degrades malformed image data', async () => {
+  it('passes image data through as a file part without validation', async () => {
     await convertToModelMessagesExtended(
       [
         makeMessage([
@@ -343,18 +304,16 @@ describe('data-context materialization', () => {
         ]),
       ],
       makeTransformers(),
-      {
-        inputCapabilities: {
-          image: { mediaTypes: ['image/png'], maxBytes: 100 },
-        },
-      },
     );
 
     const parts = vi
       .mocked(convertToModelMessages)
       .mock.calls.at(-1)?.[0][0]?.parts;
-    expect(JSON.stringify(parts)).toContain('invalid-base64');
-    expect(JSON.stringify(parts)).not.toContain('not valid base64!');
+    expect(parts).toContainEqual({
+      type: 'file',
+      mediaType: 'image/png',
+      url: 'data:image/png;base64,not valid base64!',
+    });
   });
 });
 

@@ -14,23 +14,6 @@
  * events are consumed at turn start, and Medium+High events are re-checked
  * at each step start for mid-turn arrivals.
  */
-export const MAX_INLINE_IMAGE_BYTES = 10 * 1024 * 1024;
-export const MAX_INLINE_AUDIO_BYTES = 10 * 1024 * 1024;
-
-type InlineMediaValidation =
-  | { valid: true; decodedBytes: number }
-  | {
-      valid: false;
-      reason: 'invalid-base64' | 'invalid-mime-type' | 'too-large';
-      decodedBytes?: number;
-    };
-
-export type InlineImageValidation = InlineMediaValidation;
-export type InlineAudioValidation = InlineMediaValidation;
-
-const IMAGE_MIME_TYPE_PATTERN = /^image\/[a-z0-9][a-z0-9.+-]*$/i;
-const AUDIO_MIME_TYPE_PATTERN = /^audio\/[a-z0-9][a-z0-9.+-]*$/i;
-
 export function getBase64DecodedBytes(data: string): number | undefined {
   if (data.length === 0 || data.length % 4 !== 0) return undefined;
 
@@ -53,48 +36,22 @@ export function getBase64DecodedBytes(data: string): number | undefined {
   return (data.length / 4) * 3 - padding;
 }
 
-/** Validates canonical padded base64 image data without decoding it. */
-export function validateInlineImage(
-  mimeType: string,
-  data: string,
-  maxBytes = MAX_INLINE_IMAGE_BYTES,
-): InlineImageValidation {
-  return validateInlineMedia(mimeType, data, maxBytes, IMAGE_MIME_TYPE_PATTERN);
-}
-
-/** Validates canonical padded base64 audio data without decoding it. */
-export function validateInlineAudio(
-  mimeType: string,
-  data: string,
-  maxBytes = MAX_INLINE_AUDIO_BYTES,
-): InlineAudioValidation {
-  return validateInlineMedia(mimeType, data, maxBytes, AUDIO_MIME_TYPE_PATTERN);
-}
-
-function validateInlineMedia(
-  mimeType: string,
-  data: string,
-  maxBytes: number,
-  mimeTypePattern: RegExp,
-): InlineMediaValidation {
-  if (!mimeTypePattern.test(mimeType)) {
-    return { valid: false, reason: 'invalid-mime-type' };
-  }
-  const decodedBytes = getBase64DecodedBytes(data);
-  if (decodedBytes === undefined) {
-    return { valid: false, reason: 'invalid-base64' };
-  }
-  if (decodedBytes > maxBytes) {
-    return { valid: false, reason: 'too-large', decodedBytes };
-  }
-  return { valid: true, decodedBytes };
-}
-
 export enum SessionInboxPriority {
   Low = 0,
   Medium = 1,
   High = 2,
 }
+
+/**
+ * JSON value type for context metadata.
+ */
+export type ContextMetadataValue =
+  | string
+  | number
+  | boolean
+  | null
+  | ContextMetadataValue[]
+  | { [key: string]: ContextMetadataValue };
 
 /**
  * Custom data part that stores context information for the agent. This is used
@@ -109,9 +66,7 @@ export type ContextDataUIPart = {
   /**
    * A record of key-value pairs that help describe the content to the agent.
    */
-  metadata: {
-    [key: string]: string | number | boolean;
-  };
+  metadata: Record<string, ContextMetadataValue>;
 
   /**
    * A record of key-value pairs that help describe the content to the agent.
@@ -119,8 +74,25 @@ export type ContextDataUIPart = {
   content: (
     | { type: 'text'; text: string }
     | { type: 'image'; mimeType: string; data: string }
-    | { type: 'video'; mimeType: string; url: string }
     | { type: 'audio'; mimeType: string; data: string }
+    | {
+        type: 'resource_link';
+        uri: string;
+        name: string;
+        title?: string;
+        description?: string;
+        mimeType?: string;
+        size?: number;
+      }
+    | {
+        type: 'resource';
+        resource: {
+          uri: string;
+          mimeType?: string;
+          text?: string;
+          blob?: string;
+        };
+      }
   )[];
 };
 

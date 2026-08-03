@@ -188,7 +188,10 @@ class LiveKitRoomMediaTransportModule implements MediaTransport {
     const stream = this.activeStream;
     this.activeTrack = undefined;
     this.activeStream = undefined;
-    if (stream) void stream.close();
+    if (stream)
+      void stream.close().catch((error: unknown) => {
+        if (!this.closing) void this.finish({ type: 'failed', error }, error);
+      });
   }
 
   private async pumpTrack(

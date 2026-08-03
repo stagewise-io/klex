@@ -62,6 +62,19 @@ export interface ResolvedModelConfig {
  * Model metadata with fallbacks applied. Every consumer of model info
  * gets this — no need to handle missing fields individually.
  */
+export interface ResolvedOpenAIRealtimeConfig {
+  modelId: string;
+  apiKey: string;
+  websocketUrl: string;
+  voice: string;
+  instructions: string;
+  serverVad: {
+    threshold?: number;
+    prefixPaddingMs?: number;
+    silenceDurationMs?: number;
+  };
+}
+
 export interface ModelInfo {
   /** Resolved context size in tokens (defaults to {@link DEFAULT_CONTEXT_SIZE}). */
   contextSize: number;
@@ -117,6 +130,7 @@ export interface Config {
    */
   resolveModelInfo(entry: ModelSelectionEntry): ModelInfo;
   getMcpServers(): Readonly<Record<string, McpServerConfig>>;
+  resolveOpenAIRealtime(): ResolvedOpenAIRealtimeConfig | undefined;
   /** Creates a new MCP server. Throws if the name already exists. */
   addMcpServer(
     name: string,
@@ -290,6 +304,27 @@ class ConfigModule implements Config {
 
   getModelSelection(purpose: ModelPurpose): readonly ModelSelectionEntry[] {
     return this.requireConfig().modelSelection[purpose];
+  }
+
+  resolveOpenAIRealtime(): ResolvedOpenAIRealtimeConfig | undefined {
+    const realtime = this.requireConfig().realtime;
+    if (realtime.mode !== 'openai-realtime') return undefined;
+    const resolved = this.resolveModel(realtime.model);
+    if (resolved.endpoint.format !== 'openai')
+      throw new Error('OpenAI realtime requires an OpenAI endpoint');
+    const apiKey = resolved.endpoint.auth.apiKey?.trim();
+    if (!apiKey) throw new Error('OpenAI realtime requires an API key');
+    return {
+      modelId: resolved.modelId,
+      apiKey,
+      websocketUrl: openAIRealtimeWebSocketUrl(
+        resolved.endpoint.url,
+        resolved.modelId,
+      ),
+      voice: realtime.voice,
+      instructions: realtime.instructions,
+      serverVad: realtime.serverVad ?? {},
+    };
   }
 
   resolveModel(entry: ModelSelectionEntry): ResolvedModelConfig {
@@ -1106,6 +1141,21 @@ function resolveAuthEnvVars(endpoint: EndpointConfig): EndpointConfig {
     auth.apiKey = resolveEnvVar(auth.apiKey);
   }
   return { ...endpoint, auth };
+}
+
+export function openAIRealtimeWebSocketUrl(
+  endpointUrl: string,
+  modelId: string,
+): string {
+  const url = new URL(endpointUrl);
+  if (url.protocol !== 'http:' && url.protocol !== 'https:')
+    throw new Error('OpenAI realtime endpoint must use HTTP or HTTPS');
+  url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
+  url.pathname = `${url.pathname.replace(/\/$/, '')}/realtime`;
+  url.search = '';
+  url.hash = '';
+  url.searchParams.set('model', modelId);
+  return url.toString();
 }
 
 export function createConfig(deps: ConfigDependencies): Config {

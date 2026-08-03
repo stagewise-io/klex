@@ -1,6 +1,8 @@
 import type { RootLogger } from '@stagewise/logger';
 
+import type { ResolvedOpenAIRealtimeConfig } from '@/config';
 import type { Mcp } from '@/mcp';
+import type { RealtimeAudioProcessorFactory } from '@/media-transport';
 import {
   createLiveKitRoomMediaTransportConnector,
   type LiveKitRoomMediaTransportConnector,
@@ -8,6 +10,7 @@ import {
 } from '@/media-transport/livekit-room';
 import { createLoopbackProcessorFactory } from '@/media-transport/loopback';
 
+import { createOpenAIRealtimeProcessorFactory } from './openai-realtime';
 import {
   createRealtimeSessionCoordinator,
   type RealtimeSessionCoordinator,
@@ -21,7 +24,8 @@ export interface RealtimeMediaRuntime {
 export interface RealtimeMediaRuntimeDependencies {
   logging: RootLogger;
   mcp: Mcp;
-  enabled: boolean;
+  mode: 'disabled' | 'loopback' | 'openai-realtime';
+  openAI?: ResolvedOpenAIRealtimeConfig;
   createConnector?: () => LiveKitRoomMediaTransportConnector;
   createCoordinator?: (
     connector: LiveKitRoomMediaTransportConnector,
@@ -37,11 +41,13 @@ class RealtimeMediaRuntimeModule implements RealtimeMediaRuntime {
   constructor(private readonly deps: RealtimeMediaRuntimeDependencies) {}
 
   start(): Promise<void> {
-    if (!this.deps.enabled) return Promise.resolve();
+    if (this.deps.mode === 'disabled') return Promise.resolve();
     if (this.startPromise) return this.startPromise;
     if (this.closePromise)
       return Promise.reject(new Error('Realtime media runtime is closed'));
     this.startPromise = (async () => {
+      if (this.deps.mode === 'openai-realtime' && !this.deps.openAI)
+        throw new Error('OpenAI realtime configuration is required');
       const connector =
         this.deps.createConnector?.() ??
         createLiveKitRoomMediaTransportConnector({ loadSdk: loadLiveKitSdk });
@@ -52,7 +58,7 @@ class RealtimeMediaRuntimeModule implements RealtimeMediaRuntime {
           logging: this.deps.logging,
           mcp: this.deps.mcp,
           mediaTransportConnector: connector,
-          processorFactory: createLoopbackProcessorFactory(),
+          processorFactory: this.createProcessorFactory(),
         });
       this.coordinator = coordinator;
       try {
@@ -65,6 +71,16 @@ class RealtimeMediaRuntimeModule implements RealtimeMediaRuntime {
       }
     })();
     return this.startPromise;
+  }
+
+  private createProcessorFactory(): RealtimeAudioProcessorFactory {
+    if (this.deps.mode === 'loopback') return createLoopbackProcessorFactory();
+    if (!this.deps.openAI)
+      throw new Error('OpenAI realtime configuration is required');
+    return createOpenAIRealtimeProcessorFactory({
+      logging: this.deps.logging,
+      config: this.deps.openAI,
+    });
   }
 
   close(): Promise<void> {

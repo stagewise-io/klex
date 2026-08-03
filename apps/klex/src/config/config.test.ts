@@ -11,6 +11,7 @@ import {
   ConfigValidationError,
   createConfig,
   DEFAULT_CONTEXT_SIZE,
+  openAIRealtimeWebSocketUrl,
 } from './config';
 import {
   type EndpointAuth,
@@ -154,6 +155,90 @@ describe('Config — realtime mode', () => {
         realtime: { mode: 'loopback' },
       }).realtime,
     ).toEqual({ mode: 'loopback' });
+  });
+
+  it('validates and resolves OpenAI realtime configuration', async () => {
+    const config = presetConfig('openai', 'gpt-realtime-2.1');
+    config.realtime = {
+      mode: 'openai-realtime',
+      model: 'my-openai:gpt-realtime-2.1',
+      voice: 'marin',
+      instructions: 'Answer briefly.',
+      serverVad: { threshold: 0.6, silenceDurationMs: 400 },
+    };
+    const { module } = await setup(config);
+    expect(module.resolveOpenAIRealtime()).toEqual({
+      modelId: 'gpt-realtime-2.1',
+      apiKey: 'sk-test',
+      websocketUrl: 'wss://api.openai.com/v1/realtime?model=gpt-realtime-2.1',
+      voice: 'marin',
+      instructions: 'Answer briefly.',
+      serverVad: { threshold: 0.6, silenceDurationMs: 400 },
+    });
+  });
+
+  it.each([
+    { threshold: -0.1 },
+    { threshold: 1.1 },
+    { prefixPaddingMs: -1 },
+    { silenceDurationMs: 99 },
+  ])('rejects malformed server VAD: %j', (serverVad) => {
+    expect(
+      klexConfigSchema.safeParse({
+        ...presetConfig(),
+        realtime: {
+          mode: 'openai-realtime',
+          model: 'my-openai:gpt-realtime',
+          voice: 'marin',
+          instructions: 'Answer briefly.',
+          serverVad,
+        },
+      }).success,
+    ).toBe(false);
+  });
+
+  it('rejects missing environment credentials during resolution', async () => {
+    const config = presetConfig();
+    const provider = config.providers['my-openai'];
+    if (!provider || !('preset' in provider))
+      throw new Error('Expected preset');
+    provider.auth.apiKey = '{env:KLEX_TEST_MISSING_OPENAI_KEY}';
+    config.realtime = {
+      mode: 'openai-realtime',
+      model: 'my-openai:gpt-realtime',
+      voice: 'marin',
+      instructions: 'Answer briefly.',
+    };
+    const { module } = await setup(config);
+    expect(() => module.resolveOpenAIRealtime()).toThrow(
+      'Environment variable KLEX_TEST_MISSING_OPENAI_KEY is not set',
+    );
+  });
+
+  it('rejects non-OpenAI realtime endpoints', async () => {
+    const config = manualConfig();
+    config.realtime = {
+      mode: 'openai-realtime',
+      model: 'local:chat:model:8b',
+      voice: 'marin',
+      instructions: 'Answer briefly.',
+    };
+    const { module } = await setup(config);
+    expect(() => module.resolveOpenAIRealtime()).toThrow(
+      'OpenAI realtime requires an OpenAI endpoint',
+    );
+  });
+
+  it('derives secure and local realtime WebSocket URLs', () => {
+    expect(
+      openAIRealtimeWebSocketUrl('https://api.openai.com/v1/', 'model/a'),
+    ).toBe('wss://api.openai.com/v1/realtime?model=model%2Fa');
+    expect(openAIRealtimeWebSocketUrl('http://localhost:8080/v1', 'm')).toBe(
+      'ws://localhost:8080/v1/realtime?model=m',
+    );
+    expect(() =>
+      openAIRealtimeWebSocketUrl('ftp://example.com/v1', 'm'),
+    ).toThrow('must use HTTP or HTTPS');
   });
 });
 

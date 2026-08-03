@@ -66,14 +66,37 @@ disconnection end the transport.
 LiveKit is normalized at the adapter boundary to signed 16-bit little-endian PCM,
 48,000 Hz, mono, with 20 ms incoming frames where the SDK supports that cadence.
 The adapter copies buffers at both SDK boundaries. Incoming delivery and outgoing
-SDK playout are bounded, and all writes are awaited. Arbitrary output resampling
-belongs in a future model bridge rather than this transport.
+SDK playout are bounded, and all writes are awaited. Provider-specific resampling belongs in the model bridge rather than this
+transport.
+
+## OpenAI Realtime processor
+
+`openai-realtime` preserves the three independent planes: MCP remains the
+control and lifecycle plane, LiveKit remains the caller media plane, and Klex
+opens a server-to-server authenticated WebSocket as the model inference plane.
+The WebSocket carries provider control events and 24 kHz mono PCM16. It is not a
+second room or caller transport.
+
+The processor converts LiveKit's 48 kHz PCM to 24 kHz before appending input and
+converts response audio back to 48 kHz, 20 ms frames. Both conversions use a
+stateful low-pass streaming converter rather than sample dropping. Provider VAD
+creates responses and reports speech interruption. Interruption cancels and
+truncates the active response, resets converter state, and discards buffered or
+stale assistant audio before it reaches LiveKit.
+
+The provider connection is session-scoped. Setup timeout, malformed provider
+data, provider errors, unexpected close, abort, and explicit close converge on
+one idempotent processor closure. Provider credentials remain in the
+server-side WebSocket authorization header and are never included in media
+frames or logs.
 
 `realtime.mode: "loopback"` composes the adapter with a bounded one-frame
 loopback processor. Loopback is a diagnostic interim processor, not a realtime
 AI provider. Startup subscribes the coordinator before MCP connections can
 deliver offers. Shutdown closes the coordinator and its sessions, then the
-connector and native SDK, and only then MCP.
+connector and native SDK, and only then MCP. `realtime.mode:
+"openai-realtime"` replaces only that loopback processor; the MCP contract and
+LiveKit adapter are unchanged.
 
 ## Deterministic fixture
 

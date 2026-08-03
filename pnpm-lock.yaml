@@ -116,6 +116,9 @@ importers:
       sharp:
         specifier: 0.35.3
         version: 0.35.3(@types/node@26.1.1)
+      ws:
+        specifier: 8.18.1
+        version: 8.18.1
       zod:
         specifier: 4.4.3
         version: 4.4.3
@@ -147,6 +150,9 @@ importers:
       '@types/node':
         specifier: 26.1.1
         version: 26.1.1
+      '@types/ws':
+        specifier: 8.18.1
+        version: 8.18.1
       '@vitest/coverage-istanbul':
         specifier: 4.1.10
         version: 4.1.10(vitest@4.1.10)

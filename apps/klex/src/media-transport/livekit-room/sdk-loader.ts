@@ -98,15 +98,37 @@ export async function prepareLiveKitNativeRuntime(
 }
 
 class RtcStreamAdapter implements LiveKitSdkAudioStream {
+  private iterator: AsyncIterator<LiveKitSdkAudioFrame> | undefined;
+  private closePromise: Promise<void> | undefined;
+
   constructor(private readonly stream: RtcAudioStream) {}
 
-  async *[Symbol.asyncIterator](): AsyncIterator<LiveKitSdkAudioFrame> {
-    for await (const frame of this.stream) yield frame;
+  [Symbol.asyncIterator](): AsyncIterator<LiveKitSdkAudioFrame> {
+    if (this.iterator)
+      throw new Error('LiveKit audio stream is already consumed');
+    this.iterator = this.stream[Symbol.asyncIterator]();
+    return this.iterator;
   }
 
-  async close(): Promise<void> {
-    await this.stream.cancel();
+  close(): Promise<void> {
+    if (this.closePromise) return this.closePromise;
+    const close = this.iterator?.return
+      ? this.iterator.return().then(() => undefined)
+      : this.stream.cancel();
+    this.closePromise = close.catch((error: unknown) => {
+      if (!isLockedStreamError(error)) throw error;
+    });
+    return this.closePromise;
   }
+}
+
+function isLockedStreamError(error: unknown): boolean {
+  return (
+    error instanceof TypeError &&
+    'code' in error &&
+    error.code === 'ERR_INVALID_STATE' &&
+    error.message.includes('ReadableStream is locked')
+  );
 }
 
 class RtcRemoteTrackAdapter implements LiveKitSdkRemoteAudioTrack {

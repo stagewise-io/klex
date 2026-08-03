@@ -280,12 +280,38 @@ const endpointNameParamSchema = z.object({
 
 // --- Known Models ---
 
+const imageInputCapabilitySchema = z
+  .object({
+    mediaTypes: z
+      .array(z.string().regex(/^image\/[a-z0-9][a-z0-9.+-]*$/i))
+      .nonempty(),
+    maxBytes: z.number().int().positive(),
+  })
+  .openapi('ImageInputCapability');
+
+const audioInputCapabilitySchema = z
+  .object({
+    mediaTypes: z
+      .array(z.string().regex(/^audio\/[a-z0-9][a-z0-9.+-]*$/i))
+      .nonempty(),
+    maxBytes: z.number().int().positive(),
+  })
+  .openapi('AudioInputCapability');
+
+const modelInputCapabilitiesSchema = z
+  .object({
+    image: imageInputCapabilitySchema.optional(),
+    audio: audioInputCapabilitySchema.optional(),
+  })
+  .openapi('ModelInputCapabilities');
+
 const knownModelSchema = z
   .object({
     modelId: z.string().min(1),
     endpointName: z.string().optional(),
     displayName: z.string().optional(),
     contextSize: z.number().int().positive().optional(),
+    inputCapabilities: modelInputCapabilitiesSchema.optional(),
   })
   .openapi('KnownModel');
 
@@ -301,16 +327,25 @@ const createKnownModelBodySchema = z
     endpointName: z.string().min(1).optional(),
     displayName: z.string().optional(),
     contextSize: z.number().int().positive().optional(),
+    inputCapabilities: modelInputCapabilitiesSchema.optional(),
   })
-  .refine((d) => d.displayName !== undefined || d.contextSize !== undefined, {
-    message: 'At least one of displayName or contextSize must be provided',
-  })
+  .refine(
+    (d) =>
+      d.displayName !== undefined ||
+      d.contextSize !== undefined ||
+      d.inputCapabilities !== undefined,
+    {
+      message:
+        'At least one of displayName, contextSize, or inputCapabilities must be provided',
+    },
+  )
   .openapi('CreateKnownModelBody');
 
 const updateKnownModelBodySchema = z
   .object({
     displayName: z.string().optional(),
     contextSize: z.number().int().positive().optional(),
+    inputCapabilities: modelInputCapabilitiesSchema.optional(),
   })
   .openapi('UpdateKnownModelBody');
 
@@ -325,6 +360,7 @@ const knownModelQuerySchema = z.object({
 
 export {
   apiFormatSchema,
+  audioInputCapabilitySchema,
   createEndpointBodySchema,
   createKnownModelBodySchema,
   createMcpServerBodySchema,
@@ -336,6 +372,7 @@ export {
   endpointWithNameSchema,
   errorResponseSchema,
   healthResponseSchema,
+  imageInputCapabilitySchema,
   introspectionChildSchema,
   introspectionNodeSchema,
   introspectionPathParamsSchema,
@@ -346,6 +383,7 @@ export {
   mcpServerNameParamSchema,
   mcpServersResponseSchema,
   modelIdSchema,
+  modelInputCapabilitiesSchema,
   modelSelectionPatchResponseSchema,
   modelSelectionPatchSchema,
   modelSelectionSchema,

@@ -174,9 +174,9 @@ function createTransport(config: McpServerConfig): Transport {
       : {}),
     reconnectionOptions: {
       initialReconnectionDelay: 1_000,
-      maxReconnectionDelay: 1_000,
-      reconnectionDelayGrowFactor: 1,
-      maxRetries: 0,
+      maxReconnectionDelay: 30_000,
+      reconnectionDelayGrowFactor: 2,
+      maxRetries: 5,
     },
   });
 }

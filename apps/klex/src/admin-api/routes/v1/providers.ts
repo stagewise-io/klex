@@ -8,6 +8,7 @@ import type {
   EndpointConfig,
   ManualEndpoint,
   ModelDefinition,
+  ModelInputCapabilities,
   ProviderConfig,
 } from '@/config';
 import { ConfigValidationError } from '@/config';
@@ -640,6 +641,12 @@ export const getKnownModelsRoute = createRoute({
       },
       description: 'Provider or endpoint not found',
     },
+    500: {
+      content: {
+        'application/json': { schema: errorResponseSchema },
+      },
+      description: 'Internal server error',
+    },
   },
 });
 
@@ -746,6 +753,9 @@ export function createKnownModel(
       ...(body.displayName !== undefined && { displayName: body.displayName }),
       ...(body.contextSize !== undefined && {
         contextSize: body.contextSize,
+      }),
+      ...(body.inputCapabilities !== undefined && {
+        inputCapabilities: body.inputCapabilities,
       }),
     };
 
@@ -876,15 +886,13 @@ export function updateKnownModel(
           );
         }
 
-        const cleanDef: ModelDefinition = {};
+        const cleanDef: ModelDefinition = { ...currentDef };
         if (patch.displayName !== undefined)
           cleanDef.displayName = patch.displayName;
-        else if (currentDef.displayName !== undefined)
-          cleanDef.displayName = currentDef.displayName;
         if (patch.contextSize !== undefined)
           cleanDef.contextSize = patch.contextSize;
-        else if (currentDef.contextSize !== undefined)
-          cleanDef.contextSize = currentDef.contextSize;
+        if (patch.inputCapabilities !== undefined)
+          cleanDef.inputCapabilities = patch.inputCapabilities;
 
         if (isPreset) {
           const existing = provider.knownModels ?? {};
@@ -1124,6 +1132,7 @@ function collectKnownModels(
   endpointName?: string;
   displayName?: string;
   contextSize?: number;
+  inputCapabilities?: ModelInputCapabilities;
 }> {
   if ('preset' in provider) {
     const models = provider.knownModels ?? {};
@@ -1131,6 +1140,7 @@ function collectKnownModels(
       modelId,
       displayName: def.displayName,
       contextSize: def.contextSize,
+      inputCapabilities: def.inputCapabilities,
     }));
   }
 
@@ -1143,6 +1153,7 @@ function collectKnownModels(
     endpointName?: string;
     displayName?: string;
     contextSize?: number;
+    inputCapabilities?: ModelInputCapabilities;
   }> = [];
   for (const [epName, endpoint] of Object.entries(endpoints)) {
     if (!endpoint) continue;
@@ -1153,6 +1164,7 @@ function collectKnownModels(
         endpointName: epName,
         displayName: def.displayName,
         contextSize: def.contextSize,
+        inputCapabilities: def.inputCapabilities,
       });
     }
   }

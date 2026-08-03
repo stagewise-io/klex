@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { ModuleLogger } from '@stagewise/logger';
 
-import type { Config, KlexConfig } from '@/config';
+import type { Config, KlexConfig, ModelDefinition } from '@/config';
 import { ConfigValidationError } from '@/config';
 
 import {
@@ -45,7 +45,13 @@ const baseConfig: KlexConfig = {
       preset: 'openai',
       auth: { apiKey: 'sk-test' },
       knownModels: {
-        'gpt-4o': { displayName: 'GPT-4o', contextSize: 128_000 },
+        'gpt-4o': {
+          displayName: 'GPT-4o',
+          contextSize: 128_000,
+          inputCapabilities: {
+            image: { mediaTypes: ['image/png'], maxBytes: 5_000_000 },
+          },
+        },
       },
     },
     local: {
@@ -352,7 +358,13 @@ describe('PATCH /v1/providers/:name — update provider', () => {
     expect(provider.preset).toBe('openai');
     expect(provider.auth?.apiKey).toBe('sk-updated');
     expect(provider.knownModels).toEqual({
-      'gpt-4o': { displayName: 'GPT-4o', contextSize: 128_000 },
+      'gpt-4o': {
+        displayName: 'GPT-4o',
+        contextSize: 128_000,
+        inputCapabilities: {
+          image: { mediaTypes: ['image/png'], maxBytes: 5_000_000 },
+        },
+      },
     });
   });
 
@@ -944,6 +956,21 @@ describe('GET /v1/providers/:name/known-models — list known models', () => {
     expect(body.models[0]).toMatchObject({ modelId: 'gpt-4o' });
   });
 
+  it('includes inputCapabilities in known-models response', async () => {
+    const app = createApp(makeDeps());
+    const response = await app.request('/v1/providers/my-openai/known-models');
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as {
+      models: Array<Record<string, unknown>>;
+    };
+    expect(body.models[0]).toMatchObject({
+      modelId: 'gpt-4o',
+      inputCapabilities: {
+        image: { mediaTypes: ['image/png'], maxBytes: 5_000_000 },
+      },
+    });
+  });
+
   it('returns manual provider models across all endpoints', async () => {
     const app = createApp(makeDeps());
     const response = await app.request('/v1/providers/local/known-models');
@@ -1149,7 +1176,7 @@ describe('POST /v1/providers/:name/known-models — add known model', () => {
     expect(response.status).toBe(400);
   });
 
-  it('rejects body with neither displayName nor contextSize with 400', async () => {
+  it('rejects body with neither displayName, contextSize, nor inputCapabilities with 400', async () => {
     const app = createApp(makeDeps());
     const response = await app.request('/v1/providers/my-openai/known-models', {
       method: 'POST',
@@ -1157,6 +1184,67 @@ describe('POST /v1/providers/:name/known-models — add known model', () => {
       body: JSON.stringify({ modelId: 'gpt-4o' }),
     });
     expect(response.status).toBe(400);
+  });
+
+  it('creates a model with inputCapabilities on a preset provider', async () => {
+    const addKnownModelFn = vi.fn(async () => baseConfig);
+    const app = createApp(makeDeps({ addKnownModel: addKnownModelFn }));
+    const response = await app.request('/v1/providers/my-openai/known-models', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        modelId: 'gpt-4o-vision',
+        inputCapabilities: {
+          image: {
+            mediaTypes: ['image/png', 'image/jpeg'],
+            maxBytes: 10_000_000,
+          },
+          audio: { mediaTypes: ['audio/wav'], maxBytes: 20_000_000 },
+        },
+      }),
+    });
+    expect(response.status).toBe(201);
+    expect(addKnownModelFn).toHaveBeenCalledWith(
+      'my-openai',
+      'gpt-4o-vision',
+      {
+        inputCapabilities: {
+          image: {
+            mediaTypes: ['image/png', 'image/jpeg'],
+            maxBytes: 10_000_000,
+          },
+          audio: { mediaTypes: ['audio/wav'], maxBytes: 20_000_000 },
+        },
+      },
+      undefined,
+    );
+  });
+
+  it('creates a model with only inputCapabilities (no displayName or contextSize)', async () => {
+    const addKnownModelFn = vi.fn(async () => baseConfig);
+    const app = createApp(makeDeps({ addKnownModel: addKnownModelFn }));
+    const response = await app.request('/v1/providers/local/known-models', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        modelId: 'vision-model',
+        endpointName: 'chat',
+        inputCapabilities: {
+          image: { mediaTypes: ['image/webp'], maxBytes: 8_000_000 },
+        },
+      }),
+    });
+    expect(response.status).toBe(201);
+    expect(addKnownModelFn).toHaveBeenCalledWith(
+      'local',
+      'vision-model',
+      {
+        inputCapabilities: {
+          image: { mediaTypes: ['image/webp'], maxBytes: 8_000_000 },
+        },
+      },
+      'chat',
+    );
   });
 });
 
@@ -1190,6 +1278,9 @@ describe('PATCH /v1/providers/:name/known-models/:modelId — update known model
     expect(provider.knownModels?.['gpt-4o']).toEqual({
       displayName: 'GPT-4o Updated',
       contextSize: 128_000,
+      inputCapabilities: {
+        image: { mediaTypes: ['image/png'], maxBytes: 5_000_000 },
+      },
     });
   });
 
@@ -1290,6 +1381,64 @@ describe('PATCH /v1/providers/:name/known-models/:modelId — update known model
       },
     );
     expect(response.status).toBe(404);
+  });
+
+  it('updates inputCapabilities while preserving displayName and contextSize', async () => {
+    const mutateFn = vi.fn(async (fn: (cfg: KlexConfig) => KlexConfig) =>
+      fn(baseConfig),
+    );
+    const app = createApp(makeDeps({ mutate: mutateFn }));
+    const response = await app.request(
+      '/v1/providers/my-openai/known-models/gpt-4o',
+      {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          inputCapabilities: {
+            audio: { mediaTypes: ['audio/mpeg'], maxBytes: 15_000_000 },
+          },
+        }),
+      },
+    );
+    expect(response.status).toBe(200);
+    const result = (await mutateFn.mock.results[0]!.value) as KlexConfig;
+    const provider = result.providers['my-openai']! as {
+      knownModels?: Record<string, ModelDefinition>;
+    };
+    expect(provider.knownModels?.['gpt-4o']).toEqual({
+      displayName: 'GPT-4o',
+      contextSize: 128_000,
+      inputCapabilities: {
+        audio: { mediaTypes: ['audio/mpeg'], maxBytes: 15_000_000 },
+      },
+    });
+  });
+
+  it('preserves inputCapabilities when patching only displayName', async () => {
+    const mutateFn = vi.fn(async (fn: (cfg: KlexConfig) => KlexConfig) =>
+      fn(baseConfig),
+    );
+    const app = createApp(makeDeps({ mutate: mutateFn }));
+    const response = await app.request(
+      '/v1/providers/my-openai/known-models/gpt-4o',
+      {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ displayName: 'Renamed' }),
+      },
+    );
+    expect(response.status).toBe(200);
+    const result = (await mutateFn.mock.results[0]!.value) as KlexConfig;
+    const provider = result.providers['my-openai']! as {
+      knownModels?: Record<string, ModelDefinition>;
+    };
+    expect(provider.knownModels?.['gpt-4o']).toEqual({
+      displayName: 'Renamed',
+      contextSize: 128_000,
+      inputCapabilities: {
+        image: { mediaTypes: ['image/png'], maxBytes: 5_000_000 },
+      },
+    });
   });
 });
 

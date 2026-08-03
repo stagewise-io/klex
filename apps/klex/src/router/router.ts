@@ -6,8 +6,6 @@ import {
   type ContextDataUIPart,
   type SessionInboxEvent,
   SessionInboxPriority,
-  validateInlineAudio,
-  validateInlineImage,
 } from '@/session/inbox';
 import type {
   AgentSession,
@@ -121,103 +119,78 @@ class RouterModule implements Router {
    * Converts a Push Notification from an MCP server into a session inbox event
    * and forwards it to the primary session.
    *
-   * - `sourceEnv` ← `event.sourceId`
-   * - `metadata`  ← event identity, type, namespace, and timestamp
-   * - `content`   ← ordered MCP text blocks plus serialized event data
+   * - `sourceEnv` ← MCP namespace
+   * - `metadata`  ← event type, timestamp, and structured event data
+   * - `content`   ← ordered MCP content blocks (text, image, audio,
+   *                  resource_link, resource), mapped 1:1
    */
   private async handlePushNotification(ev: McpPushNotification): Promise<void> {
     const { event, namespace } = ev;
-    const content: ContextDataUIPart['content'] = [];
-    for (const block of event.content) {
-      if (block.type === 'text') {
-        content.push({ type: 'text', text: block.text });
-        continue;
-      }
-      if (block.type === 'image') {
-        const validation = validateInlineImage(block.mimeType, block.data);
-        if (validation.valid) {
-          content.push({
+    const content: ContextDataUIPart['content'] = event.content
+      .map((block) => {
+        if (block.type === 'text')
+          return { type: 'text', text: block.text } as const;
+        if (block.type === 'image')
+          return {
             type: 'image',
             mimeType: block.mimeType,
             data: block.data,
-          });
-          continue;
-        }
-
-        content.push({
-          type: 'text',
-          text: `<unsupported-image mime-type="${block.mimeType}" reason="${validation.reason}" />`,
-        });
-        this.deps.logger.warn(
-          {
-            eventId: event.eventId,
+          } as const;
+        if (block.type === 'audio')
+          return {
+            type: 'audio',
             mimeType: block.mimeType,
-            reason: validation.reason,
-            decodedBytes: validation.decodedBytes,
-          },
-          'Router rejected invalid Push Notification image',
-        );
-        continue;
-      }
-      if (block.type !== 'audio') continue;
-
-      const validation = validateInlineAudio(block.mimeType, block.data);
-      if (validation.valid) {
-        content.push({
-          type: 'audio',
-          mimeType: block.mimeType,
-          data: block.data,
-        });
-        continue;
-      }
-
-      content.push({
-        type: 'text',
-        text: `<unsupported-audio mime-type="${block.mimeType}" reason="${validation.reason}" />`,
-      });
-      this.deps.logger.warn(
-        {
-          eventId: event.eventId,
-          mimeType: block.mimeType,
-          reason: validation.reason,
-          decodedBytes: validation.decodedBytes,
-        },
-        'Router rejected invalid Push Notification audio',
-      );
-    }
-    if (event.data !== undefined) {
-      content.push({
-        type: 'text',
-        text: `Event data: ${stableJsonStringify(event.data)}`,
-      });
-    }
-
-    const unsupportedTypes = event.content
+            data: block.data,
+          } as const;
+        if (block.type === 'resource_link')
+          return {
+            type: 'resource_link',
+            uri: block.uri,
+            name: block.name,
+            title: block.title,
+            description: block.description,
+            mimeType: block.mimeType,
+            size: block.size,
+          } as const;
+        if (block.type === 'resource') {
+          const res = block.resource;
+          return {
+            type: 'resource',
+            resource: {
+              uri: res.uri,
+              ...(res.mimeType ? { mimeType: res.mimeType } : {}),
+              ...('text' in res ? { text: res.text } : {}),
+              ...('blob' in res ? { blob: res.blob } : {}),
+            },
+          } as const;
+        }
+        return undefined;
+      })
       .filter(
-        (block) =>
-          block.type !== 'text' &&
-          block.type !== 'image' &&
-          block.type !== 'audio',
-      )
-      .map((block) => block.type);
-    if (unsupportedTypes.length > 0) {
-      this.deps.logger.warn(
-        { eventId: event.eventId, contentTypes: unsupportedTypes },
-        'Router omitted unsupported Push Notification content blocks',
+        (block): block is NonNullable<typeof block> => block !== undefined,
       );
+
+    const metadata: ContextDataUIPart['metadata'] = {
+      type: event.type,
+      createdAt: event.createdAt,
+    };
+
+    // Merge structured event data into metadata so the model sees it
+    // as context descriptors, not user-authored content.
+    // Existing envelope keys take precedence over data keys.
+    if (event.data !== undefined) {
+      for (const [key, value] of Object.entries(event.data)) {
+        if (value === null || key in metadata) continue;
+        metadata[key] = value;
+      }
     }
 
     const inboxEvent: SessionInboxEvent = {
-      sourceEnv: event.sourceId,
+      sourceEnv: namespace,
       priority: SessionInboxPriority.Medium,
       context: {
-        sourceEnv: event.sourceId,
-        metadata: {
-          eventId: event.eventId,
-          namespace,
-          type: event.type,
-          createdAt: event.createdAt,
-        },
+        sourceEnv: namespace,
+        metadata,
         content,
       },
     };
@@ -277,19 +250,6 @@ class RouterModule implements Router {
     // Re-dispatch pending inbox events so the user does not lose input.
     replacement.restorePendingEvents(info.pendingEvents);
   }
-}
-
-function stableJsonStringify(value: unknown): string {
-  const normalize = (input: unknown): unknown => {
-    if (Array.isArray(input)) return input.map(normalize);
-    if (typeof input !== 'object' || input === null) return input;
-    return Object.fromEntries(
-      Object.entries(input)
-        .sort(([left], [right]) => left.localeCompare(right))
-        .map(([key, entry]) => [key, normalize(entry)]),
-    );
-  };
-  return JSON.stringify(normalize(value));
 }
 
 export function createRouter(deps: RouterDependencies): Router {

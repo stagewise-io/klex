@@ -287,6 +287,7 @@ const imageInputCapabilitySchema = z
       .nonempty(),
     maxBytes: z.number().int().positive(),
   })
+  .strict()
   .openapi('ImageInputCapability');
 
 const audioInputCapabilitySchema = z
@@ -296,6 +297,7 @@ const audioInputCapabilitySchema = z
       .nonempty(),
     maxBytes: z.number().int().positive(),
   })
+  .strict()
   .openapi('AudioInputCapability');
 
 const modelInputCapabilitiesSchema = z
@@ -303,6 +305,7 @@ const modelInputCapabilitiesSchema = z
     image: imageInputCapabilitySchema.optional(),
     audio: audioInputCapabilitySchema.optional(),
   })
+  .strict()
   .openapi('ModelInputCapabilities');
 
 const knownModelSchema = z

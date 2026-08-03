@@ -1537,6 +1537,15 @@ describe('Config — known model CRUD', () => {
     expect(provider.endpoints['chat']!.knownModels?.['llama3']).toBeUndefined();
   });
 
+  it('removeKnownModel sets knownModels to undefined when last model is removed from manual endpoint', async () => {
+    const { module } = await setup();
+    await module.addKnownModel('local', 'llama3', modelDef, 'chat');
+    await module.removeKnownModel('local', 'llama3', 'chat');
+    const provider = module.get().providers['local']!;
+    if (!('endpoints' in provider)) throw new Error('Expected manual provider');
+    expect(provider.endpoints['chat']!.knownModels).toBeUndefined();
+  });
+
   it('removeKnownModel rejects unknown model on manual provider endpoint', async () => {
     const { module } = await setup();
     await expect(

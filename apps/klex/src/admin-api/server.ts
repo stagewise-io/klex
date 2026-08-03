@@ -54,8 +54,12 @@ import {
 import {
   getModelSelection,
   getModelSelectionRoute,
+  getTelemetry,
+  getTelemetryRoute,
   patchModelSelection,
   patchModelSelectionRoute,
+  patchTelemetry,
+  patchTelemetryRoute,
 } from './routes/v1/settings';
 
 export interface AdminAppDependencies {
@@ -99,6 +103,8 @@ export function createAdminApp(deps: AdminAppDependencies): OpenAPIHono {
   // Settings
   app.openapi(getModelSelectionRoute, getModelSelection(deps));
   app.openapi(patchModelSelectionRoute, patchModelSelection(deps));
+  app.openapi(getTelemetryRoute, getTelemetry(deps));
+  app.openapi(patchTelemetryRoute, patchTelemetry(deps));
 
   // Introspection
   app.openapi(

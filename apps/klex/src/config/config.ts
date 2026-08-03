@@ -20,6 +20,7 @@ import {
   type ModelSelection,
   type ProviderConfig,
   resolvePresetEndpoint,
+  type TelemetryLevel,
 } from './types';
 
 /**
@@ -32,6 +33,14 @@ export const DEFAULT_CONTEXT_SIZE = 200_000;
  * File name used for the persisted agent configuration file.
  */
 export const CONFIG_FILE_NAME = 'config.json';
+
+/**
+ * Returns the environment-aware default telemetry level:
+ * `'reduced'` in production, `'full'` otherwise.
+ */
+export function getDefaultTelemetryLevel(): TelemetryLevel {
+  return process.env.NODE_ENV === 'production' ? 'reduced' : 'full';
+}
 
 export interface ResolvedModelConfig {
   providerId: string;

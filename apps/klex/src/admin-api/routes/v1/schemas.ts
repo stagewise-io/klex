@@ -124,6 +124,24 @@ const introspectionPathParamsSchema = z.object({
   }),
 });
 
+// --- Settings / Telemetry ---
+
+const telemetryLevelSchema = z
+  .enum(['off', 'minimum', 'reduced', 'full'])
+  .openapi('TelemetryLevel');
+
+const telemetrySettingsSchema = z
+  .object({
+    level: telemetryLevelSchema,
+  })
+  .openapi('TelemetrySettings');
+
+const telemetrySettingsPatchSchema = z
+  .object({
+    level: telemetryLevelSchema.optional(),
+  })
+  .openapi('TelemetrySettingsPatch');
+
 // --- Settings / Model Selection ---
 
 const modelIdSchema = z
@@ -395,6 +413,9 @@ export {
   providerPresetSchema,
   providerResponseSchema,
   providersResponseSchema,
+  telemetryLevelSchema,
+  telemetrySettingsPatchSchema,
+  telemetrySettingsSchema,
   toolCallHistoryResponseSchema,
   updateEndpointBodySchema,
   updateKnownModelBodySchema,

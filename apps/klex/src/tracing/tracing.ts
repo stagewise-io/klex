@@ -1,9 +1,12 @@
 import { trace } from '@opentelemetry/api';
 import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-http';
 import { NodeSDK, resources } from '@opentelemetry/sdk-node';
+import { SimpleSpanProcessor } from '@opentelemetry/sdk-trace-base';
 import { registerTelemetry } from 'ai';
 
 import type { ModuleLogger, RootLogger } from '@stagewise/logger';
+
+import type { TelemetrySpanProcessor } from '@/telemetry-manager';
 
 import { createKlexTelemetry } from './telemetry';
 
@@ -12,6 +15,7 @@ export interface TracingDependencies {
   otlpUrl: string;
   serviceName: string;
   resourceAttributes?: Record<string, string>;
+  spanProcessor: TelemetrySpanProcessor;
 }
 
 export interface Tracing {
@@ -29,6 +33,7 @@ class TracingModule implements Tracing {
       otlpUrl: string;
       serviceName: string;
       resourceAttributes: Record<string, string>;
+      spanProcessor: TelemetrySpanProcessor;
     },
   ) {}
 
@@ -39,6 +44,8 @@ class TracingModule implements Tracing {
       url: this.deps.otlpUrl,
     });
 
+    this.deps.spanProcessor.setDelegate(new SimpleSpanProcessor(exporter));
+
     const resource = resources.defaultResource().merge(
       resources.resourceFromAttributes({
         'service.name': this.deps.serviceName,
@@ -48,7 +55,7 @@ class TracingModule implements Tracing {
 
     this.sdk = new NodeSDK({
       resource,
-      traceExporter: exporter,
+      spanProcessors: [this.deps.spanProcessor],
     });
 
     this.sdk.start();
@@ -88,5 +95,6 @@ export function createTracing(deps: TracingDependencies): Tracing {
     otlpUrl: deps.otlpUrl,
     serviceName: deps.serviceName,
     resourceAttributes: deps.resourceAttributes ?? {},
+    spanProcessor: deps.spanProcessor,
   });
 }

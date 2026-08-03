@@ -62,8 +62,9 @@ async function main(): Promise<void> {
   try {
     await config.start();
     started.push(config);
-
-    const realtimeMediaEnabled = config.get().realtime.mode === 'loopback';
+    const realtimeMode = config.get().realtime.mode;
+    const realtimeMediaEnabled = realtimeMode !== 'disabled';
+    const openAIRealtime = config.resolveOpenAIRealtime();
     const modelProvider = createModelProvider({ logging: logger, config });
     const mcp = createMcp({ logging: logger, config, realtimeMediaEnabled });
     const introspector = createIntrospector({ logging: logger });
@@ -110,7 +111,8 @@ async function main(): Promise<void> {
     const realtimeMedia = createRealtimeMediaRuntime({
       logging: logger,
       mcp,
-      enabled: realtimeMediaEnabled,
+      mode: realtimeMode,
+      openAI: openAIRealtime,
     });
 
     for (const resource of [adminApi, modelProvider]) {

@@ -200,6 +200,20 @@ describe('LiveKitRoomMediaTransportConnector', () => {
     await transport.close();
   });
 
+  it('fails safely when an unsubscribed stream cannot close', async () => {
+    const { connector, room } = setup();
+    const transport = await connector.connect(descriptor, {
+      signal: new AbortController().signal,
+    });
+    const track = new FakeTrack('first');
+    track.stream.close.mockRejectedValueOnce(new Error('close failed'));
+    room.emitSubscribed(track);
+    room.emitUnsubscribed(track);
+    await expect(transport.closed).resolves.toMatchObject({ type: 'failed' });
+    expect(room.publisher.close).toHaveBeenCalledOnce();
+    expect(room.disconnect).toHaveBeenCalledOnce();
+  });
+
   it('validates outgoing PCM before capture', async () => {
     const { connector, room } = setup();
     const transport = await connector.connect(descriptor, {

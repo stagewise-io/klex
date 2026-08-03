@@ -243,10 +243,28 @@ const telemetryConfigSchema = z.object({
   level: telemetryLevelSchema,
 });
 
-const realtimeConfigSchema = z
+const serverVadConfigSchema = z
   .object({
-    mode: z.enum(['disabled', 'loopback']),
+    threshold: z.number().min(0).max(1).optional(),
+    prefixPaddingMs: z.number().int().min(0).max(5_000).optional(),
+    silenceDurationMs: z.number().int().min(100).max(10_000).optional(),
   })
+  .strict();
+
+const realtimeConfigSchema = z
+  .discriminatedUnion('mode', [
+    z.object({ mode: z.literal('disabled') }).strict(),
+    z.object({ mode: z.literal('loopback') }).strict(),
+    z
+      .object({
+        mode: z.literal('openai-realtime'),
+        model: modelIdSchema,
+        voice: z.string().trim().min(1),
+        instructions: z.string().trim().min(1),
+        serverVad: serverVadConfigSchema.optional(),
+      })
+      .strict(),
+  ])
   .default({ mode: 'disabled' });
 
 type RealtimeConfig = z.infer<typeof realtimeConfigSchema>;

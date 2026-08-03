@@ -81,6 +81,7 @@ function createMockConfig(
       inputCapabilities: {},
     }),
     getMcpServers: () => ({}),
+    resolveOpenAIRealtime: () => undefined,
     addMcpServer: async () => {
       throw new Error('Not used in model provider tests');
     },

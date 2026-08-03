@@ -11,7 +11,7 @@ import { createRealtimeMediaRuntime } from './runtime';
 const logging = { child: vi.fn() } as unknown as RootLogger;
 const mcp = {} as Mcp;
 
-function harness(enabled: boolean) {
+function harness(mode: 'disabled' | 'loopback' | 'openai-realtime') {
   const order: string[] = [];
   const connector = {
     connect: vi.fn(),
@@ -33,7 +33,7 @@ function harness(enabled: boolean) {
   const runtime = createRealtimeMediaRuntime({
     logging,
     mcp,
-    enabled,
+    mode,
     createConnector,
     createCoordinator,
   });
@@ -49,7 +49,7 @@ function harness(enabled: boolean) {
 
 describe('createRealtimeMediaRuntime', () => {
   it('does not create realtime resources when disabled', async () => {
-    const { runtime, createConnector, createCoordinator } = harness(false);
+    const { runtime, createConnector, createCoordinator } = harness('disabled');
     await runtime.start();
     await runtime.close();
     expect(createConnector).not.toHaveBeenCalled();
@@ -58,7 +58,7 @@ describe('createRealtimeMediaRuntime', () => {
 
   it('starts once and closes coordinator before native connector', async () => {
     const { runtime, createConnector, coordinator, connector, order } =
-      harness(true);
+      harness('loopback');
     await Promise.all([runtime.start(), runtime.start()]);
     await Promise.all([runtime.close(), runtime.close()]);
     expect(createConnector).toHaveBeenCalledOnce();
@@ -72,8 +72,16 @@ describe('createRealtimeMediaRuntime', () => {
     ]);
   });
 
+  it('requires resolved configuration in OpenAI mode', async () => {
+    const { runtime, createConnector } = harness('openai-realtime');
+    await expect(runtime.start()).rejects.toThrow(
+      'OpenAI realtime configuration is required',
+    );
+    expect(createConnector).not.toHaveBeenCalled();
+  });
+
   it('closes the connector when coordinator startup fails', async () => {
-    const { runtime, coordinator, connector } = harness(true);
+    const { runtime, coordinator, connector } = harness('loopback');
     vi.mocked(coordinator.start).mockRejectedValueOnce(
       new Error('start failed'),
     );

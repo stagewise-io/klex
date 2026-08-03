@@ -12,6 +12,7 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:livekit": "set -a; . ../../.env; set +a; vitest run src/media-transport/livekit-room/livekit-room.integration.test.ts --reporter=verbose",
+    "test:openai-realtime": "set -a; . ../../.env; set +a; vitest run src/session/realtime/openai-realtime/openai-realtime.integration.test.ts --reporter=verbose",
     "test:coverage": "vitest run --coverage",
     "clean": "rimraf dist"
   },
@@ -25,6 +26,7 @@
     "@types/ffprobe-static": "2.0.3",
     "@types/fluent-ffmpeg": "2.1.27",
     "@types/node": "26.1.1",
+    "@types/ws": "8.18.1",
     "@vitest/coverage-istanbul": "4.1.10",
     "esbuild": "0.28.1",
     "livekit-server-sdk": "2.17.0",
@@ -59,6 +61,7 @@
     "hono": "4.12.30",
     "quickjs-emscripten-core": "0.32.0",
     "sharp": "0.35.3",
+    "ws": "8.18.1",
     "zod": "4.4.3"
   },
   "keywords": [],

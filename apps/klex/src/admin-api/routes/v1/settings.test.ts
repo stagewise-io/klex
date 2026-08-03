@@ -66,6 +66,9 @@ function makeDeps(config: Partial<Config> = {}): SettingsRouteDependencies {
   return {
     config: {
       get: () => baseConfig,
+      mutate: vi.fn(async (fn: (cfg: KlexConfig) => KlexConfig) =>
+        fn(baseConfig),
+      ),
       updateModelSelection: vi.fn(async () => baseConfig),
       ...config,
     } as unknown as Config,
@@ -161,19 +164,18 @@ describe('PATCH /v1/settings/model-selection', () => {
         chat: ['anthropic:claude-3-haiku'],
       },
     };
-    const updateFn = vi.fn(async () => updatedConfig);
-    const app = createApp(makeDeps({ updateModelSelection: updateFn }));
+    const mutateFn = vi.fn(async (fn: (cfg: KlexConfig) => KlexConfig) => {
+      const next = fn(baseConfig);
+      return { ...baseConfig, ...next } as KlexConfig;
+    });
+    const app = createApp(makeDeps({ mutate: mutateFn }));
     const response = await app.request('/v1/settings/model-selection', {
       method: 'PATCH',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ chat: ['anthropic:claude-3-haiku'] }),
     });
     expect(response.status).toBe(200);
-    expect(updateFn).toHaveBeenCalledWith({
-      chat: ['anthropic:claude-3-haiku'],
-      compaction: baseSelection.compaction,
-      memory: baseSelection.memory,
-    });
+    expect(mutateFn).toHaveBeenCalledOnce();
     const body = (await response.json()) as ModelSelection & {
       warnings: unknown[];
     };
@@ -189,19 +191,18 @@ describe('PATCH /v1/settings/model-selection', () => {
       compaction: ['openai:gpt-4o-mini'],
       memory: ['anthropic:claude-3-haiku'],
     };
-    const updatedConfig: KlexConfig = {
-      ...baseConfig,
-      modelSelection: newSelection,
-    };
-    const updateFn = vi.fn(async () => updatedConfig);
-    const app = createApp(makeDeps({ updateModelSelection: updateFn }));
+    const mutateFn = vi.fn(async (fn: (cfg: KlexConfig) => KlexConfig) => {
+      const next = fn(baseConfig);
+      return { ...baseConfig, ...next } as KlexConfig;
+    });
+    const app = createApp(makeDeps({ mutate: mutateFn }));
     const response = await app.request('/v1/settings/model-selection', {
       method: 'PATCH',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(newSelection),
     });
     expect(response.status).toBe(200);
-    expect(updateFn).toHaveBeenCalledWith(newSelection);
+    expect(mutateFn).toHaveBeenCalledOnce();
     const body = await response.json();
     expect(body).toMatchObject(newSelection);
   });
@@ -209,7 +210,7 @@ describe('PATCH /v1/settings/model-selection', () => {
   it('maps ConfigValidationError to 400', async () => {
     const app = createApp(
       makeDeps({
-        updateModelSelection: vi.fn(async () => {
+        mutate: vi.fn(async () => {
           throw new ConfigValidationError('Invalid model reference');
         }),
       }),
@@ -227,7 +228,7 @@ describe('PATCH /v1/settings/model-selection', () => {
   it('maps unexpected errors to 500', async () => {
     const app = createApp(
       makeDeps({
-        updateModelSelection: vi.fn(async () => {
+        mutate: vi.fn(async () => {
           throw new Error('disk full');
         }),
       }),
@@ -244,15 +245,17 @@ describe('PATCH /v1/settings/model-selection', () => {
   });
 
   it('preserves unset fields when patching with empty object', async () => {
-    const updateFn = vi.fn(async () => baseConfig);
-    const app = createApp(makeDeps({ updateModelSelection: updateFn }));
+    const mutateFn = vi.fn(async (fn: (cfg: KlexConfig) => KlexConfig) =>
+      fn(baseConfig),
+    );
+    const app = createApp(makeDeps({ mutate: mutateFn }));
     const response = await app.request('/v1/settings/model-selection', {
       method: 'PATCH',
       headers: { 'content-type': 'application/json' },
       body: '{}',
     });
     expect(response.status).toBe(200);
-    expect(updateFn).toHaveBeenCalledWith(baseSelection);
+    expect(mutateFn).toHaveBeenCalledOnce();
   });
 
   // --- Provider / endpoint validation ---
@@ -322,7 +325,9 @@ describe('PATCH /v1/settings/model-selection', () => {
     const app = createApp(
       makeDeps({
         get: () => configWithUnknown,
-        updateModelSelection: vi.fn(async () => configWithUnknown),
+        mutate: vi.fn(async (fn: (cfg: KlexConfig) => KlexConfig) =>
+          fn(configWithUnknown),
+        ),
       }),
     );
     const response = await app.request('/v1/settings/model-selection', {
@@ -343,8 +348,10 @@ describe('PATCH /v1/settings/model-selection', () => {
         chat: ['openai:gpt-4o', 'openai:gpt-5-turbo'],
       },
     };
-    const updateFn = vi.fn(async () => updatedConfig);
-    const app = createApp(makeDeps({ updateModelSelection: updateFn }));
+    const mutateFn = vi.fn(async (fn: (cfg: KlexConfig) => KlexConfig) =>
+      fn(baseConfig),
+    );
+    const app = createApp(makeDeps({ mutate: mutateFn }));
     const response = await app.request('/v1/settings/model-selection', {
       method: 'PATCH',
       headers: { 'content-type': 'application/json' },
@@ -368,8 +375,10 @@ describe('PATCH /v1/settings/model-selection', () => {
         chat: ['local:default:llama3', 'local:default:mistral'],
       },
     };
-    const updateFn = vi.fn(async () => updatedConfig);
-    const app = createApp(makeDeps({ updateModelSelection: updateFn }));
+    const mutateFn = vi.fn(async (fn: (cfg: KlexConfig) => KlexConfig) =>
+      fn(baseConfig),
+    );
+    const app = createApp(makeDeps({ mutate: mutateFn }));
     const response = await app.request('/v1/settings/model-selection', {
       method: 'PATCH',
       headers: { 'content-type': 'application/json' },
@@ -388,15 +397,10 @@ describe('PATCH /v1/settings/model-selection', () => {
   });
 
   it('returns no warnings when all models are in knownModels', async () => {
-    const updatedConfig: KlexConfig = {
-      ...baseConfig,
-      modelSelection: {
-        ...baseSelection,
-        chat: ['openai:gpt-4o'],
-      },
-    };
-    const updateFn = vi.fn(async () => updatedConfig);
-    const app = createApp(makeDeps({ updateModelSelection: updateFn }));
+    const mutateFn = vi.fn(async (fn: (cfg: KlexConfig) => KlexConfig) =>
+      fn(baseConfig),
+    );
+    const app = createApp(makeDeps({ mutate: mutateFn }));
     const response = await app.request('/v1/settings/model-selection', {
       method: 'PATCH',
       headers: { 'content-type': 'application/json' },
@@ -410,16 +414,10 @@ describe('PATCH /v1/settings/model-selection', () => {
   });
 
   it('collects warnings across multiple purposes', async () => {
-    const updatedConfig: KlexConfig = {
-      ...baseConfig,
-      modelSelection: {
-        chat: ['openai:gpt-4o', 'openai:unknown-chat'],
-        compaction: ['openai:gpt-4o-mini', 'openai:unknown-compaction'],
-        memory: ['anthropic:claude-3-haiku'],
-      },
-    };
-    const updateFn = vi.fn(async () => updatedConfig);
-    const app = createApp(makeDeps({ updateModelSelection: updateFn }));
+    const mutateFn = vi.fn(async (fn: (cfg: KlexConfig) => KlexConfig) =>
+      fn(baseConfig),
+    );
+    const app = createApp(makeDeps({ mutate: mutateFn }));
     const response = await app.request('/v1/settings/model-selection', {
       method: 'PATCH',
       headers: { 'content-type': 'application/json' },
@@ -439,15 +437,17 @@ describe('PATCH /v1/settings/model-selection', () => {
   });
 
   it('still persists when warnings are present', async () => {
-    const updateFn = vi.fn(async () => baseConfig);
-    const app = createApp(makeDeps({ updateModelSelection: updateFn }));
+    const mutateFn = vi.fn(async (fn: (cfg: KlexConfig) => KlexConfig) =>
+      fn(baseConfig),
+    );
+    const app = createApp(makeDeps({ mutate: mutateFn }));
     const response = await app.request('/v1/settings/model-selection', {
       method: 'PATCH',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ chat: ['openai:unknown-model'] }),
     });
     expect(response.status).toBe(200);
-    expect(updateFn).toHaveBeenCalled();
+    expect(mutateFn).toHaveBeenCalled();
     const body = (await response.json()) as ModelSelection & {
       warnings: Array<{ modelId: string; message: string }>;
     };

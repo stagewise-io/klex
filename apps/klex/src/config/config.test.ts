@@ -641,18 +641,19 @@ describe('Config — mutate', () => {
     expect(module.get()).toEqual(manualConfig());
   });
 
-  it('validates result through replaceNow', async () => {
+  it('does not validate references through mutate (by design)', async () => {
+    // mutate intentionally skips validateModelReferences so that
+    // non-model-selection mutations succeed even when existing
+    // modelSelection has broken references.
     const { module } = await setup();
-    await expect(
-      module.mutate((current) => ({
-        ...current,
-        modelSelection: {
-          ...current.modelSelection,
-          chat: ['nonexistent:chat:model'],
-        },
-      })),
-    ).rejects.toBeInstanceOf(ConfigValidationError);
-    expect(module.get()).toEqual(manualConfig());
+    const result = await module.mutate((current) => ({
+      ...current,
+      modelSelection: {
+        ...current.modelSelection,
+        chat: ['nonexistent:chat:model'],
+      },
+    }));
+    expect(result.modelSelection.chat).toEqual(['nonexistent:chat:model']);
   });
 });
 
@@ -1003,6 +1004,95 @@ describe('Config — getMcpServers', () => {
   );
 });
 
+describe('Config — MCP server CRUD', () => {
+  const stdioServer = { command: 'mcp-server', args: ['--port', '3000'] };
+  const httpServer = { url: 'https://example.com/mcp' };
+
+  it('addMcpServer adds a server', async () => {
+    const { module } = await setup();
+    await module.addMcpServer('new-server', stdioServer);
+    expect(module.getMcpServers()['new-server']).toBeDefined();
+  });
+
+  it('addMcpServer rejects duplicate name', async () => {
+    const { module } = await setup();
+    await module.addMcpServer('new-server', stdioServer);
+    await expect(
+      module.addMcpServer('new-server', httpServer),
+    ).rejects.toMatchObject({ code: 'already_exists' });
+  });
+
+  it('updateMcpServer replaces an existing server', async () => {
+    const { module } = await setup();
+    await module.addMcpServer('srv', stdioServer);
+    await module.updateMcpServer('srv', httpServer);
+    const server = module.getMcpServers()['srv'];
+    expect(server && 'url' in server ? server.url : '').toBe(
+      'https://example.com/mcp',
+    );
+  });
+
+  it('updateMcpServer rejects unknown server', async () => {
+    const { module } = await setup();
+    await expect(
+      module.updateMcpServer('nonexistent', stdioServer),
+    ).rejects.toMatchObject({ code: 'not_found' });
+  });
+
+  it('removeMcpServer removes a server', async () => {
+    const { module } = await setup();
+    await module.addMcpServer('srv', stdioServer);
+    await module.removeMcpServer('srv');
+    expect(module.getMcpServers()['srv']).toBeUndefined();
+  });
+
+  it('removeMcpServer rejects unknown server', async () => {
+    const { module } = await setup();
+    await expect(module.removeMcpServer('nonexistent')).rejects.toMatchObject({
+      code: 'not_found',
+    });
+  });
+});
+
+describe('Config — mutate skips validateModelReferences', () => {
+  it('allows mutating non-model-selection fields when modelSelection has broken references', async () => {
+    // Start with a valid config, then use mutate to introduce a broken
+    // model selection reference (mutate skips reference validation).
+    const { module } = await setup(
+      noSelectionConfig({
+        local: {
+          endpoints: {
+            chat: {
+              url: 'http://localhost:11434/v1',
+              format: 'chat-completions',
+              auth: {},
+            },
+          },
+        },
+      }),
+    );
+    await module.mutate((current) => ({
+      ...current,
+      modelSelection: {
+        ...current.modelSelection,
+        chat: ['nonexistent:model'],
+      },
+    }));
+
+    // A subsequent non-model-selection mutation should succeed even though
+    // modelSelection references a non-existent provider.
+    await module.addEndpoint('local', 'api', {
+      url: 'http://localhost:8080/v1',
+      format: 'open-responses',
+      auth: {},
+    });
+    const provider = module.get().providers['local'];
+    expect(
+      provider && 'endpoints' in provider ? provider.endpoints['api'] : null,
+    ).toBeDefined();
+  });
+});
+
 function noSelectionConfig(providers: KlexConfig['providers']): KlexConfig {
   return {
     providers,
@@ -1179,6 +1269,30 @@ describe('Config — endpoint CRUD', () => {
       provider && 'endpoints' in provider ? provider.endpoints['chat'] : null;
     expect(ep?.url).toBe('http://localhost:7000/v1');
     expect(ep?.format).toBe('open-responses');
+  });
+
+  it('updateEndpoint preserves knownModels on the endpoint', async () => {
+    const { module } = await setup();
+    // Add a known model first
+    await module.addKnownModel(
+      'local',
+      'llama3',
+      {
+        displayName: 'Test Model',
+        contextSize: 128_000,
+      },
+      'chat',
+    );
+    // Now update the endpoint
+    await module.updateEndpoint('local', 'chat', newEndpoint);
+    const provider = module.get().providers['local'];
+    const ep =
+      provider && 'endpoints' in provider ? provider.endpoints['chat'] : null;
+    expect(ep?.url).toBe('http://localhost:7000/v1');
+    expect(ep?.knownModels?.llama3).toEqual({
+      displayName: 'Test Model',
+      contextSize: 128_000,
+    });
   });
 
   it('updateEndpoint rejects unknown provider', async () => {

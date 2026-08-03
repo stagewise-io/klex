@@ -1,5 +1,7 @@
 import { extendZodWithOpenApi, z } from '@hono/zod-openapi';
 
+import type { ModelId } from '@/config';
+
 // Extend Zod with .openapi() metadata support for spec generation.
 extendZodWithOpenApi(z);
 
@@ -130,7 +132,7 @@ const modelIdSchema = z
     error:
       'Model ID must use the format providerId:modelId (preset) or providerId:endpointId:modelId (manual) with non-empty segments',
   })
-  .openapi('ModelId');
+  .openapi('ModelId') as z.ZodType<ModelId>;
 
 const modelSelectionSchema = z
   .object({

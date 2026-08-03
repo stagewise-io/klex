@@ -167,6 +167,24 @@ describe('GET /v1/providers — list providers', () => {
     expect(api).toBeDefined();
     expect(api!.auth.apiKey).toBe('[REDACTED]');
   });
+
+  it('does not include knownModels in endpoint objects', async () => {
+    const app = createApp(makeDeps());
+    const response = await app.request('/v1/providers');
+    const body = (await response.json()) as {
+      providers: Array<Record<string, unknown>>;
+    };
+    const manual = body.providers.find((p) => 'endpoints' in p);
+    expect(manual).toBeDefined();
+    const endpoints = manual!.endpoints as Record<
+      string,
+      Record<string, unknown>
+    >;
+    const chat = endpoints.chat;
+    expect(chat).toBeDefined();
+    expect(chat).not.toHaveProperty('knownModels');
+    expect(Object.keys(chat!)).toEqual(['url', 'format', 'auth']);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -364,6 +382,37 @@ describe('PATCH /v1/providers/:name — update provider', () => {
     expect(provider.endpoints).toHaveProperty('chat');
     expect(provider.endpoints).toHaveProperty('api');
     expect(provider.endpoints).toHaveProperty('new');
+  });
+
+  it('preserves knownModels when patching an existing endpoint', async () => {
+    const mutateFn = vi.fn(async (fn: (cfg: KlexConfig) => KlexConfig) =>
+      fn(baseConfig),
+    );
+    const app = createApp(makeDeps({ mutate: mutateFn }));
+    const response = await app.request('/v1/providers/local', {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        endpoints: {
+          chat: {
+            url: 'http://localhost:9999/v1',
+            format: 'messages',
+            auth: {},
+          },
+        },
+      }),
+    });
+    expect(response.status).toBe(200);
+    const result = (await mutateFn.mock.results[0]!.value) as KlexConfig;
+    const provider = result.providers.local! as {
+      endpoints: Record<string, Record<string, unknown>>;
+    };
+    const chat = provider.endpoints.chat!;
+    expect(chat.url).toBe('http://localhost:9999/v1');
+    expect(chat.format).toBe('messages');
+    expect(chat.knownModels).toEqual({
+      'model:8b': { displayName: 'Model 8B', contextSize: 32_000 },
+    });
   });
 
   it('returns 404 for unknown provider', async () => {
@@ -932,6 +981,16 @@ describe('GET /v1/providers/:name/known-models — list known models', () => {
     );
     expect(response.status).toBe(404);
   });
+
+  it('returns 400 when endpointName is provided for a preset provider', async () => {
+    const app = createApp(makeDeps());
+    const response = await app.request(
+      '/v1/providers/my-openai/known-models?endpointName=default',
+    );
+    expect(response.status).toBe(400);
+    const body = (await response.json()) as { error: string };
+    expect(body.error).toContain('Preset');
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -984,7 +1043,13 @@ describe('POST /v1/providers/:name/known-models — add known model', () => {
   });
 
   it('rejects endpointName on preset provider with 400', async () => {
-    const app = createApp(makeDeps());
+    const addKnownModelFn = vi.fn(async () => {
+      throw new ConfigValidationError(
+        `Preset provider 'my-openai' does not support endpoint-scoped known models`,
+        { code: 'type_mismatch' },
+      );
+    });
+    const app = createApp(makeDeps({ addKnownModel: addKnownModelFn }));
     const response = await app.request('/v1/providers/my-openai/known-models', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -1000,7 +1065,13 @@ describe('POST /v1/providers/:name/known-models — add known model', () => {
   });
 
   it('rejects missing endpointName on manual provider with 400', async () => {
-    const app = createApp(makeDeps());
+    const addKnownModelFn = vi.fn(async () => {
+      throw new ConfigValidationError(
+        `Manual provider 'local' requires an endpoint name for known models`,
+        { code: 'type_mismatch' },
+      );
+    });
+    const app = createApp(makeDeps({ addKnownModel: addKnownModelFn }));
     const response = await app.request('/v1/providers/local/known-models', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -1008,11 +1079,17 @@ describe('POST /v1/providers/:name/known-models — add known model', () => {
     });
     expect(response.status).toBe(400);
     const body = (await response.json()) as { error: string };
-    expect(body.error).toContain('endpointName');
+    expect(body.error).toContain('endpoint name');
   });
 
   it('returns 404 for unknown endpoint on manual provider', async () => {
-    const app = createApp(makeDeps());
+    const addKnownModelFn = vi.fn(async () => {
+      throw new ConfigValidationError(
+        `Endpoint 'nonexistent' not found in provider 'local'`,
+        { code: 'not_found' },
+      );
+    });
+    const app = createApp(makeDeps({ addKnownModel: addKnownModelFn }));
     const response = await app.request('/v1/providers/local/known-models', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -1026,7 +1103,12 @@ describe('POST /v1/providers/:name/known-models — add known model', () => {
   });
 
   it('returns 404 for unknown provider', async () => {
-    const app = createApp(makeDeps());
+    const addKnownModelFn = vi.fn(async () => {
+      throw new ConfigValidationError(`Provider 'nonexistent' not found`, {
+        code: 'not_found',
+      });
+    });
+    const app = createApp(makeDeps({ addKnownModel: addKnownModelFn }));
     const response = await app.request(
       '/v1/providers/nonexistent/known-models',
       {
@@ -1247,7 +1329,13 @@ describe('DELETE /v1/providers/:name/known-models/:modelId — delete known mode
   });
 
   it('rejects endpointName query on preset provider with 400', async () => {
-    const app = createApp(makeDeps());
+    const removeKnownModelFn = vi.fn(async () => {
+      throw new ConfigValidationError(
+        `Preset provider 'my-openai' does not support endpoint-scoped known models`,
+        { code: 'type_mismatch' },
+      );
+    });
+    const app = createApp(makeDeps({ removeKnownModel: removeKnownModelFn }));
     const response = await app.request(
       '/v1/providers/my-openai/known-models/gpt-4o?endpointName=default',
       { method: 'DELETE' },
@@ -1256,7 +1344,13 @@ describe('DELETE /v1/providers/:name/known-models/:modelId — delete known mode
   });
 
   it('rejects missing endpointName query on manual provider with 400', async () => {
-    const app = createApp(makeDeps());
+    const removeKnownModelFn = vi.fn(async () => {
+      throw new ConfigValidationError(
+        `Manual provider 'local' requires an endpoint name for known models`,
+        { code: 'type_mismatch' },
+      );
+    });
+    const app = createApp(makeDeps({ removeKnownModel: removeKnownModelFn }));
     const response = await app.request(
       '/v1/providers/local/known-models/model:8b',
       { method: 'DELETE' },
@@ -1265,7 +1359,13 @@ describe('DELETE /v1/providers/:name/known-models/:modelId — delete known mode
   });
 
   it('returns 404 for unknown model', async () => {
-    const app = createApp(makeDeps());
+    const removeKnownModelFn = vi.fn(async () => {
+      throw new ConfigValidationError(
+        `Model 'nonexistent' not found in provider 'my-openai'`,
+        { code: 'not_found' },
+      );
+    });
+    const app = createApp(makeDeps({ removeKnownModel: removeKnownModelFn }));
     const response = await app.request(
       '/v1/providers/my-openai/known-models/nonexistent',
       { method: 'DELETE' },
@@ -1274,7 +1374,12 @@ describe('DELETE /v1/providers/:name/known-models/:modelId — delete known mode
   });
 
   it('returns 404 for unknown provider', async () => {
-    const app = createApp(makeDeps());
+    const removeKnownModelFn = vi.fn(async () => {
+      throw new ConfigValidationError(`Provider 'nonexistent' not found`, {
+        code: 'not_found',
+      });
+    });
+    const app = createApp(makeDeps({ removeKnownModel: removeKnownModelFn }));
     const response = await app.request(
       '/v1/providers/nonexistent/known-models/gpt-4o',
       { method: 'DELETE' },

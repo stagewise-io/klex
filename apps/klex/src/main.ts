@@ -10,6 +10,7 @@ import { createRouter } from '@/router';
 import { createChatSession } from '@/session/chat';
 import { createContextCompactionExt } from '@/session/chat/extensions/context-compaction';
 import { createJsReplSandboxExt } from '@/session/chat/extensions/js-repl-sandbox';
+import { createVisionInputOptimizerExt } from '@/session/chat/extensions/vision-input-optimizer';
 import type { SessionHooks } from '@/session/types';
 import { createTracing } from '@/tracing';
 
@@ -62,6 +63,7 @@ async function main(): Promise<void> {
         extensionFactories: [
           createJsReplSandboxExt,
           createContextCompactionExt,
+          createVisionInputOptimizerExt,
         ],
         dataDirectory: cli.dataDirectory,
         hooks,

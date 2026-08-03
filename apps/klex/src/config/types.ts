@@ -94,6 +94,12 @@ const imageInputCapabilitySchema = z
       .array(z.string().regex(/^image\/[a-z0-9][a-z0-9.+-]*$/i))
       .nonempty(),
     maxBytes: z.number().int().positive(),
+    /** Max image width in pixels. undefined = no limit. Default: 2048. */
+    maxWidth: z.number().int().positive().optional(),
+    /** Max image height in pixels. undefined = no limit. Default: 2048. */
+    maxHeight: z.number().int().positive().optional(),
+    /** Max total pixel count (width × height). undefined = no limit. */
+    maxTotalPixels: z.number().int().positive().optional(),
   })
   .strict();
 

@@ -48,6 +48,7 @@
     "drizzle-orm": "0.45.2",
     "hono": "4.12.30",
     "quickjs-emscripten-core": "0.32.0",
+    "sharp": "0.35.3",
     "zod": "4.4.3"
   },
   "keywords": [],

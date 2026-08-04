@@ -126,6 +126,12 @@ class ChatSessionModule implements AgentSession {
 
   private shortId = '';
 
+  /**
+   * Free-text activity summary maintained by extensions via
+   * {@link ExtensionDeps.setActivitySummary}. Read by the router for routing.
+   */
+  private activitySummary: string | null = null;
+
   constructor(
     private readonly deps: {
       logger: ModuleLogger;
@@ -210,6 +216,8 @@ class ChatSessionModule implements AgentSession {
       logging: this.deps.logging,
       mcp: this.deps.mcp,
       sessionId: this.sessionId,
+      setActivitySummary: (summary: string | null) =>
+        this.setActivitySummary(summary),
     };
 
     this.extensionHandler = createExtensionHandler({
@@ -752,6 +760,7 @@ class ChatSessionModule implements AgentSession {
       messageCount: this.messages.length,
       createdAt: this.createdAt,
       shortId: this.shortId,
+      activitySummary: this.activitySummary,
     };
   }
 
@@ -849,6 +858,10 @@ class ChatSessionModule implements AgentSession {
 
   setShortId(shortId: string): void {
     this.shortId = shortId;
+  }
+
+  setActivitySummary(summary: string | null): void {
+    this.activitySummary = summary;
   }
 }
 

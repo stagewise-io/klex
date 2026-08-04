@@ -128,6 +128,7 @@ function makeSessionInfo(overrides: Partial<SessionInfo> = {}): SessionInfo {
     messageCount: 0,
     createdAt: new Date().toISOString(),
     shortId: '',
+    activitySummary: null,
     ...overrides,
   };
 }
@@ -157,6 +158,9 @@ function makeMockSession(
     restorePendingEvents: vi.fn(),
     setShortId: vi.fn((id: string) => {
       info.shortId = id;
+    }),
+    setActivitySummary: vi.fn((summary: string | null) => {
+      info.activitySummary = summary;
     }),
     ...overrides,
   } as unknown as AgentSession;
@@ -315,6 +319,8 @@ function setupPushNotificationHarness() {
     setShortId: vi.fn(),
     restorePendingEvents: vi.fn(),
   } as unknown as AgentSession;
+  // AgentSession requires setActivitySummary on the interface.
+  (session as AgentSession).setActivitySummary = vi.fn();
   const router = createRouter({
     logging,
     mcp,
@@ -936,6 +942,39 @@ describe('Router', () => {
       chatId: { '12345': 1 },
       senderId: { u1: 1 },
     });
+
+    await router.close();
+  });
+
+  it('passes activitySummary from session info to routing LLM', async () => {
+    const { deps, createChatSession } = makeDeps({
+      routingModels: ['test:model'],
+      routingDecision: {
+        sessionId: 's001',
+        priority: 'medium',
+      },
+    });
+    const router = createRouter(deps);
+    await router.start();
+
+    const session = createChatSession.mock.results[0]!.value as AgentSession;
+    session.setShortId('s001');
+    const info = session.getSessionInfo();
+    vi.mocked(session.getSessionInfo).mockReturnValue({
+      ...info,
+      shortId: 's001',
+      activitySummary:
+        'Reviewing PR #42 in klex-agent; notified chat 999 on Telegram',
+    });
+
+    const event = makeEvent();
+    event.context.metadata = { chatId: '999' };
+    await router.sendInput(event);
+
+    const lastCall = vi.mocked(callRoutingLlm).mock.calls.at(-1)?.[0];
+    expect(lastCall?.sessions[0]?.activitySummary).toBe(
+      'Reviewing PR #42 in klex-agent; notified chat 999 on Telegram',
+    );
 
     await router.close();
   });

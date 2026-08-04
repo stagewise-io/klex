@@ -178,6 +178,7 @@ describe('callRoutingLlm', () => {
             senderId: { u1: 1, u2: 1, u3: 1 },
           },
         },
+        activitySummary: null,
       },
     ];
     const eventMetadata = { type: 'message', count: 5 };
@@ -214,6 +215,36 @@ describe('callRoutingLlm', () => {
       isEnabled: true,
       functionId: 'router',
     });
+  });
+
+  it('includes activitySummary in the prompt when set', async () => {
+    generateObjectMock.mockResolvedValueOnce(
+      genSuccess({ sessionId: '', priority: 'medium' }),
+    );
+
+    const sessions = [
+      {
+        shortId: 'a1b2',
+        status: 'active',
+        runtimeState: 'idle',
+        eventPatterns: {
+          eventCount: 1,
+          sourceEnvs: ['github'],
+          metadataFrequency: { repo: { 'klex-agent': 1 } },
+        },
+        activitySummary:
+          'Reviewing PR #42 in klex-agent; notified chat 999 on Telegram',
+      },
+    ];
+
+    const params = makeParams({ sessions });
+    await callRoutingLlm(params);
+
+    const callArgs = generateObjectMock.mock.calls[0]?.[0];
+    const prompt = JSON.parse(callArgs.prompt);
+    expect(prompt.sessions[0].activitySummary).toBe(
+      'Reviewing PR #42 in klex-agent; notified chat 999 on Telegram',
+    );
   });
 });
 

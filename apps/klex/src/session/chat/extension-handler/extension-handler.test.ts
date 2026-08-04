@@ -110,6 +110,7 @@ const noopDeps: BaseExtensionDeps = {
   } as unknown as BaseExtensionDeps['logging'],
   mcp: {} as unknown as BaseExtensionDeps['mcp'],
   sessionId: 'test-session-id',
+  setActivitySummary: vi.fn(),
 };
 
 const HANDLER_OPTS = {

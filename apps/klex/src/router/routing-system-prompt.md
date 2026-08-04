@@ -16,6 +16,9 @@ You will receive:
      - `metadataFrequency`: for each metadata key, a map of observed values → occurrence count
        Example: `{ "chatId": { "12345": 3 }, "senderId": { "user1": 1, "user2": 1, "user3": 1 } }`
        This means 3 events came from chat 12345, sent by 3 different users.
+   - `activitySummary`: a free-text description of what the session has been doing (may be `null`)
+     This is maintained by extensions and may mention identifiers from outgoing actions —
+     e.g. "Reviewing PR #42 in klex-agent; notified chat 999 on Telegram".
 2. Metadata about a new incoming event, including a short content preview (text truncated to 32 chars, non-text blocks shown as placeholders like `[image]`, `[audio: 5sec]`, `[resource_link: name]`). If the event has a `presetPriority` field, the priority is already decided — use that value and ignore the `priority` field in your response.
 
 You must decide:
@@ -28,6 +31,13 @@ How to use event patterns for routing:
 - If multiple sessions match, prefer the one with the highest occurrence count for the matching key.
 - If the incoming event's metadata has no overlap with any session's observed values, create a new session.
 - The `sourceEnv` is also a signal: events from the same source environment are more likely related, but same-source events with no metadata overlap may still belong to different sessions.
+
+How to use activity summaries for routing:
+- The `activitySummary` field describes what the session has been doing, including outgoing actions the session initiated in other environments.
+- If an incoming event's metadata identifiers (chatId, repo, prNumber, etc.) appear in a session's `activitySummary`, route it to that session — the session initiated that interaction.
+- Example: session activity says "notified chat 999 on Telegram" and the incoming event has `chatId: "999"` from Telegram → route to that session.
+- Activity summaries are especially important for cross-environment routing: they bridge incoming events to outgoing actions that the event patterns alone cannot see.
+- When `activitySummary` is `null`, rely solely on event patterns.
 
 Guidelines:
 - Route related events to the same session to preserve conversation context

@@ -459,6 +459,7 @@ class RouterModule implements Router {
         status: sessionInfo.status,
         runtimeState: sessionInfo.runtimeState,
         eventPatterns: analyzeEventPatterns(entry.eventLog),
+        activitySummary: sessionInfo.activitySummary,
       });
     }
     return info;

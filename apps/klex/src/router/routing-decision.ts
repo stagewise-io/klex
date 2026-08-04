@@ -54,6 +54,12 @@ interface SessionRoutingInfo {
   status: string;
   runtimeState: string;
   eventPatterns: EventPatterns;
+  /**
+   * Free-text activity summary maintained by extensions. `null` when no
+   * extension has set it. The LLM uses this to match incoming events
+   * against what the session has been doing.
+   */
+  activitySummary: string | null;
 }
 
 interface RoutingDecisionParams {

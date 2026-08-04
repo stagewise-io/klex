@@ -13,7 +13,7 @@ You will receive:
 You must decide:
 - Whether to route this event to an existing session or create a new one
 - What priority to assign: "low" (background context), "medium" (normal input), or "high" (urgent interrupt)
-- Optionally, a brief summary of what the target session is now doing (use `null` if unchanged)
+- Optionally, a brief summary of what the target session is now doing (empty string if unchanged)
   - If possible, contain clear names, and identifiers (i.e. the ID or name of a conversation, thread, or user/person you interact with).
   - The description is passed into the next routing call and must serve the purpose of matching an existing session.
   - Write short, concise bullet-point-like text.
@@ -27,4 +27,4 @@ Guidelines:
 - Set "high" priority only for genuinely urgent events. Prefer using "medium" as default priority.
   - If a new event is related to the previous event or is an extension of it. (i.e. a quick follow up message or typo-fix within a conversation), use "medium".
   - If a session currently is busy with a task and the message is not directly relevant to that task, prefer "low" priority.
-- Provide a summary when the session's activity changes based on this event; use `null` otherwise
+- Provide a summary when the session's activity changes based on this event; empty string otherwise

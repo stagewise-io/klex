@@ -25,9 +25,8 @@ const routingDecisionSchema = z.object({
   priority: z.enum(['low', 'medium', 'high']),
   summary: z
     .string()
-    .nullable()
     .describe(
-      'Brief summary of what the target session is doing now. Use null if unchanged.',
+      'Brief summary of what the target session is doing now. Empty string if unchanged.',
     ),
 });
 

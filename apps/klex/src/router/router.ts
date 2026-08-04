@@ -309,7 +309,7 @@ class RouterModule implements Router {
             decision.sessionId,
           );
         }
-        if (decision.summary != null) {
+        if (decision.summary !== '') {
           span.setAttribute('klex.router.decision.summary', decision.summary);
         }
       } else {
@@ -331,8 +331,8 @@ class RouterModule implements Router {
           !this.sessions.has(decision.sessionId),
       });
 
-      // Update summary if the LLM provided one.
-      if (summary != null) {
+      // Update summary if the LLM provided a non-empty one.
+      if (summary !== null) {
         entry.summary = summary;
         entry.session.setSummary(summary);
       }
@@ -400,7 +400,7 @@ class RouterModule implements Router {
     if (decision.sessionId !== '') {
       const entry = this.sessions.get(decision.sessionId);
       if (entry) {
-        return { entry, priority, summary: decision.summary ?? null };
+        return { entry, priority, summary: decision.summary || null };
       }
       // Hallucinated session ID — create a new session.
       this.deps.logger.warn(
@@ -417,7 +417,7 @@ class RouterModule implements Router {
         'New session start failed',
       );
     });
-    return { entry: newEntry, priority, summary: decision.summary ?? null };
+    return { entry: newEntry, priority, summary: decision.summary || null };
   }
 
   /**

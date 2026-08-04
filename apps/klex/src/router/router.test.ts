@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { RootLogger } from '@stagewise/logger';
 
 import type { Config, ModelId } from '@/config';
-import type { IntrospectionScope } from '@/introspection';
+import type { IntrospectFn, IntrospectionScope } from '@/introspection';
 import type { Mcp, McpPushNotification } from '@/mcp';
 import type { ModelProvider } from '@/model-provider';
 import { type SessionInboxEvent, SessionInboxPriority } from '@/session/inbox';
@@ -41,14 +41,43 @@ vi.mock('node:crypto', () => ({
 
 // --- shared helpers ---
 
-function createIntrospectionMock(): IntrospectionScope {
+function createIntrospectionMock(): {
+  scope: IntrospectionScope;
+  getState: (path: string[]) => unknown;
+} {
+  const children = new Map<
+    string,
+    ReturnType<typeof createIntrospectionMock>
+  >();
+  let stateFn: IntrospectFn | null = null;
+
   const make = (): IntrospectionScope => ({
     path: [],
-    introspect: () => undefined,
-    child: () => make(),
-    removeChild: () => undefined,
+    introspect: (fn: IntrospectFn) => {
+      stateFn = fn;
+    },
+    child: (id: string) => {
+      if (!children.has(id)) {
+        children.set(id, createIntrospectionMock());
+      }
+      return children.get(id)!.scope;
+    },
+    removeChild: (id: string) => {
+      children.delete(id);
+    },
   });
-  return make();
+
+  const getState = (path: string[]): unknown => {
+    if (path.length === 0) {
+      return stateFn ? stateFn() : null;
+    }
+    const [head, ...rest] = path;
+    const child = children.get(head);
+    if (!child) return undefined;
+    return child.getState(rest);
+  };
+
+  return { scope: make(), getState };
 }
 
 function makeSessionInfo(overrides: Partial<SessionInfo> = {}): SessionInfo {
@@ -180,6 +209,8 @@ function makeDeps(
     );
   }
 
+  const introspectionMock = createIntrospectionMock();
+
   const deps: RouterDependencies = {
     logging: {
       child: vi.fn(() => ({
@@ -192,14 +223,14 @@ function makeDeps(
       })),
     } as unknown as RootLogger,
     mcp,
-    introspection: createIntrospectionMock(),
+    introspection: introspectionMock.scope,
     config,
     modelProvider,
     createChatSession,
     ...overrides,
   } as RouterDependencies;
 
-  return { deps, createChatSession };
+  return { deps, createChatSession, introspection: introspectionMock };
 }
 
 function makeEvent(
@@ -266,7 +297,7 @@ function setupPushNotificationHarness() {
   const router = createRouter({
     logging,
     mcp,
-    introspection: createIntrospectionMock(),
+    introspection: createIntrospectionMock().scope,
     config,
     modelProvider,
     createChatSession: () => session,
@@ -732,6 +763,41 @@ describe('Router', () => {
     expect(sessions).toHaveLength(1);
     expect(sessions[0]!.shortId).toBe('s001');
     expect(sessions[0]!.summary).toBe('Test summary');
+    await router.close();
+  });
+
+  it('introspection exposes router state with session details', async () => {
+    const { deps, createChatSession, introspection } = makeDeps();
+    const router = createRouter(deps);
+    await router.start();
+
+    const session = createChatSession.mock.results[0]!.value as AgentSession;
+    session.setShortId('s001');
+    const info = session.getSessionInfo();
+    vi.mocked(session.getSessionInfo).mockReturnValue({
+      ...info,
+      shortId: 's001',
+      summary: 'Test summary',
+      turns: 3,
+      messageCount: 7,
+    });
+
+    const state = introspection.getState(['router']) as {
+      started: boolean;
+      sessionCount: number;
+      sessions: Array<Record<string, unknown>>;
+    };
+
+    expect(state.started).toBe(true);
+    expect(state.sessionCount).toBe(1);
+    expect(state.sessions).toHaveLength(1);
+    expect(state.sessions[0]!.shortId).toBe('s001');
+    expect(state.sessions[0]!.summary).toBe('Test summary');
+    expect(state.sessions[0]!.status).toBe('active');
+    expect(state.sessions[0]!.runtimeState).toBe('idle');
+    expect(state.sessions[0]!.turns).toBe(3);
+    expect(state.sessions[0]!.messageCount).toBe(7);
+
     await router.close();
   });
 

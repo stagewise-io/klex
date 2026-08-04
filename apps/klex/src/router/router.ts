@@ -114,9 +114,12 @@ class RouterModule implements Router {
     if (this.started) return;
 
     // Register router state in the introspection tree.
-    this.deps.introspection
-      .child('router')
-      .introspect(() => ({ started: true }));
+    const routerScope = this.deps.introspection.child('router');
+    routerScope.introspect(() => ({
+      started: this.started,
+      sessionCount: this.sessions.size,
+      sessions: this.buildSessionIntrospection(),
+    }));
     this.sessionsScope = this.deps.introspection.child('sessions');
 
     await this.createSession();
@@ -458,6 +461,30 @@ class RouterModule implements Router {
       });
     }
     return info;
+  }
+
+  /**
+   * Builds a detailed snapshot of all sessions for introspection.
+   * Includes router-tracked state (shortId, summary) plus session
+   * lifecycle info (status, runtimeState, turns, messageCount).
+   */
+  private buildSessionIntrospection(): object[] {
+    const sessions: object[] = [];
+    for (const entry of this.sessions.values()) {
+      const si = entry.session.getSessionInfo();
+      sessions.push({
+        shortId: entry.shortId,
+        sessionId: si.id,
+        summary: si.summary ?? entry.summary,
+        status: si.status,
+        runtimeState: si.runtimeState,
+        turns: si.turns,
+        messageCount: si.messageCount,
+        model: si.model,
+        createdAt: si.createdAt,
+      });
+    }
+    return sessions;
   }
 
   /**

@@ -162,6 +162,7 @@ function makeDeps(
     getModelSelection: vi.fn((purpose: string) =>
       purpose === 'routing' ? routingModels : purpose === 'chat' ? chatModels : [],
     ),
+    ),
   } as unknown as Config;
 
   const modelProvider = {} as ModelProvider;

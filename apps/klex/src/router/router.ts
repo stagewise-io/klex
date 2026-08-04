@@ -225,6 +225,10 @@ class RouterModule implements Router {
   private async routeAndDispatch(event: SessionInboxEvent): Promise<void> {
     const routingInfo = this.buildSessionRoutingInfo();
     const routingModels = this.deps.config.getModelSelection('routing');
+    const effectiveModels =
+      routingModels.length > 0
+        ? routingModels
+        : this.deps.config.getModelSelection('chat');
 
     const span = tracer.startSpan('router.route', {
       attributes: {
@@ -233,8 +237,9 @@ class RouterModule implements Router {
         'klex.router.sessions': JSON.stringify(
           routingInfo.map((s) => ({ shortId: s.shortId, status: s.status })),
         ),
-        'klex.router.routing_models': routingModels.join(','),
-        'klex.router.has_routing_models': routingModels.length > 0,
+        'klex.router.routing_models': effectiveModels.join(','),
+        'klex.router.has_routing_models': effectiveModels.length > 0,
+        'klex.router.using_chat_fallback': routingModels.length === 0,
       },
       kind: SpanKind.INTERNAL,
     });
@@ -245,7 +250,7 @@ class RouterModule implements Router {
         decision = await callRoutingLlm({
           logger: this.deps.logger,
           modelProvider: this.deps.modelProvider,
-          routingModels,
+          routingModels: effectiveModels,
           sessions: routingInfo,
           eventMetadata: event.context.metadata,
           sourceEnv: event.sourceEnv,

@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 
+import type { JSONObject } from '@ai-sdk/provider';
 import {
   EmptyResponseBodyError,
   type FinishReason,
@@ -39,6 +40,8 @@ export interface RunStreamedGenerationParams {
   sessionId: string;
   /** Whether the history was compacted by an extension before this generation. */
   compacted: boolean;
+  /** Provider-specific options resolved from the model selection entry. */
+  providerOptions?: Record<string, JSONObject>;
 }
 
 /**
@@ -80,6 +83,9 @@ export async function runStreamedGeneration(
     abortSignal: params.abortSignal,
     maxRetries: 0,
     messages: params.modelMessages,
+    ...(params.providerOptions !== undefined && {
+      providerOptions: params.providerOptions,
+    }),
   });
 
   const uiMsgChunkStream = toUIMessageStream<AgentTools, ExtendedUIMessage>({

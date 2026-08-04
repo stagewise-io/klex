@@ -13,6 +13,38 @@ const modelIdSchema = z.custom<`${string}:${string}`>(
 
 type ModelId = z.infer<typeof modelIdSchema>;
 
+// Effort level: klex-level abstraction over provider-specific reasoning/thinking settings
+
+type EffortLevel = 'low' | 'medium' | 'high' | 'dynamic';
+
+// Model selection entry: bare ModelId (back-compat) or object with optional effort + providerOptions
+
+interface ModelSelectionEntryObject {
+  model: ModelId;
+  effort?: EffortLevel;
+  providerOptions?: Record<string, unknown>;
+}
+
+type ModelSelectionEntry = ModelId | ModelSelectionEntryObject;
+
+const modelSelectionEntrySchema = z.union([
+  modelIdSchema,
+  z
+    .object({
+      model: modelIdSchema,
+      effort: z.enum(['low', 'medium', 'high', 'dynamic']).optional(),
+      providerOptions: z.record(z.string(), z.unknown()).optional(),
+    })
+    .strict(),
+]);
+
+/**
+ * Extracts the bare ModelId from a ModelSelectionEntry (string or object).
+ */
+function modelIdFromEntry(entry: ModelSelectionEntry): ModelId {
+  return typeof entry === 'string' ? entry : entry.model;
+}
+
 // ApiFormat: which wire protocol / AI-SDK provider
 
 const apiFormatSchema = z.enum([
@@ -130,12 +162,12 @@ const modelDefinitionSchema = z
 type ModelInputCapabilities = z.infer<typeof modelInputCapabilitiesSchema>;
 type ModelDefinition = z.infer<typeof modelDefinitionSchema>;
 
-type ManualEndpoint = z.infer<typeof manualEndpointSchema>;
-
 // Manual endpoint: endpoint config with optional known model metadata
 const manualEndpointSchema = endpointConfigSchema.extend({
   knownModels: z.record(z.string(), modelDefinitionSchema).optional(),
 });
+
+type ManualEndpoint = z.infer<typeof manualEndpointSchema>;
 
 // Provider config: a named provider with either a preset or manual endpoints
 
@@ -163,9 +195,9 @@ type ProviderConfig = z.infer<typeof providerConfigSchema>;
 // Model selection: which models to use for each purpose
 
 const modelSelectionSchema = z.object({
-  chat: z.array(modelIdSchema),
-  compaction: z.array(modelIdSchema),
-  memory: z.array(modelIdSchema),
+  chat: z.array(modelSelectionEntrySchema),
+  compaction: z.array(modelSelectionEntrySchema),
+  memory: z.array(modelSelectionEntrySchema),
 });
 
 type ModelSelection = z.infer<typeof modelSelectionSchema>;
@@ -223,6 +255,7 @@ type KlexConfig = z.infer<typeof klexConfigSchema>;
 
 export type {
   ApiFormat,
+  EffortLevel,
   EndpointAuth,
   EndpointConfig,
   HttpServerConfig,
@@ -235,6 +268,8 @@ export type {
   ModelInputCapabilities,
   ModelPurpose,
   ModelSelection,
+  ModelSelectionEntry,
+  ModelSelectionEntryObject,
   ProviderConfig,
   ProviderPreset,
   StdioServerConfig,
@@ -243,7 +278,9 @@ export type {
 export {
   klexConfigSchema,
   mcpServerConfigSchema,
+  modelIdFromEntry,
   modelIdSchema,
+  modelSelectionEntrySchema,
   modelSelectionSchema,
   telemetryLevelSchema,
 };

@@ -1,3 +1,4 @@
+import type { JSONObject } from '@ai-sdk/provider';
 import type { Span } from '@opentelemetry/api';
 import {
   type FinishReason,
@@ -10,6 +11,7 @@ import {
 
 import type { ModuleLogger } from '@stagewise/logger';
 
+import { modelIdFromEntry } from '@/config';
 import {
   classifyGenerationError,
   type GenerationErrorClassification,
@@ -46,6 +48,8 @@ export interface GenerationRunnerDependencies {
   compacted: boolean;
   /** Initial model to use for the first attempt. */
   model: LanguageModel;
+  /** Provider-specific options resolved from the model selection entry. */
+  providerOptions?: Record<string, JSONObject>;
 }
 
 /** Outcome of a single generation attempt inside the retry loop. */
@@ -122,7 +126,9 @@ export class GenerationRunner {
 
       stepSpan.addEvent('step.generation_attempt', {
         'generation.attempt': attempt,
-        'generation.modelId': fallbackManager.getChatModelId(),
+        'generation.modelId': modelIdFromEntry(
+          fallbackManager.getChatModelEntry(),
+        ),
         'generation.modelFallbackIndex': fallbackManager.getFallbackIndex(),
       });
 
@@ -145,9 +151,13 @@ export class GenerationRunner {
           tools: this.deps.tools,
           abortSignal: generationAbortController.signal,
           logger: this.deps.logger,
-          getChatModelId: () => fallbackManager.getChatModelId(),
+          getChatModelId: () =>
+            modelIdFromEntry(fallbackManager.getChatModelEntry()),
           sessionId: this.deps.sessionId,
           compacted: this.deps.compacted,
+          ...(this.deps.providerOptions !== undefined && {
+            providerOptions: this.deps.providerOptions,
+          }),
           onUpdate: (msg) => {
             chunkCount++;
             if (!firstChunkReceived) {
@@ -186,7 +196,7 @@ export class GenerationRunner {
           fallbackManager.recordSuccessfulGeneration();
           lastUsage = response.usage;
           lastFinishReason = response.finishReason;
-          lastModelId = fallbackManager.getChatModelId();
+          lastModelId = modelIdFromEntry(fallbackManager.getChatModelEntry());
           // outcome stays 'done' — will break below.
         } else {
           // Non-good finish — check for abort first, then classify.

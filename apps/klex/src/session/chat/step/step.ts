@@ -1,11 +1,12 @@
 import { randomUUID } from 'node:crypto';
 
+import type { JSONObject } from '@ai-sdk/provider';
 import { type Context, context, type Span, trace } from '@opentelemetry/api';
 import { isToolUIPart, type LanguageModel, type ModelMessage } from 'ai';
 
 import type { ModuleLogger } from '@stagewise/logger';
 
-import type { Config } from '@/config';
+import { type Config, modelIdFromEntry } from '@/config';
 import type { ModelProvider } from '@/model-provider';
 
 import type { ExtensionHandler } from '../extension-handler';
@@ -50,7 +51,7 @@ import {
  * The `fallbackManager` is the same instance across the entire session —
  * it tracks model fallback state and cooldown. Passing it as a unit
  * (rather than individual closures) ensures the call-order protocol
- * between `getChatModelId`, `fallbackToNextModel`, and
+ * between `getChatModelEntry`, `fallbackToNextModel`, and
  * `recordSuccessfulGeneration` is enforced by the manager's encapsulation.
  */
 export interface StepDependencies {
@@ -221,17 +222,23 @@ class StepModule implements Step {
         // data is bound to this specific model's capabilities.
         let model: LanguageModel;
         let resolvedModel: ResolvedModel;
+        let providerOptions: Record<string, JSONObject> | undefined;
         {
+          const entry = this.deps.fallbackManager.getChatModelEntry();
+          const modelId = modelIdFromEntry(entry);
           const modelSpan = startChildSpan('fetch_model', {
             attributes: {
-              'model.id': this.deps.fallbackManager.getChatModelId(),
+              'model.id': modelId,
               'model.fallbackIndex':
                 this.deps.fallbackManager.getFallbackIndex(),
             },
           });
-          const modelId = this.deps.fallbackManager.getChatModelId();
           model = await this.getModel();
-          const info = this.deps.config.resolveModelInfo(modelId);
+          const resolved = this.deps.config.resolveModel(entry);
+          const info = this.deps.config.resolveModelInfo(entry);
+          providerOptions = resolved.providerOptions as
+            | Record<string, JSONObject>
+            | undefined;
           resolvedModel = {
             modelId,
             displayName: info.displayName,
@@ -242,7 +249,7 @@ class StepModule implements Step {
         }
         stepSpan.setAttribute(
           'step.modelId',
-          this.deps.fallbackManager.getChatModelId(),
+          modelIdFromEntry(this.deps.fallbackManager.getChatModelEntry()),
         );
         stepSpan.setAttribute(
           'step.modelFallbackIndex',
@@ -413,6 +420,7 @@ class StepModule implements Step {
           turnInitialFallbackIndex: this.deps.turnInitialFallbackIndex,
           compacted,
           model,
+          ...(providerOptions !== undefined && { providerOptions }),
         });
         this.generationRunner = runner;
 
@@ -474,7 +482,8 @@ class StepModule implements Step {
   // ---------------------------------------------------------------------------
 
   private async getModel(): Promise<LanguageModel> {
-    const modelId = this.deps.fallbackManager.getChatModelId();
+    const entry = this.deps.fallbackManager.getChatModelEntry();
+    const modelId = modelIdFromEntry(entry);
     return this.deps.modelProvider.get(modelId);
   }
 }

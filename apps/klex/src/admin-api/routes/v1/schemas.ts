@@ -152,19 +152,32 @@ const modelIdSchema = z
   })
   .openapi('ModelId') as z.ZodType<ModelId>;
 
+const modelSelectionEntryOapiSchema = z
+  .union([
+    modelIdSchema,
+    z
+      .object({
+        model: modelIdSchema,
+        effort: z.enum(['low', 'medium', 'high', 'dynamic']).optional(),
+        providerOptions: z.record(z.string(), z.unknown()).optional(),
+      })
+      .strict(),
+  ])
+  .openapi('ModelSelectionEntry');
+
 const modelSelectionSchema = z
   .object({
-    chat: z.array(modelIdSchema),
-    compaction: z.array(modelIdSchema),
-    memory: z.array(modelIdSchema),
+    chat: z.array(modelSelectionEntryOapiSchema),
+    compaction: z.array(modelSelectionEntryOapiSchema),
+    memory: z.array(modelSelectionEntryOapiSchema),
   })
   .openapi('ModelSelection');
 
 const modelSelectionPatchSchema = z
   .object({
-    chat: z.array(modelIdSchema).optional(),
-    compaction: z.array(modelIdSchema).optional(),
-    memory: z.array(modelIdSchema).optional(),
+    chat: z.array(modelSelectionEntryOapiSchema).optional(),
+    compaction: z.array(modelSelectionEntryOapiSchema).optional(),
+    memory: z.array(modelSelectionEntryOapiSchema).optional(),
   })
   .openapi('ModelSelectionPatch');
 

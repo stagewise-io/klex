@@ -462,7 +462,7 @@ describe('Turn — modelFallbackOccurred handling', () => {
     // Use a stateful fallback manager so getFallbackIndex reflects advances.
     let index = 1;
     const fallbackManager = {
-      getChatModelId: vi.fn(() => 'test:model' as never),
+      getChatModelEntry: vi.fn(() => 'test:model' as never),
       getFallbackIndex: vi.fn(() => index),
       fallbackToNextModel: vi.fn(() => {
         index = (index + 1) % 2;

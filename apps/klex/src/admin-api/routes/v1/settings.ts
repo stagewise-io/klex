@@ -8,6 +8,7 @@ import {
   getDefaultTelemetryLevel,
   type KlexConfig,
   type ModelSelection,
+  modelIdFromEntry,
   type ProviderConfig,
   type TelemetryLevel,
 } from '@/config';
@@ -157,8 +158,9 @@ function validateAndCollectWarnings(
 ): ModelSelectionWarning[] {
   const warnings: ModelSelectionWarning[] = [];
 
-  for (const [purpose, modelIds] of Object.entries(selection)) {
-    for (const modelId of modelIds) {
+  for (const [purpose, entries] of Object.entries(selection)) {
+    for (const entry of entries) {
+      const modelId = modelIdFromEntry(entry);
       const { providerId, endpointId, localModelId } = parseModelId(modelId);
       const provider = config.providers[providerId];
 

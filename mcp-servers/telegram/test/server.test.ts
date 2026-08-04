@@ -255,6 +255,16 @@ describe('Telegram channel', () => {
         text: 'hello',
         receivedAt: '2023-11-14T22:13:20.000Z',
       },
+      {
+        botId: '77',
+        updateId: '10',
+        messageId: '20',
+        chatId: '30',
+        senderId: '40',
+        kind: 'text',
+        text: 'hello',
+        receivedAt: '2023-11-14T22:13:20.000Z',
+      },
     ]);
   });
 
@@ -335,7 +345,12 @@ describe('Telegram channel', () => {
   it('does not download media rejected by chat and sender filters', async () => {
     const fake = createFakeBot();
     await createStartedChannel(fake);
-    await fake.emit({ kind: 'photo', fileId: 'group', chatType: 'group' });
+    await fake.emit({
+      kind: 'photo',
+      fileId: 'group',
+      chatType: 'group',
+      senderId: 41,
+    });
     await fake.emit({ kind: 'voice', fileId: 'bot', senderIsBot: true });
     await fake.emit({ kind: 'audio', fileId: 'blocked', senderId: 41 });
     expect(fake.downloadCalls).toEqual([]);

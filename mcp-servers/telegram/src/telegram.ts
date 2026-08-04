@@ -213,7 +213,6 @@ class TelegramChannelModule implements TelegramChannel {
     const senderId = String(message.senderId);
     if (
       message.senderIsBot ||
-      (!this.#isWildcard && message.chatType !== 'private') ||
       (!this.#isWildcard && !this.#allowedUserIds.has(senderId))
     ) {
       return;

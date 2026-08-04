@@ -134,7 +134,7 @@ class InboxModule implements SessionInboxBuffer {
   send(event: SessionInboxEvent): void {
     if (this.closed) throw new SessionInboxClosedError();
     this.events.push(event);
-    this.notifyNewEvent(event.priority);
+    this.notifyNewEvent(event.priority ?? SessionInboxPriority.Medium);
   }
 
   sendMessage(
@@ -192,9 +192,10 @@ class InboxModule implements SessionInboxBuffer {
       high: 0,
     };
     for (const e of events) {
-      if (e.priority === SessionInboxPriority.Low) byPriority.low++;
-      else if (e.priority === SessionInboxPriority.Medium) byPriority.medium++;
-      else if (e.priority === SessionInboxPriority.High) byPriority.high++;
+      const p = e.priority ?? SessionInboxPriority.Medium;
+      if (p === SessionInboxPriority.Low) byPriority.low++;
+      else if (p === SessionInboxPriority.Medium) byPriority.medium++;
+      else if (p === SessionInboxPriority.High) byPriority.high++;
     }
 
     // Record structure and media metadata without leaking binary bodies.
@@ -204,7 +205,8 @@ class InboxModule implements SessionInboxBuffer {
       const pulled = {
         events: events.map((e) => ({
           sourceEnv: e.sourceEnv,
-          priority: SessionInboxPriority[e.priority],
+          priority:
+            SessionInboxPriority[e.priority ?? SessionInboxPriority.Medium],
           context: redactMediaForTelemetry(e.context),
         })),
         nativeMessages: nativeMessages.map((m) => ({
@@ -275,7 +277,9 @@ class InboxModule implements SessionInboxBuffer {
       [SessionInboxEvent[], SessionInboxEvent[]]
     >(
       (prev, curr) => {
-        prev[curr.priority >= minPriority ? 0 : 1].push(curr);
+        const matches =
+          (curr.priority ?? SessionInboxPriority.Medium) >= minPriority;
+        prev[matches ? 0 : 1].push(curr);
         return prev;
       },
       [[], []],

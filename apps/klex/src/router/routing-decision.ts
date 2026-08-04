@@ -48,6 +48,12 @@ interface RoutingDecisionParams {
   eventMetadata: Record<string, ContextMetadataValue>;
   sourceEnv: string;
   contentPreview: string;
+  /**
+   * When provided, the LLM should use this priority instead of
+   * deciding its own. The router still calls the LLM for session
+   * selection and summary, but ignores the LLM's priority field.
+   */
+  presetPriority?: string;
 }
 
 export type { RoutingDecision, RoutingDecisionParams, SessionRoutingInfo };
@@ -93,6 +99,7 @@ export async function callRoutingLlm(
     eventMetadata,
     sourceEnv,
     contentPreview,
+    presetPriority,
   } = params;
 
   if (routingModels.length === 0) {
@@ -101,7 +108,12 @@ export async function callRoutingLlm(
 
   const prompt = JSON.stringify({
     sessions,
-    event: { sourceEnv, metadata: eventMetadata, contentPreview },
+    event: {
+      sourceEnv,
+      metadata: eventMetadata,
+      contentPreview,
+      ...(presetPriority ? { presetPriority } : {}),
+    },
   });
 
   for (const modelId of routingModels) {

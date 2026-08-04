@@ -234,7 +234,6 @@ class RouterModule implements Router {
 
     const inboxEvent: SessionInboxEvent = {
       sourceEnv: namespace,
-      priority: SessionInboxPriority.Medium,
       context: {
         sourceEnv: namespace,
         metadata,
@@ -286,6 +285,9 @@ class RouterModule implements Router {
           eventMetadata: event.context.metadata,
           sourceEnv: event.sourceEnv,
           contentPreview: buildContentPreview(event.context.content),
+          presetPriority: event.priority
+            ? SessionInboxPriority[event.priority]
+            : undefined,
         });
       } catch (error) {
         this.deps.logger.error(
@@ -314,7 +316,10 @@ class RouterModule implements Router {
         span.setAttribute('klex.router.decision.choice', 'fallback');
       }
 
-      const { entry, priority, summary } = this.resolveTarget(decision);
+      const { entry, priority, summary } = this.resolveTarget(
+        decision,
+        event.priority,
+      );
 
       // Record the final dispatch target.
       span.setAttributes({
@@ -370,22 +375,27 @@ class RouterModule implements Router {
    * routing decision. Falls back to default behavior when the decision
    * is null (all models failed) or references a non-existent session.
    */
-  private resolveTarget(decision: RoutingDecision | null): {
+  private resolveTarget(
+    decision: RoutingDecision | null,
+    presetPriority?: SessionInboxPriority,
+  ): {
     entry: RouterSessionEntry;
     priority: SessionInboxPriority;
     summary: string | null;
   } {
     if (decision === null) {
-      // Fallback: first active session or create new, Medium priority.
+      // Fallback: first active session or create new.
+      // Use preset priority if provided, otherwise Medium.
       const entry = this.firstActiveOrCreate();
       return {
         entry,
-        priority: SessionInboxPriority.Medium,
+        priority: presetPriority ?? SessionInboxPriority.Medium,
         summary: null,
       };
     }
 
-    const priority = this.mapPriority(decision.priority);
+    // If the event has a preset priority, use it; otherwise use the LLM's.
+    const priority = presetPriority ?? this.mapPriority(decision.priority);
 
     if (decision.sessionId !== '') {
       const entry = this.sessions.get(decision.sessionId);

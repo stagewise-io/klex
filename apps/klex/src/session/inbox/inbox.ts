@@ -98,7 +98,12 @@ export type ContextDataUIPart = {
 
 export type SessionInboxEvent = {
   sourceEnv: string;
-  priority: SessionInboxPriority;
+  /**
+   * Optional fixed priority. When set, the router uses this priority
+   * directly and the routing LLM does not decide it. When absent,
+   * the routing LLM assigns the priority.
+   */
+  priority?: SessionInboxPriority;
   context: ContextDataUIPart;
 };
 

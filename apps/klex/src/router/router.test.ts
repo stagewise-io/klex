@@ -210,7 +210,7 @@ function makeEvent(
 ) {
   return {
     sourceEnv: overrides.sourceEnv ?? 'test',
-    priority: overrides.priority ?? SessionInboxPriority.Medium,
+    priority: overrides.priority,
     context: {
       sourceEnv: overrides.sourceEnv ?? 'test',
       metadata: {},
@@ -667,6 +667,50 @@ describe('Router', () => {
     const session = createChatSession.mock.results[0]!.value as AgentSession;
     expect(session.inbox.send).toHaveBeenCalledWith(event);
     expect(event.priority).toBe(SessionInboxPriority.Medium);
+    await router.close();
+  });
+
+  it('preset priority overrides LLM decision priority', async () => {
+    const { deps, createChatSession } = makeDeps({
+      routingModels: ['test:model'],
+      routingDecision: {
+        sessionId: 's001',
+        priority: 'low',
+      },
+    });
+    const router = createRouter(deps);
+    await router.start();
+
+    const session = createChatSession.mock.results[0]!.value as AgentSession;
+    session.setShortId('s001');
+    const info = session.getSessionInfo();
+    vi.mocked(session.getSessionInfo).mockReturnValue({
+      ...info,
+      shortId: 's001',
+    });
+
+    const event = makeEvent({ priority: SessionInboxPriority.High });
+    await router.sendInput(event);
+
+    // LLM said 'low' but event had preset High — High wins.
+    expect(event.priority).toBe(SessionInboxPriority.High);
+    await router.close();
+  });
+
+  it('preset priority is used when all routing models fail', async () => {
+    const { deps, createChatSession } = makeDeps({
+      routingModels: ['test:model'],
+      routingDecision: null,
+    });
+    const router = createRouter(deps);
+    await router.start();
+
+    const event = makeEvent({ priority: SessionInboxPriority.High });
+    await router.sendInput(event);
+
+    const session = createChatSession.mock.results[0]!.value as AgentSession;
+    expect(session.inbox.send).toHaveBeenCalledWith(event);
+    expect(event.priority).toBe(SessionInboxPriority.High);
     await router.close();
   });
 

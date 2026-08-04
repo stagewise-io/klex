@@ -6,7 +6,6 @@ import { ZodError } from 'zod';
 
 import type { ModuleLogger, RootLogger } from '@stagewise/logger';
 
-import { effortToProviderOptions } from './effort-mapper';
 import {
   type EndpointAuth,
   type EndpointConfig,
@@ -55,7 +54,7 @@ export interface ResolvedModelConfig {
   /** Human-readable name from knownModels, if declared. */
   displayName?: string;
   inputCapabilities: ModelInputCapabilities;
-  /** Provider-specific options resolved from effort + explicit providerOptions. */
+  /** Provider-specific options from the model selection entry. */
   providerOptions?: Record<string, unknown>;
 }
 
@@ -326,10 +325,7 @@ class ConfigModule implements Config {
         endpoint: resolveAuthEnvVars(endpointConfig),
         isPreset: true,
         ...info,
-        providerOptions: this.resolveProviderOptions(
-          entry,
-          endpointConfig.format,
-        ),
+        providerOptions: this.resolveProviderOptions(entry),
       };
     }
 
@@ -365,10 +361,7 @@ class ConfigModule implements Config {
       endpoint: resolveAuthEnvVars(endpointConfig),
       isPreset: false,
       ...info,
-      providerOptions: this.resolveProviderOptions(
-        entry,
-        endpointConfig.format,
-      ),
+      providerOptions: this.resolveProviderOptions(entry),
     };
   }
 
@@ -379,39 +372,14 @@ class ConfigModule implements Config {
   }
 
   /**
-   * Resolves providerOptions from the selection entry: effort-derived
-   * options as the base, with explicit providerOptions merged on top
-   * (shallow merge per provider key). Returns undefined if neither
-   * effort nor providerOptions is set on the entry.
+   * Returns the providerOptions from the selection entry, or undefined
+   * if the entry is a bare string or has no providerOptions set.
    */
   private resolveProviderOptions(
     entry: ModelSelectionEntry,
-    format: EndpointConfig['format'],
   ): Record<string, unknown> | undefined {
     if (typeof entry === 'string') return undefined;
-
-    const fromEffort = entry.effort
-      ? effortToProviderOptions(entry.effort, format)
-      : undefined;
-    const explicit = entry.providerOptions;
-
-    if (!fromEffort && !explicit) return undefined;
-    if (!fromEffort) return explicit;
-    if (!explicit) return fromEffort;
-
-    // Shallow merge per provider key — explicit values override effort-derived ones.
-    const merged: Record<string, unknown> = { ...fromEffort };
-    for (const [key, value] of Object.entries(explicit)) {
-      const existing = fromEffort[key];
-      merged[key] =
-        typeof existing === 'object' &&
-        existing !== null &&
-        typeof value === 'object' &&
-        value !== null
-          ? { ...existing, ...value }
-          : value;
-    }
-    return merged;
+    return entry.providerOptions;
   }
 
   /**

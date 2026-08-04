@@ -11,6 +11,7 @@ import {
 } from '@opentelemetry/api';
 import type {
   GenerateObjectEndEvent,
+  GenerateObjectStartEvent,
   GenerateTextAbortEvent,
   GenerateTextEndEvent,
   GenerateTextStartEvent,
@@ -334,7 +335,9 @@ class KlexTelemetry implements Telemetry {
       'gen_ai.system': providerName,
       'gen_ai.provider.name': providerName,
       'gen_ai.request.model': requestModel,
-      'gen_ai.request.stream': genEvent.operationId === 'ai.streamText',
+      'gen_ai.request.stream':
+        genEvent.operationId === 'ai.streamText' ||
+        genEvent.operationId === 'ai.streamObject',
       'gen_ai.agent.name': genEvent.functionId,
     };
 
@@ -384,16 +387,52 @@ class KlexTelemetry implements Telemetry {
     // Only recorded when telemetry.recordInputs is not false.
     const recordInputs = genEvent.recordInputs !== false;
     if (recordInputs) {
-      const systemInstructions = instructionsToString(genEvent.instructions);
-      if (systemInstructions != null) {
-        attributes['gen_ai.system_instructions'] = systemInstructions;
+      // GenerateObjectStartEvent uses `system` and `prompt`/`messages`,
+      // while GenerateTextStartEvent (via StandardizedPrompt) uses
+      // `instructions` and `messages`. Read the correct fields based on
+      // the operation type to avoid dropping input for object generation.
+      const isObjectOp =
+        genEvent.operationId === 'ai.generateObject' ||
+        genEvent.operationId === 'ai.streamObject';
+
+      if (isObjectOp) {
+        const objEvent = event as InferTelemetryEvent<GenerateObjectStartEvent>;
+
+        const systemInstructions = instructionsToString(objEvent.system);
+        if (systemInstructions != null) {
+          attributes['gen_ai.system_instructions'] = systemInstructions;
+        }
+
+        // For object generation, input is provided as either `prompt`
+        // (string or ModelMessage[]) or `messages` (ModelMessage[]).
+        // Prefer messages, fall back to prompt.
+        const inputSource = objEvent.messages ?? objEvent.prompt;
+        if (typeof inputSource === 'string') {
+          const wrapped = serializeJson([
+            { role: 'user', content: inputSource },
+          ]);
+          if (wrapped != null) {
+            attributes['gen_ai.input.messages'] = wrapped;
+          }
+        } else {
+          const inputMessages = serializeJson(inputSource);
+          if (inputMessages != null) {
+            attributes['gen_ai.input.messages'] = inputMessages;
+          }
+        }
+      } else {
+        const systemInstructions = instructionsToString(genEvent.instructions);
+        if (systemInstructions != null) {
+          attributes['gen_ai.system_instructions'] = systemInstructions;
+        }
+
+        const inputMessages = serializeJson(genEvent.messages);
+        if (inputMessages != null) {
+          attributes['gen_ai.input.messages'] = inputMessages;
+        }
       }
 
-      const inputMessages = serializeJson(genEvent.messages);
-      if (inputMessages != null) {
-        attributes['gen_ai.input.messages'] = inputMessages;
-      }
-
+      // Tool definitions (only present on text-generation events).
       const toolDefs = toolsToDefinitions(
         genEvent.tools as Record<string, unknown> | undefined,
       );

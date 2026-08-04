@@ -16,6 +16,30 @@ import { callRoutingLlm } from './routing-decision';
 
 vi.mock('./routing-decision', () => ({
   callRoutingLlm: vi.fn(),
+  analyzeEventPatterns: vi.fn((log: unknown[]) => {
+    // Lightweight inline implementation for tests: count events,
+    // collect sourceEnvs, and compute metadata frequency from the log.
+    const sourceEnvs = new Set<string>();
+    const metadataFrequency: Record<string, Record<string, number>> = {};
+    for (const entry of log as Array<{
+      sourceEnv: string;
+      metadata: Record<string, unknown>;
+    }>) {
+      sourceEnvs.add(entry.sourceEnv);
+      for (const [key, value] of Object.entries(entry.metadata)) {
+        if (value === null || value === undefined) continue;
+        const valStr = String(value);
+        if (!metadataFrequency[key]) metadataFrequency[key] = {};
+        metadataFrequency[key][valStr] =
+          (metadataFrequency[key][valStr] ?? 0) + 1;
+      }
+    }
+    return {
+      eventCount: log.length,
+      sourceEnvs: [...sourceEnvs],
+      metadataFrequency,
+    };
+  }),
 }));
 
 const { mockRandomUUID, mockSpan } = vi.hoisted(() => ({
@@ -104,7 +128,6 @@ function makeSessionInfo(overrides: Partial<SessionInfo> = {}): SessionInfo {
     messageCount: 0,
     createdAt: new Date().toISOString(),
     shortId: '',
-    summary: null,
     ...overrides,
   };
 }
@@ -135,9 +158,6 @@ function makeMockSession(
     setShortId: vi.fn((id: string) => {
       info.shortId = id;
     }),
-    setSummary: vi.fn((s: string) => {
-      info.summary = s;
-    }),
     ...overrides,
   } as unknown as AgentSession;
 }
@@ -154,6 +174,7 @@ interface TestDeps {
       ) => AgentSession
     >
   >;
+  introspection: ReturnType<typeof createIntrospectionMock>;
 }
 
 function makeDeps(
@@ -292,7 +313,6 @@ function setupPushNotificationHarness() {
     close: async () => undefined,
     getSessionInfo: vi.fn(() => makeSessionInfo({ shortId: 's001' })),
     setShortId: vi.fn(),
-    setSummary: vi.fn(),
     restorePendingEvents: vi.fn(),
   } as unknown as AgentSession;
   const router = createRouter({
@@ -550,7 +570,6 @@ describe('Router', () => {
       routingDecision: {
         sessionId: 's001',
         priority: 'high',
-        summary: 'Updated summary',
       },
     });
     const router = createRouter(deps);
@@ -593,7 +612,6 @@ describe('Router', () => {
       routingDecision: {
         sessionId: 's001',
         priority: 'high',
-        summary: 'Now handling urgent request',
       },
     });
     const router = createRouter(deps);
@@ -616,9 +634,6 @@ describe('Router', () => {
     expect(callRoutingLlm).toHaveBeenCalledOnce();
     expect(initialSession.inbox.send).toHaveBeenCalledWith(event);
     expect(event.priority).toBe(SessionInboxPriority.High);
-    expect(initialSession.setSummary).toHaveBeenCalledWith(
-      'Now handling urgent request',
-    );
     await router.close();
   });
 
@@ -746,7 +761,7 @@ describe('Router', () => {
     await router.close();
   });
 
-  it('getSessions() returns all sessions with shortId and summary', async () => {
+  it('getSessions() returns all sessions with shortId', async () => {
     const { deps, createChatSession } = makeDeps();
     const router = createRouter(deps);
     await router.start();
@@ -757,13 +772,11 @@ describe('Router', () => {
     vi.mocked(session.getSessionInfo).mockReturnValue({
       ...info,
       shortId: 's001',
-      summary: 'Test summary',
     });
 
     const sessions = router.getSessions();
     expect(sessions).toHaveLength(1);
     expect(sessions[0]!.shortId).toBe('s001');
-    expect(sessions[0]!.summary).toBe('Test summary');
     await router.close();
   });
 
@@ -778,7 +791,6 @@ describe('Router', () => {
     vi.mocked(session.getSessionInfo).mockReturnValue({
       ...info,
       shortId: 's001',
-      summary: 'Test summary',
       turns: 3,
       messageCount: 7,
     });
@@ -793,7 +805,6 @@ describe('Router', () => {
     expect(state.sessionCount).toBe(1);
     expect(state.sessions).toHaveLength(1);
     expect(state.sessions[0]!.shortId).toBe('s001');
-    expect(state.sessions[0]!.summary).toBe('Test summary');
     expect(state.sessions[0]!.status).toBe('active');
     expect(state.sessions[0]!.runtimeState).toBe('idle');
     expect(state.sessions[0]!.turns).toBe(3);
@@ -888,13 +899,12 @@ describe('Router', () => {
     await routerMed.close();
   });
 
-  it('summary update flow calls session.setSummary', async () => {
+  it('records event metadata in session event log for pattern analysis', async () => {
     const { deps, createChatSession } = makeDeps({
       routingModels: ['test:model'],
       routingDecision: {
         sessionId: 's001',
         priority: 'medium',
-        summary: 'Updated activity summary',
       },
     });
     const router = createRouter(deps);
@@ -908,9 +918,25 @@ describe('Router', () => {
       shortId: 's001',
     });
 
-    await router.sendInput(makeEvent());
+    // Send an event with metadata.
+    const event = makeEvent();
+    event.context.metadata = { chatId: '12345', senderId: 'u1' };
+    await router.sendInput(event);
 
-    expect(session.setSummary).toHaveBeenCalledWith('Updated activity summary');
+    // Send a second event with overlapping metadata.
+    const event2 = makeEvent();
+    event2.context.metadata = { chatId: '12345', senderId: 'u2' };
+    await router.sendInput(event2);
+
+    // Verify that callRoutingLlm was called with eventPatterns.
+    const lastCall = vi.mocked(callRoutingLlm).mock.calls.at(-1)?.[0];
+    expect(lastCall?.sessions).toHaveLength(1);
+    expect(lastCall?.sessions[0]?.eventPatterns.eventCount).toBe(1);
+    expect(lastCall?.sessions[0]?.eventPatterns.metadataFrequency).toEqual({
+      chatId: { '12345': 1 },
+      senderId: { u1: 1 },
+    });
+
     await router.close();
   });
 });

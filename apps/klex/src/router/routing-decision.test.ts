@@ -3,8 +3,13 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { ModelId } from '@/config';
 import type { ModelProvider } from '@/model-provider';
+import type { ContextMetadataValue } from '@/session/inbox';
 
-import { callRoutingLlm } from './routing-decision';
+import {
+  analyzeEventPatterns,
+  callRoutingLlm,
+  type EventLogEntry,
+} from './routing-decision';
 
 // --- mocks ---
 
@@ -93,7 +98,6 @@ describe('callRoutingLlm', () => {
     const decision = {
       sessionId: 'a1b2',
       priority: 'medium' as const,
-      summary: 'Handling user messages',
     };
     generateObjectMock.mockResolvedValueOnce(genSuccess(decision));
 
@@ -164,9 +168,16 @@ describe('callRoutingLlm', () => {
     const sessions = [
       {
         shortId: 'a1b2',
-        summary: 'Working on auth',
         status: 'active',
         runtimeState: 'idle',
+        eventPatterns: {
+          eventCount: 3,
+          sourceEnvs: ['telegram'],
+          metadataFrequency: {
+            chatId: { '12345': 3 },
+            senderId: { u1: 1, u2: 1, u3: 1 },
+          },
+        },
       },
     ];
     const eventMetadata = { type: 'message', count: 5 };
@@ -202,6 +213,126 @@ describe('callRoutingLlm', () => {
     expect(callArgs.telemetry).toEqual({
       isEnabled: true,
       functionId: 'router',
+    });
+  });
+});
+
+// --- analyzeEventPatterns tests ---
+
+describe('analyzeEventPatterns', () => {
+  it('returns empty patterns for an empty log', () => {
+    const result = analyzeEventPatterns([]);
+    expect(result).toEqual({
+      eventCount: 0,
+      sourceEnvs: [],
+      metadataFrequency: {},
+    });
+  });
+
+  it('counts event totals and source environments', () => {
+    const log: EventLogEntry[] = [
+      {
+        sourceEnv: 'telegram',
+        metadata: { chatId: '123' },
+        receivedAt: '2026-01-01T00:00:00Z',
+      },
+      {
+        sourceEnv: 'telegram',
+        metadata: { chatId: '123' },
+        receivedAt: '2026-01-01T00:01:00Z',
+      },
+      {
+        sourceEnv: 'slack',
+        metadata: { channelId: 'C456' },
+        receivedAt: '2026-01-01T00:02:00Z',
+      },
+    ];
+    const result = analyzeEventPatterns(log);
+    expect(result.eventCount).toBe(3);
+    expect(result.sourceEnvs).toEqual(
+      expect.arrayContaining(['telegram', 'slack']),
+    );
+    expect(result.sourceEnvs).toHaveLength(2);
+  });
+
+  it('counts metadata value frequencies across events', () => {
+    const log: EventLogEntry[] = [
+      {
+        sourceEnv: 'telegram',
+        metadata: { chatId: '123', senderId: 'u1' },
+        receivedAt: '2026-01-01T00:00:00Z',
+      },
+      {
+        sourceEnv: 'telegram',
+        metadata: { chatId: '123', senderId: 'u2' },
+        receivedAt: '2026-01-01T00:01:00Z',
+      },
+      {
+        sourceEnv: 'telegram',
+        metadata: { chatId: '123', senderId: 'u3' },
+        receivedAt: '2026-01-01T00:02:00Z',
+      },
+    ];
+    const result = analyzeEventPatterns(log);
+    expect(result.metadataFrequency).toEqual({
+      chatId: { '123': 3 },
+      senderId: { u1: 1, u2: 1, u3: 1 },
+    });
+  });
+
+  it('flattens nested metadata objects with dot notation', () => {
+    const log: EventLogEntry[] = [
+      {
+        sourceEnv: 'telegram',
+        metadata: { user: { id: '42', name: 'Alice' } },
+        receivedAt: '2026-01-01T00:00:00Z',
+      },
+    ];
+    const result = analyzeEventPatterns(log);
+    expect(result.metadataFrequency).toEqual({
+      'user.id': { '42': 1 },
+      'user.name': { Alice: 1 },
+    });
+  });
+
+  it('skips null and undefined metadata values', () => {
+    const log: EventLogEntry[] = [
+      {
+        sourceEnv: 'test',
+        metadata: {
+          a: null,
+          b: 'x',
+          c: undefined as unknown as ContextMetadataValue,
+        },
+        receivedAt: '2026-01-01T00:00:00Z',
+      },
+    ];
+    const result = analyzeEventPatterns(log);
+    expect(result.metadataFrequency).toEqual({ b: { x: 1 } });
+  });
+
+  it('handles multiple distinct values for the same key', () => {
+    const log: EventLogEntry[] = [
+      {
+        sourceEnv: 'test',
+        metadata: { conversationId: 'A' },
+        receivedAt: '2026-01-01T00:00:00Z',
+      },
+      {
+        sourceEnv: 'test',
+        metadata: { conversationId: 'B' },
+        receivedAt: '2026-01-01T00:01:00Z',
+      },
+      {
+        sourceEnv: 'test',
+        metadata: { conversationId: 'A' },
+        receivedAt: '2026-01-01T00:02:00Z',
+      },
+    ];
+    const result = analyzeEventPatterns(log);
+    expect(result.metadataFrequency.conversationId).toEqual({
+      A: 2,
+      B: 1,
     });
   });
 });

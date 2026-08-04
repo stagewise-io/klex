@@ -126,8 +126,6 @@ class ChatSessionModule implements AgentSession {
 
   private shortId = '';
 
-  private summary: string | null = null;
-
   constructor(
     private readonly deps: {
       logger: ModuleLogger;
@@ -754,7 +752,6 @@ class ChatSessionModule implements AgentSession {
       messageCount: this.messages.length,
       createdAt: this.createdAt,
       shortId: this.shortId,
-      summary: this.summary,
     };
   }
 
@@ -852,10 +849,6 @@ class ChatSessionModule implements AgentSession {
 
   setShortId(shortId: string): void {
     this.shortId = shortId;
-  }
-
-  setSummary(summary: string | null): void {
-    this.summary = summary;
   }
 }
 

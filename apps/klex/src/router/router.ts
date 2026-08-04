@@ -22,7 +22,9 @@ import type {
 import { recordErrorOnSpan, tracer, withSpan } from '@/tracing';
 
 import {
+  analyzeEventPatterns,
   callRoutingLlm,
+  type EventLogEntry,
   type RoutingDecision,
   type SessionRoutingInfo,
 } from './routing-decision';
@@ -72,8 +74,8 @@ export interface Router {
 
   /**
    * Send an input event into the router. The router uses an LLM to decide
-   * which session receives it, assigns priority, and optionally updates
-   * the session summary.
+   * which session receives it and assigns priority. Event metadata is
+   * recorded per-session for structural pattern matching.
    */
   sendInput(event: SessionInboxEvent): Promise<void>;
 
@@ -86,7 +88,7 @@ export interface Router {
 interface RouterSessionEntry {
   session: AgentSession;
   shortId: string;
-  summary: string | null;
+  eventLog: EventLogEntry[];
 }
 
 class RouterModule implements Router {
@@ -317,17 +319,11 @@ class RouterModule implements Router {
             decision.sessionId,
           );
         }
-        if (decision.summary !== '') {
-          span.setAttribute('klex.router.decision.summary', decision.summary);
-        }
       } else {
         span.setAttribute('klex.router.decision.choice', 'fallback');
       }
 
-      const { entry, priority, summary } = this.resolveTarget(
-        decision,
-        event.priority,
-      );
+      const { entry, priority } = this.resolveTarget(decision, event.priority);
 
       // Record the final dispatch target.
       span.setAttributes({
@@ -339,11 +335,13 @@ class RouterModule implements Router {
           !this.sessions.has(decision.sessionId),
       });
 
-      // Update summary if the LLM provided a non-empty one.
-      if (summary !== null) {
-        entry.summary = summary;
-        entry.session.setSummary(summary);
-      }
+      // Record the event metadata in the session's event log for
+      // future pattern analysis.
+      entry.eventLog.push({
+        sourceEnv: event.sourceEnv,
+        metadata: event.context.metadata,
+        receivedAt: new Date().toISOString(),
+      });
 
       // If the session terminated itself, create a replacement.
       if (entry.session.status === 'terminated') {
@@ -379,9 +377,9 @@ class RouterModule implements Router {
   }
 
   /**
-   * Resolves the target session entry, priority, and summary from the
-   * routing decision. Falls back to default behavior when the decision
-   * is null (all models failed) or references a non-existent session.
+   * Resolves the target session entry and priority from the routing
+   * decision. Falls back to default behavior when the decision is null
+   * (all models failed) or references a non-existent session.
    */
   private resolveTarget(
     decision: RoutingDecision | null,
@@ -389,7 +387,6 @@ class RouterModule implements Router {
   ): {
     entry: RouterSessionEntry;
     priority: SessionInboxPriority;
-    summary: string | null;
   } {
     if (decision === null) {
       // Fallback: first active session or create new.
@@ -398,7 +395,6 @@ class RouterModule implements Router {
       return {
         entry,
         priority: presetPriority ?? SessionInboxPriority.Medium,
-        summary: null,
       };
     }
 
@@ -408,7 +404,7 @@ class RouterModule implements Router {
     if (decision.sessionId !== '') {
       const entry = this.sessions.get(decision.sessionId);
       if (entry) {
-        return { entry, priority, summary: decision.summary || null };
+        return { entry, priority };
       }
       // Hallucinated session ID — create a new session.
       this.deps.logger.warn(
@@ -425,7 +421,7 @@ class RouterModule implements Router {
         'New session start failed',
       );
     });
-    return { entry: newEntry, priority, summary: decision.summary || null };
+    return { entry: newEntry, priority };
   }
 
   /**
@@ -460,9 +456,9 @@ class RouterModule implements Router {
       const sessionInfo = entry.session.getSessionInfo();
       info.push({
         shortId: entry.shortId,
-        summary: entry.summary,
         status: sessionInfo.status,
         runtimeState: sessionInfo.runtimeState,
+        eventPatterns: analyzeEventPatterns(entry.eventLog),
       });
     }
     return info;
@@ -480,7 +476,7 @@ class RouterModule implements Router {
       sessions.push({
         shortId: entry.shortId,
         sessionId: si.id,
-        summary: si.summary ?? entry.summary,
+        eventPatterns: analyzeEventPatterns(entry.eventLog),
         status: si.status,
         runtimeState: si.runtimeState,
         turns: si.turns,
@@ -530,7 +526,7 @@ class RouterModule implements Router {
     );
     session.setShortId(shortId);
 
-    const entry: RouterSessionEntry = { session, shortId, summary: null };
+    const entry: RouterSessionEntry = { session, shortId, eventLog: [] };
     this.sessions.set(shortId, entry);
 
     this.deps.logger.info(

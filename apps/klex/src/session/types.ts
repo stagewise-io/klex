@@ -77,8 +77,6 @@ export interface SessionInfo {
   createdAt: string;
   /** Short unique identifier used by the routing LLM to reference this session. */
   shortId: string;
-  /** Current activity summary, updated by the routing LLM. null when no summary has been set. */
-  summary: string | null;
 }
 
 /**
@@ -159,10 +157,4 @@ export interface AgentSession {
    * creation.
    */
   setShortId(shortId: string): void;
-
-  /**
-   * Updates the session summary. Called by the router after a routing
-   * LLM decision.
-   */
-  setSummary(summary: string | null): void;
 }

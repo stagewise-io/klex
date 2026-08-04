@@ -6,6 +6,7 @@ import { ZodError } from 'zod';
 
 import type { ModuleLogger, RootLogger } from '@stagewise/logger';
 
+import { effortToProviderOptions } from './effort-mapper';
 import {
   type EndpointAuth,
   type EndpointConfig,
@@ -18,6 +19,8 @@ import {
   type ModelInputCapabilities,
   type ModelPurpose,
   type ModelSelection,
+  type ModelSelectionEntry,
+  modelIdFromEntry,
   type ProviderConfig,
   resolvePresetEndpoint,
   type TelemetryLevel,
@@ -52,6 +55,8 @@ export interface ResolvedModelConfig {
   /** Human-readable name from knownModels, if declared. */
   displayName?: string;
   inputCapabilities: ModelInputCapabilities;
+  /** Provider-specific options resolved from effort + explicit providerOptions. */
+  providerOptions?: Record<string, unknown>;
 }
 
 /**
@@ -105,13 +110,13 @@ export interface Config {
    */
   mutate(fn: (config: KlexConfig) => KlexConfig): Promise<Readonly<KlexConfig>>;
   subscribe(listener: ConfigListener): () => void;
-  getModelSelection(purpose: ModelPurpose): readonly ModelId[];
-  resolveModel(modelId: ModelId): ResolvedModelConfig;
+  getModelSelection(purpose: ModelPurpose): readonly ModelSelectionEntry[];
+  resolveModel(entry: ModelSelectionEntry): ResolvedModelConfig;
   /**
-   * Returns all model metadata for a given model ID with fallbacks
+   * Returns all model metadata for a given model entry with fallbacks
    * applied (e.g. `contextSize` defaults to {@link DEFAULT_CONTEXT_SIZE}).
    */
-  resolveModelInfo(modelId: ModelId): ModelInfo;
+  resolveModelInfo(entry: ModelSelectionEntry): ModelInfo;
   getMcpServers(): Readonly<Record<string, McpServerConfig>>;
   /** Creates a new MCP server. Throws if the name already exists. */
   addMcpServer(
@@ -284,11 +289,12 @@ class ConfigModule implements Config {
     return () => this.listeners.delete(listener);
   }
 
-  getModelSelection(purpose: ModelPurpose): readonly ModelId[] {
+  getModelSelection(purpose: ModelPurpose): readonly ModelSelectionEntry[] {
     return this.requireConfig().modelSelection[purpose];
   }
 
-  resolveModel(modelId: ModelId): ResolvedModelConfig {
+  resolveModel(entry: ModelSelectionEntry): ResolvedModelConfig {
+    const modelId = modelIdFromEntry(entry);
     const config = this.requireConfig();
     const { providerId, rest } = splitProviderId(modelId);
     const provider = config.providers[providerId];
@@ -301,11 +307,12 @@ class ConfigModule implements Config {
 
     let knownModels: Record<string, ModelDefinition> | undefined;
     let localModelId: string;
+    let endpointConfig: EndpointConfig;
 
     if ('preset' in provider) {
       localModelId = rest;
       knownModels = provider.knownModels;
-      const endpoint = resolvePresetEndpoint(provider.preset, provider.auth);
+      endpointConfig = resolvePresetEndpoint(provider.preset, provider.auth);
       const info = this.resolveMetadata(
         modelId,
         providerId,
@@ -316,9 +323,13 @@ class ConfigModule implements Config {
         providerId,
         endpointId: provider.preset,
         modelId: localModelId,
-        endpoint: resolveAuthEnvVars(endpoint),
+        endpoint: resolveAuthEnvVars(endpointConfig),
         isPreset: true,
         ...info,
+        providerOptions: this.resolveProviderOptions(
+          entry,
+          endpointConfig.format,
+        ),
       };
     }
 
@@ -340,6 +351,7 @@ class ConfigModule implements Config {
     }
 
     knownModels = endpoint.knownModels;
+    endpointConfig = endpoint;
     const info = this.resolveMetadata(
       modelId,
       providerId,
@@ -350,16 +362,56 @@ class ConfigModule implements Config {
       providerId,
       endpointId,
       modelId: localModelId,
-      endpoint: resolveAuthEnvVars(endpoint),
+      endpoint: resolveAuthEnvVars(endpointConfig),
       isPreset: false,
       ...info,
+      providerOptions: this.resolveProviderOptions(
+        entry,
+        endpointConfig.format,
+      ),
     };
   }
 
-  resolveModelInfo(modelId: ModelId): ModelInfo {
+  resolveModelInfo(entry: ModelSelectionEntry): ModelInfo {
     const { contextSize, displayName, inputCapabilities } =
-      this.resolveModel(modelId);
+      this.resolveModel(entry);
     return { contextSize, displayName, inputCapabilities };
+  }
+
+  /**
+   * Resolves providerOptions from the selection entry: effort-derived
+   * options as the base, with explicit providerOptions merged on top
+   * (shallow merge per provider key). Returns undefined if neither
+   * effort nor providerOptions is set on the entry.
+   */
+  private resolveProviderOptions(
+    entry: ModelSelectionEntry,
+    format: EndpointConfig['format'],
+  ): Record<string, unknown> | undefined {
+    if (typeof entry === 'string') return undefined;
+
+    const fromEffort = entry.effort
+      ? effortToProviderOptions(entry.effort, format)
+      : undefined;
+    const explicit = entry.providerOptions;
+
+    if (!fromEffort && !explicit) return undefined;
+    if (!fromEffort) return explicit;
+    if (!explicit) return fromEffort;
+
+    // Shallow merge per provider key — explicit values override effort-derived ones.
+    const merged: Record<string, unknown> = { ...fromEffort };
+    for (const [key, value] of Object.entries(explicit)) {
+      const existing = fromEffort[key];
+      merged[key] =
+        typeof existing === 'object' &&
+        existing !== null &&
+        typeof value === 'object' &&
+        value !== null
+          ? { ...existing, ...value }
+          : value;
+    }
+    return merged;
   }
 
   /**
@@ -575,10 +627,9 @@ class ConfigModule implements Config {
         });
       }
       // Check referential integrity before removal
-      for (const [purpose, modelIds] of Object.entries(
-        current.modelSelection,
-      )) {
-        for (const modelId of modelIds) {
+      for (const [purpose, entries] of Object.entries(current.modelSelection)) {
+        for (const entry of entries) {
+          const modelId = modelIdFromEntry(entry);
           const { providerId } = splitProviderId(modelId);
           if (providerId === name) {
             throw new ConfigValidationError(
@@ -705,10 +756,9 @@ class ConfigModule implements Config {
         );
       }
       // Check referential integrity before removal
-      for (const [purpose, modelIds] of Object.entries(
-        current.modelSelection,
-      )) {
-        for (const modelId of modelIds) {
+      for (const [purpose, entries] of Object.entries(current.modelSelection)) {
+        for (const entry of entries) {
+          const modelId = modelIdFromEntry(entry);
           const { providerId, rest } = splitProviderId(modelId);
           if (providerId === providerName) {
             const colon = rest.indexOf(':');
@@ -1014,8 +1064,9 @@ class ConfigModule implements Config {
   }
 
   private validateModelReferences(config: KlexConfig): void {
-    for (const [purpose, modelIds] of Object.entries(config.modelSelection)) {
-      for (const modelId of modelIds) {
+    for (const [purpose, entries] of Object.entries(config.modelSelection)) {
+      for (const entry of entries) {
+        const modelId = modelIdFromEntry(entry);
         const { providerId, rest } = splitProviderId(modelId);
         const provider = config.providers[providerId];
         if (!provider) {

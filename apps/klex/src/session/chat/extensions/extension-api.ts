@@ -9,7 +9,12 @@ import type {
 
 import type { ModuleLogger, RootLogger } from '@stagewise/logger';
 
-import type { Config, ModelId, ModelInputCapabilities } from '@/config';
+import type {
+  Config,
+  ModelId,
+  ModelInputCapabilities,
+  ModelSelectionEntry,
+} from '@/config';
 import type { Mcp } from '@/mcp';
 
 import type { ChatSessionInbox } from '../inbox';
@@ -147,8 +152,8 @@ export interface ResolvedModel {
  * Both are passed through to the AI SDK's `generateText`.
  */
 export interface GenerateTextArgs {
-  /** Ordered list of model IDs to try. First success wins. */
-  modelIds: readonly ModelId[];
+  /** Ordered list of model selection entries to try. First success wins. */
+  modelIds: readonly ModelSelectionEntry[];
   /** System prompt. */
   system?: string;
   /** User prompt for single-turn generation. */

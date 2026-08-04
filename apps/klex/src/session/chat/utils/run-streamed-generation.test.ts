@@ -176,6 +176,73 @@ describe('runStreamedGeneration — success', () => {
     expect(arg.timeout).toBeUndefined();
   });
 
+  it('passes providerOptions to streamText when provided', async () => {
+    setupSuccessResult({
+      messages: [
+        {
+          id: 'msg-1',
+          role: 'assistant',
+          parts: [{ type: 'text', text: 'hello' }],
+        } as ExtendedUIMessage,
+      ],
+    });
+
+    const providerOptions = {
+      openai: { reasoningEffort: 'high' },
+    } as never;
+
+    await runStreamedGeneration({
+      model,
+      modelMessages: [],
+      tools,
+      onUpdate: vi.fn(),
+      abortSignal,
+      logger,
+      getChatModelId,
+      sessionId: 'test-session',
+      compacted: false,
+      providerOptions,
+    });
+
+    const calls = vi.mocked(streamText).mock.calls;
+    const call = calls[calls.length - 1] as unknown as [
+      Record<string, unknown>,
+    ];
+    const arg = call[0];
+    expect(arg.providerOptions).toEqual(providerOptions);
+  });
+
+  it('does not pass providerOptions to streamText when undefined', async () => {
+    setupSuccessResult({
+      messages: [
+        {
+          id: 'msg-1',
+          role: 'assistant',
+          parts: [{ type: 'text', text: 'hello' }],
+        } as ExtendedUIMessage,
+      ],
+    });
+
+    await runStreamedGeneration({
+      model,
+      modelMessages: [],
+      tools,
+      onUpdate: vi.fn(),
+      abortSignal,
+      logger,
+      getChatModelId,
+      sessionId: 'test-session',
+      compacted: false,
+    });
+
+    const calls = vi.mocked(streamText).mock.calls;
+    const call = calls[calls.length - 1] as unknown as [
+      Record<string, unknown>,
+    ];
+    const arg = call[0];
+    expect(arg.providerOptions).toBeUndefined();
+  });
+
   it('passes sessionId and compacted via runtimeContext to streamText', async () => {
     setupSuccessResult({
       messages: [

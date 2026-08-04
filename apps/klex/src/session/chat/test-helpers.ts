@@ -61,7 +61,7 @@ export function makeModelProvider() {
 
 export function makeFallbackManager() {
   return {
-    getChatModelId: vi.fn(() => 'test:model' as never),
+    getChatModelEntry: vi.fn(() => 'test:model' as never),
     getFallbackIndex: vi.fn(() => 0),
     fallbackToNextModel: vi.fn(),
     recordSuccessfulGeneration: vi.fn(),

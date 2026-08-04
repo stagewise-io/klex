@@ -1,11 +1,12 @@
 import { randomUUID } from 'node:crypto';
 
+import type { JSONObject } from '@ai-sdk/provider';
 import { type Context, context, type Span, trace } from '@opentelemetry/api';
 import { generateText } from 'ai';
 
 import type { ModuleLogger, RootLogger } from '@stagewise/logger';
 
-import type { Config, ModelId } from '@/config';
+import { type Config, modelIdFromEntry } from '@/config';
 import type { IntrospectionScope } from '@/introspection';
 import type { Mcp } from '@/mcp';
 import type { ModelProvider } from '@/model-provider';
@@ -42,7 +43,6 @@ import { createTurn, type Turn, type TurnResult } from './turn';
 import { BackoffManager } from './utils/backoff-manager';
 import { ModelFallbackManager } from './utils/model-fallback-manager';
 import { getExtensionIdentifier, tracer } from './utils/tracing';
-import { extractUsage } from './utils/usage';
 
 /**
  * Maximum consecutive complete-failure turns before the session terminates.
@@ -272,7 +272,7 @@ class ChatSessionModule implements AgentSession {
       {
         attributes: {
           'gen.extension': true,
-          'gen.modelIds': modelIds.join(','),
+          'gen.modelIds': modelIds.map((e) => modelIdFromEntry(e)).join(','),
           'gen.modelCount': modelIds.length,
           'gen.systemProvided': args.system != null,
           'gen.promptProvided': args.prompt != null,
@@ -303,9 +303,14 @@ class ChatSessionModule implements AgentSession {
         const failures: string[] = [];
         let contentFilterCount = 0;
 
-        for (const modelId of modelIds) {
+        for (const entry of modelIds) {
+          const modelId = modelIdFromEntry(entry);
           try {
             const model = await this.deps.modelProvider.get(modelId);
+            const resolved = this.deps.config.resolveModel(entry);
+            const providerOptions = resolved.providerOptions as
+              | Record<string, JSONObject>
+              | undefined;
             const result = await generateText(
               args.messages
                 ? {
@@ -320,6 +325,7 @@ class ChatSessionModule implements AgentSession {
                     runtimeContext: {
                       'conversation.modelId': modelId,
                     },
+                    ...(providerOptions !== undefined && { providerOptions }),
                   }
                 : {
                     model,
@@ -333,6 +339,7 @@ class ChatSessionModule implements AgentSession {
                     runtimeContext: {
                       'conversation.modelId': modelId,
                     },
+                    ...(providerOptions !== undefined && { providerOptions }),
                   },
             );
 
@@ -707,7 +714,7 @@ class ChatSessionModule implements AgentSession {
   }
 
   public getSessionInfo(): SessionInfo {
-    const modelId = this.fallbackManager.getChatModelId();
+    const modelId = modelIdFromEntry(this.fallbackManager.getChatModelEntry());
     const fallbackIndex = this.fallbackManager.getFallbackIndex();
 
     // Build per-extension usage snapshot.

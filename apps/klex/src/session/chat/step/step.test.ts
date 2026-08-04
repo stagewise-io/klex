@@ -94,6 +94,7 @@ function makeDeps(overrides: Partial<StepDependencies> = {}): StepDependencies {
     modelProvider: makeModelProvider() as never,
     fallbackManager: makeFallbackManager() as never,
     config: {
+      resolveModel: vi.fn(() => ({ providerOptions: undefined })),
       resolveModelInfo: vi.fn(() => ({
         displayName: 'Test Model',
         contextSize: 128_000,
@@ -591,10 +592,12 @@ describe('Step — model selection', () => {
     setupDefaultMocks();
   });
 
-  it('fetches the model from modelProvider using fallbackManager.getChatModelId', async () => {
+  it('fetches the model from modelProvider using fallbackManager.getChatModelEntry', async () => {
     const modelProvider = makeModelProvider();
     const fallbackManager = makeFallbackManager();
-    fallbackManager.getChatModelId.mockReturnValue('model:claude-3' as never);
+    fallbackManager.getChatModelEntry.mockReturnValue(
+      'model:claude-3' as never,
+    );
 
     const step = createStep(
       makeDeps({
@@ -605,7 +608,7 @@ describe('Step — model selection', () => {
     );
     await step.run();
 
-    expect(fallbackManager.getChatModelId).toHaveBeenCalled();
+    expect(fallbackManager.getChatModelEntry).toHaveBeenCalled();
     expect(modelProvider.get).toHaveBeenCalledWith('model:claude-3');
   });
 
@@ -613,7 +616,9 @@ describe('Step — model selection', () => {
     const extensionHandler = makeExtensionHandler();
     const modelProvider = makeModelProvider();
     const fallbackManager = makeFallbackManager();
-    fallbackManager.getChatModelId.mockReturnValue('model:claude-3' as never);
+    fallbackManager.getChatModelEntry.mockReturnValue(
+      'model:claude-3' as never,
+    );
 
     const callOrder: string[] = [];
     modelProvider.get.mockImplementation(async () => {
@@ -652,8 +657,9 @@ describe('Step — ResolvedModel passing', () => {
   it('passes the correct ResolvedModel to runHistoryTransformers', async () => {
     const extensionHandler = makeExtensionHandler();
     const fallbackManager = makeFallbackManager();
-    fallbackManager.getChatModelId.mockReturnValue('remote:gpt-4o' as never);
+    fallbackManager.getChatModelEntry.mockReturnValue('remote:gpt-4o' as never);
     const config = {
+      resolveModel: vi.fn(() => ({ providerOptions: undefined })),
       resolveModelInfo: vi.fn(() => ({
         displayName: 'GPT-4o',
         contextSize: 128_000,
@@ -688,7 +694,9 @@ describe('Step — ResolvedModel passing', () => {
   it('recompiles canonical media history after an ordinary model fallback', async () => {
     const fallbackManager = makeFallbackManager();
     let modelId = 'primary:text-only';
-    fallbackManager.getChatModelId.mockImplementation(() => modelId as never);
+    fallbackManager.getChatModelEntry.mockImplementation(
+      () => modelId as never,
+    );
     fallbackManager.fallbackToNextModel.mockImplementation(() => {
       modelId = 'fallback:vision';
       return true;
@@ -712,6 +720,7 @@ describe('Step — ResolvedModel passing', () => {
       } as ExtendedUIMessage,
     ];
     const config = {
+      resolveModel: vi.fn(() => ({ providerOptions: undefined })),
       resolveModelInfo: vi.fn((selectedModelId: string) => ({
         displayName: selectedModelId,
         contextSize: 128_000,
@@ -751,8 +760,9 @@ describe('Step — ResolvedModel passing', () => {
   it('passes the same ResolvedModel to runContextTransformers', async () => {
     const extensionHandler = makeExtensionHandler();
     const fallbackManager = makeFallbackManager();
-    fallbackManager.getChatModelId.mockReturnValue('remote:gpt-4o' as never);
+    fallbackManager.getChatModelEntry.mockReturnValue('remote:gpt-4o' as never);
     const config = {
+      resolveModel: vi.fn(() => ({ providerOptions: undefined })),
       resolveModelInfo: vi.fn(() => ({
         displayName: 'GPT-4o',
         contextSize: 128_000,

@@ -2,7 +2,7 @@ import type { Span } from '@opentelemetry/api';
 
 import type { ModuleLogger } from '@stagewise/logger';
 
-import type { ModelId } from '@/config';
+import type { ModelSelectionEntry } from '@/config';
 
 /**
  * Default cooldown duration: the session stays on a fallback model for 5
@@ -19,7 +19,7 @@ const DEFAULT_COOLDOWN_MS = 5 * 60 * 1000;
  * session stays on the fallback model until the cooldown expires. Each
  * successful generation (via {@link recordSuccessfulGeneration}) refreshes the
  * timer, keeping the session on the fallback as long as it's working. Once the
- * cooldown expires, the next call to {@link getChatModelId} resets back to the
+ * cooldown expires, the next call to {@link getChatModelEntry} resets back to the
  * default model (index 0).
  */
 export class ModelFallbackManager {
@@ -33,7 +33,7 @@ export class ModelFallbackManager {
       logger: ModuleLogger;
       span: Span;
       sessionId: string;
-      getChatModels: () => readonly ModelId[];
+      getChatModels: () => readonly ModelSelectionEntry[];
     },
     cooldownMs: number = DEFAULT_COOLDOWN_MS,
   ) {
@@ -41,10 +41,10 @@ export class ModelFallbackManager {
   }
 
   /**
-   * Returns the current model ID, resetting to the default model if the
-   * fallback cooldown has expired.
+   * Returns the current model selection entry, resetting to the
+   * default model if the fallback cooldown has expired.
    */
-  getChatModelId(): ModelId {
+  getChatModelEntry(): ModelSelectionEntry {
     const chatModels = this.deps.getChatModels();
     if (chatModels.length === 0) {
       throw new Error('No chat models configured in modelSelection.chat');
@@ -71,11 +71,11 @@ export class ModelFallbackManager {
     }
 
     const index = this.fallbackIndex % chatModels.length;
-    const modelId = chatModels[index];
-    if (!modelId) {
+    const entry = chatModels[index];
+    if (!entry) {
       throw new Error('No chat model selected in configuration');
     }
-    return modelId;
+    return entry;
   }
 
   /** Returns the current fallback index (0 = default model). */

@@ -376,6 +376,39 @@ describe('Telegram channel', () => {
     await expect(failed.start()).rejects.toThrow('unauthorized');
     expect(failed.status()).toBe('disconnected');
   });
+
+  it('wildcard mode accepts group chats and non-allowlisted senders', async () => {
+    const received: unknown[] = [];
+    const fake = createFakeBot();
+    const channel = createTelegramChannel({
+      token: 'test-token',
+      allowedUserIds: new Set(['*']),
+      logging,
+      onMessage: (message) => {
+        received.push(message);
+      },
+      botFactory: () => fake.bot,
+    });
+    channels.push(channel);
+    await channel.start();
+
+    await fake.emit();
+    await fake.emit({ chatType: 'group', senderId: 999 });
+    await fake.emit({ senderId: 41 });
+    await fake.emit({ senderIsBot: true });
+    await fake.emit({ text: ' ' });
+
+    expect(received).toHaveLength(3);
+    expect(received[0]).toMatchObject({ senderId: '40', chatId: '30' });
+    expect(received[1]).toMatchObject({ senderId: '999' });
+    expect(received[2]).toMatchObject({ senderId: '41' });
+
+    await expect(
+      channel.sendText({ chatId: '999', message: 'ok' }),
+    ).resolves.toEqual({ messageId: '99' });
+
+    await channel.close();
+  });
 });
 
 describe('Telegram file downloader', () => {

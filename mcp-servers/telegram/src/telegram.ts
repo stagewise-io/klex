@@ -110,6 +110,7 @@ const DEFAULT_MEDIA_DOWNLOAD_TIMEOUT_MS = 15_000;
 class TelegramChannelModule implements TelegramChannel {
   readonly #token: string;
   #allowedUserIds: ReadonlySet<string>;
+  #isWildcard = false;
   readonly #logger;
   readonly #onMessage: TelegramChannelDependencies['onMessage'];
   readonly #mediaMaxBytes: number;
@@ -122,6 +123,7 @@ class TelegramChannelModule implements TelegramChannel {
   constructor(deps: TelegramChannelDependencies) {
     this.#token = deps.token;
     this.#allowedUserIds = new Set(deps.allowedUserIds);
+    this.#isWildcard = this.#allowedUserIds.has('*');
     this.#logger = deps.logging.child({
       name: 'telegram-channel',
       bindings: { module: 'telegram-channel' },
@@ -167,7 +169,7 @@ class TelegramChannelModule implements TelegramChannel {
     if (this.#state !== 'connected' || !this.#bot) {
       throw new Error('Telegram is not connected');
     }
-    if (!this.#allowedUserIds.has(input.chatId)) {
+    if (!this.#isWildcard && !this.#allowedUserIds.has(input.chatId)) {
       throw new Error(`Telegram chat is not allowed: ${input.chatId}`);
     }
     const replyToMessageId = input.replyToMessageId
@@ -192,6 +194,7 @@ class TelegramChannelModule implements TelegramChannel {
 
   updateAllowedUserIds(allowedUserIds: ReadonlySet<string>): void {
     this.#allowedUserIds = new Set(allowedUserIds);
+    this.#isWildcard = this.#allowedUserIds.has('*');
   }
 
   async close(): Promise<void> {
@@ -209,9 +212,9 @@ class TelegramChannelModule implements TelegramChannel {
   ): Promise<void> {
     const senderId = String(message.senderId);
     if (
-      message.chatType !== 'private' ||
       message.senderIsBot ||
-      !this.#allowedUserIds.has(senderId)
+      (!this.#isWildcard && message.chatType !== 'private') ||
+      (!this.#isWildcard && !this.#allowedUserIds.has(senderId))
     ) {
       return;
     }

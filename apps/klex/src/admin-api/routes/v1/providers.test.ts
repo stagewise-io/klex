@@ -76,6 +76,7 @@ const baseConfig: KlexConfig = {
     chat: ['my-openai:gpt-4o'],
     compaction: [],
     memory: [],
+    routing: [],
   },
   mcpServers: {},
 };
@@ -807,7 +808,7 @@ describe('PATCH /v1/providers/:name/endpoints/:endpointName — update endpoint'
           },
         },
       },
-      modelSelection: { chat: [], compaction: [], memory: [] },
+      modelSelection: { chat: [], compaction: [], memory: [], routing: [] },
       mcpServers: {},
     };
     const mutateFn = vi.fn(async (fn: (cfg: KlexConfig) => KlexConfig) =>

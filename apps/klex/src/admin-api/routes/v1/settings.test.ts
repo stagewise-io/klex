@@ -329,6 +329,7 @@ describe('PATCH /v1/settings/model-selection', () => {
         chat: ['unknown-provider:some-model'],
         compaction: ['openai:gpt-4o-mini'],
         memory: ['anthropic:claude-3-haiku'],
+        routing: [],
       },
     };
     const app = createApp(

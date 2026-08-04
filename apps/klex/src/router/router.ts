@@ -49,6 +49,11 @@ export interface Router {
    * the session summary.
    */
   sendInput(event: SessionInboxEvent): Promise<void>;
+
+  /**
+   * Returns a snapshot of all active sessions.
+   */
+  getSessions(): SessionInfo[];
 }
 
 interface RouterSessionEntry {
@@ -126,7 +131,6 @@ class RouterModule implements Router {
     );
   }
 
-
   // ---------------------------------------------------------------------------
   // Internal helpers
   // ---------------------------------------------------------------------------
@@ -196,7 +200,7 @@ class RouterModule implements Router {
     // Existing envelope keys take precedence over data keys.
     if (event.data !== undefined) {
       for (const [key, value] of Object.entries(event.data)) {
-        if (value === null || key in metadata) continue;
+        if (value === null || value === undefined || key in metadata) continue;
         metadata[key] = value;
       }
     }

@@ -1169,7 +1169,7 @@ describe('Config — mutate skips validateModelReferences', () => {
 function noSelectionConfig(providers: KlexConfig['providers']): KlexConfig {
   return {
     providers,
-    modelSelection: { chat: [], compaction: [], memory: [] },
+    modelSelection: { chat: [], compaction: [], memory: [], routing: [] },
     mcpServers: {},
   };
 }

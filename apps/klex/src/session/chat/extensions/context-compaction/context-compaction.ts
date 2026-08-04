@@ -5,10 +5,7 @@ import { getToolName, isToolUIPart, type TextPart } from 'ai';
 
 import { startChildSpan } from '@/tracing';
 
-import type {
-  ContextSummaryDataUIPart,
-  ExtendedUIMessage,
-} from '../../message-types';
+import type { ExtendedUIMessage } from '../../message-types';
 import {
   createDataPart,
   type DataPartTransformers,

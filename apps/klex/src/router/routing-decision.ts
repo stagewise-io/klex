@@ -6,6 +6,7 @@ import type { ModuleLogger } from '@stagewise/logger';
 
 import type { ModelId } from '@/config';
 import type { ModelProvider } from '@/model-provider';
+import type { ContextMetadataValue } from '@/session/inbox';
 import {
   mapProviderName,
   recordErrorOnSpan,
@@ -46,7 +47,7 @@ interface RoutingDecisionParams {
   modelProvider: ModelProvider;
   routingModels: readonly ModelId[];
   sessions: SessionRoutingInfo[];
-  eventMetadata: Record<string, string | number | boolean>;
+  eventMetadata: Record<string, ContextMetadataValue>;
   sourceEnv: string;
 }
 

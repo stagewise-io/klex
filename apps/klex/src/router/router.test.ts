@@ -7,11 +7,7 @@ import type { IntrospectionScope } from '@/introspection';
 import type { Mcp, McpPushNotification } from '@/mcp';
 import type { ModelProvider } from '@/model-provider';
 import { type SessionInboxEvent, SessionInboxPriority } from '@/session/inbox';
-import type {
-  AgentSession,
-  SessionHooks,
-  SessionInfo,
-} from '@/session/types';
+import type { AgentSession, SessionHooks, SessionInfo } from '@/session/types';
 
 import { createRouter, type RouterDependencies } from './router';
 import { callRoutingLlm } from './routing-decision';
@@ -122,7 +118,10 @@ interface TestDeps {
   deps: RouterDependencies;
   createChatSession: ReturnType<
     typeof vi.fn<
-      (hooks: SessionHooks, introspectionScope: IntrospectionScope) => AgentSession
+      (
+        hooks: SessionHooks,
+        introspectionScope: IntrospectionScope,
+      ) => AgentSession
     >
   >;
 }
@@ -160,8 +159,11 @@ function makeDeps(
       },
     })),
     getModelSelection: vi.fn((purpose: string) =>
-      purpose === 'routing' ? routingModels : purpose === 'chat' ? chatModels : [],
-    ),
+      purpose === 'routing'
+        ? routingModels
+        : purpose === 'chat'
+          ? chatModels
+          : [],
     ),
   } as unknown as Config;
 
@@ -256,9 +258,7 @@ function setupPushNotificationHarness() {
     inbox: { send: (event: SessionInboxEvent) => sent.push(event) },
     start: async () => undefined,
     close: async () => undefined,
-    getSessionInfo: vi.fn(() =>
-      makeSessionInfo({ shortId: 's001' }),
-    ),
+    getSessionInfo: vi.fn(() => makeSessionInfo({ shortId: 's001' })),
     setShortId: vi.fn(),
     setSummary: vi.fn(),
     restorePendingEvents: vi.fn(),
@@ -297,6 +297,9 @@ describe('Router Push Notification adaptation', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(callRoutingLlm).mockResolvedValue(null as never);
+    mockRandomUUID.mockImplementation(
+      () => 'aabbccdd-0000-0000-0000-000000000000',
+    );
   });
 
   it('passes through content blocks without validation', async () => {

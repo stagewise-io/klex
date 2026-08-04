@@ -127,6 +127,12 @@ export interface AgentSession {
   readonly status: SessionStatus;
 
   /**
+   * Returns the full session info snapshot. The router uses this for
+   * routing decisions, observability, and session lifecycle management.
+   */
+  getSessionInfo(): SessionInfo;
+
+  /**
    * Start the session — spins up owned resources (e.g. the JavaScript
    * sandbox worker). Called by the router after creation. Idempotent.
    */

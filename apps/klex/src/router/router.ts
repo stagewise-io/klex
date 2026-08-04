@@ -19,7 +19,7 @@ import type {
   SessionInfo,
   SessionTerminationInfo,
 } from '@/session/types';
-import { recordErrorOnSpan, tracer } from '@/tracing';
+import { recordErrorOnSpan, tracer, withSpan } from '@/tracing';
 
 import {
   callRoutingLlm,
@@ -280,18 +280,23 @@ class RouterModule implements Router {
     try {
       let decision: RoutingDecision | null = null;
       try {
-        decision = await callRoutingLlm({
-          logger: this.deps.logger,
-          modelProvider: this.deps.modelProvider,
-          routingModels: effectiveModels,
-          sessions: routingInfo,
-          eventMetadata: event.context.metadata,
-          sourceEnv: event.sourceEnv,
-          contentPreview: buildContentPreview(event.context.content),
-          presetPriority: event.priority
-            ? SessionInboxPriority[event.priority]
-            : undefined,
-        });
+        // Run the routing LLM call within the router.route span context
+        // so the generateObject telemetry creates a child generate_content
+        // span nested under this span.
+        decision = await withSpan(span, () =>
+          callRoutingLlm({
+            logger: this.deps.logger,
+            modelProvider: this.deps.modelProvider,
+            routingModels: effectiveModels,
+            sessions: routingInfo,
+            eventMetadata: event.context.metadata,
+            sourceEnv: event.sourceEnv,
+            contentPreview: buildContentPreview(event.context.content),
+            presetPriority: event.priority
+              ? SessionInboxPriority[event.priority]
+              : undefined,
+          }),
+        );
       } catch (error) {
         this.deps.logger.error(
           { error },

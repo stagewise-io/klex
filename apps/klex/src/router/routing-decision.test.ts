@@ -8,16 +8,8 @@ import { callRoutingLlm } from './routing-decision';
 
 // --- mocks ---
 
-const { generateObjectMock, mockSpan } = vi.hoisted(() => ({
+const { generateObjectMock } = vi.hoisted(() => ({
   generateObjectMock: vi.fn(),
-  mockSpan: {
-    setAttributes: vi.fn(),
-    setAttribute: vi.fn(),
-    recordException: vi.fn(),
-    setStatus: vi.fn(),
-    end: vi.fn(),
-    spanContext: () => ({ traceId: 't', spanId: 's', traceFlags: 0 }),
-  },
 }));
 
 vi.mock('ai', () => ({
@@ -26,13 +18,6 @@ vi.mock('ai', () => ({
 
 vi.mock('./routing-system-prompt.md', () => ({
   default: 'mock routing system prompt',
-}));
-
-vi.mock('@/tracing', () => ({
-  tracer: { startSpan: () => mockSpan },
-  mapProviderName: (p: string) => p,
-  recordErrorOnSpan: vi.fn(),
-  withSpan: (_span: unknown, fn: () => Promise<unknown>) => fn(),
 }));
 
 beforeEach(() => {
@@ -201,5 +186,22 @@ describe('callRoutingLlm', () => {
     expect(prompt.event.sourceEnv).toBe('slack');
     expect(prompt.event.metadata).toEqual(eventMetadata);
     expect(prompt.event.contentPreview).toBe('hello world…');
+  });
+
+  it('passes telemetry options to generateObject', async () => {
+    generateObjectMock.mockResolvedValueOnce(
+      genSuccess({ sessionId: '', priority: 'medium' }),
+    );
+
+    const params = makeParams({
+      routingModels: ['test:model-a'],
+    });
+    await callRoutingLlm(params);
+
+    const callArgs = generateObjectMock.mock.calls[0]?.[0];
+    expect(callArgs.telemetry).toEqual({
+      isEnabled: true,
+      functionId: 'router',
+    });
   });
 });

@@ -33,6 +33,7 @@ const { mockRandomUUID, mockSpan } = vi.hoisted(() => ({
 vi.mock('@/tracing', () => ({
   tracer: { startSpan: () => mockSpan },
   recordErrorOnSpan: vi.fn(),
+  withSpan: (_span: unknown, fn: () => Promise<unknown>) => fn(),
 }));
 
 vi.mock('node:crypto', () => ({

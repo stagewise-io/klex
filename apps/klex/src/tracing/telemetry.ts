@@ -10,6 +10,7 @@ import {
   trace,
 } from '@opentelemetry/api';
 import type {
+  GenerateObjectEndEvent,
   GenerateTextAbortEvent,
   GenerateTextEndEvent,
   GenerateTextStartEvent,
@@ -273,15 +274,19 @@ class KlexTelemetry implements Telemetry {
   // --- Operation lifecycle --------------------------------------------------
 
   onStart(event: TelemetryStartEvent): void {
-    // Only instrument text generation operations.
+    // Instrument text and object generation operations.
     if (
       event.operationId !== 'ai.streamText' &&
-      event.operationId !== 'ai.generateText'
+      event.operationId !== 'ai.generateText' &&
+      event.operationId !== 'ai.generateObject' &&
+      event.operationId !== 'ai.streamObject'
     ) {
       return;
     }
 
     // Narrow to the text-generation-specific event shape.
+    // GenerateObjectStartEvent shares the same base fields (callId,
+    // operationId, provider, modelId, messages/prompt, etc.).
     const genEvent = event as InferTelemetryEvent<GenerateTextStartEvent>;
 
     const providerName = mapProviderName(genEvent.provider);
@@ -651,6 +656,53 @@ class KlexTelemetry implements Telemetry {
         const outputMessages = serializeJson([outputMessage]);
         if (outputMessages != null) {
           state.rootSpan.setAttribute('gen_ai.output.messages', outputMessages);
+        }
+      }
+    } else if (
+      state.operationId === 'ai.generateObject' ||
+      state.operationId === 'ai.streamObject'
+    ) {
+      const objEndEvent = event as InferTelemetryEvent<
+        GenerateObjectEndEvent<unknown>
+      >;
+
+      state.rootSpan.setAttributes({
+        'gen_ai.response.finish_reasons': [objEndEvent.finishReason],
+        'gen_ai.usage.input_tokens': objEndEvent.usage.inputTokens,
+        'gen_ai.usage.output_tokens': objEndEvent.usage.outputTokens,
+      });
+
+      if (objEndEvent.finishReason === 'error') {
+        state.rootSpan.setAttribute('error.type', 'generation_error');
+        state.rootSpan.setStatus({ code: SpanStatusCode.ERROR });
+      }
+
+      if (objEndEvent.usage.inputTokenDetails?.cacheReadTokens != null) {
+        state.rootSpan.setAttribute(
+          'gen_ai.usage.cache_read.input_tokens',
+          objEndEvent.usage.inputTokenDetails.cacheReadTokens,
+        );
+      }
+      if (objEndEvent.usage.inputTokenDetails?.cacheWriteTokens != null) {
+        state.rootSpan.setAttribute(
+          'gen_ai.usage.cache_creation.input_tokens',
+          objEndEvent.usage.inputTokenDetails.cacheWriteTokens,
+        );
+      }
+
+      // Opt-in content attribute: gen_ai.output_messages for object generation.
+      if (state.recordOutputs && objEndEvent.object != null) {
+        const outputSerialized = serializeJson(objEndEvent.object);
+        if (outputSerialized != null) {
+          const outputMessages = serializeJson([
+            { role: 'assistant', content: outputSerialized },
+          ]);
+          if (outputMessages != null) {
+            state.rootSpan.setAttribute(
+              'gen_ai.output.messages',
+              outputMessages,
+            );
+          }
         }
       }
     }

@@ -1646,18 +1646,6 @@ describe('Config — known model CRUD', () => {
 });
 
 describe('Config — model selection entries (object form)', () => {
-  it('accepts object-form entries with effort', async () => {
-    const config = presetConfig('openai', 'o3');
-    config.modelSelection.chat = [{ model: 'my-openai:o3', effort: 'high' }];
-    const { module } = await setup(config);
-
-    const selection = module.getModelSelection('chat');
-    expect(selection).toHaveLength(1);
-    const entry = selection[0]!;
-    expect(typeof entry).toBe('object');
-    expect(entry).toEqual({ model: 'my-openai:o3', effort: 'high' });
-  });
-
   it('accepts object-form entries with providerOptions', async () => {
     const config = presetConfig('openai', 'gpt-4o');
     config.modelSelection.chat = [
@@ -1676,27 +1664,6 @@ describe('Config — model selection entries (object form)', () => {
     });
   });
 
-  it('accepts object-form entries with both effort and providerOptions', async () => {
-    const config = presetConfig('openai', 'o3');
-    config.modelSelection.chat = [
-      {
-        model: 'my-openai:o3',
-        effort: 'high',
-        providerOptions: { openai: { store: true } },
-      },
-    ];
-    const { module } = await setup(config);
-
-    const resolved = module.resolveModel(
-      module.getModelSelection('chat')[0] as ModelSelectionEntry,
-    );
-    // effort produces { openai: { reasoningEffort: 'high' } };
-    // explicit providerOptions merges on top: { reasoningEffort: 'high', store: true }
-    expect(resolved.providerOptions).toEqual({
-      openai: { reasoningEffort: 'high', store: true },
-    });
-  });
-
   it('accepts bare-string entries (backward compat)', async () => {
     const config = presetConfig();
     const { module } = await setup(config);
@@ -1708,89 +1675,7 @@ describe('Config — model selection entries (object form)', () => {
     expect(resolved.providerOptions).toBeUndefined();
   });
 
-  it('resolves effort to provider-specific options for OpenAI format', async () => {
-    const config = presetConfig('openai', 'o3');
-    config.modelSelection.chat = [{ model: 'my-openai:o3', effort: 'high' }];
-    const { module } = await setup(config);
-
-    const resolved = module.resolveModel(
-      module.getModelSelection('chat')[0] as ModelSelectionEntry,
-    );
-    expect(resolved.providerOptions).toEqual({
-      openai: { reasoningEffort: 'high' },
-    });
-  });
-
-  it('resolves effort to provider-specific options for Anthropic format', async () => {
-    const config = presetConfig(
-      'anthropic',
-      'claude-sonnet-4-20250514',
-      'my-anthropic',
-    );
-    config.modelSelection.chat = [
-      { model: 'my-anthropic:claude-sonnet-4-20250514', effort: 'low' },
-    ];
-    const { module } = await setup(config);
-
-    const resolved = module.resolveModel(
-      module.getModelSelection('chat')[0] as ModelSelectionEntry,
-    );
-    expect(resolved.providerOptions).toEqual({
-      anthropic: {
-        thinking: { type: 'enabled', budgetTokens: 4_000 },
-      },
-    });
-  });
-
-  it('resolves dynamic effort as medium', async () => {
-    const config = presetConfig('openai', 'o3');
-    config.modelSelection.chat = [{ model: 'my-openai:o3', effort: 'dynamic' }];
-    const { module } = await setup(config);
-
-    const resolved = module.resolveModel(
-      module.getModelSelection('chat')[0] as ModelSelectionEntry,
-    );
-    expect(resolved.providerOptions).toEqual({
-      openai: { reasoningEffort: 'medium' },
-    });
-  });
-
-  it('explicit providerOptions override effort-derived values for overlapping keys', async () => {
-    const config = presetConfig('openai', 'o3');
-    config.modelSelection.chat = [
-      {
-        model: 'my-openai:o3',
-        effort: 'low',
-        providerOptions: { openai: { reasoningEffort: 'high' } },
-      },
-    ];
-    const { module } = await setup(config);
-
-    const resolved = module.resolveModel(
-      module.getModelSelection('chat')[0] as ModelSelectionEntry,
-    );
-    // effort=low produces { reasoningEffort: 'low' };
-    // explicit providerOptions overrides reasoningEffort to 'high'
-    expect(resolved.providerOptions).toEqual({
-      openai: { reasoningEffort: 'high' },
-    });
-  });
-
-  it('returns undefined providerOptions for chat-completions format with effort', async () => {
-    const config = manualConfig();
-    config.modelSelection.chat = [
-      { model: 'local:chat:model:8b', effort: 'high' },
-    ];
-    const { module } = await setup(config);
-
-    const resolved = module.resolveModel(
-      module.getModelSelection('chat')[0] as ModelSelectionEntry,
-    );
-    // chat-completions has no effort mapping
-    expect(resolved.providerOptions).toBeUndefined();
-  });
-
-  it('returns undefined providerOptions for object entry without effort or providerOptions', async () => {
+  it('returns undefined providerOptions for object entry without providerOptions', async () => {
     const config = presetConfig();
     config.modelSelection.chat = [{ model: 'my-openai:gpt-4o' }];
     const { module } = await setup(config);
@@ -1812,9 +1697,7 @@ describe('Config — model selection entries (object form)', () => {
     ).knownModels = {
       'gpt-4o': { contextSize: 128_000, displayName: 'GPT-4o' },
     };
-    config.modelSelection.chat = [
-      { model: 'my-openai:gpt-4o', effort: 'high' },
-    ];
+    config.modelSelection.chat = [{ model: 'my-openai:gpt-4o' }];
     const { module } = await setup(config);
 
     const info = module.resolveModelInfo(
@@ -1826,7 +1709,7 @@ describe('Config — model selection entries (object form)', () => {
 
   it('validateModelReferences accepts object-form entries', async () => {
     const config = mixedConfig();
-    config.modelSelection.chat = [{ model: 'remote:gpt-4o', effort: 'high' }];
+    config.modelSelection.chat = [{ model: 'remote:gpt-4o' }];
     config.modelSelection.compaction = [
       {
         model: 'local:chat:model:8b',
@@ -1842,7 +1725,7 @@ describe('Config — model selection entries (object form)', () => {
   it('validateModelReferences rejects object-form entry with missing provider', async () => {
     const { module } = await setup(mixedConfig());
     const invalid = mixedConfig();
-    invalid.modelSelection.chat = [{ model: 'missing:gpt-4o', effort: 'high' }];
+    invalid.modelSelection.chat = [{ model: 'missing:gpt-4o' }];
 
     await expect(module.replace(invalid)).rejects.toBeInstanceOf(
       ConfigValidationError,

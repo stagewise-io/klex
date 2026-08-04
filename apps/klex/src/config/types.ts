@@ -13,15 +13,10 @@ const modelIdSchema = z.custom<`${string}:${string}`>(
 
 type ModelId = z.infer<typeof modelIdSchema>;
 
-// Effort level: klex-level abstraction over provider-specific reasoning/thinking settings
-
-type EffortLevel = 'low' | 'medium' | 'high' | 'dynamic';
-
-// Model selection entry: bare ModelId (back-compat) or object with optional effort + providerOptions
+// Model selection entry: bare ModelId (back-compat) or object with optional providerOptions
 
 interface ModelSelectionEntryObject {
   model: ModelId;
-  effort?: EffortLevel;
   providerOptions?: Record<string, unknown>;
 }
 
@@ -32,7 +27,6 @@ const modelSelectionEntrySchema = z.union([
   z
     .object({
       model: modelIdSchema,
-      effort: z.enum(['low', 'medium', 'high', 'dynamic']).optional(),
       providerOptions: z.record(z.string(), z.unknown()).optional(),
     })
     .strict(),
@@ -255,7 +249,6 @@ type KlexConfig = z.infer<typeof klexConfigSchema>;
 
 export type {
   ApiFormat,
-  EffortLevel,
   EndpointAuth,
   EndpointConfig,
   HttpServerConfig,

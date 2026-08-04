@@ -158,7 +158,6 @@ const modelSelectionEntryOapiSchema = z
     z
       .object({
         model: modelIdSchema,
-        effort: z.enum(['low', 'medium', 'high', 'dynamic']).optional(),
         providerOptions: z.record(z.string(), z.unknown()).optional(),
       })
       .strict(),

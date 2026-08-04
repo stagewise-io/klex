@@ -47,6 +47,7 @@ interface RoutingDecisionParams {
   sessions: SessionRoutingInfo[];
   eventMetadata: Record<string, ContextMetadataValue>;
   sourceEnv: string;
+  contentPreview: string;
 }
 
 export type { RoutingDecision, RoutingDecisionParams, SessionRoutingInfo };
@@ -91,6 +92,7 @@ export async function callRoutingLlm(
     sessions,
     eventMetadata,
     sourceEnv,
+    contentPreview,
   } = params;
 
   if (routingModels.length === 0) {
@@ -99,7 +101,7 @@ export async function callRoutingLlm(
 
   const prompt = JSON.stringify({
     sessions,
-    event: { sourceEnv, metadata: eventMetadata },
+    event: { sourceEnv, metadata: eventMetadata, contentPreview },
   });
 
   for (const modelId of routingModels) {

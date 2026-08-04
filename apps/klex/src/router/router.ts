@@ -27,6 +27,33 @@ import {
   type SessionRoutingInfo,
 } from './routing-decision';
 
+/**
+ * Builds a short text preview of event content for the routing LLM.
+ * Text is truncated to 32 characters. Other modalities become placeholders.
+ */
+function buildContentPreview(content: ContextDataUIPart['content']): string {
+  const parts: string[] = [];
+  for (const block of content) {
+    if (block.type === 'text') {
+      parts.push(
+        block.text.length > 32 ? `${block.text.slice(0, 32)}…` : block.text,
+      );
+    } else if (block.type === 'image') {
+      parts.push('[image]');
+    } else if (block.type === 'audio') {
+      // Estimate duration from base64 data size (rough heuristic).
+      const bytes = Math.floor((block.data.length * 3) / 4);
+      const seconds = Math.max(1, Math.round(bytes / 16000));
+      parts.push(`[audio: ${seconds}sec]`);
+    } else if (block.type === 'resource_link') {
+      parts.push(`[resource_link: ${block.name}]`);
+    } else if (block.type === 'resource') {
+      parts.push(`[resource: ${block.resource.uri}]`);
+    }
+  }
+  return parts.join(' ');
+}
+
 export interface RouterDependencies {
   logging: RootLogger;
   mcp: Mcp;
@@ -258,6 +285,7 @@ class RouterModule implements Router {
           sessions: routingInfo,
           eventMetadata: event.context.metadata,
           sourceEnv: event.sourceEnv,
+          contentPreview: buildContentPreview(event.context.content),
         });
       } catch (error) {
         this.deps.logger.error(

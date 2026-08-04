@@ -81,6 +81,7 @@ function makeParams(
     sessions: [],
     eventMetadata: {},
     sourceEnv: 'test-env',
+    contentPreview: '',
     ...overrides,
   };
 }
@@ -189,6 +190,7 @@ describe('callRoutingLlm', () => {
       sessions,
       eventMetadata,
       sourceEnv: 'slack',
+      contentPreview: 'hello world…',
     });
 
     await callRoutingLlm(params);
@@ -198,5 +200,6 @@ describe('callRoutingLlm', () => {
     expect(prompt.sessions).toEqual(sessions);
     expect(prompt.event.sourceEnv).toBe('slack');
     expect(prompt.event.metadata).toEqual(eventMetadata);
+    expect(prompt.event.contentPreview).toBe('hello world…');
   });
 });

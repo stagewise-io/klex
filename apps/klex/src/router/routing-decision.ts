@@ -17,12 +17,10 @@ import {
 import SYSTEM_PROMPT from './routing-system-prompt.md';
 
 const routingDecisionSchema = z.object({
-  sessionChoice: z.enum(['new', 'existing']),
   sessionId: z
     .string()
-    .optional()
     .describe(
-      'Short ID of the existing session to route to. Required when sessionChoice is "existing".',
+      'Short ID of the existing session to route to. Empty string to create a new session.',
     ),
   priority: z.enum(['low', 'medium', 'high']),
   summary: z

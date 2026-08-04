@@ -105,7 +105,6 @@ describe('callRoutingLlm', () => {
 
   it('returns the decision from a successful model call', async () => {
     const decision = {
-      sessionChoice: 'existing' as const,
       sessionId: 'a1b2',
       priority: 'medium' as const,
       summary: 'Handling user messages',
@@ -120,7 +119,7 @@ describe('callRoutingLlm', () => {
 
   it('falls back to the next model when the first fails', async () => {
     const decision = {
-      sessionChoice: 'new' as const,
+      sessionId: '',
       priority: 'low' as const,
     };
     generateObjectMock
@@ -173,7 +172,7 @@ describe('callRoutingLlm', () => {
 
   it('passes session info and event metadata in the prompt', async () => {
     generateObjectMock.mockResolvedValueOnce(
-      genSuccess({ sessionChoice: 'new', priority: 'medium' }),
+      genSuccess({ sessionId: '', priority: 'medium' }),
     );
 
     const sessions = [
@@ -194,7 +193,7 @@ describe('callRoutingLlm', () => {
 
     await callRoutingLlm(params);
 
-    const callArgs = generateObjectMock.mock.calls[0]![0];
+    const callArgs = generateObjectMock.mock.calls[0]?.[0];
     const prompt = JSON.parse(callArgs.prompt);
     expect(prompt.sessions).toEqual(sessions);
     expect(prompt.event.sourceEnv).toBe('slack');

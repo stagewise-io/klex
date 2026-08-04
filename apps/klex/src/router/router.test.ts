@@ -516,7 +516,6 @@ describe('Router', () => {
       routingModels: [],
       chatModels: ['chat:model-a', 'chat:model-b'],
       routingDecision: {
-        sessionChoice: 'existing',
         sessionId: 's001',
         priority: 'high',
         summary: 'Updated summary',
@@ -560,7 +559,6 @@ describe('Router', () => {
     const { deps, createChatSession } = makeDeps({
       routingModels: ['test:model'],
       routingDecision: {
-        sessionChoice: 'existing',
         sessionId: 's001',
         priority: 'high',
         summary: 'Now handling urgent request',
@@ -596,7 +594,7 @@ describe('Router', () => {
     const { deps, createChatSession } = makeDeps({
       routingModels: ['test:model'],
       routingDecision: {
-        sessionChoice: 'new',
+        sessionId: '',
         priority: 'medium',
       },
     });
@@ -627,7 +625,6 @@ describe('Router', () => {
     const { deps, createChatSession } = makeDeps({
       routingModels: ['test:model'],
       routingDecision: {
-        sessionChoice: 'existing',
         sessionId: 'xxxx',
         priority: 'low',
       },
@@ -734,7 +731,6 @@ describe('Router', () => {
     const depsLow = makeDeps({
       routingModels: ['test:model'],
       routingDecision: {
-        sessionChoice: 'existing',
         sessionId: 's001',
         priority: 'low',
       },
@@ -757,7 +753,6 @@ describe('Router', () => {
     // Reset mock for medium test
     vi.clearAllMocks();
     vi.mocked(callRoutingLlm).mockResolvedValue({
-      sessionChoice: 'existing',
       sessionId: 's001',
       priority: 'medium',
     } as never);
@@ -786,7 +781,6 @@ describe('Router', () => {
     const { deps, createChatSession } = makeDeps({
       routingModels: ['test:model'],
       routingDecision: {
-        sessionChoice: 'existing',
         sessionId: 's001',
         priority: 'medium',
         summary: 'Updated activity summary',

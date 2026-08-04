@@ -268,11 +268,12 @@ class RouterModule implements Router {
 
       // Record the routing decision on the span.
       if (decision) {
+        const isNew = decision.sessionId === '';
         span.setAttributes({
-          'klex.router.decision.choice': decision.sessionChoice,
+          'klex.router.decision.choice': isNew ? 'new' : 'existing',
           'klex.router.decision.priority': decision.priority,
         });
-        if (decision.sessionId != null) {
+        if (decision.sessionId !== '') {
           span.setAttribute(
             'klex.router.decision.session_id',
             decision.sessionId,
@@ -292,9 +293,9 @@ class RouterModule implements Router {
         'klex.router.target_short_id': entry.shortId,
         'klex.router.target_priority': SessionInboxPriority[priority],
         'klex.router.target_is_new_session':
-          decision?.sessionChoice === 'new' ||
-          (decision?.sessionChoice === 'existing' &&
-            !this.sessions.has(decision.sessionId ?? '')),
+          decision === null ||
+          decision.sessionId === '' ||
+          !this.sessions.has(decision.sessionId),
       });
 
       // Update summary if the LLM provided one.
@@ -358,7 +359,7 @@ class RouterModule implements Router {
 
     const priority = this.mapPriority(decision.priority);
 
-    if (decision.sessionChoice === 'existing' && decision.sessionId) {
+    if (decision.sessionId !== '') {
       const entry = this.sessions.get(decision.sessionId);
       if (entry) {
         return { entry, priority, summary: decision.summary ?? null };

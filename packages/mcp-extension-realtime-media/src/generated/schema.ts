@@ -23,7 +23,17 @@ const NotificationParamsSchema = z.object({
   _meta: z.record(z.string(), z.unknown()).optional(),
 });
 
-/** The initial realtime transport negotiated by this extension revision. */
+/** Common envelope for a negotiated realtime transport. */
+export const RealtimeMediaTransportDescriptorSchema = z
+  .record(z.string(), z.unknown())
+  .and(
+    z.object({
+      /** Profile selecting the adapter that validates the remaining fields. */
+      profile: z.string().min(1),
+    }),
+  );
+
+/** Descriptor specialization for the initial LiveKit room transport. */
 export const LiveKitRoomTransportDescriptorSchema = z.object({
   profile: z.literal('livekit-room'),
   /** LiveKit server URL. */
@@ -47,7 +57,7 @@ export const AcceptRealtimeMediaSessionRequestSchema =
 /** Returns the media-plane credentials only after acceptance. */
 export const AcceptRealtimeMediaSessionResultSchema = ResultSchema.and(
   z.object({
-    transport: LiveKitRoomTransportDescriptorSchema,
+    transport: RealtimeMediaTransportDescriptorSchema,
   }),
 );
 
@@ -122,9 +132,9 @@ export const RealtimeMediaSubscriptionAcknowledgedNotificationsSchema =
     'io.stagewise/realtime-media': RealtimeMediaSubscriptionSchema.optional(),
   });
 
-/** Exact capability supported by the initial contract. */
+/** Realtime transport profiles and media kinds supported by one peer. */
 export const RealtimeMediaExtensionCapabilitySchema = z.object({
-  transports: z.tuple([z.literal('livekit-room')]),
+  transports: z.array(z.string().min(1)).min(1),
   media: z.tuple([z.literal('audio')]),
 });
 

@@ -9,13 +9,19 @@ import {
 const capability = { transports: ['livekit-room'], media: ['audio'] } as const;
 
 describe('Realtime Media schemas', () => {
-  it('accepts the locked capability and rejects unsupported profiles', () => {
+  it('accepts non-empty profile capability lists', () => {
     expect(RealtimeMediaExtensionCapabilitySchema.parse(capability)).toEqual(
       capability,
     );
     expect(
       RealtimeMediaExtensionCapabilitySchema.safeParse({
         transports: ['websocket-pcm'],
+        media: ['audio'],
+      }).success,
+    ).toBe(true);
+    expect(
+      RealtimeMediaExtensionCapabilitySchema.safeParse({
+        transports: [],
         media: ['audio'],
       }).success,
     ).toBe(false);
@@ -48,7 +54,12 @@ describe('Realtime Media schemas', () => {
     ).toBeDefined();
     expect(
       AcceptRealtimeMediaSessionResultSchema.safeParse({
-        transport: { profile: 'livekit-room', url: 'invalid', token: '' },
+        transport: { profile: 'websocket-pcm', endpoint: 'opaque' },
+      }).success,
+    ).toBe(true);
+    expect(
+      AcceptRealtimeMediaSessionResultSchema.safeParse({
+        transport: { profile: '' },
       }).success,
     ).toBe(false);
   });

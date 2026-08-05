@@ -30,6 +30,7 @@ import {
 } from '../generated/schema.js';
 import type {
   AcceptRealtimeMediaSessionResult,
+  RealtimeMediaExtensionCapability,
   RealtimeMediaProtocolErrorData,
   RealtimeMediaProtocolErrorKind,
   RealtimeMediaSessionEndedNotificationParams,
@@ -66,6 +67,7 @@ export interface RealtimeMediaServerHandlers {
 }
 
 export interface RegisterRealtimeMediaServerOptions {
+  capability?: RealtimeMediaExtensionCapability;
   acceptInitializationCapabilities?: boolean;
   /** Disable when an application composes discovery through another handler. */
   registerDiscoveryHandler?: boolean;
@@ -127,12 +129,16 @@ export function registerRealtimeMediaServer(
   handlers: RealtimeMediaServerHandlers,
   options: RegisterRealtimeMediaServerOptions = {},
 ): RegisteredRealtimeMediaServer {
-  server.registerCapabilities(withRealtimeMediaCapability({}));
+  const capability = options.capability ?? {
+    transports: ['livekit-room'],
+    media: ['audio'],
+  };
+  server.registerCapabilities(withRealtimeMediaCapability({}, capability));
 
   const supports = (metadata?: Record<string, unknown>): boolean =>
-    hasPerRequestRealtimeMediaCapability(metadata) ||
+    hasPerRequestRealtimeMediaCapability(metadata, capability) ||
     (options.acceptInitializationCapabilities === true &&
-      hasRealtimeMediaCapability(server.getClientCapabilities()));
+      hasRealtimeMediaCapability(server.getClientCapabilities(), capability));
 
   const requireSupport = (context: BaseContext): void => {
     const metadata = context.mcpReq?.envelope as
@@ -140,7 +146,7 @@ export function registerRealtimeMediaServer(
       | undefined;
     if (!supports(metadata)) {
       throw new RealtimeMediaProtocolError(
-        missingRealtimeMediaCapabilityError(),
+        missingRealtimeMediaCapabilityError(capability),
       );
     }
   };
@@ -152,7 +158,7 @@ export function registerRealtimeMediaServer(
         params: z.record(z.string(), z.unknown()),
         result: ServerDiscoverResultSchema,
       },
-      () => ({ capabilities: realtimeMediaCapabilities() }),
+      () => ({ capabilities: realtimeMediaCapabilities(capability) }),
     );
   }
   server.setRequestHandler(

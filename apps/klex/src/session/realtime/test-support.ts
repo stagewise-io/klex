@@ -196,7 +196,8 @@ function createDeterministicMediaTransport(options?: {
   );
 }
 
-interface DeterministicMediaTransportConnector extends MediaTransportConnector {
+export interface DeterministicMediaTransportConnector
+  extends MediaTransportConnector {
   readonly descriptors: readonly unknown[];
   nextTransport(): Promise<DeterministicMediaTransport>;
 }

@@ -27,6 +27,7 @@ import {
 import type {
   AcceptRealtimeMediaSessionResult,
   RealtimeMediaCapabilities,
+  RealtimeMediaExtensionCapability,
   RealtimeMediaNotification,
   RealtimeMediaSubscription,
   ServerDiscoverResult,
@@ -42,6 +43,7 @@ export type RealtimeMediaClientProtocol = Pick<
 >;
 
 export interface RegisterRealtimeMediaClientOptions {
+  capability?: RealtimeMediaExtensionCapability;
   onNotification?(
     notification: RealtimeMediaNotification,
   ): void | Promise<void>;
@@ -80,11 +82,12 @@ export interface RegisteredRealtimeMediaClient {
 
 function paramsWithCapability<T extends Record<string, unknown>>(
   params: T,
+  capability: RealtimeMediaExtensionCapability,
   metadata?: Record<string, unknown>,
 ): T & { _meta: Record<string, unknown> } {
   return {
     ...params,
-    _meta: withRealtimeMediaClientCapability(metadata ?? {}),
+    _meta: withRealtimeMediaClientCapability(metadata ?? {}, capability),
   };
 }
 
@@ -92,13 +95,17 @@ export function registerRealtimeMediaClient(
   client: RealtimeMediaClientProtocol,
   options: RegisterRealtimeMediaClientOptions = {},
 ): RegisteredRealtimeMediaClient {
-  client.registerCapabilities(withRealtimeMediaCapability({}));
+  const capability = options.capability ?? {
+    transports: ['livekit-room'],
+    media: ['audio'],
+  };
+  client.registerCapabilities(withRealtimeMediaCapability({}, capability));
   let discoveryCapabilities: RealtimeMediaCapabilities | undefined;
   let discoveryRequest: Promise<ServerDiscoverResult> | undefined;
   let resolveAcknowledgement: (() => void) | undefined;
 
   const markServerSupport = (): void => {
-    discoveryCapabilities = withRealtimeMediaCapability({});
+    discoveryCapabilities = withRealtimeMediaCapability({}, capability);
   };
 
   const discover = (
@@ -109,7 +116,11 @@ export function registerRealtimeMediaClient(
       .request(
         {
           method: SERVER_DISCOVER_METHOD,
-          params: paramsWithCapability({}, requestOptions?.metadata),
+          params: paramsWithCapability(
+            {},
+            capability,
+            requestOptions?.metadata,
+          ),
         },
         ServerDiscoverResultSchema,
         requestOptions?.request,
@@ -136,12 +147,14 @@ export function registerRealtimeMediaClient(
       return resolveServerRealtimeMediaSupport({
         discovery: discoveryCapabilities,
         initialization,
+        localCapability: capability,
       });
     }
     await discover(requestOptions);
     return resolveServerRealtimeMediaSupport({
       discovery: discoveryCapabilities,
       initialization: client.getServerCapabilities(),
+      localCapability: capability,
     });
   };
 
@@ -204,6 +217,7 @@ export function registerRealtimeMediaClient(
                 'io.stagewise/realtime-media': subscription,
               },
             },
+            capability,
             requestOptions?.metadata,
           ),
         },
@@ -227,7 +241,11 @@ export function registerRealtimeMediaClient(
       return client.request(
         {
           method: REALTIME_MEDIA_ACCEPT_METHOD,
-          params: paramsWithCapability({ sessionId }, requestOptions?.metadata),
+          params: paramsWithCapability(
+            { sessionId },
+            capability,
+            requestOptions?.metadata,
+          ),
         },
         AcceptRealtimeMediaSessionResultSchema,
         requestOptions?.request,
@@ -238,7 +256,11 @@ export function registerRealtimeMediaClient(
       await client.request(
         {
           method: REALTIME_MEDIA_REJECT_METHOD,
-          params: paramsWithCapability({ sessionId }, requestOptions?.metadata),
+          params: paramsWithCapability(
+            { sessionId },
+            capability,
+            requestOptions?.metadata,
+          ),
         },
         EndRealtimeMediaSessionResultSchema,
         requestOptions?.request,
@@ -249,7 +271,11 @@ export function registerRealtimeMediaClient(
       await client.request(
         {
           method: REALTIME_MEDIA_END_METHOD,
-          params: paramsWithCapability({ sessionId }, requestOptions?.metadata),
+          params: paramsWithCapability(
+            { sessionId },
+            capability,
+            requestOptions?.metadata,
+          ),
         },
         EndRealtimeMediaSessionResultSchema,
         requestOptions?.request,

@@ -57,6 +57,13 @@ returned descriptor, creates a processor, and explicitly routes audio:
 The routing remains explicit application policy rather than automatically
 connecting properties with matching names.
 
+A profile-keyed connector registry is the source of Klex's advertised transport
+profiles and the dispatch boundary for accepted descriptors. The registry reads
+the common `profile` envelope and delegates full payload validation to the
+matching adapter. The coordinator remains profile-agnostic. Production currently
+registers only `livekit-room`; adding a profile requires adding one registry entry
+and its adapter rather than changing coordinator control flow.
+
 Each session has one abort controller and one stored `finish()` promise. Remote
 end, transport closure or failure, processor closure or failure, pump failure,
 MCP unavailability, and coordinator shutdown all converge on that promise.

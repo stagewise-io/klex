@@ -61,23 +61,26 @@
           "type": "object",
           "properties": {
             "transport": {
-              "type": "object",
-              "properties": {
-                "profile": {
-                  "type": "string",
-                  "const": "livekit-room"
+              "allOf": [
+                {
+                  "type": "object",
+                  "propertyNames": {
+                    "type": "string"
+                  },
+                  "additionalProperties": {}
                 },
-                "url": {
-                  "type": "string",
-                  "format": "uri"
-                },
-                "token": {
-                  "type": "string",
-                  "minLength": 1
+                {
+                  "type": "object",
+                  "properties": {
+                    "profile": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "required": ["profile"],
+                  "additionalProperties": false
                 }
-              },
-              "required": ["profile", "url", "token"],
-              "additionalProperties": false
+              ]
             }
           },
           "required": ["transport"],
@@ -188,13 +191,12 @@
                           "type": "object",
                           "properties": {
                             "transports": {
+                              "minItems": 1,
                               "type": "array",
-                              "prefixItems": [
-                                {
-                                  "type": "string",
-                                  "const": "livekit-room"
-                                }
-                              ]
+                              "items": {
+                                "type": "string",
+                                "minLength": 1
+                              }
                             },
                             "media": {
                               "type": "array",
@@ -252,13 +254,12 @@
                       "type": "object",
                       "properties": {
                         "transports": {
+                          "minItems": 1,
                           "type": "array",
-                          "prefixItems": [
-                            {
-                              "type": "string",
-                              "const": "livekit-room"
-                            }
-                          ]
+                          "items": {
+                            "type": "string",
+                            "minLength": 1
+                          }
                         },
                         "media": {
                           "type": "array",
@@ -324,13 +325,12 @@
                               "type": "object",
                               "properties": {
                                 "transports": {
+                                  "minItems": 1,
                                   "type": "array",
-                                  "prefixItems": [
-                                    {
-                                      "type": "string",
-                                      "const": "livekit-room"
-                                    }
-                                  ]
+                                  "items": {
+                                    "type": "string",
+                                    "minLength": 1
+                                  }
                                 },
                                 "media": {
                                   "type": "array",
@@ -377,13 +377,12 @@
               "type": "object",
               "properties": {
                 "transports": {
+                  "minItems": 1,
                   "type": "array",
-                  "prefixItems": [
-                    {
-                      "type": "string",
-                      "const": "livekit-room"
-                    }
-                  ]
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  }
                 },
                 "media": {
                   "type": "array",
@@ -408,13 +407,12 @@
       "type": "object",
       "properties": {
         "transports": {
+          "minItems": 1,
           "type": "array",
-          "prefixItems": [
-            {
-              "type": "string",
-              "const": "livekit-room"
-            }
-          ]
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
         },
         "media": {
           "type": "array",
@@ -789,6 +787,29 @@
         "not": {}
       }
     },
+    "RealtimeMediaTransportDescriptor": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "allOf": [
+        {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {}
+        },
+        {
+          "type": "object",
+          "properties": {
+            "profile": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": ["profile"],
+          "additionalProperties": false
+        }
+      ]
+    },
     "RejectRealtimeMediaSessionRequest": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "type": "object",
@@ -920,13 +941,12 @@
                               "type": "object",
                               "properties": {
                                 "transports": {
+                                  "minItems": 1,
                                   "type": "array",
-                                  "prefixItems": [
-                                    {
-                                      "type": "string",
-                                      "const": "livekit-room"
-                                    }
-                                  ]
+                                  "items": {
+                                    "type": "string",
+                                    "minLength": 1
+                                  }
                                 },
                                 "media": {
                                   "type": "array",

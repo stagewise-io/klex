@@ -6,7 +6,10 @@ import type { Mcp } from '@/mcp';
 import type { MediaTransportConnector } from '@/media-transport';
 
 import type { RealtimeSessionCoordinator } from './realtime';
-import { createRealtimeMediaRuntime } from './runtime';
+import {
+  createProductionMediaTransportConnectorRegistry,
+  createRealtimeMediaRuntime,
+} from './runtime';
 
 const logging = { child: vi.fn() } as unknown as RootLogger;
 const mcp = {} as Mcp;
@@ -57,6 +60,12 @@ function harness(enabled: boolean) {
 }
 
 describe('createRealtimeMediaRuntime', () => {
+  it('registers the production LiveKit profile', async () => {
+    const registry = createProductionMediaTransportConnectorRegistry();
+    expect(registry.profiles).toEqual(['livekit-room']);
+    await registry.close();
+  });
+
   it('does not create realtime resources when disabled', async () => {
     const { runtime, createConnector, createCoordinator } = harness(false);
     await runtime.start();

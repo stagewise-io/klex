@@ -26,7 +26,14 @@ interface NotificationParams {
   _meta?: Record<string, unknown>;
 }
 
-/** The initial realtime transport negotiated by this extension revision. */
+/** Common envelope for a negotiated realtime transport. */
+export interface RealtimeMediaTransportDescriptor {
+  /** Profile selecting the adapter that validates the remaining fields. */
+  profile: string;
+  [key: string]: unknown;
+}
+
+/** Descriptor specialization for the initial LiveKit room transport. */
 export interface LiveKitRoomTransportDescriptor {
   profile: 'livekit-room';
   /** LiveKit server URL. */
@@ -48,7 +55,7 @@ export interface AcceptRealtimeMediaSessionRequest extends JSONRPCRequest {
 
 /** Returns the media-plane credentials only after acceptance. */
 export type AcceptRealtimeMediaSessionResult = Result & {
-  transport: LiveKitRoomTransportDescriptor;
+  transport: RealtimeMediaTransportDescriptor;
 };
 
 /** Rejects an offered session. */
@@ -112,9 +119,9 @@ export interface RealtimeMediaSubscriptionAcknowledgedNotifications {
   'io.stagewise/realtime-media'?: RealtimeMediaSubscription;
 }
 
-/** Exact capability supported by the initial contract. */
+/** Realtime transport profiles and media kinds supported by one peer. */
 export interface RealtimeMediaExtensionCapability {
-  transports: ['livekit-room'];
+  transports: string[];
   media: ['audio'];
 }
 

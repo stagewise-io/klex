@@ -5,7 +5,7 @@ Each session has:
 - `id`: short ID (reference this in your response)
 - `n`: total events received
 - `envs`: source environments seen
-- `freq`: per metadata key, value → count. Only keys seen across ≥2 events (patterns). `{"chatId":{"123":3}}` = 3 events from chat 123
+- `freq`: per metadata key, value → count (top 10 keys, top 20 values per key). `{"chatId":{"123":3}}` = 3 events from chat 123
 - `act`: what the session is doing (may be absent)
 - `state`: runtime state — only present when not idle (`working`, `retrying`, `success`)
 

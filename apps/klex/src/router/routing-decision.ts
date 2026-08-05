@@ -134,8 +134,6 @@ export function analyzeEventPatterns(eventLog: EventLogEntry[]): EventPatterns {
 const MAX_FREQ_VALUES = 20;
 /** Max metadata keys to include in freq (top by total event count). */
 const MAX_FREQ_KEYS = 10;
-/** A key must appear in at least this many events to be included. */
-const MIN_PATTERN_COUNT = 2;
 /** Max characters for activitySummary in the prompt. */
 const MAX_ACT_LENGTH = 200;
 /** Max flattened keys for the incoming event's metadata. */
@@ -152,16 +150,13 @@ function buildCompactSession(s: SessionRoutingInfo): Record<string, unknown> {
   if (eventCount > 0) obj.n = eventCount;
   if (sourceEnvs.length > 0) obj.envs = sourceEnvs;
 
-  // Only include metadata keys where a pattern has emerged
-  // (key appeared in >= MIN_PATTERN_COUNT events). A single event
-  // with many metadata keys produces no patterns — the LLM cannot
-  // judge routing from a one-shot burst.
+  // Rank all metadata keys by total occurrence count, then cap
+  // to the top MAX_FREQ_KEYS to bound payload size.
   const keyTotals: Array<[string, number]> = [];
   for (const [key, values] of Object.entries(metadataFrequency)) {
     const total = Object.values(values).reduce((a, b) => a + b, 0);
-    if (total >= MIN_PATTERN_COUNT) keyTotals.push([key, total]);
+    keyTotals.push([key, total]);
   }
-  // Cap to top MAX_FREQ_KEYS by total event count.
   const topKeys = new Set(
     keyTotals
       .sort((a, b) => b[1] - a[1])

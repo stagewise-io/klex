@@ -227,7 +227,7 @@ describe('callRoutingLlm', () => {
     });
   });
 
-  it('omits freq keys that appeared in only one event (no pattern)', async () => {
+  it('includes freq keys from a single event (no emergence filter)', async () => {
     generateObjectMock.mockResolvedValueOnce(
       genSuccess({ sessionId: '', priority: 'medium' }),
     );
@@ -240,7 +240,8 @@ describe('callRoutingLlm', () => {
         eventPatterns: {
           eventCount: 1,
           sourceEnvs: ['github'],
-          // Single event with many keys — no pattern emerged.
+          // Single event with keys — all should appear so the LLM
+          // can match the second event against them.
           metadataFrequency: {
             repo: { 'klex-agent': 1 },
             pr: { '42': 1 },
@@ -256,10 +257,14 @@ describe('callRoutingLlm', () => {
 
     const callArgs = generateObjectMock.mock.calls[0]?.[0];
     const prompt = JSON.parse(callArgs.prompt);
-    expect(prompt.sessions[0].freq).toBeUndefined();
+    expect(prompt.sessions[0].freq).toEqual({
+      repo: { 'klex-agent': 1 },
+      pr: { '42': 1 },
+      author: { alice: 1 },
+    });
   });
 
-  it('includes only pattern keys in freq, excludes single-event noise', async () => {
+  it('includes all freq keys regardless of occurrence count', async () => {
     generateObjectMock.mockResolvedValueOnce(
       genSuccess({ sessionId: '', priority: 'medium' }),
     );
@@ -273,9 +278,7 @@ describe('callRoutingLlm', () => {
           eventCount: 4,
           sourceEnvs: ['telegram'],
           metadataFrequency: {
-            // Pattern: appeared in 4 events.
             chatId: { '123': 4 },
-            // Noise: appeared in only 1 event.
             requestId: { 'r-abc': 1 },
           },
         },
@@ -288,8 +291,11 @@ describe('callRoutingLlm', () => {
 
     const callArgs = generateObjectMock.mock.calls[0]?.[0];
     const prompt = JSON.parse(callArgs.prompt);
-    expect(prompt.sessions[0].freq).toEqual({ chatId: { '123': 4 } });
-    expect(prompt.sessions[0].freq.requestId).toBeUndefined();
+    // Both keys included — the top-10 cap is the sole bound.
+    expect(prompt.sessions[0].freq).toEqual({
+      chatId: { '123': 4 },
+      requestId: { 'r-abc': 1 },
+    });
   });
 
   it('caps freq to top 10 keys by total event count', async () => {
@@ -300,7 +306,7 @@ describe('callRoutingLlm', () => {
     const metadataFrequency: Record<string, Record<string, number>> = {};
     for (let i = 0; i < 15; i++) {
       // Keys with decreasing total counts: key0=15, key1=14, ... key14=1
-      // Only key0..key9 (total >= 6) qualify by count >= 2 AND top-10.
+      // Only key0..key9 qualify by top-10 ranking.
       metadataFrequency[`key${i}`] = { v: 15 - i };
     }
 

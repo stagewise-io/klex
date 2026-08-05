@@ -43,6 +43,8 @@ interface ServerEvent {
 const OPEN = 1;
 const FRAME_BYTES = 960 * 2;
 const STARTUP_TIMEOUT_MS = 10_000;
+const DEFAULT_VOICE = 'marin';
+const DEFAULT_INSTRUCTIONS = 'You are Klex. Answer clearly and briefly.';
 
 class OpenAIRealtimeProcessor implements RealtimeProcessor {
   private readonly outputQueue = new BoundedAsyncQueue<AudioFrame>(1);
@@ -139,7 +141,7 @@ class OpenAIRealtimeProcessor implements RealtimeProcessor {
       type: 'session.update',
       session: {
         type: 'realtime',
-        instructions: this.config.instructions,
+        instructions: DEFAULT_INSTRUCTIONS,
         audio: {
           input: {
             format: { type: 'audio/pcm', rate: 24_000 },
@@ -147,23 +149,14 @@ class OpenAIRealtimeProcessor implements RealtimeProcessor {
               type: 'server_vad',
               create_response: true,
               interrupt_response: true,
-              ...(this.config.serverVad.threshold === undefined
-                ? {}
-                : { threshold: this.config.serverVad.threshold }),
-              ...(this.config.serverVad.prefixPaddingMs === undefined
-                ? {}
-                : { prefix_padding_ms: this.config.serverVad.prefixPaddingMs }),
-              ...(this.config.serverVad.silenceDurationMs === undefined
-                ? {}
-                : {
-                    silence_duration_ms:
-                      this.config.serverVad.silenceDurationMs,
-                  }),
+              threshold: 0.5,
+              prefix_padding_ms: 300,
+              silence_duration_ms: 500,
             },
           },
           output: {
             format: { type: 'audio/pcm', rate: 24_000 },
-            voice: this.config.voice,
+            voice: DEFAULT_VOICE,
           },
         },
       },

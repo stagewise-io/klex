@@ -29,6 +29,7 @@ const baseSelection: ModelSelection = {
   memory: ['anthropic:claude-3-haiku'],
   imageVision: [],
   audioListening: [],
+  voice: { sts: [], tts: [], stt: [] },
 };
 
 const baseConfig: KlexConfig = {
@@ -66,7 +67,6 @@ const baseConfig: KlexConfig = {
   },
   modelSelection: baseSelection,
   mcpServers: {},
-  realtime: { mode: 'disabled' },
 };
 
 function makeDeps(config: Partial<Config> = {}): SettingsRouteDependencies {
@@ -111,6 +111,7 @@ describe('GET /v1/settings/model-selection', () => {
       memory: [],
       imageVision: [],
       audioListening: [],
+      voice: { sts: [], tts: [], stt: [] },
     };
     const app = createApp(
       makeDeps({
@@ -203,6 +204,7 @@ describe('PATCH /v1/settings/model-selection', () => {
       memory: ['anthropic:claude-3-haiku'],
       imageVision: [],
       audioListening: [],
+      voice: { sts: [], tts: [], stt: [] },
     };
     const mutateFn = vi.fn(async (fn: (cfg: KlexConfig) => KlexConfig) => {
       const next = fn(baseConfig);
@@ -335,6 +337,7 @@ describe('PATCH /v1/settings/model-selection', () => {
         memory: ['anthropic:claude-3-haiku'],
         imageVision: [],
         audioListening: [],
+        voice: { sts: [], tts: [], stt: [] },
       },
     };
     const app = createApp(

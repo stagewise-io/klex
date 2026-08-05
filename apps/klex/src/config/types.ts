@@ -53,6 +53,11 @@ const apiFormatSchema = z.enum([
   'chat-completions', // used for OpenAI-compatible chat completions endpoints
   'open-responses', // used for OpenAI-compatible responses endpoints
   'messages', // used for Anthropic-compatible messages endpoints
+
+  // Standardized voice API formats
+  'realtime', // used for OpenAI-compatible persistent Realtime endpoints
+  'speech', // used for OpenAI-compatible text-to-speech endpoints
+  'transcriptions', // used for OpenAI-compatible speech-to-text endpoints
 ]);
 
 type ApiFormat = z.infer<typeof apiFormatSchema>;
@@ -148,15 +153,35 @@ const modelInputCapabilitiesSchema = z
   })
   .strict();
 
+const modelVoiceCapabilitiesSchema = z
+  .object({
+    /** Supports native persistent speech-to-speech conversation. */
+    sts: z.boolean().optional(),
+    /** Supports synthesizing spoken audio from text. */
+    tts: z.boolean().optional(),
+    /** Supports transcribing spoken audio to text. */
+    stt: z.boolean().optional(),
+  })
+  .strict();
+
+const modelCapabilitiesSchema = z
+  .object({
+    input: modelInputCapabilitiesSchema.optional(),
+    voice: modelVoiceCapabilitiesSchema.optional(),
+  })
+  .strict();
+
 const modelDefinitionSchema = z
   .object({
     displayName: z.string().optional(),
     contextSize: z.number().int().positive().optional(),
-    inputCapabilities: modelInputCapabilitiesSchema.optional(),
+    capabilities: modelCapabilitiesSchema.optional(),
   })
   .strict();
 
 type ModelInputCapabilities = z.infer<typeof modelInputCapabilitiesSchema>;
+type ModelCapabilities = z.infer<typeof modelCapabilitiesSchema>;
+type ModelVoiceCapabilities = z.infer<typeof modelVoiceCapabilitiesSchema>;
 type ModelDefinition = z.infer<typeof modelDefinitionSchema>;
 
 // Manual endpoint: endpoint config with optional known model metadata
@@ -191,16 +216,29 @@ type ProviderConfig = z.infer<typeof providerConfigSchema>;
 
 // Model selection: which models to use for each purpose
 
+const voiceModelSelectionSchema = z
+  .object({
+    /** Native persistent speech-to-speech conversational models, in fallback order. */
+    sts: z.array(modelIdSchema).default([]),
+    /** Text-to-speech models for a future composed voice pipeline, in fallback order. */
+    tts: z.array(modelIdSchema).default([]),
+    /** Speech-to-text models for a future composed voice pipeline, in fallback order. */
+    stt: z.array(modelIdSchema).default([]),
+  })
+  .strict();
+
 const modelSelectionSchema = z.object({
   chat: z.array(modelSelectionEntrySchema),
   compaction: z.array(modelSelectionEntrySchema),
   memory: z.array(modelSelectionEntrySchema),
   imageVision: z.array(modelSelectionEntrySchema).default([]),
   audioListening: z.array(modelSelectionEntrySchema).default([]),
+  voice: voiceModelSelectionSchema.default({ sts: [], tts: [], stt: [] }),
 });
 
 type ModelSelection = z.infer<typeof modelSelectionSchema>;
-type ModelPurpose = keyof ModelSelection;
+type ModelPurpose = Exclude<keyof ModelSelection, 'voice'>;
+type VoiceModelPurpose = keyof ModelSelection['voice'];
 
 // MCP server config (standard mcp.json shape)
 
@@ -243,39 +281,11 @@ const telemetryConfigSchema = z.object({
   level: telemetryLevelSchema,
 });
 
-const serverVadConfigSchema = z
-  .object({
-    threshold: z.number().min(0).max(1).optional(),
-    prefixPaddingMs: z.number().int().min(0).max(5_000).optional(),
-    silenceDurationMs: z.number().int().min(100).max(10_000).optional(),
-  })
-  .strict();
-
-const realtimeConfigSchema = z
-  .discriminatedUnion('mode', [
-    z.object({ mode: z.literal('disabled') }).strict(),
-    z.object({ mode: z.literal('loopback') }).strict(),
-    z
-      .object({
-        mode: z.literal('openai-realtime'),
-        model: modelIdSchema,
-        voice: z.string().trim().min(1),
-        instructions: z.string().trim().min(1),
-        serverVad: serverVadConfigSchema.optional(),
-      })
-      .strict(),
-  ])
-  .default({ mode: 'disabled' });
-
-type RealtimeConfig = z.infer<typeof realtimeConfigSchema>;
-type RealtimeMode = RealtimeConfig['mode'];
-
 const klexConfigSchema = z.object({
   providers: z.record(z.string(), providerConfigSchema),
   modelSelection: modelSelectionSchema,
   mcpServers: z.record(z.string(), mcpServerConfigSchema),
   telemetry: telemetryConfigSchema.optional(),
-  realtime: realtimeConfigSchema,
 });
 
 type KlexConfig = z.infer<typeof klexConfigSchema>;
@@ -289,25 +299,26 @@ export type {
   ManualEndpoint,
   McpServerConfig,
   McpVersionNegotiation,
+  ModelCapabilities,
   ModelDefinition,
   ModelId,
   ModelInputCapabilities,
   ModelPurpose,
   ModelSelection,
   ModelSelectionEntry,
+  ModelVoiceCapabilities,
   ProviderConfig,
   ProviderPreset,
-  RealtimeConfig,
-  RealtimeMode,
   StdioServerConfig,
   TelemetryLevel,
+  VoiceModelPurpose,
 };
 export {
   klexConfigSchema,
   mcpServerConfigSchema,
+  modelCapabilitiesSchema,
   modelIdFromEntry,
   modelIdSchema,
   modelSelectionSchema,
-  realtimeConfigSchema,
   telemetryLevelSchema,
 };

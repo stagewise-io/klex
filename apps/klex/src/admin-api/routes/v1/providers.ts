@@ -7,8 +7,8 @@ import type {
   EndpointAuth,
   EndpointConfig,
   ManualEndpoint,
+  ModelCapabilities,
   ModelDefinition,
-  ModelInputCapabilities,
   ProviderConfig,
 } from '@/config';
 import { ConfigValidationError } from '@/config';
@@ -754,8 +754,8 @@ export function createKnownModel(
       ...(body.contextSize !== undefined && {
         contextSize: body.contextSize,
       }),
-      ...(body.inputCapabilities !== undefined && {
-        inputCapabilities: body.inputCapabilities,
+      ...(body.capabilities !== undefined && {
+        capabilities: body.capabilities,
       }),
     };
 
@@ -891,8 +891,8 @@ export function updateKnownModel(
           cleanDef.displayName = patch.displayName;
         if (patch.contextSize !== undefined)
           cleanDef.contextSize = patch.contextSize;
-        if (patch.inputCapabilities !== undefined)
-          cleanDef.inputCapabilities = patch.inputCapabilities;
+        if (patch.capabilities !== undefined)
+          cleanDef.capabilities = patch.capabilities;
 
         if (isPreset) {
           const existing = provider.knownModels ?? {};
@@ -1132,7 +1132,7 @@ function collectKnownModels(
   endpointName?: string;
   displayName?: string;
   contextSize?: number;
-  inputCapabilities?: ModelInputCapabilities;
+  capabilities?: ModelCapabilities;
 }> {
   if ('preset' in provider) {
     const models = provider.knownModels ?? {};
@@ -1140,7 +1140,7 @@ function collectKnownModels(
       modelId,
       displayName: def.displayName,
       contextSize: def.contextSize,
-      inputCapabilities: def.inputCapabilities,
+      capabilities: def.capabilities,
     }));
   }
 
@@ -1153,7 +1153,7 @@ function collectKnownModels(
     endpointName?: string;
     displayName?: string;
     contextSize?: number;
-    inputCapabilities?: ModelInputCapabilities;
+    capabilities?: ModelCapabilities;
   }> = [];
   for (const [epName, endpoint] of Object.entries(endpoints)) {
     if (!endpoint) continue;
@@ -1164,7 +1164,7 @@ function collectKnownModels(
         endpointName: epName,
         displayName: def.displayName,
         contextSize: def.contextSize,
-        inputCapabilities: def.inputCapabilities,
+        capabilities: def.capabilities,
       });
     }
   }

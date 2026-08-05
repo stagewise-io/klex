@@ -13,6 +13,7 @@ import {
   klexConfigSchema,
   type ManualEndpoint,
   type McpServerConfig,
+  type ModelCapabilities,
   type ModelDefinition,
   type ModelId,
   type ModelInputCapabilities,
@@ -23,6 +24,7 @@ import {
   type ProviderConfig,
   resolvePresetEndpoint,
   type TelemetryLevel,
+  type VoiceModelPurpose,
 } from './types';
 
 /**
@@ -53,6 +55,7 @@ export interface ResolvedModelConfig {
   contextSize: number;
   /** Human-readable name from knownModels, if declared. */
   displayName?: string;
+  capabilities: ModelCapabilities;
   inputCapabilities: ModelInputCapabilities;
   /** Provider-specific options from the model selection entry. */
   providerOptions?: Record<string, Record<string, unknown>>;
@@ -66,16 +69,16 @@ export interface ResolvedOpenAIRealtimeConfig {
   modelId: string;
   apiKey: string;
   websocketUrl: string;
-  voice: string;
-  instructions: string;
-  serverVad: {
-    threshold?: number;
-    prefixPaddingMs?: number;
-    silenceDurationMs?: number;
-  };
 }
 
+export type ResolvedRealtimeProvider = {
+  kind: 'openai-realtime';
+  config: ResolvedOpenAIRealtimeConfig;
+};
+
 export interface ModelInfo {
+  /** All declared model capabilities, normalized to an empty object. */
+  capabilities: ModelCapabilities;
   /** Resolved context size in tokens (defaults to {@link DEFAULT_CONTEXT_SIZE}). */
   contextSize: number;
   /** Human-readable name from `knownModels`, if declared. */
@@ -130,7 +133,7 @@ export interface Config {
    */
   resolveModelInfo(entry: ModelSelectionEntry): ModelInfo;
   getMcpServers(): Readonly<Record<string, McpServerConfig>>;
-  resolveOpenAIRealtime(): ResolvedOpenAIRealtimeConfig | undefined;
+  resolveRealtimeProvider(): ResolvedRealtimeProvider | undefined;
   /** Creates a new MCP server. Throws if the name already exists. */
   addMcpServer(
     name: string,
@@ -306,24 +309,23 @@ class ConfigModule implements Config {
     return this.requireConfig().modelSelection[purpose];
   }
 
-  resolveOpenAIRealtime(): ResolvedOpenAIRealtimeConfig | undefined {
-    const realtime = this.requireConfig().realtime;
-    if (realtime.mode !== 'openai-realtime') return undefined;
-    const resolved = this.resolveModel(realtime.model);
-    if (resolved.endpoint.format !== 'openai')
-      throw new Error('OpenAI realtime requires an OpenAI endpoint');
+  resolveRealtimeProvider(): ResolvedRealtimeProvider | undefined {
+    const [modelId] = this.requireConfig().modelSelection.voice.sts;
+    if (!modelId) return undefined;
+    const resolved = this.resolveModel(modelId);
     const apiKey = resolved.endpoint.auth.apiKey?.trim();
-    if (!apiKey) throw new Error('OpenAI realtime requires an API key');
+    if (!apiKey)
+      throw new Error(`Realtime model ${modelId} requires an API key`);
     return {
-      modelId: resolved.modelId,
-      apiKey,
-      websocketUrl: openAIRealtimeWebSocketUrl(
-        resolved.endpoint.url,
-        resolved.modelId,
-      ),
-      voice: realtime.voice,
-      instructions: realtime.instructions,
-      serverVad: realtime.serverVad ?? {},
+      kind: 'openai-realtime',
+      config: {
+        modelId: resolved.modelId,
+        apiKey,
+        websocketUrl: openAIRealtimeWebSocketUrl(
+          resolved.endpoint.url,
+          resolved.modelId,
+        ),
+      },
     };
   }
 
@@ -401,9 +403,9 @@ class ConfigModule implements Config {
   }
 
   resolveModelInfo(entry: ModelSelectionEntry): ModelInfo {
-    const { contextSize, displayName, inputCapabilities } =
+    const { capabilities, contextSize, displayName, inputCapabilities } =
       this.resolveModel(entry);
-    return { contextSize, displayName, inputCapabilities };
+    return { capabilities, contextSize, displayName, inputCapabilities };
   }
 
   /**
@@ -443,7 +445,8 @@ class ConfigModule implements Config {
     return {
       contextSize: contextSize ?? DEFAULT_CONTEXT_SIZE,
       displayName: def?.displayName,
-      inputCapabilities: def?.inputCapabilities ?? {},
+      capabilities: def?.capabilities ?? {},
+      inputCapabilities: def?.capabilities?.input ?? {},
     };
   }
 
@@ -566,6 +569,7 @@ class ConfigModule implements Config {
     try {
       if (validateReferences) {
         this.validateModelReferences(config);
+        this.validateVoiceSelections(config);
       }
       this.validateAuth(config);
     } catch (error) {
@@ -630,7 +634,17 @@ class ConfigModule implements Config {
         });
       }
       // Check referential integrity before removal
-      for (const [purpose, entries] of Object.entries(current.modelSelection)) {
+      const selectionEntries = {
+        chat: current.modelSelection.chat,
+        compaction: current.modelSelection.compaction,
+        memory: current.modelSelection.memory,
+        imageVision: current.modelSelection.imageVision,
+        audioListening: current.modelSelection.audioListening,
+        'voice.sts': current.modelSelection.voice.sts,
+        'voice.tts': current.modelSelection.voice.tts,
+        'voice.stt': current.modelSelection.voice.stt,
+      };
+      for (const [purpose, entries] of Object.entries(selectionEntries)) {
         for (const entry of entries) {
           const modelId = modelIdFromEntry(entry);
           const { providerId } = splitProviderId(modelId);
@@ -759,7 +773,17 @@ class ConfigModule implements Config {
         );
       }
       // Check referential integrity before removal
-      for (const [purpose, entries] of Object.entries(current.modelSelection)) {
+      const selectionEntries = {
+        chat: current.modelSelection.chat,
+        compaction: current.modelSelection.compaction,
+        memory: current.modelSelection.memory,
+        imageVision: current.modelSelection.imageVision,
+        audioListening: current.modelSelection.audioListening,
+        'voice.sts': current.modelSelection.voice.sts,
+        'voice.tts': current.modelSelection.voice.tts,
+        'voice.stt': current.modelSelection.voice.stt,
+      };
+      for (const [purpose, entries] of Object.entries(selectionEntries)) {
         for (const entry of entries) {
           const modelId = modelIdFromEntry(entry);
           const { providerId, rest } = splitProviderId(modelId);
@@ -1067,7 +1091,17 @@ class ConfigModule implements Config {
   }
 
   private validateModelReferences(config: KlexConfig): void {
-    for (const [purpose, entries] of Object.entries(config.modelSelection)) {
+    const selections: [string, readonly ModelSelectionEntry[]][] = [
+      ['chat', config.modelSelection.chat],
+      ['compaction', config.modelSelection.compaction],
+      ['memory', config.modelSelection.memory],
+      ['imageVision', config.modelSelection.imageVision],
+      ['audioListening', config.modelSelection.audioListening],
+      ['voice.sts', config.modelSelection.voice.sts],
+      ['voice.tts', config.modelSelection.voice.tts],
+      ['voice.stt', config.modelSelection.voice.stt],
+    ];
+    for (const [purpose, entries] of selections) {
       for (const entry of entries) {
         const modelId = modelIdFromEntry(entry);
         const { providerId, rest } = splitProviderId(modelId);
@@ -1103,6 +1137,57 @@ class ConfigModule implements Config {
       }
     }
   }
+
+  private validateVoiceSelections(config: KlexConfig): void {
+    for (const purpose of [
+      'sts',
+      'tts',
+      'stt',
+    ] as const satisfies readonly VoiceModelPurpose[]) {
+      for (const modelId of config.modelSelection.voice[purpose]) {
+        const { definition, endpoint } = resolveConfiguredModel(
+          config,
+          modelId,
+        );
+        if (definition?.capabilities?.voice?.[purpose] !== true) {
+          throw new Error(
+            `Model selection voice.${purpose} references ${modelId}, which must declare capabilities.voice.${purpose}: true`,
+          );
+        }
+        if (
+          purpose === 'sts' &&
+          endpoint.format !== 'openai' &&
+          endpoint.format !== 'realtime'
+        ) {
+          throw new Error(
+            `Model selection voice.sts references ${modelId}, but endpoint format ${endpoint.format} has no installed speech-to-speech adapter`,
+          );
+        }
+      }
+    }
+  }
+}
+
+function resolveConfiguredModel(
+  config: KlexConfig,
+  modelId: ModelId,
+): { definition: ModelDefinition | undefined; endpoint: EndpointConfig } {
+  const { providerId, rest } = splitProviderId(modelId);
+  const provider = config.providers[providerId];
+  if (!provider) throw new Error(`Unknown provider ${providerId}`);
+  if ('preset' in provider) {
+    return {
+      definition: provider.knownModels?.[rest],
+      endpoint: resolvePresetEndpoint(provider.preset, provider.auth),
+    };
+  }
+  const colon = rest.indexOf(':');
+  const endpointId = rest.slice(0, colon);
+  const localModelId = rest.slice(colon + 1);
+  const endpoint = provider.endpoints[endpointId];
+  if (!endpoint)
+    throw new Error(`Unknown endpoint ${providerId}:${endpointId}`);
+  return { definition: endpoint.knownModels?.[localModelId], endpoint };
 }
 
 function isNodeError(error: unknown): error is NodeJS.ErrnoException {

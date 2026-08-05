@@ -117,7 +117,7 @@ describe('OpenAI realtime processor', () => {
       type: 'server_vad',
       create_response: true,
       interrupt_response: true,
-      threshold: 0.6,
+      threshold: 0.5,
     });
     harness.socket.message({ type: 'session.updated' });
     await expect(harness.promise).resolves.toBeDefined();

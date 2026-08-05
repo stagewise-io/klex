@@ -23,9 +23,6 @@ describe('OpenAI realtime real provider', () => {
           modelId: process.env.OPENAI_REALTIME_MODEL ?? 'gpt-realtime-2.1',
           apiKey: apiKey as string,
           websocketUrl: `wss://api.openai.com/v1/realtime?model=${encodeURIComponent(process.env.OPENAI_REALTIME_MODEL ?? 'gpt-realtime-2.1')}`,
-          voice: process.env.OPENAI_REALTIME_VOICE ?? 'marin',
-          instructions: 'Respond only when speech is provided.',
-          serverVad: {},
         },
       });
       const processor = await factory.create({

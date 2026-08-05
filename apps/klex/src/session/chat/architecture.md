@@ -89,7 +89,8 @@ Declare native support on a `knownModels` entry:
 
 ```json
 {
-  "inputCapabilities": {
+  "capabilities": {
+    "input": {
     "image": {
       "mediaTypes": ["image/jpeg", "image/png"],
       "maxBytes": 10485760
@@ -102,7 +103,7 @@ Declare native support on a `knownModels` entry:
 }
 ```
 
-Missing `inputCapabilities.image` or `inputCapabilities.audio` means that modality is unsupported. Klex does not infer capabilities from model names. MIME matching against the selected model's configured list is exact: `audio/ogg` is not sent to a model that declares only `audio/mpeg` and `audio/wav`. Telegram voice commonly arrives as `audio/ogg`, so it degrades explicitly unless the selected model accepts that exact MIME type.
+Missing `capabilities.input.image` or `capabilities.input.audio` means that modality is unsupported. Klex does not infer capabilities from model names. MIME matching against the selected model's configured list is exact: `audio/ogg` is not sent to a model that declares only `audio/mpeg` and `audio/wav`. Telegram voice commonly arrives as `audio/ogg`, so it degrades explicitly unless the selected model accepts that exact MIME type.
 
 The core path validates MIME type, canonical base64, and decoded byte limits. It does not resize, re-encode, transcode, describe, transcribe, persist, or remotely fetch media. Deterministic format conversion and semantic fallback belong in separate future extensions.
 

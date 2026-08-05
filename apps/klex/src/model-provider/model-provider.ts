@@ -117,9 +117,11 @@ class ModelProviderModule implements ModelProvider {
         });
       case 'messages':
         return createAnthropic({ baseURL: endpoint.url, apiKey });
-      default:
+      case 'realtime':
+      case 'speech':
+      case 'transcriptions':
         throw new Error(
-          `Provider instantiation not implemented for format "${endpoint.format}"`,
+          `Endpoint format "${endpoint.format}" cannot be used as a language model`,
         );
     }
   }

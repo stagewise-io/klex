@@ -164,6 +164,12 @@ const modelSelectionEntryOapiSchema = z
   ])
   .openapi('ModelSelectionEntry');
 
+const voiceModelSelectionSchema = z.object({
+  sts: z.array(modelIdSchema),
+  tts: z.array(modelIdSchema),
+  stt: z.array(modelIdSchema),
+});
+
 const modelSelectionSchema = z
   .object({
     chat: z.array(modelSelectionEntryOapiSchema),
@@ -171,6 +177,7 @@ const modelSelectionSchema = z
     memory: z.array(modelSelectionEntryOapiSchema),
     imageVision: z.array(modelSelectionEntryOapiSchema).default([]),
     audioListening: z.array(modelSelectionEntryOapiSchema).default([]),
+    voice: voiceModelSelectionSchema,
   })
   .openapi('ModelSelection');
 
@@ -181,6 +188,7 @@ const modelSelectionPatchSchema = z
     memory: z.array(modelSelectionEntryOapiSchema).optional(),
     imageVision: z.array(modelSelectionEntryOapiSchema).optional(),
     audioListening: z.array(modelSelectionEntryOapiSchema).optional(),
+    voice: voiceModelSelectionSchema.optional(),
   })
   .openapi('ModelSelectionPatch');
 
@@ -207,6 +215,9 @@ const apiFormatSchema = z
     'chat-completions',
     'open-responses',
     'messages',
+    'realtime',
+    'speech',
+    'transcriptions',
   ])
   .openapi('ApiFormat');
 
@@ -342,13 +353,30 @@ const modelInputCapabilitiesSchema = z
   .strict()
   .openapi('ModelInputCapabilities');
 
+const modelVoiceCapabilitiesSchema = z
+  .object({
+    sts: z.boolean().optional(),
+    tts: z.boolean().optional(),
+    stt: z.boolean().optional(),
+  })
+  .strict()
+  .openapi('ModelVoiceCapabilities');
+
+const modelCapabilitiesSchema = z
+  .object({
+    input: modelInputCapabilitiesSchema.optional(),
+    voice: modelVoiceCapabilitiesSchema.optional(),
+  })
+  .strict()
+  .openapi('ModelCapabilities');
+
 const knownModelSchema = z
   .object({
     modelId: z.string().min(1),
     endpointName: z.string().optional(),
     displayName: z.string().optional(),
     contextSize: z.number().int().positive().optional(),
-    inputCapabilities: modelInputCapabilitiesSchema.optional(),
+    capabilities: modelCapabilitiesSchema.optional(),
   })
   .openapi('KnownModel');
 
@@ -364,16 +392,16 @@ const createKnownModelBodySchema = z
     endpointName: z.string().min(1).optional(),
     displayName: z.string().optional(),
     contextSize: z.number().int().positive().optional(),
-    inputCapabilities: modelInputCapabilitiesSchema.optional(),
+    capabilities: modelCapabilitiesSchema.optional(),
   })
   .refine(
     (d) =>
       d.displayName !== undefined ||
       d.contextSize !== undefined ||
-      d.inputCapabilities !== undefined,
+      d.capabilities !== undefined,
     {
       message:
-        'At least one of displayName, contextSize, or inputCapabilities must be provided',
+        'At least one of displayName, contextSize, or capabilities must be provided',
     },
   )
   .openapi('CreateKnownModelBody');
@@ -382,7 +410,7 @@ const updateKnownModelBodySchema = z
   .object({
     displayName: z.string().optional(),
     contextSize: z.number().int().positive().optional(),
-    inputCapabilities: modelInputCapabilitiesSchema.optional(),
+    capabilities: modelCapabilitiesSchema.optional(),
   })
   .openapi('UpdateKnownModelBody');
 

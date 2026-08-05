@@ -38,7 +38,6 @@ import {
   SessionInboxPriority,
 } from './inbox';
 import type { ExtendedUIMessage } from './message-types';
-import type { AgentTools } from './tools';
 import { createTurn, type Turn, type TurnResult } from './turn';
 import { BackoffManager } from './utils/backoff-manager';
 import { ModelFallbackManager } from './utils/model-fallback-manager';
@@ -119,8 +118,6 @@ class ChatSessionModule implements AgentSession {
   private extensionUsage: Map<string, UsagePair> = new Map();
 
   private readonly createdAt: string;
-
-  private readonly tools: AgentTools;
 
   constructor(
     private readonly deps: {
@@ -235,9 +232,6 @@ class ChatSessionModule implements AgentSession {
         }
       },
     });
-
-    // All tools are provided by extensions.
-    this.tools = this.extensionHandler.getTools() as AgentTools;
   }
 
   async start(): Promise<void> {
@@ -523,7 +517,6 @@ class ChatSessionModule implements AgentSession {
           messages: this.messages,
           inbox: this.sessionInbox,
           extensionHandler: this.extensionHandler,
-          tools: this.tools,
           modelProvider: this.deps.modelProvider,
           fallbackManager: this.fallbackManager,
           config: this.deps.config,

@@ -13,7 +13,6 @@ import type { ExtensionHandler } from '../extension-handler';
 import { type SessionInboxBuffer, SessionInboxPriority } from '../inbox';
 import type { ExtendedUIMessage } from '../message-types';
 import { createStep, type Step, type StepCompleteEvent } from '../step';
-import type { AgentTools } from '../tools';
 import { inboxDrainAttributes } from '../utils/inbox-drain-attributes';
 import type { ModelFallbackManager } from '../utils/model-fallback-manager';
 import { tracer } from '../utils/tracing';
@@ -27,7 +26,6 @@ export interface TurnDependencies {
   messages: ExtendedUIMessage[];
   inbox: SessionInboxBuffer;
   extensionHandler: ExtensionHandler;
-  tools: AgentTools;
   modelProvider: ModelProvider;
   fallbackManager: ModelFallbackManager;
   config: Config;
@@ -176,7 +174,6 @@ class TurnModule implements Turn {
             messages: this.deps.messages,
             inbox: this.deps.inbox,
             extensionHandler: this.deps.extensionHandler,
-            tools: this.deps.tools,
             modelProvider: this.deps.modelProvider,
             fallbackManager: this.deps.fallbackManager,
             config: this.deps.config,

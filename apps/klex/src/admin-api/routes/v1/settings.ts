@@ -33,7 +33,7 @@ export const getModelSelectionRoute = createRoute({
   tags: ['Settings'],
   summary: 'Get model selection',
   description:
-    'Returns the current model selection for chat, compaction, and memory purposes.',
+    'Returns the current model selection for chat, compaction, memory, and image-vision purposes.',
   responses: {
     200: {
       content: {
@@ -218,6 +218,7 @@ export function patchModelSelection(
           chat: patch.chat ?? current.modelSelection.chat,
           compaction: patch.compaction ?? current.modelSelection.compaction,
           memory: patch.memory ?? current.modelSelection.memory,
+          imageVision: patch.imageVision ?? current.modelSelection.imageVision,
         } as ModelSelection;
 
         // Validate only the patched fields — preserved fields are already in
@@ -226,6 +227,7 @@ export function patchModelSelection(
           chat: patch.chat ?? [],
           compaction: patch.compaction ?? [],
           memory: patch.memory ?? [],
+          imageVision: patch.imageVision ?? [],
         } as ModelSelection;
         warnings = validateAndCollectWarnings(patchSelection, current);
 

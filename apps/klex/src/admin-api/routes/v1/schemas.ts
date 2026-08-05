@@ -169,6 +169,7 @@ const modelSelectionSchema = z
     chat: z.array(modelSelectionEntryOapiSchema),
     compaction: z.array(modelSelectionEntryOapiSchema),
     memory: z.array(modelSelectionEntryOapiSchema),
+    imageVision: z.array(modelSelectionEntryOapiSchema).default([]),
   })
   .openapi('ModelSelection');
 
@@ -177,6 +178,7 @@ const modelSelectionPatchSchema = z
     chat: z.array(modelSelectionEntryOapiSchema).optional(),
     compaction: z.array(modelSelectionEntryOapiSchema).optional(),
     memory: z.array(modelSelectionEntryOapiSchema).optional(),
+    imageVision: z.array(modelSelectionEntryOapiSchema).optional(),
   })
   .openapi('ModelSelectionPatch');
 

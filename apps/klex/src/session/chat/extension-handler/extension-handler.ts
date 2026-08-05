@@ -86,14 +86,16 @@ export interface ExtensionHandler {
   close: () => Promise<void>;
 
   /**
-   * Collect and merge `getTools()` return values from all extensions
-   * that define the method. The merged `ToolSet` is combined with core
-   * session tools and passed to the LLM.
+   * Collect and merge `getTools(model)` return values from all extensions
+   * that define the method. Called per step after the model has been
+   * resolved, so extensions can make model-aware decisions about which
+   * tools to expose. The merged `ToolSet` is passed to the generation
+   * runner.
    *
    * Throws if two extensions provide a tool with the same name —
    * tool names must be unique across all extensions.
    */
-  getTools: () => ToolSet;
+  getTools: (model: ResolvedModel) => ToolSet;
 
   /**
    * Run `historyTransformer` across all extensions in order.
@@ -297,12 +299,12 @@ class ExtensionHandlerModule implements ExtensionHandler {
     }
   }
 
-  getTools(): ToolSet {
+  getTools(model: ResolvedModel): ToolSet {
     const merged: Record<string, ToolSet[keyof ToolSet]> = {};
 
     for (const ext of this.extensions) {
       if (!ext.getTools) continue;
-      const tools = ext.getTools();
+      const tools = ext.getTools(model);
 
       for (const [name, tool] of Object.entries(tools)) {
         if (merged[name]) {

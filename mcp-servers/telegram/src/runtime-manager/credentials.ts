@@ -50,10 +50,12 @@ export function parseTelegramCredentials(
   }
 
   const allowedHeader = request.headers.get('x-telegram-allowed-user-ids');
-  if (!allowedHeader) {
-    throw new TelegramCredentialError(
-      'Missing Telegram allowed user IDs header',
-    );
+  if (
+    !allowedHeader ||
+    allowedHeader.trim() === '' ||
+    allowedHeader.trim() === '*'
+  ) {
+    return { botToken, allowedUserIds: new Set(['*']) };
   }
   const values = allowedHeader.split(',').map((value) => value.trim());
   if (

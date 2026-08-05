@@ -100,6 +100,10 @@ function makeDeps(overrides: Partial<StepDependencies> = {}): StepDependencies {
         contextSize: 128_000,
         inputCapabilities: {},
       })),
+      resolveModelInfo: vi.fn(() => ({
+        displayName: 'Test Model',
+        contextSize: 128_000,
+      })),
     } as never,
     turnInitialFallbackIndex: 0,
     sessionId: 'test-session-id',
@@ -667,6 +671,10 @@ describe('Step — ResolvedModel passing', () => {
           image: { mediaTypes: ['image/png'], maxBytes: 1_000_000 },
         },
       })),
+      resolveModelInfo: vi.fn(() => ({
+        displayName: 'GPT-4o',
+        contextSize: 128_000,
+      })),
     } as never;
 
     const step = createStep(
@@ -769,6 +777,10 @@ describe('Step — ResolvedModel passing', () => {
         inputCapabilities: {
           image: { mediaTypes: ['image/png'], maxBytes: 1_000_000 },
         },
+      })),
+      resolveModelInfo: vi.fn(() => ({
+        displayName: 'GPT-4o',
+        contextSize: 128_000,
       })),
     } as never;
 

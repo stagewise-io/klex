@@ -8,6 +8,7 @@ import type { ModuleLogger } from '@stagewise/logger';
 import type { Config } from '@/config';
 import type { ModelProvider } from '@/model-provider';
 import type { Usage } from '@/session/types';
+import { tracer } from '@/tracing';
 
 import type { ExtensionHandler } from '../extension-handler';
 import { type SessionInboxBuffer, SessionInboxPriority } from '../inbox';
@@ -16,7 +17,6 @@ import { createStep, type Step, type StepCompleteEvent } from '../step';
 import type { AgentTools } from '../tools';
 import { inboxDrainAttributes } from '../utils/inbox-drain-attributes';
 import type { ModelFallbackManager } from '../utils/model-fallback-manager';
-import { tracer } from '../utils/tracing';
 import { extractUsage } from '../utils/usage';
 
 export interface TurnDependencies {

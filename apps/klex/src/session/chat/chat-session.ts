@@ -20,6 +20,7 @@ import type {
   Usage,
   UsagePair,
 } from '@/session/types';
+import { tracer } from '@/tracing';
 
 import {
   createExtensionHandler,
@@ -42,7 +43,8 @@ import type { AgentTools } from './tools';
 import { createTurn, type Turn, type TurnResult } from './turn';
 import { BackoffManager } from './utils/backoff-manager';
 import { ModelFallbackManager } from './utils/model-fallback-manager';
-import { getExtensionIdentifier, tracer } from './utils/tracing';
+import { getExtensionIdentifier } from './utils/tracing';
+import { extractUsage } from './utils/usage';
 
 /**
  * Maximum consecutive complete-failure turns before the session terminates.
@@ -121,6 +123,14 @@ class ChatSessionModule implements AgentSession {
   private readonly createdAt: string;
 
   private readonly tools: AgentTools;
+
+  private shortId = '';
+
+  /**
+   * Free-text activity summary maintained by extensions via
+   * {@link ExtensionDeps.setActivitySummary}. Read by the router for routing.
+   */
+  private activitySummary: string | null = null;
 
   constructor(
     private readonly deps: {
@@ -206,6 +216,8 @@ class ChatSessionModule implements AgentSession {
       logging: this.deps.logging,
       mcp: this.deps.mcp,
       sessionId: this.sessionId,
+      setActivitySummary: (summary: string | null) =>
+        this.setActivitySummary(summary),
     };
 
     this.extensionHandler = createExtensionHandler({
@@ -747,6 +759,8 @@ class ChatSessionModule implements AgentSession {
       steps: this.stepCount,
       messageCount: this.messages.length,
       createdAt: this.createdAt,
+      shortId: this.shortId,
+      activitySummary: this.activitySummary,
     };
   }
 
@@ -840,6 +854,14 @@ class ChatSessionModule implements AgentSession {
         // Drop silently — the router will not retry.
       }
     }
+  }
+
+  setShortId(shortId: string): void {
+    this.shortId = shortId;
+  }
+
+  setActivitySummary(summary: string | null): void {
+    this.activitySummary = summary;
   }
 }
 

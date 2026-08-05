@@ -36,6 +36,12 @@ interface PushNotification {
 - `content` is an ordered array using the canonical MCP `ContentBlock` definition
   from the extension package's pinned MCP SDK revision. It MAY be empty.
 - `data` is optional JSON whose fields and semantics are defined by `type`.
+  `data` SHOULD be bare-bones and short — only identifiers and context that the
+  router needs to route the event to the right session (e.g. `chatId`,
+  `userId`, `threadId`, `repo`). Avoid large payloads, full message bodies, or
+  verbose descriptions. The router flattens `data` into metadata keys and caps
+  at 20 keys; long values waste routing-LLM tokens without improving routing
+  accuracy.
 
 `content` supports the MCP text, image, audio, embedded-resource, and resource-link
 representations. A producer SHOULD inline only bounded media; base64 increases

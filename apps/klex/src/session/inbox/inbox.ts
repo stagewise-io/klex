@@ -44,6 +44,13 @@ export enum SessionInboxPriority {
 
 /**
  * JSON value type for context metadata.
+ *
+ * Producers should keep metadata bare-bones and short: only identifiers and
+ * structural context the router needs to route the event to the right session
+ * (e.g. `chatId`, `userId`, `threadId`). Avoid large payloads, full message
+ * bodies, or verbose descriptions. The router flattens metadata into keys and
+ * caps at 20 keys; long values waste routing-LLM tokens without improving
+ * routing accuracy.
  */
 export type ContextMetadataValue =
   | string
@@ -98,7 +105,12 @@ export type ContextDataUIPart = {
 
 export type SessionInboxEvent = {
   sourceEnv: string;
-  priority: SessionInboxPriority;
+  /**
+   * Optional fixed priority. When set, the router uses this priority
+   * directly and the routing LLM does not decide it. When absent,
+   * the routing LLM assigns the priority.
+   */
+  priority?: SessionInboxPriority;
   context: ContextDataUIPart;
 };
 

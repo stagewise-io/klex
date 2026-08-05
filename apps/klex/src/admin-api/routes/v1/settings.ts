@@ -218,6 +218,7 @@ export function patchModelSelection(
           chat: patch.chat ?? current.modelSelection.chat,
           compaction: patch.compaction ?? current.modelSelection.compaction,
           memory: patch.memory ?? current.modelSelection.memory,
+          routing: patch.routing ?? current.modelSelection.routing,
         } as ModelSelection;
 
         // Validate only the patched fields — preserved fields are already in
@@ -226,6 +227,7 @@ export function patchModelSelection(
           chat: patch.chat ?? [],
           compaction: patch.compaction ?? [],
           memory: patch.memory ?? [],
+          routing: patch.routing ?? [],
         } as ModelSelection;
         warnings = validateAndCollectWarnings(patchSelection, current);
 

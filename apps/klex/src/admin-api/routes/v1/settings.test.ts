@@ -27,6 +27,7 @@ const baseSelection: ModelSelection = {
   chat: ['openai:gpt-4o'],
   compaction: ['openai:gpt-4o-mini'],
   memory: ['anthropic:claude-3-haiku'],
+  routing: [],
 };
 
 const baseConfig: KlexConfig = {
@@ -106,6 +107,7 @@ describe('GET /v1/settings/model-selection', () => {
       chat: ['provider:endpoint:model-a', 'provider:endpoint:model-b'],
       compaction: ['provider:endpoint:model-c'],
       memory: [],
+      routing: [],
     };
     const app = createApp(
       makeDeps({
@@ -196,6 +198,7 @@ describe('PATCH /v1/settings/model-selection', () => {
       chat: ['openai:gpt-4o'],
       compaction: ['openai:gpt-4o-mini'],
       memory: ['anthropic:claude-3-haiku'],
+      routing: [],
     };
     const mutateFn = vi.fn(async (fn: (cfg: KlexConfig) => KlexConfig) => {
       const next = fn(baseConfig);
@@ -326,6 +329,7 @@ describe('PATCH /v1/settings/model-selection', () => {
         chat: ['unknown-provider:some-model'],
         compaction: ['openai:gpt-4o-mini'],
         memory: ['anthropic:claude-3-haiku'],
+        routing: [],
       },
     };
     const app = createApp(

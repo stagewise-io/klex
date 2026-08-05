@@ -61,6 +61,8 @@ async function main(): Promise<void> {
     logging: logger,
     mcp,
     introspection: introspector,
+    config,
+    modelProvider,
     createChatSession: (hooks: SessionHooks, introspectionScope) =>
       createChatSession({
         logging: logger,

@@ -1,7 +1,13 @@
+import { randomUUID } from 'node:crypto';
+
+import { SpanKind } from '@opentelemetry/api';
+
 import type { ModuleLogger, RootLogger } from '@stagewise/logger';
 
+import type { Config } from '@/config';
 import type { IntrospectionScope } from '@/introspection';
 import type { Mcp, McpPushNotification } from '@/mcp';
+import type { ModelProvider } from '@/model-provider';
 import {
   type ContextDataUIPart,
   type SessionInboxEvent,
@@ -10,13 +16,52 @@ import {
 import type {
   AgentSession,
   SessionHooks,
+  SessionInfo,
   SessionTerminationInfo,
 } from '@/session/types';
+import { recordErrorOnSpan, tracer, withSpan } from '@/tracing';
+
+import {
+  analyzeEventPatterns,
+  callRoutingLlm,
+  type EventLogEntry,
+  type RoutingDecision,
+  type SessionRoutingInfo,
+} from './routing-decision';
+
+/**
+ * Builds a short text preview of event content for the routing LLM.
+ * Text is truncated to 32 characters. Other modalities become placeholders.
+ */
+function buildContentPreview(content: ContextDataUIPart['content']): string {
+  const parts: string[] = [];
+  for (const block of content) {
+    if (block.type === 'text') {
+      parts.push(
+        block.text.length > 32 ? `${block.text.slice(0, 32)}…` : block.text,
+      );
+    } else if (block.type === 'image') {
+      parts.push('[image]');
+    } else if (block.type === 'audio') {
+      // Estimate duration from base64 data size (rough heuristic).
+      const bytes = Math.floor((block.data.length * 3) / 4);
+      const seconds = Math.max(1, Math.round(bytes / 16000));
+      parts.push(`[audio: ${seconds}sec]`);
+    } else if (block.type === 'resource_link') {
+      parts.push(`[resource_link: ${block.name}]`);
+    } else if (block.type === 'resource') {
+      parts.push(`[resource: ${block.resource.uri}]`);
+    }
+  }
+  return parts.join(' ');
+}
 
 export interface RouterDependencies {
   logging: RootLogger;
   mcp: Mcp;
   introspection: IntrospectionScope;
+  config: Config;
+  modelProvider: ModelProvider;
   createChatSession: (
     hooks: SessionHooks,
     introspectionScope: IntrospectionScope,
@@ -28,24 +73,38 @@ export interface Router {
   close(): Promise<void>;
 
   /**
-   * Send an input event into the router. The router decides internally
-   * which session receives it. Currently always routes to the single
-   * primary session.
+   * Send an input event into the router. The router uses an LLM to decide
+   * which session receives it and assigns priority. Event metadata is
+   * recorded per-session for structural pattern matching.
    */
   sendInput(event: SessionInboxEvent): Promise<void>;
+
+  /**
+   * Returns a snapshot of all active sessions.
+   */
+  getSessions(): SessionInfo[];
+}
+
+interface RouterSessionEntry {
+  session: AgentSession;
+  shortId: string;
+  eventLog: EventLogEntry[];
 }
 
 class RouterModule implements Router {
-  private session: AgentSession | null = null;
+  private sessions = new Map<string, RouterSessionEntry>();
   private started = false;
   private pushNotificationUnsub: (() => void) | undefined;
   private sessionsScope: IntrospectionScope | null = null;
+  private routingQueue: Promise<void> = Promise.resolve();
 
   constructor(
     private readonly deps: {
       logger: ModuleLogger;
       mcp: Mcp;
       introspection: IntrospectionScope;
+      config: Config;
+      modelProvider: ModelProvider;
       createChatSession: (
         hooks: SessionHooks,
         introspectionScope: IntrospectionScope,
@@ -57,12 +116,15 @@ class RouterModule implements Router {
     if (this.started) return;
 
     // Register router state in the introspection tree.
-    this.deps.introspection
-      .child('router')
-      .introspect(() => ({ started: true }));
+    const routerScope = this.deps.introspection.child('router');
+    routerScope.introspect(() => ({
+      started: this.started,
+      sessionCount: this.sessions.size,
+      sessions: this.buildSessionIntrospection(),
+    }));
     this.sessionsScope = this.deps.introspection.child('sessions');
 
-    this.session = await this.createSession();
+    await this.createSession();
 
     this.pushNotificationUnsub = this.deps.mcp.onPushNotification((ev) =>
       this.handlePushNotification(ev),
@@ -78,11 +140,10 @@ class RouterModule implements Router {
     this.pushNotificationUnsub?.();
     this.pushNotificationUnsub = undefined;
 
-    if (this.session) {
-      await this.session.close();
-      this.deps.logger.info('Router closed session');
+    for (const entry of this.sessions.values()) {
+      await entry.session.close();
     }
-    this.session = null;
+    this.sessions.clear();
 
     this.sessionsScope = null;
     this.started = false;
@@ -90,25 +151,16 @@ class RouterModule implements Router {
   }
 
   async sendInput(event: SessionInboxEvent): Promise<void> {
-    let session = this.session;
-
-    // If the session terminated itself (e.g. fatal error), replace it
-    // with a fresh one so input is not lost. This is a safety net — the
-    // onTerminated hook should already have created a replacement.
-    if (!session || session.status === 'terminated') {
-      this.deps.logger.warn(
-        { reason: session ? 'terminated' : 'not_found' },
-        'Session unavailable — creating replacement',
-      );
-      session = await this.createSession();
-    }
-
-    this.deps.logger.debug(
-      { sourceEnv: event.sourceEnv, priority: event.priority },
-      'Router dispatching input to session',
+    this.routingQueue = this.routingQueue.then(() =>
+      this.routeAndDispatch(event),
     );
+    return this.routingQueue;
+  }
 
-    session.inbox.send(event);
+  getSessions(): SessionInfo[] {
+    return [...this.sessions.values()].map((entry) =>
+      entry.session.getSessionInfo(),
+    );
   }
 
   // ---------------------------------------------------------------------------
@@ -117,7 +169,7 @@ class RouterModule implements Router {
 
   /**
    * Converts a Push Notification from an MCP server into a session inbox event
-   * and forwards it to the primary session.
+   * and forwards it to the router for LLM-based routing.
    *
    * - `sourceEnv` ← MCP namespace
    * - `metadata`  ← event type, timestamp, and structured event data
@@ -180,14 +232,13 @@ class RouterModule implements Router {
     // Existing envelope keys take precedence over data keys.
     if (event.data !== undefined) {
       for (const [key, value] of Object.entries(event.data)) {
-        if (value === null || key in metadata) continue;
+        if (value === null || value === undefined || key in metadata) continue;
         metadata[key] = value;
       }
     }
 
     const inboxEvent: SessionInboxEvent = {
       sourceEnv: namespace,
-      priority: SessionInboxPriority.Medium,
       context: {
         sourceEnv: namespace,
         metadata,
@@ -198,15 +249,275 @@ class RouterModule implements Router {
   }
 
   /**
-   * Creates a new session, awaits its startup, and wires the
-   * `onTerminated` hook so the router is notified proactively when the
-   * session self-terminates.
+   * Routes an event to the appropriate session using the routing LLM.
+   * Serialized via routingQueue to prevent race conditions.
    *
-   * `this.session` is assigned synchronously before `await session.start()`
-   * so that a concurrent `sendInput` call sees the new session and does
-   * not create a duplicate.
+   * The entire routing operation is wrapped in a `router.route` span that
+   * records the active session list, the LLM routing decision (if any),
+   * and the final dispatch target — providing full observability into the
+   * routing process.
    */
-  private async createSession(): Promise<AgentSession> {
+  private async routeAndDispatch(event: SessionInboxEvent): Promise<void> {
+    const routingInfo = this.buildSessionRoutingInfo();
+    const routingModels = this.deps.config.getModelSelection('routing');
+    const effectiveModels =
+      routingModels.length > 0
+        ? routingModels
+        : this.deps.config.getModelSelection('chat');
+
+    const span = tracer.startSpan('router.route', {
+      attributes: {
+        'klex.router.source_env': event.sourceEnv,
+        'klex.router.session_count': routingInfo.length,
+        'klex.router.sessions': JSON.stringify(
+          routingInfo.map((s) => ({ shortId: s.shortId, status: s.status })),
+        ),
+        'klex.router.routing_models': effectiveModels.join(','),
+        'klex.router.has_routing_models': effectiveModels.length > 0,
+        'klex.router.using_chat_fallback': routingModels.length === 0,
+      },
+      kind: SpanKind.INTERNAL,
+    });
+
+    try {
+      let decision: RoutingDecision | null = null;
+      try {
+        // Run the routing LLM call within the router.route span context
+        // so the generateObject telemetry creates a child generate_content
+        // span nested under this span.
+        decision = await withSpan(span, () =>
+          callRoutingLlm({
+            logger: this.deps.logger,
+            modelProvider: this.deps.modelProvider,
+            routingModels: effectiveModels,
+            sessions: routingInfo,
+            eventMetadata: event.context.metadata,
+            sourceEnv: event.sourceEnv,
+            contentPreview: buildContentPreview(event.context.content),
+            presetPriority: event.priority
+              ? SessionInboxPriority[event.priority]
+              : undefined,
+          }),
+        );
+      } catch (error) {
+        this.deps.logger.error(
+          { error },
+          'Routing LLM call threw unexpectedly — using fallback routing',
+        );
+      }
+
+      // Record the routing decision on the span.
+      if (decision) {
+        const isNew = decision.sessionId === '';
+        span.setAttributes({
+          'klex.router.decision.choice': isNew ? 'new' : 'existing',
+          'klex.router.decision.priority': decision.priority,
+        });
+        if (decision.sessionId !== '') {
+          span.setAttribute(
+            'klex.router.decision.session_id',
+            decision.sessionId,
+          );
+        }
+      } else {
+        span.setAttribute('klex.router.decision.choice', 'fallback');
+      }
+
+      const { entry, priority } = this.resolveTarget(decision, event.priority);
+
+      // Record the final dispatch target.
+      span.setAttributes({
+        'klex.router.target_short_id': entry.shortId,
+        'klex.router.target_priority': SessionInboxPriority[priority],
+        'klex.router.target_is_new_session':
+          decision === null ||
+          decision.sessionId === '' ||
+          !this.sessions.has(decision.sessionId),
+      });
+
+      // Record the event metadata in the session's event log for
+      // future pattern analysis.
+      entry.eventLog.push({
+        sourceEnv: event.sourceEnv,
+        metadata: event.context.metadata,
+        receivedAt: new Date().toISOString(),
+      });
+
+      // If the session terminated itself, create a replacement.
+      if (entry.session.status === 'terminated') {
+        this.deps.logger.warn(
+          { shortId: entry.shortId },
+          'Target session terminated — creating replacement',
+        );
+        this.sessions.delete(entry.shortId);
+        const replacement = await this.createSession();
+        replacement.session.restorePendingEvents([]);
+        event.priority = priority;
+        replacement.session.inbox.send(event);
+        return;
+      }
+
+      event.priority = priority;
+      entry.session.inbox.send(event);
+
+      this.deps.logger.debug(
+        {
+          sourceEnv: event.sourceEnv,
+          shortId: entry.shortId,
+          priority: SessionInboxPriority[priority],
+        },
+        'Router dispatched input to session',
+      );
+    } catch (error) {
+      recordErrorOnSpan(span, error);
+      throw error;
+    } finally {
+      span.end();
+    }
+  }
+
+  /**
+   * Resolves the target session entry and priority from the routing
+   * decision. Falls back to default behavior when the decision is null
+   * (all models failed) or references a non-existent session.
+   */
+  private resolveTarget(
+    decision: RoutingDecision | null,
+    presetPriority?: SessionInboxPriority,
+  ): {
+    entry: RouterSessionEntry;
+    priority: SessionInboxPriority;
+  } {
+    if (decision === null) {
+      // Fallback: first active session or create new.
+      // Use preset priority if provided, otherwise Medium.
+      const entry = this.firstActiveOrCreate();
+      return {
+        entry,
+        priority: presetPriority ?? SessionInboxPriority.Medium,
+      };
+    }
+
+    // If the event has a preset priority, use it; otherwise use the LLM's.
+    const priority = presetPriority ?? this.mapPriority(decision.priority);
+
+    if (decision.sessionId !== '') {
+      const entry = this.sessions.get(decision.sessionId);
+      if (entry) {
+        return { entry, priority };
+      }
+      // Hallucinated session ID — create a new session.
+      this.deps.logger.warn(
+        { sessionId: decision.sessionId },
+        'Routing LLM referenced non-existent session — creating new one',
+      );
+    }
+
+    // Create a new session.
+    const newEntry = this.createSessionSync();
+    void newEntry.session.start().catch((error) => {
+      this.deps.logger.error(
+        { error, shortId: newEntry.shortId },
+        'New session start failed',
+      );
+    });
+    return { entry: newEntry, priority };
+  }
+
+  /**
+   * Returns the first active session entry, or creates a new one if
+   * none exist.
+   */
+  private firstActiveOrCreate(): RouterSessionEntry {
+    for (const entry of this.sessions.values()) {
+      if (entry.session.status !== 'terminated') {
+        return entry;
+      }
+    }
+    // No active sessions — create one. We use createSessionSync to
+    // avoid blocking the serialized routing queue.
+    const entry = this.createSessionSync();
+    void entry.session.start().catch((error) => {
+      this.deps.logger.error(
+        { error, shortId: entry.shortId },
+        'Fallback session start failed',
+      );
+    });
+    return entry;
+  }
+
+  /**
+   * Builds the routing info snapshot for all active sessions.
+   */
+  private buildSessionRoutingInfo(): SessionRoutingInfo[] {
+    const info: SessionRoutingInfo[] = [];
+    for (const entry of this.sessions.values()) {
+      if (entry.session.status === 'terminated') continue;
+      const sessionInfo = entry.session.getSessionInfo();
+      info.push({
+        shortId: entry.shortId,
+        status: sessionInfo.status,
+        runtimeState: sessionInfo.runtimeState,
+        eventPatterns: analyzeEventPatterns(entry.eventLog),
+        activitySummary: sessionInfo.activitySummary,
+      });
+    }
+    return info;
+  }
+
+  /**
+   * Builds a detailed snapshot of all sessions for introspection.
+   * Includes router-tracked state (shortId, summary) plus session
+   * lifecycle info (status, runtimeState, turns, messageCount).
+   */
+  private buildSessionIntrospection(): object[] {
+    const sessions: object[] = [];
+    for (const entry of this.sessions.values()) {
+      const si = entry.session.getSessionInfo();
+      sessions.push({
+        shortId: entry.shortId,
+        sessionId: si.id,
+        eventPatterns: analyzeEventPatterns(entry.eventLog),
+        status: si.status,
+        runtimeState: si.runtimeState,
+        turns: si.turns,
+        messageCount: si.messageCount,
+        model: si.model,
+        createdAt: si.createdAt,
+      });
+    }
+    return sessions;
+  }
+
+  /**
+   * Maps a routing priority string to the SessionInboxPriority enum.
+   */
+  private mapPriority(p: 'low' | 'medium' | 'high'): SessionInboxPriority {
+    return p === 'high'
+      ? SessionInboxPriority.High
+      : p === 'low'
+        ? SessionInboxPriority.Low
+        : SessionInboxPriority.Medium;
+  }
+
+  /**
+   * Generates a 4-character hex short ID, checking for collisions.
+   */
+  private generateShortId(): string {
+    let id = randomUUID().slice(0, 4);
+    while (this.sessions.has(id)) {
+      id = randomUUID().slice(0, 4);
+    }
+    return id;
+  }
+
+  /**
+   * Creates a new session entry synchronously (without awaiting start).
+   * The session is stored in the map immediately so concurrent calls
+   * see it. start() must be awaited separately.
+   */
+  private createSessionSync(): RouterSessionEntry {
+    const shortId = this.generateShortId();
     const hooks: SessionHooks = {
       onTerminated: (info) => this.handleTerminated(info),
     };
@@ -214,20 +525,38 @@ class RouterModule implements Router {
       hooks,
       this.sessionsScope ?? this.deps.introspection,
     );
-    this.session = session;
-    await session.start().catch((error) => {
-      this.deps.logger.error(
-        { error },
-        'Session start failed — tools may be unavailable',
-      );
-    });
-    return session;
+    session.setShortId(shortId);
+
+    const entry: RouterSessionEntry = { session, shortId, eventLog: [] };
+    this.sessions.set(shortId, entry);
+
+    this.deps.logger.info(
+      { shortId, sessionId: session.getSessionInfo().id },
+      'Router created session',
+    );
+
+    return entry;
   }
 
   /**
-   * Called when a session self-terminates (fatal error). Creates a
-   * replacement session and re-dispatches any pending inbox content
-   * so the user does not lose input.
+   * Creates a new session, awaits its startup, and wires the
+   * `onTerminated` hook. Returns the session entry.
+   */
+  private async createSession(): Promise<RouterSessionEntry> {
+    const entry = this.createSessionSync();
+    await entry.session.start().catch((error) => {
+      this.deps.logger.error(
+        { error, shortId: entry.shortId },
+        'Session start failed — tools may be unavailable',
+      );
+    });
+    return entry;
+  }
+
+  /**
+   * Called when a session self-terminates (fatal error). Removes it
+   * from the session map and creates a replacement, re-dispatching
+   * any pending inbox content.
    */
   private async handleTerminated(info: SessionTerminationInfo): Promise<void> {
     this.deps.logger.warn(
@@ -239,8 +568,15 @@ class RouterModule implements Router {
       'Session self-terminated — creating replacement and re-dispatching pending input',
     );
 
+    // Find and remove the terminated session from the map.
     // The terminated session has already removed itself from the
     // introspection tree via its close() method.
+    for (const [shortId, entry] of this.sessions) {
+      if (entry.session.getSessionInfo().id === info.sessionId) {
+        this.sessions.delete(shortId);
+        break;
+      }
+    }
 
     // Create the replacement session (registered with fresh hooks).
     // Awaiting ensures the session is fully started before pending events
@@ -248,7 +584,7 @@ class RouterModule implements Router {
     const replacement = await this.createSession();
 
     // Re-dispatch pending inbox events so the user does not lose input.
-    replacement.restorePendingEvents(info.pendingEvents);
+    replacement.session.restorePendingEvents(info.pendingEvents);
   }
 }
 
@@ -260,6 +596,8 @@ export function createRouter(deps: RouterDependencies): Router {
     }),
     mcp: deps.mcp,
     introspection: deps.introspection,
+    config: deps.config,
+    modelProvider: deps.modelProvider,
     createChatSession: deps.createChatSession,
   });
 }

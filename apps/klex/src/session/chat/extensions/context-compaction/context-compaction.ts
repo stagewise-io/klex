@@ -3,8 +3,9 @@ import { randomUUID } from 'node:crypto';
 import { context, type Span, trace } from '@opentelemetry/api';
 import { getToolName, isToolUIPart, type TextPart } from 'ai';
 
+import { startChildSpan } from '@/tracing';
+
 import type { ExtendedUIMessage } from '../../message-types';
-import { startChildSpan } from '../../utils/tracing';
 import {
   createDataPart,
   type DataPartTransformers,

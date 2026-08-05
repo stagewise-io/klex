@@ -1,11 +1,9 @@
 import { type Context, context } from '@opentelemetry/api';
 import { describe, expect, it } from 'vitest';
 
-import {
-  getExtensionIdentifier,
-  startChildSpan,
-  withExtensionIdentifier,
-} from './tracing';
+import { startChildSpan } from '@/tracing';
+
+import { getExtensionIdentifier, withExtensionIdentifier } from './tracing';
 
 describe('tracing — extensionIdentifier context', () => {
   it('returns undefined when no extension identifier is set', () => {

@@ -51,6 +51,7 @@ function manualConfig(modelId = 'model:8b'): KlexConfig {
       chat: [`local:chat:${modelId}`],
       compaction: [],
       memory: [],
+      routing: [],
     },
     mcpServers: {},
   };
@@ -72,6 +73,7 @@ function presetConfig(
       chat: [`${providerId}:${modelId}`],
       compaction: [],
       memory: [],
+      routing: [],
     },
     mcpServers: {},
   };
@@ -103,6 +105,7 @@ function mixedConfig(): KlexConfig {
       chat: ['remote:gpt-4o'],
       compaction: ['local:chat:model:8b'],
       memory: ['local:api:test-model'],
+      routing: [],
     },
     mcpServers: {},
   };
@@ -612,7 +615,7 @@ describe('Config — replace (atomic persistence)', () => {
     await expect(
       module.replace({
         providers: {},
-        modelSelection: { chat: [], compaction: [], memory: [] },
+        modelSelection: { chat: [], compaction: [], memory: [], routing: [] },
         mcpServers: {},
         // missing modelSelection.chat — but TS prevents this at compile time;
         // runtime test: pass an object with extra unknown keys (schema is strict)
@@ -1166,7 +1169,7 @@ describe('Config — mutate skips validateModelReferences', () => {
 function noSelectionConfig(providers: KlexConfig['providers']): KlexConfig {
   return {
     providers,
-    modelSelection: { chat: [], compaction: [], memory: [] },
+    modelSelection: { chat: [], compaction: [], memory: [], routing: [] },
     mcpServers: {},
   };
 }

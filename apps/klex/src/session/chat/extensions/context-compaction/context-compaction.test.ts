@@ -176,6 +176,7 @@ function makeDeps(overrides?: Partial<ExtensionDeps>): ExtensionDeps {
     mcp: {} as unknown as ExtensionDeps['mcp'],
     sessionId: 'test-session-id',
     getDataDir: vi.fn(() => '/tmp/test-ext-data'),
+    setActivitySummary: vi.fn(),
     ...overrides,
   } as ExtensionDeps;
 }

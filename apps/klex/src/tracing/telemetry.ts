@@ -4,11 +4,14 @@ import {
   context,
   type Span,
   SpanKind,
+  type SpanOptions,
   SpanStatusCode,
   type Tracer,
   trace,
 } from '@opentelemetry/api';
 import type {
+  GenerateObjectEndEvent,
+  GenerateObjectStartEvent,
   GenerateTextAbortEvent,
   GenerateTextEndEvent,
   GenerateTextStartEvent,
@@ -28,6 +31,58 @@ import type {
 // that the `ai` package does not export directly.
 type TelemetryStartEvent = Parameters<NonNullable<Telemetry['onStart']>>[0];
 type TelemetryEndEvent = Parameters<NonNullable<Telemetry['onEnd']>>[0];
+
+// ---------------------------------------------------------------------------
+// Shared tracer & span utilities
+// ---------------------------------------------------------------------------
+
+/**
+ * Shared app-wide tracer. All modules (router, session, extensions, etc.)
+ * create spans through this tracer so they share the same instrumentation
+ * scope and trace hierarchy.
+ *
+ * Use {@link startChildSpan} inside a `context.with` block (or {@link withSpan})
+ * to create spans that nest under the ambient context. Use `tracer.startSpan`
+ * directly only when you need to pass an explicit parent context.
+ */
+export const tracer = trace.getTracer('klex');
+
+/**
+ * Starts a child span under the currently active OTel context.
+ *
+ * This is the idiomatic way to create spans inside a `context.with` block:
+ * the `context.with` establishes the parent span as ambient, and
+ * `startChildSpan` nests under it automatically. Callers must ensure they
+ * are inside a `context.with` block — otherwise the span will have no parent.
+ */
+export function startChildSpan(name: string, options?: SpanOptions): Span {
+  return tracer.startSpan(name, options, context.active());
+}
+
+/**
+ * Runs an async function with the given span set as the active OTel context.
+ *
+ * The caller is responsible for ending the span (typically in a `finally`
+ * block) and recording any errors via {@link recordErrorOnSpan}. This helper
+ * only establishes the context so that child spans (e.g. internal HTTP spans)
+ * nest correctly under the given span.
+ *
+ * @example
+ * ```ts
+ * const span = startChildSpan('my.operation', { attributes: { ... } });
+ * try {
+ *   const result = await withSpan(span, async () => doWork());
+ *   span.setAttributes({ ... });
+ * } catch (error) {
+ *   recordErrorOnSpan(span, error);
+ * } finally {
+ *   span.end();
+ * }
+ * ```
+ */
+export function withSpan<T>(span: Span, fn: () => Promise<T>): Promise<T> {
+  return context.with(trace.setSpan(context.active(), span), fn);
+}
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -83,7 +138,7 @@ function toolsToDefinitions(
  * Maps AI SDK provider identifiers to OTel semantic convention `gen_ai.system`
  * values.
  */
-function mapProviderName(provider: string): string {
+export function mapProviderName(provider: string): string {
   const lower = provider.toLowerCase();
   const prefixes: [string, string][] = [
     ['google.vertex', 'gcp.vertex_ai'],
@@ -220,15 +275,19 @@ class KlexTelemetry implements Telemetry {
   // --- Operation lifecycle --------------------------------------------------
 
   onStart(event: TelemetryStartEvent): void {
-    // Only instrument text generation operations.
+    // Instrument text and object generation operations.
     if (
       event.operationId !== 'ai.streamText' &&
-      event.operationId !== 'ai.generateText'
+      event.operationId !== 'ai.generateText' &&
+      event.operationId !== 'ai.generateObject' &&
+      event.operationId !== 'ai.streamObject'
     ) {
       return;
     }
 
     // Narrow to the text-generation-specific event shape.
+    // GenerateObjectStartEvent shares the same base fields (callId,
+    // operationId, provider, modelId, messages/prompt, etc.).
     const genEvent = event as InferTelemetryEvent<GenerateTextStartEvent>;
 
     const providerName = mapProviderName(genEvent.provider);
@@ -276,7 +335,9 @@ class KlexTelemetry implements Telemetry {
       'gen_ai.system': providerName,
       'gen_ai.provider.name': providerName,
       'gen_ai.request.model': requestModel,
-      'gen_ai.request.stream': genEvent.operationId === 'ai.streamText',
+      'gen_ai.request.stream':
+        genEvent.operationId === 'ai.streamText' ||
+        genEvent.operationId === 'ai.streamObject',
       'gen_ai.agent.name': genEvent.functionId,
     };
 
@@ -326,16 +387,52 @@ class KlexTelemetry implements Telemetry {
     // Only recorded when telemetry.recordInputs is not false.
     const recordInputs = genEvent.recordInputs !== false;
     if (recordInputs) {
-      const systemInstructions = instructionsToString(genEvent.instructions);
-      if (systemInstructions != null) {
-        attributes['gen_ai.system_instructions'] = systemInstructions;
+      // GenerateObjectStartEvent uses `system` and `prompt`/`messages`,
+      // while GenerateTextStartEvent (via StandardizedPrompt) uses
+      // `instructions` and `messages`. Read the correct fields based on
+      // the operation type to avoid dropping input for object generation.
+      const isObjectOp =
+        genEvent.operationId === 'ai.generateObject' ||
+        genEvent.operationId === 'ai.streamObject';
+
+      if (isObjectOp) {
+        const objEvent = event as InferTelemetryEvent<GenerateObjectStartEvent>;
+
+        const systemInstructions = instructionsToString(objEvent.system);
+        if (systemInstructions != null) {
+          attributes['gen_ai.system_instructions'] = systemInstructions;
+        }
+
+        // For object generation, input is provided as either `prompt`
+        // (string or ModelMessage[]) or `messages` (ModelMessage[]).
+        // Prefer messages, fall back to prompt.
+        const inputSource = objEvent.messages ?? objEvent.prompt;
+        if (typeof inputSource === 'string') {
+          const wrapped = serializeJson([
+            { role: 'user', content: inputSource },
+          ]);
+          if (wrapped != null) {
+            attributes['gen_ai.input.messages'] = wrapped;
+          }
+        } else {
+          const inputMessages = serializeJson(inputSource);
+          if (inputMessages != null) {
+            attributes['gen_ai.input.messages'] = inputMessages;
+          }
+        }
+      } else {
+        const systemInstructions = instructionsToString(genEvent.instructions);
+        if (systemInstructions != null) {
+          attributes['gen_ai.system_instructions'] = systemInstructions;
+        }
+
+        const inputMessages = serializeJson(genEvent.messages);
+        if (inputMessages != null) {
+          attributes['gen_ai.input.messages'] = inputMessages;
+        }
       }
 
-      const inputMessages = serializeJson(genEvent.messages);
-      if (inputMessages != null) {
-        attributes['gen_ai.input.messages'] = inputMessages;
-      }
-
+      // Tool definitions (only present on text-generation events).
       const toolDefs = toolsToDefinitions(
         genEvent.tools as Record<string, unknown> | undefined,
       );
@@ -598,6 +695,53 @@ class KlexTelemetry implements Telemetry {
         const outputMessages = serializeJson([outputMessage]);
         if (outputMessages != null) {
           state.rootSpan.setAttribute('gen_ai.output.messages', outputMessages);
+        }
+      }
+    } else if (
+      state.operationId === 'ai.generateObject' ||
+      state.operationId === 'ai.streamObject'
+    ) {
+      const objEndEvent = event as InferTelemetryEvent<
+        GenerateObjectEndEvent<unknown>
+      >;
+
+      state.rootSpan.setAttributes({
+        'gen_ai.response.finish_reasons': [objEndEvent.finishReason],
+        'gen_ai.usage.input_tokens': objEndEvent.usage.inputTokens,
+        'gen_ai.usage.output_tokens': objEndEvent.usage.outputTokens,
+      });
+
+      if (objEndEvent.finishReason === 'error') {
+        state.rootSpan.setAttribute('error.type', 'generation_error');
+        state.rootSpan.setStatus({ code: SpanStatusCode.ERROR });
+      }
+
+      if (objEndEvent.usage.inputTokenDetails?.cacheReadTokens != null) {
+        state.rootSpan.setAttribute(
+          'gen_ai.usage.cache_read.input_tokens',
+          objEndEvent.usage.inputTokenDetails.cacheReadTokens,
+        );
+      }
+      if (objEndEvent.usage.inputTokenDetails?.cacheWriteTokens != null) {
+        state.rootSpan.setAttribute(
+          'gen_ai.usage.cache_creation.input_tokens',
+          objEndEvent.usage.inputTokenDetails.cacheWriteTokens,
+        );
+      }
+
+      // Opt-in content attribute: gen_ai.output_messages for object generation.
+      if (state.recordOutputs && objEndEvent.object != null) {
+        const outputSerialized = serializeJson(objEndEvent.object);
+        if (outputSerialized != null) {
+          const outputMessages = serializeJson([
+            { role: 'assistant', content: outputSerialized },
+          ]);
+          if (outputMessages != null) {
+            state.rootSpan.setAttribute(
+              'gen_ai.output.messages',
+              outputMessages,
+            );
+          }
         }
       }
     }

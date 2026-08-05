@@ -15,9 +15,6 @@ import { ToolDispatcher } from './tool-dispatcher';
 
 vi.mock('@/tracing', () => ({
   recordErrorOnSpan: vi.fn(),
-}));
-
-vi.mock('../utils/tracing', () => ({
   startChildSpan: vi.fn(() => ({
     setAttribute: vi.fn(),
     setAttributes: vi.fn(),

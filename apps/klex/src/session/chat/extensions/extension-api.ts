@@ -471,6 +471,16 @@ export interface ExtensionDeps {
   sessionId: string;
 
   /**
+   * Sets the activity summary for this session. The router reads this
+   * via {@link SessionInfo.activitySummary} and includes it in routing
+   * decisions, so the LLM can match incoming events against what the
+   * session has been doing (e.g. outgoing MCP calls, active tasks).
+   *
+   * Pass `null` to clear the summary.
+   */
+  setActivitySummary: (summary: string | null) => void;
+
+  /**
    * Returns an absolute path to a directory the calling extension can
    * use exclusively for its own persistent storage. The directory is
    * **not** guaranteed to exist — the extension must create it (e.g.

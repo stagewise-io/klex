@@ -12,6 +12,7 @@ import {
 import type { ModuleLogger } from '@stagewise/logger';
 
 import { modelIdFromEntry } from '@/config';
+import { startChildSpan } from '@/tracing';
 import {
   classifyGenerationError,
   type GenerationErrorClassification,
@@ -26,7 +27,6 @@ import type { AgentTools } from '../tools';
 import type { ModelFallbackManager } from '../utils/model-fallback-manager';
 import { repairPartialMessage } from '../utils/repair-partial-message';
 import { runStreamedGeneration } from '../utils/run-streamed-generation';
-import { startChildSpan } from '../utils/tracing';
 import { ToolDispatcher } from './tool-dispatcher';
 
 export interface GenerationRunnerDependencies {

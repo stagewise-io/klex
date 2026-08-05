@@ -817,6 +817,58 @@ describe('Step — generation runner deps', () => {
   });
 });
 
+describe('Step — providerOptions flow', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    setupDefaultMocks();
+  });
+
+  it('passes resolved providerOptions to createGenerationRunner', async () => {
+    const providerOptions = { openai: { reasoningEffort: 'high' } };
+    const config = {
+      resolveModel: vi.fn(() => ({ providerOptions })),
+      resolveModelInfo: vi.fn(() => ({
+        displayName: 'Test',
+        contextSize: 128_000,
+        inputCapabilities: {},
+      })),
+    } as never;
+
+    const step = createStep(
+      makeDeps({
+        messages: [makeUserMessage()],
+        config,
+      }),
+    );
+    await step.run();
+
+    const createCall = vi.mocked(createGenerationRunner).mock.calls[0]?.[0];
+    expect(createCall?.providerOptions).toEqual(providerOptions);
+  });
+
+  it('omits providerOptions from createGenerationRunner when resolveModel returns undefined', async () => {
+    const config = {
+      resolveModel: vi.fn(() => ({ providerOptions: undefined })),
+      resolveModelInfo: vi.fn(() => ({
+        displayName: 'Test',
+        contextSize: 128_000,
+        inputCapabilities: {},
+      })),
+    } as never;
+
+    const step = createStep(
+      makeDeps({
+        messages: [makeUserMessage()],
+        config,
+      }),
+    );
+    await step.run();
+
+    const createCall = vi.mocked(createGenerationRunner).mock.calls[0]?.[0];
+    expect(createCall?.providerOptions).toBeUndefined();
+  });
+});
+
 describe('Step — structuredClone isolation', () => {
   beforeEach(() => {
     vi.clearAllMocks();

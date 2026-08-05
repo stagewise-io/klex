@@ -1731,4 +1731,34 @@ describe('Config — model selection entries (object form)', () => {
       ConfigValidationError,
     );
   });
+
+  it('rejects providerOptions with non-object namespace value', async () => {
+    const { module } = await setup(mixedConfig());
+    const invalid = mixedConfig();
+    invalid.modelSelection.chat = [
+      {
+        model: 'remote:gpt-4o',
+        providerOptions: { openai: 'high' } as never,
+      },
+    ];
+
+    await expect(module.replace(invalid)).rejects.toBeInstanceOf(
+      ConfigValidationError,
+    );
+  });
+
+  it('rejects providerOptions with primitive namespace value', async () => {
+    const { module } = await setup(mixedConfig());
+    const invalid = mixedConfig();
+    invalid.modelSelection.chat = [
+      {
+        model: 'remote:gpt-4o',
+        providerOptions: { openai: 42 } as never,
+      },
+    ];
+
+    await expect(module.replace(invalid)).rejects.toBeInstanceOf(
+      ConfigValidationError,
+    );
+  });
 });

@@ -17,7 +17,7 @@ type ModelId = z.infer<typeof modelIdSchema>;
 
 interface ModelSelectionEntryObject {
   model: ModelId;
-  providerOptions?: Record<string, unknown>;
+  providerOptions?: Record<string, Record<string, unknown>>;
 }
 
 type ModelSelectionEntry = ModelId | ModelSelectionEntryObject;
@@ -27,7 +27,9 @@ const modelSelectionEntrySchema = z.union([
   z
     .object({
       model: modelIdSchema,
-      providerOptions: z.record(z.string(), z.unknown()).optional(),
+      providerOptions: z
+        .record(z.string(), z.record(z.string(), z.unknown()))
+        .optional(),
     })
     .strict(),
 ]);
@@ -262,7 +264,6 @@ export type {
   ModelPurpose,
   ModelSelection,
   ModelSelectionEntry,
-  ModelSelectionEntryObject,
   ProviderConfig,
   ProviderPreset,
   StdioServerConfig,
@@ -273,7 +274,6 @@ export {
   mcpServerConfigSchema,
   modelIdFromEntry,
   modelIdSchema,
-  modelSelectionEntrySchema,
   modelSelectionSchema,
   telemetryLevelSchema,
 };

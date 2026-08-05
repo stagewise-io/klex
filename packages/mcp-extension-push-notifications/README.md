@@ -26,9 +26,16 @@ const event = {
   type: 'chat.message.received',
   createdAt: new Date().toISOString(),
   content: [{ type: 'text', text: 'Hello' }],
-  data: { messageId: '42' },
+  // data should be bare-bones identifiers only — not full payloads.
+  data: { chatId: '42', userId: 'alice' },
 };
 ```
+
+The router uses `data` as metadata for session routing. Keep it short and
+structural: conversation IDs, user IDs, thread IDs, repo names. Avoid message
+bodies, stack traces, or verbose descriptions — the router flattens and caps
+`data` at 20 keys, and long values waste routing-LLM tokens without improving
+routing accuracy.
 
 Small media may be carried inline as base64 MCP image/audio blocks. Larger or
 long-lived media should use MCP resource links whose authorization and retention

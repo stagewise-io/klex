@@ -67,6 +67,15 @@ The router subscribes through `mcp.onPushNotification(listener)` and receives `M
 
 The router never accesses the Push Notification inbox directly.
 
+### Event metadata for routing
+
+The router uses `event.data` as metadata for LLM-based session routing. Producers
+should keep `data` bare-bones and short — only identifiers and structural context
+the router needs to match the event to the right session (e.g. `chatId`,
+`userId`, `threadId`, `repo`). Avoid message bodies, stack traces, or verbose
+descriptions. The router flattens `data` into dot-notation keys and caps at 20
+keys; long values waste routing-LLM tokens without improving routing accuracy.
+
 ## Interface to Main
 
 `createMcp({ logging, config })` composes the module and its inbox. No external inbox wiring is required.

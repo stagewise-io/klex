@@ -52,7 +52,7 @@ describe('Realtime Media server', () => {
     expect(accept).toHaveBeenCalledOnce();
   });
 
-  it('rejects requests without client capability', async () => {
+  it('rejects requests without a compatible client capability', async () => {
     const { server, handlers } = fakeServer();
     registerRealtimeMediaServer(server, {
       accept: vi.fn(),
@@ -62,7 +62,14 @@ describe('Realtime Media server', () => {
     await expect(
       handlers.get('io.stagewise/realtime-media/reject')?.(
         { sessionId: 'session-1' } as never,
-        { mcpReq: { envelope: {} } } as never,
+        {
+          mcpReq: {
+            envelope: withRealtimeMediaClientCapability(
+              {},
+              { transports: ['websocket-pcm'], media: ['audio'] },
+            ),
+          },
+        } as never,
       ),
     ).rejects.toBeInstanceOf(RealtimeMediaProtocolError);
   });

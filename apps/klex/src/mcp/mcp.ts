@@ -7,6 +7,7 @@ import type {
 } from '@stagewise/mcp-extension-push-notifications';
 import type {
   AcceptRealtimeMediaSessionResult,
+  RealtimeMediaExtensionCapability,
   RealtimeMediaNotification,
 } from '@stagewise/mcp-extension-realtime-media';
 
@@ -150,7 +151,7 @@ export interface Mcp extends ToolProvider {
 export interface McpDependencies {
   logging: RootLogger;
   config: Config;
-  realtimeMediaEnabled?: boolean;
+  realtimeMediaCapability?: RealtimeMediaExtensionCapability;
   connect?: McpConnectionFactory;
 }
 
@@ -205,7 +206,7 @@ class McpModule implements Mcp {
       logger: ModuleLogger;
       config: Config;
       pushNotificationInbox: PushNotificationInbox;
-      realtimeMediaEnabled: boolean;
+      realtimeMediaCapability: RealtimeMediaExtensionCapability | undefined;
       connect: McpConnectionFactory;
     },
   ) {}
@@ -463,7 +464,7 @@ class McpModule implements Mcp {
         namespace: runtime.namespace,
         config: runtime.config,
         signal: attempt.controller.signal,
-        realtimeMediaEnabled: this.deps.realtimeMediaEnabled,
+        realtimeMediaCapability: this.deps.realtimeMediaCapability,
         onToolsChanged: (changed) => {
           if (!this.isCurrentConnection(runtime, changed)) return;
           this.publishRegistry();
@@ -764,7 +765,7 @@ class McpModule implements Mcp {
   private requireRealtimeConnection(namespace: string): McpConnection & {
     realtimeMedia: NonNullable<McpConnection['realtimeMedia']>;
   } {
-    if (!this.deps.realtimeMediaEnabled)
+    if (!this.deps.realtimeMediaCapability)
       throw new Error('Realtime Media is disabled in Klex configuration');
     const connection = this.servers.get(namespace)?.connection;
     if (!connection) throw new Error(`MCP server is unavailable: ${namespace}`);
@@ -954,7 +955,7 @@ export function createMcp(deps: McpDependencies): Mcp {
     }),
     config: deps.config,
     pushNotificationInbox: createInMemoryPushNotificationInbox(),
-    realtimeMediaEnabled: deps.realtimeMediaEnabled ?? true,
+    realtimeMediaCapability: deps.realtimeMediaCapability,
     connect: deps.connect ?? connectMcpServer,
   });
 }

@@ -47,9 +47,14 @@ function fakeClient() {
 }
 
 describe('Realtime Media client', () => {
-  it('injects capability metadata and returns accepted credentials', async () => {
+  it('injects configured capability metadata and returns accepted credentials', async () => {
     const { client, requests } = fakeClient();
-    const realtime = registerRealtimeMediaClient(client);
+    const realtime = registerRealtimeMediaClient(client, {
+      capability: {
+        transports: ['livekit-room', 'websocket-pcm'],
+        media: ['audio'],
+      },
+    });
     const result = await realtime.accept('session-1', {
       metadata: { trace: 'trace-1' },
     });
@@ -62,7 +67,7 @@ describe('Realtime Media client', () => {
           'io.modelcontextprotocol/clientCapabilities': {
             extensions: {
               [REALTIME_MEDIA_EXTENSION_ID]: {
-                transports: ['livekit-room'],
+                transports: ['livekit-room', 'websocket-pcm'],
                 media: ['audio'],
               },
             },

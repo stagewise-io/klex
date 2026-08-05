@@ -117,13 +117,16 @@ function setup(
   connect: McpConnectionFactory,
   realtimeMediaEnabled = true,
 ) {
+  const realtimeMediaCapability = realtimeMediaEnabled
+    ? { transports: ['livekit-room'], media: ['audio'] as ['audio'] }
+    : undefined;
   const config = createConfigHarness(servers);
   return {
     config,
     mcp: createMcp({
       logging,
       config: config.config,
-      realtimeMediaEnabled,
+      realtimeMediaCapability,
       connect,
     }),
   };
@@ -158,7 +161,7 @@ describe('MCP Realtime Media configuration', () => {
     );
 
     await mcp.start();
-    expect((await options.promise).realtimeMediaEnabled).toBe(false);
+    expect((await options.promise).realtimeMediaCapability).toBeUndefined();
     await expect(
       mcp.acceptRealtimeMediaSession('chat', 'call-1'),
     ).rejects.toThrow('Realtime Media is disabled in Klex configuration');

@@ -13,7 +13,10 @@ import {
   type RegisteredPushNotificationsClient,
   registerPushNotificationsClient,
 } from '@stagewise/mcp-extension-push-notifications/client';
-import type { RealtimeMediaNotification } from '@stagewise/mcp-extension-realtime-media';
+import type {
+  RealtimeMediaExtensionCapability,
+  RealtimeMediaNotification,
+} from '@stagewise/mcp-extension-realtime-media';
 import {
   type RegisteredRealtimeMediaClient,
   registerRealtimeMediaClient,
@@ -41,7 +44,7 @@ export interface ConnectMcpServerOptions {
   namespace: string;
   config: McpServerConfig;
   signal: AbortSignal;
-  realtimeMediaEnabled: boolean;
+  realtimeMediaCapability?: RealtimeMediaExtensionCapability;
   onToolsChanged(connection: McpConnection): void;
   onPushNotification(
     connection: McpConnection,
@@ -131,8 +134,9 @@ export async function connectMcpServer(
         await options.onPushNotification(connection, notification);
     },
   });
-  const realtimeMedia = options.realtimeMediaEnabled
+  const realtimeMedia = options.realtimeMediaCapability
     ? registerRealtimeMediaClient(client, {
+        capability: options.realtimeMediaCapability,
         onNotification: async (notification) => {
           if (connection)
             await options.onRealtimeMediaNotification(connection, notification);

@@ -80,6 +80,10 @@ describe('MCP to deterministic realtime session', () => {
     const mcp = createMcp({
       logging,
       config: configFor({ voice: { url: 'https://voice.example/mcp' } }),
+      realtimeMediaCapability: {
+        transports: ['livekit-room'],
+        media: ['audio'],
+      },
       connect: async (options) => {
         connectOptions = options;
         return connection;

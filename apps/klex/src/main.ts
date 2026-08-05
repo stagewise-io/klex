@@ -14,7 +14,10 @@ import { createImageInputOptimizerExt } from '@/session/chat/extensions/image-in
 import { createJsReplSandboxExt } from '@/session/chat/extensions/js-repl-sandbox';
 import { createRemindersExt } from '@/session/chat/extensions/reminders';
 import { createSoulExt } from '@/session/chat/extensions/soul';
-import { createRealtimeMediaRuntime } from '@/session/realtime';
+import {
+  createProductionMediaTransportConnectorRegistry,
+  createRealtimeMediaRuntime,
+} from '@/session/realtime';
 import type { SessionHooks } from '@/session/types';
 import {
   createTelemetryManager,
@@ -63,9 +66,21 @@ async function main(): Promise<void> {
     await config.start();
     started.push(config);
     const realtimeProvider = config.resolveRealtimeProvider();
-    const realtimeMediaEnabled = realtimeProvider !== undefined;
+    const realtimeConnectorRegistry = realtimeProvider
+      ? createProductionMediaTransportConnectorRegistry()
+      : undefined;
+    const realtimeMediaCapability = realtimeConnectorRegistry
+      ? {
+          transports: [...realtimeConnectorRegistry.profiles],
+          media: ['audio'] as ['audio'],
+        }
+      : undefined;
     const modelProvider = createModelProvider({ logging: logger, config });
-    const mcp = createMcp({ logging: logger, config, realtimeMediaEnabled });
+    const mcp = createMcp({
+      logging: logger,
+      config,
+      realtimeMediaCapability,
+    });
     const introspector = createIntrospector({ logging: logger });
 
     router = createRouter({
@@ -111,6 +126,7 @@ async function main(): Promise<void> {
       logging: logger,
       mcp,
       provider: realtimeProvider,
+      connector: realtimeConnectorRegistry,
     });
 
     for (const resource of [adminApi, modelProvider]) {

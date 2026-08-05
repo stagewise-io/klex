@@ -38,6 +38,14 @@ function postProcess(content: string): string {
     'expiresAt: z.string()',
     'expiresAt: z.iso.datetime()',
   );
+  output = output.replaceAll(
+    'profile: z.string()',
+    'profile: z.string().min(1)',
+  );
+  output = output.replace(
+    'transports: z.array(z.string())',
+    'transports: z.array(z.string().min(1)).min(1)',
+  );
   output = output.replace('url: z.string()', 'url: z.url()');
   output = output.replace('token: z.string()', 'token: z.string().min(1)');
   output = output.replaceAll('"', "'");

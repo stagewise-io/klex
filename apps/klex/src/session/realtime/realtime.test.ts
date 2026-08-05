@@ -1,14 +1,20 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import type { RootLogger } from '@stagewise/logger';
-import type { RealtimeMediaNotification } from '@stagewise/mcp-extension-realtime-media';
+import type {
+  AcceptRealtimeMediaSessionResult,
+  RealtimeMediaNotification,
+} from '@stagewise/mcp-extension-realtime-media';
 
 import type {
   Mcp,
   McpRealtimeMediaAvailabilityListener,
   McpRealtimeMediaNotificationListener,
 } from '@/mcp';
-import type { AudioFrame } from '@/media-transport';
+import {
+  type AudioFrame,
+  createMediaTransportConnectorRegistry,
+} from '@/media-transport';
 
 import { createRealtimeSessionCoordinator } from './realtime';
 import {
@@ -54,7 +60,7 @@ function deferred<T>(): {
 }
 
 function createMcpHarness(options?: {
-  accept?: () => Promise<{ transport: typeof descriptor }>;
+  accept?: () => Promise<AcceptRealtimeMediaSessionResult>;
 }) {
   const notificationListeners = new Set<McpRealtimeMediaNotificationListener>();
   const availabilityListeners = new Set<McpRealtimeMediaAvailabilityListener>();
@@ -139,6 +145,30 @@ function setup(options?: {
 }
 
 describe('realtime session coordinator', () => {
+  it('ends an accepted session when its transport profile is unsupported', async () => {
+    const mcpHarness = createMcpHarness({
+      accept: async () => ({
+        transport: { ...descriptor, profile: 'unsupported' },
+      }),
+    });
+    const registry = createMediaTransportConnectorRegistry([]);
+    const coordinator = createRealtimeSessionCoordinator({
+      logging,
+      mcp: mcpHarness.mcp,
+      mediaTransportConnector: registry,
+      processorFactory: createDeterministicEchoProcessorFactory(),
+      now: () => Date.parse('2026-08-01T18:00:00.000Z'),
+    });
+    await coordinator.start();
+    await mcpHarness.notify(offered());
+    await vi.waitFor(() => {
+      expect(mcpHarness.endRealtimeMediaSession).toHaveBeenCalledOnce();
+      expect(coordinator.getActiveSessionCount()).toBe(0);
+    });
+    await coordinator.close();
+    await registry.close();
+  });
+
   it('accepts an offer, echoes ordered frames, and handles remote end once', async () => {
     const { coordinator, connector, mcpHarness, processorFactory } = setup();
     await coordinator.start();

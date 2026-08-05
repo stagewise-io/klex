@@ -2,9 +2,11 @@ import type { RootLogger } from '@stagewise/logger';
 
 import type { ResolvedRealtimeProvider } from '@/config';
 import type { Mcp } from '@/mcp';
-import type {
-  MediaTransportConnector,
-  RealtimeProcessorFactory,
+import {
+  createMediaTransportConnectorRegistry,
+  type MediaTransportConnector,
+  type MediaTransportConnectorRegistry,
+  type RealtimeProcessorFactory,
 } from '@/media-transport';
 import {
   createLiveKitRoomMediaTransportConnector,
@@ -26,6 +28,7 @@ export interface RealtimeMediaRuntimeDependencies {
   logging: RootLogger;
   mcp: Mcp;
   provider?: ResolvedRealtimeProvider;
+  connector?: MediaTransportConnector;
   createConnector?: () => MediaTransportConnector;
   createCoordinator?: (
     connector: MediaTransportConnector,
@@ -47,8 +50,9 @@ class RealtimeMediaRuntimeModule implements RealtimeMediaRuntime {
       return Promise.reject(new Error('Realtime media runtime is closed'));
     this.startPromise = (async () => {
       const connector =
+        this.deps.connector ??
         this.deps.createConnector?.() ??
-        createLiveKitRoomMediaTransportConnector({ loadSdk: loadLiveKitSdk });
+        createProductionMediaTransportConnectorRegistry();
       this.connector = connector;
       const coordinator =
         this.deps.createCoordinator?.(connector) ??
@@ -100,4 +104,14 @@ export function createRealtimeMediaRuntime(
   deps: RealtimeMediaRuntimeDependencies,
 ): RealtimeMediaRuntime {
   return new RealtimeMediaRuntimeModule(deps);
+}
+
+export function createProductionMediaTransportConnectorRegistry(): MediaTransportConnectorRegistry {
+  return createMediaTransportConnectorRegistry([
+    {
+      profile: 'livekit-room',
+      create: () =>
+        createLiveKitRoomMediaTransportConnector({ loadSdk: loadLiveKitSdk }),
+    },
+  ]);
 }

@@ -8,7 +8,7 @@ Normative terms **MUST**, **SHOULD**, and **MAY** are interpreted as in RFC 2119
 
 ## Capability
 
-Both peers advertise:
+Both peers advertise the transport profiles they can use and their media kinds. A peer supports the extension when the profile lists intersect and both include audio. For example:
 
 ```json
 {
@@ -49,7 +49,7 @@ This is a server-to-client notification. Parameters are `{ sessionId, expiresAt 
 
 ### `io.stagewise/realtime-media/accept`
 
-This is a client-to-server request. Parameters are `{ sessionId }`. An unexpired pending offer transitions to accepted and returns:
+This is a client-to-server request. Parameters are `{ sessionId }`. An unexpired pending offer transitions to accepted and returns one transport descriptor whose `profile` was advertised by both peers:
 
 ```json
 {
@@ -61,7 +61,7 @@ This is a client-to-server request. Parameters are `{ sessionId }`. An unexpired
 }
 ```
 
-The token MUST be scoped to the accepted session and SHOULD be short lived. Servers and clients MUST NOT log it. Repeating accept returns the same logical descriptor while valid. Accepting an expired offer fails with `-32021`; an unknown session with `-32020`; a conflicting state with `-32022`.
+`profile` selects the transport adapter. Remaining descriptor fields are profile-specific, opaque to this extension, and MUST be validated by that adapter. The LiveKit token MUST be scoped to the accepted session and SHOULD be short lived. Servers and clients MUST NOT log it. Repeating accept returns the same logical descriptor while valid. Accepting an expired offer fails with `-32021`; an unknown session with `-32020`; a conflicting state with `-32022`.
 
 ### `io.stagewise/realtime-media/reject`
 

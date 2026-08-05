@@ -18,11 +18,11 @@ The extension's methods are directional:
 | `end` | Request | Client → server |
 | `session-ended` | Notification | Server → client |
 
-1. Client and server advertise audio and `livekit-room` support.
+1. Client and server advertise audio and their supported transport profiles; support requires at least one shared profile.
 2. The client opens `subscriptions/listen` with the realtime-media filter.
 3. The server emits `session-offered` with an opaque ID and expiration time.
 4. The client calls `accept` or `reject`.
-5. Acceptance returns the LiveKit URL and short-lived participant token.
+5. Acceptance returns one descriptor whose `profile` was advertised by both peers. Profile-specific fields are opaque to the extension and validated by the selected transport adapter; LiveKit returns its URL and short-lived participant token.
 6. The client ends an accepted session with `end`. The server terminates a session locally and reports that termination with `session-ended`.
 
 The subscription owns its sessions. Losing it ends pending and active sessions; this first revision has no recovery.

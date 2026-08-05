@@ -1497,7 +1497,7 @@ describe('ExtensionHandler — getTools()', () => {
       ],
     });
 
-    const tools = handler.getTools();
+    const tools = handler.getTools(mockResolvedModel);
 
     expect(Object.keys(tools).sort()).toEqual(['tool1', 'tool2']);
   });
@@ -1511,7 +1511,7 @@ describe('ExtensionHandler — getTools()', () => {
       ],
     });
 
-    const tools = handler.getTools();
+    const tools = handler.getTools(mockResolvedModel);
 
     expect(Object.keys(tools)).toEqual(['dummy']);
   });
@@ -1522,7 +1522,7 @@ describe('ExtensionHandler — getTools()', () => {
       factories: [factoryWith({}), factoryWith({})],
     });
 
-    expect(handler.getTools()).toEqual({});
+    expect(handler.getTools(mockResolvedModel)).toEqual({});
   });
 
   it('throws on duplicate tool names', () => {
@@ -1534,6 +1534,20 @@ describe('ExtensionHandler — getTools()', () => {
       ],
     });
 
-    expect(() => handler.getTools()).toThrow('Duplicate tool name "dup"');
+    expect(() => handler.getTools(mockResolvedModel)).toThrow(
+      'Duplicate tool name "dup"',
+    );
+  });
+
+  it('passes the resolved model to each extension getTools', () => {
+    const spy = vi.fn(() => ({ dummy: dummyTool }));
+    const handler = createExtensionHandler({
+      ...HANDLER_OPTS,
+      factories: [factoryWith({ getTools: spy })],
+    });
+
+    handler.getTools(mockResolvedModel);
+    expect(spy).toHaveBeenCalledOnce();
+    expect(spy).toHaveBeenCalledWith(mockResolvedModel);
   });
 });

@@ -194,6 +194,7 @@ const modelSelectionSchema = z.object({
   chat: z.array(modelSelectionEntrySchema),
   compaction: z.array(modelSelectionEntrySchema),
   memory: z.array(modelSelectionEntrySchema),
+  imageVision: z.array(modelSelectionEntrySchema).default([]),
 });
 
 type ModelSelection = z.infer<typeof modelSelectionSchema>;

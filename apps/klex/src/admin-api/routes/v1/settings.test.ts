@@ -27,6 +27,7 @@ const baseSelection: ModelSelection = {
   chat: ['openai:gpt-4o'],
   compaction: ['openai:gpt-4o-mini'],
   memory: ['anthropic:claude-3-haiku'],
+  imageVision: [],
 };
 
 const baseConfig: KlexConfig = {
@@ -101,11 +102,12 @@ describe('GET /v1/settings/model-selection', () => {
     expect(await response.json()).toEqual(baseSelection);
   });
 
-  it('returns all three purposes', async () => {
+  it('returns all purposes', async () => {
     const selection: ModelSelection = {
       chat: ['provider:endpoint:model-a', 'provider:endpoint:model-b'],
       compaction: ['provider:endpoint:model-c'],
       memory: [],
+      imageVision: [],
     };
     const app = createApp(
       makeDeps({
@@ -196,6 +198,7 @@ describe('PATCH /v1/settings/model-selection', () => {
       chat: ['openai:gpt-4o'],
       compaction: ['openai:gpt-4o-mini'],
       memory: ['anthropic:claude-3-haiku'],
+      imageVision: [],
     };
     const mutateFn = vi.fn(async (fn: (cfg: KlexConfig) => KlexConfig) => {
       const next = fn(baseConfig);
@@ -326,6 +329,7 @@ describe('PATCH /v1/settings/model-selection', () => {
         chat: ['unknown-provider:some-model'],
         compaction: ['openai:gpt-4o-mini'],
         memory: ['anthropic:claude-3-haiku'],
+        imageVision: [],
       },
     };
     const app = createApp(

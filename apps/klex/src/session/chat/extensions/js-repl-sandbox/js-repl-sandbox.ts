@@ -4,6 +4,7 @@ import type {
   Extension,
   ExtensionDeps,
   ExtensionFactory,
+  ResolvedModel,
 } from '../extension-api';
 import { createJavaScriptTool, type JavaScriptTool } from './javascript';
 
@@ -26,7 +27,7 @@ class JsReplSandboxExt implements Extension {
     await this.javaScriptTool.close();
   }
 
-  getTools(): ToolSet {
+  getTools(_model: ResolvedModel): ToolSet {
     return this.javaScriptTool.tools;
   }
 }

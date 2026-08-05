@@ -17,7 +17,6 @@ import type {
 } from '../extensions/extension-api';
 import { type SessionInboxBuffer, SessionInboxPriority } from '../inbox';
 import type { ExtendedUIMessage } from '../message-types';
-import type { AgentTools } from '../tools';
 import { checkAndFixHistory } from '../utils/check-and-fix-history';
 import { convertToModelMessagesExtended } from '../utils/convert-to-model-messages';
 import { inboxDrainAttributes } from '../utils/inbox-drain-attributes';
@@ -60,7 +59,6 @@ export interface StepDependencies {
   messages: ExtendedUIMessage[];
   inbox: SessionInboxBuffer;
   extensionHandler: ExtensionHandler;
-  tools: AgentTools;
   modelProvider: ModelProvider;
   fallbackManager: ModelFallbackManager;
   config: Config;
@@ -405,17 +403,19 @@ class StepModule implements Step {
           'step.messageCount': modelMessages.length,
         });
 
-        // 2.2.8: Run generation via the GenerationRunner.
+        // 2.2.8: Resolve tools from extensions for the current model,
+        // then run generation via the GenerationRunner.
         // The runner owns the retry loop, model fallback, error
         // classification, message salvage, stream progress tracking,
         // and tool dispatch coordination.
+        const tools = this.deps.extensionHandler.getTools(resolvedModel);
         const runner = createGenerationRunner({
           logger: this.deps.logger,
           sessionId: this.deps.sessionId,
           stepSpan,
           modelMessages,
           messages: this.deps.messages,
-          tools: this.deps.tools,
+          tools,
           fallbackManager: this.deps.fallbackManager,
           turnInitialFallbackIndex: this.deps.turnInitialFallbackIndex,
           compacted,

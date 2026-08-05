@@ -327,15 +327,21 @@ export interface Extension {
   onClose?: () => Promise<void>;
 
   /**
-   * Returns the tools this extension provides to the LLM.
+   * Returns the tools this extension provides to the LLM for the given
+   * model.
    *
-   * Called once during session construction, after all extensions have
-   * been instantiated but before the first step. The returned `ToolSet`
-   * is merged with tools from all other extensions and with core session
-   * tools. Tool names must be unique across all extensions — a duplicate
-   * throws at registration time.
+   * Called once per step, after the model has been resolved, so that
+   * extensions can make model-aware decisions about which tools to
+   * expose. The returned `ToolSet` is merged with tools from all other
+   * extensions and passed to the generation runner. Tool names must be
+   * unique across all extensions — a duplicate throws at collection
+   * time.
+   *
+   * The {@link ResolvedModel} parameter gives extensions access to the
+   * active model's ID, context size, and input capabilities. Extensions
+   * that always expose the same tools can ignore the parameter.
    */
-  getTools?: () => ToolSet;
+  getTools?: (model: ResolvedModel) => ToolSet;
 
   onStepStart?: () => void | Promise<void>;
 

@@ -12,7 +12,6 @@ import {
   makeInbox,
   makeModelProvider,
 } from '../test-helpers';
-import type { AgentTools } from '../tools';
 import { createTurn, type TurnDependencies } from './turn';
 
 // --- mocks (hoisted by vitest) ---
@@ -33,7 +32,6 @@ function makeDeps(overrides: Partial<TurnDependencies> = {}): TurnDependencies {
     messages: [],
     inbox: makeInbox(),
     extensionHandler: makeExtensionHandler() as never,
-    tools: {} as AgentTools,
     modelProvider: makeModelProvider() as never,
     fallbackManager: makeFallbackManager() as never,
     config: {

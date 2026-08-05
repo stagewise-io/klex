@@ -13,7 +13,6 @@ import {
   makeInbox,
   makeModelProvider,
 } from '../test-helpers';
-import type { AgentTools } from '../tools';
 import {
   checkAndFixHistory,
   type HistoryRepairInfo,
@@ -90,7 +89,6 @@ function makeDeps(overrides: Partial<StepDependencies> = {}): StepDependencies {
     messages: [],
     inbox: makeInbox(),
     extensionHandler: makeExtensionHandler() as never,
-    tools: {} as AgentTools,
     modelProvider: makeModelProvider() as never,
     fallbackManager: makeFallbackManager() as never,
     config: {

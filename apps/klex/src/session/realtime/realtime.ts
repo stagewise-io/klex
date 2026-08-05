@@ -1,342 +1,112 @@
-import type { ModuleLogger, RootLogger } from '@stagewise/logger';
-import type {
-  RealtimeMediaNotification,
-  RealtimeMediaSessionOfferedNotificationParams,
-} from '@stagewise/mcp-extension-realtime-media';
+import type { RootLogger } from '@stagewise/logger';
 
-import type {
-  Mcp,
-  McpRealtimeMediaAvailability,
-  McpRealtimeMediaNotification,
-} from '@/mcp';
-import type {
-  AudioFrame,
-  MediaTransport,
-  MediaTransportConnector,
-  RealtimeProcessor,
-  RealtimeProcessorFactory,
+import type { ResolvedRealtimeProvider } from '@/config';
+import type { Mcp } from '@/mcp';
+import {
+  createMediaTransportConnectorRegistry,
+  type MediaTransportConnector,
+  type MediaTransportConnectorRegistry,
+  type RealtimeProcessorFactory,
 } from '@/media-transport';
+import {
+  createLiveKitRoomMediaTransportConnector,
+  loadLiveKitSdk,
+} from '@/media-transport/livekit-room';
 
-export interface RealtimeSessionCoordinator {
+import { createOpenAIRealtimeProcessorFactory } from './openai-realtime';
+import {
+  createRealtimeSessionCoordinator,
+  type RealtimeSessionCoordinator,
+} from './session-coordinator';
+
+export interface Realtime {
   start(): Promise<void>;
   close(): Promise<void>;
-  getActiveSessionCount(): number;
 }
 
-export interface RealtimeSessionCoordinatorDependencies {
+export interface RealtimeDependencies {
   logging: RootLogger;
   mcp: Mcp;
-  mediaTransportConnector: MediaTransportConnector;
-  processorFactory: RealtimeProcessorFactory;
-  now?: () => number;
+  provider: ResolvedRealtimeProvider;
+  /**
+   * Transfers lifecycle ownership to the realtime module. The caller must not
+   * close or reuse the connector after passing it to `createRealtime`.
+   */
+  ownedConnector: MediaTransportConnector;
+  createCoordinator?: (
+    connector: MediaTransportConnector,
+  ) => RealtimeSessionCoordinator;
 }
 
-interface ActiveRealtimeSession {
-  key: string;
-  namespace: string;
-  sessionId: string;
-  controller: AbortController;
-  accepted: boolean;
-  endSent: boolean;
-  transport?: MediaTransport;
-  processor?: RealtimeProcessor;
-  setup?: Promise<void>;
-  tasks: Promise<void>[];
-  finish?: Promise<void>;
-}
+class RealtimeModule implements Realtime {
+  private connector: MediaTransportConnector | undefined;
+  private coordinator: RealtimeSessionCoordinator | undefined;
+  private startPromise: Promise<void> | undefined;
+  private closePromise: Promise<void> | undefined;
 
-class RealtimeSessionCoordinatorModule implements RealtimeSessionCoordinator {
-  private readonly sessions = new Map<string, ActiveRealtimeSession>();
-  private started = false;
-  private notificationUnsubscribe: (() => void) | undefined;
-  private availabilityUnsubscribe: (() => void) | undefined;
+  constructor(private readonly deps: RealtimeDependencies) {}
 
-  constructor(
-    private readonly deps: {
-      logger: ModuleLogger;
-      mcp: Mcp;
-      mediaTransportConnector: MediaTransportConnector;
-      processorFactory: RealtimeProcessorFactory;
-      now: () => number;
-    },
-  ) {}
-
-  async start(): Promise<void> {
-    if (this.started) return;
-    this.started = true;
-    this.notificationUnsubscribe = this.deps.mcp.onRealtimeMediaNotification(
-      (event) => this.handleNotification(event),
-    );
-    this.availabilityUnsubscribe = this.deps.mcp.onRealtimeMediaAvailability(
-      (event) => this.handleAvailability(event),
-    );
-    this.deps.logger.info('Realtime session coordinator started');
-  }
-
-  async close(): Promise<void> {
-    if (!this.started) return;
-    this.started = false;
-    this.notificationUnsubscribe?.();
-    this.notificationUnsubscribe = undefined;
-    this.availabilityUnsubscribe?.();
-    this.availabilityUnsubscribe = undefined;
-    await Promise.allSettled(
-      [...this.sessions.values()].map((session) =>
-        this.finishSession(session, { notifyRemote: session.accepted }),
-      ),
-    );
-    this.deps.logger.info('Realtime session coordinator stopped');
-  }
-
-  getActiveSessionCount(): number {
-    return this.sessions.size;
-  }
-
-  private async handleNotification(
-    event: McpRealtimeMediaNotification,
-  ): Promise<void> {
-    if (!this.started) return;
-    const notification: RealtimeMediaNotification = event.notification;
-    if (notification.method === 'io.stagewise/realtime-media/session-offered') {
-      this.handleOffer(event.namespace, notification.params);
-      return;
-    }
-    const session = this.sessions.get(
-      sessionKey(event.namespace, notification.params.sessionId),
-    );
-    if (!session) return;
-    void this.finishSession(session, { notifyRemote: false });
-  }
-
-  private handleOffer(
-    namespace: string,
-    offer: RealtimeMediaSessionOfferedNotificationParams,
-  ): void {
-    const key = sessionKey(namespace, offer.sessionId);
-    if (this.sessions.has(key)) return;
-    const session: ActiveRealtimeSession = {
-      key,
-      namespace,
-      sessionId: offer.sessionId,
-      controller: new AbortController(),
-      accepted: false,
-      endSent: false,
-      tasks: [],
-    };
-    this.sessions.set(key, session);
-    session.setup = this.activateSession(session, offer).catch(
-      (error: unknown) => {
-        if (!session.controller.signal.aborted) {
-          this.deps.logger.warn(
-            { error, namespace, sessionId: offer.sessionId },
-            'Realtime session setup failed',
-          );
-        }
-        void this.finishSession(session, {
-          notifyRemote: session.accepted,
+  start(): Promise<void> {
+    if (this.startPromise) return this.startPromise;
+    if (this.closePromise)
+      return Promise.reject(new Error('Realtime module is closed'));
+    this.startPromise = (async () => {
+      const connector = this.deps.ownedConnector;
+      this.connector = connector;
+      const coordinator =
+        this.deps.createCoordinator?.(connector) ??
+        createRealtimeSessionCoordinator({
+          logging: this.deps.logging,
+          mcp: this.deps.mcp,
+          mediaTransportConnector: connector,
+          processorFactory: this.createProcessorFactory(),
         });
-      },
-    );
-  }
-
-  private async activateSession(
-    session: ActiveRealtimeSession,
-    offer: RealtimeMediaSessionOfferedNotificationParams,
-  ): Promise<void> {
-    if (Date.parse(offer.expiresAt) <= this.deps.now()) {
-      await this.deps.mcp.rejectRealtimeMediaSession(
-        session.namespace,
-        session.sessionId,
-      );
-      void this.finishSession(session, { notifyRemote: false });
-      return;
-    }
-
-    const accepted = await this.deps.mcp.acceptRealtimeMediaSession(
-      session.namespace,
-      session.sessionId,
-    );
-    session.accepted = true;
-    if (session.controller.signal.aborted) return;
-
-    const transport = await this.deps.mediaTransportConnector.connect(
-      accepted.transport,
-      { signal: session.controller.signal },
-    );
-    session.transport = transport;
-    if (session.controller.signal.aborted) {
-      await transport.close();
-      return;
-    }
-
-    const processor = await this.deps.processorFactory.create({
-      namespace: session.namespace,
-      sessionId: session.sessionId,
-      signal: session.controller.signal,
-    });
-    session.processor = processor;
-    if (session.controller.signal.aborted) {
-      await Promise.allSettled([transport.close(), processor.close()]);
-      return;
-    }
-
-    session.tasks.push(
-      this.discoverAudioSources(session, transport, processor),
-      this.pipeAudio(
-        session,
-        processor.audioOutput,
-        (frame) => transport.audioOutput.write(frame),
-        'Realtime audio output failed',
-      ),
-      this.monitorTransport(session, transport),
-      this.monitorProcessor(session, processor),
-    );
-    this.deps.logger.info(
-      { namespace: session.namespace, sessionId: session.sessionId },
-      'Realtime session active',
-    );
-  }
-
-  private async discoverAudioSources(
-    session: ActiveRealtimeSession,
-    transport: MediaTransport,
-    processor: RealtimeProcessor,
-  ): Promise<void> {
-    try {
-      for await (const source of transport.audioSources) {
-        if (session.controller.signal.aborted) return;
-        await processor.audioInputs.attach(source);
+      this.coordinator = coordinator;
+      try {
+        await coordinator.start();
+      } catch (error) {
+        await connector.close();
+        this.connector = undefined;
+        this.coordinator = undefined;
+        throw error;
       }
-    } catch (error) {
-      if (!session.controller.signal.aborted)
-        this.failSession(session, error, 'Realtime media input failed');
-    }
-  }
-
-  private async pipeAudio(
-    session: ActiveRealtimeSession,
-    readable: AsyncIterable<AudioFrame>,
-    write: (frame: AudioFrame) => Promise<void>,
-    failureMessage: string,
-  ): Promise<void> {
-    try {
-      for await (const frame of readable) {
-        if (session.controller.signal.aborted) return;
-        await write(frame);
-      }
-    } catch (error) {
-      if (!session.controller.signal.aborted)
-        this.failSession(session, error, failureMessage);
-    }
-  }
-
-  private async monitorTransport(
-    session: ActiveRealtimeSession,
-    transport: MediaTransport,
-  ): Promise<void> {
-    const closure = await transport.closed;
-    if (session.controller.signal.aborted) return;
-    if (closure.type === 'failed')
-      this.failSession(
-        session,
-        closure.error,
-        'Realtime media transport failed',
-      );
-    else void this.finishSession(session, { notifyRemote: true });
-  }
-
-  private async monitorProcessor(
-    session: ActiveRealtimeSession,
-    processor: RealtimeProcessor,
-  ): Promise<void> {
-    const closure = await processor.closed;
-    if (session.controller.signal.aborted) return;
-    if (closure.type === 'failed')
-      this.failSession(
-        session,
-        closure.error,
-        'Realtime audio processor failed',
-      );
-    else void this.finishSession(session, { notifyRemote: true });
-  }
-
-  private failSession(
-    session: ActiveRealtimeSession,
-    error: unknown,
-    message: string,
-  ): void {
-    this.deps.logger.warn(
-      { error, namespace: session.namespace, sessionId: session.sessionId },
-      message,
-    );
-    void this.finishSession(session, { notifyRemote: session.accepted });
-  }
-
-  private async handleAvailability(
-    event: McpRealtimeMediaAvailability,
-  ): Promise<void> {
-    if (!this.started || event.available) return;
-    await Promise.allSettled(
-      [...this.sessions.values()]
-        .filter((session) => session.namespace === event.namespace)
-        .map((session) => this.finishSession(session, { notifyRemote: false })),
-    );
-  }
-
-  private finishSession(
-    session: ActiveRealtimeSession,
-    options: { notifyRemote: boolean },
-  ): Promise<void> {
-    if (session.finish) return session.finish;
-    session.finish = (async () => {
-      session.controller.abort('realtime-session-ended');
-      await session.setup;
-      if (options.notifyRemote && session.accepted && !session.endSent) {
-        session.endSent = true;
-        await this.deps.mcp
-          .endRealtimeMediaSession(session.namespace, session.sessionId)
-          .catch((error: unknown) => {
-            this.deps.logger.warn(
-              {
-                error,
-                namespace: session.namespace,
-                sessionId: session.sessionId,
-              },
-              'Realtime session end request failed',
-            );
-          });
-      }
-      await Promise.allSettled([
-        ...session.tasks,
-        session.processor?.close(),
-        session.transport?.close(),
-      ]);
-      if (this.sessions.get(session.key) === session)
-        this.sessions.delete(session.key);
-      this.deps.logger.info(
-        { namespace: session.namespace, sessionId: session.sessionId },
-        'Realtime session ended',
-      );
     })();
-    return session.finish;
+    return this.startPromise;
+  }
+
+  private createProcessorFactory(): RealtimeProcessorFactory {
+    switch (this.deps.provider.kind) {
+      case 'openai-realtime':
+        return createOpenAIRealtimeProcessorFactory({
+          logging: this.deps.logging,
+          config: this.deps.provider.config,
+        });
+    }
+  }
+
+  close(): Promise<void> {
+    if (this.closePromise) return this.closePromise;
+    this.closePromise = (async () => {
+      await this.startPromise?.catch(() => undefined);
+      await this.coordinator?.close();
+      await this.connector?.close();
+      this.coordinator = undefined;
+      this.connector = undefined;
+    })();
+    return this.closePromise;
   }
 }
 
-export function createRealtimeSessionCoordinator(
-  deps: RealtimeSessionCoordinatorDependencies,
-): RealtimeSessionCoordinator {
-  return new RealtimeSessionCoordinatorModule({
-    logger: deps.logging.child({
-      name: 'realtime-session',
-      bindings: { module: 'realtime-session' },
-    }),
-    mcp: deps.mcp,
-    mediaTransportConnector: deps.mediaTransportConnector,
-    processorFactory: deps.processorFactory,
-    now: deps.now ?? Date.now,
-  });
+export function createRealtime(deps: RealtimeDependencies): Realtime {
+  return new RealtimeModule(deps);
 }
 
-function sessionKey(namespace: string, sessionId: string): string {
-  return `${namespace}\u0000${sessionId}`;
+export function createProductionMediaTransportConnectorRegistry(): MediaTransportConnectorRegistry {
+  return createMediaTransportConnectorRegistry([
+    {
+      profile: 'livekit-room',
+      create: () =>
+        createLiveKitRoomMediaTransportConnector({ loadSdk: loadLiveKitSdk }),
+    },
+  ]);
 }

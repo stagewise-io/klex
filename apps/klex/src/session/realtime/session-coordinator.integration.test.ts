@@ -9,7 +9,7 @@ import {
   type McpConnection,
 } from '@/mcp';
 
-import { createRealtimeSessionCoordinator } from './realtime';
+import { createRealtimeSessionCoordinator } from './session-coordinator';
 import {
   createDeterministicEchoProcessorFactory,
   createDeterministicMediaTransportConnector,

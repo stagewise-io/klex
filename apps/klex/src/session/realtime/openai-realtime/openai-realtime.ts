@@ -11,7 +11,8 @@ import type {
   RealtimeProcessorFactory,
 } from '@/media-transport';
 import { BoundedAsyncQueue } from '@/media-transport/async-queue';
-import { createPcmResampler } from '@/media-transport/pcm-resampler';
+
+import { createPcmResampler } from './pcm-resampler';
 
 export interface RealtimeWebSocket {
   readonly readyState: number;

@@ -8,12 +8,22 @@ This package is the control plane only. Audio flows through the accepted transpo
 
 ## Lifecycle
 
+The extension's methods are directional:
+
+| Method | Message type | Direction |
+| --- | --- | --- |
+| `session-offered` | Notification | Server → client |
+| `accept` | Request | Client → server |
+| `reject` | Request | Client → server |
+| `end` | Request | Client → server |
+| `session-ended` | Notification | Server → client |
+
 1. Client and server advertise audio and `livekit-room` support.
 2. The client opens `subscriptions/listen` with the realtime-media filter.
 3. The server emits `session-offered` with an opaque ID and expiration time.
 4. The client calls `accept` or `reject`.
 5. Acceptance returns the LiveKit URL and short-lived participant token.
-6. Either side ends the accepted session. The server reports remote termination with `session-ended`.
+6. The client ends an accepted session with `end`. The server terminates a session locally and reports that termination with `session-ended`.
 
 The subscription owns its sessions. Losing it ends pending and active sessions; this first revision has no recovery.
 

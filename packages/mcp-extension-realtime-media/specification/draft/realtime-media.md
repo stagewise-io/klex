@@ -31,13 +31,25 @@ A server associates the stream with authenticated consumer identity, never an id
 
 ## Messages
 
+The extension defines the following directed messages:
+
+| Method | Message type | Sender | Receiver |
+| --- | --- | --- | --- |
+| `io.stagewise/realtime-media/session-offered` | Notification | Server | Client |
+| `io.stagewise/realtime-media/accept` | Request | Client | Server |
+| `io.stagewise/realtime-media/reject` | Request | Client | Server |
+| `io.stagewise/realtime-media/end` | Request | Client | Server |
+| `io.stagewise/realtime-media/session-ended` | Notification | Server | Client |
+
+Implementations MUST NOT send these methods in the opposite direction.
+
 ### `io.stagewise/realtime-media/session-offered`
 
-Parameters are `{ sessionId, expiresAt }`. `sessionId` is non-empty and opaque within authenticated server scope. `expiresAt` is an ISO 8601 timestamp. The notification MUST NOT include transport credentials.
+This is a server-to-client notification. Parameters are `{ sessionId, expiresAt }`. `sessionId` is non-empty and opaque within authenticated server scope. `expiresAt` is an ISO 8601 timestamp. The notification MUST NOT include transport credentials.
 
 ### `io.stagewise/realtime-media/accept`
 
-Parameters are `{ sessionId }`. An unexpired pending offer transitions to accepted and returns:
+This is a client-to-server request. Parameters are `{ sessionId }`. An unexpired pending offer transitions to accepted and returns:
 
 ```json
 {
@@ -53,15 +65,15 @@ The token MUST be scoped to the accepted session and SHOULD be short lived. Serv
 
 ### `io.stagewise/realtime-media/reject`
 
-Parameters are `{ sessionId }`; result is empty. It transitions a pending offer to rejected. Repeating reject succeeds. Conflicting states fail with `-32022`.
+This is a client-to-server request. Parameters are `{ sessionId }`; result is empty. It transitions a pending offer to rejected. Repeating reject succeeds. Conflicting states fail with `-32022`.
 
 ### `io.stagewise/realtime-media/end`
 
-Parameters are `{ sessionId }`; result is empty. It transitions an accepted session to ended. Repeating end succeeds. Pending, rejected, or expired sessions fail with `-32022`.
+This is a client-to-server request. Parameters are `{ sessionId }`; result is empty. It transitions an accepted session to ended. Repeating end succeeds. Pending, rejected, or expired sessions fail with `-32022`.
 
 ### `io.stagewise/realtime-media/session-ended`
 
-Parameters are `{ sessionId, reason? }`. The server sends it when a pending or accepted session terminates remotely. It is terminal for that session ID. LiveKit remains authoritative for media-plane participant, track, and reconnection state.
+This is a server-to-client notification. Parameters are `{ sessionId, reason? }`. The server sends it when a pending or accepted session terminates remotely or when the server terminates it locally. It is terminal for that session ID. A server terminates a session locally and reports the termination with this notification; it MUST NOT send `io.stagewise/realtime-media/end` to the client. LiveKit remains authoritative for media-plane participant, track, and reconnection state.
 
 ## Security and trust boundaries
 

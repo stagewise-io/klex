@@ -12,9 +12,7 @@ import SYSTEM_PROMPT from './routing-system-prompt.md';
 const routingDecisionSchema = z.object({
   sessionId: z
     .string()
-    .describe(
-      'Short ID of the existing session to route to. Empty string to create a new session.',
-    ),
+    .describe('Session ID to route to. Empty = new session.'),
   priority: z.enum(['low', 'medium', 'high']),
 });
 
@@ -43,8 +41,7 @@ export interface EventPatterns {
   /**
    * For each metadata key (flattened with dot notation for nested objects),
    * a map of observed values to their occurrence count.
-   *
-   * Example: `{ chatId: { '123': 3 }, senderId: { 'u1': 1, 'u2': 1, 'u3': 1 } }`
+   * Capped at top 20 values per key to bound payload size.
    */
   metadataFrequency: Record<string, Record<string, number>>;
 }
@@ -133,6 +130,41 @@ export function analyzeEventPatterns(eventLog: EventLogEntry[]): EventPatterns {
   };
 }
 
+/** Max values per metadata key in the LLM payload. */
+const MAX_FREQ_VALUES = 20;
+
+/**
+ * Builds a compact session object for the LLM prompt.
+ * Omits default/null/empty fields and uses short key names to minimize tokens.
+ */
+function buildCompactSession(s: SessionRoutingInfo): Record<string, unknown> {
+  const obj: Record<string, unknown> = { id: s.shortId };
+
+  const { eventCount, sourceEnvs, metadataFrequency } = s.eventPatterns;
+  if (eventCount > 0) obj.n = eventCount;
+  if (sourceEnvs.length > 0) obj.envs = sourceEnvs;
+
+  const freq: Record<string, Record<string, number>> = {};
+  for (const [key, values] of Object.entries(metadataFrequency)) {
+    const entries = Object.entries(values);
+    if (entries.length === 0) continue;
+    // Keep only the top MAX_FREQ_VALUES by count to bound payload size.
+    const sorted = entries
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, MAX_FREQ_VALUES);
+    freq[key] = Object.fromEntries(sorted);
+  }
+  if (Object.keys(freq).length > 0) obj.freq = freq;
+
+  if (s.activitySummary) obj.act = s.activitySummary;
+
+  // Include status/runtimeState only when non-default.
+  if (s.status !== 'active') obj.status = s.status;
+  if (s.runtimeState !== 'idle') obj.state = s.runtimeState;
+
+  return obj;
+}
+
 export async function callRoutingLlm(
   params: RoutingDecisionParams,
 ): Promise<RoutingDecision | null> {
@@ -152,11 +184,11 @@ export async function callRoutingLlm(
   }
 
   const prompt = JSON.stringify({
-    sessions,
+    sessions: sessions.map(buildCompactSession),
     event: {
       sourceEnv,
       metadata: eventMetadata,
-      contentPreview,
+      preview: contentPreview,
       ...(presetPriority ? { presetPriority } : {}),
     },
   });

@@ -160,7 +160,7 @@ describe('callRoutingLlm', () => {
     );
   });
 
-  it('passes session info and event metadata in the prompt', async () => {
+  it('passes compact session info and event metadata in the prompt', async () => {
     generateObjectMock.mockResolvedValueOnce(
       genSuccess({ sessionId: '', priority: 'medium' }),
     );
@@ -194,10 +194,16 @@ describe('callRoutingLlm', () => {
 
     const callArgs = generateObjectMock.mock.calls[0]?.[0];
     const prompt = JSON.parse(callArgs.prompt);
-    expect(prompt.sessions).toEqual(sessions);
+    // Compact keys: id, n, envs, freq. Defaults omitted (active/idle/null).
+    expect(prompt.sessions[0]).toEqual({
+      id: 'a1b2',
+      n: 3,
+      envs: ['telegram'],
+      freq: { chatId: { '12345': 3 }, senderId: { u1: 1, u2: 1, u3: 1 } },
+    });
     expect(prompt.event.sourceEnv).toBe('slack');
     expect(prompt.event.metadata).toEqual(eventMetadata);
-    expect(prompt.event.contentPreview).toBe('hello world…');
+    expect(prompt.event.preview).toBe('hello world…');
   });
 
   it('passes telemetry options to generateObject', async () => {
@@ -217,7 +223,7 @@ describe('callRoutingLlm', () => {
     });
   });
 
-  it('includes activitySummary in the prompt when set', async () => {
+  it('includes activitySummary as act in the prompt when set', async () => {
     generateObjectMock.mockResolvedValueOnce(
       genSuccess({ sessionId: '', priority: 'medium' }),
     );
@@ -242,7 +248,7 @@ describe('callRoutingLlm', () => {
 
     const callArgs = generateObjectMock.mock.calls[0]?.[0];
     const prompt = JSON.parse(callArgs.prompt);
-    expect(prompt.sessions[0].activitySummary).toBe(
+    expect(prompt.sessions[0].act).toBe(
       'Reviewing PR #42 in klex-agent; notified chat 999 on Telegram',
     );
   });

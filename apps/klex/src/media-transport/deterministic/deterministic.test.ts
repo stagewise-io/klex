@@ -29,7 +29,10 @@ async function expectPending(promise: Promise<unknown>): Promise<void> {
 describe('deterministic media transport', () => {
   it('delivers copied incoming and outgoing frames in order', async () => {
     const transport = createDeterministicMediaTransport();
-    const input = transport.incoming[Symbol.asyncIterator]();
+    const discovered = transport.audioSources[Symbol.asyncIterator]();
+    const sourceResult = await discovered.next();
+    if (sourceResult.done) throw new Error('Expected default source');
+    const input = sourceResult.value.readable[Symbol.asyncIterator]();
     const first = frame(1, 7);
 
     await transport.inject(first);
@@ -40,7 +43,7 @@ describe('deterministic media transport', () => {
     });
 
     const outbound = frame(2, 8);
-    await transport.send(outbound);
+    await transport.audioOutput.write(outbound);
     outbound.data[0] = 88;
     await expect(transport.receiveSent()).resolves.toMatchObject({
       sequence: 2,
@@ -55,7 +58,10 @@ describe('deterministic media transport', () => {
     const blockedInput = transport.inject(frame(2));
     await expectPending(blockedInput);
 
-    const input = transport.incoming[Symbol.asyncIterator]();
+    const discovered = transport.audioSources[Symbol.asyncIterator]();
+    const sourceResult = await discovered.next();
+    if (sourceResult.done) throw new Error('Expected default source');
+    const input = sourceResult.value.readable[Symbol.asyncIterator]();
     await expect(input.next()).resolves.toMatchObject({
       value: { sequence: 1 },
     });
@@ -64,8 +70,8 @@ describe('deterministic media transport', () => {
       value: { sequence: 2 },
     });
 
-    await transport.send(frame(3));
-    const blockedSend = transport.send(frame(4));
+    await transport.audioOutput.write(frame(3));
+    const blockedSend = transport.audioOutput.write(frame(4));
     await expectPending(blockedSend);
     await expect(transport.receiveSent()).resolves.toMatchObject({
       sequence: 3,
@@ -123,6 +129,8 @@ describe('deterministic media transport', () => {
     expect(connector.descriptors).toEqual([descriptor]);
     controller.abort();
     await connected.closed;
+    await connector.close();
+    await connector.close();
   });
 });
 
@@ -137,10 +145,15 @@ describe('deterministic echo processor', () => {
     });
     expect(await factory.nextProcessor()).toBe(processor);
 
+    const transport = createDeterministicMediaTransport();
+    const discovered = transport.audioSources[Symbol.asyncIterator]();
+    const sourceResult = await discovered.next();
+    if (sourceResult.done) throw new Error('Expected default source');
+    await processor.audioInputs.attach(sourceResult.value);
     const source = frame(1, 42);
-    await processor.writeInput(source);
+    await transport.inject(source);
     source.data[0] = 0;
-    const output = processor.output[Symbol.asyncIterator]();
+    const output = processor.audioOutput[Symbol.asyncIterator]();
     await expect(output.next()).resolves.toMatchObject({
       value: { data: Uint8Array.from([42, 0]) },
     });
@@ -161,8 +174,8 @@ describe('deterministic echo processor', () => {
     const error = new Error('processor failed');
     processor.fail(error);
     await expect(processor.closed).resolves.toEqual({ type: 'failed', error });
-    await expect(processor.output[Symbol.asyncIterator]().next()).rejects.toBe(
-      error,
-    );
+    await expect(
+      processor.audioOutput[Symbol.asyncIterator]().next(),
+    ).rejects.toBe(error);
   });
 });

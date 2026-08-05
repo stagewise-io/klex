@@ -6,9 +6,11 @@ export { loadLiveKitSdk } from './sdk-loader';
 
 import type {
   AudioFrame,
+  AudioSource,
+  AudioSourceMetadata,
   MediaTransport,
-  MediaTransportClosure,
   MediaTransportConnector,
+  RealtimeEndpointClosure,
 } from '../media-transport';
 
 const SAMPLE_RATE_HZ = 48_000;
@@ -44,6 +46,7 @@ export interface LiveKitSdkAudioStream
 
 export interface LiveKitSdkRemoteAudioTrack {
   readonly id: string;
+  readonly participantId: string;
   openStream(options: {
     sampleRate: number;
     channels: number;
@@ -85,20 +88,96 @@ export interface LiveKitRoomMediaTransportConnector
   close(): Promise<void>;
 }
 
-class LiveKitRoomMediaTransportModule implements MediaTransport {
-  private readonly incomingQueue = new BoundedAsyncQueue<AudioFrame>(
+class LiveKitAudioSourceModule implements AudioSource {
+  private readonly queue = new BoundedAsyncQueue<AudioFrame>(
     INCOMING_QUEUE_CAPACITY,
   );
-  private readonly closure = deferred<MediaTransportClosure>();
-  private readonly unsubscribe: Array<() => void> = [];
-  private activeTrack: LiveKitSdkRemoteAudioTrack | undefined;
-  private activeStream: LiveKitSdkAudioStream | undefined;
-  private publisher: LiveKitSdkAudioPublisher | undefined;
+  private readonly closure = deferred<RealtimeEndpointClosure>();
   private sequence = 0;
+  private settled = false;
+
+  readonly metadata: AudioSourceMetadata;
+  readonly readable = this.queue;
+  readonly closed = this.closure.promise;
+
+  constructor(
+    readonly id: string,
+    participantId: string,
+    private readonly stream: LiveKitSdkAudioStream,
+    private readonly onFailure: (error: unknown) => void,
+  ) {
+    this.metadata = Object.freeze({ participantId, trackId: id });
+    void this.pump();
+  }
+
+  close(reason?: string): Promise<void> {
+    return this.settle({ type: 'closed', reason });
+  }
+
+  fail(error: unknown): Promise<void> {
+    return this.settle({ type: 'failed', error }, error);
+  }
+
+  private async pump(): Promise<void> {
+    try {
+      for await (const frame of this.stream) {
+        const bytes = new Uint8Array(frame.data.byteLength);
+        bytes.set(
+          new Uint8Array(
+            frame.data.buffer,
+            frame.data.byteOffset,
+            frame.data.byteLength,
+          ),
+        );
+        await this.queue.push({
+          encoding: 'pcm-s16le',
+          sampleRateHz: frame.sampleRate,
+          channels: frame.channels,
+          sequence: this.sequence++,
+          timestampUs: Number(process.hrtime.bigint() / 1_000n),
+          data: bytes,
+        });
+      }
+      await this.close('track-ended');
+    } catch (error) {
+      if (!this.settled) {
+        await this.fail(error);
+        this.onFailure(error);
+      }
+    }
+  }
+
+  private async settle(
+    closure: RealtimeEndpointClosure,
+    error?: unknown,
+  ): Promise<void> {
+    if (this.settled) return;
+    this.settled = true;
+    this.queue.close(error);
+    try {
+      await this.stream.close();
+      this.closure.resolve(closure);
+    } catch (streamError) {
+      const failed = { type: 'failed', error: streamError } as const;
+      this.closure.resolve(failed);
+      throw streamError;
+    }
+  }
+}
+
+class LiveKitRoomMediaTransportModule implements MediaTransport {
+  private readonly sourceQueue = new BoundedAsyncQueue<AudioSource>(32);
+  private readonly closure = deferred<RealtimeEndpointClosure>();
+  private readonly unsubscribe: Array<() => void> = [];
+  private readonly activeSources = new Map<string, LiveKitAudioSourceModule>();
+  private publisher: LiveKitSdkAudioPublisher | undefined;
   private closing = false;
   private closePromise: Promise<void> | undefined;
 
-  readonly incoming: AsyncIterable<AudioFrame> = this.incomingQueue;
+  readonly audioSources = this.sourceQueue;
+  readonly audioOutput = {
+    write: (frame: AudioFrame) => this.writeAudio(frame),
+  };
   readonly closed = this.closure.promise;
 
   constructor(
@@ -150,7 +229,7 @@ class LiveKitRoomMediaTransportModule implements MediaTransport {
     }
   }
 
-  async send(frame: AudioFrame): Promise<void> {
+  private async writeAudio(frame: AudioFrame): Promise<void> {
     if (this.closing) throw new Error('LiveKit media transport is closed');
     validateFrame(frame);
     const publisher = this.publisher;
@@ -172,64 +251,37 @@ class LiveKitRoomMediaTransportModule implements MediaTransport {
   };
 
   private handleTrack(track: LiveKitSdkRemoteAudioTrack): void {
-    if (this.closing || this.activeTrack) return;
-    this.activeTrack = track;
-    const stream = track.openStream({
-      sampleRate: SAMPLE_RATE_HZ,
-      channels: CHANNELS,
-      frameSizeMs: FRAME_SIZE_MS,
+    if (this.closing || this.activeSources.has(track.id)) return;
+    const source = new LiveKitAudioSourceModule(
+      track.id,
+      track.participantId,
+      track.openStream({
+        sampleRate: SAMPLE_RATE_HZ,
+        channels: CHANNELS,
+        frameSizeMs: FRAME_SIZE_MS,
+      }),
+      (error) => {
+        if (!this.closing) void this.finish({ type: 'failed', error }, error);
+      },
+    );
+    this.activeSources.set(track.id, source);
+    void source.closed.then(() => this.activeSources.delete(track.id));
+    void this.sourceQueue.push(source).catch((error: unknown) => {
+      if (!this.closing) void this.finish({ type: 'failed', error }, error);
     });
-    this.activeStream = stream;
-    void this.pumpTrack(track, stream);
   }
 
   private handleTrackUnsubscribed(track: LiveKitSdkRemoteAudioTrack): void {
-    if (this.activeTrack?.id !== track.id) return;
-    const stream = this.activeStream;
-    this.activeTrack = undefined;
-    this.activeStream = undefined;
-    if (stream)
-      void stream.close().catch((error: unknown) => {
-        if (!this.closing) void this.finish({ type: 'failed', error }, error);
-      });
-  }
-
-  private async pumpTrack(
-    track: LiveKitSdkRemoteAudioTrack,
-    stream: LiveKitSdkAudioStream,
-  ): Promise<void> {
-    try {
-      for await (const frame of stream) {
-        if (this.closing || this.activeTrack?.id !== track.id) return;
-        const bytes = new Uint8Array(frame.data.byteLength);
-        bytes.set(
-          new Uint8Array(
-            frame.data.buffer,
-            frame.data.byteOffset,
-            frame.data.byteLength,
-          ),
-        );
-        await this.incomingQueue.push({
-          encoding: 'pcm-s16le',
-          sampleRateHz: frame.sampleRate,
-          channels: frame.channels,
-          sequence: this.sequence++,
-          timestampUs: Number(process.hrtime.bigint() / 1_000n),
-          data: bytes,
-        });
-      }
-    } catch (error) {
-      if (!this.closing) await this.finish({ type: 'failed', error }, error);
-    } finally {
-      if (this.activeTrack?.id === track.id) {
-        this.activeTrack = undefined;
-        this.activeStream = undefined;
-      }
-    }
+    const source = this.activeSources.get(track.id);
+    if (!source) return;
+    this.activeSources.delete(track.id);
+    void source.close('track-unsubscribed').catch((error: unknown) => {
+      if (!this.closing) void this.finish({ type: 'failed', error }, error);
+    });
   }
 
   private finish(
-    closure: MediaTransportClosure,
+    closure: RealtimeEndpointClosure,
     error?: unknown,
   ): Promise<void> {
     if (this.closePromise) return this.closePromise;
@@ -237,12 +289,15 @@ class LiveKitRoomMediaTransportModule implements MediaTransport {
     this.closePromise = (async () => {
       this.signal.removeEventListener('abort', this.handleAbort);
       for (const remove of this.unsubscribe.splice(0)) remove();
-      this.incomingQueue.close(error);
-      const stream = this.activeStream;
-      this.activeStream = undefined;
-      this.activeTrack = undefined;
+      this.sourceQueue.close(error);
+      const sources = [...this.activeSources.values()];
+      this.activeSources.clear();
       await Promise.allSettled([
-        stream?.close(),
+        ...sources.map((source) =>
+          closure.type === 'failed'
+            ? source.fail(closure.error)
+            : source.close(closure.reason),
+        ),
         this.publisher?.close(),
         this.room.disconnect(),
       ]);

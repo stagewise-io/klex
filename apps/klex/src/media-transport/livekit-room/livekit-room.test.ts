@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { BoundedAsyncQueue } from '../async-queue';
-import type { AudioFrame } from '../media-transport';
+import type { AudioFrame, AudioSource } from '../media-transport';
 import {
   createLiveKitRoomMediaTransportConnector,
   type LiveKitSdk,
@@ -39,7 +39,10 @@ class FakeTrack implements LiveKitSdkRemoteAudioTrack {
   readonly stream = new FakeStream();
   openStream = vi.fn(() => this.stream);
 
-  constructor(readonly id: string) {}
+  constructor(
+    readonly id: string,
+    readonly participantId = `participant-${id}`,
+  ) {}
 }
 
 class FakePublisher implements LiveKitSdkAudioPublisher {
@@ -121,10 +124,18 @@ function mediaFrame(overrides: Partial<AudioFrame> = {}): AudioFrame {
   };
 }
 
-async function nextFrame(transport: {
-  incoming: AsyncIterable<AudioFrame>;
+async function nextSource(transport: {
+  audioSources: AsyncIterable<AudioSource>;
+}) {
+  const result = await transport.audioSources[Symbol.asyncIterator]().next();
+  if (result.done) throw new Error('Expected an audio source');
+  return result.value;
+}
+
+async function nextFrame(source: {
+  readable: AsyncIterable<AudioFrame>;
 }): Promise<AudioFrame> {
-  const result = await transport.incoming[Symbol.asyncIterator]().next();
+  const result = await source.readable[Symbol.asyncIterator]().next();
   if (result.done) throw new Error('Expected an audio frame');
   return result.value;
 }
@@ -154,12 +165,19 @@ describe('LiveKitRoomMediaTransportConnector', () => {
     });
 
     const firstTrack = new FakeTrack('first');
-    const ignoredTrack = new FakeTrack('ignored');
+    const secondTrack = new FakeTrack('second');
     room.emitSubscribed(firstTrack);
-    room.emitSubscribed(ignoredTrack);
+    room.emitSubscribed(secondTrack);
+    const firstSource = await nextSource(transport);
+    const secondSource = await nextSource(transport);
+    expect(firstSource.metadata).toEqual({
+      participantId: 'participant-first',
+      trackId: 'first',
+    });
+    expect(secondSource.metadata.trackId).toBe('second');
     const source = rtcFrame(7);
     await firstTrack.stream.push(source);
-    const incoming = await nextFrame(transport);
+    const incoming = await nextFrame(firstSource);
     expect(incoming).toMatchObject({
       encoding: 'pcm-s16le',
       sampleRateHz: 48_000,
@@ -168,9 +186,9 @@ describe('LiveKitRoomMediaTransportConnector', () => {
     });
     expect(incoming.data).toEqual(new Uint8Array(source.data.buffer));
     expect(incoming.data.buffer).not.toBe(source.data.buffer);
-    expect(ignoredTrack.openStream).not.toHaveBeenCalled();
+    expect(secondTrack.openStream).toHaveBeenCalledOnce();
 
-    await transport.send(mediaFrame());
+    await transport.audioOutput.write(mediaFrame());
     expect(room.publisher.capture).toHaveBeenCalledWith(
       expect.any(Int16Array),
       2,
@@ -192,10 +210,13 @@ describe('LiveKitRoomMediaTransportConnector', () => {
     const first = new FakeTrack('first');
     const second = new FakeTrack('second');
     room.emitSubscribed(first);
+    const firstSource = await nextSource(transport);
     room.emitUnsubscribed(first);
+    await expect(firstSource.closed).resolves.toMatchObject({ type: 'closed' });
     room.emitSubscribed(second);
+    const secondSource = await nextSource(transport);
     await second.stream.push(rtcFrame(2));
-    expect((await nextFrame(transport)).sequence).toBe(0);
+    expect((await nextFrame(secondSource)).sequence).toBe(0);
     expect(first.stream.close).toHaveBeenCalledOnce();
     await transport.close();
   });
@@ -220,10 +241,10 @@ describe('LiveKitRoomMediaTransportConnector', () => {
       signal: new AbortController().signal,
     });
     await expect(
-      transport.send(mediaFrame({ sampleRateHz: 16_000 })),
+      transport.audioOutput.write(mediaFrame({ sampleRateHz: 16_000 })),
     ).rejects.toThrow('LiveKit requires 48000 Hz audio');
     await expect(
-      transport.send(mediaFrame({ data: new Uint8Array([1]) })),
+      transport.audioOutput.write(mediaFrame({ data: new Uint8Array([1]) })),
     ).rejects.toThrow('non-empty, even PCM byte length');
     expect(room.publisher.capture).not.toHaveBeenCalled();
     await transport.close();

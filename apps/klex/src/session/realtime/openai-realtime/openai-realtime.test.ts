@@ -4,7 +4,8 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { RootLogger } from '@stagewise/logger';
 
-import type { AudioFrame } from '@/media-transport';
+import type { AudioFrame, AudioSource } from '@/media-transport';
+import { BoundedAsyncQueue } from '@/media-transport/async-queue';
 
 import {
   createOpenAIRealtimeProcessorFactory,
@@ -90,6 +91,15 @@ async function activate() {
   return { ...harness, update, processor: await harness.promise };
 }
 
+function source(queue: BoundedAsyncQueue<AudioFrame>): AudioSource {
+  return {
+    id: 'microphone',
+    metadata: { participantId: 'caller', trackId: 'microphone' },
+    readable: queue,
+    closed: new Promise(() => undefined),
+  };
+}
+
 describe('OpenAI realtime processor', () => {
   it('authenticates, configures PCM and waits for readiness', async () => {
     const harness = await setup();
@@ -115,7 +125,10 @@ describe('OpenAI realtime processor', () => {
 
   it('downsamples input and packetizes fragmented response audio', async () => {
     const { socket, processor } = await activate();
-    await processor.writeInput(frame());
+    const input = new BoundedAsyncQueue<AudioFrame>(1);
+    await processor.audioInputs.attach(source(input));
+    await input.push(frame());
+    await vi.waitFor(() => expect(socket.sent.length).toBeGreaterThan(1));
     const append = JSON.parse(socket.sent.at(-1) ?? '{}');
     expect(Buffer.from(append.audio, 'base64')).toHaveLength(960);
 
@@ -130,7 +143,7 @@ describe('OpenAI realtime processor', () => {
       item_id: 'item-1',
       delta: audio24,
     });
-    const output = await processor.output[Symbol.asyncIterator]().next();
+    const output = await processor.audioOutput[Symbol.asyncIterator]().next();
     expect(output.value).toMatchObject({
       sampleRateHz: 48_000,
       channels: 1,
@@ -143,7 +156,7 @@ describe('OpenAI realtime processor', () => {
 
   it('serializes adjacent response deltas while output is backpressured', async () => {
     const { socket, processor } = await activate();
-    const output = processor.output[Symbol.asyncIterator]();
+    const output = processor.audioOutput[Symbol.asyncIterator]();
     socket.message({
       type: 'response.created',
       response: { id: 'response-1' },

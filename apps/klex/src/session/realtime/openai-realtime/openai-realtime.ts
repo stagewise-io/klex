@@ -5,9 +5,10 @@ import type { ModuleLogger, RootLogger } from '@stagewise/logger';
 import type { ResolvedOpenAIRealtimeConfig } from '@/config';
 import type {
   AudioFrame,
-  RealtimeAudioProcessor,
-  RealtimeAudioProcessorClosure,
-  RealtimeAudioProcessorFactory,
+  AudioSource,
+  RealtimeEndpointClosure,
+  RealtimeProcessor,
+  RealtimeProcessorFactory,
 } from '@/media-transport';
 import { BoundedAsyncQueue } from '@/media-transport/async-queue';
 import { createPcmResampler } from '@/media-transport/pcm-resampler';
@@ -43,13 +44,15 @@ const OPEN = 1;
 const FRAME_BYTES = 960 * 2;
 const STARTUP_TIMEOUT_MS = 10_000;
 
-class OpenAIRealtimeProcessor implements RealtimeAudioProcessor {
+class OpenAIRealtimeProcessor implements RealtimeProcessor {
   private readonly outputQueue = new BoundedAsyncQueue<AudioFrame>(1);
-  private readonly closure = deferred<RealtimeAudioProcessorClosure>();
+  private readonly closure = deferred<RealtimeEndpointClosure>();
   private readonly ready = deferred<void>();
   private readonly inputResampler = createPcmResampler('48-to-24');
   private readonly outputResampler = createPcmResampler('24-to-48');
   private outputBuffer = new Uint8Array(0);
+  private activeSourceId: string | undefined;
+  private inputTask: Promise<void> | undefined;
   private outputWork = Promise.resolve();
   private sequence = 0;
   private timestampUs = 0;
@@ -60,7 +63,10 @@ class OpenAIRealtimeProcessor implements RealtimeAudioProcessor {
   private readySettled = false;
   private startupTimer: ReturnType<typeof setTimeout>;
 
-  readonly output: AsyncIterable<AudioFrame> = this.outputQueue;
+  readonly audioInputs = {
+    attach: (source: AudioSource) => this.attachSource(source),
+  };
+  readonly audioOutput = this.outputQueue;
   readonly closed = this.closure.promise;
 
   constructor(
@@ -86,8 +92,29 @@ class OpenAIRealtimeProcessor implements RealtimeAudioProcessor {
     return this.ready.promise;
   }
 
-  async writeInput(frame: AudioFrame): Promise<void> {
+  private async attachSource(source: AudioSource): Promise<void> {
     await this.ready.promise;
+    if (this.settled) throw new Error('OpenAI realtime processor is closed');
+    if (this.activeSourceId !== undefined)
+      throw new Error('OpenAI realtime supports one active audio source');
+    this.activeSourceId = source.id;
+    const task = this.consumeSource(source).finally(() => {
+      if (this.inputTask === task) this.inputTask = undefined;
+      if (this.activeSourceId === source.id) this.activeSourceId = undefined;
+      this.inputResampler.reset();
+    });
+    this.inputTask = task;
+    void task.catch((error: unknown) => this.fail(error));
+  }
+
+  private async consumeSource(source: AudioSource): Promise<void> {
+    for await (const frame of source.readable) {
+      if (this.settled) return;
+      this.writeAudio(frame);
+    }
+  }
+
+  private writeAudio(frame: AudioFrame): void {
     if (
       frame.encoding !== 'pcm-s16le' ||
       frame.sampleRateHz !== 48_000 ||
@@ -309,7 +336,7 @@ class OpenAIRealtimeProcessor implements RealtimeAudioProcessor {
     this.settle({ type: 'failed', error });
   }
 
-  private settle(closure: RealtimeAudioProcessorClosure): void {
+  private settle(closure: RealtimeEndpointClosure): void {
     if (this.settled) return;
     this.settled = true;
     clearTimeout(this.startupTimer);
@@ -331,7 +358,7 @@ class OpenAIRealtimeProcessor implements RealtimeAudioProcessor {
   }
 }
 
-class OpenAIRealtimeProcessorFactory implements RealtimeAudioProcessorFactory {
+class OpenAIRealtimeProcessorFactory implements RealtimeProcessorFactory {
   constructor(
     private readonly config: ResolvedOpenAIRealtimeConfig,
     private readonly connect: RealtimeWebSocketConnector,
@@ -339,9 +366,7 @@ class OpenAIRealtimeProcessorFactory implements RealtimeAudioProcessorFactory {
     private readonly logger: ModuleLogger,
   ) {}
 
-  async create(options: {
-    signal: AbortSignal;
-  }): Promise<RealtimeAudioProcessor> {
+  async create(options: { signal: AbortSignal }): Promise<RealtimeProcessor> {
     if (options.signal.aborted) throw options.signal.reason;
     const socket = this.connect(this.config.websocketUrl, {
       headers: { Authorization: `Bearer ${this.config.apiKey}` },
@@ -363,7 +388,7 @@ export function createOpenAIRealtimeProcessorFactory(options: {
   config: ResolvedOpenAIRealtimeConfig;
   connect?: RealtimeWebSocketConnector;
   startupTimeoutMs?: number;
-}): RealtimeAudioProcessorFactory {
+}): RealtimeProcessorFactory {
   return new OpenAIRealtimeProcessorFactory(
     options.config,
     options.connect ??

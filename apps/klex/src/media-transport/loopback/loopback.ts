@@ -1,10 +1,11 @@
 import { BoundedAsyncQueue } from '../async-queue';
 import {
   type AudioFrame,
+  type AudioSource,
   cloneAudioFrame,
-  type RealtimeAudioProcessor,
-  type RealtimeAudioProcessorClosure,
-  type RealtimeAudioProcessorFactory,
+  type RealtimeEndpointClosure,
+  type RealtimeProcessor,
+  type RealtimeProcessorFactory,
 } from '../media-transport';
 
 interface Deferred<T> {
@@ -20,12 +21,17 @@ function deferred<T>(): Deferred<T> {
   return { promise, resolve };
 }
 
-class LoopbackProcessor implements RealtimeAudioProcessor {
+class LoopbackProcessor implements RealtimeProcessor {
   private readonly outputQueue = new BoundedAsyncQueue<AudioFrame>(1);
-  private readonly closure = deferred<RealtimeAudioProcessorClosure>();
+  private readonly closure = deferred<RealtimeEndpointClosure>();
+  private readonly activeSources = new Set<string>();
+  private readonly tasks = new Set<Promise<void>>();
   private settled = false;
 
-  readonly output: AsyncIterable<AudioFrame> = this.outputQueue;
+  readonly audioInputs = {
+    attach: (source: AudioSource) => this.attachSource(source),
+  };
+  readonly audioOutput = this.outputQueue;
   readonly closed = this.closure.promise;
 
   constructor(private readonly signal: AbortSignal) {
@@ -33,8 +39,26 @@ class LoopbackProcessor implements RealtimeAudioProcessor {
     if (signal.aborted) this.handleAbort();
   }
 
-  writeInput(frame: AudioFrame): Promise<void> {
-    return this.outputQueue.push(cloneAudioFrame(frame));
+  private async attachSource(source: AudioSource): Promise<void> {
+    if (this.settled) throw new Error('Processor is closed');
+    if (this.activeSources.has(source.id))
+      throw new Error(`Audio source already attached: ${source.id}`);
+    this.activeSources.add(source.id);
+    const task = this.consume(source).finally(() => {
+      this.activeSources.delete(source.id);
+      this.tasks.delete(task);
+    });
+    this.tasks.add(task);
+    void task.catch((error: unknown) =>
+      this.settle({ type: 'failed', error }, error),
+    );
+  }
+
+  private async consume(source: AudioSource): Promise<void> {
+    for await (const frame of source.readable) {
+      if (this.settled) return;
+      await this.outputQueue.push(cloneAudioFrame(frame));
+    }
   }
 
   async close(): Promise<void> {
@@ -45,25 +69,25 @@ class LoopbackProcessor implements RealtimeAudioProcessor {
     this.settle({ type: 'closed', reason: 'aborted' });
   };
 
-  private settle(closure: RealtimeAudioProcessorClosure): void {
+  private settle(closure: RealtimeEndpointClosure, error?: unknown): void {
     if (this.settled) return;
     this.settled = true;
     this.signal.removeEventListener('abort', this.handleAbort);
-    this.outputQueue.close();
+    this.outputQueue.close(error);
     this.closure.resolve(closure);
   }
 }
 
-class LoopbackProcessorFactory implements RealtimeAudioProcessorFactory {
+class LoopbackProcessorFactory implements RealtimeProcessorFactory {
   async create(options: {
     namespace: string;
     sessionId: string;
     signal: AbortSignal;
-  }): Promise<RealtimeAudioProcessor> {
+  }): Promise<RealtimeProcessor> {
     return new LoopbackProcessor(options.signal);
   }
 }
 
-export function createLoopbackProcessorFactory(): RealtimeAudioProcessorFactory {
+export function createLoopbackProcessorFactory(): RealtimeProcessorFactory {
   return new LoopbackProcessorFactory();
 }

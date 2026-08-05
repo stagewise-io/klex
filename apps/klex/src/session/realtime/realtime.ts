@@ -10,10 +10,11 @@ import type {
   McpRealtimeMediaNotification,
 } from '@/mcp';
 import type {
+  AudioFrame,
   MediaTransport,
   MediaTransportConnector,
-  RealtimeAudioProcessor,
-  RealtimeAudioProcessorFactory,
+  RealtimeProcessor,
+  RealtimeProcessorFactory,
 } from '@/media-transport';
 
 export interface RealtimeSessionCoordinator {
@@ -26,7 +27,7 @@ export interface RealtimeSessionCoordinatorDependencies {
   logging: RootLogger;
   mcp: Mcp;
   mediaTransportConnector: MediaTransportConnector;
-  processorFactory: RealtimeAudioProcessorFactory;
+  processorFactory: RealtimeProcessorFactory;
   now?: () => number;
 }
 
@@ -38,7 +39,7 @@ interface ActiveRealtimeSession {
   accepted: boolean;
   endSent: boolean;
   transport?: MediaTransport;
-  processor?: RealtimeAudioProcessor;
+  processor?: RealtimeProcessor;
   setup?: Promise<void>;
   tasks: Promise<void>[];
   finish?: Promise<void>;
@@ -55,7 +56,7 @@ class RealtimeSessionCoordinatorModule implements RealtimeSessionCoordinator {
       logger: ModuleLogger;
       mcp: Mcp;
       mediaTransportConnector: MediaTransportConnector;
-      processorFactory: RealtimeAudioProcessorFactory;
+      processorFactory: RealtimeProcessorFactory;
       now: () => number;
     },
   ) {}
@@ -180,8 +181,13 @@ class RealtimeSessionCoordinatorModule implements RealtimeSessionCoordinator {
     }
 
     session.tasks.push(
-      this.pumpTransportInput(session, transport, processor),
-      this.pumpProcessorOutput(session, transport, processor),
+      this.discoverAudioSources(session, transport, processor),
+      this.pipeAudio(
+        session,
+        processor.audioOutput,
+        (frame) => transport.audioOutput.write(frame),
+        'Realtime audio output failed',
+      ),
       this.monitorTransport(session, transport),
       this.monitorProcessor(session, processor),
     );
@@ -191,15 +197,15 @@ class RealtimeSessionCoordinatorModule implements RealtimeSessionCoordinator {
     );
   }
 
-  private async pumpTransportInput(
+  private async discoverAudioSources(
     session: ActiveRealtimeSession,
     transport: MediaTransport,
-    processor: RealtimeAudioProcessor,
+    processor: RealtimeProcessor,
   ): Promise<void> {
     try {
-      for await (const frame of transport.incoming) {
+      for await (const source of transport.audioSources) {
         if (session.controller.signal.aborted) return;
-        await processor.writeInput(frame);
+        await processor.audioInputs.attach(source);
       }
     } catch (error) {
       if (!session.controller.signal.aborted)
@@ -207,19 +213,20 @@ class RealtimeSessionCoordinatorModule implements RealtimeSessionCoordinator {
     }
   }
 
-  private async pumpProcessorOutput(
+  private async pipeAudio(
     session: ActiveRealtimeSession,
-    transport: MediaTransport,
-    processor: RealtimeAudioProcessor,
+    readable: AsyncIterable<AudioFrame>,
+    write: (frame: AudioFrame) => Promise<void>,
+    failureMessage: string,
   ): Promise<void> {
     try {
-      for await (const frame of processor.output) {
+      for await (const frame of readable) {
         if (session.controller.signal.aborted) return;
-        await transport.send(frame);
+        await write(frame);
       }
     } catch (error) {
       if (!session.controller.signal.aborted)
-        this.failSession(session, error, 'Realtime audio output failed');
+        this.failSession(session, error, failureMessage);
     }
   }
 
@@ -240,7 +247,7 @@ class RealtimeSessionCoordinatorModule implements RealtimeSessionCoordinator {
 
   private async monitorProcessor(
     session: ActiveRealtimeSession,
-    processor: RealtimeAudioProcessor,
+    processor: RealtimeProcessor,
   ): Promise<void> {
     const closure = await processor.closed;
     if (session.controller.signal.aborted) return;

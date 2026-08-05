@@ -128,10 +128,18 @@ describe('LiveKitRoomMediaTransport real room', () => {
         const samples = Int16Array.from({ length: 960 }, (_, index) =>
           Math.round(8_000 * Math.sin((2 * Math.PI * 440 * index) / 48_000)),
         );
-        const incomingIterator = transport.incoming[Symbol.asyncIterator]();
+        const sourceResult = await timeout(
+          transport.audioSources[Symbol.asyncIterator]().next(),
+          10_000,
+        );
+        if (sourceResult.done) throw new Error('Expected remote audio source');
+        expect(sourceResult.value.metadata.participantId).toBe(
+          'integration-peer',
+        );
         const incomingPromise = timeout(
-          nextSignaledFrame(incomingIterator, (frame) =>
-            bytesToSamples(frame.data),
+          nextSignaledFrame(
+            sourceResult.value.readable[Symbol.asyncIterator](),
+            (frame) => bytesToSamples(frame.data),
           ),
           10_000,
         );
@@ -157,7 +165,7 @@ describe('LiveKitRoomMediaTransport real room', () => {
           10_000,
         );
         for (let sequence = 1; sequence <= 20; sequence += 1) {
-          await transport.send({
+          await transport.audioOutput.write({
             encoding: 'pcm-s16le',
             sampleRateHz: 48_000,
             channels: 1,

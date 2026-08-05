@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { RootLogger } from '@stagewise/logger';
 
 import type { Mcp } from '@/mcp';
-import type { LiveKitRoomMediaTransportConnector } from '@/media-transport/livekit-room';
+import type { MediaTransportConnector } from '@/media-transport';
 
 import type { RealtimeSessionCoordinator } from './realtime';
 import { createRealtimeMediaRuntime } from './runtime';
@@ -18,7 +18,7 @@ function harness(mode: 'disabled' | 'loopback' | 'openai-realtime') {
     close: vi.fn(async () => {
       order.push('connector-close');
     }),
-  } as unknown as LiveKitRoomMediaTransportConnector;
+  } as unknown as MediaTransportConnector;
   const coordinator = {
     start: vi.fn(async () => {
       order.push('coordinator-start');

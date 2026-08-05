@@ -223,6 +223,34 @@ describe('callRoutingLlm', () => {
     });
   });
 
+  it('emits state when runtimeState is non-idle but never emits status', async () => {
+    generateObjectMock.mockResolvedValueOnce(
+      genSuccess({ sessionId: '', priority: 'medium' }),
+    );
+
+    const sessions = [
+      {
+        shortId: 'e5f6',
+        status: 'active',
+        runtimeState: 'working',
+        eventPatterns: {
+          eventCount: 5,
+          sourceEnvs: ['test'],
+          metadataFrequency: { topic: { x: 5 } },
+        },
+        activitySummary: null,
+      },
+    ];
+
+    const params = makeParams({ sessions });
+    await callRoutingLlm(params);
+
+    const callArgs = generateObjectMock.mock.calls[0]?.[0];
+    const prompt = JSON.parse(callArgs.prompt);
+    expect(prompt.sessions[0].state).toBe('working');
+    expect(prompt.sessions[0].status).toBeUndefined();
+  });
+
   it('includes activitySummary as act in the prompt when set', async () => {
     generateObjectMock.mockResolvedValueOnce(
       genSuccess({ sessionId: '', priority: 'medium' }),

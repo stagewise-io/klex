@@ -158,8 +158,8 @@ function buildCompactSession(s: SessionRoutingInfo): Record<string, unknown> {
 
   if (s.activitySummary) obj.act = s.activitySummary;
 
-  // Include status/runtimeState only when non-default.
-  if (s.status !== 'active') obj.status = s.status;
+  // status is always 'active' here (terminated sessions are filtered
+  // before buildSessionRoutingInfo), so only runtimeState carries signal.
   if (s.runtimeState !== 'idle') obj.state = s.runtimeState;
 
   return obj;

@@ -7,7 +7,7 @@ Each session has:
 - `envs`: source environments seen
 - `freq`: per metadata key, value → count. `{"chatId":{"123":3}}` = 3 events from chat 123
 - `act`: what the session is doing (may be absent)
-- `status`/`state`: only present when non-default (not active/idle)
+- `state`: runtime state — only present when not idle (`working`, `retrying`, `success`)
 
 The incoming event has:
 - `sourceEnv`, `metadata`, `preview`

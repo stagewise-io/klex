@@ -15,6 +15,7 @@ import type {
   LocalAudioTrack,
   LocalTrackPublication,
   RemoteAudioTrack,
+  RemoteParticipant,
   Room,
   AudioFrame as RtcAudioFrame,
   AudioSource as RtcAudioSource,
@@ -133,13 +134,16 @@ function isLockedStreamError(error: unknown): boolean {
 
 class RtcRemoteTrackAdapter implements LiveKitSdkRemoteAudioTrack {
   readonly id: string;
+  readonly participantId: string;
 
   constructor(
     private readonly rtc: RtcModule,
     private readonly track: RemoteAudioTrack,
+    participant: RemoteParticipant,
     fallbackId: string,
   ) {
     this.id = track.sid ?? fallbackId;
+    this.participantId = participant.identity;
   }
 
   openStream(options: {
@@ -248,7 +252,11 @@ class RtcRoomAdapter implements LiveKitSdkRoom {
   onAudioTrackSubscribed(
     listener: (track: LiveKitSdkRemoteAudioTrack) => void,
   ): () => void {
-    const handler = (track: unknown, publication: { source?: unknown }) => {
+    const handler = (
+      track: unknown,
+      publication: { source?: unknown },
+      participant: RemoteParticipant,
+    ) => {
       if (
         !(track instanceof this.rtc.RemoteAudioTrack) ||
         publication.source !== this.rtc.TrackSource.SOURCE_MICROPHONE
@@ -257,6 +265,7 @@ class RtcRoomAdapter implements LiveKitSdkRoom {
       const adapter = new RtcRemoteTrackAdapter(
         this.rtc,
         track,
+        participant,
         `remote-audio-${this.trackSequence++}`,
       );
       this.tracks.set(track, adapter);

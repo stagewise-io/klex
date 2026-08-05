@@ -10,18 +10,29 @@ MCP Realtime Media control plane
   -> session-offered
   -> coordinator accept/reject
   -> MediaTransportConnector
-  -> MediaTransport <-> RealtimeAudioProcessor
+  -> MediaTransport.audioSources -> RealtimeProcessor.audioInputs
+  -> RealtimeProcessor.audioOutput -> MediaTransport.audioOutput
   -> session-ended or local terminal condition
   -> exactly-once cleanup
 ```
 
 MCP owns capability negotiation, the ephemeral lifecycle stream, connection
 availability, and accept/reject/end operations. A media connector owns its
-media-plane resources. An audio processor owns audio-generation resources. The
+media-plane resources. A realtime processor owns inference or transformation
+resources. These roles have distinct creation boundaries but return connected
+endpoints with the same lifecycle but directional audio capabilities. The
 coordinator borrows all three dependencies and closes only the per-session
 transport and processor instances they create.
 
-## Audio contract
+## Endpoint and audio contracts
+
+Every connected endpoint exposes an idempotent `close()` and a terminal
+`closed` promise. A transport exposes a long-lived `audioSources` discovery
+iterable plus one awaited, backpressured `audioOutput` sink. Each discovered
+source has an immutable participant/track identity, its own ordered readable,
+and a terminal promise. The processor accepts sources through `audioInputs` and
+exposes one generated `audioOutput` iterable. Implementations must bound buffers
+independently, and endpoint teardown owns all source-consumption tasks.
 
 `AudioFrame` is headless signed 16-bit little-endian PCM. Every frame declares
 its sample rate, channel count, sequence, microsecond timestamp, and byte
@@ -37,10 +48,14 @@ Adapters and processors must bound internal buffering.
 
 Sessions are keyed by MCP namespace and protocol session ID. An offer is
 rejected if already expired. Otherwise the coordinator accepts it, connects the
-returned descriptor, creates a processor, and starts two pumps:
+returned descriptor, creates a processor, and explicitly routes audio:
 
-1. transport input to processor input;
-2. processor output to transport output.
+1. every source from `transport.audioSources` is attached through
+   `processor.audioInputs.attach()` without waiting for that source to end;
+2. `processor.audioOutput` is piped to `transport.audioOutput.write()`.
+
+The routing remains explicit application policy rather than automatically
+connecting properties with matching names.
 
 Each session has one abort controller and one stored `finish()` promise. Remote
 end, transport closure or failure, processor closure or failure, pump failure,
@@ -57,10 +72,9 @@ without attempting an operation on the unavailable connection.
 
 The production `livekit-room` adapter validates every accepted descriptor before
 loading the native SDK. It joins the room with auto-subscription, publishes one
-local microphone track, and selects the first subscribed remote microphone
-track. Concurrent remote audio tracks are ignored until the selected track is
-unsubscribed; a later eligible track can then replace it. Reconnect events are
-transient. Explicit close, abort, connector shutdown, and terminal room
+local microphone track, and exposes every subscribed remote microphone track
+as an independently attributed audio source. Unpublishing one track completes
+only that source; later tracks remain discoverable. Reconnect events are transient. Explicit close, abort, connector shutdown, and terminal room
 disconnection end the transport.
 
 LiveKit is normalized at the adapter boundary to signed 16-bit little-endian PCM,
@@ -77,8 +91,11 @@ opens a server-to-server authenticated WebSocket as the model inference plane.
 The WebSocket carries provider control events and 24 kHz mono PCM16. It is not a
 second room or caller transport.
 
-The processor converts LiveKit's 48 kHz PCM to 24 kHz before appending input and
-converts response audio back to 48 kHz, 20 ms frames. Both conversions use a
+The processor accepts one active attributed input source, converts its 48 kHz
+PCM to 24 kHz before appending input, and converts response audio back to 48 kHz,
+20 ms frames. A replacement may attach after the previous source ends; a
+concurrent second source is rejected because group-call mixing requires an
+explicit timing and gain policy. Both conversions use a
 stateful low-pass streaming converter rather than sample dropping. Provider VAD
 creates responses and reports speech interruption. Interruption cancels and
 truncates the active response, resets converter state, and discards buffered or
@@ -97,6 +114,21 @@ deliver offers. Shutdown closes the coordinator and its sessions, then the
 connector and native SDK, and only then MCP. `realtime.mode:
 "openai-realtime"` replaces only that loopback processor; the MCP contract and
 LiveKit adapter are unchanged.
+
+## Future modalities
+
+The connected endpoint shape provides a place for additional independently
+buffered capabilities, but the current implementation supports audio only. A
+future modality must get a requirement-driven typed contract and its own
+ordering, buffering, backpressure, and routing policy. Video representation
+cannot be fixed before choosing between sampled images, decoded frames, encoded
+frames, or native track handles. Text and transcripts are semantic events rather
+than audio-like frames, while provider tool calls belong to Klex orchestration.
+The attributed-source contract preserves participant and track lifecycle, but
+multi-participant inference still requires an explicit mixer or provider-native
+routing policy. Mutable participant metadata and targeted outputs are also
+deferred. These concerns must not be collapsed into one universal frame union
+or automatically piped between endpoints.
 
 ## Deterministic fixture
 

@@ -1,13 +1,14 @@
 import { BoundedAsyncQueue } from '../async-queue';
 import {
   type AudioFrame,
+  type AudioSource,
+  type AudioSourceMetadata,
   cloneAudioFrame,
   type MediaTransport,
-  type MediaTransportClosure,
   type MediaTransportConnector,
-  type RealtimeAudioProcessor,
-  type RealtimeAudioProcessorClosure,
-  type RealtimeAudioProcessorFactory,
+  type RealtimeEndpointClosure,
+  type RealtimeProcessor,
+  type RealtimeProcessorFactory,
 } from '../media-transport';
 
 interface Deferred<T> {
@@ -23,31 +24,86 @@ function deferred<T>(): Deferred<T> {
   return { promise, resolve };
 }
 
+export interface DeterministicAudioSource extends AudioSource {
+  inject(frame: AudioFrame): Promise<void>;
+  close(reason?: string): void;
+  fail(error: unknown): void;
+}
+
 export interface DeterministicMediaTransport extends MediaTransport {
   readonly closeCount: number;
+  addSource(
+    id: string,
+    metadata?: AudioSourceMetadata,
+  ): Promise<DeterministicAudioSource>;
   inject(frame: AudioFrame): Promise<void>;
   receiveSent(): Promise<AudioFrame>;
   remoteClose(reason?: string): void;
   fail(error: unknown): void;
 }
 
+class DeterministicAudioSourceModule implements DeterministicAudioSource {
+  private readonly queue: BoundedAsyncQueue<AudioFrame>;
+  private readonly closure = deferred<RealtimeEndpointClosure>();
+  private settled = false;
+
+  readonly readable;
+  readonly closed = this.closure.promise;
+
+  constructor(
+    readonly id: string,
+    readonly metadata: AudioSourceMetadata,
+    capacity: number,
+  ) {
+    this.queue = new BoundedAsyncQueue(capacity);
+    this.readable = this.queue;
+  }
+
+  inject(frame: AudioFrame): Promise<void> {
+    return this.queue.push(cloneAudioFrame(frame));
+  }
+
+  close(reason?: string): void {
+    this.settle({ type: 'closed', reason });
+  }
+
+  fail(error: unknown): void {
+    this.settle({ type: 'failed', error }, error);
+  }
+
+  private settle(closure: RealtimeEndpointClosure, error?: unknown): void {
+    if (this.settled) return;
+    this.settled = true;
+    this.queue.close(error);
+    this.closure.resolve(closure);
+  }
+}
+
 class DeterministicMediaTransportModule implements DeterministicMediaTransport {
-  private readonly incomingQueue: BoundedAsyncQueue<AudioFrame>;
+  private readonly sourceQueue = new BoundedAsyncQueue<AudioSource>(16);
   private readonly sentQueue: BoundedAsyncQueue<AudioFrame>;
-  private readonly closure = deferred<MediaTransportClosure>();
+  private readonly sources = new Map<string, DeterministicAudioSourceModule>();
+  private readonly closure = deferred<RealtimeEndpointClosure>();
+  private readonly defaultSource: DeterministicAudioSourceModule;
   private settled = false;
   private closes = 0;
 
-  readonly incoming: AsyncIterable<AudioFrame>;
+  readonly audioSources = this.sourceQueue;
+  readonly audioOutput = {
+    write: (frame: AudioFrame) => this.writeAudio(frame),
+  };
   readonly closed = this.closure.promise;
 
   constructor(
     private readonly signal?: AbortSignal,
-    capacity = 1,
+    private readonly capacity = 1,
   ) {
-    this.incomingQueue = new BoundedAsyncQueue(capacity);
     this.sentQueue = new BoundedAsyncQueue(capacity);
-    this.incoming = this.incomingQueue;
+    this.defaultSource = this.createSource('default-audio', {
+      participantId: 'deterministic-participant',
+      trackId: 'default-audio',
+    });
+    void this.sourceQueue.push(this.defaultSource);
     signal?.addEventListener('abort', this.handleAbort, { once: true });
     if (signal?.aborted) this.handleAbort();
   }
@@ -56,11 +112,39 @@ class DeterministicMediaTransportModule implements DeterministicMediaTransport {
     return this.closes;
   }
 
-  async inject(frame: AudioFrame): Promise<void> {
-    await this.incomingQueue.push(cloneAudioFrame(frame));
+  inject(frame: AudioFrame): Promise<void> {
+    return this.defaultSource.inject(frame);
   }
 
-  async send(frame: AudioFrame): Promise<void> {
+  async addSource(
+    id: string,
+    metadata: AudioSourceMetadata = {
+      participantId: `participant-${id}`,
+      trackId: id,
+    },
+  ): Promise<DeterministicAudioSource> {
+    if (this.sources.has(id))
+      throw new Error(`Audio source already exists: ${id}`);
+    const source = this.createSource(id, Object.freeze({ ...metadata }));
+    await this.sourceQueue.push(source);
+    return source;
+  }
+
+  private createSource(
+    id: string,
+    metadata: AudioSourceMetadata,
+  ): DeterministicAudioSourceModule {
+    const source = new DeterministicAudioSourceModule(
+      id,
+      metadata,
+      this.capacity,
+    );
+    this.sources.set(id, source);
+    void source.closed.then(() => this.sources.delete(id));
+    return source;
+  }
+
+  private async writeAudio(frame: AudioFrame): Promise<void> {
     await this.sentQueue.push(cloneAudioFrame(frame));
   }
 
@@ -88,11 +172,15 @@ class DeterministicMediaTransportModule implements DeterministicMediaTransport {
     void this.close();
   };
 
-  private settle(closure: MediaTransportClosure, error?: unknown): void {
+  private settle(closure: RealtimeEndpointClosure, error?: unknown): void {
     if (this.settled) return;
     this.settled = true;
     this.signal?.removeEventListener('abort', this.handleAbort);
-    this.incomingQueue.close(error);
+    this.sourceQueue.close(error);
+    for (const source of this.sources.values()) {
+      if (closure.type === 'failed') source.fail(closure.error);
+      else source.close(closure.reason);
+    }
     this.sentQueue.close(error);
     this.closure.resolve(closure);
   }
@@ -147,24 +235,31 @@ class DeterministicMediaTransportConnectorModule
     if (transport) return transport;
     return new Promise((resolve) => this.waiters.push(resolve));
   }
+
+  async close(): Promise<void> {}
 }
 
 export function createDeterministicMediaTransportConnector(): DeterministicMediaTransportConnector {
   return new DeterministicMediaTransportConnectorModule();
 }
 
-export interface DeterministicEchoProcessor extends RealtimeAudioProcessor {
+export interface DeterministicEchoProcessor extends RealtimeProcessor {
   readonly closeCount: number;
   fail(error: unknown): void;
 }
 
 class DeterministicEchoProcessorModule implements DeterministicEchoProcessor {
   private readonly outputQueue = new BoundedAsyncQueue<AudioFrame>(1);
-  private readonly closure = deferred<RealtimeAudioProcessorClosure>();
+  private readonly closure = deferred<RealtimeEndpointClosure>();
+  private readonly activeSources = new Set<string>();
+  private readonly tasks = new Set<Promise<void>>();
   private settled = false;
   private closes = 0;
 
-  readonly output: AsyncIterable<AudioFrame> = this.outputQueue;
+  readonly audioInputs = {
+    attach: (source: AudioSource) => this.attachSource(source),
+  };
+  readonly audioOutput = this.outputQueue;
   readonly closed = this.closure.promise;
 
   constructor(private readonly signal?: AbortSignal) {
@@ -176,8 +271,24 @@ class DeterministicEchoProcessorModule implements DeterministicEchoProcessor {
     return this.closes;
   }
 
-  async writeInput(frame: AudioFrame): Promise<void> {
-    await this.outputQueue.push(cloneAudioFrame(frame));
+  private async attachSource(source: AudioSource): Promise<void> {
+    if (this.settled) throw new Error('Processor is closed');
+    if (this.activeSources.has(source.id))
+      throw new Error(`Audio source already attached: ${source.id}`);
+    this.activeSources.add(source.id);
+    const task = this.consume(source).finally(() => {
+      this.activeSources.delete(source.id);
+      this.tasks.delete(task);
+    });
+    this.tasks.add(task);
+    void task.catch((error: unknown) => this.fail(error));
+  }
+
+  private async consume(source: AudioSource): Promise<void> {
+    for await (const frame of source.readable) {
+      if (this.settled) return;
+      await this.outputQueue.push(cloneAudioFrame(frame));
+    }
   }
 
   fail(error: unknown): void {
@@ -194,10 +305,7 @@ class DeterministicEchoProcessorModule implements DeterministicEchoProcessor {
     void this.close();
   };
 
-  private settle(
-    closure: RealtimeAudioProcessorClosure,
-    error?: unknown,
-  ): void {
+  private settle(closure: RealtimeEndpointClosure, error?: unknown): void {
     if (this.settled) return;
     this.settled = true;
     this.signal?.removeEventListener('abort', this.handleAbort);
@@ -207,7 +315,7 @@ class DeterministicEchoProcessorModule implements DeterministicEchoProcessor {
 }
 
 export interface DeterministicEchoProcessorFactory
-  extends RealtimeAudioProcessorFactory {
+  extends RealtimeProcessorFactory {
   create(options: {
     namespace: string;
     sessionId: string;

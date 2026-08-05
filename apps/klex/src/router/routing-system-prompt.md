@@ -5,12 +5,12 @@ Each session has:
 - `id`: short ID (reference this in your response)
 - `n`: total events received
 - `envs`: source environments seen
-- `freq`: per metadata key, value → count. `{"chatId":{"123":3}}` = 3 events from chat 123
+- `freq`: per metadata key, value → count. Only keys seen across ≥2 events (patterns). `{"chatId":{"123":3}}` = 3 events from chat 123
 - `act`: what the session is doing (may be absent)
 - `state`: runtime state — only present when not idle (`working`, `retrying`, `success`)
 
 The incoming event has:
-- `sourceEnv`, `metadata`, `preview`
+- `sourceEnv`, `metadata` (flattened, dot-notation — same keys as `freq`), `preview`
 - `presetPriority`: if present, use it; skip your own priority decision
 
 Route to an existing session when:

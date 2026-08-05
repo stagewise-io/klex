@@ -202,7 +202,11 @@ describe('callRoutingLlm', () => {
       freq: { chatId: { '12345': 3 }, senderId: { u1: 1, u2: 1, u3: 1 } },
     });
     expect(prompt.event.sourceEnv).toBe('slack');
-    expect(prompt.event.metadata).toEqual(eventMetadata);
+    // Flattened to dot-notation, values stringified.
+    expect(prompt.event.metadata).toEqual({
+      type: 'message',
+      count: '5',
+    });
     expect(prompt.event.preview).toBe('hello world…');
   });
 
@@ -220,6 +224,188 @@ describe('callRoutingLlm', () => {
     expect(callArgs.telemetry).toEqual({
       isEnabled: true,
       functionId: 'router',
+    });
+  });
+
+  it('omits freq keys that appeared in only one event (no pattern)', async () => {
+    generateObjectMock.mockResolvedValueOnce(
+      genSuccess({ sessionId: '', priority: 'medium' }),
+    );
+
+    const sessions = [
+      {
+        shortId: 'c1d2',
+        status: 'active',
+        runtimeState: 'idle',
+        eventPatterns: {
+          eventCount: 1,
+          sourceEnvs: ['github'],
+          // Single event with many keys — no pattern emerged.
+          metadataFrequency: {
+            repo: { 'klex-agent': 1 },
+            pr: { '42': 1 },
+            author: { alice: 1 },
+          },
+        },
+        activitySummary: null,
+      },
+    ];
+
+    const params = makeParams({ sessions });
+    await callRoutingLlm(params);
+
+    const callArgs = generateObjectMock.mock.calls[0]?.[0];
+    const prompt = JSON.parse(callArgs.prompt);
+    expect(prompt.sessions[0].freq).toBeUndefined();
+  });
+
+  it('includes only pattern keys in freq, excludes single-event noise', async () => {
+    generateObjectMock.mockResolvedValueOnce(
+      genSuccess({ sessionId: '', priority: 'medium' }),
+    );
+
+    const sessions = [
+      {
+        shortId: 'd2e3',
+        status: 'active',
+        runtimeState: 'idle',
+        eventPatterns: {
+          eventCount: 4,
+          sourceEnvs: ['telegram'],
+          metadataFrequency: {
+            // Pattern: appeared in 4 events.
+            chatId: { '123': 4 },
+            // Noise: appeared in only 1 event.
+            requestId: { 'r-abc': 1 },
+          },
+        },
+        activitySummary: null,
+      },
+    ];
+
+    const params = makeParams({ sessions });
+    await callRoutingLlm(params);
+
+    const callArgs = generateObjectMock.mock.calls[0]?.[0];
+    const prompt = JSON.parse(callArgs.prompt);
+    expect(prompt.sessions[0].freq).toEqual({ chatId: { '123': 4 } });
+    expect(prompt.sessions[0].freq.requestId).toBeUndefined();
+  });
+
+  it('caps freq to top 10 keys by total event count', async () => {
+    generateObjectMock.mockResolvedValueOnce(
+      genSuccess({ sessionId: '', priority: 'medium' }),
+    );
+
+    const metadataFrequency: Record<string, Record<string, number>> = {};
+    for (let i = 0; i < 15; i++) {
+      // Keys with decreasing total counts: key0=15, key1=14, ... key14=1
+      // Only key0..key9 (total >= 6) qualify by count >= 2 AND top-10.
+      metadataFrequency[`key${i}`] = { v: 15 - i };
+    }
+
+    const sessions = [
+      {
+        shortId: 'e3f4',
+        status: 'active',
+        runtimeState: 'idle',
+        eventPatterns: {
+          eventCount: 120,
+          sourceEnvs: ['test'],
+          metadataFrequency,
+        },
+        activitySummary: null,
+      },
+    ];
+
+    const params = makeParams({ sessions });
+    await callRoutingLlm(params);
+
+    const callArgs = generateObjectMock.mock.calls[0]?.[0];
+    const prompt = JSON.parse(callArgs.prompt);
+    const freqKeys = Object.keys(prompt.sessions[0].freq);
+    expect(freqKeys).toHaveLength(10);
+    // Top 10 by total count: key0 through key9.
+    expect(freqKeys).toEqual(
+      expect.arrayContaining([
+        'key0',
+        'key1',
+        'key2',
+        'key3',
+        'key4',
+        'key5',
+        'key6',
+        'key7',
+        'key8',
+        'key9',
+      ]),
+    );
+    expect(freqKeys).not.toContain('key10');
+  });
+
+  it('truncates activitySummary to 200 characters', async () => {
+    generateObjectMock.mockResolvedValueOnce(
+      genSuccess({ sessionId: '', priority: 'medium' }),
+    );
+
+    const longSummary = 'A'.repeat(250);
+    const sessions = [
+      {
+        shortId: 'f4g5',
+        status: 'active',
+        runtimeState: 'idle',
+        eventPatterns: {
+          eventCount: 2,
+          sourceEnvs: ['test'],
+          metadataFrequency: { topic: { x: 2 } },
+        },
+        activitySummary: longSummary,
+      },
+    ];
+
+    const params = makeParams({ sessions });
+    await callRoutingLlm(params);
+
+    const callArgs = generateObjectMock.mock.calls[0]?.[0];
+    const prompt = JSON.parse(callArgs.prompt);
+    expect(prompt.sessions[0].act).toHaveLength(200);
+    expect(prompt.sessions[0].act).toBe('A'.repeat(200));
+  });
+
+  it('flattens and caps incoming event metadata to 20 keys', async () => {
+    generateObjectMock.mockResolvedValueOnce(
+      genSuccess({ sessionId: '', priority: 'medium' }),
+    );
+
+    // 25 flat keys — only first 20 should appear.
+    const eventMetadata: Record<string, ContextMetadataValue> = {};
+    for (let i = 0; i < 25; i++) {
+      eventMetadata[`k${i}`] = `v${i}`;
+    }
+
+    const params = makeParams({ eventMetadata });
+    await callRoutingLlm(params);
+
+    const callArgs = generateObjectMock.mock.calls[0]?.[0];
+    const prompt = JSON.parse(callArgs.prompt);
+    expect(Object.keys(prompt.event.metadata)).toHaveLength(20);
+  });
+
+  it('flattens nested event metadata to dot-notation', async () => {
+    generateObjectMock.mockResolvedValueOnce(
+      genSuccess({ sessionId: '', priority: 'medium' }),
+    );
+
+    const eventMetadata = { user: { id: '42', name: 'Alice' } };
+
+    const params = makeParams({ eventMetadata });
+    await callRoutingLlm(params);
+
+    const callArgs = generateObjectMock.mock.calls[0]?.[0];
+    const prompt = JSON.parse(callArgs.prompt);
+    expect(prompt.event.metadata).toEqual({
+      'user.id': '42',
+      'user.name': 'Alice',
     });
   });
 

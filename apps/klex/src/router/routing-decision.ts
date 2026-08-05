@@ -132,6 +132,14 @@ export function analyzeEventPatterns(eventLog: EventLogEntry[]): EventPatterns {
 
 /** Max values per metadata key in the LLM payload. */
 const MAX_FREQ_VALUES = 20;
+/** Max metadata keys to include in freq (top by total event count). */
+const MAX_FREQ_KEYS = 10;
+/** A key must appear in at least this many events to be included. */
+const MIN_PATTERN_COUNT = 2;
+/** Max characters for activitySummary in the prompt. */
+const MAX_ACT_LENGTH = 200;
+/** Max flattened keys for the incoming event's metadata. */
+const MAX_EVENT_METADATA_KEYS = 20;
 
 /**
  * Builds a compact session object for the LLM prompt.
@@ -144,8 +152,25 @@ function buildCompactSession(s: SessionRoutingInfo): Record<string, unknown> {
   if (eventCount > 0) obj.n = eventCount;
   if (sourceEnvs.length > 0) obj.envs = sourceEnvs;
 
+  // Only include metadata keys where a pattern has emerged
+  // (key appeared in >= MIN_PATTERN_COUNT events). A single event
+  // with many metadata keys produces no patterns — the LLM cannot
+  // judge routing from a one-shot burst.
+  const keyTotals: Array<[string, number]> = [];
+  for (const [key, values] of Object.entries(metadataFrequency)) {
+    const total = Object.values(values).reduce((a, b) => a + b, 0);
+    if (total >= MIN_PATTERN_COUNT) keyTotals.push([key, total]);
+  }
+  // Cap to top MAX_FREQ_KEYS by total event count.
+  const topKeys = new Set(
+    keyTotals
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, MAX_FREQ_KEYS)
+      .map(([k]) => k),
+  );
   const freq: Record<string, Record<string, number>> = {};
   for (const [key, values] of Object.entries(metadataFrequency)) {
+    if (!topKeys.has(key)) continue;
     const entries = Object.entries(values);
     if (entries.length === 0) continue;
     // Keep only the top MAX_FREQ_VALUES by count to bound payload size.
@@ -156,7 +181,7 @@ function buildCompactSession(s: SessionRoutingInfo): Record<string, unknown> {
   }
   if (Object.keys(freq).length > 0) obj.freq = freq;
 
-  if (s.activitySummary) obj.act = s.activitySummary;
+  if (s.activitySummary) obj.act = s.activitySummary.slice(0, MAX_ACT_LENGTH);
 
   // status is always 'active' here (terminated sessions are filtered
   // before buildSessionRoutingInfo), so only runtimeState carries signal.
@@ -183,11 +208,18 @@ export async function callRoutingLlm(
     return null;
   }
 
+  // Flatten and cap the incoming event's metadata so it uses the same
+  // dot-notation as freq (enabling direct matching) and is bounded.
+  const flatEventMeta = flattenMetadata(eventMetadata);
+  const cappedEventMeta = Object.fromEntries(
+    Object.entries(flatEventMeta).slice(0, MAX_EVENT_METADATA_KEYS),
+  );
+
   const prompt = JSON.stringify({
     sessions: sessions.map(buildCompactSession),
     event: {
       sourceEnv,
-      metadata: eventMetadata,
+      metadata: cappedEventMeta,
       preview: contentPreview,
       ...(presetPriority ? { presetPriority } : {}),
     },

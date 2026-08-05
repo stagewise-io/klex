@@ -1,333 +1,110 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import type { RootLogger } from '@stagewise/logger';
-import type {
-  AcceptRealtimeMediaSessionResult,
-  RealtimeMediaNotification,
-} from '@stagewise/mcp-extension-realtime-media';
 
-import type {
-  Mcp,
-  McpRealtimeMediaAvailabilityListener,
-  McpRealtimeMediaNotificationListener,
-} from '@/mcp';
+import type { Mcp } from '@/mcp';
+import type { MediaTransportConnector } from '@/media-transport';
+
 import {
-  type AudioFrame,
-  createMediaTransportConnectorRegistry,
-} from '@/media-transport';
+  createProductionMediaTransportConnectorRegistry,
+  createRealtime,
+} from './realtime';
+import type { RealtimeSessionCoordinator } from './session-coordinator';
 
-import { createRealtimeSessionCoordinator } from './realtime';
-import {
-  createDeterministicEchoProcessorFactory,
-  createDeterministicMediaTransportConnector,
-} from './test-support';
+const logging = { child: vi.fn() } as unknown as RootLogger;
+const mcp = {} as Mcp;
 
-const logging = {
-  child: () => ({
-    debug: () => undefined,
-    error: () => undefined,
-    info: () => undefined,
-    warn: () => undefined,
-  }),
-} as unknown as RootLogger;
-
-const descriptor = {
-  profile: 'livekit-room' as const,
-  url: 'wss://livekit.example.test',
-  token: 'secret',
-};
-
-function frame(sequence: number): AudioFrame {
-  return {
-    encoding: 'pcm-s16le',
-    sampleRateHz: 16_000,
-    channels: 1,
-    sequence,
-    timestampUs: sequence * 20_000,
-    data: Uint8Array.from([sequence, 0]),
-  };
-}
-
-function deferred<T>(): {
-  promise: Promise<T>;
-  resolve(value: T): void;
-} {
-  let resolve!: (value: T) => void;
-  const promise = new Promise<T>((done) => {
-    resolve = done;
-  });
-  return { promise, resolve };
-}
-
-function createMcpHarness(options?: {
-  accept?: () => Promise<AcceptRealtimeMediaSessionResult>;
-}) {
-  const notificationListeners = new Set<McpRealtimeMediaNotificationListener>();
-  const availabilityListeners = new Set<McpRealtimeMediaAvailabilityListener>();
-  const acceptRealtimeMediaSession = vi.fn(
-    options?.accept ?? (async () => ({ transport: descriptor })),
-  );
-  const rejectRealtimeMediaSession = vi.fn(async () => undefined);
-  const endRealtimeMediaSession = vi.fn(async () => undefined);
-  const mcp = {
-    onRealtimeMediaNotification(
-      listener: McpRealtimeMediaNotificationListener,
-    ) {
-      notificationListeners.add(listener);
-      return () => notificationListeners.delete(listener);
-    },
-    onRealtimeMediaAvailability(
-      listener: McpRealtimeMediaAvailabilityListener,
-    ) {
-      availabilityListeners.add(listener);
-      return () => availabilityListeners.delete(listener);
-    },
-    acceptRealtimeMediaSession,
-    rejectRealtimeMediaSession,
-    endRealtimeMediaSession,
-  } as unknown as Mcp;
-  return {
-    mcp,
-    acceptRealtimeMediaSession,
-    rejectRealtimeMediaSession,
-    endRealtimeMediaSession,
-    async notify(notification: RealtimeMediaNotification) {
-      await Promise.all(
-        [...notificationListeners].map((listener) =>
-          listener({ namespace: 'voice', notification }),
-        ),
-      );
-    },
-    async setAvailable(available: boolean) {
-      await Promise.all(
-        [...availabilityListeners].map((listener) =>
-          listener({ namespace: 'voice', available }),
-        ),
-      );
-    },
-  };
-}
-
-function offered(
-  sessionId = 'session-1',
-  expiresAt = '2026-08-01T19:00:00.000Z',
-): RealtimeMediaNotification {
-  return {
-    jsonrpc: '2.0',
-    method: 'io.stagewise/realtime-media/session-offered',
-    params: { sessionId, expiresAt },
-  };
-}
-
-function ended(sessionId = 'session-1'): RealtimeMediaNotification {
-  return {
-    jsonrpc: '2.0',
-    method: 'io.stagewise/realtime-media/session-ended',
-    params: { sessionId, reason: 'remote-end' },
-  };
-}
-
-function setup(options?: {
-  mcp?: ReturnType<typeof createMcpHarness>;
-  now?: () => number;
-}) {
-  const mcpHarness = options?.mcp ?? createMcpHarness();
-  const connector = createDeterministicMediaTransportConnector();
-  const processorFactory = createDeterministicEchoProcessorFactory();
-  const coordinator = createRealtimeSessionCoordinator({
+function harness() {
+  const order: string[] = [];
+  const connector = {
+    connect: vi.fn(),
+    close: vi.fn(async () => {
+      order.push('connector-close');
+    }),
+  } as unknown as MediaTransportConnector;
+  const coordinator = {
+    start: vi.fn(async () => {
+      order.push('coordinator-start');
+    }),
+    close: vi.fn(async () => {
+      order.push('coordinator-close');
+    }),
+    getActiveSessionCount: vi.fn(() => 0),
+  } satisfies RealtimeSessionCoordinator;
+  const createCoordinator = vi.fn(() => coordinator);
+  const realtime = createRealtime({
     logging,
-    mcp: mcpHarness.mcp,
-    mediaTransportConnector: connector,
-    processorFactory,
-    now: options?.now ?? (() => Date.parse('2026-08-01T18:00:00.000Z')),
+    mcp,
+    provider: {
+      kind: 'openai-realtime',
+      config: {
+        modelId: 'gpt-realtime',
+        apiKey: 'test-key',
+        websocketUrl: 'wss://example.test/realtime',
+      },
+    },
+    ownedConnector: connector,
+    createCoordinator,
   });
-  return { coordinator, connector, mcpHarness, processorFactory };
+  return {
+    realtime,
+    connector,
+    coordinator,
+    createCoordinator,
+    order,
+  };
 }
 
-describe('realtime session coordinator', () => {
-  it('ends an accepted session when its transport profile is unsupported', async () => {
-    const mcpHarness = createMcpHarness({
-      accept: async () => ({
-        transport: { ...descriptor, profile: 'unsupported' },
-      }),
-    });
-    const registry = createMediaTransportConnectorRegistry([]);
-    const coordinator = createRealtimeSessionCoordinator({
-      logging,
-      mcp: mcpHarness.mcp,
-      mediaTransportConnector: registry,
-      processorFactory: createDeterministicEchoProcessorFactory(),
-      now: () => Date.parse('2026-08-01T18:00:00.000Z'),
-    });
-    await coordinator.start();
-    await mcpHarness.notify(offered());
-    await vi.waitFor(() => {
-      expect(mcpHarness.endRealtimeMediaSession).toHaveBeenCalledOnce();
-      expect(coordinator.getActiveSessionCount()).toBe(0);
-    });
-    await coordinator.close();
+describe('createRealtime', () => {
+  it('registers the production LiveKit profile', async () => {
+    const registry = createProductionMediaTransportConnectorRegistry();
+    expect(registry.profiles).toEqual(['livekit-room']);
     await registry.close();
   });
 
-  it('accepts an offer, echoes ordered frames, and handles remote end once', async () => {
-    const { coordinator, connector, mcpHarness, processorFactory } = setup();
-    await coordinator.start();
-    await mcpHarness.notify(offered());
-    const transport = await connector.nextTransport();
-    const processor = await processorFactory.nextProcessor();
-
-    await transport.inject(frame(1));
-    await transport.inject(frame(2));
-    await expect(transport.receiveSent()).resolves.toEqual(frame(1));
-    await expect(transport.receiveSent()).resolves.toEqual(frame(2));
-
-    await mcpHarness.notify(ended());
-    await mcpHarness.notify(ended());
-    await vi.waitFor(() => expect(coordinator.getActiveSessionCount()).toBe(0));
-    expect(mcpHarness.acceptRealtimeMediaSession).toHaveBeenCalledOnce();
-    expect(mcpHarness.endRealtimeMediaSession).not.toHaveBeenCalled();
-    expect(transport.closeCount).toBe(1);
-    expect(processor.closeCount).toBe(1);
-    await coordinator.close();
+  it('starts once and closes coordinator before native connector', async () => {
+    const { realtime, coordinator, connector, order } = harness();
+    await Promise.all([realtime.start(), realtime.start()]);
+    await Promise.all([realtime.close(), realtime.close()]);
+    expect(coordinator.start).toHaveBeenCalledOnce();
+    expect(coordinator.close).toHaveBeenCalledOnce();
+    expect(connector.close).toHaveBeenCalledOnce();
+    expect(order).toEqual([
+      'coordinator-start',
+      'coordinator-close',
+      'connector-close',
+    ]);
   });
 
-  it('rejects expired offers and ignores duplicate active offers', async () => {
-    const pendingAccept = deferred<{ transport: typeof descriptor }>();
-    const mcpHarness = createMcpHarness({
-      accept: () => pendingAccept.promise,
+  it('takes lifecycle ownership of an injected connector', async () => {
+    const { connector, coordinator } = harness();
+    const realtime = createRealtime({
+      logging,
+      mcp,
+      provider: {
+        kind: 'openai-realtime',
+        config: {
+          modelId: 'gpt-realtime',
+          apiKey: 'test-key',
+          websocketUrl: 'wss://example.test/realtime',
+        },
+      },
+      ownedConnector: connector,
+      createCoordinator: () => coordinator,
     });
-    const { coordinator } = setup({ mcp: mcpHarness });
-    await coordinator.start();
-
-    await mcpHarness.notify(offered('expired', '2026-08-01T17:00:00.000Z'));
-    await vi.waitFor(() =>
-      expect(mcpHarness.rejectRealtimeMediaSession).toHaveBeenCalledWith(
-        'voice',
-        'expired',
-      ),
-    );
-    await vi.waitFor(() => expect(coordinator.getActiveSessionCount()).toBe(0));
-
-    await mcpHarness.notify(offered());
-    await mcpHarness.notify(offered());
-    expect(mcpHarness.acceptRealtimeMediaSession).toHaveBeenCalledTimes(1);
-    await mcpHarness.notify(ended());
-    pendingAccept.resolve({ transport: descriptor });
-    await vi.waitFor(() => expect(coordinator.getActiveSessionCount()).toBe(0));
-    await coordinator.close();
+    await realtime.start();
+    await Promise.all([realtime.close(), realtime.close()]);
+    expect(connector.close).toHaveBeenCalledOnce();
   });
 
-  it('does not connect when remote end races acceptance', async () => {
-    const pendingAccept = deferred<{ transport: typeof descriptor }>();
-    const mcpHarness = createMcpHarness({
-      accept: () => pendingAccept.promise,
-    });
-    const { coordinator, connector } = setup({ mcp: mcpHarness });
-    await coordinator.start();
-    await mcpHarness.notify(offered());
-    await mcpHarness.notify(ended());
-    pendingAccept.resolve({ transport: descriptor });
-
-    await vi.waitFor(() => expect(coordinator.getActiveSessionCount()).toBe(0));
-    expect(connector.descriptors).toEqual([]);
-    expect(mcpHarness.endRealtimeMediaSession).not.toHaveBeenCalled();
-    await coordinator.close();
-  });
-
-  it('ends the MCP session on media closure and transport failure', async () => {
-    const first = setup();
-    await first.coordinator.start();
-    await first.mcpHarness.notify(offered());
-    const closedTransport = await first.connector.nextTransport();
-    closedTransport.remoteClose('participant-left');
-    await vi.waitFor(() =>
-      expect(first.mcpHarness.endRealtimeMediaSession).toHaveBeenCalledOnce(),
+  it('closes the connector when coordinator startup fails', async () => {
+    const { realtime, coordinator, connector } = harness();
+    vi.mocked(coordinator.start).mockRejectedValueOnce(
+      new Error('start failed'),
     );
-    await vi.waitFor(() =>
-      expect(first.coordinator.getActiveSessionCount()).toBe(0),
-    );
-    await first.coordinator.close();
-
-    const second = setup();
-    await second.coordinator.start();
-    await second.mcpHarness.notify(offered());
-    const failedTransport = await second.connector.nextTransport();
-    failedTransport.fail(new Error('network failed'));
-    await vi.waitFor(() =>
-      expect(second.mcpHarness.endRealtimeMediaSession).toHaveBeenCalledOnce(),
-    );
-    await vi.waitFor(() =>
-      expect(second.coordinator.getActiveSessionCount()).toBe(0),
-    );
-    expect(failedTransport.closeCount).toBe(1);
-    await second.coordinator.close();
-  });
-
-  it('ends the MCP session on processor failure', async () => {
-    const { coordinator, mcpHarness, processorFactory } = setup();
-    await coordinator.start();
-    await mcpHarness.notify(offered());
-    const processor = await processorFactory.nextProcessor();
-    processor.fail(new Error('model failed'));
-
-    await vi.waitFor(() =>
-      expect(mcpHarness.endRealtimeMediaSession).toHaveBeenCalledOnce(),
-    );
-    await vi.waitFor(() => expect(coordinator.getActiveSessionCount()).toBe(0));
-    expect(processor.closeCount).toBe(1);
-    await coordinator.close();
-  });
-
-  it('preserves outbound backpressure until sent frames are consumed', async () => {
-    const { coordinator, connector, mcpHarness } = setup();
-    await coordinator.start();
-    await mcpHarness.notify(offered());
-    const transport = await connector.nextTransport();
-
-    await transport.inject(frame(1));
-    await transport.inject(frame(2));
-    const thirdInput = transport.inject(frame(3));
-    const settled = vi.fn();
-    void thirdInput.then(settled, settled);
-    await Promise.resolve();
-    expect(settled).not.toHaveBeenCalled();
-
-    await expect(transport.receiveSent()).resolves.toEqual(frame(1));
-    await expect(transport.receiveSent()).resolves.toEqual(frame(2));
-    await expect(thirdInput).resolves.toBeUndefined();
-    await expect(transport.receiveSent()).resolves.toEqual(frame(3));
-    await mcpHarness.notify(ended());
-    await coordinator.close();
-  });
-
-  it('cleans up without ending remotely on MCP disconnect', async () => {
-    const { coordinator, connector, mcpHarness, processorFactory } = setup();
-    await coordinator.start();
-    await mcpHarness.notify(offered());
-    const transport = await connector.nextTransport();
-    const processor = await processorFactory.nextProcessor();
-
-    await mcpHarness.setAvailable(false);
-    await vi.waitFor(() => expect(coordinator.getActiveSessionCount()).toBe(0));
-    expect(mcpHarness.endRealtimeMediaSession).not.toHaveBeenCalled();
-    expect(transport.closeCount).toBe(1);
-    expect(processor.closeCount).toBe(1);
-    await coordinator.close();
-  });
-
-  it('closes active sessions and itself idempotently', async () => {
-    const { coordinator, connector, mcpHarness, processorFactory } = setup();
-    await coordinator.start();
-    await coordinator.start();
-    await mcpHarness.notify(offered());
-    const transport = await connector.nextTransport();
-    const processor = await processorFactory.nextProcessor();
-
-    await coordinator.close();
-    await coordinator.close();
-    expect(mcpHarness.endRealtimeMediaSession).toHaveBeenCalledOnce();
-    expect(transport.closeCount).toBe(1);
-    expect(processor.closeCount).toBe(1);
-    expect(coordinator.getActiveSessionCount()).toBe(0);
+    await expect(realtime.start()).rejects.toThrow('start failed');
+    expect(connector.close).toHaveBeenCalledOnce();
+    await realtime.close();
+    expect(connector.close).toHaveBeenCalledOnce();
   });
 });

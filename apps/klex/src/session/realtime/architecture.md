@@ -2,8 +2,15 @@
 
 ## Boundary
 
-The realtime session coordinator owns accepted audio-session lifetimes. It is
-independent from chat sessions and model generations.
+The public `Realtime` module is the enabled application's lifecycle boundary
+started and closed by `main.ts`. It requires a resolved provider and takes
+lifecycle ownership of the exact transport connector registry used to advertise
+MCP transport profiles. It resolves the selected processor implementation and
+creates an internal realtime session coordinator. When no compatible provider
+is selected, `main.ts` creates no registry, advertises no Realtime Media
+capability, and creates no `Realtime` module. The coordinator owns accepted
+audio-session lifetimes and remains independent from chat sessions and model
+generations.
 
 ```text
 MCP Realtime Media control plane
@@ -58,7 +65,10 @@ The routing remains explicit application policy rather than automatically
 connecting properties with matching names.
 
 A profile-keyed connector registry is the source of Klex's advertised transport
-profiles and the dispatch boundary for accepted descriptors. The registry reads
+profiles and the dispatch boundary for accepted descriptors. `main.ts` derives
+the MCP capability from that registry and then transfers the same instance to
+the enabled `Realtime` module, which closes it during startup rollback or normal
+shutdown. The registry reads
 the common `profile` envelope and delegates full payload validation to the
 matching adapter. The coordinator remains profile-agnostic. Production currently
 registers only `livekit-room`; adding a profile requires adding one registry entry
@@ -123,7 +133,7 @@ Realtime Media capability advertisement. TTS and STT selections reserve future
 composed-pipeline roles but do not activate calls yet.
 
 Voice, instructions, and VAD use provider-owned defaults until Klex exposes a
-user or agent preference mechanism. Startup subscribes the coordinator before
+user or agent preference mechanism. Startup starts the `Realtime` module, which subscribes its coordinator before
 MCP connections can deliver offers. Shutdown closes the coordinator and its
 sessions, then the connector and native SDK, and only then MCP.
 
@@ -142,5 +152,8 @@ routing policy. Mutable participant metadata and targeted outputs are also
 deferred. These concerns must not be collapsed into one universal frame union
 or automatically piped between endpoints.
 
-Coordinator tests use private test-local endpoint fakes. No diagnostic or
-synthetic media implementation is exported from the runtime source tree.
+The public `realtime.test.ts` covers lifecycle composition and ownership.
+Internal `session-coordinator.test.ts` and
+`session-coordinator.integration.test.ts` cover session orchestration with
+private test-local endpoint fakes. No diagnostic or synthetic media
+implementation is exported from the production module.

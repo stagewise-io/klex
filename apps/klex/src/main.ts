@@ -16,7 +16,7 @@ import { createRemindersExt } from '@/session/chat/extensions/reminders';
 import { createSoulExt } from '@/session/chat/extensions/soul';
 import {
   createProductionMediaTransportConnectorRegistry,
-  createRealtimeMediaRuntime,
+  createRealtime,
 } from '@/session/realtime';
 import type { SessionHooks } from '@/session/types';
 import {
@@ -66,12 +66,15 @@ async function main(): Promise<void> {
     await config.start();
     started.push(config);
     const realtimeProvider = config.resolveRealtimeProvider();
-    const realtimeConnectorRegistry = realtimeProvider
-      ? createProductionMediaTransportConnectorRegistry()
-      : undefined;
-    const realtimeMediaCapability = realtimeConnectorRegistry
+    const realtimeComposition = realtimeProvider
       ? {
-          transports: [...realtimeConnectorRegistry.profiles],
+          provider: realtimeProvider,
+          ownedConnector: createProductionMediaTransportConnectorRegistry(),
+        }
+      : undefined;
+    const realtimeMediaCapability = realtimeComposition
+      ? {
+          transports: [...realtimeComposition.ownedConnector.profiles],
           media: ['audio'] as ['audio'],
         }
       : undefined;
@@ -111,36 +114,33 @@ async function main(): Promise<void> {
           introspectionScope,
         }),
     });
-    const adminApi = createAdminApi({
-      logging: logger,
-      config,
-      mcp,
-      introspector,
-    });
+    const adminApi = createAdminApi({ logging: logger, config, mcp, router });
     const telemetryManager = createTelemetryManager({
       logging: logger,
       config,
       spanProcessor,
     });
-    const realtimeMedia = createRealtimeMediaRuntime({
-      logging: logger,
-      mcp,
-      provider: realtimeProvider,
-      connector: realtimeConnectorRegistry,
-    });
-
+    const realtime = realtimeComposition
+      ? createRealtime({
+          logging: logger,
+          mcp,
+          provider: realtimeComposition.provider,
+          ownedConnector: realtimeComposition.ownedConnector,
+        })
+      : undefined;
     for (const resource of [adminApi, modelProvider]) {
       await resource.start();
       started.push(resource);
     }
-    await realtimeMedia.start();
+    await realtime?.start();
     try {
       await mcp.start();
     } catch (error) {
-      await realtimeMedia.close();
+      await realtime?.close();
       throw error;
     }
-    started.push(mcp, realtimeMedia);
+    started.push(mcp);
+    if (realtime) started.push(realtime);
     await telemetryManager.start();
     started.push(telemetryManager);
     await router.start();

@@ -55,7 +55,7 @@ export interface ResolvedModelConfig {
   displayName?: string;
   inputCapabilities: ModelInputCapabilities;
   /** Provider-specific options from the model selection entry. */
-  providerOptions?: Record<string, unknown>;
+  providerOptions?: Record<string, Record<string, unknown>>;
 }
 
 /**
@@ -377,7 +377,7 @@ class ConfigModule implements Config {
    */
   private resolveProviderOptions(
     entry: ModelSelectionEntry,
-  ): Record<string, unknown> | undefined {
+  ): Record<string, Record<string, unknown>> | undefined {
     if (typeof entry === 'string') return undefined;
     return entry.providerOptions;
   }

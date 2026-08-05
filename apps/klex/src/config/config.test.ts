@@ -54,9 +54,9 @@ function manualConfig(modelId = 'model:8b'): KlexConfig {
       memory: [],
       imageVision: [],
       audioListening: [],
+      voice: { sts: [], tts: [], stt: [] },
     },
     mcpServers: {},
-    realtime: { mode: 'disabled' },
   };
 }
 
@@ -78,9 +78,9 @@ function presetConfig(
       memory: [],
       imageVision: [],
       audioListening: [],
+      voice: { sts: [], tts: [], stt: [] },
     },
     mcpServers: {},
-    realtime: { mode: 'disabled' },
   };
 }
 
@@ -112,9 +112,9 @@ function mixedConfig(): KlexConfig {
       memory: ['local:api:test-model'],
       imageVision: [],
       audioListening: [],
+      voice: { sts: [], tts: [], stt: [] },
     },
     mcpServers: {},
-    realtime: { mode: 'disabled' },
   };
 }
 
@@ -140,93 +140,36 @@ afterEach(async () => {
 
 // --- tests ---
 
-describe('Config — realtime mode', () => {
-  it('defaults legacy config input to disabled', () => {
-    const { realtime: _realtime, ...legacy } = manualConfig();
-    expect(klexConfigSchema.parse(legacy).realtime).toEqual({
-      mode: 'disabled',
+describe('Config — voice model selection', () => {
+  it('defaults missing voice selections to empty lists', () => {
+    const input = manualConfig() as unknown as Record<string, unknown>;
+    const selection = input.modelSelection as Record<string, unknown>;
+    delete selection.voice;
+    expect(klexConfigSchema.parse(input).modelSelection.voice).toEqual({
+      sts: [],
+      tts: [],
+      stt: [],
     });
   });
 
-  it('accepts opt-in loopback mode', () => {
-    expect(
-      klexConfigSchema.parse({
-        ...manualConfig(),
-        realtime: { mode: 'loopback' },
-      }).realtime,
-    ).toEqual({ mode: 'loopback' });
-  });
-
-  it('validates and resolves OpenAI realtime configuration', async () => {
-    const config = presetConfig('openai', 'gpt-realtime-2.1');
-    config.realtime = {
-      mode: 'openai-realtime',
-      model: 'my-openai:gpt-realtime-2.1',
-      voice: 'marin',
-      instructions: 'Answer briefly.',
-      serverVad: { threshold: 0.6, silenceDurationMs: 400 },
-    };
-    const { module } = await setup(config);
-    expect(module.resolveOpenAIRealtime()).toEqual({
-      modelId: 'gpt-realtime-2.1',
-      apiKey: 'sk-test',
-      websocketUrl: 'wss://api.openai.com/v1/realtime?model=gpt-realtime-2.1',
-      voice: 'marin',
-      instructions: 'Answer briefly.',
-      serverVad: { threshold: 0.6, silenceDurationMs: 400 },
-    });
-  });
-
-  it.each([
-    { threshold: -0.1 },
-    { threshold: 1.1 },
-    { prefixPaddingMs: -1 },
-    { silenceDurationMs: 99 },
-  ])('rejects malformed server VAD: %j', (serverVad) => {
-    expect(
-      klexConfigSchema.safeParse({
-        ...presetConfig(),
-        realtime: {
-          mode: 'openai-realtime',
-          model: 'my-openai:gpt-realtime',
-          voice: 'marin',
-          instructions: 'Answer briefly.',
-          serverVad,
-        },
-      }).success,
-    ).toBe(false);
-  });
-
-  it('rejects missing environment credentials during resolution', async () => {
-    const config = presetConfig();
+  it('resolves a capability-declared OpenAI STS model', async () => {
+    const config = presetConfig('openai', 'gpt-realtime');
     const provider = config.providers['my-openai'];
     if (!provider || !('preset' in provider))
       throw new Error('Expected preset');
-    provider.auth.apiKey = '{env:KLEX_TEST_MISSING_OPENAI_KEY}';
-    config.realtime = {
-      mode: 'openai-realtime',
-      model: 'my-openai:gpt-realtime',
-      voice: 'marin',
-      instructions: 'Answer briefly.',
+    provider.knownModels = {
+      'gpt-realtime': { capabilities: { voice: { sts: true } } },
     };
+    config.modelSelection.voice.sts = ['my-openai:gpt-realtime'];
     const { module } = await setup(config);
-    expect(() => module.resolveOpenAIRealtime()).toThrow(
-      'Environment variable KLEX_TEST_MISSING_OPENAI_KEY is not set',
-    );
-  });
-
-  it('rejects non-OpenAI realtime endpoints', async () => {
-    const config = manualConfig();
-    config.realtime = {
-      mode: 'openai-realtime',
-      model: 'local:chat:model:8b',
-      voice: 'marin',
-      instructions: 'Answer briefly.',
-    };
-    const { module } = await setup(config);
-    expect(() => module.resolveOpenAIRealtime()).toThrow(
-      'OpenAI realtime requires an OpenAI endpoint',
-    );
+    expect(module.resolveRealtimeProvider()).toEqual({
+      kind: 'openai-realtime',
+      config: {
+        modelId: 'gpt-realtime',
+        apiKey: 'sk-test',
+        websocketUrl: 'wss://api.openai.com/v1/realtime?model=gpt-realtime',
+      },
+    });
   });
 
   it('derives secure and local realtime WebSocket URLs', () => {
@@ -523,14 +466,16 @@ describe('Config — resolveModelInfo', () => {
       throw new Error('Expected preset provider');
     provider.knownModels = {
       'gpt-4o': {
-        inputCapabilities: {
-          image: {
-            mediaTypes: ['image/png', 'image/jpeg'],
-            maxBytes: 1_000_000,
-          },
-          audio: {
-            mediaTypes: ['audio/mpeg', 'audio/wav'],
-            maxBytes: 2_000_000,
+        capabilities: {
+          input: {
+            image: {
+              mediaTypes: ['image/png', 'image/jpeg'],
+              maxBytes: 1_000_000,
+            },
+            audio: {
+              mediaTypes: ['audio/mpeg', 'audio/wav'],
+              maxBytes: 2_000_000,
+            },
           },
         },
       },
@@ -579,7 +524,7 @@ describe('Config — input capability validation', () => {
     if (!provider || !('preset' in provider))
       throw new Error('Expected preset provider');
     provider.knownModels = {
-      'gpt-4o': { inputCapabilities } as never,
+      'gpt-4o': { capabilities: { input: inputCapabilities } } as never,
     };
 
     expect(klexConfigSchema.safeParse(config).success).toBe(false);
@@ -596,7 +541,7 @@ describe('Config — input capability validation', () => {
     if (!provider || !('preset' in provider))
       throw new Error('Expected preset provider');
     provider.knownModels = {
-      'gpt-4o': { inputCapabilities } as never,
+      'gpt-4o': { capabilities: { input: inputCapabilities } } as never,
     };
 
     expect(klexConfigSchema.safeParse(config).success).toBe(false);
@@ -610,13 +555,15 @@ describe('Config — input capability validation', () => {
     provider.knownModels = {
       'gpt-4o': {
         contextSize: 128_000,
-        inputCapabilities: {
-          image: {
-            mediaTypes: ['image/png', 'image/jpeg'],
-            maxBytes: 1_000_000,
-            maxWidth: 1024,
-            maxHeight: 768,
-            maxTotalPixels: 500_000,
+        capabilities: {
+          input: {
+            image: {
+              mediaTypes: ['image/png', 'image/jpeg'],
+              maxBytes: 1_000_000,
+              maxWidth: 1024,
+              maxHeight: 768,
+              maxTotalPixels: 500_000,
+            },
           },
         },
       },
@@ -640,7 +587,7 @@ describe('Config — input capability validation', () => {
     local.endpoints.chat!.knownModels = {
       'model:8b': {
         contextSize: 8_192,
-        inputCapabilities: {},
+        capabilities: { input: {} },
       },
     };
     const { module } = await setup(config);
@@ -730,6 +677,7 @@ describe('Config — replace (atomic persistence)', () => {
           memory: [],
           imageVision: [],
           audioListening: [],
+          voice: { sts: [], tts: [], stt: [] },
         },
         mcpServers: {},
         // missing modelSelection.chat — but TS prevents this at compile time;
@@ -1290,6 +1238,7 @@ function noSelectionConfig(providers: KlexConfig['providers']): KlexConfig {
       memory: [],
       imageVision: [],
       audioListening: [],
+      voice: { sts: [], tts: [], stt: [] },
     },
     mcpServers: {},
   };

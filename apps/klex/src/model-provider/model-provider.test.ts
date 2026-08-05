@@ -76,12 +76,13 @@ function createMockConfig(
     getModelSelection: () => [],
     resolveModel: resolveModelImpl,
     resolveModelInfo: () => ({
+      capabilities: {},
       contextSize: 200_000,
       displayName: undefined,
       inputCapabilities: {},
     }),
     getMcpServers: () => ({}),
-    resolveOpenAIRealtime: () => undefined,
+    resolveRealtimeProvider: () => undefined,
     addMcpServer: async () => {
       throw new Error('Not used in model provider tests');
     },
@@ -142,6 +143,7 @@ function resolved(
     modelId: overrides.modelId,
     endpoint,
     isPreset: overrides.isPreset ?? false,
+    capabilities: overrides.capabilities ?? {},
     contextSize: overrides.contextSize ?? 200_000,
     inputCapabilities: overrides.inputCapabilities ?? {},
   };

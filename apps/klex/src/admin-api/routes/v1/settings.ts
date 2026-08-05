@@ -33,7 +33,7 @@ export const getModelSelectionRoute = createRoute({
   tags: ['Settings'],
   summary: 'Get model selection',
   description:
-    'Returns the current model selection for chat, compaction, memory, image-vision, and audio-vision purposes.',
+    'Returns the current model selection for chat, compaction, memory, image-vision, audio-listening, and voice purposes.',
   responses: {
     200: {
       content: {
@@ -158,7 +158,18 @@ function validateAndCollectWarnings(
 ): ModelSelectionWarning[] {
   const warnings: ModelSelectionWarning[] = [];
 
-  for (const [purpose, entries] of Object.entries(selection)) {
+  const selections = [
+    ['chat', selection.chat],
+    ['compaction', selection.compaction],
+    ['memory', selection.memory],
+    ['imageVision', selection.imageVision],
+    ['audioListening', selection.audioListening],
+    ['voice.sts', selection.voice.sts],
+    ['voice.tts', selection.voice.tts],
+    ['voice.stt', selection.voice.stt],
+  ] as const;
+
+  for (const [purpose, entries] of selections) {
     for (const entry of entries) {
       const modelId = modelIdFromEntry(entry);
       const { providerId, endpointId, localModelId } = parseModelId(modelId);
@@ -221,6 +232,7 @@ export function patchModelSelection(
           imageVision: patch.imageVision ?? current.modelSelection.imageVision,
           audioListening:
             patch.audioListening ?? current.modelSelection.audioListening,
+          voice: patch.voice ?? current.modelSelection.voice,
         } as ModelSelection;
 
         // Validate only the patched fields — preserved fields are already in
@@ -231,6 +243,7 @@ export function patchModelSelection(
           memory: patch.memory ?? [],
           imageVision: patch.imageVision ?? [],
           audioListening: patch.audioListening ?? [],
+          voice: patch.voice ?? { sts: [], tts: [], stt: [] },
         } as ModelSelection;
         warnings = validateAndCollectWarnings(patchSelection, current);
 

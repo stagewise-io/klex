@@ -33,7 +33,7 @@ export function renderChatPage(): string {
 <body>
   <main>
     <header><h1>Klex Chat Simulator</h1><p>Local environment · MCP endpoint at /mcp</p></header>
-    <section id="call" aria-label="Realtime loopback"><button id="start-call" type="button">Start loopback call</button><button id="stop-call" type="button" disabled>End call</button><span id="call-status">Idle</span><span id="remote-audio"></span></section>
+    <section id="call" aria-label="Realtime call"><button id="start-call" type="button">Start realtime call</button><button id="stop-call" type="button" disabled>End call</button><span id="call-status">Idle</span><span id="remote-audio"></span></section>
     <section id="messages" aria-live="polite"><p class="empty">No messages yet.</p></section>
     <form id="composer"><textarea id="input" maxlength="4000" placeholder="Send a message…" aria-label="Message" required></textarea><button>Send</button></form>
   </main>

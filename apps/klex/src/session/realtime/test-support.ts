@@ -1,4 +1,3 @@
-import { BoundedAsyncQueue } from '../async-queue';
 import {
   type AudioFrame,
   type AudioSource,
@@ -9,7 +8,8 @@ import {
   type RealtimeEndpointClosure,
   type RealtimeProcessor,
   type RealtimeProcessorFactory,
-} from '../media-transport';
+} from '@/media-transport';
+import { BoundedAsyncQueue } from '@/media-transport/async-queue';
 
 interface Deferred<T> {
   promise: Promise<T>;
@@ -24,13 +24,13 @@ function deferred<T>(): Deferred<T> {
   return { promise, resolve };
 }
 
-export interface DeterministicAudioSource extends AudioSource {
+interface DeterministicAudioSource extends AudioSource {
   inject(frame: AudioFrame): Promise<void>;
   close(reason?: string): void;
   fail(error: unknown): void;
 }
 
-export interface DeterministicMediaTransport extends MediaTransport {
+interface DeterministicMediaTransport extends MediaTransport {
   readonly closeCount: number;
   addSource(
     id: string,
@@ -186,7 +186,7 @@ class DeterministicMediaTransportModule implements DeterministicMediaTransport {
   }
 }
 
-export function createDeterministicMediaTransport(options?: {
+function createDeterministicMediaTransport(options?: {
   signal?: AbortSignal;
   capacity?: number;
 }): DeterministicMediaTransport {
@@ -196,8 +196,7 @@ export function createDeterministicMediaTransport(options?: {
   );
 }
 
-export interface DeterministicMediaTransportConnector
-  extends MediaTransportConnector {
+interface DeterministicMediaTransportConnector extends MediaTransportConnector {
   readonly descriptors: readonly unknown[];
   nextTransport(): Promise<DeterministicMediaTransport>;
 }
@@ -243,7 +242,7 @@ export function createDeterministicMediaTransportConnector(): DeterministicMedia
   return new DeterministicMediaTransportConnectorModule();
 }
 
-export interface DeterministicEchoProcessor extends RealtimeProcessor {
+interface DeterministicEchoProcessor extends RealtimeProcessor {
   readonly closeCount: number;
   fail(error: unknown): void;
 }
@@ -314,8 +313,7 @@ class DeterministicEchoProcessorModule implements DeterministicEchoProcessor {
   }
 }
 
-export interface DeterministicEchoProcessorFactory
-  extends RealtimeProcessorFactory {
+interface DeterministicEchoProcessorFactory extends RealtimeProcessorFactory {
   create(options: {
     namespace: string;
     sessionId: string;

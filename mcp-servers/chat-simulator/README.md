@@ -14,7 +14,7 @@ pnpm --filter @stagewise/chat-simulator dev
 ```
 
 The development and start scripts load the repository-root `.env`. For a real
-local LiveKit loopback, configure:
+local LiveKit realtime call, configure:
 
 ```dotenv
 LIVEKIT_URL=ws://127.0.0.1:7880
@@ -105,7 +105,7 @@ Without LiveKit environment variables, acceptance intentionally returns
 `wss://contract-only.livekit.invalid` with a non-connectable token so contract
 tests remain deterministic. With all three LiveKit variables configured, the
 simulator mints short-lived browser and Klex participant tokens for one room.
-Use **Start loopback call** in the browser UI to publish the microphone and play
+Use **Start realtime call** in the browser UI to publish the microphone and play
 Klex's returned audio track. Use headphones to avoid acoustic feedback.
 
 ## E2E check

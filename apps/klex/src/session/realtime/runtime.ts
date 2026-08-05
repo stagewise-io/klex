@@ -1,6 +1,6 @@
 import type { RootLogger } from '@stagewise/logger';
 
-import type { ResolvedOpenAIRealtimeConfig } from '@/config';
+import type { ResolvedRealtimeProvider } from '@/config';
 import type { Mcp } from '@/mcp';
 import type {
   MediaTransportConnector,
@@ -10,7 +10,6 @@ import {
   createLiveKitRoomMediaTransportConnector,
   loadLiveKitSdk,
 } from '@/media-transport/livekit-room';
-import { createLoopbackProcessorFactory } from '@/media-transport/loopback';
 
 import { createOpenAIRealtimeProcessorFactory } from './openai-realtime';
 import {
@@ -26,8 +25,7 @@ export interface RealtimeMediaRuntime {
 export interface RealtimeMediaRuntimeDependencies {
   logging: RootLogger;
   mcp: Mcp;
-  mode: 'disabled' | 'loopback' | 'openai-realtime';
-  openAI?: ResolvedOpenAIRealtimeConfig;
+  provider?: ResolvedRealtimeProvider;
   createConnector?: () => MediaTransportConnector;
   createCoordinator?: (
     connector: MediaTransportConnector,
@@ -43,13 +41,11 @@ class RealtimeMediaRuntimeModule implements RealtimeMediaRuntime {
   constructor(private readonly deps: RealtimeMediaRuntimeDependencies) {}
 
   start(): Promise<void> {
-    if (this.deps.mode === 'disabled') return Promise.resolve();
+    if (!this.deps.provider) return Promise.resolve();
     if (this.startPromise) return this.startPromise;
     if (this.closePromise)
       return Promise.reject(new Error('Realtime media runtime is closed'));
     this.startPromise = (async () => {
-      if (this.deps.mode === 'openai-realtime' && !this.deps.openAI)
-        throw new Error('OpenAI realtime configuration is required');
       const connector =
         this.deps.createConnector?.() ??
         createLiveKitRoomMediaTransportConnector({ loadSdk: loadLiveKitSdk });
@@ -76,13 +72,15 @@ class RealtimeMediaRuntimeModule implements RealtimeMediaRuntime {
   }
 
   private createProcessorFactory(): RealtimeProcessorFactory {
-    if (this.deps.mode === 'loopback') return createLoopbackProcessorFactory();
-    if (!this.deps.openAI)
-      throw new Error('OpenAI realtime configuration is required');
-    return createOpenAIRealtimeProcessorFactory({
-      logging: this.deps.logging,
-      config: this.deps.openAI,
-    });
+    const provider = this.deps.provider;
+    if (!provider) throw new Error('Realtime provider is required');
+    switch (provider.kind) {
+      case 'openai-realtime':
+        return createOpenAIRealtimeProcessorFactory({
+          logging: this.deps.logging,
+          config: provider.config,
+        });
+    }
   }
 
   close(): Promise<void> {

@@ -107,13 +107,18 @@ one idempotent processor closure. Provider credentials remain in the
 server-side WebSocket authorization header and are never included in media
 frames or logs.
 
-`realtime.mode: "loopback"` composes the adapter with a bounded one-frame
-loopback processor. Loopback is a diagnostic interim processor, not a realtime
-AI provider. Startup subscribes the coordinator before MCP connections can
-deliver offers. Shutdown closes the coordinator and its sessions, then the
-connector and native SDK, and only then MCP. `realtime.mode:
-"openai-realtime"` replaces only that loopback processor; the MCP contract and
-LiveKit adapter are unchanged.
+Realtime availability is derived from `modelSelection.voice.sts`. Each ordered
+candidate must explicitly declare `capabilities.voice.sts: true`; Klex does not
+infer support from model names. The candidate endpoint format selects an
+installed provider adapter. Full `openai` and compatible `realtime` endpoints
+currently map to the OpenAI Realtime processor. An empty STS selection disables
+Realtime Media capability advertisement. TTS and STT selections reserve future
+composed-pipeline roles but do not activate calls yet.
+
+Voice, instructions, and VAD use provider-owned defaults until Klex exposes a
+user or agent preference mechanism. Startup subscribes the coordinator before
+MCP connections can deliver offers. Shutdown closes the coordinator and its
+sessions, then the connector and native SDK, and only then MCP.
 
 ## Future modalities
 
@@ -130,10 +135,5 @@ routing policy. Mutable participant metadata and targeted outputs are also
 deferred. These concerns must not be collapsed into one universal frame union
 or automatically piped between endpoints.
 
-## Deterministic fixture
-
-The deterministic connector, transport, and echo processor are test fixtures.
-They accept the negotiated descriptor as opaque input, provide bounded queues,
-and expose controls for frame injection, outbound observation, closure, failure,
-and cancellation. They are not advertised as an MCP transport and are not wired
-into the production process.
+Coordinator tests use private test-local endpoint fakes. No diagnostic or
+synthetic media implementation is exported from the runtime source tree.

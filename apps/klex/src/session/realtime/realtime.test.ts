@@ -9,12 +9,12 @@ import type {
   McpRealtimeMediaNotificationListener,
 } from '@/mcp';
 import type { AudioFrame } from '@/media-transport';
+
+import { createRealtimeSessionCoordinator } from './realtime';
 import {
   createDeterministicEchoProcessorFactory,
   createDeterministicMediaTransportConnector,
-} from '@/media-transport/deterministic';
-
-import { createRealtimeSessionCoordinator } from './realtime';
+} from './test-support';
 
 const logging = {
   child: () => ({

@@ -48,8 +48,10 @@ const baseConfig: KlexConfig = {
         'gpt-4o': {
           displayName: 'GPT-4o',
           contextSize: 128_000,
-          inputCapabilities: {
-            image: { mediaTypes: ['image/png'], maxBytes: 5_000_000 },
+          capabilities: {
+            input: {
+              image: { mediaTypes: ['image/png'], maxBytes: 5_000_000 },
+            },
           },
         },
       },
@@ -78,6 +80,7 @@ const baseConfig: KlexConfig = {
     memory: [],
     imageVision: [],
     audioListening: [],
+    voice: { sts: [], tts: [], stt: [] },
   },
   mcpServers: {},
 };
@@ -363,8 +366,10 @@ describe('PATCH /v1/providers/:name — update provider', () => {
       'gpt-4o': {
         displayName: 'GPT-4o',
         contextSize: 128_000,
-        inputCapabilities: {
-          image: { mediaTypes: ['image/png'], maxBytes: 5_000_000 },
+        capabilities: {
+          input: {
+            image: { mediaTypes: ['image/png'], maxBytes: 5_000_000 },
+          },
         },
       },
     });
@@ -815,6 +820,7 @@ describe('PATCH /v1/providers/:name/endpoints/:endpointName — update endpoint'
         memory: [],
         imageVision: [],
         audioListening: [],
+        voice: { sts: [], tts: [], stt: [] },
       },
       mcpServers: {},
     };
@@ -1017,7 +1023,7 @@ describe('GET /v1/providers/:name/known-models — list known models', () => {
     expect(body.models[0]).toMatchObject({ modelId: 'gpt-4o' });
   });
 
-  it('includes inputCapabilities in known-models response', async () => {
+  it('includes capabilities in known-models response', async () => {
     const app = createApp(makeDeps());
     const response = await app.request('/v1/providers/my-openai/known-models');
     expect(response.status).toBe(200);
@@ -1026,8 +1032,10 @@ describe('GET /v1/providers/:name/known-models — list known models', () => {
     };
     expect(body.models[0]).toMatchObject({
       modelId: 'gpt-4o',
-      inputCapabilities: {
-        image: { mediaTypes: ['image/png'], maxBytes: 5_000_000 },
+      capabilities: {
+        input: {
+          image: { mediaTypes: ['image/png'], maxBytes: 5_000_000 },
+        },
       },
     });
   });
@@ -1237,7 +1245,7 @@ describe('POST /v1/providers/:name/known-models — add known model', () => {
     expect(response.status).toBe(400);
   });
 
-  it('rejects body with neither displayName, contextSize, nor inputCapabilities with 400', async () => {
+  it('rejects body with neither displayName, contextSize, nor capabilities with 400', async () => {
     const app = createApp(makeDeps());
     const response = await app.request('/v1/providers/my-openai/known-models', {
       method: 'POST',
@@ -1247,7 +1255,7 @@ describe('POST /v1/providers/:name/known-models — add known model', () => {
     expect(response.status).toBe(400);
   });
 
-  it('creates a model with inputCapabilities on a preset provider', async () => {
+  it('creates a model with capabilities on a preset provider', async () => {
     const addKnownModelFn = vi.fn(async () => baseConfig);
     const app = createApp(makeDeps({ addKnownModel: addKnownModelFn }));
     const response = await app.request('/v1/providers/my-openai/known-models', {
@@ -1255,12 +1263,14 @@ describe('POST /v1/providers/:name/known-models — add known model', () => {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
         modelId: 'gpt-4o-vision',
-        inputCapabilities: {
-          image: {
-            mediaTypes: ['image/png', 'image/jpeg'],
-            maxBytes: 10_000_000,
+        capabilities: {
+          input: {
+            image: {
+              mediaTypes: ['image/png', 'image/jpeg'],
+              maxBytes: 10_000_000,
+            },
+            audio: { mediaTypes: ['audio/wav'], maxBytes: 20_000_000 },
           },
-          audio: { mediaTypes: ['audio/wav'], maxBytes: 20_000_000 },
         },
       }),
     });
@@ -1269,19 +1279,21 @@ describe('POST /v1/providers/:name/known-models — add known model', () => {
       'my-openai',
       'gpt-4o-vision',
       {
-        inputCapabilities: {
-          image: {
-            mediaTypes: ['image/png', 'image/jpeg'],
-            maxBytes: 10_000_000,
+        capabilities: {
+          input: {
+            image: {
+              mediaTypes: ['image/png', 'image/jpeg'],
+              maxBytes: 10_000_000,
+            },
+            audio: { mediaTypes: ['audio/wav'], maxBytes: 20_000_000 },
           },
-          audio: { mediaTypes: ['audio/wav'], maxBytes: 20_000_000 },
         },
       },
       undefined,
     );
   });
 
-  it('creates a model with only inputCapabilities (no displayName or contextSize)', async () => {
+  it('creates a model with only capabilities (no displayName or contextSize)', async () => {
     const addKnownModelFn = vi.fn(async () => baseConfig);
     const app = createApp(makeDeps({ addKnownModel: addKnownModelFn }));
     const response = await app.request('/v1/providers/local/known-models', {
@@ -1290,8 +1302,10 @@ describe('POST /v1/providers/:name/known-models — add known model', () => {
       body: JSON.stringify({
         modelId: 'vision-model',
         endpointName: 'chat',
-        inputCapabilities: {
-          image: { mediaTypes: ['image/webp'], maxBytes: 8_000_000 },
+        capabilities: {
+          input: {
+            image: { mediaTypes: ['image/webp'], maxBytes: 8_000_000 },
+          },
         },
       }),
     });
@@ -1300,8 +1314,10 @@ describe('POST /v1/providers/:name/known-models — add known model', () => {
       'local',
       'vision-model',
       {
-        inputCapabilities: {
-          image: { mediaTypes: ['image/webp'], maxBytes: 8_000_000 },
+        capabilities: {
+          input: {
+            image: { mediaTypes: ['image/webp'], maxBytes: 8_000_000 },
+          },
         },
       },
       'chat',
@@ -1339,8 +1355,10 @@ describe('PATCH /v1/providers/:name/known-models/:modelId — update known model
     expect(provider.knownModels?.['gpt-4o']).toEqual({
       displayName: 'GPT-4o Updated',
       contextSize: 128_000,
-      inputCapabilities: {
-        image: { mediaTypes: ['image/png'], maxBytes: 5_000_000 },
+      capabilities: {
+        input: {
+          image: { mediaTypes: ['image/png'], maxBytes: 5_000_000 },
+        },
       },
     });
   });
@@ -1444,7 +1462,7 @@ describe('PATCH /v1/providers/:name/known-models/:modelId — update known model
     expect(response.status).toBe(404);
   });
 
-  it('updates inputCapabilities while preserving displayName and contextSize', async () => {
+  it('updates capabilities while preserving displayName and contextSize', async () => {
     const mutateFn = vi.fn(async (fn: (cfg: KlexConfig) => KlexConfig) =>
       fn(baseConfig),
     );
@@ -1455,8 +1473,10 @@ describe('PATCH /v1/providers/:name/known-models/:modelId — update known model
         method: 'PATCH',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
-          inputCapabilities: {
-            audio: { mediaTypes: ['audio/mpeg'], maxBytes: 15_000_000 },
+          capabilities: {
+            input: {
+              audio: { mediaTypes: ['audio/mpeg'], maxBytes: 15_000_000 },
+            },
           },
         }),
       },
@@ -1469,13 +1489,15 @@ describe('PATCH /v1/providers/:name/known-models/:modelId — update known model
     expect(provider.knownModels?.['gpt-4o']).toEqual({
       displayName: 'GPT-4o',
       contextSize: 128_000,
-      inputCapabilities: {
-        audio: { mediaTypes: ['audio/mpeg'], maxBytes: 15_000_000 },
+      capabilities: {
+        input: {
+          audio: { mediaTypes: ['audio/mpeg'], maxBytes: 15_000_000 },
+        },
       },
     });
   });
 
-  it('preserves inputCapabilities when patching only displayName', async () => {
+  it('preserves capabilities when patching only displayName', async () => {
     const mutateFn = vi.fn(async (fn: (cfg: KlexConfig) => KlexConfig) =>
       fn(baseConfig),
     );
@@ -1496,8 +1518,10 @@ describe('PATCH /v1/providers/:name/known-models/:modelId — update known model
     expect(provider.knownModels?.['gpt-4o']).toEqual({
       displayName: 'Renamed',
       contextSize: 128_000,
-      inputCapabilities: {
-        image: { mediaTypes: ['image/png'], maxBytes: 5_000_000 },
+      capabilities: {
+        input: {
+          image: { mediaTypes: ['image/png'], maxBytes: 5_000_000 },
+        },
       },
     });
   });

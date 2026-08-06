@@ -2,9 +2,9 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { createLogger } from '@stagewise/logger';
 import type {
-  GatewayDaemon,
-  GatewayDaemonOptions,
-} from '@stagewise/mcp-gateway-sdk/daemon/node';
+  ProxyDaemon,
+  ProxyDaemonOptions,
+} from '@stagewise/mcp-proxy-sdk/daemon/node';
 
 import type { WindowsUseConfig } from '@/config';
 import type {
@@ -33,7 +33,7 @@ function processFixture() {
 }
 
 function daemonFixture() {
-  const value: GatewayDaemon = {
+  const value: ProxyDaemon = {
     start: vi.fn(async () => undefined),
     close: vi.fn(async () => undefined),
     state: 'idle',
@@ -82,7 +82,7 @@ describe('WindowsUse', () => {
   it('configures authenticated gateway connection and loopback handler', async () => {
     const child = processFixture();
     let processOptions: WindowsMcpProcessOptions | undefined;
-    let daemonOptions: GatewayDaemonOptions | undefined;
+    let daemonOptions: ProxyDaemonOptions | undefined;
     const app = createWindowsUse({
       config,
       logging: createLogger({ type: 'hidden' }),

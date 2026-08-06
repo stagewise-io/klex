@@ -1,9 +1,9 @@
 import type { RootLogger } from '@stagewise/logger';
 import {
-  createGatewayDaemon,
-  type GatewayDaemon,
-  type GatewayDaemonOptions,
-} from '@stagewise/mcp-gateway-sdk/daemon/node';
+  createProxyDaemon,
+  type ProxyDaemon,
+  type ProxyDaemonOptions,
+} from '@stagewise/mcp-proxy-sdk/daemon/node';
 
 import type { WindowsUseConfig } from '@/config';
 import { createHttpUpstream } from '@/http-upstream';
@@ -20,7 +20,7 @@ export interface WindowsUseOptions {
   readonly createProcess?: (
     options: WindowsMcpProcessOptions,
   ) => WindowsMcpProcess;
-  readonly createDaemon?: (options: GatewayDaemonOptions) => GatewayDaemon;
+  readonly createDaemon?: (options: ProxyDaemonOptions) => ProxyDaemon;
 }
 
 export interface WindowsUse {
@@ -30,7 +30,7 @@ export interface WindowsUse {
 
 class WindowsUseModule implements WindowsUse {
   readonly #process: WindowsMcpProcess;
-  readonly #daemon: GatewayDaemon;
+  readonly #daemon: ProxyDaemon;
   #started = false;
   #closed = false;
 
@@ -39,7 +39,7 @@ class WindowsUseModule implements WindowsUse {
       url: `http://127.0.0.1:${options.config.windowsMcpPort}/mcp`,
     });
     const createProcess = options.createProcess ?? createWindowsMcpProcess;
-    const createDaemon = options.createDaemon ?? createGatewayDaemon;
+    const createDaemon = options.createDaemon ?? createProxyDaemon;
     this.#process = createProcess({
       command: options.config.windowsMcpCommand,
       launchMode: options.config.windowsMcpLaunchMode,

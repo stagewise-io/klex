@@ -15,7 +15,7 @@
   },
   "dependencies": {
     "@stagewise/logger": "workspace:*",
-    "@stagewise/mcp-gateway-sdk": "workspace:*"
+    "@stagewise/mcp-proxy-sdk": "workspace:*"
   },
   "devDependencies": {
     "@stagewise/app-packager": "workspace:*",

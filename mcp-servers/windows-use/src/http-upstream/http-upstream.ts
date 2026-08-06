@@ -1,11 +1,11 @@
-import type { GatewayEnvironmentHandler } from '@stagewise/mcp-gateway-sdk/daemon/node';
+import type { ProxyEnvironmentHandler } from '@stagewise/mcp-proxy-sdk/daemon/node';
 
 export interface HttpUpstreamOptions {
   readonly url: URL | string;
   readonly fetch?: typeof globalThis.fetch;
 }
 
-export type HttpUpstream = GatewayEnvironmentHandler;
+export type HttpUpstream = ProxyEnvironmentHandler;
 
 class HttpUpstreamModule implements HttpUpstream {
   readonly #url: URL;

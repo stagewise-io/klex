@@ -310,9 +310,9 @@ importers:
       '@stagewise/logger':
         specifier: workspace:*
         version: link:../../packages/logger
-      '@stagewise/mcp-gateway-sdk':
+      '@stagewise/mcp-proxy-sdk':
         specifier: workspace:*
-        version: link:../../packages/mcp-gateway-sdk
+        version: link:../../packages/mcp-proxy-sdk
     devDependencies:
       '@stagewise/app-packager':
         specifier: workspace:*

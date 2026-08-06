@@ -120,10 +120,10 @@ jobs:
           "AZURE_CODE_SIGNING_DLIB=$dlibPath" >> $env:GITHUB_ENV
           "AZURE_METADATA_JSON=$metadataPath" >> $env:GITHUB_ENV
 
-      - name: Build MCP Gateway SDK
+      - name: Build MCP Proxy SDK
         shell: pwsh
         working-directory: .
-        run: pnpm --filter @stagewise/mcp-gateway-sdk build
+        run: pnpm --filter @stagewise/mcp-proxy-sdk build
 
       - name: Set up Python 3.13 x64
         uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5

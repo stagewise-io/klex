@@ -37,6 +37,19 @@ class SoulExt implements Extension {
   }
 
   /**
+   * Reads and returns the soul content if `SOUL.md` exists and is
+   * non-empty after trimming. Returns `null` otherwise. All soul-state
+   * checks (prompt, tools, execute guard, introspection) go through
+   * this method so they stay consistent.
+   */
+  private readSoul(): string | null {
+    if (!existsSync(this.soulPath)) return null;
+    const content = readFileSync(this.soulPath, 'utf-8');
+    if (content.trim().length === 0) return null;
+    return content;
+  }
+
+  /**
    * Returns the soul content for the system prompt. If `SOUL.md` exists
    * in the global extension directory, its contents are returned verbatim.
    * Otherwise the no-soul prompt is returned, which instructs the model
@@ -46,11 +59,7 @@ class SoulExt implements Extension {
    * are picked up without restarting the session.
    */
   getSystemPromptPart(): string {
-    if (existsSync(this.soulPath)) {
-      const content = readFileSync(this.soulPath, 'utf-8');
-      if (content.trim().length > 0) return content;
-    }
-    return noSoulPrompt;
+    return this.readSoul() ?? noSoulPrompt;
   }
 
   /**
@@ -59,7 +68,7 @@ class SoulExt implements Extension {
    * the model.
    */
   getTools(_model: ResolvedModel): ToolSet {
-    if (existsSync(this.soulPath)) return {};
+    if (this.readSoul() !== null) return {};
 
     return {
       createSoul: tool({
@@ -78,7 +87,7 @@ class SoulExt implements Extension {
           // Guard against a race where the soul was created between
           // getTools() and this execution (e.g. manual file creation
           // or a duplicate tool call in the same step).
-          if (existsSync(this.soulPath)) {
+          if (this.readSoul() !== null) {
             return 'A soul already exists. Your soul is already saved and active.';
           }
 
@@ -93,7 +102,7 @@ class SoulExt implements Extension {
 
   introspect(): Record<string, unknown> {
     return {
-      hasSoul: existsSync(this.soulPath),
+      hasSoul: this.readSoul() !== null,
       soulPath: this.soulPath,
     };
   }

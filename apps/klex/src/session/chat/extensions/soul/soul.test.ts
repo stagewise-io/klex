@@ -132,6 +132,30 @@ describe('SoulExt — getTools', () => {
     expect(tools).not.toHaveProperty('createSoul');
     expect(Object.keys(tools)).toHaveLength(0);
   });
+
+  it('provides createSoul when SOUL.md exists but is empty', () => {
+    const dir = makeTmpDir();
+    writeFileSync(join(dir, 'SOUL.md'), '', 'utf-8');
+
+    const deps = makeDeps({ getDataDir: () => dir });
+    const ext = createSoulExt.create(deps);
+
+    const tools = ext.getTools!(MOCK_MODEL);
+
+    expect(tools).toHaveProperty('createSoul');
+  });
+
+  it('provides createSoul when SOUL.md is whitespace-only', () => {
+    const dir = makeTmpDir();
+    writeFileSync(join(dir, 'SOUL.md'), '   \n\t  \n', 'utf-8');
+
+    const deps = makeDeps({ getDataDir: () => dir });
+    const ext = createSoulExt.create(deps);
+
+    const tools = ext.getTools!(MOCK_MODEL);
+
+    expect(tools).toHaveProperty('createSoul');
+  });
 });
 
 describe('SoulExt — createSoul tool', () => {
@@ -275,5 +299,25 @@ describe('SoulExt — introspect', () => {
     const ext = createSoulExt.create(deps);
 
     expect(ext.introspect!()).toMatchObject({ hasSoul: true });
+  });
+
+  it('reports hasSoul=false when SOUL.md is empty', () => {
+    const dir = makeTmpDir();
+    writeFileSync(join(dir, 'SOUL.md'), '', 'utf-8');
+
+    const deps = makeDeps({ getDataDir: () => dir });
+    const ext = createSoulExt.create(deps);
+
+    expect(ext.introspect!()).toMatchObject({ hasSoul: false });
+  });
+
+  it('reports hasSoul=false when SOUL.md is whitespace-only', () => {
+    const dir = makeTmpDir();
+    writeFileSync(join(dir, 'SOUL.md'), '  \n  \t  ', 'utf-8');
+
+    const deps = makeDeps({ getDataDir: () => dir });
+    const ext = createSoulExt.create(deps);
+
+    expect(ext.introspect!()).toMatchObject({ hasSoul: false });
   });
 });

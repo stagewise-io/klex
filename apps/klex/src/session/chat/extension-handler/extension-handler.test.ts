@@ -147,6 +147,7 @@ function factoryWith(
       onStart: overrides.onStart,
       onClose: overrides.onClose,
       getTools: overrides.getTools,
+      getSystemPromptPart: overrides.getSystemPromptPart,
       onStepStart: overrides.onStepStart,
       historyTransformer: overrides.historyTransformer,
       contextTransformer: overrides.contextTransformer,
@@ -1549,5 +1550,76 @@ describe('ExtensionHandler — getTools()', () => {
     handler.getTools(mockResolvedModel);
     expect(spy).toHaveBeenCalledOnce();
     expect(spy).toHaveBeenCalledWith(mockResolvedModel);
+  });
+});
+
+describe('ExtensionHandler — getSystemPromptParts()', () => {
+  it('returns an empty array when no extensions define the hook', () => {
+    const handler = createExtensionHandler({
+      ...HANDLER_OPTS,
+      factories: [factoryWith({}), factoryWith({})],
+    });
+    expect(handler.getSystemPromptParts()).toEqual([]);
+  });
+
+  it('collects parts from all extensions that define the hook, in factory order', () => {
+    const part1 = '# Part 1\n\nFirst extension prompt.';
+    const part2 = '# Part 2\n\nSecond extension prompt.';
+
+    const handler = createExtensionHandler({
+      ...HANDLER_OPTS,
+      factories: [
+        factoryWith({ getSystemPromptPart: () => part1 }),
+        factoryWith({ getSystemPromptPart: () => part2 }),
+      ],
+    });
+
+    expect(handler.getSystemPromptParts()).toEqual([part1, part2]);
+  });
+
+  it('skips extensions that do not define the hook', () => {
+    const part1 = '# Only me';
+
+    const handler = createExtensionHandler({
+      ...HANDLER_OPTS,
+      factories: [
+        factoryWith({ getSystemPromptPart: () => part1 }),
+        factoryWith({}),
+        factoryWith({ getSystemPromptPart: () => '# Three' }),
+      ],
+    });
+
+    expect(handler.getSystemPromptParts()).toEqual([part1, '# Three']);
+  });
+
+  it('filters out empty and whitespace-only strings', () => {
+    const handler = createExtensionHandler({
+      ...HANDLER_OPTS,
+      factories: [
+        factoryWith({ getSystemPromptPart: () => '   \n\n  ' }),
+        factoryWith({ getSystemPromptPart: () => '# Real content' }),
+        factoryWith({ getSystemPromptPart: () => '' }),
+      ],
+    });
+
+    expect(handler.getSystemPromptParts()).toEqual(['# Real content']);
+  });
+
+  it('catches and logs errors from individual extensions without breaking collection', () => {
+    vi.clearAllMocks();
+    const handler = createExtensionHandler({
+      ...HANDLER_OPTS,
+      factories: [
+        factoryWith({
+          getSystemPromptPart: () => {
+            throw new Error('prompt part failed');
+          },
+        }),
+        factoryWith({ getSystemPromptPart: () => '# OK' }),
+      ],
+    });
+
+    expect(handler.getSystemPromptParts()).toEqual(['# OK']);
+    expect(noopDeps.logger.error).toHaveBeenCalled();
   });
 });

@@ -403,12 +403,14 @@ class StepModule implements Step {
           'step.messageCount': modelMessages.length,
         });
 
-        // 2.2.8: Resolve tools from extensions for the current model,
-        // then run generation via the GenerationRunner.
-        // The runner owns the retry loop, model fallback, error
-        // classification, message salvage, stream progress tracking,
-        // and tool dispatch coordination.
+        // 2.2.8: Resolve tools and system prompt parts from extensions
+        // for the current model, then run generation via the
+        // GenerationRunner. The runner owns the retry loop, model
+        // fallback, error classification, message salvage, stream
+        // progress tracking, and tool dispatch coordination.
         const tools = this.deps.extensionHandler.getTools(resolvedModel);
+        const extensionSystemPromptParts =
+          this.deps.extensionHandler.getSystemPromptParts();
         const runner = createGenerationRunner({
           logger: this.deps.logger,
           sessionId: this.deps.sessionId,
@@ -416,6 +418,7 @@ class StepModule implements Step {
           modelMessages,
           messages: this.deps.messages,
           tools,
+          extensionSystemPromptParts,
           fallbackManager: this.deps.fallbackManager,
           turnInitialFallbackIndex: this.deps.turnInitialFallbackIndex,
           compacted,

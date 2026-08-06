@@ -7,6 +7,7 @@ import type {
   ResolvedModel,
 } from '../extension-api';
 import { createJavaScriptTool, type JavaScriptTool } from './javascript';
+import systemPromptPart from './system-prompt-part.md';
 
 class JsReplSandboxExt implements Extension {
   private readonly javaScriptTool: JavaScriptTool;
@@ -29,6 +30,10 @@ class JsReplSandboxExt implements Extension {
 
   getTools(_model: ResolvedModel): ToolSet {
     return this.javaScriptTool.tools;
+  }
+
+  getSystemPromptPart(): string {
+    return systemPromptPart;
   }
 }
 

@@ -406,7 +406,7 @@ describe('Reminders extension', () => {
     await ext.onClose?.();
   });
 
-  it('introspect returns active reminder count and nextFireAt', async () => {
+  it('introspect returns active reminder count, nextFireAt, and reminder entries', async () => {
     const { deps } = createMockDeps();
     const ext = createRemindersExt.create(deps);
     await callTool(ext, 'setReminder', {
@@ -420,6 +420,14 @@ describe('Reminders extension', () => {
     // nextFireAt should be an ISO string in the future.
     const fireDate = new Date(state.nextFireAt as string);
     expect(fireDate.getTime()).toBeGreaterThan(Date.now());
+    // reminders array should contain the full entry with handle, topic, setAt, firesAt
+    const reminders = state.reminders as Array<Record<string, unknown>>;
+    expect(reminders).toHaveLength(1);
+    const first = reminders[0];
+    expect(first?.handle).toBeTypeOf('number');
+    expect(first?.topic).toBe('test');
+    expect(first?.setAt).toBeTypeOf('string');
+    expect(first?.firesAt).toBeTypeOf('string');
     await ext.onClose?.();
   });
 
@@ -429,6 +437,28 @@ describe('Reminders extension', () => {
     const state = ext.introspect?.() as Record<string, unknown>;
     expect(state.activeReminders).toBe(0);
     expect(state.nextFireAt).toBeNull();
+    expect(state.reminders).toEqual([]); // also verify empty array
+  });
+
+  it('introspect returns reminders sorted by soonest-firing first', async () => {
+    const { deps } = createMockDeps();
+    const ext = createRemindersExt.create(deps);
+    await callTool(ext, 'setReminder', {
+      duration: 5,
+      unit: 'minutes',
+      topic: 'fires later',
+    });
+    await callTool(ext, 'setReminder', {
+      duration: 1,
+      unit: 'minutes',
+      topic: 'fires first',
+    });
+    const state = ext.introspect?.() as Record<string, unknown>;
+    const reminders = state.reminders as Array<Record<string, unknown>>;
+    expect(reminders).toHaveLength(2);
+    expect(reminders[0]?.topic).toBe('fires first');
+    expect(reminders[1]?.topic).toBe('fires later');
+    await ext.onClose?.();
   });
 
   it('getSystemPromptPart returns non-empty instructions', async () => {

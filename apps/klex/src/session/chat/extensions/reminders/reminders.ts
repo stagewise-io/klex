@@ -164,19 +164,20 @@ class RemindersExtension implements Extension {
   }
 
   introspect(): Record<string, unknown> {
-    const entries = [...this.reminders.values()];
-    const nextFireAt =
-      entries.length > 0
-        ? (entries
-            .map((e) => e.firesAt)
-            .sort((a, b) => a - b)
-            .at(0) ?? null)
-        : null;
+    const entries = [...this.reminders.values()].sort(
+      (a, b) => a.firesAt - b.firesAt,
+    );
+    const first = entries[0];
     return {
       activeReminders: entries.length,
       closed: this.closed,
-      nextFireAt:
-        nextFireAt !== null ? new Date(nextFireAt).toISOString() : null,
+      nextFireAt: first ? new Date(first.firesAt).toISOString() : null,
+      reminders: entries.map((e) => ({
+        handle: e.handle,
+        topic: e.topic,
+        setAt: e.setAt,
+        firesAt: new Date(e.firesAt).toISOString(),
+      })),
     };
   }
 

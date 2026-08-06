@@ -24,6 +24,7 @@ import {
   descriptionCache,
   type EffectiveVision,
   extractImageBuffer,
+  isSharpAvailable,
   type ProcessedPart,
   resolveEffectiveVision,
   runOptimization,
@@ -53,7 +54,13 @@ class ImageInputOptimizerExt implements Extension {
    */
   private readonly imageRegistry = new Map<string, FilePart | ImagePart>();
 
-  constructor(private readonly deps: ExtensionDeps) {}
+  constructor(private readonly deps: ExtensionDeps) {
+    if (!isSharpAvailable()) {
+      deps.logger.warn(
+        'sharp not found — image input optimizer will degrade to text replacement for all images',
+      );
+    }
+  }
 
   getTools(model: ResolvedModel): ToolSet {
     // Only expose the viewImage tool when the active model cannot see

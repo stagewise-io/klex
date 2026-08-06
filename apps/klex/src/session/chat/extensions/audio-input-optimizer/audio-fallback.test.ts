@@ -18,6 +18,84 @@ import {
   runTransformer,
 } from './test-helpers';
 
+vi.mock('ffmpeg-static', () => ({
+  default: '/mock/ffmpeg',
+}));
+
+vi.mock('ffprobe-static', () => ({
+  path: '/mock/ffprobe',
+}));
+
+vi.mock('fluent-ffmpeg', () => {
+  function createCommand(input: any) {
+    return {
+      toFormat() {
+        return this;
+      },
+      audioBitrate() {
+        return this;
+      },
+      audioFrequency() {
+        return this;
+      },
+      audioChannels() {
+        return this;
+      },
+      on(_event: string, _handler: (err: Error) => void) {
+        return this;
+      },
+      pipe(dest: any) {
+        input.destroy();
+        dest.write(Buffer.alloc(100, 0));
+        dest.end();
+        return dest;
+      },
+      ffprobe(callback: (err: Error | null) => void) {
+        let settled = false;
+        const settle = (fn: () => void): void => {
+          if (settled) return;
+          settled = true;
+          fn();
+        };
+        const bytes: number[] = [];
+        input.on('data', (chunk: any) => {
+          if (typeof chunk === 'number') {
+            bytes.push(chunk);
+          } else if (Buffer.isBuffer(chunk) || chunk instanceof Uint8Array) {
+            for (const b of chunk) bytes.push(b);
+          } else {
+            bytes.push(Number(chunk));
+          }
+          if (bytes.length >= 4) {
+            input.destroy();
+            const header = String.fromCharCode(...bytes.slice(0, 4));
+            settle(() =>
+              callback(
+                header === 'RIFF' ? null : new Error('Invalid audio data'),
+              ),
+            );
+          }
+        });
+        input.on('end', () => {
+          settle(() => {
+            if (bytes.length < 4) {
+              callback(new Error('Invalid audio data'));
+            }
+          });
+        });
+        input.on('error', (err: Error) => settle(() => callback(err)));
+      },
+      kill() {},
+    };
+  }
+
+  const ffmpeg: any = (input: any) => createCommand(input);
+  ffmpeg.setFfmpegPath = () => {};
+  ffmpeg.setFfprobePath = () => {};
+
+  return { default: ffmpeg };
+});
+
 vi.mock('./audio-system-prompt.md', () => ({
   default: 'Describe this audio.',
 }));

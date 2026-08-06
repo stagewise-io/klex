@@ -268,6 +268,46 @@ describe('ImageInputOptimizer — URL images skipped', () => {
     expect(content[0]?.type).toBe('file');
     expect(content[0]?.mediaType).toBe('image/webp');
   });
+
+  it('replaces URL image with placeholder for non-vision models with vision helpers', async () => {
+    const part: FilePart = {
+      type: 'file',
+      data: { type: 'url', url: new URL('https://example.com/image.png') },
+      mediaType: 'image/png',
+    };
+    const config = makeVisionConfig(['vision:gpt-4o']);
+    const generateText = vi.fn();
+    const deps = makeDeps({ config, generateText });
+    const msg = makeUserMessage([part]);
+    const content = getContent(
+      await runTransformer([msg], makeModel({ inputCapabilities: {} }), deps),
+      0,
+    );
+    // URL image can't be extracted for description generation —
+    // should be replaced with placeholder text, not passed through.
+    expect(content[0]?.type).toBe('text');
+    expect(content[0]?.text).toContain("Can't directly see image");
+    expect(content[0]?.text).toContain('viewImage');
+    // generateText should NOT be called — no inline buffer to describe
+    expect(generateText).not.toHaveBeenCalled();
+  });
+
+  it('replaces URL image with unsupported text for non-vision models without vision helpers', async () => {
+    const part: FilePart = {
+      type: 'file',
+      data: { type: 'url', url: new URL('https://example.com/image.png') },
+      mediaType: 'image/png',
+    };
+    const msg = makeUserMessage([part]);
+    const content = getContent(
+      await runTransformer([msg], makeModel({ inputCapabilities: {} })),
+      0,
+    );
+    expect(content[0]?.type).toBe('text');
+    expect(content[0]?.text).toBe(
+      "Can't see the image, you have no vision capabilities or vision model as a helper to see the image.",
+    );
+  });
 });
 
 describe('ImageInputOptimizer — metadata stripping', () => {
@@ -542,6 +582,28 @@ describe('ImageInputOptimizer — format preference', () => {
     );
     expect(content[0]?.mediaType).toBe('image/png');
   }, 15_000);
+
+  it('uses declared non-standard format instead of defaulting to webp', async () => {
+    // Model only supports gif — should convert to gif, not webp
+    const img = await makeImageBuffer(100, 100, 'png');
+    const msg = makeUserMessage([makeFilePart(img, 'image/png')]);
+    const content = getContent(
+      await runTransformer(
+        [msg],
+        makeModel({
+          inputCapabilities: {
+            image: {
+              mediaTypes: ['image/gif'],
+              maxBytes: 4_194_304,
+            },
+          },
+        }),
+      ),
+      0,
+    );
+    expect(content[0]?.type).toBe('file');
+    expect(content[0]?.mediaType).toBe('image/gif');
+  });
 });
 
 describe('ImageInputOptimizer — supports: false', () => {
@@ -624,6 +686,28 @@ describe('ImageInputOptimizer — hybrid description generation', () => {
     await runTransformer([msg], model, deps);
 
     // generateText should only be called once — the second call uses cache
+    expect(generateText).toHaveBeenCalledOnce();
+  });
+
+  it('deduplicates concurrent requests for identical images', async () => {
+    const img = await makeImageBuffer(100, 100);
+    // Two identical images in the same message
+    const msg = makeUserMessage([
+      makeFilePart(img, 'image/png'),
+      makeFilePart(img, 'image/png'),
+    ]);
+    const config = makeVisionConfig(['vision:gpt-4o']);
+    const generateText = vi.fn().mockResolvedValue(genSuccess('A red square.'));
+    const deps = makeDeps({ config, generateText });
+    const model = makeModel({ inputCapabilities: {} });
+
+    const content = getContent(await runTransformer([msg], model, deps), 0);
+
+    // Both images should get descriptions
+    expect(content[0]?.type).toBe('text');
+    expect(content[1]?.type).toBe('text');
+    // generateText should be called only once — in-flight dedup
+    // prevents the second concurrent request from firing.
     expect(generateText).toHaveBeenCalledOnce();
   });
 

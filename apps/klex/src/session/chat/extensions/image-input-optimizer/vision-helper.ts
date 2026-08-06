@@ -14,6 +14,7 @@ import {
   cache,
   descriptionCache,
   type EffectiveVision,
+  inflightDescriptions,
   resolveEffectiveVision,
   runOptimization,
 } from './image-processing';
@@ -104,14 +105,44 @@ export async function describeImage(
   lookFor: string | undefined,
   systemPrompt: string,
 ): Promise<string | null> {
-  // Only cache general descriptions (no lookFor). Targeted descriptions
-  // from the viewImage tool are stored as tool results in the chat
-  // history, so re-caching them here is unnecessary.
+  // Only deduplicate general descriptions (no lookFor). Targeted
+  // descriptions from the viewImage tool are not cached here — their
+  // results live in the chat history as tool results.
   if (imageHash && !lookFor) {
     const cached = descriptionCache.get(imageHash);
     if (cached !== undefined) return cached;
+
+    const inflight = inflightDescriptions.get(imageHash);
+    if (inflight) return inflight;
   }
 
+  const promise = runDescribeImage(
+    deps,
+    imagePart,
+    visionModelIds,
+    buffer,
+    imageHash,
+    lookFor,
+    systemPrompt,
+  );
+
+  if (imageHash && !lookFor) {
+    inflightDescriptions.set(imageHash, promise);
+    promise.finally(() => inflightDescriptions.delete(imageHash));
+  }
+
+  return promise;
+}
+
+async function runDescribeImage(
+  deps: ExtensionDeps,
+  imagePart: FilePart | ImagePart,
+  visionModelIds: readonly ModelSelectionEntry[],
+  buffer: Buffer | null,
+  imageHash: string | null,
+  lookFor: string | undefined,
+  systemPrompt: string,
+): Promise<string | null> {
   // Optimize the image for the vision helper model's capabilities
   // before sending it — same pipeline as regular image processing.
   const optimizedPart = await optimizeForVisionHelper(

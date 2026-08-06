@@ -252,13 +252,22 @@ class ImageInputOptimizerExt implements Extension {
     visionModelIds: readonly ModelSelectionEntry[],
   ): Promise<ProcessedPart> {
     const buffer = extractImageBuffer(part);
-    if (buffer === null) return part; // URL/reference — pass through uncached
 
     // supports === false: replace with description or fallback text
     if (!settings.supports) {
       if (hasVisionModels) {
         const id = imageId;
         this.imageRegistry.set(id, part);
+
+        if (buffer === null) {
+          // URL/reference image — can't extract inline data to
+          // generate a general description. Still register it so the
+          // viewImage tool can attempt to analyze it on-demand.
+          return {
+            type: 'text',
+            text: `Can't directly see image. Use tool '${VIEW_IMAGE_TOOL_NAME}' with ID ${id} to get information on image content.`,
+          };
+        }
 
         // Generate a general description of the image. This is cached
         // by image hash (no lookFor) and shared across all non-vision
@@ -291,6 +300,9 @@ class ImageInputOptimizerExt implements Extension {
       }
       return { type: 'text', text: UNSUPPORTED_IMAGE_TEXT };
     }
+
+    // supports === true: pass through URL/reference images uncached
+    if (buffer === null) return part;
 
     // supports === true: process image (resize, format, etc.) with caching
     const cacheKey = `${createHash('sha1').update(buffer).digest('hex').slice(0, 16)}:${modelId}`;

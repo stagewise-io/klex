@@ -137,6 +137,7 @@ const audioInputCapabilitySchema = z
       .array(z.string().regex(/^audio\/[a-z0-9][a-z0-9.+-]*$/i))
       .nonempty(),
     maxBytes: z.number().int().positive(),
+    maxLengthSeconds: z.number().int().positive().optional(),
   })
   .strict();
 

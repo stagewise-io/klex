@@ -27,6 +27,17 @@ vi.mock('ffprobe-static', () => ({
 }));
 
 vi.mock('fluent-ffmpeg', () => {
+  function parseWavDuration(bytes: number[]): number {
+    if (bytes.length < 44) return 0;
+    const buf = Buffer.from(bytes);
+    if (buf.subarray(0, 4).toString('latin1') !== 'RIFF') return 0;
+    const sampleRate = buf.readUInt32LE(24);
+    const channels = buf.readUInt16LE(22);
+    const dataSize = buf.readUInt32LE(40);
+    const byteRate = sampleRate * channels * 2;
+    return byteRate > 0 ? dataSize / byteRate : 0;
+  }
+
   function createCommand(input: any) {
     return {
       toFormat() {
@@ -41,6 +52,9 @@ vi.mock('fluent-ffmpeg', () => {
       audioChannels() {
         return this;
       },
+      duration() {
+        return this;
+      },
       on(_event: string, _handler: (err: Error) => void) {
         return this;
       },
@@ -50,7 +64,7 @@ vi.mock('fluent-ffmpeg', () => {
         dest.end();
         return dest;
       },
-      ffprobe(callback: (err: Error | null) => void) {
+      ffprobe(callback: (err: Error | null, data?: any) => void) {
         let settled = false;
         const settle = (fn: () => void): void => {
           if (settled) return;
@@ -66,19 +80,25 @@ vi.mock('fluent-ffmpeg', () => {
           } else {
             bytes.push(Number(chunk));
           }
-          if (bytes.length >= 4) {
+          if (bytes.length >= 44) {
             input.destroy();
             const header = String.fromCharCode(...bytes.slice(0, 4));
+            if (header !== 'RIFF') {
+              settle(() => callback(new Error('Invalid audio data')));
+              return;
+            }
+            const duration = parseWavDuration(bytes);
             settle(() =>
-              callback(
-                header === 'RIFF' ? null : new Error('Invalid audio data'),
-              ),
+              callback(null, {
+                format: { duration },
+                streams: [{ duration }],
+              }),
             );
           }
         });
         input.on('end', () => {
           settle(() => {
-            if (bytes.length < 4) {
+            if (bytes.length < 44) {
               callback(new Error('Invalid audio data'));
             }
           });

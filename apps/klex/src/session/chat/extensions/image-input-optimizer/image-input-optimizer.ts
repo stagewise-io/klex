@@ -23,7 +23,7 @@ import type {
   ResolvedModel,
 } from '../extension-api';
 import visionSystemPrompt from './vision-system-prompt.md';
-import visionToolPrompt from './vision-tool-prompt.md';
+import visionToolPrompt from './vision-tool-system-prompt.md';
 
 export const IMAGE_INPUT_OPTIMIZER_IDENTIFIER =
   'io.stagewise/image-input-optimizer';
@@ -335,14 +335,13 @@ class ImageInputOptimizerExt implements Extension {
     return {
       [VIEW_IMAGE_TOOL_NAME]: tool({
         description:
-          'Retrieve a more detailed description of an image you cannot directly see. Pass the image ID from the placeholder text. Optionally specify "lookFor" to focus the description on specific aspects of the image.',
+          'Retrieve a more detailed description of an image you cannot directly see. Pass the image ID from the placeholder text and specify "lookFor" to focus the description on specific aspects of the image.',
         inputSchema: z.object({
           id: z
             .string()
             .describe('The image ID from the placeholder text (e.g. "0-1")'),
           lookFor: z
             .string()
-            .optional()
             .describe(
               'What to specifically look for in the image (e.g. "text content", "colors", "layout")',
             ),

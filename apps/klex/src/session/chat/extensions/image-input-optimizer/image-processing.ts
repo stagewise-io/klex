@@ -15,7 +15,7 @@ const MIN_DIMENSION = 64;
 const MAX_CACHE_BYTES = 20 * 1024 * 1024; // 20 MB
 const DEFAULT_MEDIA_TYPES = ['image/webp', 'image/png', 'image/jpeg'] as const;
 
-type ImageFormat = 'webp' | 'png' | 'jpeg';
+type ImageFormat = 'webp' | 'png' | 'jpeg' | 'tiff' | 'gif' | 'avif';
 export type ProcessedPart = FilePart | TextPart | ImagePart;
 
 export interface EffectiveVision {
@@ -99,10 +99,14 @@ export const descriptionCache = new BoundedCache<string, string>(
   (s) => s.length,
 );
 
+/** In-flight description promises to deduplicate concurrent requests for the same image. */
+export const inflightDescriptions = new Map<string, Promise<string | null>>();
+
 /** Clears the module-level caches. Intended for testing only. */
 export function clearImageInputOptimizerCache(): void {
   cache.clear();
   descriptionCache.clear();
+  inflightDescriptions.clear();
 }
 
 export function resolveEffectiveVision(
@@ -194,10 +198,19 @@ function originalMediaType(part: FilePart | ImagePart): string {
   return part.type === 'file' ? part.mediaType : (part.mediaType ?? 'image');
 }
 
+const KNOWN_FORMATS: ReadonlySet<string> = new Set([
+  'webp',
+  'png',
+  'jpeg',
+  'tiff',
+  'gif',
+  'avif',
+]);
+
 /** Converts a mediaType string (e.g. 'image/png') to an ImageFormat, or null if not a known encodable format. */
 function mediaTypeToFormat(mt: string): ImageFormat | null {
   const fmt = mt.replace(/^image\//, '');
-  if (fmt === 'png' || fmt === 'webp' || fmt === 'jpeg') return fmt;
+  if (KNOWN_FORMATS.has(fmt)) return fmt as ImageFormat;
   return null;
 }
 
@@ -211,17 +224,26 @@ function selectTargetFormat(
     if (fmt) supportedFormats.add(fmt);
   }
 
+  // Prefer webp/png/jpeg for best compression
   for (const fmt of FORMAT_PREFERENCE) {
     if (supportedFormats.has(fmt)) return fmt;
   }
 
-  if (
-    currentFormat === 'webp' ||
-    currentFormat === 'png' ||
-    currentFormat === 'jpeg'
-  ) {
-    return currentFormat;
+  // No preferred format is supported. Try any other encodable format
+  // the model declares — better than sending an undeclared format.
+  for (const fmt of supportedFormats) {
+    return fmt;
   }
+
+  // No supported format is encodable. Keep the current format if
+  // we can encode it — avoids sending an undeclared format (e.g.
+  // webp) to a model that only supports non-standard formats.
+  if (currentFormat) {
+    const fmt = mediaTypeToFormat(`image/${currentFormat}`);
+    if (fmt) return fmt;
+  }
+
+  // Current format is not encodable either — best-effort webp
   return 'webp';
 }
 
@@ -236,7 +258,12 @@ async function transformImage(
     originalFormat,
     settings.supportedMediaTypes,
   );
-  const baseQuality = targetFormat === 'webp' ? WEBP_QUALITY : JPEG_QUALITY;
+  const baseQuality =
+    targetFormat === 'webp'
+      ? WEBP_QUALITY
+      : targetFormat === 'jpeg'
+        ? JPEG_QUALITY
+        : 85; // Default for tiff, gif, avif, etc.
 
   // Compute resize target — capped by maxWidth/maxHeight and maxTotalPixels
   let targetWidth = Math.min(settings.maxWidth, imgWidth);

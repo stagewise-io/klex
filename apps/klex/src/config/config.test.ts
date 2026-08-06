@@ -52,6 +52,7 @@ function manualConfig(modelId = 'model:8b'): KlexConfig {
       compaction: [],
       memory: [],
       imageVision: [],
+      audioListening: [],
     },
     mcpServers: {},
   };
@@ -74,6 +75,7 @@ function presetConfig(
       compaction: [],
       memory: [],
       imageVision: [],
+      audioListening: [],
     },
     mcpServers: {},
   };
@@ -106,6 +108,7 @@ function mixedConfig(): KlexConfig {
       compaction: ['local:chat:model:8b'],
       memory: ['local:api:test-model'],
       imageVision: [],
+      audioListening: [],
     },
     mcpServers: {},
   };
@@ -620,6 +623,7 @@ describe('Config — replace (atomic persistence)', () => {
           compaction: [],
           memory: [],
           imageVision: [],
+          audioListening: [],
         },
         mcpServers: {},
         // missing modelSelection.chat — but TS prevents this at compile time;
@@ -1174,7 +1178,13 @@ describe('Config — mutate skips validateModelReferences', () => {
 function noSelectionConfig(providers: KlexConfig['providers']): KlexConfig {
   return {
     providers,
-    modelSelection: { chat: [], compaction: [], memory: [], imageVision: [] },
+    modelSelection: {
+      chat: [],
+      compaction: [],
+      memory: [],
+      imageVision: [],
+      audioListening: [],
+    },
     mcpServers: {},
   };
 }

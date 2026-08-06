@@ -42,6 +42,12 @@ export interface RunStreamedGenerationParams {
   compacted: boolean;
   /** Provider-specific options resolved from the model selection entry. */
   providerOptions?: Record<string, JSONObject>;
+  /**
+   * System prompt parts collected from extensions at the beginning of
+   * the step. Appended to the base system prompt (separated by blank
+   * lines) before generation.
+   */
+  extensionSystemPromptParts?: string[];
 }
 
 /**
@@ -69,7 +75,10 @@ export async function runStreamedGeneration(
     tools: toolsWithoutExecute(params.tools),
     instructions: {
       role: 'system',
-      content: systemPrompt,
+      content: [systemPrompt, ...(params.extensionSystemPromptParts ?? [])]
+        .map((s) => s.trim())
+        .filter((s) => s.length > 0)
+        .join('\n\n'),
     },
     telemetry: {
       isEnabled: true,

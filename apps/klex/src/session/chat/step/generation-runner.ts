@@ -50,6 +50,12 @@ export interface GenerationRunnerDependencies {
   model: LanguageModel;
   /** Provider-specific options resolved from the model selection entry. */
   providerOptions?: Record<string, JSONObject>;
+  /**
+   * System prompt parts collected from extensions at the beginning of
+   * the step. Appended to the base system prompt (separated by blank
+   * lines) before each generation attempt.
+   */
+  extensionSystemPromptParts: string[];
 }
 
 /** Outcome of a single generation attempt inside the retry loop. */
@@ -155,6 +161,7 @@ export class GenerationRunner {
             modelIdFromEntry(fallbackManager.getChatModelEntry()),
           sessionId: this.deps.sessionId,
           compacted: this.deps.compacted,
+          extensionSystemPromptParts: this.deps.extensionSystemPromptParts,
           ...(this.deps.providerOptions !== undefined && {
             providerOptions: this.deps.providerOptions,
           }),

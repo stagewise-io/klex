@@ -343,6 +343,18 @@ export interface Extension {
    */
   getTools?: (model: ResolvedModel) => ToolSet;
 
+  /**
+   * Returns a string that this extension contributes to the system
+   * prompt. Called once per step, at the beginning of the step, for
+   * every extension that defines the method. Parts are collected in
+   * factory order and appended to the base system prompt (separated by
+   * blank lines) before generation.
+   *
+   * Extensions that don't need to inject system prompt content can
+   * omit this method.
+   */
+  getSystemPromptPart?: () => string;
+
   onStepStart?: () => void | Promise<void>;
 
   /**

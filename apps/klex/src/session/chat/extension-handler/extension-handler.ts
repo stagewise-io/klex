@@ -98,6 +98,14 @@ export interface ExtensionHandler {
   getTools: (model: ResolvedModel) => ToolSet;
 
   /**
+   * Collect `getSystemPromptPart()` return values from all extensions
+   * that define the method. Called once per step at the beginning of
+   * the step. Parts are returned in factory order. Empty/whitespace-only
+   * strings are filtered out.
+   */
+  getSystemPromptParts: () => string[];
+
+  /**
    * Run `historyTransformer` across all extensions in order.
    * Each extension receives the output history of the previous one.
    * Flags from all extensions are merged (OR semantics).
@@ -317,6 +325,27 @@ class ExtensionHandlerModule implements ExtensionHandler {
     }
 
     return merged as ToolSet;
+  }
+
+  getSystemPromptParts(): string[] {
+    const parts: string[] = [];
+
+    for (const ext of this.extensions) {
+      if (!ext.getSystemPromptPart) continue;
+      try {
+        const part = ext.getSystemPromptPart();
+        if (part.trim().length > 0) {
+          parts.push(part);
+        }
+      } catch (error) {
+        this.extensionDeps.logger.error(
+          { error, extensionIdentifier: this.identifiersByExtension.get(ext) },
+          'Extension getSystemPromptPart failed',
+        );
+      }
+    }
+
+    return parts;
   }
 
   async runHistoryTransformers(

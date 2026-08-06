@@ -1,7 +1,8 @@
-import type { FilePart, ModelMessage, TextPart, ToolResultPart } from 'ai';
+import type { FilePart, ModelMessage, TextPart } from 'ai';
 
 import type { ModelSelectionEntry } from '@/config';
 import { modelIdFromEntry } from '@/config';
+import { extractToolResultText } from '@/shared-utilities';
 
 import type { ExtensionDeps } from '../extension-api';
 import {
@@ -264,25 +265,6 @@ export function stripListenAudioFromHistory(
       return msg;
     })
     .filter((msg): msg is ModelMessage => msg !== null);
-}
-
-/** Extracts a text string from a ToolResultPart's output field. */
-function extractToolResultText(part: ToolResultPart): string {
-  const output = part.output;
-  if (typeof output === 'string') return output;
-  if (output && typeof output === 'object') {
-    if (output.type === 'text') return output.value as string;
-    if (output.type === 'error-text') return output.value as string;
-    if (output.type === 'json') return JSON.stringify(output.value);
-    if (output.type === 'content' && Array.isArray(output.value)) {
-      return output.value
-        .map((p: { type: string; text?: string }) =>
-          p.type === 'text' ? p.text : '',
-        )
-        .join('');
-    }
-  }
-  return '';
 }
 
 // Re-export for use by the main module

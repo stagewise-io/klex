@@ -10,6 +10,7 @@ import { type Config, modelIdFromEntry } from '@/config';
 import type { IntrospectionScope } from '@/introspection';
 import type { Mcp } from '@/mcp';
 import type { ModelProvider } from '@/model-provider';
+import type { RouterApi } from '@/router';
 import type { SessionInboxEvent } from '@/session/inbox';
 import type {
   AgentSession,
@@ -54,6 +55,7 @@ export interface ChatSessionDependencies {
   modelProvider: ModelProvider;
   config: Config;
   mcp: Mcp;
+  router: RouterApi;
   extensionFactories: ExtensionFactory[];
   /** Root data directory of the agent. Used for extension data dirs. */
   dataDirectory: string;
@@ -127,6 +129,7 @@ class ChatSessionModule implements AgentSession {
       config: Config;
       dataDirectory: string;
       mcp: Mcp;
+      router: RouterApi;
       extensionFactories: ExtensionFactory[];
       introspectionScope: IntrospectionScope;
       hooks?: SessionHooks;
@@ -202,6 +205,7 @@ class ChatSessionModule implements AgentSession {
       logger: this.deps.logger,
       logging: this.deps.logging,
       mcp: this.deps.mcp,
+      router: this.deps.router,
       sessionId: this.sessionId,
     };
 
@@ -847,6 +851,7 @@ export function createChatSession(deps: ChatSessionDependencies): AgentSession {
     config: deps.config,
     dataDirectory: deps.dataDirectory,
     mcp: deps.mcp,
+    router: deps.router,
     extensionFactories: deps.extensionFactories,
     introspectionScope: deps.introspectionScope,
     hooks: deps.hooks,

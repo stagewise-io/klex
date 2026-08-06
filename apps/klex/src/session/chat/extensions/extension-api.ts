@@ -16,6 +16,7 @@ import type {
   ModelSelectionEntry,
 } from '@/config';
 import type { Mcp } from '@/mcp';
+import type { RouterApi } from '@/router';
 
 import type { ChatSessionInbox } from '../inbox';
 import type { ExtendedUIMessage } from '../message-types';
@@ -487,6 +488,14 @@ export interface ExtensionDeps {
    * observability correlation.
    */
   sessionId: string;
+
+  /**
+   * The router API — allows extensions to send input events that the
+   * router dispatches to the active session. Unlike {@link inbox}, this
+   * survives session termination: the router creates a replacement
+   * session if the current one has terminated.
+   */
+  router: RouterApi;
 
   /**
    * Returns an absolute path to a directory the calling extension can

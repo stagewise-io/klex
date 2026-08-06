@@ -20,19 +20,28 @@ export interface RouterDependencies {
   createChatSession: (
     hooks: SessionHooks,
     introspectionScope: IntrospectionScope,
+    router: RouterApi,
   ) => AgentSession;
 }
 
-export interface Router {
-  start(): Promise<void>;
-  close(): Promise<void>;
-
+/**
+ * The subset of router capabilities exposed to extensions. Extensions
+ * can send input events that the router dispatches to the active session.
+ * This survives session termination — the router creates a replacement
+ * session if the current one has terminated.
+ */
+export interface RouterApi {
   /**
    * Send an input event into the router. The router decides internally
    * which session receives it. Currently always routes to the single
    * primary session.
    */
   sendInput(event: SessionInboxEvent): Promise<void>;
+}
+
+export interface Router extends RouterApi {
+  start(): Promise<void>;
+  close(): Promise<void>;
 }
 
 class RouterModule implements Router {
@@ -49,6 +58,7 @@ class RouterModule implements Router {
       createChatSession: (
         hooks: SessionHooks,
         introspectionScope: IntrospectionScope,
+        router: RouterApi,
       ) => AgentSession;
     },
   ) {}
@@ -90,6 +100,14 @@ class RouterModule implements Router {
   }
 
   async sendInput(event: SessionInboxEvent): Promise<void> {
+    if (!this.started) {
+      this.deps.logger.warn(
+        { sourceEnv: event.sourceEnv },
+        'Router is not running — dropping input event',
+      );
+      return;
+    }
+
     let session = this.session;
 
     // If the session terminated itself (e.g. fatal error), replace it
@@ -213,6 +231,7 @@ class RouterModule implements Router {
     const session = this.deps.createChatSession(
       hooks,
       this.sessionsScope ?? this.deps.introspection,
+      this,
     );
     this.session = session;
     await session.start().catch((error) => {

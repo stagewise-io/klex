@@ -6,11 +6,12 @@ import { createConfig } from '@/config';
 import { createIntrospector } from '@/introspection';
 import { createMcp } from '@/mcp';
 import { createModelProvider } from '@/model-provider';
-import { createRouter } from '@/router';
+import { createRouter, type RouterApi } from '@/router';
 import { createChatSession } from '@/session/chat';
 import { createContextCompactionExt } from '@/session/chat/extensions/context-compaction';
 import { createImageInputOptimizerExt } from '@/session/chat/extensions/image-input-optimizer';
 import { createJsReplSandboxExt } from '@/session/chat/extensions/js-repl-sandbox';
+import { createRemindersExt } from '@/session/chat/extensions/reminders';
 import { createSoulExt } from '@/session/chat/extensions/soul';
 import type { SessionHooks } from '@/session/types';
 import {
@@ -62,17 +63,23 @@ async function main(): Promise<void> {
     logging: logger,
     mcp,
     introspection: introspector,
-    createChatSession: (hooks: SessionHooks, introspectionScope) =>
+    createChatSession: (
+      hooks: SessionHooks,
+      introspectionScope,
+      router: RouterApi,
+    ) =>
       createChatSession({
         logging: logger,
         config: config,
         modelProvider: modelProvider,
         mcp,
+        router,
         extensionFactories: [
           createSoulExt,
           createJsReplSandboxExt,
           createContextCompactionExt,
           createImageInputOptimizerExt,
+          createRemindersExt,
         ],
         dataDirectory: cli.dataDirectory,
         hooks,

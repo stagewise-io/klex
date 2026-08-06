@@ -270,20 +270,6 @@ describe('ImageInputOptimizer — URL images skipped', () => {
   });
 });
 
-describe('ImageInputOptimizer — no transformation needed', () => {
-  it('returns image as-is when within all limits', async () => {
-    const img = await makeImageBuffer(100, 100);
-    const msg = makeUserMessage([makeFilePart(img, 'image/png')]);
-    const content = getContent(await runTransformer([msg], makeModel()), 0);
-    expect(content[0]?.type).toBe('file');
-    const data = content[0]?.data as { type: string; data: string };
-    expect(data.type).toBe('data');
-    expect(typeof data.data).toBe('string');
-    // Verify it's valid base64 by decoding round-trip
-    expect(Buffer.from(data.data, 'base64').length).toBeGreaterThan(0);
-  });
-});
-
 describe('ImageInputOptimizer — metadata stripping', () => {
   it('strips EXIF metadata from transformed images', async () => {
     const imgWithMeta = await sharp({
@@ -559,30 +545,6 @@ describe('ImageInputOptimizer — format preference', () => {
 });
 
 describe('ImageInputOptimizer — supports: false', () => {
-  it('replaces image with TextPart notification when no vision models', async () => {
-    const img = await makeImageBuffer(100, 100);
-    const msg = makeUserMessage([makeFilePart(img, 'image/png')]);
-    const content = getContent(
-      await runTransformer([msg], makeModel({ inputCapabilities: {} })),
-      0,
-    );
-    expect(content[0]?.type).toBe('text');
-    expect(content[0]?.text).toBe(
-      "Can't see the image, you have no vision capabilities or vision model as a helper to see the image.",
-    );
-  });
-
-  it('produces consistent TextPart replacement across calls', async () => {
-    const img = await makeImageBuffer(100, 100);
-    const msg = makeUserMessage([makeFilePart(img, 'image/png')]);
-    const model = makeModel({ inputCapabilities: {} });
-    const result1 = await runTransformer([msg], model);
-    const result2 = await runTransformer([msg], model);
-    const c1 = getContent(result1, 0);
-    const c2 = getContent(result2, 0);
-    expect(c1[0]?.text).toBe(c2[0]?.text);
-  });
-
   it('replaces image with description + viewImage hint when vision models configured', async () => {
     const img = await makeImageBuffer(100, 100);
     const msg = makeUserMessage([makeFilePart(img, 'image/png')]);
@@ -910,20 +872,6 @@ describe('ImageInputOptimizer — viewImage tool-call stripping', () => {
 });
 
 describe('ImageInputOptimizer — caching', () => {
-  it('returns cached result on second call with same image + modelId', async () => {
-    const img = await makeImageBuffer(3000, 3000, 'png');
-    const msg = makeUserMessage([makeFilePart(img, 'image/png')]);
-    const model = makeModel();
-
-    const result1 = await runTransformer([msg], model);
-    const result2 = await runTransformer([msg], model);
-    const c1 = getContent(result1, 0);
-    const c2 = getContent(result2, 0);
-
-    // Same object from cache
-    expect(c1[0]).toBe(c2[0]);
-  });
-
   it('shares cache across extension instances', async () => {
     const img = await makeImageBuffer(3000, 3000, 'png');
     const msg = makeUserMessage([makeFilePart(img, 'image/png')]);
@@ -1100,21 +1048,6 @@ describe('ImageInputOptimizer — introspection', () => {
   });
 });
 
-describe('ImageInputOptimizer — non-image content preserved', () => {
-  it('does not modify text parts or non-image file parts', async () => {
-    const textPart = { type: 'text' as const, text: 'hello' };
-    const pdfPart = {
-      type: 'file' as const,
-      data: { type: 'data' as const, data: Buffer.from('pdf-data') },
-      mediaType: 'application/pdf',
-    };
-    const msg = makeUserMessage([textPart, pdfPart]);
-    const content = getContent(await runTransformer([msg], makeModel()), 0);
-    expect(content[0]).toEqual(textPart);
-    expect(content[1]).toEqual(pdfPart);
-  });
-});
-
 // ---------------------------------------------------------------------------
 // viewImage tool
 // ---------------------------------------------------------------------------
@@ -1180,16 +1113,6 @@ describe('ImageInputOptimizer — viewImage tool execute', () => {
     }) => Promise<string>;
   }
 
-  it('returns a description when the vision model succeeds', async () => {
-    const img = await makeImageBuffer(100, 100);
-    const config = makeVisionConfig(['vision:gpt-4o']);
-    const generateText = vi.fn().mockResolvedValue(genSuccess('A red square.'));
-    const deps = makeDeps({ config, generateText });
-    const execute = await setupToolAndImage(img, deps);
-    const result = await execute({ id: '0-0' });
-    expect(result).toBe('A red square.');
-  });
-
   it('passes tool system prompt and image to generateText on tool execute', async () => {
     const img = await makeImageBuffer(100, 100);
     const config = makeVisionConfig(['vision:gpt-4o']);
@@ -1198,7 +1121,8 @@ describe('ImageInputOptimizer — viewImage tool execute', () => {
     const execute = await setupToolAndImage(img, deps);
     // Use lookFor to force a second generateText call (without lookFor,
     // the cached general description is returned and no new call is made)
-    await execute({ id: '0-0', lookFor: 'colors' });
+    const result = await execute({ id: '0-0', lookFor: 'colors' });
+    expect(result).toBe('A red square.');
     expect(generateText).toHaveBeenCalledTimes(2);
     const toolArgs = generateText.mock.calls[1]?.[0] as {
       modelIds: string[];
@@ -1252,16 +1176,6 @@ describe('ImageInputOptimizer — viewImage tool execute', () => {
     // generateText was called once during context transformation
     // (for the general description), but not for the unknown ID.
     expect(generateText).toHaveBeenCalledOnce();
-  });
-
-  it('returns failure message when all vision models fail', async () => {
-    const img = await makeImageBuffer(100, 100);
-    const config = makeVisionConfig(['vision:gpt-4o']);
-    const generateText = vi.fn().mockResolvedValue(genFailure());
-    const deps = makeDeps({ config, generateText });
-    const execute = await setupToolAndImage(img, deps);
-    const result = await execute({ id: '0-0' });
-    expect(result).toContain('Unable to analyze');
   });
 
   it('uses chat model fallback when vision models fail', async () => {

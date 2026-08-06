@@ -77,6 +77,7 @@ const baseConfig: KlexConfig = {
     compaction: [],
     memory: [],
     imageVision: [],
+    audioListening: [],
   },
   mcpServers: {},
 };
@@ -808,7 +809,13 @@ describe('PATCH /v1/providers/:name/endpoints/:endpointName — update endpoint'
           },
         },
       },
-      modelSelection: { chat: [], compaction: [], memory: [], imageVision: [] },
+      modelSelection: {
+        chat: [],
+        compaction: [],
+        memory: [],
+        imageVision: [],
+        audioListening: [],
+      },
       mcpServers: {},
     };
     const mutateFn = vi.fn(async (fn: (cfg: KlexConfig) => KlexConfig) =>

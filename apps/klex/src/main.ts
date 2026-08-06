@@ -8,6 +8,7 @@ import { createMcp } from '@/mcp';
 import { createModelProvider } from '@/model-provider';
 import { createRouter, type RouterApi } from '@/router';
 import { createChatSession } from '@/session/chat';
+import { createAudioInputOptimizerExt } from '@/session/chat/extensions/audio-input-optimizer';
 import { createContextCompactionExt } from '@/session/chat/extensions/context-compaction';
 import { createImageInputOptimizerExt } from '@/session/chat/extensions/image-input-optimizer';
 import { createJsReplSandboxExt } from '@/session/chat/extensions/js-repl-sandbox';
@@ -79,6 +80,7 @@ async function main(): Promise<void> {
           createJsReplSandboxExt,
           createContextCompactionExt,
           createImageInputOptimizerExt,
+          createAudioInputOptimizerExt,
           createRemindersExt,
         ],
         dataDirectory: cli.dataDirectory,

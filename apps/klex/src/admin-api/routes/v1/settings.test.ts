@@ -28,6 +28,7 @@ const baseSelection: ModelSelection = {
   compaction: ['openai:gpt-4o-mini'],
   memory: ['anthropic:claude-3-haiku'],
   imageVision: [],
+  audioListening: [],
 };
 
 const baseConfig: KlexConfig = {
@@ -108,6 +109,7 @@ describe('GET /v1/settings/model-selection', () => {
       compaction: ['provider:endpoint:model-c'],
       memory: [],
       imageVision: [],
+      audioListening: [],
     };
     const app = createApp(
       makeDeps({
@@ -199,6 +201,7 @@ describe('PATCH /v1/settings/model-selection', () => {
       compaction: ['openai:gpt-4o-mini'],
       memory: ['anthropic:claude-3-haiku'],
       imageVision: [],
+      audioListening: [],
     };
     const mutateFn = vi.fn(async (fn: (cfg: KlexConfig) => KlexConfig) => {
       const next = fn(baseConfig);
@@ -330,6 +333,7 @@ describe('PATCH /v1/settings/model-selection', () => {
         compaction: ['openai:gpt-4o-mini'],
         memory: ['anthropic:claude-3-haiku'],
         imageVision: [],
+        audioListening: [],
       },
     };
     const app = createApp(

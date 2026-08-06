@@ -11,6 +11,7 @@ import { createChatSession } from '@/session/chat';
 import { createContextCompactionExt } from '@/session/chat/extensions/context-compaction';
 import { createImageInputOptimizerExt } from '@/session/chat/extensions/image-input-optimizer';
 import { createJsReplSandboxExt } from '@/session/chat/extensions/js-repl-sandbox';
+import { createSoulExt } from '@/session/chat/extensions/soul';
 import type { SessionHooks } from '@/session/types';
 import {
   createTelemetryManager,
@@ -68,6 +69,7 @@ async function main(): Promise<void> {
         modelProvider: modelProvider,
         mcp,
         extensionFactories: [
+          createSoulExt,
           createJsReplSandboxExt,
           createContextCompactionExt,
           createImageInputOptimizerExt,

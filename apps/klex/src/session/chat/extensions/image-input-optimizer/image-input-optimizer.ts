@@ -335,7 +335,7 @@ class ImageInputOptimizerExt implements Extension {
     return {
       [VIEW_IMAGE_TOOL_NAME]: tool({
         description:
-          'Retrieve a more detailed description of an image you cannot directly see. Pass the image ID from the placeholder text and specify "lookFor" to focus the description on specific aspects of the image.',
+          'Get more information about an image that referenced this tool. Only use this tool when an image placeholder in the conversation instructs you to do so. Pass the image ID from the placeholder text and specify "lookFor" to focus on specific aspects of the image.',
         inputSchema: z.object({
           id: z
             .string()

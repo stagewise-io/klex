@@ -1,5 +1,4 @@
 import type { FilePart, ImagePart, TextPart } from 'ai';
-import sharp from 'sharp';
 
 import type { ModelInputCapabilities } from '@/config';
 import {
@@ -8,6 +7,30 @@ import {
   estimatePartSize,
   extractBufferFromUrl,
 } from '@/shared-utilities';
+
+// Lazy-load sharp — it's a native addon that may not be available in SEA builds
+// or on systems without the native binary. Mirrors the isFfmpegAvailable
+// pattern in audio-processing.ts.
+type SharpFn = typeof import('sharp')['default'];
+let sharpModule: SharpFn | null = null;
+let sharpChecked = false;
+
+function getSharp(): SharpFn | null {
+  if (sharpChecked) return sharpModule;
+  sharpChecked = true;
+  try {
+    // Use require() for CJS compatibility in SEA builds where sharp is external
+    sharpModule = require('sharp');
+  } catch {
+    sharpModule = null;
+  }
+  return sharpModule;
+}
+
+/** Returns true if sharp is available for image processing. */
+export function isSharpAvailable(): boolean {
+  return getSharp() !== null;
+}
 
 const DEFAULT_MAX_WIDTH = 2048;
 const DEFAULT_MAX_HEIGHT = 2048;
@@ -184,6 +207,10 @@ async function transformImage(
   settings: EffectiveVision,
   originalFormat: string | undefined,
 ): Promise<{ buffer: Buffer; format: ImageFormat }> {
+  const sharp = getSharp();
+  if (sharp === null) {
+    throw new Error('sharp is not available — image processing disabled');
+  }
   const targetFormat = selectTargetFormat(
     originalFormat,
     settings.supportedMediaTypes,
@@ -254,6 +281,10 @@ export async function runOptimization(
   part: FilePart | ImagePart,
   settings: EffectiveVision,
 ): Promise<FilePart> {
+  const sharp = getSharp();
+  if (sharp === null) {
+    throw new Error('sharp is not available — image processing disabled');
+  }
   const meta = await sharp(buffer).metadata();
   const width = meta.width;
   const height = meta.height;

@@ -59,6 +59,12 @@ export function createBuildOptions(isSea: boolean): {
       // Normal Node builds resolve dependencies from node_modules. Bundling them
       // into ESM breaks packages that use runtime CommonJS requires.
       packages: isSea ? 'bundle' : 'external',
+      // sharp is a native addon (N-API) that uses createRequire(import.meta.url)
+      // to load .node files at runtime. Bundling it into CJS/SEA breaks because
+      // esbuild transforms import.meta.url to undefined. Keep it external so the
+      // require() is deferred to runtime, where image-processing.ts handles the
+      // failure gracefully (same pattern as ffmpeg in audio-processing.ts).
+      ...(isSea ? { external: ['sharp'] } : {}),
     },
     worker: {
       ...sharedOptions,

@@ -30,6 +30,7 @@ import {
   descriptionCache,
   type EffectiveAudio,
   extractAudioBuffer,
+  isFfmpegAvailable,
   type ProcessedPart,
   resolveEffectiveAudio,
   runOptimization,
@@ -52,7 +53,13 @@ class AudioInputOptimizerExt implements Extension {
    */
   private readonly audioRegistry = new Map<string, FilePart>();
 
-  constructor(private readonly deps: ExtensionDeps) {}
+  constructor(private readonly deps: ExtensionDeps) {
+    if (!isFfmpegAvailable()) {
+      deps.logger.warn(
+        'ffmpeg not found on PATH — audio input optimizer will degrade to text replacement for all audio',
+      );
+    }
+  }
 
   getTools(model: ResolvedModel): ToolSet {
     // Only expose the listenAudio tool when the active model cannot hear

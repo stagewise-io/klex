@@ -3,7 +3,11 @@ packages:
   - packages/*
   - mcp-servers/*
 
+ignoredBuiltDependencies:
+  - ffmpeg-static
+  - protobufjs
+
+minimumReleaseAge: 2880
+
 onlyBuiltDependencies:
   - esbuild
-
-minimumReleaseAge: 2880 # 48 hours — reject packages published less than 48h ago

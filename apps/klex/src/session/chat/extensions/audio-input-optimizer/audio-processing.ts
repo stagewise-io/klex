@@ -1,6 +1,10 @@
+import { execFileSync } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import { PassThrough, Readable } from 'node:stream';
 
 import type { FilePart, TextPart } from 'ai';
+import ffmpegStaticPath from 'ffmpeg-static';
+import { path as ffprobeStaticPath } from 'ffprobe-static';
 import ffmpeg from 'fluent-ffmpeg';
 
 import type { ModelInputCapabilities } from '@/config';
@@ -10,6 +14,19 @@ import {
   estimatePartSize,
   extractBufferFromUrl,
 } from '@/shared-utilities';
+
+// Configure fluent-ffmpeg to use bundled static binaries when available.
+// In SEA builds the static binaries are not embedded — falls back to PATH.
+const ffprobeBinaryPath = existsSync(ffprobeStaticPath)
+  ? ffprobeStaticPath
+  : 'ffprobe';
+
+if (ffmpegStaticPath !== null && existsSync(ffmpegStaticPath)) {
+  ffmpeg.setFfmpegPath(ffmpegStaticPath);
+}
+if (existsSync(ffprobeStaticPath)) {
+  ffmpeg.setFfprobePath(ffprobeStaticPath);
+}
 
 const DEFAULT_MAX_DATA_SIZE = 25_165_824; // 24 MB
 const FORMAT_PREFERENCE = ['mp3', 'wav', 'ogg', 'flac', 'aac'] as const;
@@ -48,6 +65,23 @@ export function clearAudioInputOptimizerCache(): void {
   cache.clear();
   descriptionCache.clear();
   inflightDescriptions.clear();
+}
+
+let ffmpegAvailable: boolean | null = null;
+
+/** Checks whether ffprobe is available on PATH. Result is cached. */
+export function isFfmpegAvailable(): boolean {
+  if (ffmpegAvailable !== null) return ffmpegAvailable;
+  try {
+    execFileSync(ffprobeBinaryPath, ['-version'], {
+      stdio: 'ignore',
+      timeout: 5000,
+    });
+    ffmpegAvailable = true;
+  } catch {
+    ffmpegAvailable = false;
+  }
+  return ffmpegAvailable;
 }
 
 export function resolveEffectiveAudio(
@@ -154,21 +188,26 @@ function formatToFfmpegName(fmt: AudioFormat): string {
 function selectTargetFormat(
   currentFormat: AudioFormat | null,
   supportedMediaTypes: readonly string[],
-): AudioFormat {
-  const supportedFormats = new Set<AudioFormat>();
+): AudioFormat | null {
+  const supportedMediaSet = new Set(supportedMediaTypes);
+
+  // Only select formats whose emitted canonical MIME is actually
+  // declared by the model — avoids relabeling audio to an undeclared
+  // type (e.g. audio/opus → audio/ogg when only audio/opus is declared).
+  for (const fmt of FORMAT_PREFERENCE) {
+    if (supportedMediaSet.has(formatToMediaType(fmt))) return fmt;
+  }
+
+  // Check other declared MIME types — only use the format if its
+  // canonical MIME is also declared (prevents alias mismatches).
   for (const mt of supportedMediaTypes) {
     const fmt = mediaTypeToFormat(mt);
-    if (fmt) supportedFormats.add(fmt);
+    if (fmt && supportedMediaSet.has(formatToMediaType(fmt))) return fmt;
   }
 
-  for (const fmt of FORMAT_PREFERENCE) {
-    if (supportedFormats.has(fmt)) return fmt;
-  }
-
-  if (currentFormat !== null) {
-    return currentFormat;
-  }
-  return 'mp3';
+  // No format's canonical MIME is declared — return null so the caller
+  // can preserve the original or fail rather than relabeling.
+  return null;
 }
 
 interface QualitySetting {
@@ -220,12 +259,15 @@ function convertAudio(
   inputBuffer: Buffer,
   targetFormat: AudioFormat,
   options: QualitySetting,
+  maxOutputBytes: number,
 ): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     let settled = false;
     let timeout: NodeJS.Timeout | undefined;
     const chunks: Buffer[] = [];
+    let totalBytes = 0;
     const passthrough = new PassThrough();
+    let command: ReturnType<typeof ffmpeg> | undefined;
 
     const settle = (fn: () => void): void => {
       if (settled) return;
@@ -234,11 +276,25 @@ function convertAudio(
       fn();
     };
 
-    passthrough.on('data', (chunk: Buffer) => chunks.push(chunk));
+    passthrough.on('data', (chunk: Buffer) => {
+      totalBytes += chunk.length;
+      if (totalBytes > maxOutputBytes) {
+        settle(() => {
+          command?.kill('SIGKILL');
+          reject(
+            new Error(
+              `Audio conversion output exceeded ${maxOutputBytes} bytes`,
+            ),
+          );
+        });
+        return;
+      }
+      chunks.push(chunk);
+    });
     passthrough.on('end', () => settle(() => resolve(Buffer.concat(chunks))));
     passthrough.on('error', (err: Error) => settle(() => reject(err)));
 
-    const command = ffmpeg(Readable.from(inputBuffer))
+    command = ffmpeg(Readable.from(inputBuffer))
       .toFormat(formatToFfmpegName(targetFormat))
       .on('error', (err: Error) => settle(() => reject(err)));
 
@@ -248,7 +304,7 @@ function convertAudio(
 
     timeout = setTimeout(() => {
       settle(() => {
-        command.kill('SIGKILL');
+        command?.kill('SIGKILL');
         reject(new Error('Audio conversion timed out'));
       });
     }, FFMPEG_TIMEOUT_MS);
@@ -261,25 +317,57 @@ async function transformAudio(
   buffer: Buffer,
   settings: EffectiveAudio,
   originalFormat: AudioFormat | null,
-): Promise<{ buffer: Buffer; format: AudioFormat }> {
+  originalMediaType: string,
+): Promise<{ buffer: Buffer; mediaType: string }> {
   const targetFormat = selectTargetFormat(
     originalFormat,
     settings.supportedMediaTypes,
   );
-  const steps = qualitySteps(targetFormat);
-  let lastOutput: Buffer | null = null;
+  const maxOutputBytes = Math.max(settings.maxDataSize * 4, 50 * 1024 * 1024);
 
+  // No format with a declared canonical MIME — try re-encoding in the
+  // current format to preserve the original (declared) MIME type.
+  if (targetFormat === null) {
+    if (
+      originalFormat !== null &&
+      settings.supportedMediaTypes.includes(originalMediaType)
+    ) {
+      const steps = qualitySteps(originalFormat);
+      for (const step of steps) {
+        const output = await convertAudio(
+          buffer,
+          originalFormat,
+          step,
+          maxOutputBytes,
+        );
+        if (output.length <= settings.maxDataSize) {
+          return { buffer: output, mediaType: originalMediaType };
+        }
+      }
+    }
+    throw new Error(
+      'No supported audio format with a declared MIME type available for conversion',
+    );
+  }
+
+  const steps = qualitySteps(targetFormat);
   for (const step of steps) {
-    const output = await convertAudio(buffer, targetFormat, step);
-    lastOutput = output;
+    const output = await convertAudio(
+      buffer,
+      targetFormat,
+      step,
+      maxOutputBytes,
+    );
     if (output.length <= settings.maxDataSize) {
-      return { buffer: output, format: targetFormat };
+      return { buffer: output, mediaType: formatToMediaType(targetFormat) };
     }
   }
 
-  // All quality steps exhausted — return the smallest output we produced
-  // biome-ignore lint/style/noNonNullAssertion: loop guarantees at least one iteration produces output
-  return { buffer: lastOutput!, format: targetFormat };
+  // All quality steps exhausted — output still exceeds maxDataSize.
+  // Treat as a processing failure so the caller degrades gracefully.
+  throw new Error(
+    `Audio could not be reduced below maxDataSize (${settings.maxDataSize} bytes)`,
+  );
 }
 
 /**
@@ -308,10 +396,11 @@ export async function runOptimization(
     return buildFilePart(buffer, part.mediaType, part);
   }
 
-  const { buffer: output, format } = await transformAudio(
+  const { buffer: output, mediaType } = await transformAudio(
     buffer,
     settings,
     originalFormat,
+    part.mediaType,
   );
-  return buildFilePart(output, formatToMediaType(format), part);
+  return buildFilePart(output, mediaType, part);
 }

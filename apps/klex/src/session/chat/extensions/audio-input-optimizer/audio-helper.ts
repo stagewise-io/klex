@@ -183,10 +183,31 @@ async function runDescribeAudio(
     deps.logger.warn(
       'All audio-vision models failed — falling back to chat models with audio capability',
     );
+    // Re-optimize for the fallback chat models — they may have different
+    // format or byte constraints than the primary audio helper model.
+    const fallbackOptimizedPart = await optimizeForAudioHelper(
+      deps,
+      audioPart,
+      buffer,
+      audioChatEntries,
+      audioHash,
+    );
+    const fallbackUserContent: Array<FilePart | TextPart> = [
+      fallbackOptimizedPart,
+    ];
+    if (lookFor) {
+      fallbackUserContent.push({
+        type: 'text',
+        text: `Specifically listen for: ${lookFor}`,
+      });
+    }
+    const fallbackMessages: ModelMessage[] = [
+      { role: 'user', content: fallbackUserContent },
+    ];
     const fallbackResult = await deps.generateText({
       modelIds: audioChatEntries,
       system: systemPrompt,
-      messages,
+      messages: fallbackMessages,
     });
 
     if (fallbackResult.success) {

@@ -15,7 +15,7 @@ vi.mock('./vision-system-prompt.md', () => ({
   default: 'Describe this image.',
 }));
 
-vi.mock('./vision-tool-prompt.md', () => ({
+vi.mock('./vision-tool-system-prompt.md', () => ({
   default: 'Answer the question about the image.',
 }));
 
@@ -1098,7 +1098,7 @@ describe('ImageInputOptimizer — viewImage tool execute', () => {
   async function setupToolAndImage(
     img: Buffer,
     deps: ExtensionDeps,
-  ): Promise<(input: { id: string; lookFor?: string }) => Promise<string>> {
+  ): Promise<(input: { id: string; lookFor: string }) => Promise<string>> {
     const ext = createImageInputOptimizerExt.create(deps);
     const msg = makeUserMessage([makeFilePart(img, 'image/png')]);
     const nonVisionModel = makeModel({ inputCapabilities: {} });
@@ -1109,7 +1109,7 @@ describe('ImageInputOptimizer — viewImage tool execute', () => {
     };
     return viewImage.execute as (input: {
       id: string;
-      lookFor?: string;
+      lookFor: string;
     }) => Promise<string>;
   }
 
@@ -1171,7 +1171,7 @@ describe('ImageInputOptimizer — viewImage tool execute', () => {
     const generateText = vi.fn().mockResolvedValue(genSuccess('A red square.'));
     const deps = makeDeps({ config, generateText });
     const execute = await setupToolAndImage(img, deps);
-    const result = await execute({ id: '99-99' });
+    const result = await execute({ id: '99-99', lookFor: 'test' });
     expect(result).toContain('not found');
     // generateText was called once during context transformation
     // (for the general description), but not for the unknown ID.
@@ -1187,17 +1187,18 @@ describe('ImageInputOptimizer — viewImage tool execute', () => {
     );
     const generateText = vi
       .fn()
+      .mockResolvedValueOnce(genSuccess('General description.'))
       .mockResolvedValueOnce(genFailure())
       .mockResolvedValueOnce(genSuccess('Chat model description.'));
     const deps = makeDeps({ config, generateText });
     const execute = await setupToolAndImage(img, deps);
-    const result = await execute({ id: '0-0' });
+    const result = await execute({ id: '0-0', lookFor: 'details' });
     expect(result).toBe('Chat model description.');
-    expect(generateText).toHaveBeenCalledTimes(2);
-    const secondCall = generateText.mock.calls[1]?.[0] as {
+    expect(generateText).toHaveBeenCalledTimes(3);
+    const thirdCall = generateText.mock.calls[2]?.[0] as {
       modelIds: string[];
     };
-    expect(secondCall.modelIds).toEqual(['chat:claude-3']);
+    expect(thirdCall.modelIds).toEqual(['chat:claude-3']);
   });
 
   it('returns failure message when both vision and chat fallback fail', async () => {
@@ -1210,7 +1211,7 @@ describe('ImageInputOptimizer — viewImage tool execute', () => {
     const generateText = vi.fn().mockResolvedValue(genFailure());
     const deps = makeDeps({ config, generateText });
     const execute = await setupToolAndImage(img, deps);
-    const result = await execute({ id: '0-0' });
+    const result = await execute({ id: '0-0', lookFor: 'details' });
     expect(result).toContain('Unable to analyze');
   });
 
@@ -1240,23 +1241,10 @@ describe('ImageInputOptimizer — viewImage tool execute', () => {
     const generateText = vi.fn().mockResolvedValue(genFailure());
     const deps = makeDeps({ config, generateText });
     const execute = await setupToolAndImage(img, deps);
-    const result = await execute({ id: '0-0' });
+    const result = await execute({ id: '0-0', lookFor: 'details' });
     expect(result).toContain('Unable to analyze');
     // Called during context transformation and during tool execute
     expect(generateText).toHaveBeenCalledTimes(2);
-  });
-
-  it('caches general description across tool calls', async () => {
-    const img = await makeImageBuffer(100, 100);
-    const config = makeVisionConfig(['vision:gpt-4o']);
-    const generateText = vi.fn().mockResolvedValue(genSuccess('A red square.'));
-    const deps = makeDeps({ config, generateText });
-    const execute = await setupToolAndImage(img, deps);
-    // First call uses cached general description from context transformation
-    await execute({ id: '0-0' });
-    // Second call also uses cache — no new generateText call
-    await execute({ id: '0-0' });
-    expect(generateText).toHaveBeenCalledOnce();
   });
 
   it('generates separate descriptions for different lookFor values', async () => {
@@ -1288,9 +1276,9 @@ describe('ImageInputOptimizer — viewImage tool execute', () => {
     await ext.contextTransformer?.([msg], nonVisionModel);
     const tools = ext.getTools?.(nonVisionModel) ?? {};
     const viewImage = tools.viewImage as {
-      execute: (input: { id: string; lookFor?: string }) => Promise<string>;
+      execute: (input: { id: string; lookFor: string }) => Promise<string>;
     };
-    await viewImage.execute?.({ id: '0-0' }, {
+    await viewImage.execute?.({ id: '0-0', lookFor: 'test' }, {
       messages: [],
       toolCallId: 'test',
     } as never);

@@ -29,6 +29,7 @@ if (existsSync(ffprobeStaticPath)) {
 }
 
 const DEFAULT_MAX_DATA_SIZE = 25_165_824; // 24 MB
+const DEFAULT_MAX_LENGTH_SECONDS = 1800; // 30 minutes
 const FORMAT_PREFERENCE = ['mp3', 'wav', 'ogg', 'flac', 'aac'] as const;
 const FFMPEG_TIMEOUT_MS = 30_000;
 const MAX_CACHE_BYTES = 20 * 1024 * 1024; // 20 MB
@@ -39,6 +40,7 @@ export type ProcessedPart = FilePart | TextPart;
 export interface EffectiveAudio {
   supports: boolean;
   maxDataSize: number;
+  maxLengthSeconds: number;
   supportedMediaTypes: readonly string[];
 }
 
@@ -91,6 +93,7 @@ export function resolveEffectiveAudio(
   return {
     supports: audio !== undefined,
     maxDataSize: audio?.maxBytes ?? DEFAULT_MAX_DATA_SIZE,
+    maxLengthSeconds: audio?.maxLengthSeconds ?? DEFAULT_MAX_LENGTH_SECONDS,
     supportedMediaTypes: audio?.mediaTypes ?? [],
   };
 }
@@ -238,8 +241,8 @@ function qualitySteps(targetFormat: AudioFormat): readonly QualitySetting[] {
   ];
 }
 
-/** Probes an audio buffer to verify it is valid audio. Rejects on any ffprobe error. */
-function probeAudio(inputBuffer: Buffer): Promise<void> {
+/** Probes an audio buffer to verify it is valid audio. Returns duration in seconds. */
+function probeAudio(inputBuffer: Buffer): Promise<number> {
   return new Promise((resolve, reject) => {
     let settled = false;
     const settle = (fn: () => void): void => {
@@ -248,8 +251,15 @@ function probeAudio(inputBuffer: Buffer): Promise<void> {
       fn();
     };
 
-    ffmpeg(Readable.from(inputBuffer)).ffprobe((err: Error | null) =>
-      settle(() => (err ? reject(err) : resolve())),
+    ffmpeg(Readable.from(inputBuffer)).ffprobe(
+      (err: Error | null, data: ffmpeg.FfprobeData) =>
+        settle(() => {
+          if (err) return reject(err);
+          // Duration from format-level, fall back to stream-level
+          const duration =
+            data?.format?.duration ?? data?.streams?.[0]?.duration;
+          resolve(typeof duration === 'number' ? duration : 0);
+        }),
     );
   });
 }
@@ -260,6 +270,7 @@ function convertAudio(
   targetFormat: AudioFormat,
   options: QualitySetting,
   maxOutputBytes: number,
+  maxDurationSeconds?: number,
 ): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     let settled = false;
@@ -298,6 +309,9 @@ function convertAudio(
       .toFormat(formatToFfmpegName(targetFormat))
       .on('error', (err: Error) => settle(() => reject(err)));
 
+    if (maxDurationSeconds !== undefined) {
+      command.duration(maxDurationSeconds);
+    }
     if (options.audioBitrate) command.audioBitrate(options.audioBitrate);
     if (options.audioFrequency) command.audioFrequency(options.audioFrequency);
     if (options.audioChannels) command.audioChannels(options.audioChannels);
@@ -318,12 +332,22 @@ async function transformAudio(
   settings: EffectiveAudio,
   originalFormat: AudioFormat | null,
   originalMediaType: string,
+  durationSeconds: number,
 ): Promise<{ buffer: Buffer; mediaType: string }> {
   const targetFormat = selectTargetFormat(
     originalFormat,
     settings.supportedMediaTypes,
   );
   const maxOutputBytes = Math.max(settings.maxDataSize * 4, 50 * 1024 * 1024);
+  // Truncate audio that exceeds the max length. The conversion will
+  // stop at this duration, discarding the remainder.
+  // TODO: Instead of truncating, chunk long audio into segments and
+  // make multiple calls to the model (or the listen fallback model)
+  // to process each chunk, then combine the results.
+  const maxDuration =
+    durationSeconds > settings.maxLengthSeconds
+      ? settings.maxLengthSeconds
+      : undefined;
 
   // No format with a declared canonical MIME — try re-encoding in the
   // current format to preserve the original (declared) MIME type.
@@ -339,6 +363,7 @@ async function transformAudio(
           originalFormat,
           step,
           maxOutputBytes,
+          maxDuration,
         );
         if (output.length <= settings.maxDataSize) {
           return { buffer: output, mediaType: originalMediaType };
@@ -357,6 +382,7 @@ async function transformAudio(
       targetFormat,
       step,
       maxOutputBytes,
+      maxDuration,
     );
     if (output.length <= settings.maxDataSize) {
       return { buffer: output, mediaType: formatToMediaType(targetFormat) };
@@ -383,16 +409,17 @@ export async function runOptimization(
   part: FilePart,
   settings: EffectiveAudio,
 ): Promise<FilePart> {
-  // Validate the audio is parseable — analogous to sharp(buffer).metadata()
-  await probeAudio(buffer);
+  // Validate the audio is parseable and get its duration.
+  const durationSeconds = await probeAudio(buffer);
 
   const originalFormat = mediaTypeToFormat(part.mediaType);
   const needsFormatChange = !settings.supportedMediaTypes.includes(
     part.mediaType,
   );
   const needsSizeReduction = buffer.length > settings.maxDataSize;
+  const needsLengthTruncation = durationSeconds > settings.maxLengthSeconds;
 
-  if (!needsFormatChange && !needsSizeReduction) {
+  if (!needsFormatChange && !needsSizeReduction && !needsLengthTruncation) {
     return buildFilePart(buffer, part.mediaType, part);
   }
 
@@ -401,6 +428,7 @@ export async function runOptimization(
     settings,
     originalFormat,
     part.mediaType,
+    durationSeconds,
   );
   return buildFilePart(output, mediaType, part);
 }

@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { ModuleLogger } from '@stagewise/logger';
 
-import { type SessionInboxEvent, SessionInboxPriority } from '@/session/inbox';
+import { type SessionInboxEvent, SessionInboxUrgency } from '@/session/inbox';
 
 import type { ExtensionDeps, ExtensionFactory } from '../extension-api';
 import { createRemindersExt } from './reminders';
@@ -152,7 +152,7 @@ describe('Reminders extension', () => {
     expect(sendInput).toHaveBeenCalledTimes(1);
     const event = sendInput.mock.calls[0]?.[0] as SessionInboxEvent;
     expect(event.sourceEnv).toBe('reminders');
-    expect(event.priority).toBe(SessionInboxPriority.Medium);
+    expect(event.urgency).toBe(SessionInboxUrgency.Default);
     expect(event.context.metadata).toMatchObject({
       type: 'reminder.fired',
       handle: expect.any(Number),

@@ -36,7 +36,7 @@ import {
   createInbox,
   type SessionInbox,
   type SessionInboxBuffer,
-  SessionInboxPriority,
+  SessionInboxUrgency,
 } from './inbox';
 import type { ExtendedUIMessage } from './message-types';
 import { createTurn, type Turn, type TurnResult } from './turn';
@@ -89,6 +89,13 @@ class ChatSessionModule implements AgentSession {
    * Set to null when no wait is in progress.
    */
   private backoffInterrupt: (() => void) | null = null;
+
+  /**
+   * Set when non-deferrable input arrives during an active turn.
+   * Checked after the turn completes — if true, the loop runs a
+   * check-retry turn so the model can review the new input.
+   */
+  private newInputDuringTurn = false;
 
   private readonly sessionId = randomUUID();
 
@@ -173,7 +180,9 @@ class ChatSessionModule implements AgentSession {
     );
 
     this.sessionInbox = createInbox({
-      onNewEvent: this.onNewInboxEvent,
+      onImmediateEvent: this.onImmediateEvent,
+      onImmediateMessage: this.onImmediateMessage,
+      onNewInput: this.onNewInput,
       logger: this.deps.logger,
     });
 
@@ -435,23 +444,41 @@ class ChatSessionModule implements AgentSession {
   // Loop — hosted in the session per architecture.md
   // ---------------------------------------------------------------------------
 
-  private onNewInboxEvent = (priority: SessionInboxPriority): void => {
-    // High priority: abort the current generation immediately (2.2.8.2).
-    if (priority === SessionInboxPriority.High && this.currentTurn) {
+  private onImmediateEvent = (event: SessionInboxEvent): void => {
+    // Append to history immediately as a user message with data-context part.
+    this.messages.push({
+      role: 'user',
+      id: randomUUID(),
+      parts: [{ type: 'data-context', data: event.context }],
+    });
+
+    // Critical urgency: abort the current generation immediately.
+    if (event.urgency === SessionInboxUrgency.Critical && this.currentTurn) {
       this.currentTurn.abortGeneration('inbox_interrupt');
       this.sessionSpan.addEvent('session.generation_aborted', {
         'session.abortReason': 'inbox_interrupt',
-        'inbox.priority': SessionInboxPriority[priority],
+        'inbox.urgency': SessionInboxUrgency[event.urgency],
       });
     }
+  };
 
+  private onImmediateMessage = (message: ExtendedUIMessage): void => {
+    this.messages.push(message);
+  };
+
+  private onNewInput = (): void => {
     // If currently in a backoff wait, interrupt it so the new input is
     // processed immediately.
     if (this.backoffInterrupt) {
       this.backoffInterrupt();
     }
 
-    // If no turn is active, start one (architecture step 1).
+    // Track that new input arrived during an active turn.
+    if (this.loopActive) {
+      this.newInputDuringTurn = true;
+    }
+
+    // If no turn is active, start one.
     if (!this.loopActive) {
       void this.runLoop();
     }
@@ -477,6 +504,7 @@ class ChatSessionModule implements AgentSession {
     this.runtimeState = 'working';
 
     let needsBackoffRetry = false;
+    let needsCheckRetry = false;
 
     try {
       while (true) {
@@ -492,9 +520,13 @@ class ChatSessionModule implements AgentSession {
           return;
         }
 
-        // If the inbox is empty AND we're not in a backoff retry cycle,
-        // go idle.
-        if (this.sessionInbox.isEmpty() && !needsBackoffRetry) {
+        // If the inbox is empty AND we're not in a backoff retry cycle
+        // AND no check-retry is needed, go idle.
+        if (
+          this.sessionInbox.isEmpty() &&
+          !needsBackoffRetry &&
+          !needsCheckRetry
+        ) {
           this.runtimeState = 'idle';
           this.sessionSpan.addEvent('session.idle', {
             'session.id': this.sessionId,
@@ -506,13 +538,21 @@ class ChatSessionModule implements AgentSession {
           return;
         }
 
-        // Run exactly one turn per iteration. The turn drains inbox input
-        // and runs steps until no more generation is needed.
+        // Reset the new-input flag before each turn so we only detect
+        // input that arrives during this specific turn.
+        this.newInputDuringTurn = false;
+
+        // Run exactly one turn per iteration. The turn drains deferred
+        // inbox input and runs steps until no more generation is needed.
         //
         // If we're in a backoff retry cycle, the turn will run even though
         // the inbox may be empty — it retries generation with the existing
         // messages. The turn's step will find the last assistant message
         // (or a "Continue." message from the prior forceNextStep) and retry.
+        //
+        // If needsCheckRetry is true, the turn injects a data-check message
+        // prompting the model to review new input that arrived during the
+        // previous turn.
         const turn = createTurn({
           logger: this.deps.logger,
           sessionId: this.sessionId,
@@ -525,6 +565,7 @@ class ChatSessionModule implements AgentSession {
           fallbackManager: this.fallbackManager,
           config: this.deps.config,
           forceContinue: needsBackoffRetry,
+          forceCheck: needsCheckRetry,
         });
         this.currentTurn = turn;
 
@@ -576,6 +617,7 @@ class ChatSessionModule implements AgentSession {
           this.runtimeState = 'retrying';
           this.backoffManager.recordFailure();
           needsBackoffRetry = true;
+          needsCheckRetry = false;
 
           // Terminate after too many consecutive failures to prevent
           // infinite retry loops.
@@ -603,11 +645,21 @@ class ChatSessionModule implements AgentSession {
           this.runtimeState = 'success';
           this.backoffManager.recordSuccess();
           needsBackoffRetry = false;
+          // Check if new non-deferrable input arrived during this turn.
+          // If so, run a check-retry turn so the model can review it.
+          needsCheckRetry = this.newInputDuringTurn;
         }
 
-        // If the turn succeeded or was a no-op, loop back to the top
-        // to check for more inbox input or go idle.
-        if (!needsBackoffRetry) {
+        // If the turn succeeded or was a no-op, and no check-retry is
+        // needed, loop back to the top to check for more inbox input or
+        // go idle.
+        if (!needsBackoffRetry && !needsCheckRetry) {
+          continue;
+        }
+
+        // If a check-retry is needed (and no backoff), loop back to run
+        // a check-retry turn.
+        if (!needsBackoffRetry && needsCheckRetry) {
           continue;
         }
 
@@ -804,10 +856,9 @@ class ChatSessionModule implements AgentSession {
     // while we drain what's already buffered.
     this.sessionInbox.close();
 
-    // Drain remaining inbox events so the router can re-dispatch them
-    // to the replacement session. getEvents(Low) drains all priorities.
-    // Safe to call after close().
-    const pendingEvents = this.sessionInbox.getEvents(SessionInboxPriority.Low);
+    // Drain remaining deferred inbox events so the router can re-dispatch them
+    // to the replacement session.
+    const pendingEvents = this.sessionInbox.getEvents();
 
     // Now perform the standard close (span end, status update, etc.).
     // close() will call sessionInbox.close() again — that's a no-op.

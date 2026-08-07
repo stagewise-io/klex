@@ -2,7 +2,6 @@ import { context, trace } from '@opentelemetry/api';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { StepCompleteEvent } from '../extensions/extension-api';
-import { SessionInboxPriority } from '../inbox';
 import type { ExtendedUIMessage } from '../message-types';
 import { createStep } from '../step';
 import {
@@ -75,7 +74,7 @@ describe('Turn — inbox draining', () => {
     vi.clearAllMocks();
   });
 
-  it('drains inbox at Low priority at the start of the turn', async () => {
+  it('drains deferred inbox at the start of the turn', async () => {
     const step = makeMockStep();
     vi.mocked(createStep).mockReturnValue(step);
 
@@ -86,7 +85,6 @@ describe('Turn — inbox draining', () => {
     expect(inbox.drain).toHaveBeenCalledOnce();
     expect(inbox.drain).toHaveBeenCalledWith(
       expect.anything(),
-      SessionInboxPriority.Low,
       expect.anything(),
     );
   });
@@ -602,5 +600,99 @@ describe('Turn — forceContinue (backoff retry)', () => {
         m.role === 'user' && m.parts.some((p) => p.type === 'data-continue'),
     );
     expect(continueMsg).toBeUndefined();
+  });
+});
+
+describe('Turn — forceCheck (check-retry)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('injects a data-check message when forceCheck is true and last message is assistant text-only', async () => {
+    const step1 = makeMockStep({ shouldContinue: true });
+    const step2 = makeMockStep({ shouldContinue: false });
+    vi.mocked(createStep).mockReturnValueOnce(step1).mockReturnValueOnce(step2);
+
+    const messages: ExtendedUIMessage[] = [
+      { id: 'u1', role: 'user', parts: [{ type: 'text', text: 'hello' }] },
+      { id: 'a1', role: 'assistant', parts: [{ type: 'text', text: 'hi' }] },
+    ] as ExtendedUIMessage[];
+
+    const turn = createTurn(makeDeps({ messages, forceCheck: true }));
+    await turn.run();
+
+    const checkMsg = messages.find(
+      (m) => m.role === 'user' && m.parts.some((p) => p.type === 'data-check'),
+    );
+    expect(checkMsg).toBeDefined();
+  });
+
+  it('does not inject data-check when last message is assistant with tool calls', async () => {
+    const step1 = makeMockStep({ shouldContinue: true });
+    const step2 = makeMockStep({ shouldContinue: false });
+    vi.mocked(createStep).mockReturnValueOnce(step1).mockReturnValueOnce(step2);
+
+    const messages: ExtendedUIMessage[] = [
+      { id: 'u1', role: 'user', parts: [{ type: 'text', text: 'hello' }] },
+      {
+        id: 'a1',
+        role: 'assistant',
+        parts: [
+          { type: 'text', text: 'calling tool' },
+          {
+            type: 'tool-someTool' as never,
+            toolCallId: 'call-1',
+            state: 'input-available',
+            input: {},
+            providerExecuted: false,
+          } as never,
+        ],
+      },
+    ] as ExtendedUIMessage[];
+
+    const turn = createTurn(makeDeps({ messages, forceCheck: true }));
+    await turn.run();
+
+    const checkMsg = messages.find(
+      (m) => m.role === 'user' && m.parts.some((p) => p.type === 'data-check'),
+    );
+    expect(checkMsg).toBeUndefined();
+  });
+
+  it('does not inject data-check when last message is a user message', async () => {
+    const step1 = makeMockStep({ shouldContinue: true });
+    const step2 = makeMockStep({ shouldContinue: false });
+    vi.mocked(createStep).mockReturnValueOnce(step1).mockReturnValueOnce(step2);
+
+    const messages: ExtendedUIMessage[] = [
+      { id: 'u1', role: 'user', parts: [{ type: 'text', text: 'hello' }] },
+    ] as ExtendedUIMessage[];
+
+    const turn = createTurn(makeDeps({ messages, forceCheck: true }));
+    await turn.run();
+
+    const checkCount = messages.filter(
+      (m) => m.role === 'user' && m.parts.some((p) => p.type === 'data-check'),
+    ).length;
+    expect(checkCount).toBe(0);
+  });
+
+  it('does not inject data-check when forceCheck is not set', async () => {
+    const step1 = makeMockStep({ shouldContinue: true });
+    const step2 = makeMockStep({ shouldContinue: false });
+    vi.mocked(createStep).mockReturnValueOnce(step1).mockReturnValueOnce(step2);
+
+    const messages: ExtendedUIMessage[] = [
+      { id: 'u1', role: 'user', parts: [{ type: 'text', text: 'hello' }] },
+      { id: 'a1', role: 'assistant', parts: [{ type: 'text', text: 'hi' }] },
+    ] as ExtendedUIMessage[];
+
+    const turn = createTurn(makeDeps({ messages }));
+    await turn.run();
+
+    const checkMsg = messages.find(
+      (m) => m.role === 'user' && m.parts.some((p) => p.type === 'data-check'),
+    );
+    expect(checkMsg).toBeUndefined();
   });
 });

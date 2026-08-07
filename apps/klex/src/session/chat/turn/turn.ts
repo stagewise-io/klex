@@ -10,7 +10,7 @@ import type { ModelProvider } from '@/model-provider';
 import type { Usage } from '@/session/types';
 
 import type { ExtensionHandler } from '../extension-handler';
-import { type SessionInboxBuffer, SessionInboxPriority } from '../inbox';
+import type { SessionInboxBuffer } from '../inbox';
 import type { ExtendedUIMessage } from '../message-types';
 import { createStep, type Step, type StepCompleteEvent } from '../step';
 import { inboxDrainAttributes } from '../utils/inbox-drain-attributes';
@@ -36,6 +36,13 @@ export interface TurnDependencies {
    * even when the inbox is empty.
    */
   forceContinue?: boolean;
+  /**
+   * When true, the turn injects a `data-check` user message before the
+   * first step if the last message is an assistant message without tool
+   * calls. Used by the session's check-retry to prompt the model to
+   * review new input that arrived during the previous turn.
+   */
+  forceCheck?: boolean;
 }
 
 export interface TurnResult {
@@ -105,15 +112,16 @@ class TurnModule implements Turn {
 
     try {
       await context.with(turnContext, async () => {
-        // 2.1: Fetch inbox for low, medium and high prio inputs
-        const drainedLow = this.deps.inbox.drain(
+        // 2.1: Drain deferred inbox inputs (Deferrable urgency only).
+        // Critical and Default urgency items were already appended to
+        // messages[] immediately on arrival.
+        const drainedDeferred = this.deps.inbox.drain(
           this.deps.messages,
-          SessionInboxPriority.Low,
           this.deps.logger,
         );
         turnSpan.addEvent(
           'turn.inbox_drained',
-          inboxDrainAttributes(drainedLow, 'low'),
+          inboxDrainAttributes(drainedDeferred, 'turn'),
         );
 
         // 2.2: Run steps until no more generation is needed
@@ -141,8 +149,35 @@ class TurnModule implements Turn {
         // same action — inject a "Continue." user message before the
         // next step.
         let needsContinue = this.deps.forceContinue ?? false;
+        let needsCheck = this.deps.forceCheck ?? false;
 
         while (stepResult.shouldContinue) {
+          // Check injection (before continue injection — a check-retry
+          // turn needs the prompt before the first step). The check
+          // message tells the model to review new input and decide
+          // whether to do more. Only injected once (consumed on first
+          // iteration), same guard as Continue: only when the last
+          // message is an assistant without tool calls.
+          if (needsCheck) {
+            const lastMsg = this.deps.messages[this.deps.messages.length - 1];
+            const shouldInjectCheck =
+              lastMsg?.role === 'assistant' &&
+              !lastMsg.parts.some((p) => isToolUIPart(p));
+            if (shouldInjectCheck) {
+              this.deps.messages.push({
+                id: randomUUID(),
+                role: 'user',
+                parts: [{ type: 'data-check', data: {} }],
+              });
+              turnSpan.addEvent('turn.force_check_injected', {});
+              this.deps.logger.debug(
+                { turnId: this.id, stepCount },
+                'Forced check message injected',
+              );
+            }
+            needsCheck = false;
+          }
+
           if (needsContinue) {
             // Continue is only useful when the last message is an assistant
             // message without tool calls — the model needs an explicit prompt
@@ -172,7 +207,6 @@ class TurnModule implements Turn {
             logger: this.deps.logger,
             turnContext,
             messages: this.deps.messages,
-            inbox: this.deps.inbox,
             extensionHandler: this.deps.extensionHandler,
             modelProvider: this.deps.modelProvider,
             fallbackManager: this.deps.fallbackManager,

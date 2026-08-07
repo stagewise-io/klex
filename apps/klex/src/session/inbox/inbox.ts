@@ -1,19 +1,20 @@
 /**
- * Inbox priority levels controlling when buffered events/messages are
- * consumed by the session lifecycle.
+ * Inbox urgency levels controlling how events/messages are handled by
+ * the session lifecycle.
  *
- * - **Low**: Consumed at turn start only. Background context, non-urgent
- *   information. Not consumed mid-turn.
- * - **Medium**: Consumed per-step at step start. Normal user input, tool
- *   results. Picks up events that arrive mid-turn.
- * - **High**: Aborts the current generation immediately and is consumed
- *   by the next step. Urgent interrupts, user corrections.
- *
- * The Turn drains at `Low` (which includes Medium+High via `>= minPriority`),
- * and the Step drains at `Medium` (which includes High). This means all
- * events are consumed at turn start, and Medium+High events are re-checked
- * at each step start for mid-turn arrivals.
+ * - **Critical**: Appended to history immediately and aborts the current
+ *   generation. Use for urgent interrupts, user corrections.
+ * - **Default**: Appended to history immediately but does not abort the
+ *   current generation. The running step finishes naturally; the model
+ *   sees the new input in the next step's clone or in a check-retry turn.
+ * - **Deferrable**: Buffered until turn start drain. Background context
+ *   that can wait. Not appended immediately, does not trigger check-retry.
  */
+export enum SessionInboxUrgency {
+  Critical = 0,
+  Default = 1,
+  Deferrable = 2,
+}
 export function getBase64DecodedBytes(data: string): number | undefined {
   if (data.length === 0 || data.length % 4 !== 0) return undefined;
 
@@ -34,12 +35,6 @@ export function getBase64DecodedBytes(data: string): number | undefined {
     return undefined;
   }
   return (data.length / 4) * 3 - padding;
-}
-
-export enum SessionInboxPriority {
-  Low = 0,
-  Medium = 1,
-  High = 2,
 }
 
 /**
@@ -98,7 +93,7 @@ export type ContextDataUIPart = {
 
 export type SessionInboxEvent = {
   sourceEnv: string;
-  priority: SessionInboxPriority;
+  urgency: SessionInboxUrgency;
   context: ContextDataUIPart;
 };
 
@@ -132,7 +127,7 @@ export interface SessionInbox {
    * @throws {SessionInboxClosedError} if the inbox has been closed.
    *
    * @param event.sourceEnv The environment from which the input originates.
-   * @param event.priority The priority with which the input is sent. Higher priority gets faster response.
+   * @param event.urgency The urgency of the input. Critical aborts the current generation and appends immediately. Default appends immediately without aborting. Deferrable buffers until the next turn start.
    * @param event.context The context item that should be sent to the model.
    */
   send: (event: SessionInboxEvent) => void;

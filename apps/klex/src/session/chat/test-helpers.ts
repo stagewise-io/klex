@@ -18,7 +18,7 @@ export const testLogger: ModuleLogger = {
 
 export const emptyDrainResult: DrainInboxResult = {
   total: 0,
-  byPriority: { low: 0, medium: 0, high: 0 },
+  deferredEvents: 0,
   nativeMessages: 0,
   before: { events: 0, messages: 0 },
   remaining: { events: 0, messages: 0 },

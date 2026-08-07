@@ -6,7 +6,7 @@ import type { ModuleLogger } from '@stagewise/logger';
 import {
   type ContextDataUIPart,
   type SessionInboxEvent,
-  SessionInboxPriority,
+  SessionInboxUrgency,
 } from '@/session/inbox';
 
 import type {
@@ -244,7 +244,7 @@ class RemindersExtension implements Extension {
 
     const event: SessionInboxEvent = {
       sourceEnv: 'reminders',
-      priority: SessionInboxPriority.Medium,
+      urgency: SessionInboxUrgency.Default,
       context: {
         sourceEnv: 'reminders',
         metadata,

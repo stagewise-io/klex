@@ -5,10 +5,11 @@ import type { ExtendedUIMessage } from '@/session/chat/message-types';
 import { testLogger as drainLogger } from '../test-helpers';
 import {
   createInbox,
+  type InboxDependencies,
   redactMediaForTelemetry,
   type SessionInboxBuffer,
   type SessionInboxEvent,
-  SessionInboxPriority,
+  SessionInboxUrgency,
 } from './inbox';
 
 // --- fixtures ---
@@ -23,12 +24,12 @@ function makeMessage(text: string): ExtendedUIMessage {
 
 function makeEvent(
   sourceEnv: string,
-  priority: SessionInboxPriority,
+  urgency: SessionInboxUrgency,
   text: string,
 ): SessionInboxEvent {
   return {
     sourceEnv,
-    priority,
+    urgency,
     context: {
       sourceEnv,
       metadata: {},
@@ -37,138 +38,171 @@ function makeEvent(
   };
 }
 
-const low = (text: string) =>
-  makeEvent('test-env', SessionInboxPriority.Low, text);
-const medium = (text: string) =>
-  makeEvent('test-env', SessionInboxPriority.Medium, text);
-const high = (text: string) =>
-  makeEvent('test-env', SessionInboxPriority.High, text);
+const critical = (text: string) =>
+  makeEvent('test-env', SessionInboxUrgency.Critical, text);
+const defaultEvent = (text: string) =>
+  makeEvent('test-env', SessionInboxUrgency.Default, text);
+const deferrable = (text: string) =>
+  makeEvent('test-env', SessionInboxUrgency.Deferrable, text);
+
+function makeDeps(
+  overrides: Partial<{
+    onImmediateEvent: ReturnType<typeof vi.fn>;
+    onImmediateMessage: ReturnType<typeof vi.fn>;
+    onNewInput: ReturnType<typeof vi.fn>;
+  }> = {},
+): InboxDependencies {
+  return {
+    onImmediateEvent: overrides.onImmediateEvent ?? vi.fn(),
+    onImmediateMessage: overrides.onImmediateMessage ?? vi.fn(),
+    onNewInput: overrides.onNewInput ?? vi.fn(),
+  } as InboxDependencies;
+}
 
 // --- tests ---
 
 describe('Inbox — factory', () => {
   it('returns an object implementing SessionInboxBuffer', () => {
-    const inbox = createInbox({
-      onNewEvent: vi.fn<(priority: SessionInboxPriority) => void>(),
-    });
+    const inbox = createInbox(makeDeps());
     expect(typeof inbox.send).toBe('function');
     expect(typeof inbox.getEvents).toBe('function');
   });
 });
 
 describe('Inbox — send', () => {
-  let onNewEvent: ReturnType<
-    typeof vi.fn<(priority: SessionInboxPriority) => void>
-  >;
+  let onImmediateEvent: ReturnType<typeof vi.fn>;
+  let onImmediateMessage: ReturnType<typeof vi.fn>;
+  let onNewInput: ReturnType<typeof vi.fn>;
   let inbox: SessionInboxBuffer;
 
   beforeEach(() => {
-    onNewEvent = vi.fn<(priority: SessionInboxPriority) => void>();
-    inbox = createInbox({ onNewEvent });
+    onImmediateEvent = vi.fn();
+    onImmediateMessage = vi.fn();
+    onNewInput = vi.fn();
+    inbox = createInbox({
+      onImmediateEvent,
+      onImmediateMessage,
+      onNewInput,
+    } as InboxDependencies);
   });
 
-  it('stores an event without error', () => {
-    inbox.send(low('hello'));
-    expect(inbox.getEvents(SessionInboxPriority.Low)).toHaveLength(1);
+  it('buffers deferrable events and does NOT call onImmediateEvent', () => {
+    inbox.send(deferrable('hello'));
+    expect(inbox.getEvents()).toHaveLength(1);
+    expect(onImmediateEvent).not.toHaveBeenCalled();
   });
 
-  it('calls onNewEvent with the correct priority', () => {
-    inbox.send(high('urgent'));
-    expect(onNewEvent).toHaveBeenCalledExactlyOnceWith(
-      SessionInboxPriority.High,
+  it('dispatches critical events immediately via onImmediateEvent and does NOT buffer', () => {
+    inbox.send(critical('urgent'));
+    expect(onImmediateEvent).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ urgency: SessionInboxUrgency.Critical }),
     );
+    expect(inbox.getEvents()).toEqual([]);
   });
 
-  it('calls onNewEvent once per sent event', () => {
-    inbox.send(low('a'));
-    inbox.send(medium('b'));
-    inbox.send(high('c'));
-    expect(onNewEvent).toHaveBeenCalledTimes(3);
-    expect(onNewEvent).toHaveBeenNthCalledWith(1, SessionInboxPriority.Low);
-    expect(onNewEvent).toHaveBeenNthCalledWith(2, SessionInboxPriority.Medium);
-    expect(onNewEvent).toHaveBeenNthCalledWith(3, SessionInboxPriority.High);
+  it('dispatches default events immediately via onImmediateEvent and does NOT buffer', () => {
+    inbox.send(defaultEvent('normal'));
+    expect(onImmediateEvent).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ urgency: SessionInboxUrgency.Default }),
+    );
+    expect(inbox.getEvents()).toEqual([]);
   });
 
-  it('buffers the event even if onNewEvent throws', () => {
-    onNewEvent.mockImplementation(() => {
-      throw new Error('callback explosion');
-    });
-    expect(() => inbox.send(low('survivor'))).not.toThrow();
-    expect(inbox.getEvents(SessionInboxPriority.Low)).toHaveLength(1);
+  it('calls onNewInput once per sent event', () => {
+    inbox.send(critical('a'));
+    inbox.send(defaultEvent('b'));
+    inbox.send(deferrable('c'));
+    expect(onNewInput).toHaveBeenCalledTimes(3);
   });
 
-  it('logs the error when onNewEvent throws and a logger is provided', () => {
+  it('buffers deferrable events even if onImmediateEvent throws', () => {
+    // Deferrable events don't call onImmediateEvent, so they're always safe.
+    expect(() => inbox.send(deferrable('survivor'))).not.toThrow();
+    expect(inbox.getEvents()).toHaveLength(1);
+  });
+
+  it('logs the error when onImmediateEvent throws and a logger is provided', () => {
     const errorLogger = vi.fn();
     const logger = {
       error: errorLogger,
     } as unknown as import('@stagewise/logger').ModuleLogger;
-    onNewEvent.mockImplementation(() => {
+    onImmediateEvent.mockImplementation(() => {
       throw new Error('callback explosion');
     });
-    const throwingInbox = createInbox({ onNewEvent, logger });
-    expect(() => throwingInbox.send(low('survivor'))).not.toThrow();
+    const throwingInbox = createInbox({
+      onImmediateEvent,
+      onImmediateMessage,
+      onNewInput,
+      logger,
+    } as InboxDependencies);
+    expect(() => throwingInbox.send(critical('survivor'))).not.toThrow();
     expect(errorLogger).toHaveBeenCalledOnce();
+  });
+
+  it('does not buffer immediate events even if onImmediateEvent throws', () => {
+    onImmediateEvent.mockImplementation(() => {
+      throw new Error('callback explosion');
+    });
+    expect(() => inbox.send(critical('lost'))).not.toThrow();
+    expect(inbox.getEvents()).toEqual([]);
   });
 });
 
 describe('Inbox — getEvents', () => {
-  let onNewEvent: ReturnType<
-    typeof vi.fn<(priority: SessionInboxPriority) => void>
-  >;
+  let onImmediateEvent: ReturnType<typeof vi.fn>;
+  let onImmediateMessage: ReturnType<typeof vi.fn>;
+  let onNewInput: ReturnType<typeof vi.fn>;
   let inbox: SessionInboxBuffer;
 
   beforeEach(() => {
-    onNewEvent = vi.fn<(priority: SessionInboxPriority) => void>();
-    inbox = createInbox({ onNewEvent });
+    onImmediateEvent = vi.fn();
+    onImmediateMessage = vi.fn();
+    onNewInput = vi.fn();
+    inbox = createInbox({
+      onImmediateEvent,
+      onImmediateMessage,
+      onNewInput,
+    } as InboxDependencies);
   });
 
-  it('returns an empty array when no events have been sent', () => {
-    expect(inbox.getEvents(SessionInboxPriority.Low)).toEqual([]);
+  it('returns an empty array when no deferrable events have been sent', () => {
+    expect(inbox.getEvents()).toEqual([]);
   });
 
-  it('returns only events at or above minPriority (Medium)', () => {
-    inbox.send(low('a'));
-    inbox.send(medium('b'));
-    inbox.send(high('c'));
-    const events = inbox.getEvents(SessionInboxPriority.Medium);
-    expect(events).toHaveLength(2);
-    expect(events[0]?.context.content[0]).toMatchObject({ text: 'b' });
-    expect(events[1]?.context.content[0]).toMatchObject({ text: 'c' });
-  });
-
-  it('returns events in ascending time order (oldest first)', () => {
-    inbox.send(low('first'));
-    inbox.send(low('second'));
-    inbox.send(low('third'));
-    const events = inbox.getEvents(SessionInboxPriority.Low);
+  it('returns all deferrable events in ascending time order (oldest first)', () => {
+    inbox.send(deferrable('first'));
+    inbox.send(deferrable('second'));
+    inbox.send(deferrable('third'));
+    const events = inbox.getEvents();
+    expect(events).toHaveLength(3);
     expect(events[0]?.context.content[0]).toMatchObject({ text: 'first' });
     expect(events[1]?.context.content[0]).toMatchObject({ text: 'second' });
     expect(events[2]?.context.content[0]).toMatchObject({ text: 'third' });
   });
 
   it('removes returned events from the buffer', () => {
-    inbox.send(low('a'));
-    inbox.send(low('b'));
-    inbox.getEvents(SessionInboxPriority.Low);
-    expect(inbox.getEvents(SessionInboxPriority.Low)).toEqual([]);
+    inbox.send(deferrable('a'));
+    inbox.send(deferrable('b'));
+    inbox.getEvents();
+    expect(inbox.getEvents()).toEqual([]);
   });
 
-  it('preserves non-matching events in the buffer', () => {
-    inbox.send(low('keep'));
-    inbox.send(high('drain'));
-    const drained = inbox.getEvents(SessionInboxPriority.High);
-    expect(drained).toHaveLength(1);
-    // Low-priority event should still be in the buffer
-    const remaining = inbox.getEvents(SessionInboxPriority.Low);
-    expect(remaining).toHaveLength(1);
-    expect(remaining[0]?.context.content[0]).toMatchObject({ text: 'keep' });
+  it('does not return immediate events (they bypass the buffer)', () => {
+    inbox.send(critical('immediate-1'));
+    inbox.send(defaultEvent('immediate-2'));
+    inbox.send(deferrable('buffered-1'));
+    const events = inbox.getEvents();
+    expect(events).toHaveLength(1);
+    expect(events[0]?.context.content[0]).toMatchObject({
+      text: 'buffered-1',
+    });
   });
 
   it('allows sending new events after draining', () => {
-    inbox.send(low('first-batch'));
-    inbox.getEvents(SessionInboxPriority.Low);
-    inbox.send(high('second-batch'));
-    const events = inbox.getEvents(SessionInboxPriority.Low);
+    inbox.send(deferrable('first-batch'));
+    inbox.getEvents();
+    inbox.send(deferrable('second-batch'));
+    const events = inbox.getEvents();
     expect(events).toHaveLength(1);
     expect(events[0]?.context.content[0]).toMatchObject({
       text: 'second-batch',
@@ -179,126 +213,149 @@ describe('Inbox — getEvents', () => {
 // --- sendMessage / getMessages tests ---
 
 describe('Inbox — sendMessage', () => {
-  let onNewEvent: ReturnType<
-    typeof vi.fn<(priority: SessionInboxPriority) => void>
-  >;
+  let onImmediateEvent: ReturnType<typeof vi.fn>;
+  let onImmediateMessage: ReturnType<typeof vi.fn>;
+  let onNewInput: ReturnType<typeof vi.fn>;
   let inbox: SessionInboxBuffer;
 
   beforeEach(() => {
-    onNewEvent = vi.fn<(priority: SessionInboxPriority) => void>();
-    inbox = createInbox({ onNewEvent });
+    onImmediateEvent = vi.fn();
+    onImmediateMessage = vi.fn();
+    onNewInput = vi.fn();
+    inbox = createInbox({
+      onImmediateEvent,
+      onImmediateMessage,
+      onNewInput,
+    } as InboxDependencies);
   });
 
-  it('stores a message without error', () => {
-    inbox.sendMessage(makeMessage('hello'), SessionInboxPriority.Low);
-    expect(inbox.getMessages(SessionInboxPriority.Low)).toHaveLength(1);
+  it('buffers deferrable messages and does NOT call onImmediateMessage', () => {
+    inbox.sendMessage(makeMessage('hello'), SessionInboxUrgency.Deferrable);
+    expect(inbox.getMessages()).toHaveLength(1);
+    expect(onImmediateMessage).not.toHaveBeenCalled();
   });
 
-  it('calls onNewEvent with the correct priority', () => {
-    inbox.sendMessage(makeMessage('urgent'), SessionInboxPriority.High);
-    expect(onNewEvent).toHaveBeenCalledExactlyOnceWith(
-      SessionInboxPriority.High,
+  it('dispatches critical messages immediately via onImmediateMessage', () => {
+    inbox.sendMessage(makeMessage('urgent'), SessionInboxUrgency.Critical);
+    expect(onImmediateMessage).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ id: 'msg-urgent' }),
     );
+    expect(inbox.getMessages()).toEqual([]);
   });
 
-  it('calls onNewEvent once per sent message', () => {
-    inbox.sendMessage(makeMessage('a'), SessionInboxPriority.Low);
-    inbox.sendMessage(makeMessage('b'), SessionInboxPriority.Medium);
-    inbox.sendMessage(makeMessage('c'), SessionInboxPriority.High);
-    expect(onNewEvent).toHaveBeenCalledTimes(3);
+  it('dispatches default messages immediately via onImmediateMessage', () => {
+    inbox.sendMessage(makeMessage('normal'), SessionInboxUrgency.Default);
+    expect(onImmediateMessage).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ id: 'msg-normal' }),
+    );
+    expect(inbox.getMessages()).toEqual([]);
+  });
+
+  it('calls onNewInput once per sent message', () => {
+    inbox.sendMessage(makeMessage('a'), SessionInboxUrgency.Critical);
+    inbox.sendMessage(makeMessage('b'), SessionInboxUrgency.Default);
+    inbox.sendMessage(makeMessage('c'), SessionInboxUrgency.Deferrable);
+    expect(onNewInput).toHaveBeenCalledTimes(3);
   });
 });
 
 describe('Inbox — getMessages', () => {
-  let onNewEvent: ReturnType<
-    typeof vi.fn<(priority: SessionInboxPriority) => void>
-  >;
+  let onImmediateEvent: ReturnType<typeof vi.fn>;
+  let onImmediateMessage: ReturnType<typeof vi.fn>;
+  let onNewInput: ReturnType<typeof vi.fn>;
   let inbox: SessionInboxBuffer;
 
   beforeEach(() => {
-    onNewEvent = vi.fn<(priority: SessionInboxPriority) => void>();
-    inbox = createInbox({ onNewEvent });
+    onImmediateEvent = vi.fn();
+    onImmediateMessage = vi.fn();
+    onNewInput = vi.fn();
+    inbox = createInbox({
+      onImmediateEvent,
+      onImmediateMessage,
+      onNewInput,
+    } as InboxDependencies);
   });
 
-  it('returns an empty array when no messages have been sent', () => {
-    expect(inbox.getMessages(SessionInboxPriority.Low)).toEqual([]);
+  it('returns an empty array when no deferrable messages have been sent', () => {
+    expect(inbox.getMessages()).toEqual([]);
   });
 
-  it('returns only messages at or above minPriority (Medium)', () => {
-    inbox.sendMessage(makeMessage('a'), SessionInboxPriority.Low);
-    inbox.sendMessage(makeMessage('b'), SessionInboxPriority.Medium);
-    inbox.sendMessage(makeMessage('c'), SessionInboxPriority.High);
-    const messages = inbox.getMessages(SessionInboxPriority.Medium);
-    expect(messages).toHaveLength(2);
-    expect(messages[0]?.id).toBe('msg-b');
-    expect(messages[1]?.id).toBe('msg-c');
-  });
-
-  it('returns messages in ascending time order (oldest first)', () => {
-    inbox.sendMessage(makeMessage('first'), SessionInboxPriority.Low);
-    inbox.sendMessage(makeMessage('second'), SessionInboxPriority.Low);
-    inbox.sendMessage(makeMessage('third'), SessionInboxPriority.Low);
-    const messages = inbox.getMessages(SessionInboxPriority.Low);
+  it('returns all deferrable messages in ascending time order (oldest first)', () => {
+    inbox.sendMessage(makeMessage('first'), SessionInboxUrgency.Deferrable);
+    inbox.sendMessage(makeMessage('second'), SessionInboxUrgency.Deferrable);
+    inbox.sendMessage(makeMessage('third'), SessionInboxUrgency.Deferrable);
+    const messages = inbox.getMessages();
+    expect(messages).toHaveLength(3);
     expect(messages[0]?.id).toBe('msg-first');
     expect(messages[1]?.id).toBe('msg-second');
     expect(messages[2]?.id).toBe('msg-third');
   });
 
   it('removes returned messages from the buffer', () => {
-    inbox.sendMessage(makeMessage('a'), SessionInboxPriority.Low);
-    inbox.sendMessage(makeMessage('b'), SessionInboxPriority.Low);
-    inbox.getMessages(SessionInboxPriority.Low);
-    expect(inbox.getMessages(SessionInboxPriority.Low)).toEqual([]);
+    inbox.sendMessage(makeMessage('a'), SessionInboxUrgency.Deferrable);
+    inbox.sendMessage(makeMessage('b'), SessionInboxUrgency.Deferrable);
+    inbox.getMessages();
+    expect(inbox.getMessages()).toEqual([]);
   });
 
-  it('preserves non-matching messages in the buffer', () => {
-    inbox.sendMessage(makeMessage('keep'), SessionInboxPriority.Low);
-    inbox.sendMessage(makeMessage('drain'), SessionInboxPriority.High);
-    const drained = inbox.getMessages(SessionInboxPriority.High);
-    expect(drained).toHaveLength(1);
-    const remaining = inbox.getMessages(SessionInboxPriority.Low);
-    expect(remaining).toHaveLength(1);
-    expect(remaining[0]?.id).toBe('msg-keep');
+  it('does not return immediate messages (they bypass the buffer)', () => {
+    inbox.sendMessage(makeMessage('immediate'), SessionInboxUrgency.Critical);
+    inbox.sendMessage(makeMessage('buffered'), SessionInboxUrgency.Deferrable);
+    const messages = inbox.getMessages();
+    expect(messages).toHaveLength(1);
+    expect(messages[0]?.id).toBe('msg-buffered');
   });
 });
 
 describe('Inbox — isEmpty with mixed events and messages', () => {
-  let onNewEvent: ReturnType<
-    typeof vi.fn<(priority: SessionInboxPriority) => void>
-  >;
+  let onImmediateEvent: ReturnType<typeof vi.fn>;
+  let onImmediateMessage: ReturnType<typeof vi.fn>;
+  let onNewInput: ReturnType<typeof vi.fn>;
   let inbox: SessionInboxBuffer;
 
   beforeEach(() => {
-    onNewEvent = vi.fn<(priority: SessionInboxPriority) => void>();
-    inbox = createInbox({ onNewEvent });
+    onImmediateEvent = vi.fn();
+    onImmediateMessage = vi.fn();
+    onNewInput = vi.fn();
+    inbox = createInbox({
+      onImmediateEvent,
+      onImmediateMessage,
+      onNewInput,
+    } as InboxDependencies);
   });
 
   it('returns true when both buffers are empty', () => {
     expect(inbox.isEmpty()).toBe(true);
   });
 
-  it('returns false when only events are present', () => {
-    inbox.send(low('event'));
+  it('returns false when only deferred events are present', () => {
+    inbox.send(deferrable('event'));
     expect(inbox.isEmpty()).toBe(false);
   });
 
-  it('returns false when only messages are present', () => {
-    inbox.sendMessage(makeMessage('msg'), SessionInboxPriority.Low);
+  it('returns false when only deferred messages are present', () => {
+    inbox.sendMessage(makeMessage('msg'), SessionInboxUrgency.Deferrable);
     expect(inbox.isEmpty()).toBe(false);
   });
 
-  it('returns true after both events and messages are drained', () => {
-    inbox.send(low('event'));
-    inbox.sendMessage(makeMessage('msg'), SessionInboxPriority.Low);
-    inbox.getEvents(SessionInboxPriority.Low);
-    inbox.getMessages(SessionInboxPriority.Low);
+  it('returns true when no deferrable items remain (immediate items do not affect isEmpty)', () => {
+    inbox.send(critical('event'));
+    inbox.sendMessage(makeMessage('msg'), SessionInboxUrgency.Default);
+    expect(inbox.isEmpty()).toBe(true);
+  });
+
+  it('returns true after both deferred events and messages are drained', () => {
+    inbox.send(deferrable('event'));
+    inbox.sendMessage(makeMessage('msg'), SessionInboxUrgency.Deferrable);
+    inbox.getEvents();
+    inbox.getMessages();
     expect(inbox.isEmpty()).toBe(true);
   });
 
   it('returns false when only events are drained but messages remain', () => {
-    inbox.send(low('event'));
-    inbox.sendMessage(makeMessage('msg'), SessionInboxPriority.Low);
-    inbox.getEvents(SessionInboxPriority.Low);
+    inbox.send(deferrable('event'));
+    inbox.sendMessage(makeMessage('msg'), SessionInboxUrgency.Deferrable);
+    inbox.getEvents();
     expect(inbox.isEmpty()).toBe(false);
   });
 });
@@ -307,14 +364,14 @@ describe('Inbox — isEmpty with mixed events and messages', () => {
 
 describe('Inbox — drain: empty inbox', () => {
   it('returns zero counts and does not append a message', () => {
-    const inbox = createInbox({ onNewEvent: vi.fn() });
+    const inbox = createInbox(makeDeps());
     const messages: ExtendedUIMessage[] = [];
 
-    const result = inbox.drain(messages, SessionInboxPriority.Low, drainLogger);
+    const result = inbox.drain(messages, drainLogger);
 
     expect(result).toEqual({
       total: 0,
-      byPriority: { low: 0, medium: 0, high: 0 },
+      deferredEvents: 0,
       nativeMessages: 0,
       before: { events: 0, messages: 0 },
       remaining: { events: 0, messages: 0 },
@@ -322,8 +379,8 @@ describe('Inbox — drain: empty inbox', () => {
     expect(messages).toHaveLength(0);
   });
 
-  it('leaves messages array untouched for an empty inbox at any priority', () => {
-    const inbox = createInbox({ onNewEvent: vi.fn() });
+  it('leaves messages array untouched for an empty inbox', () => {
+    const inbox = createInbox(makeDeps());
     const messages: ExtendedUIMessage[] = [
       {
         id: 'existing',
@@ -332,7 +389,7 @@ describe('Inbox — drain: empty inbox', () => {
       } as ExtendedUIMessage,
     ];
 
-    inbox.drain(messages, SessionInboxPriority.High, drainLogger);
+    inbox.drain(messages, drainLogger);
 
     expect(messages).toHaveLength(1);
   });
@@ -343,18 +400,18 @@ describe('Inbox — media handling', () => {
     const imageData = 'aW1hZ2U=';
     const event: SessionInboxEvent = {
       sourceEnv: 'telegram:1',
-      priority: SessionInboxPriority.Medium,
+      urgency: SessionInboxUrgency.Deferrable,
       context: {
         sourceEnv: 'telegram:1',
         metadata: {},
         content: [{ type: 'image', mimeType: 'image/png', data: imageData }],
       },
     };
-    const inbox = createInbox({ onNewEvent: vi.fn() });
+    const inbox = createInbox(makeDeps());
     inbox.send(event);
     const messages: ExtendedUIMessage[] = [];
 
-    inbox.drain(messages, SessionInboxPriority.Low, drainLogger);
+    inbox.drain(messages, drainLogger);
 
     expect(messages[0]?.parts[0]).toMatchObject({
       type: 'data-context',
@@ -380,18 +437,18 @@ describe('Inbox — media handling', () => {
     const audioData = 'YXVkaW8=';
     const event: SessionInboxEvent = {
       sourceEnv: 'telegram:1',
-      priority: SessionInboxPriority.Medium,
+      urgency: SessionInboxUrgency.Deferrable,
       context: {
         sourceEnv: 'telegram:1',
         metadata: {},
         content: [{ type: 'audio', mimeType: 'audio/ogg', data: audioData }],
       },
     };
-    const inbox = createInbox({ onNewEvent: vi.fn() });
+    const inbox = createInbox(makeDeps());
     inbox.send(event);
     const messages: ExtendedUIMessage[] = [];
 
-    inbox.drain(messages, SessionInboxPriority.Low, drainLogger);
+    inbox.drain(messages, drainLogger);
 
     expect(messages[0]?.parts[0]).toMatchObject({
       type: 'data-context',
@@ -446,18 +503,18 @@ describe('Inbox — media handling', () => {
   });
 });
 
-describe('Inbox — drain: with events', () => {
+describe('Inbox — drain: with deferred events', () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
 
   it('appends a single user message containing all drained events as data-context parts', () => {
-    const inbox = createInbox({ onNewEvent: vi.fn() });
-    inbox.send(low('a'));
-    inbox.send(high('b'));
+    const inbox = createInbox(makeDeps());
+    inbox.send(deferrable('a'));
+    inbox.send(deferrable('b'));
     const messages: ExtendedUIMessage[] = [];
 
-    inbox.drain(messages, SessionInboxPriority.Low, drainLogger);
+    inbox.drain(messages, drainLogger);
 
     expect(messages).toHaveLength(1);
     expect(messages[0]?.role).toBe('user');
@@ -466,26 +523,25 @@ describe('Inbox — drain: with events', () => {
     expect(messages[0]?.parts[1]).toMatchObject({ type: 'data-context' });
   });
 
-  it('reports correct counts broken down by priority', () => {
-    const inbox = createInbox({ onNewEvent: vi.fn() });
-    inbox.send(low('1'));
-    inbox.send(low('2'));
-    inbox.send(medium('3'));
-    inbox.send(high('4'));
-    inbox.send(high('5'));
+  it('reports correct counts for deferred events', () => {
+    const inbox = createInbox(makeDeps());
+    inbox.send(deferrable('1'));
+    inbox.send(deferrable('2'));
+    inbox.send(critical('3')); // immediate, not buffered
+    inbox.send(defaultEvent('4')); // immediate, not buffered
 
-    const result = inbox.drain([], SessionInboxPriority.Low, drainLogger);
+    const result = inbox.drain([], drainLogger);
 
-    expect(result.total).toBe(5);
-    expect(result.byPriority).toEqual({ low: 2, medium: 1, high: 2 });
+    expect(result.total).toBe(2);
+    expect(result.deferredEvents).toBe(2);
   });
 
-  it('logs the drain operation with priority and counts', () => {
-    const inbox = createInbox({ onNewEvent: vi.fn() });
-    inbox.send(medium('a'));
-    inbox.send(high('b'));
+  it('logs the drain operation with counts', () => {
+    const inbox = createInbox(makeDeps());
+    inbox.send(deferrable('a'));
+    inbox.send(deferrable('b'));
 
-    inbox.drain([], SessionInboxPriority.Medium, drainLogger);
+    inbox.drain([], drainLogger);
 
     expect(drainLogger.debug).toHaveBeenCalledOnce();
     const calls = vi.mocked(drainLogger.debug).mock.calls;
@@ -495,11 +551,9 @@ describe('Inbox — drain: with events', () => {
     ];
     expect(msg).toBe('Inbox drained');
     expect(meta).toMatchObject({
-      minPriority: 'Medium',
       total: 2,
-      low: 0,
-      medium: 1,
-      high: 1,
+      deferredEvents: 2,
+      nativeMessages: 0,
     });
   });
 });
@@ -509,20 +563,20 @@ describe('Inbox — drain: native messages', () => {
     vi.clearAllMocks();
   });
 
-  it('appends native messages to the messages array', () => {
-    const inbox = createInbox({ onNewEvent: vi.fn() });
-    inbox.sendMessage(makeMessage('a'), SessionInboxPriority.Low);
-    inbox.sendMessage(makeMessage('b'), SessionInboxPriority.Low);
+  it('appends deferred native messages to the messages array', () => {
+    const inbox = createInbox(makeDeps());
+    inbox.sendMessage(makeMessage('a'), SessionInboxUrgency.Deferrable);
+    inbox.sendMessage(makeMessage('b'), SessionInboxUrgency.Deferrable);
     const messages: ExtendedUIMessage[] = [];
 
-    inbox.drain(messages, SessionInboxPriority.Low, drainLogger);
+    inbox.drain(messages, drainLogger);
 
     expect(messages).toHaveLength(2);
     expect(messages[0]?.id).toBe('msg-a');
     expect(messages[1]?.id).toBe('msg-b');
   });
 
-  it('delivers a native message with a circular custom data part', () => {
+  it('delivers a deferred native message with a circular custom data part', () => {
     const circularPart: Record<string, unknown> = { type: 'data-custom' };
     circularPart.self = circularPart;
     const message = {
@@ -530,34 +584,32 @@ describe('Inbox — drain: native messages', () => {
       role: 'user',
       parts: [circularPart],
     } as unknown as ExtendedUIMessage;
-    const inbox = createInbox({ onNewEvent: vi.fn() });
-    inbox.sendMessage(message, SessionInboxPriority.Low);
+    const inbox = createInbox(makeDeps());
+    inbox.sendMessage(message, SessionInboxUrgency.Deferrable);
     const messages: ExtendedUIMessage[] = [];
 
-    expect(() =>
-      inbox.drain(messages, SessionInboxPriority.Low, drainLogger),
-    ).not.toThrow();
+    expect(() => inbox.drain(messages, drainLogger)).not.toThrow();
     expect(messages).toEqual([message]);
     expect(inbox.isEmpty()).toBe(true);
   });
 
   it('reports the native message count in the result', () => {
-    const inbox = createInbox({ onNewEvent: vi.fn() });
-    inbox.sendMessage(makeMessage('native-1'), SessionInboxPriority.Low);
+    const inbox = createInbox(makeDeps());
+    inbox.sendMessage(makeMessage('native-1'), SessionInboxUrgency.Deferrable);
 
-    const result = inbox.drain([], SessionInboxPriority.Low, drainLogger);
+    const result = inbox.drain([], drainLogger);
 
     expect(result.nativeMessages).toBe(1);
     expect(result.total).toBe(1);
   });
 
   it('appends native messages before context events', () => {
-    const inbox = createInbox({ onNewEvent: vi.fn() });
-    inbox.send(low('ctx'));
-    inbox.sendMessage(makeMessage('native'), SessionInboxPriority.Low);
+    const inbox = createInbox(makeDeps());
+    inbox.send(deferrable('ctx'));
+    inbox.sendMessage(makeMessage('native'), SessionInboxUrgency.Deferrable);
     const messages: ExtendedUIMessage[] = [];
 
-    inbox.drain(messages, SessionInboxPriority.Low, drainLogger);
+    inbox.drain(messages, drainLogger);
 
     expect(messages).toHaveLength(2);
     // Native message first
@@ -573,20 +625,23 @@ describe('Inbox — drain: native messages', () => {
   });
 
   it('total includes both events and native messages', () => {
-    const inbox = createInbox({ onNewEvent: vi.fn() });
-    inbox.send(low('ctx-1'));
-    inbox.send(medium('ctx-2'));
-    inbox.sendMessage(makeMessage('native-1'), SessionInboxPriority.Low);
-    inbox.sendMessage(makeMessage('native-2'), SessionInboxPriority.Low);
+    const inbox = createInbox(makeDeps());
+    inbox.send(deferrable('ctx-1'));
+    inbox.send(deferrable('ctx-2'));
+    inbox.sendMessage(makeMessage('native-1'), SessionInboxUrgency.Deferrable);
+    inbox.sendMessage(makeMessage('native-2'), SessionInboxUrgency.Deferrable);
 
-    const result = inbox.drain([], SessionInboxPriority.Low, drainLogger);
+    const result = inbox.drain([], drainLogger);
 
     expect(result.total).toBe(4);
     expect(result.nativeMessages).toBe(2);
   });
 
-  it('leaves messages array untouched when no events and no native messages', () => {
-    const inbox = createInbox({ onNewEvent: vi.fn() });
+  it('leaves messages array untouched when no deferred events and no deferred native messages', () => {
+    const inbox = createInbox(makeDeps());
+    // Send immediate items — they bypass the buffer
+    inbox.send(critical('immediate'));
+    inbox.sendMessage(makeMessage('immediate'), SessionInboxUrgency.Default);
     const messages: ExtendedUIMessage[] = [
       {
         id: 'existing',
@@ -595,7 +650,7 @@ describe('Inbox — drain: native messages', () => {
       } as ExtendedUIMessage,
     ];
 
-    inbox.drain(messages, SessionInboxPriority.High, drainLogger);
+    inbox.drain(messages, drainLogger);
 
     expect(messages).toHaveLength(1);
   });

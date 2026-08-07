@@ -5,7 +5,7 @@ import type { Mcp, McpPushNotification } from '@/mcp';
 import {
   type ContextDataUIPart,
   type SessionInboxEvent,
-  SessionInboxPriority,
+  SessionInboxUrgency,
 } from '@/session/inbox';
 import type {
   AgentSession,
@@ -122,7 +122,10 @@ class RouterModule implements Router {
     }
 
     this.deps.logger.debug(
-      { sourceEnv: event.sourceEnv, priority: event.priority },
+      {
+        sourceEnv: event.sourceEnv,
+        urgency: SessionInboxUrgency[event.urgency],
+      },
       'Router dispatching input to session',
     );
 
@@ -205,7 +208,7 @@ class RouterModule implements Router {
 
     const inboxEvent: SessionInboxEvent = {
       sourceEnv: namespace,
-      priority: SessionInboxPriority.Medium,
+      urgency: SessionInboxUrgency.Default,
       context: {
         sourceEnv: namespace,
         metadata,

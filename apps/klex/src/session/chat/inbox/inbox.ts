@@ -7,7 +7,7 @@ import {
   type SessionInbox,
   SessionInboxClosedError,
   type SessionInboxEvent,
-  SessionInboxPriority,
+  SessionInboxUrgency,
 } from '@/session/inbox';
 
 import type { ExtendedUIMessage } from '../message-types';
@@ -16,7 +16,7 @@ import { tracer } from '../utils/tracing';
 export type { SessionInbox, SessionInboxEvent };
 // Re-export router-facing types for convenience — chat-internal consumers
 // can import everything from one place.
-export { SessionInboxClosedError, SessionInboxPriority };
+export { SessionInboxClosedError, SessionInboxUrgency };
 
 /**
  * Extends the router-facing {@link SessionInbox} with the ability to send
@@ -29,32 +29,32 @@ export interface ChatSessionInbox extends SessionInbox {
    *
    * Use this only when you need full control over the message structure
    * (e.g. custom data parts that are not context events). The message is
-   * appended to the session history as-is during inbox draining.
+   * appended to the session history as-is — immediately for
+   * Critical/Default urgency, or at the next turn start for Deferrable.
    *
    * @throws {SessionInboxClosedError} if the inbox has been closed.
    *
    * @param message The message to send into the inbox.
-   * @param priority The priority with which the message is sent.
+   * @param urgency The urgency with which the message is sent.
    */
   sendMessage: (
     message: ExtendedUIMessage,
-    priority: SessionInboxPriority,
+    urgency: SessionInboxUrgency,
   ) => void;
 }
 
 export type DrainInboxResult = {
   total: number;
-  byPriority: { low: number; medium: number; high: number };
+  deferredEvents: number;
   nativeMessages: number;
   before: { events: number; messages: number };
   remaining: { events: number; messages: number };
 };
 
 /**
- * Internal entry for a native message in the inbox buffer.
+ * Internal entry for a deferred native message in the inbox buffer.
  */
-type InboxMessageEntry = {
-  priority: SessionInboxPriority;
+type DeferredMessageEntry = {
   message: ExtendedUIMessage;
 };
 
@@ -64,8 +64,8 @@ type InboxMessageEntry = {
  */
 export interface SessionInboxBuffer extends ChatSessionInbox {
   /**
-   * Drains events and native messages at or above the given minimum
-   * priority, appending them to the provided messages array.
+   * Drains deferred events and native messages from the inbox buffer,
+   * appending them to the provided messages array.
    *
    * Native messages are appended first (in arrival order), followed by a
    * single user message bundling all context events as `data-context`
@@ -73,59 +73,68 @@ export interface SessionInboxBuffer extends ChatSessionInbox {
    * array is left untouched.
    *
    * @param messages The session messages array to append drained content to.
-   * @param minPriority The minimum priority to drain.
    * @param logger Logger for recording the drain operation.
    * @returns Summary counts of drained events and native messages.
    */
   drain: (
     messages: ExtendedUIMessage[],
-    minPriority: SessionInboxPriority,
     logger: ModuleLogger,
   ) => DrainInboxResult;
 
   /**
-   * Fetches context events with the given minimum priority and removes them
-   * from the inbox.
+   * Fetches all deferred context events and removes them from the inbox.
    *
    * Events are returned in ascending time order (oldest first).
-   *
-   * @param minPriority The minimum priority of the events to fetch.
    */
-  getEvents: (minPriority: SessionInboxPriority) => SessionInboxEvent[];
+  getEvents: () => SessionInboxEvent[];
 
   /**
-   * Fetches native messages with the given minimum priority and removes them
-   * from the inbox.
+   * Fetches all deferred native messages and removes them from the inbox.
    *
    * Messages are returned in ascending time order (oldest first).
-   *
-   * @param minPriority The minimum priority of the messages to fetch.
    */
-  getMessages: (minPriority: SessionInboxPriority) => ExtendedUIMessage[];
+  getMessages: () => ExtendedUIMessage[];
 
   /**
-   * Returns if the box is empty (no events and no messages).
+   * Returns if the box is empty (no deferred events and no deferred messages).
    */
   isEmpty: () => boolean;
 }
 
 export interface InboxDependencies {
-  /** Called whenever a new event or message is pushed into the inbox. */
-  onNewEvent: (priority: SessionInboxPriority) => void;
+  /**
+   * Called for Critical and Default urgency events. The session appends
+   * the event to the message history immediately. For Critical urgency,
+   * the session also aborts the running generation.
+   */
+  onImmediateEvent: (event: SessionInboxEvent) => void;
+  /**
+   * Called for Critical and Default urgency native messages. The session
+   * appends the message to the message history immediately.
+   */
+  onImmediateMessage: (message: ExtendedUIMessage) => void;
+  /**
+   * Called for any input (any urgency). The session uses this to trigger
+   * the loop, track new input during a turn, and interrupt backoff waits.
+   */
+  onNewInput: () => void;
   /** Optional logger for recording unexpected errors from the callback. */
   logger?: ModuleLogger;
 }
 
 /**
  * The inbox is a buffer for all external inputs to a session.
- * It holds two separate buffers: one for context events and one for
- * native messages.
+ * It holds two separate buffers for deferred items: one for context
+ * events and one for native messages. Critical and Default urgency
+ * items bypass the buffer via callbacks — they are appended to the
+ * session history immediately on arrival.
  */
 class InboxModule implements SessionInboxBuffer {
   // Sorted by age. Newer entries have higher index.
-  private events: SessionInboxEvent[] = [];
+  // Only Deferrable urgency items are buffered here.
+  private deferredEvents: SessionInboxEvent[] = [];
 
-  private messages: InboxMessageEntry[] = [];
+  private deferredMessages: DeferredMessageEntry[] = [];
 
   private closed = false;
 
@@ -133,69 +142,77 @@ class InboxModule implements SessionInboxBuffer {
 
   send(event: SessionInboxEvent): void {
     if (this.closed) throw new SessionInboxClosedError();
-    this.events.push(event);
-    this.notifyNewEvent(event.priority);
+
+    if (event.urgency === SessionInboxUrgency.Deferrable) {
+      this.deferredEvents.push(event);
+    } else {
+      // Critical or Default — dispatch immediately via callback.
+      this.notifyImmediateEvent(event);
+    }
+
+    this.notifyNewInput();
   }
 
-  sendMessage(
-    message: ExtendedUIMessage,
-    priority: SessionInboxPriority,
-  ): void {
+  sendMessage(message: ExtendedUIMessage, urgency: SessionInboxUrgency): void {
     if (this.closed) throw new SessionInboxClosedError();
-    this.messages.push({ priority, message });
-    this.notifyNewEvent(priority);
+
+    if (urgency === SessionInboxUrgency.Deferrable) {
+      this.deferredMessages.push({ message });
+    } else {
+      // Critical or Default — dispatch immediately via callback.
+      this.notifyImmediateMessage(message);
+    }
+
+    this.notifyNewInput();
   }
 
   close(): void {
     this.closed = true;
   }
 
-  /**
-   * Notifies the session that new input arrived. The event/message is
-   * already buffered at this point, so a throwing callback must not
-   * reject the sender — the loop will drain the buffer on its next
-   * iteration regardless.
-   */
-  private notifyNewEvent(priority: SessionInboxPriority): void {
+  private notifyImmediateEvent(event: SessionInboxEvent): void {
     try {
-      this.deps.onNewEvent(priority);
+      this.deps.onImmediateEvent(event);
     } catch (err) {
       this.deps.logger?.error(
-        { priority: SessionInboxPriority[priority], err },
-        'Inbox onNewEvent callback threw — event is buffered, will be drained on next loop iteration',
+        { urgency: SessionInboxUrgency[event.urgency], err },
+        'Inbox onImmediateEvent callback threw — event may not be in history',
       );
     }
   }
 
-  drain(
-    messages: ExtendedUIMessage[],
-    minPriority: SessionInboxPriority,
-    logger: ModuleLogger,
-  ): DrainInboxResult {
-    const beforeEvents = this.events.length;
-    const beforeMessages = this.messages.length;
+  private notifyImmediateMessage(message: ExtendedUIMessage): void {
+    try {
+      this.deps.onImmediateMessage(message);
+    } catch (err) {
+      this.deps.logger?.error(
+        { messageId: message.id, err },
+        'Inbox onImmediateMessage callback threw — message may not be in history',
+      );
+    }
+  }
+
+  private notifyNewInput(): void {
+    try {
+      this.deps.onNewInput();
+    } catch (err) {
+      this.deps.logger?.error({ err }, 'Inbox onNewInput callback threw');
+    }
+  }
+
+  drain(messages: ExtendedUIMessage[], logger: ModuleLogger): DrainInboxResult {
+    const beforeEvents = this.deferredEvents.length;
+    const beforeMessages = this.deferredMessages.length;
 
     const span = tracer.startSpan('inbox.drain', {
       attributes: {
-        'inbox.minPriority': SessionInboxPriority[minPriority],
         'inbox.before.events': beforeEvents,
         'inbox.before.messages': beforeMessages,
       },
     });
 
-    const events = this.getEvents(minPriority);
-    const nativeMessages = this.getMessages(minPriority);
-
-    const byPriority: { low: number; medium: number; high: number } = {
-      low: 0,
-      medium: 0,
-      high: 0,
-    };
-    for (const e of events) {
-      if (e.priority === SessionInboxPriority.Low) byPriority.low++;
-      else if (e.priority === SessionInboxPriority.Medium) byPriority.medium++;
-      else if (e.priority === SessionInboxPriority.High) byPriority.high++;
-    }
+    const events = this.getEvents();
+    const nativeMessages = this.getMessages();
 
     // Record structure and media metadata without leaking binary bodies.
     // Telemetry projection must never prevent already-pulled inputs from being
@@ -204,7 +221,7 @@ class InboxModule implements SessionInboxBuffer {
       const pulled = {
         events: events.map((e) => ({
           sourceEnv: e.sourceEnv,
-          priority: SessionInboxPriority[e.priority],
+          urgency: SessionInboxUrgency[e.urgency],
           context: redactMediaForTelemetry(e.context),
         })),
         nativeMessages: nativeMessages.map((m) => ({
@@ -222,11 +239,9 @@ class InboxModule implements SessionInboxBuffer {
       'inbox.drained.events': events.length,
       'inbox.drained.nativeMessages': nativeMessages.length,
       'inbox.drained.total': events.length + nativeMessages.length,
-      'inbox.drained.low': byPriority.low,
-      'inbox.drained.medium': byPriority.medium,
-      'inbox.drained.high': byPriority.high,
-      'inbox.remaining.events': this.events.length,
-      'inbox.remaining.messages': this.messages.length,
+      'inbox.drained.deferredEvents': events.length,
+      'inbox.remaining.events': this.deferredEvents.length,
+      'inbox.remaining.messages': this.deferredMessages.length,
     });
 
     // Append native messages first, then bundle context events into a
@@ -246,11 +261,8 @@ class InboxModule implements SessionInboxBuffer {
 
     logger.debug(
       {
-        minPriority: SessionInboxPriority[minPriority],
         total: events.length + nativeMessages.length,
-        low: byPriority.low,
-        medium: byPriority.medium,
-        high: byPriority.high,
+        deferredEvents: events.length,
         nativeMessages: nativeMessages.length,
       },
       'Inbox drained',
@@ -260,48 +272,28 @@ class InboxModule implements SessionInboxBuffer {
 
     return {
       total: events.length + nativeMessages.length,
-      byPriority,
+      deferredEvents: events.length,
       nativeMessages: nativeMessages.length,
       before: { events: beforeEvents, messages: beforeMessages },
       remaining: {
-        events: this.events.length,
-        messages: this.messages.length,
+        events: this.deferredEvents.length,
+        messages: this.deferredMessages.length,
       },
     };
   }
 
-  getEvents(minPriority: SessionInboxPriority): SessionInboxEvent[] {
-    const [matching, notMatching] = this.events.reduce<
-      [SessionInboxEvent[], SessionInboxEvent[]]
-    >(
-      (prev, curr) => {
-        prev[curr.priority >= minPriority ? 0 : 1].push(curr);
-        return prev;
-      },
-      [[], []],
-    );
-
-    this.events = notMatching;
-    return matching;
+  getEvents(): SessionInboxEvent[] {
+    return this.deferredEvents.splice(0);
   }
 
-  getMessages(minPriority: SessionInboxPriority): ExtendedUIMessage[] {
-    const [matching, notMatching] = this.messages.reduce<
-      [InboxMessageEntry[], InboxMessageEntry[]]
-    >(
-      (prev, curr) => {
-        prev[curr.priority >= minPriority ? 0 : 1].push(curr);
-        return prev;
-      },
-      [[], []],
-    );
-
-    this.messages = notMatching;
-    return matching.map((entry) => entry.message);
+  getMessages(): ExtendedUIMessage[] {
+    return this.deferredMessages.splice(0).map((entry) => entry.message);
   }
 
   isEmpty(): boolean {
-    return this.events.length === 0 && this.messages.length === 0;
+    return (
+      this.deferredEvents.length === 0 && this.deferredMessages.length === 0
+    );
   }
 }
 

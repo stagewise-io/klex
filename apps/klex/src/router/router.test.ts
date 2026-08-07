@@ -4,7 +4,7 @@ import type { RootLogger } from '@stagewise/logger';
 
 import type { IntrospectionScope } from '@/introspection';
 import type { Mcp, McpPushNotification } from '@/mcp';
-import { type SessionInboxEvent, SessionInboxPriority } from '@/session/inbox';
+import { type SessionInboxEvent, SessionInboxUrgency } from '@/session/inbox';
 import type { AgentSession } from '@/session/types';
 
 import { createRouter } from './router';
@@ -94,7 +94,7 @@ describe('Router Push Notification adaptation', () => {
     expect(harness.sent).toEqual([
       {
         sourceEnv: 'telegram',
-        priority: SessionInboxPriority.Medium,
+        urgency: SessionInboxUrgency.Default,
         context: {
           sourceEnv: 'telegram',
           metadata: {

@@ -79,13 +79,14 @@ export function clearAudioInputOptimizerCache(): void {
 
 let ffmpegAvailable: boolean | null = null;
 
-/** Checks whether ffprobe (bundled static binary) is available. Result is cached. */
+/** Checks whether ffprobe (bundled static binary) is available. Result is cached.
+ * Uses a 30s timeout to accommodate Rosetta translation on first launch of x86_64 binaries. */
 export function isFfmpegAvailable(): boolean {
   if (ffmpegAvailable !== null) return ffmpegAvailable;
   try {
     execFileSync(ffprobeStaticPath, ['-version'], {
       stdio: 'ignore',
-      timeout: 5000,
+      timeout: 30_000,
     });
     ffmpegAvailable = true;
   } catch {

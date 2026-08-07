@@ -8,6 +8,12 @@ import { createCalculatorMcp } from './mcp.js';
 const PORT = Number(process.env.PORT ?? 3125);
 const LOG_LEVEL = (process.env.LOG_LEVEL ?? 'INFO') as LogLevel;
 
+if (!Number.isInteger(PORT) || PORT < 1 || PORT > 65535) {
+  throw new Error(
+    `Invalid PORT: ${process.env.PORT ?? PORT}. Must be an integer in range 1–65535.`,
+  );
+}
+
 const logger = createLogger({ name: 'calculator', minLevel: LOG_LEVEL });
 
 const mcp = createCalculatorMcp();

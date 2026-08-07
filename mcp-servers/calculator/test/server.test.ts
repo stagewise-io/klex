@@ -99,11 +99,30 @@ describe('Calculator MCP server', () => {
   });
 
   it('returns error for invalid expression', async () => {
-    const text = await callTool(mcp, 'evaluate', {
-      expression: '\\frac{1}{0}',
-    });
-    // Division by zero — mathjs returns Infinity or throws
-    // Either way, the tool should not crash
-    expect(text).toBeTruthy();
+    const response = await mcp.fetch(
+      new Request('http://localhost/mcp', {
+        method: 'POST',
+        headers: {
+          Accept: 'application/json, text/event-stream',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id: 1,
+          method: 'tools/call',
+          params: { name: 'evaluate', arguments: { expression: '???bad' } },
+        }),
+      }),
+    );
+    const text = await response.text();
+    const data = text
+      .split('\n')
+      .find((line) => line.startsWith('data: '))
+      ?.slice(6);
+    const parsed = JSON.parse(data ?? text) as {
+      result: { content: { type: string; text: string }[]; isError?: boolean };
+    };
+    expect(parsed.result.isError).toBe(true);
+    expect(parsed.result.content[0]?.text).toContain('Error:');
   });
 });

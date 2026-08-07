@@ -162,11 +162,15 @@ class CalculatorMcpModule implements CalculatorMcp {
             try {
               const result = solveEquation(input.equation, input.variable);
               if (result.solutions.length === 0) {
+                const parts: string[] = [result.message ?? 'No solutions'];
+                if (result.latex.length > 0) {
+                  parts.push('', 'LaTeX:', ...result.latex);
+                }
                 return {
                   content: [
                     {
                       type: 'text',
-                      text: result.message ?? 'No solutions',
+                      text: parts.join('\n'),
                     },
                   ],
                 };
@@ -241,9 +245,11 @@ export function createCalculatorMcp(): CalculatorMcp {
 
 function errorContent(error: unknown): {
   content: { type: 'text'; text: string }[];
+  isError: true;
 } {
   const message = error instanceof Error ? error.message : String(error);
   return {
     content: [{ type: 'text', text: `Error: ${message}` }],
+    isError: true,
   };
 }

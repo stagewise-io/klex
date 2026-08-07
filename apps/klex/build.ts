@@ -29,6 +29,33 @@ const aliasPlugin: esbuild.Plugin = {
   },
 };
 
+/**
+ * Virtualizes native packages (sharp, ffmpeg-static, ffprobe-static) so they
+ * load from the on-disk node_modules/ beside the SEA executable at runtime.
+ *
+ * The SEA embedder's require() only handles built-in modules — externalized
+ * npm packages fail with ERR_UNKNOWN_BUILTIN_MODULE. This plugin replaces
+ * imports of these three packages with shim modules that use
+ * createRequire(process.execPath) to create a proper Node.js require that
+ * resolves from the executable's directory.
+ *
+ * The actual packages (JS + native binaries) are copied to dist/node_modules/
+ * during packaging (see package-exe.ts → copyNativeAssets).
+ */
+const nativeShimPlugin: esbuild.Plugin = {
+  name: 'native-shim',
+  setup(build) {
+    build.onResolve(
+      { filter: /^(sharp|ffmpeg-static|ffprobe-static)$/ },
+      (args) => ({ path: args.path, namespace: 'native-shim' }),
+    );
+    build.onLoad({ filter: /.*/, namespace: 'native-shim' }, (args) => ({
+      contents: `const{createRequire}=require("node:module");const r=createRequire(process.execPath);module.exports=r(${JSON.stringify(args.path)});`,
+      loader: 'js',
+    }));
+  },
+};
+
 const sharedOptions: BuildOptions = {
   tsconfig: 'tsconfig.json',
   plugins: [aliasPlugin],
@@ -59,12 +86,11 @@ export function createBuildOptions(isSea: boolean): {
       // Normal Node builds resolve dependencies from node_modules. Bundling them
       // into ESM breaks packages that use runtime CommonJS requires.
       packages: isSea ? 'bundle' : 'external',
-      // sharp is a native addon (N-API) that uses createRequire(import.meta.url)
-      // to load .node files at runtime. Bundling it into CJS/SEA breaks because
-      // esbuild transforms import.meta.url to undefined. Keep it external so the
-      // require() is deferred to runtime, where image-processing.ts handles the
-      // failure gracefully (same pattern as ffmpeg in audio-processing.ts).
-      ...(isSea ? { external: ['sharp'] } : {}),
+      // Bundle JS into the SEA blob. Native packages (sharp, ffmpeg-static,
+      // ffprobe-static) are virtualized by nativeShimPlugin — their JS and
+      // native binaries are copied beside the executable during packaging
+      // (see package-exe.ts → copyNativeAssets).
+      ...(isSea ? { plugins: [aliasPlugin, nativeShimPlugin] } : {}),
     },
     worker: {
       ...sharedOptions,

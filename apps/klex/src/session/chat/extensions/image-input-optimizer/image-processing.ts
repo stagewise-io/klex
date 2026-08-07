@@ -8,9 +8,11 @@ import {
   extractBufferFromUrl,
 } from '@/shared-utilities';
 
-// Lazy-load sharp — it's a native addon that may not be available in SEA builds
-// or on systems without the native binary. Mirrors the isFfmpegAvailable
-// pattern in audio-processing.ts.
+// Lazy-load sharp — it's a native addon. In SEA builds, sharp's JS is
+// bundled into the blob and the native @img/sharp-* packages are copied to
+// dist/node_modules/@img/ during packaging (see package-exe.ts).
+// The build fails if native packages are missing, so this should always
+// succeed. The lazy loading remains as a safety net for dev/non-SEA runs.
 type SharpFn = typeof import('sharp')['default'];
 let sharpModule: SharpFn | null = null;
 let sharpChecked = false;
@@ -19,7 +21,7 @@ function getSharp(): SharpFn | null {
   if (sharpChecked) return sharpModule;
   sharpChecked = true;
   try {
-    // Use require() for CJS compatibility in SEA builds where sharp is external
+    // Use require() for CJS compatibility in SEA builds
     sharpModule = require('sharp');
   } catch {
     sharpModule = null;

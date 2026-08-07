@@ -16,6 +16,68 @@ if (!existsSync(executablePath)) {
   );
 }
 
+// Verify native assets were copied beside the executable.
+const distDir = resolve(import.meta.dirname, '..', 'dist');
+const nativeAssetChecks: Array<{ name: string; path: string }> = [
+  {
+    name: 'sharp addon',
+    path: resolve(
+      distDir,
+      'node_modules',
+      `@img`,
+      `sharp-${process.platform}-${process.arch}`,
+      'index.cjs',
+    ),
+  },
+  {
+    name: 'sharp libvips',
+    path: resolve(
+      distDir,
+      'node_modules',
+      '@img',
+      `sharp-libvips-${process.platform}-${process.arch}`,
+    ),
+  },
+  {
+    name: 'ffmpeg binary',
+    path: resolve(
+      distDir,
+      'node_modules',
+      'ffmpeg-static',
+      process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg',
+    ),
+  },
+  {
+    name: 'ffprobe binary',
+    path: resolve(
+      distDir,
+      'node_modules',
+      'ffprobe-static',
+      'bin',
+      process.platform,
+      process.arch,
+      process.platform === 'win32' ? 'ffprobe.exe' : 'ffprobe',
+    ),
+  },
+];
+
+const missingAssets = nativeAssetChecks.filter((check) => {
+  if (!existsSync(check.path)) {
+    process.stderr.write(
+      `Missing native asset: ${check.name} at ${check.path}\n`,
+    );
+    return true;
+  }
+  return false;
+});
+
+if (missingAssets.length > 0) {
+  throw new Error(
+    `${missingAssets.length} native asset(s) missing beside executable — ` +
+      'run package:exe to copy them, or check copyNativeAssets in package-exe.ts',
+  );
+}
+
 const result = spawnSync(executablePath, ['--help'], {
   encoding: 'utf8',
   timeout: 30_000,

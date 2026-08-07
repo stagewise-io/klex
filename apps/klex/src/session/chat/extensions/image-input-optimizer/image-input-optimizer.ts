@@ -55,11 +55,9 @@ class ImageInputOptimizerExt implements Extension {
   private readonly imageRegistry = new Map<string, FilePart | ImagePart>();
 
   constructor(private readonly deps: ExtensionDeps) {
-    if (!isSharpAvailable()) {
-      deps.logger.warn(
-        'sharp not found — image input optimizer will degrade to text replacement for all images',
-      );
-    }
+    // sharp is guaranteed to be available — the build fails if native
+    // packages are missing (see package-exe.ts → copyNativeAssets).
+    // isSharpAvailable() remains as a defensive check for dev/non-SEA runs.
   }
 
   getTools(model: ResolvedModel): ToolSet {

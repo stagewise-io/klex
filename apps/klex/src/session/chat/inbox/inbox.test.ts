@@ -115,6 +115,18 @@ describe('Inbox — send', () => {
     expect(onNewInput).toHaveBeenCalledTimes(3);
   });
 
+  it('passes urgency to onNewInput', () => {
+    inbox.send(critical('a'));
+    inbox.send(defaultEvent('b'));
+    inbox.send(deferrable('c'));
+    expect(onNewInput).toHaveBeenNthCalledWith(1, SessionInboxUrgency.Critical);
+    expect(onNewInput).toHaveBeenNthCalledWith(2, SessionInboxUrgency.Default);
+    expect(onNewInput).toHaveBeenNthCalledWith(
+      3,
+      SessionInboxUrgency.Deferrable,
+    );
+  });
+
   it('buffers deferrable events even if onImmediateEvent throws', () => {
     // Deferrable events don't call onImmediateEvent, so they're always safe.
     expect(() => inbox.send(deferrable('survivor'))).not.toThrow();
@@ -258,6 +270,18 @@ describe('Inbox — sendMessage', () => {
     inbox.sendMessage(makeMessage('b'), SessionInboxUrgency.Default);
     inbox.sendMessage(makeMessage('c'), SessionInboxUrgency.Deferrable);
     expect(onNewInput).toHaveBeenCalledTimes(3);
+  });
+
+  it('passes urgency to onNewInput for sendMessage', () => {
+    inbox.sendMessage(makeMessage('a'), SessionInboxUrgency.Critical);
+    inbox.sendMessage(makeMessage('b'), SessionInboxUrgency.Default);
+    inbox.sendMessage(makeMessage('c'), SessionInboxUrgency.Deferrable);
+    expect(onNewInput).toHaveBeenNthCalledWith(1, SessionInboxUrgency.Critical);
+    expect(onNewInput).toHaveBeenNthCalledWith(2, SessionInboxUrgency.Default);
+    expect(onNewInput).toHaveBeenNthCalledWith(
+      3,
+      SessionInboxUrgency.Deferrable,
+    );
   });
 });
 

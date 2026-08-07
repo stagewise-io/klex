@@ -120,8 +120,10 @@ export interface InboxDependencies {
   /**
    * Called for any input (any urgency). The session uses this to trigger
    * the loop, track new input during a turn, and interrupt backoff waits.
+   * The urgency is passed so the session can distinguish Deferrable
+   * arrivals (which do not trigger check-retry) from Critical/Default.
    */
-  onNewInput: () => void;
+  onNewInput: (urgency: SessionInboxUrgency) => void;
   /** Optional logger for recording unexpected errors from the callback. */
   logger?: ModuleLogger;
 }
@@ -154,7 +156,7 @@ class InboxModule implements SessionInboxBuffer {
       this.notifyImmediateEvent(event);
     }
 
-    this.notifyNewInput();
+    this.notifyNewInput(event.urgency);
   }
 
   sendMessage(message: ExtendedUIMessage, urgency: SessionInboxUrgency): void {
@@ -167,7 +169,7 @@ class InboxModule implements SessionInboxBuffer {
       this.notifyImmediateMessage(message, urgency);
     }
 
-    this.notifyNewInput();
+    this.notifyNewInput(urgency);
   }
 
   close(): void {
@@ -199,9 +201,9 @@ class InboxModule implements SessionInboxBuffer {
     }
   }
 
-  private notifyNewInput(): void {
+  private notifyNewInput(urgency: SessionInboxUrgency): void {
     try {
-      this.deps.onNewInput();
+      this.deps.onNewInput(urgency);
     } catch (err) {
       this.deps.logger?.error({ err }, 'Inbox onNewInput callback threw');
     }

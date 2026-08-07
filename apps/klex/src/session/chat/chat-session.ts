@@ -97,6 +97,14 @@ class ChatSessionModule implements AgentSession {
    */
   private newInputDuringTurn = false;
 
+  /**
+   * Set when any input arrives while the loop is idle.
+   * Critical/Default events are appended to history immediately but
+   * not buffered in the inbox, so isEmpty() alone cannot detect them.
+   * This flag ensures the loop runs a turn to process them.
+   */
+  private hasPendingInput = false;
+
   private readonly sessionId = randomUUID();
 
   private readonly sessionSpan: Span;
@@ -478,8 +486,12 @@ class ChatSessionModule implements AgentSession {
       this.newInputDuringTurn = true;
     }
 
-    // If no turn is active, start one.
+    // If no turn is active, flag that there is pending input and
+    // start the loop. The flag ensures the loop doesn't go idle
+    // before processing immediate events that were appended to
+    // history but not buffered in the inbox.
     if (!this.loopActive) {
+      this.hasPendingInput = true;
       void this.runLoop();
     }
   };
@@ -520,10 +532,12 @@ class ChatSessionModule implements AgentSession {
           return;
         }
 
-        // If the inbox is empty AND we're not in a backoff retry cycle
-        // AND no check-retry is needed, go idle.
+        // If the inbox is empty AND no pending immediate input AND
+        // we're not in a backoff retry cycle AND no check-retry is
+        // needed, go idle.
         if (
           this.sessionInbox.isEmpty() &&
+          !this.hasPendingInput &&
           !needsBackoffRetry &&
           !needsCheckRetry
         ) {
@@ -538,9 +552,10 @@ class ChatSessionModule implements AgentSession {
           return;
         }
 
-        // Reset the new-input flag before each turn so we only detect
+        // Reset the input flags before each turn so we only detect
         // input that arrives during this specific turn.
         this.newInputDuringTurn = false;
+        this.hasPendingInput = false;
 
         // Run exactly one turn per iteration. The turn drains deferred
         // inbox input and runs steps until no more generation is needed.

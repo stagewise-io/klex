@@ -110,9 +110,13 @@ export interface InboxDependencies {
   onImmediateEvent: (event: SessionInboxEvent) => void;
   /**
    * Called for Critical and Default urgency native messages. The session
-   * appends the message to the message history immediately.
+   * appends the message to the message history immediately. For Critical
+   * urgency, the session also aborts the running generation.
    */
-  onImmediateMessage: (message: ExtendedUIMessage) => void;
+  onImmediateMessage: (
+    message: ExtendedUIMessage,
+    urgency: SessionInboxUrgency,
+  ) => void;
   /**
    * Called for any input (any urgency). The session uses this to trigger
    * the loop, track new input during a turn, and interrupt backoff waits.
@@ -160,7 +164,7 @@ class InboxModule implements SessionInboxBuffer {
       this.deferredMessages.push({ message });
     } else {
       // Critical or Default — dispatch immediately via callback.
-      this.notifyImmediateMessage(message);
+      this.notifyImmediateMessage(message, urgency);
     }
 
     this.notifyNewInput();
@@ -181,12 +185,15 @@ class InboxModule implements SessionInboxBuffer {
     }
   }
 
-  private notifyImmediateMessage(message: ExtendedUIMessage): void {
+  private notifyImmediateMessage(
+    message: ExtendedUIMessage,
+    urgency: SessionInboxUrgency,
+  ): void {
     try {
-      this.deps.onImmediateMessage(message);
+      this.deps.onImmediateMessage(message, urgency);
     } catch (err) {
       this.deps.logger?.error(
-        { messageId: message.id, err },
+        { messageId: message.id, urgency: SessionInboxUrgency[urgency], err },
         'Inbox onImmediateMessage callback threw — message may not be in history',
       );
     }

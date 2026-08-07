@@ -235,18 +235,20 @@ describe('Inbox — sendMessage', () => {
     expect(onImmediateMessage).not.toHaveBeenCalled();
   });
 
-  it('dispatches critical messages immediately via onImmediateMessage', () => {
+  it('dispatches critical messages immediately via onImmediateMessage with urgency', () => {
     inbox.sendMessage(makeMessage('urgent'), SessionInboxUrgency.Critical);
     expect(onImmediateMessage).toHaveBeenCalledExactlyOnceWith(
       expect.objectContaining({ id: 'msg-urgent' }),
+      SessionInboxUrgency.Critical,
     );
     expect(inbox.getMessages()).toEqual([]);
   });
 
-  it('dispatches default messages immediately via onImmediateMessage', () => {
+  it('dispatches default messages immediately via onImmediateMessage with urgency', () => {
     inbox.sendMessage(makeMessage('normal'), SessionInboxUrgency.Default);
     expect(onImmediateMessage).toHaveBeenCalledExactlyOnceWith(
       expect.objectContaining({ id: 'msg-normal' }),
+      SessionInboxUrgency.Default,
     );
     expect(inbox.getMessages()).toEqual([]);
   });

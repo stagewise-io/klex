@@ -1,6 +1,6 @@
 # Telegram MCP Server
 
-An ephemeral Telegram bridge using grammY. Allowlisted private text, photo, audio, and voice messages become Push Notifications; agents reply through one text-only MCP tool.
+An ephemeral Telegram bridge using grammY. Allowlisted private text, photo, audio, and voice messages become Push Notifications; agents reply through text, voice, and photo MCP tools, manage their bot profile, and query pending inbound messages.
 
 ## Start the proxy
 
@@ -90,7 +90,115 @@ await mcpClient.callTool({
 });
 ```
 
-Messages must contain 1–4,000 characters. The outbound `chatId` must be in the runtime's current allowlist. Outbound images and audio are not supported.
+Messages must contain 1–4,000 characters. The outbound `chatId` must be in the runtime's current allowlist.
+
+## Outbound voice
+
+Send a voice message (OGG/OPUS) with:
+
+```ts
+await mcpClient.callTool({
+  name: 'sendVoice',
+  arguments: {
+    chatId: '123456789',
+    voiceData: base64EncodedOgg, // base64-encoded audio bytes
+    caption: 'Transcript',        // optional, 1–1,024 chars
+    duration: 10,                 // optional, seconds (0–3,600)
+    replyToMessageId: '42',       // optional
+  },
+});
+```
+
+Voice data must be 1–50 MB of decoded bytes, base64-encoded. The outbound `chatId` must be in the runtime's current allowlist.
+
+## Outbound photos
+
+Send a photo with:
+
+```ts
+await mcpClient.callTool({
+  name: 'sendPhoto',
+  arguments: {
+    chatId: '123456789',
+    photoData: base64EncodedJpeg, // base64-encoded image bytes
+    caption: 'Caption',           // optional, 1–1,024 chars
+    replyToMessageId: '42',       // optional
+  },
+});
+```
+
+Photo data must be 1–10 MB of decoded bytes, base64-encoded. The photo's width and height must not exceed 10,000 px in total. The outbound `chatId` must be in the runtime's current allowlist.
+
+## Chat info
+
+Fetch metadata about a Telegram chat:
+
+```ts
+await mcpClient.callTool({
+  name: 'getChatInfo',
+  arguments: {
+    chatId: '123456789',
+  },
+});
+```
+
+Returns the chat's `id`, `type`, and optionally `username`, `firstName`, `lastName`, or `title`. The `chatId` does not need to be in the runtime allowlist — this works for any chat the bot is a member of.
+
+## Pending message history
+
+Retrieve pending (unacknowledged) inbound messages with optional filters:
+
+```ts
+await mcpClient.callTool({
+  name: 'getChatHistory',
+  arguments: {
+    chatId: '123456789', // optional filter
+    senderId: '987654321', // optional filter
+    kind: 'text',          // optional: 'text' | 'photo' | 'audio' | 'voice'
+    limit: 100,            // optional, max 1,000
+  },
+});
+```
+
+> **Important:** The Telegram Bot API does not expose full server-side chat history. This tool returns only messages received by the bot since the current runtime started and not yet acknowledged. Acknowledged events are excluded. Restarting the proxy or destroying the runtime discards all pending messages.
+
+## Bot profile management
+
+Read and update the bot's display name, description, and short description:
+
+```ts
+// Get current profile
+await mcpClient.callTool({ name: 'getMyProfile', arguments: {} });
+
+// Set display name (0–64 chars)
+await mcpClient.callTool({
+  name: 'setMyName',
+  arguments: { name: 'My Bot' },
+});
+
+// Set description shown in the chat with the bot (0–512 chars)
+await mcpClient.callTool({
+  name: 'setMyDescription',
+  arguments: { description: 'A helpful assistant' },
+});
+
+// Set short description shown on the profile page (0–120 chars)
+await mcpClient.callTool({
+  name: 'setMyShortDescription',
+  arguments: { shortDescription: 'Helpful assistant' },
+});
+```
+
+### Profile photo limitation
+
+The Telegram Bot API does **not** provide a method for a bot to update its own profile photo. The `setChatPhoto` method changes a group chat's photo (and requires admin rights), not the bot's own profile picture. Business-account photo methods (`setBusinessAccountProfilePhoto`) require a business connection and are not applicable to ordinary bots.
+
+To change the bot's profile picture, use **@BotFather** on Telegram:
+
+1. Open a chat with [@BotFather](https://t.me/BotFather)
+2. Send `/setuserpic`
+3. Select the bot
+4. Upload the new profile photo
 
 ## Pending queue guarantees
 

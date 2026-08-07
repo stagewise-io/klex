@@ -161,6 +161,13 @@ describe('Telegram runtime manager', () => {
             updates.push([...ids]);
           },
           sendText: vi.fn(),
+          sendVoice: vi.fn(),
+          sendPhoto: vi.fn(),
+          setMyName: vi.fn(),
+          setMyDescription: vi.fn(),
+          setMyShortDescription: vi.fn(),
+          getMyProfile: vi.fn(),
+          getChat: vi.fn(),
         };
         channels.push({ token: deps.token, start, close, updates, channel });
         return channel;
@@ -266,6 +273,30 @@ describe('Telegram runtime manager', () => {
           async sendText(_chatId, message) {
             sends.push(message);
             return 99;
+          },
+          async sendVoice() {
+            return 100;
+          },
+          async sendPhoto() {
+            return 101;
+          },
+          async setMyName() {},
+          async setMyDescription() {},
+          async setMyShortDescription() {},
+          async getMyName() {
+            return 'Test Bot';
+          },
+          async getMyDescription() {
+            return 'Test description';
+          },
+          async getMyShortDescription() {
+            return 'Test short';
+          },
+          async getChat(chatId) {
+            return {
+              id: chatId,
+              type: 'private',
+            };
           },
         };
         bots.set(deps.token, {

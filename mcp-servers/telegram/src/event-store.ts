@@ -26,6 +26,12 @@ export interface EventStoreOptions {
 export interface EventStore {
   append(message: InboundTelegramMessage): AppendResult;
   page(options?: { limit?: number }): GetEventsResult;
+  query(options?: {
+    chatId?: string;
+    senderId?: string;
+    kind?: 'text' | 'photo' | 'audio' | 'voice';
+    limit?: number;
+  }): GetEventsResult;
   acknowledge(eventIds: string[]): void;
   close(): void;
 }
@@ -91,6 +97,48 @@ class EventStoreModule implements EventStore {
         .slice(0, limit)
         .map(({ event }) => this.#copy(event)),
       hasMore: this.#pending.length > limit,
+    };
+  }
+
+  query(
+    options: {
+      chatId?: string;
+      senderId?: string;
+      kind?: 'text' | 'photo' | 'audio' | 'voice';
+      limit?: number;
+    } = {},
+  ): GetEventsResult {
+    const requestedLimit = options.limit ?? DEFAULT_PAGE_SIZE;
+    if (!Number.isInteger(requestedLimit) || requestedLimit < 1) {
+      throw new RangeError('Event query limit must be a positive integer');
+    }
+    let indices = this.#pending.map((_, index) => index);
+    if (options.chatId) {
+      indices = indices.filter((index) => {
+        const event = this.#pending[index]!.event;
+        return event.data?.chatId === options.chatId;
+      });
+    }
+    if (options.senderId) {
+      indices = indices.filter((index) => {
+        const event = this.#pending[index]!.event;
+        return event.data?.senderId === options.senderId;
+      });
+    }
+    if (options.kind) {
+      indices = indices.filter((index) => {
+        const event = this.#pending[index]!.event;
+        return options.kind === 'text'
+          ? !event.data?.mediaKind
+          : event.data?.mediaKind === options.kind;
+      });
+    }
+    const limit = Math.min(requestedLimit, MAX_PAGE_SIZE);
+    return {
+      events: indices
+        .slice(0, limit)
+        .map((index) => this.#copy(this.#pending[index]!.event)),
+      hasMore: indices.length > limit,
     };
   }
 

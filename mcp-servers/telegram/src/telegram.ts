@@ -1,4 +1,4 @@
-import { Bot } from 'grammy';
+import { Bot, InputFile } from 'grammy';
 
 import type { RootLogger } from '@stagewise/logger';
 
@@ -37,6 +37,21 @@ export type InboundTelegramMessage = InboundTextMessage | InboundMediaMessage;
 
 export type TelegramStatus = 'starting' | 'connected' | 'disconnected';
 
+export interface ChatInfo {
+  id: string;
+  type: string;
+  username?: string;
+  firstName?: string;
+  lastName?: string;
+  title?: string;
+}
+
+export interface BotProfile {
+  name: string;
+  description: string;
+  shortDescription: string;
+}
+
 export interface TelegramChannel {
   start(): Promise<void>;
   sendText(input: {
@@ -44,6 +59,24 @@ export interface TelegramChannel {
     message: string;
     replyToMessageId?: string;
   }): Promise<{ messageId: string }>;
+  sendVoice(input: {
+    chatId: string;
+    voiceData: string;
+    caption?: string;
+    duration?: number;
+    replyToMessageId?: string;
+  }): Promise<{ messageId: string }>;
+  sendPhoto(input: {
+    chatId: string;
+    photoData: string;
+    caption?: string;
+    replyToMessageId?: string;
+  }): Promise<{ messageId: string }>;
+  setMyName(name: string): Promise<void>;
+  setMyDescription(description: string): Promise<void>;
+  setMyShortDescription(shortDescription: string): Promise<void>;
+  getMyProfile(): Promise<BotProfile>;
+  getChat(chatId: string): Promise<ChatInfo>;
   status(): TelegramStatus;
   updateAllowedUserIds(allowedUserIds: ReadonlySet<string>): void;
   close(): Promise<void>;
@@ -92,6 +125,26 @@ export interface TelegramBot {
     message: string,
     replyToMessageId?: number,
   ): Promise<number>;
+  sendVoice(input: {
+    chatId: string;
+    voice: Uint8Array;
+    caption?: string;
+    duration?: number;
+    replyToMessageId?: number;
+  }): Promise<number>;
+  sendPhoto(input: {
+    chatId: string;
+    photo: Uint8Array;
+    caption?: string;
+    replyToMessageId?: number;
+  }): Promise<number>;
+  setMyName(name: string): Promise<void>;
+  setMyDescription(description: string): Promise<void>;
+  setMyShortDescription(shortDescription: string): Promise<void>;
+  getMyName(): Promise<string>;
+  getMyDescription(): Promise<string>;
+  getMyShortDescription(): Promise<string>;
+  getChat(chatId: string): Promise<ChatInfo>;
 }
 
 export interface TelegramChannelDependencies {
@@ -183,6 +236,133 @@ class TelegramChannelModule implements TelegramChannel {
     } catch {
       this.#logger.warn({}, 'Telegram message delivery failed');
       throw new Error('Telegram message delivery failed');
+    }
+  }
+
+  async sendVoice(input: {
+    chatId: string;
+    voiceData: string;
+    caption?: string;
+    duration?: number;
+    replyToMessageId?: string;
+  }): Promise<{ messageId: string }> {
+    if (this.#state !== 'connected' || !this.#bot) {
+      throw new Error('Telegram is not connected');
+    }
+    if (!this.#allowedUserIds.has(input.chatId)) {
+      throw new Error(`Telegram chat is not allowed: ${input.chatId}`);
+    }
+    const replyToMessageId = input.replyToMessageId
+      ? parseInteger(input.replyToMessageId, 'replyToMessageId')
+      : undefined;
+    try {
+      const voice = Buffer.from(input.voiceData, 'base64');
+      const messageId = await this.#bot.sendVoice({
+        chatId: input.chatId,
+        voice: new Uint8Array(voice),
+        caption: input.caption,
+        duration: input.duration,
+        replyToMessageId,
+      });
+      return { messageId: String(messageId) };
+    } catch {
+      this.#logger.warn({}, 'Telegram voice delivery failed');
+      throw new Error('Telegram voice delivery failed');
+    }
+  }
+
+  async sendPhoto(input: {
+    chatId: string;
+    photoData: string;
+    caption?: string;
+    replyToMessageId?: string;
+  }): Promise<{ messageId: string }> {
+    if (this.#state !== 'connected' || !this.#bot) {
+      throw new Error('Telegram is not connected');
+    }
+    if (!this.#allowedUserIds.has(input.chatId)) {
+      throw new Error(`Telegram chat is not allowed: ${input.chatId}`);
+    }
+    const replyToMessageId = input.replyToMessageId
+      ? parseInteger(input.replyToMessageId, 'replyToMessageId')
+      : undefined;
+    try {
+      const photo = Buffer.from(input.photoData, 'base64');
+      const messageId = await this.#bot.sendPhoto({
+        chatId: input.chatId,
+        photo: new Uint8Array(photo),
+        caption: input.caption,
+        replyToMessageId,
+      });
+      return { messageId: String(messageId) };
+    } catch {
+      this.#logger.warn({}, 'Telegram photo delivery failed');
+      throw new Error('Telegram photo delivery failed');
+    }
+  }
+
+  async setMyName(name: string): Promise<void> {
+    if (this.#state !== 'connected' || !this.#bot) {
+      throw new Error('Telegram is not connected');
+    }
+    try {
+      await this.#bot.setMyName(name);
+    } catch {
+      this.#logger.warn({}, 'Telegram name update failed');
+      throw new Error('Telegram name update failed');
+    }
+  }
+
+  async setMyDescription(description: string): Promise<void> {
+    if (this.#state !== 'connected' || !this.#bot) {
+      throw new Error('Telegram is not connected');
+    }
+    try {
+      await this.#bot.setMyDescription(description);
+    } catch {
+      this.#logger.warn({}, 'Telegram description update failed');
+      throw new Error('Telegram description update failed');
+    }
+  }
+
+  async setMyShortDescription(shortDescription: string): Promise<void> {
+    if (this.#state !== 'connected' || !this.#bot) {
+      throw new Error('Telegram is not connected');
+    }
+    try {
+      await this.#bot.setMyShortDescription(shortDescription);
+    } catch {
+      this.#logger.warn({}, 'Telegram short description update failed');
+      throw new Error('Telegram short description update failed');
+    }
+  }
+
+  async getMyProfile(): Promise<BotProfile> {
+    if (this.#state !== 'connected' || !this.#bot) {
+      throw new Error('Telegram is not connected');
+    }
+    try {
+      const [name, description, shortDescription] = await Promise.all([
+        this.#bot.getMyName(),
+        this.#bot.getMyDescription(),
+        this.#bot.getMyShortDescription(),
+      ]);
+      return { name, description, shortDescription };
+    } catch {
+      this.#logger.warn({}, 'Telegram profile fetch failed');
+      throw new Error('Telegram profile fetch failed');
+    }
+  }
+
+  async getChat(chatId: string): Promise<ChatInfo> {
+    if (this.#state !== 'connected' || !this.#bot) {
+      throw new Error('Telegram is not connected');
+    }
+    try {
+      return await this.#bot.getChat(chatId);
+    } catch {
+      this.#logger.warn({}, 'Telegram chat lookup failed');
+      throw new Error('Telegram chat lookup failed');
     }
   }
 
@@ -378,6 +558,59 @@ function createGrammyBot(token: string): TelegramBot {
             : { message_id: replyToMessageId },
       });
       return sent.message_id;
+    },
+    async sendVoice({ chatId, voice, caption, duration, replyToMessageId }) {
+      const sent = await bot.api.sendVoice(chatId, new InputFile(voice), {
+        caption,
+        duration,
+        reply_parameters:
+          replyToMessageId === undefined
+            ? undefined
+            : { message_id: replyToMessageId },
+      });
+      return sent.message_id;
+    },
+    async sendPhoto({ chatId, photo, caption, replyToMessageId }) {
+      const sent = await bot.api.sendPhoto(chatId, new InputFile(photo), {
+        caption,
+        reply_parameters:
+          replyToMessageId === undefined
+            ? undefined
+            : { message_id: replyToMessageId },
+      });
+      return sent.message_id;
+    },
+    async setMyName(name) {
+      await bot.api.setMyName(name);
+    },
+    async setMyDescription(description) {
+      await bot.api.setMyDescription(description);
+    },
+    async setMyShortDescription(shortDescription) {
+      await bot.api.setMyShortDescription(shortDescription);
+    },
+    async getMyName() {
+      const result = await bot.api.getMyName();
+      return result.name;
+    },
+    async getMyDescription() {
+      const result = await bot.api.getMyDescription();
+      return result.description;
+    },
+    async getMyShortDescription() {
+      const result = await bot.api.getMyShortDescription();
+      return result.short_description;
+    },
+    async getChat(chatId) {
+      const chat = await bot.api.getChat(chatId);
+      return {
+        id: String(chat.id),
+        type: chat.type,
+        username: 'username' in chat ? chat.username : undefined,
+        firstName: 'first_name' in chat ? chat.first_name : undefined,
+        lastName: 'last_name' in chat ? chat.last_name : undefined,
+        title: 'title' in chat ? chat.title : undefined,
+      };
     },
   };
 }

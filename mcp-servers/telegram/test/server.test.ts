@@ -57,6 +57,25 @@ function createFakeBot(getMeError?: Error) {
     message: string;
     replyToMessageId?: number;
   }[] = [];
+  const voiceSends: {
+    chatId: string;
+    voice: Uint8Array;
+    caption?: string;
+    duration?: number;
+    replyToMessageId?: number;
+  }[] = [];
+  const photoSends: {
+    chatId: string;
+    photo: Uint8Array;
+    caption?: string;
+    replyToMessageId?: number;
+  }[] = [];
+  let profileName = 'Test Bot';
+  let profileDescription = 'Test description';
+  let profileShortDescription = 'Test short';
+  const nameCalls: string[] = [];
+  const descriptionCalls: string[] = [];
+  const shortDescriptionCalls: string[] = [];
   const downloadCalls: string[] = [];
   const downloads = new Map<string, TelegramFileDownloadResult>();
   let startCount = 0;
@@ -89,12 +108,56 @@ function createFakeBot(getMeError?: Error) {
       sends.push({ chatId, message, replyToMessageId });
       return 99;
     },
+    async sendVoice({ chatId, voice, caption, duration, replyToMessageId }) {
+      voiceSends.push({ chatId, voice, caption, duration, replyToMessageId });
+      return 100;
+    },
+    async sendPhoto({ chatId, photo, caption, replyToMessageId }) {
+      photoSends.push({ chatId, photo, caption, replyToMessageId });
+      return 101;
+    },
+    async setMyName(name) {
+      nameCalls.push(name);
+      profileName = name;
+    },
+    async setMyDescription(description) {
+      descriptionCalls.push(description);
+      profileDescription = description;
+    },
+    async setMyShortDescription(shortDescription) {
+      shortDescriptionCalls.push(shortDescription);
+      profileShortDescription = shortDescription;
+    },
+    async getMyName() {
+      return profileName;
+    },
+    async getMyDescription() {
+      return profileDescription;
+    },
+    async getMyShortDescription() {
+      return profileShortDescription;
+    },
+    async getChat(chatId) {
+      return {
+        id: chatId,
+        type: 'private',
+        username: undefined,
+        firstName: 'Test User',
+        lastName: undefined,
+        title: undefined,
+      };
+    },
   };
   return {
     bot,
     sends,
+    voiceSends,
+    photoSends,
     downloadCalls,
     downloads,
+    nameCalls,
+    descriptionCalls,
+    shortDescriptionCalls,
     emit(message: Partial<RawTelegramMessage> = {}) {
       return listener?.({
         kind: 'text',
@@ -540,5 +603,300 @@ describe('MCP contract', () => {
       await mcp.close();
       store.close();
     }
+  });
+
+  it('sends voice messages via the sendVoice tool', async () => {
+    const store = createEventStore();
+    const { channel, fake } = await createStartedChannel();
+    const mcp = createTelegramMcp(channel, store);
+    try {
+      const audioBase64 = Buffer.from('fake-ogg-data').toString('base64');
+      expect(
+        await jsonRpc(mcp, {
+          method: 'tools/call',
+          params: {
+            name: 'sendVoice',
+            arguments: {
+              chatId: '40',
+              voiceData: audioBase64,
+              caption: 'voice caption',
+              duration: 10,
+            },
+          },
+        }),
+      ).toMatchObject({ result: { content: [{ type: 'text' }] } });
+      expect(fake.voiceSends).toHaveLength(1);
+      expect(fake.voiceSends[0]).toMatchObject({
+        chatId: '40',
+        caption: 'voice caption',
+        duration: 10,
+      });
+    } finally {
+      await mcp.close();
+      store.close();
+    }
+  });
+
+  it('sends photos via the sendPhoto tool', async () => {
+    const store = createEventStore();
+    const { channel, fake } = await createStartedChannel();
+    const mcp = createTelegramMcp(channel, store);
+    try {
+      const photoBase64 = Buffer.from('fake-jpeg-data').toString('base64');
+      expect(
+        await jsonRpc(mcp, {
+          method: 'tools/call',
+          params: {
+            name: 'sendPhoto',
+            arguments: {
+              chatId: '40',
+              photoData: photoBase64,
+              caption: 'photo caption',
+            },
+          },
+        }),
+      ).toMatchObject({ result: { content: [{ type: 'text' }] } });
+      expect(fake.photoSends).toHaveLength(1);
+      expect(fake.photoSends[0]).toMatchObject({
+        chatId: '40',
+        caption: 'photo caption',
+      });
+    } finally {
+      await mcp.close();
+      store.close();
+    }
+  });
+
+  it('fetches chat info via the getChatInfo tool', async () => {
+    const store = createEventStore();
+    const { channel } = await createStartedChannel();
+    const mcp = createTelegramMcp(channel, store);
+    try {
+      const result = await jsonRpc(mcp, {
+        method: 'tools/call',
+        params: {
+          name: 'getChatInfo',
+          arguments: { chatId: '40' },
+        },
+      });
+      const parsed = JSON.parse(
+        (result as { result: { content: [{ text: string }] } }).result
+          .content[0].text,
+      );
+      expect(parsed).toMatchObject({
+        id: '40',
+        type: 'private',
+        firstName: 'Test User',
+      });
+    } finally {
+      await mcp.close();
+      store.close();
+    }
+  });
+
+  it('queries pending messages via the getChatHistory tool', async () => {
+    const store = createEventStore();
+    const { channel, fake } = await createStartedChannel(
+      createFakeBot(),
+      (message) => {
+        store.append(message);
+      },
+    );
+    await fake.emit({ text: 'first message' });
+    await fake.emit({
+      updateId: 11,
+      kind: 'photo',
+      fileId: 'photo',
+      caption: 'photo caption',
+    });
+    const mcp = createTelegramMcp(channel, store);
+    try {
+      const result = await jsonRpc(mcp, {
+        method: 'tools/call',
+        params: {
+          name: 'getChatHistory',
+          arguments: { chatId: '30' },
+        },
+      });
+      const parsed = JSON.parse(
+        (result as { result: { content: [{ text: string }] } }).result
+          .content[0].text,
+      );
+      expect(parsed.count).toBe(2);
+      expect(parsed.events).toHaveLength(2);
+    } finally {
+      await mcp.close();
+      store.close();
+    }
+  });
+
+  it('filters chat history by message kind', async () => {
+    const store = createEventStore();
+    const { channel, fake } = await createStartedChannel(
+      createFakeBot(),
+      (message) => {
+        store.append(message);
+      },
+    );
+    await fake.emit({ text: 'text msg' });
+    await fake.emit({
+      updateId: 11,
+      kind: 'photo',
+      fileId: 'photo',
+      caption: 'photo msg',
+    });
+    const mcp = createTelegramMcp(channel, store);
+    try {
+      const result = await jsonRpc(mcp, {
+        method: 'tools/call',
+        params: {
+          name: 'getChatHistory',
+          arguments: { kind: 'text' },
+        },
+      });
+      const parsed = JSON.parse(
+        (result as { result: { content: [{ text: string }] } }).result
+          .content[0].text,
+      );
+      expect(parsed.count).toBe(1);
+      expect(parsed.events[0].data).toMatchObject({
+        messageId: '20',
+      });
+    } finally {
+      await mcp.close();
+      store.close();
+    }
+  });
+
+  it('retrieves the bot profile via the getMyProfile tool', async () => {
+    const store = createEventStore();
+    const { channel } = await createStartedChannel();
+    const mcp = createTelegramMcp(channel, store);
+    try {
+      const result = await jsonRpc(mcp, {
+        method: 'tools/call',
+        params: {
+          name: 'getMyProfile',
+          arguments: {},
+        },
+      });
+      const parsed = JSON.parse(
+        (result as { result: { content: [{ text: string }] } }).result
+          .content[0].text,
+      );
+      expect(parsed).toEqual({
+        name: 'Test Bot',
+        description: 'Test description',
+        shortDescription: 'Test short',
+      });
+    } finally {
+      await mcp.close();
+      store.close();
+    }
+  });
+
+  it('updates the bot name via the setMyName tool', async () => {
+    const store = createEventStore();
+    const { channel, fake } = await createStartedChannel();
+    const mcp = createTelegramMcp(channel, store);
+    try {
+      expect(
+        await jsonRpc(mcp, {
+          method: 'tools/call',
+          params: {
+            name: 'setMyName',
+            arguments: { name: 'New Bot Name' },
+          },
+        }),
+      ).toMatchObject({ result: { content: [{ type: 'text' }] } });
+      expect(fake.nameCalls).toEqual(['New Bot Name']);
+    } finally {
+      await mcp.close();
+      store.close();
+    }
+  });
+
+  it('updates the bot description via the setMyDescription tool', async () => {
+    const store = createEventStore();
+    const { channel, fake } = await createStartedChannel();
+    const mcp = createTelegramMcp(channel, store);
+    try {
+      expect(
+        await jsonRpc(mcp, {
+          method: 'tools/call',
+          params: {
+            name: 'setMyDescription',
+            arguments: { description: 'A new description' },
+          },
+        }),
+      ).toMatchObject({ result: { content: [{ type: 'text' }] } });
+      expect(fake.descriptionCalls).toEqual(['A new description']);
+    } finally {
+      await mcp.close();
+      store.close();
+    }
+  });
+
+  it('updates the bot short description via the setMyShortDescription tool', async () => {
+    const store = createEventStore();
+    const { channel, fake } = await createStartedChannel();
+    const mcp = createTelegramMcp(channel, store);
+    try {
+      expect(
+        await jsonRpc(mcp, {
+          method: 'tools/call',
+          params: {
+            name: 'setMyShortDescription',
+            arguments: { shortDescription: 'New short' },
+          },
+        }),
+      ).toMatchObject({ result: { content: [{ type: 'text' }] } });
+      expect(fake.shortDescriptionCalls).toEqual(['New short']);
+    } finally {
+      await mcp.close();
+      store.close();
+    }
+  });
+});
+
+describe('event store query', () => {
+  it('filters by chatId, senderId, and kind', () => {
+    const store = createEventStore();
+    store.append(textMessage);
+    store.append({ ...textMessage, updateId: '12', chatId: '31' });
+    store.append({
+      ...photoMessage,
+      updateId: '13',
+      chatId: '32',
+      senderId: '41',
+    });
+
+    expect(store.query({ chatId: '30' }).events).toHaveLength(1);
+    expect(store.query({ chatId: '31' }).events).toHaveLength(1);
+    expect(store.query({ chatId: '32' }).events).toHaveLength(1);
+    expect(store.query({ senderId: '40' }).events).toHaveLength(2);
+    expect(store.query({ senderId: '41' }).events).toHaveLength(1);
+    expect(store.query({ kind: 'text' }).events).toHaveLength(2);
+    expect(store.query({ kind: 'photo' }).events).toHaveLength(1);
+    expect(store.query({ kind: 'voice' }).events).toHaveLength(0);
+    store.close();
+  });
+
+  it('respects limit and reports hasMore', () => {
+    const store = createEventStore();
+    store.append(textMessage);
+    store.append({ ...textMessage, updateId: '12' });
+    store.append({ ...textMessage, updateId: '13' });
+    const result = store.query({ limit: 2 });
+    expect(result.events).toHaveLength(2);
+    expect(result.hasMore).toBe(true);
+    store.close();
+  });
+
+  it('rejects invalid limit values', () => {
+    const store = createEventStore();
+    expect(() => store.query({ limit: 0 })).toThrow(RangeError);
+    expect(() => store.query({ limit: -1 })).toThrow(RangeError);
+    store.close();
   });
 });

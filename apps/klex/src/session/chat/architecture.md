@@ -14,17 +14,49 @@ Router
 
 Owns message history, inbox, extension handler, fallback manager, backoff manager, and the run loop. Lives for the application lifetime (or until a fatal error self-terminates it). Exposes `status: 'active' | 'terminated'` so the router can detect dead sessions and replace them.
 
-**Loop:** processes one turn per iteration. If a turn fails completely (all models exhausted) and no new inbox input arrives, applies exponential backoff before retrying. Fatal errors (e.g. 400, invalid prompt) terminate the session immediately.
+**Loop:** processes one turn per iteration. Goes idle only when the inbox deferred buffer is empty, no pending immediate input (`hasPendingInput`), no backoff retry is needed, and no check-retry is needed. If a turn fails completely (all models exhausted) and no new inbox input arrives, applies exponential backoff before retrying. Fatal errors (e.g. 400, invalid prompt) terminate the session immediately.
 
 ## Inbox
 
-Three-urgency event buffer fed by the router:
+Three-urgency event buffer fed by the router. Two entry points: `send(event)` for context events (from MCP push notifications, router) and `sendMessage(message, urgency)` for native messages (from extensions). Both share the same urgency semantics.
+
+### Urgency levels
 
 - **Critical** — appended to history immediately (via callback). Aborts current generation. Triggers a check-retry turn after the turn ends.
 - **Default** — appended to history immediately (via callback). Does not abort. Triggers a check-retry turn after the turn ends.
 - **Deferrable** — buffered in the inbox, drained at turn start. Background context.
 
+### When events enter history
+
+The timing depends on both the urgency and the current session state:
+
+| Urgency | Session idle | Active turn | Backoff wait | Terminated |
+|---------|-------------|-------------|--------------|------------|
+| **Critical** | Immediately via callback. `hasPendingInput` starts the loop. | Immediately via callback. Generation aborted. `newInputDuringTurn` → check-retry after turn. | Immediately via callback. Backoff interrupted. `forceContinue` turn processes it. | Blocked — `SessionInboxClosedError`. |
+| **Default** | Immediately via callback. `hasPendingInput` starts the loop. | Immediately via callback. `newInputDuringTurn` → check-retry after turn. | Immediately via callback. Backoff interrupted. `forceContinue` turn processes it. | Blocked — `SessionInboxClosedError`. |
+| **Deferrable** | Buffered in inbox. `isEmpty()` false → loop starts, turn drains it. | Buffered in inbox. `newInputDuringTurn` → check-retry turn drains it. | Buffered in inbox. Backoff interrupted. `forceContinue` turn drains it. | Blocked — `SessionInboxClosedError`. |
+
+### Loop trigger mechanism
+
+Every `send()` and `sendMessage()` call invokes `onNewInput()` after dispatching/buffering. This callback:
+
+- **If the loop is idle** (`loopActive = false`): sets `hasPendingInput = true` and starts `runLoop()`. The flag is necessary because Critical/Default events are already in `messages[]` — the loop's idle check uses `inbox.isEmpty()` which only inspects the deferred buffer, so without the flag the loop would go idle without processing the immediate event.
+- **If the loop is active** (`loopActive = true`): sets `newInputDuringTurn = true`. The post-turn logic checks this flag and runs a check-retry turn (`forceCheck`) that injects a `data-check` prompt.
+- **If in a backoff wait**: interrupts the wait via `backoffInterrupt`. The loop resumes and processes the new input.
+
+Both flags are reset to `false` at the start of each turn iteration, so they only capture input that arrives during that specific turn.
+
+### Mid-turn visibility
+
 Critical and Default events bypass the buffer via `onImmediateEvent` / `onImmediateMessage` callbacks. The `structuredClone` generation copy ensures mid-turn appends are visible to the next step without corrupting the original. After a turn ends with a valid stop, if input arrived during the turn (`newInputDuringTurn`), the loop runs a check-retry turn with `forceCheck` that injects a `data-check` prompt asking the model to review new input and decide whether to respond.
+
+### Critical urgency abort
+
+Both `send()` and `sendMessage()` with Critical urgency abort the running generation via `currentTurn.abortGeneration('inbox_interrupt')`. The abort fires only if a turn is active (`currentTurn !== null`). For `sendMessage`, the urgency is passed to `onImmediateMessage` so the session can decide whether to abort.
+
+### Session termination and event recovery
+
+When a session terminates (fatal error, max failures, or explicit close), the inbox is closed first — any subsequent `send()` / `sendMessage()` throws `SessionInboxClosedError`. Deferred events remaining in the buffer are drained via `getEvents()` and passed to the router's `onTerminated` hook, which creates a replacement session and re-dispatches them via `restorePendingEvents()`. Immediate (Critical/Default) events that were already appended to history are lost with the terminated session's history — only deferred events survive.
 
 ## Turn
 

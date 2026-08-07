@@ -470,8 +470,20 @@ class ChatSessionModule implements AgentSession {
     }
   };
 
-  private onImmediateMessage = (message: ExtendedUIMessage): void => {
+  private onImmediateMessage = (
+    message: ExtendedUIMessage,
+    urgency: SessionInboxUrgency,
+  ): void => {
     this.messages.push(message);
+
+    // Critical urgency: abort the current generation immediately.
+    if (urgency === SessionInboxUrgency.Critical && this.currentTurn) {
+      this.currentTurn.abortGeneration('inbox_interrupt');
+      this.sessionSpan.addEvent('session.generation_aborted', {
+        'session.abortReason': 'inbox_interrupt',
+        'inbox.urgency': SessionInboxUrgency[urgency],
+      });
+    }
   };
 
   private onNewInput = (): void => {

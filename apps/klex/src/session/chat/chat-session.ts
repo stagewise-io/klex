@@ -105,6 +105,15 @@ class ChatSessionModule implements AgentSession {
    */
   private hasPendingInput = false;
 
+  /**
+   * Buffer for immediate (Critical/Default) events and messages that
+   * arrive while a turn is active. Instead of pushing them to messages[]
+   * immediately (which would place them before the in-flight assistant
+   * response), they are queued here and flushed after each step commits
+   * its response. This preserves response-before-new-input ordering.
+   */
+  private pendingImmediate: ExtendedUIMessage[] = [];
+
   private readonly sessionId = randomUUID();
 
   private readonly sessionSpan: Span;
@@ -453,12 +462,19 @@ class ChatSessionModule implements AgentSession {
   // ---------------------------------------------------------------------------
 
   private onImmediateEvent = (event: SessionInboxEvent): void => {
-    // Append to history immediately as a user message with data-context part.
-    this.messages.push({
+    const message: ExtendedUIMessage = {
       role: 'user',
       id: randomUUID(),
       parts: [{ type: 'data-context', data: event.context }],
-    });
+    };
+
+    if (this.loopActive) {
+      // Queue — will be flushed after the current step commits its
+      // response, preserving response-before-new-input ordering.
+      this.pendingImmediate.push(message);
+    } else {
+      this.messages.push(message);
+    }
 
     // Critical urgency: abort the current generation immediately.
     if (event.urgency === SessionInboxUrgency.Critical && this.currentTurn) {
@@ -474,7 +490,13 @@ class ChatSessionModule implements AgentSession {
     message: ExtendedUIMessage,
     urgency: SessionInboxUrgency,
   ): void => {
-    this.messages.push(message);
+    if (this.loopActive) {
+      // Queue — will be flushed after the current step commits its
+      // response, preserving response-before-new-input ordering.
+      this.pendingImmediate.push(message);
+    } else {
+      this.messages.push(message);
+    }
 
     // Critical urgency: abort the current generation immediately.
     if (urgency === SessionInboxUrgency.Critical && this.currentTurn) {
@@ -486,15 +508,29 @@ class ChatSessionModule implements AgentSession {
     }
   };
 
-  private onNewInput = (): void => {
+  /**
+   * Flushes pending immediate events/messages to the history array.
+   * Called by the turn after each step commits its response, ensuring
+   * new input appears after the assistant response, not before it.
+   */
+  private flushPendingImmediate = (): void => {
+    if (this.pendingImmediate.length > 0) {
+      this.messages.push(...this.pendingImmediate);
+      this.pendingImmediate = [];
+    }
+  };
+
+  private onNewInput = (urgency: SessionInboxUrgency): void => {
     // If currently in a backoff wait, interrupt it so the new input is
     // processed immediately.
     if (this.backoffInterrupt) {
       this.backoffInterrupt();
     }
 
-    // Track that new input arrived during an active turn.
-    if (this.loopActive) {
+    // Track that new non-deferrable input arrived during an active turn.
+    // Deferrable input is buffered and will be drained at the next turn
+    // start, so it does not need a check-retry turn.
+    if (this.loopActive && urgency !== SessionInboxUrgency.Deferrable) {
       this.newInputDuringTurn = true;
     }
 
@@ -593,6 +629,7 @@ class ChatSessionModule implements AgentSession {
           config: this.deps.config,
           forceContinue: needsBackoffRetry,
           forceCheck: needsCheckRetry,
+          flushPendingImmediate: this.flushPendingImmediate,
         });
         this.currentTurn = turn;
 
@@ -601,6 +638,9 @@ class ChatSessionModule implements AgentSession {
           turnResult = await turn.run();
         } finally {
           this.currentTurn = null;
+          // Flush any pending events that arrived after the last step
+          // committed but before the turn returned.
+          this.flushPendingImmediate();
         }
 
         // Update observability counters.

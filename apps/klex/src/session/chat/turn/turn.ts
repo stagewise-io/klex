@@ -43,6 +43,12 @@ export interface TurnDependencies {
    * review new input that arrived during the previous turn.
    */
   forceCheck?: boolean;
+  /**
+   * Called after each step commits its response to messages[]. Flushes
+   * any immediate (Critical/Default) events that were queued during the
+   * step's generation, preserving response-before-new-input ordering.
+   */
+  flushPendingImmediate?: () => void;
 }
 
 export interface TurnResult {
@@ -221,6 +227,12 @@ class TurnModule implements Turn {
           } finally {
             this.currentStep = null;
           }
+
+          // Flush any immediate events that were queued during the
+          // step's generation. This ensures new input appears after
+          // the assistant response, preserving correct ordering.
+          this.deps.flushPendingImmediate?.();
+
           stepCount++;
           totalStepCount = stepCount;
           if (stepResult.generation?.usage) {

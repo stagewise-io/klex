@@ -425,10 +425,11 @@ export interface ExtensionDeps {
    * Inserts a message into the session history immediately after the
    * message whose ID matches `afterMessageId`.
    *
-   * Unlike {@link SessionInbox.sendMessage}, which buffers the message
-   * for the next turn, this mutates the live history array directly.
-   * The inserted message is visible to the next step's history
-   * preprocessing.
+   * Unlike {@link SessionInbox.sendMessage}, whose timing depends on
+   * urgency (Critical/Default append immediately or after the current
+   * step; Deferrable buffers until the next turn), this mutates the
+   * live history array directly. The inserted message is visible to
+   * the next step's history preprocessing.
    *
    * @returns `true` if the message was found and the insert succeeded,
    *          `false` if no message with the given ID exists.

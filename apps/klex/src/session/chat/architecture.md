@@ -32,23 +32,27 @@ The timing depends on both the urgency and the current session state:
 
 | Urgency | Session idle | Active turn | Backoff wait | Terminated |
 |---------|-------------|-------------|--------------|------------|
-| **Critical** | Immediately via callback. `hasPendingInput` starts the loop. | Immediately via callback. Generation aborted. `newInputDuringTurn` → check-retry after turn. | Immediately via callback. Backoff interrupted. `forceContinue` turn processes it. | Blocked — `SessionInboxClosedError`. |
-| **Default** | Immediately via callback. `hasPendingInput` starts the loop. | Immediately via callback. `newInputDuringTurn` → check-retry after turn. | Immediately via callback. Backoff interrupted. `forceContinue` turn processes it. | Blocked — `SessionInboxClosedError`. |
-| **Deferrable** | Buffered in inbox. `isEmpty()` false → loop starts, turn drains it. | Buffered in inbox. `newInputDuringTurn` → check-retry turn drains it. | Buffered in inbox. Backoff interrupted. `forceContinue` turn drains it. | Blocked — `SessionInboxClosedError`. |
+| **Critical** | Immediately via callback. `hasPendingInput` starts the loop. | Queued in `pendingImmediate`. Generation aborted. Flushed after step commits response. `newInputDuringTurn` → check-retry after turn. | Immediately via callback. Backoff interrupted. `forceContinue` turn processes it. | Blocked — `SessionInboxClosedError`. |
+| **Default** | Immediately via callback. `hasPendingInput` starts the loop. | Queued in `pendingImmediate`. Flushed after step commits response. `newInputDuringTurn` → check-retry after turn. | Immediately via callback. Backoff interrupted. `forceContinue` turn processes it. | Blocked — `SessionInboxClosedError`. |
+| **Deferrable** | Buffered in inbox. `isEmpty()` false → loop starts, turn drains it. | Buffered in inbox. Drained at next turn start. Does NOT set `newInputDuringTurn`. | Buffered in inbox. Backoff interrupted. `forceContinue` turn drains it. | Blocked — `SessionInboxClosedError`. |
 
 ### Loop trigger mechanism
 
 Every `send()` and `sendMessage()` call invokes `onNewInput()` after dispatching/buffering. This callback:
 
 - **If the loop is idle** (`loopActive = false`): sets `hasPendingInput = true` and starts `runLoop()`. The flag is necessary because Critical/Default events are already in `messages[]` — the loop's idle check uses `inbox.isEmpty()` which only inspects the deferred buffer, so without the flag the loop would go idle without processing the immediate event.
-- **If the loop is active** (`loopActive = true`): sets `newInputDuringTurn = true`. The post-turn logic checks this flag and runs a check-retry turn (`forceCheck`) that injects a `data-check` prompt.
+- **If the loop is active** (`loopActive = true`): for Critical/Default urgency, sets `newInputDuringTurn = true` (triggers check-retry). For Deferrable, does NOT set the flag — the buffered event will be drained at the next turn start without needing a check-retry. The event itself is queued in `pendingImmediate` (for Critical/Default) to preserve response-before-new-input ordering.
 - **If in a backoff wait**: interrupts the wait via `backoffInterrupt`. The loop resumes and processes the new input.
 
 Both flags are reset to `false` at the start of each turn iteration, so they only capture input that arrives during that specific turn.
 
-### Mid-turn visibility
+### Mid-turn visibility and ordering
 
-Critical and Default events bypass the buffer via `onImmediateEvent` / `onImmediateMessage` callbacks. The `structuredClone` generation copy ensures mid-turn appends are visible to the next step without corrupting the original. After a turn ends with a valid stop, if input arrived during the turn (`newInputDuringTurn`), the loop runs a check-retry turn with `forceCheck` that injects a `data-check` prompt asking the model to review new input and decide whether to respond.
+Critical and Default events that arrive during an active turn are queued in a `pendingImmediate` buffer instead of being pushed to `messages[]` immediately. This prevents a stale response (generated from the pre-event history) from appearing after the new user event in the conversation. The buffer is flushed after each step commits its response via `flushPendingImmediate()`, ensuring the ordering is always `[..., ASSISTANT_RESPONSE, NEW_USER_EVENT]`.
+
+The `structuredClone` generation copy ensures the generation does not see mid-turn appends. After a turn ends with a valid stop, if non-deferrable input arrived during the turn (`newInputDuringTurn`), the loop runs a check-retry turn with `forceCheck` that injects a `data-check` prompt asking the model to review new input and decide whether to respond.
+
+Deferrable events do not set `newInputDuringTurn` — they are buffered in the inbox and drained at the next turn start, so no check-retry is needed.
 
 ### Critical urgency abort
 

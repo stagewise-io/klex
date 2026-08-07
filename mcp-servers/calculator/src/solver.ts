@@ -1,4 +1,8 @@
-import { getPolynomialCoefficients, simplifyFallback } from './engine.js';
+import {
+  evaluateNumeric,
+  getPolynomialCoefficients,
+  simplifyFallback,
+} from './engine.js';
 import { latexToMathjs } from './latex.js';
 
 export interface SolveResult {
@@ -23,7 +27,30 @@ export function solveEquation(equation: string, variable: string): SolveResult {
     const { coefficients, variables } = getPolynomialCoefficients(lhs);
 
     if (variables.length === 1 && variables[0] === variable) {
-      return solvePolynomial(coefficients, variable);
+      const result = solvePolynomial(coefficients, variable);
+      // Filter out roots that are poles of the original expression —
+      // evaluating the LHS at a pole yields NaN or Infinity.
+      // Only filter when there are actual solutions to check.
+      if (result.solutions.length > 0) {
+        result.solutions = result.solutions.filter((sol) => {
+          const valStr = sol.split('=')[1]?.trim();
+          if (!valStr) return true;
+          const val = Number.parseFloat(valStr);
+          if (Number.isNaN(val)) return true;
+          return evaluateNumeric(lhs, variable, val);
+        });
+        result.latex = result.latex.filter((sol) => {
+          const valStr = sol.split('=')[1]?.trim();
+          if (!valStr) return true;
+          const val = Number.parseFloat(valStr);
+          if (Number.isNaN(val)) return true;
+          return evaluateNumeric(lhs, variable, val);
+        });
+        if (result.solutions.length === 0 && result.type !== 'unsolved') {
+          result.message = 'All candidate roots are excluded by denominator';
+        }
+      }
+      return result;
     }
 
     if (variables.length === 0) {
@@ -94,7 +121,7 @@ function solvePolynomial(coeffs: number[], variable: string): SolveResult {
     return {
       solutions: [`${variable} = ${sol}`],
       latex: [`${variable} = ${sol}`],
-      type: 'exact',
+      type: 'numeric',
     };
   }
 
@@ -114,14 +141,25 @@ function solveQuadratic(coeffs: number[], variable: string): SolveResult {
 
   if (discriminant > 0) {
     const sqrtD = Math.sqrt(discriminant);
-    const x1 = (-b + sqrtD) / (2 * a);
-    const x2 = (-b - sqrtD) / (2 * a);
+    let x1: number;
+    let x2: number;
+    if (b === 0) {
+      // No cancellation risk when b=0 — use standard formula directly
+      x1 = sqrtD / (2 * a);
+      x2 = -sqrtD / (2 * a);
+    } else {
+      // Numerically stable q-formula: compute the root without subtraction
+      // cancellation, then derive the other via Vieta's product.
+      const q = -0.5 * (b + Math.sign(b) * sqrtD);
+      x1 = q / a;
+      x2 = c / q;
+    }
     const s1 = formatNum(x1);
     const s2 = formatNum(x2);
     return {
       solutions: [`${variable} = ${s1}`, `${variable} = ${s2}`],
       latex: [`${variable} = ${s1}`, `${variable} = ${s2}`],
-      type: 'exact',
+      type: 'numeric',
     };
   }
 
@@ -131,7 +169,7 @@ function solveQuadratic(coeffs: number[], variable: string): SolveResult {
     return {
       solutions: [`${variable} = ${sol}`],
       latex: [`${variable} = ${sol}`],
-      type: 'exact',
+      type: 'numeric',
     };
   }
 
@@ -143,7 +181,7 @@ function solveQuadratic(coeffs: number[], variable: string): SolveResult {
   return {
     solutions: [`${variable} = ${re} + ${im}i`, `${variable} = ${re} - ${im}i`],
     latex: [`${variable} = ${re} + ${im}i`, `${variable} = ${re} - ${im}i`],
-    type: 'exact',
+    type: 'numeric',
   };
 }
 
@@ -171,6 +209,7 @@ function solvePolynomialNumeric(
   const maxIter = 500;
   const tolerance = 1e-12;
 
+  let converged = false;
   for (let iter = 0; iter < maxIter; iter++) {
     let maxDelta = 0;
     for (let i = 0; i < n; i++) {
@@ -187,7 +226,26 @@ function solvePolynomialNumeric(
       roots[i] = sub(roots[i] as Complex, delta);
       maxDelta = Math.max(maxDelta, abs(delta));
     }
-    if (maxDelta < tolerance) break;
+    if (maxDelta < tolerance) {
+      converged = true;
+      break;
+    }
+  }
+
+  // Verify all roots have finite residuals
+  const validRoots = roots.filter((r) => {
+    if (!Number.isFinite(r.re) || !Number.isFinite(r.im)) return false;
+    const residual = evalPoly(normalized, r);
+    return abs(residual) < 1e-6;
+  });
+
+  if (!converged || validRoots.length < n) {
+    return {
+      solutions: [],
+      latex: [],
+      type: 'unsolved',
+      message: `Degree ${n} polynomial — numeric solver did not converge to reliable roots`,
+    };
   }
 
   const solutions = roots.map((r) => {

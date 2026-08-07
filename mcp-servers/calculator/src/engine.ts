@@ -9,6 +9,12 @@ import { latexToMathjs } from './latex.js';
  */
 const math = create(all ?? {}, { number: 'Fraction' });
 
+/**
+ * Default-number instance for non-rational functions like sqrt, nthRoot,
+ * trig, and log that cannot operate on Fraction values.
+ */
+const mathNum = create(all ?? {}, {});
+
 export interface EngineResult {
   /** Human-readable result in mathjs plain-text syntax. */
   result: string;
@@ -30,7 +36,14 @@ export function evaluateExpression(
     }
   }
 
-  const value = math.evaluate(expr, processedScope);
+  let value: unknown;
+  try {
+    value = math.evaluate(expr, processedScope);
+  } catch {
+    // Non-rational functions (sqrt, nthRoot, trig, log) fail under
+    // Fraction config — fall back to the default-number instance.
+    value = mathNum.evaluate(expr, processedScope);
+  }
   const resultStr = formatResult(math.format(value, { precision: 14 }));
   return { result: resultStr, latex: toLatex(resultStr) };
 }
@@ -86,4 +99,22 @@ export function getPolynomialCoefficients(expression: string): {
 export function simplifyFallback(expression: string): EngineResult {
   const node = math.simplify(expression);
   return { result: node.toString(), latex: node.toTex() };
+}
+
+/** Exposed for solver.ts — evaluate an expression numerically. */
+export function evaluateNumeric(
+  expression: string,
+  variable: string,
+  value: number,
+): boolean {
+  try {
+    const result = mathNum.evaluate(expression, { [variable]: value });
+    return (
+      typeof result === 'number' &&
+      !Number.isNaN(result) &&
+      Number.isFinite(result)
+    );
+  } catch {
+    return false;
+  }
 }

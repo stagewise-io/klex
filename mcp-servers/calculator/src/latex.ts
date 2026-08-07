@@ -239,6 +239,15 @@ class Converter {
   #parseCommand(): string {
     this.#pos++; // skip backslash
     let name = '';
+
+    // Non-letter commands: \!, \,, \;, \: — spacing commands
+    // that use symbols instead of names.
+    const sym = this.#input[this.#pos] as string;
+    if (sym === '!' || sym === ',' || sym === ';' || sym === ':') {
+      this.#pos++;
+      return ' ';
+    }
+
     while (
       this.#pos < this.#input.length &&
       /[a-zA-Z]/.test(this.#input[this.#pos] as string)
@@ -247,7 +256,7 @@ class Converter {
       this.#pos++;
     }
 
-    // Spacing commands
+    // Spacing commands — consume and return a space
     if (SPACING.has(name)) return ' ';
 
     // Strip commands
@@ -270,7 +279,7 @@ class Converter {
       const num = this.#parseFunctionArg();
       this.#skipSpace();
       const den = this.#parseFunctionArg();
-      return `(${num}) / (${den})`;
+      return `((${num}) / (${den}))`;
     }
 
     // \binom{n}{k} = n! / (k! * (n-k)!)
@@ -337,6 +346,9 @@ class Converter {
         const arg = this.#parseFunctionArg();
         return `(${fn}(${arg}))^(${exp})`;
       }
+      // \left / \right and other strip-only commands before the argument
+      // e.g. \cos\left(2\cdot x\right) → cos(2 * x)
+      this.#consumeStripCommands();
       const arg = this.#parseFunctionArg();
       return `${fn}(${arg})`;
     }
@@ -376,22 +388,23 @@ class Converter {
       // Read the full parenthesized group, then strip outer parens
       // so function wrappers don't double-wrap: sin((x)) → sin(x)
       let depth = 0;
-      let result = '';
+      const start = this.#pos;
       while (this.#pos < this.#input.length) {
         const c = this.#input[this.#pos] as string;
         if (c === '(') depth++;
         else if (c === ')') {
           depth--;
-          result += c;
-          this.#pos++;
-          if (depth === 0) break;
-          continue;
+          if (depth === 0) {
+            this.#pos++;
+            break;
+          }
         }
-        result += c;
         this.#pos++;
       }
-      // Strip the outermost parens
-      return result.slice(1, -1);
+      // Recursively convert the inner content so nested LaTeX
+      // commands like \sin(\frac{1}{2}) are properly converted
+      const inner = this.#input.slice(start + 1, this.#pos - 1);
+      return new Converter(inner).convert();
     }
     if (ch === '\\') return this.#parseCommand();
     // Single character or number
@@ -413,5 +426,31 @@ class Converter {
     ) {
       this.#pos++;
     }
+  }
+
+  /** Consume consecutive strip-only commands (\left, \right, \big, etc.). */
+  #consumeStripCommands(): void {
+    let prev = this.#pos;
+    for (;;) {
+      this.#skipSpace();
+      if (this.#input[this.#pos] !== '\\') break;
+      const saved = this.#pos;
+      this.#pos++; // skip backslash
+      let name = '';
+      while (
+        this.#pos < this.#input.length &&
+        /[a-zA-Z]/.test(this.#input[this.#pos] as string)
+      ) {
+        name += this.#input[this.#pos];
+        this.#pos++;
+      }
+      if (!STRIP.has(name)) {
+        // Not a strip command — restore position and stop
+        this.#pos = saved;
+        break;
+      }
+      prev = this.#pos;
+    }
+    this.#pos = prev;
   }
 }

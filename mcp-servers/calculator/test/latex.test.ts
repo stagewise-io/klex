@@ -16,20 +16,28 @@ describe('latexToMathjs — basic arithmetic', () => {
 
 describe('latexToMathjs — fractions', () => {
   it('converts \\frac{a}{b}', () => {
-    expect(latexToMathjs('\\frac{1}{2}')).toBe('(1) / (2)');
+    expect(latexToMathjs('\\frac{1}{2}')).toBe('((1) / (2))');
   });
 
   it('handles nested fractions', () => {
-    expect(latexToMathjs('\\frac{1}{\\frac{1}{2}}')).toBe('(1) / ((1) / (2))');
+    expect(latexToMathjs('\\frac{1}{\\frac{1}{2}}')).toBe(
+      '((1) / (((1) / (2))))',
+    );
   });
 
   it('handles fractions with expressions', () => {
-    expect(latexToMathjs('\\frac{x^2 - 1}{x - 1}')).toBe('(x^2 - 1) / (x - 1)');
+    expect(latexToMathjs('\\frac{x^2 - 1}{x - 1}')).toBe(
+      '((x^2 - 1) / (x - 1))',
+    );
   });
 
   it('handles \\dfrac and \\tfrac', () => {
-    expect(latexToMathjs('\\dfrac{3}{4}')).toBe('(3) / (4)');
-    expect(latexToMathjs('\\tfrac{5}{6}')).toBe('(5) / (6)');
+    expect(latexToMathjs('\\dfrac{3}{4}')).toBe('((3) / (4))');
+    expect(latexToMathjs('\\tfrac{5}{6}')).toBe('((5) / (6))');
+  });
+
+  it('parenthesizes \\frac for correct superscript binding', () => {
+    expect(latexToMathjs('\\frac{x}{y}^2')).toBe('((x) / (y))^2');
   });
 });
 
@@ -105,6 +113,19 @@ describe('latexToMathjs — operators and delimiters', () => {
   it('strips \\left and \\right', () => {
     expect(latexToMathjs('\\left( x + 1 \\right)')).toBe('( x + 1 )');
   });
+
+  it('consumes spacing commands before operators', () => {
+    expect(latexToMathjs('3\\!')).toBe('3');
+    expect(latexToMathjs('2\\,x')).toBe('2 x');
+  });
+
+  it('handles \\cos\\left(2\\cdot x\\right)', () => {
+    expect(latexToMathjs('\\cos\\left(2\\cdot x\\right)')).toBe('cos(2* x)');
+  });
+
+  it('handles nested \\frac inside parenthesized function args', () => {
+    expect(latexToMathjs('\\sin(\\frac{1}{2})')).toBe('sin(((1) / (2)))');
+  });
 });
 
 describe('latexToMathjs — superscripts and subscripts', () => {
@@ -135,6 +156,6 @@ describe('latexToMathjs — complex expressions', () => {
   });
 
   it('handles \\frac{\\sin(x)}{x}', () => {
-    expect(latexToMathjs('\\frac{\\sin(x)}{x}')).toBe('(sin(x)) / (x)');
+    expect(latexToMathjs('\\frac{\\sin(x)}{x}')).toBe('((sin(x)) / (x))');
   });
 });

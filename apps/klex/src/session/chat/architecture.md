@@ -18,23 +18,25 @@ Owns message history, inbox, extension handler, fallback manager, backoff manage
 
 ## Inbox
 
-Three-priority event buffer fed by the router:
+Three-urgency event buffer fed by the router:
 
-- **Low** — drained at turn start. Background context.
-- **Medium** — drained at step start. Normal user input, tool results.
-- **High** — aborts current generation immediately, drained by next step.
+- **Critical** — appended to history immediately (via callback). Aborts current generation. Triggers a check-retry turn after the turn ends.
+- **Default** — appended to history immediately (via callback). Does not abort. Triggers a check-retry turn after the turn ends.
+- **Deferrable** — buffered in the inbox, drained at turn start. Background context.
 
-Turn drains `≥ Low`; Step drains `≥ Medium`.
+Critical and Default events bypass the buffer via `onImmediateEvent` / `onImmediateMessage` callbacks. The `structuredClone` generation copy ensures mid-turn appends are visible to the next step without corrupting the original. After a turn ends with a valid stop, if input arrived during the turn (`newInputDuringTurn`), the loop runs a check-retry turn with `forceCheck` that injects a `data-check` prompt asking the model to review new input and decide whether to respond.
 
 ## Turn
 
-Drains low-priority inbox, then runs steps sequentially until no more generation is needed. Unifies "Continue." injection (backoff retry or salvage `forceNextStep`) into a single code path. `completeFailure = hadAnyFailure && !hadAnySuccess` — salvaged content counts as non-failure.
+Drains deferrable inbox, then runs steps sequentially until no more generation is needed. Unifies "Continue." injection (backoff retry or salvage `forceNextStep`) and `data-check` injection (check-retry after new input) into a single code path. `completeFailure = hadAnyFailure && !hadAnySuccess` — salvaged content counts as non-failure.
 
 ## Step
 
-Coordinator: inbox drain (medium) → history repair → decision (can a step run?) → model fetch → history transformation (clone → extension pre-process → model-aware core conversion → extension post-process) → delegate to GenerationRunner.
+Coordinator: history repair → decision (can a step run?) → model fetch → history transformation (clone → extension pre-process → model-aware core conversion → extension post-process) → delegate to GenerationRunner.
 
-The `messages[]` array is shared by reference across Session/Turn/Step. The critical window (extension processing + generation) operates on a `structuredClone` copy, so mutations can't corrupt the original. The original is only mutated in synchronous sequential code (inbox drain, history repair, Continue injection, response push).
+The step no longer drains the inbox. Immediate (Critical/Default) events are already in `messages[]` via callbacks; Deferrable events are drained at turn start. Generation operates on a `structuredClone` copy, so mid-turn appends are visible to the next step without corrupting the original.
+
+The `messages[]` array is shared by reference across Session/Turn/Step. The critical window (extension processing + generation) operates on a `structuredClone` copy, so mutations can't corrupt the original. The original is only mutated in synchronous sequential code (turn-start drain, history repair, Continue/check injection, response push, immediate inbox appends via callbacks).
 
 ## Native media input
 

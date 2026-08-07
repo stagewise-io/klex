@@ -14,7 +14,7 @@ import type { ExtendedUIMessage } from '../message-types';
 /**
  * Converts UI messages into the format expected by the model.
  *
- * `data-continue` parts are only meaningful when the preceding message
+ * `data-continue` and `data-check` parts are only meaningful when the preceding message
  * is an assistant message without tool calls — the model needs an
  * explicit prompt to continue a text-only response. In all other cases
  * (user message, assistant with tool calls, or no preceding message),
@@ -54,28 +54,32 @@ export const convertToModelMessagesExtended = async (
     });
   }
 
-  // Determine whether the last user message's Continue part is needed.
-  // Continue is only useful when the preceding message is an assistant
-  // message without tool calls — the model needs an explicit prompt to
-  // continue a text-only response. Otherwise the Continue is redundant.
+  // Determine whether the last user message's signal part is needed.
+  // Signal parts (data-continue, data-check) are only useful when the
+  // preceding message is an assistant message without tool calls — the
+  // model needs an explicit prompt to continue or check. Otherwise the
+  // signal is redundant.
   const prevMsg = materialized[lastUserMsgIdx - 1];
-  const continueNeeded =
+  const signalNeeded =
     prevMsg?.role === 'assistant' &&
     !prevMsg.parts.some((p) => isToolUIPart(p));
 
   const filtered = materialized.flatMap((msg, i) => {
     if (msg.role !== 'user') return [msg];
 
-    // Determine whether to strip Continue from this user message.
-    // - Last user message: strip if Continue is not needed.
+    // Determine whether to strip signal parts from this user message.
+    // - Last user message: strip if the signal is not needed.
     // - Older user messages: always strip (only the most recent matters).
-    const shouldStripContinue = i === lastUserMsgIdx ? !continueNeeded : true;
+    const shouldStripSignals = i === lastUserMsgIdx ? !signalNeeded : true;
 
     if (
-      shouldStripContinue &&
-      msg.parts.some((p) => p.type === 'data-continue')
+      shouldStripSignals &&
+      (msg.parts.some((p) => p.type === 'data-continue') ||
+        msg.parts.some((p) => p.type === 'data-check'))
     ) {
-      const parts = msg.parts.filter((p) => p.type !== 'data-continue');
+      const parts = msg.parts.filter(
+        (p) => p.type !== 'data-continue' && p.type !== 'data-check',
+      );
       return parts.length > 0 ? [{ ...msg, parts }] : [];
     }
 
@@ -222,6 +226,16 @@ function convertContinuePart(): TextPart[] {
   return [{ type: 'text', text: 'Continue.' }];
 }
 
+/** Transforms a `data-check` part into a review prompt. */
+function convertCheckPart(): TextPart[] {
+  return [
+    {
+      type: 'text',
+      text: 'New data appeared before you finished your output. Check if you need to take any actions or responses. Do nothing, if nothing relevant happened.',
+    },
+  ];
+}
+
 /**
  * Builds a `convertDataPart` callback for the AI SDK.
  *
@@ -252,6 +266,10 @@ function makeConvertDataPart(
     if (key === 'context') return undefined;
     if (key === 'continue') {
       const result = convertContinuePart();
+      return result.length > 0 ? result[0] : undefined;
+    }
+    if (key === 'check') {
+      const result = convertCheckPart();
       return result.length > 0 ? result[0] : undefined;
     }
 

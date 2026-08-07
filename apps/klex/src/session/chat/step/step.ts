@@ -15,11 +15,9 @@ import type {
   StepCompleteEvent,
   TransformationFlags,
 } from '../extensions/extension-api';
-import { type SessionInboxBuffer, SessionInboxPriority } from '../inbox';
 import type { ExtendedUIMessage } from '../message-types';
 import { checkAndFixHistory } from '../utils/check-and-fix-history';
 import { convertToModelMessagesExtended } from '../utils/convert-to-model-messages';
-import { inboxDrainAttributes } from '../utils/inbox-drain-attributes';
 import type { ModelFallbackManager } from '../utils/model-fallback-manager';
 import { startChildSpan, tracer } from '../utils/tracing';
 import {
@@ -37,8 +35,7 @@ import {
  * cannot corrupt the original array during generation.
  *
  * The original array is only mutated in synchronous, sequential code:
- * - Inbox drain (at the start of each layer: Turn drains Low, Step
- *   drains Medium)
+ * - Inbox drain (Turn drains deferred items at turn start)
  * - `checkAndFixHistory` (before the clone)
  * - Continue injection (between steps, synchronous)
  * - Response push (after generation completes, synchronous)
@@ -57,7 +54,6 @@ export interface StepDependencies {
   logger: ModuleLogger;
   turnContext: Context;
   messages: ExtendedUIMessage[];
-  inbox: SessionInboxBuffer;
   extensionHandler: ExtensionHandler;
   modelProvider: ModelProvider;
   fallbackManager: ModelFallbackManager;
@@ -116,17 +112,6 @@ class StepModule implements Step {
         // before any processing — inbox drain, history repair, or the
         // step decision — so extensions can reset per-step state.
         await this.deps.extensionHandler.runStepStartHooks();
-
-        // 2.2.2: fetch inbox
-        const drained = this.deps.inbox.drain(
-          this.deps.messages,
-          SessionInboxPriority.Medium,
-          this.deps.logger,
-        );
-        stepSpan.addEvent(
-          'step.inbox_drained',
-          inboxDrainAttributes(drained, 'medium'),
-        );
 
         // 2.2.2.1: Repair history before making any step decision.
         // This ensures that any tool calls left in an intermediate state

@@ -17,6 +17,13 @@ export type UIMessageMetadata = Record<string, never>;
 export type ContinueDataUIPart = Record<string, never>;
 
 /**
+ * Custom data part that signals the model should review new input that
+ * arrived during its previous turn and decide whether to do more.
+ * The converter turns this into a text part with a review prompt.
+ */
+export type CheckDataUIPart = Record<string, never>;
+
+/**
  * Core custom data part types. Only types that are fundamental to the
  * session itself live here — extension-defined data parts are NOT
  * registered centrally. Extensions define their own part types locally
@@ -27,6 +34,7 @@ export type ContinueDataUIPart = Record<string, never>;
 export type CustomUIDataParts = {
   context: ContextDataUIPart;
   continue: ContinueDataUIPart;
+  check: CheckDataUIPart;
 };
 
 export type ExtendedUIMessage = UIMessage<

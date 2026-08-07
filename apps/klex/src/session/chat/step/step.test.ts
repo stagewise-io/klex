@@ -10,7 +10,6 @@ import {
   testLogger as logger,
   makeExtensionHandler,
   makeFallbackManager,
-  makeInbox,
   makeModelProvider,
 } from '../test-helpers';
 import {
@@ -87,7 +86,6 @@ function makeDeps(overrides: Partial<StepDependencies> = {}): StepDependencies {
     logger,
     turnContext: context.active(),
     messages: [],
-    inbox: makeInbox(),
     extensionHandler: makeExtensionHandler() as never,
     modelProvider: makeModelProvider() as never,
     fallbackManager: makeFallbackManager() as never,

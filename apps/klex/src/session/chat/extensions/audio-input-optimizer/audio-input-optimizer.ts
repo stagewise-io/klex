@@ -56,7 +56,7 @@ class AudioInputOptimizerExt implements Extension {
   constructor(private readonly deps: ExtensionDeps) {
     if (!isFfmpegAvailable()) {
       deps.logger.warn(
-        'ffmpeg not found on PATH — audio input optimizer will degrade to text replacement for all audio',
+        'bundled ffprobe binary failed to execute — audio input optimizer will degrade to text replacement for all audio',
       );
     }
   }

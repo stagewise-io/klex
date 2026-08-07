@@ -24,15 +24,16 @@ import type { ExtendedUIMessage } from '../message-types';
  * avoid sending empty user messages to the model API.
  *
  * Custom data parts are converted using built-in transformers for the
- * core types (`data-context`, `data-continue`) and extension-registered
- * transformers for any additional types. Core type transformers cannot
- * be overridden by extensions — the built-in conversion always applies.
+ * core types (`data-context`, `data-continue`, `data-check`) and
+ * extension-registered transformers for any additional types. Core type
+ * transformers cannot be overridden by extensions — the built-in
+ * conversion always applies.
  * Parts whose type has no registered transformer are dropped (the AI
  * SDK's `convertDataPart` returns `undefined`).
  *
  * @param transformers Merged data-part transformers from extensions.
- *   Core types (`context`, `continue`) are always handled by built-in
- *   transformers and are ignored if present here.
+ *   Core types (`context`, `continue`, `check`) are always handled by
+ *   built-in transformers and are ignored if present here.
  */
 export const convertToModelMessagesExtended = async (
   messages: ExtendedUIMessage[],
@@ -94,10 +95,11 @@ export const convertToModelMessagesExtended = async (
 // ---------------------------------------------------------------------------
 // Built-in core data part transformers
 //
-// `context` and `continue` are core session concepts defined in
-// `message-types.ts`. Their transformations are non-negotiable — if they
-// were missing, MCP context events and continuation signals would be
-// silently dropped. Extensions cannot override these.
+// `context`, `continue`, and `check` are core session concepts defined
+// in `message-types.ts`. Their transformations are non-negotiable — if
+// they were missing, MCP context events, continuation signals, and
+// check-retry prompts would be silently dropped. Extensions cannot
+// override these.
 // ---------------------------------------------------------------------------
 
 function materializeContextParts(
@@ -239,10 +241,10 @@ function convertCheckPart(): TextPart[] {
 /**
  * Builds a `convertDataPart` callback for the AI SDK.
  *
- * Core data part types (`context`, `continue`) are always handled by
- * built-in transformers — extension-registered transformers for these
- * keys are ignored. All other custom types are dispatched to the
- * extension-registered transformer map.
+ * Core data part types (`context`, `continue`, `check`) are always
+ * handled by built-in transformers — extension-registered transformers
+ * for these keys are ignored. All other custom types are dispatched to
+ * the extension-registered transformer map.
  *
  * The AI SDK calls this function for each custom data part in a message.
  * The part's `type` is `data-{key}` (e.g. `data-context`); we strip the

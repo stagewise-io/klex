@@ -21,6 +21,19 @@ vi.mock('ffprobe-static', () => ({
   path: '/mock/ffprobe',
 }));
 
+// Production code calls existsSync on the ffmpeg/ffprobe paths and throws
+// if missing. Mock it to return true for those mock paths.
+vi.mock('node:fs', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs')>();
+  return {
+    ...actual,
+    existsSync: vi.fn((p: string) => {
+      if (p === '/mock/ffmpeg' || p === '/mock/ffprobe') return true;
+      return actual.existsSync(p);
+    }),
+  };
+});
+
 vi.mock('fluent-ffmpeg', () => {
   function parseWavDuration(bytes: number[]): number {
     if (bytes.length < 44) return 0;

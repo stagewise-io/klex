@@ -1,4 +1,6 @@
-import { resolve } from 'node:path';
+import { cpSync, existsSync, mkdirSync } from 'node:fs';
+import { createRequire } from 'node:module';
+import { dirname, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { parseArgs } from 'node:util';
 
@@ -51,6 +53,138 @@ export function createKlexAgentPackagerConfig(
   };
 }
 
+/**
+ * Copies native packages beside the SEA executable.
+ *
+ * The SEA build virtualizes sharp, ffmpeg-static, and ffprobe-static via
+ * nativeShimPlugin (build.ts) so they load from on-disk node_modules/ using
+ * createRequire(process.execPath). This function copies all required packages:
+ *
+ * 1. **sharp** (JS) + deps (detect-libc, semver, @img/colour) — sharp's CJS
+ *    entry does `require('@img/sharp-…/sharp.node')` at runtime which resolves
+ *    from the on-disk node_modules. The .node addon's @rpath links to the
+ *    sibling @img/sharp-libvips-…/lib directory for the libvips dylib.
+ *
+ * 2. **ffmpeg-static** — prebuilt ffmpeg binary. The package's index.js uses
+ *    `__dirname` to locate the binary, which works because the package is
+ *    loaded from disk via createRequire (not bundled into the SEA blob).
+ *
+ * 3. **ffprobe-static** — same pattern as ffmpeg-static.
+ *
+ * All packages are **mandatory** — if any cannot be found or copied, the
+ * build fails. There is no graceful degradation; native media processing
+ * (audio transcoding, image resizing, vision fallback) is required at runtime.
+ */
+function copyNativeAssets(outputDirectory: string): void {
+  const require = createRequire(import.meta.url);
+  const destNodeModules = join(outputDirectory, 'node_modules');
+  mkdirSync(destNodeModules, { recursive: true });
+
+  const errors: string[] = [];
+
+  /** Resolves a package's root directory from its package.json. */
+  function resolvePackageDir(name: string): string {
+    // Try resolving the main entry first; fall back to package.json
+    // (some @img packages only export ./sharp.node and ./package).
+    let resolveTarget: string;
+    try {
+      require.resolve(name);
+      resolveTarget = name;
+    } catch {
+      resolveTarget = `${name}/package`;
+    }
+    const resolvedPath = require.resolve(resolveTarget);
+    // If we resolved package.json, the dir is its parent.
+    // If we resolved the main entry, walk up to find package.json.
+    let dir = dirname(resolvedPath);
+    for (;;) {
+      if (existsSync(join(dir, 'package.json'))) return dir;
+      const parent = dirname(dir);
+      if (parent === dir) {
+        throw new Error(
+          `Could not find package.json for ${name} starting from ${resolvedPath}`,
+        );
+      }
+      dir = parent;
+    }
+  }
+
+  /** Copies a package to dest/node_modules/<name>. */
+  function copyPackage(name: string): boolean {
+    try {
+      const pkgDir = resolvePackageDir(name);
+      cpSync(pkgDir, join(destNodeModules, name), { recursive: true });
+      return true;
+    } catch (e) {
+      errors.push(`Failed to copy ${name}: ${(e as Error).message}`);
+      return false;
+    }
+  }
+
+  const platformArch = `${process.platform}-${process.arch}`;
+
+  // sharp JS package + runtime dependencies (all loaded from disk at runtime)
+  copyPackage('sharp');
+  copyPackage('detect-libc');
+  copyPackage('semver');
+  copyPackage('@img/colour');
+
+  // sharp native addons (platform-specific .node addon + libvips dylib)
+  copyPackage(`@img/sharp-${platformArch}`);
+  copyPackage(`@img/sharp-libvips-${platformArch}`);
+
+  // audio processing binaries
+  copyPackage('ffmpeg-static');
+  copyPackage('ffprobe-static');
+
+  // Verify critical files exist after copy
+  const checks: Array<{ name: string; path: string }> = [
+    {
+      name: 'sharp package',
+      path: join(destNodeModules, 'sharp', 'package.json'),
+    },
+    {
+      name: 'sharp native addon',
+      path: join(destNodeModules, '@img', `sharp-${platformArch}`, 'index.cjs'),
+    },
+    {
+      name: 'sharp libvips',
+      path: join(destNodeModules, '@img', `sharp-libvips-${platformArch}`),
+    },
+    {
+      name: 'ffmpeg binary',
+      path: join(
+        destNodeModules,
+        'ffmpeg-static',
+        process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg',
+      ),
+    },
+    {
+      name: 'ffprobe binary',
+      path: join(
+        destNodeModules,
+        'ffprobe-static',
+        'bin',
+        process.platform,
+        process.arch,
+        process.platform === 'win32' ? 'ffprobe.exe' : 'ffprobe',
+      ),
+    },
+  ];
+
+  for (const check of checks) {
+    if (!existsSync(check.path)) {
+      errors.push(`${check.name} not found at ${check.path}`);
+    }
+  }
+
+  if (errors.length > 0) {
+    throw new Error(
+      `Native asset packaging failed — media processing will not work at runtime:\n  - ${errors.join('\n  - ')}`,
+    );
+  }
+}
+
 export async function packageKlexAgent(
   arguments_: readonly string[],
   environment: NodeJS.ProcessEnv = process.env,
@@ -70,10 +204,12 @@ export async function packageKlexAgent(
     environment,
     skipNotarize: values['skip-notarize'],
   });
-  return packageApp(config, {
+  const artifact = await packageApp(config, {
     baseDirectory: ROOT,
     environment,
   });
+  copyNativeAssets(dirname(artifact.outputPath));
+  return artifact;
 }
 
 async function main(): Promise<void> {

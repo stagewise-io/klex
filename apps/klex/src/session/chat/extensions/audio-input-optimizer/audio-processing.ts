@@ -15,18 +15,26 @@ import {
   extractBufferFromUrl,
 } from '@/shared-utilities';
 
-// Configure fluent-ffmpeg to use bundled static binaries when available.
-// In SEA builds the static binaries are not embedded — falls back to PATH.
-const ffprobeBinaryPath = existsSync(ffprobeStaticPath)
-  ? ffprobeStaticPath
-  : 'ffprobe';
+// Configure fluent-ffmpeg to use the bundled static binaries.
+// In SEA builds, the ffmpeg-static and ffprobe-static packages are
+// externalized and their binaries are copied to dist/node_modules/ during
+// packaging (see package-exe.ts → copyNativeAssets). The build fails if
+// any binary is missing — there is no PATH fallback.
+if (ffmpegStaticPath === null || !existsSync(ffmpegStaticPath)) {
+  throw new Error(
+    `ffmpeg-static binary not found at ${ffmpegStaticPath}. ` +
+      'The packaging step should have copied it to dist/node_modules/ffmpeg-static/.',
+  );
+}
+if (!existsSync(ffprobeStaticPath)) {
+  throw new Error(
+    `ffprobe-static binary not found at ${ffprobeStaticPath}. ` +
+      'The packaging step should have copied it to dist/node_modules/ffprobe-static/.',
+  );
+}
 
-if (ffmpegStaticPath !== null && existsSync(ffmpegStaticPath)) {
-  ffmpeg.setFfmpegPath(ffmpegStaticPath);
-}
-if (existsSync(ffprobeStaticPath)) {
-  ffmpeg.setFfprobePath(ffprobeStaticPath);
-}
+ffmpeg.setFfmpegPath(ffmpegStaticPath);
+ffmpeg.setFfprobePath(ffprobeStaticPath);
 
 const DEFAULT_MAX_DATA_SIZE = 25_165_824; // 24 MB
 const DEFAULT_MAX_LENGTH_SECONDS = 1800; // 30 minutes
@@ -71,11 +79,11 @@ export function clearAudioInputOptimizerCache(): void {
 
 let ffmpegAvailable: boolean | null = null;
 
-/** Checks whether ffprobe is available on PATH. Result is cached. */
+/** Checks whether ffprobe (bundled static binary) is available. Result is cached. */
 export function isFfmpegAvailable(): boolean {
   if (ffmpegAvailable !== null) return ffmpegAvailable;
   try {
-    execFileSync(ffprobeBinaryPath, ['-version'], {
+    execFileSync(ffprobeStaticPath, ['-version'], {
       stdio: 'ignore',
       timeout: 5000,
     });

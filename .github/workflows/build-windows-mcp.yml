@@ -1,14 +1,200 @@
-name: Build Windows-MCP
+name: Build Windows Use
 
 on:
   workflow_dispatch:
 
-permissions: {}
+permissions:
+  contents: read
 
 jobs:
-  placeholder:
-    name: Select the windows-use branch when dispatching
-    runs-on: ubuntu-latest
+  build:
+    name: Package Windows Use x64
+    environment: windows-use-release
+    runs-on: windows-2022
+    timeout-minutes: 30
+
+    defaults:
+      run:
+        working-directory: mcp-servers/windows-use/packaging/windows-mcp
+
     steps:
-      - name: Explain placeholder
-        run: echo "Dispatch this workflow with the windows-use branch selected to run the full Windows build."
+      - name: Check out repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Set up Node.js 22
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22.22.0"
+
+      - name: Set up pnpm 10.30.3
+        shell: pwsh
+        working-directory: .
+        run: |
+          corepack enable
+          corepack prepare pnpm@10.30.3 --activate
+          pnpm install --frozen-lockfile
+
+      - name: Validate Azure Trusted Signing configuration
+        shell: pwsh
+        working-directory: .
+        env:
+          AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          AZURE_ACCOUNT_NAME: ${{ vars.AZURE_ACCOUNT_NAME }}
+          AZURE_ACCOUNT_ENDPOINT_URI: ${{ vars.AZURE_ACCOUNT_ENDPOINT_URI }}
+          AZURE_CERTIFICATE_PROFILE_NAME: ${{ vars.AZURE_CERTIFICATE_PROFILE_NAME }}
+        run: |
+          $requiredVariables = @(
+            "AZURE_TENANT_ID",
+            "AZURE_CLIENT_ID",
+            "AZURE_CLIENT_SECRET",
+            "AZURE_ACCOUNT_NAME",
+            "AZURE_ACCOUNT_ENDPOINT_URI",
+            "AZURE_CERTIFICATE_PROFILE_NAME"
+          )
+          $missingVariables = @(
+            $requiredVariables | Where-Object {
+              [string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable($_))
+            }
+          )
+          if ($missingVariables.Count -gt 0) {
+            throw "Missing Azure Trusted Signing configuration: $($missingVariables -join ', ')"
+          }
+
+      - name: Set up Azure Trusted Signing
+        shell: pwsh
+        working-directory: .
+        env:
+          AZURE_ACCOUNT_NAME: ${{ vars.AZURE_ACCOUNT_NAME }}
+          AZURE_ACCOUNT_ENDPOINT_URI: ${{ vars.AZURE_ACCOUNT_ENDPOINT_URI }}
+          AZURE_CERTIFICATE_PROFILE_NAME: ${{ vars.AZURE_CERTIFICATE_PROFILE_NAME }}
+        run: |
+          $nugetDirectory = Join-Path "${{ runner.temp }}" "trusted-signing"
+          New-Item -ItemType Directory -Force -Path $nugetDirectory | Out-Null
+          nuget install Microsoft.Trusted.Signing.Client `
+            -Version 1.0.95 `
+            -OutputDirectory $nugetDirectory `
+            -Source https://api.nuget.org/v3/index.json
+          if ($LASTEXITCODE -ne 0) {
+            throw "Installing Microsoft.Trusted.Signing.Client failed."
+          }
+
+          $dlibPath = Get-ChildItem `
+            -Path $nugetDirectory `
+            -Recurse `
+            -Filter "Azure.CodeSigning.Dlib.dll" |
+            Where-Object { $_.FullName -match "x64" } |
+            Select-Object -First 1 -ExpandProperty FullName
+          if (-not $dlibPath) {
+            throw "Azure.CodeSigning.Dlib.dll was not found."
+          }
+
+          $sdkPath = "C:\Program Files (x86)\Windows Kits\10\bin"
+          $signToolPath = Get-ChildItem `
+            -Path $sdkPath `
+            -Recurse `
+            -Filter "signtool.exe" |
+            Where-Object { $_.FullName -match "x64" } |
+            Sort-Object {
+              [version]($_.Directory.Parent.Name -replace "^(\d+\.\d+\.\d+\.\d+).*", '$1')
+            } -Descending |
+            Select-Object -First 1 -ExpandProperty FullName
+          if (-not $signToolPath) {
+            throw "An x64 signtool.exe was not found in the Windows SDK."
+          }
+
+          $metadataPath = Join-Path "${{ runner.temp }}" "trusted-signing-metadata.json"
+          $metadata = [ordered]@{
+            Endpoint = $env:AZURE_ACCOUNT_ENDPOINT_URI
+            CodeSigningAccountName = $env:AZURE_ACCOUNT_NAME
+            CertificateProfileName = $env:AZURE_CERTIFICATE_PROFILE_NAME
+          } | ConvertTo-Json
+          [System.IO.File]::WriteAllText(
+            $metadataPath,
+            $metadata,
+            [System.Text.UTF8Encoding]::new($false)
+          )
+
+          "SIGNTOOL_PATH=$signToolPath" >> $env:GITHUB_ENV
+          "AZURE_CODE_SIGNING_DLIB=$dlibPath" >> $env:GITHUB_ENV
+          "AZURE_METADATA_JSON=$metadataPath" >> $env:GITHUB_ENV
+
+      - name: Build MCP Proxy SDK
+        shell: pwsh
+        working-directory: .
+        run: pnpm --filter @stagewise/mcp-proxy-sdk build
+
+      - name: Set up Python 3.13 x64
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.13"
+          architecture: x64
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
+        with:
+          version: "0.11.33"
+          enable-cache: true
+          cache-dependency-glob: mcp-servers/windows-use/packaging/windows-mcp/uv.lock
+
+      - name: Verify frozen dependency lock
+        shell: pwsh
+        run: uv lock --check
+
+      - name: Build portable artifact
+        shell: pwsh
+        env:
+          AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          WINDOWS_SIGNING_REQUIRED: "true"
+        run: ./build.ps1
+
+      - name: Smoke-test frozen executable
+        shell: pwsh
+        run: ./smoke-test.ps1 -BundleDirectory ./artifacts/windows-mcp-0.8.2-win-x64
+
+      - name: Assemble complete Windows Use bundle
+        shell: pwsh
+        working-directory: mcp-servers/windows-use/packaging/windows-use
+        env:
+          AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          WINDOWS_SIGNING_REQUIRED: "true"
+        run: ./assemble.ps1
+
+      - name: Verify final bundle signatures
+        shell: pwsh
+        working-directory: .
+        run: |
+          $bundleRoot = "mcp-servers/windows-use/packaging/windows-use/artifacts/stagewise-windows-use-win-x64"
+          $executables = @(
+            (Join-Path $bundleRoot "stagewise-windows-use.exe"),
+            (Join-Path $bundleRoot "windows-mcp/windows-mcp.exe")
+          )
+
+          foreach ($executable in $executables) {
+            if (-not (Test-Path -LiteralPath $executable -PathType Leaf)) {
+              throw "Signed bundle executable is missing: $executable"
+            }
+
+            $signature = Get-AuthenticodeSignature -LiteralPath $executable
+            if ($signature.Status -ne [System.Management.Automation.SignatureStatus]::Valid) {
+              throw "Authenticode validation failed for $executable with status $($signature.Status)."
+            }
+
+            & $env:SIGNTOOL_PATH verify /pa /all /v $executable
+            if ($LASTEXITCODE -ne 0) {
+              throw "SignTool policy verification failed for $executable."
+            }
+          }
+
+      - name: Upload portable ZIP
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: stagewise-windows-use-win-x64
+          path: mcp-servers/windows-use/packaging/windows-use/artifacts/stagewise-windows-use-win-x64.zip
+          if-no-files-found: error
+          retention-days: 14

@@ -1,0 +1,8 @@
+{
+  "gatewayUrl": "wss://REPLACE_WITH_GATEWAY_HOST/environment",
+  "gatewayToken": "REPLACE_WITH_ENVIRONMENT_TOKEN",
+  "windowsMcpCommand": "windows-mcp/windows-mcp.exe",
+  "windowsMcpLaunchMode": "executable",
+  "windowsMcpPort": 8123,
+  "logLevel": "INFO"
+}

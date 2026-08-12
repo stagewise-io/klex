@@ -40,10 +40,24 @@ const realtime = registerRealtimeMediaClient(client, {
 
 const subscription = await realtime.listen();
 const accepted = await realtime.accept(sessionId);
+switch (accepted.transport.kind) {
+  case 'livekit-room': {
+    // Validated and typed as LiveKitRoomTransportDescriptor.
+    const { url, token } = accepted.transport.descriptor;
+    await connectToLiveKit(url, token);
+    break;
+  }
+  case 'unknown':
+    // Forward-compatible opaque descriptor for an unrecognized profile.
+    handleUnknownTransport(accepted.transport.descriptor);
+    break;
+}
 subscription.closed.catch(reconnect);
 ```
 
-Treat URLs, tokens, and all notification fields as untrusted. Never log the participant token.
+The client helper validates descriptors for profiles it knows. A known profile with malformed fields rejects `accept()`; unrecognized profiles retain all opaque fields under `kind: 'unknown'`. Adding another known-profile schema extends this discriminated result without changing the wire protocol.
+
+Treat URLs, tokens, and all notification fields as untrusted. Transport adapters should validate again at their media-plane trust boundary. Never log the participant token.
 
 ## Server
 

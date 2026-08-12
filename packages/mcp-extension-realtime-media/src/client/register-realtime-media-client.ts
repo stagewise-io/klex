@@ -25,13 +25,16 @@ import {
   SubscriptionsListenResultSchema,
 } from '../generated/schema.js';
 import type {
-  AcceptRealtimeMediaSessionResult,
   RealtimeMediaCapabilities,
   RealtimeMediaExtensionCapability,
   RealtimeMediaNotification,
   RealtimeMediaSubscription,
   ServerDiscoverResult,
 } from '../spec.types.js';
+import {
+  decodeRealtimeMediaAcceptResult,
+  type RealtimeMediaClientAcceptResult,
+} from './transport-decoder.js';
 
 export type RealtimeMediaClientProtocol = Pick<
   Client,
@@ -69,7 +72,7 @@ export interface RegisteredRealtimeMediaClient {
   accept(
     sessionId: string,
     options?: RealtimeMediaRequestOptions,
-  ): Promise<AcceptRealtimeMediaSessionResult>;
+  ): Promise<RealtimeMediaClientAcceptResult>;
   reject(
     sessionId: string,
     options?: RealtimeMediaRequestOptions,
@@ -238,7 +241,7 @@ export function registerRealtimeMediaClient(
     },
     async accept(sessionId, requestOptions) {
       await requireServerSupport(requestOptions);
-      return client.request(
+      const result = await client.request(
         {
           method: REALTIME_MEDIA_ACCEPT_METHOD,
           params: paramsWithCapability(
@@ -250,6 +253,7 @@ export function registerRealtimeMediaClient(
         AcceptRealtimeMediaSessionResultSchema,
         requestOptions?.request,
       );
+      return decodeRealtimeMediaAcceptResult(result);
     },
     async reject(sessionId, requestOptions) {
       await requireServerSupport(requestOptions);

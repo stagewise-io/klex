@@ -1,5 +1,6 @@
 import type { ModuleLogger, RootLogger } from '@stagewise/logger';
 import type {
+  LiveKitRoomTransportDescriptor,
   RealtimeMediaNotification,
   RealtimeMediaSessionOfferedNotificationParams,
 } from '@stagewise/mcp-extension-realtime-media';
@@ -26,7 +27,7 @@ export interface RealtimeSessionCoordinator {
 export interface RealtimeSessionCoordinatorDependencies {
   logging: RootLogger;
   mcp: Mcp;
-  mediaTransportConnector: MediaTransportConnector;
+  mediaTransportConnector: MediaTransportConnector<LiveKitRoomTransportDescriptor>;
   processorFactory: RealtimeProcessorFactory;
   now?: () => number;
 }
@@ -55,7 +56,7 @@ class RealtimeSessionCoordinatorModule implements RealtimeSessionCoordinator {
     private readonly deps: {
       logger: ModuleLogger;
       mcp: Mcp;
-      mediaTransportConnector: MediaTransportConnector;
+      mediaTransportConnector: MediaTransportConnector<LiveKitRoomTransportDescriptor>;
       processorFactory: RealtimeProcessorFactory;
       now: () => number;
     },
@@ -159,8 +160,9 @@ class RealtimeSessionCoordinatorModule implements RealtimeSessionCoordinator {
     session.accepted = true;
     if (session.controller.signal.aborted) return;
 
+    const descriptor = liveKitDescriptorFrom(accepted.transport);
     const transport = await this.deps.mediaTransportConnector.connect(
-      accepted.transport,
+      descriptor,
       { signal: session.controller.signal },
     );
     session.transport = transport;
@@ -339,4 +341,19 @@ export function createRealtimeSessionCoordinator(
 
 function sessionKey(namespace: string, sessionId: string): string {
   return `${namespace}\u0000${sessionId}`;
+}
+
+function liveKitDescriptorFrom(
+  transport: Awaited<
+    ReturnType<Mcp['acceptRealtimeMediaSession']>
+  >['transport'],
+): LiveKitRoomTransportDescriptor {
+  switch (transport.kind) {
+    case 'livekit-room':
+      return transport.descriptor;
+    case 'unknown':
+      throw new Error(
+        `Unsupported media transport profile: ${transport.descriptor.profile}`,
+      );
+  }
 }

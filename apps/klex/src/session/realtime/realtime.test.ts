@@ -1,13 +1,15 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import type { RootLogger } from '@stagewise/logger';
+import type { LiveKitRoomTransportDescriptor } from '@stagewise/mcp-extension-realtime-media';
 
 import type { Mcp } from '@/mcp';
 import type { MediaTransportConnector } from '@/media-transport';
 
 import {
-  createProductionMediaTransportConnectorRegistry,
+  createProductionMediaTransportConnector,
   createRealtime,
+  PRODUCTION_REALTIME_MEDIA_CAPABILITY,
 } from './realtime';
 import type { RealtimeSessionCoordinator } from './session-coordinator';
 
@@ -21,7 +23,7 @@ function harness() {
     close: vi.fn(async () => {
       order.push('connector-close');
     }),
-  } as unknown as MediaTransportConnector;
+  } as unknown as MediaTransportConnector<LiveKitRoomTransportDescriptor>;
   const coordinator = {
     start: vi.fn(async () => {
       order.push('coordinator-start');
@@ -56,10 +58,13 @@ function harness() {
 }
 
 describe('createRealtime', () => {
-  it('registers the production LiveKit profile', async () => {
-    const registry = createProductionMediaTransportConnectorRegistry();
-    expect(registry.profiles).toEqual(['livekit-room']);
-    await registry.close();
+  it('composes the production LiveKit connector and capability', async () => {
+    expect(PRODUCTION_REALTIME_MEDIA_CAPABILITY).toEqual({
+      transports: ['livekit-room'],
+      media: ['audio'],
+    });
+    const connector = createProductionMediaTransportConnector();
+    await connector.close();
   });
 
   it('starts once and closes coordinator before native connector', async () => {

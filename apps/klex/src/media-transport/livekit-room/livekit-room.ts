@@ -1,4 +1,7 @@
-import { LiveKitRoomTransportDescriptorSchema } from '@stagewise/mcp-extension-realtime-media';
+import {
+  type LiveKitRoomTransportDescriptor,
+  LiveKitRoomTransportDescriptorSchema,
+} from '@stagewise/mcp-extension-realtime-media';
 
 import { BoundedAsyncQueue } from '../async-queue';
 
@@ -84,7 +87,7 @@ export interface LiveKitSdk {
 export type LiveKitSdkLoader = () => Promise<LiveKitSdk>;
 
 export interface LiveKitRoomMediaTransportConnector
-  extends MediaTransportConnector {
+  extends MediaTransportConnector<LiveKitRoomTransportDescriptor> {
   close(): Promise<void>;
 }
 
@@ -320,7 +323,7 @@ class LiveKitRoomMediaTransportConnectorModule
   constructor(private readonly loadSdk: LiveKitSdkLoader) {}
 
   async connect(
-    descriptor: unknown,
+    descriptor: LiveKitRoomTransportDescriptor,
     options: { signal: AbortSignal },
   ): Promise<MediaTransport> {
     if (this.closing) throw new Error('LiveKit connector is closed');

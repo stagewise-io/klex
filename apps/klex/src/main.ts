@@ -15,8 +15,9 @@ import { createJsReplSandboxExt } from '@/session/chat/extensions/js-repl-sandbo
 import { createRemindersExt } from '@/session/chat/extensions/reminders';
 import { createSoulExt } from '@/session/chat/extensions/soul';
 import {
-  createProductionMediaTransportConnectorRegistry,
+  createProductionMediaTransportConnector,
   createRealtime,
+  PRODUCTION_REALTIME_MEDIA_CAPABILITY,
 } from '@/session/realtime';
 import type { SessionHooks } from '@/session/types';
 import {
@@ -69,14 +70,11 @@ async function main(): Promise<void> {
     const realtimeComposition = realtimeProvider
       ? {
           provider: realtimeProvider,
-          ownedConnector: createProductionMediaTransportConnectorRegistry(),
+          ownedConnector: createProductionMediaTransportConnector(),
         }
       : undefined;
     const realtimeMediaCapability = realtimeComposition
-      ? {
-          transports: [...realtimeComposition.ownedConnector.profiles],
-          media: ['audio'] as ['audio'],
-        }
+      ? PRODUCTION_REALTIME_MEDIA_CAPABILITY
       : undefined;
     const modelProvider = createModelProvider({ logging: logger, config });
     const mcp = createMcp({

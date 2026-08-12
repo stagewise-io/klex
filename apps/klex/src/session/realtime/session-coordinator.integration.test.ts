@@ -43,9 +43,12 @@ describe('MCP to deterministic realtime session', () => {
     const subscriptionClosed = Promise.withResolvers<void>();
     const accept = vi.fn(async () => ({
       transport: {
-        profile: 'livekit-room' as const,
-        url: 'wss://livekit.example.test',
-        token: 'secret',
+        kind: 'livekit-room' as const,
+        descriptor: {
+          profile: 'livekit-room' as const,
+          url: 'wss://livekit.example.test',
+          token: 'secret',
+        },
       },
     }));
     const end = vi.fn(async () => undefined);

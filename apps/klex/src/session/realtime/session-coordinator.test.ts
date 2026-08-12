@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { RootLogger } from '@stagewise/logger';
 import type {
-  AcceptRealtimeMediaSessionResult,
+  RealtimeMediaClientAcceptResult,
   RealtimeMediaNotification,
 } from '@stagewise/mcp-extension-realtime-media';
 
@@ -11,10 +11,7 @@ import type {
   McpRealtimeMediaAvailabilityListener,
   McpRealtimeMediaNotificationListener,
 } from '@/mcp';
-import {
-  type AudioFrame,
-  createMediaTransportConnectorRegistry,
-} from '@/media-transport';
+import type { AudioFrame } from '@/media-transport';
 
 import { createRealtimeSessionCoordinator } from './session-coordinator';
 import {
@@ -60,12 +57,15 @@ function deferred<T>(): {
 }
 
 function createMcpHarness(options?: {
-  accept?: () => Promise<AcceptRealtimeMediaSessionResult>;
+  accept?: () => Promise<RealtimeMediaClientAcceptResult>;
 }) {
   const notificationListeners = new Set<McpRealtimeMediaNotificationListener>();
   const availabilityListeners = new Set<McpRealtimeMediaAvailabilityListener>();
   const acceptRealtimeMediaSession = vi.fn(
-    options?.accept ?? (async () => ({ transport: descriptor })),
+    options?.accept ??
+      (async () => ({
+        transport: { kind: 'livekit-room', descriptor },
+      })),
   );
   const rejectRealtimeMediaSession = vi.fn(async () => undefined);
   const endRealtimeMediaSession = vi.fn(async () => undefined);
@@ -148,14 +148,17 @@ describe('realtime session coordinator', () => {
   it('ends an accepted session when its transport profile is unsupported', async () => {
     const mcpHarness = createMcpHarness({
       accept: async () => ({
-        transport: { ...descriptor, profile: 'unsupported' },
+        transport: {
+          kind: 'unknown',
+          descriptor: { ...descriptor, profile: 'unsupported' },
+        },
       }),
     });
-    const registry = createMediaTransportConnectorRegistry([]);
+    const connector = createDeterministicMediaTransportConnector();
     const coordinator = createRealtimeSessionCoordinator({
       logging,
       mcp: mcpHarness.mcp,
-      mediaTransportConnector: registry,
+      mediaTransportConnector: connector,
       processorFactory: createDeterministicEchoProcessorFactory(),
       now: () => Date.parse('2026-08-01T18:00:00.000Z'),
     });
@@ -165,8 +168,8 @@ describe('realtime session coordinator', () => {
       expect(mcpHarness.endRealtimeMediaSession).toHaveBeenCalledOnce();
       expect(coordinator.getActiveSessionCount()).toBe(0);
     });
+    expect(connector.descriptors).toEqual([]);
     await coordinator.close();
-    await registry.close();
   });
 
   it('accepts an offer, echoes ordered frames, and handles remote end once', async () => {
@@ -192,7 +195,7 @@ describe('realtime session coordinator', () => {
   });
 
   it('rejects expired offers and ignores duplicate active offers', async () => {
-    const pendingAccept = deferred<{ transport: typeof descriptor }>();
+    const pendingAccept = deferred<RealtimeMediaClientAcceptResult>();
     const mcpHarness = createMcpHarness({
       accept: () => pendingAccept.promise,
     });
@@ -212,13 +215,15 @@ describe('realtime session coordinator', () => {
     await mcpHarness.notify(offered());
     expect(mcpHarness.acceptRealtimeMediaSession).toHaveBeenCalledTimes(1);
     await mcpHarness.notify(ended());
-    pendingAccept.resolve({ transport: descriptor });
+    pendingAccept.resolve({
+      transport: { kind: 'livekit-room', descriptor },
+    });
     await vi.waitFor(() => expect(coordinator.getActiveSessionCount()).toBe(0));
     await coordinator.close();
   });
 
   it('does not connect when remote end races acceptance', async () => {
-    const pendingAccept = deferred<{ transport: typeof descriptor }>();
+    const pendingAccept = deferred<RealtimeMediaClientAcceptResult>();
     const mcpHarness = createMcpHarness({
       accept: () => pendingAccept.promise,
     });
@@ -226,7 +231,9 @@ describe('realtime session coordinator', () => {
     await coordinator.start();
     await mcpHarness.notify(offered());
     await mcpHarness.notify(ended());
-    pendingAccept.resolve({ transport: descriptor });
+    pendingAccept.resolve({
+      transport: { kind: 'livekit-room', descriptor },
+    });
 
     await vi.waitFor(() => expect(coordinator.getActiveSessionCount()).toBe(0));
     expect(connector.descriptors).toEqual([]);

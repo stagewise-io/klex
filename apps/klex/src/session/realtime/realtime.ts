@@ -1,15 +1,18 @@
 import type { RootLogger } from '@stagewise/logger';
+import type {
+  LiveKitRoomTransportDescriptor,
+  RealtimeMediaExtensionCapability,
+} from '@stagewise/mcp-extension-realtime-media';
 
 import type { ResolvedRealtimeProvider } from '@/config';
 import type { Mcp } from '@/mcp';
-import {
-  createMediaTransportConnectorRegistry,
-  type MediaTransportConnector,
-  type MediaTransportConnectorRegistry,
-  type RealtimeProcessorFactory,
+import type {
+  MediaTransportConnector,
+  RealtimeProcessorFactory,
 } from '@/media-transport';
 import {
   createLiveKitRoomMediaTransportConnector,
+  type LiveKitRoomMediaTransportConnector,
   loadLiveKitSdk,
 } from '@/media-transport/livekit-room';
 
@@ -32,14 +35,16 @@ export interface RealtimeDependencies {
    * Transfers lifecycle ownership to the realtime module. The caller must not
    * close or reuse the connector after passing it to `createRealtime`.
    */
-  ownedConnector: MediaTransportConnector;
+  ownedConnector: MediaTransportConnector<LiveKitRoomTransportDescriptor>;
   createCoordinator?: (
-    connector: MediaTransportConnector,
+    connector: MediaTransportConnector<LiveKitRoomTransportDescriptor>,
   ) => RealtimeSessionCoordinator;
 }
 
 class RealtimeModule implements Realtime {
-  private connector: MediaTransportConnector | undefined;
+  private connector:
+    | MediaTransportConnector<LiveKitRoomTransportDescriptor>
+    | undefined;
   private coordinator: RealtimeSessionCoordinator | undefined;
   private startPromise: Promise<void> | undefined;
   private closePromise: Promise<void> | undefined;
@@ -101,12 +106,11 @@ export function createRealtime(deps: RealtimeDependencies): Realtime {
   return new RealtimeModule(deps);
 }
 
-export function createProductionMediaTransportConnectorRegistry(): MediaTransportConnectorRegistry {
-  return createMediaTransportConnectorRegistry([
-    {
-      profile: 'livekit-room',
-      create: () =>
-        createLiveKitRoomMediaTransportConnector({ loadSdk: loadLiveKitSdk }),
-    },
-  ]);
+export const PRODUCTION_REALTIME_MEDIA_CAPABILITY = {
+  transports: ['livekit-room'],
+  media: ['audio'],
+} as const satisfies RealtimeMediaExtensionCapability;
+
+export function createProductionMediaTransportConnector(): LiveKitRoomMediaTransportConnector {
+  return createLiveKitRoomMediaTransportConnector({ loadSdk: loadLiveKitSdk });
 }

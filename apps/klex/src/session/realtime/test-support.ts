@@ -1,3 +1,5 @@
+import type { LiveKitRoomTransportDescriptor } from '@stagewise/mcp-extension-realtime-media';
+
 import {
   type AudioFrame,
   type AudioSource,
@@ -197,8 +199,8 @@ function createDeterministicMediaTransport(options?: {
 }
 
 export interface DeterministicMediaTransportConnector
-  extends MediaTransportConnector {
-  readonly descriptors: readonly unknown[];
+  extends MediaTransportConnector<LiveKitRoomTransportDescriptor> {
+  readonly descriptors: readonly LiveKitRoomTransportDescriptor[];
   nextTransport(): Promise<DeterministicMediaTransport>;
 }
 
@@ -209,14 +211,14 @@ class DeterministicMediaTransportConnectorModule
   private readonly waiters: Array<
     (transport: DeterministicMediaTransport) => void
   > = [];
-  private readonly acceptedDescriptors: unknown[] = [];
+  private readonly acceptedDescriptors: LiveKitRoomTransportDescriptor[] = [];
 
-  get descriptors(): readonly unknown[] {
+  get descriptors(): readonly LiveKitRoomTransportDescriptor[] {
     return this.acceptedDescriptors;
   }
 
   async connect(
-    descriptor: unknown,
+    descriptor: LiveKitRoomTransportDescriptor,
     options: { signal: AbortSignal },
   ): Promise<DeterministicMediaTransport> {
     if (options.signal.aborted) throw options.signal.reason;

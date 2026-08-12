@@ -6,7 +6,7 @@ import type {
   PushNotificationNotification,
 } from '@stagewise/mcp-extension-push-notifications';
 import type {
-  AcceptRealtimeMediaSessionResult,
+  RealtimeMediaClientAcceptResult,
   RealtimeMediaExtensionCapability,
   RealtimeMediaNotification,
 } from '@stagewise/mcp-extension-realtime-media';
@@ -134,7 +134,7 @@ export interface Mcp extends ToolProvider {
   acceptRealtimeMediaSession(
     namespace: string,
     sessionId: string,
-  ): Promise<AcceptRealtimeMediaSessionResult>;
+  ): Promise<RealtimeMediaClientAcceptResult>;
   rejectRealtimeMediaSession(
     namespace: string,
     sessionId: string,
@@ -264,7 +264,7 @@ class McpModule implements Mcp {
   async acceptRealtimeMediaSession(
     namespace: string,
     sessionId: string,
-  ): Promise<AcceptRealtimeMediaSessionResult> {
+  ): Promise<RealtimeMediaClientAcceptResult> {
     return this.requireRealtimeConnection(namespace).realtimeMedia.accept(
       sessionId,
     );

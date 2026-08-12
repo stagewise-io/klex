@@ -60,9 +60,9 @@ export interface MediaTransport extends RealtimeEndpoint {
 }
 
 /** Connects an accepted MCP descriptor to a media plane. */
-export interface MediaTransportConnector {
+export interface MediaTransportConnector<Descriptor = unknown> {
   connect(
-    descriptor: unknown,
+    descriptor: Descriptor,
     options: { signal: AbortSignal },
   ): Promise<MediaTransport>;
   close(): Promise<void>;

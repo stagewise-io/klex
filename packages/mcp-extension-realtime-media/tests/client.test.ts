@@ -1,12 +1,23 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, expectTypeOf, it, vi } from 'vitest';
 
 import {
   type RealtimeMediaClientProtocol,
   registerRealtimeMediaClient,
 } from '../src/client/index.js';
-import { REALTIME_MEDIA_EXTENSION_ID } from '../src/index.js';
+import {
+  type LiveKitRoomTransportDescriptor,
+  REALTIME_MEDIA_EXTENSION_ID,
+  type RealtimeMediaTransportDescriptor,
+} from '../src/index.js';
 
-function fakeClient() {
+function fakeClient(
+  transport: RealtimeMediaTransportDescriptor = {
+    profile: 'livekit-room',
+    url: 'wss://livekit.example.com',
+    token: 'secret',
+  },
+  resultMeta?: Record<string, unknown>,
+) {
   const handlers = new Map<string, (value: never) => unknown>();
   const requests: unknown[] = [];
   const capability = {
@@ -28,13 +39,7 @@ function fakeClient() {
         return new Promise(() => undefined);
       }
       if (method.endsWith('/accept')) {
-        return {
-          transport: {
-            profile: 'livekit-room',
-            url: 'wss://livekit.example.com',
-            token: 'secret',
-          },
-        };
+        return { transport, _meta: resultMeta };
       }
       return {};
     }),
@@ -58,7 +63,17 @@ describe('Realtime Media client', () => {
     const result = await realtime.accept('session-1', {
       metadata: { trace: 'trace-1' },
     });
-    expect(result.transport.profile).toBe('livekit-room');
+    expect(result.transport.kind).toBe('livekit-room');
+    if (result.transport.kind !== 'livekit-room')
+      throw new Error('Expected LiveKit transport');
+    expect(result.transport.descriptor).toMatchObject({
+      profile: 'livekit-room',
+      url: 'wss://livekit.example.com',
+      token: 'secret',
+    });
+    expectTypeOf(
+      result.transport.descriptor,
+    ).toMatchTypeOf<LiveKitRoomTransportDescriptor>();
     expect(requests[0]).toMatchObject({
       params: {
         sessionId: 'session-1',
@@ -74,6 +89,50 @@ describe('Realtime Media client', () => {
           },
         },
       },
+    });
+  });
+
+  it('rejects malformed descriptors for known profiles', async () => {
+    const { client } = fakeClient({
+      profile: 'livekit-room',
+      url: 'not-a-url',
+      token: '',
+    });
+    const realtime = registerRealtimeMediaClient(client);
+    await expect(realtime.accept('session-1')).rejects.toThrow();
+  });
+
+  it('preserves unknown profiles and opaque fields', async () => {
+    const descriptor = {
+      profile: 'websocket-pcm',
+      endpoint: 'wss://media.example.com',
+      vendor: { revision: 2 },
+    };
+    const { client } = fakeClient(descriptor, { trace: 'trace-1' });
+    const result =
+      await registerRealtimeMediaClient(client).accept('session-1');
+    expect(result).toEqual({
+      transport: { kind: 'unknown', descriptor },
+      _meta: { trace: 'trace-1' },
+    });
+    if (result.transport.kind !== 'unknown')
+      throw new Error('Expected unknown transport');
+    expectTypeOf(
+      result.transport.descriptor,
+    ).toEqualTypeOf<RealtimeMediaTransportDescriptor>();
+  });
+
+  it('preserves extra descriptor metadata for known profiles', async () => {
+    const { client } = fakeClient({
+      profile: 'livekit-room',
+      url: 'wss://livekit.example.com',
+      token: 'secret',
+      vendor: { trace: 'trace-1' },
+    });
+    const result =
+      await registerRealtimeMediaClient(client).accept('session-1');
+    expect(result.transport.descriptor).toMatchObject({
+      vendor: { trace: 'trace-1' },
     });
   });
 

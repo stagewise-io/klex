@@ -61,7 +61,7 @@ This is a client-to-server request. Parameters are `{ sessionId }`. An unexpired
 }
 ```
 
-`profile` selects the transport adapter. Remaining descriptor fields are profile-specific, opaque to this extension, and MUST be validated by that adapter. The LiveKit token MUST be scoped to the accepted session and SHOULD be short lived. Servers and clients MUST NOT log it. Repeating accept returns the same logical descriptor while valid. Accepting an expired offer fails with `-32021`; an unknown session with `-32020`; a conflicting state with `-32022`.
+`profile` selects the transport adapter. Remaining descriptor fields are profile-specific and opaque on the wire. SDK helpers MAY recognize profiles and validate their fields before exposing a typed descriptor to application code; they MUST preserve unrecognized profiles as opaque descriptors for forward compatibility. The selected transport adapter MUST still validate the descriptor at its media-plane trust boundary. The LiveKit token MUST be scoped to the accepted session and SHOULD be short lived. Servers and clients MUST NOT log it. Repeating accept returns the same logical descriptor while valid. Accepting an expired offer fails with `-32021`; an unknown session with `-32020`; a conflicting state with `-32022`.
 
 ### `io.stagewise/realtime-media/reject`
 

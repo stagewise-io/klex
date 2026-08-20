@@ -6,6 +6,7 @@ import type { ModuleLogger } from '@stagewise/logger';
 import type { Config } from '@/config';
 import type { Introspector } from '@/introspection';
 import type { Mcp } from '@/mcp';
+import type { ModelCallLogger } from '@/model-call-logger';
 
 import { getHealth, healthRoute } from './routes/v1/health';
 import {
@@ -61,11 +62,13 @@ import {
   patchTelemetry,
   patchTelemetryRoute,
 } from './routes/v1/settings';
+import { getUsage, getUsageRoute } from './routes/v1/usage';
 
 export interface AdminAppDependencies {
   config: Config;
   mcp: Mcp;
   introspector: Introspector;
+  modelCallLogger: ModelCallLogger;
   logger: ModuleLogger;
 }
 
@@ -121,6 +124,9 @@ export function createAdminApp(deps: AdminAppDependencies): OpenAPIHono {
   app.openapi(updateMcpServerRoute, updateMcpServer(deps));
   app.openapi(deleteMcpServerRoute, deleteMcpServer(deps));
   app.openapi(getMcpToolCallHistoryRoute, getMcpToolCallHistory(deps));
+
+  // Usage
+  app.openapi(getUsageRoute, getUsage(deps));
 
   // Providers
   app.openapi(getProvidersRoute, getProviders(deps));

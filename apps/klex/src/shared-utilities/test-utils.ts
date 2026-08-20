@@ -35,6 +35,7 @@ export function makeDeps(overrides?: Partial<ExtensionDeps>): ExtensionDeps {
     } as unknown as ExtensionDeps['logger'],
     logging: {} as unknown as ExtensionDeps['logging'],
     mcp: {} as unknown as ExtensionDeps['mcp'],
+    router: { sendInput: vi.fn() } as unknown as ExtensionDeps['router'],
     sessionId: 'test-session',
     getDataDir: vi.fn(() => '/tmp/test-ext-data'),
     ...overrides,

@@ -93,6 +93,7 @@ function makeDeps(
     turnInitialFallbackIndex: 0,
     compacted: false,
     model: {} as LanguageModel,
+    extensionSystemPromptParts: [] as string[],
     ...overrides,
   };
 }

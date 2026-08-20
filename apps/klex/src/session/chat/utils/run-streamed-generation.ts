@@ -83,6 +83,16 @@ export async function runStreamedGeneration(
     telemetry: {
       isEnabled: true,
       functionId: 'chat-session',
+      // The AI SDK's restricted telemetry dispatcher strips runtime
+      // context keys unless they are explicitly allow-listed here.
+      // Without this, conversation.modelId / conversation.id are removed
+      // before KlexTelemetry.onStart sees them, causing modelId to be
+      // logged as "unknown".
+      includeRuntimeContext: {
+        'conversation.id': true,
+        'conversation.compacted': true,
+        'conversation.modelId': true,
+      },
     },
     runtimeContext: {
       'conversation.id': params.sessionId,

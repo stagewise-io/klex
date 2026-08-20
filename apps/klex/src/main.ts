@@ -5,6 +5,7 @@ import { type CliOptions, parseCliArgs } from '@/cli';
 import { createConfig } from '@/config';
 import { createIntrospector } from '@/introspection';
 import { createMcp } from '@/mcp';
+import { createModelCallLogger } from '@/model-call-logger';
 import { createModelProvider } from '@/model-provider';
 import { createRouter, type RouterApi } from '@/router';
 import { createChatSession } from '@/session/chat';
@@ -84,6 +85,13 @@ async function main(): Promise<void> {
     });
     const introspector = createIntrospector({ logging: logger });
 
+    const modelCallLogger = createModelCallLogger({
+      logging: logger,
+      dataDirectory: cli.dataDirectory,
+    });
+
+    tracing.setModelCallSink((record) => modelCallLogger.recordCall(record));
+
     router = createRouter({
       logging: logger,
       mcp,
@@ -112,7 +120,13 @@ async function main(): Promise<void> {
           introspectionScope,
         }),
     });
-    const adminApi = createAdminApi({ logging: logger, config, mcp, router });
+    const adminApi = createAdminApi({
+      logging: logger,
+      config,
+      mcp,
+      introspector,
+      modelCallLogger,
+    });
     const telemetryManager = createTelemetryManager({
       logging: logger,
       config,
@@ -126,7 +140,7 @@ async function main(): Promise<void> {
           ownedConnector: realtimeComposition.ownedConnector,
         })
       : undefined;
-    for (const resource of [adminApi, modelProvider]) {
+    for (const resource of [modelCallLogger, modelProvider, adminApi]) {
       await resource.start();
       started.push(resource);
     }

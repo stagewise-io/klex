@@ -5,6 +5,7 @@ import type { ModuleLogger, RootLogger } from '@stagewise/logger';
 import type { Config } from '@/config';
 import type { Introspector } from '@/introspection';
 import type { Mcp } from '@/mcp';
+import type { ModelCallLogger } from '@/model-call-logger';
 
 import { createAdminApp } from './server';
 
@@ -13,6 +14,7 @@ export interface AdminApiDependencies {
   config: Config;
   mcp: Mcp;
   introspector: Introspector;
+  modelCallLogger: ModelCallLogger;
 }
 
 export interface AdminApi {
@@ -30,6 +32,7 @@ class AdminApiModule implements AdminApi {
       config: Config;
       mcp: Mcp;
       introspector: Introspector;
+      modelCallLogger: ModelCallLogger;
     },
   ) {}
 
@@ -41,6 +44,7 @@ class AdminApiModule implements AdminApi {
       config: this.deps.config,
       mcp: this.deps.mcp,
       introspector: this.deps.introspector,
+      modelCallLogger: this.deps.modelCallLogger,
       logger: this.deps.logger,
     });
 
@@ -77,5 +81,6 @@ export function createAdminApi(deps: AdminApiDependencies): AdminApi {
     config: deps.config,
     mcp: deps.mcp,
     introspector: deps.introspector,
+    modelCallLogger: deps.modelCallLogger,
   });
 }

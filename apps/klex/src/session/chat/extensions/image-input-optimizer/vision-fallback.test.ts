@@ -459,8 +459,11 @@ describe('ImageInputOptimizer — viewImage tool execute', () => {
     const nonVisionModel = makeModel({ inputCapabilities: {} });
     await ext.contextTransformer?.([msg], nonVisionModel);
     const tools = ext.getTools?.(nonVisionModel) ?? {};
-    const viewImage = tools.viewImage as {
-      execute: (input: { id: string; lookFor?: string }) => Promise<string>;
+    const viewImage = tools.viewImage as unknown as {
+      execute: (
+        input: { id: string; lookFor?: string },
+        options?: unknown,
+      ) => Promise<string>;
     };
     return viewImage.execute as (input: {
       id: string;
@@ -630,10 +633,13 @@ describe('ImageInputOptimizer — viewImage tool execute', () => {
     const nonVisionModel = makeModel({ inputCapabilities: {} });
     await ext.contextTransformer?.([msg], nonVisionModel);
     const tools = ext.getTools?.(nonVisionModel) ?? {};
-    const viewImage = tools.viewImage as {
-      execute: (input: { id: string; lookFor: string }) => Promise<string>;
+    const viewImage = tools.viewImage as unknown as {
+      execute: (
+        input: { id: string; lookFor: string },
+        options?: unknown,
+      ) => Promise<string>;
     };
-    await viewImage.execute?.({ id: '0-0', lookFor: 'test' }, {
+    await viewImage.execute({ id: '0-0', lookFor: 'test' }, {
       messages: [],
       toolCallId: 'test',
     } as never);

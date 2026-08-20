@@ -1,10 +1,14 @@
-import { createRoute, type RouteHandler, z } from '@hono/zod-openapi';
+import { createRoute, type RouteHandler } from '@hono/zod-openapi';
 
 import type { ModuleLogger } from '@stagewise/logger';
 
 import type { ModelCallLogger } from '@/model-call-logger';
 
-import { usageQuerySchema, usageResponseSchema } from './schemas';
+import {
+  errorResponseSchema,
+  usageQuerySchema,
+  usageResponseSchema,
+} from './schemas';
 
 export const getUsageRoute = createRoute({
   method: 'get',
@@ -26,7 +30,7 @@ export const getUsageRoute = createRoute({
     400: {
       content: {
         'application/json': {
-          schema: z.object({ error: z.string() }),
+          schema: errorResponseSchema,
         },
       },
       description: 'Invalid query parameters',
@@ -34,7 +38,7 @@ export const getUsageRoute = createRoute({
     500: {
       content: {
         'application/json': {
-          schema: z.object({ error: z.string() }),
+          schema: errorResponseSchema,
         },
       },
       description: 'Internal server error',

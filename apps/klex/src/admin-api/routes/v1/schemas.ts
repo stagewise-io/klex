@@ -427,50 +427,157 @@ const knownModelQuerySchema = z.object({
 
 const usageSplitBySchema = z
   .enum(['none', 'model', 'provider', 'endpoint'])
+  .describe('Dimension to split usage data by for grouping')
   .openapi('UsageSplitBy');
 
 const usageGranularitySchema = z
   .enum(['event', 'hourly', 'daily', 'weekly'])
+  .describe('Time granularity for usage data aggregation')
   .openapi('UsageGranularity');
 
 const usageQuerySchema = z.object({
-  splitBy: usageSplitBySchema.default('none'),
-  from: z.string().datetime({ offset: false }).optional(),
-  to: z.string().datetime({ offset: false }).optional(),
-  granularity: usageGranularitySchema.default('daily'),
-  limit: z.coerce.number().int().min(1).max(10000).default(1000),
+  splitBy: usageSplitBySchema
+    .default('none')
+    .describe(
+      'Dimension to group results by: none, model, provider, or endpoint',
+    ),
+  from: z
+    .string()
+    .datetime({ offset: false })
+    .optional()
+    .describe(
+      'Inclusive lower bound as UTC ISO 8601 datetime (no timezone offset)',
+    ),
+  to: z
+    .string()
+    .datetime({ offset: false })
+    .optional()
+    .describe(
+      'Exclusive upper bound as UTC ISO 8601 datetime (no timezone offset)',
+    ),
+  granularity: usageGranularitySchema
+    .default('daily')
+    .describe(
+      'Time bucket granularity: event (per-call), hourly, daily, or weekly',
+    ),
+  limit: z.coerce
+    .number()
+    .int()
+    .min(1)
+    .max(10000)
+    .default(1000)
+    .describe(
+      'Maximum number of records to return (event granularity only; default 1000)',
+    ),
 });
 
 const usageDataPointSchema = z
   .object({
-    bucket: z.string().nullable(),
-    splitKey: z.string().nullable(),
-    callCount: z.number().int(),
-    inputTokens: z.number().int(),
-    outputTokens: z.number().int(),
-    inputCacheWriteTokens: z.number().int(),
-    inputCacheReadTokens: z.number().int(),
-    ttftMs: z.number().nullable(),
-    totalDurationMs: z.number().nullable(),
-    errorCount: z.number().int(),
+    bucket: z
+      .string()
+      .nullable()
+      .describe('Time bucket (ISO 8601). Null for event granularity.'),
+    splitKey: z
+      .string()
+      .nullable()
+      .describe(
+        'Split dimension value (model ID, provider ID, or endpoint ID). Null when splitBy=none.',
+      ),
+    callCount: z
+      .number()
+      .int()
+      .describe('Number of model calls in this bucket/split'),
+    inputTokens: z.number().int().describe('Total input (prompt) tokens'),
+    outputTokens: z.number().int().describe('Total output (completion) tokens'),
+    inputCacheWriteTokens: z
+      .number()
+      .int()
+      .describe('Total cache-write input tokens'),
+    inputCacheReadTokens: z
+      .number()
+      .int()
+      .describe('Total cache-read input tokens'),
+    ttftMs: z
+      .number()
+      .nullable()
+      .describe(
+        'Time to first token in ms (actual for event granularity, average for aggregated)',
+      ),
+    totalDurationMs: z
+      .number()
+      .nullable()
+      .describe(
+        'Total duration in ms (actual for event granularity, average for aggregated)',
+      ),
+    errorCount: z
+      .number()
+      .int()
+      .describe('Number of calls that resulted in an error'),
     // Event-level fields (null for aggregated granularities)
-    id: z.string().nullable(),
-    sessionId: z.string().nullable(),
-    providerId: z.string().nullable(),
-    endpointId: z.string().nullable(),
-    modelId: z.string().nullable(),
-    source: z.enum(['chat', 'extension']).nullable(),
-    extensionId: z.string().nullable(),
-    finishReason: z.string().nullable(),
-    errorType: z.string().nullable(),
-    startedAt: z.string().nullable(),
-    finishedAt: z.string().nullable(),
+    id: z
+      .string()
+      .nullable()
+      .describe('Record ID. Null for aggregated granularities.'),
+    sessionId: z
+      .string()
+      .nullable()
+      .describe('Session UUID. Null for aggregated granularities.'),
+    providerId: z
+      .string()
+      .nullable()
+      .describe('Provider ID. Null for aggregated granularities.'),
+    endpointId: z
+      .string()
+      .nullable()
+      .describe('Endpoint ID. Null for aggregated granularities.'),
+    modelId: z
+      .string()
+      .nullable()
+      .describe('Model ID. Null for aggregated granularities.'),
+    source: z
+      .enum(['chat', 'extension'])
+      .nullable()
+      .describe(
+        'Call source: chat-session generation or extension-initiated. Null for aggregated granularities.',
+      ),
+    extensionId: z
+      .string()
+      .nullable()
+      .describe(
+        'Extension identifier. Null for aggregated granularities or non-extension calls.',
+      ),
+    finishReason: z
+      .string()
+      .nullable()
+      .describe(
+        'AI SDK finish reason (stop, tool-calls, error, aborted, etc.). Null for aggregated granularities.',
+      ),
+    errorType: z
+      .string()
+      .nullable()
+      .describe(
+        'Error type/name. Null for aggregated granularities or non-error calls.',
+      ),
+    startedAt: z
+      .string()
+      .nullable()
+      .describe(
+        'ISO 8601 timestamp when the call started. Null for aggregated granularities.',
+      ),
+    finishedAt: z
+      .string()
+      .nullable()
+      .describe(
+        'ISO 8601 timestamp when the call finished. Null for aggregated granularities.',
+      ),
   })
   .openapi('UsageDataPoint');
 
 const usageResponseSchema = z
   .object({
-    dataPoints: z.array(usageDataPointSchema),
+    dataPoints: z
+      .array(usageDataPointSchema)
+      .describe('Usage data points matching the query'),
   })
   .openapi('UsageResponse');
 

@@ -19,8 +19,6 @@ import type {
   LanguageModelCallEndEvent,
   LanguageModelCallStartEvent,
   Telemetry,
-  ToolExecutionEndEvent,
-  ToolExecutionStartEvent,
 } from 'ai';
 
 import type { ModelCallRecord, ModelCallSource } from '@/model-call-logger';
@@ -164,21 +162,14 @@ interface CallState {
   /** Root operation span — `generate_content {modelId}`. */
   rootSpan: Span;
   rootContext: Context;
-  /** Tool-execution spans keyed by `toolCallId`. */
-  toolSpans: Map<string, { span: Span; context: Context }>;
   /** Telemetry options saved from the `onStart` event. */
-  recordInputs: boolean;
   recordOutputs: boolean;
   functionId: string | undefined;
   operationId: string;
   /** Session UUID from runtimeContext — set on root span as gen_ai.conversation.id. */
   conversationId: string | undefined;
-  /** Whether the history was compacted — set as gen_ai.conversation.compacted. */
-  compacted: boolean | undefined;
   /** Full klex modelId (providerId:endpointId:modelId) from runtimeContext. */
   fullModelId: string | undefined;
-  /** Tool descriptions keyed by tool name, extracted from the tool set in onStart. */
-  toolDescriptions: Map<string, string | undefined>;
   /** Provider ID extracted from fullModelId. */
   providerId: string | undefined;
   /** Endpoint ID extracted from fullModelId. */
@@ -454,30 +445,14 @@ export class KlexTelemetry implements Telemetry {
     // Inherit the active context (the step context) as parent.
     const rootContext = trace.setSpan(context.active(), rootSpan);
 
-    // Extract tool descriptions from the tool set for use in execute_tool spans.
-    const toolDescriptions = new Map<string, string | undefined>();
-    const tools = genEvent.tools as Record<string, unknown> | undefined;
-    if (tools != null) {
-      for (const [name, tool] of Object.entries(tools)) {
-        const t = tool as Record<string, unknown>;
-        if (typeof t.description === 'string') {
-          toolDescriptions.set(name, t.description);
-        }
-      }
-    }
-
     this.callStates.set(genEvent.callId, {
       rootSpan,
       rootContext,
-      toolSpans: new Map(),
-      recordInputs: genEvent.recordInputs !== false,
       recordOutputs: genEvent.recordOutputs !== false,
       functionId: genEvent.functionId,
       operationId: genEvent.operationId,
       conversationId,
-      compacted,
       fullModelId,
-      toolDescriptions,
       providerId,
       endpointId,
       modelIdOnly,
@@ -552,105 +527,6 @@ export class KlexTelemetry implements Telemetry {
       }
       span.setAttributes(perfAttrs);
     }
-  }
-
-  // --- Tool execution lifecycle --------------------------------------------
-
-  onToolExecutionStart(
-    event: InferTelemetryEvent<ToolExecutionStartEvent>,
-  ): void {
-    const state = this.getCallState(event.callId);
-    if (!state) return;
-
-    const { toolCall } = event;
-    const spanName = `execute_tool ${toolCall.toolName}`;
-
-    const attributes: Attributes = {
-      'gen_ai.operation.name': 'execute_tool',
-      'gen_ai.tool.name': toolCall.toolName,
-      'gen_ai.tool.call.id': toolCall.toolCallId,
-      'gen_ai.tool.type': 'function',
-    };
-
-    // Tool description from the original tool definition (if present).
-    const description = state.toolDescriptions.get(toolCall.toolName);
-    if (description != null) {
-      attributes['gen_ai.tool.description'] = description;
-    }
-
-    // Opt-in content attribute: tool call arguments.
-    if (state.recordInputs) {
-      const args = serializeJson(toolCall.input);
-      if (args != null) {
-        attributes['gen_ai.tool.call.arguments'] = args;
-      }
-    }
-
-    const toolSpan = this.tracer.startSpan(
-      spanName,
-      {
-        attributes,
-        kind: SpanKind.INTERNAL,
-      },
-      state.rootContext,
-    );
-
-    const toolContext = trace.setSpan(state.rootContext, toolSpan);
-    state.toolSpans.set(toolCall.toolCallId, {
-      span: toolSpan,
-      context: toolContext,
-    });
-  }
-
-  executeTool<T>(options: {
-    callId: string;
-    toolCallId: string;
-    execute: () => PromiseLike<T>;
-  }): PromiseLike<T> {
-    const state = this.getCallState(options.callId);
-    const entry = state?.toolSpans.get(options.toolCallId);
-    if (!entry) return options.execute();
-
-    return context.with(entry.context, async () => {
-      try {
-        return await options.execute();
-      } catch (error) {
-        // Record the error on the span so it surfaces even if the SDK's
-        // normal onToolExecutionEnd path is not reached.
-        recordErrorOnSpan(entry.span, error);
-        throw error;
-      }
-    });
-  }
-
-  onToolExecutionEnd(event: InferTelemetryEvent<ToolExecutionEndEvent>): void {
-    const state = this.getCallState(event.callId);
-    if (!state) return;
-
-    const entry = state.toolSpans.get(event.toolCall.toolCallId);
-    if (!entry) return;
-
-    const { span } = entry;
-
-    const durationSec = msToSeconds(event.toolExecutionMs);
-    if (durationSec != null) {
-      span.setAttribute('gen_ai.execute_tool.duration', durationSec);
-    }
-
-    if (event.toolOutput.type === 'tool-error') {
-      recordErrorOnSpan(span, event.toolOutput.error);
-    } else if (event.toolOutput.type === 'tool-result') {
-      // Opt-in content attribute: tool call result.
-      if (state.recordOutputs) {
-        const result = serializeJson(event.toolOutput.output);
-        if (result != null) {
-          span.setAttribute('gen_ai.tool.call.result', result);
-        }
-      }
-    }
-
-    span.end();
-    state.toolSpans.delete(event.toolCall.toolCallId);
   }
 
   // --- Operation end --------------------------------------------------------
@@ -773,12 +649,6 @@ export class KlexTelemetry implements Telemetry {
       state.rootSpan.setAttribute('gen_ai.abort.reason', reasonStr);
     }
 
-    // End any open tool spans.
-    for (const { span } of state.toolSpans.values()) {
-      span.end();
-    }
-    state.toolSpans.clear();
-
     // Forward model call record to the sink (if registered).
     this.forwardModelCallRecord(
       event.callId,
@@ -806,12 +676,6 @@ export class KlexTelemetry implements Telemetry {
     if (!state) return;
 
     const actualError = maybeEvent.error ?? error;
-
-    for (const { span } of state.toolSpans.values()) {
-      recordErrorOnSpan(span, actualError);
-      span.end();
-    }
-    state.toolSpans.clear();
 
     recordErrorOnSpan(state.rootSpan, actualError);
 

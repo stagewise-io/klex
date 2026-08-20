@@ -164,54 +164,12 @@ class ModelCallLoggerModule implements ModelCallLogger {
   // ---------------------------------------------------------------------------
 
   private async flushQueue(): Promise<void> {
-    if (this.writeQueue.length === 0 || !this.client) return;
+    if (this.writeQueue.length === 0 || !this.db) return;
 
     const batch = this.writeQueue.splice(0, this.writeQueue.length);
 
-    // Build a multi-row INSERT as a single batched statement.
-    // A unique sentinel object distinguishes SQL NULL from the literal string "NULL".
-    const NULL_SENTINEL = Symbol('null');
-    const valueList = batch
-      .map((r) => {
-        const escaped = [
-          r.id,
-          r.sessionId,
-          r.providerId,
-          r.endpointId,
-          r.modelId,
-          r.source,
-          r.extensionId,
-          String(r.inputTokens),
-          String(r.outputTokens),
-          String(r.inputCacheWriteTokens),
-          String(r.inputCacheReadTokens),
-          r.ttftMs != null ? String(r.ttftMs) : NULL_SENTINEL,
-          r.totalDurationMs != null ? String(r.totalDurationMs) : NULL_SENTINEL,
-          r.finishReason,
-          r.isError ? '1' : '0',
-          r.errorType,
-          r.startedAt,
-          r.finishedAt,
-        ]
-          .map((v) =>
-            v === null || v === NULL_SENTINEL
-              ? 'NULL'
-              : `'${String(v).replace(/'/g, "''")}'`,
-          )
-          .join(', ');
-        return `(${escaped})`;
-      })
-      .join(', ');
-
     try {
-      await this.client.executeMultiple(`
-INSERT OR IGNORE INTO model_calls (
-  id, session_id, provider_id, endpoint_id, model_id, source, extension_id,
-  input_tokens, output_tokens, input_cache_write_tokens, input_cache_read_tokens,
-  ttft_ms, total_duration_ms, finish_reason, is_error, error_type,
-  started_at, finished_at
-) VALUES ${valueList};
-`);
+      await this.db.insert(modelCallsTable).values(batch).onConflictDoNothing();
     } catch (error) {
       // Re-queue the failed batch at the front for retry on next flush.
       this.writeQueue.unshift(...batch);

@@ -109,6 +109,7 @@ const noopDeps: BaseExtensionDeps = {
     child: () => noopDeps.logger,
   } as unknown as BaseExtensionDeps['logging'],
   mcp: {} as unknown as BaseExtensionDeps['mcp'],
+  router: { sendInput: vi.fn() } as unknown as BaseExtensionDeps['router'],
   sessionId: 'test-session-id',
 };
 

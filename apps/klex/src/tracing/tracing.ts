@@ -8,7 +8,11 @@ import type { ModuleLogger, RootLogger } from '@stagewise/logger';
 
 import type { TelemetrySpanProcessor } from '@/telemetry-manager';
 
-import { createKlexTelemetry } from './telemetry';
+import {
+  createKlexTelemetry,
+  type KlexTelemetry,
+  type ModelCallSink,
+} from './telemetry';
 
 export interface TracingDependencies {
   logging: RootLogger;
@@ -21,11 +25,13 @@ export interface TracingDependencies {
 export interface Tracing {
   start(): Promise<void>;
   close(): Promise<void>;
+  setModelCallSink(sink: ModelCallSink | null): void;
 }
 
 class TracingModule implements Tracing {
   private sdk: NodeSDK | null = null;
   private started = false;
+  private readonly telemetryInstance: KlexTelemetry;
 
   constructor(
     private readonly deps: {
@@ -35,7 +41,15 @@ class TracingModule implements Tracing {
       resourceAttributes: Record<string, string>;
       spanProcessor: TelemetrySpanProcessor;
     },
-  ) {}
+  ) {
+    // Always register the custom telemetry integration so usage tracking
+    // works even when OTel SDK startup is skipped (tracing disabled).
+    // trace.getTracer returns a ProxyTracer that delegates to the global
+    // provider — no-op before SDK start, real once it starts.
+    const tracer = trace.getTracer(deps.serviceName);
+    this.telemetryInstance = createKlexTelemetry(tracer);
+    registerTelemetry(this.telemetryInstance);
+  }
 
   async start(): Promise<void> {
     if (this.started) return;
@@ -61,16 +75,14 @@ class TracingModule implements Tracing {
     this.sdk.start();
     this.started = true;
 
-    // Register a custom Telemetry integration that creates spans fitting
-    // the klex trace hierarchy (session → turn → step → generation
-    // → chat) instead of the AI SDK's default invoke_agent/step spans.
-    const tracer = trace.getTracer(this.deps.serviceName);
-    registerTelemetry(createKlexTelemetry(tracer));
-
     this.deps.logger.info(
       { otlpUrl: this.deps.otlpUrl, serviceName: this.deps.serviceName },
       'Tracing started',
     );
+  }
+
+  setModelCallSink(sink: ModelCallSink | null): void {
+    this.telemetryInstance.setModelCallSink(sink);
   }
 
   async close(): Promise<void> {

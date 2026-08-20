@@ -345,8 +345,16 @@ class ChatSessionModule implements AgentSession {
                     temperature: args.temperature,
                     maxOutputTokens: args.maxOutputTokens,
                     maxRetries: args.maxRetries ?? 0,
-                    telemetry: { isEnabled: true, functionId },
+                    telemetry: {
+                      isEnabled: true,
+                      functionId,
+                      includeRuntimeContext: {
+                        'conversation.id': true,
+                        'conversation.modelId': true,
+                      },
+                    },
                     runtimeContext: {
+                      'conversation.id': this.sessionId,
                       'conversation.modelId': modelId,
                     },
                     ...(providerOptions !== undefined && { providerOptions }),
@@ -359,8 +367,16 @@ class ChatSessionModule implements AgentSession {
                     temperature: args.temperature,
                     maxOutputTokens: args.maxOutputTokens,
                     maxRetries: args.maxRetries ?? 0,
-                    telemetry: { isEnabled: true, functionId },
+                    telemetry: {
+                      isEnabled: true,
+                      functionId,
+                      includeRuntimeContext: {
+                        'conversation.id': true,
+                        'conversation.modelId': true,
+                      },
+                    },
                     runtimeContext: {
+                      'conversation.id': this.sessionId,
                       'conversation.modelId': modelId,
                     },
                     ...(providerOptions !== undefined && { providerOptions }),

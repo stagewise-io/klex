@@ -23,11 +23,16 @@ import type {
   ToolExecutionStartEvent,
 } from 'ai';
 
+import type { ModelCallRecord, ModelCallSource } from '@/model-call-logger';
+
 // Extract the exact event types the Telemetry interface expects for
 // onStart / onEnd. These are unions (OperationStartEvent / OperationEndEvent)
 // that the `ai` package does not export directly.
 type TelemetryStartEvent = Parameters<NonNullable<Telemetry['onStart']>>[0];
 type TelemetryEndEvent = Parameters<NonNullable<Telemetry['onEnd']>>[0];
+
+/** Sink function that receives a `ModelCallRecord` at the end of every model call. */
+export type ModelCallSink = (record: ModelCallRecord) => void;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -174,6 +179,18 @@ interface CallState {
   fullModelId: string | undefined;
   /** Tool descriptions keyed by tool name, extracted from the tool set in onStart. */
   toolDescriptions: Map<string, string | undefined>;
+  /** Provider ID extracted from fullModelId. */
+  providerId: string | undefined;
+  /** Endpoint ID extracted from fullModelId. */
+  endpointId: string | undefined;
+  /** Model ID (final segment of fullModelId). */
+  modelIdOnly: string | undefined;
+  /** Wall-clock timestamp (ms) when onStart fired. */
+  spanStartTime: number;
+  /** Time to first token in ms, set in onLanguageModelCallEnd. */
+  ttftMs: number | undefined;
+  /** Total response time in ms, set in onLanguageModelCallEnd. */
+  totalDurationMs: number | undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -204,8 +221,9 @@ interface CallState {
  *
  * All attribute keys follow the OTel gen_ai semantic conventions.
  */
-class KlexTelemetry implements Telemetry {
+export class KlexTelemetry implements Telemetry {
   private readonly callStates = new Map<string, CallState>();
+  private modelCallSink: ModelCallSink | null = null;
 
   constructor(private readonly tracer: Tracer) {}
 
@@ -215,6 +233,69 @@ class KlexTelemetry implements Telemetry {
 
   private cleanupCallState(callId: string): void {
     this.callStates.delete(callId);
+  }
+
+  /** Register a sink that receives a `ModelCallRecord` at the end of every model call. */
+  setModelCallSink(sink: ModelCallSink | null): void {
+    this.modelCallSink = sink;
+  }
+
+  /**
+   * Builds a `ModelCallRecord` from `CallState` and forwards it to the sink.
+   * Fire-and-forget — never throws.
+   */
+  private forwardModelCallRecord(
+    callId: string,
+    state: CallState,
+    finishReason: string,
+    isError: boolean,
+    errorType: string | null,
+    inputTokens: number,
+    outputTokens: number,
+    cacheWriteTokens: number,
+    cacheReadTokens: number,
+  ): void {
+    if (!this.modelCallSink) return;
+
+    // Derive source and extensionId from functionId.
+    // functionId patterns: 'chat-session', 'extension:<id>', or undefined.
+    const functionId = state.functionId;
+    let source: ModelCallSource = 'chat';
+    let extensionId: string | null = null;
+    if (functionId?.startsWith('extension:')) {
+      source = 'extension';
+      extensionId = functionId.slice('extension:'.length);
+    }
+
+    const now = Date.now();
+    const record: ModelCallRecord = {
+      id: callId,
+      sessionId: state.conversationId ?? null,
+      providerId: state.providerId ?? 'unknown',
+      endpointId: state.endpointId ?? null,
+      modelId: state.modelIdOnly ?? state.fullModelId ?? 'unknown',
+      source,
+      extensionId,
+      inputTokens,
+      outputTokens,
+      inputCacheWriteTokens: cacheWriteTokens,
+      inputCacheReadTokens: cacheReadTokens,
+      ttftMs: state.ttftMs ?? null,
+      // Use the AI SDK's responseTimeMs when available; fall back to
+      // wall-clock duration for abort/error paths (no performance data).
+      totalDurationMs: state.totalDurationMs ?? now - state.spanStartTime,
+      finishReason,
+      isError,
+      errorType,
+      startedAt: new Date(state.spanStartTime).toISOString(),
+      finishedAt: new Date(now).toISOString(),
+    };
+
+    try {
+      this.modelCallSink(record);
+    } catch {
+      // Fire-and-forget — never propagate sink errors.
+    }
   }
 
   // --- Operation lifecycle --------------------------------------------------
@@ -246,8 +327,11 @@ class KlexTelemetry implements Telemetry {
         ? (runtimeContext['conversation.compacted'] as boolean)
         : undefined;
     // The full klex modelId (providerId:endpointId:modelId) is passed
-    // via runtimeContext by the session. Fall back to the AI SDK's internal
-    // model name if not provided (e.g. third-party callers).
+    // via runtimeContext by the session. The AI SDK's restricted telemetry
+    // dispatcher strips runtime context keys unless the caller explicitly
+    // allow-lists them via telemetry.includeRuntimeContext. If that was
+    // not configured, fall back to the AI SDK's internal provider/modelId
+    // fields so we still capture something useful.
     const fullModelId =
       typeof runtimeContext?.['conversation.modelId'] === 'string'
         ? (runtimeContext['conversation.modelId'] as string)
@@ -257,17 +341,35 @@ class KlexTelemetry implements Telemetry {
     // Parse the klex fullModelId (format: providerId:endpointId:modelId
     // or providerId:modelId) to extract individual components for trace
     // metadata. This lets traces be filtered/grouped by provider and endpoint.
-    const modelParts = fullModelId?.split(':') ?? [];
-    const providerId = modelParts.length >= 2 ? modelParts[0] : undefined;
-    // When 3 parts: providerId:endpointId:modelId
-    // When 2 parts: providerId:modelId (preset, no endpoint)
-    const endpointId = modelParts.length >= 3 ? modelParts[1] : undefined;
-    const modelIdOnly =
-      modelParts.length >= 3
-        ? modelParts[2]
-        : modelParts.length === 2
-          ? modelParts[1]
-          : undefined;
+    // Uses indexOf/slice (not split) so model IDs containing colons survive.
+    // The config layer uses the same approach in splitProviderId/resolveModel.
+    let providerId: string | undefined;
+    let endpointId: string | undefined;
+    let modelIdOnly: string | undefined;
+    if (fullModelId) {
+      const firstColon = fullModelId.indexOf(':');
+      if (firstColon !== -1) {
+        providerId = fullModelId.slice(0, firstColon);
+        const rest = fullModelId.slice(firstColon + 1);
+        const secondColon = rest.indexOf(':');
+        if (secondColon !== -1) {
+          // providerId:endpointId:modelId (manual provider)
+          endpointId = rest.slice(0, secondColon);
+          modelIdOnly = rest.slice(secondColon + 1);
+        } else {
+          // providerId:modelId (preset provider, no endpoint)
+          modelIdOnly = rest;
+        }
+      }
+    } else {
+      // Fall back to the AI SDK's own provider/modelId fields when the
+      // runtime context was stripped by the restricted telemetry dispatcher.
+      // These are the bare names (e.g. provider="openai", modelId="gpt-4o")
+      // so they won't include endpoint information, but they prevent
+      // modelId from being logged as "unknown".
+      providerId = genEvent.provider;
+      modelIdOnly = genEvent.modelId;
+    }
 
     const spanName = `generate_content ${requestModel}`;
 
@@ -376,6 +478,12 @@ class KlexTelemetry implements Telemetry {
       compacted,
       fullModelId,
       toolDescriptions,
+      providerId,
+      endpointId,
+      modelIdOnly,
+      spanStartTime: Date.now(),
+      ttftMs: undefined,
+      totalDurationMs: undefined,
     });
   }
 
@@ -434,11 +542,13 @@ class KlexTelemetry implements Telemetry {
         perfAttrs['gen_ai.client.operation.duration'] = msToSeconds(
           event.performance.responseTimeMs,
         );
+        state.totalDurationMs = event.performance.responseTimeMs;
       }
       if (event.performance.timeToFirstOutputMs != null) {
         perfAttrs['gen_ai.response.time_to_first_chunk'] = msToSeconds(
           event.performance.timeToFirstOutputMs,
         );
+        state.ttftMs = event.performance.timeToFirstOutputMs;
       }
       span.setAttributes(perfAttrs);
     }
@@ -549,7 +659,7 @@ class KlexTelemetry implements Telemetry {
     const state = this.getCallState(event.callId);
     if (!state?.rootSpan) return;
 
-    // Only record text-generation-specific attributes.
+    // Only record text-generation-specific attributes and forward model call records.
     if (
       state.operationId === 'ai.streamText' ||
       state.operationId === 'ai.generateText'
@@ -600,6 +710,19 @@ class KlexTelemetry implements Telemetry {
           state.rootSpan.setAttribute('gen_ai.output.messages', outputMessages);
         }
       }
+
+      // Forward model call record to the sink (if registered).
+      this.forwardModelCallRecord(
+        event.callId,
+        state,
+        textEndEvent.finishReason,
+        textEndEvent.finishReason === 'error',
+        textEndEvent.finishReason === 'error' ? 'generation_error' : null,
+        textEndEvent.usage.inputTokens ?? 0,
+        textEndEvent.usage.outputTokens ?? 0,
+        textEndEvent.usage.inputTokenDetails?.cacheWriteTokens ?? 0,
+        textEndEvent.usage.inputTokenDetails?.cacheReadTokens ?? 0,
+      );
     }
 
     state.rootSpan.end();
@@ -656,6 +779,19 @@ class KlexTelemetry implements Telemetry {
     }
     state.toolSpans.clear();
 
+    // Forward model call record to the sink (if registered).
+    this.forwardModelCallRecord(
+      event.callId,
+      state,
+      'aborted',
+      true,
+      'aborted',
+      0,
+      0,
+      0,
+      0,
+    );
+
     state.rootSpan.end();
     this.cleanupCallState(event.callId);
   }
@@ -678,6 +814,24 @@ class KlexTelemetry implements Telemetry {
     state.toolSpans.clear();
 
     recordErrorOnSpan(state.rootSpan, actualError);
+
+    // Forward model call record to the sink (if registered).
+    // Best-effort: if onEnd already forwarded a record for this callId,
+    // the PRIMARY KEY constraint in SQLite silently rejects the duplicate.
+    const errorType =
+      actualError instanceof Error ? actualError.name : String(actualError);
+    this.forwardModelCallRecord(
+      maybeEvent.callId,
+      state,
+      'error',
+      true,
+      errorType,
+      0,
+      0,
+      0,
+      0,
+    );
+
     state.rootSpan.end();
     this.cleanupCallState(maybeEvent.callId);
   }
@@ -694,6 +848,6 @@ class KlexTelemetry implements Telemetry {
  * context (the klex step context).  Register globally via
  * `registerTelemetry(createKlexTelemetry(tracer))`.
  */
-export function createKlexTelemetry(tracer: Tracer): Telemetry {
+export function createKlexTelemetry(tracer: Tracer): KlexTelemetry {
   return new KlexTelemetry(tracer);
 }

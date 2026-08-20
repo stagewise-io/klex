@@ -1,6 +1,7 @@
-import { type Span, SpanStatusCode } from '@opentelemetry/api';
+import { SpanStatusCode } from '@opentelemetry/api';
 import type {
   ReadableSpan,
+  Span,
   SpanProcessor,
 } from '@opentelemetry/sdk-trace-base';
 import { describe, expect, it, vi } from 'vitest';
@@ -11,12 +12,12 @@ function makeSpan(overrides: Partial<ReadableSpan> = {}): ReadableSpan {
   return {
     name: 'test-span',
     kind: 0,
-    spanContext: {
+    spanContext: () => ({
       traceId: '0'.repeat(32),
       spanId: '0'.repeat(16),
       traceFlags: 0,
       isRemote: false,
-    },
+    }),
     parentSpanContext: undefined,
     startTime: [0, 0],
     endTime: [0, 0],

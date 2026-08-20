@@ -423,6 +423,57 @@ const knownModelQuerySchema = z.object({
   endpointName: z.string().min(1).optional(),
 });
 
+// --- Usage ---
+
+const usageSplitBySchema = z
+  .enum(['none', 'model', 'provider', 'endpoint'])
+  .openapi('UsageSplitBy');
+
+const usageGranularitySchema = z
+  .enum(['event', 'hourly', 'daily', 'weekly'])
+  .openapi('UsageGranularity');
+
+const usageQuerySchema = z.object({
+  splitBy: usageSplitBySchema.default('none'),
+  from: z.string().datetime({ offset: false }).optional(),
+  to: z.string().datetime({ offset: false }).optional(),
+  granularity: usageGranularitySchema.default('daily'),
+  limit: z.coerce.number().int().min(1).max(10000).default(1000),
+});
+
+const usageDataPointSchema = z
+  .object({
+    bucket: z.string().nullable(),
+    splitKey: z.string().nullable(),
+    callCount: z.number().int(),
+    inputTokens: z.number().int(),
+    outputTokens: z.number().int(),
+    inputCacheWriteTokens: z.number().int(),
+    inputCacheReadTokens: z.number().int(),
+    ttftMs: z.number().nullable(),
+    totalDurationMs: z.number().nullable(),
+    errorCount: z.number().int(),
+    // Event-level fields (null for aggregated granularities)
+    id: z.string().nullable(),
+    sessionId: z.string().nullable(),
+    providerId: z.string().nullable(),
+    endpointId: z.string().nullable(),
+    modelId: z.string().nullable(),
+    source: z.enum(['chat', 'extension']).nullable(),
+    extensionId: z.string().nullable(),
+    finishReason: z.string().nullable(),
+    errorType: z.string().nullable(),
+    startedAt: z.string().nullable(),
+    finishedAt: z.string().nullable(),
+  })
+  .openapi('UsageDataPoint');
+
+const usageResponseSchema = z
+  .object({
+    dataPoints: z.array(usageDataPointSchema),
+  })
+  .openapi('UsageResponse');
+
 export {
   apiFormatSchema,
   audioInputCapabilitySchema,
@@ -465,4 +516,9 @@ export {
   updateKnownModelBodySchema,
   updateMcpServerBodySchema,
   updateProviderBodySchema,
+  usageDataPointSchema,
+  usageGranularitySchema,
+  usageQuerySchema,
+  usageResponseSchema,
+  usageSplitBySchema,
 };

@@ -119,8 +119,11 @@ async function main(): Promise<void> {
 
   await Promise.all(contexts.map((buildContext) => buildContext.rebuild()));
   await restartAgent();
-  watching = true;
   await Promise.all(contexts.map((buildContext) => buildContext.watch()));
+  // Enable restart-on-rebuild only AFTER watch()'s initial build completes.
+  // watch() always does an initial build even if rebuild() already ran;
+  // setting watching=true before that would trigger a spurious restart.
+  watching = true;
   console.log('Watching for changes...');
 }
 

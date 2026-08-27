@@ -2,7 +2,9 @@ import { createLogger } from '@stagewise/logger';
 
 import { createAdminApi } from '@/admin-api';
 import { type CliOptions, parseCliArgs } from '@/cli';
+import { createCloudConnectivity } from '@/cloud-connectivity';
 import { createConfig } from '@/config';
+import { createDirectoryLock } from '@/directory-lock';
 import { createIntrospector } from '@/introspection';
 import { createMcp } from '@/mcp';
 import { createModelCallLogger } from '@/model-call-logger';
@@ -57,6 +59,15 @@ async function main(): Promise<void> {
   await tracing.start();
 
   const cli: CliOptions = parseCliArgs(process.argv.slice(2));
+
+  // Acquire directory lock before any module starts — prevents concurrent
+  // instances from using the same working directory.
+  const dirLock = createDirectoryLock({
+    logging: logger,
+    dataDirectory: cli.dataDirectory,
+  });
+  await dirLock.acquire();
+
   const config = createConfig({
     logging: logger,
     dataDirectory: cli.dataDirectory,
@@ -67,6 +78,18 @@ async function main(): Promise<void> {
   try {
     await config.start();
     started.push(config);
+
+    // Cloud connectivity: identity is always created; enrollment + token
+    // client are initialized only when cloud is enabled.
+    const cloudConnectivity = createCloudConnectivity({
+      logging: logger,
+      dataDirectory: cli.dataDirectory,
+      cloudEnabled: cli.cloudEnabled,
+      cloudBaseUrl: cli.cloudBaseUrl,
+      enrollmentToken: cli.cloudEnrollToken,
+    });
+    await cloudConnectivity.start();
+    started.push(cloudConnectivity);
     const realtimeProvider = config.resolveRealtimeProvider();
     const realtimeComposition = realtimeProvider
       ? {
@@ -157,8 +180,11 @@ async function main(): Promise<void> {
     started.push(telemetryManager);
     await router.start();
   } catch (error) {
-    await router?.close();
+    await router?.close().catch((error: unknown) => {
+      logger.error({ error }, 'Router shutdown failed');
+    });
     await closeReverse(started);
+    await dirLock.release();
     throw error;
   }
 
@@ -167,8 +193,13 @@ async function main(): Promise<void> {
   const shutdown = async () => {
     if (shuttingDown) return;
     shuttingDown = true;
-    await runningRouter.close();
+    await runningRouter.close().catch((error: unknown) => {
+      logger.error({ error }, 'Router shutdown failed');
+    });
     await closeReverse(started);
+    await dirLock.release().catch((error: unknown) => {
+      logger.error({ error }, 'Lock release failed');
+    });
     await tracing.close();
     await logger[Symbol.asyncDispose]();
     process.exit(0);

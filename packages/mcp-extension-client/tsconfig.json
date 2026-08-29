@@ -1,0 +1,10 @@
+{
+  "extends": "../typescript-config/base.json",
+  "compilerOptions": {
+    "composite": false,
+    "noEmit": true,
+    "types": ["node", "vitest/globals"]
+  },
+  "include": ["src/**/*.ts", "tests/**/*.ts"],
+  "exclude": ["node_modules", ".turbo", "dist"]
+}

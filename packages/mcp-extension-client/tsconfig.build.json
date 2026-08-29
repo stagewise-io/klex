@@ -1,0 +1,12 @@
+{
+  "extends": "../typescript-config/base.json",
+  "compilerOptions": {
+    "composite": false,
+    "rootDir": "src",
+    "outDir": "dist",
+    "noEmit": false,
+    "types": ["node"]
+  },
+  "include": ["src/**/*.ts"],
+  "exclude": ["node_modules", ".turbo", "dist"]
+}

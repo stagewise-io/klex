@@ -1,5 +1,7 @@
 import type { Client, RequestOptions } from '@modelcontextprotocol/client';
 
+import { registerSubscriptionAcknowledgementHandler } from '@stagewise/mcp-extension-client';
+
 import {
   resolveServerPushNotificationsSupport,
   withPushNotificationsCapability,
@@ -10,7 +12,6 @@ import {
   PUSH_NOTIFICATIONS_GET_METHOD,
   PUSH_NOTIFICATIONS_NOTIFICATION_METHOD,
   SERVER_DISCOVER_METHOD,
-  SUBSCRIPTIONS_ACKNOWLEDGED_METHOD,
   SUBSCRIPTIONS_LISTEN_METHOD,
 } from '../constants.js';
 import {
@@ -168,12 +169,16 @@ export function registerPushNotificationsClient(
       });
     },
   );
-  client.setNotificationHandler(
-    SUBSCRIPTIONS_ACKNOWLEDGED_METHOD,
-    { params: SubscriptionsAcknowledgedNotificationSchema.shape.params },
+  registerSubscriptionAcknowledgementHandler(
+    client,
+    'io.stagewise/push-notifications',
     (params) => {
+      const subscription =
+        SubscriptionsAcknowledgedNotificationSchema.shape.params.parse(params)
+          .notifications['io.stagewise/push-notifications'];
+      if (!subscription) return;
       markServerSupport();
-      acknowledged = params.notifications['io.stagewise/push-notifications'];
+      acknowledged = subscription;
       resolveAcknowledgement?.();
       resolveAcknowledgement = undefined;
     },

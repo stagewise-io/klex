@@ -1,5 +1,7 @@
 import type { Client, RequestOptions } from '@modelcontextprotocol/client';
 
+import { registerSubscriptionAcknowledgementHandler } from '@stagewise/mcp-extension-client';
+
 import {
   resolveServerRealtimeMediaSupport,
   withRealtimeMediaCapability,
@@ -12,7 +14,6 @@ import {
   REALTIME_MEDIA_SESSION_ENDED_METHOD,
   REALTIME_MEDIA_SESSION_OFFERED_METHOD,
   SERVER_DISCOVER_METHOD,
-  SUBSCRIPTIONS_ACKNOWLEDGED_METHOD,
   SUBSCRIPTIONS_LISTEN_METHOD,
 } from '../constants.js';
 import {
@@ -193,11 +194,14 @@ export function registerRealtimeMediaClient(
       });
     },
   );
-  client.setNotificationHandler(
-    SUBSCRIPTIONS_ACKNOWLEDGED_METHOD,
-    { params: SubscriptionsAcknowledgedNotificationSchema.shape.params },
+  registerSubscriptionAcknowledgementHandler(
+    client,
+    'io.stagewise/realtime-media',
     (params) => {
-      if (!params.notifications['io.stagewise/realtime-media']) return;
+      const subscription =
+        SubscriptionsAcknowledgedNotificationSchema.shape.params.parse(params)
+          .notifications['io.stagewise/realtime-media'];
+      if (!subscription) return;
       markServerSupport();
       resolveAcknowledgement?.();
       resolveAcknowledgement = undefined;

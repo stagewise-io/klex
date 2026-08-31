@@ -1,4 +1,8 @@
-import type { CloudConnectivity } from '@/cloud-connectivity';
+export interface DiscoveryCloudAuthProvider {
+  getAccessToken(resource: string, scopes: string[]): Promise<string>;
+  invalidate(resource: string): void;
+  isTrustedAuthorizationServer(issuer: string): boolean;
+}
 
 interface TrustedProtectedResource {
   resource: string;
@@ -75,7 +79,7 @@ function resolveSafeMetadataUrl(
 async function discoverTrustedResource(
   response: Response,
   configuredResource: string,
-  cloudConnectivity: CloudConnectivity,
+  cloudAuth: DiscoveryCloudAuthProvider,
   fetchImpl: typeof fetch,
 ): Promise<TrustedProtectedResource | null> {
   const header = response.headers.get('www-authenticate');
@@ -108,7 +112,7 @@ async function discoverTrustedResource(
   const supportedScopes = Reflect.get(metadata, 'scopes_supported');
   if (!isStringArray(authorizationServers)) return null;
   const trustedIssuers = authorizationServers.filter((issuer) =>
-    cloudConnectivity.isTrustedAuthorizationServer(issuer),
+    cloudAuth.isTrustedAuthorizationServer(issuer),
   );
   if (trustedIssuers.length === 0) return null;
   if (trustedIssuers.length !== 1 || authorizationServers.length !== 1) {
@@ -133,7 +137,7 @@ async function discoverTrustedResource(
 }
 
 export function createDiscoveryAuthenticatedFetch(
-  cloudConnectivity: CloudConnectivity,
+  cloudAuth: DiscoveryCloudAuthProvider,
   configuredResource: string,
   fetchImpl: typeof fetch = globalThis.fetch,
 ): typeof fetch {
@@ -144,7 +148,7 @@ export function createDiscoveryAuthenticatedFetch(
     discovery ??= discoverTrustedResource(
       response,
       configuredResource,
-      cloudConnectivity,
+      cloudAuth,
       fetchImpl,
     ).finally(() => {
       discovery = null;
@@ -165,9 +169,9 @@ export function createDiscoveryAuthenticatedFetch(
         );
       }
       if (refresh) {
-        cloudConnectivity.invalidateAccessToken(protectedResource.resource);
+        cloudAuth.invalidate(protectedResource.resource);
       }
-      const token = await cloudConnectivity.getAccessToken(
+      const token = await cloudAuth.getAccessToken(
         protectedResource.resource,
         protectedResource.scopes,
       );

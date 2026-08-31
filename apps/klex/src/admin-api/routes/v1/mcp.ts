@@ -29,7 +29,7 @@ export const getMcpServersRoute = createRoute({
   tags: ['MCP Servers'],
   summary: 'List MCP servers',
   description:
-    'Returns sanitized status for all configured MCP servers, including OAuth authorization_required and authorizing states. OAuth URLs, callback data, and credentials are never returned.',
+    'Returns the current status of all configured MCP servers including connection state, tool count, and transport type.',
   responses: {
     200: {
       content: {
@@ -62,7 +62,7 @@ export const createMcpServerRoute = createRoute({
   tags: ['MCP Servers'],
   summary: 'Add an MCP server',
   description:
-    'Adds a new MCP server configuration. The body must include a non-empty "name" plus either stdio configuration or HTTP configuration. Remote HTTP servers automatically negotiate MCP OAuth when challenged unless an Authorization header is configured.',
+    'Adds a new MCP server configuration. The body must include a non-empty "name" field plus either a stdio config (command, args, env) or an HTTP config (url, headers).',
   request: {
     body: {
       content: {
@@ -104,7 +104,7 @@ export function createMcpServer(
 ): RouteHandler<typeof createMcpServerRoute> {
   return async (c) => {
     const { name, ...serverConfig } = c.req.valid('json');
-    const server: McpServerConfig = serverConfig;
+    const server = serverConfig as McpServerConfig;
 
     try {
       await deps.config.addMcpServer(name, server);
@@ -127,7 +127,7 @@ export const updateMcpServerRoute = createRoute({
   tags: ['MCP Servers'],
   summary: 'Update an MCP server',
   description:
-    'Replaces an MCP server configuration. Remote HTTP servers automatically negotiate MCP OAuth when challenged unless an Authorization header is configured.',
+    'Replaces the configuration of an existing MCP server. The body must contain a valid stdio or HTTP server config (without the name field).',
   request: {
     params: mcpServerNameParamSchema,
     body: {
@@ -170,7 +170,7 @@ export function updateMcpServer(
 ): RouteHandler<typeof updateMcpServerRoute> {
   return async (c) => {
     const { name } = c.req.valid('param');
-    const server: McpServerConfig = c.req.valid('json');
+    const server = c.req.valid('json') as McpServerConfig;
 
     try {
       await deps.config.updateMcpServer(name, server);

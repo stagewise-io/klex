@@ -1,5 +1,4 @@
 import { randomUUID } from 'node:crypto';
-import { join } from 'node:path';
 
 import type { ModuleLogger, RootLogger } from '@stagewise/logger';
 import type {
@@ -32,15 +31,9 @@ import type {
 
 import {
   connectMcpServer,
-  McpAuthorizationRequiredError,
   type McpConnection,
   type McpConnectionFactory,
 } from './connection';
-import type { OAuthAuthorizationSessionFactory } from './oauth/callback';
-import { LocalOAuthAuthorizationCoordinator } from './oauth/coordinator';
-import { LocalOAuthCallbackReceiver } from './oauth/local-callback';
-import { LocalBrowserOAuthPresenter } from './oauth/presenter';
-import { McpOAuthStore } from './oauth/store';
 import {
   buildMcpRegistry,
   canonicalConfigSignature,
@@ -83,16 +76,12 @@ export type McpRealtimeMediaAvailabilityListener = (
  * Connection status of an MCP server.
  * - `connected` — connection is active and tools are available.
  * - `connecting` — a connection attempt is in progress.
- * - `authorization_required` — OAuth consent is required but unavailable in the current mode.
- * - `authorizing` — an interactive OAuth authorization is in progress.
  * - `error` — the connection failed and is awaiting retry.
  * - `disconnected` — the server is not configured or was removed.
  */
 export type McpConnectionStatus =
   | 'connected'
   | 'connecting'
-  | 'authorization_required'
-  | 'authorizing'
   | 'error'
   | 'disconnected';
 
@@ -164,10 +153,8 @@ export interface McpDependencies {
   logging: RootLogger;
   config: Config;
   realtimeMediaCapability?: RealtimeMediaExtensionCapability;
-  cloudEnabled?: boolean;
-  cloudConnectivity?: CloudConnectivity;
-  dataDirectory?: string;
   connect?: McpConnectionFactory;
+  cloudConnectivity?: CloudConnectivity;
 }
 
 interface PushNotificationWorker {
@@ -222,9 +209,8 @@ class McpModule implements Mcp {
       config: Config;
       pushNotificationInbox: PushNotificationInbox;
       realtimeMediaCapability: RealtimeMediaExtensionCapability | undefined;
-      cloudConnectivity: CloudConnectivity | undefined;
       connect: McpConnectionFactory;
-      closeOAuth: () => Promise<void>;
+      cloudConnectivity: CloudConnectivity | undefined;
     },
   ) {}
 
@@ -310,7 +296,6 @@ class McpModule implements Mcp {
     this.started = false;
     this.unsubscribe?.();
     this.unsubscribe = undefined;
-    await this.deps.closeOAuth();
     const connections = [...this.servers.values()].flatMap((runtime) => {
       const connection = this.invalidateRuntime(runtime);
       return connection ? [connection] : [];
@@ -437,6 +422,19 @@ class McpModule implements Mcp {
 
     for (const [namespace, config] of Object.entries(servers)) {
       if (this.servers.has(namespace)) continue;
+
+      // Skip servers that require cloud auth when cloud connectivity is disabled
+      if (
+        config.useCloudAuth &&
+        !this.deps.cloudConnectivity?.isCloudEnabled()
+      ) {
+        this.deps.logger.error(
+          { namespace },
+          'MCP server requires cloud auth but cloud connectivity is disabled — skipping',
+        );
+        continue;
+      }
+
       const runtime: McpServerRuntime = {
         namespace,
         config,
@@ -477,13 +475,25 @@ class McpModule implements Mcp {
     };
     runtime.attempt = attempt;
     runtime.status = 'connecting';
+    const cloudConnectivity = this.deps.cloudConnectivity;
     void this.deps
       .connect({
         namespace: runtime.namespace,
         config: runtime.config,
         signal: attempt.controller.signal,
         realtimeMediaCapability: this.deps.realtimeMediaCapability,
-        cloudConnectivity: this.deps.cloudConnectivity,
+        ...(runtime.config.useCloudAuth && cloudConnectivity
+          ? {
+              cloudAuth: {
+                getAccessToken: (resource: string, scopes: string[]) =>
+                  cloudConnectivity.getAccessToken(resource, scopes),
+                invalidate: (resource: string) =>
+                  cloudConnectivity.invalidateAccessToken(resource),
+                isTrustedAuthorizationServer: (issuer: string) =>
+                  cloudConnectivity.isTrustedAuthorizationServer(issuer),
+              },
+            }
+          : {}),
         onToolsChanged: (changed) => {
           if (!this.isCurrentConnection(runtime, changed)) return;
           this.publishRegistry();
@@ -496,11 +506,6 @@ class McpModule implements Mcp {
           this.enqueuePushNotification(changed, notification),
         onRealtimeMediaNotification: (changed, notification) =>
           this.publishRealtimeNotification(changed, notification),
-        onAuthorizationStatus: (status) => {
-          if (!this.isCurrentAttempt(runtime, attempt)) return;
-          runtime.status = status;
-          this.publishRegistry();
-        },
         onDisconnect: (disconnected) => {
           if (!this.isCurrentConnection(runtime, disconnected)) return;
           runtime.connection = undefined;
@@ -542,23 +547,12 @@ class McpModule implements Mcp {
       .catch((error: unknown) => {
         if (!this.isCurrentAttempt(runtime, attempt)) return;
         runtime.attempt = undefined;
-        const authorizationRequired =
-          error instanceof McpAuthorizationRequiredError;
-        runtime.status = authorizationRequired
-          ? 'authorization_required'
-          : 'error';
-        if (authorizationRequired) {
-          this.deps.logger.info(
-            { namespace: runtime.namespace },
-            'MCP server requires authorization',
-          );
-          return;
-        }
+        runtime.status = 'error';
         const isRetry = runtime.retryAttempt > 0;
         if (isRetry) {
           this.deps.logger.debug(
             {
-              error: safeDiagnosticError(error),
+              error,
               namespace: runtime.namespace,
               retryAttempt: runtime.retryAttempt,
             },
@@ -566,10 +560,7 @@ class McpModule implements Mcp {
           );
         } else {
           this.deps.logger.warn(
-            {
-              error: safeDiagnosticError(error),
-              namespace: runtime.namespace,
-            },
+            { error, namespace: runtime.namespace },
             'MCP connection failed — will retry with exponential backoff',
           );
         }
@@ -986,40 +977,6 @@ class McpModule implements Mcp {
 }
 
 export function createMcp(deps: McpDependencies): Mcp {
-  const localPresenter =
-    deps.cloudEnabled === false ? new LocalBrowserOAuthPresenter() : undefined;
-  const coordinator = localPresenter
-    ? new LocalOAuthAuthorizationCoordinator((url) =>
-        localPresenter.present(url),
-      )
-    : undefined;
-  const store = new McpOAuthStore(
-    join(deps.dataDirectory ?? '.klex', 'credentials', 'mcp-oauth.json'),
-  );
-  const sessionFactory: OAuthAuthorizationSessionFactory | undefined =
-    coordinator
-      ? {
-          start: async () => {
-            const receiver = await LocalOAuthCallbackReceiver.start();
-            return {
-              redirectUrl: receiver.redirectUrl,
-              authorize: (options) =>
-                coordinator.authorize({ ...options, receiver }),
-              close: () => receiver.close(),
-            };
-          },
-        }
-      : undefined;
-  const connect: McpConnectionFactory = deps.connect
-    ? deps.connect
-    : (options) =>
-        connectMcpServer({
-          ...options,
-          oauth: {
-            ...(sessionFactory ? { sessionFactory } : {}),
-            store,
-          },
-        });
   return new McpModule({
     logger: deps.logging.child({
       name: 'mcp',
@@ -1028,31 +985,13 @@ export function createMcp(deps: McpDependencies): Mcp {
     config: deps.config,
     pushNotificationInbox: createInMemoryPushNotificationInbox(),
     realtimeMediaCapability: deps.realtimeMediaCapability,
+    connect: deps.connect ?? connectMcpServer,
     cloudConnectivity: deps.cloudConnectivity,
-    connect,
-    closeOAuth: () => coordinator?.close() ?? Promise.resolve(),
   });
 }
 
 function signature(config: McpServerConfig): string {
   return canonicalConfigSignature(config);
-}
-
-function safeDiagnosticError(error: unknown): {
-  name: string;
-  message: string;
-} {
-  const name = error instanceof Error ? error.name : 'Error';
-  const message = error instanceof Error ? error.message : String(error);
-  return {
-    name,
-    message: message
-      .replace(/Bearer\s+[^\s,;]+/gi, 'Bearer [REDACTED]')
-      .replace(
-        /(["']?(?:authorization|access_token|client_assertion)["']?\s*[:=]\s*["']?)[^\s,"';]+/gi,
-        '$1[REDACTED]',
-      ),
-  };
 }
 
 function abortableDelay(

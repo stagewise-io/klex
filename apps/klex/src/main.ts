@@ -29,8 +29,11 @@ import {
 } from '@/telemetry-manager';
 import { createTracing } from '@/tracing';
 
+const cli: CliOptions = parseCliArgs(process.argv.slice(2));
+
 const logger = createLogger({
   name: 'klex',
+  verbose: cli.verbose,
   otel: {
     url: 'http://localhost:4318/v1/logs',
     resourceAttributes: {
@@ -57,8 +60,6 @@ async function main(): Promise<void> {
     spanProcessor,
   });
   await tracing.start();
-
-  const cli: CliOptions = parseCliArgs(process.argv.slice(2));
 
   // Acquire directory lock before any module starts — prevents concurrent
   // instances from using the same working directory.
@@ -87,6 +88,7 @@ async function main(): Promise<void> {
       cloudEnabled: cli.cloudEnabled,
       cloudBaseUrl: cli.cloudBaseUrl,
       enrollmentToken: cli.cloudEnrollToken,
+      allowDangerousUnsecureCloud: cli.allowDangerousUnsecureCloud,
     });
     await cloudConnectivity.start();
     started.push(cloudConnectivity);
@@ -105,9 +107,7 @@ async function main(): Promise<void> {
       logging: logger,
       config,
       realtimeMediaCapability,
-      cloudEnabled: cli.cloudEnabled,
       cloudConnectivity,
-      dataDirectory: cli.dataDirectory,
     });
     const introspector = createIntrospector({ logging: logger });
 
@@ -152,6 +152,8 @@ async function main(): Promise<void> {
       mcp,
       introspector,
       modelCallLogger,
+      cloudEnabled: cli.cloudEnabled,
+      port: cli.adminPort,
     });
     const telemetryManager = createTelemetryManager({
       logging: logger,

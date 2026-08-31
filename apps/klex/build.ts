@@ -46,7 +46,7 @@ const nativeShimPlugin: esbuild.Plugin = {
   name: 'native-shim',
   setup(build) {
     build.onResolve(
-      { filter: /^(sharp|ffmpeg-static|ffprobe-static|libsql)$/ },
+      { filter: /^(sharp|ffmpeg-static|ffprobe-static)$/ },
       (args) => ({ path: args.path, namespace: 'native-shim' }),
     );
     build.onLoad({ filter: /.*/, namespace: 'native-shim' }, (args) => ({

@@ -11,6 +11,8 @@ describe('parseCliArgs', () => {
     delete process.env.KLEX_NO_CLOUD;
     delete process.env.KLEX_CLOUD_BASE_URL;
     delete process.env.KLEX_CLOUD_ENROLLMENT_TOKEN;
+    delete process.env.KLEX_ADMIN_PORT;
+    delete process.env.KLEX_ALLOW_UNSECURE_CLOUD;
   });
 
   afterEach(() => {
@@ -19,6 +21,8 @@ describe('parseCliArgs', () => {
       'KLEX_NO_CLOUD',
       'KLEX_CLOUD_BASE_URL',
       'KLEX_CLOUD_ENROLLMENT_TOKEN',
+      'KLEX_ADMIN_PORT',
+      'KLEX_ALLOW_UNSECURE_CLOUD',
     ]) {
       if (key in originalEnv) {
         // biome-ignore lint/suspicious/noExplicitAny: restore env
@@ -151,6 +155,57 @@ describe('parseCliArgs', () => {
       process.env.KLEX_CLOUD_ENROLLMENT_TOKEN = 'EFGH-IJKL';
       const result = parseCliArgs(['--cloud-enroll-token', 'ABCD-EFGH']);
       expect(result.cloudEnrollToken).toBe('ABCD-EFGH');
+    });
+  });
+
+  describe('allow dangerous unsecure cloud', () => {
+    it('defaults to false when no args or env var provided', () => {
+      const result = parseCliArgs([]);
+      expect(result.allowDangerousUnsecureCloud).toBe(false);
+    });
+
+    it('enables when --allow-dangerous-unsecure-cloud is passed', () => {
+      const result = parseCliArgs(['--allow-dangerous-unsecure-cloud']);
+      expect(result.allowDangerousUnsecureCloud).toBe(true);
+    });
+
+    it('enables when KLEX_ALLOW_UNSECURE_CLOUD=1 and no CLI arg', () => {
+      process.env.KLEX_ALLOW_UNSECURE_CLOUD = '1';
+      const result = parseCliArgs([]);
+      expect(result.allowDangerousUnsecureCloud).toBe(true);
+    });
+
+    it('--no-allow-dangerous-unsecure-cloud overrides KLEX_ALLOW_UNSECURE_CLOUD=1', () => {
+      process.env.KLEX_ALLOW_UNSECURE_CLOUD = '1';
+      const result = parseCliArgs(['--no-allow-dangerous-unsecure-cloud']);
+      expect(result.allowDangerousUnsecureCloud).toBe(false);
+    });
+
+    it('--allow-dangerous-unsecure-cloud overrides KLEX_ALLOW_UNSECURE_CLOUD not set', () => {
+      const result = parseCliArgs(['--allow-dangerous-unsecure-cloud']);
+      expect(result.allowDangerousUnsecureCloud).toBe(true);
+    });
+  });
+
+  describe('verbose', () => {
+    it('defaults to false when no args provided', () => {
+      const result = parseCliArgs([]);
+      expect(result.verbose).toBe(false);
+    });
+
+    it('enables when --verbose is passed', () => {
+      const result = parseCliArgs(['--verbose']);
+      expect(result.verbose).toBe(true);
+    });
+
+    it('enables when -v is passed', () => {
+      const result = parseCliArgs(['-v']);
+      expect(result.verbose).toBe(true);
+    });
+
+    it('disables when --no-verbose is passed', () => {
+      const result = parseCliArgs(['--no-verbose']);
+      expect(result.verbose).toBe(false);
     });
   });
 });

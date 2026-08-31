@@ -203,68 +203,6 @@ describe('POST /v1/mcp-servers — create MCP server', () => {
     expect(body.servers).toEqual(statuses);
   });
 
-  it('accepts the explicit HTTP transport type used by other clients', async () => {
-    const addMcpServerFn = vi.fn(async () => klexConfigStub);
-    const app = createApp(makeDeps({ addMcpServer: addMcpServerFn }));
-    const response = await app.request('/v1/mcp-servers', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        name: 'oauth-server',
-        type: 'http',
-        url: 'https://example.com/mcp',
-      }),
-    });
-
-    expect(response.status).toBe(201);
-    expect(addMcpServerFn).toHaveBeenCalledWith('oauth-server', {
-      type: 'http',
-      url: 'https://example.com/mcp',
-    });
-  });
-
-  it('accepts streamable HTTP with pinned version negotiation', async () => {
-    const addMcpServerFn = vi.fn(async () => klexConfigStub);
-    const app = createApp(makeDeps({ addMcpServer: addMcpServerFn }));
-    const response = await app.request('/v1/mcp-servers', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        name: 'modern-server',
-        type: 'streamable-http',
-        url: 'https://example.com/mcp',
-        versionNegotiation: { pin: '2026-07-28' },
-      }),
-    });
-
-    expect(response.status).toBe(201);
-    expect(addMcpServerFn).toHaveBeenCalledWith('modern-server', {
-      type: 'streamable-http',
-      url: 'https://example.com/mcp',
-      versionNegotiation: { pin: '2026-07-28' },
-    });
-  });
-
-  it('accepts an Authorization header as an explicit OAuth override', async () => {
-    const addMcpServerFn = vi.fn(async () => klexConfigStub);
-    const app = createApp(makeDeps({ addMcpServer: addMcpServerFn }));
-    const response = await app.request('/v1/mcp-servers', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        name: 'header-server',
-        url: 'https://example.com/mcp',
-        headers: { Authorization: 'Bearer static-secret' },
-      }),
-    });
-
-    expect(response.status).toBe(201);
-    expect(addMcpServerFn).toHaveBeenCalledWith('header-server', {
-      url: 'https://example.com/mcp',
-      headers: { Authorization: 'Bearer static-secret' },
-    });
-  });
-
   it('accepts a valid stdio server config', async () => {
     const addMcpServerFn = vi.fn(async () => klexConfigStub);
     const app = createApp(makeDeps({ addMcpServer: addMcpServerFn }));
@@ -284,6 +222,58 @@ describe('POST /v1/mcp-servers — create MCP server', () => {
       args: ['server.js'],
       env: { NODE_ENV: 'production' },
     });
+  });
+
+  it('accepts useCloudAuth on an HTTP server config', async () => {
+    const addMcpServerFn = vi.fn(async () => klexConfigStub);
+    const app = createApp(makeDeps({ addMcpServer: addMcpServerFn }));
+    const response = await app.request('/v1/mcp-servers', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        name: 'cloud-server',
+        url: 'https://cloud.example.com/mcp',
+        useCloudAuth: true,
+      }),
+    });
+    expect(response.status).toBe(201);
+    expect(addMcpServerFn).toHaveBeenCalledWith('cloud-server', {
+      url: 'https://cloud.example.com/mcp',
+      useCloudAuth: true,
+    });
+  });
+
+  it('accepts versionNegotiation on an HTTP server config', async () => {
+    const addMcpServerFn = vi.fn(async () => klexConfigStub);
+    const app = createApp(makeDeps({ addMcpServer: addMcpServerFn }));
+    const response = await app.request('/v1/mcp-servers', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        name: 'modern-server',
+        url: 'https://example.com/mcp',
+        versionNegotiation: { pin: '2025-06-18' },
+      }),
+    });
+    expect(response.status).toBe(201);
+    expect(addMcpServerFn).toHaveBeenCalledWith('modern-server', {
+      url: 'https://example.com/mcp',
+      versionNegotiation: { pin: '2025-06-18' },
+    });
+  });
+
+  it('rejects unknown fields with 400', async () => {
+    const app = createApp(makeDeps());
+    const response = await app.request('/v1/mcp-servers', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        name: 'bad-server',
+        url: 'https://example.com/mcp',
+        bogus: true,
+      }),
+    });
+    expect(response.status).toBe(400);
   });
 
   it('maps ConfigValidationError to 409', async () => {

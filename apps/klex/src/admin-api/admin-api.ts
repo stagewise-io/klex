@@ -15,6 +15,8 @@ export interface AdminApiDependencies {
   mcp: Mcp;
   introspector: Introspector;
   modelCallLogger: ModelCallLogger;
+  cloudEnabled: boolean;
+  port: number;
 }
 
 export interface AdminApi {
@@ -33,6 +35,8 @@ class AdminApiModule implements AdminApi {
       mcp: Mcp;
       introspector: Introspector;
       modelCallLogger: ModelCallLogger;
+      cloudEnabled: boolean;
+      port: number;
     },
   ) {}
 
@@ -46,11 +50,19 @@ class AdminApiModule implements AdminApi {
       introspector: this.deps.introspector,
       modelCallLogger: this.deps.modelCallLogger,
       logger: this.deps.logger,
+      port: this.deps.port,
     });
+
+    if (this.deps.cloudEnabled) {
+      this.deps.logger.info(
+        'AdminAPI running in tunnel-only mode — local port not bound',
+      );
+      return;
+    }
 
     this.server = await new Promise<ServerType>((resolve) => {
       const server = serve(
-        { fetch: app.fetch, port: 2706, hostname: '0.0.0.0' },
+        { fetch: app.fetch, port: this.deps.port, hostname: '0.0.0.0' },
         (info) => {
           this.deps.logger.info(
             { address: info.address, port: info.port },
@@ -82,5 +94,7 @@ export function createAdminApi(deps: AdminApiDependencies): AdminApi {
     mcp: deps.mcp,
     introspector: deps.introspector,
     modelCallLogger: deps.modelCallLogger,
+    cloudEnabled: deps.cloudEnabled,
+    port: deps.port,
   });
 }

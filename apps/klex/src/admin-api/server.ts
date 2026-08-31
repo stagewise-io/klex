@@ -70,6 +70,7 @@ export interface AdminAppDependencies {
   introspector: Introspector;
   modelCallLogger: ModelCallLogger;
   logger: ModuleLogger;
+  port: number;
 }
 
 // biome-ignore lint/suspicious/noExplicitAny: Hook generic parameters are opaque validation types
@@ -84,7 +85,9 @@ const validationHook: Hook<any, any, any, any> = (result, c) => {
   }
 };
 
-export function createAdminApp(deps: AdminAppDependencies): OpenAPIHono {
+export type AdminApp = OpenAPIHono;
+
+export function createAdminApp(deps: AdminAppDependencies): AdminApp {
   const app = new OpenAPIHono({
     defaultHook: validationHook,
   });
@@ -151,7 +154,7 @@ export function createAdminApp(deps: AdminAppDependencies): OpenAPIHono {
       description:
         'Observability and management API for the Klex Agent admin plane. Provides session state, token consumption, MCP connection status, tool call history, and configuration management.',
     },
-    servers: [{ url: 'http://0.0.0.0:2706' }],
+    servers: [{ url: `http://0.0.0.0:${deps.port}` }],
   });
 
   return app;

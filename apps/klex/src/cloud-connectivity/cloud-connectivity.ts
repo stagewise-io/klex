@@ -1,3 +1,9 @@
+import {
+  type CloudApiClient,
+  connectAgentTunnel,
+  createCloudApiClient,
+} from '@klex/cloud-api';
+
 import type { ModuleLogger, RootLogger } from '@stagewise/logger';
 
 import {
@@ -20,12 +26,26 @@ export interface CloudConnectivityDependencies {
   cloudEnabled: boolean;
   cloudBaseUrl: string;
   enrollmentToken: string | undefined;
+  allowDangerousUnsecureCloud: boolean;
 }
+
+const CLOUD_API_SCOPES = ['agent:access'];
+
+/** The OAuth `resource` parameter for all token requests. Both tunnel and
+ * public API tokens are scoped to the cloud API surface at `/v1`. */
+const API_RESOURCE_PATH = '/v1';
+const RETRY_INITIAL_MS = 1_000;
+const RETRY_MAX_MS = 30_000;
 
 class CloudConnectivityModule implements CloudConnectivity {
   private identity: CloudIdentity | null = null;
   private enrollment: EnrollmentState | null = null;
   private tokenClient: TokenClient | null = null;
+  private cloudApiClient: CloudApiClient | null = null;
+  private tunnel: Awaited<ReturnType<typeof connectAgentTunnel>> | null = null;
+  private retryTimer: ReturnType<typeof setTimeout> | null = null;
+  private retryAttempt = 0;
+  private connecting = false;
   private started = false;
 
   constructor(
@@ -35,6 +55,7 @@ class CloudConnectivityModule implements CloudConnectivity {
       cloudEnabled: boolean;
       cloudBaseUrl: string;
       enrollmentToken: string | undefined;
+      allowDangerousUnsecureCloud: boolean;
     },
   ) {}
 
@@ -54,6 +75,20 @@ class CloudConnectivityModule implements CloudConnectivity {
         'Cloud connectivity disabled — identity keypair ready',
       );
       return;
+    }
+
+    // Validate cloud base URL scheme
+    if (!this.deps.cloudBaseUrl.startsWith('https://')) {
+      if (this.deps.allowDangerousUnsecureCloud) {
+        this.deps.logger.warn(
+          { cloudBaseUrl: this.deps.cloudBaseUrl },
+          'Using an unsecure (http) cloud base URL — a secure (https) connection is strongly preferred. Token and key material may be exposed to network interception.',
+        );
+      } else {
+        throw new Error(
+          `Cloud base URL must use https:// (got: ${this.deps.cloudBaseUrl}). Use --allow-dangerous-unsecure-cloud to override at your own risk.`,
+        );
+      }
     }
 
     // Cloud enabled — load enrollment state
@@ -77,12 +112,116 @@ class CloudConnectivityModule implements CloudConnectivity {
       cloudBaseUrl: this.deps.cloudBaseUrl,
       clientId: this.enrollment.clientId,
       privateKey,
+      privateKeyKid: this.identity.kid,
+      allowDangerousUnsecureCloud: this.deps.allowDangerousUnsecureCloud,
+    });
+
+    this.cloudApiClient = createCloudApiClient(this.deps.cloudBaseUrl, {
+      headers: async () => ({
+        authorization: `Bearer ${await this.getAccessToken(this.apiResource(), CLOUD_API_SCOPES)}`,
+      }),
     });
 
     this.deps.logger.info(
       { clientId: this.enrollment.clientId },
-      'Klex Cloud connectivity enabled',
+      'Klex Cloud connectivity enabled; tunnel connecting',
     );
+
+    // Token acquisition and tunnel establishment are best-effort background
+    // work and must never block the rest of application startup.
+    void this.connectTunnel();
+  }
+
+  private async connectTunnel(): Promise<void> {
+    if (!this.started || this.connecting || !this.tokenClient) return;
+    this.connecting = true;
+
+    try {
+      let accessToken: string;
+      try {
+        accessToken = await this.tokenClient.getAccessToken(
+          this.apiResource(),
+          CLOUD_API_SCOPES,
+        );
+      } catch {
+        if (!this.started) return;
+        const retryDelayMs = this.scheduleReconnect();
+        this.deps.logger.warn(
+          { retryAttempt: this.retryAttempt, retryDelayMs },
+          'Klex Cloud tunnel access token unavailable; retrying',
+        );
+        return;
+      }
+      if (!this.started) return;
+
+      const tunnel = await connectAgentTunnel(this.apiResource(), {
+        accessToken,
+      });
+      if (!this.started) {
+        tunnel.close();
+        return;
+      }
+
+      this.tunnel = tunnel;
+      tunnel.on('open', () => {
+        if (this.tunnel !== tunnel || !this.started) return;
+        this.retryAttempt = 0;
+        this.deps.logger.info(
+          { clientId: this.enrollment?.clientId },
+          'Klex Cloud tunnel connected',
+        );
+      });
+      tunnel.on('error', (error) => {
+        if (this.tunnel !== tunnel || !this.started) return;
+        this.tunnel = null;
+        this.tokenClient?.invalidate(this.apiResource());
+        const retryDelayMs = this.scheduleReconnect();
+        this.deps.logger.error(
+          { error, retryAttempt: this.retryAttempt, retryDelayMs },
+          'Klex Cloud tunnel error; retrying',
+        );
+        tunnel.close();
+      });
+      tunnel.on('close', (code, reason) => {
+        if (this.tunnel !== tunnel || !this.started) return;
+        this.tunnel = null;
+        this.tokenClient?.invalidate(this.apiResource());
+        const retryDelayMs = this.scheduleReconnect();
+        this.deps.logger.warn(
+          {
+            code,
+            reason: reason.toString(),
+            retryAttempt: this.retryAttempt,
+            retryDelayMs,
+          },
+          'Klex Cloud tunnel disconnected; retrying',
+        );
+      });
+    } catch (error) {
+      if (!this.started) return;
+      const retryDelayMs = this.scheduleReconnect();
+      this.deps.logger.error(
+        { error, retryAttempt: this.retryAttempt, retryDelayMs },
+        'Klex Cloud tunnel connection failed; retrying',
+      );
+    } finally {
+      this.connecting = false;
+    }
+  }
+
+  private scheduleReconnect(): number | null {
+    if (!this.started || this.retryTimer) return null;
+    const delay = Math.min(
+      RETRY_INITIAL_MS * 2 ** this.retryAttempt,
+      RETRY_MAX_MS,
+    );
+    this.retryAttempt += 1;
+    this.retryTimer = setTimeout(() => {
+      this.retryTimer = null;
+      void this.connectTunnel();
+    }, delay);
+    this.retryTimer.unref?.();
+    return delay;
   }
 
   private async handleEnrollment(): Promise<void> {
@@ -109,6 +248,7 @@ class CloudConnectivityModule implements CloudConnectivity {
       );
       await this.persistEnrollment(clientId, identity.kid);
     } catch (error) {
+      this.deps.logger.error({ error }, 'Headless cloud enrollment failed');
       throw new Error(
         `Headless enrollment failed: ${error instanceof Error ? error.message : String(error)}`,
         { cause: error },
@@ -172,6 +312,13 @@ class CloudConnectivityModule implements CloudConnectivity {
     this.tokenClient?.invalidate(resource);
   }
 
+  getApiClient(): CloudApiClient {
+    if (!this.cloudApiClient) {
+      throw new Error('Klex Cloud API client is not initialized');
+    }
+    return this.cloudApiClient;
+  }
+
   isEnrolled(): boolean {
     return this.enrollment?.clientId != null;
   }
@@ -192,12 +339,27 @@ class CloudConnectivityModule implements CloudConnectivity {
     }
   }
 
+  private apiResource(): string {
+    return `${this.deps.cloudBaseUrl.replace(/\/$/, '')}${API_RESOURCE_PATH}`;
+  }
+
   async close(): Promise<void> {
     if (!this.started) return;
     this.started = false;
 
+    if (this.retryTimer) {
+      clearTimeout(this.retryTimer);
+      this.retryTimer = null;
+    }
+    this.retryAttempt = 0;
+    this.connecting = false;
+    this.tunnel?.close();
+    this.tunnel = null;
+    this.cloudApiClient = null;
+
     this.tokenClient?.close();
     this.tokenClient = null;
+
     this.identity = null;
     this.enrollment = null;
 
@@ -217,5 +379,6 @@ export function createCloudConnectivity(
     cloudEnabled: deps.cloudEnabled,
     cloudBaseUrl: deps.cloudBaseUrl,
     enrollmentToken: deps.enrollmentToken,
+    allowDangerousUnsecureCloud: deps.allowDangerousUnsecureCloud,
   });
 }

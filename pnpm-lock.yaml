@@ -65,6 +65,9 @@ importers:
       '@jitl/quickjs-singlefile-mjs-release-sync':
         specifier: 0.32.0
         version: 0.32.0
+      '@klex/cloud-api':
+        specifier: 1.0.1
+        version: 1.0.1
       '@libsql/client':
         specifier: 0.17.4
         version: 0.17.4
@@ -430,6 +433,9 @@ importers:
       '@stagewise/typescript-config':
         specifier: workspace:*
         version: link:../typescript-config
+      '@types/node':
+        specifier: 26.1.1
+        version: 26.1.1
       typescript:
         specifier: 7.0.2
         version: 7.0.2
@@ -533,7 +539,7 @@ importers:
     dependencies:
       '@modelcontextprotocol/node':
         specifier: 2.0.0-beta.4
-        version: 2.0.0-beta.4(@modelcontextprotocol/server@2.0.0-beta.4)(hono@4.12.30)
+        version: 2.0.0-beta.4(@modelcontextprotocol/server@2.0.0-beta.4)(hono@4.13.2)
       ws:
         specifier: 8.18.1
         version: 8.18.1
@@ -1232,6 +1238,10 @@ packages:
 
   '@js-sdsl/ordered-map@4.4.2':
     resolution: {integrity: sha512-iUKgm52T8HOE/makSxjqoWhe95ZJA1/G1sYsGev2JDKUSS14KAgg1LHb+Ba+IPow0xflbnSkOsZcO08C7w1gYw==}
+
+  '@klex/cloud-api@1.0.1':
+    resolution: {integrity: sha512-0O/BXLKbSDsaBxx+fxY6wdALDCicAVPJqy3BKg1xP1g/hc94/tRWQd1iyvtgRX7iPDNHyr01O8bkLrLiCWL+4A==}
+    engines: {node: '>=22'}
 
   '@libsql/client@0.17.4':
     resolution: {integrity: sha512-lYayFWasDV78A+TjlEhr6ubb3odBV6OHjb+wdp8VQcyWWAEIjuwbCHaraEUS4m4yWoo0BvZo96It4VdzZRmRWw==}
@@ -2494,6 +2504,10 @@ packages:
     resolution: {integrity: sha512-emn+JoJjrN9YTpRDS5it/UI2SO9BAE37T6I3d963RxcZ81G9A4pr2SZTEiiaiKbzx+NKRg5BZ89fCL7gCJCUog==}
     engines: {node: '>=16.9.0'}
 
+  hono@4.13.2:
+    resolution: {integrity: sha512-JydRilDRkYBQMt9qR9U92mXxmbGqsqSn/IKOrh4e7/gEbn+0zSr8igTu0obwJoNGN4sez28DIql7FBHWydoJpA==}
+    engines: {node: '>=16.9.0'}
+
   html-escaper@2.0.2:
     resolution: {integrity: sha512-H2iMtd0I4Mt5eYiapRdIDjp+XzelXQ0tFE4JS7YFwFevXXMmOp9myNrUvCg0D6ws8iqkRPBfKHgbwig1SmlLfg==}
 
@@ -3522,6 +3536,18 @@ packages:
       utf-8-validate:
         optional: true
 
+  ws@8.21.3:
+    resolution: {integrity: sha512-201TZ/kPWxoPr/OKWjquZR1SWKXcvxdH+e1xrx89b3YbmzLMFCLfnaG1HFIgWzJOEWZ7MvpK++odZufgYR50Rw==}
+    engines: {node: '>=10.0.0'}
+    peerDependencies:
+      bufferutil: ^4.0.1
+      utf-8-validate: '>=5.0.2'
+    peerDependenciesMeta:
+      bufferutil:
+        optional: true
+      utf-8-validate:
+        optional: true
+
   y18n@5.0.8:
     resolution: {integrity: sha512-0pfFzegeDWJHJIAmTLRP2DwHjdF5s7jo9tuztdQxAhINCdvS+3nGINqPd00AphqJR/0LhANUS6/+7SCb98YOfA==}
     engines: {node: '>=10'}
@@ -3993,9 +4019,9 @@ snapshots:
 
   '@gwhitney/detect-indent@7.0.1': {}
 
-  '@hono/node-server@1.19.14(hono@4.12.30)':
+  '@hono/node-server@1.19.14(hono@4.13.2)':
     dependencies:
-      hono: 4.12.30
+      hono: 4.13.2
 
   '@hono/node-server@2.0.10(hono@4.12.30)':
     dependencies:
@@ -4153,6 +4179,15 @@ snapshots:
 
   '@js-sdsl/ordered-map@4.4.2': {}
 
+  '@klex/cloud-api@1.0.1':
+    dependencies:
+      '@types/ws': 8.18.1
+      hono: 4.13.2
+      ws: 8.21.3
+    transitivePeerDependencies:
+      - bufferutil
+      - utf-8-validate
+
   '@libsql/client@0.17.4':
     dependencies:
       '@libsql/core': 0.17.4
@@ -4272,12 +4307,12 @@ snapshots:
       '@modelcontextprotocol/server': 2.0.0-beta.4
       hono: 4.12.30
 
-  '@modelcontextprotocol/node@2.0.0-beta.4(@modelcontextprotocol/server@2.0.0-beta.4)(hono@4.12.30)':
+  '@modelcontextprotocol/node@2.0.0-beta.4(@modelcontextprotocol/server@2.0.0-beta.4)(hono@4.13.2)':
     dependencies:
-      '@hono/node-server': 1.19.14(hono@4.12.30)
+      '@hono/node-server': 1.19.14(hono@4.13.2)
       '@modelcontextprotocol/server': 2.0.0-beta.4
     optionalDependencies:
-      hono: 4.12.30
+      hono: 4.13.2
 
   '@modelcontextprotocol/server@2.0.0-beta.4':
     dependencies:
@@ -5304,6 +5339,8 @@ snapshots:
   help-me@5.0.0: {}
 
   hono@4.12.30: {}
+
+  hono@4.13.2: {}
 
   html-escaper@2.0.2: {}
 
@@ -6342,6 +6379,8 @@ snapshots:
       write-file-atomic: 5.0.1
 
   ws@8.18.1: {}
+
+  ws@8.21.3: {}
 
   y18n@5.0.8: {}
 

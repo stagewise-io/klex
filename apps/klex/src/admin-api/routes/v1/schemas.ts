@@ -25,14 +25,7 @@ const healthResponseSchema = z
 // --- MCP ---
 
 const mcpConnectionStatusSchema = z
-  .enum([
-    'connected',
-    'connecting',
-    'authorization_required',
-    'authorizing',
-    'error',
-    'disconnected',
-  ])
+  .enum(['connected', 'connecting', 'error', 'disconnected'])
   .openapi('McpConnectionStatus');
 
 const mcpServerInfoSchema = z
@@ -56,28 +49,27 @@ const mcpVersionNegotiationSchema = z.union([
   z.object({ pin: z.string().min(1) }).strict(),
 ]);
 
-const httpMcpServerSchema = z
-  .object({
-    type: z.enum(['http', 'streamable-http']).optional(),
-    url: z.url(),
-    headers: z.record(z.string(), z.string()).optional(),
-    versionNegotiation: mcpVersionNegotiationSchema.optional(),
-  })
-  .strict();
-
 const createMcpServerBodySchema = z
   .union([
     z
       .object({
         name: z.string().min(1),
-        type: z.literal('stdio').optional(),
         command: z.string(),
         args: z.array(z.string()).optional(),
         env: z.record(z.string(), z.string()).optional(),
         versionNegotiation: mcpVersionNegotiationSchema.optional(),
+        useCloudAuth: z.boolean().optional(),
       })
       .strict(),
-    httpMcpServerSchema.safeExtend({ name: z.string().min(1) }),
+    z
+      .object({
+        name: z.string().min(1),
+        url: z.url(),
+        headers: z.record(z.string(), z.string()).optional(),
+        versionNegotiation: mcpVersionNegotiationSchema.optional(),
+        useCloudAuth: z.boolean().optional(),
+      })
+      .strict(),
   ])
   .openapi('CreateMcpServerBody');
 
@@ -85,14 +77,21 @@ const updateMcpServerBodySchema = z
   .union([
     z
       .object({
-        type: z.literal('stdio').optional(),
         command: z.string(),
         args: z.array(z.string()).optional(),
         env: z.record(z.string(), z.string()).optional(),
         versionNegotiation: mcpVersionNegotiationSchema.optional(),
+        useCloudAuth: z.boolean().optional(),
       })
       .strict(),
-    httpMcpServerSchema,
+    z
+      .object({
+        url: z.url(),
+        headers: z.record(z.string(), z.string()).optional(),
+        versionNegotiation: mcpVersionNegotiationSchema.optional(),
+        useCloudAuth: z.boolean().optional(),
+      })
+      .strict(),
   ])
   .openapi('UpdateMcpServerBody');
 

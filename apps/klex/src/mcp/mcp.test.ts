@@ -6,6 +6,7 @@ import type {
   PushNotificationNotification,
 } from '@stagewise/mcp-extension-push-notifications';
 
+import type { CloudConnectivity } from '@/cloud-connectivity';
 import type {
   Config,
   ConfigListener,
@@ -13,11 +14,10 @@ import type {
   McpServerConfig,
 } from '@/config';
 
-import {
-  type ConnectMcpServerOptions,
-  McpAuthorizationRequiredError,
-  type McpConnection,
-  type McpConnectionFactory,
+import type {
+  ConnectMcpServerOptions,
+  McpConnection,
+  McpConnectionFactory,
 } from './connection';
 import { createMcp } from './mcp';
 
@@ -117,6 +117,7 @@ function setup(
   servers: Record<string, McpServerConfig>,
   connect: McpConnectionFactory,
   realtimeMediaEnabled = true,
+  cloudConnectivity?: Partial<CloudConnectivity>,
 ) {
   const realtimeMediaCapability = realtimeMediaEnabled
     ? { transports: ['livekit-room'], media: ['audio'] as ['audio'] }
@@ -129,6 +130,9 @@ function setup(
       config: config.config,
       realtimeMediaCapability,
       connect,
+      ...(cloudConnectivity
+        ? { cloudConnectivity: cloudConnectivity as CloudConnectivity }
+        : {}),
     }),
   };
 }
@@ -331,30 +335,6 @@ describe('MCP namespace isolation', () => {
     await vi.advanceTimersByTimeAsync(1_000);
     expect(attempts.get('failing')).toBe(2);
     expect(attempts.get('hanging')).toBe(1);
-    await mcp.close();
-  });
-
-  it('does not retry a namespace that requires authorization', async () => {
-    vi.useFakeTimers();
-    const connect = vi.fn(async () => {
-      throw new McpAuthorizationRequiredError(new Error('unauthorized'));
-    });
-    const { mcp } = setup(
-      { protected: { url: 'https://protected.example/mcp' } },
-      connect,
-    );
-
-    await mcp.start();
-    await vi.advanceTimersByTimeAsync(0);
-    expect(connect).toHaveBeenCalledOnce();
-    expect(mcp.getServerStatuses()).toContainEqual(
-      expect.objectContaining({
-        name: 'protected',
-        status: 'authorization_required',
-      }),
-    );
-    await vi.advanceTimersByTimeAsync(60_000);
-    expect(connect).toHaveBeenCalledOnce();
     await mcp.close();
   });
 
@@ -655,5 +635,73 @@ describe('MCP namespace isolation', () => {
     pending.resolve(late);
     await vi.waitFor(() => expect(late.close).toHaveBeenCalledOnce());
     expect(await namespaceNames(mcp)).toEqual([]);
+  });
+});
+
+describe('MCP cloud auth (useCloudAuth)', () => {
+  it('skips servers with useCloudAuth when cloud connectivity is disabled', async () => {
+    const connect = vi.fn(async () => connection('cloud-mcp'));
+    const { mcp } = setup(
+      { 'cloud-mcp': { url: 'https://cloud.example/mcp', useCloudAuth: true } },
+      connect,
+      false,
+    );
+
+    await mcp.start();
+    await vi.waitFor(() => expect(connect).not.toHaveBeenCalled());
+    expect(await namespaceNames(mcp)).toEqual([]);
+    await mcp.close();
+  });
+
+  it('connects servers with useCloudAuth when cloud is enabled and passes cloudAuth', async () => {
+    const captured = deferred<ConnectMcpServerOptions>();
+    const connect = vi.fn(async (opts: ConnectMcpServerOptions) => {
+      captured.resolve(opts);
+      return connection('cloud-mcp');
+    });
+    const getAccessToken = vi.fn(async () => 'cloud-bearer-token');
+    const invalidateAccessToken = vi.fn();
+    const { mcp } = setup(
+      { 'cloud-mcp': { url: 'https://cloud.example/mcp', useCloudAuth: true } },
+      connect,
+      false,
+      { isCloudEnabled: () => true, getAccessToken, invalidateAccessToken },
+    );
+
+    await mcp.start();
+    await vi.waitFor(() => expect(connect).toHaveBeenCalledOnce());
+
+    const opts = await captured.promise;
+    expect(opts.cloudAuth).toBeDefined();
+    const token = await opts.cloudAuth?.getAccessToken(
+      'https://cloud.example/mcp',
+      ['mcp:access'],
+    );
+    expect(token).toBe('cloud-bearer-token');
+    expect(getAccessToken).toHaveBeenCalledWith('https://cloud.example/mcp', [
+      'mcp:access',
+    ]);
+
+    // Verify invalidate is wired through
+    opts.cloudAuth?.invalidate('https://cloud.example/mcp');
+    expect(invalidateAccessToken).toHaveBeenCalledWith(
+      'https://cloud.example/mcp',
+    );
+
+    await mcp.close();
+  });
+
+  it('connects servers without useCloudAuth regardless of cloud state', async () => {
+    const connect = vi.fn(async () => connection('local-mcp'));
+    const { mcp } = setup(
+      { 'local-mcp': { url: 'https://local.example/mcp' } },
+      connect,
+      false,
+      { isCloudEnabled: () => false, getAccessToken: vi.fn() },
+    );
+
+    await mcp.start();
+    await waitForNamespace(mcp, 'local-mcp');
+    await mcp.close();
   });
 });

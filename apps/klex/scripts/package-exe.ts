@@ -12,19 +12,19 @@ import {
 
 const ROOT = resolve(import.meta.dirname, '..');
 const require = createRequire(import.meta.url);
-const NATIVE_PACKAGE_TARGETS: Partial<
+const LIVEKIT_BINDING_PACKAGES: Partial<
   Record<NodeJS.Platform, Partial<Record<string, string>>>
 > = {
   darwin: {
-    arm64: 'darwin-arm64',
-    x64: 'darwin-x64',
+    arm64: '@livekit/rtc-ffi-bindings-darwin-arm64',
+    x64: '@livekit/rtc-ffi-bindings-darwin-x64',
   },
   linux: {
-    arm64: 'linux-arm64-gnu',
-    x64: 'linux-x64-gnu',
+    arm64: '@livekit/rtc-ffi-bindings-linux-arm64-gnu',
+    x64: '@livekit/rtc-ffi-bindings-linux-x64-gnu',
   },
   win32: {
-    x64: 'win32-x64-msvc',
+    x64: '@livekit/rtc-ffi-bindings-win32-x64-msvc',
   },
 };
 
@@ -32,10 +32,7 @@ export function resolveLiveKitNativeAddon(
   platform: NodeJS.Platform = process.platform,
   architecture: string = process.arch,
 ): string {
-  const target = NATIVE_PACKAGE_TARGETS[platform]?.[architecture];
-  const packageName = target
-    ? `@livekit/rtc-ffi-bindings-${target}`
-    : undefined;
+  const packageName = LIVEKIT_BINDING_PACKAGES[platform]?.[architecture];
   if (!packageName)
     throw new Error(
       `LiveKit does not support executable packaging for ${platform}-${architecture}`,
@@ -88,7 +85,7 @@ export function createKlexAgentPackagerConfig(
 /**
  * Copies native packages beside the SEA executable.
  *
- * The SEA build virtualizes native-backed packages via
+ * The SEA build virtualizes sharp, ffmpeg-static, and ffprobe-static via
  * nativeShimPlugin (build.ts) so they load from on-disk node_modules/ using
  * createRequire(process.execPath). This function copies all required packages:
  *
@@ -102,9 +99,6 @@ export function createKlexAgentPackagerConfig(
  *    loaded from disk via createRequire (not bundled into the SEA blob).
  *
  * 3. **ffprobe-static** — same pattern as ffmpeg-static.
- *
- * 4. **libsql** + its platform addon — loaded from disk so libsql's dynamic
- *    `require('@libsql/<target>')` resolves through a normal Node require.
  *
  * All packages are **mandatory** — if any cannot be found or copied, the
  * build fails. There is no graceful degradation; native media processing
@@ -157,12 +151,6 @@ function copyNativeAssets(outputDirectory: string): void {
   }
 
   const platformArch = `${process.platform}-${process.arch}`;
-  const nativeTarget = NATIVE_PACKAGE_TARGETS[process.platform]?.[process.arch];
-  if (!nativeTarget) {
-    throw new Error(
-      `Native packages do not support executable packaging for ${platformArch}`,
-    );
-  }
 
   // sharp JS package + runtime dependencies (all loaded from disk at runtime)
   copyPackage('sharp');
@@ -177,11 +165,6 @@ function copyNativeAssets(outputDirectory: string): void {
   // audio processing binaries
   copyPackage('ffmpeg-static');
   copyPackage('ffprobe-static');
-
-  // SQLite native addon and its runtime target loader
-  copyPackage('libsql');
-  copyPackage('@neon-rs/load');
-  copyPackage(`@libsql/${nativeTarget}`);
 
   // Verify critical files exist after copy
   const checks: Array<{ name: string; path: string }> = [
@@ -204,10 +187,6 @@ function copyNativeAssets(outputDirectory: string): void {
         'ffmpeg-static',
         process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg',
       ),
-    },
-    {
-      name: 'libsql native addon',
-      path: join(destNodeModules, '@libsql', nativeTarget, 'index.node'),
     },
     {
       name: 'ffprobe binary',

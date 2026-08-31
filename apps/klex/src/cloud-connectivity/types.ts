@@ -1,3 +1,5 @@
+import type { CloudApiClient } from '@klex/cloud-api';
+
 export type CloudAlgorithm = 'EdDSA';
 
 export interface CloudIdentity {
@@ -17,6 +19,7 @@ export interface CloudConnectivity {
   close(): Promise<void>;
   getAccessToken(resource: string, scopes: string[]): Promise<string>;
   invalidateAccessToken(resource: string): void;
+  getApiClient(): CloudApiClient;
   isEnrolled(): boolean;
   isCloudEnabled(): boolean;
   isTrustedAuthorizationServer(issuer: string): boolean;

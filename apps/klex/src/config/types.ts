@@ -249,20 +249,26 @@ const mcpVersionNegotiationSchema = z.union([
 
 type McpVersionNegotiation = z.infer<typeof mcpVersionNegotiationSchema>;
 
-const stdioServerConfigSchema = z.object({
-  command: z.string(),
-  args: z.array(z.string()).optional(),
-  env: z.record(z.string(), z.string()).optional(),
-  versionNegotiation: mcpVersionNegotiationSchema.optional(),
-});
+const stdioServerConfigSchema = z
+  .object({
+    type: z.literal('stdio').optional(),
+    command: z.string(),
+    args: z.array(z.string()).optional(),
+    env: z.record(z.string(), z.string()).optional(),
+    versionNegotiation: mcpVersionNegotiationSchema.optional(),
+  })
+  .strict();
 
 type StdioServerConfig = z.infer<typeof stdioServerConfigSchema>;
 
-const httpServerConfigSchema = z.object({
-  url: z.url(),
-  headers: z.record(z.string(), z.string()).optional(),
-  versionNegotiation: mcpVersionNegotiationSchema.optional(),
-});
+const httpServerConfigSchema = z
+  .object({
+    type: z.enum(['http', 'streamable-http']).optional(),
+    url: z.url(),
+    headers: z.record(z.string(), z.string()).optional(),
+    versionNegotiation: mcpVersionNegotiationSchema.optional(),
+  })
+  .strict();
 
 type HttpServerConfig = z.infer<typeof httpServerConfigSchema>;
 

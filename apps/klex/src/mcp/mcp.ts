@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { join } from 'node:path';
 
 import type { ModuleLogger, RootLogger } from '@stagewise/logger';
 import type {
@@ -30,9 +31,15 @@ import type {
 
 import {
   connectMcpServer,
+  McpAuthorizationRequiredError,
   type McpConnection,
   type McpConnectionFactory,
 } from './connection';
+import type { OAuthAuthorizationSessionFactory } from './oauth/callback';
+import { LocalOAuthAuthorizationCoordinator } from './oauth/coordinator';
+import { LocalOAuthCallbackReceiver } from './oauth/local-callback';
+import { LocalBrowserOAuthPresenter } from './oauth/presenter';
+import { McpOAuthStore } from './oauth/store';
 import {
   buildMcpRegistry,
   canonicalConfigSignature,
@@ -75,12 +82,16 @@ export type McpRealtimeMediaAvailabilityListener = (
  * Connection status of an MCP server.
  * - `connected` — connection is active and tools are available.
  * - `connecting` — a connection attempt is in progress.
+ * - `authorization_required` — OAuth consent is required but unavailable in the current mode.
+ * - `authorizing` — an interactive OAuth authorization is in progress.
  * - `error` — the connection failed and is awaiting retry.
  * - `disconnected` — the server is not configured or was removed.
  */
 export type McpConnectionStatus =
   | 'connected'
   | 'connecting'
+  | 'authorization_required'
+  | 'authorizing'
   | 'error'
   | 'disconnected';
 
@@ -152,6 +163,8 @@ export interface McpDependencies {
   logging: RootLogger;
   config: Config;
   realtimeMediaCapability?: RealtimeMediaExtensionCapability;
+  cloudEnabled?: boolean;
+  dataDirectory?: string;
   connect?: McpConnectionFactory;
 }
 
@@ -208,6 +221,7 @@ class McpModule implements Mcp {
       pushNotificationInbox: PushNotificationInbox;
       realtimeMediaCapability: RealtimeMediaExtensionCapability | undefined;
       connect: McpConnectionFactory;
+      closeOAuth: () => Promise<void>;
     },
   ) {}
 
@@ -293,6 +307,7 @@ class McpModule implements Mcp {
     this.started = false;
     this.unsubscribe?.();
     this.unsubscribe = undefined;
+    await this.deps.closeOAuth();
     const connections = [...this.servers.values()].flatMap((runtime) => {
       const connection = this.invalidateRuntime(runtime);
       return connection ? [connection] : [];
@@ -477,6 +492,11 @@ class McpModule implements Mcp {
           this.enqueuePushNotification(changed, notification),
         onRealtimeMediaNotification: (changed, notification) =>
           this.publishRealtimeNotification(changed, notification),
+        onAuthorizationStatus: (status) => {
+          if (!this.isCurrentAttempt(runtime, attempt)) return;
+          runtime.status = status;
+          this.publishRegistry();
+        },
         onDisconnect: (disconnected) => {
           if (!this.isCurrentConnection(runtime, disconnected)) return;
           runtime.connection = undefined;
@@ -518,7 +538,18 @@ class McpModule implements Mcp {
       .catch((error: unknown) => {
         if (!this.isCurrentAttempt(runtime, attempt)) return;
         runtime.attempt = undefined;
-        runtime.status = 'error';
+        const authorizationRequired =
+          error instanceof McpAuthorizationRequiredError;
+        runtime.status = authorizationRequired
+          ? 'authorization_required'
+          : 'error';
+        if (authorizationRequired) {
+          this.deps.logger.info(
+            { namespace: runtime.namespace },
+            'MCP server requires authorization',
+          );
+          return;
+        }
         const isRetry = runtime.retryAttempt > 0;
         if (isRetry) {
           this.deps.logger.debug(
@@ -948,6 +979,40 @@ class McpModule implements Mcp {
 }
 
 export function createMcp(deps: McpDependencies): Mcp {
+  const localPresenter =
+    deps.cloudEnabled === false ? new LocalBrowserOAuthPresenter() : undefined;
+  const coordinator = localPresenter
+    ? new LocalOAuthAuthorizationCoordinator((url) =>
+        localPresenter.present(url),
+      )
+    : undefined;
+  const store = new McpOAuthStore(
+    join(deps.dataDirectory ?? '.klex', 'credentials', 'mcp-oauth.json'),
+  );
+  const sessionFactory: OAuthAuthorizationSessionFactory | undefined =
+    coordinator
+      ? {
+          start: async () => {
+            const receiver = await LocalOAuthCallbackReceiver.start();
+            return {
+              redirectUrl: receiver.redirectUrl,
+              authorize: (options) =>
+                coordinator.authorize({ ...options, receiver }),
+              close: () => receiver.close(),
+            };
+          },
+        }
+      : undefined;
+  const connect: McpConnectionFactory = deps.connect
+    ? deps.connect
+    : (options) =>
+        connectMcpServer({
+          ...options,
+          oauth: {
+            ...(sessionFactory ? { sessionFactory } : {}),
+            store,
+          },
+        });
   return new McpModule({
     logger: deps.logging.child({
       name: 'mcp',
@@ -956,7 +1021,8 @@ export function createMcp(deps: McpDependencies): Mcp {
     config: deps.config,
     pushNotificationInbox: createInMemoryPushNotificationInbox(),
     realtimeMediaCapability: deps.realtimeMediaCapability,
-    connect: deps.connect ?? connectMcpServer,
+    connect,
+    closeOAuth: () => coordinator?.close() ?? Promise.resolve(),
   });
 }
 

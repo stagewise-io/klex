@@ -203,6 +203,68 @@ describe('POST /v1/mcp-servers — create MCP server', () => {
     expect(body.servers).toEqual(statuses);
   });
 
+  it('accepts the explicit HTTP transport type used by other clients', async () => {
+    const addMcpServerFn = vi.fn(async () => klexConfigStub);
+    const app = createApp(makeDeps({ addMcpServer: addMcpServerFn }));
+    const response = await app.request('/v1/mcp-servers', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        name: 'oauth-server',
+        type: 'http',
+        url: 'https://example.com/mcp',
+      }),
+    });
+
+    expect(response.status).toBe(201);
+    expect(addMcpServerFn).toHaveBeenCalledWith('oauth-server', {
+      type: 'http',
+      url: 'https://example.com/mcp',
+    });
+  });
+
+  it('accepts streamable HTTP with pinned version negotiation', async () => {
+    const addMcpServerFn = vi.fn(async () => klexConfigStub);
+    const app = createApp(makeDeps({ addMcpServer: addMcpServerFn }));
+    const response = await app.request('/v1/mcp-servers', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        name: 'modern-server',
+        type: 'streamable-http',
+        url: 'https://example.com/mcp',
+        versionNegotiation: { pin: '2026-07-28' },
+      }),
+    });
+
+    expect(response.status).toBe(201);
+    expect(addMcpServerFn).toHaveBeenCalledWith('modern-server', {
+      type: 'streamable-http',
+      url: 'https://example.com/mcp',
+      versionNegotiation: { pin: '2026-07-28' },
+    });
+  });
+
+  it('accepts an Authorization header as an explicit OAuth override', async () => {
+    const addMcpServerFn = vi.fn(async () => klexConfigStub);
+    const app = createApp(makeDeps({ addMcpServer: addMcpServerFn }));
+    const response = await app.request('/v1/mcp-servers', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        name: 'header-server',
+        url: 'https://example.com/mcp',
+        headers: { Authorization: 'Bearer static-secret' },
+      }),
+    });
+
+    expect(response.status).toBe(201);
+    expect(addMcpServerFn).toHaveBeenCalledWith('header-server', {
+      url: 'https://example.com/mcp',
+      headers: { Authorization: 'Bearer static-secret' },
+    });
+  });
+
   it('accepts a valid stdio server config', async () => {
     const addMcpServerFn = vi.fn(async () => klexConfigStub);
     const app = createApp(makeDeps({ addMcpServer: addMcpServerFn }));

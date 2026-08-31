@@ -13,10 +13,11 @@ import type {
   McpServerConfig,
 } from '@/config';
 
-import type {
-  ConnectMcpServerOptions,
-  McpConnection,
-  McpConnectionFactory,
+import {
+  type ConnectMcpServerOptions,
+  McpAuthorizationRequiredError,
+  type McpConnection,
+  type McpConnectionFactory,
 } from './connection';
 import { createMcp } from './mcp';
 
@@ -330,6 +331,30 @@ describe('MCP namespace isolation', () => {
     await vi.advanceTimersByTimeAsync(1_000);
     expect(attempts.get('failing')).toBe(2);
     expect(attempts.get('hanging')).toBe(1);
+    await mcp.close();
+  });
+
+  it('does not retry a namespace that requires authorization', async () => {
+    vi.useFakeTimers();
+    const connect = vi.fn(async () => {
+      throw new McpAuthorizationRequiredError(new Error('unauthorized'));
+    });
+    const { mcp } = setup(
+      { protected: { url: 'https://protected.example/mcp' } },
+      connect,
+    );
+
+    await mcp.start();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(connect).toHaveBeenCalledOnce();
+    expect(mcp.getServerStatuses()).toContainEqual(
+      expect.objectContaining({
+        name: 'protected',
+        status: 'authorization_required',
+      }),
+    );
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(connect).toHaveBeenCalledOnce();
     await mcp.close();
   });
 

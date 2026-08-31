@@ -25,7 +25,14 @@ const healthResponseSchema = z
 // --- MCP ---
 
 const mcpConnectionStatusSchema = z
-  .enum(['connected', 'connecting', 'error', 'disconnected'])
+  .enum([
+    'connected',
+    'connecting',
+    'authorization_required',
+    'authorizing',
+    'error',
+    'disconnected',
+  ])
   .openapi('McpConnectionStatus');
 
 const mcpServerInfoSchema = z
@@ -44,33 +51,48 @@ const mcpServersResponseSchema = z
   })
   .openapi('McpServersResponse');
 
+const mcpVersionNegotiationSchema = z.union([
+  z.enum(['legacy', 'auto']),
+  z.object({ pin: z.string().min(1) }).strict(),
+]);
+
+const httpMcpServerSchema = z
+  .object({
+    type: z.enum(['http', 'streamable-http']).optional(),
+    url: z.url(),
+    headers: z.record(z.string(), z.string()).optional(),
+    versionNegotiation: mcpVersionNegotiationSchema.optional(),
+  })
+  .strict();
+
 const createMcpServerBodySchema = z
   .union([
-    z.object({
-      name: z.string().min(1),
-      command: z.string(),
-      args: z.array(z.string()).optional(),
-      env: z.record(z.string(), z.string()).optional(),
-    }),
-    z.object({
-      name: z.string().min(1),
-      url: z.url(),
-      headers: z.record(z.string(), z.string()).optional(),
-    }),
+    z
+      .object({
+        name: z.string().min(1),
+        type: z.literal('stdio').optional(),
+        command: z.string(),
+        args: z.array(z.string()).optional(),
+        env: z.record(z.string(), z.string()).optional(),
+        versionNegotiation: mcpVersionNegotiationSchema.optional(),
+      })
+      .strict(),
+    httpMcpServerSchema.safeExtend({ name: z.string().min(1) }),
   ])
   .openapi('CreateMcpServerBody');
 
 const updateMcpServerBodySchema = z
   .union([
-    z.object({
-      command: z.string(),
-      args: z.array(z.string()).optional(),
-      env: z.record(z.string(), z.string()).optional(),
-    }),
-    z.object({
-      url: z.url(),
-      headers: z.record(z.string(), z.string()).optional(),
-    }),
+    z
+      .object({
+        type: z.literal('stdio').optional(),
+        command: z.string(),
+        args: z.array(z.string()).optional(),
+        env: z.record(z.string(), z.string()).optional(),
+        versionNegotiation: mcpVersionNegotiationSchema.optional(),
+      })
+      .strict(),
+    httpMcpServerSchema,
   ])
   .openapi('UpdateMcpServerBody');
 

@@ -1123,6 +1123,26 @@ describe('Config — getMcpServers', () => {
     expect(module.getMcpServers().local?.versionNegotiation).toBeUndefined();
   });
 
+  it.each(['http', 'streamable-http'] as const)(
+    'accepts the %s transport type used by other MCP clients',
+    async (type) => {
+      const config = manualConfig();
+      config.mcpServers.remote = {
+        type,
+        url: 'https://example.com/mcp',
+      };
+      const { module } = await setup(config);
+      expect(module.getMcpServers().remote).toMatchObject({ type });
+    },
+  );
+
+  it('accepts the explicit stdio transport type', async () => {
+    const config = manualConfig();
+    config.mcpServers.local = { type: 'stdio', command: 'mcp-server' };
+    const { module } = await setup(config);
+    expect(module.getMcpServers().local).toMatchObject({ type: 'stdio' });
+  });
+
   it.each([{}, { pin: '' }, 'modern'])(
     'rejects invalid MCP version negotiation: %j',
     async (versionNegotiation) => {

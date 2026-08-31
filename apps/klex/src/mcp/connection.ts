@@ -2,8 +2,10 @@ import {
   type CallToolResult,
   Client,
   type Tool as McpToolDefinition,
+  type OAuthClientProvider,
   StreamableHTTPClientTransport,
   type Transport,
+  UnauthorizedError,
   type VersionNegotiationOptions,
 } from '@modelcontextprotocol/client';
 import { StdioClientTransport } from '@modelcontextprotocol/client/stdio';
@@ -24,6 +26,20 @@ import {
 
 import type { McpServerConfig } from '@/config';
 import type { JsonObject } from '@/tool-provider';
+
+import type {
+  OAuthAuthorizationSession,
+  OAuthAuthorizationSessionFactory,
+} from './oauth/callback';
+import { McpOAuthProvider } from './oauth/provider';
+import type { McpOAuthStore } from './oauth/store';
+
+export class McpAuthorizationRequiredError extends Error {
+  public constructor(cause: unknown) {
+    super('MCP server authorization is required', { cause });
+    this.name = 'McpAuthorizationRequiredError';
+  }
+}
 
 export interface McpConnection {
   readonly namespace: string;
@@ -55,6 +71,13 @@ export interface ConnectMcpServerOptions {
     notification: RealtimeMediaNotification,
   ): void | Promise<void>;
   onDisconnect(connection: McpConnection): void;
+  onAuthorizationStatus?(
+    status: 'authorization_required' | 'authorizing' | 'connecting',
+  ): void;
+  oauth?: {
+    sessionFactory?: OAuthAuthorizationSessionFactory;
+    store: McpOAuthStore;
+  };
 }
 
 export type McpConnectionFactory = (
@@ -143,7 +166,8 @@ export async function connectMcpServer(
         },
       })
     : undefined;
-  const transport = createTransport(options.config);
+  const oauth = await createOAuthTransportOptions(options);
+  let transport = createTransport(options.config, oauth?.provider);
   client.onclose = () => {
     if (connection && !expectedClose) options.onDisconnect(connection);
   };
@@ -151,7 +175,30 @@ export async function connectMcpServer(
   const onAbort = () => void client.close();
   options.signal.addEventListener('abort', onAbort, { once: true });
   try {
-    await client.connect(transport, { signal: options.signal });
+    try {
+      await client.connect(transport, { signal: options.signal });
+    } catch (error) {
+      if (!(error instanceof UnauthorizedError) || !oauth?.callback)
+        throw error;
+      options.onAuthorizationStatus?.('authorizing');
+      let callback: URLSearchParams;
+      try {
+        callback = await oauth.callback;
+      } catch (callbackError) {
+        throw new McpAuthorizationRequiredError(callbackError);
+      }
+      if (!(transport instanceof StreamableHTTPClientTransport)) {
+        throw new Error('OAuth requires an HTTP MCP transport');
+      }
+      try {
+        await transport.finishAuth(callback);
+      } catch (finishError) {
+        throw new McpAuthorizationRequiredError(finishError);
+      }
+      transport = createTransport(options.config, oauth.provider);
+      options.onAuthorizationStatus?.('connecting');
+      await client.connect(transport, { signal: options.signal });
+    }
     const [supportsPushNotifications, supportsRealtimeMedia, result] =
       await Promise.all([
         pushNotifications.serverSupportsPushNotifications({
@@ -182,8 +229,16 @@ export async function connectMcpServer(
   } catch (error) {
     expectedClose = true;
     await client.close().catch(() => undefined);
-    throw error;
+    const connectionError =
+      error instanceof UnauthorizedError
+        ? new McpAuthorizationRequiredError(error)
+        : error;
+    if (connectionError instanceof McpAuthorizationRequiredError) {
+      options.onAuthorizationStatus?.('authorization_required');
+    }
+    throw connectionError;
   } finally {
+    await oauth?.session.close().catch(() => undefined);
     options.signal.removeEventListener('abort', onAbort);
   }
 }
@@ -194,7 +249,63 @@ export function resolveVersionNegotiation(
   return { mode: config.versionNegotiation ?? 'auto' };
 }
 
-function createTransport(config: McpServerConfig): Transport {
+async function createOAuthTransportOptions(
+  options: ConnectMcpServerOptions,
+): Promise<
+  | {
+      callback?: Promise<URLSearchParams>;
+      provider: OAuthClientProvider;
+      session: OAuthAuthorizationSession;
+    }
+  | undefined
+> {
+  if (
+    'command' in options.config ||
+    !shouldUseAutomaticOAuth(options.config) ||
+    !options.oauth?.sessionFactory
+  ) {
+    return undefined;
+  }
+
+  const session = await options.oauth.sessionFactory.start();
+  let callback: Promise<URLSearchParams> | undefined;
+  const provider = new McpOAuthProvider({
+    onAuthorizationRedirect: (authorizationUrl) => {
+      const state = authorizationUrl.searchParams.get('state');
+      if (!state)
+        throw new Error('OAuth authorization URL did not include state');
+      callback = session.authorize({
+        authorizationUrl,
+        signal: options.signal,
+        state,
+      });
+    },
+    redirectUrl: session.redirectUrl,
+    serverName: `${options.namespace}\u0000${options.config.url}`,
+    store: options.oauth.store,
+  });
+  return {
+    get callback() {
+      return callback;
+    },
+    provider,
+    session,
+  };
+}
+
+export function shouldUseAutomaticOAuth(config: McpServerConfig): boolean {
+  return (
+    !('command' in config) &&
+    !Object.keys(config.headers ?? {}).some(
+      (header) => header.toLowerCase() === 'authorization',
+    )
+  );
+}
+
+function createTransport(
+  config: McpServerConfig,
+  authProvider?: OAuthClientProvider,
+): Transport {
   if ('command' in config) {
     return new StdioClientTransport({
       command: config.command,
@@ -203,6 +314,7 @@ function createTransport(config: McpServerConfig): Transport {
     });
   }
   return new StreamableHTTPClientTransport(new URL(config.url), {
+    ...(authProvider ? { authProvider } : {}),
     ...(config.headers
       ? { requestInit: { headers: new Headers(config.headers) } }
       : {}),

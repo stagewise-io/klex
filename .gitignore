@@ -12,4 +12,9 @@ mcp-proxy.config.json
 
 .klex.json
 .data/
+# Klex runtime data when launched from apps/klex
 apps/klex/config.json
+apps/klex/credentials/
+apps/klex/extensions/
+apps/klex/identity/
+apps/klex/*.sqlite*

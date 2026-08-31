@@ -24,7 +24,6 @@ import {
   descriptionCache,
   type EffectiveVision,
   extractImageBuffer,
-  isSharpAvailable,
   type ProcessedPart,
   resolveEffectiveVision,
   runOptimization,
@@ -54,11 +53,7 @@ class ImageInputOptimizerExt implements Extension {
    */
   private readonly imageRegistry = new Map<string, FilePart | ImagePart>();
 
-  constructor(private readonly deps: ExtensionDeps) {
-    // sharp is guaranteed to be available — the build fails if native
-    // packages are missing (see package-exe.ts → copyNativeAssets).
-    // isSharpAvailable() remains as a defensive check for dev/non-SEA runs.
-  }
+  constructor(private readonly deps: ExtensionDeps) {}
 
   getTools(model: ResolvedModel): ToolSet {
     // Only expose the viewImage tool when the active model cannot see

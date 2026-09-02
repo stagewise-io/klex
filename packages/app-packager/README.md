@@ -59,7 +59,10 @@ signing provider when present, and notarization status.
 The root API also exports:
 
 - `signExecutable(options)` for signing an existing executable
+- `signExecutables(options)` for signing an ordered complete-payload inventory
 - `verifyExecutable(options)` for platform-native signature verification
+- `notarizeMacOSArchive(options)` for submitting an already assembled ZIP to
+  Apple's notary service without repackaging or stapling it
 - Config and result types for all public operations
 
 ## Configuration
@@ -130,6 +133,12 @@ Development mode applies an ad-hoc signature after SEA injection. Release mode
 requires `macos.identity`, applies hardened-runtime signing and configured
 entitlements, and verifies with `codesign`.
 
+Applications that ship native files beside the SEA executable must sign those
+nested files before archiving. Pass an inner-to-outer ordered inventory to
+`signExecutables()`; for macOS, put the main executable last. Windows callers
+must include every `.exe`, `.dll`, and `.node` payload. Linux does not support
+code signing in this package.
+
 Notarization uses:
 
 - `APPLE_ID`
@@ -137,7 +146,10 @@ Notarization uses:
 - `APPLE_TEAM_ID`
 
 Credentials are passed as command arguments but redacted from errors. Stapling
-is opt-in through `macos.notarization.staple`.
+is opt-in through `macos.notarization.staple`. Relocatable directory releases
+should instead ZIP the complete signed directory temporarily and pass that ZIP
+to `notarizeMacOSArchive()`; raw directory/tar releases cannot carry a stapled
+ticket.
 
 ### Linux
 

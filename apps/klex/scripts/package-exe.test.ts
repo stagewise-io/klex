@@ -1,7 +1,18 @@
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
 import { describe, expect, it } from 'vitest';
 
 import {
   createKlexAgentPackagerConfig,
+  listPackagedCodeFiles,
   packageKlexAgent,
   resolveLiveKitNativeAddon,
 } from './package-exe';
@@ -38,53 +49,59 @@ describe('Klex Agent executable packaging', () => {
   it('resolves only supported host native addons', () => {
     expect(resolveLiveKitNativeAddon()).toMatch(/rtc-node.*\.node$/);
     expect(() => resolveLiveKitNativeAddon('aix', 'ppc64')).toThrow(
-      'LiveKit does not support executable packaging for aix-ppc64',
+      'Klex release target is not supported for aix-ppc64',
     );
   });
 
-  it('enables and staples notarization with complete credentials', () => {
-    const config = createKlexAgentPackagerConfig({
-      environment: {
-        APPLE_ID: 'release@example.com',
-        APPLE_PASSWORD: 'app-password',
-        APPLE_TEAM_ID: 'TEAMID',
-      },
-    });
-
-    expect(config.macos?.notarization).toEqual({
-      enabled: true,
-      staple: true,
-    });
-  });
-
-  it('disables notarization when explicitly skipped', () => {
-    const config = createKlexAgentPackagerConfig({
-      environment: {
-        APPLE_ID: 'release@example.com',
-        APPLE_PASSWORD: 'app-password',
-        APPLE_TEAM_ID: 'TEAMID',
-      },
-      skipNotarize: true,
-    });
-
-    expect(config.macos?.notarization).toBeUndefined();
-  });
-
-  it.each([
-    {},
-    { APPLE_ID: 'release@example.com' },
-    {
-      APPLE_ID: 'release@example.com',
-      APPLE_PASSWORD: 'app-password',
-    },
-  ])(
-    'disables notarization with absent or partial credentials',
-    (environment) => {
-      const config = createKlexAgentPackagerConfig({ environment });
-
+  it.each(['darwin', 'win32'] as const)(
+    'requires main-executable signing for %s release builds',
+    (platform) => {
+      const config = createKlexAgentPackagerConfig({
+        environment: { KLEX_RELEASE_CHANNEL: 'stable' },
+        platform,
+      });
+      expect(config.signing).toEqual({ mode: 'required' });
       expect(config.macos?.notarization).toBeUndefined();
     },
   );
+
+  it('keeps Linux release builds unsigned', () => {
+    const config = createKlexAgentPackagerConfig({
+      environment: { KLEX_RELEASE_CHANNEL: 'stable' },
+      platform: 'linux',
+    });
+    expect(config.signing).toEqual({ mode: 'optional' });
+  });
+
+  it('rejects the notarization escape hatch for releases', () => {
+    expect(() =>
+      createKlexAgentPackagerConfig({
+        environment: { KLEX_RELEASE_CHANNEL: 'nightly' },
+        skipNotarize: true,
+      }),
+    ).toThrow('--skip-notarize is not allowed for release builds');
+  });
+
+  it('lists native and executable payloads with the main executable last', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'klex-inventory-'));
+    try {
+      mkdirSync(join(directory, 'node_modules'), { recursive: true });
+      writeFileSync(join(directory, 'klex'), 'main');
+      chmodSync(join(directory, 'klex'), 0o755);
+      writeFileSync(join(directory, 'worker.js'), 'worker');
+      writeFileSync(join(directory, 'node_modules', 'addon.node'), 'native');
+      writeFileSync(join(directory, 'node_modules', 'tool'), 'tool');
+      chmodSync(join(directory, 'node_modules', 'tool'), 0o755);
+
+      expect(listPackagedCodeFiles(directory, 'darwin')).toEqual([
+        join(directory, 'node_modules', 'addon.node'),
+        join(directory, 'node_modules', 'tool'),
+        join(directory, 'klex'),
+      ]);
+    } finally {
+      rmSync(directory, { force: true, recursive: true });
+    }
+  });
 
   it('rejects unsupported packaging arguments before packaging', async () => {
     await expect(packageKlexAgent(['--unsupported'], {})).rejects.toThrow(

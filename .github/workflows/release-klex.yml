@@ -1,0 +1,52 @@
+name: Release Klex
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+jobs:
+  identity:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.release.outputs.version }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+          ref: ${{ github.sha }}
+      - id: release
+        name: Validate stable release tag
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          tag="$RELEASE_TAG"
+          version="${tag#v}"
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Stable release tags must match vMAJOR.MINOR.PATCH" >&2
+            exit 1
+          fi
+          package_version="$(node -p "require('./apps/klex/package.json').version")"
+          if [[ "$version" != "$package_version" ]]; then
+            echo "Tag version $version does not match apps/klex/package.json ($package_version)" >&2
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+  release:
+    needs: identity
+    permissions:
+      contents: write
+    uses: ./.github/workflows/_release-klex.yml
+    with:
+      channel: stable
+      ref: ${{ github.sha }}
+      tag: ${{ github.ref_name }}
+      version: ${{ needs.identity.outputs.version }}
+    secrets: inherit

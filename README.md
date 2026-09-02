@@ -1,6 +1,12 @@
-# Klex Agent
+<p align="center">
+  <img src="assets/brand/icon.svg" alt="Klex Bot logo" width="120" height="120">
+</p>
 
-Klex is an isolated agent that excels at memory, self-improvement and efficient orchestration. 
+<h1 align="center">Klex Bot</h1>
+
+<p align="center">
+  An isolated agent that excels at memory, self-improvement, and efficient orchestration.
+</p>
 
 ## Quick Start
 

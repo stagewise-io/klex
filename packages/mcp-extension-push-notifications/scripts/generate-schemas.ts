@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join, relative } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
@@ -59,10 +59,24 @@ function postProcess(content: string): string {
   return output;
 }
 
-async function buildJsonSchema(): Promise<string> {
-  const moduleUrl = pathToFileURL(generatedFile);
-  moduleUrl.searchParams.set('generated', String(Date.now()));
-  const schemas = (await import(moduleUrl.href)) as Record<string, unknown>;
+async function buildJsonSchema(generated: string): Promise<string> {
+  mkdirSync(generatedDirectory, { recursive: true });
+  const temporarySchemaFile = join(
+    generatedDirectory,
+    `.schema-${process.pid}-${Date.now()}.ts`,
+  );
+  writeFileSync(temporarySchemaFile, generated, 'utf8');
+
+  let schemas: Record<string, unknown>;
+  try {
+    schemas = (await import(pathToFileURL(temporarySchemaFile).href)) as Record<
+      string,
+      unknown
+    >;
+  } finally {
+    rmSync(temporarySchemaFile, { force: true });
+  }
+
   const definitions: Record<string, unknown> = {};
 
   for (const [name, schema] of Object.entries(schemas)) {
@@ -126,7 +140,7 @@ async function main(): Promise<void> {
   );
 
   const jsonSchema = canonicalizeGeneratedOutput(
-    await buildJsonSchema(),
+    await buildJsonSchema(generated),
     jsonSchemaFile,
   );
 
@@ -136,7 +150,6 @@ async function main(): Promise<void> {
       { expected: jsonSchema, filePath: jsonSchemaFile },
     ]);
   } else {
-    mkdirSync(generatedDirectory, { recursive: true });
     writeFileSync(generatedFile, generated, 'utf8');
     writeFileSync(jsonSchemaFile, jsonSchema, 'utf8');
   }

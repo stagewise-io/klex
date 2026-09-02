@@ -103,7 +103,7 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - name: Validate release code
         run: |
-          pnpm --filter @stagewise/app-packager build
+          pnpm --filter '@stagewise/klex^...' build
           pnpm --filter @stagewise/klex exec vitest run scripts/release src/release/release.test.ts scripts/package-exe.test.ts
           pnpm --filter @stagewise/klex typecheck
           pnpm --filter @stagewise/app-packager test

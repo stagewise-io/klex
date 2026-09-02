@@ -4,6 +4,7 @@
   "type": "module",
   "sideEffects": false,
   "description": "SDK for hosting MCP proxys and connecting remote MCP environments",
+  "license": "Apache-2.0",
   "exports": {
     "./core": {
       "types": "./dist/core/index.d.ts",

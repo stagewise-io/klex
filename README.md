@@ -55,3 +55,7 @@ There is no dedicated policy that determines which session an incoming message b
 Klex knows about its available models and their tradeoffs:
 - Just need to query some info -> Klex will use a flashy model to reduce latency
 - Need to do market research -> Klex will use smart, available models to improve accuracy
+
+## License
+
+Klex is licensed under the [Apache License 2.0](LICENSE).

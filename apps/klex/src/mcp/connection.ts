@@ -51,11 +51,7 @@ export interface McpConnection {
   ): Promise<{ resources: Resource[]; nextCursor?: string }>;
   listResourceTemplates(
     signal: AbortSignal,
-    cursor?: string,
-  ): Promise<{
-    resourceTemplates: ResourceTemplateType[];
-    nextCursor?: string;
-  }>;
+  ): Promise<{ resourceTemplates: ResourceTemplateType[] }>;
   readResource(uri: string, signal: AbortSignal): Promise<ReadResourceResult>;
   close(): Promise<void>;
 }
@@ -118,11 +114,20 @@ class McpServerConnection implements McpConnection {
     );
   }
 
-  async listResources(signal: AbortSignal): Promise<{ resources: Resource[] }> {
+  async listResources(
+    signal: AbortSignal,
+    cursor?: string,
+  ): Promise<{ resources: Resource[]; nextCursor?: string }> {
     if (this.closed)
       throw new Error(`MCP server is unavailable: ${this.namespace}`);
-    const result = await this.client.listResources(undefined, { signal });
-    return { resources: result.resources };
+    const result = await this.client.listResources(
+      cursor ? { cursor } : undefined,
+      { signal },
+    );
+    return {
+      resources: result.resources,
+      ...(result.nextCursor ? { nextCursor: result.nextCursor } : {}),
+    };
   }
 
   async listResourceTemplates(

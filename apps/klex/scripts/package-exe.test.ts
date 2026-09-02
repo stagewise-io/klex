@@ -14,6 +14,8 @@ import {
   createKlexAgentPackagerConfig,
   listPackagedCodeFiles,
   packageKlexAgent,
+  resolveFfprobeInstaller,
+  resolveFfprobeInstallerPackageName,
   resolveLiveKitNativeAddon,
 } from './package-exe';
 
@@ -46,9 +48,33 @@ describe('Klex Agent executable packaging', () => {
     });
   });
 
-  it('resolves only supported host native addons', () => {
+  it('resolves native payloads for every release target', () => {
     expect(resolveLiveKitNativeAddon()).toMatch(/rtc-node.*\.node$/);
+    expect(resolveFfprobeInstaller().binaryPath).toMatch(/ffprobe$/);
+    expect(
+      [
+        ['darwin', 'arm64'],
+        ['darwin', 'x64'],
+        ['linux', 'arm64'],
+        ['linux', 'x64'],
+        ['win32', 'x64'],
+      ].map(([platform, architecture]) =>
+        resolveFfprobeInstallerPackageName(
+          platform as NodeJS.Platform,
+          architecture as NodeJS.Architecture,
+        ),
+      ),
+    ).toEqual([
+      '@ffprobe-installer/darwin-arm64',
+      '@ffprobe-installer/darwin-x64',
+      '@ffprobe-installer/linux-arm64',
+      '@ffprobe-installer/linux-x64',
+      '@ffprobe-installer/win32-x64',
+    ]);
     expect(() => resolveLiveKitNativeAddon('aix', 'ppc64')).toThrow(
+      'Klex release target is not supported for aix-ppc64',
+    );
+    expect(() => resolveFfprobeInstallerPackageName('aix', 'ppc64')).toThrow(
       'Klex release target is not supported for aix-ppc64',
     );
   });

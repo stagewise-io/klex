@@ -23,7 +23,39 @@ export function resolveLiveKitNativeAddon(
     platform,
     architecture as NodeJS.Architecture,
   );
-  return require.resolve(`@livekit/rtc-ffi-bindings-${nativePackageTarget}`);
+  const liveKitRequire = createRequire(require.resolve('@livekit/rtc-node'));
+  const bindingsRequire = createRequire(
+    liveKitRequire.resolve('@livekit/rtc-ffi-bindings'),
+  );
+  return bindingsRequire.resolve(
+    `@livekit/rtc-ffi-bindings-${nativePackageTarget}`,
+  );
+}
+
+export function resolveFfprobeInstallerPackageName(
+  platform: NodeJS.Platform = process.platform,
+  architecture: string = process.arch,
+): string {
+  resolveReleaseTarget(platform, architecture as NodeJS.Architecture);
+  return `@ffprobe-installer/${platform}-${architecture}`;
+}
+
+export function resolveFfprobeInstaller(
+  platform: NodeJS.Platform = process.platform,
+  architecture: string = process.arch,
+): { readonly binaryPath: string; readonly packageName: string } {
+  const packageName = resolveFfprobeInstallerPackageName(
+    platform,
+    architecture,
+  );
+  const binary = platform === 'win32' ? 'ffprobe.exe' : 'ffprobe';
+  const ffprobeRequire = createRequire(
+    require.resolve('@ffprobe-installer/ffprobe'),
+  );
+  return {
+    binaryPath: ffprobeRequire.resolve(`${packageName}/${binary}`),
+    packageName,
+  };
 }
 
 export interface KlexAgentPackagingOptions {
@@ -82,7 +114,8 @@ export function createKlexAgentPackagerConfig(
  *    `__dirname` to locate the binary, which works because the package is
  *    loaded from disk via createRequire (not bundled into the SEA blob).
  *
- * 3. **ffprobe-static** — same pattern as ffmpeg-static.
+ * 3. **@ffprobe-installer/ffprobe** + its platform payload — the wrapper
+ *    resolves the sibling platform package and its prebuilt ffprobe binary.
  *
  * 4. **libsql** + its platform addon — loaded from disk so libsql's dynamic
  *    `require('@libsql/<target>')` resolves through a normal Node require.
@@ -99,17 +132,20 @@ export function copyNativeAssets(outputDirectory: string): void {
   const errors: string[] = [];
 
   /** Resolves a package's root directory from its package.json. */
-  function resolvePackageDir(name: string): string {
+  function resolvePackageDir(
+    name: string,
+    packageRequire: NodeJS.Require = require,
+  ): string {
     // Try resolving the main entry first; fall back to package.json
     // (some @img packages only export ./sharp.node and ./package).
     let resolveTarget: string;
     try {
-      require.resolve(name);
+      packageRequire.resolve(name);
       resolveTarget = name;
     } catch {
       resolveTarget = `${name}/package`;
     }
-    const resolvedPath = require.resolve(resolveTarget);
+    const resolvedPath = packageRequire.resolve(resolveTarget);
     // If we resolved package.json, the dir is its parent.
     // If we resolved the main entry, walk up to find package.json.
     let dir = dirname(resolvedPath);
@@ -126,9 +162,12 @@ export function copyNativeAssets(outputDirectory: string): void {
   }
 
   /** Copies a package to dest/node_modules/<name>. */
-  function copyPackage(name: string): boolean {
+  function copyPackage(
+    name: string,
+    packageRequire: NodeJS.Require = require,
+  ): boolean {
     try {
-      const pkgDir = resolvePackageDir(name);
+      const pkgDir = resolvePackageDir(name, packageRequire);
       cpSync(pkgDir, join(destNodeModules, name), { recursive: true });
       return true;
     } catch (e) {
@@ -141,18 +180,31 @@ export function copyNativeAssets(outputDirectory: string): void {
   const { nativePackageTarget } = resolveReleaseTarget();
 
   // sharp JS package + runtime dependencies (all loaded from disk at runtime)
+  const sharpRequire = createRequire(require.resolve('sharp'));
   copyPackage('sharp');
-  copyPackage('detect-libc');
-  copyPackage('semver');
-  copyPackage('@img/colour');
+  copyPackage('detect-libc', sharpRequire);
+  copyPackage('semver', sharpRequire);
+  copyPackage('@img/colour', sharpRequire);
 
   // sharp native addons (platform-specific .node addon + libvips dylib)
-  copyPackage(`@img/sharp-${platformArch}`);
-  copyPackage(`@img/sharp-libvips-${platformArch}`);
+  copyPackage(`@img/sharp-${platformArch}`, sharpRequire);
+  copyPackage(`@img/sharp-libvips-${platformArch}`, sharpRequire);
 
   // audio and realtime-media native payloads
   copyPackage('ffmpeg-static');
-  copyPackage('ffprobe-static');
+  copyPackage('@ffprobe-installer/ffprobe');
+  try {
+    const ffprobe = resolveFfprobeInstaller();
+    cpSync(
+      dirname(ffprobe.binaryPath),
+      join(destNodeModules, ffprobe.packageName),
+      { recursive: true },
+    );
+  } catch (error) {
+    errors.push(
+      `Failed to copy ffprobe platform package: ${(error as Error).message}`,
+    );
+  }
   try {
     cpSync(
       resolveLiveKitNativeAddon(),
@@ -165,9 +217,11 @@ export function copyNativeAssets(outputDirectory: string): void {
   }
 
   // SQLite native addon and its runtime target loader
-  copyPackage('libsql');
-  copyPackage('@neon-rs/load');
-  copyPackage(`@libsql/${nativePackageTarget}`);
+  const libsqlClientRequire = createRequire(require.resolve('@libsql/client'));
+  const libsqlRequire = createRequire(libsqlClientRequire.resolve('libsql'));
+  copyPackage('libsql', libsqlClientRequire);
+  copyPackage('@neon-rs/load', libsqlRequire);
+  copyPackage(`@libsql/${nativePackageTarget}`, libsqlRequire);
 
   // Verify critical files exist after copy
   const checks: Array<{ name: string; path: string }> = [
@@ -199,10 +253,8 @@ export function copyNativeAssets(outputDirectory: string): void {
       name: 'ffprobe binary',
       path: join(
         destNodeModules,
-        'ffprobe-static',
-        'bin',
-        process.platform,
-        process.arch,
+        '@ffprobe-installer',
+        `${process.platform}-${process.arch}`,
         process.platform === 'win32' ? 'ffprobe.exe' : 'ffprobe',
       ),
     },

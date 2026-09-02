@@ -134,7 +134,7 @@ export async function buildReleaseArtifact(
         stageDirectory,
         submission,
       ]);
-      (dependencies.notarize ?? notarizeMacOSArchive)({
+      await (dependencies.notarize ?? notarizeMacOSArchive)({
         environment: releaseEnvironment,
         file: submission,
       });

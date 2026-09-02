@@ -32,7 +32,8 @@ const aliasPlugin: esbuild.Plugin = {
 };
 
 /**
- * Virtualizes native packages (sharp, ffmpeg-static, ffprobe-static, libsql) so they
+ * Virtualizes native packages (sharp, ffmpeg-static, @ffprobe-installer/ffprobe,
+ * libsql) so they
  * load from the on-disk node_modules/ beside the SEA executable at runtime.
  *
  * The SEA embedder's require() only handles built-in modules — externalized
@@ -48,7 +49,9 @@ const nativeShimPlugin: esbuild.Plugin = {
   name: 'native-shim',
   setup(build) {
     build.onResolve(
-      { filter: /^(sharp|ffmpeg-static|ffprobe-static|libsql)$/ },
+      {
+        filter: /^(sharp|ffmpeg-static|@ffprobe-installer\/ffprobe|libsql)$/,
+      },
       (args) => ({ path: args.path, namespace: 'native-shim' }),
     );
     build.onLoad({ filter: /.*/, namespace: 'native-shim' }, (args) => ({

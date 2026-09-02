@@ -2,9 +2,9 @@ import { execFileSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { PassThrough, Readable } from 'node:stream';
 
+import { path as ffprobeStaticPath } from '@ffprobe-installer/ffprobe';
 import type { FilePart, TextPart } from 'ai';
 import ffmpegStaticPath from 'ffmpeg-static';
-import { path as ffprobeStaticPath } from 'ffprobe-static';
 import ffmpeg from 'fluent-ffmpeg';
 
 import type { ModelInputCapabilities } from '@/config';
@@ -16,7 +16,7 @@ import {
 } from '@/shared-utilities';
 
 // Configure fluent-ffmpeg to use the bundled static binaries.
-// In SEA builds, the ffmpeg-static and ffprobe-static packages are
+// In SEA builds, the ffmpeg-static and @ffprobe-installer packages are
 // externalized and their binaries are copied to dist/node_modules/ during
 // packaging (see package-exe.ts → copyNativeAssets). The build fails if
 // any binary is missing — there is no PATH fallback.
@@ -28,8 +28,8 @@ if (ffmpegStaticPath === null || !existsSync(ffmpegStaticPath)) {
 }
 if (!existsSync(ffprobeStaticPath)) {
   throw new Error(
-    `ffprobe-static binary not found at ${ffprobeStaticPath}. ` +
-      'The packaging step should have copied it to dist/node_modules/ffprobe-static/.',
+    `ffprobe binary not found at ${ffprobeStaticPath}. ` +
+      'The packaging step should have copied the @ffprobe-installer packages.',
   );
 }
 

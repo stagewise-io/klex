@@ -115,7 +115,10 @@ describe('release artifact builder', () => {
             writeFileSync(archivePath, 'archive');
           },
           isMachO: () => true,
-          notarize: () => events.push('notarize'),
+          notarize: async () => {
+            events.push('notarize');
+            return 'submission-id';
+          },
           packageAgent: async () => packaged,
           resolveTarget: () => ({
             architecture: 'arm64',

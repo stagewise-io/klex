@@ -4,9 +4,10 @@ import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
-import type {
-  CommandRunner,
-  CommandRunOptions,
+import {
+  CommandExecutionError,
+  type CommandRunner,
+  type CommandRunOptions,
 } from '../command-runner/index.js';
 import { notarizeMacOSArchive, signExecutables } from './signing.js';
 
@@ -17,13 +18,22 @@ class RecordingRunner implements CommandRunner {
     options?: CommandRunOptions;
   }> = [];
 
+  constructor(private readonly responses: Array<string | Error> = []) {}
+
   run(
     command: string,
     arguments_: readonly string[],
     options?: CommandRunOptions,
   ) {
     this.calls.push({ command, arguments: arguments_, options });
-    return { command, arguments: arguments_, stdout: '', stderr: '' };
+    const response = this.responses.shift();
+    if (response instanceof Error) throw response;
+    return {
+      command,
+      arguments: arguments_,
+      stdout: response ?? '',
+      stderr: '',
+    };
   }
 }
 
@@ -65,13 +75,16 @@ describe('complete payload signing', () => {
     );
   });
 
-  it('submits an archive with redacted Apple credentials', () => {
+  it('submits and polls an archive with redacted Apple credentials', async () => {
     const directory = mkdtempSync(join(tmpdir(), 'app-packager-notarize-'));
     const archive = join(directory, 'payload.zip');
     writeFileSync(archive, 'zip');
-    const runner = new RecordingRunner();
+    const runner = new RecordingRunner([
+      JSON.stringify({ id: 'submission-id' }),
+      JSON.stringify({ status: 'Accepted' }),
+    ]);
     try {
-      notarizeMacOSArchive({
+      await notarizeMacOSArchive({
         environment: {
           APPLE_ID: 'release@example.com',
           APPLE_PASSWORD: 'secret-password',
@@ -81,41 +94,111 @@ describe('complete payload signing', () => {
         runner,
       });
 
-      expect(runner.calls).toHaveLength(1);
+      expect(runner.calls).toHaveLength(2);
       expect(runner.calls[0]).toMatchObject({
         command: 'xcrun',
-        options: { sensitiveArgumentIndexes: [4, 6, 8] },
+        options: { sensitiveArgumentIndexes: [6, 8, 10] },
       });
       expect(runner.calls[0]?.arguments).toEqual([
         'notarytool',
         'submit',
         archive,
+        '--output-format',
+        'json',
         '--apple-id',
         'release@example.com',
         '--password',
         'secret-password',
         '--team-id',
         'TEAMID',
-        '--wait',
+      ]);
+      expect(runner.calls[1]?.arguments.slice(0, 3)).toEqual([
+        'notarytool',
+        'info',
+        'submission-id',
       ]);
     } finally {
       rmSync(directory, { force: true, recursive: true });
     }
   });
 
-  it('rejects incomplete notarization credentials before invoking commands', () => {
+  it('retries transient notarization polling failures', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'app-packager-notarize-'));
+    const archive = join(directory, 'payload.zip');
+    writeFileSync(archive, 'zip');
+    const runner = new RecordingRunner([
+      JSON.stringify({ id: 'submission-id' }),
+      new CommandExecutionError('temporary polling failure', {
+        command: 'xcrun notarytool info',
+        stdout: '',
+        stderr: '',
+      }),
+      JSON.stringify({ status: 'In Progress' }),
+      JSON.stringify({ status: 'Accepted' }),
+    ]);
+    const delays: number[] = [];
+    try {
+      await expect(
+        notarizeMacOSArchive({
+          environment: {
+            APPLE_ID: 'release@example.com',
+            APPLE_PASSWORD: 'secret-password',
+            APPLE_TEAM_ID: 'TEAMID',
+          },
+          file: archive,
+          maxPollingAttempts: 3,
+          pollingIntervalMs: 25,
+          runner,
+          sleep: async (milliseconds) => {
+            delays.push(milliseconds);
+          },
+        }),
+      ).resolves.toBe('submission-id');
+      expect(delays).toEqual([25, 25]);
+    } finally {
+      rmSync(directory, { force: true, recursive: true });
+    }
+  });
+
+  it('includes the Apple log when notarization is rejected', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'app-packager-notarize-'));
+    const archive = join(directory, 'payload.zip');
+    writeFileSync(archive, 'zip');
+    const runner = new RecordingRunner([
+      JSON.stringify({ id: 'submission-id' }),
+      JSON.stringify({ status: 'Invalid' }),
+      'The executable has an invalid signature',
+    ]);
+    try {
+      await expect(
+        notarizeMacOSArchive({
+          environment: {
+            APPLE_ID: 'release@example.com',
+            APPLE_PASSWORD: 'secret-password',
+            APPLE_TEAM_ID: 'TEAMID',
+          },
+          file: archive,
+          runner,
+        }),
+      ).rejects.toThrow('The executable has an invalid signature');
+    } finally {
+      rmSync(directory, { force: true, recursive: true });
+    }
+  });
+
+  it('rejects incomplete notarization credentials before invoking commands', async () => {
     const directory = mkdtempSync(join(tmpdir(), 'app-packager-notarize-'));
     const archive = join(directory, 'payload.zip');
     writeFileSync(archive, 'zip');
     const runner = new RecordingRunner();
     try {
-      expect(() =>
+      await expect(
         notarizeMacOSArchive({
           environment: { APPLE_ID: 'release@example.com' },
           file: archive,
           runner,
         }),
-      ).toThrow(
+      ).rejects.toThrow(
         'macOS notarization requires APPLE_ID, APPLE_PASSWORD, and APPLE_TEAM_ID',
       );
       expect(runner.calls).toHaveLength(0);

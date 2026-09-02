@@ -24,6 +24,8 @@ export function signWindowsExecutable(
 
   options.runner.run(configuration.signToolPath, [
     'sign',
+    '/v',
+    '/debug',
     '/fd',
     'sha256',
     '/tr',

@@ -52,10 +52,8 @@ export function smokeKlexDistribution(
       path: resolve(
         distributionDirectory,
         'node_modules',
-        'ffprobe-static',
-        'bin',
-        process.platform,
-        process.arch,
+        '@ffprobe-installer',
+        `${process.platform}-${process.arch}`,
         process.platform === 'win32' ? 'ffprobe.exe' : 'ffprobe',
       ),
     },

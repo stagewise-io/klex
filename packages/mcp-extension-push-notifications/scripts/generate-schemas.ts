@@ -1,9 +1,14 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, relative } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { generate } from 'ts-to-zod';
 import { type $ZodType, toJSONSchema } from 'zod/v4/core';
+
+import {
+  assertGeneratedOutputsCurrent,
+  canonicalizeGeneratedOutput,
+} from '../../../scripts/generated-schema-output.js';
 
 const projectRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
 const sourceDirectory = join(projectRoot, 'src');
@@ -115,25 +120,26 @@ async function main(): Promise<void> {
     '\\',
     '/',
   );
-  const generated = postProcess(
-    result.getZodSchemasFile(`${importPath}/spec.types.js`),
+  const generated = canonicalizeGeneratedOutput(
+    postProcess(result.getZodSchemasFile(`${importPath}/spec.types.js`)),
+    generatedFile,
   );
 
-  mkdirSync(generatedDirectory, { recursive: true });
-  writeFileSync(generatedFile, generated, 'utf8');
-  const jsonSchema = await buildJsonSchema();
+  const jsonSchema = canonicalizeGeneratedOutput(
+    await buildJsonSchema(),
+    jsonSchemaFile,
+  );
 
   if (check) {
-    if (!existsSync(jsonSchemaFile)) {
-      throw new Error('schema.json does not exist');
-    }
-    if (readFileSync(jsonSchemaFile, 'utf8') !== jsonSchema) {
-      throw new Error('schema.json is stale; run `pnpm generate:schemas`');
-    }
-    return;
+    assertGeneratedOutputsCurrent([
+      { expected: generated, filePath: generatedFile },
+      { expected: jsonSchema, filePath: jsonSchemaFile },
+    ]);
+  } else {
+    mkdirSync(generatedDirectory, { recursive: true });
+    writeFileSync(generatedFile, generated, 'utf8');
+    writeFileSync(jsonSchemaFile, jsonSchema, 'utf8');
   }
-
-  writeFileSync(jsonSchemaFile, jsonSchema, 'utf8');
 }
 
 await main();

@@ -1024,6 +1024,36 @@ describe('Config — env var resolution', () => {
   });
 });
 
+describe('Config — MCP authentication discovery', () => {
+  it('accepts a URL-only Cloud MCP server', () => {
+    const config = manualConfig();
+    config.mcpServers.slack = {
+      url: 'https://cloud.example/api/integrations/slack/mcp',
+    };
+
+    expect(klexConfigSchema.safeParse(config).success).toBe(true);
+  });
+
+  it('rejects the removed MCP auth field', () => {
+    const base = manualConfig();
+    const config = {
+      ...base,
+      mcpServers: {
+        slack: {
+          url: 'https://cloud.example/api/integrations/slack/mcp',
+          auth: {
+            type: 'cloud',
+            resource: 'https://cloud.example/api/integrations/slack/mcp',
+            scopes: ['mcp:use'],
+          },
+        },
+      },
+    };
+
+    expect(klexConfigSchema.safeParse(config).success).toBe(false);
+  });
+});
+
 describe('Config — getMcpServers', () => {
   it('returns configured MCP servers', async () => {
     const config = manualConfig();

@@ -196,10 +196,17 @@ function materializeContextPart(
           type: 'text',
           text: `<text>${escapeXmlText(res.text)}</text>`,
         });
+      } else if (res.blob !== undefined && res.mimeType?.trim()) {
+        const normalizedMimeType = res.mimeType.trim().toLowerCase();
+        parts.push({
+          type: 'file',
+          mediaType: normalizedMimeType,
+          url: `data:${normalizedMimeType};base64,${res.blob.replaceAll(/\s/g, '')}`,
+        });
       } else if (res.blob !== undefined) {
         parts.push({
           type: 'text',
-          text: `<blob>${res.blob}</blob>`,
+          text: `<blob>${escapeXmlText(res.blob)}</blob>`,
         });
       }
       parts.push({ type: 'text', text: '</resource>' });

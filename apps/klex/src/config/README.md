@@ -49,7 +49,7 @@ test suite is network-independent. Set `OPENAI_REALTIME_INTEGRATION=1` and
 `OPENAI_API_KEY`, then run `pnpm test:openai-realtime` from `apps/klex` for the
 opt-in provider connection check.
 
-## MCP OAuth
+## MCP authentication
 
 HTTP MCP servers automatically negotiate OAuth when they return an authorization
 challenge. No Klex-specific authentication setting is required:
@@ -77,10 +77,41 @@ registration data, PKCE material, and discovery state are stored with owner-only
 permissions in `credentials/mcp-oauth.json` under the data directory; they are
 not written to `config.json` or returned by the Admin API.
 
-When cloud connectivity is enabled, local browser authorization is deliberately
-disabled. An OAuth challenge leaves the MCP server in
-`authorization_required`. A future cloud callback adapter will complete that
-flow through the enrolled-agent channel; this release does not add a callback
-route or transport for it. The Admin API exposes only sanitized lifecycle states
-(`authorization_required` and `authorizing`), never authorization URLs, callback
-parameters, issuers, or credentials.
+When cloud connectivity is enabled, Klex first follows the server's RFC 9728
+protected-resource challenge. The advertised metadata URL must use HTTP(S), have
+no embedded credentials, and share the configured MCP server's origin. If the
+advertised authorization server exactly matches
+`<configured-cloud-base-url>/api/auth`, Klex verifies that the metadata resource
+exactly equals the configured MCP URL and that all challenged scopes are
+supported. It then uses the enrolled machine identity to obtain an
+audience-specific token. Hostname patterns are not trusted, so production and
+preview deployments use the same issuer-based flow.
+
+Trusted Cloud discovery requires enabled, enrolled Cloud connectivity. Klex
+caches the validated discovery result and access token. A later 401 invalidates
+the resource-specific token and retries once; a second 401 is returned without
+another retry. Tokens are attached only to requests for the validated canonical
+resource and never to metadata requests or foreign resources.
+
+For non-Cloud authorization servers, local browser authorization is deliberately
+disabled while cloud connectivity is enabled. Their OAuth challenge leaves the
+MCP server in `authorization_required`. With `--no-cloud`, the generic loopback
+flow described above remains available. The Admin API exposes only sanitized
+lifecycle states (`authorization_required` and `authorizing`), never
+authorization URLs, callback parameters, issuers, or credentials.
+
+A Klex Cloud MCP server is therefore configured with only its URL:
+
+```json
+{
+  "mcpServers": {
+    "slack": {
+      "url": "https://cloud.klex.bot/api/integrations/slack/mcp"
+    }
+  }
+}
+```
+
+Incoming Slack notifications use at-least-once delivery. Klex subscribes before
+draining persisted events and deduplicates by `eventId`, so reconnecting after a
+process or network interruption does not lose accepted Slack events.

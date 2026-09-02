@@ -16,6 +16,8 @@ export interface CloudConnectivity {
   start(): Promise<void>;
   close(): Promise<void>;
   getAccessToken(resource: string, scopes: string[]): Promise<string>;
+  invalidateAccessToken(resource: string): void;
   isEnrolled(): boolean;
   isCloudEnabled(): boolean;
+  isTrustedAuthorizationServer(issuer: string): boolean;
 }

@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+
 import type {
   CallToolResult,
   Tool as McpToolDefinition,
@@ -74,7 +76,9 @@ export function normalizeCallToolResult(result: CallToolResult): JsonValue {
 }
 
 export function canonicalConfigSignature(value: unknown): string {
-  return JSON.stringify(sortJson(value));
+  return createHash('sha256')
+    .update(JSON.stringify(sortJson(value)))
+    .digest('hex');
 }
 
 function normalizeInputSchema(

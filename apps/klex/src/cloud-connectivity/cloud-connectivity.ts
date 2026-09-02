@@ -168,12 +168,28 @@ class CloudConnectivityModule implements CloudConnectivity {
     return this.tokenClient.getAccessToken(resource, scopes);
   }
 
+  invalidateAccessToken(resource: string): void {
+    this.tokenClient?.invalidate(resource);
+  }
+
   isEnrolled(): boolean {
     return this.enrollment?.clientId != null;
   }
 
   isCloudEnabled(): boolean {
     return this.deps.cloudEnabled;
+  }
+
+  isTrustedAuthorizationServer(issuer: string): boolean {
+    try {
+      const expectedIssuer = new URL(
+        '/api/auth',
+        this.deps.cloudBaseUrl,
+      ).toString();
+      return new URL(issuer).toString() === expectedIssuer;
+    } catch {
+      return false;
+    }
   }
 
   async close(): Promise<void> {

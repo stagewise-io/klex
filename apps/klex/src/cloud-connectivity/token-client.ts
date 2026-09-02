@@ -175,12 +175,14 @@ class TokenClientModule implements TokenClient {
   private async ensureMetadata(): Promise<oauth.AuthorizationServer> {
     if (this.serverMetadata) return this.serverMetadata;
 
-    const issuerUrl = new URL(this.deps.cloudBaseUrl);
+    const issuerUrl = new URL('/api/auth', this.deps.cloudBaseUrl);
+    const discoveryUrl = new URL(
+      '/api/auth/.well-known/oauth-authorization-server',
+      this.deps.cloudBaseUrl,
+    );
 
     try {
-      const response = await oauth.discoveryRequest(issuerUrl, {
-        algorithm: 'oauth2',
-      });
+      const response = await fetch(discoveryUrl);
       this.serverMetadata = await oauth.processDiscoveryResponse(
         issuerUrl,
         response,
@@ -191,9 +193,12 @@ class TokenClientModule implements TokenClient {
         'OAuth discovery failed — falling back to manual metadata',
       );
       // Manual fallback: construct minimal metadata
-      const tokenEndpoint = `${this.deps.cloudBaseUrl}/api/auth/oauth2/token`;
+      const tokenEndpoint = new URL(
+        '/api/auth/oauth2/token',
+        this.deps.cloudBaseUrl,
+      ).toString();
       this.serverMetadata = {
-        issuer: this.deps.cloudBaseUrl,
+        issuer: issuerUrl.toString(),
         token_endpoint: tokenEndpoint,
       };
     }

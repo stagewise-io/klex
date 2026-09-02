@@ -169,6 +169,20 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
+          $requiredSecrets = @{
+            AZURE_TENANT_ID = '${{ secrets.AZURE_TENANT_ID }}'
+            AZURE_CLIENT_ID = '${{ secrets.AZURE_CLIENT_ID }}'
+            AZURE_CLIENT_SECRET = '${{ secrets.AZURE_CLIENT_SECRET }}'
+            AZURE_ACCOUNT_ENDPOINT_URI = '${{ secrets.AZURE_ACCOUNT_ENDPOINT_URI }}'
+            AZURE_ACCOUNT_NAME = '${{ secrets.AZURE_ACCOUNT_NAME }}'
+            AZURE_CERTIFICATE_PROFILE_NAME = '${{ secrets.AZURE_CERTIFICATE_PROFILE_NAME }}'
+          }
+          $missingSecrets = @($requiredSecrets.GetEnumerator() |
+            Where-Object { [string]::IsNullOrWhiteSpace($_.Value) } |
+            ForEach-Object Key)
+          if ($missingSecrets.Count -gt 0) {
+            throw "Missing Azure Trusted Signing secrets: $($missingSecrets -join ', ')"
+          }
           $nugetDir = Join-Path '${{ runner.temp }}' 'nuget'
           nuget install Microsoft.Trusted.Signing.Client -Version 1.0.95 -OutputDirectory $nugetDir -Source https://api.nuget.org/v3/index.json
           $dlib = Get-ChildItem $nugetDir -Recurse -Filter Azure.CodeSigning.Dlib.dll |

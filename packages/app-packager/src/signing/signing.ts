@@ -1,6 +1,7 @@
 import { existsSync, statSync } from 'node:fs';
 
 import {
+  CommandExecutionError,
   type CommandRunner,
   createCommandRunner,
 } from '../command-runner/index.js';
@@ -40,7 +41,10 @@ export interface SignExecutablesOptions
 export interface NotarizeMacOSArchiveOptions {
   readonly environment?: NodeJS.ProcessEnv;
   readonly file: string;
+  readonly maxPollingAttempts?: number;
+  readonly pollingIntervalMs?: number;
   readonly runner?: CommandRunner;
+  readonly sleep?: (milliseconds: number) => Promise<void>;
 }
 
 export interface VerifyExecutableOptions {
@@ -93,9 +97,9 @@ export async function signExecutables(
   return result as SigningResult;
 }
 
-export function notarizeMacOSArchive(
+export async function notarizeMacOSArchive(
   options: NotarizeMacOSArchiveOptions,
-): void {
+): Promise<string> {
   requireExecutable(options.file);
   const environment = options.environment ?? process.env;
   const configuration = resolveMacOSNotarizationConfiguration(
@@ -103,22 +107,112 @@ export function notarizeMacOSArchive(
     false,
   );
   const runner = options.runner ?? createCommandRunner();
-  runner.run(
+  const credentials = [
+    '--apple-id',
+    configuration.appleId,
+    '--password',
+    configuration.applePassword,
+    '--team-id',
+    configuration.teamId,
+  ] as const;
+  const submission = runner.run(
     'xcrun',
     [
       'notarytool',
       'submit',
       options.file,
-      '--apple-id',
-      configuration.appleId,
-      '--password',
-      configuration.applePassword,
-      '--team-id',
-      configuration.teamId,
-      '--wait',
+      '--output-format',
+      'json',
+      ...credentials,
     ],
-    { sensitiveArgumentIndexes: [4, 6, 8] },
+    { sensitiveArgumentIndexes: [6, 8, 10] },
   );
+  const submissionId = parseNotarizationResponse(submission.stdout).id;
+  if (!submissionId) {
+    throw new Error('Apple notarization submission did not return an ID');
+  }
+
+  const maxAttempts = options.maxPollingAttempts ?? 120;
+  const pollingIntervalMs = options.pollingIntervalMs ?? 15_000;
+  const sleep = options.sleep ?? delay;
+  let lastPollingError: CommandExecutionError | undefined;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      const result = runner.run(
+        'xcrun',
+        [
+          'notarytool',
+          'info',
+          submissionId,
+          '--output-format',
+          'json',
+          ...credentials,
+        ],
+        { sensitiveArgumentIndexes: [6, 8, 10] },
+      );
+      const status = parseNotarizationResponse(result.stdout).status;
+      if (status === 'Accepted') return submissionId;
+      if (status === 'Invalid' || status === 'Rejected') {
+        throw new Error(
+          `Apple notarization ${submissionId} was ${status}: ${readNotarizationLog(
+            runner,
+            submissionId,
+            credentials,
+          )}`,
+        );
+      }
+      lastPollingError = undefined;
+    } catch (error) {
+      if (!(error instanceof CommandExecutionError)) throw error;
+      lastPollingError = error;
+    }
+
+    if (attempt < maxAttempts) await sleep(pollingIntervalMs);
+  }
+
+  const detail = lastPollingError
+    ? ` Last polling error: ${lastPollingError.message}`
+    : '';
+  throw new Error(
+    `Apple notarization ${submissionId} did not complete after ${maxAttempts} polling attempts.${detail}`,
+  );
+}
+
+interface NotarizationResponse {
+  readonly id?: string;
+  readonly status?: string;
+}
+
+function parseNotarizationResponse(output: string): NotarizationResponse {
+  try {
+    return JSON.parse(output) as NotarizationResponse;
+  } catch (error) {
+    throw new Error('Could not parse Apple notarization response', {
+      cause: error,
+    });
+  }
+}
+
+function readNotarizationLog(
+  runner: CommandRunner,
+  submissionId: string,
+  credentials: readonly string[],
+): string {
+  try {
+    const result = runner.run(
+      'xcrun',
+      ['notarytool', 'log', submissionId, ...credentials],
+      { sensitiveArgumentIndexes: [4, 6, 8] },
+    );
+    return result.stdout.trim() || 'Apple returned no rejection log';
+  } catch (error) {
+    return `rejection log unavailable: ${(error as Error).message}`;
+  }
+}
+
+function delay(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
 export async function verifyExecutable(

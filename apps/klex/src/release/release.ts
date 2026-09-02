@@ -118,7 +118,7 @@ export function resolveApplicationVersion(
     );
   }
   const requestedTag = environment.KLEX_RELEASE_TAG?.trim();
-  const expectedTag = channel === 'nightly' ? 'nightly' : `v${version}`;
+  const expectedTag = `v${version}`;
   if (requestedTag !== undefined && requestedTag !== expectedTag) {
     throw new Error(
       `Klex release tag ${requestedTag} does not match ${expectedTag}`,

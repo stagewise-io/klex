@@ -78,8 +78,8 @@ jobs:
             echo "Unsupported release channel: ${{ inputs.channel }}" >&2
             exit 1
           fi
-          if [[ "${{ inputs.channel }}" == stable && "${{ inputs.tag }}" != "v${{ inputs.version }}" ]]; then
-            echo "Stable tag must be v${{ inputs.version }}" >&2
+          if [[ "${{ inputs.tag }}" != "v${{ inputs.version }}" ]]; then
+            echo "Release tag must be v${{ inputs.version }}" >&2
             exit 1
           fi
           echo "commit=$commit" >> "$GITHUB_OUTPUT"

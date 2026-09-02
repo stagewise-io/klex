@@ -188,11 +188,11 @@ describe('release versions', () => {
     ).toThrow('release tag v1.2.2 does not match v1.2.3');
   });
 
-  it('accepts the mutable nightly release tag', () => {
+  it('accepts the immutable nightly release tag', () => {
     expect(
       resolveApplicationVersion({
         KLEX_RELEASE_CHANNEL: 'nightly',
-        KLEX_RELEASE_TAG: 'nightly',
+        KLEX_RELEASE_TAG: 'v1.2.4-nightly20260902c001',
         KLEX_VERSION: '1.2.4-nightly20260902c001',
       }),
     ).toBe('1.2.4-nightly20260902c001');

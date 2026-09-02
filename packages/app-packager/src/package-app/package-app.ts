@@ -51,15 +51,16 @@ export async function packageApp(
       config,
       workspace,
       runner,
-      prepareRuntime: () =>
+      prepareRuntime: () => {
         adapter.prepareRuntime(
           config.outputPath,
           runner,
           context.environment ?? process.env,
-        ),
+        );
+        adapter.strip(config.outputPath, runner);
+      },
     });
     if (config.platform !== 'win32') chmodSync(config.outputPath, 0o755);
-    adapter.strip(config.outputPath, runner);
     const signature = adapter.sign({
       file: config.outputPath,
       mode: config.signingMode,

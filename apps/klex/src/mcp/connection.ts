@@ -2,6 +2,9 @@ import {
   type CallToolResult,
   Client,
   type Tool as McpToolDefinition,
+  type ReadResourceResult,
+  type Resource,
+  type ResourceTemplateType,
   StreamableHTTPClientTransport,
   type Transport,
   type VersionNegotiationOptions,
@@ -42,6 +45,18 @@ export interface McpConnection {
     input: JsonObject,
     signal: AbortSignal,
   ): Promise<CallToolResult>;
+  listResources(
+    signal: AbortSignal,
+    cursor?: string,
+  ): Promise<{ resources: Resource[]; nextCursor?: string }>;
+  listResourceTemplates(
+    signal: AbortSignal,
+    cursor?: string,
+  ): Promise<{
+    resourceTemplates: ResourceTemplateType[];
+    nextCursor?: string;
+  }>;
+  readResource(uri: string, signal: AbortSignal): Promise<ReadResourceResult>;
   close(): Promise<void>;
 }
 
@@ -101,6 +116,33 @@ class McpServerConnection implements McpConnection {
       { name: tool.name, arguments: input },
       { signal, toolDefinition: tool },
     );
+  }
+
+  async listResources(signal: AbortSignal): Promise<{ resources: Resource[] }> {
+    if (this.closed)
+      throw new Error(`MCP server is unavailable: ${this.namespace}`);
+    const result = await this.client.listResources(undefined, { signal });
+    return { resources: result.resources };
+  }
+
+  async listResourceTemplates(
+    signal: AbortSignal,
+  ): Promise<{ resourceTemplates: ResourceTemplateType[] }> {
+    if (this.closed)
+      throw new Error(`MCP server is unavailable: ${this.namespace}`);
+    const result = await this.client.listResourceTemplates(undefined, {
+      signal,
+    });
+    return { resourceTemplates: result.resourceTemplates };
+  }
+
+  async readResource(
+    uri: string,
+    signal: AbortSignal,
+  ): Promise<ReadResourceResult> {
+    if (this.closed)
+      throw new Error(`MCP server is unavailable: ${this.namespace}`);
+    return this.client.readResource({ uri }, { signal });
   }
 
   async close(): Promise<void> {

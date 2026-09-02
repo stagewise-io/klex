@@ -15,6 +15,7 @@ import { createAudioInputOptimizerExt } from '@/session/chat/extensions/audio-in
 import { createContextCompactionExt } from '@/session/chat/extensions/context-compaction';
 import { createImageInputOptimizerExt } from '@/session/chat/extensions/image-input-optimizer';
 import { createJsReplSandboxExt } from '@/session/chat/extensions/js-repl-sandbox';
+import { createMcpResourceViewerExt } from '@/session/chat/extensions/mcp-resource-viewer';
 import { createRemindersExt } from '@/session/chat/extensions/reminders';
 import { createSoulExt } from '@/session/chat/extensions/soul';
 import {
@@ -140,6 +141,7 @@ async function main(): Promise<void> {
             createImageInputOptimizerExt,
             createAudioInputOptimizerExt,
             createRemindersExt,
+            createMcpResourceViewerExt,
           ],
           dataDirectory: cli.dataDirectory,
           hooks,

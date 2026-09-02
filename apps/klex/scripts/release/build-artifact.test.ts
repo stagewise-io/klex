@@ -106,7 +106,7 @@ describe('release artifact builder', () => {
           channel: 'nightly',
           gitCommit: COMMIT,
           outputDirectory: join(root, 'output'),
-          tag: 'nightly',
+          tag: 'v1.0.1-nightly20260902c001',
           version: '1.0.1-nightly20260902c001',
         },
         {

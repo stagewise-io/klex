@@ -9,6 +9,7 @@ import { createIntrospector } from '@/introspection';
 import { createMcp } from '@/mcp';
 import { createModelCallLogger } from '@/model-call-logger';
 import { createModelProvider } from '@/model-provider';
+import { KLEX_VERSION } from '@/release';
 import { createRouter, type RouterApi } from '@/router';
 import { createChatSession } from '@/session/chat';
 import { createAudioInputOptimizerExt } from '@/session/chat/extensions/audio-input-optimizer';
@@ -47,7 +48,7 @@ const logger = createLogger({
 const spanProcessor = createTelemetrySpanProcessor();
 
 async function main(): Promise<void> {
-  logger.info('Klex Agent v1.0.0');
+  logger.info(`Klex Agent v${KLEX_VERSION}`);
 
   const tracing = createTracing({
     logging: logger,

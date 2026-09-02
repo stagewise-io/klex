@@ -2,6 +2,8 @@ import { parseArgs } from 'node:util';
 
 import { createLogger } from '@stagewise/logger';
 
+import { KLEX_VERSION } from '@/release';
+
 export interface CliOptions {
   dataDirectory: string;
   cloudEnabled: boolean;
@@ -79,7 +81,7 @@ function printHelp(): void {
   const logger = createLogger({ name: 'klex', verbose: true });
   logger.info(
     `
-Klex Agent v1.0.0
+Klex Agent v${KLEX_VERSION}
 
 Usage: klex [options]
 

@@ -1,4 +1,4 @@
-import { cpSync, existsSync, mkdirSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, readdirSync, statSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { dirname, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -10,38 +10,25 @@ import {
   packageApp,
 } from '@stagewise/app-packager';
 
+import { resolveApplicationVersion, resolveReleaseTarget } from '@/release';
+
 const ROOT = resolve(import.meta.dirname, '..');
 const require = createRequire(import.meta.url);
-const LIVEKIT_BINDING_PACKAGES: Partial<
-  Record<NodeJS.Platform, Partial<Record<string, string>>>
-> = {
-  darwin: {
-    arm64: '@livekit/rtc-ffi-bindings-darwin-arm64',
-    x64: '@livekit/rtc-ffi-bindings-darwin-x64',
-  },
-  linux: {
-    arm64: '@livekit/rtc-ffi-bindings-linux-arm64-gnu',
-    x64: '@livekit/rtc-ffi-bindings-linux-x64-gnu',
-  },
-  win32: {
-    x64: '@livekit/rtc-ffi-bindings-win32-x64-msvc',
-  },
-};
 
 export function resolveLiveKitNativeAddon(
   platform: NodeJS.Platform = process.platform,
   architecture: string = process.arch,
 ): string {
-  const packageName = LIVEKIT_BINDING_PACKAGES[platform]?.[architecture];
-  if (!packageName)
-    throw new Error(
-      `LiveKit does not support executable packaging for ${platform}-${architecture}`,
-    );
-  return require.resolve(packageName);
+  const { nativePackageTarget } = resolveReleaseTarget(
+    platform,
+    architecture as NodeJS.Architecture,
+  );
+  return require.resolve(`@livekit/rtc-ffi-bindings-${nativePackageTarget}`);
 }
 
 export interface KlexAgentPackagingOptions {
   readonly environment?: NodeJS.ProcessEnv;
+  readonly platform?: NodeJS.Platform;
   readonly skipNotarize?: boolean;
 }
 
@@ -50,13 +37,13 @@ export function createKlexAgentPackagerConfig(
 ): AppPackagerConfig {
   const environment = options.environment ?? process.env;
   const identity = environment.APPLE_SIGNING_IDENTITY?.trim();
-  const shouldNotarize =
-    !options.skipNotarize &&
-    Boolean(
-      environment.APPLE_ID &&
-        environment.APPLE_PASSWORD &&
-        environment.APPLE_TEAM_ID,
-    );
+  const platform = options.platform ?? process.platform;
+  const releaseBuild = environment.KLEX_RELEASE_CHANNEL !== undefined;
+  if (releaseBuild && options.skipNotarize) {
+    throw new Error('--skip-notarize is not allowed for release builds');
+  }
+  const requiresExecutableSigning =
+    releaseBuild && (platform === 'darwin' || platform === 'win32');
 
   return {
     name: 'klex',
@@ -67,7 +54,7 @@ export function createKlexAgentPackagerConfig(
       'livekit-rtc.node': resolveLiveKitNativeAddon(),
     },
     useCodeCache: true,
-    signing: { mode: 'optional' },
+    signing: { mode: requiresExecutableSigning ? 'required' : 'optional' },
     macos: {
       ...(identity ? { identity } : {}),
       entitlements: {
@@ -75,9 +62,6 @@ export function createKlexAgentPackagerConfig(
         allowUnsignedExecutableMemory: true,
         disableLibraryValidation: true,
       },
-      ...(shouldNotarize
-        ? { notarization: { enabled: true, staple: true } as const }
-        : {}),
     },
   };
 }
@@ -85,7 +69,7 @@ export function createKlexAgentPackagerConfig(
 /**
  * Copies native packages beside the SEA executable.
  *
- * The SEA build virtualizes sharp, ffmpeg-static, and ffprobe-static via
+ * The SEA build virtualizes native-backed packages via
  * nativeShimPlugin (build.ts) so they load from on-disk node_modules/ using
  * createRequire(process.execPath). This function copies all required packages:
  *
@@ -100,11 +84,14 @@ export function createKlexAgentPackagerConfig(
  *
  * 3. **ffprobe-static** — same pattern as ffmpeg-static.
  *
+ * 4. **libsql** + its platform addon — loaded from disk so libsql's dynamic
+ *    `require('@libsql/<target>')` resolves through a normal Node require.
+ *
  * All packages are **mandatory** — if any cannot be found or copied, the
  * build fails. There is no graceful degradation; native media processing
  * (audio transcoding, image resizing, vision fallback) is required at runtime.
  */
-function copyNativeAssets(outputDirectory: string): void {
+export function copyNativeAssets(outputDirectory: string): void {
   const require = createRequire(import.meta.url);
   const destNodeModules = join(outputDirectory, 'node_modules');
   mkdirSync(destNodeModules, { recursive: true });
@@ -151,6 +138,7 @@ function copyNativeAssets(outputDirectory: string): void {
   }
 
   const platformArch = `${process.platform}-${process.arch}`;
+  const { nativePackageTarget } = resolveReleaseTarget();
 
   // sharp JS package + runtime dependencies (all loaded from disk at runtime)
   copyPackage('sharp');
@@ -162,9 +150,24 @@ function copyNativeAssets(outputDirectory: string): void {
   copyPackage(`@img/sharp-${platformArch}`);
   copyPackage(`@img/sharp-libvips-${platformArch}`);
 
-  // audio processing binaries
+  // audio and realtime-media native payloads
   copyPackage('ffmpeg-static');
   copyPackage('ffprobe-static');
+  try {
+    cpSync(
+      resolveLiveKitNativeAddon(),
+      join(outputDirectory, 'livekit-rtc.node'),
+    );
+  } catch (error) {
+    errors.push(
+      `Failed to copy LiveKit RTC addon: ${(error as Error).message}`,
+    );
+  }
+
+  // SQLite native addon and its runtime target loader
+  copyPackage('libsql');
+  copyPackage('@neon-rs/load');
+  copyPackage(`@libsql/${nativePackageTarget}`);
 
   // Verify critical files exist after copy
   const checks: Array<{ name: string; path: string }> = [
@@ -189,6 +192,10 @@ function copyNativeAssets(outputDirectory: string): void {
       ),
     },
     {
+      name: 'libsql native addon',
+      path: join(destNodeModules, '@libsql', nativePackageTarget, 'index.node'),
+    },
+    {
       name: 'ffprobe binary',
       path: join(
         destNodeModules,
@@ -198,6 +205,10 @@ function copyNativeAssets(outputDirectory: string): void {
         process.arch,
         process.platform === 'win32' ? 'ffprobe.exe' : 'ffprobe',
       ),
+    },
+    {
+      name: 'LiveKit RTC addon',
+      path: join(outputDirectory, 'livekit-rtc.node'),
     },
   ];
 
@@ -212,6 +223,36 @@ function copyNativeAssets(outputDirectory: string): void {
       `Native asset packaging failed — media processing will not work at runtime:\n  - ${errors.join('\n  - ')}`,
     );
   }
+}
+
+export function listPackagedCodeFiles(
+  outputDirectory: string,
+  platform: NodeJS.Platform = process.platform,
+): readonly string[] {
+  const executableName = platform === 'win32' ? 'klex.exe' : 'klex';
+  const executablePath = join(outputDirectory, executableName);
+  const files: string[] = [];
+
+  function visit(directory: string): void {
+    for (const entry of readdirSync(directory, { withFileTypes: true })) {
+      const path = join(directory, entry.name);
+      if (entry.isDirectory()) {
+        visit(path);
+      } else if (entry.isFile()) {
+        const executable = (statSync(path).mode & 0o111) !== 0;
+        const nativeExtension = /\.(?:dylib|dll|exe|node)$/i.test(entry.name);
+        if (path === executablePath || nativeExtension || executable)
+          files.push(path);
+      }
+    }
+  }
+
+  visit(outputDirectory);
+  return files.sort((left, right) => {
+    if (left === executablePath) return 1;
+    if (right === executablePath) return -1;
+    return left.localeCompare(right);
+  });
 }
 
 export async function packageKlexAgent(
@@ -229,6 +270,7 @@ export async function packageKlexAgent(
     strict: true,
     allowPositionals: false,
   });
+  resolveApplicationVersion(environment);
   const config = createKlexAgentPackagerConfig({
     environment,
     skipNotarize: values['skip-notarize'],

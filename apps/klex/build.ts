@@ -4,6 +4,8 @@ import { pathToFileURL } from 'node:url';
 import type { BuildOptions } from 'esbuild';
 import * as esbuild from 'esbuild';
 
+import { resolveApplicationVersion } from '@/release';
+
 /**
  * esbuild plugin that resolves the `@/` import alias to `./src/`,
  * matching the tsconfig `paths` configuration.
@@ -30,12 +32,12 @@ const aliasPlugin: esbuild.Plugin = {
 };
 
 /**
- * Virtualizes native packages (sharp, ffmpeg-static, ffprobe-static) so they
+ * Virtualizes native packages (sharp, ffmpeg-static, ffprobe-static, libsql) so they
  * load from the on-disk node_modules/ beside the SEA executable at runtime.
  *
  * The SEA embedder's require() only handles built-in modules — externalized
  * npm packages fail with ERR_UNKNOWN_BUILTIN_MODULE. This plugin replaces
- * imports of these three packages with shim modules that use
+ * imports of these packages with shim modules that use
  * createRequire(process.execPath) to create a proper Node.js require that
  * resolves from the executable's directory.
  *
@@ -46,7 +48,7 @@ const nativeShimPlugin: esbuild.Plugin = {
   name: 'native-shim',
   setup(build) {
     build.onResolve(
-      { filter: /^(sharp|ffmpeg-static|ffprobe-static)$/ },
+      { filter: /^(sharp|ffmpeg-static|ffprobe-static|libsql)$/ },
       (args) => ({ path: args.path, namespace: 'native-shim' }),
     );
     build.onLoad({ filter: /.*/, namespace: 'native-shim' }, (args) => ({
@@ -56,8 +58,13 @@ const nativeShimPlugin: esbuild.Plugin = {
   },
 };
 
+const applicationVersion = resolveApplicationVersion();
+
 const sharedOptions: BuildOptions = {
   tsconfig: 'tsconfig.json',
+  define: {
+    __KLEX_VERSION__: JSON.stringify(applicationVersion),
+  },
   plugins: [aliasPlugin],
   bundle: true,
   platform: 'node',

@@ -1,0 +1,83 @@
+name: Nightly Klex Release
+
+on:
+  schedule:
+    - cron: '17 2 * * *'
+  workflow_dispatch:
+    inputs:
+      date:
+        description: Test-only nightly date override (YYYYMMDD)
+        required: false
+        type: string
+      counter:
+        description: Test-only nightly counter override
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  identity:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    outputs:
+      commit: ${{ steps.release.outputs.commit }}
+      should-release: ${{ steps.release.outputs.should-release }}
+      tag: ${{ steps.version.outputs.tag }}
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: main
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: 10.30.3
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          cache: pnpm
+          node-version: 22.21.1
+      - run: pnpm install --frozen-lockfile
+      - id: version
+        name: Generate nightly version
+        shell: bash
+        env:
+          NIGHTLY_COUNTER: ${{ inputs.counter }}
+          NIGHTLY_DATE: ${{ inputs.date }}
+        run: |
+          args=(--github-output)
+          [[ -z "$NIGHTLY_DATE" ]] || args+=(--date "$NIGHTLY_DATE")
+          [[ -z "$NIGHTLY_COUNTER" ]] || args+=(--counter "$NIGHTLY_COUNTER")
+          pnpm --filter @stagewise/klex exec tsx \
+            scripts/release/nightly-version.ts "${args[@]}" >> "$GITHUB_OUTPUT"
+      - id: release
+        name: Resolve commit and detect changes
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          commit="$(git rev-parse HEAD)"
+          latest_tag="$(git tag --merged HEAD --sort=-creatordate --list 'v*-nightly*' | head -1)"
+          should_release=true
+          if [[ "$EVENT_NAME" == schedule && -n "$latest_tag" ]]; then
+            latest_commit="$(git rev-list -n 1 "$latest_tag")"
+            [[ "$latest_commit" != "$commit" ]] || should_release=false
+          fi
+          echo "commit=$commit" >> "$GITHUB_OUTPUT"
+          echo "should-release=$should_release" >> "$GITHUB_OUTPUT"
+
+  release:
+    needs: identity
+    if: needs.identity.outputs.should-release == 'true'
+    permissions:
+      contents: write
+    uses: ./.github/workflows/_release-klex.yml
+    with:
+      channel: nightly
+      ref: ${{ needs.identity.outputs.commit }}
+      tag: ${{ needs.identity.outputs.tag }}
+      version: ${{ needs.identity.outputs.version }}
+    secrets: inherit

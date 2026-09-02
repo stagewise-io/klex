@@ -1,0 +1,331 @@
+name: _Release Klex (Reusable)
+
+on:
+  workflow_call:
+    inputs:
+      channel:
+        description: Release channel (stable or nightly)
+        required: true
+        type: string
+      ref:
+        description: Immutable commit or ref to build
+        required: true
+        type: string
+      tag:
+        description: GitHub Release tag
+        required: true
+        type: string
+      version:
+        description: Canonical Klex version
+        required: true
+        type: string
+    secrets:
+      APPLE_ID:
+        required: false
+      APPLE_PASSWORD:
+        required: false
+      APPLE_TEAM_ID:
+        required: false
+      APPLE_SIGNING_IDENTITY:
+        required: false
+      MACOS_CERT_P12_BASE64:
+        required: false
+      MACOS_CERT_P12_PASSWORD:
+        required: false
+      AZURE_TENANT_ID:
+        required: false
+      AZURE_CLIENT_ID:
+        required: false
+      AZURE_CLIENT_SECRET:
+        required: false
+      AZURE_ACCOUNT_NAME:
+        required: false
+      AZURE_ACCOUNT_ENDPOINT_URI:
+        required: false
+      AZURE_CERTIFICATE_PROFILE_NAME:
+        required: false
+
+permissions:
+  contents: read
+
+concurrency:
+  cancel-in-progress: false
+  group: klex-release-${{ inputs.tag }}
+
+env:
+  NODE_VERSION: 22.21.1
+  PNPM_VERSION: 10.30.3
+
+jobs:
+  prepare:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 5
+    outputs:
+      commit: ${{ steps.identity.outputs.commit }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ inputs.ref }}
+      - id: identity
+        name: Resolve immutable release identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          commit="$(git rev-parse HEAD)"
+          if [[ "${{ inputs.channel }}" != stable && "${{ inputs.channel }}" != nightly ]]; then
+            echo "Unsupported release channel: ${{ inputs.channel }}" >&2
+            exit 1
+          fi
+          if [[ "${{ inputs.channel }}" == stable && "${{ inputs.tag }}" != "v${{ inputs.version }}" ]]; then
+            echo "Stable tag must be v${{ inputs.version }}" >&2
+            exit 1
+          fi
+          echo "commit=$commit" >> "$GITHUB_OUTPUT"
+
+  checks:
+    needs: prepare
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+          ref: ${{ needs.prepare.outputs.commit }}
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          cache: pnpm
+          node-version: ${{ env.NODE_VERSION }}
+      - run: pnpm install --frozen-lockfile
+      - name: Validate release code
+        run: |
+          pnpm --filter @stagewise/klex exec vitest run scripts/release src/release/release.test.ts scripts/package-exe.test.ts
+          pnpm --filter @stagewise/klex typecheck
+          pnpm --filter @stagewise/app-packager test
+          pnpm --filter @stagewise/app-packager typecheck
+
+  build:
+    name: Build ${{ matrix.target }}
+    needs: [prepare, checks]
+    environment: Release
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-26
+            target: darwin-arm64
+          - runner: macos-26-intel
+            target: darwin-x64
+          - runner: ubuntu-24.04-arm
+            target: linux-arm64-gnu
+          - runner: ubuntu-22.04
+            target: linux-x64-gnu
+          - runner: windows-2022
+            target: windows-x64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+          ref: ${{ needs.prepare.outputs.commit }}
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          cache: pnpm
+          node-version: ${{ env.NODE_VERSION }}
+      - run: pnpm install --frozen-lockfile
+
+      - name: Verify runner architecture
+        shell: bash
+        run: |
+          set -euo pipefail
+          actual="$(node -p 'process.arch')"
+          case "${{ matrix.target }}" in
+            *-arm64*) expected=arm64 ;;
+            *) expected=x64 ;;
+          esac
+          test "$actual" = "$expected" || {
+            echo "Expected $expected runner, got $actual" >&2
+            exit 1
+          }
+
+      - name: Import macOS signing certificate
+        if: runner.os == 'macOS'
+        uses: apple-actions/import-codesign-certs@63fff01cd422d4b7b855d40ca1e9d34d2de9427d # v3
+        with:
+          p12-file-base64: ${{ secrets.MACOS_CERT_P12_BASE64 }}
+          p12-password: ${{ secrets.MACOS_CERT_P12_PASSWORD }}
+
+      - name: Configure Azure Trusted Signing
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $nugetDir = Join-Path '${{ runner.temp }}' 'nuget'
+          nuget install Microsoft.Trusted.Signing.Client -Version 1.0.95 -OutputDirectory $nugetDir -Source https://api.nuget.org/v3/index.json
+          $dlib = Get-ChildItem $nugetDir -Recurse -Filter Azure.CodeSigning.Dlib.dll |
+            Where-Object FullName -Match 'x64' | Select-Object -First 1 -ExpandProperty FullName
+          $signTool = Get-ChildItem 'C:\Program Files (x86)\Windows Kits\10\bin' -Recurse -Filter signtool.exe |
+            Where-Object FullName -Match 'x64' | Select-Object -First 1 -ExpandProperty FullName
+          if (-not $dlib -or -not $signTool) { throw 'Azure Trusted Signing tools not found' }
+          $metadata = Join-Path '${{ runner.temp }}' 'azure-signing-metadata.json'
+          @{
+            Endpoint = '${{ secrets.AZURE_ACCOUNT_ENDPOINT_URI }}'
+            CodeSigningAccountName = '${{ secrets.AZURE_ACCOUNT_NAME }}'
+            CertificateProfileName = '${{ secrets.AZURE_CERTIFICATE_PROFILE_NAME }}'
+          } | ConvertTo-Json | Set-Content -Encoding utf8 $metadata
+          "AZURE_CODE_SIGNING_DLIB=$dlib" >> $env:GITHUB_ENV
+          "AZURE_METADATA_JSON=$metadata" >> $env:GITHUB_ENV
+          "SIGNTOOL_PATH=$signTool" >> $env:GITHUB_ENV
+
+      - name: Build, sign, smoke-test, and archive
+        run: >-
+          pnpm --filter @stagewise/klex release:artifact --
+          --version "${{ inputs.version }}"
+          --channel "${{ inputs.channel }}"
+          --tag "${{ inputs.tag }}"
+          --git-commit "${{ needs.prepare.outputs.commit }}"
+          --output-directory release-output
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          KLEX_RELEASE: '1'
+          KLEX_RELEASE_CHANNEL: ${{ inputs.channel }}
+          KLEX_VERSION: ${{ inputs.version }}
+
+      - name: Enforce Linux glibc baseline
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="$(find apps/klex/release-output -maxdepth 1 -name '*.tar.gz' -print -quit)"
+          mkdir glibc-audit
+          tar -xzf "$archive" -C glibc-audit
+          highest="$(find glibc-audit -type f -exec grep -ahoE 'GLIBC_[0-9]+\.[0-9]+' {} + 2>/dev/null | sort -Vu | tail -1 || true)"
+          test -n "$highest" || { echo 'No GLIBC symbol versions found' >&2; exit 1; }
+          first="$(printf '%s\n%s\n' GLIBC_2.28 "$highest" | sort -V | head -1)"
+          test "$first" = "$highest" || {
+            echo "Artifact requires $highest; maximum supported baseline is GLIBC_2.28" >&2
+            exit 1
+          }
+
+      - name: Upload target artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          if-no-files-found: error
+          name: klex-${{ matrix.target }}
+          path: |
+            apps/klex/release-output/*.tar.gz
+            apps/klex/release-output/*.zip
+            apps/klex/release-output/*.sha256
+            apps/klex/release-output/build-metadata-*.json
+          retention-days: 14
+
+  aggregate:
+    needs: [prepare, build]
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+          ref: ${{ needs.prepare.outputs.commit }}
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          cache: pnpm
+          node-version: ${{ env.NODE_VERSION }}
+      - run: pnpm install --frozen-lockfile
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          merge-multiple: true
+          path: release-output
+          pattern: klex-*
+      - name: Validate and assemble release metadata
+        run: >-
+          pnpm --filter @stagewise/klex release:assemble --
+          --version "${{ inputs.version }}"
+          --channel "${{ inputs.channel }}"
+          --tag "${{ inputs.tag }}"
+          --git-commit "${{ needs.prepare.outputs.commit }}"
+          --repository "${{ github.repository }}"
+          --input-directory "../../release-output"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          if-no-files-found: error
+          name: klex-release-${{ inputs.version }}
+          path: release-output/
+          retention-days: 14
+
+  publish:
+    needs: [prepare, aggregate]
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: klex-release-${{ inputs.version }}
+          path: release-output
+      - name: Publish immutable stable or rolling nightly release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mapfile -t files < <(find release-output -maxdepth 1 -type f \( \
+            -name '*.tar.gz' -o -name '*.zip' -o -name '*.sha256' -o \
+            -name 'checksums.txt' -o -name 'release-manifest.json' \
+          \) -print | sort)
+          if [[ "${#files[@]}" -ne 13 ]]; then
+            printf 'Expected 13 public release files, found %s:\n' "${#files[@]}" >&2
+            printf '  %s\n' "${files[@]}" >&2
+            exit 1
+          fi
+
+          if [[ "${{ inputs.channel }}" == stable ]]; then
+            if gh release view "${{ inputs.tag }}" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+              existing_assets="$(gh release view "${{ inputs.tag }}" \
+                --json assets \
+                --jq '.assets | length' \
+                --repo "${{ github.repository }}")"
+              if [[ "$existing_assets" == 13 ]]; then
+                echo "Stable release ${{ inputs.tag }} is already complete; leaving it immutable"
+                exit 0
+              fi
+              echo "Stable release ${{ inputs.tag }} exists with $existing_assets assets; refusing to mutate it" >&2
+              exit 1
+            fi
+            gh release create "${{ inputs.tag }}" "${files[@]}" \
+              --generate-notes \
+              --latest \
+              --repo "${{ github.repository }}" \
+              --target "${{ needs.prepare.outputs.commit }}" \
+              --title "Klex ${{ inputs.version }}" 
+          else
+            gh release delete "${{ inputs.tag }}" \
+              --cleanup-tag \
+              --repo "${{ github.repository }}" \
+              --yes 2>/dev/null || true
+            gh release create "${{ inputs.tag }}" "${files[@]}" \
+              --generate-notes \
+              --prerelease \
+              --repo "${{ github.repository }}" \
+              --target "${{ needs.prepare.outputs.commit }}" \
+              --title "Klex nightly (${{ inputs.version }})"
+          fi

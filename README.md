@@ -2,29 +2,29 @@
 
 An isolated agent that excels at memory, self-improvement, and efficient orchestration.
 
-## Quick Start
+## Installation
 
-### Linux, macOS, WSL
+Download the archive for your operating system and architecture from
+[GitHub Releases](../../releases). Verify it with the published checksum,
+extract the complete directory, and run `klex` (`klex.exe` on Windows) from
+that directory.
+
+Published builds support macOS on Apple Silicon and Intel, glibc-based Linux
+on ARM64 and x64, and Windows on x64. Klex is distributed as a relocatable
+directory because its executable uses native runtime dependencies. Do not copy
+only the main executable. Public installer scripts are not available yet.
+
+Launch it from the extracted directory:
 
 ```bash
-# Install Klex on any machine:
-curl -fsSL https://klex-agent.stagewise.io/install.sh | bash
-
-# Start the Klex setup
-mkdir my-klex-agent
-cd my-klex-agent
-klex
+./klex --help
 ```
 
-### Windows
-```ps1
-# Install Klex
-iex (irm https://klex-agent.stagewise.io/install.ps1)
-
-mkdir my-first-klex-agent
-cd my-first-klex-agent
-klex
+```powershell
+.\klex.exe --help
 ```
+
+Release operators should see [apps/klex/RELEASING.md](apps/klex/RELEASING.md).
 
 
 ## Klex is computer-agnostic

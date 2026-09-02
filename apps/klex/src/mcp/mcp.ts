@@ -12,6 +12,7 @@ import type {
   RealtimeMediaNotification,
 } from '@stagewise/mcp-extension-realtime-media';
 
+import type { CloudConnectivity } from '@/cloud-connectivity';
 import type { Config, McpServerConfig } from '@/config';
 import {
   createInMemoryPushNotificationInbox,
@@ -164,6 +165,7 @@ export interface McpDependencies {
   config: Config;
   realtimeMediaCapability?: RealtimeMediaExtensionCapability;
   cloudEnabled?: boolean;
+  cloudConnectivity?: CloudConnectivity;
   dataDirectory?: string;
   connect?: McpConnectionFactory;
 }
@@ -220,6 +222,7 @@ class McpModule implements Mcp {
       config: Config;
       pushNotificationInbox: PushNotificationInbox;
       realtimeMediaCapability: RealtimeMediaExtensionCapability | undefined;
+      cloudConnectivity: CloudConnectivity | undefined;
       connect: McpConnectionFactory;
       closeOAuth: () => Promise<void>;
     },
@@ -480,6 +483,7 @@ class McpModule implements Mcp {
         config: runtime.config,
         signal: attempt.controller.signal,
         realtimeMediaCapability: this.deps.realtimeMediaCapability,
+        cloudConnectivity: this.deps.cloudConnectivity,
         onToolsChanged: (changed) => {
           if (!this.isCurrentConnection(runtime, changed)) return;
           this.publishRegistry();
@@ -554,7 +558,7 @@ class McpModule implements Mcp {
         if (isRetry) {
           this.deps.logger.debug(
             {
-              error,
+              error: safeDiagnosticError(error),
               namespace: runtime.namespace,
               retryAttempt: runtime.retryAttempt,
             },
@@ -562,7 +566,10 @@ class McpModule implements Mcp {
           );
         } else {
           this.deps.logger.warn(
-            { error, namespace: runtime.namespace },
+            {
+              error: safeDiagnosticError(error),
+              namespace: runtime.namespace,
+            },
             'MCP connection failed — will retry with exponential backoff',
           );
         }
@@ -1021,6 +1028,7 @@ export function createMcp(deps: McpDependencies): Mcp {
     config: deps.config,
     pushNotificationInbox: createInMemoryPushNotificationInbox(),
     realtimeMediaCapability: deps.realtimeMediaCapability,
+    cloudConnectivity: deps.cloudConnectivity,
     connect,
     closeOAuth: () => coordinator?.close() ?? Promise.resolve(),
   });
@@ -1028,6 +1036,23 @@ export function createMcp(deps: McpDependencies): Mcp {
 
 function signature(config: McpServerConfig): string {
   return canonicalConfigSignature(config);
+}
+
+function safeDiagnosticError(error: unknown): {
+  name: string;
+  message: string;
+} {
+  const name = error instanceof Error ? error.name : 'Error';
+  const message = error instanceof Error ? error.message : String(error);
+  return {
+    name,
+    message: message
+      .replace(/Bearer\s+[^\s,;]+/gi, 'Bearer [REDACTED]')
+      .replace(
+        /(["']?(?:authorization|access_token|client_assertion)["']?\s*[:=]\s*["']?)[^\s,"';]+/gi,
+        '$1[REDACTED]',
+      ),
+  };
 }
 
 function abortableDelay(

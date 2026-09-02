@@ -15,13 +15,6 @@ function escapeXmlText(value: string): string {
     .replaceAll('>', '&gt;');
 }
 
-/** Mirrors the converter's escapeXmlAttr for attribute-value expectations. */
-function escapeXmlAttr(value: string): string {
-  return escapeXmlText(value)
-    .replaceAll('"', '&quot;')
-    .replaceAll("'", '&apos;');
-}
-
 // --- mocks ---
 
 vi.mock('ai', async (importOriginal) => {
@@ -293,6 +286,72 @@ describe('data-context materialization', () => {
       url: 'data:audio/ogg;base64,not valid base64!',
     });
   });
+
+  it('materializes embedded binary resources as normalized file parts', async () => {
+    await convertToModelMessagesExtended(
+      [
+        makeMessage([
+          makeContextPart('slack', {}, [
+            { type: 'text', text: 'document' },
+            {
+              type: 'resource',
+              resource: {
+                uri: 'slack://T1/files/F1',
+                mimeType: ' APPLICATION/PDF ',
+                blob: 'ZG9j\n',
+              },
+            },
+            image,
+            audio,
+          ]),
+        ]),
+      ],
+      makeTransformers(),
+    );
+
+    const parts = vi
+      .mocked(convertToModelMessages)
+      .mock.calls.at(-1)?.[0][0]?.parts;
+    expect(parts).toContainEqual({
+      type: 'file',
+      mediaType: 'application/pdf',
+      url: 'data:application/pdf;base64,ZG9j',
+    });
+    expect(parts?.findIndex((part) => part.type === 'file')).toBeLessThan(
+      parts?.findLastIndex((part) => part.type === 'file') ?? 0,
+    );
+  });
+
+  it.each([undefined, '   '])(
+    'retains a textual fallback for blobs with MIME type %s',
+    async (mimeType) => {
+      await convertToModelMessagesExtended(
+        [
+          makeMessage([
+            makeContextPart('slack', {}, [
+              {
+                type: 'resource',
+                resource: {
+                  uri: 'slack://T1/files/F1',
+                  ...(mimeType === undefined ? {} : { mimeType }),
+                  blob: 'aGVsbG8<&',
+                },
+              },
+            ]),
+          ]),
+        ],
+        makeTransformers(),
+      );
+
+      const parts = vi
+        .mocked(convertToModelMessages)
+        .mock.calls.at(-1)?.[0][0]?.parts;
+      expect(parts).toContainEqual({
+        type: 'text',
+        text: '<blob>aGVsbG8&lt;&amp;</blob>',
+      });
+    },
+  );
 
   it('passes image data through as a file part without validation', async () => {
     await convertToModelMessagesExtended(

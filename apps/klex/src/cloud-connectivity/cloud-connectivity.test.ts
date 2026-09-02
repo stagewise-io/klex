@@ -48,6 +48,27 @@ import { performEnrollment, promptEnrollmentCode } from './enrollment';
 describe('CloudConnectivity', () => {
   let dir: string;
 
+  it('trusts only the exact configured Cloud authorization server', () => {
+    const cloud = createCloudConnectivity({
+      logging,
+      dataDirectory: '/unused',
+      cloudEnabled: true,
+      cloudBaseUrl: 'https://preview.example/deployment',
+      enrollmentToken: undefined,
+    });
+
+    expect(
+      cloud.isTrustedAuthorizationServer('https://preview.example/api/auth'),
+    ).toBe(true);
+    expect(
+      cloud.isTrustedAuthorizationServer('https://preview.example/api/auth/'),
+    ).toBe(false);
+    expect(
+      cloud.isTrustedAuthorizationServer('https://cloud.klex.bot/api/auth'),
+    ).toBe(false);
+    expect(cloud.isTrustedAuthorizationServer('not a URL')).toBe(false);
+  });
+
   beforeEach(async () => {
     dir = await makeTempDir();
     vi.mocked(performEnrollment).mockReset();
@@ -73,7 +94,7 @@ describe('CloudConnectivity', () => {
     expect(cloud.isEnrolled()).toBe(false);
 
     await expect(
-      cloud.getAccessToken('https://api.klex.bot', ['agent']),
+      cloud.getAccessToken('https://api.klex.bot', ['mcp:use']),
     ).rejects.toThrow('Cloud connectivity is disabled');
 
     await cloud.close();
@@ -96,7 +117,7 @@ describe('CloudConnectivity', () => {
     expect(cloud.isEnrolled()).toBe(false);
 
     await expect(
-      cloud.getAccessToken('https://api.klex.bot', ['agent']),
+      cloud.getAccessToken('https://api.klex.bot', ['mcp:use']),
     ).rejects.toThrow('Agent is not enrolled');
 
     await cloud.close();

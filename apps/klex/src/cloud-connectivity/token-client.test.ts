@@ -9,7 +9,9 @@ const logger = logging.child({ name: 'token-client', bindings: {} });
 
 const mockCloudBaseUrl = 'https://cloud.test.klex.bot';
 const mockClientId = 'test-client-id';
-const mockTokenEndpoint = `${mockCloudBaseUrl}/api/auth/oauth2/token`;
+const mockIssuer = `${mockCloudBaseUrl}/api/auth`;
+const mockDiscoveryEndpoint = `${mockIssuer}/.well-known/oauth-authorization-server`;
+const mockTokenEndpoint = `${mockIssuer}/oauth2/token`;
 
 // Helper: create a real Ed25519 private key via Web Crypto API
 async function mockPrivateKey(): Promise<CryptoKey> {
@@ -34,7 +36,7 @@ function createMockFetch(tokenBody: {
     if (url.includes('.well-known')) {
       return new Response(
         JSON.stringify({
-          issuer: mockCloudBaseUrl,
+          issuer: mockIssuer,
           token_endpoint: mockTokenEndpoint,
         }),
         { status: 200, headers: { 'Content-Type': 'application/json' } },
@@ -66,7 +68,7 @@ describe('TokenClient', () => {
       access_token: 'test-token-123',
       token_type: 'Bearer',
       expires_in: 3600,
-      scope: 'agent mcp:access',
+      scope: 'mcp:use tunnel:connect',
     });
     globalThis.fetch = fetchSpy as unknown as typeof globalThis.fetch;
 
@@ -79,18 +81,19 @@ describe('TokenClient', () => {
     });
 
     const token = await client.getAccessToken('https://api.test.klex.bot', [
-      'agent',
-      'mcp:access',
+      'mcp:use',
+      'tunnel:connect',
     ]);
 
     expect(token).toBe('test-token-123');
     // 1 discovery + 1 token request = 2 fetches
     expect(fetchSpy).toHaveBeenCalledTimes(2);
+    expect(fetchSpy).toHaveBeenNthCalledWith(1, new URL(mockDiscoveryEndpoint));
 
     // Second call should use cache — no new fetches
     const token2 = await client.getAccessToken('https://api.test.klex.bot', [
-      'agent',
-      'mcp:access',
+      'mcp:use',
+      'tunnel:connect',
     ]);
     expect(token2).toBe('test-token-123');
     expect(fetchSpy).toHaveBeenCalledTimes(2);
@@ -103,7 +106,7 @@ describe('TokenClient', () => {
       access_token: 'expired-token',
       token_type: 'Bearer',
       expires_in: 1, // 1 second
-      scope: 'agent',
+      scope: 'mcp:use',
     });
     globalThis.fetch = fetchSpy as unknown as typeof globalThis.fetch;
 
@@ -115,7 +118,7 @@ describe('TokenClient', () => {
       privateKey,
     });
 
-    await client.getAccessToken('https://api.test.klex.bot', ['agent']);
+    await client.getAccessToken('https://api.test.klex.bot', ['mcp:use']);
     // 1 discovery + 1 token = 2
     expect(fetchSpy).toHaveBeenCalledTimes(2);
 
@@ -125,7 +128,7 @@ describe('TokenClient', () => {
     vi.advanceTimersByTime(70_000);
 
     const token = await client.getAccessToken('https://api.test.klex.bot', [
-      'agent',
+      'mcp:use',
     ]);
     // Discovery cached. 1 proactive refresh + 1 expiry re-fetch = 2 more
     expect(token).toBe('expired-token');
@@ -139,7 +142,7 @@ describe('TokenClient', () => {
       access_token: 'cached-token',
       token_type: 'Bearer',
       expires_in: 3600,
-      scope: 'agent',
+      scope: 'mcp:use',
     });
     globalThis.fetch = fetchSpy as unknown as typeof globalThis.fetch;
 
@@ -151,13 +154,13 @@ describe('TokenClient', () => {
       privateKey,
     });
 
-    await client.getAccessToken('https://api.test.klex.bot', ['agent']);
+    await client.getAccessToken('https://api.test.klex.bot', ['mcp:use']);
     // 1 discovery + 1 token = 2
     expect(fetchSpy).toHaveBeenCalledTimes(2);
 
     client.invalidate('https://api.test.klex.bot');
 
-    await client.getAccessToken('https://api.test.klex.bot', ['agent']);
+    await client.getAccessToken('https://api.test.klex.bot', ['mcp:use']);
     // Discovery cached, only 1 new token fetch
     expect(fetchSpy).toHaveBeenCalledTimes(3);
 
@@ -169,7 +172,7 @@ describe('TokenClient', () => {
       access_token: 'will-be-closed',
       token_type: 'Bearer',
       expires_in: 3600,
-      scope: 'agent',
+      scope: 'mcp:use',
     });
     globalThis.fetch = fetchSpy as unknown as typeof globalThis.fetch;
 
@@ -181,7 +184,7 @@ describe('TokenClient', () => {
       privateKey,
     });
 
-    await client.getAccessToken('https://api.test.klex.bot', ['agent']);
+    await client.getAccessToken('https://api.test.klex.bot', ['mcp:use']);
     client.close();
 
     // Should not throw on second close
@@ -193,7 +196,7 @@ describe('TokenClient', () => {
       access_token: 'refreshed-token',
       token_type: 'Bearer',
       expires_in: 100, // 100 seconds
-      scope: 'agent',
+      scope: 'mcp:use',
     });
     globalThis.fetch = fetchSpy as unknown as typeof globalThis.fetch;
 
@@ -205,7 +208,7 @@ describe('TokenClient', () => {
       privateKey,
     });
 
-    await client.getAccessToken('https://api.test.klex.bot', ['agent']);
+    await client.getAccessToken('https://api.test.klex.bot', ['mcp:use']);
     // 1 discovery + 1 token = 2
     expect(fetchSpy).toHaveBeenCalledTimes(2);
 
@@ -227,7 +230,7 @@ describe('TokenClient', () => {
       if (url.includes('.well-known')) {
         return new Response(
           JSON.stringify({
-            issuer: mockCloudBaseUrl,
+            issuer: mockIssuer,
             token_endpoint: mockTokenEndpoint,
           }),
           { status: 200, headers: { 'Content-Type': 'application/json' } },
@@ -253,7 +256,7 @@ describe('TokenClient', () => {
     });
 
     await expect(
-      client.getAccessToken('https://api.test.klex.bot', ['agent']),
+      client.getAccessToken('https://api.test.klex.bot', ['mcp:use']),
     ).rejects.toThrow();
 
     client.close();
@@ -264,7 +267,7 @@ describe('TokenClient', () => {
       access_token: 'dedup-token',
       token_type: 'Bearer',
       expires_in: 3600,
-      scope: 'agent',
+      scope: 'mcp:use',
     });
     globalThis.fetch = fetchSpy as unknown as typeof globalThis.fetch;
 
@@ -279,8 +282,8 @@ describe('TokenClient', () => {
     // Two concurrent requests for the same resource should result in a
     // single token fetch (plus the discovery request).
     const [token1, token2] = await Promise.all([
-      client.getAccessToken('https://api.test.klex.bot', ['agent']),
-      client.getAccessToken('https://api.test.klex.bot', ['agent']),
+      client.getAccessToken('https://api.test.klex.bot', ['mcp:use']),
+      client.getAccessToken('https://api.test.klex.bot', ['mcp:use']),
     ]);
 
     expect(token1).toBe('dedup-token');

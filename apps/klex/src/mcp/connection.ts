@@ -24,6 +24,7 @@ import {
   registerRealtimeMediaClient,
 } from '@stagewise/mcp-extension-realtime-media/client';
 
+import type { CloudConnectivity } from '@/cloud-connectivity';
 import type { McpServerConfig } from '@/config';
 import type { JsonObject } from '@/tool-provider';
 
@@ -31,6 +32,7 @@ import type {
   OAuthAuthorizationSession,
   OAuthAuthorizationSessionFactory,
 } from './oauth/callback';
+import { createDiscoveryAuthenticatedFetch } from './oauth/protected-resource';
 import { McpOAuthProvider } from './oauth/provider';
 import type { McpOAuthStore } from './oauth/store';
 
@@ -61,6 +63,7 @@ export interface ConnectMcpServerOptions {
   config: McpServerConfig;
   signal: AbortSignal;
   realtimeMediaCapability?: RealtimeMediaExtensionCapability;
+  cloudConnectivity?: CloudConnectivity;
   onToolsChanged(connection: McpConnection): void;
   onPushNotification(
     connection: McpConnection,
@@ -167,7 +170,11 @@ export async function connectMcpServer(
       })
     : undefined;
   const oauth = await createOAuthTransportOptions(options);
-  let transport = createTransport(options.config, oauth?.provider);
+  let transport = createTransport(
+    options.config,
+    oauth?.provider,
+    options.cloudConnectivity,
+  );
   client.onclose = () => {
     if (connection && !expectedClose) options.onDisconnect(connection);
   };
@@ -195,7 +202,11 @@ export async function connectMcpServer(
       } catch (finishError) {
         throw new McpAuthorizationRequiredError(finishError);
       }
-      transport = createTransport(options.config, oauth.provider);
+      transport = createTransport(
+        options.config,
+        oauth.provider,
+        options.cloudConnectivity,
+      );
       options.onAuthorizationStatus?.('connecting');
       await client.connect(transport, { signal: options.signal });
     }
@@ -302,9 +313,21 @@ export function shouldUseAutomaticOAuth(config: McpServerConfig): boolean {
   );
 }
 
+export function shouldUseCloudAuthentication(
+  config: McpServerConfig,
+  cloudConnectivity?: CloudConnectivity,
+): cloudConnectivity is CloudConnectivity {
+  return (
+    cloudConnectivity?.isCloudEnabled() === true &&
+    cloudConnectivity.isEnrolled() &&
+    shouldUseAutomaticOAuth(config)
+  );
+}
+
 function createTransport(
   config: McpServerConfig,
   authProvider?: OAuthClientProvider,
+  cloudConnectivity?: CloudConnectivity,
 ): Transport {
   if ('command' in config) {
     return new StdioClientTransport({
@@ -317,6 +340,14 @@ function createTransport(
     ...(authProvider ? { authProvider } : {}),
     ...(config.headers
       ? { requestInit: { headers: new Headers(config.headers) } }
+      : {}),
+    ...(shouldUseCloudAuthentication(config, cloudConnectivity)
+      ? {
+          fetch: createDiscoveryAuthenticatedFetch(
+            cloudConnectivity,
+            config.url,
+          ),
+        }
       : {}),
     reconnectionOptions: {
       initialReconnectionDelay: 1_000,

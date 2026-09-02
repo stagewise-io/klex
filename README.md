@@ -1,12 +1,6 @@
-<p align="center">
-  <img src="assets/brand/icon.svg" alt="Klex Bot logo" width="120" height="120">
-</p>
+<img src="assets/brand/wordmark.png" alt="Klex Bot" width="240">
 
-<h1 align="center">Klex Bot</h1>
-
-<p align="center">
-  An isolated agent that excels at memory, self-improvement, and efficient orchestration.
-</p>
+An isolated agent that excels at memory, self-improvement, and efficient orchestration.
 
 ## Quick Start
 

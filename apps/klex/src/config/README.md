@@ -49,31 +49,69 @@ test suite is network-independent. Set `OPENAI_REALTIME_INTEGRATION=1` and
 `OPENAI_API_KEY`, then run `pnpm test:openai-realtime` from `apps/klex` for the
 opt-in provider connection check.
 
-## Cloud MCP authentication
+## MCP authentication
 
-HTTP MCP servers can opt into Klex Cloud authentication with `useCloudAuth`:
+HTTP MCP servers automatically negotiate OAuth when they return an authorization
+challenge. No Klex-specific authentication setting is required:
 
 ```json
 {
   "mcpServers": {
-    "slack": {
-      "url": "https://cloud.klex.bot/api/integrations/slack/mcp",
-      "useCloudAuth": true
+    "accounting": {
+      "url": "https://mcp.example.com/mcp"
     }
   }
 }
 ```
 
-Klex sends the first request without a Cloud token. After a `401` response, it
-follows the server's RFC 9728 protected-resource challenge. The advertised
-metadata URL must use HTTP(S), contain no credentials, and share the configured
-MCP server's origin. The authorization server must exactly match the configured
-Klex Cloud issuer, and the metadata resource must exactly match the configured
-MCP URL. Klex then uses its enrolled machine identity to obtain a
-resource-specific token with the challenged scopes.
+Klex also accepts `"type": "http"` and `"type": "streamable-http"` for
+compatibility with MCP configurations used by other clients. An explicitly
+configured `Authorization` header takes precedence and disables automatic OAuth.
+OAuth is not used for stdio servers.
 
-Cloud authentication requires enabled, enrolled Cloud connectivity. Klex caches
-the validated discovery result and access token. A later `401` invalidates the
-resource-specific token and retries once. Tokens are attached only to requests
-for the validated canonical resource and never to metadata requests, redirects,
-or foreign resources. Stdio MCP servers do not use Cloud authentication.
+For non-Cloud authorization servers, Klex opens the provider consent page in the
+system browser and accepts the callback on a temporary `127.0.0.1` port. This
+flow is active regardless of cloud connectivity. If the browser cannot be opened,
+Klex prints the consent URL for manual use. Authorization is canceled when Klex
+shuts down and times out after five minutes. Tokens, client registration data,
+PKCE material, and discovery state are stored with owner-only permissions in
+`credentials/mcp-oauth.json` under the data directory; they are not written to
+`config.json` or returned by the Admin API. Cloud-hosted authorization, where the
+consent window and callback live in Klex Cloud instead of a local browser, is
+planned; until then consent happens on the machine running Klex.
+
+When cloud connectivity is enabled, Klex first follows the server's RFC 9728
+protected-resource challenge. The advertised metadata URL must use HTTP(S), have
+no embedded credentials, and share the configured MCP server's origin. If the
+advertised authorization server exactly matches
+`<configured-cloud-base-url>/api/auth`, Klex verifies that the metadata resource
+exactly equals the configured MCP URL and that all challenged scopes are
+supported. It then uses the enrolled machine identity to obtain an
+audience-specific token. Hostname patterns are not trusted, so production and
+preview deployments use the same issuer-based flow.
+
+Trusted Cloud discovery requires enabled, enrolled Cloud connectivity. Klex
+caches the validated discovery result and access token. A later 401 invalidates
+the resource-specific token and retries once; a second 401 is returned without
+another retry. Tokens are attached only to requests for the validated canonical
+resource and never to metadata requests or foreign resources. Servers whose
+issuer is not Klex Cloud fall through to the generic flow described above. The
+Admin API exposes only sanitized lifecycle states (`authorization_required` and
+`authorizing`), never authorization URLs, callback parameters, issuers, or
+credentials.
+
+A Klex Cloud MCP server is therefore configured with only its URL:
+
+```json
+{
+  "mcpServers": {
+    "slack": {
+      "url": "https://cloud.klex.bot/api/integrations/slack/mcp"
+    }
+  }
+}
+```
+
+Incoming Slack notifications use at-least-once delivery. Klex subscribes before
+draining persisted events and deduplicates by `eventId`, so reconnecting after a
+process or network interruption does not lose accepted Slack events.

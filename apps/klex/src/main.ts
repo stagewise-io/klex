@@ -108,6 +108,7 @@ async function main(): Promise<void> {
       logging: logger,
       config,
       realtimeMediaCapability,
+      dataDirectory: cli.dataDirectory,
       cloudConnectivity,
     });
     const introspector = createIntrospector({ logging: logger });

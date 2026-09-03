@@ -6,7 +6,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { PackagedAppArtifact } from '@stagewise/app-packager';
 
-import { buildReleaseArtifact } from './build-artifact';
+import { buildReleaseArtifact, resolveArchiveCommand } from './build-artifact';
 
 const COMMIT = '0123456789abcdef0123456789abcdef01234567';
 
@@ -43,6 +43,25 @@ function createPackagedDistribution(
     },
   };
 }
+
+describe('release archive commands', () => {
+  it('passes Windows paths as PowerShell literals', () => {
+    const command = resolveArchiveCommand(
+      "D:\\release stage\\klex's package",
+      "D:\\release output\\klex's.zip",
+      'win32',
+    );
+
+    expect(command).toEqual({
+      arguments: [
+        '-NoProfile',
+        '-Command',
+        "Compress-Archive -LiteralPath 'D:\\release stage\\klex''s package' -DestinationPath 'D:\\release output\\klex''s.zip' -Force",
+      ],
+      command: 'powershell',
+    });
+  });
+});
 
 describe('release artifact builder', () => {
   it('stages, smokes, archives, hashes, and describes a Linux build', async () => {

@@ -238,28 +238,47 @@ function isMachOFile(file: string): boolean {
   return runCommand('file', ['--brief', file]).includes('Mach-O');
 }
 
+export interface ArchiveCommand {
+  readonly arguments: readonly string[];
+  readonly command: string;
+}
+
+export function resolveArchiveCommand(
+  directory: string,
+  archivePath: string,
+  platform: NodeJS.Platform,
+): ArchiveCommand {
+  if (platform === 'win32') {
+    const quotePowerShellLiteral = (value: string): string =>
+      `'${value.replaceAll("'", "''")}'`;
+    return {
+      arguments: [
+        '-NoProfile',
+        '-Command',
+        `Compress-Archive -LiteralPath ${quotePowerShellLiteral(directory)} -DestinationPath ${quotePowerShellLiteral(archivePath)} -Force`,
+      ],
+      command: 'powershell',
+    };
+  }
+  return {
+    arguments: [
+      '-czf',
+      archivePath,
+      '-C',
+      dirname(directory),
+      basename(directory),
+    ],
+    command: 'tar',
+  };
+}
+
 function createArchive(
   directory: string,
   archivePath: string,
   platform: NodeJS.Platform,
 ): void {
-  if (platform === 'win32') {
-    runCommand('powershell', [
-      '-NoProfile',
-      '-Command',
-      'Compress-Archive -LiteralPath $args[0] -DestinationPath $args[1] -Force',
-      directory,
-      archivePath,
-    ]);
-    return;
-  }
-  runCommand('tar', [
-    '-czf',
-    archivePath,
-    '-C',
-    dirname(directory),
-    basename(directory),
-  ]);
+  const command = resolveArchiveCommand(directory, archivePath, platform);
+  runCommand(command.command, command.arguments);
 }
 
 function runCommand(command: string, arguments_: readonly string[]): string {

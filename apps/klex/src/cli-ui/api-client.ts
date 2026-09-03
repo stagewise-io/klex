@@ -154,7 +154,10 @@ export class AdminApiClient {
   private readonly baseUrl: string;
   private readonly fetcher: typeof fetch;
 
-  constructor(baseUrl = ADMIN_API_BASE, fetcher: typeof fetch = fetch) {
+  constructor(
+    baseUrl = ADMIN_API_BASE,
+    fetcher: typeof fetch = (...args) => globalThis.fetch(...args),
+  ) {
     this.baseUrl = baseUrl;
     this.fetcher = fetcher;
   }

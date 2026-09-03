@@ -59,6 +59,16 @@ Incoming messages become Push Notifications. Agent replies by calling channel to
 
 Keep protocol packages free of application storage policy. Keep environment-specific actions out of agent core.
 
+## Native dependencies
+
+`apps/klex` ships as a Node SEA executable, which cannot bundle native modules. Any
+dependency with a `.node` addon or a prebuilt binary must be virtualized at build time,
+copied at packaging time, and proven loadable by `klex --verify-native`. Existence checks
+are not verification, and lazy loaders can hide a broken addon until a user hits it.
+
+Before adding or changing such a dependency, read
+`.stagewise/skills/native-dependencies/SKILL.md`.
+
 ## Technical docs
 
 - `apps/klex/src/mcp/architecture.md`

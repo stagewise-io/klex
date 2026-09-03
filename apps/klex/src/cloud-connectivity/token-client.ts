@@ -28,6 +28,7 @@ interface TokenFailureState {
 }
 
 const SAFETY_BUFFER_MS = 60_000;
+const MAX_DIAGNOSTIC_BODY_LENGTH = 512;
 const RETRY_INITIAL_MS = 1_000;
 const RETRY_MAX_MS = 30_000;
 const CACHE_KEY_SEPARATOR = '\0';
@@ -39,6 +40,65 @@ function createCacheKey(resource: string, scopes: string[]): string {
 
 function isCacheKeyForResource(cacheKey: string, resource: string): boolean {
   return cacheKey.startsWith(`${resource}${CACHE_KEY_SEPARATOR}`);
+}
+
+/**
+ * Replaces credential values with `[redacted]`.
+ *
+ * A response can be non-conformant yet still carry a live token — for example
+ * a success body with a malformed `expires_in`. Diagnostics reach
+ * `logger.error`, so token values must never survive into them.
+ */
+function redactCredentials(text: string): string {
+  const fields = ['access_token', 'refresh_token', 'id_token'];
+  let redacted = text;
+  for (const field of fields) {
+    // JSON: "access_token": "..."
+    redacted = redacted.replace(
+      new RegExp(`("${field}"\\s*:\\s*")(?:[^"\\\\]|\\\\.)*(")`, 'g'),
+      `$1[redacted]$2`,
+    );
+    // Form-encoded fallback: access_token=...
+    redacted = redacted.replace(
+      new RegExp(`(${field}=)[^&\\s]+`, 'g'),
+      `$1[redacted]`,
+    );
+  }
+  return redacted;
+}
+
+/**
+ * Summarises an HTTP response for error messages.
+ *
+ * `oauth4webapi` reports a non-conformant token response without the status
+ * code or body, which makes a transient edge failure (502/503/504, an HTML
+ * proxy error page) indistinguishable from an authorization-server
+ * regression. Retries then mask the difference entirely.
+ *
+ * The caller must pass a clone taken before the body was consumed.
+ */
+function safeClone(response: Response): Response | null {
+  try {
+    return response.clone();
+  } catch {
+    // A clone failure must never mask the original OAuth error.
+    return null;
+  }
+}
+
+async function describeResponse(response: Response): Promise<string> {
+  const contentType = response.headers.get('content-type') ?? 'unknown';
+  let body: string;
+  try {
+    body = redactCredentials((await response.text()).trim());
+  } catch (error) {
+    body = `<unreadable: ${error instanceof Error ? error.message : String(error)}>`;
+  }
+  const snippet =
+    body.length > MAX_DIAGNOSTIC_BODY_LENGTH
+      ? `${body.slice(0, MAX_DIAGNOSTIC_BODY_LENGTH)}… [truncated]`
+      : body || '<empty>';
+  return `HTTP ${response.status} ${response.statusText || '-'}, content-type: ${contentType}, body: ${snippet}`;
 }
 
 // oauth4webapi signs Ed25519 assertions with alg "Ed25519" (Web Crypto naming).
@@ -229,6 +289,11 @@ class TokenClientModule implements TokenClient {
       );
     }
 
+    // Clone before processing: the body can only be consumed once, and
+    // `processClientCredentialsResponse` consumes it. Without this clone the
+    // failure path has no status code and no body to report.
+    const diagnosticResponse = safeClone(response);
+
     let result: oauth.TokenEndpointResponse;
     try {
       result = await oauth.processClientCredentialsResponse(
@@ -237,16 +302,23 @@ class TokenClientModule implements TokenClient {
         response,
       );
     } catch (error) {
+      const diagnostics = diagnosticResponse
+        ? await describeResponse(diagnosticResponse).catch(
+            (readError: unknown) =>
+              `diagnostics unavailable: ${readError instanceof Error ? readError.message : String(readError)}`,
+          )
+        : 'diagnostics unavailable: response could not be cloned';
+
       if (error instanceof oauth.ResponseBodyError) {
         const body = error.error;
         const desc = error.error_description;
         throw new Error(
-          `Token request rejected: ${body}${desc ? ` — ${desc}` : ''}`,
+          `Token request rejected: ${body}${desc ? ` — ${desc}` : ''} (${diagnostics})`,
           { cause: error },
         );
       }
       throw new Error(
-        `Token response processing failed: ${error instanceof Error ? error.message : String(error)}`,
+        `Token response processing failed: ${error instanceof Error ? error.message : String(error)} (${diagnostics})`,
         { cause: error },
       );
     }

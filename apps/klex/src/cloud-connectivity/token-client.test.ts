@@ -49,6 +49,54 @@ function createMockFetch(tokenBody: {
   }) as unknown as ReturnType<typeof vi.fn>;
 }
 
+// Helper: mock fetch that serves discovery normally but returns a caller-
+// supplied raw Response for the token endpoint.
+function createMockFetchWithTokenResponse(
+  tokenResponse: () => Response,
+): ReturnType<typeof vi.fn> {
+  return vi.fn(async (input: string | URL | Request) => {
+    const url = typeof input === 'string' ? input : input.toString();
+
+    if (url.includes('.well-known')) {
+      return new Response(
+        JSON.stringify({
+          issuer: mockIssuer,
+          token_endpoint: mockTokenEndpoint,
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      );
+    }
+
+    return tokenResponse();
+  }) as unknown as ReturnType<typeof vi.fn>;
+}
+
+async function captureTokenError(
+  tokenResponse: () => Response,
+): Promise<string> {
+  globalThis.fetch = createMockFetchWithTokenResponse(
+    tokenResponse,
+  ) as unknown as typeof globalThis.fetch;
+
+  const privateKey = await mockPrivateKey();
+  const client = createTokenClient({
+    logger,
+    cloudBaseUrl: mockCloudBaseUrl,
+    clientId: mockClientId,
+    privateKey,
+    privateKeyKid: 'test-key-id',
+  });
+
+  try {
+    await client.getAccessToken('https://api.test.klex.bot', ['agent']);
+    throw new Error('Expected token acquisition to fail');
+  } catch (error) {
+    return error instanceof Error ? error.message : String(error);
+  } finally {
+    client.close();
+  }
+}
+
 describe('TokenClient', () => {
   let originalFetch: typeof globalThis.fetch;
 
@@ -417,5 +465,65 @@ describe('TokenClient — refresh retry', () => {
     });
 
     client.close();
+  });
+
+  describe('failure diagnostics', () => {
+    it('reports status, status text, and content type for a gateway error', async () => {
+      const message = await captureTokenError(
+        () =>
+          new Response(
+            '<html><body><h1>503 Service Temporarily Unavailable</h1></body></html>',
+            {
+              status: 503,
+              statusText: 'Service Unavailable',
+              headers: { 'Content-Type': 'text/html' },
+            },
+          ),
+      );
+
+      // Without these details a transient edge failure is indistinguishable
+      // from an authorization-server regression.
+      expect(message).toContain('HTTP 503');
+      expect(message).toContain('Service Unavailable');
+      expect(message).toContain('text/html');
+      expect(message).toContain('503 Service Temporarily Unavailable');
+    });
+
+    it('redacts credentials from a non-conformant success body', async () => {
+      const message = await captureTokenError(
+        () =>
+          new Response(
+            JSON.stringify({
+              access_token: 'super-secret-token-value',
+              refresh_token: 'super-secret-refresh-value',
+              token_type: 'Bearer',
+              expires_in: 'not-a-number',
+            }),
+            {
+              status: 200,
+              headers: { 'Content-Type': 'application/json' },
+            },
+          ),
+      );
+
+      expect(message).toContain('HTTP 200');
+      expect(message).not.toContain('super-secret-token-value');
+      expect(message).not.toContain('super-secret-refresh-value');
+      expect(message).toContain('[redacted]');
+    });
+
+    it('truncates an oversized diagnostic body', async () => {
+      const message = await captureTokenError(
+        () =>
+          new Response('x'.repeat(4096), {
+            status: 502,
+            headers: { 'Content-Type': 'text/plain' },
+          }),
+      );
+
+      expect(message).toContain('HTTP 502');
+      expect(message).toContain('[truncated]');
+      expect(message.length).toBeLessThan(1024);
+    });
   });
 });

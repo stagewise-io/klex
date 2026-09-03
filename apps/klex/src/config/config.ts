@@ -39,6 +39,21 @@ export const DEFAULT_CONTEXT_SIZE = 200_000;
 export const CONFIG_FILE_NAME = 'config.json';
 
 /**
+ * Removes a single leading UTF-8 byte-order mark from decoded text.
+ *
+ * `readFile(path, 'utf8')` preserves a BOM as `U+FEFF`, and `JSON.parse`
+ * rejects it. Editors on Windows write UTF-8 with a BOM by default —
+ * PowerShell 5.1's `Set-Content -Encoding UTF8` and older Notepad both do —
+ * so a hand-edited config can look perfectly valid yet fail to parse.
+ *
+ * Only one BOM is stripped: a second `U+FEFF` is genuine content and must
+ * still be reported as invalid JSON.
+ */
+function stripByteOrderMark(source: string): string {
+  return source.startsWith('\uFEFF') ? source.slice(1) : source;
+}
+
+/**
  * Returns the environment-aware default telemetry level:
  * `'reduced'` in production, `'full'` otherwise.
  */
@@ -241,11 +256,16 @@ class ConfigModule implements Config {
 
     let input: unknown;
     try {
-      input = JSON.parse(source);
+      input = JSON.parse(stripByteOrderMark(source));
     } catch (error) {
-      throw new Error(`Config at ${this.deps.configPath} is not valid JSON`, {
-        cause: error,
-      });
+      // Surface the parser's own message: it carries the position of the
+      // offending token, which is the only practical way to locate a stray
+      // comma, comment, or control character in a hand-edited file.
+      const detail = error instanceof Error ? error.message : String(error);
+      throw new Error(
+        `Config at ${this.deps.configPath} is not valid JSON: ${detail}`,
+        { cause: error },
+      );
     }
 
     try {

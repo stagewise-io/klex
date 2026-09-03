@@ -201,6 +201,41 @@ describe('Config — lifecycle', () => {
     await expect(module.start()).rejects.toThrow(/not valid JSON/);
   });
 
+  it('includes the parser detail in the invalid JSON error', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'klex-config-'));
+    directories.push(dir);
+    await writeFile(join(dir, CONFIG_FILE_NAME), '{"providers": {},}');
+    const module = createConfig({ logging, dataDirectory: dir });
+    // The parser message carries the offending position, which is the only
+    // practical way to locate the problem in a hand-edited file.
+    await expect(module.start()).rejects.toThrow(/not valid JSON: .*position/i);
+  });
+
+  it('loads a config file written as UTF-8 with a byte-order mark', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'klex-config-'));
+    directories.push(dir);
+    // PowerShell 5.1 `Set-Content -Encoding UTF8` and older Notepad emit a
+    // BOM. It is invisible in editors but `JSON.parse` rejects it.
+    await writeFile(
+      join(dir, CONFIG_FILE_NAME),
+      `\uFEFF${JSON.stringify(manualConfig(), null, 2)}\n`,
+    );
+    const module = createConfig({ logging, dataDirectory: dir });
+    await expect(module.start()).resolves.toBeUndefined();
+    expect(module.resolveModel('local:chat:model:8b').modelId).toBe('model:8b');
+  });
+
+  it('still rejects a second byte-order mark as invalid JSON', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'klex-config-'));
+    directories.push(dir);
+    await writeFile(
+      join(dir, CONFIG_FILE_NAME),
+      `\uFEFF\uFEFF${JSON.stringify(manualConfig(), null, 2)}\n`,
+    );
+    const module = createConfig({ logging, dataDirectory: dir });
+    await expect(module.start()).rejects.toThrow(/not valid JSON/);
+  });
+
   it('throws on schema violation with ConfigValidationError wrapped message', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'klex-config-'));
     directories.push(dir);

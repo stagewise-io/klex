@@ -24,7 +24,7 @@
   },
   "scripts": {
     "clean": "rm -rf dist",
-    "build": "pnpm --filter @stagewise/klex build:admin-api-types && node build.mjs",
+    "build": "pnpm --filter \"@stagewise/klex^...\" build && pnpm --filter @stagewise/klex build:admin-api-types && node build.mjs",
     "typecheck": "pnpm build && tsc --noEmit",
     "verify": "pnpm build && node verify-package.mjs"
   },

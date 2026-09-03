@@ -17,6 +17,7 @@ import {
   resolveFfprobeInstaller,
   resolveFfprobeInstallerPackageName,
   resolveLiveKitNativeAddon,
+  resolveSharpNativePackageNames,
 } from './package-exe';
 
 describe('Klex Agent executable packaging', () => {
@@ -77,6 +78,20 @@ describe('Klex Agent executable packaging', () => {
     expect(() => resolveFfprobeInstallerPackageName('aix', 'ppc64')).toThrow(
       'Klex release target is not supported for aix-ppc64',
     );
+  });
+
+  it('selects the Sharp payload layout for each platform', () => {
+    expect(resolveSharpNativePackageNames('win32', 'x64')).toEqual({
+      addon: '@img/sharp-win32-x64',
+    });
+    expect(resolveSharpNativePackageNames('darwin', 'arm64')).toEqual({
+      addon: '@img/sharp-darwin-arm64',
+      libvips: '@img/sharp-libvips-darwin-arm64',
+    });
+    expect(resolveSharpNativePackageNames('linux', 'x64')).toEqual({
+      addon: '@img/sharp-linux-x64',
+      libvips: '@img/sharp-libvips-linux-x64',
+    });
   });
 
   it.each(['darwin', 'win32'] as const)(

@@ -4,6 +4,12 @@
   "private": true,
   "type": "module",
   "main": "./dist/main.js",
+  "exports": {
+    "./admin-api": {
+      "types": "./src/admin-api/index.ts",
+      "default": "./src/admin-api/index.ts"
+    }
+  },
   "scripts": {
     "dev": "tsx scripts/dev.ts",
     "build": "tsx build.ts",
@@ -13,6 +19,7 @@
     "release:nightly-version": "tsx scripts/release/nightly-version.ts",
     "test:exe": "pnpm run build:exe -- --skip-notarize && tsx scripts/smoke-exe.ts",
     "typecheck": "tsc --noEmit",
+    "build:admin-api-types": "rm -rf .types/admin-api && tsc -p tsconfig.admin-api-types.json",
     "test": "vitest run",
     "test:livekit": "set -a; . ../../.env; set +a; vitest run src/media-transport/livekit-room/livekit-room.integration.test.ts --reporter=verbose",
     "test:openai-realtime": "set -a; . ../../.env; set +a; vitest run src/session/realtime/openai-realtime/openai-realtime.integration.test.ts --reporter=verbose",
@@ -47,7 +54,7 @@
     "@hono/node-server": "2.0.10",
     "@hono/zod-openapi": "1.5.1",
     "@jitl/quickjs-singlefile-mjs-release-sync": "0.32.0",
-    "@klex/cloud-api": "1.0.1",
+    "@klex/cloud-api": "link:/Users/glenntows/.stagewise/worktrees/9e2809bb39c8/sublime-charge/packages/cloud-api/dist",
     "@libsql/client": "0.17.4",
     "@livekit/rtc-node": "0.13.32",
     "@modelcontextprotocol/client": "2.0.0-beta.4",

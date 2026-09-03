@@ -22,10 +22,12 @@ export interface AdminApiDependencies {
 export interface AdminApi {
   start(): Promise<void>;
   close(): Promise<void>;
+  getApp(): ReturnType<typeof createAdminApp>['app'];
 }
 
 class AdminApiModule implements AdminApi {
   private server: ServerType | null = null;
+  private app: ReturnType<typeof createAdminApp>['app'] | null = null;
   private started = false;
 
   constructor(
@@ -52,6 +54,7 @@ class AdminApiModule implements AdminApi {
       logger: this.deps.logger,
       port: this.deps.port,
     });
+    this.app = app.app;
 
     if (this.deps.cloudEnabled) {
       this.deps.logger.info(
@@ -62,7 +65,7 @@ class AdminApiModule implements AdminApi {
 
     this.server = await new Promise<ServerType>((resolve) => {
       const server = serve(
-        { fetch: app.fetch, port: this.deps.port, hostname: '0.0.0.0' },
+        { fetch: app.app.fetch, port: this.deps.port, hostname: '0.0.0.0' },
         (info) => {
           this.deps.logger.info(
             { address: info.address, port: info.port },
@@ -74,13 +77,19 @@ class AdminApiModule implements AdminApi {
     });
   }
 
+  getApp(): ReturnType<typeof createAdminApp>['app'] {
+    if (!this.app) throw new Error('AdminAPI has not been started');
+    return this.app;
+  }
+
   async close(): Promise<void> {
     const server = this.server;
-    if (!server) return;
-
-    await new Promise<void>((resolve) => server.close(() => resolve()));
-    this.server = null;
-    this.deps.logger.info('AdminAPI stopped');
+    if (server) {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+      this.server = null;
+      this.deps.logger.info('AdminAPI stopped');
+    }
+    this.app = null;
   }
 }
 

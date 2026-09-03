@@ -64,6 +64,32 @@ export function getIntrospectionRoot(
 // slashes. Instead we register the OpenAPI spec manually and mount the Hono
 // route directly.
 
+export const introspectionPathClientRoute = createRoute({
+  method: 'get',
+  path: '/v1/introspect/{path}',
+  tags: ['Introspection'],
+  summary: 'Read introspection tree node at path',
+  request: { params: introspectionPathParamsSchema },
+  responses: {
+    200: {
+      content: { 'application/json': { schema: introspectionNodeSchema } },
+      description: 'Introspection node with state and children',
+    },
+    400: {
+      content: { 'application/json': { schema: errorResponseSchema } },
+      description: 'Path parameter is required',
+    },
+    404: {
+      content: { 'application/json': { schema: errorResponseSchema } },
+      description: 'Path not found in introspection tree',
+    },
+    500: {
+      content: { 'application/json': { schema: errorResponseSchema } },
+      description: 'Internal server error',
+    },
+  },
+});
+
 export const introspectionPathRouteSpec = {
   method: 'get' as const,
   path: '/v1/introspect/{path}',
@@ -106,15 +132,14 @@ export const introspectionPathRouteSpec = {
  * wildcard param key doesn't map to the Zod schema's field name —
  * validation is a trivial non-empty check done inline.
  */
-export function registerIntrospectionPathRoute(
-  app: OpenAPIHono,
-  deps: IntrospectionRouteDependencies,
-): void {
-  // Register the OpenAPI path spec for documentation.
+export function registerIntrospectionPathRoute(app: OpenAPIHono): void {
   app.openAPIRegistry.registerPath(introspectionPathRouteSpec);
+}
 
-  // Mount the Hono route with a regex pattern that captures slashes.
-  app.get('/v1/introspect/:path{.+}', async (c) => {
+export function getIntrospectionPathHandler(
+  deps: IntrospectionRouteDependencies,
+): RouteHandler<typeof introspectionPathClientRoute> {
+  return async (c) => {
     const rawPath = c.req.param('path');
 
     if (!rawPath) {
@@ -136,5 +161,5 @@ export function registerIntrospectionPathRoute(
     }
 
     return c.json(node, 200);
-  });
+  };
 }

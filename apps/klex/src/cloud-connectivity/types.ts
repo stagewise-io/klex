@@ -1,5 +1,7 @@
 import type { CloudApiClient } from '@klex/cloud-api';
 
+import type { AdminApp } from '@/admin-api/server';
+
 export type CloudAlgorithm = 'EdDSA';
 
 export interface CloudIdentity {
@@ -14,8 +16,11 @@ export interface EnrollmentState {
   kid: string;
 }
 
+export type TunnelApp = AdminApp;
+
 export interface CloudConnectivity {
   start(): Promise<void>;
+  setTunnelApp(app: TunnelApp): void;
   close(): Promise<void>;
   getAccessToken(resource: string, scopes: string[]): Promise<string>;
   invalidateAccessToken(resource: string): void;

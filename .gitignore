@@ -15,6 +15,7 @@ mcp-proxy.config.json
 # Klex runtime data when launched from apps/klex
 apps/klex/config.json
 apps/klex/.klex.lock
+apps/klex/.types/
 apps/klex/credentials/
 apps/klex/extensions/
 apps/klex/identity/

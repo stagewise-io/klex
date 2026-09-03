@@ -1,0 +1,9 @@
+{
+  "extends": "../typescript-config/base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "types": ["node"]
+  },
+  "include": ["dist"],
+  "exclude": ["node_modules", ".turbo"]
+}

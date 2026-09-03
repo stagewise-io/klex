@@ -6,6 +6,7 @@ import type { ModuleLogger, RootLogger } from '@stagewise/logger';
 import { createIntrospector } from '@/introspection';
 
 import {
+  getIntrospectionPathHandler,
   getIntrospectionRoot,
   type IntrospectionRouteDependencies,
   introspectionRootRoute,
@@ -28,7 +29,8 @@ const noopRootLogger = {
 function createApp(deps: IntrospectionRouteDependencies): OpenAPIHono {
   return setupTestApp((app) => {
     app.openapi(introspectionRootRoute, getIntrospectionRoot(deps));
-    registerIntrospectionPathRoute(app, deps);
+    registerIntrospectionPathRoute(app);
+    app.get('/v1/introspect/:path{.+}', getIntrospectionPathHandler(deps));
   });
 }
 

@@ -174,6 +174,9 @@ async function main(): Promise<void> {
       await resource.start();
       started.push(resource);
     }
+    if (cli.cloudEnabled) {
+      cloudConnectivity.setTunnelApp(adminApi.getApp());
+    }
     await realtime?.start();
     try {
       await mcp.start();

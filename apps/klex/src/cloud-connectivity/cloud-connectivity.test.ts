@@ -30,7 +30,7 @@ const {
   const cloudApiClientMock = { agent: { tunnel: {} } };
   const createCloudApiClientMock = vi.fn(() => cloudApiClientMock);
   const tunnelHandlers: Record<string, (...args: unknown[]) => void> = {};
-  const tunnelMock = { close: vi.fn(), on: vi.fn() };
+  const tunnelMock = { stop: vi.fn(), on: vi.fn() };
   const tunnelOnMock = tunnelMock.on.mockImplementation(
     (event: string, handler: (...args: unknown[]) => void) => {
       tunnelHandlers[event] = handler;
@@ -39,19 +39,31 @@ const {
   );
   return {
     cloudApiClientMock,
-    connectAgentTunnelMock: vi.fn(async () => tunnelMock),
+    connectAgentTunnelMock: vi.fn(
+      async (options: {
+        accessToken: () => Promise<string>;
+        onConnect?: (agentId: string) => void;
+        onClose?: (code: number, reason: string) => void;
+      }) => {
+        await options.accessToken();
+        tunnelHandlers.open = () => options.onConnect?.('agent-123');
+        tunnelHandlers.close = (...args: unknown[]) =>
+          options.onClose?.(args[0] as number, args[1] as string);
+        return tunnelMock;
+      },
+    ),
     createCloudApiClientMock,
     getAccessTokenMock: vi.fn(async () => 'mock-access-token'),
     invalidateTokenMock: vi.fn(),
     tokenClientCloseMock: vi.fn(),
-    tunnelCloseMock: tunnelMock.close,
+    tunnelCloseMock: tunnelMock.stop,
     tunnelHandlers,
     tunnelOnMock,
   };
 });
 
 vi.mock('@klex/cloud-api', () => ({
-  connectAgentTunnel: connectAgentTunnelMock,
+  startAgentTunnel: connectAgentTunnelMock,
   createCloudApiClient: createCloudApiClientMock,
 }));
 
@@ -124,10 +136,19 @@ describe('CloudConnectivity', () => {
     vi.mocked(performEnrollment).mockReset();
     vi.mocked(promptEnrollmentCode).mockReset();
     connectAgentTunnelMock.mockReset();
-    connectAgentTunnelMock.mockImplementation(async () => ({
-      close: tunnelCloseMock,
-      on: tunnelOnMock,
-    }));
+    connectAgentTunnelMock.mockImplementation(
+      async (options: {
+        accessToken: () => Promise<string>;
+        onConnect?: (agentId: string) => void;
+        onClose?: (code: number, reason: string) => void;
+      }) => {
+        await options.accessToken();
+        tunnelHandlers.open = () => options.onConnect?.('agent-123');
+        tunnelHandlers.close = (...args: unknown[]) =>
+          options.onClose?.(args[0] as number, args[1] as string);
+        return { stop: tunnelCloseMock, on: tunnelOnMock };
+      },
+    );
     createCloudApiClientMock.mockClear();
     getAccessTokenMock.mockReset();
     getAccessTokenMock.mockResolvedValue('mock-access-token');
@@ -155,6 +176,8 @@ describe('CloudConnectivity', () => {
       allowDangerousUnsecureCloud: false,
     });
     await cloud.start();
+    cloud.setTunnelApp({} as never);
+    await Promise.resolve();
     return cloud;
   }
 
@@ -217,6 +240,8 @@ describe('CloudConnectivity', () => {
     });
 
     await cloud.start();
+    cloud.setTunnelApp({} as never);
+    await Promise.resolve();
 
     expect(cloud.isEnrolled()).toBe(true);
     expect(performEnrollment).toHaveBeenCalledWith(
@@ -230,8 +255,11 @@ describe('CloudConnectivity', () => {
     );
     expect(cloud.getApiClient()).toBe(cloudApiClientMock);
     expect(connectAgentTunnelMock).toHaveBeenCalledWith(
-      'https://cloud.klex.bot/v1',
-      { accessToken: 'mock-access-token' },
+      expect.objectContaining({
+        baseUrl: 'https://cloud.klex.bot/v1',
+        app: expect.anything(),
+        accessToken: expect.any(Function),
+      }),
     );
     expect(getAccessTokenMock).toHaveBeenCalledWith(
       'https://cloud.klex.bot/v1',
@@ -266,7 +294,7 @@ describe('CloudConnectivity', () => {
 
     expect(cloud.isEnrolled()).toBe(true);
     expect(getAccessTokenMock).toHaveBeenCalledOnce();
-    expect(connectAgentTunnelMock).not.toHaveBeenCalled();
+    expect(connectAgentTunnelMock).toHaveBeenCalledOnce();
 
     await cloud.close();
   });
@@ -276,10 +304,11 @@ describe('CloudConnectivity', () => {
     getAccessTokenMock.mockRejectedValueOnce(new Error('token unavailable'));
     const cloud = await startEnrolledCloud();
 
-    expect(connectAgentTunnelMock).not.toHaveBeenCalled();
+    expect(connectAgentTunnelMock).toHaveBeenCalledOnce();
+    expect(getAccessTokenMock).toHaveBeenCalledOnce();
     await vi.advanceTimersByTimeAsync(1_000);
     expect(getAccessTokenMock).toHaveBeenCalledTimes(2);
-    expect(connectAgentTunnelMock).toHaveBeenCalledOnce();
+    expect(connectAgentTunnelMock).toHaveBeenCalledTimes(2);
 
     await cloud.close();
   });
@@ -333,9 +362,8 @@ describe('CloudConnectivity', () => {
     expect(invalidateTokenMock).toHaveBeenCalledWith(
       'https://cloud.klex.bot/v1',
     );
-    await vi.advanceTimersByTimeAsync(1_000);
-    expect(getAccessTokenMock).toHaveBeenCalledTimes(2);
-    expect(connectAgentTunnelMock).toHaveBeenCalledTimes(2);
+    expect(getAccessTokenMock).toHaveBeenCalledOnce();
+    expect(connectAgentTunnelMock).toHaveBeenCalledOnce();
 
     await cloud.close();
   });

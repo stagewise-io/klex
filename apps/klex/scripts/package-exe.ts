@@ -40,6 +40,23 @@ export function resolveFfprobeInstallerPackageName(
   return `@ffprobe-installer/${platform}-${architecture}`;
 }
 
+export function resolveSharpNativePackageNames(
+  platform: NodeJS.Platform = process.platform,
+  architecture: string = process.arch,
+): {
+  readonly addon: string;
+  readonly libvips?: string;
+} {
+  resolveReleaseTarget(platform, architecture as NodeJS.Architecture);
+  const platformArch = `${platform}-${architecture}`;
+  return {
+    addon: `@img/sharp-${platformArch}`,
+    ...(platform === 'win32'
+      ? {}
+      : { libvips: `@img/sharp-libvips-${platformArch}` }),
+  };
+}
+
 export function resolveFfprobeInstaller(
   platform: NodeJS.Platform = process.platform,
   architecture: string = process.arch,
@@ -107,8 +124,9 @@ export function createKlexAgentPackagerConfig(
  *
  * 1. **sharp** (JS) + deps (detect-libc, semver, @img/colour) — sharp's CJS
  *    entry does `require('@img/sharp-…/sharp.node')` at runtime which resolves
- *    from the on-disk node_modules. The .node addon's @rpath links to the
- *    sibling @img/sharp-libvips-…/lib directory for the libvips dylib.
+ *    from the on-disk node_modules. On macOS and Linux, the .node addon's
+ *    @rpath links to the sibling @img/sharp-libvips-…/lib directory. Windows
+ *    ships its libvips DLLs inside the @img/sharp-win32-… package instead.
  *
  * 2. **ffmpeg-static** — prebuilt ffmpeg binary. The package's index.js uses
  *    `__dirname` to locate the binary, which works because the package is
@@ -176,8 +194,8 @@ export function copyNativeAssets(outputDirectory: string): void {
     }
   }
 
-  const platformArch = `${process.platform}-${process.arch}`;
   const { nativePackageTarget } = resolveReleaseTarget();
+  const sharpNativePackages = resolveSharpNativePackageNames();
 
   // sharp JS package + runtime dependencies (all loaded from disk at runtime)
   const sharpRequire = createRequire(require.resolve('sharp'));
@@ -186,9 +204,12 @@ export function copyNativeAssets(outputDirectory: string): void {
   copyPackage('semver', sharpRequire);
   copyPackage('@img/colour', sharpRequire);
 
-  // sharp native addons (platform-specific .node addon + libvips dylib)
-  copyPackage(`@img/sharp-${platformArch}`, sharpRequire);
-  copyPackage(`@img/sharp-libvips-${platformArch}`, sharpRequire);
+  // sharp native addon plus the separate libvips package used on Unix.
+  // Windows bundles its libvips DLLs in @img/sharp-win32-*.
+  copyPackage(sharpNativePackages.addon, sharpRequire);
+  if (sharpNativePackages.libvips) {
+    copyPackage(sharpNativePackages.libvips, sharpRequire);
+  }
 
   // audio and realtime-media native payloads
   copyPackage('ffmpeg-static');
@@ -231,12 +252,16 @@ export function copyNativeAssets(outputDirectory: string): void {
     },
     {
       name: 'sharp native addon',
-      path: join(destNodeModules, '@img', `sharp-${platformArch}`, 'index.cjs'),
+      path: join(destNodeModules, sharpNativePackages.addon, 'index.cjs'),
     },
-    {
-      name: 'sharp libvips',
-      path: join(destNodeModules, '@img', `sharp-libvips-${platformArch}`),
-    },
+    ...(sharpNativePackages.libvips
+      ? [
+          {
+            name: 'sharp libvips',
+            path: join(destNodeModules, sharpNativePackages.libvips),
+          },
+        ]
+      : []),
     {
       name: 'ffmpeg binary',
       path: join(

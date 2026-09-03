@@ -13,6 +13,11 @@ export interface CliOptions {
   adminPort: number;
   allowDangerousUnsecureCloud: boolean;
   verbose: boolean;
+  /**
+   * Diagnostic: load every native dependency and exit. Used by the packaged
+   * executable smoke test. Deliberately undocumented in --help.
+   */
+  verifyNative: boolean;
 }
 
 export function parseCliArgs(argv: string[]): CliOptions {
@@ -28,6 +33,8 @@ export function parseCliArgs(argv: string[]): CliOptions {
       'admin-port': { type: 'string' },
       'allow-dangerous-unsecure-cloud': { type: 'boolean' },
       verbose: { type: 'boolean', short: 'v' },
+      // Diagnostic flag, intentionally absent from printHelp().
+      'verify-native': { type: 'boolean' },
     },
     allowNegative: true,
   });
@@ -71,6 +78,8 @@ export function parseCliArgs(argv: string[]): CliOptions {
 
   const verbose = values.verbose ?? false;
 
+  const verifyNative = values['verify-native'] ?? false;
+
   return {
     dataDirectory,
     cloudEnabled,
@@ -80,6 +89,7 @@ export function parseCliArgs(argv: string[]): CliOptions {
     adminPort,
     allowDangerousUnsecureCloud,
     verbose,
+    verifyNative,
   };
 }
 

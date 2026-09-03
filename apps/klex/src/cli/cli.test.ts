@@ -66,6 +66,18 @@ describe('parseCliArgs', () => {
     exitSpy.mockRestore();
   });
 
+  describe('verifyNative', () => {
+    it('defaults to false when the flag is absent', () => {
+      const result = parseCliArgs([]);
+      expect(result.verifyNative).toBe(false);
+    });
+
+    it('enables the probe when --verify-native is passed', () => {
+      const result = parseCliArgs(['--verify-native']);
+      expect(result.verifyNative).toBe(true);
+    });
+  });
+
   describe('headless', () => {
     it('defaults to false when no args or env var provided', () => {
       const result = parseCliArgs([]);

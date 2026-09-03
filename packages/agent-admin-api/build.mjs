@@ -23,22 +23,20 @@ const createAdminApp = apiSourceFile.statements.find(
     ts.isFunctionDeclaration(statement) &&
     statement.name?.text === 'createAdminApp',
 );
-if (!createAdminApp?.type || !ts.isTypeLiteralNode(createAdminApp.type)) {
-  throw new Error(
-    'Expected createAdminApp to have an object return type containing app',
-  );
-}
-const appProperty = createAdminApp.type.members.find(
-  (member) =>
-    ts.isPropertySignature(member) &&
-    ts.isIdentifier(member.name) &&
-    member.name.text === 'app',
-);
-if (!appProperty?.type) {
-  throw new Error('Expected createAdminApp return type to contain app');
+if (!createAdminApp?.type) {
+  throw new Error('Expected createAdminApp to have a return type');
 }
 
-const adminApiType = appProperty.type
+const returnType = createAdminApp.type;
+const appProperty = ts.isTypeLiteralNode(returnType)
+  ? returnType.members.find(
+      (member) =>
+        ts.isPropertySignature(member) &&
+        ts.isIdentifier(member.name) &&
+        member.name.text === 'app',
+    )
+  : undefined;
+const adminApiType = (appProperty?.type ?? returnType)
   .getText(apiSourceFile)
   .replaceAll('/:path{.+}', '/:path');
 if (

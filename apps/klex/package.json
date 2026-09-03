@@ -60,7 +60,7 @@
     "@hono/node-server": "2.0.10",
     "@hono/zod-openapi": "1.5.1",
     "@jitl/quickjs-singlefile-mjs-release-sync": "0.32.0",
-    "@klex/cloud-api": "link:/Users/glenntows/.stagewise/worktrees/9e2809bb39c8/sublime-charge/packages/cloud-api/dist",
+    "@klex/cloud-api": "1.1.0",
     "@libsql/client": "0.17.4",
     "@livekit/rtc-node": "0.13.32",
     "@modelcontextprotocol/client": "2.0.0-beta.4",

@@ -9,5 +9,10 @@ ignoredBuiltDependencies:
 
 minimumReleaseAge: 2880
 
+# First-party packages are trusted and must be consumable immediately after
+# publish; the release-age guard exists for third-party supply-chain risk.
+minimumReleaseAgeExclude:
+  - '@klex/cloud-api'
+
 onlyBuiltDependencies:
   - esbuild

@@ -11,6 +11,7 @@ import { createMcp } from '@/mcp';
 import { createModelCallLogger } from '@/model-call-logger';
 import { createModelProvider } from '@/model-provider';
 import { KLEX_VERSION } from '@/release';
+import { runNativeVerification } from '@/release/verify-native';
 import { createRouter, type RouterApi } from '@/router';
 import { createChatSession } from '@/session/chat';
 import { createAudioInputOptimizerExt } from '@/session/chat/extensions/audio-input-optimizer';
@@ -55,6 +56,13 @@ const spanProcessor = createTelemetrySpanProcessor();
 
 async function main(): Promise<void> {
   logger.info(`Klex Agent v${KLEX_VERSION}`);
+
+  // Diagnostic path: load every native dependency and exit without starting any
+  // subsystem. Used by the packaged executable smoke test to prove native addons
+  // actually load, which existence checks cannot.
+  if (cli.verifyNative) {
+    process.exit(await runNativeVerification());
+  }
 
   const tracing = createTracing({
     logging: logger,

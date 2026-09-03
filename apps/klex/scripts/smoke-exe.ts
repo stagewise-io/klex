@@ -127,6 +127,25 @@ export function smokeKlexDistribution(
       `Expected ${expectedVersion} in executable output:\n${output}`,
     );
   }
+  // Existence checks above prove the native assets were copied; they cannot
+  // prove they load. --verify-native force-loads every native addon inside the
+  // real SEA process, which is the only place @rpath resolution, codesigning and
+  // createRequire(process.execPath) all interact. sharp and LiveKit are loaded
+  // lazily in production, so nothing else in this smoke test touches them.
+  const nativeResult = spawnSync(executablePath, ['--verify-native'], {
+    encoding: 'utf8',
+    env: environment,
+    timeout: 60_000,
+  });
+  const nativeOutput = `${nativeResult.stdout ?? ''}${nativeResult.stderr ?? ''}`;
+  if (nativeResult.error) throw nativeResult.error;
+  if (nativeResult.status !== 0) {
+    throw new Error(
+      `Native dependency verification failed with status ${nativeResult.status} and signal ${nativeResult.signal ?? 'none'}:\n${nativeOutput}`,
+    );
+  }
+  process.stdout.write(nativeOutput);
+
   process.stdout.write(
     `Klex Agent executable smoke test passed: ${executablePath}\n`,
   );

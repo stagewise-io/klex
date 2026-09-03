@@ -82,34 +82,6 @@ export function resolveFfprobeInstaller(
   };
 }
 
-const LIBSQL_NATIVE_PACKAGES: Partial<
-  Record<NodeJS.Platform, Partial<Record<string, string>>>
-> = {
-  darwin: {
-    arm64: '@libsql/darwin-arm64',
-    x64: '@libsql/darwin-x64',
-  },
-  linux: {
-    arm64: '@libsql/linux-arm64-gnu',
-    x64: '@libsql/linux-x64-gnu',
-  },
-  win32: {
-    x64: '@libsql/win32-x64-msvc',
-  },
-};
-
-export function resolveLibsqlNativePackage(
-  platform: NodeJS.Platform = process.platform,
-  architecture: string = process.arch,
-): string {
-  const packageName = LIBSQL_NATIVE_PACKAGES[platform]?.[architecture];
-  if (!packageName)
-    throw new Error(
-      `libSQL does not support executable packaging for ${platform}-${architecture}`,
-    );
-  return packageName;
-}
-
 export interface KlexAgentPackagingOptions {
   readonly environment?: NodeJS.ProcessEnv;
   readonly platform?: NodeJS.Platform;
@@ -250,10 +222,6 @@ export function copyNativeAssets(outputDirectory: string): void {
     copyPackage(sharpNativePackages.libvips, sharpRequire);
   }
 
-  // libSQL runtime and native addon
-  copyPackage('libsql');
-  copyPackage(resolveLibsqlNativePackage());
-
   // Audio processing binaries. fluent-ffmpeg itself is bundled into the SEA;
   // its small preset directory is copied below as a runtime data asset.
   rmSync(join(destNodeModules, 'fluent-ffmpeg'), {
@@ -361,7 +329,7 @@ export function copyNativeAssets(outputDirectory: string): void {
 
   if (errors.length > 0) {
     throw new Error(
-      `Native asset packaging failed — media processing will not work at runtime:\n  - ${errors.join('\n  - ')}`,
+      `Native asset packaging failed — media processing will not work at runtime:\n  - ${errors.join('\n  - ')}\n\nIf you added a native dependency, see .stagewise/skills/native-dependencies/SKILL.md`,
     );
   }
 }

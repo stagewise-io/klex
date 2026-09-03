@@ -48,8 +48,11 @@ const nativeShimPlugin: esbuild.Plugin = {
   setup(build) {
     build.onResolve(
       {
+        // Note: @libsql/client is deliberately absent — it is bundled into the
+        // SEA and reaches the on-disk `libsql` package through this shim.
+        // See .stagewise/skills/native-dependencies/SKILL.md before editing.
         filter:
-          /^(sharp|ffmpeg-static|@ffprobe-installer\/ffprobe|ffprobe-static|libsql|@libsql\/(darwin|linux|win32)-)/,
+          /^(sharp|ffmpeg-static|@ffprobe-installer\/ffprobe|libsql|@libsql\/(darwin|linux|win32)-)/,
       },
       (args) => ({ path: args.path, namespace: 'native-shim' }),
     );

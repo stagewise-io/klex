@@ -23,18 +23,8 @@
     "typescript": "7.0.2",
     "vitest": "4.1.10"
   },
-  "packageManager": "pnpm@10.30.3",
+  "packageManager": "pnpm@11.22.0",
   "engines": {
     "node": ">=26.0.0"
-  },
-  "pnpm": {
-    "onlyBuiltDependencies": [
-      "@ffprobe-installer/darwin-arm64",
-      "@ffprobe-installer/darwin-x64",
-      "@ffprobe-installer/linux-arm64",
-      "@ffprobe-installer/linux-x64",
-      "@ffprobe-installer/win32-x64",
-      "ffmpeg-static"
-    ]
   }
 }

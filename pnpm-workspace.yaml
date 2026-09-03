@@ -3,9 +3,16 @@ packages:
   - packages/*
   - mcp-servers/*
 
-ignoredBuiltDependencies:
-  - ffmpeg-static
-  - protobufjs
+allowBuilds:
+  '@ffprobe-installer/darwin-arm64': true
+  '@ffprobe-installer/darwin-x64': true
+  '@ffprobe-installer/linux-arm64': true
+  '@ffprobe-installer/linux-x64': true
+  '@ffprobe-installer/win32-x64': true
+  esbuild: true
+  ffmpeg-static: true
+  protobufjs: false
+
 
 minimumReleaseAge: 2880
 

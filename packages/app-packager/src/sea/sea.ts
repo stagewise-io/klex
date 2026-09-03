@@ -43,6 +43,7 @@ export function createSeaWorkspace(
     main: config.entry,
     output: blobPath,
     disableExperimentalSEAWarning: true,
+    mainFormat: config.mainFormat,
     useCodeCache: config.useCodeCache,
     ...(config.assets.length > 0 ? { assets } : {}),
   };

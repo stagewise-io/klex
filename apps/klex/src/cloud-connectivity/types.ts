@@ -1,7 +1,5 @@
 import type { CloudApiClient } from '@klex/cloud-api';
 
-import type { AdminApp } from '@/admin-api/server';
-
 export type CloudAlgorithm = 'EdDSA';
 
 export interface CloudIdentity {
@@ -16,11 +14,15 @@ export interface EnrollmentState {
   kid: string;
 }
 
-export type TunnelApp = AdminApp;
+export interface EnrollmentResult {
+  clientId: string;
+  enrolledAt: string;
+}
+
+export type TunnelState = 'disconnected' | 'connecting' | 'connected' | 'error';
 
 export interface CloudConnectivity {
   start(): Promise<void>;
-  setTunnelApp(app: TunnelApp): void;
   close(): Promise<void>;
   getAccessToken(resource: string, scopes: string[]): Promise<string>;
   invalidateAccessToken(resource: string): void;
@@ -28,4 +30,8 @@ export interface CloudConnectivity {
   isEnrolled(): boolean;
   isCloudEnabled(): boolean;
   isTrustedAuthorizationServer(issuer: string): boolean;
+  getEnrollmentState(): EnrollmentState;
+  getCloudBaseUrl(): string;
+  enroll(enrollmentCode: string): Promise<EnrollmentResult>;
+  getTunnelState(): TunnelState;
 }

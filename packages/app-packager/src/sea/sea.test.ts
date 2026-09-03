@@ -44,6 +44,7 @@ describe('createSeaExecutable', () => {
         outputPath: join(directory, 'order-test'),
         assets: [],
         useCodeCache: false,
+        mainFormat: 'commonjs',
         signingMode: 'optional',
         macos: {},
         platform: process.platform,

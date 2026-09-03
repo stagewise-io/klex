@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import type { RootLogger } from '@stagewise/logger';
 
+import type { CloudConnectivity } from '@/cloud-connectivity';
 import type { Config } from '@/config';
 import type { Introspector } from '@/introspection';
 import type { Mcp } from '@/mcp';
@@ -22,6 +23,27 @@ const config = {} as Config;
 const mcp = {} as Mcp;
 const introspector = {} as Introspector;
 const modelCallLogger = {} as ModelCallLogger;
+const cloudConnectivity = {
+  start: async () => undefined,
+  close: async () => undefined,
+  getAccessToken: async () => 'token',
+  invalidateAccessToken: () => undefined,
+  getApiClient: () => ({}),
+  isEnrolled: () => true,
+  isCloudEnabled: () => true,
+  isTrustedAuthorizationServer: () => true,
+  getEnrollmentState: () => ({
+    clientId: 'client-1',
+    enrolledAt: '2025-01-01T00:00:00Z',
+    kid: 'kid-1',
+  }),
+  getCloudBaseUrl: () => 'https://cloud.example',
+  enroll: async () => ({
+    clientId: 'client-1',
+    enrolledAt: '2025-01-01T00:00:00Z',
+  }),
+  getTunnelState: () => 'disconnected',
+} as unknown as CloudConnectivity;
 
 describe('AdminApi', () => {
   describe('cloud disabled — binds local port', () => {
@@ -34,6 +56,7 @@ describe('AdminApi', () => {
         mcp,
         introspector,
         modelCallLogger,
+        cloudConnectivity,
         cloudEnabled: false,
         port: 19999,
       });
@@ -62,6 +85,7 @@ describe('AdminApi', () => {
         mcp,
         introspector,
         modelCallLogger,
+        cloudConnectivity,
         cloudEnabled: true,
         port: 19998,
       });

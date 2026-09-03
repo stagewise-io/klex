@@ -1,12 +1,14 @@
-import type { CloudApiClient, StartAgentTunnelOptions } from '@klex/cloud-api';
-import { createCloudApiClient, startAgentTunnel } from '@klex/cloud-api';
+import {
+  type CloudApiClient,
+  connectAgentTunnel,
+  createCloudApiClient,
+} from '@klex/cloud-api';
 
 import type { ModuleLogger, RootLogger } from '@stagewise/logger';
 
 import {
   loadEnrollmentState,
   performEnrollment,
-  promptEnrollmentCode,
   saveEnrollmentState,
 } from './enrollment';
 import { importPrivateKey, loadOrCreateIdentity } from './identity';
@@ -14,8 +16,9 @@ import { createTokenClient, type TokenClient } from './token-client';
 import type {
   CloudConnectivity,
   CloudIdentity,
+  EnrollmentResult,
   EnrollmentState,
-  TunnelApp,
+  TunnelState,
 } from './types';
 
 export interface CloudConnectivityDependencies {
@@ -40,12 +43,12 @@ class CloudConnectivityModule implements CloudConnectivity {
   private enrollment: EnrollmentState | null = null;
   private tokenClient: TokenClient | null = null;
   private cloudApiClient: CloudApiClient | null = null;
-  private tunnel: Awaited<ReturnType<typeof startAgentTunnel>> | null = null;
-  private tunnelApp: TunnelApp | null = null;
+  private tunnel: Awaited<ReturnType<typeof connectAgentTunnel>> | null = null;
   private retryTimer: ReturnType<typeof setTimeout> | null = null;
   private retryAttempt = 0;
   private connecting = false;
   private started = false;
+  private tunnelState: TunnelState = 'disconnected';
 
   constructor(
     private readonly deps: {
@@ -97,9 +100,19 @@ class CloudConnectivityModule implements CloudConnectivity {
     );
 
     if (this.enrollment.clientId === null) {
-      await this.handleEnrollment();
-      // If enrollment failed in interactive mode, enrollment.clientId stays null
-      if (this.enrollment.clientId === null) {
+      // Not enrolled — try headless enrollment if a token was provided.
+      // Interactive enrollment is handled by the CLI UI; we do not block
+      // startup with a readline prompt here.
+      if (this.deps.enrollmentToken) {
+        await this.enrollHeadless(this.identity);
+        if (this.enrollment.clientId === null) {
+          return;
+        }
+      } else {
+        this.deps.logger.warn(
+          { kid: this.identity.kid },
+          'Not enrolled in Klex Cloud and no enrollment token provided. Cloud features will be unavailable. To enroll, use the CLI UI or restart with --cloud-enroll-token.',
+        );
         return;
       }
     }
@@ -127,53 +140,82 @@ class CloudConnectivityModule implements CloudConnectivity {
     );
 
     // Token acquisition and tunnel establishment are best-effort background
-    // work and must never block the rest of application startup. The admin
-    // app is attached after its module starts.
+    // work and must never block the rest of application startup.
     void this.connectTunnel();
   }
 
   private async connectTunnel(): Promise<void> {
-    const tunnelApp = this.tunnelApp;
-    if (!this.started || this.connecting || !this.tokenClient || !tunnelApp) {
-      return;
-    }
+    if (!this.started || this.connecting || !this.tokenClient) return;
     this.connecting = true;
 
     try {
-      const tunnel = await startAgentTunnel({
-        baseUrl: this.apiResource(),
-        accessToken: () =>
-          this.tokenClient?.getAccessToken(
-            this.apiResource(),
-            CLOUD_API_SCOPES,
-          ) ?? Promise.reject(new Error('Cloud token client unavailable')),
-        // Dispatch tunneled requests to the same app and routes used by the
-        // standalone Admin API. Path resolution belongs to the cloud side.
-        // The linked SDK and agent use different Hono minor versions.
-        app: tunnelApp as unknown as StartAgentTunnelOptions['app'],
-        onConnect: (agentId) => {
-          this.retryAttempt = 0;
-          this.deps.logger.info({ agentId }, 'Klex Cloud tunnel connected');
-        },
-        onError: (error) => {
-          this.tokenClient?.invalidate(this.apiResource());
-          this.deps.logger.error({ error }, 'Klex Cloud tunnel error');
-        },
-        onClose: (code, reason) => {
-          this.tokenClient?.invalidate(this.apiResource());
-          this.deps.logger.warn(
-            { code, reason },
-            'Klex Cloud tunnel disconnected; reconnecting',
-          );
-        },
-      });
-      if (!this.started) {
-        await tunnel.stop();
+      let accessToken: string;
+      this.tunnelState = 'connecting';
+      try {
+        accessToken = await this.tokenClient.getAccessToken(
+          this.apiResource(),
+          CLOUD_API_SCOPES,
+        );
+      } catch {
+        if (!this.started) return;
+        const retryDelayMs = this.scheduleReconnect();
+        this.deps.logger.warn(
+          { retryAttempt: this.retryAttempt, retryDelayMs },
+          'Klex Cloud tunnel access token unavailable; retrying',
+        );
         return;
       }
+      if (!this.started) return;
+
+      const tunnel = await connectAgentTunnel(this.apiResource(), {
+        accessToken,
+      });
+      if (!this.started) {
+        tunnel.close();
+        return;
+      }
+
       this.tunnel = tunnel;
+      tunnel.on('open', () => {
+        if (this.tunnel !== tunnel || !this.started) return;
+        this.retryAttempt = 0;
+        this.tunnelState = 'connected';
+        this.deps.logger.info(
+          { clientId: this.enrollment?.clientId },
+          'Klex Cloud tunnel connected',
+        );
+      });
+      tunnel.on('error', (error: unknown) => {
+        if (this.tunnel !== tunnel || !this.started) return;
+        this.tunnel = null;
+        this.tunnelState = 'error';
+        this.tokenClient?.invalidate(this.apiResource());
+        const retryDelayMs = this.scheduleReconnect();
+        this.deps.logger.error(
+          { error, retryAttempt: this.retryAttempt, retryDelayMs },
+          'Klex Cloud tunnel error; retrying',
+        );
+        tunnel.close();
+      });
+      tunnel.on('close', (code: unknown, reason: unknown) => {
+        if (this.tunnel !== tunnel || !this.started) return;
+        this.tunnel = null;
+        this.tunnelState = 'error';
+        this.tokenClient?.invalidate(this.apiResource());
+        const retryDelayMs = this.scheduleReconnect();
+        this.deps.logger.warn(
+          {
+            code,
+            reason: String(reason),
+            retryAttempt: this.retryAttempt,
+            retryDelayMs,
+          },
+          'Klex Cloud tunnel disconnected; retrying',
+        );
+      });
     } catch (error) {
       if (!this.started) return;
+      this.tunnelState = 'error';
       const retryDelayMs = this.scheduleReconnect();
       this.deps.logger.error(
         { error, retryAttempt: this.retryAttempt, retryDelayMs },
@@ -199,17 +241,6 @@ class CloudConnectivityModule implements CloudConnectivity {
     return delay;
   }
 
-  private async handleEnrollment(): Promise<void> {
-    const identity = this.identity;
-    if (!identity) return;
-
-    if (this.deps.enrollmentToken) {
-      await this.enrollHeadless(identity);
-    } else {
-      await this.enrollInteractive(identity);
-    }
-  }
-
   private async enrollHeadless(identity: CloudIdentity): Promise<void> {
     const enrollmentToken = this.deps.enrollmentToken;
     if (!enrollmentToken) return;
@@ -231,33 +262,34 @@ class CloudConnectivityModule implements CloudConnectivity {
     }
   }
 
-  private async enrollInteractive(identity: CloudIdentity): Promise<void> {
-    for (;;) {
-      const enrollmentCode = await promptEnrollmentCode(this.deps.logger);
-      if (enrollmentCode === null) {
-        this.deps.logger.warn(
-          'Not enrolled in Klex Cloud and no enrollment code available. Cloud features will be unavailable. To enroll, restart with --cloud-enroll-token or KLEX_CLOUD_ENROLLMENT_TOKEN.',
-        );
-        return;
-      }
-
-      this.deps.logger.info('Enrolling agent in Klex Cloud');
-
-      try {
-        const clientId = await performEnrollment(
-          this.deps.cloudBaseUrl,
-          enrollmentCode,
-          identity,
-        );
-        await this.persistEnrollment(clientId, identity.kid);
-        return;
-      } catch (error) {
-        this.deps.logger.error(
-          { error },
-          'Enrollment failed — please try again with a new code',
-        );
-      }
+  async enroll(enrollmentCode: string): Promise<EnrollmentResult> {
+    if (!this.identity) {
+      throw new Error('Cloud connectivity has not been started');
     }
+    if (!this.deps.cloudEnabled) {
+      throw new Error('Cloud connectivity is disabled');
+    }
+
+    const clientId = await performEnrollment(
+      this.deps.cloudBaseUrl,
+      enrollmentCode,
+      this.identity,
+    );
+    await this.persistEnrollment(clientId, this.identity.kid);
+    await this.initTokenClient();
+
+    this.cloudApiClient = createCloudApiClient(this.deps.cloudBaseUrl, {
+      headers: async () => ({
+        authorization: `Bearer ${await this.getAccessToken(this.apiResource(), CLOUD_API_SCOPES)}`,
+      }),
+    });
+
+    void this.connectTunnel();
+
+    return {
+      clientId,
+      enrolledAt: this.enrollment?.enrolledAt ?? new Date().toISOString(),
+    };
   }
 
   private async persistEnrollment(
@@ -273,9 +305,32 @@ class CloudConnectivityModule implements CloudConnectivity {
     this.deps.logger.info({ clientId }, 'Enrollment successful');
   }
 
-  setTunnelApp(app: TunnelApp): void {
-    this.tunnelApp = app;
-    if (this.started && this.deps.cloudEnabled) void this.connectTunnel();
+  private async initTokenClient(): Promise<void> {
+    if (!this.identity || !this.enrollment?.clientId) return;
+    const privateKey = await importPrivateKey(this.identity);
+    this.tokenClient = createTokenClient({
+      logger: this.deps.logger,
+      cloudBaseUrl: this.deps.cloudBaseUrl,
+      clientId: this.enrollment.clientId,
+      privateKey,
+      privateKeyKid: this.identity.kid,
+      allowDangerousUnsecureCloud: this.deps.allowDangerousUnsecureCloud,
+    });
+  }
+
+  getEnrollmentState(): EnrollmentState {
+    if (this.enrollment) {
+      return { ...this.enrollment };
+    }
+    return {
+      clientId: null,
+      enrolledAt: null,
+      kid: this.identity?.kid ?? '',
+    };
+  }
+
+  getCloudBaseUrl(): string {
+    return this.deps.cloudBaseUrl;
   }
 
   async getAccessToken(resource: string, scopes: string[]): Promise<string> {
@@ -319,6 +374,10 @@ class CloudConnectivityModule implements CloudConnectivity {
     }
   }
 
+  getTunnelState(): TunnelState {
+    return this.tunnelState;
+  }
+
   private apiResource(): string {
     return `${this.deps.cloudBaseUrl.replace(/\/$/, '')}${API_RESOURCE_PATH}`;
   }
@@ -333,9 +392,9 @@ class CloudConnectivityModule implements CloudConnectivity {
     }
     this.retryAttempt = 0;
     this.connecting = false;
-    if (this.tunnel) await this.tunnel.stop();
+    this.tunnel?.close();
     this.tunnel = null;
-    this.tunnelApp = null;
+    this.tunnelState = 'disconnected';
     this.cloudApiClient = null;
 
     this.tokenClient?.close();

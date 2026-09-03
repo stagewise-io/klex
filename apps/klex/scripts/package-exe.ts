@@ -1,4 +1,11 @@
-import { cpSync, existsSync, mkdirSync, readdirSync, statSync } from 'node:fs';
+import {
+  cpSync,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  rmSync,
+  statSync,
+} from 'node:fs';
 import { createRequire } from 'node:module';
 import { dirname, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -75,6 +82,34 @@ export function resolveFfprobeInstaller(
   };
 }
 
+const LIBSQL_NATIVE_PACKAGES: Partial<
+  Record<NodeJS.Platform, Partial<Record<string, string>>>
+> = {
+  darwin: {
+    arm64: '@libsql/darwin-arm64',
+    x64: '@libsql/darwin-x64',
+  },
+  linux: {
+    arm64: '@libsql/linux-arm64-gnu',
+    x64: '@libsql/linux-x64-gnu',
+  },
+  win32: {
+    x64: '@libsql/win32-x64-msvc',
+  },
+};
+
+export function resolveLibsqlNativePackage(
+  platform: NodeJS.Platform = process.platform,
+  architecture: string = process.arch,
+): string {
+  const packageName = LIBSQL_NATIVE_PACKAGES[platform]?.[architecture];
+  if (!packageName)
+    throw new Error(
+      `libSQL does not support executable packaging for ${platform}-${architecture}`,
+    );
+  return packageName;
+}
+
 export interface KlexAgentPackagingOptions {
   readonly environment?: NodeJS.ProcessEnv;
   readonly platform?: NodeJS.Platform;
@@ -96,13 +131,15 @@ export function createKlexAgentPackagerConfig(
 
   return {
     name: 'klex',
-    entry: 'dist/main.js',
+    entry: 'dist/main.mjs',
     outputDirectory: 'dist',
+    mainFormat: 'module',
     assets: {
       'javascript-sandbox-worker.js': 'dist/javascript-sandbox-worker.js',
       'livekit-rtc.node': resolveLiveKitNativeAddon(),
     },
-    useCodeCache: true,
+    // Node SEA does not support code cache with ESM main bundles.
+    useCodeCache: false,
     signing: { mode: requiresExecutableSigning ? 'required' : 'optional' },
     macos: {
       ...(identity ? { identity } : {}),
@@ -186,7 +223,9 @@ export function copyNativeAssets(outputDirectory: string): void {
   ): boolean {
     try {
       const pkgDir = resolvePackageDir(name, packageRequire);
-      cpSync(pkgDir, join(destNodeModules, name), { recursive: true });
+      const destination = join(destNodeModules, name);
+      rmSync(destination, { recursive: true, force: true });
+      cpSync(pkgDir, destination, { recursive: true });
       return true;
     } catch (e) {
       errors.push(`Failed to copy ${name}: ${(e as Error).message}`);
@@ -211,7 +250,16 @@ export function copyNativeAssets(outputDirectory: string): void {
     copyPackage(sharpNativePackages.libvips, sharpRequire);
   }
 
-  // audio and realtime-media native payloads
+  // libSQL runtime and native addon
+  copyPackage('libsql');
+  copyPackage(resolveLibsqlNativePackage());
+
+  // Audio processing binaries. fluent-ffmpeg itself is bundled into the SEA;
+  // its small preset directory is copied below as a runtime data asset.
+  rmSync(join(destNodeModules, 'fluent-ffmpeg'), {
+    recursive: true,
+    force: true,
+  });
   copyPackage('ffmpeg-static');
   copyPackage('@ffprobe-installer/ffprobe');
   try {
@@ -244,6 +292,18 @@ export function copyNativeAssets(outputDirectory: string): void {
   copyPackage('@neon-rs/load', libsqlRequire);
   copyPackage(`@libsql/${nativePackageTarget}`, libsqlRequire);
 
+  try {
+    const fluentFfmpegDir = resolvePackageDir('fluent-ffmpeg');
+    const presetsSource = join(fluentFfmpegDir, 'lib', 'presets');
+    const presetsDestination = join(outputDirectory, 'presets');
+    rmSync(presetsDestination, { recursive: true, force: true });
+    cpSync(presetsSource, presetsDestination, { recursive: true });
+  } catch (e) {
+    errors.push(
+      `Failed to copy fluent-ffmpeg presets: ${(e as Error).message}`,
+    );
+  }
+
   // Verify critical files exist after copy
   const checks: Array<{ name: string; path: string }> = [
     {
@@ -262,6 +322,10 @@ export function copyNativeAssets(outputDirectory: string): void {
           },
         ]
       : []),
+    {
+      name: 'fluent-ffmpeg presets',
+      path: join(outputDirectory, 'presets', 'divx.js'),
+    },
     {
       name: 'ffmpeg binary',
       path: join(

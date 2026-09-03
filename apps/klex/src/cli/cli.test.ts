@@ -13,6 +13,7 @@ describe('parseCliArgs', () => {
     delete process.env.KLEX_CLOUD_ENROLLMENT_TOKEN;
     delete process.env.KLEX_ADMIN_PORT;
     delete process.env.KLEX_ALLOW_UNSECURE_CLOUD;
+    delete process.env.KLEX_HEADLESS;
   });
 
   afterEach(() => {
@@ -23,6 +24,7 @@ describe('parseCliArgs', () => {
       'KLEX_CLOUD_ENROLLMENT_TOKEN',
       'KLEX_ADMIN_PORT',
       'KLEX_ALLOW_UNSECURE_CLOUD',
+      'KLEX_HEADLESS',
     ]) {
       if (key in originalEnv) {
         // biome-ignore lint/suspicious/noExplicitAny: restore env
@@ -64,13 +66,33 @@ describe('parseCliArgs', () => {
     exitSpy.mockRestore();
   });
 
-  it('exits with code 0 when -h is passed', () => {
-    const exitSpy = vi.spyOn(process, 'exit').mockImplementation(() => {
-      throw new Error('process.exit called');
+  describe('headless', () => {
+    it('defaults to false when no args or env var provided', () => {
+      const result = parseCliArgs([]);
+      expect(result.headless).toBe(false);
     });
-    expect(() => parseCliArgs(['-h'])).toThrow('process.exit called');
-    expect(exitSpy).toHaveBeenCalledWith(0);
-    exitSpy.mockRestore();
+
+    it('enables headless when --headless is passed', () => {
+      const result = parseCliArgs(['--headless']);
+      expect(result.headless).toBe(true);
+    });
+
+    it('enables headless when -H is passed', () => {
+      const result = parseCliArgs(['-H']);
+      expect(result.headless).toBe(true);
+    });
+
+    it('enables headless when KLEX_HEADLESS=1 and no CLI arg', () => {
+      process.env.KLEX_HEADLESS = '1';
+      const result = parseCliArgs([]);
+      expect(result.headless).toBe(true);
+    });
+
+    it('does not enable headless when KLEX_HEADLESS is not 1', () => {
+      process.env.KLEX_HEADLESS = '0';
+      const result = parseCliArgs([]);
+      expect(result.headless).toBe(false);
+    });
   });
 
   describe('cloud enabled', () => {

@@ -30,13 +30,14 @@ describe('Klex Agent executable packaging', () => {
 
     expect(config).toEqual({
       name: 'klex',
-      entry: 'dist/main.js',
+      entry: 'dist/main.mjs',
       outputDirectory: 'dist',
+      mainFormat: 'module',
       assets: {
         'javascript-sandbox-worker.js': 'dist/javascript-sandbox-worker.js',
         'livekit-rtc.node': resolveLiveKitNativeAddon(),
       },
-      useCodeCache: true,
+      useCodeCache: false,
       signing: { mode: 'optional' },
       macos: {
         identity: 'Developer ID Application: stagewise Inc.',

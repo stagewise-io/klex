@@ -24,12 +24,15 @@ export interface AppSigningConfig {
   readonly mode?: SigningMode;
 }
 
+export type SeaMainFormat = 'commonjs' | 'module';
+
 export interface AppPackagerConfig {
   readonly name: string;
   readonly entry: string;
   readonly outputDirectory: string;
   readonly assets?: Readonly<Record<string, string>>;
   readonly useCodeCache?: boolean;
+  readonly mainFormat?: SeaMainFormat;
   readonly expectedNodeVersion?: string;
   readonly expectedArchitecture?: NodeJS.Architecture;
   readonly signing?: AppSigningConfig;
@@ -69,6 +72,7 @@ export interface NormalizedAppPackagerConfig {
   readonly outputPath: string;
   readonly assets: readonly NormalizedAsset[];
   readonly useCodeCache: boolean;
+  readonly mainFormat: SeaMainFormat;
   readonly platform: NodeJS.Platform;
   readonly architecture: NodeJS.Architecture;
   readonly nodeVersion: string;
@@ -152,6 +156,7 @@ export function normalizeAppPackagerConfig(
     outputPath: join(outputDirectory, executableName),
     assets,
     useCodeCache: config.useCodeCache ?? true,
+    mainFormat: config.mainFormat ?? 'commonjs',
     platform,
     architecture,
     nodeVersion,

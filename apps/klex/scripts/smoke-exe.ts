@@ -6,45 +6,46 @@ import { parseArgs } from 'node:util';
 
 import { resolveApplicationVersion, resolveReleaseTarget } from '@/release';
 
-export function smokeKlexDistribution(
-  distributionDirectory: string,
-  environment: NodeJS.ProcessEnv = process.env,
-): void {
-  const executableName = process.platform === 'win32' ? 'klex.exe' : 'klex';
-  const executablePath = resolve(distributionDirectory, executableName);
-  if (!existsSync(executablePath)) {
-    throw new Error(
-      `Klex Agent executable is missing at ${executablePath}; run build:exe first`,
-    );
-  }
+import { resolveSharpNativePackageNames } from './package-exe';
 
-  const nativeAssetChecks: Array<{ name: string; path: string }> = [
+export function resolveNativeAssetChecks(
+  distributionDirectory: string,
+  platform: NodeJS.Platform = process.platform,
+  architecture: string = process.arch,
+): ReadonlyArray<{ readonly name: string; readonly path: string }> {
+  const sharpNativePackages = resolveSharpNativePackageNames(
+    platform,
+    architecture,
+  );
+  return [
     {
       name: 'sharp addon',
       path: resolve(
         distributionDirectory,
         'node_modules',
-        '@img',
-        `sharp-${process.platform}-${process.arch}`,
+        sharpNativePackages.addon,
         'index.cjs',
       ),
     },
-    {
-      name: 'sharp libvips',
-      path: resolve(
-        distributionDirectory,
-        'node_modules',
-        '@img',
-        `sharp-libvips-${process.platform}-${process.arch}`,
-      ),
-    },
+    ...(sharpNativePackages.libvips
+      ? [
+          {
+            name: 'sharp libvips',
+            path: resolve(
+              distributionDirectory,
+              'node_modules',
+              sharpNativePackages.libvips,
+            ),
+          },
+        ]
+      : []),
     {
       name: 'ffmpeg binary',
       path: resolve(
         distributionDirectory,
         'node_modules',
         'ffmpeg-static',
-        process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg',
+        platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg',
       ),
     },
     {
@@ -53,8 +54,8 @@ export function smokeKlexDistribution(
         distributionDirectory,
         'node_modules',
         '@ffprobe-installer',
-        `${process.platform}-${process.arch}`,
-        process.platform === 'win32' ? 'ffprobe.exe' : 'ffprobe',
+        `${platform}-${architecture}`,
+        platform === 'win32' ? 'ffprobe.exe' : 'ffprobe',
       ),
     },
     {
@@ -63,7 +64,8 @@ export function smokeKlexDistribution(
         distributionDirectory,
         'node_modules',
         '@libsql',
-        resolveReleaseTarget().nativePackageTarget,
+        resolveReleaseTarget(platform, architecture as NodeJS.Architecture)
+          .nativePackageTarget,
         'index.node',
       ),
     },
@@ -76,6 +78,21 @@ export function smokeKlexDistribution(
       path: resolve(distributionDirectory, 'livekit-rtc.node'),
     },
   ];
+}
+
+export function smokeKlexDistribution(
+  distributionDirectory: string,
+  environment: NodeJS.ProcessEnv = process.env,
+): void {
+  const executableName = process.platform === 'win32' ? 'klex.exe' : 'klex';
+  const executablePath = resolve(distributionDirectory, executableName);
+  if (!existsSync(executablePath)) {
+    throw new Error(
+      `Klex Agent executable is missing at ${executablePath}; run build:exe first`,
+    );
+  }
+
+  const nativeAssetChecks = resolveNativeAssetChecks(distributionDirectory);
   const missingAssets = nativeAssetChecks.filter((check) => {
     if (existsSync(check.path)) return false;
     process.stderr.write(

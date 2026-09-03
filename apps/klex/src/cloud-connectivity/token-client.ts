@@ -95,18 +95,23 @@ function redactJsonValue(value: unknown): unknown {
 function redactCredentialText(text: string): string {
   let redacted = text;
   for (const field of SENSITIVE_FIELDS) {
-    // Key/value pairs, tolerating single quotes and unquoted keys.
-    redacted = redacted.replace(
-      new RegExp(
-        `${KEY_BOUNDARY}(["']?${field}["']?\\s*:\\s*)(["'])(?:[^"'\\\\]|\\\\.)*(["'])`,
-        'gi',
-      ),
-      `$1$2${REDACTED}$3`,
+    // Either delimiter (`:` or `=`) paired with either value form (quoted or
+    // bare). Enumerating single combinations leaves gaps — a bare
+    // colon-delimited `client_assertion: eyJ...` from a proxy is as plausible
+    // as a quoted JSON pair.
+    const pattern = new RegExp(
+      `${KEY_BOUNDARY}(["']?${field}["']?\\s*[:=]\\s*)` +
+        `("(?:[^"\\\\]|\\\\.)*"|'(?:[^'\\\\]|\\\\.)*'|[^\\s,;&}\\]]+)`,
+      'gi',
     );
-    // Form-encoded: access_token=...
     redacted = redacted.replace(
-      new RegExp(`${KEY_BOUNDARY}(${field}=)[^&\\s]+`, 'gi'),
-      `$1${REDACTED}`,
+      pattern,
+      (_match: string, prefix: string, value: string) => {
+        // Preserve the original quoting so serialised JSON stays parseable.
+        const quote =
+          value.startsWith('"') || value.startsWith("'") ? value[0] : '';
+        return `${prefix}${quote}${REDACTED}${quote}`;
+      },
     );
   }
   return redacted;

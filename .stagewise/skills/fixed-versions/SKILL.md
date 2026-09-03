@@ -19,6 +19,12 @@ description: Enforces pinned exact versions for all dependency installs and upda
 
 5. **DevDependencies too.** Same rule — exact versions, no ranges.
 
+## Native dependencies
+
+If the package you are adding to `apps/klex` ships a `.node` addon or a prebuilt
+binary, pinning is not enough — it must also be virtualized, copied and probed.
+Read `.stagewise/skills/native-dependencies/SKILL.md` before adding it.
+
 ## Rationale
 
 - Reproducible installs across machines and CI.

@@ -593,6 +593,38 @@ describe('TokenClient — refresh retry', () => {
       expect(message).toContain('AS-4711');
     });
 
+    // Both delimiters crossed with both value forms. Covering only some
+    // combinations is how the bare colon-delimited case slipped through, so the
+    // grid is enumerated explicitly.
+    const nonJsonCredentialBodies = [
+      ['bare key, colon, bare value', 'client_assertion: SECRET'],
+      ['bare key, equals, bare value', 'client_assertion=SECRET'],
+      ['quoted key, colon, quoted value', '"client_assertion": "SECRET"'],
+      ['quoted key, equals, quoted value', '"client_assertion"="SECRET"'],
+      ['single-quoted value', "client_assertion: 'SECRET'"],
+      ['padded colon', 'client_assertion   :   SECRET'],
+      ['uppercase key', 'CLIENT_ASSERTION: SECRET'],
+    ] as const;
+
+    it.each(nonJsonCredentialBodies)(
+      'redacts a credential in non-JSON text (%s)',
+      async (_label, pair) => {
+        const message = await captureTokenError(
+          () =>
+            new Response(`upstream rejected request\n${pair}\ntrailing text`, {
+              status: 400,
+              headers: { 'Content-Type': 'text/plain' },
+            }),
+        );
+
+        expect(message).not.toContain('SECRET');
+        expect(message).toContain('[redacted]');
+        // The surrounding diagnostic context must survive redaction.
+        expect(message).toContain('upstream rejected request');
+        expect(message).toContain('trailing text');
+      },
+    );
+
     it('truncates an oversized diagnostic body', async () => {
       const message = await captureTokenError(
         () =>

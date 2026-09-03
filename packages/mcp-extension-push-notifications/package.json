@@ -32,7 +32,7 @@
     "clean": "rm -rf dist",
     "build": "pnpm run generate:schemas && pnpm run clean && tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "pnpm run generate:schemas && vitest run"
   },
   "dependencies": {
     "@stagewise/mcp-extension-client": "workspace:*"

@@ -25,7 +25,14 @@ const healthResponseSchema = z
 // --- MCP ---
 
 const mcpConnectionStatusSchema = z
-  .enum(['connected', 'connecting', 'error', 'disconnected'])
+  .enum([
+    'connected',
+    'connecting',
+    'authorization_required',
+    'authorizing',
+    'error',
+    'disconnected',
+  ])
   .openapi('McpConnectionStatus');
 
 const mcpServerInfoSchema = z
@@ -54,20 +61,20 @@ const createMcpServerBodySchema = z
     z
       .object({
         name: z.string().min(1),
+        type: z.literal('stdio').optional(),
         command: z.string(),
         args: z.array(z.string()).optional(),
         env: z.record(z.string(), z.string()).optional(),
         versionNegotiation: mcpVersionNegotiationSchema.optional(),
-        useCloudAuth: z.boolean().optional(),
       })
       .strict(),
     z
       .object({
         name: z.string().min(1),
+        type: z.enum(['http', 'streamable-http']).optional(),
         url: z.url(),
         headers: z.record(z.string(), z.string()).optional(),
         versionNegotiation: mcpVersionNegotiationSchema.optional(),
-        useCloudAuth: z.boolean().optional(),
       })
       .strict(),
   ])
@@ -77,19 +84,19 @@ const updateMcpServerBodySchema = z
   .union([
     z
       .object({
+        type: z.literal('stdio').optional(),
         command: z.string(),
         args: z.array(z.string()).optional(),
         env: z.record(z.string(), z.string()).optional(),
         versionNegotiation: mcpVersionNegotiationSchema.optional(),
-        useCloudAuth: z.boolean().optional(),
       })
       .strict(),
     z
       .object({
+        type: z.enum(['http', 'streamable-http']).optional(),
         url: z.url(),
         headers: z.record(z.string(), z.string()).optional(),
         versionNegotiation: mcpVersionNegotiationSchema.optional(),
-        useCloudAuth: z.boolean().optional(),
       })
       .strict(),
   ])

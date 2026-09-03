@@ -14,10 +14,11 @@ import type {
   McpServerConfig,
 } from '@/config';
 
-import type {
-  ConnectMcpServerOptions,
-  McpConnection,
-  McpConnectionFactory,
+import {
+  type ConnectMcpServerOptions,
+  McpAuthorizationRequiredError,
+  type McpConnection,
+  type McpConnectionFactory,
 } from './connection';
 import { createMcp } from './mcp';
 
@@ -338,6 +339,30 @@ describe('MCP namespace isolation', () => {
     await mcp.close();
   });
 
+  it('does not retry a namespace that requires authorization', async () => {
+    vi.useFakeTimers();
+    const connect = vi.fn(async () => {
+      throw new McpAuthorizationRequiredError(new Error('unauthorized'));
+    });
+    const { mcp } = setup(
+      { protected: { url: 'https://protected.example/mcp' } },
+      connect,
+    );
+
+    await mcp.start();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(connect).toHaveBeenCalledOnce();
+    expect(mcp.getServerStatuses()).toContainEqual(
+      expect.objectContaining({
+        name: 'protected',
+        status: 'authorization_required',
+      }),
+    );
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(connect).toHaveBeenCalledOnce();
+    await mcp.close();
+  });
+
   it('connects an added namespace while an earlier attempt remains pending', async () => {
     const pending = deferred<McpConnection>();
     const connect = vi.fn(async ({ namespace }: ConnectMcpServerOptions) =>
@@ -638,22 +663,26 @@ describe('MCP namespace isolation', () => {
   });
 });
 
-describe('MCP cloud auth (useCloudAuth)', () => {
-  it('skips servers with useCloudAuth when cloud connectivity is disabled', async () => {
-    const connect = vi.fn(async () => connection('cloud-mcp'));
+describe('MCP cloud auth (discovery-driven)', () => {
+  it('connects HTTP servers without cloudAuth when cloud connectivity is absent', async () => {
+    const captured = deferred<ConnectMcpServerOptions>();
+    const connect = vi.fn(async (opts: ConnectMcpServerOptions) => {
+      captured.resolve(opts);
+      return connection('cloud-mcp');
+    });
     const { mcp } = setup(
-      { 'cloud-mcp': { url: 'https://cloud.example/mcp', useCloudAuth: true } },
+      { 'cloud-mcp': { url: 'https://cloud.example/mcp' } },
       connect,
       false,
     );
 
     await mcp.start();
-    await vi.waitFor(() => expect(connect).not.toHaveBeenCalled());
-    expect(await namespaceNames(mcp)).toEqual([]);
+    await vi.waitFor(() => expect(connect).toHaveBeenCalledOnce());
+    expect((await captured.promise).cloudAuth).toBeUndefined();
     await mcp.close();
   });
 
-  it('connects servers with useCloudAuth when cloud is enabled and passes cloudAuth', async () => {
+  it('passes cloudAuth to every HTTP server when cloud is enabled', async () => {
     const captured = deferred<ConnectMcpServerOptions>();
     const connect = vi.fn(async (opts: ConnectMcpServerOptions) => {
       captured.resolve(opts);
@@ -662,7 +691,7 @@ describe('MCP cloud auth (useCloudAuth)', () => {
     const getAccessToken = vi.fn(async () => 'cloud-bearer-token');
     const invalidateAccessToken = vi.fn();
     const { mcp } = setup(
-      { 'cloud-mcp': { url: 'https://cloud.example/mcp', useCloudAuth: true } },
+      { 'cloud-mcp': { url: 'https://cloud.example/mcp' } },
       connect,
       false,
       { isCloudEnabled: () => true, getAccessToken, invalidateAccessToken },
@@ -691,7 +720,7 @@ describe('MCP cloud auth (useCloudAuth)', () => {
     await mcp.close();
   });
 
-  it('connects servers without useCloudAuth regardless of cloud state', async () => {
+  it('connects HTTP servers regardless of cloud state', async () => {
     const connect = vi.fn(async () => connection('local-mcp'));
     const { mcp } = setup(
       { 'local-mcp': { url: 'https://local.example/mcp' } },

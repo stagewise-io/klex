@@ -275,6 +275,7 @@ class CloudConnectivityModule implements CloudConnectivity {
       enrollmentCode,
       this.identity,
     );
+    await this.resetCloudSession();
     await this.persistEnrollment(clientId, this.identity.kid);
     await this.initTokenClient();
 
@@ -303,6 +304,21 @@ class CloudConnectivityModule implements CloudConnectivity {
     };
     await saveEnrollmentState(this.deps.dataDirectory, this.enrollment);
     this.deps.logger.info({ clientId }, 'Enrollment successful');
+  }
+
+  private async resetCloudSession(): Promise<void> {
+    if (this.retryTimer) {
+      clearTimeout(this.retryTimer);
+      this.retryTimer = null;
+    }
+    this.retryAttempt = 0;
+    this.connecting = false;
+    this.tunnel?.close();
+    this.tunnel = null;
+    this.tunnelState = 'disconnected';
+    this.cloudApiClient = null;
+    this.tokenClient?.close();
+    this.tokenClient = null;
   }
 
   private async initTokenClient(): Promise<void> {
@@ -386,19 +402,7 @@ class CloudConnectivityModule implements CloudConnectivity {
     if (!this.started) return;
     this.started = false;
 
-    if (this.retryTimer) {
-      clearTimeout(this.retryTimer);
-      this.retryTimer = null;
-    }
-    this.retryAttempt = 0;
-    this.connecting = false;
-    this.tunnel?.close();
-    this.tunnel = null;
-    this.tunnelState = 'disconnected';
-    this.cloudApiClient = null;
-
-    this.tokenClient?.close();
-    this.tokenClient = null;
+    await this.resetCloudSession();
 
     this.identity = null;
     this.enrollment = null;

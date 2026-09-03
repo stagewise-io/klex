@@ -42,29 +42,98 @@ function isCacheKeyForResource(cacheKey: string, resource: string): boolean {
   return cacheKey.startsWith(`${resource}${CACHE_KEY_SEPARATOR}`);
 }
 
+const REDACTED = '[redacted]';
+
+/**
+ * Credential-bearing fields that must never reach a log.
+ *
+ * Covers both directions: fields an authorization server returns
+ * (`access_token`, `refresh_token`, `id_token`) and fields we submit that a
+ * server or intervening proxy may echo back in an error body
+ * (`client_assertion` is our `private_key_jwt`, so it is at least as sensitive
+ * as the token it buys).
+ */
+const SENSITIVE_FIELDS = [
+  'access_token',
+  'refresh_token',
+  'id_token',
+  'client_secret',
+  'client_assertion',
+  'code',
+  'device_code',
+];
+
+// Prevents `code` from matching inside `error_code`, which would discard
+// diagnostics we actually want to keep.
+const KEY_BOUNDARY = '(?<![\\w-])';
+
+function isSensitiveKey(key: string): boolean {
+  return SENSITIVE_FIELDS.includes(key.toLowerCase());
+}
+
+function redactJsonValue(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map(redactJsonValue);
+  }
+  if (value !== null && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, nested]) => [
+        key,
+        isSensitiveKey(key) ? REDACTED : redactJsonValue(nested),
+      ]),
+    );
+  }
+  return value;
+}
+
+/**
+ * Scans arbitrary text. Used for non-JSON bodies (HTML proxy pages,
+ * form-encoded errors) and as a second pass over serialised JSON, where a
+ * secret can sit inside an innocently named string value such as
+ * `error_description`.
+ */
+function redactCredentialText(text: string): string {
+  let redacted = text;
+  for (const field of SENSITIVE_FIELDS) {
+    // Key/value pairs, tolerating single quotes and unquoted keys.
+    redacted = redacted.replace(
+      new RegExp(
+        `${KEY_BOUNDARY}(["']?${field}["']?\\s*:\\s*)(["'])(?:[^"'\\\\]|\\\\.)*(["'])`,
+        'gi',
+      ),
+      `$1$2${REDACTED}$3`,
+    );
+    // Form-encoded: access_token=...
+    redacted = redacted.replace(
+      new RegExp(`${KEY_BOUNDARY}(${field}=)[^&\\s]+`, 'gi'),
+      `$1${REDACTED}`,
+    );
+  }
+  return redacted;
+}
+
 /**
  * Replaces credential values with `[redacted]`.
  *
  * A response can be non-conformant yet still carry a live token — for example
  * a success body with a malformed `expires_in`. Diagnostics reach
  * `logger.error`, so token values must never survive into them.
+ *
+ * Structural redaction is preferred over a raw-text scan because `JSON.parse`
+ * normalises escaped key spellings (`access\u005ftoken` decodes to
+ * `access_token`), which a text regex cannot see. The text pass still runs
+ * afterwards to catch secrets embedded in string values.
  */
 function redactCredentials(text: string): string {
-  const fields = ['access_token', 'refresh_token', 'id_token'];
-  let redacted = text;
-  for (const field of fields) {
-    // JSON: "access_token": "..."
-    redacted = redacted.replace(
-      new RegExp(`("${field}"\\s*:\\s*")(?:[^"\\\\]|\\\\.)*(")`, 'g'),
-      `$1[redacted]$2`,
-    );
-    // Form-encoded fallback: access_token=...
-    redacted = redacted.replace(
-      new RegExp(`(${field}=)[^&\\s]+`, 'g'),
-      `$1[redacted]`,
-    );
+  try {
+    const parsed: unknown = JSON.parse(text);
+    if (parsed !== null && typeof parsed === 'object') {
+      return redactCredentialText(JSON.stringify(redactJsonValue(parsed)));
+    }
+  } catch {
+    // Not JSON — the text scanner is the only available defence.
   }
-  return redacted;
+  return redactCredentialText(text);
 }
 
 /**

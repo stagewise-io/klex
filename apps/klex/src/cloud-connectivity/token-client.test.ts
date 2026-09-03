@@ -512,6 +512,87 @@ describe('TokenClient — refresh retry', () => {
       expect(message).toContain('[redacted]');
     });
 
+    it('redacts a credential under a JSON-escaped property name', async () => {
+      // `JSON.parse` decodes `access\u005ftoken` to `access_token`, so a
+      // raw-text scan alone would leak the value.
+      const message = await captureTokenError(
+        () =>
+          new Response('{"access\\u005ftoken":"super-secret-token-value"}', {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          }),
+      );
+
+      expect(message).not.toContain('super-secret-token-value');
+      expect(message).toContain('[redacted]');
+    });
+
+    it('redacts submitted credentials echoed back by the server', async () => {
+      // A server or proxy that echoes the request body would otherwise expose
+      // the `private_key_jwt` assertion.
+      const message = await captureTokenError(
+        () =>
+          new Response(
+            'invalid_request: client_assertion=super-secret-assertion-value&grant_type=client_credentials',
+            {
+              status: 400,
+              headers: { 'Content-Type': 'text/plain' },
+            },
+          ),
+      );
+
+      expect(message).not.toContain('super-secret-assertion-value');
+      expect(message).toContain('[redacted]');
+    });
+
+    it('redacts a credential nested inside an error object', async () => {
+      const message = await captureTokenError(
+        () =>
+          new Response(
+            JSON.stringify({
+              error: 'invalid_client',
+              sent: { client_secret: 'super-secret-client-value' },
+            }),
+            { status: 401, headers: { 'Content-Type': 'application/json' } },
+          ),
+      );
+
+      expect(message).not.toContain('super-secret-client-value');
+      expect(message).toContain('[redacted]');
+    });
+
+    it('redacts a credential embedded in a string value', async () => {
+      const message = await captureTokenError(
+        () =>
+          new Response(
+            JSON.stringify({
+              error_description: 'rejected access_token=super-secret-embedded',
+            }),
+            { status: 400, headers: { 'Content-Type': 'application/json' } },
+          ),
+      );
+
+      expect(message).not.toContain('super-secret-embedded');
+      expect(message).toContain('[redacted]');
+    });
+
+    it('preserves diagnostic fields whose names merely end in a keyword', async () => {
+      // `error_code` must survive: redacting it would defeat the purpose of
+      // capturing the body at all.
+      const message = await captureTokenError(
+        () =>
+          new Response(
+            JSON.stringify({
+              error_code: 'AS-4711',
+              expires_in: 'not-a-number',
+            }),
+            { status: 200, headers: { 'Content-Type': 'application/json' } },
+          ),
+      );
+
+      expect(message).toContain('AS-4711');
+    });
+
     it('truncates an oversized diagnostic body', async () => {
       const message = await captureTokenError(
         () =>

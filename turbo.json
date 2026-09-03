@@ -6,16 +6,31 @@
       "dependsOn": ["^build"],
       "outputs": ["dist/**", "src/generated/**"]
     },
+    "build:admin-api-types": {
+      "dependsOn": ["^build"],
+      "outputs": [".types/admin-api/**"]
+    },
+    "@klex/agent-admin-api#build": {
+      "dependsOn": ["@stagewise/klex#build:admin-api-types"],
+      "outputs": ["dist/**"]
+    },
     "dev": {
       "cache": false,
       "persistent": true
     },
     "typecheck": {
-      "dependsOn": ["^typecheck"]
+      "dependsOn": ["^build"]
+    },
+    "@klex/agent-admin-api#typecheck": {
+      "dependsOn": ["build"]
     },
     "test": {
       "dependsOn": ["^build"],
       "outputs": ["coverage**"]
+    },
+    "verify": {
+      "dependsOn": ["build"],
+      "cache": false
     },
     "clean": {
       "cache": false

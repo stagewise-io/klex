@@ -24,9 +24,10 @@
   },
   "scripts": {
     "clean": "rm -rf dist",
-    "build": "pnpm --filter \"@stagewise/klex^...\" build && pnpm --filter @stagewise/klex build:admin-api-types && node build.mjs",
-    "typecheck": "pnpm build && tsc --noEmit",
-    "verify": "pnpm build && node verify-package.mjs"
+    "build": "node build.mjs",
+    "typecheck": "tsc --noEmit",
+    "test": "node --test release-config.test.mjs",
+    "verify": "node verify-package.mjs"
   },
   "devDependencies": {
     "@hono/zod-openapi": "1.5.1",
@@ -39,7 +40,6 @@
     "@types/node": "26.1.1",
     "hono": "4.12.30",
     "semantic-release": "25.0.9",
-    "semantic-release-monorepo": "8.0.2",
     "typescript": "5.9.3"
   },
   "packageManager": "pnpm@11.22.0"

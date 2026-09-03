@@ -1,4 +1,4 @@
-# Package releases — semantic-release with monorepo support.
+# Publish @klex/agent-admin-api for scoped conventional commits on main.
 
 name: Release
 
@@ -37,22 +37,16 @@ jobs:
           cache: pnpm
           registry-url: https://registry.npmjs.org
       - run: pnpm install --frozen-lockfile
-      - name: Build publishable packages
-        run: pnpm --filter @klex/agent-admin-api build
-      - name: Verify publishable packages
-        run: pnpm --filter @klex/agent-admin-api verify
-      - name: Typecheck
+      - name: Build workspace
+        run: pnpm build
+      - name: Typecheck workspace
         run: pnpm typecheck
-      - name: Test
+      - name: Test workspace
         run: pnpm test
-      - name: Release changed packages
+      - name: Verify publishable package
+        run: pnpm exec turbo run verify --filter @klex/agent-admin-api
+      - name: Release agent-admin-api
+        working-directory: packages/agent-admin-api
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-          for pkg_dir in packages/*/; do
-            [ -f "$pkg_dir.releaserc.js" ] || [ -f "$pkg_dir/.releaserc.js" ] || continue
-            echo "::group::Releasing $pkg_dir"
-            (cd "$pkg_dir" && pnpm exec semantic-release)
-            echo "::endgroup::"
-          done
+        run: pnpm exec semantic-release

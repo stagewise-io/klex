@@ -21,8 +21,15 @@ function getSharp(): SharpFn | null {
   if (sharpChecked) return sharpModule;
   sharpChecked = true;
   try {
-    // Use require() for CJS compatibility in SEA builds
-    sharpModule = require('sharp');
+    // Use require() for CJS compatibility in SEA builds.
+    // In SEA builds `sharp` resolves to the ESM shim in build.ts, so esbuild
+    // compiles this require() into a namespace object ({ default, path }) rather
+    // than the callable sharp function. Unwrap `.default` or every sharp(...)
+    // call throws "is not a function" while isSharpAvailable() still reports
+    // true. Caught by `klex --verify-native`.
+    const loaded = require('sharp') as SharpFn | { default: SharpFn };
+    sharpModule =
+      typeof loaded === 'function' ? loaded : (loaded.default ?? null);
   } catch {
     sharpModule = null;
   }

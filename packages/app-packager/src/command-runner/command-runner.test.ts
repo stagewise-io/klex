@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import {
   CommandExecutionError,
@@ -35,5 +35,29 @@ describe('createCommandRunner', () => {
         stderr: 'stderr detail',
       });
     }
+  });
+
+  it('passes timeouts to child processes and reports expiration', () => {
+    const spawn = vi.fn(() => ({
+      error: Object.assign(new Error('spawnSync tool ETIMEDOUT'), {
+        code: 'ETIMEDOUT',
+      }),
+      status: null,
+      signal: 'SIGTERM',
+      stdout: '',
+      stderr: '',
+      pid: 1,
+      output: [],
+    }));
+    const runner = createCommandRunner({ spawn: spawn as never });
+
+    expect(() =>
+      runner.run('tool', ['sign', 'app.exe'], { timeoutMs: 300_000 }),
+    ).toThrow('Command timed out after 300000ms: tool sign app.exe');
+    expect(spawn).toHaveBeenCalledWith(
+      'tool',
+      ['sign', 'app.exe'],
+      expect.objectContaining({ timeout: 300_000 }),
+    );
   });
 });

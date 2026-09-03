@@ -3,7 +3,9 @@ import { spawnSync } from 'node:child_process';
 export interface CommandRunOptions {
   readonly cwd?: string;
   readonly captureOutput?: boolean;
+  readonly logCommand?: boolean;
   readonly sensitiveArgumentIndexes?: readonly number[];
+  readonly timeoutMs?: number;
 }
 
 export type CommandOptions = CommandRunOptions;
@@ -52,24 +54,32 @@ class NativeCommandRunner implements CommandRunner {
     arguments_: readonly string[],
     options: CommandRunOptions = {},
   ): CommandResult {
-    const result = this.spawn(command, [...arguments_], {
-      cwd: options.cwd,
-      encoding: 'utf8',
-      shell: false,
-      stdio: options.captureOutput === false ? 'inherit' : 'pipe',
-    });
     const displayArguments = arguments_.map((argument, index) =>
       options.sensitiveArgumentIndexes?.includes(index)
         ? '<redacted>'
         : argument,
     );
     const displayCommand = [command, ...displayArguments].join(' ');
+    if (options.logCommand)
+      process.stdout.write(`Running: ${displayCommand}\n`);
+
+    const result = this.spawn(command, [...arguments_], {
+      cwd: options.cwd,
+      encoding: 'utf8',
+      shell: false,
+      stdio: options.captureOutput === false ? 'inherit' : 'pipe',
+      timeout: options.timeoutMs,
+    });
     const stdout = typeof result.stdout === 'string' ? result.stdout : '';
     const stderr = typeof result.stderr === 'string' ? result.stderr : '';
 
     if (result.error) {
+      const timedOut =
+        'code' in result.error && result.error.code === 'ETIMEDOUT';
       throw new CommandExecutionError(
-        `Failed to start command: ${displayCommand}`,
+        timedOut
+          ? `Command timed out after ${String(options.timeoutMs)}ms: ${displayCommand}`
+          : `Failed to start command: ${displayCommand}`,
         {
           command: displayCommand,
           stdout,

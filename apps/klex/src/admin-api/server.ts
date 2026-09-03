@@ -164,7 +164,8 @@ export function createAdminApp(deps: AdminAppDependencies): AdminApp {
       description:
         'Observability and management API for the Klex Agent admin plane. Provides session state, token consumption, MCP connection status, tool call history, and configuration management.',
     },
-    servers: [{ url: `http://0.0.0.0:${deps.port}` }],
+    // Must match the loopback-only bind in admin-api.ts.
+    servers: [{ url: `http://127.0.0.1:${deps.port}` }],
   });
 
   return app;

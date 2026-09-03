@@ -63,15 +63,16 @@ describe('AdminApi', () => {
 
       await api.start();
 
-      // Verify the port is listening by making a request
-      const response = await fetch('http://0.0.0.0:19999/v1/health');
+      // Verify the port is listening by making a request. The server binds
+      // loopback only, so the client must dial 127.0.0.1 explicitly.
+      const response = await fetch('http://127.0.0.1:19999/v1/health');
       expect(response.status).toBe(200);
     });
 
     it('closes the server', async () => {
       await api.close();
 
-      await expect(fetch('http://0.0.0.0:19999/v1/health')).rejects.toThrow();
+      await expect(fetch('http://127.0.0.1:19999/v1/health')).rejects.toThrow();
     });
   });
 
@@ -93,7 +94,7 @@ describe('AdminApi', () => {
       await api.start();
 
       // Port should NOT be bound
-      await expect(fetch('http://0.0.0.0:19998/v1/health')).rejects.toThrow();
+      await expect(fetch('http://127.0.0.1:19998/v1/health')).rejects.toThrow();
     });
 
     it('close() is safe when tunnel-only', async () => {

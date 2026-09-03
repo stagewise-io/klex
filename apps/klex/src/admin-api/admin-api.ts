@@ -66,9 +66,13 @@ class AdminApiModule implements AdminApi {
       return;
     }
 
+    // Loopback only: the admin API has no authentication middleware and its
+    // routes expose configuration and provider data. Binding 0.0.0.0 exposed
+    // that to the whole local network under `--no-cloud`. Use the IPv4
+    // literal rather than 'localhost', which can resolve to IPv6 ::1 only.
     this.server = await new Promise<ServerType>((resolve) => {
       const server = serve(
-        { fetch: this.app!.fetch, port: this.deps.port, hostname: '0.0.0.0' },
+        { fetch: this.app!.fetch, port: this.deps.port, hostname: '127.0.0.1' },
         (info) => {
           this.deps.logger.info(
             { address: info.address, port: info.port },

@@ -184,12 +184,25 @@ jobs:
             throw "Missing Azure Trusted Signing secrets: $($missingSecrets -join ', ')"
           }
           $nugetDir = Join-Path '${{ runner.temp }}' 'nuget'
-          nuget install Microsoft.Trusted.Signing.Client -Version 1.0.95 -OutputDirectory $nugetDir -Source https://api.nuget.org/v3/index.json
-          $dlib = Get-ChildItem $nugetDir -Recurse -Filter Azure.CodeSigning.Dlib.dll |
-            Where-Object FullName -Match 'x64' | Select-Object -First 1 -ExpandProperty FullName
-          $signTool = Get-ChildItem 'C:\Program Files (x86)\Windows Kits\10\bin' -Recurse -Filter signtool.exe |
-            Where-Object FullName -Match 'x64' | Select-Object -First 1 -ExpandProperty FullName
-          if (-not $dlib -or -not $signTool) { throw 'Azure Trusted Signing tools not found' }
+          $trustedSigningVersion = '1.0.95'
+          $sdkBuildToolsVersion = '10.0.22621.3233'
+          nuget install Microsoft.Trusted.Signing.Client -Version $trustedSigningVersion -OutputDirectory $nugetDir -Source https://api.nuget.org/v3/index.json
+          nuget install Microsoft.Windows.SDK.BuildTools -Version $sdkBuildToolsVersion -OutputDirectory $nugetDir -Source https://api.nuget.org/v3/index.json
+          $dlib = Join-Path $nugetDir "Microsoft.Trusted.Signing.Client.$trustedSigningVersion\bin\x64\Azure.CodeSigning.Dlib.dll"
+          $signTool = Join-Path $nugetDir "Microsoft.Windows.SDK.BuildTools.$sdkBuildToolsVersion\bin\10.0.22621.0\x64\signtool.exe"
+          if (-not (Test-Path $dlib) -or -not (Test-Path $signTool)) {
+            throw 'Pinned Azure Trusted Signing tools not found'
+          }
+          $minimumSignToolVersion = [version]'10.0.22621.755'
+          $signToolVersion = (Get-Item $signTool).VersionInfo.FileVersionRaw
+          if (-not $signToolVersion -or $signToolVersion -lt $minimumSignToolVersion) {
+            throw "SignTool $signToolVersion is older than required version $minimumSignToolVersion"
+          }
+          $dotnetEightRuntime = dotnet --list-runtimes | Select-String '^Microsoft.NETCore.App 8\.'
+          if (-not $dotnetEightRuntime) {
+            throw '.NET 8 runtime is required by Azure Trusted Signing'
+          }
+          Write-Host "Using SignTool $signToolVersion from pinned Windows SDK Build Tools $sdkBuildToolsVersion"
           $metadata = Join-Path '${{ runner.temp }}' 'azure-signing-metadata.json'
           @{
             Endpoint = '${{ secrets.AZURE_ACCOUNT_ENDPOINT_URI }}'

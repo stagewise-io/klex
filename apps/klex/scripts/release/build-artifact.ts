@@ -113,10 +113,29 @@ export async function buildReleaseArtifact(
     );
     const isMachO = dependencies.isMachO ?? isMachOFile;
     const files = candidates.filter(isMachO);
-    const result = await (dependencies.signMany ?? signExecutables)({
+    const executablePath = join(stageDirectory, 'klex');
+    const runtimeFiles = files.filter((file) => file !== executablePath);
+    const signMany = dependencies.signMany ?? signExecutables;
+    if (runtimeFiles.length > 0) {
+      await signMany({
+        environment: releaseEnvironment,
+        files: runtimeFiles,
+        macos: { identity: environment.APPLE_SIGNING_IDENTITY },
+        mode: 'required',
+        platform: 'darwin',
+      });
+    }
+    const result = await signMany({
       environment: releaseEnvironment,
-      files,
-      macos: { identity: environment.APPLE_SIGNING_IDENTITY },
+      files: [executablePath],
+      macos: {
+        entitlements: {
+          allowJit: true,
+          allowUnsignedExecutableMemory: true,
+          disableLibraryValidation: true,
+        },
+        identity: environment.APPLE_SIGNING_IDENTITY,
+      },
       mode: 'required',
       platform: 'darwin',
     });

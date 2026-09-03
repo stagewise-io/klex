@@ -118,11 +118,17 @@ describe('release artifact builder', () => {
     const root = mkdtempSync(join(tmpdir(), 'klex-release-build-'));
     const packaged = createPackagedDistribution(root, 'darwin', 'arm64');
     const events: string[] = [];
-    let signedFiles: readonly string[] = [];
+    const signingCalls: Array<{
+      files: readonly string[];
+      macos: unknown;
+    }> = [];
     try {
       const result = await buildReleaseArtifact(
         {
           channel: 'nightly',
+          environment: {
+            APPLE_SIGNING_IDENTITY: 'Developer ID Application: Stagewise',
+          },
           gitCommit: COMMIT,
           outputDirectory: join(root, 'output'),
           tag: 'v1.0.1-nightly20260902c001',
@@ -147,9 +153,9 @@ describe('release artifact builder', () => {
             target: 'darwin-arm64',
           }),
           run: () => '',
-          signMany: async ({ files }) => {
+          signMany: async ({ files, macos }) => {
             events.push('sign');
-            signedFiles = files;
+            signingCalls.push({ files, macos });
             return {
               provider: 'apple-developer-id',
               signed: true,
@@ -160,11 +166,28 @@ describe('release artifact builder', () => {
         },
       );
 
-      expect(events).toEqual(['sign', 'notarize', 'smoke', 'archive']);
-      expect(signedFiles).toContainEqual(
+      expect(events).toEqual(['sign', 'sign', 'notarize', 'smoke', 'archive']);
+      expect(signingCalls).toHaveLength(2);
+      expect(signingCalls[0]?.files).toContainEqual(
         expect.stringMatching(/\/livekit-rtc\.node$/),
       );
-      expect(signedFiles.at(-1)).toMatch(/\/klex$/);
+      expect(signingCalls[0]?.files).not.toContainEqual(
+        expect.stringMatching(/\/klex$/),
+      );
+      expect(signingCalls[0]?.macos).toEqual({
+        identity: 'Developer ID Application: Stagewise',
+      });
+      expect(signingCalls[1]).toEqual({
+        files: [expect.stringMatching(/\/klex$/)],
+        macos: {
+          entitlements: {
+            allowJit: true,
+            allowUnsignedExecutableMemory: true,
+            disableLibraryValidation: true,
+          },
+          identity: 'Developer ID Application: Stagewise',
+        },
+      });
       expect(result.metadata.artifact).toMatchObject({
         notarized: true,
         signed: true,

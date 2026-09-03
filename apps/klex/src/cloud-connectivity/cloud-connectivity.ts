@@ -47,6 +47,7 @@ class CloudConnectivityModule implements CloudConnectivity {
   private retryTimer: ReturnType<typeof setTimeout> | null = null;
   private retryAttempt = 0;
   private connecting = false;
+  private connectionGeneration = 0;
   private started = false;
   private tunnelState: TunnelState = 'disconnected';
 
@@ -147,6 +148,7 @@ class CloudConnectivityModule implements CloudConnectivity {
   private async connectTunnel(): Promise<void> {
     if (!this.started || this.connecting || !this.tokenClient) return;
     this.connecting = true;
+    const generation = this.connectionGeneration;
 
     try {
       let accessToken: string;
@@ -157,7 +159,7 @@ class CloudConnectivityModule implements CloudConnectivity {
           CLOUD_API_SCOPES,
         );
       } catch {
-        if (!this.started) return;
+        if (!this.started || generation !== this.connectionGeneration) return;
         const retryDelayMs = this.scheduleReconnect();
         this.deps.logger.warn(
           { retryAttempt: this.retryAttempt, retryDelayMs },
@@ -165,19 +167,24 @@ class CloudConnectivityModule implements CloudConnectivity {
         );
         return;
       }
-      if (!this.started) return;
+      if (!this.started || generation !== this.connectionGeneration) return;
 
       const tunnel = await connectAgentTunnel(this.apiResource(), {
         accessToken,
       });
-      if (!this.started) {
+      if (!this.started || generation !== this.connectionGeneration) {
         tunnel.close();
         return;
       }
 
       this.tunnel = tunnel;
       tunnel.on('open', () => {
-        if (this.tunnel !== tunnel || !this.started) return;
+        if (
+          this.tunnel !== tunnel ||
+          !this.started ||
+          generation !== this.connectionGeneration
+        )
+          return;
         this.retryAttempt = 0;
         this.tunnelState = 'connected';
         this.deps.logger.info(
@@ -186,7 +193,12 @@ class CloudConnectivityModule implements CloudConnectivity {
         );
       });
       tunnel.on('error', (error: unknown) => {
-        if (this.tunnel !== tunnel || !this.started) return;
+        if (
+          this.tunnel !== tunnel ||
+          !this.started ||
+          generation !== this.connectionGeneration
+        )
+          return;
         this.tunnel = null;
         this.tunnelState = 'error';
         this.tokenClient?.invalidate(this.apiResource());
@@ -198,7 +210,12 @@ class CloudConnectivityModule implements CloudConnectivity {
         tunnel.close();
       });
       tunnel.on('close', (code: unknown, reason: unknown) => {
-        if (this.tunnel !== tunnel || !this.started) return;
+        if (
+          this.tunnel !== tunnel ||
+          !this.started ||
+          generation !== this.connectionGeneration
+        )
+          return;
         this.tunnel = null;
         this.tunnelState = 'error';
         this.tokenClient?.invalidate(this.apiResource());
@@ -214,7 +231,7 @@ class CloudConnectivityModule implements CloudConnectivity {
         );
       });
     } catch (error) {
-      if (!this.started) return;
+      if (!this.started || generation !== this.connectionGeneration) return;
       this.tunnelState = 'error';
       const retryDelayMs = this.scheduleReconnect();
       this.deps.logger.error(
@@ -222,7 +239,9 @@ class CloudConnectivityModule implements CloudConnectivity {
         'Klex Cloud tunnel connection failed; retrying',
       );
     } finally {
-      this.connecting = false;
+      if (generation === this.connectionGeneration) {
+        this.connecting = false;
+      }
     }
   }
 
@@ -307,6 +326,7 @@ class CloudConnectivityModule implements CloudConnectivity {
   }
 
   private async resetCloudSession(): Promise<void> {
+    this.connectionGeneration += 1;
     if (this.retryTimer) {
       clearTimeout(this.retryTimer);
       this.retryTimer = null;

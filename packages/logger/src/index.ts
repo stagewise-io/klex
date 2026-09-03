@@ -23,6 +23,8 @@ export interface LoggerOptions {
   minLevel?: LogLevel;
   type?: 'json' | 'pretty' | 'hidden';
   verbose?: boolean;
+  /** When false, suppresses all console output (for TUI mode). Default: true */
+  console?: boolean;
   mask?: {
     keys?: string[];
     caseInsensitive?: boolean;
@@ -175,11 +177,16 @@ const compactFormatter: LogFormatter<ILogObj> = (
 
 export function createLogger(opts?: LoggerOptions): RootLogger {
   const verbose = opts?.verbose ?? true;
+  const consoleOutput = opts?.console !== false;
 
   const logger = new TslogLogger<ILogObj>({
     name: opts?.name,
     minLevel: verbose ? (opts?.minLevel ?? 'INFO') : 'INFO',
-    type: verbose ? (opts?.type ?? 'pretty') : 'hidden',
+    type: consoleOutput
+      ? verbose
+        ? (opts?.type ?? 'pretty')
+        : 'hidden'
+      : 'hidden',
     mask: opts?.mask
       ? {
           keys: opts.mask.keys ?? [
@@ -194,7 +201,7 @@ export function createLogger(opts?: LoggerOptions): RootLogger {
       : undefined,
   });
 
-  if (!verbose) {
+  if (!verbose && consoleOutput) {
     logger.attachTransport({
       name: 'compact-console',
       format: compactFormatter,

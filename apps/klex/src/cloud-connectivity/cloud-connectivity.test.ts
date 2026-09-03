@@ -30,7 +30,7 @@ const {
   const cloudApiClientMock = { agent: { tunnel: {} } };
   const createCloudApiClientMock = vi.fn(() => cloudApiClientMock);
   const tunnelHandlers: Record<string, (...args: unknown[]) => void> = {};
-  const tunnelMock = { stop: vi.fn(), on: vi.fn() };
+  const tunnelMock = { close: vi.fn(), on: vi.fn() };
   const tunnelOnMock = tunnelMock.on.mockImplementation(
     (event: string, handler: (...args: unknown[]) => void) => {
       tunnelHandlers[event] = handler;
@@ -39,31 +39,19 @@ const {
   );
   return {
     cloudApiClientMock,
-    connectAgentTunnelMock: vi.fn(
-      async (options: {
-        accessToken: () => Promise<string>;
-        onConnect?: (agentId: string) => void;
-        onClose?: (code: number, reason: string) => void;
-      }) => {
-        await options.accessToken();
-        tunnelHandlers.open = () => options.onConnect?.('agent-123');
-        tunnelHandlers.close = (...args: unknown[]) =>
-          options.onClose?.(args[0] as number, args[1] as string);
-        return tunnelMock;
-      },
-    ),
+    connectAgentTunnelMock: vi.fn(async () => tunnelMock),
     createCloudApiClientMock,
     getAccessTokenMock: vi.fn(async () => 'mock-access-token'),
     invalidateTokenMock: vi.fn(),
     tokenClientCloseMock: vi.fn(),
-    tunnelCloseMock: tunnelMock.stop,
+    tunnelCloseMock: tunnelMock.close,
     tunnelHandlers,
     tunnelOnMock,
   };
 });
 
 vi.mock('@klex/cloud-api', () => ({
-  startAgentTunnel: connectAgentTunnelMock,
+  connectAgentTunnel: connectAgentTunnelMock,
   createCloudApiClient: createCloudApiClientMock,
 }));
 
@@ -136,19 +124,10 @@ describe('CloudConnectivity', () => {
     vi.mocked(performEnrollment).mockReset();
     vi.mocked(promptEnrollmentCode).mockReset();
     connectAgentTunnelMock.mockReset();
-    connectAgentTunnelMock.mockImplementation(
-      async (options: {
-        accessToken: () => Promise<string>;
-        onConnect?: (agentId: string) => void;
-        onClose?: (code: number, reason: string) => void;
-      }) => {
-        await options.accessToken();
-        tunnelHandlers.open = () => options.onConnect?.('agent-123');
-        tunnelHandlers.close = (...args: unknown[]) =>
-          options.onClose?.(args[0] as number, args[1] as string);
-        return { stop: tunnelCloseMock, on: tunnelOnMock };
-      },
-    );
+    connectAgentTunnelMock.mockImplementation(async () => ({
+      close: tunnelCloseMock,
+      on: tunnelOnMock,
+    }));
     createCloudApiClientMock.mockClear();
     getAccessTokenMock.mockReset();
     getAccessTokenMock.mockResolvedValue('mock-access-token');
@@ -176,8 +155,6 @@ describe('CloudConnectivity', () => {
       allowDangerousUnsecureCloud: false,
     });
     await cloud.start();
-    cloud.setTunnelApp({} as never);
-    await Promise.resolve();
     return cloud;
   }
 
@@ -240,8 +217,6 @@ describe('CloudConnectivity', () => {
     });
 
     await cloud.start();
-    cloud.setTunnelApp({} as never);
-    await Promise.resolve();
 
     expect(cloud.isEnrolled()).toBe(true);
     expect(performEnrollment).toHaveBeenCalledWith(
@@ -254,20 +229,25 @@ describe('CloudConnectivity', () => {
       expect.objectContaining({ headers: expect.any(Function) }),
     );
     expect(cloud.getApiClient()).toBe(cloudApiClientMock);
+    expect(cloud.getTunnelState()).toBe('connecting');
     expect(connectAgentTunnelMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        baseUrl: 'https://cloud.klex.bot/v1',
-        app: expect.anything(),
-        accessToken: expect.any(Function),
-      }),
+      'https://cloud.klex.bot/v1',
+      { accessToken: 'mock-access-token' },
     );
     expect(getAccessTokenMock).toHaveBeenCalledWith(
       'https://cloud.klex.bot/v1',
       ['agent:access'],
     );
 
+    // Flush microtasks so connectTunnel finishes registering tunnel event handlers
+    await new Promise((r) => setTimeout(r, 0));
+    // Tunnel open event should transition state to 'connected'
+    tunnelHandlers.open?.();
+    expect(cloud.getTunnelState()).toBe('connected');
+
     await cloud.close();
     expect(tunnelCloseMock).toHaveBeenCalled();
+    expect(cloud.getTunnelState()).toBe('disconnected');
   });
 
   it('uses the requested resource and scopes for non-tunnel tokens', async () => {
@@ -294,7 +274,7 @@ describe('CloudConnectivity', () => {
 
     expect(cloud.isEnrolled()).toBe(true);
     expect(getAccessTokenMock).toHaveBeenCalledOnce();
-    expect(connectAgentTunnelMock).toHaveBeenCalledOnce();
+    expect(connectAgentTunnelMock).not.toHaveBeenCalled();
 
     await cloud.close();
   });
@@ -304,11 +284,11 @@ describe('CloudConnectivity', () => {
     getAccessTokenMock.mockRejectedValueOnce(new Error('token unavailable'));
     const cloud = await startEnrolledCloud();
 
-    expect(connectAgentTunnelMock).toHaveBeenCalledOnce();
-    expect(getAccessTokenMock).toHaveBeenCalledOnce();
+    expect(cloud.getTunnelState()).toBe('connecting');
+    expect(connectAgentTunnelMock).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(1_000);
     expect(getAccessTokenMock).toHaveBeenCalledTimes(2);
-    expect(connectAgentTunnelMock).toHaveBeenCalledTimes(2);
+    expect(connectAgentTunnelMock).toHaveBeenCalledOnce();
 
     await cloud.close();
   });
@@ -346,6 +326,7 @@ describe('CloudConnectivity', () => {
     const cloud = await startEnrolledCloud();
 
     expect(connectAgentTunnelMock).toHaveBeenCalledOnce();
+    expect(cloud.getTunnelState()).toBe('error');
     await vi.advanceTimersByTimeAsync(1_000);
     expect(connectAgentTunnelMock).toHaveBeenCalledTimes(2);
 
@@ -357,13 +338,19 @@ describe('CloudConnectivity', () => {
     const cloud = await startEnrolledCloud();
 
     tunnelHandlers.open?.();
+    expect(cloud.getTunnelState()).toBe('connected');
+
     tunnelHandlers.close?.(1006, Buffer.from('connection lost'));
+    expect(cloud.getTunnelState()).toBe('error');
 
     expect(invalidateTokenMock).toHaveBeenCalledWith(
       'https://cloud.klex.bot/v1',
     );
-    expect(getAccessTokenMock).toHaveBeenCalledOnce();
-    expect(connectAgentTunnelMock).toHaveBeenCalledOnce();
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(getAccessTokenMock).toHaveBeenCalledTimes(2);
+    expect(connectAgentTunnelMock).toHaveBeenCalledTimes(2);
+    // Reconnect attempt should set state back to 'connecting'
+    expect(cloud.getTunnelState()).toBe('connecting');
 
     await cloud.close();
   });
@@ -387,10 +374,7 @@ describe('CloudConnectivity', () => {
     await cloud.close();
   });
 
-  it('cloud enabled, interactive enrollment fails: retries then user cancels', async () => {
-    vi.mocked(promptEnrollmentCode)
-      .mockResolvedValueOnce('USER-INPUT')
-      .mockResolvedValueOnce(null);
+  it('cloud enabled, interactive enrollment via enroll() fails: throws error', async () => {
     vi.mocked(performEnrollment).mockRejectedValue(
       new Error('Enrollment failed (400): invalid code'),
     );
@@ -404,23 +388,21 @@ describe('CloudConnectivity', () => {
       allowDangerousUnsecureCloud: false,
     });
 
-    // Should not throw — user cancelled after first failure
     await cloud.start();
-
     expect(cloud.isEnrolled()).toBe(false);
-    expect(promptEnrollmentCode).toHaveBeenCalledTimes(2);
+
+    // Interactive enrollment via enroll() — CLI UI handles retry/cancel
+    await expect(cloud.enroll('USER-INPUT')).rejects.toThrow(
+      'Enrollment failed (400): invalid code',
+    );
+    expect(cloud.isEnrolled()).toBe(false);
     expect(performEnrollment).toHaveBeenCalledTimes(1);
 
     await cloud.close();
   });
 
-  it('cloud enabled, interactive enrollment retries then succeeds', async () => {
-    vi.mocked(promptEnrollmentCode)
-      .mockResolvedValueOnce('BAD-CODE')
-      .mockResolvedValueOnce('GOOD-CODE');
-    vi.mocked(performEnrollment)
-      .mockRejectedValueOnce(new Error('Enrollment failed (400): invalid code'))
-      .mockResolvedValueOnce('client-retry-ok');
+  it('cloud enabled, interactive enrollment via enroll() succeeds', async () => {
+    vi.mocked(performEnrollment).mockResolvedValue('client-retry-ok');
 
     const cloud = createCloudConnectivity({
       logging,
@@ -432,8 +414,19 @@ describe('CloudConnectivity', () => {
     });
 
     await cloud.start();
+    expect(cloud.isEnrolled()).toBe(false);
+
+    // First attempt fails (simulated by mock reset)
+    vi.mocked(performEnrollment).mockRejectedValueOnce(
+      new Error('Enrollment failed (400): invalid code'),
+    );
+
+    // CLI UI would retry — second call to enroll() with a good code
+    await expect(cloud.enroll('BAD-CODE')).rejects.toThrow();
+    const result = await cloud.enroll('GOOD-CODE');
 
     expect(cloud.isEnrolled()).toBe(true);
+    expect(result.clientId).toBe('client-retry-ok');
     expect(performEnrollment).toHaveBeenCalledTimes(2);
     expect(performEnrollment).toHaveBeenLastCalledWith(
       'https://cloud.klex.bot',

@@ -33,14 +33,12 @@ const aliasPlugin: esbuild.Plugin = {
 
 /**
  * Virtualizes native packages (sharp, ffmpeg-static, @ffprobe-installer/ffprobe,
- * libsql) so they
- * load from the on-disk node_modules/ beside the SEA executable at runtime.
+ * libsql, and platform-specific libsql packages) so they load from the on-disk
+ * node_modules/ beside the SEA executable at runtime.
  *
- * The SEA embedder's require() only handles built-in modules — externalized
- * npm packages fail with ERR_UNKNOWN_BUILTIN_MODULE. This plugin replaces
- * imports of these packages with shim modules that use
- * createRequire(process.execPath) to create a proper Node.js require that
- * resolves from the executable's directory.
+ * The SEA embedder cannot bundle native npm modules. This plugin replaces
+ * imports of these packages with ESM shim modules that use createRequire(process.execPath)
+ * to resolve the on-disk packages beside the executable.
  *
  * The actual packages (JS + native binaries) are copied to dist/node_modules/
  * during packaging (see package-exe.ts → copyNativeAssets).
@@ -50,12 +48,13 @@ const nativeShimPlugin: esbuild.Plugin = {
   setup(build) {
     build.onResolve(
       {
-        filter: /^(sharp|ffmpeg-static|@ffprobe-installer\/ffprobe|libsql)$/,
+        filter:
+          /^(sharp|ffmpeg-static|@ffprobe-installer\/ffprobe|ffprobe-static|libsql|@libsql\/(darwin|linux|win32)-)/,
       },
       (args) => ({ path: args.path, namespace: 'native-shim' }),
     );
     build.onLoad({ filter: /.*/, namespace: 'native-shim' }, (args) => ({
-      contents: `const{createRequire}=require("node:module");const r=createRequire(process.execPath);module.exports=r(${JSON.stringify(args.path)});`,
+      contents: `import{createRequire}from"node:module";const r=createRequire(process.execPath);const m=r(${JSON.stringify(args.path)});export default m;export const path=m.path;`,
       loader: 'js',
     }));
   },
@@ -71,7 +70,7 @@ const sharedOptions: BuildOptions = {
   plugins: [aliasPlugin],
   bundle: true,
   platform: 'node',
-  target: 'node22',
+  target: 'node26',
   sourcemap: false,
   minify: true,
   treeShaking: true,
@@ -89,16 +88,27 @@ export function createBuildOptions(isSea: boolean): {
     main: {
       ...sharedOptions,
       entryPoints: ['src/main.ts'],
-      outfile: 'dist/main.js',
-      // SEA embeds the blob as CJS — must output CJS for executable builds.
-      // Normal dev/build uses ESM.
-      format: isSea ? 'cjs' : 'esm',
+      outfile: isSea ? 'dist/main.mjs' : 'dist/main.js',
+      // SEA supports ESM bundles via mainFormat: module.
+      format: 'esm',
       // Normal Node builds resolve dependencies from node_modules. Bundling them
       // into ESM breaks packages that use runtime CommonJS requires.
       packages: isSea ? 'bundle' : 'external',
       // Bundle JS into the SEA blob. Native packages are loaded from copied
       // on-disk assets, while foreign LiveKit bindings remain unresolved.
       ...(isSea ? { plugins: [aliasPlugin, nativeShimPlugin] } : {}),
+      ...(isSea
+        ? {
+            banner: {
+              js: 'import{createRequire}from"node:module";const require=createRequire(process.execPath);',
+            },
+            // fluent-ffmpeg is bundled, but its legacy CommonJS source refers
+            // to __dirname for its preset directory. Resolve that reference
+            // to the SEA entry directory; package-exe.ts copies the presets
+            // there as a small, explicit runtime asset.
+            define: { __dirname: 'import.meta.dirname' },
+          }
+        : {}),
       external: isSea ? ['@livekit/rtc-ffi-bindings-*'] : undefined,
     },
     worker: {
@@ -120,7 +130,7 @@ async function main(): Promise<void> {
     esbuild.build(options.worker),
   ]);
   console.log(
-    `Build complete → dist/main.js (${isSea ? 'CJS/SEA' : 'ESM'}) + dist/javascript-sandbox-worker.js`,
+    `Build complete → ${isSea ? 'dist/main.mjs (ESM/SEA)' : 'dist/main.js (ESM)'} + dist/javascript-sandbox-worker.js`,
   );
 }
 

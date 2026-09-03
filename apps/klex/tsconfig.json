@@ -7,6 +7,7 @@
     "rootDir": "./src",
     "lib": ["esnext"],
     "types": ["node"],
+    "jsx": "react-jsx",
     "paths": {
       "@/*": ["./src/*"]
     },

@@ -9,6 +9,7 @@ export interface CliOptions {
   cloudEnabled: boolean;
   cloudBaseUrl: string;
   cloudEnrollToken: string | undefined;
+  headless: boolean;
   adminPort: number;
   allowDangerousUnsecureCloud: boolean;
   verbose: boolean;
@@ -20,6 +21,7 @@ export function parseCliArgs(argv: string[]): CliOptions {
     options: {
       'data-dir': { type: 'string', short: 'd' },
       help: { type: 'boolean', short: 'h' },
+      headless: { type: 'boolean', short: 'H' },
       'cloud-base-url': { type: 'string' },
       cloud: { type: 'boolean' },
       'cloud-enroll-token': { type: 'string' },
@@ -52,6 +54,9 @@ export function parseCliArgs(argv: string[]): CliOptions {
   const cloudEnrollToken =
     values['cloud-enroll-token'] ?? process.env.KLEX_CLOUD_ENROLLMENT_TOKEN;
 
+  const headless =
+    values.headless === true || process.env.KLEX_HEADLESS === '1';
+
   const adminPort =
     values['admin-port'] !== undefined
       ? Number.parseInt(values['admin-port'], 10)
@@ -71,6 +76,7 @@ export function parseCliArgs(argv: string[]): CliOptions {
     cloudEnabled,
     cloudBaseUrl,
     cloudEnrollToken,
+    headless,
     adminPort,
     allowDangerousUnsecureCloud,
     verbose,
@@ -87,6 +93,7 @@ Usage: klex [options]
 
 Options:
   -d, --data-dir <path>        Working directory for agent data (overrides KLEX_DATA_DIR)
+  -H, --headless               Run without the interactive CLI UI (overrides KLEX_HEADLESS)
   -h, --help                   Show this help message
   --cloud-base-url <url>       Klex Cloud API base URL (overrides KLEX_CLOUD_BASE_URL, default: https://cloud.klex.bot)
   --no-cloud                   Disable Klex Cloud connectivity (overrides KLEX_NO_CLOUD)

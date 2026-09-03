@@ -2,6 +2,7 @@ import { type ServerType, serve } from '@hono/node-server';
 
 import type { ModuleLogger, RootLogger } from '@stagewise/logger';
 
+import type { CloudConnectivity } from '@/cloud-connectivity';
 import type { Config } from '@/config';
 import type { Introspector } from '@/introspection';
 import type { Mcp } from '@/mcp';
@@ -15,6 +16,7 @@ export interface AdminApiDependencies {
   mcp: Mcp;
   introspector: Introspector;
   modelCallLogger: ModelCallLogger;
+  cloudConnectivity: CloudConnectivity;
   cloudEnabled: boolean;
   port: number;
 }
@@ -22,12 +24,12 @@ export interface AdminApiDependencies {
 export interface AdminApi {
   start(): Promise<void>;
   close(): Promise<void>;
-  getApp(): ReturnType<typeof createAdminApp>['app'];
+  handle(request: Request): Response | Promise<Response>;
 }
 
 class AdminApiModule implements AdminApi {
   private server: ServerType | null = null;
-  private app: ReturnType<typeof createAdminApp>['app'] | null = null;
+  private app: ReturnType<typeof createAdminApp> | null = null;
   private started = false;
 
   constructor(
@@ -37,6 +39,7 @@ class AdminApiModule implements AdminApi {
       mcp: Mcp;
       introspector: Introspector;
       modelCallLogger: ModelCallLogger;
+      cloudConnectivity: CloudConnectivity;
       cloudEnabled: boolean;
       port: number;
     },
@@ -46,15 +49,15 @@ class AdminApiModule implements AdminApi {
     if (this.started) return;
     this.started = true;
 
-    const app = createAdminApp({
+    this.app = createAdminApp({
       config: this.deps.config,
       mcp: this.deps.mcp,
       introspector: this.deps.introspector,
       modelCallLogger: this.deps.modelCallLogger,
+      cloudConnectivity: this.deps.cloudConnectivity,
       logger: this.deps.logger,
       port: this.deps.port,
     });
-    this.app = app.app;
 
     if (this.deps.cloudEnabled) {
       this.deps.logger.info(
@@ -65,7 +68,7 @@ class AdminApiModule implements AdminApi {
 
     this.server = await new Promise<ServerType>((resolve) => {
       const server = serve(
-        { fetch: app.app.fetch, port: this.deps.port, hostname: '0.0.0.0' },
+        { fetch: this.app!.fetch, port: this.deps.port, hostname: '0.0.0.0' },
         (info) => {
           this.deps.logger.info(
             { address: info.address, port: info.port },
@@ -77,19 +80,18 @@ class AdminApiModule implements AdminApi {
     });
   }
 
-  getApp(): ReturnType<typeof createAdminApp>['app'] {
-    if (!this.app) throw new Error('AdminAPI has not been started');
-    return this.app;
+  handle(request: Request): Response | Promise<Response> {
+    if (!this.app) throw new Error('Admin API is not started');
+    return this.app.fetch(request);
   }
 
   async close(): Promise<void> {
     const server = this.server;
-    if (server) {
-      await new Promise<void>((resolve) => server.close(() => resolve()));
-      this.server = null;
-      this.deps.logger.info('AdminAPI stopped');
-    }
-    this.app = null;
+    if (!server) return;
+
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    this.server = null;
+    this.deps.logger.info('AdminAPI stopped');
   }
 }
 
@@ -103,6 +105,7 @@ export function createAdminApi(deps: AdminApiDependencies): AdminApi {
     mcp: deps.mcp,
     introspector: deps.introspector,
     modelCallLogger: deps.modelCallLogger,
+    cloudConnectivity: deps.cloudConnectivity,
     cloudEnabled: deps.cloudEnabled,
     port: deps.port,
   });

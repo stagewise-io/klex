@@ -609,9 +609,40 @@ const usageResponseSchema = z
   })
   .openapi('UsageResponse');
 
+// --- Cloud ---
+
+const cloudStatusResponseSchema = z
+  .object({
+    cloudEnabled: z.boolean(),
+    enrolled: z.boolean(),
+    clientId: z.string().nullable(),
+    enrolledAt: z.string().nullable(),
+    cloudBaseUrl: z.string(),
+    tunnelState: z
+      .enum(['disconnected', 'connecting', 'connected', 'error'])
+      .describe('Tunnel connection state to Klex Cloud'),
+  })
+  .openapi('CloudStatusResponse');
+
+const cloudEnrollBodySchema = z
+  .object({
+    enrollmentCode: z.string().min(1),
+  })
+  .openapi('CloudEnrollBody');
+
+const cloudEnrollResponseSchema = z
+  .object({
+    clientId: z.string(),
+    enrolledAt: z.string(),
+  })
+  .openapi('CloudEnrollResponse');
+
 export {
   apiFormatSchema,
   audioInputCapabilitySchema,
+  cloudEnrollBodySchema,
+  cloudEnrollResponseSchema,
+  cloudStatusResponseSchema,
   createEndpointBodySchema,
   createKnownModelBodySchema,
   createMcpServerBodySchema,

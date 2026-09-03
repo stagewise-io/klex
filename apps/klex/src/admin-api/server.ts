@@ -3,14 +3,20 @@ import { HTTPException } from 'hono/http-exception';
 
 import type { ModuleLogger } from '@stagewise/logger';
 
+import type { CloudConnectivity } from '@/cloud-connectivity';
 import type { Config } from '@/config';
 import type { Introspector } from '@/introspection';
 import type { Mcp } from '@/mcp';
 import type { ModelCallLogger } from '@/model-call-logger';
 
+import {
+  enrollCloud,
+  enrollCloudRoute,
+  getCloudStatus,
+  getCloudStatusRoute,
+} from './routes/v1/cloud';
 import { getHealth, healthRoute } from './routes/v1/health';
 import {
-  getIntrospectionPathHandler,
   getIntrospectionRoot,
   introspectionRootRoute,
   registerIntrospectionPathRoute,
@@ -70,6 +76,7 @@ export interface AdminAppDependencies {
   mcp: Mcp;
   introspector: Introspector;
   modelCallLogger: ModelCallLogger;
+  cloudConnectivity: CloudConnectivity;
   logger: ModuleLogger;
   port: number;
 }
@@ -86,26 +93,11 @@ const validationHook: Hook<any, any, any, any> = (result, c) => {
   }
 };
 
-export function createAdminApp(deps: AdminAppDependencies) {
+export type AdminApp = OpenAPIHono;
+
+export function createAdminApp(deps: AdminAppDependencies): AdminApp {
   const app = new OpenAPIHono({
     defaultHook: validationHook,
-  });
-
-  app.use('*', async (c, next) => {
-    const startedAt = Date.now();
-    try {
-      await next();
-    } finally {
-      deps.logger.info(
-        {
-          method: c.req.method,
-          path: c.req.path,
-          status: c.res.status,
-          durationMs: Date.now() - startedAt,
-        },
-        'Admin API request',
-      );
-    }
   });
 
   app.onError((err, c) => {
@@ -119,43 +111,49 @@ export function createAdminApp(deps: AdminAppDependencies) {
     return c.json({ error: 'Internal server error' }, 500);
   });
 
-  const routedApp = app
-    .openapi(healthRoute, getHealth())
-    .openapi(getModelSelectionRoute, getModelSelection(deps))
-    .openapi(patchModelSelectionRoute, patchModelSelection(deps))
-    .openapi(getTelemetryRoute, getTelemetry(deps))
-    .openapi(patchTelemetryRoute, patchTelemetry(deps))
-    .openapi(
-      introspectionRootRoute,
-      getIntrospectionRoot({ introspector: deps.introspector }),
-    )
-    .openapi(getMcpServersRoute, getMcpServers(deps))
-    .openapi(createMcpServerRoute, createMcpServer(deps))
-    .openapi(updateMcpServerRoute, updateMcpServer(deps))
-    .openapi(deleteMcpServerRoute, deleteMcpServer(deps))
-    .openapi(getMcpToolCallHistoryRoute, getMcpToolCallHistory(deps))
-    .openapi(getUsageRoute, getUsage(deps))
-    .openapi(getProvidersRoute, getProviders(deps))
-    .openapi(createProviderRoute, createProvider(deps))
-    .openapi(updateProviderRoute, updateProvider(deps))
-    .openapi(deleteProviderRoute, deleteProvider(deps))
-    .openapi(getEndpointsRoute, getEndpoints(deps))
-    .openapi(createEndpointRoute, createEndpoint(deps))
-    .openapi(updateEndpointRoute, updateEndpoint(deps))
-    .openapi(deleteEndpointRoute, deleteEndpoint(deps))
-    .openapi(getKnownModelsRoute, getKnownModels(deps))
-    .openapi(createKnownModelRoute, createKnownModel(deps))
-    .openapi(updateKnownModelRoute, updateKnownModel(deps))
-    .openapi(deleteKnownModelRoute, deleteKnownModel(deps));
+  // Health
+  app.openapi(healthRoute, getHealth());
 
-  registerIntrospectionPathRoute(app);
-  const introspectionPathHandler = getIntrospectionPathHandler({
-    introspector: deps.introspector,
-  });
-  const appWithIntrospection = routedApp.get(
-    '/v1/introspect/:path{.+}',
-    introspectionPathHandler,
+  // Cloud
+  app.openapi(getCloudStatusRoute, getCloudStatus(deps));
+  app.openapi(enrollCloudRoute, enrollCloud(deps));
+
+  // Settings
+  app.openapi(getModelSelectionRoute, getModelSelection(deps));
+  app.openapi(patchModelSelectionRoute, patchModelSelection(deps));
+  app.openapi(getTelemetryRoute, getTelemetry(deps));
+  app.openapi(patchTelemetryRoute, patchTelemetry(deps));
+
+  // Introspection
+  app.openapi(
+    introspectionRootRoute,
+    getIntrospectionRoot({ introspector: deps.introspector }),
   );
+  registerIntrospectionPathRoute(app);
+
+  // MCP Servers
+  app.openapi(getMcpServersRoute, getMcpServers(deps));
+  app.openapi(createMcpServerRoute, createMcpServer(deps));
+  app.openapi(updateMcpServerRoute, updateMcpServer(deps));
+  app.openapi(deleteMcpServerRoute, deleteMcpServer(deps));
+  app.openapi(getMcpToolCallHistoryRoute, getMcpToolCallHistory(deps));
+
+  // Usage
+  app.openapi(getUsageRoute, getUsage(deps));
+
+  // Providers
+  app.openapi(getProvidersRoute, getProviders(deps));
+  app.openapi(createProviderRoute, createProvider(deps));
+  app.openapi(updateProviderRoute, updateProvider(deps));
+  app.openapi(deleteProviderRoute, deleteProvider(deps));
+  app.openapi(getEndpointsRoute, getEndpoints(deps));
+  app.openapi(createEndpointRoute, createEndpoint(deps));
+  app.openapi(updateEndpointRoute, updateEndpoint(deps));
+  app.openapi(deleteEndpointRoute, deleteEndpoint(deps));
+  app.openapi(getKnownModelsRoute, getKnownModels(deps));
+  app.openapi(createKnownModelRoute, createKnownModel(deps));
+  app.openapi(updateKnownModelRoute, updateKnownModel(deps));
+  app.openapi(deleteKnownModelRoute, deleteKnownModel(deps));
 
   // OpenAPI spec endpoint
   app.doc('/v1/openapi.json', {
@@ -169,7 +167,5 @@ export function createAdminApp(deps: AdminAppDependencies) {
     servers: [{ url: `http://0.0.0.0:${deps.port}` }],
   });
 
-  return { app: appWithIntrospection };
+  return app;
 }
-
-export type AdminApp = ReturnType<typeof createAdminApp>['app'];

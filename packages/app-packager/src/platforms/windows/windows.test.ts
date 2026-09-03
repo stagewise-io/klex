@@ -8,13 +8,15 @@ import { prepareWindowsRuntime, signWindowsExecutable } from './windows.js';
 
 class RecordingRunner implements CommandRunner {
   readonly calls: string[][] = [];
+  readonly options: Array<CommandRunOptions | undefined> = [];
 
   run(
     command: string,
     arguments_: readonly string[],
-    _options?: CommandRunOptions,
+    options?: CommandRunOptions,
   ) {
     this.calls.push([command, ...arguments_]);
+    this.options.push(options);
     return { command, arguments: arguments_, stdout: '', stderr: '' };
   }
 }
@@ -45,6 +47,11 @@ describe('Windows signing adapter', () => {
       ['signtool.exe', 'remove'],
       ['signtool.exe', 'sign'],
       ['signtool.exe', 'verify'],
+    ]);
+    expect(runner.options).toEqual([
+      { captureOutput: false, logCommand: true, timeoutMs: 300_000 },
+      { captureOutput: false, logCommand: true, timeoutMs: 300_000 },
+      { captureOutput: false, logCommand: true, timeoutMs: 300_000 },
     ]);
     expect(result).toEqual({
       signed: true,

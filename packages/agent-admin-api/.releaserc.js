@@ -1,21 +1,8 @@
-import {
-  analyzeCommits as monorepoAnalyzeCommits,
-  fail as monorepoFail,
-  generateNotes as monorepoGenerateNotes,
-  success as monorepoSuccess,
-  tagFormat as monorepoTagFormat,
-} from 'semantic-release-monorepo';
-
 export default {
   branches: ['main'],
-  tagFormat: monorepoTagFormat,
-  analyzeCommits: monorepoAnalyzeCommits,
-  generateNotes: monorepoGenerateNotes,
-  success: monorepoSuccess,
-  fail: monorepoFail,
+  tagFormat: '@klex/agent-admin-api-v${version}',
   plugins: [
-    '@semantic-release/commit-analyzer',
-    '@semantic-release/release-notes-generator',
+    ['./release-plugin.mjs', { scope: 'agent-admin-api' }],
     [
       '@semantic-release/npm',
       {

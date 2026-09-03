@@ -157,8 +157,8 @@ export function ModelSelectionScreen({
   async function patchPurpose(
     purpose: Purpose,
     modelIds: string[],
-  ): Promise<void> {
-    if (!selection) return;
+  ): Promise<boolean> {
+    if (!selection) return false;
     let patchBody: Record<string, unknown>;
     if (purpose.startsWith('voice.')) {
       const voiceKey = purpose.split('.')[1] as 'sts' | 'tts' | 'stt';
@@ -181,11 +181,13 @@ export function ModelSelectionScreen({
           pushToast(`Warning: ${w.message}`, 'error');
         }
       }
+      return true;
     } catch (err) {
       pushToast(
         err instanceof AdminApiClientError ? err.message : 'Update failed',
         'error',
       );
+      return false;
     }
   }
 
@@ -209,13 +211,16 @@ export function ModelSelectionScreen({
                   setMode('detail');
                   return;
                 }
-                await patchPurpose(selectedPurpose, [
-                  ...current,
-                  pendingModelId.trim(),
-                ]);
-                pushToast('Model added', 'info');
-                setPendingModelId('');
-                setMode('detail');
+                if (
+                  await patchPurpose(selectedPurpose, [
+                    ...current,
+                    pendingModelId.trim(),
+                  ])
+                ) {
+                  pushToast('Model added', 'info');
+                  setPendingModelId('');
+                  setMode('detail');
+                }
               }}
               showCursor
             />
@@ -242,9 +247,10 @@ export function ModelSelectionScreen({
         </Box>
         <ConfirmInput
           onConfirm={async () => {
-            await patchPurpose(selectedPurpose, models.slice(0, -1));
-            pushToast('Model removed', 'info');
-            setMode('detail');
+            if (await patchPurpose(selectedPurpose, models.slice(0, -1))) {
+              pushToast('Model removed', 'info');
+              setMode('detail');
+            }
           }}
           onCancel={() => setMode('detail')}
         />

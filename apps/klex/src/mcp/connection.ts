@@ -2,6 +2,9 @@ import {
   type CallToolResult,
   Client,
   type Tool as McpToolDefinition,
+  type ReadResourceResult,
+  type Resource,
+  type ResourceTemplateType,
   StreamableHTTPClientTransport,
   type Transport,
   type VersionNegotiationOptions,
@@ -42,6 +45,14 @@ export interface McpConnection {
     input: JsonObject,
     signal: AbortSignal,
   ): Promise<CallToolResult>;
+  listResources(
+    signal: AbortSignal,
+    cursor?: string,
+  ): Promise<{ resources: Resource[]; nextCursor?: string }>;
+  listResourceTemplates(
+    signal: AbortSignal,
+  ): Promise<{ resourceTemplates: ResourceTemplateType[] }>;
+  readResource(uri: string, signal: AbortSignal): Promise<ReadResourceResult>;
   close(): Promise<void>;
 }
 
@@ -101,6 +112,42 @@ class McpServerConnection implements McpConnection {
       { name: tool.name, arguments: input },
       { signal, toolDefinition: tool },
     );
+  }
+
+  async listResources(
+    signal: AbortSignal,
+    cursor?: string,
+  ): Promise<{ resources: Resource[]; nextCursor?: string }> {
+    if (this.closed)
+      throw new Error(`MCP server is unavailable: ${this.namespace}`);
+    const result = await this.client.listResources(
+      cursor ? { cursor } : undefined,
+      { signal },
+    );
+    return {
+      resources: result.resources,
+      ...(result.nextCursor ? { nextCursor: result.nextCursor } : {}),
+    };
+  }
+
+  async listResourceTemplates(
+    signal: AbortSignal,
+  ): Promise<{ resourceTemplates: ResourceTemplateType[] }> {
+    if (this.closed)
+      throw new Error(`MCP server is unavailable: ${this.namespace}`);
+    const result = await this.client.listResourceTemplates(undefined, {
+      signal,
+    });
+    return { resourceTemplates: result.resourceTemplates };
+  }
+
+  async readResource(
+    uri: string,
+    signal: AbortSignal,
+  ): Promise<ReadResourceResult> {
+    if (this.closed)
+      throw new Error(`MCP server is unavailable: ${this.namespace}`);
+    return this.client.readResource({ uri }, { signal });
   }
 
   async close(): Promise<void> {

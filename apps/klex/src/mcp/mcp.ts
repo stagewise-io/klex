@@ -1,5 +1,11 @@
 import { randomUUID } from 'node:crypto';
 
+import type {
+  ReadResourceResult,
+  Resource,
+  ResourceTemplateType,
+} from '@modelcontextprotocol/client';
+
 import type { ModuleLogger, RootLogger } from '@stagewise/logger';
 import type {
   PushNotification,
@@ -147,6 +153,20 @@ export interface Mcp extends ToolProvider {
   getServerStatuses(): McpServerInfo[];
   /** Returns the recorded history of tool calls to MCP servers. */
   getToolCallHistory(): McpToolCallRecord[];
+  /** Lists resources and resource templates from the given MCP server.
+   * When `cursor` is provided, returns a single page of resources plus
+   * `nextCursor` for the next page. When omitted, auto-aggregates all pages.
+   * Resource templates are always auto-aggregated (typically few in number). */
+  listResources(
+    namespace: string,
+    cursor?: string,
+  ): Promise<{
+    resources: Resource[];
+    resourceTemplates: ResourceTemplateType[];
+    nextCursor?: string;
+  }>;
+  /** Reads a single resource by URI from the given MCP server. */
+  readResource(namespace: string, uri: string): Promise<ReadResourceResult>;
 }
 
 export interface McpDependencies {
@@ -966,6 +986,42 @@ class McpModule implements Mcp {
 
   getToolCallHistory(): McpToolCallRecord[] {
     return [...this.toolCallHistory];
+  }
+
+  private requireConnection(namespace: string): McpConnection {
+    const connection = this.servers.get(namespace)?.connection;
+    if (!connection) throw new Error(`MCP server is unavailable: ${namespace}`);
+    return connection;
+  }
+
+  async listResources(
+    namespace: string,
+    cursor?: string,
+  ): Promise<{
+    resources: Resource[];
+    resourceTemplates: ResourceTemplateType[];
+    nextCursor?: string;
+  }> {
+    const connection = this.requireConnection(namespace);
+    const signal = AbortSignal.timeout(30_000);
+    // Templates are always auto-aggregated (typically few in number).
+    const [resourceResult, templateResult] = await Promise.all([
+      connection.listResources(signal, cursor),
+      connection.listResourceTemplates(signal),
+    ]);
+    return {
+      resources: resourceResult.resources,
+      resourceTemplates: templateResult.resourceTemplates,
+      nextCursor: resourceResult.nextCursor,
+    };
+  }
+
+  async readResource(
+    namespace: string,
+    uri: string,
+  ): Promise<ReadResourceResult> {
+    const connection = this.requireConnection(namespace);
+    return connection.readResource(uri, AbortSignal.timeout(30_000));
   }
 
   private addToolCallRecord(record: McpToolCallRecord): void {

@@ -449,6 +449,9 @@ importers:
       '@stagewise/typescript-config':
         specifier: workspace:*
         version: link:../typescript-config
+      '@types/node':
+        specifier: 26.1.1
+        version: 26.1.1
       hono:
         specifier: 4.12.30
         version: 4.12.30

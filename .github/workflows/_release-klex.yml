@@ -320,8 +320,8 @@ jobs:
             -name '*.tar.gz' -o -name '*.zip' -o -name '*.sha256' -o \
             -name 'checksums.txt' -o -name 'release-manifest.json' \
           \) -print | sort)
-          if [[ "${#files[@]}" -ne 13 ]]; then
-            printf 'Expected 13 public release files, found %s:\n' "${#files[@]}" >&2
+          if [[ "${#files[@]}" -ne 8 ]]; then
+            printf 'Expected 8 public release files, found %s:\n' "${#files[@]}" >&2
             printf '  %s\n' "${files[@]}" >&2
             exit 1
           fi
@@ -332,7 +332,7 @@ jobs:
                 --json assets \
                 --jq '.assets | length' \
                 --repo "${{ github.repository }}")"
-              if [[ "$existing_assets" == 13 ]]; then
+              if [[ "$existing_assets" == 8 ]]; then
                 echo "Stable release ${{ inputs.tag }} is already complete; leaving it immutable"
                 exit 0
               fi

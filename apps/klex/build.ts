@@ -109,7 +109,15 @@ export function createBuildOptions(isSea: boolean): {
             // to __dirname for its preset directory. Resolve that reference
             // to the SEA entry directory; package-exe.ts copies the presets
             // there as a small, explicit runtime asset.
-            define: { __dirname: 'import.meta.dirname' },
+            //
+            // sharedOptions.define must be spread back in: this object replaces
+            // it rather than merging, and dropping __KLEX_VERSION__ here made
+            // every released executable fall back to the package.json version
+            // at runtime instead of reporting its release version.
+            define: {
+              ...sharedOptions.define,
+              __dirname: 'import.meta.dirname',
+            },
           }
         : {}),
       external: isSea ? ['@livekit/rtc-ffi-bindings-*'] : undefined,

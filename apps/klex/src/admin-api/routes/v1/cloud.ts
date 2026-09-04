@@ -112,7 +112,7 @@ export function enrollCloud(
       const message =
         error instanceof Error ? error.message : 'Enrollment failed';
       deps.logger.error({ error }, 'Cloud enrollment failed');
-      return c.json({ error: message }, 400);
+      return c.json({ error: message, code: 'enrollment_failed' }, 400);
     }
   };
 }

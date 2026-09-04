@@ -116,18 +116,37 @@ browser flow on the next attempt.
 
 The cloud channel is **pull-based**. The agent exposes no new cloud-facing
 surface; Klex Cloud reaches the agent's admin API through the tunnel and drives
-`/v1/mcp-oauth/*`: list pending authorizations, start one for a server name,
-deliver callback parameters, cancel one. This keeps the agent free of any
-agent-to-cloud protocol and avoids needing to know its own `agentId`.
+the `mcp-servers` resource:
+
+| Call | Purpose |
+|---|---|
+| `GET /v1/mcp-servers`, `GET /v1/mcp-servers/{name}` | read status *and* the live authorization in one round-trip |
+| `PUT /v1/mcp-servers/{name}/authorization` | start one, or get the live one back — idempotent |
+| `DELETE /v1/mcp-servers/{name}/authorization` | cancel the parked attempt |
+| `POST /v1/mcp-oauth/callback` | deliver callback parameters, keyed by `state` |
+
+This keeps the agent free of any agent-to-cloud protocol and avoids needing to
+know its own `agentId`.
+
+Authorization state is part of the server row: `authorization` is non-null while
+a cloud authorization awaits consent, carrying only `id`, `createdAt` and
+`expiresAt`. `status: 'authorizing'` with `authorization: null` means the local
+loopback flow is driving the attempt, so there is nothing for the cloud to relay.
+`usesInteractiveOAuth` says up front whether a server can be authorized this way
+at all.
+
+The callback sits outside the resource on purpose: it is keyed by `state`, not by
+a server name, and must be servable by a redirect handler that knows neither.
 
 Trust model of the callback sink: `POST /v1/mcp-oauth/callback` is
 unauthenticated by necessity — the cloud proxy strips `authorization` and
 `cookie`, and the admin API has no auth middleware. Security rests on the OAuth
 `state` (32 random bytes from the SDK provider), compared timing-safely, usable
 exactly once, and expiring with the entry. PKCE verifiers, client secrets, and
-tokens never leave the agent. `state` and the authorization URL never appear in
-listings or logs, because `state` is the capability that authorizes a callback
-and the authorization URL embeds it.
+tokens never leave the agent. `state` and the authorization URL are returned
+exactly once, by the `PUT`, to the caller that asked; they appear in no pollable
+response and in no log line, because `state` is the capability that authorizes a
+callback and the authorization URL embeds it.
 
 `CLOUD_OAUTH_CALLBACK_PATH` (`/v1/mcp-oauth/callback`) is a compatibility
 contract with the cloud: it is baked into dynamic client registrations, so

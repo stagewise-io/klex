@@ -10,6 +10,7 @@ import {
   createMcpServerBodySchema,
   errorResponseSchema,
   mcpServerNameParamSchema,
+  mcpServerResponseSchema,
   mcpServersResponseSchema,
   toolCallHistoryResponseSchema,
   updateMcpServerBodySchema,
@@ -29,7 +30,7 @@ export const getMcpServersRoute = createRoute({
   tags: ['MCP Servers'],
   summary: 'List MCP servers',
   description:
-    'Returns sanitized status for all configured MCP servers, including OAuth authorization_required and authorizing states. OAuth URLs, callback data, and credentials are never returned.',
+    'Returns sanitized status for all configured MCP servers, including any pending OAuth authorization, the last connection failure, and the next scheduled retry. OAuth URLs, callback data, and credentials are never returned.',
   responses: {
     200: {
       content: {
@@ -51,6 +52,52 @@ export function getMcpServers(
 ): RouteHandler<typeof getMcpServersRoute> {
   return (c) => {
     return c.json({ servers: deps.mcp.getServerStatuses() }, 200);
+  };
+}
+
+// --- GET /v1/mcp-servers/{name} ---
+
+export const getMcpServerRoute = createRoute({
+  method: 'get',
+  path: '/v1/mcp-servers/{name}',
+  tags: ['MCP Servers'],
+  summary: 'Get one MCP server',
+  description:
+    'Returns sanitized status for a single MCP server, including any pending OAuth authorization. Poll this while an authorization is in flight instead of re-issuing the authorization request.',
+  request: {
+    params: mcpServerNameParamSchema,
+  },
+  responses: {
+    200: {
+      content: {
+        'application/json': { schema: mcpServerResponseSchema },
+      },
+      description: 'MCP server status',
+    },
+    404: {
+      content: {
+        'application/json': { schema: errorResponseSchema },
+      },
+      description: 'MCP server not found',
+    },
+  },
+});
+
+export function getMcpServer(
+  deps: McpRouteDependencies,
+): RouteHandler<typeof getMcpServerRoute> {
+  return (c) => {
+    const { name } = c.req.valid('param');
+    const server = deps.mcp
+      .getServerStatuses()
+      .find((status) => status.name === name);
+    if (!server) {
+      return c.json(
+        { error: 'MCP server not found', code: 'server_not_found' },
+        404,
+      );
+    }
+    return c.json({ server }, 200);
   };
 }
 
@@ -111,10 +158,13 @@ export function createMcpServer(
       return c.json({ servers: deps.mcp.getServerStatuses() }, 201);
     } catch (error) {
       if (error instanceof ConfigValidationError) {
-        return c.json({ error: error.message }, 409);
+        return c.json({ error: error.message, code: 'server_exists' }, 409);
       }
       deps.logger.error({ error }, 'MCP server create failed');
-      return c.json({ error: 'Failed to create MCP server' }, 500);
+      return c.json(
+        { error: 'Failed to create MCP server', code: 'internal_error' },
+        500,
+      );
     }
   };
 }
@@ -177,10 +227,13 @@ export function updateMcpServer(
       return c.json({ servers: deps.mcp.getServerStatuses() }, 200);
     } catch (error) {
       if (error instanceof ConfigValidationError) {
-        return c.json({ error: error.message }, 404);
+        return c.json({ error: error.message, code: 'server_not_found' }, 404);
       }
       deps.logger.error({ error }, 'MCP server update failed');
-      return c.json({ error: 'Failed to update MCP server' }, 500);
+      return c.json(
+        { error: 'Failed to update MCP server', code: 'internal_error' },
+        500,
+      );
     }
   };
 }
@@ -230,10 +283,13 @@ export function deleteMcpServer(
       return c.json({ servers: deps.mcp.getServerStatuses() }, 200);
     } catch (error) {
       if (error instanceof ConfigValidationError) {
-        return c.json({ error: error.message }, 404);
+        return c.json({ error: error.message, code: 'server_not_found' }, 404);
       }
       deps.logger.error({ error }, 'MCP server delete failed');
-      return c.json({ error: 'Failed to delete MCP server' }, 500);
+      return c.json(
+        { error: 'Failed to delete MCP server', code: 'internal_error' },
+        500,
+      );
     }
   };
 }

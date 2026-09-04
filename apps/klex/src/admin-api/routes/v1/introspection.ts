@@ -49,7 +49,10 @@ export function getIntrospectionRoot(
     const node = await deps.introspector.readGreedy([]);
 
     if (node === undefined) {
-      return c.json({ error: 'Introspection root not found' }, 500);
+      return c.json(
+        { error: 'Introspection root not found', code: 'internal_error' },
+        500,
+      );
     }
 
     return c.json(node, 200);
@@ -143,7 +146,10 @@ export function getIntrospectionPathHandler(
     const rawPath = c.req.param('path');
 
     if (!rawPath) {
-      return c.json({ error: 'Path parameter is required' }, 400);
+      return c.json(
+        { error: 'Path parameter is required', code: 'invalid_request' },
+        400,
+      );
     }
 
     // Split on '/' and filter empty segments. Greedy resolution in the
@@ -155,7 +161,10 @@ export function getIntrospectionPathHandler(
 
     if (node === undefined) {
       return c.json(
-        { error: `Introspection path not found: ${segments.join('/')}` },
+        {
+          error: `Introspection path not found: ${segments.join('/')}`,
+          code: 'not_found',
+        },
         404,
       );
     }

@@ -69,7 +69,10 @@ export function getUsage(
       return c.json({ dataPoints }, 200);
     } catch (error) {
       deps.logger.error({ error }, 'Usage query failed');
-      return c.json({ error: 'Internal server error' }, 500);
+      return c.json(
+        { error: 'Internal server error', code: 'internal_error' },
+        500,
+      );
     }
   };
 }

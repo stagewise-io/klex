@@ -145,7 +145,10 @@ describe('GET /v1/usage', () => {
     const response = await app.request('/v1/usage');
     expect(response.status).toBe(500);
     const body = await response.json();
-    expect(body).toEqual({ error: 'Internal server error' });
+    expect(body).toEqual({
+      error: 'Internal server error',
+      code: 'internal_error',
+    });
   });
 
   // --- Default values ---------------------------------------------------------

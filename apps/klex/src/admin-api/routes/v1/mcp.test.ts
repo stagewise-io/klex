@@ -12,6 +12,8 @@ import {
   createMcpServerRoute,
   deleteMcpServer,
   deleteMcpServerRoute,
+  getMcpServer,
+  getMcpServerRoute,
   getMcpServers,
   getMcpServersRoute,
   getMcpToolCallHistory,
@@ -36,6 +38,10 @@ function makeServerInfo(overrides: Partial<McpServerInfo> = {}): McpServerInfo {
     supportsPushNotifications: false,
     supportsRealtimeMedia: false,
     transport: 'http',
+    usesInteractiveOAuth: false,
+    authorization: null,
+    lastError: null,
+    nextRetryAt: null,
     ...overrides,
   };
 }
@@ -80,6 +86,7 @@ function makeDeps(
 function createApp(deps: McpRouteDependencies): OpenAPIHono {
   return setupTestApp((app) => {
     app.openapi(getMcpServersRoute, getMcpServers(deps));
+    app.openapi(getMcpServerRoute, getMcpServer(deps));
     app.openapi(createMcpServerRoute, createMcpServer(deps));
     app.openapi(updateMcpServerRoute, updateMcpServer(deps));
     app.openapi(deleteMcpServerRoute, deleteMcpServer(deps));
@@ -122,6 +129,68 @@ describe('GET /v1/mcp-servers — list MCP servers', () => {
     expect(body.servers).toHaveLength(3);
     expect(body.servers).toEqual(servers);
   });
+
+  it('embeds a live authorization plus failure detail in the server row', async () => {
+    const servers = [
+      makeServerInfo({
+        name: 'protected',
+        status: 'authorizing',
+        usesInteractiveOAuth: true,
+        authorization: {
+          id: 'auth-1',
+          createdAt: '2026-07-28T08:00:00.000Z',
+          expiresAt: '2026-07-28T08:15:00.000Z',
+        },
+      }),
+      makeServerInfo({
+        name: 'flaky',
+        status: 'error',
+        lastError: {
+          name: 'Error',
+          message: 'connect ECONNREFUSED',
+          at: '2026-07-28T08:00:00.000Z',
+        },
+        nextRetryAt: '2026-07-28T08:00:30.000Z',
+      }),
+    ];
+    const app = createApp(makeDeps({}, { getServerStatuses: () => servers }));
+    const response = await app.request('/v1/mcp-servers');
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as { servers: McpServerInfo[] };
+    expect(body.servers[0]?.authorization).toEqual({
+      id: 'auth-1',
+      createdAt: '2026-07-28T08:00:00.000Z',
+      expiresAt: '2026-07-28T08:15:00.000Z',
+    });
+    expect(body.servers[0]).not.toHaveProperty('state');
+    expect(body.servers[0]).not.toHaveProperty('authorizationUrl');
+    expect(body.servers[1]?.lastError?.message).toBe('connect ECONNREFUSED');
+    expect(body.servers[1]?.nextRetryAt).toBe('2026-07-28T08:00:30.000Z');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// GET /v1/mcp-servers/{name}
+// ---------------------------------------------------------------------------
+
+describe('GET /v1/mcp-servers/{name} — read one MCP server', () => {
+  it('returns the matching server row', async () => {
+    const servers = [
+      makeServerInfo({ name: 'other' }),
+      makeServerInfo({ name: 'wanted', toolCount: 7 }),
+    ];
+    const app = createApp(makeDeps({}, { getServerStatuses: () => servers }));
+    const response = await app.request('/v1/mcp-servers/wanted');
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ server: servers[1] });
+  });
+
+  it('returns 404 with a machine-readable code for an unknown name', async () => {
+    const app = createApp(makeDeps());
+    const response = await app.request('/v1/mcp-servers/nope');
+    expect(response.status).toBe(404);
+    expect(await response.json()).toMatchObject({ code: 'server_not_found' });
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -139,6 +208,7 @@ describe('POST /v1/mcp-servers — create MCP server', () => {
     expect(response.status).toBe(400);
     expect(await response.json()).toEqual({
       error: 'Malformed JSON in request body',
+      code: 'malformed_json',
     });
   });
 
@@ -379,6 +449,7 @@ describe('POST /v1/mcp-servers — create MCP server', () => {
     expect(response.status).toBe(500);
     expect(await response.json()).toEqual({
       error: 'Failed to create MCP server',
+      code: 'internal_error',
     });
   });
 });
@@ -398,6 +469,7 @@ describe('PATCH /v1/mcp-servers/:name — update MCP server', () => {
     expect(response.status).toBe(400);
     expect(await response.json()).toEqual({
       error: 'Malformed JSON in request body',
+      code: 'malformed_json',
     });
   });
 
@@ -469,6 +541,7 @@ describe('PATCH /v1/mcp-servers/:name — update MCP server', () => {
     expect(response.status).toBe(500);
     expect(await response.json()).toEqual({
       error: 'Failed to update MCP server',
+      code: 'internal_error',
     });
   });
 });
@@ -526,6 +599,7 @@ describe('DELETE /v1/mcp-servers/:name — remove MCP server', () => {
     expect(response.status).toBe(500);
     expect(await response.json()).toEqual({
       error: 'Failed to delete MCP server',
+      code: 'internal_error',
     });
   });
 });

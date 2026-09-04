@@ -1,3 +1,6 @@
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
 import { describe, expect, it, vi } from 'vitest';
 
 import type { RootLogger } from '@stagewise/logger';
@@ -87,6 +90,7 @@ describe('MCP to deterministic realtime session', () => {
         transports: ['livekit-room'],
         media: ['audio'],
       },
+      dataDirectory: join(tmpdir(), 'klex-realtime-test'),
       connect: async (options) => {
         connectOptions = options;
         return connection;

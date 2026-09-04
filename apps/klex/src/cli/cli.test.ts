@@ -1,12 +1,17 @@
+import { homedir } from 'node:os';
+import { join } from 'node:path';
+
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+import { KLEX_VERSION } from '@/release';
 
 import { parseCliArgs } from './cli';
 
 describe('parseCliArgs', () => {
   const originalEnv = { ...process.env };
-  const originalCwd = process.cwd();
 
   beforeEach(() => {
+    delete process.env.KLEX_HOME;
     delete process.env.KLEX_DATA_DIR;
     delete process.env.KLEX_NO_CLOUD;
     delete process.env.KLEX_CLOUD_BASE_URL;
@@ -18,6 +23,7 @@ describe('parseCliArgs', () => {
 
   afterEach(() => {
     for (const key of [
+      'KLEX_HOME',
       'KLEX_DATA_DIR',
       'KLEX_NO_CLOUD',
       'KLEX_CLOUD_BASE_URL',
@@ -35,9 +41,44 @@ describe('parseCliArgs', () => {
     }
   });
 
-  it('defaults to process.cwd() when no args or env var provided', () => {
+  it('defaults to ~/.klex/agents/default when no args or env vars provided', () => {
     const result = parseCliArgs([]);
-    expect(result.dataDirectory).toBe(originalCwd);
+    expect(result.dataDirectory).toBe(
+      join(homedir(), '.klex', 'agents', 'default'),
+    );
+  });
+
+  it('nests the agent directory under KLEX_HOME', () => {
+    process.env.KLEX_HOME = '/custom/klex-home';
+    const result = parseCliArgs([]);
+    expect(result.dataDirectory).toBe(
+      join('/custom/klex-home', 'agents', 'default'),
+    );
+  });
+
+  it('KLEX_DATA_DIR overrides KLEX_HOME', () => {
+    process.env.KLEX_HOME = '/custom/klex-home';
+    process.env.KLEX_DATA_DIR = '/env/data-dir';
+    const result = parseCliArgs([]);
+    expect(result.dataDirectory).toBe('/env/data-dir');
+  });
+
+  it('--data-dir overrides both KLEX_DATA_DIR and KLEX_HOME', () => {
+    process.env.KLEX_HOME = '/custom/klex-home';
+    process.env.KLEX_DATA_DIR = '/env/data-dir';
+    const result = parseCliArgs(['--data-dir', '/cli/data-dir']);
+    expect(result.dataDirectory).toBe('/cli/data-dir');
+  });
+
+  it('never resolves the data directory relative to the current directory', () => {
+    // Regression guard: a PATH-installed klex must resolve the same agent from
+    // any working directory.
+    const cwdSpy = vi
+      .spyOn(process, 'cwd')
+      .mockReturnValue('/some/unrelated/cwd');
+    const result = parseCliArgs([]);
+    expect(result.dataDirectory).not.toContain('/some/unrelated/cwd');
+    cwdSpy.mockRestore();
   });
 
   it('uses KLEX_DATA_DIR env var when no CLI arg provided', () => {
@@ -64,6 +105,22 @@ describe('parseCliArgs', () => {
     expect(() => parseCliArgs(['--help'])).toThrow('process.exit called');
     expect(exitSpy).toHaveBeenCalledWith(0);
     exitSpy.mockRestore();
+  });
+
+  describe('--version', () => {
+    it('writes the bare version to stdout and exits 0', () => {
+      const writeSpy = vi
+        .spyOn(process.stdout, 'write')
+        .mockImplementation(() => true);
+      const exitSpy = vi.spyOn(process, 'exit').mockImplementation(() => {
+        throw new Error('process.exit called');
+      });
+      expect(() => parseCliArgs(['--version'])).toThrow('process.exit called');
+      expect(writeSpy).toHaveBeenCalledWith(`${KLEX_VERSION}\n`);
+      expect(exitSpy).toHaveBeenCalledWith(0);
+      exitSpy.mockRestore();
+      writeSpy.mockRestore();
+    });
   });
 
   describe('verifyNative', () => {

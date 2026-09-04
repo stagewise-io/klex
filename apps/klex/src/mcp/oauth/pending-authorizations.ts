@@ -32,7 +32,7 @@ export type PendingAuthorizationInfo = Omit<
 
 export class PendingAuthorizationError extends Error {}
 
-type Waiter = (authorization: PendingAuthorization) => void;
+type Waiter = (authorization: PendingAuthorization | undefined) => void;
 
 interface PendingEntry {
   authorization: PendingAuthorization;
@@ -162,10 +162,6 @@ export class McpPendingAuthorizationRegistry {
       .sort((left, right) => left.createdAt.localeCompare(right.createdAt));
   }
 
-  public get(id: string): PendingAuthorization | undefined {
-    return this.byId.get(id)?.authorization;
-  }
-
   public findByServer(serverName: string): PendingAuthorization | undefined {
     for (const entry of this.byId.values()) {
       if (entry.authorization.serverName === serverName)
@@ -221,6 +217,12 @@ export class McpPendingAuthorizationRegistry {
         new PendingAuthorizationError('OAuth authorization registry closed'),
       );
     }
+    // Callers blocked in `waitForServer` must not linger until their timer
+    // fires: shutdown means no authorization will ever materialize.
+    for (const waiters of [...this.waiters.values()]) {
+      for (const waiter of [...waiters]) waiter(undefined);
+    }
+    this.waiters.clear();
   }
 
   private settle(state: string, error: Error): void {
@@ -236,7 +238,12 @@ export class McpPendingAuthorizationRegistry {
     this.byId.delete(entry.authorization.id);
   }
 
-  /** Constant-time `state` lookup: a linear scan with timing-safe compares. */
+  /**
+   * Looks a `state` up with timing-safe per-entry compares. The scan itself is
+   * not constant-time — it stops at the first match, and length mismatches
+   * short-circuit — which is acceptable because states are high-entropy random
+   * values, so nothing about the secret leaks through position or length.
+   */
   private findByState(state: string): PendingEntry | undefined {
     for (const [candidate, entry] of this.byState) {
       if (secureEqual(candidate, state)) return entry;

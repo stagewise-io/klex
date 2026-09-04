@@ -13,7 +13,9 @@
   "scripts": {
     "dev": "tsx scripts/dev.ts",
     "build": "tsx build.ts",
+    "prebuild:exe": "node ../../scripts/require-node-26.mjs",
     "build:exe": "pnpm --filter \"@stagewise/klex^...\" build && tsx build.ts --sea && tsx scripts/package-exe.ts",
+    "prerelease:artifact": "node ../../scripts/require-node-26.mjs",
     "release:artifact": "pnpm --filter \"@stagewise/klex^...\" build && tsx build.ts --sea && tsx scripts/release/build-artifact.ts",
     "release:assemble": "tsx scripts/release/aggregate-manifest.ts",
     "release:nightly-version": "tsx scripts/release/nightly-version.ts",

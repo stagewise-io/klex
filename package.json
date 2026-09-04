@@ -4,12 +4,20 @@
   "license": "Apache-2.0",
   "type": "module",
   "scripts": {
+    "require:node": "node scripts/require-node-26.mjs",
+    "preinstall": "pnpm require:node",
+    "prebuild": "pnpm require:node",
     "build": "turbo run build",
+    "predev": "pnpm require:node",
     "dev": "turbo watch dev",
     "prepare": "husky",
+    "precheck": "pnpm require:node",
     "check": "biome check .",
+    "precheck:fix": "pnpm require:node",
     "check:fix": "biome check . --write",
+    "pretypecheck": "pnpm require:node",
     "typecheck": "turbo run typecheck",
+    "pretest": "pnpm require:node",
     "test": "turbo run test"
   },
   "devDependencies": {
@@ -25,6 +33,6 @@
   },
   "packageManager": "pnpm@11.22.0",
   "engines": {
-    "node": ">=26.0.0"
+    "node": "26.x"
   }
 }

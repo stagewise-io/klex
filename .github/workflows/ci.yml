@@ -53,8 +53,8 @@ jobs:
       # These two files are fetched and executed straight from the default branch
       # by the documented one-liners, so a broken main is a broken installer for
       # every new user. No Node toolchain is needed here.
-      - name: Shellcheck install.sh
-        run: shellcheck --shell=sh install.sh
+      - name: Shellcheck install.sh and its harness
+        run: shellcheck --shell=sh install.sh scripts/install-e2e.sh
       - name: Parse install.ps1
         shell: pwsh
         # Parse-only. It catches syntax errors before they reach a user, but it
@@ -70,6 +70,22 @@ jobs:
             exit 1
           }
           Write-Host 'install.ps1 parsed cleanly'
+
+  installer-e2e:
+    name: Installer End-to-End (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      # Runs install.sh against synthetic file:// artifacts, so it exercises the
+      # install, upgrade, PATH, receipt, rollback and uninstall paths without a
+      # published release. Both operating systems are covered because the shell
+      # startup files, symlink behaviour and coreutils flags differ between them.
+      - name: Installer end-to-end
+        run: sh scripts/install-e2e.sh
 
   executable:
     name: Packaged Executable

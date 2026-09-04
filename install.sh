@@ -387,7 +387,37 @@ link_current() {
 	if [ -e "$klex_bin_dir/klex" ] && [ ! -L "$klex_bin_dir/klex" ]; then
 		die "$klex_bin_dir/klex exists and is not a symlink; remove it and retry"
 	fi
+	# A link with a different target is not ours. That only happens when
+	# --install-dir points at a directory someone else manages, and silently
+	# replacing their klex launcher is worse than stopping.
+	if [ -L "$klex_bin_dir/klex" ] &&
+		[ "$(readlink "$klex_bin_dir/klex" 2>/dev/null || true)" != '../current/klex' ]; then
+		die "$klex_bin_dir/klex is a symlink this installer did not create; remove it and retry"
+	fi
 	ln -sfn '../current/klex' "$klex_bin_dir/klex"
+}
+
+current_points_at_version() {
+	# $1 = version. True when current resolves to versions/<version>, whatever form
+	# the stored link target happens to take.
+	#
+	# Resolved physical directories, not the raw readlink string: a link written by
+	# hand, by an older layout, or through a symlinked HOME names the same directory
+	# in a different form. Callers use this to decide whether a version directory is
+	# safe to delete, so a false 'no' would destroy a published installation.
+	current_points_at_version_have="$(cd "$klex_install_dir/current" 2>/dev/null && pwd -P)" || return 1
+	current_points_at_version_want="$(cd "$klex_install_dir/versions/$1" 2>/dev/null && pwd -P)" || return 1
+	[ -n "$current_points_at_version_have" ] || return 1
+	[ "$current_points_at_version_have" = "$current_points_at_version_want" ]
+}
+
+discard_unpublished_version() {
+	# $1 = version. Removes versions/<version> unless current still points at it,
+	# which is the same-version reinstall case: that directory is the installation
+	# this run failed to replace, so deleting it would break a working install.
+	if ! current_points_at_version "$1"; then
+		rm -rf "$klex_install_dir/versions/$1"
+	fi
 }
 
 restore_current() {
@@ -495,6 +525,14 @@ shell_profile_files() {
 		# Linux logins read .bashrc; macOS Terminal reads .bash_profile.
 		printf '%s\n' "$HOME/.bashrc"
 		printf '%s\n' "$HOME/.bash_profile"
+		# A bash user with no startup file at all would otherwise get only a created
+		# .bashrc, which a login shell (macOS Terminal) never reads, while creating a
+		# .bash_profile is refused below because it masks .profile. .profile is read
+		# by login bash in exactly that situation. Offered only when nothing else
+		# exists, so established setups keep getting a single block.
+		if [ ! -f "$HOME/.bashrc" ] && [ ! -f "$HOME/.bash_profile" ] && [ ! -f "$HOME/.bash_login" ]; then
+			printf '%s\n' "$HOME/.profile"
+		fi
 		;;
 	fish)
 		printf '%s\n' "${XDG_CONFIG_HOME:-$HOME/.config}/fish/config.fish"
@@ -544,7 +582,12 @@ setup_path() {
 		# did not write it. Otherwise a reinstall replaces the receipt with one that
 		# claims no PATH file was touched, and --uninstall then leaves the block
 		# behind forever.
-		if [ -f "$setup_path_file" ] && grep -qF "$KLEX_MARKER_BEGIN" "$setup_path_file"; then
+		# Matched on the bin directory too, not the marker alone: the marker is the
+		# same for every install root, so a second install under --install-dir would
+		# otherwise claim the first one's block and strip it on uninstall.
+		if [ -f "$setup_path_file" ] &&
+			grep -qF "$KLEX_MARKER_BEGIN" "$setup_path_file" &&
+			grep -qF "$klex_bin_dir" "$setup_path_file"; then
 			klex_modified_path_files="$klex_modified_path_files$setup_path_file
 "
 			info "PATH entry already present in $setup_path_file"
@@ -621,8 +664,12 @@ receipt_path_files() {
 }
 
 strip_path_block() {
-	# $1 = profile file. Removes complete marker blocks, leaving everything else
-	# byte-identical.
+	# $1 = profile file, $2 = bin directory this uninstall owns. Removes the marker
+	# blocks that reference $2, leaving everything else byte-identical.
+	#
+	# Scoped by bin directory because the marker text is identical for every install
+	# root: a second install elsewhere writes its own block into the same file, and
+	# uninstalling one must not take the other's PATH entry with it.
 	#
 	# awk with exact line comparison, not a sed range: a sed range whose closing
 	# address never matches deletes everything to end of file. An interrupted
@@ -637,12 +684,26 @@ strip_path_block() {
 	fi
 
 	strip_path_block_tmp="$1.klex-uninstall.$$"
-	if awk -v begin_marker="$KLEX_MARKER_BEGIN" -v end_marker="$KLEX_MARKER_END" '
-		$0 == begin_marker { in_block = 1; next }
-		in_block && $0 == end_marker { in_block = 0; next }
-		!in_block { print }
+	if awk -v begin_marker="$KLEX_MARKER_BEGIN" -v end_marker="$KLEX_MARKER_END" -v bin_dir="$2" '
+		$0 == begin_marker { in_block = 1; owned = 0; block = $0; next }
+		in_block && $0 == end_marker {
+			if (!owned) print block "\n" $0
+			in_block = 0
+			next
+		}
+		in_block {
+			block = block "\n" $0
+			if (bin_dir != "" && index($0, bin_dir) > 0) owned = 1
+			next
+		}
+		{ print }
 		END { if (in_block) exit 3 }
 	' "$1" >"$strip_path_block_tmp"; then
+		if cmp -s "$strip_path_block_tmp" "$1"; then
+			rm -f "$strip_path_block_tmp"
+			info "$1 has no PATH entry for $2; left untouched"
+			return 0
+		fi
 		cat "$strip_path_block_tmp" >"$1"
 		rm -f "$strip_path_block_tmp"
 		info "removed the PATH entry from $1"
@@ -664,10 +725,18 @@ do_uninstall() {
 
 	do_uninstall_version="$(json_scalar 'version' "$do_uninstall_receipt")"
 
+	# From the receipt, so the blocks removed are the ones this install wrote even
+	# when --install-dir differs from the default. Receipts predating this field
+	# fall back to the conventional location.
+	do_uninstall_bin_dir="$(json_scalar 'binDir' "$do_uninstall_receipt")"
+	if [ -z "$do_uninstall_bin_dir" ]; then
+		do_uninstall_bin_dir="$klex_install_dir/bin"
+	fi
+
 	receipt_path_files "$do_uninstall_receipt" >"$do_uninstall_receipt.paths.$$"
 	while IFS= read -r do_uninstall_file; do
 		[ -n "$do_uninstall_file" ] || continue
-		strip_path_block "$do_uninstall_file"
+		strip_path_block "$do_uninstall_file" "$do_uninstall_bin_dir"
 	done <"$do_uninstall_receipt.paths.$$"
 	rm -f "$do_uninstall_receipt.paths.$$"
 
@@ -738,12 +807,7 @@ do_install() {
 	# Verify before publishing. A release that cannot run must never become the
 	# active one, and at this point current still points at the previous version.
 	if ! verify_installation "$klex_install_dir/versions/$do_install_version/klex" "$do_install_version"; then
-		# Keep the directory if it is already the published one (same-version
-		# reinstall): deleting it would break the installation this run failed to
-		# replace.
-		if [ "$(readlink "$klex_install_dir/current" 2>/dev/null || true)" != "versions/$do_install_version" ]; then
-			rm -rf "$klex_install_dir/versions/$do_install_version"
-		fi
+		discard_unpublished_version "$do_install_version"
 		die 'the downloaded release does not run on this machine; the existing installation was left in place'
 	fi
 
@@ -753,6 +817,9 @@ do_install() {
 	# symlink chain resolves. A failure here has to be rolled back.
 	if ! verify_installation "$klex_bin_dir/klex" "$do_install_version"; then
 		restore_current
+		# Same cleanup as the pre-publish failure path: once current points back at
+		# the previous version, the directory just unpacked is unreferenced.
+		discard_unpublished_version "$do_install_version"
 		die 'klex does not run through the installed symlinks; the previous version was restored'
 	fi
 	info 'native dependencies verified'

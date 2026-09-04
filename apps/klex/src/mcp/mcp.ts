@@ -1057,20 +1057,28 @@ class McpModule implements Mcp {
         reason: 'server is configured with an explicit Authorization header',
       };
     }
+    // Repeat clicks in the cloud UI must not restart the flow: an in-flight
+    // request already carries the authorization URL the user needs. Checked
+    // before cloud availability so a tunnel blip cannot hide a live request.
+    const existing = this.deps.pendingAuthorizations.findByServer(serverName);
+    if (existing) return { outcome: 'pending', authorization: existing };
+
     if (!isCloudAuthorizationAvailable(this.deps.cloudConnectivity)) {
       return { outcome: 'unavailable' };
     }
-
-    // Repeat clicks in the cloud UI must not restart the flow: an in-flight
-    // request already carries the authorization URL the user needs.
-    const existing = this.deps.pendingAuthorizations.findByServer(serverName);
-    if (existing) return { outcome: 'pending', authorization: existing };
 
     let runtime = this.servers.get(serverName);
     if (!runtime) {
       this.scheduleReconcile(this.deps.config.getMcpServers());
       runtime = this.servers.get(serverName);
-      if (!runtime) return { outcome: 'timeout' };
+      // `scheduleReconcile` is a no-op before `start()`, so a missing runtime
+      // here means the module is not running — not a slow connection attempt.
+      if (!runtime) {
+        return {
+          outcome: 'not_applicable',
+          reason: 'MCP module is not started',
+        };
+      }
     }
     if (runtime.connection) {
       return {
@@ -1088,7 +1096,17 @@ class McpModule implements Mcp {
       serverName,
       AUTHORIZATION_MATERIALIZE_TIMEOUT_MS,
     );
-    if (!authorization) return { outcome: 'timeout' };
+    if (!authorization) {
+      // The re-driven attempt may have succeeded outright (cached or refreshed
+      // token), in which case no authorization was ever needed.
+      if (runtime.connection) {
+        return {
+          outcome: 'not_applicable',
+          reason: 'server is now connected',
+        };
+      }
+      return { outcome: 'timeout' };
+    }
     return { outcome: 'pending', authorization };
   }
 

@@ -93,6 +93,51 @@ Key invariants:
 - Late connections from superseded attempts close immediately.
 - A server configuration change does not reset a client cursor because no cursor exists.
 
+## OAuth authorization channels
+
+OAuth-protected HTTP MCP servers are authorized through one of two
+`OAuthAuthorizationSession` implementations. `connection.ts` knows neither: it
+calls `sessionFactory.start({ serverName, serverUrl })` once per connection
+attempt, uses `session.redirectUrl` as the OAuth redirect URI, and awaits the
+promise returned by `session.authorize()`.
+
+```text
+connect attempt -> 401 -> sessionFactory.start(context)
+  local channel:  loopback receiver on 127.0.0.1 + browser on the agent host
+  cloud channel:  public cloud redirect URI + pending-authorization registry
+  -> callback params resolve the parked promise
+  -> transport.finishAuth() -> reconnect
+```
+
+Selection happens per `start()` call, not once at construction: the cloud
+channel is used when cloud connectivity is enabled, the agent is enrolled, and
+the tunnel state is `connected`. A tunnel drop therefore falls back to the local
+browser flow on the next attempt.
+
+The cloud channel is **pull-based**. The agent exposes no new cloud-facing
+surface; Klex Cloud reaches the agent's admin API through the tunnel and drives
+`/v1/mcp-oauth/*`: list pending authorizations, start one for a server name,
+deliver callback parameters, cancel one. This keeps the agent free of any
+agent-to-cloud protocol and avoids needing to know its own `agentId`.
+
+Trust model of the callback sink: `POST /v1/mcp-oauth/callback` is
+unauthenticated by necessity — the cloud proxy strips `authorization` and
+`cookie`, and the admin API has no auth middleware. Security rests on the OAuth
+`state` (32 random bytes from the SDK provider), compared timing-safely, usable
+exactly once, and expiring with the entry. PKCE verifiers, client secrets, and
+tokens never leave the agent. `state` and the authorization URL never appear in
+listings or logs, because `state` is the capability that authorizes a callback
+and the authorization URL embeds it.
+
+`CLOUD_OAUTH_CALLBACK_PATH` (`/v1/mcp-oauth/callback`) is a compatibility
+contract with the cloud: it is baked into dynamic client registrations, so
+changing it forces re-registration with every authorization server. The cloud
+TTL (15 minutes) is deliberately wider than the local one (5 minutes) because
+cloud consent is user-driven and asynchronous.
+
+Pending authorizations are in-memory: each one is a live, blocked connection
+attempt. A restart drops them, and the cloud simply starts a new authorization.
+
 ## Interface to Router
 
 The router subscribes through `mcp.onPushNotification(listener)` and receives `McpPushNotification` objects containing `{ namespace, event }`. It converts them into session-inbox events.

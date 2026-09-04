@@ -42,6 +42,7 @@ klex_bin_dir=''
 klex_manifest_url=''
 klex_staging_dir=''
 klex_modified_path_files=''
+klex_previous_current=''
 
 # ---------------------------------------------------------------- diagnostics
 
@@ -362,7 +363,8 @@ unpack_archive() {
 }
 
 link_current() {
-	# $1 = version. Repoints current at the newly unpacked version.
+	# $1 = version. Repoints current at the newly unpacked version, recording the
+	# previous target so a failed verification can be rolled back.
 	#
 	# `ln -sfn`, not `mv` over the old link: when the destination is a symlink to a
 	# directory, mv follows it and deposits the new link *inside* the old version
@@ -375,6 +377,9 @@ link_current() {
 		die "$klex_install_dir/current exists and is not a symlink; remove it and retry"
 	fi
 
+	# readlink, not realpath: a dangling link still has a target worth restoring.
+	klex_previous_current="$(readlink "$klex_install_dir/current" 2>/dev/null || true)"
+
 	# Relative target so the whole install root stays relocatable.
 	ln -sfn "versions/$1" "$klex_install_dir/current"
 
@@ -385,23 +390,37 @@ link_current() {
 	ln -sfn '../current/klex' "$klex_bin_dir/klex"
 }
 
+restore_current() {
+	# Undoes link_current after a failed verification, so a broken release never
+	# stays published. The bin/klex link is version-independent and needs no undo.
+	if [ -n "$klex_previous_current" ]; then
+		ln -sfn "$klex_previous_current" "$klex_install_dir/current"
+		warn "rolled back: current -> $klex_previous_current"
+	else
+		rm -f "$klex_install_dir/current"
+	fi
+}
+
 verify_installation() {
-	# $1 = expected version.
+	# $1 = executable to run, $2 = expected version. Returns non-zero instead of
+	# dying so the caller can roll back a published link first.
 	#
 	# A SEA resolves its native addons relative to the realpath of the running
-	# executable, so this also proves the symlink chain works.
-	verify_installation_reported="$("$klex_bin_dir/klex" --version 2>/dev/null || true)"
-	if [ "$verify_installation_reported" != "$1" ]; then
-		die "installed klex reports version '$verify_installation_reported', expected '$1'"
+	# executable, so running it through the symlink chain also proves that chain.
+	verify_installation_reported="$("$1" --version 2>/dev/null || true)"
+	if [ "$verify_installation_reported" != "$2" ]; then
+		warn "klex reports version '$verify_installation_reported', expected '$2'"
+		return 1
 	fi
 
 	# Existence checks cannot prove a native addon loads; --verify-native
 	# force-loads every one of them inside the real SEA process.
-	if ! verify_installation_output="$("$klex_bin_dir/klex" --verify-native 2>&1)"; then
+	if ! verify_installation_output="$("$1" --verify-native 2>&1)"; then
 		printf '%s\n' "$verify_installation_output" >&2
-		die 'native dependency verification failed; this build cannot run on this machine'
+		warn 'native dependency verification failed; this build cannot run on this machine'
+		return 1
 	fi
-	info 'native dependencies verified'
+	return 0
 }
 
 # ---------------------------------------------------------------------- receipt
@@ -506,9 +525,11 @@ path_block() {
 }
 
 setup_path() {
+	# --no-modify-path still has to walk the profile files. A block written by an
+	# earlier run is ours whether or not this run is allowed to write, and the
+	# receipt has to keep claiming it; otherwise --uninstall leaves it behind.
 	if [ "$opt_modify_path" = 'no' ]; then
 		info "skipping PATH setup; add $klex_bin_dir to PATH yourself"
-		return 0
 	fi
 
 	# Via a file, not a pipe: a piped while loop runs in a subshell and would
@@ -527,6 +548,10 @@ setup_path() {
 			klex_modified_path_files="$klex_modified_path_files$setup_path_file
 "
 			info "PATH entry already present in $setup_path_file"
+			continue
+		fi
+
+		if [ "$opt_modify_path" = 'no' ]; then
 			continue
 		fi
 
@@ -596,7 +621,14 @@ receipt_path_files() {
 }
 
 strip_path_block() {
-	# $1 = profile file. Removes the marker block, leaving everything else byte-identical.
+	# $1 = profile file. Removes complete marker blocks, leaving everything else
+	# byte-identical.
+	#
+	# awk with exact line comparison, not a sed range: a sed range whose closing
+	# address never matches deletes everything to end of file. An interrupted
+	# install or a hand edit can leave an opening marker without its closing one,
+	# and destroying the rest of someone's shell profile is not an acceptable
+	# uninstall. Exit 3 means the file ended inside a block; nothing is written.
 	if [ ! -f "$1" ]; then
 		return 0
 	fi
@@ -605,13 +637,18 @@ strip_path_block() {
 	fi
 
 	strip_path_block_tmp="$1.klex-uninstall.$$"
-	if sed "\\|^$KLEX_MARKER_BEGIN\$|,\\|^$KLEX_MARKER_END\$|d" "$1" >"$strip_path_block_tmp"; then
+	if awk -v begin_marker="$KLEX_MARKER_BEGIN" -v end_marker="$KLEX_MARKER_END" '
+		$0 == begin_marker { in_block = 1; next }
+		in_block && $0 == end_marker { in_block = 0; next }
+		!in_block { print }
+		END { if (in_block) exit 3 }
+	' "$1" >"$strip_path_block_tmp"; then
 		cat "$strip_path_block_tmp" >"$1"
 		rm -f "$strip_path_block_tmp"
 		info "removed the PATH entry from $1"
 	else
 		rm -f "$strip_path_block_tmp"
-		warn "could not edit $1; remove the klex installer block by hand"
+		warn "$1 has an unterminated klex installer block and was left untouched; remove the lines after '$KLEX_MARKER_BEGIN' by hand"
 	fi
 }
 
@@ -697,8 +734,29 @@ do_install() {
 
 	mkdir -p "$klex_install_dir"
 	unpack_archive "$do_install_archive" "$do_install_version"
+
+	# Verify before publishing. A release that cannot run must never become the
+	# active one, and at this point current still points at the previous version.
+	if ! verify_installation "$klex_install_dir/versions/$do_install_version/klex" "$do_install_version"; then
+		# Keep the directory if it is already the published one (same-version
+		# reinstall): deleting it would break the installation this run failed to
+		# replace.
+		if [ "$(readlink "$klex_install_dir/current" 2>/dev/null || true)" != "versions/$do_install_version" ]; then
+			rm -rf "$klex_install_dir/versions/$do_install_version"
+		fi
+		die 'the downloaded release does not run on this machine; the existing installation was left in place'
+	fi
+
 	link_current "$do_install_version"
-	verify_installation "$do_install_version"
+
+	# Again through bin/klex: that is the path users get, and only this proves the
+	# symlink chain resolves. A failure here has to be rolled back.
+	if ! verify_installation "$klex_bin_dir/klex" "$do_install_version"; then
+		restore_current
+		die 'klex does not run through the installed symlinks; the previous version was restored'
+	fi
+	info 'native dependencies verified'
+
 	setup_path
 
 	do_install_channel="$(json_scalar 'channel' "$do_install_manifest")"

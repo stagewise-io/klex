@@ -126,6 +126,64 @@ const mcpServerNameParamSchema = z.object({
   name: z.string().min(1),
 });
 
+// --- MCP OAuth ---
+
+// `state` and the authorization URL are deliberately absent: `state` is the only
+// capability guarding the callback sink, and the authorization URL embeds it.
+const pendingAuthorizationSchema = z
+  .object({
+    id: z.string(),
+    serverName: z.string(),
+    serverUrl: z.string(),
+    createdAt: z.string().datetime(),
+    expiresAt: z.string().datetime(),
+  })
+  .openapi('PendingAuthorization');
+
+const pendingAuthorizationsResponseSchema = z
+  .object({
+    authorizations: z.array(pendingAuthorizationSchema),
+  })
+  .openapi('PendingAuthorizationsResponse');
+
+const startAuthorizationBodySchema = z
+  .object({
+    serverName: z.string().min(1),
+  })
+  .strict()
+  .openapi('StartAuthorizationBody');
+
+const startAuthorizationResponseSchema = z
+  .object({
+    id: z.string(),
+    serverName: z.string(),
+    serverUrl: z.string(),
+    authorizationUrl: z.string(),
+    state: z.string(),
+    expiresAt: z.string().datetime(),
+  })
+  .openapi('StartAuthorizationResponse');
+
+const oauthCallbackBodySchema = z
+  .object({
+    state: z.string().min(1),
+    code: z.string().min(1).optional(),
+    error: z.string().min(1).optional(),
+    error_description: z.string().optional(),
+  })
+  .strict()
+  .openapi('OAuthCallbackBody');
+
+const oauthCallbackAcceptedSchema = z
+  .object({
+    accepted: z.literal(true),
+  })
+  .openapi('OAuthCallbackAccepted');
+
+const pendingAuthorizationIdParamSchema = z.object({
+  id: z.string().min(1),
+});
+
 // --- Introspection ---
 
 const introspectionChildSchema = z
@@ -670,10 +728,17 @@ export {
   modelSelectionPatchSchema,
   modelSelectionSchema,
   modelSelectionWarningSchema,
+  oauthCallbackAcceptedSchema,
+  oauthCallbackBodySchema,
+  pendingAuthorizationIdParamSchema,
+  pendingAuthorizationSchema,
+  pendingAuthorizationsResponseSchema,
   providerNameParamSchema,
   providerPresetSchema,
   providerResponseSchema,
   providersResponseSchema,
+  startAuthorizationBodySchema,
+  startAuthorizationResponseSchema,
   telemetryLevelSchema,
   telemetrySettingsPatchSchema,
   telemetrySettingsSchema,

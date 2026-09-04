@@ -35,6 +35,16 @@ import {
   updateMcpServerRoute,
 } from './routes/v1/mcp';
 import {
+  cancelAuthorization,
+  cancelAuthorizationRoute,
+  completeAuthorization,
+  completeAuthorizationRoute,
+  getPendingAuthorizations,
+  getPendingAuthorizationsRoute,
+  startAuthorization,
+  startAuthorizationRoute,
+} from './routes/v1/mcp-oauth';
+import {
   createEndpoint,
   createEndpointRoute,
   createKnownModel,
@@ -135,6 +145,10 @@ export function createAdminApp(deps: AdminAppDependencies) {
     .openapi(updateMcpServerRoute, updateMcpServer(deps))
     .openapi(deleteMcpServerRoute, deleteMcpServer(deps))
     .openapi(getMcpToolCallHistoryRoute, getMcpToolCallHistory(deps))
+    .openapi(getPendingAuthorizationsRoute, getPendingAuthorizations(deps))
+    .openapi(startAuthorizationRoute, startAuthorization(deps))
+    .openapi(completeAuthorizationRoute, completeAuthorization(deps))
+    .openapi(cancelAuthorizationRoute, cancelAuthorization(deps))
     .openapi(getUsageRoute, getUsage(deps))
     .openapi(getProvidersRoute, getProviders(deps))
     .openapi(createProviderRoute, createProvider(deps))

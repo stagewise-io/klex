@@ -144,7 +144,11 @@ afterEach(async () => {
 // --- tests ---
 
 describe('Config — minimal schema', () => {
-  it('requires an official name of at least two characters', () => {
+  it('defaults a missing official name for legacy configurations', () => {
+    expect(klexConfigSchema.parse({}).officialName).toBe('Agent');
+  });
+
+  it('requires a provided official name to have at least two characters', () => {
     expect(() => klexConfigSchema.parse({ officialName: 'A' })).toThrow();
     expect(klexConfigSchema.parse({ officialName: 'Ada' })).toMatchObject({
       officialName: 'Ada',
@@ -262,7 +266,7 @@ describe('Config — lifecycle', () => {
     directories.push(dir);
     await writeFile(
       join(dir, CONFIG_FILE_NAME),
-      '{"providers": {}, "modelSelection": {}, "mcpServers": {}}',
+      '{"officialName": "A", "providers": {}, "modelSelection": {}, "mcpServers": {}}',
     );
     const module = createConfig({ logging, dataDirectory: dir });
     await expect(module.start()).rejects.toThrow(/invalid/);

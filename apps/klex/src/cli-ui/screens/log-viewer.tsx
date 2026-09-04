@@ -76,10 +76,11 @@ export function LogViewerScreen({
       .getEntries()
       .filter((entry) => (LEVEL_RANK[entry.level] ?? 2) >= threshold);
   }, [logStore, minimumLevel, version]);
-  const visibleRows = Math.max((stdout.rows || 24) - 12, 4);
+  const visibleRows = Math.min(20, Math.max((stdout.rows || 24) - 12, 4));
   const end = resolveViewportEnd(entries, endSequence, visibleRows);
   const visible = entries.slice(Math.max(0, end - visibleRows), end);
   const offset = entries.length - end;
+  const scrollbar = createScrollbar(entries.length, visibleRows, end);
 
   useInput((_input, key) => {
     if (!key.upArrow && !key.pageUp && !key.downArrow && !key.pageDown) return;
@@ -119,14 +120,25 @@ export function LogViewerScreen({
           ? `Paused · ${offset} entries newer`
           : 'Following latest logs'}
       </Text>
-      <Box marginTop={1} flexDirection="column">
-        {visible.length === 0 ? (
-          <Text dimColor>No logs at this level.</Text>
-        ) : (
-          visible.map((entry) => (
-            <LogLine key={entry.sequence} entry={entry} style={style} />
-          ))
-        )}
+      <Box marginTop={1} height={visibleRows}>
+        <Box flexDirection="column" flexGrow={1}>
+          {visible.length === 0 ? (
+            <Text dimColor>No logs at this level.</Text>
+          ) : (
+            visible.map((entry) => (
+              <LogLine key={entry.sequence} entry={entry} style={style} />
+            ))
+          )}
+        </Box>
+        {scrollbar.length > 0 ? (
+          <Box marginLeft={1} flexDirection="column">
+            {scrollbar.map((row) => (
+              <Text key={row.id} dimColor={row.character === '│'}>
+                {row.character}
+              </Text>
+            ))}
+          </Box>
+        ) : null}
       </Box>
     </ScreenSection>
   );
@@ -181,6 +193,31 @@ function resolveViewportEnd(
   if (firstNewerIndex >= 0)
     return Math.min(entries.length, Math.max(visibleRows, firstNewerIndex));
   return entries.length;
+}
+
+function createScrollbar(
+  totalRows: number,
+  visibleRows: number,
+  end: number,
+): { id: string; character: '│' | '█' }[] {
+  if (totalRows <= visibleRows) return [];
+
+  const thumbSize = Math.max(
+    1,
+    Math.floor((visibleRows * visibleRows) / totalRows),
+  );
+  const maximumThumbStart = visibleRows - thumbSize;
+  const scrollStart = Math.max(0, end - visibleRows);
+  const maximumScrollStart = totalRows - visibleRows;
+  const thumbStart = Math.round(
+    (scrollStart / maximumScrollStart) * maximumThumbStart,
+  );
+
+  return Array.from({ length: visibleRows }, (_, position) => ({
+    id: `scrollbar-${position}`,
+    character:
+      position >= thumbStart && position < thumbStart + thumbSize ? '█' : '│',
+  }));
 }
 
 function singleLine(value: string): string {

@@ -1,5 +1,4 @@
 import { Box, render, Text, useInput, useStdout } from 'ink';
-import SelectInput from 'ink-select-input';
 import Spinner from 'ink-spinner';
 import TextInput from 'ink-text-input';
 import { type ComponentProps, useEffect, useState } from 'react';
@@ -15,6 +14,70 @@ interface Choice {
   label: string;
   value: string;
   disabled?: boolean;
+}
+
+function GroupedChoiceList({
+  items,
+  onSelect,
+}: {
+  items: Choice[];
+  onSelect: (item: Choice) => void;
+}) {
+  const selectableItems = items.filter((item) => !item.disabled);
+  const [selectedValue, setSelectedValue] = useState(selectableItems[0]?.value);
+
+  useInput((input, key) => {
+    const selectedIndex = Math.max(
+      0,
+      selectableItems.findIndex((item) => item.value === selectedValue),
+    );
+
+    if (input === 'k' || key.upArrow) {
+      const previousIndex =
+        (selectedIndex - 1 + selectableItems.length) % selectableItems.length;
+      setSelectedValue(selectableItems[previousIndex]?.value);
+    } else if (input === 'j' || key.downArrow) {
+      const nextIndex = (selectedIndex + 1) % selectableItems.length;
+      setSelectedValue(selectableItems[nextIndex]?.value);
+    } else if (key.return) {
+      const selectedItem = selectableItems[selectedIndex];
+      if (selectedItem) onSelect(selectedItem);
+    } else if (/^[1-9]$/.test(input)) {
+      const selectedItem = selectableItems[Number.parseInt(input, 10) - 1];
+      if (selectedItem) onSelect(selectedItem);
+    }
+  });
+
+  return (
+    <Box flexDirection="column">
+      {items.map((item) => {
+        const isAction = item.value === '__create__';
+        const isSelected = item.value === selectedValue;
+        return (
+          <Box key={item.value} flexDirection="column">
+            {isAction ? (
+              <Box marginTop={1} marginBottom={0}>
+                <Text dimColor>Actions</Text>
+              </Box>
+            ) : null}
+            <Box>
+              <Box width={2}>
+                <Text color={isSelected ? 'blue' : undefined}>
+                  {isSelected ? '›' : ' '}
+                </Text>
+              </Box>
+              <Text
+                color={isSelected ? 'blue' : undefined}
+                dimColor={item.disabled}
+              >
+                {item.label}
+              </Text>
+            </Box>
+          </Box>
+        );
+      })}
+    </Box>
+  );
 }
 
 export function createAgentPicker(deps: {
@@ -244,7 +307,7 @@ function PickerScreen({
       </Text>
       <Box marginTop={1} flexDirection="column">
         {error ? <Text color="red">{error}</Text> : null}
-        <SelectInput
+        <GroupedChoiceList
           items={items}
           onSelect={(item) => {
             if (item.value === '__create__') {

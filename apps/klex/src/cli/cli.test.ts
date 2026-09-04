@@ -44,14 +44,14 @@ describe('parseCliArgs', () => {
   it('leaves the data directory unset for interactive discovery', () => {
     const result = parseCliArgs([]);
     expect(result.dataDirectory).toBeUndefined();
-    expect(result.agentRoot).toBe(join(homedir(), '.klex'));
+    expect(result.agentRoot).toBe(join(homedir(), '.klex', 'agents'));
   });
 
   it('nests the agent directory under KLEX_HOME', () => {
     process.env.KLEX_HOME = '/custom/klex-home';
     const result = parseCliArgs([]);
     expect(result.dataDirectory).toBeUndefined();
-    expect(result.agentRoot).toBe('/custom/klex-home');
+    expect(result.agentRoot).toBe('/custom/klex-home/agents');
   });
 
   it('KLEX_DATA_DIR overrides KLEX_HOME', () => {

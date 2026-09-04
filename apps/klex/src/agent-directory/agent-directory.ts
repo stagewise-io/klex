@@ -149,7 +149,7 @@ function validateAgentName(value: string): string {
 }
 
 export function defaultAgentRoot(): string {
-  return join(homedir(), '.klex');
+  return join(homedir(), '.klex', 'agents');
 }
 
 export function createAgentDirectory(

@@ -84,8 +84,10 @@ export function parseCliArgs(argv: string[]): CliOptions {
 
   // The root is deterministic and CWD-independent. Interactive mode uses it
   // for first-level agent discovery; an explicit data directory bypasses it.
-  const agentRoot =
-    pathOrUndefined(process.env.KLEX_HOME) ?? join(homedir(), '.klex');
+  const agentRoot = join(
+    pathOrUndefined(process.env.KLEX_HOME) ?? join(homedir(), '.klex'),
+    'agents',
+  );
   const dataDirectory =
     pathOrUndefined(values['data-dir']) ??
     pathOrUndefined(process.env.KLEX_DATA_DIR);

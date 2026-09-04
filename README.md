@@ -1,4 +1,7 @@
-<img src="assets/brand/wordmark.png" alt="Klex Bot" width="240">
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/brand/wordmark-dark.png">
+  <img src="assets/brand/wordmark.png" alt="Klex" width="240">
+</picture>
 
 An isolated agent that excels at memory, self-improvement, and efficient orchestration.
 

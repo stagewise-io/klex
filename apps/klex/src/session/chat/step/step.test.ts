@@ -608,6 +608,39 @@ describe('Step — model selection', () => {
     expect(modelProvider.get).toHaveBeenCalledWith('model:claude-3');
   });
 
+  it('reports unusable models and advances to the next fallback', async () => {
+    const modelProvider = makeModelProvider();
+    modelProvider.get.mockRejectedValue(new Error('unsupported model format'));
+    const fallbackManager = makeFallbackManager();
+    fallbackManager.getChatModelEntry.mockReturnValue(
+      'speech:text-to-speech' as never,
+    );
+    const extensionHandler = makeExtensionHandler();
+
+    const result = await createStep(
+      makeDeps({
+        messages: [makeUserMessage()],
+        modelProvider: modelProvider as never,
+        fallbackManager: fallbackManager as never,
+        extensionHandler: extensionHandler as never,
+      }),
+    ).run();
+
+    expect(fallbackManager.fallbackToNextModel).toHaveBeenCalledOnce();
+    expect(result).toEqual({
+      shouldContinue: true,
+      forceNextStep: false,
+      fatalError: false,
+      fatalErrorReason: null,
+      generationFailed: false,
+      generation: null,
+      toolCalls: [],
+      modelFallbackOccurred: true,
+    });
+    expect(extensionHandler.runStepCompleteHooks).toHaveBeenCalledWith(result);
+    expect(createGenerationRunner).not.toHaveBeenCalled();
+  });
+
   it('fetches the model BEFORE calling runHistoryTransformers', async () => {
     const extensionHandler = makeExtensionHandler();
     const modelProvider = makeModelProvider();

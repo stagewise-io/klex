@@ -87,14 +87,22 @@ describe('AgentDirectory', () => {
         mcpServers: {},
       }),
     );
+    await mkdir(join(root, 'legacy'), { recursive: true });
+    await writeFile(join(root, 'legacy', 'config.json'), '{}');
     await mkdir(join(root, 'invalid'), { recursive: true });
-    await writeFile(join(root, 'invalid', 'config.json'), '{}');
+    await writeFile(
+      join(root, 'invalid', 'config.json'),
+      JSON.stringify({ officialName: 'A' }),
+    );
 
     const agents = await createAgentDirectory({
       logging,
       rootDirectory: root,
     }).discover();
 
-    expect(agents.map((agent) => agent.officialName)).toEqual(['Valid']);
+    expect(agents.map((agent) => agent.officialName)).toEqual([
+      'Agent',
+      'Valid',
+    ]);
   });
 });

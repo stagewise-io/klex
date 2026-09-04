@@ -254,19 +254,25 @@ class StepModule implements Step {
             modelSpan.recordException(error as Error);
             modelSpan.setAttribute('model.unusable', true);
             modelSpan.end();
+            stepSpan.addEvent('step.model_resolution_failed', {
+              'model.id': modelId,
+              'model.fallbackIndex':
+                this.deps.fallbackManager.getFallbackIndex(),
+            });
             this.deps.logger.warn(
               { modelId, error },
-              'Step skipped: selected model is unusable; ignoring this model entry',
+              'Selected model is unusable; advancing to the next configured model',
             );
+            this.deps.fallbackManager.fallbackToNextModel();
             const unusableModelEvent: StepCompleteEvent = {
-              shouldContinue: false,
+              shouldContinue: true,
               forceNextStep: false,
               fatalError: false,
               fatalErrorReason: null,
               generationFailed: false,
               generation: null,
               toolCalls: [],
-              modelFallbackOccurred: false,
+              modelFallbackOccurred: true,
             };
             await this.deps.extensionHandler.runStepCompleteHooks(
               unusableModelEvent,

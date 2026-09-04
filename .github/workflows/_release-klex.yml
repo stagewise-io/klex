@@ -413,18 +413,32 @@ jobs:
             # target_commitish only at creation, so it stays at this commit while
             # the assets roll forward. The manifest carries the real gitCommit.
             gh release create channel-nightly \
-              --notes 'Rolling pointer to the latest Klex nightly. Assets here are metadata only; binaries live on the versioned nightly release. The tag is a fixed anchor -- read gitCommit and version from the manifest.' \
+              --notes 'Rolling pointer to the latest Klex nightly. Carries release-manifest.json only; binaries and their checksums live on the immutable versioned nightly release that the manifest points at. The tag is a fixed anchor -- read gitCommit and version from the manifest.' \
               --prerelease \
               --repo "$REPO" \
               --target "$COMMIT" \
               --title 'Klex nightly (rolling pointer)'
           fi
 
-          # Overwrite assets in place. The release is never deleted, so the fixed
-          # installer URL cannot 404 in a delete/recreate window.
+          # Exactly one mutable asset, deliberately. GitHub Releases has no
+          # atomic multi-asset update, so publishing the manifest and a sibling
+          # release-manifest.json.sha256 here would let a reader observe a new
+          # manifest against the previous checksum and reject a valid nightly.
+          #
+          # Dropping the sibling loses no integrity: it hashes a manifest served
+          # from the same URL and origin, so anyone able to forge one can forge
+          # both. The real chain is the manifest's own artifacts[].archiveSha256
+          # over binaries hosted on the immutable versioned release, and that
+          # release still carries release-manifest.json.sha256 and checksums.txt
+          # for out-of-band pinning.
+          #
+          # The release itself is never deleted, so only this single small asset
+          # is briefly absent while --clobber replaces it. Installers must treat
+          # a failed pointer fetch as retryable; a missing asset is a clean,
+          # self-healing failure, unlike a checksum mismatch that looks like
+          # tampering.
           gh release upload channel-nightly \
             release-output/release-manifest.json \
-            release-output/release-manifest.json.sha256 \
             --clobber \
             --repo "$REPO"
           gh release edit channel-nightly \

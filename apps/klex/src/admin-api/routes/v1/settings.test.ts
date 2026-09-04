@@ -158,6 +158,7 @@ describe('PATCH /v1/settings/agent', () => {
     expect(response.status).toBe(500);
     expect(await response.json()).toEqual({
       error: 'Failed to update agent identity',
+      code: 'internal_error',
     });
   });
 });

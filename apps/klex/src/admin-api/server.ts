@@ -8,7 +8,7 @@ import type { Introspector } from '@/introspection';
 import type { Mcp } from '@/mcp';
 import type { ModelCallLogger } from '@/model-call-logger';
 
-import { createErrorHandler, validationHook } from './errors';
+import { createErrorHandler, notFoundHandler, validationHook } from './errors';
 import {
   enrollCloud,
   enrollCloudRoute,
@@ -114,6 +114,7 @@ export function createAdminApp(deps: AdminAppDependencies) {
       deps.logger.error({ error }, 'Unhandled error in admin API');
     }),
   );
+  app.notFound(notFoundHandler);
 
   const routedApp = app
     .openapi(healthRoute, getHealth())

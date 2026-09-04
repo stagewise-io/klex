@@ -96,7 +96,7 @@ describe('PUT /v1/mcp-servers/{name}/authorization', () => {
     expect(requestAuthorization).toHaveBeenCalledWith('qonto');
   });
 
-  it('is idempotent: a repeat call returns the same live authorization', async () => {
+  it('serializes the same pending authorization consistently', async () => {
     const requestAuthorization = vi.fn(
       async (): Promise<RequestAuthorizationResult> => ({
         outcome: 'pending',

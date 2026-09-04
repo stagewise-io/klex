@@ -99,6 +99,22 @@ describe('AdminApi', () => {
       expect(response.status).toBe(200);
     });
 
+    it.each([
+      ['unknown path', new Request('http://klex.local/v1/unknown')],
+      [
+        'unsupported method',
+        new Request('http://klex.local/v1/health', { method: 'POST' }),
+      ],
+    ])('formats %s errors as JSON', async (_case, request) => {
+      const response = await api.handle(request);
+
+      expect(response.status).toBe(404);
+      expect(await response.json()).toEqual({
+        error: 'Not found',
+        code: 'not_found',
+      });
+    });
+
     it('close() is safe without a local listener', async () => {
       await api.close();
     });

@@ -60,14 +60,21 @@ interface TunneledResponse {
  * cloud tunnel session does and reassembles the agent's response frames.
  */
 class TunnelPeer {
-  private readonly chunks: Buffer[] = [];
+  private chunks: Buffer[] = [];
   private resolveResponse?: (response: TunneledResponse) => void;
+  private rejectResponse?: (error: Error) => void;
   private head?: { status: number; headers: Record<string, string | string[]> };
 
   constructor(private readonly ws: WebSocket) {
     ws.on('message', (data: Buffer) => {
       this.handleFrame(decodeFrame(data));
     });
+    // Without these the socket dying mid-request would surface as an opaque
+    // vitest timeout instead of the actual failure.
+    ws.on('error', (error) => this.fail(error));
+    ws.on('close', () =>
+      this.fail(new Error('tunnel socket closed before RESPONSE_END')),
+    );
   }
 
   /** WELCOME must be the first frame, per the protocol. */
@@ -91,8 +98,22 @@ class TunnelPeer {
     path: string,
     body?: string,
   ): Promise<TunneledResponse> {
-    const response = new Promise<TunneledResponse>((resolve) => {
-      this.resolveResponse = resolve;
+    this.chunks = [];
+    this.head = undefined;
+    const response = new Promise<TunneledResponse>((resolve, reject) => {
+      const timer = setTimeout(
+        () => this.fail(new Error('no tunneled response within 5s')),
+        5_000,
+      );
+      timer.unref?.();
+      this.resolveResponse = (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      };
+      this.rejectResponse = (error) => {
+        clearTimeout(timer);
+        reject(error);
+      };
     });
 
     const headers: Record<string, string> = { host: 'agent' };
@@ -124,6 +145,13 @@ class TunnelPeer {
     return response;
   }
 
+  private fail(error: Error): void {
+    const reject = this.rejectResponse;
+    this.resolveResponse = undefined;
+    this.rejectResponse = undefined;
+    reject?.(error);
+  }
+
   private handleFrame(frame: DecodedFrame): void {
     const message = decodeMessage(frame.header.type, frame.payload);
     switch (message.type) {
@@ -135,8 +163,14 @@ class TunnelPeer {
         break;
       case MessageType.RESPONSE_END: {
         const head = this.head;
-        if (head === undefined) throw new Error('RESPONSE_END before HEAD');
-        this.resolveResponse?.({
+        if (head === undefined) {
+          this.fail(new Error('RESPONSE_END before RESPONSE_HEAD'));
+          break;
+        }
+        const resolve = this.resolveResponse;
+        this.resolveResponse = undefined;
+        this.rejectResponse = undefined;
+        resolve?.({
           status: head.status,
           headers: head.headers,
           body: Buffer.concat(this.chunks).toString('utf8'),

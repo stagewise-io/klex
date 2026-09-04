@@ -157,4 +157,11 @@ describe('McpPendingAuthorizationRegistry', () => {
     registry.closeAll();
     await expect(laterPending).rejects.toThrow('registry closed');
   });
+
+  it('releases waitForServer callers on shutdown', async () => {
+    const registry = new McpPendingAuthorizationRegistry();
+    const waiting = registry.waitForServer('qonto', 60_000);
+    registry.closeAll();
+    await expect(waiting).resolves.toBeUndefined();
+  });
 });

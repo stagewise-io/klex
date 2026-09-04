@@ -22,6 +22,9 @@ export interface EnrollmentResult {
 export type TunnelState = 'disconnected' | 'connecting' | 'connected' | 'error';
 
 export interface CloudConnectivity {
+  setTunnelRequestHandler(
+    handler: (request: Request) => Response | Promise<Response>,
+  ): void;
   start(): Promise<void>;
   close(): Promise<void>;
   getAccessToken(resource: string, scopes: string[]): Promise<string>;

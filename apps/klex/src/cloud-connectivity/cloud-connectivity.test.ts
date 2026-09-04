@@ -18,40 +18,61 @@ import { createCloudConnectivity } from './cloud-connectivity';
 
 const {
   cloudApiClientMock,
-  connectAgentTunnelMock,
+  startAgentTunnelMock,
   createCloudApiClientMock,
   getAccessTokenMock,
   invalidateTokenMock,
   tokenClientCloseMock,
-  tunnelCloseMock,
+  tunnelStopMock,
   tunnelHandlers,
-  tunnelOnMock,
+  tunnelOptionsRef,
 } = vi.hoisted(() => {
   const cloudApiClientMock = { agent: { tunnel: {} } };
   const createCloudApiClientMock = vi.fn(() => cloudApiClientMock);
   const tunnelHandlers: Record<string, (...args: unknown[]) => void> = {};
-  const tunnelMock = { close: vi.fn(), on: vi.fn() };
-  const tunnelOnMock = tunnelMock.on.mockImplementation(
-    (event: string, handler: (...args: unknown[]) => void) => {
-      tunnelHandlers[event] = handler;
-      return tunnelMock;
+  const tunnelOptionsRef: {
+    current: {
+      accessToken?: string | (() => string | Promise<string>);
+      reconnect?: boolean;
+      reconnectDelayMs?: number;
+      maxReconnectDelayMs?: number;
+      onRequest?: (request: Request) => Response | Promise<Response>;
+    };
+  } = { current: {} };
+  const tunnelStopMock = vi.fn(async () => undefined);
+  const startAgentTunnelMock = vi.fn(
+    async (options: {
+      accessToken: string | (() => string | Promise<string>);
+      onRequest?: (request: Request) => Response | Promise<Response>;
+      onConnect?: () => void;
+      onClose?: (code: number, reason: string) => void;
+      onError?: (error: Error) => void;
+    }) => {
+      if (typeof options.accessToken === 'function')
+        await options.accessToken();
+      tunnelOptionsRef.current = options;
+      tunnelHandlers.open = options.onConnect ?? (() => undefined);
+      tunnelHandlers.close = (...args) =>
+        options.onClose?.(args[0] as number, args[1] as string);
+      tunnelHandlers.error = (...args) => options.onError?.(args[0] as Error);
+      return { agentId: null, stop: tunnelStopMock };
     },
   );
   return {
     cloudApiClientMock,
-    connectAgentTunnelMock: vi.fn(async () => tunnelMock),
+    startAgentTunnelMock,
     createCloudApiClientMock,
     getAccessTokenMock: vi.fn(async () => 'mock-access-token'),
     invalidateTokenMock: vi.fn(),
     tokenClientCloseMock: vi.fn(),
-    tunnelCloseMock: tunnelMock.close,
+    tunnelStopMock,
     tunnelHandlers,
-    tunnelOnMock,
+    tunnelOptionsRef,
   };
 });
 
 vi.mock('@klex/cloud-api', () => ({
-  connectAgentTunnel: connectAgentTunnelMock,
+  startAgentTunnel: startAgentTunnelMock,
   createCloudApiClient: createCloudApiClientMock,
 }));
 
@@ -123,20 +144,34 @@ describe('CloudConnectivity', () => {
     dir = await makeTempDir();
     vi.mocked(performEnrollment).mockReset();
     vi.mocked(promptEnrollmentCode).mockReset();
-    connectAgentTunnelMock.mockReset();
-    connectAgentTunnelMock.mockImplementation(async () => ({
-      close: tunnelCloseMock,
-      on: tunnelOnMock,
-    }));
+    startAgentTunnelMock.mockReset();
+    startAgentTunnelMock.mockImplementation(
+      async (options: {
+        accessToken: string | (() => string | Promise<string>);
+        onRequest?: (request: Request) => Response | Promise<Response>;
+        onConnect?: () => void;
+        onClose?: (code: number, reason: string) => void;
+        onError?: (error: Error) => void;
+      }) => {
+        if (typeof options.accessToken === 'function')
+          await options.accessToken();
+        tunnelOptionsRef.current = options;
+        tunnelHandlers.open = options.onConnect ?? (() => undefined);
+        tunnelHandlers.close = (...args) =>
+          options.onClose?.(args[0] as number, args[1] as string);
+        tunnelHandlers.error = (...args) => options.onError?.(args[0] as Error);
+        return { agentId: null, stop: tunnelStopMock };
+      },
+    );
     createCloudApiClientMock.mockClear();
     getAccessTokenMock.mockReset();
     getAccessTokenMock.mockResolvedValue('mock-access-token');
     invalidateTokenMock.mockClear();
     tokenClientCloseMock.mockClear();
-    tunnelCloseMock.mockClear();
-    tunnelOnMock.mockClear();
+    tunnelStopMock.mockClear();
     for (const event of Object.keys(tunnelHandlers))
       delete tunnelHandlers[event];
+    tunnelOptionsRef.current = {};
   });
 
   afterEach(async () => {
@@ -230,9 +265,15 @@ describe('CloudConnectivity', () => {
     );
     expect(cloud.getApiClient()).toBe(cloudApiClientMock);
     expect(cloud.getTunnelState()).toBe('connecting');
-    expect(connectAgentTunnelMock).toHaveBeenCalledWith(
-      'https://cloud.klex.bot/v1',
-      { accessToken: 'mock-access-token' },
+    expect(startAgentTunnelMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        baseUrl: 'https://cloud.klex.bot/v1',
+        accessToken: expect.any(Function),
+        reconnect: true,
+        reconnectDelayMs: 1_000,
+        maxReconnectDelayMs: 30_000,
+        onRequest: expect.any(Function),
+      }),
     );
     expect(getAccessTokenMock).toHaveBeenCalledWith(
       'https://cloud.klex.bot/v1',
@@ -246,8 +287,47 @@ describe('CloudConnectivity', () => {
     expect(cloud.getTunnelState()).toBe('connected');
 
     await cloud.close();
-    expect(tunnelCloseMock).toHaveBeenCalled();
+    expect(tunnelStopMock).toHaveBeenCalled();
     expect(cloud.getTunnelState()).toBe('disconnected');
+  });
+
+  it('routes tunnel requests through the Admin API handler', async () => {
+    const cloud = createCloudConnectivity({
+      logging,
+      dataDirectory: dir,
+      cloudEnabled: true,
+      cloudBaseUrl: 'https://cloud.klex.bot',
+      enrollmentToken: 'ABCD-EFGH',
+      allowDangerousUnsecureCloud: false,
+    });
+    vi.mocked(performEnrollment).mockResolvedValueOnce('client-1');
+    const handler = vi.fn(async (request: Request) => {
+      expect(request.method).toBe('POST');
+      expect(new URL(request.url).pathname).toBe('/v1/test');
+      expect(new URL(request.url).search).toBe('?stream=1');
+      expect(request.headers.get('x-test')).toBe('yes');
+      expect(await request.text()).toBe('request-body');
+      return new Response('response-body', {
+        status: 201,
+        headers: { 'x-response': 'yes' },
+      });
+    });
+    cloud.setTunnelRequestHandler(handler);
+    await cloud.start();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const response = await tunnelOptionsRef.current.onRequest?.(
+      new Request('https://agent.invalid/v1/test?stream=1', {
+        method: 'POST',
+        headers: { 'x-test': 'yes' },
+        body: 'request-body',
+      }),
+    );
+    expect(response?.status).toBe(201);
+    expect(response?.headers.get('x-response')).toBe('yes');
+    expect(await response?.text()).toBe('response-body');
+    expect(handler).toHaveBeenCalledOnce();
+    await cloud.close();
   });
 
   it('uses the requested resource and scopes for non-tunnel tokens', async () => {
@@ -274,7 +354,7 @@ describe('CloudConnectivity', () => {
 
     expect(cloud.isEnrolled()).toBe(true);
     expect(getAccessTokenMock).toHaveBeenCalledOnce();
-    expect(connectAgentTunnelMock).not.toHaveBeenCalled();
+    expect(startAgentTunnelMock).toHaveBeenCalledOnce();
 
     await cloud.close();
   });
@@ -284,11 +364,11 @@ describe('CloudConnectivity', () => {
     getAccessTokenMock.mockRejectedValueOnce(new Error('token unavailable'));
     const cloud = await startEnrolledCloud();
 
-    expect(cloud.getTunnelState()).toBe('connecting');
-    expect(connectAgentTunnelMock).not.toHaveBeenCalled();
+    expect(cloud.getTunnelState()).toBe('error');
+    expect(startAgentTunnelMock).toHaveBeenCalledOnce();
     await vi.advanceTimersByTimeAsync(1_000);
     expect(getAccessTokenMock).toHaveBeenCalledTimes(2);
-    expect(connectAgentTunnelMock).toHaveBeenCalledOnce();
+    expect(startAgentTunnelMock).toHaveBeenCalledTimes(2);
 
     await cloud.close();
   });
@@ -320,20 +400,27 @@ describe('CloudConnectivity', () => {
 
   it('retries when the package tunnel connection fails', async () => {
     vi.useFakeTimers();
-    connectAgentTunnelMock.mockRejectedValueOnce(
-      new Error('tunnel unavailable'),
-    );
+    startAgentTunnelMock.mockImplementationOnce(async (options) => {
+      if (typeof options.accessToken === 'function')
+        await options.accessToken();
+      throw new Error('tunnel unavailable');
+    });
     const cloud = await startEnrolledCloud();
 
-    expect(connectAgentTunnelMock).toHaveBeenCalledOnce();
+    expect(startAgentTunnelMock).toHaveBeenCalledOnce();
+    expect(getAccessTokenMock).toHaveBeenCalledOnce();
+    expect(invalidateTokenMock).toHaveBeenCalledWith(
+      'https://cloud.klex.bot/v1',
+    );
     expect(cloud.getTunnelState()).toBe('error');
     await vi.advanceTimersByTimeAsync(1_000);
-    expect(connectAgentTunnelMock).toHaveBeenCalledTimes(2);
+    expect(startAgentTunnelMock).toHaveBeenCalledTimes(2);
+    expect(getAccessTokenMock).toHaveBeenCalledTimes(2);
 
     await cloud.close();
   });
 
-  it('reconnects through the package with a fresh token after disconnect', async () => {
+  it('delegates reconnect backoff to the package and supplies fresh tokens', async () => {
     vi.useFakeTimers();
     const cloud = await startEnrolledCloud();
 
@@ -342,15 +429,17 @@ describe('CloudConnectivity', () => {
 
     tunnelHandlers.close?.(1006, Buffer.from('connection lost'));
     expect(cloud.getTunnelState()).toBe('error');
-
     expect(invalidateTokenMock).toHaveBeenCalledWith(
       'https://cloud.klex.bot/v1',
     );
+
     await vi.advanceTimersByTimeAsync(1_000);
+    expect(startAgentTunnelMock).toHaveBeenCalledOnce();
+
+    const accessToken = tunnelOptionsRef.current.accessToken;
+    expect(accessToken).toBeTypeOf('function');
+    await (accessToken as () => string | Promise<string>)();
     expect(getAccessTokenMock).toHaveBeenCalledTimes(2);
-    expect(connectAgentTunnelMock).toHaveBeenCalledTimes(2);
-    // Reconnect attempt should set state back to 'connecting'
-    expect(cloud.getTunnelState()).toBe('connecting');
 
     await cloud.close();
   });

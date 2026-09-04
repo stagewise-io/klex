@@ -106,8 +106,6 @@ async function main(): Promise<void> {
       enrollmentToken: cli.cloudEnrollToken,
       allowDangerousUnsecureCloud: cli.allowDangerousUnsecureCloud,
     });
-    await cloudConnectivity.start();
-    started.push(cloudConnectivity);
     const realtimeProvider = config.resolveRealtimeProvider();
     const realtimeComposition = realtimeProvider
       ? {
@@ -191,6 +189,9 @@ async function main(): Promise<void> {
       await resource.start();
       started.push(resource);
     }
+    cloudConnectivity.setTunnelRequestHandler(adminApi.handle.bind(adminApi));
+    await cloudConnectivity.start();
+    started.push(cloudConnectivity);
     await realtime?.start();
     try {
       await mcp.start();

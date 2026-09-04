@@ -25,14 +25,11 @@ export function parseStableVersion(version: string): [number, number, number] {
 
 export function findLatestStableTag(tags: readonly string[]): string | null {
   const stable = tags
-    .map((tag) => ({ tag, match: /^v(\d+\.\d+\.\d+)$/.exec(tag) }))
-    .filter(
-      (entry): entry is { tag: string; match: RegExpExecArray } =>
-        entry.match !== null,
-    )
+    .map((tag) => ({ tag, version: tag.startsWith('v') ? tag.slice(1) : '' }))
+    .filter((entry) => stableVersionPattern.test(entry.version))
     .sort((left, right) => {
-      const leftParts = parseStableVersion(left.match[1] ?? '');
-      const rightParts = parseStableVersion(right.match[1] ?? '');
+      const leftParts = parseStableVersion(left.version);
+      const rightParts = parseStableVersion(right.version);
       for (let index = 0; index < 3; index += 1) {
         const difference = (rightParts[index] ?? 0) - (leftParts[index] ?? 0);
         if (difference !== 0) return difference;
@@ -126,7 +123,11 @@ export function generateChangelogSection(
   customNotes: string | null = null,
 ): string {
   parseStableVersion(version);
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+  if (
+    !/^\d{4}-\d{2}-\d{2}$/.test(date) ||
+    Number.isNaN(Date.parse(`${date}T00:00:00Z`)) ||
+    new Date(`${date}T00:00:00Z`).toISOString().slice(0, 10) !== date
+  ) {
     throw new Error(`Invalid changelog date: ${date}`);
   }
   const breaking = commits.filter((commit) => commit.breaking);
@@ -181,7 +182,7 @@ export function extractChangelogSection(
   const matches = [
     ...changelog.matchAll(
       new RegExp(
-        `^## ${escaped} \\(\\d{4}-\\d{2}-\\d{2}\\)\\n[\\s\\S]*?(?=^## |(?![\\s\\S]))`,
+        `^## ${escaped} \\(\\d{4}-\\d{2}-\\d{2}\\)\\n[\\s\\S]*?(?=^## (?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*) \\(\\d{4}-\\d{2}-\\d{2}\\)$|(?![\\s\\S]))`,
         'gm',
       ),
     ),

@@ -15,22 +15,22 @@ jobs:
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
-      - name: Check out main with release credentials
-        uses: actions/checkout@v6
+      - name: Check out main
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
+          persist-credentials: false
           ref: main
-          token: ${{ secrets.RELEASE_PAT }}
 
       - name: Install pnpm
-        uses: pnpm/action-setup@v5
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
         with:
           version: 10.30.3
 
       - name: Install Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
-          node-version: 22.12.0
+          node-version-file: .nvmrc
           cache: pnpm
 
       - name: Install dependencies
@@ -43,6 +43,7 @@ jobs:
       - name: Create release branch and commit
         env:
           BRANCH: release/klex-${{ steps.release.outputs.tag }}
+          GH_TOKEN: ${{ secrets.RELEASE_PAT }}
           VERSION: ${{ steps.release.outputs.version }}
         run: |
           set -euo pipefail
@@ -50,9 +51,10 @@ jobs:
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git switch -C "$BRANCH"
           git add -- apps/klex/package.json apps/klex/CHANGELOG.md
-          git add -A -- .release-notes/klex.md
+          git add -A -- .release-notes/
           git diff --cached --check
           git commit -m "chore(klex): release $VERSION"
+          gh auth setup-git
           git push --force-with-lease origin "$BRANCH"
 
       - name: Open release pull request

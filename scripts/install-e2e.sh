@@ -113,14 +113,16 @@ stray_dotentries() {
 }
 
 write_manifest() {
-	# $1 = version, $2 = sha override ('' to use the real digest)
+	# $1 = version, $2 = sha override ('' to use the real digest),
+	# $3 = channel (defaults to nightly).
 	mv_file="$LAB/serve/klex-$1-$TARGET.tar.gz"
 	mv_size="$(wc -c <"$mv_file" | tr -d ' ')"
 	mv_sha="$(sha256_of "$mv_file")"
 	if [ -n "$2" ]; then mv_sha="$2"; fi
+	mv_channel="${3:-nightly}"
 	cat >"$LAB/serve/release-manifest.json" <<EOF
 {
-  "channel": "nightly",
+  "channel": "$mv_channel",
   "gitCommit": "0000000000000000000000000000000000000000",
   "schemaVersion": 1,
   "version": "$1",
@@ -487,17 +489,65 @@ check 'uninstall ignores an invalid KLEX_CHANNEL' "$?"
 check 'the install root is gone' "$?"
 
 printf '\n== 17. manifest URL contract is channel-specific ==\n'
-grep -qF 'releases/download/channel-stable/release-manifest.json' "$REPO_ROOT/install.sh"
+# Put a deterministic curl in front of PATH. It records every URL while still
+# copying the synthetic manifest and artifacts, so these are behavioral tests
+# of the installer's actual URL selection rather than source-text assertions.
+mkdir -p "$LAB/mock-bin"
+cat >"$LAB/mock-bin/curl" <<'EOF'
+#!/bin/sh
+while [ "$#" -gt 0 ]; do
+	case "$1" in
+	-o)
+		destination="$2"
+		shift 2
+		;;
+	*)
+		url="$1"
+		shift
+		;;
+	esac
+done
+printf '%s\n' "$url" >>"$MOCK_CURL_LOG"
+case "$url" in
+file://*) cp "${url#file://}" "$destination" ;;
+*/release-manifest.json) cp "$MOCK_MANIFEST" "$destination" ;;
+*) exit 22 ;;
+esac
+EOF
+chmod +x "$LAB/mock-bin/curl"
+
+exercise_manifest_url() {
+	# $1 = expected URL fragment, rest = installer arguments.
+	expected_url="$1"
+	shift
+	rm -rf "$ROOT"
+	: >"$LAB/curl-urls.log"
+	env -i \
+		HOME="$LAB/home" \
+		PATH="$LAB/mock-bin:$PATH" \
+		SHELL=/bin/bash \
+		MOCK_CURL_LOG="$LAB/curl-urls.log" \
+		MOCK_MANIFEST="$LAB/serve/release-manifest.json" \
+		sh "$REPO_ROOT/install.sh" --install-dir "$ROOT" --no-modify-path "$@" >/dev/null
+	grep -qF "$expected_url" "$LAB/curl-urls.log"
+}
+
+make_artifact 2.1.0
+write_manifest 2.1.0 '' stable
+exercise_manifest_url 'releases/download/channel-stable/release-manifest.json' --channel stable
 check 'Unix stable resolves channel-stable' "$?"
-grep -qF 'releases/download/channel-nightly/release-manifest.json' "$REPO_ROOT/install.sh"
+write_manifest 2.1.0 '' nightly
+exercise_manifest_url 'releases/download/channel-nightly/release-manifest.json' --channel nightly
 check 'Unix nightly resolves channel-nightly' "$?"
-grep -qF 'releases/download/v$opt_version/release-manifest.json' "$REPO_ROOT/install.sh"
+write_manifest 2.1.0 '' stable
+exercise_manifest_url 'releases/download/v2.1.0/release-manifest.json' --version 2.1.0
 check 'Unix exact version resolves its immutable tag' "$?"
-grep -qF 'releases/download/channel-stable/release-manifest.json' "$REPO_ROOT/install.ps1"
-check 'PowerShell stable resolves channel-stable' "$?"
-grep -qF 'releases/download/channel-nightly/release-manifest.json' "$REPO_ROOT/install.ps1"
-check 'PowerShell nightly resolves channel-nightly' "$?"
-grep -qF 'releases/download/v$pinned/release-manifest.json' "$REPO_ROOT/install.ps1"
+
+# PowerShell is unavailable on the Unix matrix. Anchor each assertion to the
+# branch that returns it so swapping stable/nightly URLs fails this check.
+awk '/if \(\$ResolvedChannel -eq .nightly.\)/ { getline; if ($0 ~ /channel-nightly/) nightly=1 } /return .*channel-stable/ { stable=1 } END { exit !(nightly && stable) }' "$REPO_ROOT/install.ps1"
+check 'PowerShell maps stable and nightly pointer URLs' "$?"
+awk '/if \(\$pinned\)/ { getline; if ($0 ~ /releases\/download\/v\$pinned\/release-manifest.json/) pinned=1 } END { exit !pinned }' "$REPO_ROOT/install.ps1"
 check 'PowerShell exact version resolves its immutable tag' "$?"
 # Every behavioral case above injects KLEX_MANIFEST_URL while also passing
 # ordinary flags. Their successful offline installs prove that the explicit

@@ -4,6 +4,9 @@ import { parseArgs } from 'node:util';
 import { extractChangelogSection } from './stable-release';
 
 const { values } = parseArgs({
+  args: process.argv
+    .slice(2)
+    .filter((argument, index) => index > 0 || argument !== '--'),
   options: {
     changelog: { type: 'string' },
     output: { type: 'string' },

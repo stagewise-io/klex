@@ -340,7 +340,18 @@ jobs:
                 --jq '.assets | length' \
                 --repo "${{ github.repository }}")"
               if [[ "$existing_assets" == 8 ]]; then
-                echo "Stable release ${{ inputs.tag }} is already complete; leaving it immutable"
+                existing_manifest="$(mktemp)"
+                gh release download "${{ inputs.tag }}" \
+                  --pattern release-manifest.json \
+                  --output "$existing_manifest" \
+                  --repo "${{ github.repository }}"
+                if ! cmp -s release-output/release-manifest.json "$existing_manifest"; then
+                  echo "Stable release ${{ inputs.tag }} has a different manifest; refusing to promote rebuilt artifacts" >&2
+                  rm -f "$existing_manifest"
+                  exit 1
+                fi
+                rm -f "$existing_manifest"
+                echo "Stable release ${{ inputs.tag }} is already complete and matches the assembled manifest"
                 exit 0
               fi
               echo "Stable release ${{ inputs.tag }} exists with $existing_assets assets; refusing to mutate it" >&2
@@ -495,6 +506,17 @@ jobs:
             --title "Klex stable (rolling pointer -> $VERSION)"
           test "$(gh release view channel-stable --json assets --jq '.assets | length' --repo "$REPO")" = 1
           test "$(gh release view channel-stable --json assets --jq '.assets[0].name' --repo "$REPO")" = release-manifest.json
+          promoted_manifest="$(mktemp)"
+          gh release download channel-stable \
+            --pattern release-manifest.json \
+            --output "$promoted_manifest" \
+            --repo "$REPO"
+          cmp -s release-output/release-manifest.json "$promoted_manifest" || {
+            echo 'Promoted channel-stable manifest differs from the verified manifest' >&2
+            rm -f "$promoted_manifest"
+            exit 1
+          }
+          rm -f "$promoted_manifest"
 
   # Rolling pointer giving the installer a fixed nightly URL:
   # releases/download/channel-nightly/release-manifest.json. Nightly tags are

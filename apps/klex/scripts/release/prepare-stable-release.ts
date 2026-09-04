@@ -1,5 +1,7 @@
+import { realpathSync } from 'node:fs';
 import { readFile, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { parseArgs } from 'node:util';
 
 import {
@@ -92,6 +94,9 @@ export async function prepareStableRelease(options: {
 
 async function main(): Promise<void> {
   const { values } = parseArgs({
+    args: process.argv
+      .slice(2)
+      .filter((argument, index) => index > 0 || argument !== '--'),
     options: {
       date: { type: 'string' },
       'github-output': { type: 'string' },
@@ -111,6 +116,9 @@ async function main(): Promise<void> {
     process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
 }
 
-if (import.meta.url === new URL(process.argv[1] ?? '', 'file:').href) {
+if (
+  process.argv[1] &&
+  import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href
+) {
   await main();
 }

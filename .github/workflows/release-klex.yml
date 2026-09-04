@@ -9,8 +9,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
-  id-token: write
+  contents: read
 
 concurrency:
   group: release-klex-stable
@@ -26,9 +25,10 @@ jobs:
       version: ${{ steps.release.outputs.version }}
     steps:
       - name: Check out release commit
-        uses: actions/checkout@v6
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
+          persist-credentials: false
           ref: ${{ github.sha }}
 
       - name: Detect unreleased Klex version
@@ -37,6 +37,7 @@ jobs:
           BEFORE: ${{ github.event.before }}
           EVENT_NAME: ${{ github.event_name }}
           RELEASE_REF: ${{ github.sha }}
+          RELEASE_SOURCE_REF: ${{ github.ref }}
         run: |
           set -euo pipefail
           version=$(node -p "require('./apps/klex/package.json').version")
@@ -46,6 +47,11 @@ jobs:
           fi
           tag="v$version"
           should_release=false
+
+          if [ "$EVENT_NAME" = workflow_dispatch ] && [ "$RELEASE_SOURCE_REF" != refs/heads/main ]; then
+            echo 'Auto-release must be dispatched from main.' >&2
+            exit 1
+          fi
 
           if [ "$EVENT_NAME" = push ]; then
             if [ -z "$BEFORE" ] || [[ "$BEFORE" =~ ^0+$ ]]; then
@@ -76,6 +82,9 @@ jobs:
   release:
     needs: detect
     if: needs.detect.outputs.should_release == 'true'
+    permissions:
+      contents: write
+      id-token: write
     uses: ./.github/workflows/_release-klex.yml
     with:
       channel: stable

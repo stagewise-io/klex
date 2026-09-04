@@ -12,7 +12,7 @@ export interface CliOptions {
   cloudBaseUrl: string;
   cloudEnrollToken: string | undefined;
   headless: boolean;
-  adminPort: number;
+  dangerousLocalAdminApiPort: number | undefined;
   allowDangerousUnsecureCloud: boolean;
   verbose: boolean;
   /**
@@ -32,6 +32,20 @@ function pathOrUndefined(value: string | undefined): string | undefined {
   return trimmed === undefined || trimmed === '' ? undefined : trimmed;
 }
 
+function portOrUndefined(value: string | undefined): number | undefined {
+  const trimmed = value?.trim();
+  if (trimmed === undefined || trimmed === '') return undefined;
+  if (!/^\d+$/.test(trimmed)) {
+    throw new Error(`Invalid local Admin API port: ${value}`);
+  }
+
+  const port = Number(trimmed);
+  if (!Number.isSafeInteger(port) || port < 1 || port > 65_535) {
+    throw new Error(`Invalid local Admin API port: ${value}`);
+  }
+  return port;
+}
+
 export function parseCliArgs(argv: string[]): CliOptions {
   const { values } = parseArgs({
     args: argv,
@@ -42,7 +56,7 @@ export function parseCliArgs(argv: string[]): CliOptions {
       'cloud-base-url': { type: 'string' },
       cloud: { type: 'boolean' },
       'cloud-enroll-token': { type: 'string' },
-      'admin-port': { type: 'string' },
+      'dangerous-local-admin-api-port': { type: 'string' },
       'allow-dangerous-unsecure-cloud': { type: 'boolean' },
       verbose: { type: 'boolean', short: 'v' },
       version: { type: 'boolean' },
@@ -97,12 +111,10 @@ export function parseCliArgs(argv: string[]): CliOptions {
   const headless =
     values.headless === true || process.env.KLEX_HEADLESS === '1';
 
-  const adminPort =
-    values['admin-port'] !== undefined
-      ? Number.parseInt(values['admin-port'], 10)
-      : process.env.KLEX_ADMIN_PORT !== undefined
-        ? Number.parseInt(process.env.KLEX_ADMIN_PORT, 10)
-        : 2706;
+  const dangerousLocalAdminApiPort = portOrUndefined(
+    values['dangerous-local-admin-api-port'] ??
+      process.env.KLEX_DANGEROUS_LOCAL_ADMIN_API_PORT,
+  );
 
   const allowDangerousUnsecureCloud =
     values['allow-dangerous-unsecure-cloud'] !== undefined
@@ -119,7 +131,7 @@ export function parseCliArgs(argv: string[]): CliOptions {
     cloudBaseUrl,
     cloudEnrollToken,
     headless,
-    adminPort,
+    dangerousLocalAdminApiPort,
     allowDangerousUnsecureCloud,
     verbose,
     verifyNative,
@@ -143,7 +155,7 @@ Options:
   --no-cloud                   Disable Klex Cloud connectivity (overrides KLEX_NO_CLOUD)
   --cloud                      Enable Klex Cloud connectivity (overrides KLEX_NO_CLOUD)
   --cloud-enroll-token <code>  Enrollment token for headless enrollment (overrides KLEX_CLOUD_ENROLLMENT_TOKEN)
-  --admin-port <port>          Admin API port (overrides KLEX_ADMIN_PORT, default: 2706)
+  --dangerous-local-admin-api-port <port>  Expose the unauthenticated Admin API on 127.0.0.1 (overrides KLEX_DANGEROUS_LOCAL_ADMIN_API_PORT)
   --allow-dangerous-unsecure-cloud  Allow http cloud base URL and ws tunnel (overrides KLEX_ALLOW_UNSECURE_CLOUD, default: false)
   -v, --verbose                   Enable verbose (pretty) logging (default: compact)
 

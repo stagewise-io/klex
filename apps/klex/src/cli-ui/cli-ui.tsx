@@ -38,11 +38,13 @@ export function createCliUi(deps: CliUiDependencies): CliUi {
 class CliUiModule implements CliUi {
   private readonly onQuit: () => void;
   private readonly adminApi: CliUiDependencies['adminApi'];
+  private readonly dangerousLocalAdminApiPort: number | undefined;
   private inkInstance: ReturnType<typeof render> | undefined;
 
   constructor(deps: CliUiDependencies) {
     this.onQuit = deps.onQuit;
     this.adminApi = deps.adminApi;
+    this.dangerousLocalAdminApiPort = deps.dangerousLocalAdminApiPort;
   }
 
   start(): void {
@@ -54,7 +56,11 @@ class CliUiModule implements CliUi {
     );
 
     this.inkInstance = render(
-      <AppRoot apiClient={apiClient} onQuit={() => this.requestQuit()} />,
+      <AppRoot
+        apiClient={apiClient}
+        dangerousLocalAdminApiPort={this.dangerousLocalAdminApiPort}
+        onQuit={() => this.requestQuit()}
+      />,
       {
         exitOnCtrlC: true,
       },
@@ -94,9 +100,11 @@ class CliUiModule implements CliUi {
 
 function AppRoot({
   apiClient,
+  dangerousLocalAdminApiPort,
   onQuit,
 }: {
   apiClient: AdminApiClient;
+  dangerousLocalAdminApiPort: number | undefined;
   onQuit: () => void;
 }) {
   const navigation = useNavigationState();
@@ -129,6 +137,7 @@ function AppRoot({
               cloud={globalStatus.cloud}
               loading={globalStatus.loading}
               toastCount={toasts.length}
+              dangerousLocalAdminApiPort={dangerousLocalAdminApiPort}
               onRefreshGlobal={globalStatus.refresh}
             />
           </TextInputActiveProvider>
@@ -158,6 +167,7 @@ function FrameLayout({
   cloud,
   loading,
   toastCount,
+  dangerousLocalAdminApiPort,
   onRefreshGlobal,
 }: {
   apiClient: AdminApiClient;
@@ -166,6 +176,7 @@ function FrameLayout({
   cloud: import('./api-client').CloudStatus | null;
   loading: boolean;
   toastCount: number;
+  dangerousLocalAdminApiPort: number | undefined;
   onRefreshGlobal: () => void;
 }) {
   const { meta } = useScreenMeta();
@@ -184,6 +195,7 @@ function FrameLayout({
       cloud={cloud}
       loading={loading}
       toastCount={toastCount}
+      dangerousLocalAdminApiPort={dangerousLocalAdminApiPort}
     >
       <ScreenRouter
         apiClient={apiClient}

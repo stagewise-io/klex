@@ -147,7 +147,7 @@ class CloudConnectivityModule implements CloudConnectivity {
 
     this.deps.logger.info(
       { clientId: this.enrollment.clientId },
-      'Klex Cloud connectivity enabled; tunnel connecting',
+      'Klex Cloud connectivity enabled',
     );
 
     // Token acquisition and tunnel establishment are best-effort background

@@ -16,7 +16,7 @@ describe('parseCliArgs', () => {
     delete process.env.KLEX_NO_CLOUD;
     delete process.env.KLEX_CLOUD_BASE_URL;
     delete process.env.KLEX_CLOUD_ENROLLMENT_TOKEN;
-    delete process.env.KLEX_ADMIN_PORT;
+    delete process.env.KLEX_DANGEROUS_LOCAL_ADMIN_API_PORT;
     delete process.env.KLEX_ALLOW_UNSECURE_CLOUD;
     delete process.env.KLEX_HEADLESS;
   });
@@ -28,7 +28,7 @@ describe('parseCliArgs', () => {
       'KLEX_NO_CLOUD',
       'KLEX_CLOUD_BASE_URL',
       'KLEX_CLOUD_ENROLLMENT_TOKEN',
-      'KLEX_ADMIN_PORT',
+      'KLEX_DANGEROUS_LOCAL_ADMIN_API_PORT',
       'KLEX_ALLOW_UNSECURE_CLOUD',
       'KLEX_HEADLESS',
     ]) {
@@ -296,6 +296,39 @@ describe('parseCliArgs', () => {
       const result = parseCliArgs(['--cloud-enroll-token', 'ABCD-EFGH']);
       expect(result.cloudEnrollToken).toBe('ABCD-EFGH');
     });
+  });
+
+  describe('dangerous local Admin API port', () => {
+    it('defaults to undefined', () => {
+      const result = parseCliArgs([]);
+      expect(result.dangerousLocalAdminApiPort).toBeUndefined();
+    });
+
+    it('uses --dangerous-local-admin-api-port when provided', () => {
+      const result = parseCliArgs(['--dangerous-local-admin-api-port', '2706']);
+      expect(result.dangerousLocalAdminApiPort).toBe(2706);
+    });
+
+    it('uses KLEX_DANGEROUS_LOCAL_ADMIN_API_PORT when provided', () => {
+      process.env.KLEX_DANGEROUS_LOCAL_ADMIN_API_PORT = '2707';
+      const result = parseCliArgs([]);
+      expect(result.dangerousLocalAdminApiPort).toBe(2707);
+    });
+
+    it('prefers the CLI option over the environment variable', () => {
+      process.env.KLEX_DANGEROUS_LOCAL_ADMIN_API_PORT = '2707';
+      const result = parseCliArgs(['--dangerous-local-admin-api-port', '2708']);
+      expect(result.dangerousLocalAdminApiPort).toBe(2708);
+    });
+
+    it.each(['0', '65536', '12.5', 'not-a-port'])(
+      'rejects invalid port %s',
+      (port) => {
+        expect(() =>
+          parseCliArgs(['--dangerous-local-admin-api-port', port]),
+        ).toThrow(`Invalid local Admin API port: ${port}`);
+      },
+    );
   });
 
   describe('allow dangerous unsecure cloud', () => {

@@ -291,7 +291,7 @@ resolve_manifest_url() {
 		return 0
 	fi
 
-	klex_manifest_url="https://github.com/$KLEX_REPOSITORY/releases/latest/download/release-manifest.json"
+	klex_manifest_url="https://github.com/$KLEX_REPOSITORY/releases/download/channel-stable/release-manifest.json"
 }
 
 # ----------------------------------------------------------------- json access

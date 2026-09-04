@@ -291,6 +291,14 @@ jobs:
           --git-commit "${{ needs.prepare.outputs.commit }}"
           --repository "${{ github.repository }}"
           --input-directory "../../release-output"
+      - name: Extract stable release notes
+        if: inputs.channel == 'stable'
+        run: >-
+          pnpm --filter @stagewise/klex exec tsx
+          scripts/release/extract-release-notes.ts --
+          --version "${{ inputs.version }}"
+          --changelog CHANGELOG.md
+          --output "../../release-output/release-notes.md"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           if-no-files-found: error
@@ -338,8 +346,12 @@ jobs:
               echo "Stable release ${{ inputs.tag }} exists with $existing_assets assets; refusing to mutate it" >&2
               exit 1
             fi
+            test -s release-output/release-notes.md || {
+              echo 'Stable release notes are missing or empty' >&2
+              exit 1
+            }
             gh release create "${{ inputs.tag }}" "${files[@]}" \
-              --generate-notes \
+              --notes-file release-output/release-notes.md \
               --latest \
               --repo "${{ github.repository }}" \
               --target "${{ needs.prepare.outputs.commit }}" \
@@ -357,11 +369,137 @@ jobs:
               --title "Klex nightly (${{ inputs.version }})"
           fi
 
+  verify-stable-install:
+    name: Verify stable install (${{ matrix.target }})
+    needs: [prepare, publish]
+    if: inputs.channel == 'stable'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-26
+            target: darwin-arm64
+          - runner: macos-26-intel
+            target: darwin-x64
+          - runner: ubuntu-24.04-arm
+            target: linux-arm64-gnu
+          - runner: ubuntu-22.04
+            target: linux-x64-gnu
+          - runner: windows-2022
+            target: windows-x64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+          ref: ${{ needs.prepare.outputs.commit }}
+      - name: Install, verify, and uninstall (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        env:
+          KLEX_HOME: ${{ runner.temp }}/klex-data
+          KLEX_MANIFEST_URL: https://github.com/${{ github.repository }}/releases/download/${{ inputs.tag }}/release-manifest.json
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          root="${RUNNER_TEMP}/klex-install"
+          sh ./install.sh --install-dir "$root" --no-modify-path
+          test -s "$root/install-receipt.json"
+          "$root/bin/klex" --verify-native
+          test "$("$root/bin/klex" --version)" = "$VERSION"
+          sh ./install.sh --install-dir "$root" --uninstall
+          test ! -e "$root"
+      - name: Install, verify, and uninstall (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          KLEX_HOME: ${{ runner.temp }}\klex-data
+          KLEX_MANIFEST_URL: https://github.com/${{ github.repository }}/releases/download/${{ inputs.tag }}/release-manifest.json
+          VERSION: ${{ inputs.version }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $root = Join-Path '${{ runner.temp }}' 'klex-install'
+          & ./install.ps1 -InstallDir $root -NoModifyPath
+          if (-not (Test-Path -LiteralPath (Join-Path $root 'install-receipt.json'))) {
+            throw 'install receipt was not created'
+          }
+          & (Join-Path $root 'bin\klex.cmd') --verify-native
+          $actual = & (Join-Path $root 'bin\klex.cmd') --version
+          if ($actual -ne $env:VERSION) {
+            throw "Expected $env:VERSION, got $actual"
+          }
+          & ./install.ps1 -InstallDir $root -Uninstall
+          if (Test-Path -LiteralPath $root) {
+            throw 'install root remains after uninstall'
+          }
+
+  publish-stable-pointer:
+    needs: [prepare, publish, verify-stable-install]
+    if: inputs.channel == 'stable'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    concurrency:
+      group: klex-channel-stable-pointer
+      cancel-in-progress: false
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: klex-release-${{ inputs.version }}
+          path: release-output
+      - name: Promote the channel-stable pointer
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          VERSION: ${{ inputs.version }}
+          COMMIT: ${{ needs.prepare.outputs.commit }}
+        run: |
+          set -euo pipefail
+          if gh release view channel-stable --repo "$REPO" >/dev/null 2>&1; then
+            previous="$(gh release download channel-stable \
+              --pattern release-manifest.json \
+              --output - \
+              --repo "$REPO" 2>/dev/null | jq -r '.version // empty' || true)"
+            if [[ -n "$previous" && "$previous" != "$VERSION" ]]; then
+              newest="$(printf '%s\n%s\n' "$previous" "$VERSION" | sort -V | tail -n1)"
+              if [[ "$newest" != "$VERSION" ]]; then
+                echo "Stable pointer is at $previous, newer than $VERSION; leaving it untouched"
+                exit 0
+              fi
+            fi
+            mapfile -t existing_assets < <(gh release view channel-stable \
+              --json assets --jq '.assets[].name' --repo "$REPO")
+            for asset in "${existing_assets[@]}"; do
+              if [[ "$asset" != release-manifest.json ]]; then
+                echo "Unexpected channel-stable asset: $asset" >&2
+                exit 1
+              fi
+            done
+          else
+            gh release create channel-stable \
+              --notes 'Rolling pointer to the latest verified Klex stable release. Carries release-manifest.json only; binaries and checksums live on the immutable versioned release referenced by the manifest.' \
+              --prerelease \
+              --repo "$REPO" \
+              --target "$COMMIT" \
+              --title 'Klex stable (rolling pointer)'
+          fi
+          gh release upload channel-stable \
+            release-output/release-manifest.json \
+            --clobber \
+            --repo "$REPO"
+          gh release edit channel-stable \
+            --repo "$REPO" \
+            --title "Klex stable (rolling pointer -> $VERSION)"
+          test "$(gh release view channel-stable --json assets --jq '.assets | length' --repo "$REPO")" = 1
+          test "$(gh release view channel-stable --json assets --jq '.assets[0].name' --repo "$REPO")" = release-manifest.json
+
   # Rolling pointer giving the installer a fixed nightly URL:
   # releases/download/channel-nightly/release-manifest.json. Nightly tags are
-  # unique per build, so no stable download path exists otherwise. Stable needs
-  # no equivalent -- it is created with --latest, and nightlies pass --prerelease
-  # without --latest, so they cannot hijack releases/latest.
+  # unique per build, so no stable download path exists otherwise. Stable uses
+  # the equivalent channel-stable pointer after its install verification gate.
   #
   # Split out of `publish` for its own concurrency group. The pointer is the only
   # shared mutable resource here; concurrent runs are otherwise serialized only

@@ -170,7 +170,7 @@ function Resolve-ManifestUrl {
 		return "https://github.com/$script:Repository/releases/download/channel-nightly/release-manifest.json"
 	}
 
-	return "https://github.com/$script:Repository/releases/latest/download/release-manifest.json"
+	return "https://github.com/$script:Repository/releases/download/channel-stable/release-manifest.json"
 }
 
 # -------------------------------------------------------------------- network

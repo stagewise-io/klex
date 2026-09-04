@@ -19,6 +19,7 @@
     "release:artifact": "pnpm --filter \"@stagewise/klex^...\" build && tsx build.ts --sea && tsx scripts/release/build-artifact.ts",
     "release:assemble": "tsx scripts/release/aggregate-manifest.ts",
     "release:nightly-version": "tsx scripts/release/nightly-version.ts",
+    "release:prepare": "tsx scripts/release/prepare-stable-release.ts",
     "test:exe": "pnpm run build:exe -- --skip-notarize && tsx scripts/smoke-exe.ts",
     "typecheck": "tsc --noEmit",
     "build:admin-api-types": "rm -rf .types/admin-api && tsc -p tsconfig.admin-api-types.json",

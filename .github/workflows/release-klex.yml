@@ -1,55 +1,85 @@
-name: Release Klex
+name: Auto-release Klex
 
 on:
   push:
-    tags:
-      - 'v*'
+    branches:
+      - main
+    paths:
+      - apps/klex/package.json
+  workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
+  id-token: write
+
+concurrency:
+  group: release-klex-stable
+  cancel-in-progress: false
 
 jobs:
-  identity:
-    runs-on: ubuntu-22.04
-    timeout-minutes: 5
+  detect:
+    runs-on: ubuntu-latest
     outputs:
+      ref: ${{ steps.release.outputs.ref }}
+      should_release: ${{ steps.release.outputs.should_release }}
+      tag: ${{ steps.release.outputs.tag }}
       version: ${{ steps.release.outputs.version }}
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Check out release commit
+        uses: actions/checkout@v6
         with:
-          persist-credentials: false
+          fetch-depth: 0
           ref: ${{ github.sha }}
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
-        with:
-          node-version-file: .nvmrc
-      - id: release
-        name: Validate stable release tag
-        shell: bash
+
+      - name: Detect unreleased Klex version
+        id: release
         env:
-          RELEASE_TAG: ${{ github.ref_name }}
+          BEFORE: ${{ github.event.before }}
+          EVENT_NAME: ${{ github.event_name }}
+          RELEASE_REF: ${{ github.sha }}
         run: |
           set -euo pipefail
-          tag="$RELEASE_TAG"
-          version="${tag#v}"
-          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "Stable release tags must match vMAJOR.MINOR.PATCH" >&2
+          version=$(node -p "require('./apps/klex/package.json').version")
+          if ! [[ "$version" =~ ^0\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            echo "Klex stable version must be a strict pre-1.0 version, got: $version" >&2
             exit 1
           fi
-          package_version="$(node -p "require('./apps/klex/package.json').version")"
-          if [[ "$version" != "$package_version" ]]; then
-            echo "Tag version $version does not match apps/klex/package.json ($package_version)" >&2
-            exit 1
+          tag="v$version"
+          should_release=false
+
+          if [ "$EVENT_NAME" = push ]; then
+            if [ -z "$BEFORE" ] || [[ "$BEFORE" =~ ^0+$ ]]; then
+              echo 'Cannot verify the package-version delta for this push.' >&2
+              exit 1
+            fi
+            previous=$(git show "$BEFORE:apps/klex/package.json" | node -e "let input=''; process.stdin.on('data', c => input += c).on('end', () => process.stdout.write(JSON.parse(input).version))")
+            if [ "$previous" = "$version" ]; then
+              echo "Package version did not change ($version); skipping."
+            else
+              should_release=true
+            fi
+          else
+            should_release=true
           fi
-          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+          if git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null 2>&1; then
+            echo "Tag $tag already exists; skipping."
+            should_release=false
+          fi
+          {
+            echo "ref=$RELEASE_REF"
+            echo "should_release=$should_release"
+            echo "tag=$tag"
+            echo "version=$version"
+          } >> "$GITHUB_OUTPUT"
 
   release:
-    needs: identity
-    permissions:
-      contents: write
+    needs: detect
+    if: needs.detect.outputs.should_release == 'true'
     uses: ./.github/workflows/_release-klex.yml
     with:
       channel: stable
-      ref: ${{ github.sha }}
-      tag: ${{ github.ref_name }}
-      version: ${{ needs.identity.outputs.version }}
+      ref: ${{ needs.detect.outputs.ref }}
+      tag: ${{ needs.detect.outputs.tag }}
+      version: ${{ needs.detect.outputs.version }}
     secrets: inherit

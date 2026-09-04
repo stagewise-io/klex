@@ -92,6 +92,18 @@ export function smokeKlexDistribution(
     );
   }
 
+  // The release build sets KLEX_VERSION, KLEX_RELEASE_CHANNEL and
+  // KLEX_RELEASE_TAG so the version can be baked in at compile time. Passing
+  // that environment into the child would let the executable read the expected
+  // answer back out of its own environment at runtime, which is exactly how a
+  // build that failed to embed __KLEX_VERSION__ passed this smoke test and
+  // shipped reporting the package.json version. Users have none of these
+  // variables, so neither does the child.
+  const runtimeEnvironment: NodeJS.ProcessEnv = { ...environment };
+  delete runtimeEnvironment.KLEX_VERSION;
+  delete runtimeEnvironment.KLEX_RELEASE_CHANNEL;
+  delete runtimeEnvironment.KLEX_RELEASE_TAG;
+
   const nativeAssetChecks = resolveNativeAssetChecks(distributionDirectory);
   const missingAssets = nativeAssetChecks.filter((check) => {
     if (existsSync(check.path)) return false;
@@ -108,7 +120,7 @@ export function smokeKlexDistribution(
 
   const result = spawnSync(executablePath, ['--help'], {
     encoding: 'utf8',
-    env: environment,
+    env: runtimeEnvironment,
     timeout: 30_000,
   });
   const output = `${result.stdout ?? ''}${result.stderr ?? ''}`;
@@ -134,7 +146,7 @@ export function smokeKlexDistribution(
   // lazily in production, so nothing else in this smoke test touches them.
   const nativeResult = spawnSync(executablePath, ['--verify-native'], {
     encoding: 'utf8',
-    env: environment,
+    env: runtimeEnvironment,
     timeout: 60_000,
   });
   const nativeOutput = `${nativeResult.stdout ?? ''}${nativeResult.stderr ?? ''}`;

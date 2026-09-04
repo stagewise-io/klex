@@ -549,9 +549,6 @@ awk '/if \(\$ResolvedChannel -eq .nightly.\)/ { getline; if ($0 ~ /channel-night
 check 'PowerShell maps stable and nightly pointer URLs' "$?"
 awk '/if \(\$pinned\)/ { getline; if ($0 ~ /releases\/download\/v\$pinned\/release-manifest.json/) pinned=1 } END { exit !pinned }' "$REPO_ROOT/install.ps1"
 check 'PowerShell exact version resolves its immutable tag' "$?"
-# Every behavioral case above injects KLEX_MANIFEST_URL while also passing
-# ordinary flags. Their successful offline installs prove that the explicit
-# manifest wins over channel/version/default URL construction.
 
 printf '\n'
 if [ "$fails" -eq 0 ]; then

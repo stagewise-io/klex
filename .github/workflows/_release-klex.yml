@@ -356,25 +356,77 @@ jobs:
               --repo "${{ github.repository }}" \
               --target "${{ needs.prepare.outputs.commit }}" \
               --title "Klex nightly (${{ inputs.version }})"
+          fi
 
-            # Rolling pointer so the installer has a fixed nightly URL. Nightly
-            # tags are unique per build, so there is no stable download path
-            # otherwise. Stable needs no equivalent: its release is created with
-            # --latest above, which makes releases/latest/download correct, and
-            # nightlies use --prerelease so they can never hijack it.
-            #
-            # Metadata only. Deliberately does not add files to release-output,
-            # because the 8-file guard above runs before this step.
-            gh release delete channel-nightly \
-              --cleanup-tag \
-              --repo "${{ github.repository }}" \
-              --yes 2>/dev/null || true
+  # Rolling pointer giving the installer a fixed nightly URL:
+  # releases/download/channel-nightly/release-manifest.json. Nightly tags are
+  # unique per build, so no stable download path exists otherwise. Stable needs
+  # no equivalent -- it is created with --latest, and nightlies pass --prerelease
+  # without --latest, so they cannot hijack releases/latest.
+  #
+  # Split out of `publish` for its own concurrency group. The pointer is the only
+  # shared mutable resource here; concurrent runs are otherwise serialized only
+  # by their unique versioned tags, which does not protect this.
+  #
+  # Metadata only: deliberately does not add files to release-output, whose
+  # 8-file guard runs in `publish`.
+  publish-nightly-pointer:
+    needs: [prepare, publish]
+    if: inputs.channel != 'stable'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    concurrency:
+      group: klex-channel-nightly-pointer
+      cancel-in-progress: false
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: klex-release-${{ inputs.version }}
+          path: release-output
+      - name: Update the channel-nightly pointer
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          VERSION: ${{ inputs.version }}
+          COMMIT: ${{ needs.prepare.outputs.commit }}
+        run: |
+          set -euo pipefail
+
+          if gh release view channel-nightly --repo "$REPO" >/dev/null 2>&1; then
+            # Monotonic guard: a slower run must not overwrite a newer pointer.
+            previous="$(gh release download channel-nightly \
+              --pattern release-manifest.json \
+              --output - \
+              --repo "$REPO" 2>/dev/null | jq -r '.version // empty' || true)"
+            if [[ -n "$previous" && "$previous" != "$VERSION" ]]; then
+              newest="$(printf '%s\n%s\n' "$previous" "$VERSION" | sort -V | tail -n1)"
+              if [[ "$newest" != "$VERSION" ]]; then
+                echo "Pointer is at $previous, newer than $VERSION; leaving it untouched"
+                exit 0
+              fi
+            fi
+          else
+            # The tag is a fixed anchor, not a commit reference: GitHub honours
+            # target_commitish only at creation, so it stays at this commit while
+            # the assets roll forward. The manifest carries the real gitCommit.
             gh release create channel-nightly \
-              release-output/release-manifest.json \
-              release-output/release-manifest.json.sha256 \
-              --notes 'Rolling pointer to the latest Klex nightly. Assets here are metadata only; the binaries live on the versioned nightly release.' \
+              --notes 'Rolling pointer to the latest Klex nightly. Assets here are metadata only; binaries live on the versioned nightly release. The tag is a fixed anchor -- read gitCommit and version from the manifest.' \
               --prerelease \
-              --repo "${{ github.repository }}" \
-              --target "${{ needs.prepare.outputs.commit }}" \
+              --repo "$REPO" \
+              --target "$COMMIT" \
               --title 'Klex nightly (rolling pointer)'
           fi
+
+          # Overwrite assets in place. The release is never deleted, so the fixed
+          # installer URL cannot 404 in a delete/recreate window.
+          gh release upload channel-nightly \
+            release-output/release-manifest.json \
+            release-output/release-manifest.json.sha256 \
+            --clobber \
+            --repo "$REPO"
+          gh release edit channel-nightly \
+            --repo "$REPO" \
+            --title "Klex nightly (rolling pointer -> $VERSION)"

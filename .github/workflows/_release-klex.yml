@@ -335,27 +335,18 @@ jobs:
 
           if [[ "${{ inputs.channel }}" == stable ]]; then
             if gh release view "${{ inputs.tag }}" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+              expected_assets="$(printf '%s\n' "${files[@]##*/}" | sort)"
               existing_assets="$(gh release view "${{ inputs.tag }}" \
                 --json assets \
-                --jq '.assets | length' \
-                --repo "${{ github.repository }}")"
-              if [[ "$existing_assets" == 8 ]]; then
-                existing_manifest="$(mktemp)"
-                gh release download "${{ inputs.tag }}" \
-                  --pattern release-manifest.json \
-                  --output "$existing_manifest" \
-                  --repo "${{ github.repository }}"
-                if ! cmp -s release-output/release-manifest.json "$existing_manifest"; then
-                  echo "Stable release ${{ inputs.tag }} has a different manifest; refusing to promote rebuilt artifacts" >&2
-                  rm -f "$existing_manifest"
-                  exit 1
-                fi
-                rm -f "$existing_manifest"
-                echo "Stable release ${{ inputs.tag }} is already complete and matches the assembled manifest"
-                exit 0
+                --jq '.assets[].name' \
+                --repo "${{ github.repository }}" | sort)"
+              if [[ "$existing_assets" != "$expected_assets" ]]; then
+                echo "Stable release ${{ inputs.tag }} exists with unexpected assets; refusing to mutate it" >&2
+                diff -u <(printf '%s\n' "$expected_assets") <(printf '%s\n' "$existing_assets") >&2 || true
+                exit 1
               fi
-              echo "Stable release ${{ inputs.tag }} exists with $existing_assets assets; refusing to mutate it" >&2
-              exit 1
+              echo "Stable release ${{ inputs.tag }} is already complete; reusing its immutable assets"
+              exit 0
             fi
             test -s release-output/release-notes.md || {
               echo 'Stable release notes are missing or empty' >&2
@@ -456,19 +447,22 @@ jobs:
       group: klex-channel-stable-pointer
       cancel-in-progress: false
     steps:
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          name: klex-release-${{ inputs.version }}
-          path: release-output
       - name: Promote the channel-stable pointer
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
           VERSION: ${{ inputs.version }}
+          TAG: ${{ inputs.tag }}
           COMMIT: ${{ needs.prepare.outputs.commit }}
         run: |
           set -euo pipefail
+          canonical_dir="$(mktemp -d)"
+          gh release download "$TAG" \
+            --pattern release-manifest.json \
+            --dir "$canonical_dir" \
+            --repo "$REPO"
+          canonical_manifest="$canonical_dir/release-manifest.json"
           if gh release view channel-stable --repo "$REPO" >/dev/null 2>&1; then
             previous="$(gh release download channel-stable \
               --pattern release-manifest.json \
@@ -498,7 +492,7 @@ jobs:
               --title 'Klex stable (rolling pointer)'
           fi
           gh release upload channel-stable \
-            release-output/release-manifest.json \
+            "$canonical_manifest" \
             --clobber \
             --repo "$REPO"
           gh release edit channel-stable \
@@ -510,12 +504,15 @@ jobs:
           gh release download channel-stable \
             --pattern release-manifest.json \
             --output "$promoted_manifest" \
+            --clobber \
             --repo "$REPO"
-          cmp -s release-output/release-manifest.json "$promoted_manifest" || {
-            echo 'Promoted channel-stable manifest differs from the verified manifest' >&2
+          cmp -s "$canonical_manifest" "$promoted_manifest" || {
+            echo 'Promoted channel-stable manifest differs from the verified immutable manifest' >&2
+            rm -rf "$canonical_dir"
             rm -f "$promoted_manifest"
             exit 1
           }
+          rm -rf "$canonical_dir"
           rm -f "$promoted_manifest"
 
   # Rolling pointer giving the installer a fixed nightly URL:

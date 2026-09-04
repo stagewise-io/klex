@@ -99,6 +99,14 @@ export function createAdminApp(deps: AdminAppDependencies) {
     defaultHook: validationHook,
   });
 
+  app.use('*', async (c, next) => {
+    deps.logger.debug(
+      { method: c.req.method, path: c.req.path },
+      'Admin API request',
+    );
+    await next();
+  });
+
   app.onError((err, c) => {
     if (err instanceof HTTPException) {
       return c.json({ error: err.message }, err.status);

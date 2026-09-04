@@ -181,7 +181,7 @@ export function createLogger(opts?: LoggerOptions): RootLogger {
 
   const logger = new TslogLogger<ILogObj>({
     name: opts?.name,
-    minLevel: verbose ? (opts?.minLevel ?? 'INFO') : 'INFO',
+    minLevel: verbose ? (opts?.minLevel ?? 'DEBUG') : 'INFO',
     type: consoleOutput
       ? verbose
         ? (opts?.type ?? 'pretty')

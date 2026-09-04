@@ -1,7 +1,8 @@
 import {
+  type AgentTunnelHandle,
   type CloudApiClient,
-  connectAgentTunnel,
   createCloudApiClient,
+  startAgentTunnel,
 } from '@klex/cloud-api';
 
 import type { ModuleLogger, RootLogger } from '@stagewise/logger';
@@ -43,7 +44,10 @@ class CloudConnectivityModule implements CloudConnectivity {
   private enrollment: EnrollmentState | null = null;
   private tokenClient: TokenClient | null = null;
   private cloudApiClient: CloudApiClient | null = null;
-  private tunnel: Awaited<ReturnType<typeof connectAgentTunnel>> | null = null;
+  private tunnel: AgentTunnelHandle | null = null;
+  private tunnelRequestHandler:
+    | ((request: Request) => Response | Promise<Response>)
+    | null = null;
   private retryTimer: ReturnType<typeof setTimeout> | null = null;
   private retryAttempt = 0;
   private connecting = false;
@@ -61,6 +65,12 @@ class CloudConnectivityModule implements CloudConnectivity {
       allowDangerousUnsecureCloud: boolean;
     },
   ) {}
+
+  setTunnelRequestHandler(
+    handler: (request: Request) => Response | Promise<Response>,
+  ): void {
+    this.tunnelRequestHandler = handler;
+  }
 
   async start(): Promise<void> {
     if (this.started) return;
@@ -150,89 +160,87 @@ class CloudConnectivityModule implements CloudConnectivity {
     this.connecting = true;
     const generation = this.connectionGeneration;
 
+    const tokenClient = this.tokenClient;
     try {
-      let accessToken: string;
       this.tunnelState = 'connecting';
-      try {
-        accessToken = await this.tokenClient.getAccessToken(
-          this.apiResource(),
-          CLOUD_API_SCOPES,
-        );
-      } catch {
-        if (!this.started || generation !== this.connectionGeneration) return;
-        const retryDelayMs = this.scheduleReconnect();
-        this.deps.logger.warn(
-          { retryAttempt: this.retryAttempt, retryDelayMs },
-          'Klex Cloud tunnel access token unavailable; retrying',
-        );
-        return;
-      }
-      if (!this.started || generation !== this.connectionGeneration) return;
-
-      const tunnel = await connectAgentTunnel(this.apiResource(), {
-        accessToken,
+      const tunnel = await startAgentTunnel({
+        baseUrl: this.apiResource(),
+        accessToken: () =>
+          tokenClient.getAccessToken(this.apiResource(), CLOUD_API_SCOPES),
+        reconnect: true,
+        reconnectDelayMs: RETRY_INITIAL_MS,
+        maxReconnectDelayMs: RETRY_MAX_MS,
+        onRequest: async (request) => {
+          const handler = this.tunnelRequestHandler;
+          if (!handler) {
+            return new Response('Admin API is not initialized', {
+              status: 503,
+            });
+          }
+          this.deps.logger.debug(
+            { method: request.method, path: new URL(request.url).pathname },
+            'Klex Cloud tunnel request dispatched to Admin API',
+          );
+          try {
+            const response = await handler(request);
+            this.deps.logger.debug(
+              {
+                method: request.method,
+                path: new URL(request.url).pathname,
+                status: response.status,
+              },
+              'Klex Cloud tunnel request handled by Admin API',
+            );
+            return response;
+          } catch (error) {
+            this.deps.logger.debug(
+              {
+                error,
+                method: request.method,
+                path: new URL(request.url).pathname,
+              },
+              'Klex Cloud tunnel request failed in Admin API',
+            );
+            throw error;
+          }
+        },
+        onConnect: () => {
+          if (!this.started || generation !== this.connectionGeneration) return;
+          this.retryAttempt = 0;
+          this.tunnelState = 'connected';
+          this.deps.logger.info(
+            { clientId: this.enrollment?.clientId },
+            'Klex Cloud tunnel connected',
+          );
+        },
+        onError: (error) => {
+          if (!this.started || generation !== this.connectionGeneration) return;
+          this.tunnelState = 'error';
+          tokenClient.invalidate(this.apiResource());
+          this.deps.logger.error(
+            { error },
+            'Klex Cloud tunnel error; package reconnect remains active',
+          );
+        },
+        onClose: (code, reason) => {
+          if (!this.started || generation !== this.connectionGeneration) return;
+          this.tunnelState = 'error';
+          tokenClient.invalidate(this.apiResource());
+          this.deps.logger.warn(
+            { code, reason },
+            'Klex Cloud tunnel disconnected; package reconnect scheduled',
+          );
+        },
       });
       if (!this.started || generation !== this.connectionGeneration) {
-        tunnel.close();
+        await tunnel.stop();
         return;
       }
-
       this.tunnel = tunnel;
-      tunnel.on('open', () => {
-        if (
-          this.tunnel !== tunnel ||
-          !this.started ||
-          generation !== this.connectionGeneration
-        )
-          return;
-        this.retryAttempt = 0;
-        this.tunnelState = 'connected';
-        this.deps.logger.info(
-          { clientId: this.enrollment?.clientId },
-          'Klex Cloud tunnel connected',
-        );
-      });
-      tunnel.on('error', (error: unknown) => {
-        if (
-          this.tunnel !== tunnel ||
-          !this.started ||
-          generation !== this.connectionGeneration
-        )
-          return;
-        this.tunnel = null;
-        this.tunnelState = 'error';
-        this.tokenClient?.invalidate(this.apiResource());
-        const retryDelayMs = this.scheduleReconnect();
-        this.deps.logger.error(
-          { error, retryAttempt: this.retryAttempt, retryDelayMs },
-          'Klex Cloud tunnel error; retrying',
-        );
-        tunnel.close();
-      });
-      tunnel.on('close', (code: unknown, reason: unknown) => {
-        if (
-          this.tunnel !== tunnel ||
-          !this.started ||
-          generation !== this.connectionGeneration
-        )
-          return;
-        this.tunnel = null;
-        this.tunnelState = 'error';
-        this.tokenClient?.invalidate(this.apiResource());
-        const retryDelayMs = this.scheduleReconnect();
-        this.deps.logger.warn(
-          {
-            code,
-            reason: String(reason),
-            retryAttempt: this.retryAttempt,
-            retryDelayMs,
-          },
-          'Klex Cloud tunnel disconnected; retrying',
-        );
-      });
     } catch (error) {
       if (!this.started || generation !== this.connectionGeneration) return;
       this.tunnelState = 'error';
+      tokenClient.invalidate(this.apiResource());
       const retryDelayMs = this.scheduleReconnect();
       this.deps.logger.error(
         { error, retryAttempt: this.retryAttempt, retryDelayMs },
@@ -333,7 +341,7 @@ class CloudConnectivityModule implements CloudConnectivity {
     }
     this.retryAttempt = 0;
     this.connecting = false;
-    this.tunnel?.close();
+    await this.tunnel?.stop();
     this.tunnel = null;
     this.tunnelState = 'disconnected';
     this.cloudApiClient = null;

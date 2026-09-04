@@ -846,7 +846,8 @@ class ChatSessionModule implements AgentSession {
   }
 
   public getSessionInfo(): SessionInfo {
-    const modelId = modelIdFromEntry(this.fallbackManager.getChatModelEntry());
+    const modelEntry = this.fallbackManager.getChatModelEntry();
+    const modelId = modelEntry ? modelIdFromEntry(modelEntry) : null;
     const fallbackIndex = this.fallbackManager.getFallbackIndex();
 
     // Build per-extension usage snapshot.

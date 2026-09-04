@@ -130,11 +130,13 @@ export class GenerationRunner {
       const generationAbortController = new AbortController();
       this.generationAbortController = generationAbortController;
 
+      const currentModelEntry = fallbackManager.getChatModelEntry();
+      const currentModelId = currentModelEntry
+        ? modelIdFromEntry(currentModelEntry)
+        : 'unknown';
       stepSpan.addEvent('step.generation_attempt', {
         'generation.attempt': attempt,
-        'generation.modelId': modelIdFromEntry(
-          fallbackManager.getChatModelEntry(),
-        ),
+        'generation.modelId': currentModelId,
         'generation.modelFallbackIndex': fallbackManager.getFallbackIndex(),
       });
 
@@ -157,8 +159,10 @@ export class GenerationRunner {
           tools: this.deps.tools,
           abortSignal: generationAbortController.signal,
           logger: this.deps.logger,
+          // Generation is only reached with a resolved model. Keep the
+          // telemetry fallback typed as a model id for defensive callers.
           getChatModelId: () =>
-            modelIdFromEntry(fallbackManager.getChatModelEntry()),
+            currentModelId === 'unknown' ? 'unknown:unknown' : currentModelId,
           sessionId: this.deps.sessionId,
           compacted: this.deps.compacted,
           extensionSystemPromptParts: this.deps.extensionSystemPromptParts,
@@ -203,7 +207,7 @@ export class GenerationRunner {
           fallbackManager.recordSuccessfulGeneration();
           lastUsage = response.usage;
           lastFinishReason = response.finishReason;
-          lastModelId = modelIdFromEntry(fallbackManager.getChatModelEntry());
+          lastModelId = currentModelId;
           // outcome stays 'done' — will break below.
         } else {
           // Non-good finish — check for abort first, then classify.

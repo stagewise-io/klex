@@ -37,6 +37,7 @@ const logging = {
 
 function manualConfig(modelId = 'model:8b'): KlexConfig {
   return {
+    officialName: 'Test Agent',
     providers: {
       local: {
         endpoints: {
@@ -66,6 +67,7 @@ function presetConfig(
   providerId = 'my-openai',
 ): KlexConfig {
   return {
+    officialName: 'Test Agent',
     providers: {
       [providerId]: {
         preset,
@@ -86,6 +88,7 @@ function presetConfig(
 
 function mixedConfig(): KlexConfig {
   return {
+    officialName: 'Test Agent',
     providers: {
       remote: {
         preset: 'openai',
@@ -139,6 +142,24 @@ afterEach(async () => {
 });
 
 // --- tests ---
+
+describe('Config — minimal schema', () => {
+  it('requires an official name of at least two characters', () => {
+    expect(() => klexConfigSchema.parse({ officialName: 'A' })).toThrow();
+    expect(klexConfigSchema.parse({ officialName: 'Ada' })).toMatchObject({
+      officialName: 'Ada',
+      providers: {},
+      modelSelection: { chat: [], compaction: [], memory: [] },
+      mcpServers: {},
+    });
+  });
+
+  it('trims the official name', () => {
+    expect(
+      klexConfigSchema.parse({ officialName: '  Ada  ' }).officialName,
+    ).toBe('Ada');
+  });
+});
 
 describe('Config — voice model selection', () => {
   it('defaults missing voice selections to empty lists', () => {
@@ -670,7 +691,7 @@ describe('Config — replace (atomic persistence)', () => {
     const { directory, module } = await setup();
     const before = await readFile(join(directory, CONFIG_FILE_NAME), 'utf8');
     const invalid = manualConfig();
-    invalid.modelSelection.chat = ['missing:chat:model'];
+    invalid.officialName = 'x';
 
     await expect(module.replace(invalid)).rejects.toBeInstanceOf(
       ConfigValidationError,
@@ -701,10 +722,11 @@ describe('Config — replace (atomic persistence)', () => {
     expect(module.get()).toEqual(manualConfig());
   });
 
-  it('rejects config with missing modelSelection keys', async () => {
+  it('accepts an agent with no providers or model selections', async () => {
     const { module } = await setup();
     await expect(
       module.replace({
+        officialName: 'Empty Agent',
         providers: {},
         modelSelection: {
           chat: [],
@@ -715,10 +737,8 @@ describe('Config — replace (atomic persistence)', () => {
           voice: { sts: [], tts: [], stt: [] },
         },
         mcpServers: {},
-        // missing modelSelection.chat — but TS prevents this at compile time;
-        // runtime test: pass an object with extra unknown keys (schema is strict)
       }),
-    ).resolves.toBeDefined(); // empty config is valid
+    ).resolves.toBeDefined();
   });
 });
 
@@ -837,7 +857,7 @@ describe('Config — subscriptions', () => {
     });
 
     const invalid = manualConfig();
-    invalid.modelSelection.chat = ['missing:chat:model'];
+    invalid.officialName = 'x';
     await expect(module.replace(invalid)).rejects.toBeInstanceOf(
       ConfigValidationError,
     );
@@ -948,22 +968,20 @@ describe('Config — validation', () => {
     });
   });
 
-  it('rejects model selection referencing unknown provider', async () => {
+  it('accepts model selection referencing unknown provider', async () => {
     const { module } = await setup();
     const config = manualConfig();
     config.modelSelection.chat = ['nonexistent:chat:model'];
-    await expect(module.replace(config)).rejects.toBeInstanceOf(
-      ConfigValidationError,
-    );
+    await expect(module.replace(config)).resolves.toBeDefined();
+    expect(module.getModelSelection('chat')).toEqual([]);
   });
 
-  it('rejects model selection referencing unknown endpoint in manual provider', async () => {
+  it('accepts model selection referencing unknown endpoint in manual provider', async () => {
     const { module } = await setup();
     const config = manualConfig();
     config.modelSelection.chat = ['local:missing:model'];
-    await expect(module.replace(config)).rejects.toBeInstanceOf(
-      ConfigValidationError,
-    );
+    await expect(module.replace(config)).resolves.toBeDefined();
+    expect(module.getModelSelection('chat')).toEqual([]);
   });
 
   it('accepts any model ID for preset providers', async () => {
@@ -973,14 +991,12 @@ describe('Config — validation', () => {
     await expect(module.replace(config)).resolves.toBeDefined();
   });
 
-  it('rejects model selection for manual provider without endpoint ID', async () => {
+  it('accepts unresolved model selection for a manual provider', async () => {
     const { module } = await setup();
     const config = manualConfig();
-    // 'local:model' — only 2 segments, manual provider needs 3
     config.modelSelection.chat = ['local:model'];
-    await expect(module.replace(config)).rejects.toBeInstanceOf(
-      ConfigValidationError,
-    );
+    await expect(module.replace(config)).resolves.toBeDefined();
+    expect(module.getModelSelection('chat')).toEqual([]);
   });
 
   it('rejects provider with both preset and endpoints (strict schema)', async () => {
@@ -1316,6 +1332,7 @@ describe('Config — mutate skips validateModelReferences', () => {
 
 function noSelectionConfig(providers: KlexConfig['providers']): KlexConfig {
   return {
+    officialName: 'Test Agent',
     providers,
     modelSelection: {
       chat: [],
@@ -1880,14 +1897,13 @@ describe('Config — model selection entries (object form)', () => {
     await expect(module.replace(config)).resolves.toBeDefined();
   });
 
-  it('validateModelReferences rejects object-form entry with missing provider', async () => {
+  it('accepts an object-form entry with a missing provider', async () => {
     const { module } = await setup(mixedConfig());
-    const invalid = mixedConfig();
-    invalid.modelSelection.chat = [{ model: 'missing:gpt-4o' }];
+    const config = mixedConfig();
+    config.modelSelection.chat = [{ model: 'missing:gpt-4o' }];
 
-    await expect(module.replace(invalid)).rejects.toBeInstanceOf(
-      ConfigValidationError,
-    );
+    await expect(module.replace(config)).resolves.toBeDefined();
+    expect(module.getModelSelection('chat')).toEqual([]);
   });
 
   it('rejects providerOptions with non-object namespace value', async () => {

@@ -8,6 +8,7 @@ import {
   AdminApiClientError,
   type CloudStatus,
 } from '../api-client';
+import { ScreenSection } from '../components/screen-section';
 import { StatusBadge } from '../components/status-badge';
 import { usePolling } from '../hooks/use-polling';
 import { useScreenMeta } from '../hooks/use-screen-meta';
@@ -92,7 +93,10 @@ export function CloudScreen({ apiClient, onBack }: CloudScreenProps) {
 
   if (mode === 'enroll-input' || mode === 'enrolling') {
     return (
-      <Box flexDirection="column">
+      <ScreenSection title="Cloud enrollment">
+        <Text dimColor>
+          Connect this Klex Bot to the cloud so it can be reached remotely.
+        </Text>
         <Box marginTop={1} flexDirection="column">
           <Text>Paste your enrollment code below:</Text>
           <Text dimColor>
@@ -140,7 +144,7 @@ export function CloudScreen({ apiClient, onBack }: CloudScreenProps) {
             </Text>
           )}
         </Box>
-      </Box>
+      </ScreenSection>
     );
   }
 
@@ -149,8 +153,8 @@ export function CloudScreen({ apiClient, onBack }: CloudScreenProps) {
   const status = statusPoll.data;
 
   return (
-    <Box flexDirection="column">
-      <Box marginTop={1} flexDirection="column">
+    <ScreenSection title="Cloud">
+      <Box flexDirection="column">
         {statusPoll.loading && !status && <Text dimColor>Loading...</Text>}
 
         {status && (
@@ -243,6 +247,6 @@ export function CloudScreen({ apiClient, onBack }: CloudScreenProps) {
           </>
         )}
       </Box>
-    </Box>
+    </ScreenSection>
   );
 }

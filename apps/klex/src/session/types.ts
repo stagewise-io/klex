@@ -28,7 +28,7 @@ export type SessionRuntimeState =
 /** Active model information for a session. */
 export interface SessionModelInfo {
   /** The model ID currently in use (may be a fallback model). */
-  id: string;
+  id: string | null;
   /** True when the session is on a fallback model (fallbackIndex > 0). */
   isFallback: boolean;
   /** Current fallback index (0 = default model). */

@@ -7,7 +7,10 @@ import { createLogger } from '@stagewise/logger';
 import { KLEX_VERSION } from '@/release';
 
 export interface CliOptions {
-  dataDirectory: string;
+  /** Explicit agent directory, or undefined in interactive discovery mode. */
+  dataDirectory: string | undefined;
+  /** Root containing discoverable agent directories. */
+  agentRoot: string;
   cloudEnabled: boolean;
   cloudBaseUrl: string;
   cloudEnrollToken: string | undefined;
@@ -79,20 +82,13 @@ export function parseCliArgs(argv: string[]): CliOptions {
     process.exit(0);
   }
 
-  // Deterministic, CWD-independent. A PATH-installed klex must resolve the same
-  // agent no matter which directory it is invoked from; a cwd-relative default
-  // silently creates a separate agent (config, credentials, enrollment, logs)
-  // per directory. Nested under agents/ so a future multi-agent picker can
-  // enumerate $KLEX_HOME/agents/* without a migration.
-  // Blank values are treated as unset throughout, so a stray `KLEX_HOME=` in a
-  // shell profile or unit file cannot silently relocate the agent to the
-  // current working directory.
-  const klexHome =
+  // The root is deterministic and CWD-independent. Interactive mode uses it
+  // for first-level agent discovery; an explicit data directory bypasses it.
+  const agentRoot =
     pathOrUndefined(process.env.KLEX_HOME) ?? join(homedir(), '.klex');
   const dataDirectory =
     pathOrUndefined(values['data-dir']) ??
-    pathOrUndefined(process.env.KLEX_DATA_DIR) ??
-    join(klexHome, 'agents', 'default');
+    pathOrUndefined(process.env.KLEX_DATA_DIR);
 
   // CLI args take priority over env vars. --no-cloud sets values.cloud to false.
   const cloudEnabled =
@@ -127,6 +123,7 @@ export function parseCliArgs(argv: string[]): CliOptions {
 
   return {
     dataDirectory,
+    agentRoot,
     cloudEnabled,
     cloudBaseUrl,
     cloudEnrollToken,
@@ -147,7 +144,7 @@ Klex Bot v${KLEX_VERSION}
 Usage: klex [options]
 
 Options:
-  -d, --data-dir <path>        Directory for agent data (overrides KLEX_DATA_DIR and KLEX_HOME, default: $KLEX_HOME/agents/default)
+  -d, --data-dir <path>        Directory for agent data (overrides KLEX_DATA_DIR; interactive mode otherwise discovers agents under KLEX_HOME)
   -H, --headless               Run without the interactive CLI UI (overrides KLEX_HEADLESS)
   -h, --help                   Show this help message
   --version                    Print the version and exit

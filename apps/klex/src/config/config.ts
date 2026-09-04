@@ -326,11 +326,17 @@ class ConfigModule implements Config {
   }
 
   getModelSelection(purpose: ModelPurpose): readonly ModelSelectionEntry[] {
-    return this.requireConfig().modelSelection[purpose];
+    const config = this.requireConfig();
+    return config.modelSelection[purpose].filter((entry) =>
+      this.isValidModelReference(config, entry),
+    );
   }
 
   resolveRealtimeProvider(): ResolvedRealtimeProvider | undefined {
-    const [modelId] = this.requireConfig().modelSelection.voice.sts;
+    const config = this.requireConfig();
+    const modelId = config.modelSelection.voice.sts.find((entry) =>
+      this.isValidModelReference(config, entry),
+    );
     if (!modelId) return undefined;
     const resolved = this.resolveModel(modelId);
     const apiKey = resolved.endpoint.auth.apiKey?.trim();
@@ -356,6 +362,10 @@ class ConfigModule implements Config {
     const provider = config.providers[providerId];
 
     if (!provider) {
+      this.deps.logger.warn(
+        { modelId, providerId },
+        'Ignoring model selection that references an unknown provider',
+      );
       throw new Error(
         `Model ${modelId} references unknown provider ${providerId}`,
       );
@@ -398,6 +408,10 @@ class ConfigModule implements Config {
     const endpoint = provider.endpoints[endpointId];
 
     if (!endpoint) {
+      this.deps.logger.warn(
+        { modelId, providerId, endpointId },
+        'Ignoring model selection that references an unknown endpoint',
+      );
       throw new Error(
         `Model ${modelId} references unknown endpoint ${providerId}:${endpointId}`,
       );
@@ -588,7 +602,7 @@ class ConfigModule implements Config {
 
     try {
       if (validateReferences) {
-        this.validateModelReferences(config);
+        this.warnInvalidModelReferences(config);
         this.validateVoiceSelections(config);
       }
       this.validateAuth(config);
@@ -1110,7 +1124,21 @@ class ConfigModule implements Config {
     }
   }
 
-  private validateModelReferences(config: KlexConfig): void {
+  private isValidModelReference(
+    config: KlexConfig,
+    entry: ModelSelectionEntry,
+  ): boolean {
+    const { providerId, rest } = splitProviderId(modelIdFromEntry(entry));
+    const provider = config.providers[providerId];
+    if (!provider) return false;
+    if ('preset' in provider) return true;
+    const colon = rest.indexOf(':');
+    return (
+      colon !== -1 && provider.endpoints[rest.slice(0, colon)] !== undefined
+    );
+  }
+
+  private warnInvalidModelReferences(config: KlexConfig): void {
     const selections: [string, readonly ModelSelectionEntry[]][] = [
       ['chat', config.modelSelection.chat],
       ['compaction', config.modelSelection.compaction],
@@ -1127,10 +1155,11 @@ class ConfigModule implements Config {
         const { providerId, rest } = splitProviderId(modelId);
         const provider = config.providers[providerId];
         if (!provider) {
-          throw new ConfigValidationError(
-            `Model selection ${purpose} references unknown provider ${providerId}`,
-            { code: 'referential_integrity' },
+          this.deps.logger.warn(
+            { modelId, purpose, providerId },
+            'Model selection references unknown provider — entry will be ignored',
           );
+          continue;
         }
 
         if ('preset' in provider) {
@@ -1140,18 +1169,19 @@ class ConfigModule implements Config {
 
         const colon = rest.indexOf(':');
         if (colon === -1) {
-          throw new ConfigValidationError(
-            `Model selection ${purpose} references provider ${providerId} without an endpoint ID; use ${providerId}:endpointId:modelId format`,
-            { code: 'referential_integrity' },
+          this.deps.logger.warn(
+            { modelId, purpose, providerId },
+            'Model selection lacks an endpoint ID — entry will be ignored',
           );
+          continue;
         }
 
         const endpointId = rest.slice(0, colon);
         const endpoint = provider.endpoints[endpointId];
         if (!endpoint) {
-          throw new ConfigValidationError(
-            `Model selection ${purpose} references unknown endpoint ${providerId}:${endpointId}`,
-            { code: 'referential_integrity' },
+          this.deps.logger.warn(
+            { modelId, purpose, providerId, endpointId },
+            'Model selection references unknown endpoint — entry will be ignored',
           );
         }
       }
@@ -1165,10 +1195,20 @@ class ConfigModule implements Config {
       'stt',
     ] as const satisfies readonly VoiceModelPurpose[]) {
       for (const modelId of config.modelSelection.voice[purpose]) {
-        const { definition, endpoint } = resolveConfiguredModel(
-          config,
-          modelId,
-        );
+        let resolved: {
+          definition: ModelDefinition | undefined;
+          endpoint: EndpointConfig;
+        };
+        try {
+          resolved = resolveConfiguredModel(config, modelId);
+        } catch (error) {
+          this.deps.logger.warn(
+            { modelId, purpose, error },
+            'Voice model selection is unusable — entry will be ignored',
+          );
+          continue;
+        }
+        const { definition, endpoint } = resolved;
         if (definition?.capabilities?.voice?.[purpose] !== true) {
           throw new Error(
             `Model selection voice.${purpose} references ${modelId}, which must declare capabilities.voice.${purpose}: true`,

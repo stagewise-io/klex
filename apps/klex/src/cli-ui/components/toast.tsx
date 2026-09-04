@@ -1,6 +1,7 @@
 import { Box, Text, useInput } from 'ink';
-import { useEffect, useState } from 'react';
+import { useEffect } from 'react';
 
+import { useTextInputActive } from '../hooks/use-text-input-active';
 import type { Toast as ToastType } from '../hooks/use-toast';
 
 export interface ToastStackProps {
@@ -9,13 +10,23 @@ export interface ToastStackProps {
 }
 
 export function ToastStack({ toasts, onDismiss }: ToastStackProps) {
-  if (toasts.length === 0) return null;
+  const latest = toasts.at(-1);
+  const { active: textInputActive } = useTextInputActive();
+
+  useInput((input) => {
+    if (input.toLowerCase() === 'x' && latest && !textInputActive) {
+      onDismiss(latest.id);
+    }
+  });
+
+  if (!latest) return null;
 
   return (
-    <Box flexDirection="column" marginTop={1}>
-      {toasts.map((toast) => (
-        <ToastItem key={toast.id} toast={toast} onDismiss={onDismiss} />
-      ))}
+    <Box flexDirection="column" alignItems="flex-end" paddingX={1}>
+      <ToastItem toast={latest} onDismiss={onDismiss} />
+      {toasts.length > 1 ? (
+        <Text dimColor>{toasts.length - 1} more notification(s)</Text>
+      ) : null}
     </Box>
   );
 }
@@ -27,26 +38,10 @@ function ToastItem({
   toast: ToastType;
   onDismiss: (id: number) => void;
 }) {
-  const [visible, setVisible] = useState(true);
-  const [dismissed, setDismissed] = useState(false);
-
   useEffect(() => {
-    const timer = setTimeout(() => {
-      setVisible(false);
-      onDismiss(toast.id);
-    }, 8000);
+    const timer = setTimeout(() => onDismiss(toast.id), 8000);
     return () => clearTimeout(timer);
   }, [toast.id, onDismiss]);
-
-  useInput((_input, _key) => {
-    if (!dismissed) {
-      setDismissed(true);
-      setVisible(false);
-      onDismiss(toast.id);
-    }
-  });
-
-  if (!visible) return null;
 
   const color =
     toast.level === 'error'
@@ -54,24 +49,20 @@ function ToastItem({
       : toast.level === 'warning'
         ? 'yellow'
         : 'blue';
-
   const label =
     toast.level === 'error'
-      ? 'ERROR'
+      ? 'Error'
       : toast.level === 'warning'
-        ? 'WARN'
-        : 'INFO';
+        ? 'Warning'
+        : 'Notice';
 
   return (
-    <Box flexDirection="column">
-      <Box>
-        <Text color={color} bold>
-          [{label}]
-        </Text>
-        <Text> </Text>
-        <Text color={color}>{toast.message}</Text>
-      </Box>
-      <Text dimColor>Press any key or wait 8s to dismiss</Text>
+    <Box borderStyle="single" borderColor={color} paddingX={1}>
+      <Text bold color={color}>
+        {label}:{' '}
+      </Text>
+      <Text>{toast.message}</Text>
+      <Text dimColor> [x] Dismiss</Text>
     </Box>
   );
 }

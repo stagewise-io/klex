@@ -101,7 +101,7 @@ export interface SessionInfo {
   id: string;
   status: string;
   runtimeState: string;
-  model: { id: string; isFallback: boolean; fallbackIndex: number };
+  model: { id: string | null; isFallback: boolean; fallbackIndex: number };
   usage: {
     chat: { latest: unknown; total: unknown };
     extensions: Record<string, unknown>;

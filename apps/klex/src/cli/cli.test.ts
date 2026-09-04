@@ -1,5 +1,5 @@
 import { homedir } from 'node:os';
-import { isAbsolute, join } from 'node:path';
+import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -41,19 +41,17 @@ describe('parseCliArgs', () => {
     }
   });
 
-  it('defaults to ~/.klex/agents/default when no args or env vars provided', () => {
+  it('leaves the data directory unset for interactive discovery', () => {
     const result = parseCliArgs([]);
-    expect(result.dataDirectory).toBe(
-      join(homedir(), '.klex', 'agents', 'default'),
-    );
+    expect(result.dataDirectory).toBeUndefined();
+    expect(result.agentRoot).toBe(join(homedir(), '.klex'));
   });
 
   it('nests the agent directory under KLEX_HOME', () => {
     process.env.KLEX_HOME = '/custom/klex-home';
     const result = parseCliArgs([]);
-    expect(result.dataDirectory).toBe(
-      join('/custom/klex-home', 'agents', 'default'),
-    );
+    expect(result.dataDirectory).toBeUndefined();
+    expect(result.agentRoot).toBe('/custom/klex-home');
   });
 
   it('KLEX_DATA_DIR overrides KLEX_HOME', () => {
@@ -77,7 +75,7 @@ describe('parseCliArgs', () => {
       .spyOn(process, 'cwd')
       .mockReturnValue('/some/unrelated/cwd');
     const result = parseCliArgs([]);
-    expect(result.dataDirectory).not.toContain('/some/unrelated/cwd');
+    expect(result.dataDirectory).toBeUndefined();
     cwdSpy.mockRestore();
   });
 
@@ -91,9 +89,7 @@ describe('parseCliArgs', () => {
       // the current working directory.
       process.env.KLEX_HOME = value;
       const result = parseCliArgs([]);
-      expect(result.dataDirectory).toBe(
-        join(homedir(), '.klex', 'agents', 'default'),
-      );
+      expect(result.dataDirectory).toBeUndefined();
     },
   );
 
@@ -104,9 +100,7 @@ describe('parseCliArgs', () => {
     process.env.KLEX_HOME = '/custom/klex-home';
     process.env.KLEX_DATA_DIR = value;
     const result = parseCliArgs([]);
-    expect(result.dataDirectory).toBe(
-      join('/custom/klex-home', 'agents', 'default'),
-    );
+    expect(result.dataDirectory).toBeUndefined();
   });
 
   it('treats a blank --data-dir as unset', () => {
@@ -121,13 +115,13 @@ describe('parseCliArgs', () => {
     expect(result.dataDirectory).toBe('/env/data-dir');
   });
 
-  it('resolves every blank source to an absolute path', () => {
+  it('leaves every blank source unset for interactive discovery', () => {
     // The concrete failure mode the guard exists for: join('', ...) yields the
     // relative 'agents/default'.
     process.env.KLEX_HOME = '';
     process.env.KLEX_DATA_DIR = '';
     const result = parseCliArgs(['--data-dir', '']);
-    expect(isAbsolute(result.dataDirectory)).toBe(true);
+    expect(result.dataDirectory).toBeUndefined();
   });
 
   it('uses KLEX_DATA_DIR env var when no CLI arg provided', () => {

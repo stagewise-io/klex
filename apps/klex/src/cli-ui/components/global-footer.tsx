@@ -9,6 +9,24 @@ export interface GlobalFooterProps {
   cloud: CloudStatus | null;
   loading: boolean;
   toastCount: number;
+  width?: number;
+}
+
+function formatShortcutKey(key: string): string {
+  switch (key) {
+    case 'escape':
+    case 'esc':
+      return 'Esc';
+    case 'return':
+    case 'enter':
+      return 'Enter';
+    case 'backspace':
+      return 'Backspace';
+    case 'delete':
+      return 'Delete';
+    default:
+      return key;
+  }
 }
 
 export function GlobalFooter({
@@ -17,75 +35,55 @@ export function GlobalFooter({
   cloud,
   loading,
   toastCount,
+  width,
 }: GlobalFooterProps) {
   const activeSessions = sessions.filter(
-    (s) => s.runtimeState === 'running' || s.status === 'running',
+    (session) =>
+      session.runtimeState === 'running' || session.status === 'running',
   ).length;
+  const availableWidth = width ?? 80;
 
   return (
-    <Box flexDirection="column" flexShrink={0}>
-      <Text dimColor>{'─'.repeat(60)}</Text>
-
-      {/* Key hints */}
-      <Box gap={1}>
-        {keys.map((k) => (
-          <Text key={k.key} dimColor>
-            [{k.key}] {k.label}
-          </Text>
-        ))}
-      </Box>
-
-      {/* Status bar: session summary + cloud + toast indicator */}
-      <Box justifyContent="space-between">
-        <Box gap={2}>
+    <Box flexDirection="column" flexShrink={0} width={width} paddingX={1}>
+      <Text dimColor>{'─'.repeat(Math.max(availableWidth - 2, 1))}</Text>
+      <Box justifyContent="space-between" flexWrap="wrap">
+        <Box gap={2} flexWrap="wrap">
+          {keys.map((shortcut) => (
+            <Text key={shortcut.key}>
+              <Text bold color="blue">
+                [{formatShortcutKey(shortcut.key)}]
+              </Text>{' '}
+              <Text dimColor>{shortcut.label}</Text>
+            </Text>
+          ))}
+        </Box>
+        <Box gap={2} flexWrap="wrap">
           {loading ? (
-            <Text dimColor>initializing...</Text>
+            <Text dimColor>Starting…</Text>
           ) : (
             <>
-              <Box>
-                <Text dimColor>sessions: </Text>
-                <Text bold>{sessions.length}</Text>
-                {activeSessions > 0 && (
-                  <StatusBadge
-                    status="ok"
-                    label={` ${activeSessions} active`}
-                  />
-                )}
-              </Box>
+              <Text dimColor>
+                {sessions.length} session{sessions.length === 1 ? '' : 's'}
+                {activeSessions > 0 ? ` · ${activeSessions} active` : ''}
+              </Text>
               {cloud ? (
-                <Box>
-                  <Text dimColor>cloud: </Text>
-                  <StatusBadge
-                    status={
-                      cloud.enrolled
-                        ? 'ok'
-                        : cloud.cloudEnabled
-                          ? 'warn'
-                          : 'idle'
-                    }
-                    label={
-                      cloud.enrolled
-                        ? 'enrolled'
-                        : cloud.cloudEnabled
-                          ? 'pending'
-                          : 'off'
-                    }
-                  />
-                </Box>
-              ) : (
-                <Box>
-                  <Text dimColor>cloud: </Text>
-                  <StatusBadge status="error" label="offline" />
-                </Box>
-              )}
+                <StatusBadge
+                  status={
+                    cloud.enrolled ? 'ok' : cloud.cloudEnabled ? 'warn' : 'idle'
+                  }
+                  label={
+                    cloud.enrolled ? 'Cloud connected' : 'Cloud disconnected'
+                  }
+                />
+              ) : null}
             </>
           )}
+          {toastCount > 0 ? (
+            <Text color="yellow">
+              {toastCount} notice{toastCount === 1 ? '' : 's'}
+            </Text>
+          ) : null}
         </Box>
-        {toastCount > 0 && (
-          <Text color="yellow">
-            ⚠ {toastCount} notification{toastCount > 1 ? 's' : ''}
-          </Text>
-        )}
       </Box>
     </Box>
   );

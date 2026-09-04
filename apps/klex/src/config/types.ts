@@ -228,9 +228,9 @@ const voiceModelSelectionSchema = z
   .strict();
 
 const modelSelectionSchema = z.object({
-  chat: z.array(modelSelectionEntrySchema),
-  compaction: z.array(modelSelectionEntrySchema),
-  memory: z.array(modelSelectionEntrySchema),
+  chat: z.array(modelSelectionEntrySchema).default([]),
+  compaction: z.array(modelSelectionEntrySchema).default([]),
+  memory: z.array(modelSelectionEntrySchema).default([]),
   imageVision: z.array(modelSelectionEntrySchema).default([]),
   audioListening: z.array(modelSelectionEntrySchema).default([]),
   voice: voiceModelSelectionSchema.default({ sts: [], tts: [], stt: [] }),
@@ -288,9 +288,17 @@ const telemetryConfigSchema = z.object({
 });
 
 const klexConfigSchema = z.object({
-  providers: z.record(z.string(), providerConfigSchema),
-  modelSelection: modelSelectionSchema,
-  mcpServers: z.record(z.string(), mcpServerConfigSchema),
+  officialName: z.string().trim().min(2),
+  providers: z.record(z.string(), providerConfigSchema).default({}),
+  modelSelection: modelSelectionSchema.default({
+    chat: [],
+    compaction: [],
+    memory: [],
+    imageVision: [],
+    audioListening: [],
+    voice: { sts: [], tts: [], stt: [] },
+  }),
+  mcpServers: z.record(z.string(), mcpServerConfigSchema).default({}),
   telemetry: telemetryConfigSchema.optional(),
 });
 

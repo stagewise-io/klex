@@ -18,11 +18,21 @@ export type ModuleLogger = Pick<
 
 export type LogLevel = TLogLevelName;
 
+export interface CapturedLogEntry {
+  timestamp: Date;
+  level: string;
+  loggerName: string;
+  message: string;
+  fields: Record<string, unknown> | null;
+  sequence: number;
+}
+
 export interface LoggerOptions {
   name?: string;
   minLevel?: LogLevel;
   type?: 'json' | 'pretty' | 'hidden';
   verbose?: boolean;
+  capture?: (entry: CapturedLogEntry) => void;
   /** When false, suppresses all console output (for TUI mode). Default: true */
   console?: boolean;
   mask?: {
@@ -181,7 +191,11 @@ export function createLogger(opts?: LoggerOptions): RootLogger {
 
   const logger = new TslogLogger<ILogObj>({
     name: opts?.name,
-    minLevel: verbose ? (opts?.minLevel ?? 'DEBUG') : 'INFO',
+    minLevel: opts?.capture
+      ? 'DEBUG'
+      : verbose
+        ? (opts?.minLevel ?? 'DEBUG')
+        : 'INFO',
     type: consoleOutput
       ? verbose
         ? (opts?.type ?? 'pretty')
@@ -201,9 +215,29 @@ export function createLogger(opts?: LoggerOptions): RootLogger {
       : undefined,
   });
 
+  if (opts?.capture) {
+    const capture = opts.capture;
+    let sequence = 0;
+    logger.attachTransport((record) => {
+      const recordObj = record as Record<string, unknown>;
+      const meta = recordObj['_meta'] as
+        | { date?: Date; logLevelName?: string; name?: string }
+        | undefined;
+      capture({
+        timestamp: meta?.date ?? new Date(),
+        level: meta?.logLevelName ?? 'INFO',
+        loggerName: meta?.name ?? '',
+        message: extractMessage(recordObj),
+        fields: extractFields(recordObj, '_meta'),
+        sequence: sequence++,
+      });
+    });
+  }
+
   if (!verbose && consoleOutput) {
     logger.attachTransport({
       name: 'compact-console',
+      minLevel: 'INFO',
       format: compactFormatter,
       write: (_record, line) => {
         console.log(line);
@@ -212,14 +246,14 @@ export function createLogger(opts?: LoggerOptions): RootLogger {
   }
 
   if (opts?.otel) {
-    logger.attachTransport(
-      httpTransport({
-        url: opts.otel.url,
-        format: otlpFormat({ resource: opts.otel.resourceAttributes }),
-        encodeBody: otlpBatchBody,
-        name: 'otlp',
-      }),
-    );
+    const transport = httpTransport<ILogObj>({
+      url: opts.otel.url,
+      format: otlpFormat({ resource: opts.otel.resourceAttributes }),
+      encodeBody: otlpBatchBody,
+      name: 'otlp',
+    });
+    if (!verbose) transport.minLevel = 'INFO';
+    logger.attachTransport(transport);
   }
 
   return logger;

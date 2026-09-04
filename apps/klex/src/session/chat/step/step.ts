@@ -206,9 +206,30 @@ class StepModule implements Step {
         let model: LanguageModel;
         let resolvedModel: ResolvedModel;
         let providerOptions: Record<string, JSONObject> | undefined;
+        let selectedModelId: string | undefined;
         {
           const entry = this.deps.fallbackManager.getChatModelEntry();
+          if (entry === undefined) {
+            stepSpan.addEvent('step.no_model_configured');
+            this.deps.logger.warn(
+              { sessionId: this.deps.sessionId },
+              'Step skipped: no chat model is configured; configure modelSelection.chat to continue',
+            );
+            const noModelEvent: StepCompleteEvent = {
+              shouldContinue: false,
+              forceNextStep: false,
+              fatalError: false,
+              fatalErrorReason: null,
+              generationFailed: false,
+              generation: null,
+              toolCalls: [],
+              modelFallbackOccurred: false,
+            };
+            await this.deps.extensionHandler.runStepCompleteHooks(noModelEvent);
+            return noModelEvent;
+          }
           const modelId = modelIdFromEntry(entry);
+          selectedModelId = modelId;
           const modelSpan = startChildSpan('fetch_model', {
             attributes: {
               'model.id': modelId,
@@ -216,24 +237,45 @@ class StepModule implements Step {
                 this.deps.fallbackManager.getFallbackIndex(),
             },
           });
-          model = await this.getModel();
-          const resolved = this.deps.config.resolveModel(entry);
-          const info = this.deps.config.resolveModelInfo(entry);
-          providerOptions = resolved.providerOptions as
-            | Record<string, JSONObject>
-            | undefined;
-          resolvedModel = {
-            modelId,
-            displayName: info.displayName,
-            contextSize: info.contextSize,
-            inputCapabilities: info.inputCapabilities,
-          };
+          try {
+            model = await this.getModel();
+            const resolved = this.deps.config.resolveModel(entry);
+            const info = this.deps.config.resolveModelInfo(entry);
+            providerOptions = resolved.providerOptions as
+              | Record<string, JSONObject>
+              | undefined;
+            resolvedModel = {
+              modelId,
+              displayName: info.displayName,
+              contextSize: info.contextSize,
+              inputCapabilities: info.inputCapabilities,
+            };
+          } catch (error) {
+            modelSpan.recordException(error as Error);
+            modelSpan.setAttribute('model.unusable', true);
+            modelSpan.end();
+            this.deps.logger.warn(
+              { modelId, error },
+              'Step skipped: selected model is unusable; ignoring this model entry',
+            );
+            const unusableModelEvent: StepCompleteEvent = {
+              shouldContinue: false,
+              forceNextStep: false,
+              fatalError: false,
+              fatalErrorReason: null,
+              generationFailed: false,
+              generation: null,
+              toolCalls: [],
+              modelFallbackOccurred: false,
+            };
+            await this.deps.extensionHandler.runStepCompleteHooks(
+              unusableModelEvent,
+            );
+            return unusableModelEvent;
+          }
           modelSpan.end();
         }
-        stepSpan.setAttribute(
-          'step.modelId',
-          modelIdFromEntry(this.deps.fallbackManager.getChatModelEntry()),
-        );
+        stepSpan.setAttribute('step.modelId', selectedModelId ?? 'unknown');
         stepSpan.setAttribute(
           'step.modelFallbackIndex',
           this.deps.fallbackManager.getFallbackIndex(),
@@ -471,6 +513,9 @@ class StepModule implements Step {
 
   private async getModel(): Promise<LanguageModel> {
     const entry = this.deps.fallbackManager.getChatModelEntry();
+    if (!entry) {
+      throw new Error('No chat model is configured');
+    }
     const modelId = modelIdFromEntry(entry);
     return this.deps.modelProvider.get(modelId);
   }

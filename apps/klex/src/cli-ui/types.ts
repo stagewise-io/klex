@@ -5,6 +5,8 @@ export type Screen =
   | 'mcp-servers'
   | 'cloud'
   | 'model-selection'
+  | 'debug-information'
+  | 'logs'
   | 'telemetry'
   | 'usage';
 
@@ -12,5 +14,7 @@ export interface CliUiDependencies {
   logging: import('@stagewise/logger').RootLogger;
   onQuit: () => void;
   adminApi: Pick<import('@/admin-api').AdminApi, 'handle'>;
+  dataDirectory: string;
+  logStore: import('@/log-store').LogStore;
   dangerousLocalAdminApiPort: number | undefined;
 }

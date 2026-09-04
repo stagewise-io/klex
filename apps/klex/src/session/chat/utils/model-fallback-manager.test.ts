@@ -43,11 +43,9 @@ describe('ModelFallbackManager', () => {
       expect(mgr.getChatModelEntry()).toBe('provider:default');
     });
 
-    it('throws when no chat models are configured', () => {
+    it('returns undefined when no chat models are configured', () => {
       const mgr = makeManager(1000, undefined, []);
-      expect(() => mgr.getChatModelEntry()).toThrow(
-        'No chat models configured',
-      );
+      expect(mgr.getChatModelEntry()).toBeUndefined();
     });
   });
 
@@ -66,11 +64,9 @@ describe('ModelFallbackManager', () => {
       expect(mgr.getFallbackIndex()).toBe(0);
     });
 
-    it('throws when no chat models are configured', () => {
+    it('returns undefined when no chat models are configured', () => {
       const mgr = makeManager(1000, undefined, []);
-      expect(() => mgr.fallbackToNextModel()).toThrow(
-        'No chat models configured',
-      );
+      expect(mgr.fallbackToNextModel()).toBeUndefined();
     });
 
     it('records a span event on fallback', () => {

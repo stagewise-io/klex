@@ -8,6 +8,7 @@ import type {
   McpServersResponse,
   SessionInfo,
 } from '../api-client';
+import { ScreenSection } from '../components/screen-section';
 import { StatusBadge } from '../components/status-badge';
 import { usePolling } from '../hooks/use-polling';
 import { useScreenMeta } from '../hooks/use-screen-meta';
@@ -18,9 +19,9 @@ export interface HomeScreenProps {
   apiClient: AdminApiClient;
   sessions: SessionInfo[];
   cloud: CloudStatus | null;
+  dangerousLocalAdminApiPort: number | undefined;
   onRefreshGlobal: () => void;
   onOpenSettings: () => void;
-  onOpenCloud: () => void;
   onOpenUsage: () => void;
 }
 
@@ -28,9 +29,9 @@ export function HomeScreen({
   apiClient,
   sessions,
   cloud,
+  dangerousLocalAdminApiPort,
   onRefreshGlobal,
   onOpenSettings,
-  onOpenCloud,
   onOpenUsage,
 }: HomeScreenProps) {
   const { pushToast } = useToast();
@@ -58,7 +59,6 @@ export function HomeScreen({
       breadcrumb: [],
       keys: [
         { key: 's', label: 'Settings' },
-        { key: 'c', label: 'Cloud' },
         { key: 'u', label: 'Usage' },
         { key: 'r', label: 'Refresh' },
       ],
@@ -67,7 +67,6 @@ export function HomeScreen({
 
   useMenuInput({
     [MenuKeys.Settings]: onOpenSettings,
-    [MenuKeys.Cloud]: onOpenCloud,
     [MenuKeys.Usage]: onOpenUsage,
     [MenuKeys.Refresh]: () => {
       onRefreshGlobal();
@@ -75,8 +74,30 @@ export function HomeScreen({
     },
   });
 
+  const unsafeCloudConnection =
+    cloud?.cloudEnabled === true && isUnsafeCloudUrl(cloud.cloudBaseUrl);
+
   return (
-    <Box flexDirection="column">
+    <Box flexDirection="column" gap={1}>
+      {unsafeCloudConnection ? (
+        <ScreenSection title="Unsafe cloud connection" tone="yellow">
+          <Text>
+            Cloud traffic uses an unencrypted connection ({cloud.cloudBaseUrl}).
+          </Text>
+          <Text dimColor>
+            Credentials and agent data may be visible in transit. Use HTTPS in
+            production.
+          </Text>
+        </ScreenSection>
+      ) : null}
+      {dangerousLocalAdminApiPort !== undefined ? (
+        <ScreenSection title="Security warning" tone="yellow">
+          <Text>
+            The unauthenticated Admin API is exposed at
+            {` http://127.0.0.1:${dangerousLocalAdminApiPort}`}.
+          </Text>
+        </ScreenSection>
+      ) : null}
       <SessionsSection loading={false} sessions={sessions} />
       <CloudSection loading={false} status={cloud} />
       <McpSection
@@ -95,12 +116,10 @@ function SessionsSection({
   sessions: SessionInfo[] | null;
 }) {
   return (
-    <Box flexDirection="column">
+    <ScreenSection title="Active Sessions">
       <Box>
-        <Text bold>Active Sessions</Text>
         {loading && (
           <Text>
-            {' '}
             <Spinner type="dots" />
           </Text>
         )}
@@ -110,13 +129,13 @@ function SessionsSection({
         <Text dimColor>No active sessions.</Text>
       )}
       {sessions !== null && sessions.length > 0 && (
-        <Box flexDirection="column" marginLeft={2}>
+        <Box flexDirection="column">
           {sessions.map((session) => (
             <SessionRow key={session.id} session={session} />
           ))}
         </Box>
       )}
-    </Box>
+    </ScreenSection>
   );
 }
 
@@ -144,7 +163,7 @@ function SessionRow({ session }: { session: SessionInfo }) {
         </Text>
         {session.model && (
           <Text dimColor>
-            model: {session.model.id}
+            model: {session.model.id ?? 'not configured'}
             {session.model.isFallback
               ? ` (fallback #${session.model.fallbackIndex})`
               : ''}
@@ -163,71 +182,51 @@ function CloudSection({
   status: CloudStatus | null;
 }) {
   return (
-    <Box marginTop={1} flexDirection="column">
-      <Text bold>Cloud</Text>
+    <ScreenSection title="Cloud">
       {loading && (
         <Text>
-          {' '}
           <Spinner type="dots" />
         </Text>
       )}
       {!loading && status === null && <Text dimColor>No data.</Text>}
-      {!loading && status !== null && (
-        <Box marginLeft={2} flexDirection="column">
+      {!loading && status !== null && !status.cloudEnabled && (
+        <Text dimColor>Cloud Connection is disabled</Text>
+      )}
+      {!loading && status !== null && status.cloudEnabled && (
+        <Box flexDirection="column">
           <Box>
-            <Text dimColor>enabled: </Text>
-            <StatusBadge
-              status={status.cloudEnabled ? 'ok' : 'idle'}
-              label={status.cloudEnabled ? 'yes' : 'no'}
-            />
-          </Box>
-          <Box>
-            <Text dimColor>enrolled: </Text>
+            <Text dimColor>Enrollment: </Text>
             <StatusBadge
               status={status.enrolled ? 'ok' : 'warn'}
-              label={status.enrolled ? 'yes' : 'no'}
+              label={status.enrolled ? 'enrolled' : 'not enrolled'}
             />
           </Box>
-          {status.enrolled && status.clientId && (
-            <Text dimColor>enrollment ID: {status.clientId}</Text>
-          )}
-          {status.enrolled && status.cloudEnabled && (
-            <Box>
-              <Text dimColor>tunnel: </Text>
-              <StatusBadge
-                status={
-                  status.tunnelState === 'connected'
-                    ? 'ok'
-                    : status.tunnelState === 'connecting'
-                      ? 'warn'
-                      : status.tunnelState === 'error'
-                        ? 'error'
-                        : 'idle'
-                }
-                label={
-                  status.tunnelState === 'connected'
-                    ? 'connected'
-                    : status.tunnelState === 'connecting'
-                      ? 'connecting'
-                      : status.tunnelState === 'error'
-                        ? 'error — reconnecting'
-                        : 'disconnected'
-                }
-              />
-            </Box>
-          )}
-          {!status.enrolled && status.cloudEnabled && (
-            <Text color="yellow">Press c to enroll</Text>
-          )}
-          {!status.cloudEnabled && (
-            <Text dimColor>cloud disabled — use --no-cloud to toggle</Text>
-          )}
-          {status.cloudEnabled && (
-            <Text dimColor>cloud URL: {status.cloudBaseUrl}</Text>
-          )}
+          <Box>
+            <Text dimColor>Tunnel Status: </Text>
+            <StatusBadge
+              status={
+                status.tunnelState === 'connected'
+                  ? 'ok'
+                  : status.tunnelState === 'connecting'
+                    ? 'warn'
+                    : status.tunnelState === 'error'
+                      ? 'error'
+                      : 'idle'
+              }
+              label={
+                status.tunnelState === 'connected'
+                  ? 'connected'
+                  : status.tunnelState === 'connecting'
+                    ? 'connecting'
+                    : status.tunnelState === 'error'
+                      ? 'error — reconnecting'
+                      : 'disconnected'
+              }
+            />
+          </Box>
         </Box>
       )}
-    </Box>
+    </ScreenSection>
   );
 }
 
@@ -259,12 +258,10 @@ function McpSection({
   servers: McpServersResponse['servers'] | null;
 }) {
   return (
-    <Box marginTop={1} flexDirection="column">
+    <ScreenSection title="MCP Servers">
       <Box>
-        <Text bold>MCP Servers</Text>
         {loading && (
           <Text>
-            {' '}
             <Spinner type="dots" />
           </Text>
         )}
@@ -274,7 +271,7 @@ function McpSection({
         <Text dimColor>No MCP servers configured.</Text>
       )}
       {servers !== null && servers.length > 0 && (
-        <Box marginLeft={2} flexDirection="column">
+        <Box flexDirection="column">
           {servers.map((server) => {
             const badge = mcpStatusToBadge(server.status);
             return (
@@ -291,8 +288,17 @@ function McpSection({
           })}
         </Box>
       )}
-    </Box>
+    </ScreenSection>
   );
+}
+
+function isUnsafeCloudUrl(value: string): boolean {
+  try {
+    const protocol = new URL(value).protocol;
+    return protocol === 'http:' || protocol === 'ws:';
+  } catch {
+    return /^(?:http|ws):\/\//i.test(value);
+  }
 }
 
 function formatAge(isoDate: string): string {

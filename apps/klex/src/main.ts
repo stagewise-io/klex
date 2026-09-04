@@ -1,13 +1,19 @@
 import { createLogger } from '@stagewise/logger';
 
 import { type AdminApi, createAdminApi } from '@/admin-api';
+import { createAgentDirectory, defaultAgentRoot } from '@/agent-directory';
+import { createAgentPicker } from '@/agent-picker';
 import { type CliOptions, parseCliArgs } from '@/cli';
 import { createCliUi } from '@/cli-ui';
-import { createCloudConnectivity } from '@/cloud-connectivity';
+import {
+  type CloudConnectivity,
+  createCloudConnectivity,
+} from '@/cloud-connectivity';
 import { createConfig } from '@/config';
 import { ensureDataDirectory } from '@/data-directory';
-import { createDirectoryLock } from '@/directory-lock';
+import { createDirectoryLock, type DirectoryLock } from '@/directory-lock';
 import { createIntrospector } from '@/introspection';
+import { createLogStore } from '@/log-store';
 import { createMcp } from '@/mcp';
 import { createModelCallLogger } from '@/model-call-logger';
 import { createModelProvider } from '@/model-provider';
@@ -34,10 +40,12 @@ import {
 import { createTracing } from '@/tracing';
 
 const cli: CliOptions = parseCliArgs(process.argv.slice(2));
+const logStore = createLogStore(500);
 
 const logger = createLogger({
   name: 'klex',
   verbose: cli.verbose,
+  capture: cli.headless ? undefined : (entry) => logStore.add(entry),
   // In interactive (non-headless) mode, suppress all console output so the
   // Ink TUI has exclusive access to stdout/stderr. OTel transport still sends
   // logs to the collector. Fatal errors re-enable console output in the
@@ -65,6 +73,70 @@ async function main(): Promise<void> {
     process.exit(await runNativeVerification());
   }
 
+  let interactiveCloud: CloudConnectivity | undefined;
+  let interactiveLock: DirectoryLock | undefined;
+  const agentDirectory = createAgentDirectory({
+    logging: logger,
+    rootDirectory: cli.agentRoot || defaultAgentRoot(),
+  });
+  if (cli.dataDirectory === undefined) {
+    if (cli.headless) {
+      throw new Error(
+        'Headless mode requires --data-dir or KLEX_DATA_DIR to identify an agent directory',
+      );
+    }
+    const selectedDirectory = await createAgentPicker({
+      agentDirectory,
+      prepareCloud: async (directory) => {
+        if (!cli.cloudEnabled) return false;
+        await interactiveCloud?.close().catch(() => undefined);
+        interactiveCloud = undefined;
+        await interactiveLock?.release().catch(() => undefined);
+        interactiveLock = undefined;
+
+        await ensureDataDirectory(directory);
+        const lock = createDirectoryLock({
+          logging: logger,
+          dataDirectory: directory,
+        });
+        await lock.acquire();
+        interactiveLock = lock;
+
+        let cloud: CloudConnectivity | undefined;
+        try {
+          cloud = createCloudConnectivity({
+            logging: logger,
+            dataDirectory: directory,
+            cloudEnabled: true,
+            cloudBaseUrl: cli.cloudBaseUrl,
+            // A supplied token completes enrollment without another prompt;
+            // otherwise the wizard collects one below.
+            enrollmentToken: cli.cloudEnrollToken,
+            allowDangerousUnsecureCloud: cli.allowDangerousUnsecureCloud,
+          });
+          interactiveCloud = cloud;
+          await cloud.start();
+          return !cloud.isEnrolled();
+        } catch (error) {
+          await cloud?.close().catch(() => undefined);
+          interactiveCloud = undefined;
+          await lock.release().catch(() => undefined);
+          interactiveLock = undefined;
+          throw error;
+        }
+      },
+      enrollCloud: async (_directory, token) => {
+        await interactiveCloud?.enroll(token);
+      },
+    }).choose();
+    if (selectedDirectory === undefined) {
+      await interactiveCloud?.close().catch(() => undefined);
+      await interactiveLock?.release().catch(() => undefined);
+      return;
+    }
+    cli.dataDirectory = selectedDirectory;
+  }
+
   const tracing = createTracing({
     logging: logger,
     otlpUrl: 'http://localhost:4318/v1/traces',
@@ -75,8 +147,6 @@ async function main(): Promise<void> {
     },
     spanProcessor,
   });
-  await tracing.start();
-
   // The data directory is the first thing every subsystem writes into, and on a
   // fresh machine it does not exist yet. Create it before the lock, whose
   // exclusive open would otherwise fail with ENOENT.
@@ -84,11 +154,13 @@ async function main(): Promise<void> {
 
   // Acquire directory lock before any module starts — prevents concurrent
   // instances from using the same working directory.
-  const dirLock = createDirectoryLock({
-    logging: logger,
-    dataDirectory: cli.dataDirectory,
-  });
-  await dirLock.acquire();
+  const dirLock =
+    interactiveLock ??
+    createDirectoryLock({
+      logging: logger,
+      dataDirectory: cli.dataDirectory,
+    });
+  if (!interactiveLock) await dirLock.acquire();
 
   const config = createConfig({
     logging: logger,
@@ -99,19 +171,22 @@ async function main(): Promise<void> {
   let router: ReturnType<typeof createRouter> | undefined;
 
   try {
+    await tracing.start();
     await config.start();
     started.push(config);
 
     // Cloud connectivity: identity is always created; enrollment + token
     // client are initialized only when cloud is enabled.
-    const cloudConnectivity = createCloudConnectivity({
-      logging: logger,
-      dataDirectory: cli.dataDirectory,
-      cloudEnabled: cli.cloudEnabled,
-      cloudBaseUrl: cli.cloudBaseUrl,
-      enrollmentToken: cli.cloudEnrollToken,
-      allowDangerousUnsecureCloud: cli.allowDangerousUnsecureCloud,
-    });
+    const cloudConnectivity =
+      interactiveCloud ??
+      createCloudConnectivity({
+        logging: logger,
+        dataDirectory: cli.dataDirectory,
+        cloudEnabled: cli.cloudEnabled,
+        cloudBaseUrl: cli.cloudBaseUrl,
+        enrollmentToken: cli.cloudEnrollToken,
+        allowDangerousUnsecureCloud: cli.allowDangerousUnsecureCloud,
+      });
     const realtimeProvider = config.resolveRealtimeProvider();
     const realtimeComposition = realtimeProvider
       ? {
@@ -162,7 +237,7 @@ async function main(): Promise<void> {
             createAudioInputOptimizerExt,
             createRemindersExt,
           ],
-          dataDirectory: cli.dataDirectory,
+          dataDirectory: cli.dataDirectory!,
           hooks,
           introspectionScope,
         }),
@@ -214,7 +289,18 @@ async function main(): Promise<void> {
       logger.error({ error }, 'Router shutdown failed');
     });
     await closeReverse(started);
+    if (interactiveCloud && !started.includes(interactiveCloud)) {
+      await interactiveCloud.close().catch((closeError: unknown) => {
+        logger.error(
+          { error: closeError },
+          'Interactive cloud shutdown failed',
+        );
+      });
+    }
     await dirLock.release();
+    await tracing.close().catch((closeError: unknown) => {
+      logger.error({ error: closeError }, 'Tracing shutdown failed');
+    });
     throw error;
   }
 
@@ -264,6 +350,8 @@ async function main(): Promise<void> {
       logging: logger,
       onQuit: quitImmediately,
       adminApi: runningAdminApi,
+      dataDirectory: cli.dataDirectory,
+      logStore,
       dangerousLocalAdminApiPort: cli.dangerousLocalAdminApiPort,
     });
     cliUi = ui;

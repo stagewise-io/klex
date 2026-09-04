@@ -1,5 +1,7 @@
 import { useInput } from 'ink';
 
+import { useTextInputActive } from './hooks/use-text-input-active';
+
 export const MenuKeys = {
   Settings: 's',
   Cloud: 'c',
@@ -16,7 +18,11 @@ export const MenuKeys = {
 export type MenuKeyAction = Partial<Record<string, () => void>>;
 
 export function useMenuInput(actions: MenuKeyAction) {
+  const { active } = useTextInputActive();
+
   useInput((input, key) => {
+    // Text fields own character input. Keep Escape available so every form
+    // can still be cancelled without triggering unrelated shortcuts.
     if (key.escape && actions.escape) {
       actions.escape();
       return;
@@ -33,6 +39,8 @@ export function useMenuInput(actions: MenuKeyAction) {
       actions.delete();
       return;
     }
+    if (active) return;
+
     const lower = input.toLowerCase();
     if (actions[lower]) {
       actions[lower]();

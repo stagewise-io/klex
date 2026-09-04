@@ -3,7 +3,6 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { AdminApiClient } from './api-client';
 import { AppFrame } from './components/app-frame';
-import { ToastStack } from './components/toast';
 import { useGlobalStatus } from './hooks/use-global-status';
 import {
   NavigationContext,
@@ -18,7 +17,9 @@ import {
 import { type Toast, ToastContext } from './hooks/use-toast';
 import { MenuKeys, useMenuInput } from './menu-keys';
 import { CloudScreen } from './screens/cloud';
+import { DebugInformationScreen } from './screens/debug-information';
 import { HomeScreen } from './screens/home';
+import { LogViewerScreen } from './screens/log-viewer';
 import { McpScreen } from './screens/mcp';
 import { ModelSelectionScreen } from './screens/model-selection';
 import { ProvidersScreen } from './screens/providers';
@@ -38,12 +39,17 @@ export function createCliUi(deps: CliUiDependencies): CliUi {
 class CliUiModule implements CliUi {
   private readonly onQuit: () => void;
   private readonly adminApi: CliUiDependencies['adminApi'];
+  private readonly dataDirectory: string;
+  private readonly logStore: CliUiDependencies['logStore'];
   private readonly dangerousLocalAdminApiPort: number | undefined;
   private inkInstance: ReturnType<typeof render> | undefined;
+  private terminalCleared = false;
 
   constructor(deps: CliUiDependencies) {
     this.onQuit = deps.onQuit;
     this.adminApi = deps.adminApi;
+    this.dataDirectory = deps.dataDirectory;
+    this.logStore = deps.logStore;
     this.dangerousLocalAdminApiPort = deps.dangerousLocalAdminApiPort;
   }
 
@@ -55,9 +61,12 @@ class CliUiModule implements CliUi {
       async (input, init) => this.adminApi.handle(new Request(input, init)),
     );
 
+    this.terminalCleared = false;
     this.inkInstance = render(
       <AppRoot
         apiClient={apiClient}
+        dataDirectory={this.dataDirectory}
+        logStore={this.logStore}
         dangerousLocalAdminApiPort={this.dangerousLocalAdminApiPort}
         onQuit={() => this.requestQuit()}
       />,
@@ -71,8 +80,14 @@ class CliUiModule implements CliUi {
     const instance = this.inkInstance;
     if (instance) {
       instance.waitUntilExit().then(
-        () => this.onQuit(),
-        () => this.onQuit(),
+        () => {
+          this.clearTerminal();
+          this.onQuit();
+        },
+        () => {
+          this.clearTerminal();
+          this.onQuit();
+        },
       );
     }
   }
@@ -84,6 +99,7 @@ class CliUiModule implements CliUi {
       // Best-effort — the React tree may already be torn down.
     }
     this.inkInstance = undefined;
+    this.clearTerminal();
   }
 
   /** Called when the user presses 'q'. Unmounts Ink; waitUntilExit
@@ -93,17 +109,28 @@ class CliUiModule implements CliUi {
       this.inkInstance?.unmount();
     } catch {
       // If unmount fails, fall back to direct process shutdown.
+      this.clearTerminal();
       this.onQuit();
     }
+  }
+
+  private clearTerminal(): void {
+    if (this.terminalCleared) return;
+    this.terminalCleared = true;
+    process.stdout.write('\u001b[2J\u001b[3J\u001b[H');
   }
 }
 
 function AppRoot({
   apiClient,
+  dataDirectory,
+  logStore,
   dangerousLocalAdminApiPort,
   onQuit,
 }: {
   apiClient: AdminApiClient;
+  dataDirectory: string;
+  logStore: CliUiDependencies['logStore'];
   dangerousLocalAdminApiPort: number | undefined;
   onQuit: () => void;
 }) {
@@ -132,17 +159,19 @@ function AppRoot({
             <GlobalQuitHandler onQuit={onQuit} />
             <FrameLayout
               apiClient={apiClient}
+              dataDirectory={dataDirectory}
+              logStore={logStore}
               navigation={navigation}
               sessions={globalStatus.sessions}
               cloud={globalStatus.cloud}
               loading={globalStatus.loading}
-              toastCount={toasts.length}
+              toasts={toasts}
+              onDismissToast={dismissToast}
               dangerousLocalAdminApiPort={dangerousLocalAdminApiPort}
               onRefreshGlobal={globalStatus.refresh}
             />
           </TextInputActiveProvider>
         </ScreenMetaProvider>
-        <ToastStack toasts={toasts} onDismiss={dismissToast} />
       </ToastContext.Provider>
     </NavigationContext.Provider>
   );
@@ -162,20 +191,26 @@ function GlobalQuitHandler({ onQuit }: { onQuit: () => void }) {
 
 function FrameLayout({
   apiClient,
+  dataDirectory,
+  logStore,
   navigation,
   sessions,
   cloud,
   loading,
-  toastCount,
+  toasts,
+  onDismissToast,
   dangerousLocalAdminApiPort,
   onRefreshGlobal,
 }: {
   apiClient: AdminApiClient;
+  dataDirectory: string;
+  logStore: CliUiDependencies['logStore'];
   navigation: NavigationContextValue;
   sessions: import('./api-client').SessionInfo[];
   cloud: import('./api-client').CloudStatus | null;
   loading: boolean;
-  toastCount: number;
+  toasts: Toast[];
+  onDismissToast: (id: number) => void;
   dangerousLocalAdminApiPort: number | undefined;
   onRefreshGlobal: () => void;
 }) {
@@ -194,14 +229,17 @@ function FrameLayout({
       sessions={sessions}
       cloud={cloud}
       loading={loading}
-      toastCount={toastCount}
-      dangerousLocalAdminApiPort={dangerousLocalAdminApiPort}
+      toasts={toasts}
+      onDismissToast={onDismissToast}
     >
       <ScreenRouter
         apiClient={apiClient}
+        dataDirectory={dataDirectory}
+        logStore={logStore}
         navigation={navigation}
         sessions={sessions}
         cloud={cloud}
+        dangerousLocalAdminApiPort={dangerousLocalAdminApiPort}
         onRefreshGlobal={onRefreshGlobal}
       />
     </AppFrame>
@@ -210,15 +248,21 @@ function FrameLayout({
 
 function ScreenRouter({
   apiClient,
+  dataDirectory,
+  logStore,
   navigation,
   sessions,
   cloud,
+  dangerousLocalAdminApiPort,
   onRefreshGlobal,
 }: {
   apiClient: AdminApiClient;
+  dataDirectory: string;
+  logStore: CliUiDependencies['logStore'];
   navigation: NavigationContextValue;
   sessions: import('./api-client').SessionInfo[];
   cloud: import('./api-client').CloudStatus | null;
+  dangerousLocalAdminApiPort: number | undefined;
   onRefreshGlobal: () => void;
 }) {
   switch (navigation.current) {
@@ -228,19 +272,25 @@ function ScreenRouter({
           apiClient={apiClient}
           sessions={sessions}
           cloud={cloud}
+          dangerousLocalAdminApiPort={dangerousLocalAdminApiPort}
           onRefreshGlobal={onRefreshGlobal}
           onOpenSettings={() => navigation.navigate('settings')}
-          onOpenCloud={() => navigation.navigate('cloud')}
           onOpenUsage={() => navigation.navigate('usage')}
         />
       );
     case 'settings':
       return (
         <SettingsScreen
+          dataDirectory={dataDirectory}
           onOpenProviders={() => navigation.navigate('providers')}
+          onOpenCloud={() => navigation.navigate('cloud')}
           onOpenMcp={() => navigation.navigate('mcp-servers')}
           onOpenModelSelection={() => navigation.navigate('model-selection')}
           onOpenTelemetry={() => navigation.navigate('telemetry')}
+          onOpenDebugInformation={() =>
+            navigation.navigate('debug-information')
+          }
+          onOpenLogs={() => navigation.navigate('logs')}
           onBack={() => navigation.goBack()}
         />
       );
@@ -270,6 +320,22 @@ function ScreenRouter({
       return (
         <UsageScreen apiClient={apiClient} onBack={() => navigation.goBack()} />
       );
+    case 'debug-information':
+      return (
+        <DebugInformationScreen
+          dataDirectory={dataDirectory}
+          cloud={cloud}
+          dangerousLocalAdminApiPort={dangerousLocalAdminApiPort}
+          onBack={() => navigation.goBack()}
+        />
+      );
+    case 'logs':
+      return (
+        <LogViewerScreen
+          logStore={logStore}
+          onBack={() => navigation.goBack()}
+        />
+      );
     case 'telemetry':
       return (
         <ComingSoon title="Telemetry" onBack={() => navigation.goBack()} />
@@ -280,9 +346,9 @@ function ScreenRouter({
           apiClient={apiClient}
           sessions={sessions}
           cloud={cloud}
+          dangerousLocalAdminApiPort={dangerousLocalAdminApiPort}
           onRefreshGlobal={onRefreshGlobal}
           onOpenSettings={() => navigation.navigate('settings')}
-          onOpenCloud={() => navigation.navigate('cloud')}
           onOpenUsage={() => navigation.navigate('usage')}
         />
       );

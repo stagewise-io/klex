@@ -131,6 +131,19 @@ function isNodeError(error: unknown): error is NodeJS.ErrnoException {
   return error instanceof Error && 'code' in error;
 }
 
+/** Returns whether a live Klex process currently owns this directory lock. */
+export async function isDirectoryInUse(
+  dataDirectory: string,
+): Promise<boolean> {
+  try {
+    const content = await readFile(join(dataDirectory, LOCK_FILE_NAME), 'utf8');
+    const pid = (JSON.parse(content) as { pid?: unknown }).pid;
+    return typeof pid === 'number' && isProcessAlive(pid);
+  } catch {
+    return false;
+  }
+}
+
 export function createDirectoryLock(
   deps: DirectoryLockDependencies,
 ): DirectoryLock {

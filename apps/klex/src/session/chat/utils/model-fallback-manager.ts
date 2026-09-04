@@ -44,10 +44,15 @@ export class ModelFallbackManager {
    * Returns the current model selection entry, resetting to the
    * default model if the fallback cooldown has expired.
    */
-  getChatModelEntry(): ModelSelectionEntry {
+  getChatModelEntry(): ModelSelectionEntry | undefined {
     const chatModels = this.deps.getChatModels();
     if (chatModels.length === 0) {
-      throw new Error('No chat models configured in modelSelection.chat');
+      // Reset stale fallback state so models added at runtime start at the
+      // configured default rather than an old index.
+      this.fallbackIndex = 0;
+      this.fallbackExpiresAt = null;
+      this.lastSuccessfulGenerationAt = null;
+      return undefined;
     }
 
     // Check if the fallback cooldown has expired. If so, reset to the
@@ -72,9 +77,6 @@ export class ModelFallbackManager {
 
     const index = this.fallbackIndex % chatModels.length;
     const entry = chatModels[index];
-    if (!entry) {
-      throw new Error('No chat model selected in configuration');
-    }
     return entry;
   }
 
@@ -90,7 +92,11 @@ export class ModelFallbackManager {
   fallbackToNextModel(): void {
     const chatModels = this.deps.getChatModels();
     if (chatModels.length === 0) {
-      throw new Error('No chat models configured in modelSelection.chat');
+      this.deps.logger.warn(
+        { sessionId: this.deps.sessionId },
+        'Cannot fall back because no chat models are configured',
+      );
+      return;
     }
     this.fallbackIndex = (this.fallbackIndex + 1) % chatModels.length;
 

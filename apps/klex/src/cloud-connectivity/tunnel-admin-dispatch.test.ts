@@ -1,0 +1,249 @@
+/**
+ * Proves that the MCP OAuth admin routes are reachable over a real tunnel
+ * WebSocket, framed exactly the way Klex Cloud frames them.
+ *
+ * The contract verified here is what the production wiring depends on: a
+ * request arriving as REQUEST_HEAD/REQUEST_DATA/REQUEST_END frames reaches the
+ * admin app with path and body intact, and its response travels back as
+ * RESPONSE_HEAD/RESPONSE_DATA/RESPONSE_END.
+ */
+import {
+  AgentTunnelConnection,
+  type DecodedFrame,
+  decodeFrame,
+  decodeMessage,
+  encodeMessageFrame,
+  HttpMethod,
+  MessageType,
+} from '@klex/cloud-api';
+import { Hono } from 'hono';
+import { describe, expect, it, vi } from 'vitest';
+import { WebSocket, WebSocketServer } from 'ws';
+
+import type { ModuleLogger } from '@stagewise/logger';
+
+import type { Mcp, PendingAuthorizationInfo } from '@/mcp';
+
+import {
+  completeAuthorization,
+  completeAuthorizationRoute,
+  getPendingAuthorizations,
+  getPendingAuthorizationsRoute,
+  type McpOAuthRouteDependencies,
+} from '../admin-api/routes/v1/mcp-oauth';
+import { setupTestApp } from '../admin-api/routes/v1/test-utils';
+
+const logger = {
+  info: () => undefined,
+  error: () => undefined,
+} as unknown as ModuleLogger;
+
+const pendingInfo: PendingAuthorizationInfo = {
+  id: 'auth-1',
+  serverName: 'qonto',
+  serverUrl: 'https://qonto.example/mcp',
+  createdAt: '2026-07-28T08:00:00.000Z',
+  expiresAt: '2026-07-28T08:15:00.000Z',
+};
+
+/** Control frames (WELCOME, PING/PONG) use stream id 0. */
+const CONTROL_STREAM_ID = 0;
+
+interface TunneledResponse {
+  status: number;
+  headers: Record<string, string | string[]>;
+  body: string;
+}
+
+/**
+ * Server-side view of one tunnel connection: sends request frames the way the
+ * cloud tunnel session does and reassembles the agent's response frames.
+ */
+class TunnelPeer {
+  private readonly chunks: Buffer[] = [];
+  private resolveResponse?: (response: TunneledResponse) => void;
+  private head?: { status: number; headers: Record<string, string | string[]> };
+
+  constructor(private readonly ws: WebSocket) {
+    ws.on('message', (data: Buffer) => {
+      this.handleFrame(decodeFrame(data));
+    });
+  }
+
+  /** WELCOME must be the first frame, per the protocol. */
+  public welcome(): void {
+    this.ws.send(
+      encodeMessageFrame(
+        {
+          type: MessageType.WELCOME,
+          protocolVersion: 1,
+          startTime: Math.floor(Date.now() / 1000),
+          agentId: 'agent-under-test',
+        },
+        CONTROL_STREAM_ID,
+      ),
+    );
+  }
+
+  public request(
+    streamId: number,
+    method: number,
+    path: string,
+    body?: string,
+  ): Promise<TunneledResponse> {
+    const response = new Promise<TunneledResponse>((resolve) => {
+      this.resolveResponse = resolve;
+    });
+
+    const headers: Record<string, string> = { host: 'agent' };
+    if (body !== undefined) {
+      headers['content-type'] = 'application/json';
+      headers['content-length'] = String(Buffer.byteLength(body));
+    }
+
+    this.ws.send(
+      encodeMessageFrame(
+        { type: MessageType.REQUEST_HEAD, method, path, headers },
+        streamId,
+      ),
+    );
+
+    if (body !== undefined) {
+      this.ws.send(
+        encodeMessageFrame(
+          { type: MessageType.REQUEST_DATA, data: Buffer.from(body, 'utf8') },
+          streamId,
+        ),
+      );
+    }
+
+    this.ws.send(
+      encodeMessageFrame({ type: MessageType.REQUEST_END }, streamId),
+    );
+
+    return response;
+  }
+
+  private handleFrame(frame: DecodedFrame): void {
+    const message = decodeMessage(frame.header.type, frame.payload);
+    switch (message.type) {
+      case MessageType.RESPONSE_HEAD:
+        this.head = { status: message.status, headers: message.headers };
+        break;
+      case MessageType.RESPONSE_DATA:
+        this.chunks.push(message.data);
+        break;
+      case MessageType.RESPONSE_END: {
+        const head = this.head;
+        if (head === undefined) throw new Error('RESPONSE_END before HEAD');
+        this.resolveResponse?.({
+          status: head.status,
+          headers: head.headers,
+          body: Buffer.concat(this.chunks).toString('utf8'),
+        });
+        break;
+      }
+      default:
+        break;
+    }
+  }
+}
+
+interface Harness {
+  peer: TunnelPeer;
+  close: () => Promise<void>;
+}
+
+async function startHarness(deps: McpOAuthRouteDependencies): Promise<Harness> {
+  const routes = setupTestApp((instance) => {
+    instance
+      .openapi(getPendingAuthorizationsRoute, getPendingAuthorizations(deps))
+      .openapi(completeAuthorizationRoute, completeAuthorization(deps));
+  });
+  // The tunnel dispatches into a plain Hono app, mirroring the admin server.
+  const app = new Hono().route('/', routes);
+
+  const server = new WebSocketServer({ port: 0 });
+  await new Promise<void>((resolve) => server.once('listening', resolve));
+  const address = server.address();
+  if (typeof address === 'string' || address === null) {
+    throw new Error('WebSocketServer did not bind a port');
+  }
+
+  const serverSocket = new Promise<WebSocket>((resolve) =>
+    server.once('connection', resolve),
+  );
+  const clientWs = new WebSocket(`ws://127.0.0.1:${address.port}`);
+  await new Promise<void>((resolve, reject) => {
+    clientWs.once('open', () => resolve());
+    clientWs.once('error', reject);
+  });
+
+  const connection = new AgentTunnelConnection(clientWs, { app });
+  connection.start();
+
+  const peer = new TunnelPeer(await serverSocket);
+  peer.welcome();
+
+  return {
+    peer,
+    close: async () => {
+      connection.close('test over');
+      clientWs.close();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    },
+  };
+}
+
+describe('admin MCP OAuth routes over a tunnel connection', () => {
+  it('serves the pending listing', async () => {
+    const harness = await startHarness({
+      mcp: {
+        listPendingAuthorizations: vi.fn(() => [pendingInfo]),
+      } as unknown as Mcp,
+      logger,
+    });
+
+    try {
+      const response = await harness.peer.request(
+        1,
+        HttpMethod.GET,
+        '/v1/mcp-oauth/pending',
+      );
+
+      expect(response.status).toBe(200);
+      expect(JSON.parse(response.body)).toEqual({
+        authorizations: [pendingInfo],
+      });
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it('delivers a callback body to the handler intact', async () => {
+    const complete = vi.fn(
+      (_state: string, _params: URLSearchParams) => 'accepted' as const,
+    );
+    const harness = await startHarness({
+      mcp: { completeAuthorization: complete } as unknown as Mcp,
+      logger,
+    });
+
+    try {
+      const response = await harness.peer.request(
+        1,
+        HttpMethod.POST,
+        '/v1/mcp-oauth/callback',
+        JSON.stringify({ state: 'secret-state', code: 'auth-code' }),
+      );
+
+      expect(response.status).toBe(202);
+      expect(JSON.parse(response.body)).toEqual({ accepted: true });
+      const call = complete.mock.calls[0];
+      expect(call?.[0]).toBe('secret-state');
+      expect(call?.[1].get('code')).toBe('auth-code');
+    } finally {
+      await harness.close();
+    }
+  });
+});

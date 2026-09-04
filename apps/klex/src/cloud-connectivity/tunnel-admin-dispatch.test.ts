@@ -1,5 +1,5 @@
 /**
- * Proves that the MCP OAuth admin routes are reachable over a real tunnel
+ * Proves that the MCP authorization admin routes are reachable over a real tunnel
  * WebSocket, framed exactly the way Klex Cloud frames them.
  *
  * The contract verified here is what the production wiring depends on: a
@@ -22,15 +22,19 @@ import { WebSocket, WebSocketServer } from 'ws';
 
 import type { ModuleLogger } from '@stagewise/logger';
 
-import type { Mcp, PendingAuthorizationInfo } from '@/mcp';
+import type { Config } from '@/config';
+import type { Mcp, McpServerInfo } from '@/mcp';
 
+import {
+  getMcpServers,
+  getMcpServersRoute,
+  type McpRouteDependencies,
+} from '../admin-api/routes/v1/mcp';
 import {
   completeAuthorization,
   completeAuthorizationRoute,
-  getPendingAuthorizations,
-  getPendingAuthorizationsRoute,
-  type McpOAuthRouteDependencies,
-} from '../admin-api/routes/v1/mcp-oauth';
+  type McpAuthorizationRouteDependencies,
+} from '../admin-api/routes/v1/mcp.authorization';
 import { setupTestApp } from '../admin-api/routes/v1/test-utils';
 
 const logger = {
@@ -38,12 +42,21 @@ const logger = {
   error: () => undefined,
 } as unknown as ModuleLogger;
 
-const pendingInfo: PendingAuthorizationInfo = {
-  id: 'auth-1',
-  serverName: 'qonto',
-  serverUrl: 'https://qonto.example/mcp',
-  createdAt: '2026-07-28T08:00:00.000Z',
-  expiresAt: '2026-07-28T08:15:00.000Z',
+const authorizingServer: McpServerInfo = {
+  name: 'qonto',
+  status: 'authorizing',
+  toolCount: 0,
+  supportsPushNotifications: false,
+  supportsRealtimeMedia: false,
+  transport: 'http',
+  usesInteractiveOAuth: true,
+  authorization: {
+    id: 'auth-1',
+    createdAt: '2026-07-28T08:00:00.000Z',
+    expiresAt: '2026-07-28T08:15:00.000Z',
+  },
+  lastError: null,
+  nextRetryAt: null,
 };
 
 /** Control frames (WELCOME, PING/PONG) use stream id 0. */
@@ -188,10 +201,18 @@ interface Harness {
   close: () => Promise<void>;
 }
 
-async function startHarness(deps: McpOAuthRouteDependencies): Promise<Harness> {
+async function startHarness(
+  deps: McpAuthorizationRouteDependencies,
+): Promise<Harness> {
+  // The list route only reads `mcp`; `config` exists to satisfy its dependency
+  // contract.
+  const mcpDeps: McpRouteDependencies = {
+    ...deps,
+    config: {} as Config,
+  };
   const routes = setupTestApp((instance) => {
     instance
-      .openapi(getPendingAuthorizationsRoute, getPendingAuthorizations(deps))
+      .openapi(getMcpServersRoute, getMcpServers(mcpDeps))
       .openapi(completeAuthorizationRoute, completeAuthorization(deps));
   });
   // The tunnel dispatches into a plain Hono app, mirroring the admin server.
@@ -229,11 +250,11 @@ async function startHarness(deps: McpOAuthRouteDependencies): Promise<Harness> {
   };
 }
 
-describe('admin MCP OAuth routes over a tunnel connection', () => {
-  it('serves the pending listing', async () => {
+describe('admin MCP authorization routes over a tunnel connection', () => {
+  it('serves the server listing with its embedded authorization', async () => {
     const harness = await startHarness({
       mcp: {
-        listPendingAuthorizations: vi.fn(() => [pendingInfo]),
+        getServerStatuses: vi.fn(() => [authorizingServer]),
       } as unknown as Mcp,
       logger,
     });
@@ -242,12 +263,12 @@ describe('admin MCP OAuth routes over a tunnel connection', () => {
       const response = await harness.peer.request(
         1,
         HttpMethod.GET,
-        '/v1/mcp-oauth/pending',
+        '/v1/mcp-servers',
       );
 
       expect(response.status).toBe(200);
       expect(JSON.parse(response.body)).toEqual({
-        authorizations: [pendingInfo],
+        servers: [authorizingServer],
       });
     } finally {
       await harness.close();

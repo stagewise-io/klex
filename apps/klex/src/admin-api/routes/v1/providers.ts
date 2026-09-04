@@ -127,11 +127,14 @@ export function createProvider(
     } catch (error) {
       if (error instanceof ConfigValidationError) {
         if (error.code === 'already_exists')
-          return c.json({ error: error.message }, 409);
-        return c.json({ error: error.message }, 400);
+          return c.json({ error: error.message, code: 'conflict' }, 409);
+        return c.json({ error: error.message, code: 'invalid_request' }, 400);
       }
       deps.logger.error({ error }, 'Provider create failed');
-      return c.json({ error: 'Failed to create provider' }, 500);
+      return c.json(
+        { error: 'Failed to create provider', code: 'internal_error' },
+        500,
+      );
     }
   };
 }
@@ -207,11 +210,14 @@ export function updateProvider(
     } catch (error) {
       if (error instanceof ConfigValidationError) {
         if (error.code === 'not_found')
-          return c.json({ error: error.message }, 404);
-        return c.json({ error: error.message }, 400);
+          return c.json({ error: error.message, code: 'not_found' }, 404);
+        return c.json({ error: error.message, code: 'invalid_request' }, 400);
       }
       deps.logger.error({ error }, 'Provider update failed');
-      return c.json({ error: 'Failed to update provider' }, 500);
+      return c.json(
+        { error: 'Failed to update provider', code: 'internal_error' },
+        500,
+      );
     }
   };
 }
@@ -275,13 +281,16 @@ export function deleteProvider(
     } catch (error) {
       if (error instanceof ConfigValidationError) {
         if (error.code === 'not_found')
-          return c.json({ error: error.message }, 404);
+          return c.json({ error: error.message, code: 'not_found' }, 404);
         if (error.code === 'referential_integrity')
-          return c.json({ error: error.message }, 409);
-        return c.json({ error: error.message }, 400);
+          return c.json({ error: error.message, code: 'conflict' }, 409);
+        return c.json({ error: error.message, code: 'invalid_request' }, 400);
       }
       deps.logger.error({ error }, 'Provider delete failed');
-      return c.json({ error: 'Failed to delete provider' }, 500);
+      return c.json(
+        { error: 'Failed to delete provider', code: 'internal_error' },
+        500,
+      );
     }
   };
 }
@@ -334,13 +343,17 @@ export function getEndpoints(
     const provider = deps.config.get().providers[name];
 
     if (!provider) {
-      return c.json({ error: `Provider '${name}' not found` }, 404);
+      return c.json(
+        { error: `Provider '${name}' not found`, code: 'not_found' },
+        404,
+      );
     }
 
     if ('preset' in provider) {
       return c.json(
         {
           error: `Provider '${name}' is a preset provider and has no configurable endpoints`,
+          code: 'preset_provider',
         },
         400,
       );
@@ -424,13 +437,16 @@ export function createEndpoint(
     } catch (error) {
       if (error instanceof ConfigValidationError) {
         if (error.code === 'not_found')
-          return c.json({ error: error.message }, 404);
+          return c.json({ error: error.message, code: 'not_found' }, 404);
         if (error.code === 'already_exists')
-          return c.json({ error: error.message }, 409);
-        return c.json({ error: error.message }, 400);
+          return c.json({ error: error.message, code: 'conflict' }, 409);
+        return c.json({ error: error.message, code: 'invalid_request' }, 400);
       }
       deps.logger.error({ error }, 'Endpoint create failed');
-      return c.json({ error: 'Failed to create endpoint' }, 500);
+      return c.json(
+        { error: 'Failed to create endpoint', code: 'internal_error' },
+        500,
+      );
     }
   };
 }
@@ -531,11 +547,14 @@ export function updateEndpoint(
     } catch (error) {
       if (error instanceof ConfigValidationError) {
         if (error.code === 'not_found')
-          return c.json({ error: error.message }, 404);
-        return c.json({ error: error.message }, 400);
+          return c.json({ error: error.message, code: 'not_found' }, 404);
+        return c.json({ error: error.message, code: 'invalid_request' }, 400);
       }
       deps.logger.error({ error }, 'Endpoint update failed');
-      return c.json({ error: 'Failed to update endpoint' }, 500);
+      return c.json(
+        { error: 'Failed to update endpoint', code: 'internal_error' },
+        500,
+      );
     }
   };
 }
@@ -598,13 +617,16 @@ export function deleteEndpoint(
     } catch (error) {
       if (error instanceof ConfigValidationError) {
         if (error.code === 'not_found')
-          return c.json({ error: error.message }, 404);
+          return c.json({ error: error.message, code: 'not_found' }, 404);
         if (error.code === 'referential_integrity')
-          return c.json({ error: error.message }, 409);
-        return c.json({ error: error.message }, 400);
+          return c.json({ error: error.message, code: 'conflict' }, 409);
+        return c.json({ error: error.message, code: 'invalid_request' }, 400);
       }
       deps.logger.error({ error }, 'Endpoint delete failed');
-      return c.json({ error: 'Failed to delete endpoint' }, 500);
+      return c.json(
+        { error: 'Failed to delete endpoint', code: 'internal_error' },
+        500,
+      );
     }
   };
 }
@@ -659,13 +681,17 @@ export function getKnownModels(
     const provider = deps.config.get().providers[name];
 
     if (!provider) {
-      return c.json({ error: `Provider '${name}' not found` }, 404);
+      return c.json(
+        { error: `Provider '${name}' not found`, code: 'not_found' },
+        404,
+      );
     }
 
     if ('preset' in provider && query.endpointName !== undefined) {
       return c.json(
         {
           error: `Preset provider '${name}' does not support endpoint-scoped known models — omit endpointName`,
+          code: 'preset_provider',
         },
         400,
       );
@@ -679,6 +705,7 @@ export function getKnownModels(
       return c.json(
         {
           error: `Endpoint '${query.endpointName}' not found in provider '${name}'`,
+          code: 'not_found',
         },
         404,
       );
@@ -775,13 +802,16 @@ export function createKnownModel(
     } catch (error) {
       if (error instanceof ConfigValidationError) {
         if (error.code === 'not_found')
-          return c.json({ error: error.message }, 404);
+          return c.json({ error: error.message, code: 'not_found' }, 404);
         if (error.code === 'already_exists')
-          return c.json({ error: error.message }, 409);
-        return c.json({ error: error.message }, 400);
+          return c.json({ error: error.message, code: 'conflict' }, 409);
+        return c.json({ error: error.message, code: 'invalid_request' }, 400);
       }
       deps.logger.error({ error }, 'Known model create failed');
-      return c.json({ error: 'Failed to create known model' }, 500);
+      return c.json(
+        { error: 'Failed to create known model', code: 'internal_error' },
+        500,
+      );
     }
   };
 }
@@ -935,11 +965,14 @@ export function updateKnownModel(
     } catch (error) {
       if (error instanceof ConfigValidationError) {
         if (error.code === 'not_found')
-          return c.json({ error: error.message }, 404);
-        return c.json({ error: error.message }, 400);
+          return c.json({ error: error.message, code: 'not_found' }, 404);
+        return c.json({ error: error.message, code: 'invalid_request' }, 400);
       }
       deps.logger.error({ error }, 'Known model update failed');
-      return c.json({ error: 'Failed to update known model' }, 500);
+      return c.json(
+        { error: 'Failed to update known model', code: 'internal_error' },
+        500,
+      );
     }
   };
 }
@@ -1003,11 +1036,14 @@ export function deleteKnownModel(
     } catch (error) {
       if (error instanceof ConfigValidationError) {
         if (error.code === 'not_found')
-          return c.json({ error: error.message }, 404);
-        return c.json({ error: error.message }, 400);
+          return c.json({ error: error.message, code: 'not_found' }, 404);
+        return c.json({ error: error.message, code: 'invalid_request' }, 400);
       }
       deps.logger.error({ error }, 'Known model delete failed');
-      return c.json({ error: 'Failed to delete known model' }, 500);
+      return c.json(
+        { error: 'Failed to delete known model', code: 'internal_error' },
+        500,
+      );
     }
   };
 }

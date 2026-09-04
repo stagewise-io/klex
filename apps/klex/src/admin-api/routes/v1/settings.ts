@@ -334,10 +334,13 @@ export function patchModelSelection(
       return c.json({ ...config.modelSelection, warnings }, 200);
     } catch (error) {
       if (error instanceof ConfigValidationError) {
-        return c.json({ error: error.message }, 400);
+        return c.json({ error: error.message, code: 'invalid_request' }, 400);
       }
       deps.logger.error({ error }, 'Model selection update failed');
-      return c.json({ error: 'Failed to update model selection' }, 500);
+      return c.json(
+        { error: 'Failed to update model selection', code: 'internal_error' },
+        500,
+      );
     }
   };
 }
@@ -433,10 +436,16 @@ export function patchTelemetry(
       return c.json({ level }, 200);
     } catch (error) {
       if (error instanceof ConfigValidationError) {
-        return c.json({ error: error.message }, 400);
+        return c.json({ error: error.message, code: 'invalid_request' }, 400);
       }
       deps.logger.error({ error }, 'Telemetry update failed');
-      return c.json({ error: 'Failed to update telemetry settings' }, 500);
+      return c.json(
+        {
+          error: 'Failed to update telemetry settings',
+          code: 'internal_error',
+        },
+        500,
+      );
     }
   };
 }

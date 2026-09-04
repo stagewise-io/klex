@@ -23,7 +23,7 @@ import {
   type McpConnection,
   type McpConnectionFactory,
 } from './connection';
-import { createMcp } from './mcp';
+import { createMcp, type Mcp } from './mcp';
 import { McpPendingAuthorizationRegistry } from './oauth/pending-authorizations';
 
 const logging = {
@@ -341,6 +341,58 @@ describe('MCP namespace isolation', () => {
     await vi.advanceTimersByTimeAsync(1_000);
     expect(attempts.get('failing')).toBe(2);
     expect(attempts.get('hanging')).toBe(1);
+    await mcp.close();
+  });
+
+  it('reports the last connection failure and the next retry time', async () => {
+    vi.useFakeTimers();
+    const { mcp } = setup(
+      { failing: { url: 'https://failing.example/mcp' } },
+      async () => {
+        throw new Error('offline');
+      },
+    );
+
+    await mcp.start();
+    await vi.advanceTimersByTimeAsync(0);
+    const failing = mcp
+      .getServerStatuses()
+      .find((server) => server.name === 'failing');
+    expect(failing?.status).toBe('error');
+    expect(failing?.lastError).toMatchObject({
+      name: 'Error',
+      message: 'offline',
+    });
+    expect(failing?.lastError?.at).toEqual(expect.any(String));
+    expect(failing?.nextRetryAt).toEqual(expect.any(String));
+    await mcp.close();
+  });
+
+  it('clears the last connection failure once a namespace connects', async () => {
+    vi.useFakeTimers();
+    let firstAttempt = true;
+    const { mcp } = setup(
+      { flaky: { url: 'https://flaky.example/mcp' } },
+      async ({ namespace }: ConnectMcpServerOptions) => {
+        if (firstAttempt) {
+          firstAttempt = false;
+          throw new Error('offline');
+        }
+        return connection(namespace);
+      },
+    );
+
+    await mcp.start();
+    await vi.advanceTimersByTimeAsync(0);
+    // The first retry fires after RETRY_INITIAL_MS and succeeds.
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(await namespaceNames(mcp)).toContain('flaky');
+    const flaky = mcp
+      .getServerStatuses()
+      .find((server) => server.name === 'flaky');
+    expect(flaky?.status).toBe('connected');
+    expect(flaky?.lastError).toBeNull();
+    expect(flaky?.nextRetryAt).toBeNull();
     await mcp.close();
   });
 
@@ -768,6 +820,14 @@ function setupAuthorization(
   };
 }
 
+function serverRow(mcp: Mcp, name: string) {
+  return mcp.getServerStatuses().find((server) => server.name === name);
+}
+
+function authorizationOf(mcp: Mcp, name: string) {
+  return serverRow(mcp, name)?.authorization ?? null;
+}
+
 describe('MCP cloud authorization requests', () => {
   it('reports unknown servers and servers that do not use interactive OAuth', async () => {
     const { mcp } = setupAuthorization(
@@ -785,12 +845,14 @@ describe('MCP cloud authorization requests', () => {
     expect(await mcp.requestAuthorization('missing')).toEqual({
       outcome: 'not_found',
     });
-    expect(await mcp.requestAuthorization('local')).toMatchObject({
-      outcome: 'not_applicable',
+    expect(await mcp.requestAuthorization('local')).toEqual({
+      outcome: 'unsupported_transport',
     });
-    expect(await mcp.requestAuthorization('keyed')).toMatchObject({
-      outcome: 'not_applicable',
+    expect(await mcp.requestAuthorization('keyed')).toEqual({
+      outcome: 'manual_credentials',
     });
+    expect(serverRow(mcp, 'local')?.usesInteractiveOAuth).toBe(false);
+    expect(serverRow(mcp, 'keyed')?.usesInteractiveOAuth).toBe(false);
     await mcp.close();
   });
 
@@ -849,7 +911,9 @@ describe('MCP cloud authorization requests', () => {
       outcome: 'pending',
       authorization: { serverName: 'protected', state: 'secret' },
     });
-    expect(mcp.listPendingAuthorizations()).toHaveLength(1);
+    expect(authorizationOf(mcp, 'protected')).toMatchObject({
+      id: expect.any(String),
+    });
 
     // A second request is idempotent while the first is still live.
     expect(await mcp.requestAuthorization('protected')).toMatchObject({
@@ -902,12 +966,11 @@ describe('MCP cloud authorization requests', () => {
 
     await mcp.start();
     await vi.waitFor(() =>
-      expect(mcp.listPendingAuthorizations()).toHaveLength(1),
+      expect(authorizationOf(mcp, 'protected')).not.toBeNull(),
     );
-    const [pending] = mcp.listPendingAuthorizations();
-    expect(mcp.cancelAuthorization(pending?.id ?? '')).toBe(true);
+    expect(mcp.cancelAuthorization('protected')).toBe(true);
     expect(mcp.cancelAuthorization('unknown')).toBe(false);
-    expect(mcp.listPendingAuthorizations()).toHaveLength(0);
+    expect(authorizationOf(mcp, 'protected')).toBeNull();
     await mcp.close();
   });
 });

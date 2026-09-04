@@ -211,6 +211,7 @@ describe('PATCH /v1/settings/model-selection', () => {
     expect(response.status).toBe(400);
     expect(await response.json()).toEqual({
       error: 'Malformed JSON in request body',
+      code: 'malformed_json',
     });
   });
 
@@ -326,6 +327,7 @@ describe('PATCH /v1/settings/model-selection', () => {
     expect(response.status).toBe(500);
     expect(await response.json()).toEqual({
       error: 'Failed to update model selection',
+      code: 'internal_error',
     });
   });
 
@@ -608,6 +610,7 @@ describe('PATCH /v1/settings/telemetry', () => {
     expect(response.status).toBe(400);
     expect(await response.json()).toEqual({
       error: 'Malformed JSON in request body',
+      code: 'malformed_json',
     });
   });
 
@@ -645,6 +648,7 @@ describe('PATCH /v1/settings/telemetry', () => {
     expect(response.status).toBe(500);
     expect(await response.json()).toEqual({
       error: 'Failed to update telemetry settings',
+      code: 'internal_error',
     });
   });
 });

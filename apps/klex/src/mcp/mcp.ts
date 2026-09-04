@@ -44,7 +44,6 @@ import { LocalOAuthCallbackReceiver } from './oauth/local-callback';
 import {
   McpPendingAuthorizationRegistry,
   type PendingAuthorization,
-  type PendingAuthorizationInfo,
 } from './oauth/pending-authorizations';
 import { LocalBrowserOAuthPresenter } from './oauth/presenter';
 import { McpOAuthStore } from './oauth/store';
@@ -122,6 +121,37 @@ export interface McpServerInfo {
   supportsRealtimeMedia: boolean;
   /** Server type: stdio or http. */
   transport: 'stdio' | 'http';
+  /**
+   * Whether this server can be authorized interactively at all — an HTTP
+   * server without explicitly configured credentials.
+   */
+  usesInteractiveOAuth: boolean;
+  /**
+   * Live cloud authorization waiting for a relayed callback, if any. `null`
+   * while `status` is `authorizing` means the local browser flow is driving it.
+   * Never carries the authorization URL or the OAuth `state`.
+   */
+  authorization: McpServerAuthorizationInfo | null;
+  /** Last connection failure, sanitized. Cleared on a successful connect. */
+  lastError: McpServerErrorInfo | null;
+  /** ISO timestamp of the next scheduled reconnect attempt, if one is armed. */
+  nextRetryAt: string | null;
+}
+
+/** Authorization state embedded in an MCP server status. */
+export interface McpServerAuthorizationInfo {
+  /** Opaque identifier, safe to expose. */
+  id: string;
+  createdAt: string;
+  expiresAt: string;
+}
+
+/** Sanitized description of the last failed connection attempt. */
+export interface McpServerErrorInfo {
+  name: string;
+  message: string;
+  /** ISO timestamp of the failure. */
+  at: string;
 }
 
 /** Record of a tool call made to an MCP server. */
@@ -172,11 +202,6 @@ export interface Mcp extends ToolProvider {
   getToolCallHistory(): McpToolCallRecord[];
 
   /**
-   * Authorization requests currently waiting for a cloud-delivered callback.
-   * Never includes authorization URLs or the OAuth `state`.
-   */
-  listPendingAuthorizations(): PendingAuthorizationInfo[];
-  /**
    * Produces an authorization request for a configured MCP server, re-driving a
    * connection attempt when no request is pending. Idempotent while a request
    * for the same server is live.
@@ -187,16 +212,25 @@ export interface Mcp extends ToolProvider {
     state: string,
     params: URLSearchParams,
   ): 'accepted' | 'unknown';
-  /** Cancels a pending authorization. Returns false if it is unknown. */
-  cancelAuthorization(id: string): boolean;
+  /**
+   * Cancels the pending authorization of a server. Returns false when the
+   * server has none.
+   */
+  cancelAuthorization(serverName: string): boolean;
 }
 
 export type RequestAuthorizationResult =
   | { outcome: 'pending'; authorization: PendingAuthorization }
   /** No such MCP server is configured. */
   | { outcome: 'not_found' }
-  /** The server does not use interactive OAuth, or is already connected. */
-  | { outcome: 'not_applicable'; reason: string }
+  /** A stdio server, which never speaks OAuth. */
+  | { outcome: 'unsupported_transport' }
+  /** The server carries an explicitly configured `Authorization` header. */
+  | { outcome: 'manual_credentials' }
+  /** The server is already connected, so nothing needs authorizing. */
+  | { outcome: 'already_connected' }
+  /** The MCP module is not running, so no attempt can be driven. */
+  | { outcome: 'not_running' }
   /** The cloud authorization channel is not usable right now. */
   | { outcome: 'unavailable' }
   /** The connection attempt did not reach the authorization step in time. */
@@ -242,6 +276,8 @@ interface McpServerRuntime {
   attempt?: McpConnectionAttempt;
   retryAttempt: number;
   retryTimer?: ReturnType<typeof setTimeout>;
+  lastError?: McpServerErrorInfo;
+  nextRetryAt?: string;
 }
 
 class McpModule implements Mcp {
@@ -564,6 +600,11 @@ class McpModule implements Mcp {
           if (!this.isCurrentConnection(runtime, disconnected)) return;
           runtime.connection = undefined;
           runtime.status = 'error';
+          runtime.lastError = {
+            name: 'McpDisconnectedError',
+            message: 'MCP server closed the connection unexpectedly',
+            at: new Date().toISOString(),
+          };
           this.stopEventWorker(runtime.namespace);
           this.stopRealtimeWorker(runtime.namespace);
           this.publishRegistry();
@@ -582,6 +623,7 @@ class McpModule implements Mcp {
         runtime.attempt = undefined;
         runtime.connection = connection;
         runtime.status = 'connected';
+        runtime.lastError = undefined;
         this.clearRetry(runtime);
         this.publishRegistry();
         if (connection.supportsPushNotifications)
@@ -613,11 +655,13 @@ class McpModule implements Mcp {
           );
           return;
         }
+        const diagnostic = safeDiagnosticError(error);
+        runtime.lastError = { ...diagnostic, at: new Date().toISOString() };
         const isRetry = runtime.retryAttempt > 0;
         if (isRetry) {
           this.deps.logger.debug(
             {
-              error: safeDiagnosticError(error),
+              error: diagnostic,
               namespace: runtime.namespace,
               retryAttempt: runtime.retryAttempt,
             },
@@ -626,7 +670,7 @@ class McpModule implements Mcp {
         } else {
           this.deps.logger.warn(
             {
-              error: safeDiagnosticError(error),
+              error: diagnostic,
               namespace: runtime.namespace,
             },
             'MCP connection failed — will retry with exponential backoff',
@@ -991,12 +1035,14 @@ class McpModule implements Mcp {
     }, delay);
     timer.unref?.();
     runtime.retryTimer = timer;
+    runtime.nextRetryAt = new Date(Date.now() + delay).toISOString();
   }
 
   private clearRetry(runtime: McpServerRuntime): void {
     if (runtime.retryTimer) clearTimeout(runtime.retryTimer);
     runtime.retryTimer = undefined;
     runtime.retryAttempt = 0;
+    runtime.nextRetryAt = undefined;
   }
 
   private publishRegistry(): void {
@@ -1019,6 +1065,8 @@ class McpModule implements Mcp {
       const runtime = this.servers.get(name);
       const config = configured[name] ?? runtime?.config;
       const connection = runtime?.connection;
+      const transport = config && 'command' in config ? 'stdio' : 'http';
+      const pending = this.deps.pendingAuthorizations.findByServer(name);
       statuses.push({
         name,
         status: runtime?.status ?? 'disconnected',
@@ -1026,7 +1074,21 @@ class McpModule implements Mcp {
         supportsPushNotifications:
           connection?.supportsPushNotifications ?? false,
         supportsRealtimeMedia: connection?.supportsRealtimeMedia ?? false,
-        transport: config && 'command' in config ? 'stdio' : 'http',
+        transport,
+        usesInteractiveOAuth:
+          transport === 'http' &&
+          config !== undefined &&
+          !('command' in config) &&
+          shouldUseAutomaticOAuth(config),
+        authorization: pending
+          ? {
+              id: pending.id,
+              createdAt: pending.createdAt,
+              expiresAt: pending.expiresAt,
+            }
+          : null,
+        lastError: runtime?.lastError ?? null,
+        nextRetryAt: runtime?.nextRetryAt ?? null,
       });
     }
     return statuses;
@@ -1036,26 +1098,14 @@ class McpModule implements Mcp {
     return [...this.toolCallHistory];
   }
 
-  listPendingAuthorizations(): PendingAuthorizationInfo[] {
-    return this.deps.pendingAuthorizations.list();
-  }
-
   async requestAuthorization(
     serverName: string,
   ): Promise<RequestAuthorizationResult> {
     const config = this.deps.config.getMcpServers()[serverName];
     if (!config) return { outcome: 'not_found' };
-    if ('command' in config) {
-      return {
-        outcome: 'not_applicable',
-        reason: 'stdio MCP servers do not use OAuth',
-      };
-    }
+    if ('command' in config) return { outcome: 'unsupported_transport' };
     if (!shouldUseAutomaticOAuth(config)) {
-      return {
-        outcome: 'not_applicable',
-        reason: 'server is configured with an explicit Authorization header',
-      };
+      return { outcome: 'manual_credentials' };
     }
     // Repeat clicks in the cloud UI must not restart the flow: an in-flight
     // request already carries the authorization URL the user needs. Checked
@@ -1073,19 +1123,9 @@ class McpModule implements Mcp {
       runtime = this.servers.get(serverName);
       // `scheduleReconcile` is a no-op before `start()`, so a missing runtime
       // here means the module is not running — not a slow connection attempt.
-      if (!runtime) {
-        return {
-          outcome: 'not_applicable',
-          reason: 'MCP module is not started',
-        };
-      }
+      if (!runtime) return { outcome: 'not_running' };
     }
-    if (runtime.connection) {
-      return {
-        outcome: 'not_applicable',
-        reason: 'server is already connected',
-      };
-    }
+    if (runtime.connection) return { outcome: 'already_connected' };
 
     this.clearRetry(runtime);
     runtime.attempt?.controller.abort();
@@ -1099,12 +1139,7 @@ class McpModule implements Mcp {
     if (!authorization) {
       // The re-driven attempt may have succeeded outright (cached or refreshed
       // token), in which case no authorization was ever needed.
-      if (runtime.connection) {
-        return {
-          outcome: 'not_applicable',
-          reason: 'server is now connected',
-        };
-      }
+      if (runtime.connection) return { outcome: 'already_connected' };
       return { outcome: 'timeout' };
     }
     return { outcome: 'pending', authorization };
@@ -1117,8 +1152,10 @@ class McpModule implements Mcp {
     return this.deps.pendingAuthorizations.complete(state, params);
   }
 
-  cancelAuthorization(id: string): boolean {
-    return this.deps.pendingAuthorizations.cancel(id);
+  cancelAuthorization(serverName: string): boolean {
+    const pending = this.deps.pendingAuthorizations.findByServer(serverName);
+    if (!pending) return false;
+    return this.deps.pendingAuthorizations.cancel(pending.id);
   }
 
   private addToolCallRecord(record: McpToolCallRecord): void {

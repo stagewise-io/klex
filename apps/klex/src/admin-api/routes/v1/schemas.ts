@@ -7,9 +7,12 @@ extendZodWithOpenApi(z);
 
 // --- Shared ---
 
+// `code` is machine-readable and stable; `error` is a human-readable message
+// that may change wording at any time. Clients branch on `code`.
 const errorResponseSchema = z
   .object({
     error: z.string(),
+    code: z.string(),
   })
   .openapi('ErrorResponse');
 
@@ -35,13 +38,37 @@ const mcpConnectionStatusSchema = z
   ])
   .openapi('McpConnectionStatus');
 
+// `state` and the authorization URL are deliberately absent: `state` is the only
+// capability guarding the callback sink, and the authorization URL embeds it.
+// They are returned exactly once, by `PUT .../authorization`.
+const mcpServerAuthorizationSchema = z
+  .object({
+    id: z.string(),
+    createdAt: z.string().datetime(),
+    expiresAt: z.string().datetime(),
+  })
+  .openapi('McpServerAuthorization');
+
+const mcpServerErrorSchema = z
+  .object({
+    name: z.string(),
+    message: z.string(),
+    at: z.string().datetime(),
+  })
+  .openapi('McpServerError');
+
 const mcpServerInfoSchema = z
   .object({
     name: z.string(),
     status: mcpConnectionStatusSchema,
     toolCount: z.number().int().min(0),
     supportsPushNotifications: z.boolean(),
+    supportsRealtimeMedia: z.boolean(),
     transport: z.enum(['stdio', 'http']),
+    usesInteractiveOAuth: z.boolean(),
+    authorization: mcpServerAuthorizationSchema.nullable(),
+    lastError: mcpServerErrorSchema.nullable(),
+    nextRetryAt: z.string().datetime().nullable(),
   })
   .openapi('McpServerInfo');
 
@@ -50,6 +77,12 @@ const mcpServersResponseSchema = z
     servers: z.array(mcpServerInfoSchema),
   })
   .openapi('McpServersResponse');
+
+const mcpServerResponseSchema = z
+  .object({
+    server: mcpServerInfoSchema,
+  })
+  .openapi('McpServerResponse');
 
 const mcpVersionNegotiationSchema = z.union([
   z.enum(['legacy', 'auto']),
@@ -126,34 +159,9 @@ const mcpServerNameParamSchema = z.object({
   name: z.string().min(1),
 });
 
-// --- MCP OAuth ---
-
-// `state` and the authorization URL are deliberately absent: `state` is the only
-// capability guarding the callback sink, and the authorization URL embeds it.
-const pendingAuthorizationSchema = z
-  .object({
-    id: z.string(),
-    serverName: z.string(),
-    serverUrl: z.url(),
-    createdAt: z.string().datetime(),
-    expiresAt: z.string().datetime(),
-  })
-  .openapi('PendingAuthorization');
-
-const pendingAuthorizationsResponseSchema = z
-  .object({
-    authorizations: z.array(pendingAuthorizationSchema),
-  })
-  .openapi('PendingAuthorizationsResponse');
-
-const startAuthorizationBodySchema = z
-  .object({
-    serverName: z.string().min(1),
-  })
-  .strict()
-  .openapi('StartAuthorizationBody');
-
-const startAuthorizationResponseSchema = z
+// The one response that carries `state` and the authorization URL: it goes to
+// the caller that asked for the authorization, and nowhere else.
+const mcpServerAuthorizationStartedSchema = z
   .object({
     id: z.string(),
     serverName: z.string(),
@@ -162,7 +170,7 @@ const startAuthorizationResponseSchema = z
     state: z.string(),
     expiresAt: z.string().datetime(),
   })
-  .openapi('StartAuthorizationResponse');
+  .openapi('McpServerAuthorizationStarted');
 
 // Not `.strict()`: providers add benign extras to the redirect (`scope`, `iss`,
 // `error_uri`), and rejecting the relayed callback with a 400 would leave the
@@ -181,10 +189,6 @@ const oauthCallbackAcceptedSchema = z
     accepted: z.literal(true),
   })
   .openapi('OAuthCallbackAccepted');
-
-const pendingAuthorizationIdParamSchema = z.object({
-  id: z.string().min(1),
-});
 
 // --- Introspection ---
 
@@ -741,7 +745,11 @@ export {
   knownModelQuerySchema,
   knownModelSchema,
   knownModelsResponseSchema,
+  mcpServerAuthorizationSchema,
+  mcpServerAuthorizationStartedSchema,
+  mcpServerErrorSchema,
   mcpServerNameParamSchema,
+  mcpServerResponseSchema,
   mcpServersResponseSchema,
   modelIdSchema,
   modelInputCapabilitiesSchema,
@@ -751,15 +759,10 @@ export {
   modelSelectionWarningSchema,
   oauthCallbackAcceptedSchema,
   oauthCallbackBodySchema,
-  pendingAuthorizationIdParamSchema,
-  pendingAuthorizationSchema,
-  pendingAuthorizationsResponseSchema,
   providerNameParamSchema,
   providerPresetSchema,
   providerResponseSchema,
   providersResponseSchema,
-  startAuthorizationBodySchema,
-  startAuthorizationResponseSchema,
   telemetryLevelSchema,
   telemetrySettingsPatchSchema,
   telemetrySettingsSchema,

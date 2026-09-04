@@ -214,6 +214,7 @@ describe('POST /v1/providers — create provider', () => {
     expect(response.status).toBe(400);
     expect(await response.json()).toEqual({
       error: 'Malformed JSON in request body',
+      code: 'malformed_json',
     });
   });
 
@@ -321,6 +322,7 @@ describe('POST /v1/providers — create provider', () => {
     expect(response.status).toBe(500);
     expect(await response.json()).toEqual({
       error: 'Failed to create provider',
+      code: 'internal_error',
     });
   });
 });
@@ -340,6 +342,7 @@ describe('PATCH /v1/providers/:name — update provider', () => {
     expect(response.status).toBe(400);
     expect(await response.json()).toEqual({
       error: 'Malformed JSON in request body',
+      code: 'malformed_json',
     });
   });
 
@@ -481,6 +484,7 @@ describe('PATCH /v1/providers/:name — update provider', () => {
     expect(response.status).toBe(500);
     expect(await response.json()).toEqual({
       error: 'Failed to update provider',
+      code: 'internal_error',
     });
   });
 
@@ -597,6 +601,7 @@ describe('DELETE /v1/providers/:name — delete provider', () => {
     expect(response.status).toBe(500);
     expect(await response.json()).toEqual({
       error: 'Failed to delete provider',
+      code: 'internal_error',
     });
   });
 });
@@ -749,6 +754,7 @@ describe('POST /v1/providers/:name/endpoints — create endpoint', () => {
     expect(response.status).toBe(400);
     expect(await response.json()).toEqual({
       error: 'Malformed JSON in request body',
+      code: 'malformed_json',
     });
   });
 });
@@ -915,6 +921,7 @@ describe('PATCH /v1/providers/:name/endpoints/:endpointName — update endpoint'
     expect(response.status).toBe(500);
     expect(await response.json()).toEqual({
       error: 'Failed to update endpoint',
+      code: 'internal_error',
     });
   });
 });
@@ -1007,6 +1014,7 @@ describe('DELETE /v1/providers/:name/endpoints/:endpointName — delete endpoint
     expect(response.status).toBe(500);
     expect(await response.json()).toEqual({
       error: 'Failed to delete endpoint',
+      code: 'internal_error',
     });
   });
 });

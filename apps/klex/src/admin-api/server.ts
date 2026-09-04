@@ -1,5 +1,4 @@
-import { type Hook, OpenAPIHono } from '@hono/zod-openapi';
-import { HTTPException } from 'hono/http-exception';
+import { OpenAPIHono } from '@hono/zod-openapi';
 
 import type { ModuleLogger } from '@stagewise/logger';
 
@@ -9,6 +8,7 @@ import type { Introspector } from '@/introspection';
 import type { Mcp } from '@/mcp';
 import type { ModelCallLogger } from '@/model-call-logger';
 
+import { createErrorHandler, validationHook } from './errors';
 import {
   enrollCloud,
   enrollCloudRoute,
@@ -27,6 +27,8 @@ import {
   createMcpServerRoute,
   deleteMcpServer,
   deleteMcpServerRoute,
+  getMcpServer,
+  getMcpServerRoute,
   getMcpServers,
   getMcpServersRoute,
   getMcpToolCallHistory,
@@ -39,11 +41,9 @@ import {
   cancelAuthorizationRoute,
   completeAuthorization,
   completeAuthorizationRoute,
-  getPendingAuthorizations,
-  getPendingAuthorizationsRoute,
   startAuthorization,
   startAuthorizationRoute,
-} from './routes/v1/mcp-oauth';
+} from './routes/v1/mcp.authorization';
 import {
   createEndpoint,
   createEndpointRoute,
@@ -96,18 +96,6 @@ export interface AdminAppDependencies {
   localPort: number | undefined;
 }
 
-// biome-ignore lint/suspicious/noExplicitAny: Hook generic parameters are opaque validation types
-const validationHook: Hook<any, any, any, any> = (result, c) => {
-  if (!result.success) {
-    const message = result.error.issues
-      .map((i) =>
-        i.path.length > 0 ? `${i.path.join('.')}: ${i.message}` : i.message,
-      )
-      .join('; ');
-    return c.json({ error: message }, 400);
-  }
-};
-
 export function createAdminApp(deps: AdminAppDependencies) {
   const app = new OpenAPIHono({
     defaultHook: validationHook,
@@ -121,16 +109,11 @@ export function createAdminApp(deps: AdminAppDependencies) {
     await next();
   });
 
-  app.onError((err, c) => {
-    if (err instanceof HTTPException) {
-      return c.json({ error: err.message }, err.status);
-    }
-    if (err instanceof SyntaxError) {
-      return c.json({ error: 'Malformed JSON in request body' }, 400);
-    }
-    deps.logger.error({ error: err }, 'Unhandled error in admin API');
-    return c.json({ error: 'Internal server error' }, 500);
-  });
+  app.onError(
+    createErrorHandler((error) => {
+      deps.logger.error({ error }, 'Unhandled error in admin API');
+    }),
+  );
 
   const routedApp = app
     .openapi(healthRoute, getHealth())
@@ -147,14 +130,14 @@ export function createAdminApp(deps: AdminAppDependencies) {
       getIntrospectionRoot({ introspector: deps.introspector }),
     )
     .openapi(getMcpServersRoute, getMcpServers(deps))
+    .openapi(getMcpServerRoute, getMcpServer(deps))
     .openapi(createMcpServerRoute, createMcpServer(deps))
     .openapi(updateMcpServerRoute, updateMcpServer(deps))
     .openapi(deleteMcpServerRoute, deleteMcpServer(deps))
     .openapi(getMcpToolCallHistoryRoute, getMcpToolCallHistory(deps))
-    .openapi(getPendingAuthorizationsRoute, getPendingAuthorizations(deps))
     .openapi(startAuthorizationRoute, startAuthorization(deps))
-    .openapi(completeAuthorizationRoute, completeAuthorization(deps))
     .openapi(cancelAuthorizationRoute, cancelAuthorization(deps))
+    .openapi(completeAuthorizationRoute, completeAuthorization(deps))
     .openapi(getUsageRoute, getUsage(deps))
     .openapi(getProvidersRoute, getProviders(deps))
     .openapi(createProviderRoute, createProvider(deps))

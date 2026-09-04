@@ -6,7 +6,6 @@ import type { ModuleLogger } from '@stagewise/logger';
 import type {
   Mcp,
   PendingAuthorization,
-  PendingAuthorizationInfo,
   RequestAuthorizationResult,
 } from '@/mcp';
 
@@ -15,12 +14,10 @@ import {
   cancelAuthorizationRoute,
   completeAuthorization,
   completeAuthorizationRoute,
-  getPendingAuthorizations,
-  getPendingAuthorizationsRoute,
-  type McpOAuthRouteDependencies,
+  type McpAuthorizationRouteDependencies,
   startAuthorization,
   startAuthorizationRoute,
-} from './mcp-oauth';
+} from './mcp.authorization';
 import { setupTestApp } from './test-utils';
 
 const logger = {
@@ -28,24 +25,19 @@ const logger = {
   error: () => undefined,
 } as unknown as ModuleLogger;
 
-const pendingInfo: PendingAuthorizationInfo = {
+const pending: PendingAuthorization = {
   id: 'auth-1',
   serverName: 'qonto',
   serverUrl: 'https://qonto.example/mcp',
   createdAt: '2026-07-28T08:00:00.000Z',
   expiresAt: '2026-07-28T08:15:00.000Z',
-};
-
-const pending: PendingAuthorization = {
-  ...pendingInfo,
   authorizationUrl: 'https://auth.qonto.example/authorize?state=secret-state',
   state: 'secret-state',
 };
 
-function makeDeps(mcp: Partial<Mcp> = {}): McpOAuthRouteDependencies {
+function makeDeps(mcp: Partial<Mcp> = {}): McpAuthorizationRouteDependencies {
   return {
     mcp: {
-      listPendingAuthorizations: vi.fn(() => []),
       requestAuthorization: vi.fn(
         async (): Promise<RequestAuthorizationResult> => ({
           outcome: 'not_found',
@@ -59,13 +51,12 @@ function makeDeps(mcp: Partial<Mcp> = {}): McpOAuthRouteDependencies {
   };
 }
 
-function app(deps: McpOAuthRouteDependencies): OpenAPIHono {
+function app(deps: McpAuthorizationRouteDependencies): OpenAPIHono {
   return setupTestApp((instance) => {
     instance
-      .openapi(getPendingAuthorizationsRoute, getPendingAuthorizations(deps))
       .openapi(startAuthorizationRoute, startAuthorization(deps))
-      .openapi(completeAuthorizationRoute, completeAuthorization(deps))
-      .openapi(cancelAuthorizationRoute, cancelAuthorization(deps));
+      .openapi(cancelAuthorizationRoute, cancelAuthorization(deps))
+      .openapi(completeAuthorizationRoute, completeAuthorization(deps));
   });
 }
 
@@ -77,30 +68,11 @@ function post(path: string, body: unknown): Request {
   });
 }
 
-describe('GET /v1/mcp-oauth/pending', () => {
-  it('returns the listing without authorization URLs or state', async () => {
-    const deps = makeDeps({
-      listPendingAuthorizations: vi.fn(() => [pendingInfo]),
-    });
-    const response = await app(deps).request(
-      'http://localhost/v1/mcp-oauth/pending',
-    );
+function put(path: string): Request {
+  return new Request(`http://localhost${path}`, { method: 'PUT' });
+}
 
-    expect(response.status).toBe(200);
-    const body = (await response.json()) as {
-      authorizations: Record<string, unknown>[];
-    };
-    expect(body.authorizations).toHaveLength(1);
-    expect(body.authorizations[0]).not.toHaveProperty('authorizationUrl');
-    expect(body.authorizations[0]).not.toHaveProperty('state');
-    expect(body.authorizations[0]).toMatchObject({
-      id: 'auth-1',
-      serverName: 'qonto',
-    });
-  });
-});
-
-describe('POST /v1/mcp-oauth/authorizations', () => {
+describe('PUT /v1/mcp-servers/{name}/authorization', () => {
   it('returns the authorization URL and state for its single caller', async () => {
     const requestAuthorization = vi.fn(
       async (): Promise<RequestAuthorizationResult> => ({
@@ -109,7 +81,7 @@ describe('POST /v1/mcp-oauth/authorizations', () => {
       }),
     );
     const response = await app(makeDeps({ requestAuthorization })).request(
-      post('/v1/mcp-oauth/authorizations', { serverName: 'qonto' }),
+      put('/v1/mcp-servers/qonto/authorization'),
     );
 
     expect(response.status).toBe(200);
@@ -119,36 +91,77 @@ describe('POST /v1/mcp-oauth/authorizations', () => {
       serverUrl: 'https://qonto.example/mcp',
       authorizationUrl: pending.authorizationUrl,
       state: 'secret-state',
-      expiresAt: pendingInfo.expiresAt,
+      expiresAt: pending.expiresAt,
     });
     expect(requestAuthorization).toHaveBeenCalledWith('qonto');
   });
 
-  it.each([
-    [{ outcome: 'not_found' } as RequestAuthorizationResult, 404],
-    [
-      {
-        outcome: 'not_applicable',
-        reason: 'stdio MCP servers do not use OAuth',
-      } as RequestAuthorizationResult,
-      409,
-    ],
-    [{ outcome: 'unavailable' } as RequestAuthorizationResult, 503],
-    [{ outcome: 'timeout' } as RequestAuthorizationResult, 504],
-  ])('maps outcome %j to status %i', async (outcome, status) => {
-    const response = await app(
-      makeDeps({ requestAuthorization: vi.fn(async () => outcome) }),
-    ).request(post('/v1/mcp-oauth/authorizations', { serverName: 'qonto' }));
+  it('is idempotent: a repeat call returns the same live authorization', async () => {
+    const requestAuthorization = vi.fn(
+      async (): Promise<RequestAuthorizationResult> => ({
+        outcome: 'pending',
+        authorization: pending,
+      }),
+    );
+    const instance = app(makeDeps({ requestAuthorization }));
+    const first = await instance.request(
+      put('/v1/mcp-servers/qonto/authorization'),
+    );
+    const second = await instance.request(
+      put('/v1/mcp-servers/qonto/authorization'),
+    );
 
-    expect(response.status).toBe(status);
-    expect(await response.json()).toHaveProperty('error');
+    expect(first.status).toBe(200);
+    expect(second.status).toBe(200);
+    expect(await first.json()).toEqual(await second.json());
   });
 
-  it('rejects a body without a server name', async () => {
-    const response = await app(makeDeps()).request(
-      post('/v1/mcp-oauth/authorizations', {}),
-    );
-    expect(response.status).toBe(400);
+  it.each([
+    ['not_found', 404, 'server_not_found'],
+    ['unsupported_transport', 409, 'unsupported_transport'],
+    ['manual_credentials', 409, 'manual_credentials'],
+    ['already_connected', 409, 'already_connected'],
+    ['not_running', 503, 'not_running'],
+    ['unavailable', 503, 'cloud_unavailable'],
+    ['timeout', 504, 'authorization_timeout'],
+  ] as const)('maps outcome %s to %i / %s', async (outcome, status, code) => {
+    const response = await app(
+      makeDeps({
+        requestAuthorization: vi.fn(
+          async () => ({ outcome }) as RequestAuthorizationResult,
+        ),
+      }),
+    ).request(put('/v1/mcp-servers/qonto/authorization'));
+
+    expect(response.status).toBe(status);
+    expect(await response.json()).toMatchObject({ code });
+  });
+});
+
+describe('DELETE /v1/mcp-servers/{name}/authorization', () => {
+  it('cancels the authorization of the named server', async () => {
+    const cancel = vi.fn(() => true);
+    const response = await app(
+      makeDeps({ cancelAuthorization: cancel }),
+    ).request('http://localhost/v1/mcp-servers/qonto/authorization', {
+      method: 'DELETE',
+    });
+
+    expect(response.status).toBe(204);
+    expect(cancel).toHaveBeenCalledWith('qonto');
+  });
+
+  it('returns 404 when the server has no live authorization', async () => {
+    const response = await app(
+      makeDeps({ cancelAuthorization: vi.fn(() => false) }),
+    ).request('http://localhost/v1/mcp-servers/qonto/authorization', {
+      method: 'DELETE',
+    });
+
+    expect(response.status).toBe(404);
+    expect(await response.json()).toMatchObject({
+      code: 'authorization_not_found',
+    });
   });
 });
 
@@ -201,6 +214,7 @@ describe('POST /v1/mcp-oauth/callback', () => {
     );
 
     expect(response.status).toBe(404);
+    expect(await response.json()).toMatchObject({ code: 'unknown_state' });
   });
 
   it('rejects a body carrying neither a code nor an error', async () => {
@@ -210,6 +224,7 @@ describe('POST /v1/mcp-oauth/callback', () => {
     ).request(post('/v1/mcp-oauth/callback', { state: 'secret-state' }));
 
     expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({ code: 'invalid_callback' });
     expect(completeAuthorizationSpy).not.toHaveBeenCalled();
   });
 
@@ -218,29 +233,5 @@ describe('POST /v1/mcp-oauth/callback', () => {
       post('/v1/mcp-oauth/callback', { code: 'auth-code' }),
     );
     expect(response.status).toBe(400);
-  });
-});
-
-describe('DELETE /v1/mcp-oauth/authorizations/{id}', () => {
-  it('cancels a pending authorization', async () => {
-    const cancel = vi.fn(() => true);
-    const response = await app(
-      makeDeps({ cancelAuthorization: cancel }),
-    ).request('http://localhost/v1/mcp-oauth/authorizations/auth-1', {
-      method: 'DELETE',
-    });
-
-    expect(response.status).toBe(204);
-    expect(cancel).toHaveBeenCalledWith('auth-1');
-  });
-
-  it('returns 404 for an unknown id', async () => {
-    const response = await app(
-      makeDeps({ cancelAuthorization: vi.fn(() => false) }),
-    ).request('http://localhost/v1/mcp-oauth/authorizations/nope', {
-      method: 'DELETE',
-    });
-
-    expect(response.status).toBe(404);
   });
 });

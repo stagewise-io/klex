@@ -164,7 +164,7 @@ export interface McpDependencies {
   logging: RootLogger;
   config: Config;
   realtimeMediaCapability?: RealtimeMediaExtensionCapability;
-  dataDirectory?: string;
+  dataDirectory: string;
   connect?: McpConnectionFactory;
   cloudConnectivity?: CloudConnectivity;
 }
@@ -1002,7 +1002,7 @@ export function createMcp(deps: McpDependencies): Mcp {
     localPresenter.present(url),
   );
   const store = new McpOAuthStore(
-    join(deps.dataDirectory ?? '.klex', 'credentials', 'mcp-oauth.json'),
+    join(deps.dataDirectory, 'credentials', 'mcp-oauth.json'),
   );
   const sessionFactory: OAuthAuthorizationSessionFactory = {
     start: async () => {

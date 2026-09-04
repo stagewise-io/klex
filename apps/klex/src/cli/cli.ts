@@ -1,3 +1,5 @@
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 import { parseArgs } from 'node:util';
 
 import { createLogger } from '@stagewise/logger';
@@ -33,19 +35,36 @@ export function parseCliArgs(argv: string[]): CliOptions {
       'admin-port': { type: 'string' },
       'allow-dangerous-unsecure-cloud': { type: 'boolean' },
       verbose: { type: 'boolean', short: 'v' },
+      version: { type: 'boolean' },
       // Diagnostic flag, intentionally absent from printHelp().
       'verify-native': { type: 'boolean' },
     },
     allowNegative: true,
   });
 
+  // Bare, parseable output on stdout. Deliberately not routed through the
+  // logger: printHelp() uses a logger and therefore prefixes a timestamp and
+  // level, which the installer cannot parse.
+  if (values.version) {
+    process.stdout.write(`${KLEX_VERSION}\n`);
+    process.exit(0);
+  }
+
   if (values.help) {
     printHelp();
     process.exit(0);
   }
 
+  // Deterministic, CWD-independent. A PATH-installed klex must resolve the same
+  // agent no matter which directory it is invoked from; a cwd-relative default
+  // silently creates a separate agent (config, credentials, enrollment, logs)
+  // per directory. Nested under agents/ so a future multi-agent picker can
+  // enumerate $KLEX_HOME/agents/* without a migration.
+  const klexHome = process.env.KLEX_HOME ?? join(homedir(), '.klex');
   const dataDirectory =
-    values['data-dir'] ?? process.env.KLEX_DATA_DIR ?? process.cwd();
+    values['data-dir'] ??
+    process.env.KLEX_DATA_DIR ??
+    join(klexHome, 'agents', 'default');
 
   // CLI args take priority over env vars. --no-cloud sets values.cloud to false.
   const cloudEnabled =
@@ -102,9 +121,10 @@ Klex Agent v${KLEX_VERSION}
 Usage: klex [options]
 
 Options:
-  -d, --data-dir <path>        Working directory for agent data (overrides KLEX_DATA_DIR)
+  -d, --data-dir <path>        Directory for agent data (overrides KLEX_DATA_DIR and KLEX_HOME, default: $KLEX_HOME/agents/default)
   -H, --headless               Run without the interactive CLI UI (overrides KLEX_HEADLESS)
   -h, --help                   Show this help message
+  --version                    Print the version and exit
   --cloud-base-url <url>       Klex Cloud API base URL (overrides KLEX_CLOUD_BASE_URL, default: https://cloud.klex.bot)
   --no-cloud                   Disable Klex Cloud connectivity (overrides KLEX_NO_CLOUD)
   --cloud                      Enable Klex Cloud connectivity (overrides KLEX_NO_CLOUD)
@@ -112,6 +132,9 @@ Options:
   --admin-port <port>          Admin API port (overrides KLEX_ADMIN_PORT, default: 2706)
   --allow-dangerous-unsecure-cloud  Allow http cloud base URL and ws tunnel (overrides KLEX_ALLOW_UNSECURE_CLOUD, default: false)
   -v, --verbose                   Enable verbose (pretty) logging (default: compact)
+
+Environment:
+  KLEX_HOME                    Root directory for all Klex data (default: ~/.klex)
 `,
   );
 }

@@ -1,3 +1,6 @@
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { RootLogger } from '@stagewise/logger';
@@ -130,6 +133,7 @@ function setup(
       logging,
       config: config.config,
       realtimeMediaCapability,
+      dataDirectory: join(tmpdir(), 'klex-mcp-test'),
       connect,
       ...(cloudConnectivity
         ? { cloudConnectivity: cloudConnectivity as CloudConnectivity }

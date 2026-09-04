@@ -53,7 +53,6 @@ concurrency:
   group: klex-release-${{ inputs.tag }}
 
 env:
-  NODE_VERSION: 26.8.1
   PNPM_VERSION: 11.22.0
 
 jobs:
@@ -99,7 +98,7 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           cache: pnpm
-          node-version: ${{ env.NODE_VERSION }}
+          node-version-file: .nvmrc
       - run: pnpm install --frozen-lockfile
       - name: Validate release code
         run: |
@@ -140,7 +139,7 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           cache: pnpm
-          node-version: ${{ env.NODE_VERSION }}
+          node-version-file: .nvmrc
       - run: pnpm install --frozen-lockfile
 
       - name: Verify runner architecture
@@ -276,7 +275,7 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           cache: pnpm
-          node-version: ${{ env.NODE_VERSION }}
+          node-version-file: .nvmrc
       - run: pnpm install --frozen-lockfile
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:

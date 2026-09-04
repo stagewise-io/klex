@@ -17,7 +17,6 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  NODE_VERSION: 26.8.1
   PNPM_VERSION: 11.22.0
 
 jobs:
@@ -33,7 +32,7 @@ jobs:
           version: ${{ env.PNPM_VERSION }}
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
-          node-version: ${{ env.NODE_VERSION }}
+          node-version-file: .nvmrc
           cache: pnpm
           registry-url: https://registry.npmjs.org
       - run: pnpm install --frozen-lockfile

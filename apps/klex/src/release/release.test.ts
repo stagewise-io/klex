@@ -31,7 +31,7 @@ function validManifest() {
         notarized: false,
         signed: true,
         target: 'linux-x64-gnu',
-        url: 'https://github.com/stagewise/klex-agent/releases/download/v1.2.3/klex-1.2.3-linux-x64-gnu.tar.gz',
+        url: 'https://github.com/stagewise-io/klex/releases/download/v1.2.3/klex-1.2.3-linux-x64-gnu.tar.gz',
         verified: true,
       },
     ],
@@ -53,7 +53,7 @@ function validCompleteManifest() {
       signed: true,
       signingProvider: 'apple-developer-id',
       target,
-      url: `https://github.com/stagewise/klex-agent/releases/download/v1.2.3/klex-1.2.3-${target}.tar.gz`,
+      url: `https://github.com/stagewise-io/klex/releases/download/v1.2.3/klex-1.2.3-${target}.tar.gz`,
       verified: true,
     })),
     ...(['linux-arm64-gnu', 'linux-x64-gnu'] as const).map((target) => ({
@@ -63,7 +63,7 @@ function validCompleteManifest() {
       signed: false,
       signingProvider: undefined,
       target,
-      url: `https://github.com/stagewise/klex-agent/releases/download/v1.2.3/klex-1.2.3-${target}.tar.gz`,
+      url: `https://github.com/stagewise-io/klex/releases/download/v1.2.3/klex-1.2.3-${target}.tar.gz`,
       verified: false,
     })),
     {
@@ -73,7 +73,7 @@ function validCompleteManifest() {
       signed: true,
       signingProvider: 'azure-trusted-signing',
       target: 'windows-x64',
-      url: 'https://github.com/stagewise/klex-agent/releases/download/v1.2.3/klex-1.2.3-windows-x64.zip',
+      url: 'https://github.com/stagewise-io/klex/releases/download/v1.2.3/klex-1.2.3-windows-x64.zip',
       verified: true,
     },
   ];

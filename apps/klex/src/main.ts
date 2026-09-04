@@ -5,6 +5,7 @@ import { type CliOptions, parseCliArgs } from '@/cli';
 import { createCliUi } from '@/cli-ui';
 import { createCloudConnectivity } from '@/cloud-connectivity';
 import { createConfig } from '@/config';
+import { ensureDataDirectory } from '@/data-directory';
 import { createDirectoryLock } from '@/directory-lock';
 import { createIntrospector } from '@/introspection';
 import { createMcp } from '@/mcp';
@@ -75,6 +76,11 @@ async function main(): Promise<void> {
     spanProcessor,
   });
   await tracing.start();
+
+  // The data directory is the first thing every subsystem writes into, and on a
+  // fresh machine it does not exist yet. Create it before the lock, whose
+  // exclusive open would otherwise fail with ENOENT.
+  await ensureDataDirectory(cli.dataDirectory);
 
   // Acquire directory lock before any module starts — prevents concurrent
   // instances from using the same working directory.

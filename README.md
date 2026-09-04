@@ -7,17 +7,63 @@ An isolated agent that excels at memory, self-improvement, and efficient orchest
 
 ## Installation
 
+macOS and Linux:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/stagewise-io/klex/main/install.sh | sh
+```
+
+Windows (PowerShell):
+
+```powershell
+irm https://raw.githubusercontent.com/stagewise-io/klex/main/install.ps1 | iex
+```
+
+The installer reads the release manifest, verifies the archive's SHA-256, and
+installs into a versioned directory behind a `current` link, so upgrades never
+overwrite a running install. It then runs `klex --verify-native` to prove the
+native runtime dependencies actually load on your machine. It never uses `sudo`
+and writes nothing outside your home directory.
+
+Supported: macOS on Apple Silicon and Intel, glibc-based Linux on ARM64 and x64,
+Windows on x64. Windows ARM64 gets the x64 build under emulation. musl-based
+Linux (Alpine) is not supported and is detected rather than half-installed.
+
+### Options
+
+| Option | Meaning |
+|---|---|
+| `--version <x.y.z>` | Install an exact version instead of the newest release |
+| `--install-dir <path>`, `KLEX_INSTALL_DIR` | Install root. Default: `${XDG_DATA_HOME:-~/.local/share}/klex`, or `%LOCALAPPDATA%\Klex` |
+| `--no-modify-path` | Leave shell startup files and the user `PATH` untouched |
+| `--uninstall` | Remove the installation |
+| `KLEX_HOME` | Agent data root. Default: `~/.klex` |
+
+Pass options to the Windows script through a script block, since a piped script
+cannot take parameters:
+
+```powershell
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/stagewise-io/klex/main/install.ps1))) -NoModifyPath
+```
+
+### Uninstalling
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/stagewise-io/klex/main/install.sh | sh -s -- --uninstall
+```
+
+Uninstalling removes the program and its `PATH` entry. It deliberately leaves
+`KLEX_HOME` (`~/.klex` by default) in place, because that directory holds your
+configuration, credentials, enrollment state, and history. Delete it yourself if
+you want it gone.
+
+### Manual installation
+
 Download the archive for your operating system and architecture from
-[GitHub Releases](../../releases). Verify it with the published checksum,
-extract the complete directory, and run `klex` (`klex.exe` on Windows) from
-that directory.
-
-Published builds support macOS on Apple Silicon and Intel, glibc-based Linux
-on ARM64 and x64, and Windows on x64. Klex is distributed as a relocatable
-directory because its executable uses native runtime dependencies. Do not copy
-only the main executable. Public installer scripts are not available yet.
-
-Launch it from the extracted directory:
+[GitHub Releases](../../releases), verify it against the published checksum, and
+extract the complete directory. Klex ships as a relocatable directory because
+its executable loads native runtime dependencies from a sibling `node_modules`;
+copying only the executable out of it will not work.
 
 ```bash
 ./klex --help

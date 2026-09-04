@@ -19,7 +19,7 @@ describe('packaged JavaScript sandbox Worker', () => {
   beforeAll(() => {
     if (!existsSync(workerUrl)) {
       throw new Error(
-        'Packaged Worker is missing; run the Klex Agent build before this smoke test',
+        'Packaged Worker is missing; run the Klex Bot build before this smoke test',
       );
     }
   });

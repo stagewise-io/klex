@@ -1,6 +1,6 @@
 # @klex/agent-admin-api
 
-Shared types for the Klex Agent Admin API.
+Shared types for the Klex Bot Admin API.
 
 The package exports the routed Hono application type through `AdminApi` and
 `AdminApiServer`, plus the `OpenAPIHono` type used to build RPC clients.

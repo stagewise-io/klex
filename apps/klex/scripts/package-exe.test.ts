@@ -20,8 +20,8 @@ import {
   resolveSharpNativePackageNames,
 } from './package-exe';
 
-describe('Klex Agent executable packaging', () => {
-  it('defines the Klex Agent SEA inputs and macOS signing policy', () => {
+describe('Klex Bot executable packaging', () => {
+  it('defines the Klex Bot SEA inputs and macOS signing policy', () => {
     const config = createKlexAgentPackagerConfig({
       environment: {
         APPLE_SIGNING_IDENTITY: 'Developer ID Application: stagewise Inc.',

@@ -1,10 +1,10 @@
-# Klex Agent
+# Klex Bot
 
 One durable agent. Many channels, model runs, subagents, and machines. User sees one coherent actor, not the machinery.
 
 ## Brain-only VM
 
-Klex Agent VM holds brain, memory, config, and orchestration state. It is not the work machine.
+Klex Bot VM holds brain, memory, config, and orchestration state. It is not the work machine.
 
 Core must not use its host as a coding box, browser box, or general shell. Give it external environments through MCP. Need to write code? Attach a disposable Linux VM. Need to send a message? Attach a channel server.
 

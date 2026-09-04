@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { resolveNativeAssetChecks } from './smoke-exe';
 
-describe('Klex Agent executable smoke checks', () => {
+describe('Klex Bot executable smoke checks', () => {
   it('uses the bundled Sharp libvips DLLs on Windows', () => {
     const checks = resolveNativeAssetChecks('/distribution', 'win32', 'x64');
 

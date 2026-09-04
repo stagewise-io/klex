@@ -373,7 +373,7 @@ export class KlexTelemetry implements Telemetry {
       'gen_ai.agent.name': genEvent.functionId,
     };
 
-    // Klex-agent-specific metadata: provider and endpoint IDs from the
+    // Klex Bot-specific metadata: provider and endpoint IDs from the
     // full model ID. These allow traces to be filtered by provider/endpoint
     // in the tracing backend.
     if (providerId != null) {

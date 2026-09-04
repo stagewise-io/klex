@@ -55,7 +55,7 @@ const logger = createLogger({
 const spanProcessor = createTelemetrySpanProcessor();
 
 async function main(): Promise<void> {
-  logger.info(`Klex Agent v${KLEX_VERSION}`);
+  logger.info(`Klex Bot v${KLEX_VERSION}`);
 
   // Diagnostic path: load every native dependency and exit without starting any
   // subsystem. Used by the packaged executable smoke test to prove native addons
@@ -277,7 +277,7 @@ main().catch(async (error: unknown) => {
   // In interactive mode the logger is hidden. Re-enable console output so
   // startup errors are visible instead of silently swallowed.
   logger.settings.type = 'pretty';
-  logger.fatal({ error }, 'Klex Agent startup failed');
+  logger.fatal({ error }, 'Klex Bot startup failed');
   await logger[Symbol.asyncDispose]();
   process.exitCode = 1;
 });

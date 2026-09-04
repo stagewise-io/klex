@@ -649,6 +649,8 @@ class McpModule implements Mcp {
           ? 'authorization_required'
           : 'error';
         if (authorizationRequired) {
+          runtime.lastError = undefined;
+          runtime.nextRetryAt = undefined;
           this.deps.logger.info(
             { namespace: runtime.namespace },
             'MCP server requires authorization',
@@ -953,6 +955,10 @@ class McpModule implements Mcp {
       );
       runtime.connection = undefined;
       runtime.status = 'error';
+      runtime.lastError = {
+        ...safeDiagnosticError(error),
+        at: new Date().toISOString(),
+      };
       this.stopRealtimeWorker(runtime.namespace);
       this.stopEventWorker(runtime.namespace);
       this.publishRegistry();
@@ -1031,6 +1037,7 @@ class McpModule implements Mcp {
       if (!this.isCurrentRuntime(runtime) || runtime.retryTimer !== timer)
         return;
       runtime.retryTimer = undefined;
+      runtime.nextRetryAt = undefined;
       this.activateRuntime(runtime);
     }, delay);
     timer.unref?.();

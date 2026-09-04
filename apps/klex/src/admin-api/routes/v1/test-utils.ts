@@ -1,6 +1,10 @@
 import { OpenAPIHono } from '@hono/zod-openapi';
 
-import { createErrorHandler, validationHook } from '../../errors';
+import {
+  createErrorHandler,
+  notFoundHandler,
+  validationHook,
+} from '../../errors';
 
 export { validationHook };
 
@@ -14,6 +18,7 @@ export function setupTestApp(
 ): OpenAPIHono {
   const app = new OpenAPIHono({ defaultHook: validationHook });
   app.onError(createErrorHandler());
+  app.notFound(notFoundHandler);
   register(app);
   return app;
 }

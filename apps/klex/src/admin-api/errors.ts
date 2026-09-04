@@ -7,7 +7,7 @@
  * route tests assert a shape production never emits.
  */
 import type { Hook } from '@hono/zod-openapi';
-import type { ErrorHandler } from 'hono';
+import type { Context, ErrorHandler } from 'hono';
 import { HTTPException } from 'hono/http-exception';
 
 /**
@@ -31,28 +31,26 @@ export const validationHook: Hook<any, any, any, any> = (result, c) => {
   }
 };
 
+/** Formats unmatched paths and unsupported methods consistently. */
+export function notFoundHandler(c: Context) {
+  return c.json({ error: 'Not found', code: 'not_found' }, 404);
+}
+
 /**
  * Builds the admin API `onError` handler.
  *
- * @param onUnhandled - Invoked for errors that are neither HTTP exceptions nor
- *   body parse failures, i.e. the ones worth logging.
+ * @param onUnhandled - Invoked for errors that are not HTTP exceptions, i.e.
+ *   the ones worth logging.
  */
-// biome-ignore lint/suspicious/noExplicitAny: the handler is shared across differently-typed apps
 export function createErrorHandler(
   onUnhandled?: (error: Error) => void,
-): ErrorHandler<any> {
+): ErrorHandler {
   return (err, c) => {
     if (err instanceof HTTPException) {
       if (err.status === 400 && err.message === MALFORMED_JSON_MESSAGE) {
         return c.json({ error: err.message, code: 'malformed_json' }, 400);
       }
       return c.json({ error: err.message, code: 'http_error' }, err.status);
-    }
-    if (err instanceof SyntaxError) {
-      return c.json(
-        { error: MALFORMED_JSON_MESSAGE, code: 'malformed_json' },
-        400,
-      );
     }
     onUnhandled?.(err);
     return c.json(

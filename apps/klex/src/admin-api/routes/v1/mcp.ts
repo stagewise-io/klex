@@ -80,6 +80,12 @@ export const getMcpServerRoute = createRoute({
       },
       description: 'MCP server not found',
     },
+    500: {
+      content: {
+        'application/json': { schema: errorResponseSchema },
+      },
+      description: 'Internal server error',
+    },
   },
 });
 

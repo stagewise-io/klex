@@ -420,6 +420,35 @@ describe('MCP namespace isolation', () => {
     await mcp.close();
   });
 
+  it('clears stale diagnostics when a retry requires authorization', async () => {
+    vi.useFakeTimers();
+    let attempts = 0;
+    const { mcp } = setup(
+      { protected: { url: 'https://protected.example/mcp' } },
+      async () => {
+        attempts += 1;
+        if (attempts === 1) throw new Error('offline');
+        throw new McpAuthorizationRequiredError(new Error('unauthorized'));
+      },
+    );
+
+    await mcp.start();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(serverRow(mcp, 'protected')).toMatchObject({
+      status: 'error',
+      lastError: { message: 'offline' },
+      nextRetryAt: expect.any(String),
+    });
+
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(serverRow(mcp, 'protected')).toMatchObject({
+      status: 'authorization_required',
+      lastError: null,
+      nextRetryAt: null,
+    });
+    await mcp.close();
+  });
+
   it('connects an added namespace while an earlier attempt remains pending', async () => {
     const pending = deferred<McpConnection>();
     const connect = vi.fn(async ({ namespace }: ConnectMcpServerOptions) =>
@@ -661,6 +690,15 @@ describe('MCP namespace isolation', () => {
       available: false,
     });
     expect(connectionWithRealtime.close).toHaveBeenCalledOnce();
+    expect(serverRow(mcp, 'voice')).toMatchObject({
+      status: 'error',
+      lastError: {
+        name: 'Error',
+        message: 'Realtime Media subscription closed',
+        at: expect.any(String),
+      },
+      nextRetryAt: expect.any(String),
+    });
     await mcp.close();
   });
 
@@ -911,13 +949,18 @@ describe('MCP cloud authorization requests', () => {
       outcome: 'pending',
       authorization: { serverName: 'protected', state: 'secret' },
     });
+    if (result.outcome !== 'pending') throw new Error('Expected authorization');
     expect(authorizationOf(mcp, 'protected')).toMatchObject({
       id: expect.any(String),
     });
 
     // A second request is idempotent while the first is still live.
-    expect(await mcp.requestAuthorization('protected')).toMatchObject({
-      outcome: 'pending',
+    const repeated = await mcp.requestAuthorization('protected');
+    expect(repeated).toEqual(result);
+    expect(authorizationOf(mcp, 'protected')).toEqual({
+      id: result.authorization.id,
+      createdAt: result.authorization.createdAt,
+      expiresAt: result.authorization.expiresAt,
     });
 
     expect(

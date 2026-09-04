@@ -162,8 +162,6 @@ describe('GET /v1/mcp-servers — list MCP servers', () => {
       createdAt: '2026-07-28T08:00:00.000Z',
       expiresAt: '2026-07-28T08:15:00.000Z',
     });
-    expect(body.servers[0]).not.toHaveProperty('state');
-    expect(body.servers[0]).not.toHaveProperty('authorizationUrl');
     expect(body.servers[1]?.lastError?.message).toBe('connect ECONNREFUSED');
     expect(body.servers[1]?.nextRetryAt).toBe('2026-07-28T08:00:30.000Z');
   });

@@ -144,9 +144,9 @@ unauthenticated by necessity — the cloud proxy strips `authorization` and
 `state` (32 random bytes from the SDK provider), compared timing-safely, usable
 exactly once, and expiring with the entry. PKCE verifiers, client secrets, and
 tokens never leave the agent. `state` and the authorization URL are returned
-exactly once, by the `PUT`, to the caller that asked; they appear in no pollable
-response and in no log line, because `state` is the capability that authorizes a
-callback and the authorization URL embeds it.
+only by the idempotent `PUT`, to the caller that asked; they appear in no
+pollable response and in no log line, because `state` is the capability that
+authorizes a callback and the authorization URL embeds it.
 
 `CLOUD_OAUTH_CALLBACK_PATH` (`/v1/mcp-oauth/callback`) is a compatibility
 contract with the cloud: it is baked into dynamic client registrations, so

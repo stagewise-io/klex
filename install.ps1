@@ -228,12 +228,22 @@ function Assert-Checksum {
 	Write-Info 'checksum verified'
 }
 
+function Get-ReparsePointItem {
+	param([Parameter(Mandatory = $true)][string] $Path)
+
+	# Not Test-Path: it resolves the target, so a junction whose target has been
+	# deleted is reported as nonexistent even though the reparse point still
+	# occupies the name and still blocks New-Item. Get-Item -Force sees the link
+	# itself.
+	return (Get-Item -LiteralPath $Path -Force -ErrorAction SilentlyContinue)
+}
+
 function Remove-DirectoryLink {
 	param([Parameter(Mandatory = $true)][string] $Path)
 
-	if (-not (Test-Path -LiteralPath $Path)) { return }
+	$item = Get-ReparsePointItem -Path $Path
+	if (-not $item) { return }
 
-	$item = Get-Item -LiteralPath $Path -Force
 	$isLink = ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -eq [IO.FileAttributes]::ReparsePoint
 	if (-not $isLink) {
 		Stop-WithError "$Path exists and is not a junction; remove it and retry"
@@ -242,8 +252,39 @@ function Remove-DirectoryLink {
 	# Remove-Item -Recurse on a junction has deleted target contents on older
 	# PowerShell versions. rmdir on the reparse point only removes the link.
 	& cmd.exe /c "rmdir `"$Path`"" | Out-Null
-	if (Test-Path -LiteralPath $Path) {
+	if (Get-ReparsePointItem -Path $Path) {
 		Stop-WithError "could not remove the existing junction at $Path"
+	}
+}
+
+function Get-DirectoryLinkTarget {
+	param([Parameter(Mandatory = $true)][string] $Path)
+
+	$item = Get-ReparsePointItem -Path $Path
+	if (-not $item) { return $null }
+
+	$target = $item.Target
+	if (-not $target) { return $null }
+	# PowerShell 5.1 exposes Target as a collection for reparse points.
+	if ($target -is [Array]) {
+		if ($target.Count -eq 0) { return $null }
+		return [string] $target[0]
+	}
+	return [string] $target
+}
+
+function Get-ComparablePath {
+	param([string] $Path)
+
+	# Junction targets come back in whatever form the filesystem stored them, so
+	# raw string equality against a path this script built is unreliable. Compare
+	# normalized, separator-trimmed forms instead; a false 'different' verdict here
+	# would delete a directory that is still published.
+	if (-not $Path) { return $null }
+	try {
+		return ([IO.Path]::GetFullPath($Path)).TrimEnd('\', '/')
+	} catch {
+		return $Path.TrimEnd('\', '/')
 	}
 }
 
@@ -321,30 +362,38 @@ function Set-CurrentLink {
 	return $binDir
 }
 
-function Assert-Installation {
+function Test-Installation {
 	param(
-		[Parameter(Mandatory = $true)][string] $Root,
+		[Parameter(Mandatory = $true)][string] $Exe,
 		[Parameter(Mandatory = $true)][string] $ExpectedVersion
 	)
 
+	# Returns $false instead of throwing so the caller can roll back a junction it
+	# has already published.
+	#
 	# A SEA resolves its native addons relative to the realpath of the running
-	# executable, so this also proves the junction chain works.
-	$exe = Join-Path $Root 'current\klex.exe'
+	# executable, so running it through the junction also proves that chain.
+	if (-not (Test-Path -LiteralPath $Exe)) {
+		Write-Warn "no executable at $Exe"
+		return $false
+	}
 
-	$reported = (& $exe --version 2>$null | Select-Object -First 1)
+	$reported = (& $Exe --version 2>$null | Select-Object -First 1)
 	if ($reported) { $reported = $reported.Trim() }
 	if ($reported -ne $ExpectedVersion) {
-		Stop-WithError "installed klex reports version '$reported', expected '$ExpectedVersion'"
+		Write-Warn "klex reports version '$reported', expected '$ExpectedVersion'"
+		return $false
 	}
 
 	# Existence checks cannot prove a native addon loads; --verify-native
 	# force-loads every one of them inside the real SEA process.
-	$output = (& $exe --verify-native 2>&1)
+	$output = (& $Exe --verify-native 2>&1)
 	if ($LASTEXITCODE -ne 0) {
 		$output | Out-String | Write-Host
-		Stop-WithError 'native dependency verification failed; this build cannot run on this machine'
+		Write-Warn 'native dependency verification failed; this build cannot run on this machine'
+		return $false
 	}
-	Write-Info 'native dependencies verified'
+	return $true
 }
 
 # --------------------------------------------------------------------- receipt
@@ -404,12 +453,20 @@ function Test-PathEntry {
 function Add-BinDirToPath {
 	param([Parameter(Mandatory = $true)][string] $BinDir)
 
+	$entries = Get-UserPathEntries
+
 	if ($NoModifyPath) {
+		# An entry left by an earlier run is still ours, and the receipt has to keep
+		# claiming it even when this run may not write. Otherwise -Uninstall leaves it
+		# behind pointing at a deleted directory.
+		if (Test-PathEntry -Entry $BinDir -Entries $entries) {
+			Write-Info "skipping PATH setup; $BinDir is already on the user PATH"
+			return $true
+		}
 		Write-Info "skipping PATH setup; add $BinDir to PATH yourself"
 		return $false
 	}
 
-	$entries = Get-UserPathEntries
 	if (Test-PathEntry -Entry $BinDir -Entries $entries) {
 		# Still reported as ours: the entry points inside the install root, so an
 		# earlier run of this installer put it there. Returning $false would write a
@@ -536,8 +593,38 @@ function Invoke-Install {
 
 		New-Item -ItemType Directory -Path $root -Force | Out-Null
 		$versionDir = Expand-Artifact -ArchivePath $archivePath -VersionsDir (Join-Path $root 'versions') -ArtifactVersion $manifest.version
+
+		$current = Join-Path $root 'current'
+		$previousTarget = Get-DirectoryLinkTarget -Path $current
+
+		# Verify before publishing. A release that cannot run must never become the
+		# active one, and current still points at the previous version here.
+		if (-not (Test-Installation -Exe (Join-Path $versionDir 'klex.exe') -ExpectedVersion $manifest.version)) {
+			# Keep the directory if it is already the published one (same-version
+			# reinstall): deleting it would break the installation this run failed to
+			# replace.
+			if ((Get-ComparablePath $previousTarget) -ine (Get-ComparablePath $versionDir)) {
+				Remove-Item -LiteralPath $versionDir -Recurse -Force -ErrorAction SilentlyContinue
+			}
+			Stop-WithError 'the downloaded release does not run on this machine; the existing installation was left in place'
+		}
+
 		$binDir = Set-CurrentLink -Root $root -VersionDir $versionDir
-		Assert-Installation -Root $root -ExpectedVersion $manifest.version
+
+		# Again through current\klex.exe: only this proves the junction resolves. A
+		# failure here has to be rolled back.
+		if (-not (Test-Installation -Exe (Join-Path $current 'klex.exe') -ExpectedVersion $manifest.version)) {
+			if ($previousTarget) {
+				Remove-DirectoryLink -Path $current
+				New-Item -ItemType Junction -Path $current -Target $previousTarget | Out-Null
+				Write-Warn "rolled back: current -> $previousTarget"
+			} else {
+				Remove-DirectoryLink -Path $current
+			}
+			Stop-WithError 'klex does not run through the installed junction; the previous version was restored'
+		}
+		Write-Info 'native dependencies verified'
+
 		$pathModified = Add-BinDirToPath -BinDir $binDir
 
 		$receiptChannel = if ($manifest.PSObject.Properties['channel'] -and $manifest.channel) { $manifest.channel } else { $resolvedChannel }

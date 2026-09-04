@@ -13,13 +13,15 @@
 # Runs on macOS and Linux. Every check is reported; the script exits non-zero if
 # any of them failed.
 #
-# Two shellcheck rules are disabled for the whole file, because both patterns are
-# the harness idiom rather than accidents:
+# Three shellcheck rules are disabled for the whole file, because these patterns
+# are harness idioms rather than accidents:
 #   SC2319 -- every assertion is a `[ ... ]` or `grep` on one line whose status is
 #             consumed by `check` on the very next line. Nothing can overwrite it.
 #   SC2251 -- `! grep ...` assertions are intentional. errexit is switched off
 #             before the first check, so they must not abort the run.
-# shellcheck disable=SC2319,SC2251
+#   SC2016 -- two grep needles intentionally match literal PowerShell and shell
+#             variable references in the installer source.
+# shellcheck disable=SC2319,SC2251,SC2016
 set -eu
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -483,6 +485,23 @@ run_installer_with_env 'KLEX_CHANNEL=bogus' --uninstall >"$LAB/env5.log" 2>&1
 check 'uninstall ignores an invalid KLEX_CHANNEL' "$?"
 [ ! -d "$ROOT" ]
 check 'the install root is gone' "$?"
+
+printf '\n== 17. manifest URL contract is channel-specific ==\n'
+grep -qF 'releases/download/channel-stable/release-manifest.json' "$REPO_ROOT/install.sh"
+check 'Unix stable resolves channel-stable' "$?"
+grep -qF 'releases/download/channel-nightly/release-manifest.json' "$REPO_ROOT/install.sh"
+check 'Unix nightly resolves channel-nightly' "$?"
+grep -qF 'releases/download/v$opt_version/release-manifest.json' "$REPO_ROOT/install.sh"
+check 'Unix exact version resolves its immutable tag' "$?"
+grep -qF 'releases/download/channel-stable/release-manifest.json' "$REPO_ROOT/install.ps1"
+check 'PowerShell stable resolves channel-stable' "$?"
+grep -qF 'releases/download/channel-nightly/release-manifest.json' "$REPO_ROOT/install.ps1"
+check 'PowerShell nightly resolves channel-nightly' "$?"
+grep -qF 'releases/download/v$pinned/release-manifest.json' "$REPO_ROOT/install.ps1"
+check 'PowerShell exact version resolves its immutable tag' "$?"
+# Every behavioral case above injects KLEX_MANIFEST_URL while also passing
+# ordinary flags. Their successful offline installs prove that the explicit
+# manifest wins over channel/version/default URL construction.
 
 printf '\n'
 if [ "$fails" -eq 0 ]; then

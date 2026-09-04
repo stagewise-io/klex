@@ -1,0 +1,80 @@
+name: Prepare Klex Release
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: prepare-klex-release
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out main with release credentials
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          ref: main
+          token: ${{ secrets.RELEASE_PAT }}
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v5
+        with:
+          version: 10.30.3
+
+      - name: Install Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22.12.0
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Prepare version and changelog
+        id: release
+        run: pnpm --filter @stagewise/klex release:prepare -- --repo-root "$GITHUB_WORKSPACE" --github-output "$GITHUB_OUTPUT"
+
+      - name: Create release branch and commit
+        env:
+          BRANCH: release/klex-${{ steps.release.outputs.tag }}
+          VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git switch -C "$BRANCH"
+          git add -- apps/klex/package.json apps/klex/CHANGELOG.md
+          git add -A -- .release-notes/klex.md
+          git diff --cached --check
+          git commit -m "chore(klex): release $VERSION"
+          git push --force-with-lease origin "$BRANCH"
+
+      - name: Open release pull request
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_PAT }}
+          BRANCH: release/klex-${{ steps.release.outputs.tag }}
+          VERSION: ${{ steps.release.outputs.version }}
+          TAG: ${{ steps.release.outputs.tag }}
+          BUMP: ${{ steps.release.outputs.bump }}
+          NOTES: ${{ steps.release.outputs.notes }}
+        run: |
+          set -euo pipefail
+          body_file=$(mktemp)
+          {
+            printf '## Klex %s\n\n' "$VERSION"
+            printf -- '- Inferred bump: `%s`\n' "$BUMP"
+            printf -- '- Release tag: `%s`\n\n' "$TAG"
+            printf '## Release notes\n\n%s\n' "$NOTES"
+          } > "$body_file"
+          existing=$(gh pr list --head "$BRANCH" --base main --state open --json number --jq '.[0].number // empty')
+          if [ -n "$existing" ]; then
+            gh pr edit "$existing" --title "chore(klex): release $VERSION" --body-file "$body_file" --add-label release
+          else
+            gh pr create --base main --head "$BRANCH" --title "chore(klex): release $VERSION" --body-file "$body_file" --label release
+          fi

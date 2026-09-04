@@ -19,9 +19,10 @@ Windows (PowerShell):
 irm https://raw.githubusercontent.com/stagewise-io/klex/main/install.ps1 | iex
 ```
 
-The installer reads the release manifest, verifies the archive's SHA-256, and
-installs into a versioned directory behind a `current` link, so upgrades never
-overwrite a running install. It then runs `klex --verify-native` to prove the
+The default installer resolves the dedicated `channel-stable` manifest; nightly
+and exact-version installs use their own release URLs. It verifies the archive's
+SHA-256 and installs into a versioned directory behind a `current` link, so
+upgrades never overwrite a running install. It then runs `klex --verify-native` to prove the
 native runtime dependencies actually load on your machine. It never uses `sudo`
 and writes nothing outside your home directory.
 

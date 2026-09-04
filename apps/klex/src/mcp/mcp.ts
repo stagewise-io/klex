@@ -35,10 +35,17 @@ import {
   McpAuthorizationRequiredError,
   type McpConnection,
   type McpConnectionFactory,
+  shouldUseAutomaticOAuth,
 } from './connection';
 import type { OAuthAuthorizationSessionFactory } from './oauth/callback';
+import { createCloudOAuthAuthorizationSessionFactory } from './oauth/cloud-callback';
 import { LocalOAuthAuthorizationCoordinator } from './oauth/coordinator';
 import { LocalOAuthCallbackReceiver } from './oauth/local-callback';
+import {
+  McpPendingAuthorizationRegistry,
+  type PendingAuthorization,
+  type PendingAuthorizationInfo,
+} from './oauth/pending-authorizations';
 import { LocalBrowserOAuthPresenter } from './oauth/presenter';
 import { McpOAuthStore } from './oauth/store';
 import {
@@ -51,6 +58,11 @@ import {
 const RETRY_INITIAL_MS = 1_000;
 const RETRY_MAX_MS = 30_000;
 const EVENT_PAGE_SIZE = 100;
+/**
+ * How long `requestAuthorization` waits for a connection attempt to reach the
+ * authorization step and publish a pending entry.
+ */
+const AUTHORIZATION_MATERIALIZE_TIMEOUT_MS = 15_000;
 
 export interface McpPushNotification {
   namespace: string;
@@ -158,7 +170,37 @@ export interface Mcp extends ToolProvider {
   getServerStatuses(): McpServerInfo[];
   /** Returns the recorded history of tool calls to MCP servers. */
   getToolCallHistory(): McpToolCallRecord[];
+
+  /**
+   * Authorization requests currently waiting for a cloud-delivered callback.
+   * Never includes authorization URLs or the OAuth `state`.
+   */
+  listPendingAuthorizations(): PendingAuthorizationInfo[];
+  /**
+   * Produces an authorization request for a configured MCP server, re-driving a
+   * connection attempt when no request is pending. Idempotent while a request
+   * for the same server is live.
+   */
+  requestAuthorization(serverName: string): Promise<RequestAuthorizationResult>;
+  /** Delivers OAuth callback parameters for a pending authorization. */
+  completeAuthorization(
+    state: string,
+    params: URLSearchParams,
+  ): 'accepted' | 'unknown';
+  /** Cancels a pending authorization. Returns false if it is unknown. */
+  cancelAuthorization(id: string): boolean;
 }
+
+export type RequestAuthorizationResult =
+  | { outcome: 'pending'; authorization: PendingAuthorization }
+  /** No such MCP server is configured. */
+  | { outcome: 'not_found' }
+  /** The server does not use interactive OAuth, or is already connected. */
+  | { outcome: 'not_applicable'; reason: string }
+  /** The cloud authorization channel is not usable right now. */
+  | { outcome: 'unavailable' }
+  /** The connection attempt did not reach the authorization step in time. */
+  | { outcome: 'timeout' };
 
 export interface McpDependencies {
   logging: RootLogger;
@@ -167,6 +209,11 @@ export interface McpDependencies {
   dataDirectory: string;
   connect?: McpConnectionFactory;
   cloudConnectivity?: CloudConnectivity;
+  /**
+   * Injection seam for tests that replace `connect`: a supplied registry lets a
+   * fake connection factory park authorizations the way the real one does.
+   */
+  pendingAuthorizations?: McpPendingAuthorizationRegistry;
 }
 
 interface PushNotificationWorker {
@@ -223,6 +270,7 @@ class McpModule implements Mcp {
       realtimeMediaCapability: RealtimeMediaExtensionCapability | undefined;
       connect: McpConnectionFactory;
       cloudConnectivity: CloudConnectivity | undefined;
+      pendingAuthorizations: McpPendingAuthorizationRegistry;
       closeOAuth: () => Promise<void>;
     },
   ) {}
@@ -988,12 +1036,94 @@ class McpModule implements Mcp {
     return [...this.toolCallHistory];
   }
 
+  listPendingAuthorizations(): PendingAuthorizationInfo[] {
+    return this.deps.pendingAuthorizations.list();
+  }
+
+  async requestAuthorization(
+    serverName: string,
+  ): Promise<RequestAuthorizationResult> {
+    const config = this.deps.config.getMcpServers()[serverName];
+    if (!config) return { outcome: 'not_found' };
+    if ('command' in config) {
+      return {
+        outcome: 'not_applicable',
+        reason: 'stdio MCP servers do not use OAuth',
+      };
+    }
+    if (!shouldUseAutomaticOAuth(config)) {
+      return {
+        outcome: 'not_applicable',
+        reason: 'server is configured with an explicit Authorization header',
+      };
+    }
+    if (!isCloudAuthorizationAvailable(this.deps.cloudConnectivity)) {
+      return { outcome: 'unavailable' };
+    }
+
+    // Repeat clicks in the cloud UI must not restart the flow: an in-flight
+    // request already carries the authorization URL the user needs.
+    const existing = this.deps.pendingAuthorizations.findByServer(serverName);
+    if (existing) return { outcome: 'pending', authorization: existing };
+
+    let runtime = this.servers.get(serverName);
+    if (!runtime) {
+      this.scheduleReconcile(this.deps.config.getMcpServers());
+      runtime = this.servers.get(serverName);
+      if (!runtime) return { outcome: 'timeout' };
+    }
+    if (runtime.connection) {
+      return {
+        outcome: 'not_applicable',
+        reason: 'server is already connected',
+      };
+    }
+
+    this.clearRetry(runtime);
+    runtime.attempt?.controller.abort();
+    runtime.attempt = undefined;
+    this.connectRuntime(runtime);
+
+    const authorization = await this.deps.pendingAuthorizations.waitForServer(
+      serverName,
+      AUTHORIZATION_MATERIALIZE_TIMEOUT_MS,
+    );
+    if (!authorization) return { outcome: 'timeout' };
+    return { outcome: 'pending', authorization };
+  }
+
+  completeAuthorization(
+    state: string,
+    params: URLSearchParams,
+  ): 'accepted' | 'unknown' {
+    return this.deps.pendingAuthorizations.complete(state, params);
+  }
+
+  cancelAuthorization(id: string): boolean {
+    return this.deps.pendingAuthorizations.cancel(id);
+  }
+
   private addToolCallRecord(record: McpToolCallRecord): void {
     this.toolCallHistory.unshift(record);
     if (this.toolCallHistory.length > McpModule.MAX_TOOL_CALL_HISTORY) {
       this.toolCallHistory.length = McpModule.MAX_TOOL_CALL_HISTORY;
     }
   }
+}
+
+/**
+ * The cloud channel is usable only while the agent is enrolled and the tunnel
+ * is up — the cloud has no other way to deliver callback parameters. Evaluated
+ * per connection attempt so a tunnel drop falls back to the local browser flow.
+ */
+export function isCloudAuthorizationAvailable(
+  cloudConnectivity: CloudConnectivity | undefined,
+): boolean {
+  return Boolean(
+    cloudConnectivity?.isCloudEnabled() &&
+      cloudConnectivity.isEnrolled() &&
+      cloudConnectivity.getTunnelState() === 'connected',
+  );
 }
 
 export function createMcp(deps: McpDependencies): Mcp {
@@ -1004,7 +1134,9 @@ export function createMcp(deps: McpDependencies): Mcp {
   const store = new McpOAuthStore(
     join(deps.dataDirectory, 'credentials', 'mcp-oauth.json'),
   );
-  const sessionFactory: OAuthAuthorizationSessionFactory = {
+  const localSessionFactory: OAuthAuthorizationSessionFactory = {
+    // The local receiver is per-authorization: it binds an ephemeral loopback
+    // port, so the server context is irrelevant here.
     start: async () => {
       const receiver = await LocalOAuthCallbackReceiver.start();
       return {
@@ -1013,6 +1145,23 @@ export function createMcp(deps: McpDependencies): Mcp {
         close: () => receiver.close(),
       };
     },
+  };
+  const pendingAuthorizations =
+    deps.pendingAuthorizations ?? new McpPendingAuthorizationRegistry();
+  const cloudSessionFactory = createCloudOAuthAuthorizationSessionFactory({
+    registry: pendingAuthorizations,
+    getCloudBaseUrl: () => {
+      const cloudConnectivity = deps.cloudConnectivity;
+      if (!cloudConnectivity)
+        throw new Error('Cloud connectivity is not configured');
+      return cloudConnectivity.getCloudBaseUrl();
+    },
+  });
+  const sessionFactory: OAuthAuthorizationSessionFactory = {
+    start: (context) =>
+      isCloudAuthorizationAvailable(deps.cloudConnectivity)
+        ? cloudSessionFactory.start(context)
+        : localSessionFactory.start(context),
   };
   const connect: McpConnectionFactory = deps.connect
     ? deps.connect
@@ -1031,7 +1180,11 @@ export function createMcp(deps: McpDependencies): Mcp {
     realtimeMediaCapability: deps.realtimeMediaCapability,
     connect,
     cloudConnectivity: deps.cloudConnectivity,
-    closeOAuth: () => coordinator.close(),
+    pendingAuthorizations,
+    closeOAuth: async () => {
+      pendingAuthorizations.closeAll();
+      await coordinator.close();
+    },
   });
 }
 

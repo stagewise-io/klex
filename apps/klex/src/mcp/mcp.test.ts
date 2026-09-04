@@ -24,6 +24,7 @@ import {
   type McpConnectionFactory,
 } from './connection';
 import { createMcp } from './mcp';
+import { McpPendingAuthorizationRegistry } from './oauth/pending-authorizations';
 
 const logging = {
   child: () => ({
@@ -735,6 +736,178 @@ describe('MCP cloud auth (discovery-driven)', () => {
 
     await mcp.start();
     await waitForNamespace(mcp, 'local-mcp');
+    await mcp.close();
+  });
+});
+
+const cloudReady: Partial<CloudConnectivity> = {
+  isCloudEnabled: () => true,
+  isEnrolled: () => true,
+  getTunnelState: () => 'connected',
+  getCloudBaseUrl: () => 'https://cloud.example.com',
+};
+
+function setupAuthorization(
+  servers: Record<string, McpServerConfig>,
+  connect: McpConnectionFactory,
+  cloudConnectivity: Partial<CloudConnectivity> = cloudReady,
+) {
+  const config = createConfigHarness(servers);
+  const pendingAuthorizations = new McpPendingAuthorizationRegistry();
+  return {
+    config,
+    pendingAuthorizations,
+    mcp: createMcp({
+      logging,
+      config: config.config,
+      dataDirectory: join(tmpdir(), 'klex-mcp-test'),
+      connect,
+      cloudConnectivity: cloudConnectivity as CloudConnectivity,
+      pendingAuthorizations,
+    }),
+  };
+}
+
+describe('MCP cloud authorization requests', () => {
+  it('reports unknown servers and servers that do not use interactive OAuth', async () => {
+    const { mcp } = setupAuthorization(
+      {
+        local: { command: 'node', args: ['server.js'] },
+        keyed: {
+          url: 'https://keyed.example/mcp',
+          headers: { Authorization: 'Bearer static' },
+        },
+      },
+      async ({ namespace }: ConnectMcpServerOptions) => connection(namespace),
+    );
+
+    await mcp.start();
+    expect(await mcp.requestAuthorization('missing')).toEqual({
+      outcome: 'not_found',
+    });
+    expect(await mcp.requestAuthorization('local')).toMatchObject({
+      outcome: 'not_applicable',
+    });
+    expect(await mcp.requestAuthorization('keyed')).toMatchObject({
+      outcome: 'not_applicable',
+    });
+    await mcp.close();
+  });
+
+  it('reports the cloud channel as unavailable while the tunnel is down', async () => {
+    const { mcp } = setupAuthorization(
+      { protected: { url: 'https://protected.example/mcp' } },
+      async () => {
+        throw new McpAuthorizationRequiredError(new Error('unauthorized'));
+      },
+      { ...cloudReady, getTunnelState: () => 'disconnected' },
+    );
+
+    await mcp.start();
+    expect(await mcp.requestAuthorization('protected')).toEqual({
+      outcome: 'unavailable',
+    });
+    await mcp.close();
+  });
+
+  it('re-drives a connection attempt and returns the parked authorization', async () => {
+    let parked = false;
+    const { mcp, pendingAuthorizations } = setupAuthorization(
+      { protected: { url: 'https://protected.example/mcp' } },
+      async ({ namespace, signal }: ConnectMcpServerOptions) => {
+        // First attempt fails outright; later attempts park an authorization the
+        // way the cloud session factory does.
+        if (!parked) {
+          parked = true;
+          throw new McpAuthorizationRequiredError(new Error('unauthorized'));
+        }
+        await pendingAuthorizations.register(
+          {
+            serverName: namespace,
+            serverUrl: 'https://protected.example/mcp',
+            authorizationUrl: 'https://auth.example/authorize?state=secret',
+            state: 'secret',
+          },
+          { signal, timeoutMs: 60_000 },
+        );
+        return connection(namespace);
+      },
+    );
+
+    await mcp.start();
+    await vi.waitFor(() =>
+      expect(mcp.getServerStatuses()).toContainEqual(
+        expect.objectContaining({
+          name: 'protected',
+          status: 'authorization_required',
+        }),
+      ),
+    );
+
+    const result = await mcp.requestAuthorization('protected');
+    expect(result).toMatchObject({
+      outcome: 'pending',
+      authorization: { serverName: 'protected', state: 'secret' },
+    });
+    expect(mcp.listPendingAuthorizations()).toHaveLength(1);
+
+    // A second request is idempotent while the first is still live.
+    expect(await mcp.requestAuthorization('protected')).toMatchObject({
+      outcome: 'pending',
+    });
+
+    expect(
+      mcp.completeAuthorization(
+        'secret',
+        new URLSearchParams({ code: 'auth-code' }),
+      ),
+    ).toBe('accepted');
+    await waitForNamespace(mcp, 'protected');
+    await mcp.close();
+  });
+
+  it('times out when the attempt never reaches the authorization step', async () => {
+    vi.useFakeTimers();
+    const { mcp } = setupAuthorization(
+      { protected: { url: 'https://protected.example/mcp' } },
+      async () => {
+        throw new McpAuthorizationRequiredError(new Error('unauthorized'));
+      },
+    );
+
+    await mcp.start();
+    await vi.advanceTimersByTimeAsync(0);
+    const result = mcp.requestAuthorization('protected');
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect(await result).toEqual({ outcome: 'timeout' });
+    await mcp.close();
+  });
+
+  it('cancels a pending authorization', async () => {
+    const { mcp, pendingAuthorizations } = setupAuthorization(
+      { protected: { url: 'https://protected.example/mcp' } },
+      async ({ namespace, signal }: ConnectMcpServerOptions) => {
+        await pendingAuthorizations.register(
+          {
+            serverName: namespace,
+            serverUrl: 'https://protected.example/mcp',
+            authorizationUrl: 'https://auth.example/authorize?state=secret',
+            state: 'secret',
+          },
+          { signal, timeoutMs: 60_000 },
+        );
+        return connection(namespace);
+      },
+    );
+
+    await mcp.start();
+    await vi.waitFor(() =>
+      expect(mcp.listPendingAuthorizations()).toHaveLength(1),
+    );
+    const [pending] = mcp.listPendingAuthorizations();
+    expect(mcp.cancelAuthorization(pending?.id ?? '')).toBe(true);
+    expect(mcp.cancelAuthorization('unknown')).toBe(false);
+    expect(mcp.listPendingAuthorizations()).toHaveLength(0);
     await mcp.close();
   });
 });

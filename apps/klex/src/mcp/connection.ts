@@ -282,7 +282,10 @@ async function createOAuthTransportOptions(
     return undefined;
   }
 
-  const session = await options.oauth.sessionFactory.start();
+  const session = await options.oauth.sessionFactory.start({
+    serverName: options.namespace,
+    serverUrl: options.config.url,
+  });
   let callback: Promise<URLSearchParams> | undefined;
   const provider = new McpOAuthProvider({
     onAuthorizationRedirect: (authorizationUrl) => {

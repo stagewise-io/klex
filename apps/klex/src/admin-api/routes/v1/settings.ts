@@ -101,10 +101,13 @@ export function patchAgentIdentity(
       return c.json({ officialName: config.officialName }, 200);
     } catch (error) {
       if (error instanceof ConfigValidationError) {
-        return c.json({ error: error.message }, 400);
+        return c.json({ error: error.message, code: 'invalid_request' }, 400);
       }
       deps.logger.error({ error }, 'Agent identity update failed');
-      return c.json({ error: 'Failed to update agent identity' }, 500);
+      return c.json(
+        { error: 'Failed to update agent identity', code: 'internal_error' },
+        500,
+      );
     }
   };
 }

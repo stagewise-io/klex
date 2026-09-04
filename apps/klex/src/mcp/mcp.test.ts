@@ -23,7 +23,7 @@ import {
   type McpConnection,
   type McpConnectionFactory,
 } from './connection';
-import { createMcp, type Mcp } from './mcp';
+import { createMcp, type Mcp, shouldUseCloudAuthorization } from './mcp';
 import { McpPendingAuthorizationRegistry } from './oauth/pending-authorizations';
 
 const logging = {
@@ -837,6 +837,27 @@ const cloudReady: Partial<CloudConnectivity> = {
   getCloudBaseUrl: () => 'https://cloud.example.com',
 };
 
+describe('MCP OAuth channel selection', () => {
+  it('keeps enrolled agents on cloud OAuth while the tunnel is disconnected', () => {
+    expect(
+      shouldUseCloudAuthorization({
+        ...cloudReady,
+        getTunnelState: () => 'disconnected',
+      } as CloudConnectivity),
+    ).toBe(true);
+  });
+
+  it('uses local OAuth for agents that are not cloud-managed', () => {
+    expect(
+      shouldUseCloudAuthorization({
+        ...cloudReady,
+        isEnrolled: () => false,
+      } as CloudConnectivity),
+    ).toBe(false);
+    expect(shouldUseCloudAuthorization(undefined)).toBe(false);
+  });
+});
+
 function setupAuthorization(
   servers: Record<string, McpServerConfig>,
   connect: McpConnectionFactory,
@@ -906,6 +927,35 @@ describe('MCP cloud authorization requests', () => {
     await mcp.start();
     expect(await mcp.requestAuthorization('protected')).toEqual({
       outcome: 'unavailable',
+    });
+    await mcp.close();
+  });
+
+  it('returns a parked authorization after the tunnel disconnects', async () => {
+    const { mcp, pendingAuthorizations } = setupAuthorization(
+      { protected: { url: 'https://protected.example/mcp' } },
+      async ({ namespace, signal }: ConnectMcpServerOptions) => {
+        await pendingAuthorizations.register(
+          {
+            serverName: namespace,
+            serverUrl: 'https://protected.example/mcp',
+            authorizationUrl: 'https://auth.example/authorize?state=secret',
+            state: 'secret',
+          },
+          { signal, timeoutMs: 60_000 },
+        );
+        return connection(namespace);
+      },
+      { ...cloudReady, getTunnelState: () => 'disconnected' },
+    );
+
+    await mcp.start();
+    await vi.waitFor(() =>
+      expect(authorizationOf(mcp, 'protected')).not.toBeNull(),
+    );
+    expect(await mcp.requestAuthorization('protected')).toMatchObject({
+      outcome: 'pending',
+      authorization: { serverName: 'protected', state: 'secret' },
     });
     await mcp.close();
   });

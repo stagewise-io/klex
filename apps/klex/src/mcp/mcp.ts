@@ -1174,9 +1174,23 @@ class McpModule implements Mcp {
 }
 
 /**
- * The cloud channel is usable only while the agent is enrolled and the tunnel
- * is up — the cloud has no other way to deliver callback parameters. Evaluated
- * per connection attempt so a tunnel drop falls back to the local browser flow.
+ * Cloud-managed agents must keep OAuth on the cloud channel even while the
+ * tunnel is connecting or temporarily unavailable. Choosing the local channel
+ * from transient tunnel state can open a browser on the agent host and creates
+ * a loopback callback that a remote user cannot complete.
+ */
+export function shouldUseCloudAuthorization(
+  cloudConnectivity: CloudConnectivity | undefined,
+): boolean {
+  return Boolean(
+    cloudConnectivity?.isCloudEnabled() && cloudConnectivity.isEnrolled(),
+  );
+}
+
+/**
+ * A dashboard request can start authorization only while the callback delivery
+ * channel is usable. Existing pending authorizations are returned before this
+ * check so they survive a tunnel interruption.
  */
 export function isCloudAuthorizationAvailable(
   cloudConnectivity: CloudConnectivity | undefined,
@@ -1221,7 +1235,7 @@ export function createMcp(deps: McpDependencies): Mcp {
   });
   const sessionFactory: OAuthAuthorizationSessionFactory = {
     start: (context) =>
-      isCloudAuthorizationAvailable(deps.cloudConnectivity)
+      shouldUseCloudAuthorization(deps.cloudConnectivity)
         ? cloudSessionFactory.start(context)
         : localSessionFactory.start(context),
   };

@@ -31,16 +31,16 @@ Linux (Alpine) is not supported and is detected rather than half-installed.
 
 ### Options
 
-| Option | Meaning |
-|---|---|
-| `--version <x.y.z>` | Install an exact version instead of the newest release |
-| `--install-dir <path>`, `KLEX_INSTALL_DIR` | Install root. Default: `${XDG_DATA_HOME:-~/.local/share}/klex`, or `%LOCALAPPDATA%\Klex` |
-| `--no-modify-path` | Leave shell startup files and the user `PATH` untouched |
-| `--uninstall` | Remove the installation |
-| `KLEX_HOME` | Agent data root. Default: `~/.klex` |
+| macOS and Linux | Windows | Meaning |
+|---|---|---|
+| `--version <x.y.z>` | `-Version <x.y.z>` | Install an exact version instead of the newest release |
+| `--install-dir <path>` | `-InstallDir <path>` | Install root. Default: `${XDG_DATA_HOME:-~/.local/share}/klex`, or `%LOCALAPPDATA%\Klex`. Also settable as `KLEX_INSTALL_DIR` |
+| `--no-modify-path` | `-NoModifyPath` | Leave shell startup files and the user `PATH` untouched |
+| `--uninstall` | `-Uninstall` | Remove the installation |
+| `KLEX_HOME` | `KLEX_HOME` | Agent data root. Default: `~/.klex` |
 
-Pass options to the Windows script through a script block, since a piped script
-cannot take parameters:
+The Windows script takes PowerShell-style parameters, and a piped script cannot
+take parameters at all, so pass them through a script block:
 
 ```powershell
 & ([scriptblock]::Create((irm https://raw.githubusercontent.com/stagewise-io/klex/main/install.ps1))) -NoModifyPath

@@ -377,12 +377,9 @@ link_current() {
 		die "$klex_install_dir/current exists and is not a symlink; remove it and retry"
 	fi
 
-	# readlink, not realpath: a dangling link still has a target worth restoring.
-	klex_previous_current="$(readlink "$klex_install_dir/current" 2>/dev/null || true)"
-
-	# Relative target so the whole install root stays relocatable.
-	ln -sfn "versions/$1" "$klex_install_dir/current"
-
+	# Both launcher checks run before current is repointed. Dying after the swap
+	# would leave the new version published behind a launcher this run refused to
+	# touch, which is a worse state than the one it started in.
 	mkdir -p "$klex_bin_dir"
 	if [ -e "$klex_bin_dir/klex" ] && [ ! -L "$klex_bin_dir/klex" ]; then
 		die "$klex_bin_dir/klex exists and is not a symlink; remove it and retry"
@@ -394,6 +391,13 @@ link_current() {
 		[ "$(readlink "$klex_bin_dir/klex" 2>/dev/null || true)" != '../current/klex' ]; then
 		die "$klex_bin_dir/klex is a symlink this installer did not create; remove it and retry"
 	fi
+
+	# readlink, not realpath: a dangling link still has a target worth restoring.
+	klex_previous_current="$(readlink "$klex_install_dir/current" 2>/dev/null || true)"
+
+	# Relative target so the whole install root stays relocatable.
+	ln -sfn "versions/$1" "$klex_install_dir/current"
+
 	ln -sfn '../current/klex' "$klex_bin_dir/klex"
 }
 
@@ -585,9 +589,13 @@ setup_path() {
 		# Matched on the bin directory too, not the marker alone: the marker is the
 		# same for every install root, so a second install under --install-dir would
 		# otherwise claim the first one's block and strip it on uninstall.
+		#
+		# The patterns include the quote and the trailing delimiter that path_block
+		# writes, so a bin directory is matched as a whole PATH element. A bare
+		# substring search would let /opt/klex/bin claim /opt/klex/bin/bin's block.
 		if [ -f "$setup_path_file" ] &&
 			grep -qF "$KLEX_MARKER_BEGIN" "$setup_path_file" &&
-			grep -qF "$klex_bin_dir" "$setup_path_file"; then
+			grep -qF -e "\"$klex_bin_dir:" -e "\"$klex_bin_dir\"" "$setup_path_file"; then
 			klex_modified_path_files="$klex_modified_path_files$setup_path_file
 "
 			info "PATH entry already present in $setup_path_file"
@@ -669,7 +677,9 @@ strip_path_block() {
 	#
 	# Scoped by bin directory because the marker text is identical for every install
 	# root: a second install elsewhere writes its own block into the same file, and
-	# uninstalling one must not take the other's PATH entry with it.
+	# uninstalling one must not take the other's PATH entry with it. The directory is
+	# matched as a whole PATH element, quote and delimiter included, so an install
+	# root that is a path prefix of another cannot claim the other's block.
 	#
 	# awk with exact line comparison, not a sed range: a sed range whose closing
 	# address never matches deletes everything to end of file. An interrupted
@@ -693,7 +703,8 @@ strip_path_block() {
 		}
 		in_block {
 			block = block "\n" $0
-			if (bin_dir != "" && index($0, bin_dir) > 0) owned = 1
+			if (bin_dir != "" && (index($0, "\"" bin_dir ":") > 0 ||
+				index($0, "\"" bin_dir "\"") > 0)) owned = 1
 			next
 		}
 		{ print }

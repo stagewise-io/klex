@@ -31,7 +31,13 @@ irm https://raw.githubusercontent.com/stagewise-io/klex/main/install.ps1 | iex
 [CmdletBinding()]
 param(
 	# Release channel. 'nightly' is intentionally undocumented in the README.
-	[ValidateSet('stable', 'nightly')]
+	#
+	# Deliberately unvalidated by attribute. The documented one-liner is
+	# `irm ... | iex`, which evaluates this text in the caller's scope instead of
+	# invoking a script, so a param block becomes a set of plain variable
+	# declarations. A [ValidateSet] would then be applied to a variable holding
+	# the unbound [string] default '' and fail the whole install before any code
+	# runs. Invoke-Install rejects unknown channels explicitly instead.
 	[string] $Channel,
 
 	# Exact version to install instead of the newest release of the channel.

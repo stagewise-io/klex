@@ -134,7 +134,7 @@ const pendingAuthorizationSchema = z
   .object({
     id: z.string(),
     serverName: z.string(),
-    serverUrl: z.string(),
+    serverUrl: z.url(),
     createdAt: z.string().datetime(),
     expiresAt: z.string().datetime(),
   })
@@ -157,13 +157,16 @@ const startAuthorizationResponseSchema = z
   .object({
     id: z.string(),
     serverName: z.string(),
-    serverUrl: z.string(),
-    authorizationUrl: z.string(),
+    serverUrl: z.url(),
+    authorizationUrl: z.url(),
     state: z.string(),
     expiresAt: z.string().datetime(),
   })
   .openapi('StartAuthorizationResponse');
 
+// Not `.strict()`: providers add benign extras to the redirect (`scope`, `iss`,
+// `error_uri`), and rejecting the relayed callback with a 400 would leave the
+// parked authorization to time out. Unknown keys are stripped instead.
 const oauthCallbackBodySchema = z
   .object({
     state: z.string().min(1),
@@ -171,7 +174,6 @@ const oauthCallbackBodySchema = z
     error: z.string().min(1).optional(),
     error_description: z.string().optional(),
   })
-  .strict()
   .openapi('OAuthCallbackBody');
 
 const oauthCallbackAcceptedSchema = z

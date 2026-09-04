@@ -1,9 +1,9 @@
 import { execFileSync } from 'node:child_process';
-import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 
 import {
   calculateNextStableVersion,
@@ -15,6 +15,16 @@ import {
   prependChangelog,
   readReleaseHistory,
 } from './stable-release';
+
+const temporaryRepositories: string[] = [];
+
+afterEach(async () => {
+  await Promise.all(
+    temporaryRepositories
+      .splice(0)
+      .map((repo) => rm(repo, { force: true, recursive: true })),
+  );
+});
 
 const commit = (
   subject: string,
@@ -38,6 +48,7 @@ describe('stable release versioning', () => {
         'v0.2.10',
         'v0.10.0',
         'channel-nightly',
+        'v01.20.0',
       ]),
     ).toBe('v0.10.0');
   });
@@ -96,13 +107,19 @@ describe('stable changelog', () => {
         commit('speed it up', { type: 'perf' }),
       ],
       '2026-09-04',
-      'Operator context.',
+      'Operator context.\n\n## Migration details\n\nKeep this nested heading.',
     );
     expect(section).toContain('Operator context.');
     expect(section).toContain('### Breaking Changes');
     expect(section).toContain('### Features');
     expect(section).toContain('### Bug Fixes');
     expect(section).toContain('### Other Changes');
+  });
+
+  it('rejects impossible changelog dates', () => {
+    expect(() =>
+      generateChangelogSection('0.2.0', [commit('fix it')], '2026-02-31'),
+    ).toThrow('Invalid changelog date');
   });
 
   it('prepends and extracts exactly one matching section', () => {
@@ -115,6 +132,7 @@ describe('stable changelog', () => {
       '0.1.1',
       [commit('new')],
       '2026-09-04',
+      '## Migration details\n\nKeep this nested heading.',
     );
     const changelog = prependChangelog(
       prependChangelog('', oldSection),
@@ -133,6 +151,7 @@ describe('stable changelog', () => {
 describe('git release history', () => {
   it('uses all history for a first release and a stable tag thereafter', async () => {
     const repo = await mkdtemp(path.join(tmpdir(), 'klex-release-git-'));
+    temporaryRepositories.push(repo);
     execFileSync('git', ['init', '-q'], { cwd: repo });
     execFileSync('git', ['config', 'user.email', 'test@example.com'], {
       cwd: repo,

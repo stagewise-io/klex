@@ -356,4 +356,25 @@ jobs:
               --repo "${{ github.repository }}" \
               --target "${{ needs.prepare.outputs.commit }}" \
               --title "Klex nightly (${{ inputs.version }})"
+
+            # Rolling pointer so the installer has a fixed nightly URL. Nightly
+            # tags are unique per build, so there is no stable download path
+            # otherwise. Stable needs no equivalent: its release is created with
+            # --latest above, which makes releases/latest/download correct, and
+            # nightlies use --prerelease so they can never hijack it.
+            #
+            # Metadata only. Deliberately does not add files to release-output,
+            # because the 8-file guard above runs before this step.
+            gh release delete channel-nightly \
+              --cleanup-tag \
+              --repo "${{ github.repository }}" \
+              --yes 2>/dev/null || true
+            gh release create channel-nightly \
+              release-output/release-manifest.json \
+              release-output/release-manifest.json.sha256 \
+              --notes 'Rolling pointer to the latest Klex nightly. Assets here are metadata only; the binaries live on the versioned nightly release.' \
+              --prerelease \
+              --repo "${{ github.repository }}" \
+              --target "${{ needs.prepare.outputs.commit }}" \
+              --title 'Klex nightly (rolling pointer)'
           fi

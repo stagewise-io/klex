@@ -45,6 +45,32 @@ jobs:
       - run: pnpm build
       - run: pnpm typecheck
 
+  installers:
+    name: Installer Scripts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      # These two files are fetched and executed straight from the default branch
+      # by the documented one-liners, so a broken main is a broken installer for
+      # every new user. No Node toolchain is needed here.
+      - name: Shellcheck install.sh
+        run: shellcheck --shell=sh install.sh
+      - name: Parse install.ps1
+        shell: pwsh
+        # Parse-only. It catches syntax errors before they reach a user, but it
+        # runs under PowerShell 7 on Linux, so it cannot prove 5.1 compatibility
+        # or that any Windows-specific call behaves; that still needs a real
+        # Windows run.
+        run: |
+          $parseErrors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile(
+            (Join-Path $PWD 'install.ps1'), [ref] $null, [ref] $parseErrors) | Out-Null
+          if ($parseErrors) {
+            $parseErrors | ForEach-Object { Write-Host $_.Message }
+            exit 1
+          }
+          Write-Host 'install.ps1 parsed cleanly'
+
   executable:
     name: Packaged Executable
     runs-on: ${{ matrix.os }}

@@ -74,6 +74,7 @@ Options:
   -h, --help            Show this help
 
 Environment:
+  KLEX_VERSION          Same as --version
   KLEX_INSTALL_DIR      Same as --install-dir
   KLEX_HOME             Agent data root (default: ~/.klex); never modified here
 
@@ -144,8 +145,26 @@ parse_arguments() {
 		esac
 	done
 
+	# Uninstalling reads no release metadata, so channel and version are not
+	# resolved or validated there. Otherwise a stale `export KLEX_CHANNEL=typo`
+	# in the caller's shell would refuse to remove an installation over a value
+	# the operation never consults.
+	if [ "$opt_uninstall" = 'yes' ]; then
+		return 0
+	fi
+
+	# Environment fallbacks sit behind their flags, matching KLEX_INSTALL_DIR.
+	# Without them `export KLEX_CHANNEL=nightly` fails silently and the install
+	# 404s on a stable URL the caller never asked for. KLEX_CHANNEL stays out of
+	# --help for the same reason --channel does: nightly is not a public channel.
+	if [ -z "$opt_channel" ]; then
+		opt_channel="${KLEX_CHANNEL:-}"
+	fi
 	if [ -z "$opt_channel" ]; then
 		opt_channel="$KLEX_DEFAULT_CHANNEL"
+	fi
+	if [ -z "$opt_version" ]; then
+		opt_version="${KLEX_VERSION:-}"
 	fi
 	case "$opt_channel" in
 	stable | nightly) ;;

@@ -33,11 +33,19 @@ Linux (Alpine) is not supported and is detected rather than half-installed.
 
 | macOS and Linux | Windows | Meaning |
 |---|---|---|
-| `--version <x.y.z>` | `-Version <x.y.z>` | Install an exact version instead of the newest release |
+| `--version <x.y.z>` | `-Version <x.y.z>` | Install an exact version instead of the newest release. Also settable as `KLEX_VERSION` |
 | `--install-dir <path>` | `-InstallDir <path>` | Install root. Default: `${XDG_DATA_HOME:-~/.local/share}/klex`, or `%LOCALAPPDATA%\Klex`. Also settable as `KLEX_INSTALL_DIR` |
 | `--no-modify-path` | `-NoModifyPath` | Leave shell startup files and the user `PATH` untouched |
 | `--uninstall` | `-Uninstall` | Remove the installation |
 | `KLEX_HOME` | `KLEX_HOME` | Agent data root. Default: `~/.klex` |
+
+A piped script receives no arguments, so options have to be handed to the shell
+itself. `KLEX_VERSION=... curl ...` sets the variable for `curl`, not for the
+installer:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/stagewise-io/klex/main/install.sh | sh -s -- --version 0.1.1
+```
 
 The Windows script takes PowerShell-style parameters, and a piped script cannot
 take parameters at all, so pass them through a script block:

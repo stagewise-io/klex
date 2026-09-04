@@ -108,6 +108,7 @@ Options:
   -Help                Show this help
 
 Environment:
+  KLEX_VERSION         Same as -Version
   KLEX_INSTALL_DIR     Same as -InstallDir
   KLEX_HOME            Agent data root (default: %USERPROFILE%\.klex); never modified here
 

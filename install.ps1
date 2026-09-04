@@ -58,6 +58,9 @@ Set-StrictMode -Version 1.0
 $script:Repository = 'stagewise-io/klex'
 $script:DefaultChannel = 'stable'
 $script:FetchAttempts = 4
+# Written into bin\klex.cmd so a later run can tell its own shim apart from a
+# file that happened to be there first.
+$script:ShimMarker = 'klex installer shim; managed by install.ps1'
 
 # PowerShell 5.1 defaults to TLS 1.0 on older Windows builds, which GitHub refuses.
 try {
@@ -340,22 +343,34 @@ function Set-CurrentLink {
 		[Parameter(Mandatory = $true)][string] $VersionDir
 	)
 
+	$binDir = Join-Path $Root 'bin'
+	$shimPath = Join-Path $binDir 'klex.cmd'
+
+	# Checked before anything is published: a klex.cmd without the marker belongs to
+	# someone else. That only happens when -InstallDir points at a directory another
+	# tool manages, and silently replacing their launcher is worse than stopping.
+	if ((Test-Path -LiteralPath $shimPath) -and
+		([IO.File]::ReadAllText($shimPath) -notmatch [regex]::Escape($script:ShimMarker))) {
+		Stop-WithError "$shimPath was not created by this installer; remove it and retry"
+	}
+
 	$current = Join-Path $Root 'current'
 	Remove-DirectoryLink -Path $current
 	New-Item -ItemType Junction -Path $current -Target $VersionDir | Out-Null
 
-	$binDir = Join-Path $Root 'bin'
 	New-Item -ItemType Directory -Path $binDir -Force | Out-Null
 
 	# %~dp0 keeps the shim relocatable, and it resolves through the junction, so
 	# the shim never has to be rewritten on upgrade.
-	$shim = @'
+	$shim = @"
 @echo off
+@rem $script:ShimMarker
 "%~dp0..\current\klex.exe" %*
-'@
+"@
+
 	# ASCII, CRLF: cmd.exe mis-parses a UTF-8 BOM in a .cmd file.
 	[IO.File]::WriteAllText(
-		(Join-Path $binDir 'klex.cmd'),
+		$shimPath,
 		($shim -replace "`r?`n", "`r`n"),
 		(New-Object Text.ASCIIEncoding))
 

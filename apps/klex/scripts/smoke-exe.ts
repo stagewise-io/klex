@@ -88,7 +88,7 @@ export function smokeKlexDistribution(
   const executablePath = resolve(distributionDirectory, executableName);
   if (!existsSync(executablePath)) {
     throw new Error(
-      `Klex Agent executable is missing at ${executablePath}; run build:exe first`,
+      `Klex Bot executable is missing at ${executablePath}; run build:exe first`,
     );
   }
 
@@ -115,13 +115,13 @@ export function smokeKlexDistribution(
   if (result.error) throw result.error;
   if (result.status !== 0) {
     throw new Error(
-      `Klex Agent executable exited with status ${result.status} and signal ${result.signal ?? 'none'}:\n${output}`,
+      `Klex Bot executable exited with status ${result.status} and signal ${result.signal ?? 'none'}:\n${output}`,
     );
   }
   if (!output.includes('Usage: klex [options]')) {
-    throw new Error(`Klex Agent usage banner was not found:\n${output}`);
+    throw new Error(`Klex Bot usage banner was not found:\n${output}`);
   }
-  const expectedVersion = `Klex Agent v${resolveApplicationVersion(environment)}`;
+  const expectedVersion = `Klex Bot v${resolveApplicationVersion(environment)}`;
   if (!output.includes(expectedVersion)) {
     throw new Error(
       `Expected ${expectedVersion} in executable output:\n${output}`,
@@ -147,7 +147,7 @@ export function smokeKlexDistribution(
   process.stdout.write(nativeOutput);
 
   process.stdout.write(
-    `Klex Agent executable smoke test passed: ${executablePath}\n`,
+    `Klex Bot executable smoke test passed: ${executablePath}\n`,
   );
 }
 

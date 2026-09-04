@@ -38,7 +38,7 @@ export class McpOAuthProvider implements OAuthClientProvider {
 
   public get clientMetadata(): OAuthClientMetadata {
     return {
-      client_name: 'Klex Agent',
+      client_name: 'Klex Bot',
       grant_types: ['authorization_code', 'refresh_token'],
       redirect_uris: [this.redirectUrl.toString()],
       response_types: ['code'],

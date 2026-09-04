@@ -130,7 +130,7 @@ function printHelp(): void {
   const logger = createLogger({ name: 'klex', verbose: true });
   logger.info(
     `
-Klex Agent v${KLEX_VERSION}
+Klex Bot v${KLEX_VERSION}
 
 Usage: klex [options]
 

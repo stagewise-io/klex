@@ -147,10 +147,10 @@ export function createAdminApp(deps: AdminAppDependencies) {
   app.doc('/v1/openapi.json', {
     openapi: '3.0.0',
     info: {
-      title: 'Klex Agent Admin API',
+      title: 'Klex Bot Admin API',
       version: '1.0.0',
       description:
-        'Observability and management API for the Klex Agent admin plane. Provides session state, token consumption, MCP connection status, tool call history, and configuration management.',
+        'Observability and management API for the Klex Bot admin plane. Provides session state, token consumption, MCP connection status, tool call history, and configuration management.',
     },
     // Must match the loopback-only bind in admin-api.ts.
     servers: [{ url: `http://127.0.0.1:${deps.port}` }],

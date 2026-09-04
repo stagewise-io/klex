@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "type": "module",
   "sideEffects": false,
-  "description": "Shared types for the Klex Agent Admin API",
+  "description": "Shared types for the Klex Bot Admin API",
   "license": "Apache-2.0",
   "exports": {
     ".": {

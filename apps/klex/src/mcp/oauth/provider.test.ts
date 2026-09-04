@@ -34,7 +34,7 @@ describe('McpOAuthProvider', () => {
   it('builds dynamic registration metadata', async () => {
     const { provider } = await createProvider();
     expect(provider.clientMetadata).toEqual({
-      client_name: 'Klex Agent',
+      client_name: 'Klex Bot',
       grant_types: ['authorization_code', 'refresh_token'],
       redirect_uris: ['http://127.0.0.1:12345/oauth/callback'],
       response_types: ['code'],

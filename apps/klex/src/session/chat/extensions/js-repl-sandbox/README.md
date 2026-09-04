@@ -1,6 +1,6 @@
 # JavaScript Tool
 
-The JavaScript tool is the Klex Agent's session-owned orchestration environment. It exposes external tools through a narrow JSON-only `ToolProvider` port without adding every external tool to the model's native AI SDK tool list.
+The JavaScript tool is the Klex Bot's session-owned orchestration environment. It exposes external tools through a narrow JSON-only `ToolProvider` port without adding every external tool to the model's native AI SDK tool list.
 
 ## Ownership and lifecycle
 

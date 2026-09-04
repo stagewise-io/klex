@@ -1,5 +1,5 @@
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { isAbsolute, join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -79,6 +79,55 @@ describe('parseCliArgs', () => {
     const result = parseCliArgs([]);
     expect(result.dataDirectory).not.toContain('/some/unrelated/cwd');
     cwdSpy.mockRestore();
+  });
+
+  it.each([
+    ['empty', ''],
+    ['whitespace-only', '   '],
+  ])(
+    'treats %s KLEX_HOME as unset instead of producing a relative path',
+    (_label, value) => {
+      // A stray `KLEX_HOME=` in a shell profile must not relocate the agent to
+      // the current working directory.
+      process.env.KLEX_HOME = value;
+      const result = parseCliArgs([]);
+      expect(result.dataDirectory).toBe(
+        join(homedir(), '.klex', 'agents', 'default'),
+      );
+    },
+  );
+
+  it.each([
+    ['empty', ''],
+    ['whitespace-only', '   '],
+  ])('treats %s KLEX_DATA_DIR as unset', (_label, value) => {
+    process.env.KLEX_HOME = '/custom/klex-home';
+    process.env.KLEX_DATA_DIR = value;
+    const result = parseCliArgs([]);
+    expect(result.dataDirectory).toBe(
+      join('/custom/klex-home', 'agents', 'default'),
+    );
+  });
+
+  it('treats a blank --data-dir as unset', () => {
+    process.env.KLEX_DATA_DIR = '/env/data-dir';
+    const result = parseCliArgs(['--data-dir', '  ']);
+    expect(result.dataDirectory).toBe('/env/data-dir');
+  });
+
+  it('trims surrounding whitespace off resolved paths', () => {
+    process.env.KLEX_DATA_DIR = '  /env/data-dir  ';
+    const result = parseCliArgs([]);
+    expect(result.dataDirectory).toBe('/env/data-dir');
+  });
+
+  it('resolves every blank source to an absolute path', () => {
+    // The concrete failure mode the guard exists for: join('', ...) yields the
+    // relative 'agents/default'.
+    process.env.KLEX_HOME = '';
+    process.env.KLEX_DATA_DIR = '';
+    const result = parseCliArgs(['--data-dir', '']);
+    expect(isAbsolute(result.dataDirectory)).toBe(true);
   });
 
   it('uses KLEX_DATA_DIR env var when no CLI arg provided', () => {

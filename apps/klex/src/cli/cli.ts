@@ -22,6 +22,16 @@ export interface CliOptions {
   verifyNative: boolean;
 }
 
+/**
+ * Blank is not a path. An empty or whitespace-only value would otherwise pass
+ * `??` and turn an absolute default into a cwd-relative one, which is exactly
+ * the per-directory agent split this resolution exists to prevent.
+ */
+function pathOrUndefined(value: string | undefined): string | undefined {
+  const trimmed = value?.trim();
+  return trimmed === undefined || trimmed === '' ? undefined : trimmed;
+}
+
 export function parseCliArgs(argv: string[]): CliOptions {
   const { values } = parseArgs({
     args: argv,
@@ -60,10 +70,14 @@ export function parseCliArgs(argv: string[]): CliOptions {
   // silently creates a separate agent (config, credentials, enrollment, logs)
   // per directory. Nested under agents/ so a future multi-agent picker can
   // enumerate $KLEX_HOME/agents/* without a migration.
-  const klexHome = process.env.KLEX_HOME ?? join(homedir(), '.klex');
+  // Blank values are treated as unset throughout, so a stray `KLEX_HOME=` in a
+  // shell profile or unit file cannot silently relocate the agent to the
+  // current working directory.
+  const klexHome =
+    pathOrUndefined(process.env.KLEX_HOME) ?? join(homedir(), '.klex');
   const dataDirectory =
-    values['data-dir'] ??
-    process.env.KLEX_DATA_DIR ??
+    pathOrUndefined(values['data-dir']) ??
+    pathOrUndefined(process.env.KLEX_DATA_DIR) ??
     join(klexHome, 'agents', 'default');
 
   // CLI args take priority over env vars. --no-cloud sets values.cloud to false.

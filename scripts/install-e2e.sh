@@ -159,6 +159,23 @@ run_installer() {
 	run_installer_in "$LAB/home" "$LAB/home/opt/klex" "$@"
 }
 
+run_installer_with_env() {
+	# $1 = one extra NAME=VALUE pair, rest = installer arguments.
+	#
+	# Kept separate from run_installer_in because that one builds its environment
+	# from literal assignments; a pair passed as a single quoted word lets a case
+	# add exactly one KLEX_* variable without reintroducing word splitting.
+	riwe_pair="$1"
+	shift
+	env -i \
+		HOME="$LAB/home" \
+		PATH="$PATH" \
+		SHELL=/bin/bash \
+		KLEX_MANIFEST_URL="file://$LAB/serve/release-manifest.json" \
+		"$riwe_pair" \
+		sh "$REPO_ROOT/install.sh" --install-dir "$LAB/home/opt/klex" "$@"
+}
+
 run_ok_in() {
 	# $1 = label, $2 = log file, $3 = HOME, $4 = install dir, rest = arguments.
 	#
@@ -427,6 +444,45 @@ grep -qF "\"$PFX_IN/bin:" "$LAB/home/.bashrc"
 check "the inner root's block survives" "$?"
 grep -q 'tail-line' "$LAB/home/.bashrc"
 check 'unrelated content still intact' "$?"
+
+printf '\n== 16. KLEX_CHANNEL and KLEX_VERSION are honoured behind their flags ==\n'
+# The install root is irrelevant here: every case is decided by argument and
+# environment resolution, which happens before anything is written.
+make_artifact 2.0.0
+write_manifest 2.0.0 ''
+rm -rf "$ROOT"
+
+# A bogus channel is only rejected if the variable was read at all. Before the
+# environment fallback existed, this run silently resolved the default channel
+# and succeeded, which is exactly the failure mode being locked down.
+run_installer_with_env 'KLEX_CHANNEL=bogus' >"$LAB/env1.log" 2>&1 && bad=1 || bad=0
+check 'KLEX_CHANNEL=bogus exits non-zero' "$bad"
+grep -q 'unknown channel: bogus' "$LAB/env1.log"
+check 'names the rejected channel' "$?"
+[ ! -d "$ROOT" ]
+check 'nothing installed for the bogus channel' "$?"
+
+run_installer_with_env 'KLEX_CHANNEL=bogus' --channel stable >"$LAB/env2.log" 2>&1
+check '--channel overrides KLEX_CHANNEL' "$?"
+[ "$("$ROOT/bin/klex" --version)" = '2.0.0' ]
+check 'the override actually installed' "$?"
+
+# KLEX_VERSION reaches the manifest/version cross-check, so a pin the manifest
+# cannot satisfy proves the variable was read rather than ignored.
+run_installer_with_env 'KLEX_VERSION=9.9.9' >"$LAB/env3.log" 2>&1 && bad=1 || bad=0
+check 'KLEX_VERSION=9.9.9 exits non-zero' "$bad"
+grep -q 'requested version 9.9.9' "$LAB/env3.log"
+check 'names the requested version' "$?"
+
+run_installer_with_env 'KLEX_VERSION=9.9.9' --version 2.0.0 >"$LAB/env4.log" 2>&1
+check '--version overrides KLEX_VERSION' "$?"
+
+# Uninstalling consults no release metadata, so a stale channel export in the
+# caller's shell must not be able to refuse the removal.
+run_installer_with_env 'KLEX_CHANNEL=bogus' --uninstall >"$LAB/env5.log" 2>&1
+check 'uninstall ignores an invalid KLEX_CHANNEL' "$?"
+[ ! -d "$ROOT" ]
+check 'the install root is gone' "$?"
 
 printf '\n'
 if [ "$fails" -eq 0 ]; then

@@ -212,6 +212,23 @@ const introspectionPathParamsSchema = z.object({
   }),
 });
 
+// --- Settings / Agent ---
+
+const officialNameSchema = z.string().trim().min(2);
+
+const agentIdentityResponseSchema = z
+  .object({
+    officialName: officialNameSchema,
+  })
+  .openapi('AgentIdentityResponse');
+
+const agentIdentityPatchSchema = z
+  .object({
+    officialName: officialNameSchema,
+  })
+  .strict()
+  .openapi('AgentIdentityPatch');
+
 // --- Settings / Telemetry ---
 
 const telemetryLevelSchema = z
@@ -698,6 +715,8 @@ const cloudEnrollResponseSchema = z
   .openapi('CloudEnrollResponse');
 
 export {
+  agentIdentityPatchSchema,
+  agentIdentityResponseSchema,
   apiFormatSchema,
   audioInputCapabilitySchema,
   cloudEnrollBodySchema,

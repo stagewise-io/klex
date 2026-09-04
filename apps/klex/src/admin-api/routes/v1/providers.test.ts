@@ -40,6 +40,7 @@ const logger = {
 } as unknown as ModuleLogger;
 
 const baseConfig: KlexConfig = {
+  officialName: 'Test Agent',
   providers: {
     'my-openai': {
       preset: 'openai',
@@ -800,6 +801,7 @@ describe('PATCH /v1/providers/:name/endpoints/:endpointName — update endpoint'
 
   it('merges auth headers when patching only auth', async () => {
     const configWithHeaders: KlexConfig = {
+      officialName: 'Test Agent',
       providers: {
         local: {
           endpoints: {

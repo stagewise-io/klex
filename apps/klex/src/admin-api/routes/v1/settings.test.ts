@@ -7,10 +7,14 @@ import type { Config, KlexConfig, ModelSelection } from '@/config';
 import { ConfigValidationError } from '@/config';
 
 import {
+  getAgentIdentity,
+  getAgentIdentityRoute,
   getModelSelection,
   getModelSelectionRoute,
   getTelemetry,
   getTelemetryRoute,
+  patchAgentIdentity,
+  patchAgentIdentityRoute,
   patchModelSelection,
   patchModelSelectionRoute,
   patchTelemetry,
@@ -33,6 +37,7 @@ const baseSelection: ModelSelection = {
 };
 
 const baseConfig: KlexConfig = {
+  officialName: 'Test Agent',
   providers: {
     openai: {
       preset: 'openai',
@@ -85,12 +90,77 @@ function makeDeps(config: Partial<Config> = {}): SettingsRouteDependencies {
 
 function createApp(deps: SettingsRouteDependencies): OpenAPIHono {
   return setupTestApp((app) => {
+    app.openapi(getAgentIdentityRoute, getAgentIdentity(deps));
+    app.openapi(patchAgentIdentityRoute, patchAgentIdentity(deps));
     app.openapi(getModelSelectionRoute, getModelSelection(deps));
     app.openapi(patchModelSelectionRoute, patchModelSelection(deps));
     app.openapi(getTelemetryRoute, getTelemetry(deps));
     app.openapi(patchTelemetryRoute, patchTelemetry(deps));
   });
 }
+
+// ---------------------------------------------------------------------------
+// GET /v1/settings/agent
+// ---------------------------------------------------------------------------
+
+describe('GET /v1/settings/agent', () => {
+  it("returns the agent's official name", async () => {
+    const response = await createApp(makeDeps()).request('/v1/settings/agent');
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ officialName: 'Test Agent' });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// PATCH /v1/settings/agent
+// ---------------------------------------------------------------------------
+
+describe('PATCH /v1/settings/agent', () => {
+  it("updates and returns the agent's official name", async () => {
+    const mutate = vi.fn(async (fn: (cfg: KlexConfig) => KlexConfig) =>
+      fn(baseConfig),
+    );
+    const response = await createApp(makeDeps({ mutate })).request(
+      '/v1/settings/agent',
+      {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ officialName: '  Ada  ' }),
+      },
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ officialName: 'Ada' });
+    expect(mutate).toHaveBeenCalledOnce();
+  });
+
+  it('rejects names shorter than two characters', async () => {
+    const response = await createApp(makeDeps()).request('/v1/settings/agent', {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ officialName: 'A' }),
+    });
+
+    expect(response.status).toBe(400);
+  });
+
+  it('returns 500 when persistence fails', async () => {
+    const response = await createApp(
+      makeDeps({
+        mutate: vi.fn().mockRejectedValue(new Error('write failed')),
+      }),
+    ).request('/v1/settings/agent', {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ officialName: 'Ada' }),
+    });
+
+    expect(response.status).toBe(500);
+    expect(await response.json()).toEqual({
+      error: 'Failed to update agent identity',
+    });
+  });
+});
 
 // ---------------------------------------------------------------------------
 // GET /v1/settings/model-selection

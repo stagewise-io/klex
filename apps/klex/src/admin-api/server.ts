@@ -71,10 +71,14 @@ import {
   updateProviderRoute,
 } from './routes/v1/providers';
 import {
+  getAgentIdentity,
+  getAgentIdentityRoute,
   getModelSelection,
   getModelSelectionRoute,
   getTelemetry,
   getTelemetryRoute,
+  patchAgentIdentity,
+  patchAgentIdentityRoute,
   patchModelSelection,
   patchModelSelectionRoute,
   patchTelemetry,
@@ -132,6 +136,8 @@ export function createAdminApp(deps: AdminAppDependencies) {
     .openapi(healthRoute, getHealth())
     .openapi(getCloudStatusRoute, getCloudStatus(deps))
     .openapi(enrollCloudRoute, enrollCloud(deps))
+    .openapi(getAgentIdentityRoute, getAgentIdentity(deps))
+    .openapi(patchAgentIdentityRoute, patchAgentIdentity(deps))
     .openapi(getModelSelectionRoute, getModelSelection(deps))
     .openapi(patchModelSelectionRoute, patchModelSelection(deps))
     .openapi(getTelemetryRoute, getTelemetry(deps))

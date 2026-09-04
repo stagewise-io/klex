@@ -1,5 +1,4 @@
 import type { CloudApiClient } from '@klex/cloud-api';
-
 export type CloudAlgorithm = 'EdDSA';
 
 export interface CloudIdentity {

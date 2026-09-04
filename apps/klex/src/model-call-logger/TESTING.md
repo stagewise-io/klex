@@ -48,24 +48,28 @@ This tests the full middleware stack (Zod validation, route handler, error handl
 
 ### 1. Start klex and generate traffic
 
-Start the application normally. Every model call (chat, extension-initiated) will be logged to `{dataDir}/model-calls.sqlite`.
+Start the application with an explicit local Admin API port. Every model call (chat, extension-initiated) will be logged to `{dataDir}/model-calls.sqlite`.
+
+```bash
+klex --dangerous-local-admin-api-port 2706
+```
 
 ### 2. Query the admin API
 
-The admin API runs on its own port (check your config for the admin port). Query the usage endpoint:
+The Admin API is private by default. The dangerous option above exposes its unauthenticated routes on loopback for manual testing. Query the usage endpoint:
 
 ```bash
 # Default: daily granularity, no split, last 1000 records
-curl http://localhost:<admin-port>/v1/usage
+curl http://127.0.0.1:2706/v1/usage
 
 # Split by model, daily buckets, specific time range
-curl 'http://localhost:<admin-port>/v1/usage?splitBy=model&granularity=daily&from=2026-01-01T00:00:00.000Z&to=2026-02-01T00:00:00.000Z'
+curl 'http://127.0.0.1:2706/v1/usage?splitBy=model&granularity=daily&from=2026-01-01T00:00:00.000Z&to=2026-02-01T00:00:00.000Z'
 
 # Per-event (no aggregation), limit to 50
-curl 'http://localhost:<admin-port>/v1/usage?granularity=event&limit=50'
+curl 'http://127.0.0.1:2706/v1/usage?granularity=event&limit=50'
 
 # Weekly buckets split by provider
-curl 'http://localhost:<admin-port>/v1/usage?granularity=weekly&splitBy=provider'
+curl 'http://127.0.0.1:2706/v1/usage?granularity=weekly&splitBy=provider'
 ```
 
 ### 3. Inspect the database directly

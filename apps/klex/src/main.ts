@@ -168,8 +168,7 @@ async function main(): Promise<void> {
       introspector,
       modelCallLogger,
       cloudConnectivity,
-      cloudEnabled: cli.cloudEnabled,
-      port: cli.adminPort,
+      localPort: cli.dangerousLocalAdminApiPort,
     });
     adminApiForUi = adminApi;
     const telemetryManager = createTelemetryManager({
@@ -214,6 +213,7 @@ async function main(): Promise<void> {
   }
 
   const runningRouter = router;
+  const runningAdminApi = adminApiForUi;
   let shuttingDown = false;
   let cliUi: { start(): void; close(): void } | undefined;
 
@@ -257,7 +257,8 @@ async function main(): Promise<void> {
     const ui = createCliUi({
       logging: logger,
       onQuit: quitImmediately,
-      adminApi: adminApiForUi!,
+      adminApi: runningAdminApi,
+      dangerousLocalAdminApiPort: cli.dangerousLocalAdminApiPort,
     });
     cliUi = ui;
     ui.start();

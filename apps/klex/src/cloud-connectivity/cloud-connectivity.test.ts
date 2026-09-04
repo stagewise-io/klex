@@ -280,8 +280,6 @@ describe('CloudConnectivity', () => {
       ['agent:access'],
     );
 
-    // Flush microtasks so connectTunnel finishes registering tunnel event handlers
-    await new Promise((r) => setTimeout(r, 0));
     // Tunnel open event should transition state to 'connected'
     tunnelHandlers.open?.();
     expect(cloud.getTunnelState()).toBe('connected');

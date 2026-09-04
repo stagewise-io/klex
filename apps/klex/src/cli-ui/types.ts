@@ -12,4 +12,5 @@ export interface CliUiDependencies {
   logging: import('@stagewise/logger').RootLogger;
   onQuit: () => void;
   adminApi: Pick<import('@/admin-api').AdminApi, 'handle'>;
+  dangerousLocalAdminApiPort: number | undefined;
 }

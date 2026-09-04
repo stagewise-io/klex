@@ -79,7 +79,7 @@ export interface AdminAppDependencies {
   modelCallLogger: ModelCallLogger;
   cloudConnectivity: CloudConnectivity;
   logger: ModuleLogger;
-  port: number;
+  localPort: number | undefined;
 }
 
 // biome-ignore lint/suspicious/noExplicitAny: Hook generic parameters are opaque validation types
@@ -160,8 +160,10 @@ export function createAdminApp(deps: AdminAppDependencies) {
       description:
         'Observability and management API for the Klex Bot admin plane. Provides session state, token consumption, MCP connection status, tool call history, and configuration management.',
     },
-    // Must match the loopback-only bind in admin-api.ts.
-    servers: [{ url: `http://127.0.0.1:${deps.port}` }],
+    // Only advertise a local server when the dangerous opt-in is enabled.
+    ...(deps.localPort === undefined
+      ? {}
+      : { servers: [{ url: `http://127.0.0.1:${deps.localPort}` }] }),
   });
 
   const appWithIntrospection = routedApp.get(

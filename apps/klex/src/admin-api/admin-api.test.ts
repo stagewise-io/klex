@@ -46,7 +46,7 @@ const cloudConnectivity = {
 } as unknown as CloudConnectivity;
 
 describe('AdminApi', () => {
-  describe('cloud disabled — binds local port', () => {
+  describe('dangerous local port enabled', () => {
     let api: AdminApi;
 
     it('starts and binds to the configured port', async () => {
@@ -57,8 +57,7 @@ describe('AdminApi', () => {
         introspector,
         modelCallLogger,
         cloudConnectivity,
-        cloudEnabled: false,
-        port: 19999,
+        localPort: 19999,
       });
 
       await api.start();
@@ -76,7 +75,7 @@ describe('AdminApi', () => {
     });
   });
 
-  describe('cloud enabled — tunnel-only mode', () => {
+  describe('private mode', () => {
     let api: AdminApi;
 
     it('starts without binding a local port', async () => {
@@ -87,17 +86,20 @@ describe('AdminApi', () => {
         introspector,
         modelCallLogger,
         cloudConnectivity,
-        cloudEnabled: true,
-        port: 19998,
+        localPort: undefined,
       });
 
       await api.start();
 
-      // Port should NOT be bound
       await expect(fetch('http://127.0.0.1:19998/v1/health')).rejects.toThrow();
+
+      const response = await api.handle(
+        new Request('http://klex.local/v1/health'),
+      );
+      expect(response.status).toBe(200);
     });
 
-    it('close() is safe when tunnel-only', async () => {
+    it('close() is safe without a local listener', async () => {
       await api.close();
     });
   });

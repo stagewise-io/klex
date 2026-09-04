@@ -17,8 +17,7 @@ export interface AdminApiDependencies {
   introspector: Introspector;
   modelCallLogger: ModelCallLogger;
   cloudConnectivity: CloudConnectivity;
-  cloudEnabled: boolean;
-  port: number;
+  localPort: number | undefined;
 }
 
 export interface AdminApi {
@@ -40,8 +39,7 @@ class AdminApiModule implements AdminApi {
       introspector: Introspector;
       modelCallLogger: ModelCallLogger;
       cloudConnectivity: CloudConnectivity;
-      cloudEnabled: boolean;
-      port: number;
+      localPort: number | undefined;
     },
   ) {}
 
@@ -56,13 +54,11 @@ class AdminApiModule implements AdminApi {
       modelCallLogger: this.deps.modelCallLogger,
       cloudConnectivity: this.deps.cloudConnectivity,
       logger: this.deps.logger,
-      port: this.deps.port,
+      localPort: this.deps.localPort,
     });
 
-    if (this.deps.cloudEnabled) {
-      this.deps.logger.info(
-        'AdminAPI running in tunnel-only mode — local port not bound',
-      );
+    if (this.deps.localPort === undefined) {
+      this.deps.logger.info('AdminAPI running without a local port');
       return;
     }
 
@@ -70,13 +66,18 @@ class AdminApiModule implements AdminApi {
     // routes expose configuration and provider data. Binding 0.0.0.0 exposed
     // that to the whole local network under `--no-cloud`. Use the IPv4
     // literal rather than 'localhost', which can resolve to IPv6 ::1 only.
+    const app = this.app;
     this.server = await new Promise<ServerType>((resolve) => {
       const server = serve(
-        { fetch: this.app!.fetch, port: this.deps.port, hostname: '127.0.0.1' },
+        {
+          fetch: app.fetch,
+          port: this.deps.localPort,
+          hostname: '127.0.0.1',
+        },
         (info) => {
-          this.deps.logger.info(
+          this.deps.logger.warn(
             { address: info.address, port: info.port },
-            'AdminAPI listening',
+            'DANGER: unauthenticated Admin API is available on a local port',
           );
           resolve(server);
         },
@@ -110,7 +111,6 @@ export function createAdminApi(deps: AdminApiDependencies): AdminApi {
     introspector: deps.introspector,
     modelCallLogger: deps.modelCallLogger,
     cloudConnectivity: deps.cloudConnectivity,
-    cloudEnabled: deps.cloudEnabled,
-    port: deps.port,
+    localPort: deps.localPort,
   });
 }

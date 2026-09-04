@@ -1,4 +1,4 @@
-import { Box } from 'ink';
+import { Box, Text } from 'ink';
 import type { ReactNode } from 'react';
 
 import type { CloudStatus, SessionInfo } from '../api-client';
@@ -13,6 +13,7 @@ export interface AppFrameProps {
   cloud: CloudStatus | null;
   loading: boolean;
   toastCount: number;
+  dangerousLocalAdminApiPort: number | undefined;
   children: ReactNode;
 }
 
@@ -24,6 +25,7 @@ export function AppFrame({
   cloud,
   loading,
   toastCount,
+  dangerousLocalAdminApiPort,
   children,
 }: AppFrameProps) {
   return (
@@ -35,6 +37,14 @@ export function AppFrame({
         cloud={cloud}
         loading={loading}
       />
+      {dangerousLocalAdminApiPort !== undefined && (
+        <Box borderColor="yellow" borderStyle="single" paddingX={1}>
+          <Text bold color="yellow">
+            WARNING: Unauthenticated Admin API exposed at
+            {` http://127.0.0.1:${dangerousLocalAdminApiPort}`}
+          </Text>
+        </Box>
+      )}
       <Box flexDirection="column" flexGrow={1} marginTop={1}>
         {children}
       </Box>

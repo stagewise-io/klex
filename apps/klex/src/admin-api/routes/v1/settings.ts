@@ -14,6 +14,8 @@ import {
 } from '@/config';
 
 import {
+  agentIdentityPatchSchema,
+  agentIdentityResponseSchema,
   errorResponseSchema,
   modelSelectionPatchResponseSchema,
   modelSelectionPatchSchema,
@@ -25,6 +27,86 @@ import {
 export interface SettingsRouteDependencies {
   config: Config;
   logger: ModuleLogger;
+}
+
+export const getAgentIdentityRoute = createRoute({
+  method: 'get',
+  path: '/v1/settings/agent',
+  tags: ['Settings'],
+  summary: 'Get agent identity',
+  description: "Returns the agent's official display name.",
+  responses: {
+    200: {
+      content: {
+        'application/json': { schema: agentIdentityResponseSchema },
+      },
+      description: 'Agent identity',
+    },
+  },
+});
+
+export function getAgentIdentity(
+  deps: SettingsRouteDependencies,
+): RouteHandler<typeof getAgentIdentityRoute> {
+  return (c) => c.json({ officialName: deps.config.get().officialName }, 200);
+}
+
+export const patchAgentIdentityRoute = createRoute({
+  method: 'patch',
+  path: '/v1/settings/agent',
+  tags: ['Settings'],
+  summary: 'Update agent identity',
+  description: "Updates the agent's official display name.",
+  request: {
+    body: {
+      content: {
+        'application/json': { schema: agentIdentityPatchSchema },
+      },
+      required: true,
+    },
+  },
+  responses: {
+    200: {
+      content: {
+        'application/json': { schema: agentIdentityResponseSchema },
+      },
+      description: 'Updated agent identity',
+    },
+    400: {
+      content: {
+        'application/json': { schema: errorResponseSchema },
+      },
+      description: 'Invalid official name',
+    },
+    500: {
+      content: {
+        'application/json': { schema: errorResponseSchema },
+      },
+      description: 'Internal server error',
+    },
+  },
+});
+
+export function patchAgentIdentity(
+  deps: SettingsRouteDependencies,
+): RouteHandler<typeof patchAgentIdentityRoute> {
+  return async (c) => {
+    const { officialName } = c.req.valid('json');
+
+    try {
+      const config = await deps.config.mutate((current) => ({
+        ...current,
+        officialName,
+      }));
+      return c.json({ officialName: config.officialName }, 200);
+    } catch (error) {
+      if (error instanceof ConfigValidationError) {
+        return c.json({ error: error.message }, 400);
+      }
+      deps.logger.error({ error }, 'Agent identity update failed');
+      return c.json({ error: 'Failed to update agent identity' }, 500);
+    }
+  };
 }
 
 export const getModelSelectionRoute = createRoute({

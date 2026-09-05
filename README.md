@@ -30,6 +30,28 @@ Supported: macOS on Apple Silicon and Intel, glibc-based Linux on ARM64 and x64,
 Windows on x64. Windows ARM64 gets the x64 build under emulation. musl-based
 Linux (Alpine) is not supported and is detected rather than half-installed.
 
+### Self-update
+
+Installer-managed interactive sessions check their installed channel for a newer
+release at startup and then at a bounded interval. If one is available, the TUI
+shows a persistent banner: press `u` to **update and restart**, or `n` to hide
+that version for the rest of the run. The Usage screen uses `g`.
+
+The check is opportunistic. Offline, unavailable, stale, and malformed release
+metadata does not interrupt startup. Self-update is disabled for development
+runs, manually extracted archives, malformed or moved installations, unsupported
+targets, and headless mode.
+
+An accepted update runs in the background. Klex downloads the installer from the
+exact release commit, invokes it non-interactively for the receipt's install root,
+and leaves PATH configuration untouched. The installer verifies the archive and
+native runtime before moving `current`; failures leave the active version usable.
+Only one install or uninstall transaction may operate on an install root at a
+time. On success, Klex closes active resources, releases the agent-directory lock,
+and starts the new executable through `current` with the original arguments,
+environment, working directory, and terminal streams. Update and restart aborts
+in-flight agent work; it is not a live handoff.
+
 ### Options
 
 | macOS and Linux | Windows | Meaning |

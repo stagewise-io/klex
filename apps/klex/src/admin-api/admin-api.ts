@@ -4,6 +4,7 @@ import type { ModuleLogger, RootLogger } from '@stagewise/logger';
 
 import type { CloudConnectivity } from '@/cloud-connectivity';
 import type { Config } from '@/config';
+import type { GodMessages } from '@/god-messages';
 import type { Introspector } from '@/introspection';
 import type { Mcp } from '@/mcp';
 import type { ModelCallLogger } from '@/model-call-logger';
@@ -17,6 +18,7 @@ export interface AdminApiDependencies {
   introspector: Introspector;
   modelCallLogger: ModelCallLogger;
   cloudConnectivity: CloudConnectivity;
+  godMessages: GodMessages;
   localPort: number | undefined;
 }
 
@@ -39,6 +41,7 @@ class AdminApiModule implements AdminApi {
       introspector: Introspector;
       modelCallLogger: ModelCallLogger;
       cloudConnectivity: CloudConnectivity;
+      godMessages: GodMessages;
       localPort: number | undefined;
     },
   ) {}
@@ -53,6 +56,7 @@ class AdminApiModule implements AdminApi {
       introspector: this.deps.introspector,
       modelCallLogger: this.deps.modelCallLogger,
       cloudConnectivity: this.deps.cloudConnectivity,
+      godMessages: this.deps.godMessages,
       logger: this.deps.logger,
       localPort: this.deps.localPort,
     });
@@ -111,6 +115,7 @@ export function createAdminApi(deps: AdminApiDependencies): AdminApi {
     introspector: deps.introspector,
     modelCallLogger: deps.modelCallLogger,
     cloudConnectivity: deps.cloudConnectivity,
+    godMessages: deps.godMessages,
     localPort: deps.localPort,
   });
 }

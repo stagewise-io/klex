@@ -14,6 +14,7 @@ import type { RouterApi } from '@/router';
 import type { SessionInboxEvent } from '@/session/inbox';
 import type {
   AgentSession,
+  ChatSessionHandle,
   SessionHooks,
   SessionInfo,
   SessionRuntimeState,
@@ -33,8 +34,8 @@ import type {
   GenerateTextResult,
 } from './extensions/extension-api';
 import {
+  type ChatSessionInbox,
   createInbox,
-  type SessionInbox,
   type SessionInboxBuffer,
   SessionInboxUrgency,
 } from './inbox';
@@ -114,7 +115,7 @@ class ChatSessionModule implements AgentSession {
    */
   private pendingImmediate: ExtendedUIMessage[] = [];
 
-  private readonly sessionId = randomUUID();
+  readonly sessionId = randomUUID();
 
   private readonly sessionSpan: Span;
 
@@ -837,7 +838,7 @@ class ChatSessionModule implements AgentSession {
   // Public API
   // ---------------------------------------------------------------------------
 
-  public get inbox(): SessionInbox {
+  public get inbox(): ChatSessionInbox {
     return this.sessionInbox;
   }
 
@@ -975,7 +976,9 @@ class ChatSessionModule implements AgentSession {
   }
 }
 
-export function createChatSession(deps: ChatSessionDependencies): AgentSession {
+export function createChatSession(
+  deps: ChatSessionDependencies,
+): ChatSessionHandle {
   return new ChatSessionModule({
     logger: deps.logging.child({
       name: 'chat-session',

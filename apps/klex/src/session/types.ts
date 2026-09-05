@@ -1,3 +1,4 @@
+import type { ChatSessionInbox } from './chat/inbox';
 import type { SessionInboxEvent } from './inbox';
 
 /**
@@ -108,6 +109,21 @@ export interface SessionHooks {
 }
 
 /**
+ * Extended {@link AgentSession} handle that exposes chat-specific capabilities.
+ *
+ * The router interacts with sessions through the narrow {@link AgentSession}
+ * interface. Modules that need to send native messages (e.g. the god-messages
+ * module) use this wider handle to access {@link ChatSessionInbox.sendMessage}
+ * and the session ID.
+ */
+export interface ChatSessionHandle extends AgentSession {
+  /** Inbox with `sendMessage` for injecting native messages. */
+  inbox: ChatSessionInbox;
+  /** Unique session identifier (UUID). */
+  readonly sessionId: string;
+}
+
+/**
  * This is the interface that AgentSessions must implement in order to become
  * controllable by the Router.
  */
@@ -143,4 +159,10 @@ export interface AgentSession {
    * input.
    */
   restorePendingEvents(events: SessionInboxEvent[]): void;
+
+  /**
+   * Snapshot of the session's current state for observability.
+   * Used by the router to aggregate session info in the introspection tree.
+   */
+  getSessionInfo(): SessionInfo;
 }

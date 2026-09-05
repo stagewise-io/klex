@@ -4,6 +4,7 @@ import type { RootLogger } from '@stagewise/logger';
 
 import type { CloudConnectivity } from '@/cloud-connectivity';
 import type { Config } from '@/config';
+import type { GodMessages } from '@/god-messages';
 import type { Introspector } from '@/introspection';
 import type { Mcp } from '@/mcp';
 import type { ModelCallLogger } from '@/model-call-logger';
@@ -44,6 +45,11 @@ const cloudConnectivity = {
   }),
   getTunnelState: () => 'disconnected',
 } as unknown as CloudConnectivity;
+const godMessages = {
+  start: async () => undefined,
+  sendGodMessage: async () => ({ sessionId: 'test' }),
+  close: async () => undefined,
+} as unknown as GodMessages;
 
 describe('AdminApi', () => {
   describe('dangerous local port enabled', () => {
@@ -57,6 +63,7 @@ describe('AdminApi', () => {
         introspector,
         modelCallLogger,
         cloudConnectivity,
+        godMessages,
         localPort: 19999,
       });
 
@@ -86,6 +93,7 @@ describe('AdminApi', () => {
         introspector,
         modelCallLogger,
         cloudConnectivity,
+        godMessages,
         localPort: undefined,
       });
 

@@ -532,6 +532,99 @@ const knownModelQuerySchema = z.object({
   endpointName: z.string().min(1).optional(),
 });
 
+// --- God Messages ---
+
+const MAX_GOD_MESSAGE_BLOCKS = 16;
+const MAX_GOD_MESSAGE_TEXT_LENGTH = 100_000;
+const MAX_GOD_MESSAGE_MEDIA_LENGTH = 20_000_000;
+const MAX_GOD_MESSAGE_URI_LENGTH = 2_048;
+const MAX_GOD_MESSAGE_METADATA_LENGTH = 1_000;
+const BASE64_PATTERN =
+  /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
+
+const godMessageTextSchema = z.string().min(1).max(MAX_GOD_MESSAGE_TEXT_LENGTH);
+const godMessageBase64Schema = z
+  .string()
+  .min(1)
+  .max(MAX_GOD_MESSAGE_MEDIA_LENGTH)
+  .regex(BASE64_PATTERN, 'Expected valid base64 data');
+
+const godMessageTextBlockSchema = z
+  .object({
+    type: z.literal('text'),
+    text: godMessageTextSchema,
+  })
+  .openapi('GodMessageTextBlock');
+
+const godMessageImageBlockSchema = z
+  .object({
+    type: z.literal('image'),
+    mimeType: z.string().min(1).max(MAX_GOD_MESSAGE_METADATA_LENGTH),
+    data: godMessageBase64Schema,
+  })
+  .openapi('GodMessageImageBlock');
+
+const godMessageAudioBlockSchema = z
+  .object({
+    type: z.literal('audio'),
+    mimeType: z.string().min(1).max(MAX_GOD_MESSAGE_METADATA_LENGTH),
+    data: godMessageBase64Schema,
+  })
+  .openapi('GodMessageAudioBlock');
+
+const godMessageResourceLinkBlockSchema = z
+  .object({
+    type: z.literal('resource_link'),
+    uri: z.string().min(1).max(MAX_GOD_MESSAGE_URI_LENGTH),
+    name: z.string().min(1).max(MAX_GOD_MESSAGE_METADATA_LENGTH),
+    title: z.string().max(MAX_GOD_MESSAGE_METADATA_LENGTH).optional(),
+    description: z.string().max(MAX_GOD_MESSAGE_TEXT_LENGTH).optional(),
+    mimeType: z.string().max(MAX_GOD_MESSAGE_METADATA_LENGTH).optional(),
+    size: z.number().int().nonnegative().optional(),
+  })
+  .openapi('GodMessageResourceLinkBlock');
+
+const godMessageResourceBlockSchema = z
+  .object({
+    type: z.literal('resource'),
+    resource: z
+      .object({
+        uri: z.string().min(1).max(MAX_GOD_MESSAGE_URI_LENGTH),
+        mimeType: z.string().max(MAX_GOD_MESSAGE_METADATA_LENGTH).optional(),
+        text: godMessageTextSchema.optional(),
+        blob: godMessageBase64Schema.optional(),
+      })
+      .refine(
+        (resource) =>
+          (resource.text !== undefined) !== (resource.blob !== undefined),
+        { message: 'Resource must contain exactly one of text or blob' },
+      ),
+  })
+  .openapi('GodMessageResourceBlock');
+
+const godMessageContentBlockSchema = z.union([
+  godMessageTextBlockSchema,
+  godMessageImageBlockSchema,
+  godMessageAudioBlockSchema,
+  godMessageResourceLinkBlockSchema,
+  godMessageResourceBlockSchema,
+]);
+
+const createGodMessageBodySchema = z
+  .object({
+    content: z
+      .array(godMessageContentBlockSchema)
+      .min(1)
+      .max(MAX_GOD_MESSAGE_BLOCKS),
+  })
+  .openapi('CreateGodMessageBody');
+
+const createGodMessageResponseSchema = z
+  .object({
+    sessionId: z.string(),
+  })
+  .openapi('CreateGodMessageResponse');
+
 // --- Usage ---
 
 const usageSplitBySchema = z
@@ -727,6 +820,8 @@ export {
   cloudEnrollResponseSchema,
   cloudStatusResponseSchema,
   createEndpointBodySchema,
+  createGodMessageBodySchema,
+  createGodMessageResponseSchema,
   createKnownModelBodySchema,
   createMcpServerBodySchema,
   createProviderBodySchema,

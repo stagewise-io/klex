@@ -10,13 +10,22 @@ import type { AgentSession } from '@/session/types';
 import { createRouter } from './router';
 
 function createIntrospectionMock(): IntrospectionScope {
-  const make = (): IntrospectionScope => ({
-    path: [],
-    introspect: () => undefined,
-    child: () => make(),
-    removeChild: () => undefined,
-  });
-  return make();
+  const make = (path: string[]): IntrospectionScope => {
+    const children = new Set<string>();
+    return {
+      path,
+      introspect: () => undefined,
+      child: (id) => {
+        if (children.has(id)) throw new Error(`Duplicate child: ${id}`);
+        children.add(id);
+        return make([...path, id]);
+      },
+      removeChild: (id) => {
+        children.delete(id);
+      },
+    };
+  };
+  return make([]);
 }
 
 function setup() {
@@ -48,10 +57,11 @@ function setup() {
     start: async () => undefined,
     close: async () => undefined,
   } as unknown as AgentSession;
+  const introspection = createIntrospectionMock();
   const router = createRouter({
     logging,
     mcp,
-    introspection: createIntrospectionMock(),
+    introspection,
     createChatSession: () => session,
   });
 
@@ -255,5 +265,15 @@ describe('Router Push Notification adaptation', () => {
     });
 
     expect(harness.sent[0]?.context.content).toEqual([]);
+  });
+
+  it('supports close followed by start without leaking scopes', async () => {
+    const harness = setup();
+
+    await harness.router.start();
+    await harness.router.close();
+    await harness.router.start();
+
+    await harness.router.close();
   });
 });

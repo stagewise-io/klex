@@ -24,6 +24,20 @@ export type ContinueDataUIPart = Record<string, never>;
 export type CheckDataUIPart = Record<string, never>;
 
 /**
+ * Custom data part that carries a god message — a high-priority
+ * directive received via the admin API. The converter wraps its content
+ * in `<god-message>...</god-message>` XML, handling text, image, audio,
+ * resource_link, and resource blocks identically to `data-context`.
+ *
+ * Unlike `ContextDataUIPart`, god messages have no `sourceEnv` or
+ * `metadata` — they originate from the admin API, not an external
+ * environment.
+ */
+export type GodMessageDataUIPart = {
+  content: ContextDataUIPart['content'];
+};
+
+/**
  * Core custom data part types. Only types that are fundamental to the
  * session itself live here — extension-defined data parts are NOT
  * registered centrally. Extensions define their own part types locally
@@ -33,6 +47,7 @@ export type CheckDataUIPart = Record<string, never>;
  */
 export type CustomUIDataParts = {
   context: ContextDataUIPart;
+  'god-message': GodMessageDataUIPart;
   continue: ContinueDataUIPart;
   check: CheckDataUIPart;
 };

@@ -1,15 +1,15 @@
 import { analyzeCommits as analyzeConventionalCommits } from '@semantic-release/commit-analyzer';
 import { generateNotes as generateConventionalNotes } from '@semantic-release/release-notes-generator';
 
+export function commitHasScope(message, expectedScope) {
+  const header = message.split('\n', 1)[0];
+  const match = /^[a-z][a-z0-9-]*\(([^)]+)\)(?:!)?:/i.exec(header);
+
+  return match?.[1].split(',').includes(expectedScope) ?? false;
+}
+
 function scopedCommits(scope, commits) {
-  const escapedScope = scope.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const scopedHeader = new RegExp(
-    `^[a-z][a-z0-9-]*\\(${escapedScope}\\)(?:!)?:`,
-    'i',
-  );
-  return commits.filter(({ message }) =>
-    scopedHeader.test(message.split('\n', 1)[0]),
-  );
+  return commits.filter(({ message }) => commitHasScope(message, scope));
 }
 
 export async function generateNotes({ scope }, context) {

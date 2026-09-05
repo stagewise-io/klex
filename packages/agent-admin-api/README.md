@@ -36,4 +36,13 @@ Error responses include a machine-readable `code` alongside the human-readable
 configured credentials, connected servers, unavailable Cloud authorization,
 and authorization timeouts.
 
+## God session management
+
+The Admin API contract includes the dedicated God Messages session:
+
+- `POST /v1/god-messages` submits a trusted multipart directive.
+- `GET /v1/god-messages/session` returns the current session state.
+- `GET /v1/god-messages/messages` returns cursor-paginated session history.
+- `POST /v1/god-messages/reset` replaces a resettable session.
+
 Install `hono` and `@hono/zod-openapi` as peer dependencies.

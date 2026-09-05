@@ -6,6 +6,7 @@ export const MenuKeys = {
   Settings: 's',
   Cloud: 'c',
   Usage: 'u',
+  GodMessages: 'g',
   Refresh: 'r',
   Quit: 'q',
   Back: 'escape',

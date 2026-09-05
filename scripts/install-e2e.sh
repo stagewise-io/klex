@@ -163,6 +163,17 @@ run_installer() {
 	run_installer_in "$LAB/home" "$LAB/home/opt/klex" "$@"
 }
 
+run_installer_from_stdin() {
+	# Exercise the documented curl | sh execution mode, where $0 is not the
+	# installer path. This is especially important for macOS lockf handling.
+	env -i \
+		HOME="$LAB/home" \
+		PATH="$PATH" \
+		SHELL=/bin/bash \
+		KLEX_MANIFEST_URL="file://$LAB/serve/release-manifest.json" \
+		sh -s -- --install-dir "$LAB/home/opt/klex" "$@" <"$REPO_ROOT/install.sh"
+}
+
 run_installer_with_env() {
 	# $1 = one extra NAME=VALUE pair, rest = installer arguments.
 	#
@@ -599,6 +610,10 @@ else
 	lock_released=$?
 fi
 check 'transaction lock is released after success' "$lock_released"
+run_installer_from_stdin --no-modify-path >"$LAB/stdin-install.log" 2>&1
+check 'stdin installer invocation succeeds' "$?"
+[ "$("$ROOT/bin/klex" --version)" = '2.1.0' ]
+check 'stdin installer preserves the published version' "$?"
 
 printf '\n'
 if [ "$fails" -eq 0 ]; then

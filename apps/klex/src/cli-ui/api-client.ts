@@ -99,6 +99,23 @@ export interface GodMessageResponse {
   sessionId: string;
 }
 
+export interface GodMessagesResponse {
+  messages: SerializedMessage[];
+  nextCursor: string | null;
+  hasMore: boolean;
+}
+
+export interface SerializedPart {
+  type: string;
+  [key: string]: unknown;
+}
+
+export interface SerializedMessage {
+  id: string;
+  role: string;
+  parts: SerializedPart[];
+}
+
 export interface IntrospectionNode {
   path: string[];
   state: Record<string, unknown> | null;
@@ -396,6 +413,29 @@ export class AdminApiClient {
     return this.request<GodMessageResponse>('/v1/god-messages', {
       method: 'POST',
       body: { content: [{ type: 'text', text }] },
+    });
+  }
+
+  getGodSession(): Promise<SessionInfo> {
+    return this.request<SessionInfo>('/v1/god-messages/session');
+  }
+
+  getGodMessages(
+    limit?: number,
+    cursor?: string,
+  ): Promise<GodMessagesResponse> {
+    const query = new URLSearchParams();
+    if (limit !== undefined) query.set('limit', String(limit));
+    if (cursor) query.set('cursor', cursor);
+    const qs = query.toString();
+    return this.request<GodMessagesResponse>(
+      `/v1/god-messages/messages${qs ? `?${qs}` : ''}`,
+    );
+  }
+
+  resetGodSession(): Promise<GodMessageResponse> {
+    return this.request<GodMessageResponse>('/v1/god-messages/reset', {
+      method: 'POST',
     });
   }
 

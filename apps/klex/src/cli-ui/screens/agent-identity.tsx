@@ -34,10 +34,13 @@ export function AgentIdentityScreen({
   const [identity, setIdentity] = useState<AgentIdentity | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [loadAttempt, setLoadAttempt] = useState(0);
   const [pendingName, setPendingName] = useState('');
   const [saving, setSaving] = useState(false);
   const savingRef = useRef(false);
 
+  // loadAttempt is an explicit retry trigger, not request input.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: retries must rerun the effect
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
@@ -64,7 +67,7 @@ export function AgentIdentityScreen({
     return () => {
       cancelled = true;
     };
-  }, [apiClient, pushToast]);
+  }, [apiClient, pushToast, loadAttempt]);
 
   useEffect(() => {
     setActive(mode === 'edit' && !saving);
@@ -77,6 +80,7 @@ export function AgentIdentityScreen({
       keys:
         mode === 'view'
           ? [
+              ...(loadError ? [{ key: 'r', label: 'Retry' }] : []),
               { key: 'e', label: 'Edit' },
               { key: 'esc', label: 'Back' },
             ]
@@ -87,7 +91,7 @@ export function AgentIdentityScreen({
                 { key: 'esc', label: 'Cancel' },
               ],
     });
-  }, [setMeta, mode, saving]);
+  }, [setMeta, mode, loadError, saving]);
 
   useMenuInput({
     [MenuKeys.Back]: () => {
@@ -99,6 +103,11 @@ export function AgentIdentityScreen({
       if (mode === 'view' && identity) {
         setPendingName(identity.officialName);
         setMode('edit');
+      }
+    },
+    r: () => {
+      if (mode === 'view' && !loading && !identity) {
+        setLoadAttempt((attempt) => attempt + 1);
       }
     },
   });
@@ -168,7 +177,10 @@ export function AgentIdentityScreen({
     <ScreenSection title="Agent Identity">
       {loading && <Text dimColor>Loading...</Text>}
       {!loading && loadError && !identity && (
-        <Text color="red">{loadError}</Text>
+        <Box flexDirection="column">
+          <Text color="red">{loadError}</Text>
+          <Text dimColor>[r] Retry | [esc] Back</Text>
+        </Box>
       )}
       {!loading && identity && (
         <Box flexDirection="column">

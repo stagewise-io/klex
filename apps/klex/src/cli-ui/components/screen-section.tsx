@@ -8,7 +8,7 @@ export function ScreenSection({
 }: {
   title: string;
   children: ReactNode;
-  tone?: 'blue' | 'yellow';
+  tone?: 'blue' | 'yellow' | 'red';
 }) {
   const { stdout } = useStdout();
   const terminalWidth = stdout.columns || 80;

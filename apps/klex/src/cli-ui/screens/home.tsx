@@ -14,6 +14,7 @@ import { usePolling } from '../hooks/use-polling';
 import { useScreenMeta } from '../hooks/use-screen-meta';
 import { useToast } from '../hooks/use-toast';
 import { MenuKeys, useMenuInput } from '../menu-keys';
+import { formatAge } from '../utils/format-age';
 
 export interface HomeScreenProps {
   apiClient: AdminApiClient;
@@ -299,14 +300,4 @@ function isUnsafeCloudUrl(value: string): boolean {
   } catch {
     return /^(?:http|ws):\/\//i.test(value);
   }
-}
-
-function formatAge(isoDate: string): string {
-  const created = new Date(isoDate).getTime();
-  if (Number.isNaN(created)) return 'unknown';
-  const elapsed = Date.now() - created;
-  if (elapsed < 60_000) return `${Math.floor(elapsed / 1000)}s`;
-  if (elapsed < 3_600_000) return `${Math.floor(elapsed / 60_000)}m`;
-  if (elapsed < 86_400_000) return `${Math.floor(elapsed / 3_600_000)}h`;
-  return `${Math.floor(elapsed / 86_400_000)}d`;
 }

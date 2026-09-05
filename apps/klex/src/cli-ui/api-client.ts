@@ -91,6 +91,10 @@ export interface CloudEnrollResult {
   enrolledAt: string;
 }
 
+export interface GodMessageResponse {
+  sessionId: string;
+}
+
 export interface IntrospectionNode {
   path: string[];
   state: Record<string, unknown> | null;
@@ -368,6 +372,15 @@ export class AdminApiClient {
     return this.request<CloudEnrollResult>('/v1/cloud/enroll', {
       method: 'POST',
       body: { enrollmentCode },
+    });
+  }
+
+  // --- God Messages ---
+
+  sendGodMessage(text: string): Promise<GodMessageResponse> {
+    return this.request<GodMessageResponse>('/v1/god-messages', {
+      method: 'POST',
+      body: { content: [{ type: 'text', text }] },
     });
   }
 

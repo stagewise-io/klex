@@ -8,7 +8,8 @@ export type Screen =
   | 'debug-information'
   | 'logs'
   | 'telemetry'
-  | 'usage';
+  | 'usage'
+  | 'god-messages';
 
 export interface CliUiDependencies {
   logging: import('@stagewise/logger').RootLogger;

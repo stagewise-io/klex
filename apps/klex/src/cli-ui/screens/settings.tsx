@@ -15,6 +15,7 @@ export interface SettingsScreenProps {
   onOpenTelemetry: () => void;
   onOpenDebugInformation: () => void;
   onOpenLogs: () => void;
+  onOpenGodMessages: () => void;
   onBack: () => void;
 }
 
@@ -31,6 +32,7 @@ const MENU_ITEMS: MenuItem[] = [
   { label: 'Telemetry', value: 'telemetry' },
   { label: 'Debug Information', value: 'debug-information' },
   { label: 'Logs', value: 'logs' },
+  { label: 'God Messages', value: 'god-messages' },
 ];
 
 export function SettingsScreen({
@@ -42,6 +44,7 @@ export function SettingsScreen({
   onOpenTelemetry,
   onOpenDebugInformation,
   onOpenLogs,
+  onOpenGodMessages,
   onBack,
 }: SettingsScreenProps) {
   const { setMeta } = useScreenMeta();
@@ -84,6 +87,9 @@ export function SettingsScreen({
         break;
       case 'logs':
         onOpenLogs();
+        break;
+      case 'god-messages':
+        onOpenGodMessages();
         break;
     }
   };

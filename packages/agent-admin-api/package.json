@@ -31,7 +31,7 @@
     "clean": "rm -rf dist",
     "build": "node build.mjs",
     "typecheck": "tsc --noEmit",
-    "test": "node --test release-config.test.mjs",
+    "test": "node --test release-config.test.mjs ../../scripts/check-agent-admin-api-release.test.mjs",
     "verify": "node verify-package.mjs"
   },
   "devDependencies": {

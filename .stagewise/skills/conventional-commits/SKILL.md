@@ -28,13 +28,22 @@ Use for every commit in this repo. No exceptions.
 
 5. **No `Co-authored-by`, no trailers** unless explicitly requested.
 
-6. **Scope optional.** `feat(admin): add health endpoint` — scope in parens after type. Use when change targets a specific subsystem.
+6. **Scope optional.** `feat(admin): add health endpoint` — scope in parens after type. Use workspace names from `pnpm-workspace.yaml` when a change targets a specific workspace.
+
+7. **Multiple scopes use commas without spaces.** Include every affected publishable workspace: `feat(klex,agent-admin-api): add route types`. Do not use slashes, whitespace, or duplicate scopes.
+
+8. **Public Admin API changes require `agent-admin-api`.** If a Klex change alters the generated `AdminApi` declaration, include both `klex` and `agent-admin-api`. Never use an empty release-trigger commit; put the scopes on the non-empty implementation or documentation commit so rebase merging preserves them. CI compares the generated declaration against the PR base and rejects a missing release scope.
 
 ## Examples
 
 Summary only — sufficient:
 ```
 chore: remove LICENSE file
+```
+
+Multiple affected workspaces:
+```
+feat(klex,agent-admin-api): expose god session routes
 ```
 
 Summary + bullets — summary alone insufficient:

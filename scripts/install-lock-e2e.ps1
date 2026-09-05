@@ -29,3 +29,4 @@ $probe.Dispose()
 Remove-Item -LiteralPath $lockPath -Force -ErrorAction SilentlyContinue
 Remove-Item -LiteralPath $lab -Recurse -Force -ErrorAction SilentlyContinue
 Write-Host 'ALL CHECKS PASSED'
+exit 0

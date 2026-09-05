@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, stat, unlink } from 'node:fs/promises';
+import { chmod, mkdtemp, readFile, rm, stat, unlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -83,6 +83,21 @@ describe('DirectoryLock', () => {
     expect(parsed.pid).toBe(process.pid);
     await lock.release();
   });
+
+  it.runIf(process.platform !== 'win32')(
+    'reports failure to remove the lock file',
+    async () => {
+      const lock = createDirectoryLock({ logging, dataDirectory: dir });
+      await lock.acquire();
+      await chmod(dir, 0o500);
+      try {
+        await expect(lock.release()).rejects.toMatchObject({ code: 'EACCES' });
+      } finally {
+        await chmod(dir, 0o700);
+      }
+      await expect(stat(join(dir, '.klex.lock'))).resolves.toBeDefined();
+    },
+  );
 
   it('release is idempotent', async () => {
     const lock = createDirectoryLock({ logging, dataDirectory: dir });

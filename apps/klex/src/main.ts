@@ -315,17 +315,20 @@ async function main(): Promise<void> {
     closeUi: () => cliUi?.close(),
     cleanup: async () => {
       updateManager?.stop();
-      await Promise.allSettled([
+      const [, , lockRelease] = await Promise.allSettled([
         runningRouter.close().catch((error: unknown) => {
           logger.error({ error }, 'Router shutdown failed');
         }),
         closeReverse(started),
-        dirLock.release().catch((error: unknown) => {
-          logger.error({ error }, 'Lock release failed');
-        }),
+        dirLock.release(),
         tracing.close(),
         logger[Symbol.asyncDispose](),
       ]);
+      if (lockRelease.status === 'rejected') {
+        throw new Error('Could not release the agent-directory lock', {
+          cause: lockRelease.reason,
+        });
+      }
     },
     exit: (code) => process.exit(code),
     onRestartError: (error) => {

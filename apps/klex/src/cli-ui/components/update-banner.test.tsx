@@ -54,6 +54,35 @@ describe('UpdateBanner', () => {
     expect(updateManager.install).toHaveBeenCalledOnce();
   });
 
+  it('returns to the offer when active-session confirmation is cancelled', async () => {
+    const updateManager = manager({ status: 'available', version: '1.2.4' });
+    const view = render(
+      <UpdateBanner activeSessionCount={2} manager={updateManager} />,
+    );
+    await act(async () => view.stdin.write('u'));
+    expect(view.lastFrame()).toContain('[n] Cancel');
+    await act(async () => view.stdin.write('n'));
+    expect(view.lastFrame()).toContain('Klex 1.2.4 is available');
+    expect(view.lastFrame()).toContain('[n] Dismiss for now');
+  });
+
+  it('does not claim input owned by the active screen', async () => {
+    const updateManager = manager({ status: 'available', version: '1.2.4' });
+    const view = render(
+      <UpdateBanner
+        activeSessionCount={0}
+        inputBlocked
+        manager={updateManager}
+      />,
+    );
+    expect(view.lastFrame()).not.toContain('1.2.4');
+    await act(async () => {
+      view.stdin.write('u');
+      view.stdin.write('n');
+    });
+    expect(updateManager.install).not.toHaveBeenCalled();
+  });
+
   it('dismisses an offer for the current run', async () => {
     const updateManager = manager({ status: 'available', version: '1.2.4' });
     const view = render(

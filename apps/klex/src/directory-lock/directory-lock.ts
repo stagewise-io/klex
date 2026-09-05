@@ -49,10 +49,15 @@ class DirectoryLockModule implements DirectoryLock {
     if (!this.acquired) return;
     this.acquired = false;
 
-    // Unlink the lock file BEFORE closing the handle.  If we close first,
+    // Unlink the lock file BEFORE closing the handle. If we close first,
     // another process could create a new lock file in the gap between
     // close() and unlink(), and our unlink would delete their file.
-    await this.safeRemoveLock();
+    let removeError: unknown;
+    try {
+      await this.safeRemoveLock();
+    } catch (error) {
+      removeError = error;
+    }
 
     if (this.handle) {
       await this.handle.close().catch((error: unknown) => {
@@ -60,6 +65,7 @@ class DirectoryLockModule implements DirectoryLock {
       });
       this.handle = null;
     }
+    if (removeError) throw removeError;
     this.deps.logger.debug('Working directory lock released');
   }
 
@@ -110,7 +116,11 @@ class DirectoryLockModule implements DirectoryLock {
   }
 
   private async safeRemoveLock(): Promise<void> {
-    await unlink(this.deps.lockPath).catch(() => undefined);
+    try {
+      await unlink(this.deps.lockPath);
+    } catch (error) {
+      if (!isNodeError(error) || error.code !== 'ENOENT') throw error;
+    }
   }
 }
 

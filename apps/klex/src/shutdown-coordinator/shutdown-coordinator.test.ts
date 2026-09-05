@@ -63,6 +63,33 @@ describe('shutdown coordinator', () => {
     expect(exit).toHaveBeenCalledWith(0);
   });
 
+  it('does not restart when cleanup fails', async () => {
+    const exit = vi.fn();
+    const onRestartError = vi.fn();
+    const restartProcess = vi.fn(async () => 0);
+    const coordinator = createShutdownCoordinator({
+      cleanup: async () => {
+        throw new Error('lock release failed');
+      },
+      closeUi: vi.fn(),
+      exit,
+      onRestartError,
+      restartProcess,
+    });
+    coordinator.requestRestart({
+      arguments: [],
+      cwd: process.cwd(),
+      environment: process.env,
+      launcher: process.execPath,
+    });
+    await tick();
+    expect(restartProcess).not.toHaveBeenCalled();
+    expect(onRestartError).toHaveBeenCalledWith(
+      expect.objectContaining({ message: 'lock release failed' }),
+    );
+    expect(exit).toHaveBeenCalledWith(1);
+  });
+
   it('does not restart when cleanup times out', async () => {
     const exit = vi.fn();
     const onRestartError = vi.fn();

@@ -267,6 +267,9 @@ function FrameLayout({
                   session.status === 'running',
               ).length
             }
+            inputBlocked={meta.keys.some(({ key }) =>
+              ['n', 'u'].includes(key.toLowerCase()),
+            )}
             manager={updateManager}
           />
         ) : undefined

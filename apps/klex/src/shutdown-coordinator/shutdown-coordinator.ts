@@ -39,22 +39,34 @@ export function createShutdownCoordinator(
     }
 
     let timeoutHandle: NodeJS.Timeout | undefined;
-    const timeout = new Promise<'timeout'>((resolve) => {
+    const timeout = new Promise<{ status: 'timeout' }>((resolve) => {
       timeoutHandle = setTimeout(
-        () => resolve('timeout'),
+        () => resolve({ status: 'timeout' }),
         options.timeoutMs ?? 3000,
       );
     });
-    void Promise.race([
-      options.cleanup().then(() => 'clean' as const),
-      timeout,
-    ]).then(async (result) => {
+    const cleanup = options.cleanup().then(
+      () => ({ status: 'clean' as const }),
+      (error: unknown) => ({
+        status: 'error' as const,
+        error:
+          error instanceof Error
+            ? error
+            : new Error('Could not release application resources'),
+      }),
+    );
+    void Promise.race([cleanup, timeout]).then(async (result) => {
       if (timeoutHandle) clearTimeout(timeoutHandle);
+      if (result.status === 'error') {
+        if (mode === 'restart') options.onRestartError(result.error);
+        options.exit(1);
+        return;
+      }
       if (mode === 'exit' || !restart) {
         options.exit(0);
         return;
       }
-      if (result === 'timeout') {
+      if (result.status === 'timeout') {
         options.onRestartError(
           new Error('Timed out while releasing application resources'),
         );

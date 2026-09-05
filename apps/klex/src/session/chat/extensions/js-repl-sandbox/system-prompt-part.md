@@ -1,4 +1,6 @@
-# JavaScript toolbox
+# MCP tools & JS sandbox
+
+In order to call MCP tools and interact iwth the world, you MUST use the JS REPL sandbox tool to do so. There's no other way.
 
 Use `runInSandbox` to execute JavaScript in a persistent, isolated sandbox. Top-level `await` and `return` are supported. Persist state explicitly on `globalThis`.
 

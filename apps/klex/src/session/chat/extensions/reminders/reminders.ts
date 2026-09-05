@@ -81,7 +81,7 @@ class RemindersExtension implements Extension {
             .int()
             .positive()
             .describe(
-              'How long until the reminder fires. Must be a positive integer. ' +
+              'How long until the reminder fires. MUST be a positive number. ' +
                 `Maximum total duration is ${MAX_DURATION_DAYS} days across all units.`,
             ),
           unit: z
@@ -103,7 +103,7 @@ class RemindersExtension implements Extension {
             .number()
             .int()
             .describe(
-              'A numeric handle to cancel this reminder with clearReminder.',
+              'A numeric handle that allows you to cancel this reminder with clearReminder.',
             ),
         }),
         execute: async ({ duration, unit, topic }) => {

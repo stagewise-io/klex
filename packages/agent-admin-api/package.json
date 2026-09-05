@@ -5,6 +5,11 @@
   "sideEffects": false,
   "description": "Shared types for the Klex Bot Admin API",
   "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/stagewise-io/klex.git",
+    "directory": "packages/agent-admin-api"
+  },
   "exports": {
     ".": {
       "types": "./dist/index.d.ts"

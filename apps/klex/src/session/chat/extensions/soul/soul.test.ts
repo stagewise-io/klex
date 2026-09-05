@@ -21,6 +21,10 @@ vi.mock('./no-soul-prompt-regular.md', () => ({
   default: "# Where am I?\n\nYou don't know who you are.",
 }));
 
+vi.mock('./update-soul-tool-description.md', () => ({
+  default: 'Memorize or update your soul.',
+}));
+
 const MOCK_MODEL = {
   modelId: 'test:model',
   displayName: 'Test Model',
@@ -211,216 +215,23 @@ describe('SoulExt (standard) — getTools', () => {
 // ---------------------------------------------------------------------------
 
 describe('SoulExt (god) — getTools', () => {
-  it('provides the createSoul tool when no soul exists', () => {
-    const deps = makeDeps();
-    const ext = createSoulExtGod.create(deps);
+  it('provides updateSoul when no soul exists', () => {
+    const ext = createSoulExtGod.create(makeDeps());
 
-    const tools = ext.getTools!(MOCK_MODEL);
-
-    expect(tools).toHaveProperty('createSoul');
-    expect(tools).not.toHaveProperty('updateSoul');
+    expect(ext.getTools!(MOCK_MODEL)).toHaveProperty('updateSoul');
   });
 
-  it('provides updateSoul (not createSoul) when a soul exists', () => {
+  it('provides updateSoul when a soul exists', () => {
     const dir = makeTmpDir();
     writeFileSync(join(dir, 'SOUL.md'), 'I am someone.', 'utf-8');
+    const ext = createSoulExtGod.create(makeDeps({ getDataDir: () => dir }));
 
-    const deps = makeDeps({ getDataDir: () => dir });
-    const ext = createSoulExtGod.create(deps);
-
-    const tools = ext.getTools!(MOCK_MODEL);
-
-    expect(tools).toHaveProperty('updateSoul');
-    expect(tools).not.toHaveProperty('createSoul');
-  });
-
-  it('provides createSoul when SOUL.md exists but is empty', () => {
-    const dir = makeTmpDir();
-    writeFileSync(join(dir, 'SOUL.md'), '', 'utf-8');
-
-    const deps = makeDeps({ getDataDir: () => dir });
-    const ext = createSoulExtGod.create(deps);
-
-    const tools = ext.getTools!(MOCK_MODEL);
-
-    expect(tools).toHaveProperty('createSoul');
-  });
-
-  it('provides createSoul when SOUL.md is whitespace-only', () => {
-    const dir = makeTmpDir();
-    writeFileSync(join(dir, 'SOUL.md'), '   \n\t  \n', 'utf-8');
-
-    const deps = makeDeps({ getDataDir: () => dir });
-    const ext = createSoulExtGod.create(deps);
-
-    const tools = ext.getTools!(MOCK_MODEL);
-
-    expect(tools).toHaveProperty('createSoul');
+    expect(ext.getTools!(MOCK_MODEL)).toHaveProperty('updateSoul');
   });
 });
 
 // ---------------------------------------------------------------------------
-// createSoul tool (god mode only)
-// ---------------------------------------------------------------------------
-
-describe('SoulExt (god) — createSoul tool', () => {
-  it('writes the soul file and returns a success message', async () => {
-    const dir = makeTmpDir();
-    const deps = makeDeps({ getDataDir: () => dir });
-    const ext = createSoulExtGod.create(deps);
-
-    const tools = ext.getTools!(MOCK_MODEL);
-    const createSoul = tools.createSoul as unknown as {
-      execute: (args: { content: string }) => Promise<string>;
-    };
-
-    const soulContent = '# My Soul\n\nI am Echo. Brief and sharp.';
-    const result = await createSoul.execute({ content: soulContent });
-
-    expect(result).toContain('saved');
-    expect(existsSync(join(dir, 'SOUL.md'))).toBe(true);
-    expect(readFileSync(join(dir, 'SOUL.md'), 'utf-8')).toBe(soulContent);
-  });
-
-  it('creates the extension directory if it does not exist', async () => {
-    const baseDir = makeTmpDir();
-    const extDir = join(baseDir, 'nested', 'soul-dir');
-
-    const deps = makeDeps({ getDataDir: () => extDir });
-    const ext = createSoulExtGod.create(deps);
-
-    const tools = ext.getTools!(MOCK_MODEL);
-    const createSoul = tools.createSoul as unknown as {
-      execute: (args: { content: string }) => Promise<string>;
-    };
-
-    expect(existsSync(extDir)).toBe(false);
-
-    await createSoul.execute({ content: 'I am Forge.' });
-
-    expect(existsSync(join(extDir, 'SOUL.md'))).toBe(true);
-  });
-
-  it('rejects empty content via schema validation', () => {
-    const deps = makeDeps();
-    const ext = createSoulExtGod.create(deps);
-
-    const tools = ext.getTools!(MOCK_MODEL);
-    const createSoul = tools.createSoul as unknown as {
-      inputSchema: { safeParse: (input: unknown) => { success: boolean } };
-    };
-
-    expect(createSoul.inputSchema.safeParse({ content: '' }).success).toBe(
-      false,
-    );
-  });
-
-  it('rejects whitespace-only content via schema validation', () => {
-    const deps = makeDeps();
-    const ext = createSoulExtGod.create(deps);
-
-    const tools = ext.getTools!(MOCK_MODEL);
-    const createSoul = tools.createSoul as unknown as {
-      inputSchema: { safeParse: (input: unknown) => { success: boolean } };
-    };
-
-    expect(
-      createSoul.inputSchema.safeParse({ content: '  \n\t ' }).success,
-    ).toBe(false);
-  });
-
-  it('rejects content containing the official name', async () => {
-    const dir = makeTmpDir();
-    const deps = makeDeps({ getDataDir: () => dir });
-    const ext = createSoulExtGod.create(deps);
-
-    const tools = ext.getTools!(MOCK_MODEL);
-    const createSoul = tools.createSoul as unknown as {
-      inputSchema: { safeParse: (input: unknown) => { success: boolean } };
-      execute: (args: { content: string }) => Promise<string>;
-    };
-    const content = 'I am atlas, the navigator.';
-
-    expect(createSoul.inputSchema.safeParse({ content }).success).toBe(false);
-    await expect(createSoul.execute({ content })).resolves.toContain(
-      'must not include your official name',
-    );
-    expect(existsSync(join(dir, 'SOUL.md'))).toBe(false);
-  });
-
-  it('rejects content exceeding the 10000 character limit', () => {
-    const deps = makeDeps();
-    const ext = createSoulExtGod.create(deps);
-
-    const tools = ext.getTools!(MOCK_MODEL);
-    const createSoul = tools.createSoul as unknown as {
-      inputSchema: { safeParse: (input: unknown) => { success: boolean } };
-    };
-
-    expect(
-      createSoul.inputSchema.safeParse({ content: 'x'.repeat(10_001) }).success,
-    ).toBe(false);
-  });
-
-  it('accepts content at exactly 10000 characters', () => {
-    const deps = makeDeps();
-    const ext = createSoulExtGod.create(deps);
-
-    const tools = ext.getTools!(MOCK_MODEL);
-    const createSoul = tools.createSoul as unknown as {
-      inputSchema: { safeParse: (input: unknown) => { success: boolean } };
-    };
-
-    expect(
-      createSoul.inputSchema.safeParse({ content: 'x'.repeat(10_000) }).success,
-    ).toBe(true);
-  });
-
-  it('refuses to overwrite an existing soul', async () => {
-    const dir = makeTmpDir();
-    writeFileSync(join(dir, 'SOUL.md'), 'Original soul', 'utf-8');
-
-    const deps = makeDeps({ getDataDir: () => dir });
-    const ext = createSoulExtGod.create(deps);
-
-    // Simulate the edge case where the tool was registered (soul didn't
-    // exist at getTools time) but the file appeared before execute ran.
-    rmSync(join(dir, 'SOUL.md'));
-    const tools = ext.getTools!(MOCK_MODEL);
-    const createSoul = tools.createSoul as unknown as {
-      execute: (args: { content: string }) => Promise<string>;
-    };
-    writeFileSync(join(dir, 'SOUL.md'), 'Soul appeared', 'utf-8');
-
-    const result = await createSoul.execute({ content: 'New soul' });
-
-    expect(result).toContain('already exists');
-    expect(readFileSync(join(dir, 'SOUL.md'), 'utf-8')).toBe('Soul appeared');
-  });
-
-  it('tool disappears after soul is created (next step)', async () => {
-    const dir = makeTmpDir();
-    const deps = makeDeps({ getDataDir: () => dir });
-    const ext = createSoulExtGod.create(deps);
-
-    // Step 1: no soul → createSoul available
-    const toolsBefore = ext.getTools!(MOCK_MODEL);
-    expect(toolsBefore).toHaveProperty('createSoul');
-
-    const createSoul = toolsBefore.createSoul as unknown as {
-      execute: (args: { content: string }) => Promise<string>;
-    };
-    await createSoul.execute({ content: 'I am now alive.' });
-
-    // Step 2: soul exists → updateSoul available (not createSoul)
-    const toolsAfter = ext.getTools!(MOCK_MODEL);
-    expect(toolsAfter).not.toHaveProperty('createSoul');
-    expect(toolsAfter).toHaveProperty('updateSoul');
-  });
-});
-
-// ---------------------------------------------------------------------------
-// updateSoul tool (god mode only, when soul exists)
+// updateSoul tool (god mode only)
 // ---------------------------------------------------------------------------
 
 describe('SoulExt (god) — updateSoul tool', () => {
@@ -443,7 +254,7 @@ describe('SoulExt (god) — updateSoul tool', () => {
     expect(readFileSync(join(dir, 'SOUL.md'), 'utf-8')).toBe(newContent);
   });
 
-  it('always overwrites — no race guard (unlike createSoul)', async () => {
+  it('writes the soul when no soul currently exists', async () => {
     const dir = makeTmpDir();
     writeFileSync(join(dir, 'SOUL.md'), 'Soul exists', 'utf-8');
 
@@ -478,27 +289,6 @@ describe('SoulExt (god) — updateSoul tool', () => {
     expect(updateSoul.inputSchema.safeParse({ content: '' }).success).toBe(
       false,
     );
-  });
-
-  it('rejects content containing the official name', async () => {
-    const dir = makeTmpDir();
-    writeFileSync(join(dir, 'SOUL.md'), 'Original soul', 'utf-8');
-
-    const deps = makeDeps({ getDataDir: () => dir });
-    const ext = createSoulExtGod.create(deps);
-
-    const tools = ext.getTools!(MOCK_MODEL);
-    const updateSoul = tools.updateSoul as unknown as {
-      inputSchema: { safeParse: (input: unknown) => { success: boolean } };
-      execute: (args: { content: string }) => Promise<string>;
-    };
-    const content = 'My official identity is ATLAS.';
-
-    expect(updateSoul.inputSchema.safeParse({ content }).success).toBe(false);
-    await expect(updateSoul.execute({ content })).resolves.toContain(
-      'must not include your official name',
-    );
-    expect(readFileSync(join(dir, 'SOUL.md'), 'utf-8')).toBe('Original soul');
   });
 
   it('rejects content exceeding the 10000 character limit', () => {

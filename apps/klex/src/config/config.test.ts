@@ -163,6 +163,21 @@ describe('Config — minimal schema', () => {
       klexConfigSchema.parse({ officialName: '  Ada  ' }).officialName,
     ).toBe('Ada');
   });
+
+  it('migrates legacy names longer than 128 Unicode characters', () => {
+    expect(
+      Array.from(
+        klexConfigSchema.parse({ officialName: '😀'.repeat(129) }).officialName,
+      ),
+    ).toHaveLength(128);
+  });
+
+  it('migrates multiline official names to a single line', () => {
+    expect(
+      klexConfigSchema.parse({ officialName: 'Echo\nLegacy suffix' })
+        .officialName,
+    ).toBe('Echo Legacy suffix');
+  });
 });
 
 describe('Config — voice model selection', () => {

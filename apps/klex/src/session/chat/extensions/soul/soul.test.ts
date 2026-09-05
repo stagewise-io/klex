@@ -315,6 +315,20 @@ describe('SoulExt (god) — createSoul tool', () => {
     );
   });
 
+  it('rejects whitespace-only content via schema validation', () => {
+    const deps = makeDeps();
+    const ext = createSoulExtGod.create(deps);
+
+    const tools = ext.getTools!(MOCK_MODEL);
+    const createSoul = tools.createSoul as unknown as {
+      inputSchema: { safeParse: (input: unknown) => { success: boolean } };
+    };
+
+    expect(
+      createSoul.inputSchema.safeParse({ content: '  \n\t ' }).success,
+    ).toBe(false);
+  });
+
   it('rejects content containing the official name', async () => {
     const dir = makeTmpDir();
     const deps = makeDeps({ getDataDir: () => dir });

@@ -79,6 +79,9 @@ class SoulExt implements Extension {
     return z
       .string()
       .min(1)
+      .refine((content) => content.trim().length > 0, {
+        message: 'Soul content must not be blank',
+      })
       .max(MAX_SOUL_LENGTH)
       .refine((content) => !this.containsOfficialName(content), {
         message: 'Soul content must not include the official name',

@@ -287,7 +287,7 @@ function convertCheckPart(): TextPart[] {
 /**
  * Builds a `convertDataPart` callback for the AI SDK.
  *
- * Core data part types (`context`, `continue`, `check`) are always
+ * Core data part types (`context`, `god-message`, `continue`, `check`) are always
  * handled by built-in transformers — extension-registered transformers
  * for these keys are ignored. All other custom types are dispatched to
  * the extension-registered transformer map.

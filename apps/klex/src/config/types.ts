@@ -288,7 +288,7 @@ const telemetryConfigSchema = z.object({
 });
 
 const klexConfigSchema = z.object({
-  officialName: z.string().trim().min(2).default('Agent'),
+  officialName: z.string().trim().min(2).max(128).default('Agent'),
   providers: z.record(z.string(), providerConfigSchema).default({}),
   modelSelection: modelSelectionSchema.default({
     chat: [],

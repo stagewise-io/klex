@@ -218,7 +218,7 @@ const introspectionPathParamsSchema = z.object({
 
 // --- Settings / Agent ---
 
-const officialNameSchema = z.string().trim().min(2);
+const officialNameSchema = z.string().trim().min(2).max(128);
 
 const agentIdentityResponseSchema = z
   .object({

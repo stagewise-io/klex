@@ -8,6 +8,7 @@ import { MenuKeys, useMenuInput } from '../menu-keys';
 
 export interface SettingsScreenProps {
   dataDirectory: string;
+  onOpenAgentIdentity: () => void;
   onOpenProviders: () => void;
   onOpenCloud: () => void;
   onOpenMcp: () => void;
@@ -25,6 +26,7 @@ interface MenuItem {
 }
 
 const MENU_ITEMS: MenuItem[] = [
+  { label: 'Agent Identity', value: 'agent-identity' },
   { label: 'Cloud', value: 'cloud' },
   { label: 'Providers & Endpoints', value: 'providers' },
   { label: 'MCP Servers', value: 'mcp' },
@@ -37,6 +39,7 @@ const MENU_ITEMS: MenuItem[] = [
 
 export function SettingsScreen({
   dataDirectory,
+  onOpenAgentIdentity,
   onOpenProviders,
   onOpenCloud,
   onOpenMcp,
@@ -67,6 +70,9 @@ export function SettingsScreen({
 
   const handleSelect = (item: MenuItem) => {
     switch (item.value) {
+      case 'agent-identity':
+        onOpenAgentIdentity();
+        break;
       case 'cloud':
         onOpenCloud();
         break;

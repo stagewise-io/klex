@@ -1,8 +1,9 @@
 import { Box, render, Text, useInput } from 'ink';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { AdminApiClient } from './api-client';
 import { AppFrame } from './components/app-frame';
+import { UpdateBanner } from './components/update-banner';
 import { useGlobalStatus } from './hooks/use-global-status';
 import {
   NavigationContext,
@@ -42,6 +43,7 @@ class CliUiModule implements CliUi {
   private readonly dataDirectory: string;
   private readonly logStore: CliUiDependencies['logStore'];
   private readonly dangerousLocalAdminApiPort: number | undefined;
+  private readonly updateManager: CliUiDependencies['updateManager'];
   private inkInstance: ReturnType<typeof render> | undefined;
   private terminalCleared = false;
 
@@ -51,6 +53,7 @@ class CliUiModule implements CliUi {
     this.dataDirectory = deps.dataDirectory;
     this.logStore = deps.logStore;
     this.dangerousLocalAdminApiPort = deps.dangerousLocalAdminApiPort;
+    this.updateManager = deps.updateManager;
   }
 
   start(): void {
@@ -69,9 +72,10 @@ class CliUiModule implements CliUi {
         logStore={this.logStore}
         dangerousLocalAdminApiPort={this.dangerousLocalAdminApiPort}
         onQuit={() => this.requestQuit()}
+        updateManager={this.updateManager}
       />,
       {
-        exitOnCtrlC: true,
+        exitOnCtrlC: false,
       },
     );
 
@@ -127,17 +131,20 @@ function AppRoot({
   logStore,
   dangerousLocalAdminApiPort,
   onQuit,
+  updateManager,
 }: {
   apiClient: AdminApiClient;
   dataDirectory: string;
   logStore: CliUiDependencies['logStore'];
   dangerousLocalAdminApiPort: number | undefined;
   onQuit: () => void;
+  updateManager: CliUiDependencies['updateManager'];
 }) {
   const navigation = useNavigationState();
   const globalStatus = useGlobalStatus(apiClient);
 
   const [toasts, setToasts] = useState<Toast[]>([]);
+  const quitConfirmationExpiresAt = useRef(0);
   const pushToast = useCallback(
     (message: string, level: Toast['level'] = 'info') => {
       setToasts((prev) => [
@@ -150,13 +157,27 @@ function AppRoot({
   const dismissToast = useCallback((id: number) => {
     setToasts((prev) => prev.filter((t) => t.id !== id));
   }, []);
+  const requestQuit = useCallback(async () => {
+    if (updateManager?.getState().status === 'installing') {
+      if (Date.now() > quitConfirmationExpiresAt.current) {
+        quitConfirmationExpiresAt.current = Date.now() + 5_000;
+        pushToast(
+          'An update is installing. Press q or Ctrl+C again within 5 seconds to cancel it and quit.',
+          'warning',
+        );
+        return;
+      }
+      await updateManager.cancelInstall();
+    }
+    onQuit();
+  }, [onQuit, pushToast, updateManager]);
 
   return (
     <NavigationContext.Provider value={navigation}>
       <ToastContext.Provider value={{ toasts, pushToast, dismissToast }}>
         <ScreenMetaProvider>
           <TextInputActiveProvider>
-            <GlobalQuitHandler onQuit={onQuit} />
+            <GlobalQuitHandler onQuit={() => void requestQuit()} />
             <FrameLayout
               apiClient={apiClient}
               dataDirectory={dataDirectory}
@@ -169,6 +190,7 @@ function AppRoot({
               onDismissToast={dismissToast}
               dangerousLocalAdminApiPort={dangerousLocalAdminApiPort}
               onRefreshGlobal={globalStatus.refresh}
+              updateManager={updateManager}
             />
           </TextInputActiveProvider>
         </ScreenMetaProvider>
@@ -179,10 +201,12 @@ function AppRoot({
 
 function GlobalQuitHandler({ onQuit }: { onQuit: () => void }) {
   const { active } = useTextInputActive();
-  useInput((input) => {
-    // Ctrl+C is handled natively by Ink via exitOnCtrlC: true.
-    // 'q' quits only when not typing in a text input.
-    if (input.toLowerCase() === 'q' && !active) {
+  useInput((input, key) => {
+    // Ctrl+C always requests shutdown. 'q' quits only when not typing.
+    if (
+      (key.ctrl && input === 'c') ||
+      (input.toLowerCase() === 'q' && !active)
+    ) {
       onQuit();
     }
   });
@@ -201,6 +225,7 @@ function FrameLayout({
   onDismissToast,
   dangerousLocalAdminApiPort,
   onRefreshGlobal,
+  updateManager,
 }: {
   apiClient: AdminApiClient;
   dataDirectory: string;
@@ -213,6 +238,7 @@ function FrameLayout({
   onDismissToast: (id: number) => void;
   dangerousLocalAdminApiPort: number | undefined;
   onRefreshGlobal: () => void;
+  updateManager: CliUiDependencies['updateManager'];
 }) {
   const { meta } = useScreenMeta();
 
@@ -231,6 +257,23 @@ function FrameLayout({
       loading={loading}
       toasts={toasts}
       onDismissToast={onDismissToast}
+      updateBanner={
+        updateManager ? (
+          <UpdateBanner
+            activeSessionCount={
+              sessions.filter(
+                (session) =>
+                  session.runtimeState === 'running' ||
+                  session.status === 'running',
+              ).length
+            }
+            inputBlocked={meta.keys.some(({ key }) =>
+              ['n', 'u'].includes(key.toLowerCase()),
+            )}
+            manager={updateManager}
+          />
+        ) : undefined
+      }
     >
       <ScreenRouter
         apiClient={apiClient}

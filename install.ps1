@@ -67,6 +67,8 @@ $script:FetchAttempts = 4
 # Written into bin\klex.cmd so a later run can tell its own shim apart from a
 # file that happened to be there first.
 $script:ShimMarker = 'klex installer shim; managed by install.ps1'
+$script:InstallLockHandle = $null
+$script:InstallLockPath = $null
 
 # PowerShell 5.1 defaults to TLS 1.0 on older Windows builds, which GitHub refuses.
 try {
@@ -114,6 +116,44 @@ Environment:
 
 Agent data lives outside the install root and survives -Uninstall.
 '@ | Write-Host
+}
+
+# ---------------------------------------------------------- transaction lock
+
+function Enter-InstallLock {
+	param([Parameter(Mandatory = $true)][string] $Root)
+
+	$fullRoot = [IO.Path]::GetFullPath($Root)
+	$rootPath = [IO.Path]::GetPathRoot($fullRoot)
+	$lockRoot = if ($fullRoot -eq $rootPath) { $fullRoot } else { $fullRoot.TrimEnd('\', '/') }
+	$parent = Split-Path -Parent $lockRoot
+	if ($parent) { New-Item -ItemType Directory -Path $parent -Force | Out-Null }
+	$script:InstallLockPath = "$lockRoot.install-lock"
+	try {
+		$script:InstallLockHandle = [IO.File]::Open(
+			$script:InstallLockPath,
+			[IO.FileMode]::OpenOrCreate,
+			[IO.FileAccess]::ReadWrite,
+			[IO.FileShare]::None)
+		$script:InstallLockHandle.SetLength(0)
+		$writer = New-Object IO.StreamWriter($script:InstallLockHandle, (New-Object Text.UTF8Encoding($false)), 1024, $true)
+		$writer.WriteLine($PID)
+		$writer.Flush()
+		$writer.Dispose()
+	} catch [IO.IOException] {
+		Stop-WithError "another install operation is already running for $fullRoot"
+	}
+}
+
+function Exit-InstallLock {
+	if ($script:InstallLockHandle) {
+		$script:InstallLockHandle.Dispose()
+		$script:InstallLockHandle = $null
+	}
+	if ($script:InstallLockPath) {
+		Remove-Item -LiteralPath $script:InstallLockPath -Force -ErrorAction SilentlyContinue
+		$script:InstallLockPath = $null
+	}
 }
 
 # ------------------------------------------------------------------ resolving
@@ -181,6 +221,10 @@ function Invoke-Download {
 		[Parameter(Mandatory = $true)][string] $Destination,
 		[Parameter(Mandatory = $true)][string] $Description
 	)
+
+	# Windows PowerShell 5.1 redraws download progress for every chunk, which
+	# severely throttles large downloads. Function scope avoids leaking through irm | iex.
+	$ProgressPreference = 'SilentlyContinue'
 
 	# The nightly pointer release replaces its manifest asset in place, so the
 	# fixed URL can 404 for a moment during a nightly run. A single failure is
@@ -677,9 +721,15 @@ if ($Help) {
 	return
 }
 
-if ($Uninstall) {
-	Invoke-Uninstall
-	return
-}
+$operationRoot = Resolve-InstallDir
+Enter-InstallLock -Root $operationRoot
+try {
+	if ($Uninstall) {
+		Invoke-Uninstall
+		return
+	}
 
-Invoke-Install
+	Invoke-Install
+} finally {
+	Exit-InstallLock
+}

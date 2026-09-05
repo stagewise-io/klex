@@ -17,4 +17,5 @@ export interface CliUiDependencies {
   dataDirectory: string;
   logStore: import('@/log-store').LogStore;
   dangerousLocalAdminApiPort: number | undefined;
+  updateManager?: import('@/self-update').UpdateManager;
 }

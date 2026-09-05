@@ -43,6 +43,11 @@ klex_manifest_url=''
 klex_staging_dir=''
 klex_modified_path_files=''
 klex_previous_current=''
+klex_lock_dir=''
+klex_lock_kind=''
+klex_lock_owned='no'
+klex_lock_holder_pid=''
+klex_lock_ready_file=''
 
 # ---------------------------------------------------------------- diagnostics
 
@@ -88,6 +93,87 @@ cleanup() {
 	if [ -n "$klex_staging_dir" ] && [ -d "$klex_staging_dir" ]; then
 		rm -rf "$klex_staging_dir"
 	fi
+	release_install_lock
+}
+
+handle_signal() {
+	handle_signal_status="$1"
+	# A trapped signal does not make every POSIX shell exit. Clear the traps
+	# first, then clean up and terminate so installation never resumes unlocked.
+	trap - EXIT INT TERM
+	cleanup
+	exit "$handle_signal_status"
+}
+
+release_install_lock() {
+	if [ "$klex_lock_owned" != 'yes' ] || [ -z "$klex_lock_dir" ]; then
+		return 0
+	fi
+	if [ "$klex_lock_kind" = 'flock' ]; then
+		flock -u 9
+		exec 9>&-
+	elif [ "$klex_lock_kind" = 'lockf' ]; then
+		kill "$klex_lock_holder_pid" 2>/dev/null || true
+		wait "$klex_lock_holder_pid" 2>/dev/null || true
+		rm -f "$klex_lock_ready_file"
+	fi
+	klex_lock_owned='no'
+}
+
+acquire_install_lock() {
+	mkdir -p "$klex_install_dir"
+	acquire_install_lock_root="$(CDPATH='' cd -P "$klex_install_dir" && pwd)"
+	klex_lock_dir="${acquire_install_lock_root}.install-lock"
+	if command -v flock >/dev/null 2>&1; then
+		exec 9>>"$klex_lock_dir"
+		if ! flock -n 9; then
+			exec 9>&-
+			acquire_install_lock_owner="$(cat "$klex_lock_dir" 2>/dev/null || true)"
+			die "another install operation is already running for $klex_install_dir${acquire_install_lock_owner:+ (pid $acquire_install_lock_owner)}"
+		fi
+		: >"$klex_lock_dir"
+		printf '%s\n' "$$" >&9
+		klex_lock_kind='flock'
+	elif command -v lockf >/dev/null 2>&1; then
+		# Keep the kernel lock in a small child process. Re-executing this script is
+		# not safe because the documented curl | sh invocation has no readable $0.
+		klex_lock_ready_file="${klex_lock_dir}.$$.ready"
+		rm -f "$klex_lock_ready_file"
+		# The positional parameters belong to the child shell, not this process.
+		# shellcheck disable=SC2016
+		lockf -t 0 "$klex_lock_dir" /bin/sh -c '
+			printf "%s\n" "$2" >"$1"
+			while kill -0 "$2" 2>/dev/null; do sleep 1; done
+		' sh "$klex_lock_ready_file" "$$" &
+		klex_lock_holder_pid=$!
+		acquire_install_lock_attempt=0
+		while [ ! -s "$klex_lock_ready_file" ]; do
+			if ! kill -0 "$klex_lock_holder_pid" 2>/dev/null; then
+				if wait "$klex_lock_holder_pid"; then
+					acquire_install_lock_status=0
+				else
+					acquire_install_lock_status=$?
+				fi
+				rm -f "$klex_lock_ready_file"
+				if [ "$acquire_install_lock_status" -eq 75 ]; then
+					die "another install operation is already running for $klex_install_dir"
+				fi
+				die "could not acquire the install lock for $klex_install_dir"
+			fi
+			acquire_install_lock_attempt=$((acquire_install_lock_attempt + 1))
+			if [ "$acquire_install_lock_attempt" -ge 200 ]; then
+				kill "$klex_lock_holder_pid" 2>/dev/null || true
+				wait "$klex_lock_holder_pid" 2>/dev/null || true
+				rm -f "$klex_lock_ready_file"
+				die "timed out acquiring the install lock for $klex_install_dir"
+			fi
+			sleep 0.05
+		done
+		klex_lock_kind='lockf'
+	else
+		die 'a supported install-lock utility is required (flock on Linux or lockf on macOS)'
+	fi
+	klex_lock_owned='yes'
 }
 
 require_value() {
@@ -793,7 +879,6 @@ do_install() {
 	resolve_manifest_url
 
 	klex_staging_dir="$(mktemp -d 2>/dev/null || mktemp -d -t klex-install)"
-	trap cleanup EXIT INT TERM
 
 	info "target $klex_target"
 	info "fetching $klex_manifest_url"
@@ -874,6 +959,11 @@ do_install() {
 
 main() {
 	parse_arguments "$@"
+	resolve_install_dir
+	acquire_install_lock "$@"
+	trap cleanup EXIT
+	trap 'handle_signal 130' INT
+	trap 'handle_signal 143' TERM
 
 	if [ "$opt_uninstall" = 'yes' ]; then
 		do_uninstall

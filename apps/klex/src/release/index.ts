@@ -1,7 +1,9 @@
 export {
   type ArchiveExtension,
+  compareReleaseVersions,
   completeReleaseManifestSchema,
   getReleaseArtifactName,
+  isNewerReleaseVersion,
   isNightlyVersion,
   isStableVersion,
   KLEX_VERSION,
@@ -13,6 +15,7 @@ export {
   type ReleaseManifest,
   type ReleaseTarget,
   type ReleaseTargetDefinition,
+  type ReleaseVersionOrder,
   releaseArtifactSchema,
   releaseBuildMetadataSchema,
   releaseManifestSchema,

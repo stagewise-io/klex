@@ -16,6 +16,7 @@ export interface AppFrameProps {
   loading: boolean;
   toasts: Toast[];
   onDismissToast: (id: number) => void;
+  updateBanner?: ReactNode;
   children: ReactNode;
 }
 
@@ -28,6 +29,7 @@ export function AppFrame({
   loading,
   toasts,
   onDismissToast,
+  updateBanner,
   children,
 }: AppFrameProps) {
   const { stdout } = useStdout();
@@ -62,6 +64,7 @@ export function AppFrame({
           </Box>
         ) : null}
       </Box>
+      {updateBanner}
       <Box>
         <GlobalFooter
           keys={keys}

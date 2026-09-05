@@ -163,6 +163,17 @@ run_installer() {
 	run_installer_in "$LAB/home" "$LAB/home/opt/klex" "$@"
 }
 
+run_installer_from_stdin() {
+	# Exercise the documented curl | sh execution mode, where $0 is not the
+	# installer path. This is especially important for macOS lockf handling.
+	env -i \
+		HOME="$LAB/home" \
+		PATH="$PATH" \
+		SHELL=/bin/bash \
+		KLEX_MANIFEST_URL="file://$LAB/serve/release-manifest.json" \
+		sh -s -- --install-dir "$LAB/home/opt/klex" "$@" <"$REPO_ROOT/install.sh"
+}
+
 run_installer_with_env() {
 	# $1 = one extra NAME=VALUE pair, rest = installer arguments.
 	#
@@ -549,6 +560,60 @@ awk '/if \(\$ResolvedChannel -eq .nightly.\)/ { getline; if ($0 ~ /channel-night
 check 'PowerShell maps stable and nightly pointer URLs' "$?"
 awk '/if \(\$pinned\)/ { getline; if ($0 ~ /releases\/download\/v\$pinned\/release-manifest.json/) pinned=1 } END { exit !pinned }' "$REPO_ROOT/install.ps1"
 check 'PowerShell exact version resolves its immutable tag' "$?"
+
+printf '\n== 18. install transaction lock ==\n'
+# A live owner must refuse both upgrades and uninstalls without changing the
+# published installation. Using this harness process as the owner is the same
+# observable state as a concurrently running installer after lock acquisition.
+rm -rf "${ROOT}.install-lock"
+if command -v flock >/dev/null 2>&1; then
+	exec 8>>"${ROOT}.install-lock"
+	flock -n 8
+	printf '%s\n' "$$" >"${ROOT}.install-lock"
+	lock_kind='flock'
+else
+	lock_ready="$LAB/lock-ready"
+	lockf -t 0 "${ROOT}.install-lock" /bin/sh -c 'printf "%s\n" "$$" >"$1"; sleep 30' sh "$lock_ready" &
+	lock_holder=$!
+	while [ ! -s "$lock_ready" ]; do sleep 0.05; done
+	lock_kind='lockf'
+fi
+run_installer >"$LAB/lock-live.log" 2>&1 && bad=1 || bad=0
+check 'concurrent install is refused' "$bad"
+grep -q 'another install operation is already running' "$LAB/lock-live.log"
+check 'concurrent install names the contention' "$?"
+[ "$("$ROOT/bin/klex" --version)" = '2.1.0' ]
+check 'published install survives contention' "$?"
+run_installer --uninstall >"$LAB/lock-uninstall.log" 2>&1 && bad=1 || bad=0
+check 'concurrent uninstall is refused' "$bad"
+[ "$("$ROOT/bin/klex" --version)" = '2.1.0' ]
+check 'published install survives concurrent uninstall' "$?"
+if [ "$lock_kind" = 'flock' ]; then
+	flock -u 8
+	exec 8>&-
+else
+	kill "$lock_holder"
+	wait "$lock_holder" 2>/dev/null || true
+fi
+
+# A stale PID file carries no kernel lock and must not block the next invocation.
+printf '%s\n' '2147483647' >"${ROOT}.install-lock"
+run_ok 'stale lock is reclaimed' "$LAB/lock-stale.log" --no-modify-path
+if command -v flock >/dev/null 2>&1; then
+	exec 7>>"${ROOT}.install-lock"
+	flock -n 7
+	lock_released=$?
+	flock -u 7
+	exec 7>&-
+else
+	lockf -t 0 "${ROOT}.install-lock" /usr/bin/true
+	lock_released=$?
+fi
+check 'transaction lock is released after success' "$lock_released"
+run_installer_from_stdin --no-modify-path >"$LAB/stdin-install.log" 2>&1
+check 'stdin installer invocation succeeds' "$?"
+[ "$("$ROOT/bin/klex" --version)" = '2.1.0' ]
+check 'stdin installer preserves the published version' "$?"
 
 printf '\n'
 if [ "$fails" -eq 0 ]; then

@@ -222,6 +222,10 @@ function Invoke-Download {
 		[Parameter(Mandatory = $true)][string] $Description
 	)
 
+	# Windows PowerShell 5.1 redraws download progress for every chunk, which
+	# severely throttles large downloads. Function scope avoids leaking through irm | iex.
+	$ProgressPreference = 'SilentlyContinue'
+
 	# The nightly pointer release replaces its manifest asset in place, so the
 	# fixed URL can 404 for a moment during a nightly run. A single failure is
 	# therefore not evidence that the release is missing.

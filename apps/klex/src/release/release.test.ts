@@ -2,8 +2,10 @@ import { describe, expect, it } from 'vitest';
 
 import packageJson from '../../package.json';
 import {
+  compareReleaseVersions,
   completeReleaseManifestSchema,
   getReleaseArtifactName,
+  isNewerReleaseVersion,
   isNightlyVersion,
   isStableVersion,
   releaseManifestSchema,
@@ -154,6 +156,25 @@ describe('release versions', () => {
     expect(() => resolveReleaseChannel(version)).toThrow(
       'Invalid Klex release version',
     );
+  });
+
+  it.each([
+    ['1.2.3', '1.2.3', 0],
+    ['1.2.4', '1.2.3', 1],
+    ['1.1.9', '1.2.0', -1],
+    ['1.2.4-nightly20260902c002', '1.2.4-nightly20260902c001', 1],
+    ['1.2.4-nightly20260903c001', '1.2.4-nightly20260902c999', 1],
+    ['1.2.4-nightly20260902c001', '1.2.4-nightly20260902c001', 0],
+  ] as const)('orders %s against %s', (left, right, expected) => {
+    expect(compareReleaseVersions(left, right)).toBe(expected);
+    expect(isNewerReleaseVersion(left, right)).toBe(expected === 1);
+  });
+
+  it.each([
+    ['not-a-version', '1.2.3'],
+    ['1.2.3', '1.2.4-nightly20260902c001'],
+  ])('rejects incomparable versions %s and %s', (left, right) => {
+    expect(() => compareReleaseVersions(left, right)).toThrow();
   });
 
   it('uses the package version as the local-build fallback', () => {

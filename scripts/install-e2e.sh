@@ -550,6 +550,31 @@ check 'PowerShell maps stable and nightly pointer URLs' "$?"
 awk '/if \(\$pinned\)/ { getline; if ($0 ~ /releases\/download\/v\$pinned\/release-manifest.json/) pinned=1 } END { exit !pinned }' "$REPO_ROOT/install.ps1"
 check 'PowerShell exact version resolves its immutable tag' "$?"
 
+printf '\n== 18. install transaction lock ==\n'
+# A live owner must refuse both upgrades and uninstalls without changing the
+# published installation. Using this harness process as the owner is the same
+# observable state as a concurrently running installer after lock acquisition.
+rm -rf "${ROOT}.install-lock"
+mkdir "${ROOT}.install-lock"
+printf '%s\n' "$$" >"${ROOT}.install-lock/pid"
+run_installer >"$LAB/lock-live.log" 2>&1 && bad=1 || bad=0
+check 'concurrent install is refused' "$bad"
+grep -q 'another install operation is already running' "$LAB/lock-live.log"
+check 'concurrent install names the contention' "$?"
+[ "$("$ROOT/bin/klex" --version)" = '2.1.0' ]
+check 'published install survives contention' "$?"
+run_installer --uninstall >"$LAB/lock-uninstall.log" 2>&1 && bad=1 || bad=0
+check 'concurrent uninstall is refused' "$bad"
+rm -rf "${ROOT}.install-lock"
+
+# A process cannot have this PID, so the next invocation must reclaim the stale
+# directory and complete normally.
+mkdir "${ROOT}.install-lock"
+printf '%s\n' '2147483647' >"${ROOT}.install-lock/pid"
+run_ok 'stale lock is reclaimed' "$LAB/lock-stale.log" --no-modify-path
+[ ! -e "${ROOT}.install-lock" ]
+check 'transaction lock is removed after success' "$?"
+
 printf '\n'
 if [ "$fails" -eq 0 ]; then
 	printf 'ALL CHECKS PASSED\n'

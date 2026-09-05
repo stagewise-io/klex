@@ -60,7 +60,7 @@ export function HomeScreen({
       breadcrumb: [],
       keys: [
         { key: 's', label: 'Settings' },
-        { key: 'u', label: 'Usage' },
+        { key: 'g', label: 'Usage' },
         { key: 'r', label: 'Refresh' },
       ],
     });

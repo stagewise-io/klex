@@ -99,6 +99,54 @@ export function resolveReleaseChannel(version: string): ReleaseChannel {
   throw new Error(`Invalid Klex release version: ${version}`);
 }
 
+export type ReleaseVersionOrder = -1 | 0 | 1;
+
+function compareNumericParts(
+  left: readonly number[],
+  right: readonly number[],
+): ReleaseVersionOrder {
+  for (let index = 0; index < left.length; index += 1) {
+    const difference = (left[index] ?? 0) - (right[index] ?? 0);
+    if (difference < 0) return -1;
+    if (difference > 0) return 1;
+  }
+  return 0;
+}
+
+/** Compare two validated versions from the same release channel. */
+export function compareReleaseVersions(
+  left: string,
+  right: string,
+): ReleaseVersionOrder {
+  const leftChannel = resolveReleaseChannel(left);
+  const rightChannel = resolveReleaseChannel(right);
+  if (leftChannel !== rightChannel) {
+    throw new Error(
+      `Cannot compare Klex versions from different channels: ${left} and ${right}`,
+    );
+  }
+
+  const pattern =
+    leftChannel === 'stable' ? stableVersionPattern : nightlyVersionPattern;
+  const leftMatch = pattern.exec(left);
+  const rightMatch = pattern.exec(right);
+  if (!leftMatch || !rightMatch) {
+    throw new Error('Validated Klex release versions could not be parsed');
+  }
+  const indices = leftChannel === 'stable' ? [1, 2, 3] : [1, 2, 3, 4, 5];
+  return compareNumericParts(
+    indices.map((index) => Number.parseInt(leftMatch[index] ?? '0', 10)),
+    indices.map((index) => Number.parseInt(rightMatch[index] ?? '0', 10)),
+  );
+}
+
+export function isNewerReleaseVersion(
+  candidate: string,
+  current: string,
+): boolean {
+  return compareReleaseVersions(candidate, current) > 0;
+}
+
 export function resolveApplicationVersion(
   environment: NodeJS.ProcessEnv = process.env,
   fallbackVersion: string = packageJson.version,

@@ -113,6 +113,14 @@ also runs the real installer against the immutable versioned manifest on all
 five target runners, checks the exact version, and exercises receipt-driven
 uninstall.
 
+Interactive self-update fetches the channel manifest but downloads the installer
+script from the manifest's exact `gitCommit`, then requests the exact manifest
+version. Every release commit must therefore contain compatible `install.sh` and
+`install.ps1` scripts. Installers must keep the receipt schema, versioned layout,
+verify-before-publish behavior, rollback, and per-root transaction lock compatible
+with the application updater. CI exercises Unix contention and stale-lock
+recovery plus Windows exclusive-handle contention and cleanup.
+
 For manual download verification:
 
 ```bash

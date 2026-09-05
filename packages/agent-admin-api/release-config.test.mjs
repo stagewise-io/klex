@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { analyzeCommits } from './release-plugin.mjs';
+import { analyzeCommits, commitHasScope } from './release-plugin.mjs';
 
 const logger = { log() {} };
 
@@ -31,6 +31,27 @@ test('releases a minor for an agent-admin-api feature', async () => {
   assert.equal(
     await analyze('feat(agent-admin-api): add route types'),
     'minor',
+  );
+});
+
+test('recognizes agent-admin-api in a comma-separated scope list', async () => {
+  assert.equal(
+    await analyze('feat(klex,agent-admin-api): add route types'),
+    'minor',
+  );
+  assert.equal(
+    commitHasScope(
+      'fix(agent-admin-api,klex): repair route types',
+      'agent-admin-api',
+    ),
+    true,
+  );
+  assert.equal(
+    commitHasScope(
+      'fix(klex,agent-admin-api-client): repair client',
+      'agent-admin-api',
+    ),
+    false,
   );
 });
 

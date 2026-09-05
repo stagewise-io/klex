@@ -1,4 +1,5 @@
-# Publish @klex/agent-admin-api for scoped conventional commits on main.
+# Publish @klex/agent-admin-api when a conventional commit on main includes
+# agent-admin-api in its comma-separated scope list.
 
 name: Release
 

@@ -46,6 +46,8 @@ klex_previous_current=''
 klex_lock_dir=''
 klex_lock_kind=''
 klex_lock_owned='no'
+klex_lock_holder_pid=''
+klex_lock_ready_file=''
 
 # ---------------------------------------------------------------- diagnostics
 
@@ -110,6 +112,10 @@ release_install_lock() {
 	if [ "$klex_lock_kind" = 'flock' ]; then
 		flock -u 9
 		exec 9>&-
+	elif [ "$klex_lock_kind" = 'lockf' ]; then
+		kill "$klex_lock_holder_pid" 2>/dev/null || true
+		wait "$klex_lock_holder_pid" 2>/dev/null || true
+		rm -f "$klex_lock_ready_file"
 	fi
 	klex_lock_owned='no'
 }
@@ -129,19 +135,41 @@ acquire_install_lock() {
 		printf '%s\n' "$$" >&9
 		klex_lock_kind='flock'
 	elif command -v lockf >/dev/null 2>&1; then
-		if [ "${KLEX_INSTALL_LOCK_HELD:-}" = "$klex_lock_dir" ]; then
-			# The parent lockf process owns the kernel lock for this child.
-			return 0
-		fi
-		if env "KLEX_INSTALL_LOCK_HELD=$klex_lock_dir" lockf -t 0 "$klex_lock_dir" /bin/sh "$0" "$@"; then
-			exit 0
-		else
-			acquire_install_lock_status=$?
-		fi
-		if [ "$acquire_install_lock_status" -eq 75 ]; then
-			die "another install operation is already running for $klex_install_dir"
-		fi
-		exit "$acquire_install_lock_status"
+		# Keep the kernel lock in a small child process. Re-executing this script is
+		# not safe because the documented curl | sh invocation has no readable $0.
+		klex_lock_ready_file="${klex_lock_dir}.$$.ready"
+		rm -f "$klex_lock_ready_file"
+		# The positional parameters belong to the child shell, not this process.
+		# shellcheck disable=SC2016
+		lockf -t 0 "$klex_lock_dir" /bin/sh -c '
+			printf "%s\n" "$2" >"$1"
+			while kill -0 "$2" 2>/dev/null; do sleep 1; done
+		' sh "$klex_lock_ready_file" "$$" &
+		klex_lock_holder_pid=$!
+		acquire_install_lock_attempt=0
+		while [ ! -s "$klex_lock_ready_file" ]; do
+			if ! kill -0 "$klex_lock_holder_pid" 2>/dev/null; then
+				if wait "$klex_lock_holder_pid"; then
+					acquire_install_lock_status=0
+				else
+					acquire_install_lock_status=$?
+				fi
+				rm -f "$klex_lock_ready_file"
+				if [ "$acquire_install_lock_status" -eq 75 ]; then
+					die "another install operation is already running for $klex_install_dir"
+				fi
+				die "could not acquire the install lock for $klex_install_dir"
+			fi
+			acquire_install_lock_attempt=$((acquire_install_lock_attempt + 1))
+			if [ "$acquire_install_lock_attempt" -ge 200 ]; then
+				kill "$klex_lock_holder_pid" 2>/dev/null || true
+				wait "$klex_lock_holder_pid" 2>/dev/null || true
+				rm -f "$klex_lock_ready_file"
+				die "timed out acquiring the install lock for $klex_install_dir"
+			fi
+			sleep 0.05
+		done
+		klex_lock_kind='lockf'
 	else
 		die 'a supported install-lock utility is required (flock on Linux or lockf on macOS)'
 	fi

@@ -75,6 +75,10 @@ export interface TelemetrySettings {
   level: string;
 }
 
+export interface AgentIdentity {
+  officialName: string;
+}
+
 export type TunnelState = 'disconnected' | 'connecting' | 'connected' | 'error';
 
 export interface CloudStatus {
@@ -339,6 +343,17 @@ export class AdminApiClient {
   }
 
   // --- Settings ---
+
+  getAgentIdentity(): Promise<AgentIdentity> {
+    return this.request<AgentIdentity>('/v1/settings/agent');
+  }
+
+  patchAgentIdentity(body: { officialName: string }): Promise<AgentIdentity> {
+    return this.request<AgentIdentity>('/v1/settings/agent', {
+      method: 'PATCH',
+      body,
+    });
+  }
 
   getModelSelection(): Promise<ModelSelection> {
     return this.request<ModelSelection>('/v1/settings/model-selection');

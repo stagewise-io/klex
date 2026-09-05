@@ -33,8 +33,12 @@ import {
 } from '@/session/chat/extensions/god-messages';
 import { createImageInputOptimizerExt } from '@/session/chat/extensions/image-input-optimizer';
 import { createJsReplSandboxExt } from '@/session/chat/extensions/js-repl-sandbox';
+import { createNameLoaderExt } from '@/session/chat/extensions/name-loader';
 import { createRemindersExt } from '@/session/chat/extensions/reminders';
-import { createSoulExt } from '@/session/chat/extensions/soul';
+import {
+  createSoulExt,
+  createSoulExtGod,
+} from '@/session/chat/extensions/soul';
 import {
   createProductionMediaTransportConnector,
   createRealtime,
@@ -254,6 +258,7 @@ async function main(): Promise<void> {
       mcp,
       introspection: introspector,
       createChatSession: buildChatSession([
+        createNameLoaderExt,
         createSoulExt,
         createGodMessagesDistrustExt,
       ]),
@@ -263,7 +268,8 @@ async function main(): Promise<void> {
       introspection: introspector,
       router,
       createChatSession: buildChatSession([
-        createSoulExt,
+        createNameLoaderExt,
+        createSoulExtGod,
         createGodMessagesTrustExt,
       ]),
     });

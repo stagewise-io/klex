@@ -9,7 +9,8 @@ export type Screen =
   | 'logs'
   | 'telemetry'
   | 'usage'
-  | 'god-messages';
+  | 'god-messages'
+  | 'agent-identity';
 
 export interface CliUiDependencies {
   logging: import('@stagewise/logger').RootLogger;

@@ -137,6 +137,39 @@ describe('AdminApiClient', () => {
     });
   });
 
+  describe('agent identity', () => {
+    it('getAgentIdentity sends GET to /v1/settings/agent', async () => {
+      const fetchMock = mockFetch(jsonResponse({ officialName: 'Klex' }));
+      const client = new AdminApiClient('http://test');
+      globalThis.fetch = fetchMock;
+
+      const result = await client.getAgentIdentity();
+      expect(fetchMock).toHaveBeenCalledWith(
+        'http://test/v1/settings/agent',
+        expect.objectContaining({ method: 'GET' }),
+      );
+      expect(result.officialName).toBe('Klex');
+    });
+
+    it('patchAgentIdentity sends PATCH with body', async () => {
+      const fetchMock = mockFetch(jsonResponse({ officialName: 'New Name' }));
+      const client = new AdminApiClient('http://test');
+      globalThis.fetch = fetchMock;
+
+      const result = await client.patchAgentIdentity({
+        officialName: 'New Name',
+      });
+      expect(fetchMock).toHaveBeenCalledWith(
+        'http://test/v1/settings/agent',
+        expect.objectContaining({
+          method: 'PATCH',
+          body: JSON.stringify({ officialName: 'New Name' }),
+        }),
+      );
+      expect(result.officialName).toBe('New Name');
+    });
+  });
+
   describe('error handling', () => {
     it('throws AdminApiClientError on non-ok response', async () => {
       // Each call consumes the Response, so return a new one each time

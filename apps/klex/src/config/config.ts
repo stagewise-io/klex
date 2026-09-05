@@ -270,7 +270,18 @@ class ConfigModule implements Config {
 
     try {
       this.config = this.parse(input);
+      const configuredName =
+        typeof input === 'object' && input !== null && 'officialName' in input
+          ? input.officialName
+          : undefined;
+      if (
+        typeof configuredName === 'string' &&
+        Array.from(configuredName.trim()).length > 128
+      ) {
+        await this.replaceNow(this.config);
+      }
     } catch (error) {
+      this.config = null;
       if (error instanceof ConfigValidationError) {
         throw new Error(
           `Config at ${this.deps.configPath} is invalid: ${error.message}`,

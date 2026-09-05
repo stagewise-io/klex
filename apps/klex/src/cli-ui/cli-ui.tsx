@@ -16,6 +16,7 @@ import {
 } from './hooks/use-text-input-active';
 import { type Toast, ToastContext } from './hooks/use-toast';
 import { MenuKeys, useMenuInput } from './menu-keys';
+import { AgentIdentityScreen } from './screens/agent-identity';
 import { CloudScreen } from './screens/cloud';
 import { DebugInformationScreen } from './screens/debug-information';
 import { GodMessagesScreen } from './screens/god-messages';
@@ -283,6 +284,7 @@ function ScreenRouter({
       return (
         <SettingsScreen
           dataDirectory={dataDirectory}
+          onOpenAgentIdentity={() => navigation.navigate('agent-identity')}
           onOpenProviders={() => navigation.navigate('providers')}
           onOpenCloud={() => navigation.navigate('cloud')}
           onOpenMcp={() => navigation.navigate('mcp-servers')}
@@ -341,6 +343,13 @@ function ScreenRouter({
     case 'god-messages':
       return (
         <GodMessagesScreen
+          apiClient={apiClient}
+          onBack={() => navigation.goBack()}
+        />
+      );
+    case 'agent-identity':
+      return (
+        <AgentIdentityScreen
           apiClient={apiClient}
           onBack={() => navigation.goBack()}
         />

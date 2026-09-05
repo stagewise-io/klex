@@ -163,6 +163,14 @@ describe('Config — minimal schema', () => {
       klexConfigSchema.parse({ officialName: '  Ada  ' }).officialName,
     ).toBe('Ada');
   });
+
+  it('truncates official names to 128 Unicode characters', () => {
+    const officialName = klexConfigSchema.parse({
+      officialName: '😀'.repeat(129),
+    }).officialName;
+
+    expect(Array.from(officialName)).toHaveLength(128);
+  });
 });
 
 describe('Config — voice model selection', () => {
@@ -270,6 +278,19 @@ describe('Config — lifecycle', () => {
     );
     const module = createConfig({ logging, dataDirectory: dir });
     await expect(module.start()).rejects.toThrow(/invalid/);
+  });
+
+  it('persists a truncated official name during startup', async () => {
+    const config = manualConfig();
+    config.officialName = '😀'.repeat(129);
+
+    const { directory, module } = await setup(config);
+    const persisted = JSON.parse(
+      await readFile(join(directory, CONFIG_FILE_NAME), 'utf8'),
+    ) as KlexConfig;
+
+    expect(Array.from(module.get().officialName)).toHaveLength(128);
+    expect(persisted.officialName).toBe(module.get().officialName);
   });
 
   it('start is idempotent', async () => {

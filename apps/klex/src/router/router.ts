@@ -71,6 +71,12 @@ class RouterModule implements Router {
       .child('router')
       .introspect(() => ({ started: true }));
     this.sessionsScope = this.deps.introspection.child('sessions');
+    this.sessionsScope.introspect(() => ({
+      sessions:
+        this.session && this.session.status === 'active'
+          ? [this.session.getSessionInfo()]
+          : [],
+    }));
 
     this.session = await this.createSession();
 
@@ -94,6 +100,8 @@ class RouterModule implements Router {
     }
     this.session = null;
 
+    this.deps.introspection.removeChild('sessions');
+    this.deps.introspection.removeChild('router');
     this.sessionsScope = null;
     this.started = false;
     this.deps.logger.info('Router stopped');

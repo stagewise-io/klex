@@ -82,6 +82,37 @@ function makeContextSummaryPart(
   } as unknown as ExtendedUIMessage['parts'][number];
 }
 
+function makeGodMessagePart(
+  content: (
+    | { type: 'text'; text: string }
+    | { type: 'image'; mimeType: string; data: string }
+    | { type: 'audio'; mimeType: string; data: string }
+    | {
+        type: 'resource_link';
+        uri: string;
+        name: string;
+        title?: string;
+        description?: string;
+        mimeType?: string;
+        size?: number;
+      }
+    | {
+        type: 'resource';
+        resource: {
+          uri: string;
+          mimeType?: string;
+          text?: string;
+          blob?: string;
+        };
+      }
+  )[],
+): ExtendedUIMessage['parts'][number] {
+  return {
+    type: 'data-god-message',
+    data: { content },
+  } as ExtendedUIMessage['parts'][number];
+}
+
 function makeContinuePart(): ExtendedUIMessage['parts'][number] {
   return {
     type: 'data-continue',
@@ -643,6 +674,68 @@ describe('convertToModelMessagesExtended — data-continue filtering', () => {
         m.parts.some((p) => p.type === 'data-continue'),
       ),
     ).toBe(false);
+  });
+});
+
+describe('data-god-message materialization', () => {
+  it('materializes a single text block into <god-message> wrapper', async () => {
+    const godMsg = makeGodMessagePart([
+      { type: 'text', text: 'Do something now' },
+    ]);
+    const messages = [makeMessage([godMsg])];
+    const original = structuredClone(messages);
+
+    await convertToModelMessagesExtended(messages, makeTransformers());
+
+    const materialized = vi
+      .mocked(convertToModelMessages)
+      .mock.calls.at(-1)?.[0];
+    expect(materialized?.[0]?.parts).toEqual([
+      { type: 'text', text: '<god-message>' },
+      { type: 'text', text: '<text>Do something now</text>' },
+      { type: 'text', text: '</god-message>' },
+    ]);
+    expect(messages).toEqual(original);
+  });
+
+  it('materializes empty content as just wrapper tags', async () => {
+    const godMsg = makeGodMessagePart([]);
+    const messages = [makeMessage([godMsg])];
+
+    await convertToModelMessagesExtended(messages, makeTransformers());
+
+    const materialized = vi
+      .mocked(convertToModelMessages)
+      .mock.calls.at(-1)?.[0];
+    expect(materialized?.[0]?.parts).toEqual([
+      { type: 'text', text: '<god-message>' },
+      { type: 'text', text: '</god-message>' },
+    ]);
+  });
+
+  it('passes non-god-message parts through unchanged', async () => {
+    const godMsg = makeGodMessagePart([{ type: 'text', text: 'god text' }]);
+    const plainText = { type: 'text', text: 'plain text' } as const;
+    const messages = [makeMessage([plainText, godMsg, plainText])];
+
+    await convertToModelMessagesExtended(messages, makeTransformers());
+
+    const materialized = vi
+      .mocked(convertToModelMessages)
+      .mock.calls.at(-1)?.[0];
+    // plain text before, god-message materialized, plain text after
+    expect(materialized?.[0]?.parts[0]).toEqual(plainText);
+    expect(materialized?.[0]?.parts[1]).toMatchObject({
+      type: 'text',
+      text: '<god-message>',
+    });
+    // Last part should be the closing tag, then plainText
+    const lastTwo = materialized?.[0]?.parts.slice(-2);
+    expect(lastTwo?.[0]).toMatchObject({
+      type: 'text',
+      text: '</god-message>',
+    });
+    expect(lastTwo?.[1]).toEqual(plainText);
   });
 });
 

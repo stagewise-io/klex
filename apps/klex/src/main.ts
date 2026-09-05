@@ -12,6 +12,7 @@ import {
 import { createConfig } from '@/config';
 import { ensureDataDirectory } from '@/data-directory';
 import { createDirectoryLock, type DirectoryLock } from '@/directory-lock';
+import { createGodMessages } from '@/god-messages';
 import { createIntrospector } from '@/introspection';
 import { createLogStore } from '@/log-store';
 import { createMcp } from '@/mcp';
@@ -20,9 +21,16 @@ import { createModelProvider } from '@/model-provider';
 import { KLEX_VERSION } from '@/release';
 import { runNativeVerification } from '@/release/verify-native';
 import { createRouter, type RouterApi } from '@/router';
-import { createChatSession } from '@/session/chat';
+import {
+  type ChatSessionDependencies,
+  createChatSession,
+} from '@/session/chat';
 import { createAudioInputOptimizerExt } from '@/session/chat/extensions/audio-input-optimizer';
 import { createContextCompactionExt } from '@/session/chat/extensions/context-compaction';
+import {
+  createGodMessagesDistrustExt,
+  createGodMessagesTrustExt,
+} from '@/session/chat/extensions/god-messages';
 import { createImageInputOptimizerExt } from '@/session/chat/extensions/image-input-optimizer';
 import { createJsReplSandboxExt } from '@/session/chat/extensions/js-repl-sandbox';
 import { createRemindersExt } from '@/session/chat/extensions/reminders';
@@ -150,7 +158,8 @@ async function main(): Promise<void> {
   // The data directory is the first thing every subsystem writes into, and on a
   // fresh machine it does not exist yet. Create it before the lock, whose
   // exclusive open would otherwise fail with ENOENT.
-  await ensureDataDirectory(cli.dataDirectory);
+  const dataDirectory = cli.dataDirectory;
+  await ensureDataDirectory(dataDirectory);
 
   // Acquire directory lock before any module starts — prevents concurrent
   // instances from using the same working directory.
@@ -214,33 +223,49 @@ async function main(): Promise<void> {
 
     tracing.setModelCallSink((record) => modelCallLogger.recordCall(record));
 
-    router = createRouter({
-      logging: logger,
-      mcp,
-      introspection: introspector,
-      createChatSession: (
+    const buildChatSession =
+      (sessionExtensions: ChatSessionDependencies['extensionFactories']) =>
+      (
         hooks: SessionHooks,
-        introspectionScope,
-        router: RouterApi,
+        introspectionScope: ChatSessionDependencies['introspectionScope'],
+        sessionRouter: RouterApi,
       ) =>
         createChatSession({
           logging: logger,
           config,
           modelProvider,
           mcp,
-          router,
+          router: sessionRouter,
           extensionFactories: [
-            createSoulExt,
+            ...sessionExtensions,
             createJsReplSandboxExt,
             createContextCompactionExt,
             createImageInputOptimizerExt,
             createAudioInputOptimizerExt,
             createRemindersExt,
           ],
-          dataDirectory: cli.dataDirectory!,
+          dataDirectory,
           hooks,
           introspectionScope,
-        }),
+        });
+
+    router = createRouter({
+      logging: logger,
+      mcp,
+      introspection: introspector,
+      createChatSession: buildChatSession([
+        createSoulExt,
+        createGodMessagesDistrustExt,
+      ]),
+    });
+    const godMessages = createGodMessages({
+      logging: logger,
+      introspection: introspector,
+      router,
+      createChatSession: buildChatSession([
+        createSoulExt,
+        createGodMessagesTrustExt,
+      ]),
     });
     const adminApi = createAdminApi({
       logging: logger,
@@ -249,6 +274,7 @@ async function main(): Promise<void> {
       introspector,
       modelCallLogger,
       cloudConnectivity,
+      godMessages,
       localPort: cli.dangerousLocalAdminApiPort,
     });
     adminApiForUi = adminApi;
@@ -284,6 +310,8 @@ async function main(): Promise<void> {
     await telemetryManager.start();
     started.push(telemetryManager);
     await router.start();
+    await godMessages.start();
+    started.push(godMessages);
   } catch (error) {
     await router?.close().catch((error: unknown) => {
       logger.error({ error }, 'Router shutdown failed');

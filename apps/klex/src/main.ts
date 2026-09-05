@@ -316,8 +316,8 @@ async function main(): Promise<void> {
     await telemetryManager.start();
     started.push(telemetryManager);
     await router.start();
-    await godMessages.start();
     started.push(godMessages);
+    await godMessages.start();
   } catch (error) {
     await router?.close().catch((error: unknown) => {
       logger.error({ error }, 'Router shutdown failed');

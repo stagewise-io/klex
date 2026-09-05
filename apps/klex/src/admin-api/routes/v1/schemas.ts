@@ -218,7 +218,21 @@ const introspectionPathParamsSchema = z.object({
 
 // --- Settings / Agent ---
 
-const officialNameSchema = z.string().trim().min(2).max(128);
+const officialNameSchema = z
+  .string()
+  .trim()
+  .min(2)
+  .refine(
+    (name) =>
+      !name.includes('\n') &&
+      !name.includes('\r') &&
+      !name.includes('\u2028') &&
+      !name.includes('\u2029'),
+    { message: 'Official name must be a single line' },
+  )
+  .refine((name) => Array.from(name).length <= 128, {
+    message: 'Official name must be at most 128 characters',
+  });
 
 const agentIdentityResponseSchema = z
   .object({
@@ -547,7 +561,7 @@ const godMessageBase64Schema = z
   .string()
   .min(1)
   .max(MAX_GOD_MESSAGE_MEDIA_LENGTH)
-  .regex(BASE64_PATTERN, 'Expected valid base64 data');
+  .regex(BASE64_PATTERN, 'Expected canonical base64 data');
 
 const godMessageTextBlockSchema = z
   .object({
@@ -614,7 +628,7 @@ const createGodMessageBodySchema = z
   .object({
     content: z
       .array(godMessageContentBlockSchema)
-      .min(1)
+      .nonempty()
       .max(MAX_GOD_MESSAGE_BLOCKS),
   })
   .openapi('CreateGodMessageBody');
@@ -624,6 +638,85 @@ const createGodMessageResponseSchema = z
     sessionId: z.string(),
   })
   .openapi('CreateGodMessageResponse');
+
+// --- God Session Observability ---
+
+const usageSchema = z.object({
+  latest: z
+    .object({
+      inputTokens: z.number().int(),
+      outputTokens: z.number().int(),
+      inputCacheWriteTokens: z.number().int(),
+      inputCacheReadTokens: z.number().int(),
+    })
+    .nullable(),
+  total: z.object({
+    inputTokens: z.number().int(),
+    outputTokens: z.number().int(),
+    inputCacheWriteTokens: z.number().int(),
+    inputCacheReadTokens: z.number().int(),
+  }),
+});
+
+const godSessionInfoResponseSchema = z
+  .object({
+    id: z.string(),
+    status: z.enum(['active', 'terminated']),
+    runtimeState: z.enum([
+      'working',
+      'retrying',
+      'success',
+      'idle',
+      'terminated',
+    ]),
+    model: z.object({
+      id: z.string().nullable(),
+      isFallback: z.boolean(),
+      fallbackIndex: z.number().int().min(0),
+    }),
+    usage: z.object({
+      chat: usageSchema,
+      extensions: z.record(z.string(), usageSchema),
+    }),
+    turns: z.number().int().min(0),
+    steps: z.number().int().min(0),
+    messageCount: z.number().int().min(0),
+    createdAt: z.string().datetime(),
+  })
+  .openapi('GodSessionInfoResponse');
+
+const serializedMessagePartSchema = z
+  .record(z.string(), z.unknown())
+  .openapi('SerializedMessagePart');
+
+const serializedMessageSchema = z
+  .object({
+    id: z.string(),
+    role: z.string(),
+    parts: z.array(serializedMessagePartSchema),
+  })
+  .openapi('SerializedMessage');
+
+const godMessagesResponseSchema = z
+  .object({
+    messages: z.array(serializedMessageSchema),
+    nextCursor: z.string().nullable(),
+    hasMore: z.boolean(),
+  })
+  .openapi('GodMessagesResponse');
+
+const godMessagesQuerySchema = z
+  .object({
+    limit: z.coerce.number().int().min(1).max(200).default(50),
+    cursor: z.string().optional(),
+  })
+  .openapi('GodMessagesQuery');
+
+const godMessageResetResponseSchema = z
+  .object({
+    sessionId: z.string(),
+  })
+  .openapi('GodMessageResetResponse');
 
 // --- Usage ---
 
@@ -831,6 +924,10 @@ export {
   endpointsResponseSchema,
   endpointWithNameSchema,
   errorResponseSchema,
+  godMessageResetResponseSchema,
+  godMessagesQuerySchema,
+  godMessagesResponseSchema,
+  godSessionInfoResponseSchema,
   healthResponseSchema,
   imageInputCapabilitySchema,
   introspectionChildSchema,
@@ -858,6 +955,8 @@ export {
   providerPresetSchema,
   providerResponseSchema,
   providersResponseSchema,
+  serializedMessagePartSchema,
+  serializedMessageSchema,
   telemetryLevelSchema,
   telemetrySettingsPatchSchema,
   telemetrySettingsSchema,

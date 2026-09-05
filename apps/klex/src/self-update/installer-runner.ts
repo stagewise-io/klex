@@ -3,15 +3,19 @@ import { chmod, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+import { readLimitedResponse } from './read-limited-response';
+
 const MAX_INSTALLER_BYTES = 1024 * 1024;
 const MAX_DIAGNOSTIC_BYTES = 64 * 1024;
 const MAX_ERROR_MESSAGE_BYTES = 1000;
 const TERMINATION_GRACE_MS = 500;
 const TERMINATION_POLL_MS = 25;
 const TERMINATION_TIMEOUT_MS = 2_000;
+const INSTALLER_TIMEOUT_MS = 10 * 60 * 1000;
 const REPOSITORY = 'stagewise-io/klex';
 const STRIPPED_ENVIRONMENT_KEYS = new Set([
   'KLEX_CHANNEL',
+  'KLEX_INSTALL_LOCK_HELD',
   'KLEX_MANIFEST_URL',
   'KLEX_RELEASE_CHANNEL',
   'KLEX_RELEASE_TAG',
@@ -51,7 +55,11 @@ export async function runImmutableInstaller(
     if (!response.ok) {
       throw new Error(`Updater download failed with HTTP ${response.status}`);
     }
-    const bytes = new Uint8Array(await response.arrayBuffer());
+    const bytes = await readLimitedResponse(
+      response,
+      MAX_INSTALLER_BYTES,
+      'Updater download has an invalid size',
+    );
     if (bytes.byteLength === 0 || bytes.byteLength > MAX_INSTALLER_BYTES) {
       throw new Error('Updater download has an invalid size');
     }
@@ -102,11 +110,39 @@ async function spawnInstaller(
       windowsHide: true,
     });
     let termination: Promise<void> | undefined;
-    const abort = () => {
-      termination ??= terminateInstallerTree(child.pid, windows, () =>
+    let settled = false;
+    const timeout = setTimeout(
+      () => beginTermination('Updater timed out'),
+      INSTALLER_TIMEOUT_MS,
+    );
+    timeout.unref();
+    const cleanup = () => {
+      clearTimeout(timeout);
+      request.signal?.removeEventListener('abort', abort);
+    };
+    const settleReject = (error: unknown) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(error);
+    };
+    const settleResolve = () => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resolve();
+    };
+    function beginTermination(reason: string): void {
+      if (termination) return;
+      termination = terminateInstallerTree(child.pid, windows, () =>
         child.kill('SIGKILL'),
       );
-    };
+      void termination.then(
+        () => settleReject(new Error(reason)),
+        (error: unknown) => settleReject(error),
+      );
+    }
+    const abort = () => beginTermination('Update cancelled');
     request.signal?.addEventListener('abort', abort, { once: true });
     if (request.signal?.aborted) abort();
     let diagnostics = '';
@@ -114,28 +150,24 @@ async function spawnInstaller(
     child.stderr.on('data', (chunk: string) => {
       diagnostics = `${diagnostics}${chunk}`.slice(-MAX_DIAGNOSTIC_BYTES);
     });
-    child.once('error', (error) => {
-      request.signal?.removeEventListener('abort', abort);
-      reject(error);
-    });
+    child.once('error', settleReject);
     child.once('exit', (code, signal) => {
-      request.signal?.removeEventListener('abort', abort);
       void (async () => {
         await termination;
         if (code === 0) {
-          resolve();
+          settleResolve();
           return;
         }
         const reason = signal
           ? `signal ${signal}`
           : `exit code ${code ?? 'unknown'}`;
         const detail = diagnostics.trim().slice(-MAX_ERROR_MESSAGE_BYTES);
-        reject(
+        settleReject(
           new Error(
             `Updater failed with ${reason}${detail ? `: ${detail}` : ''}`,
           ),
         );
-      })().catch(reject);
+      })().catch(settleReject);
     });
   });
 }

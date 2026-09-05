@@ -102,13 +102,14 @@ export function resolveReleaseChannel(version: string): ReleaseChannel {
 export type ReleaseVersionOrder = -1 | 0 | 1;
 
 function compareNumericParts(
-  left: readonly number[],
-  right: readonly number[],
+  left: readonly bigint[],
+  right: readonly bigint[],
 ): ReleaseVersionOrder {
   for (let index = 0; index < left.length; index += 1) {
-    const difference = (left[index] ?? 0) - (right[index] ?? 0);
-    if (difference < 0) return -1;
-    if (difference > 0) return 1;
+    const leftPart = left[index] ?? 0n;
+    const rightPart = right[index] ?? 0n;
+    if (leftPart < rightPart) return -1;
+    if (leftPart > rightPart) return 1;
   }
   return 0;
 }
@@ -135,8 +136,8 @@ export function compareReleaseVersions(
   }
   const indices = leftChannel === 'stable' ? [1, 2, 3] : [1, 2, 3, 4, 5];
   return compareNumericParts(
-    indices.map((index) => Number.parseInt(leftMatch[index] ?? '0', 10)),
-    indices.map((index) => Number.parseInt(rightMatch[index] ?? '0', 10)),
+    indices.map((index) => BigInt(leftMatch[index] ?? '0')),
+    indices.map((index) => BigInt(rightMatch[index] ?? '0')),
   );
 }
 

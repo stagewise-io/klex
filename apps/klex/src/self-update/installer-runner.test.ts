@@ -12,6 +12,7 @@ describe('immutable installer runner', () => {
     async () => {
       const overriddenKeys = [
         'KLEX_CHANNEL',
+        'KLEX_INSTALL_LOCK_HELD',
         'KLEX_MANIFEST_URL',
         'KLEX_RELEASE_CHANNEL',
         'KLEX_RELEASE_TAG',
@@ -24,7 +25,7 @@ describe('immutable installer runner', () => {
 
       const script = `#!/bin/sh
 set -eu
-if env | grep -Eq '^(KLEX_CHANNEL|KLEX_MANIFEST_URL|KLEX_RELEASE_CHANNEL|KLEX_RELEASE_TAG|KLEX_VERSION)='; then
+if env | grep -Eq '^(KLEX_CHANNEL|KLEX_INSTALL_LOCK_HELD|KLEX_MANIFEST_URL|KLEX_RELEASE_CHANNEL|KLEX_RELEASE_TAG|KLEX_VERSION)='; then
   exit 20
 fi
 [ "$1" = "--version" ]
@@ -64,6 +65,29 @@ fi
     },
   );
 
+  it('stops reading an updater response at the byte limit', async () => {
+    let pulls = 0;
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        pulls += 1;
+        controller.enqueue(new Uint8Array(600 * 1024));
+      },
+    });
+
+    await expect(
+      runImmutableInstaller(
+        {
+          gitCommit: 'b'.repeat(40),
+          installRoot: '/tmp/klex root',
+          platform: process.platform,
+          version: '1.2.4',
+        },
+        vi.fn(async () => new Response(body, { status: 200 })),
+      ),
+    ).rejects.toThrow('Updater download has an invalid size');
+    expect(pulls).toBeLessThanOrEqual(3);
+  });
+
   it.runIf(process.platform !== 'win32')(
     'terminates the complete installer process group when cancelled',
     async () => {
@@ -93,7 +117,7 @@ wait
       try {
         const pids = await waitForPids(pidFile);
         controller.abort();
-        await expect(run).rejects.toThrow(/Updater failed with signal/);
+        await expect(run).rejects.toThrow('Update cancelled');
         for (const pid of pids) expect(isProcessAlive(pid)).toBe(false);
       } finally {
         controller.abort();

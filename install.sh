@@ -44,6 +44,7 @@ klex_staging_dir=''
 klex_modified_path_files=''
 klex_previous_current=''
 klex_lock_dir=''
+klex_lock_kind=''
 klex_lock_owned='no'
 
 # ---------------------------------------------------------------- diagnostics
@@ -106,40 +107,45 @@ release_install_lock() {
 	if [ "$klex_lock_owned" != 'yes' ] || [ -z "$klex_lock_dir" ]; then
 		return 0
 	fi
-	# Remove only a lock that still names this process as its owner.
-	if [ "$(cat "$klex_lock_dir/pid" 2>/dev/null || true)" = "$$" ]; then
-		rm -rf "$klex_lock_dir"
+	if [ "$klex_lock_kind" = 'flock' ]; then
+		flock -u 9
+		exec 9>&-
 	fi
 	klex_lock_owned='no'
 }
 
 acquire_install_lock() {
-	klex_lock_dir="${klex_install_dir}.install-lock"
-	mkdir -p "$(dirname "$klex_install_dir")"
-	acquire_install_lock_attempt=1
-	while [ "$acquire_install_lock_attempt" -le 3 ]; do
-		if mkdir "$klex_lock_dir" 2>/dev/null; then
-			printf '%s\n' "$$" >"$klex_lock_dir/pid"
-			klex_lock_owned='yes'
+	mkdir -p "$klex_install_dir"
+	acquire_install_lock_root="$(CDPATH='' cd -P "$klex_install_dir" && pwd)"
+	klex_lock_dir="${acquire_install_lock_root}.install-lock"
+	if command -v flock >/dev/null 2>&1; then
+		exec 9>>"$klex_lock_dir"
+		if ! flock -n 9; then
+			exec 9>&-
+			acquire_install_lock_owner="$(cat "$klex_lock_dir" 2>/dev/null || true)"
+			die "another install operation is already running for $klex_install_dir${acquire_install_lock_owner:+ (pid $acquire_install_lock_owner)}"
+		fi
+		: >"$klex_lock_dir"
+		printf '%s\n' "$$" >&9
+		klex_lock_kind='flock'
+	elif command -v lockf >/dev/null 2>&1; then
+		if [ "${KLEX_INSTALL_LOCK_HELD:-}" = "$klex_lock_dir" ]; then
+			# The parent lockf process owns the kernel lock for this child.
 			return 0
 		fi
-
-		acquire_install_lock_owner="$(cat "$klex_lock_dir/pid" 2>/dev/null || true)"
-		if [ -n "$acquire_install_lock_owner" ]; then
-			if kill -0 "$acquire_install_lock_owner" 2>/dev/null; then
-				die "another install operation is already running for $klex_install_dir (pid $acquire_install_lock_owner)"
-			fi
-			# Re-read before removal so we never reclaim a lock whose owner changed.
-			if [ "$(cat "$klex_lock_dir/pid" 2>/dev/null || true)" = "$acquire_install_lock_owner" ]; then
-				rm -rf "$klex_lock_dir"
-			fi
+		if env "KLEX_INSTALL_LOCK_HELD=$klex_lock_dir" lockf -t 0 "$klex_lock_dir" /bin/sh "$0" "$@"; then
+			exit 0
 		else
-			# The owner may still be between mkdir and writing pid.
-			sleep 1
+			acquire_install_lock_status=$?
 		fi
-		acquire_install_lock_attempt=$((acquire_install_lock_attempt + 1))
-	done
-	die "could not acquire the install lock for $klex_install_dir; remove $klex_lock_dir if no installer is running"
+		if [ "$acquire_install_lock_status" -eq 75 ]; then
+			die "another install operation is already running for $klex_install_dir"
+		fi
+		exit "$acquire_install_lock_status"
+	else
+		die 'a supported install-lock utility is required (flock on Linux or lockf on macOS)'
+	fi
+	klex_lock_owned='yes'
 }
 
 require_value() {
@@ -926,7 +932,7 @@ do_install() {
 main() {
 	parse_arguments "$@"
 	resolve_install_dir
-	acquire_install_lock
+	acquire_install_lock "$@"
 	trap cleanup EXIT
 	trap 'handle_signal 130' INT
 	trap 'handle_signal 143' TERM

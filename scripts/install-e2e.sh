@@ -555,8 +555,18 @@ printf '\n== 18. install transaction lock ==\n'
 # published installation. Using this harness process as the owner is the same
 # observable state as a concurrently running installer after lock acquisition.
 rm -rf "${ROOT}.install-lock"
-mkdir "${ROOT}.install-lock"
-printf '%s\n' "$$" >"${ROOT}.install-lock/pid"
+if command -v flock >/dev/null 2>&1; then
+	exec 8>>"${ROOT}.install-lock"
+	flock -n 8
+	printf '%s\n' "$$" >"${ROOT}.install-lock"
+	lock_kind='flock'
+else
+	lock_ready="$LAB/lock-ready"
+	lockf -t 0 "${ROOT}.install-lock" /bin/sh -c 'printf "%s\n" "$$" >"$1"; sleep 30' sh "$lock_ready" &
+	lock_holder=$!
+	while [ ! -s "$lock_ready" ]; do sleep 0.05; done
+	lock_kind='lockf'
+fi
 run_installer >"$LAB/lock-live.log" 2>&1 && bad=1 || bad=0
 check 'concurrent install is refused' "$bad"
 grep -q 'another install operation is already running' "$LAB/lock-live.log"
@@ -565,15 +575,30 @@ check 'concurrent install names the contention' "$?"
 check 'published install survives contention' "$?"
 run_installer --uninstall >"$LAB/lock-uninstall.log" 2>&1 && bad=1 || bad=0
 check 'concurrent uninstall is refused' "$bad"
-rm -rf "${ROOT}.install-lock"
+[ "$("$ROOT/bin/klex" --version)" = '2.1.0' ]
+check 'published install survives concurrent uninstall' "$?"
+if [ "$lock_kind" = 'flock' ]; then
+	flock -u 8
+	exec 8>&-
+else
+	kill "$lock_holder"
+	wait "$lock_holder" 2>/dev/null || true
+fi
 
-# A process cannot have this PID, so the next invocation must reclaim the stale
-# directory and complete normally.
-mkdir "${ROOT}.install-lock"
-printf '%s\n' '2147483647' >"${ROOT}.install-lock/pid"
+# A stale PID file carries no kernel lock and must not block the next invocation.
+printf '%s\n' '2147483647' >"${ROOT}.install-lock"
 run_ok 'stale lock is reclaimed' "$LAB/lock-stale.log" --no-modify-path
-[ ! -e "${ROOT}.install-lock" ]
-check 'transaction lock is removed after success' "$?"
+if command -v flock >/dev/null 2>&1; then
+	exec 7>>"${ROOT}.install-lock"
+	flock -n 7
+	lock_released=$?
+	flock -u 7
+	exec 7>&-
+else
+	lockf -t 0 "${ROOT}.install-lock" /usr/bin/true
+	lock_released=$?
+fi
+check 'transaction lock is released after success' "$lock_released"
 
 printf '\n'
 if [ "$fails" -eq 0 ]; then

@@ -314,7 +314,11 @@ async function main(): Promise<void> {
   const shutdown = createShutdownCoordinator({
     closeUi: () => cliUi?.close(),
     cleanup: async () => {
+      const updateState = updateManager?.getState();
       updateManager?.stop();
+      if (updateState?.status !== 'restarting') {
+        await updateManager?.cancelInstall();
+      }
       const [, , lockRelease] = await Promise.allSettled([
         runningRouter.close().catch((error: unknown) => {
           logger.error({ error }, 'Router shutdown failed');
@@ -363,7 +367,7 @@ async function main(): Promise<void> {
             arguments: process.argv.slice(2),
             cwd: process.cwd(),
             environment: process.env,
-            launcher: updatedInstallation.runningExecutable,
+            launcher: updatedInstallation.currentExecutable,
           }),
       });
     }

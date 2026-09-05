@@ -12,9 +12,11 @@ type UpdateBannerManager = Pick<
 
 export function UpdateBanner({
   activeSessionCount,
+  inputBlocked = false,
   manager,
 }: {
   activeSessionCount: number;
+  inputBlocked?: boolean;
   manager: UpdateBannerManager;
 }) {
   const state = useSyncExternalStore(
@@ -47,33 +49,41 @@ export function UpdateBanner({
     });
   };
 
-  useInput((input) => {
-    if (active || dismissed) return;
-    const key = input.toLowerCase();
-    if (key === 'u' && state.status === 'available') {
-      if (
-        activeSessionCount > 0 &&
-        confirmingVersionRef.current !== state.version
+  useInput(
+    (input) => {
+      if (active || dismissed) return;
+      const key = input.toLowerCase();
+      if (key === 'u' && state.status === 'available') {
+        if (
+          activeSessionCount > 0 &&
+          confirmingVersionRef.current !== state.version
+        ) {
+          confirmingVersionRef.current = state.version;
+          setConfirmingVersion(state.version);
+          return;
+        }
+        requestInstall();
+      } else if (key === 'u' && state.status === 'failed') {
+        requestInstall();
+      } else if (
+        key === 'n' &&
+        state.status === 'available' &&
+        confirmingVersionRef.current === state.version
       ) {
-        confirmingVersionRef.current = state.version;
-        setConfirmingVersion(state.version);
-        return;
+        confirmingVersionRef.current = undefined;
+        setConfirmingVersion(undefined);
+      } else if (
+        key === 'n' &&
+        version &&
+        (state.status === 'available' || state.status === 'failed')
+      ) {
+        setDismissedVersion(version);
       }
-      requestInstall();
-    } else if (key === 'u' && state.status === 'failed') {
-      requestInstall();
-    } else if (
-      key === 'n' &&
-      version &&
-      (state.status === 'available' || state.status === 'failed')
-    ) {
-      confirmingVersionRef.current = undefined;
-      setConfirmingVersion(undefined);
-      setDismissedVersion(version);
-    }
-  });
+    },
+    { isActive: !inputBlocked },
+  );
 
-  if (dismissed) return null;
+  if (dismissed || inputBlocked) return null;
   const message = confirming
     ? `${activeSessionCount} active session${activeSessionCount === 1 ? '' : 's'} will be interrupted. Press u again to update and restart.`
     : updateMessage(state);

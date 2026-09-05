@@ -6,6 +6,9 @@ import { join } from 'node:path';
 const MAX_INSTALLER_BYTES = 1024 * 1024;
 const MAX_DIAGNOSTIC_BYTES = 64 * 1024;
 const MAX_ERROR_MESSAGE_BYTES = 1000;
+const TERMINATION_GRACE_MS = 500;
+const TERMINATION_POLL_MS = 25;
+const TERMINATION_TIMEOUT_MS = 2_000;
 const REPOSITORY = 'stagewise-io/klex';
 const STRIPPED_ENVIRONMENT_KEYS = new Set([
   'KLEX_CHANNEL',
@@ -93,11 +96,17 @@ async function spawnInstaller(
 
   await new Promise<void>((resolve, reject) => {
     const child = spawn(command, commandArguments, {
+      detached: !windows,
       env: sanitizedEnvironment(process.env),
       stdio: ['ignore', 'ignore', 'pipe'],
       windowsHide: true,
     });
-    const abort = () => child.kill();
+    let termination: Promise<void> | undefined;
+    const abort = () => {
+      termination ??= terminateInstallerTree(child.pid, windows, () =>
+        child.kill('SIGKILL'),
+      );
+    };
     request.signal?.addEventListener('abort', abort, { once: true });
     if (request.signal?.aborted) abort();
     let diagnostics = '';
@@ -111,21 +120,100 @@ async function spawnInstaller(
     });
     child.once('exit', (code, signal) => {
       request.signal?.removeEventListener('abort', abort);
-      if (code === 0) {
-        resolve();
-        return;
-      }
-      const reason = signal
-        ? `signal ${signal}`
-        : `exit code ${code ?? 'unknown'}`;
-      const detail = diagnostics.trim().slice(-MAX_ERROR_MESSAGE_BYTES);
-      reject(
-        new Error(
-          `Updater failed with ${reason}${detail ? `: ${detail}` : ''}`,
-        ),
-      );
+      void (async () => {
+        await termination;
+        if (code === 0) {
+          resolve();
+          return;
+        }
+        const reason = signal
+          ? `signal ${signal}`
+          : `exit code ${code ?? 'unknown'}`;
+        const detail = diagnostics.trim().slice(-MAX_ERROR_MESSAGE_BYTES);
+        reject(
+          new Error(
+            `Updater failed with ${reason}${detail ? `: ${detail}` : ''}`,
+          ),
+        );
+      })().catch(reject);
     });
   });
+}
+
+async function terminateInstallerTree(
+  pid: number | undefined,
+  windows: boolean,
+  killChild: () => void,
+): Promise<void> {
+  if (pid === undefined) {
+    killChild();
+    return;
+  }
+  if (windows) {
+    await terminateWindowsProcessTree(pid);
+    return;
+  }
+
+  signalProcessGroup(pid, 'SIGTERM');
+  const deadline = Date.now() + TERMINATION_GRACE_MS;
+  while (Date.now() < deadline && isProcessGroupAlive(pid)) {
+    await delay(TERMINATION_POLL_MS);
+  }
+  if (isProcessGroupAlive(pid)) signalProcessGroup(pid, 'SIGKILL');
+
+  const killDeadline = Date.now() + TERMINATION_TIMEOUT_MS;
+  while (Date.now() < killDeadline && isProcessGroupAlive(pid)) {
+    await delay(TERMINATION_POLL_MS);
+  }
+  if (isProcessGroupAlive(pid)) {
+    throw new Error('Could not terminate the updater process group');
+  }
+}
+
+function terminateWindowsProcessTree(pid: number): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const taskkill = spawn('taskkill.exe', ['/pid', String(pid), '/T', '/F'], {
+      stdio: 'ignore',
+      windowsHide: true,
+    });
+    taskkill.once('error', reject);
+    taskkill.once('exit', (code) => {
+      if (code === 0 || code === 128) resolve();
+      else
+        reject(
+          new Error(`taskkill failed with exit code ${code ?? 'unknown'}`),
+        );
+    });
+  });
+}
+
+function signalProcessGroup(pid: number, signal: NodeJS.Signals): void {
+  try {
+    process.kill(-pid, signal);
+  } catch (error) {
+    if (!isMissingProcess(error)) throw error;
+  }
+}
+
+function isProcessGroupAlive(pid: number): boolean {
+  try {
+    process.kill(-pid, 0);
+    return true;
+  } catch (error) {
+    return !isMissingProcess(error);
+  }
+}
+
+function isMissingProcess(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    'code' in error &&
+    (error as NodeJS.ErrnoException).code === 'ESRCH'
+  );
+}
+
+function delay(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
 function sanitizedEnvironment(

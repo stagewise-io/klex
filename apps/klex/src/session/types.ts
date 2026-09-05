@@ -1,4 +1,5 @@
 import type { ChatSessionInbox } from './chat/inbox';
+import type { ExtendedUIMessage } from './chat/message-types';
 import type { SessionInboxEvent } from './inbox';
 
 /**
@@ -121,6 +122,8 @@ export interface ChatSessionHandle extends AgentSession {
   inbox: ChatSessionInbox;
   /** Unique session identifier (UUID). */
   readonly sessionId: string;
+  /** Snapshot of the session's message history (shallow copy). */
+  getMessages(): readonly ExtendedUIMessage[];
 }
 
 /**

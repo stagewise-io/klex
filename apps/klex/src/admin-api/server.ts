@@ -19,6 +19,12 @@ import {
 import {
   createGodMessage,
   createGodMessageRoute,
+  getGodMessages,
+  getGodMessagesRoute,
+  getGodSession,
+  getGodSessionRoute,
+  resetGodSession,
+  resetGodSessionRoute,
 } from './routes/v1/god-messages';
 import { getHealth, healthRoute } from './routes/v1/health';
 import {
@@ -146,6 +152,9 @@ export function createAdminApp(deps: AdminAppDependencies) {
     .openapi(cancelAuthorizationRoute, cancelAuthorization(deps))
     .openapi(completeAuthorizationRoute, completeAuthorization(deps))
     .openapi(createGodMessageRoute, createGodMessage(deps))
+    .openapi(getGodSessionRoute, getGodSession(deps))
+    .openapi(getGodMessagesRoute, getGodMessages(deps))
+    .openapi(resetGodSessionRoute, resetGodSession(deps))
     .openapi(getUsageRoute, getUsage(deps))
     .openapi(getProvidersRoute, getProviders(deps))
     .openapi(createProviderRoute, createProvider(deps))

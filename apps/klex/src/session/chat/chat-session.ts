@@ -884,6 +884,10 @@ class ChatSessionModule implements AgentSession {
     };
   }
 
+  public getMessages(): readonly ExtendedUIMessage[] {
+    return [...this.messages];
+  }
+
   async close(): Promise<void> {
     if (this.closePromise) return this.closePromise;
     this._status = 'terminated';

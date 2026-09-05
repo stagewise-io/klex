@@ -125,7 +125,7 @@ function Enter-InstallLock {
 
 	$fullRoot = [IO.Path]::GetFullPath($Root)
 	$rootPath = [IO.Path]::GetPathRoot($fullRoot)
-	$lockRoot = if ($fullRoot -eq $rootPath) { $fullRoot } else { $fullRoot.TrimEnd('\\', '/') }
+	$lockRoot = if ($fullRoot -eq $rootPath) { $fullRoot } else { $fullRoot.TrimEnd('\', '/') }
 	$parent = Split-Path -Parent $lockRoot
 	if ($parent) { New-Item -ItemType Directory -Path $parent -Force | Out-Null }
 	$script:InstallLockPath = "$lockRoot.install-lock"

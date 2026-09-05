@@ -170,6 +170,85 @@ describe('AdminApiClient', () => {
     });
   });
 
+  describe('god session', () => {
+    it('getGodSession sends GET to /v1/god-messages/session', async () => {
+      const fetchMock = mockFetch(
+        jsonResponse({
+          id: 's1',
+          status: 'active',
+          runtimeState: 'idle',
+          model: { id: 'openai:gpt-4o', isFallback: false, fallbackIndex: 0 },
+          usage: {
+            chat: {
+              latest: null,
+              total: {
+                inputTokens: 0,
+                outputTokens: 0,
+                inputCacheWriteTokens: 0,
+                inputCacheReadTokens: 0,
+              },
+            },
+            extensions: {},
+          },
+          turns: 0,
+          steps: 0,
+          messageCount: 0,
+          createdAt: '2026-01-01T00:00:00.000Z',
+        }),
+      );
+      const client = new AdminApiClient('http://test');
+      globalThis.fetch = fetchMock;
+
+      const result = await client.getGodSession();
+      expect(fetchMock).toHaveBeenCalledWith(
+        'http://test/v1/god-messages/session',
+        expect.objectContaining({ method: 'GET' }),
+      );
+      expect(result.id).toBe('s1');
+    });
+
+    it('getGodMessages sends GET with limit and cursor params', async () => {
+      const fetchMock = mockFetch(
+        jsonResponse({ messages: [], nextCursor: null, hasMore: false }),
+      );
+      const client = new AdminApiClient('http://test');
+      globalThis.fetch = fetchMock;
+
+      await client.getGodMessages(25, 'msg-5');
+      expect(fetchMock).toHaveBeenCalledWith(
+        'http://test/v1/god-messages/messages?limit=25&cursor=msg-5',
+        expect.objectContaining({ method: 'GET' }),
+      );
+    });
+
+    it('getGodMessages sends GET without params when none provided', async () => {
+      const fetchMock = mockFetch(
+        jsonResponse({ messages: [], nextCursor: null, hasMore: false }),
+      );
+      const client = new AdminApiClient('http://test');
+      globalThis.fetch = fetchMock;
+
+      await client.getGodMessages();
+      expect(fetchMock).toHaveBeenCalledWith(
+        'http://test/v1/god-messages/messages',
+        expect.objectContaining({ method: 'GET' }),
+      );
+    });
+
+    it('resetGodSession sends POST to /v1/god-messages/reset', async () => {
+      const fetchMock = mockFetch(jsonResponse({ sessionId: 'new-session' }));
+      const client = new AdminApiClient('http://test');
+      globalThis.fetch = fetchMock;
+
+      const result = await client.resetGodSession();
+      expect(fetchMock).toHaveBeenCalledWith(
+        'http://test/v1/god-messages/reset',
+        expect.objectContaining({ method: 'POST' }),
+      );
+      expect(result.sessionId).toBe('new-session');
+    });
+  });
+
   describe('error handling', () => {
     it('throws AdminApiClientError on non-ok response', async () => {
       // Each call consumes the Response, so return a new one each time

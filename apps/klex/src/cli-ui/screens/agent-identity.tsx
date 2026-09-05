@@ -33,11 +33,17 @@ export function AgentIdentityScreen({
   const [mode, setMode] = useState<Mode>('view');
   const [identity, setIdentity] = useState<AgentIdentity | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [loadAttempt, setLoadAttempt] = useState(0);
   const [pendingName, setPendingName] = useState('');
+  const [saving, setSaving] = useState(false);
 
+  // loadAttempt is an explicit retry trigger, not request input.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: retries must rerun the effect
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
+    setLoadError(null);
     apiClient
       .getAgentIdentity()
       .then((data) => {
@@ -48,23 +54,23 @@ export function AgentIdentityScreen({
       })
       .catch((err) => {
         if (!cancelled) {
-          pushToast(
+          const message =
             err instanceof AdminApiClientError
               ? err.message
-              : 'Failed to load agent identity',
-            'error',
-          );
+              : 'Failed to load agent identity';
+          setLoadError(message);
+          pushToast(message, 'error');
           setLoading(false);
         }
       });
     return () => {
       cancelled = true;
     };
-  }, [apiClient, pushToast]);
+  }, [apiClient, pushToast, loadAttempt]);
 
   useEffect(() => {
-    setActive(mode === 'edit');
-  }, [mode, setActive]);
+    setActive(mode === 'edit' && !saving);
+  }, [mode, saving, setActive]);
 
   useEffect(() => {
     setMeta({
@@ -73,18 +79,22 @@ export function AgentIdentityScreen({
       keys:
         mode === 'view'
           ? [
+              ...(loadError ? [{ key: 'r', label: 'Retry' }] : []),
               { key: 'e', label: 'Edit' },
               { key: 'esc', label: 'Back' },
             ]
-          : [
-              { key: 'enter', label: 'Save' },
-              { key: 'esc', label: 'Cancel' },
-            ],
+          : saving
+            ? []
+            : [
+                { key: 'enter', label: 'Save' },
+                { key: 'esc', label: 'Cancel' },
+              ],
     });
-  }, [setMeta, mode]);
+  }, [setMeta, mode, loadError, saving]);
 
   useMenuInput({
     [MenuKeys.Back]: () => {
+      if (saving) return;
       if (mode === 'view') onBack();
       else setMode('view');
     },
@@ -94,19 +104,26 @@ export function AgentIdentityScreen({
         setMode('edit');
       }
     },
+    r: () => {
+      if (mode === 'view' && !loading && !identity) {
+        setLoadAttempt((attempt) => attempt + 1);
+      }
+    },
   });
 
   async function saveName() {
+    if (saving) return;
     const trimmed = pendingName.trim();
     if (trimmed.length < MIN_NAME) {
       pushToast(`Name must be at least ${MIN_NAME} characters`, 'error');
       return;
     }
-    if (trimmed.length > MAX_NAME) {
+    if (Array.from(trimmed).length > MAX_NAME) {
       pushToast(`Name must be at most ${MAX_NAME} characters`, 'error');
       return;
     }
 
+    setSaving(true);
     try {
       const updated = await apiClient.patchAgentIdentity({
         officialName: trimmed,
@@ -119,6 +136,8 @@ export function AgentIdentityScreen({
         err instanceof AdminApiClientError ? err.message : 'Update failed',
         'error',
       );
+    } finally {
+      setSaving(false);
     }
   }
 
@@ -135,11 +154,13 @@ export function AgentIdentityScreen({
               onChange={setPendingName}
               placeholder="Agent name"
               onSubmit={saveName}
-              showCursor
+              showCursor={!saving}
             />
           </Box>
           <Box marginTop={1}>
-            <Text dimColor>[enter] Save | [esc] Cancel</Text>
+            <Text dimColor>
+              {saving ? 'Saving...' : '[enter] Save | [esc] Cancel'}
+            </Text>
           </Box>
         </Box>
       </Box>
@@ -149,6 +170,12 @@ export function AgentIdentityScreen({
   return (
     <ScreenSection title="Agent Identity">
       {loading && <Text dimColor>Loading...</Text>}
+      {!loading && loadError && !identity && (
+        <Box flexDirection="column">
+          <Text color="red">{loadError}</Text>
+          <Text dimColor>[r] Retry | [esc] Back</Text>
+        </Box>
+      )}
       {!loading && identity && (
         <Box flexDirection="column">
           <Box>

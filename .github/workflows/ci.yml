@@ -70,6 +70,15 @@ jobs:
           }
           Write-Host 'install.ps1 parsed cleanly'
 
+  installer-lock-windows:
+    name: Installer Lock End-to-End (Windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: Exercise exclusive installer lock
+        shell: pwsh
+        run: ./scripts/install-lock-e2e.ps1
+
   installer-e2e:
     name: Installer End-to-End (${{ matrix.os }})
     runs-on: ${{ matrix.os }}

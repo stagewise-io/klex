@@ -43,6 +43,8 @@ klex_manifest_url=''
 klex_staging_dir=''
 klex_modified_path_files=''
 klex_previous_current=''
+klex_lock_dir=''
+klex_lock_owned='no'
 
 # ---------------------------------------------------------------- diagnostics
 
@@ -88,6 +90,56 @@ cleanup() {
 	if [ -n "$klex_staging_dir" ] && [ -d "$klex_staging_dir" ]; then
 		rm -rf "$klex_staging_dir"
 	fi
+	release_install_lock
+}
+
+handle_signal() {
+	handle_signal_status="$1"
+	# A trapped signal does not make every POSIX shell exit. Clear the traps
+	# first, then clean up and terminate so installation never resumes unlocked.
+	trap - EXIT INT TERM
+	cleanup
+	exit "$handle_signal_status"
+}
+
+release_install_lock() {
+	if [ "$klex_lock_owned" != 'yes' ] || [ -z "$klex_lock_dir" ]; then
+		return 0
+	fi
+	# Remove only a lock that still names this process as its owner.
+	if [ "$(cat "$klex_lock_dir/pid" 2>/dev/null || true)" = "$$" ]; then
+		rm -rf "$klex_lock_dir"
+	fi
+	klex_lock_owned='no'
+}
+
+acquire_install_lock() {
+	klex_lock_dir="${klex_install_dir}.install-lock"
+	mkdir -p "$(dirname "$klex_install_dir")"
+	acquire_install_lock_attempt=1
+	while [ "$acquire_install_lock_attempt" -le 3 ]; do
+		if mkdir "$klex_lock_dir" 2>/dev/null; then
+			printf '%s\n' "$$" >"$klex_lock_dir/pid"
+			klex_lock_owned='yes'
+			return 0
+		fi
+
+		acquire_install_lock_owner="$(cat "$klex_lock_dir/pid" 2>/dev/null || true)"
+		if [ -n "$acquire_install_lock_owner" ]; then
+			if kill -0 "$acquire_install_lock_owner" 2>/dev/null; then
+				die "another install operation is already running for $klex_install_dir (pid $acquire_install_lock_owner)"
+			fi
+			# Re-read before removal so we never reclaim a lock whose owner changed.
+			if [ "$(cat "$klex_lock_dir/pid" 2>/dev/null || true)" = "$acquire_install_lock_owner" ]; then
+				rm -rf "$klex_lock_dir"
+			fi
+		else
+			# The owner may still be between mkdir and writing pid.
+			sleep 1
+		fi
+		acquire_install_lock_attempt=$((acquire_install_lock_attempt + 1))
+	done
+	die "could not acquire the install lock for $klex_install_dir; remove $klex_lock_dir if no installer is running"
 }
 
 require_value() {
@@ -793,7 +845,6 @@ do_install() {
 	resolve_manifest_url
 
 	klex_staging_dir="$(mktemp -d 2>/dev/null || mktemp -d -t klex-install)"
-	trap cleanup EXIT INT TERM
 
 	info "target $klex_target"
 	info "fetching $klex_manifest_url"
@@ -874,6 +925,11 @@ do_install() {
 
 main() {
 	parse_arguments "$@"
+	resolve_install_dir
+	acquire_install_lock
+	trap cleanup EXIT
+	trap 'handle_signal 130' INT
+	trap 'handle_signal 143' TERM
 
 	if [ "$opt_uninstall" = 'yes' ]; then
 		do_uninstall

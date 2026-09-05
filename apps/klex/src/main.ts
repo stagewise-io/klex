@@ -17,9 +17,10 @@ import { createLogStore } from '@/log-store';
 import { createMcp } from '@/mcp';
 import { createModelCallLogger } from '@/model-call-logger';
 import { createModelProvider } from '@/model-provider';
-import { KLEX_VERSION } from '@/release';
+import { KLEX_VERSION, resolveReleaseTarget } from '@/release';
 import { runNativeVerification } from '@/release/verify-native';
 import { createRouter, type RouterApi } from '@/router';
+import { discoverManagedInstallation, UpdateManager } from '@/self-update';
 import { createChatSession } from '@/session/chat';
 import { createAudioInputOptimizerExt } from '@/session/chat/extensions/audio-input-optimizer';
 import { createContextCompactionExt } from '@/session/chat/extensions/context-compaction';
@@ -33,6 +34,7 @@ import {
   PRODUCTION_REALTIME_MEDIA_CAPABILITY,
 } from '@/session/realtime';
 import type { SessionHooks } from '@/session/types';
+import { createShutdownCoordinator } from '@/shutdown-coordinator';
 import {
   createTelemetryManager,
   createTelemetrySpanProcessor,
@@ -306,56 +308,78 @@ async function main(): Promise<void> {
 
   const runningRouter = router;
   const runningAdminApi = adminApiForUi;
-  let shuttingDown = false;
   let cliUi: { start(): void; close(): void } | undefined;
+  let updateManager: UpdateManager | undefined;
 
-  // Graceful shutdown with a hard timeout. Called from UI q/Ctrl+C and
-  // from OS signals. Attempts orderly cleanup for 3 seconds; if it hasn't
-  // completed by then, hard-exit so the process never hangs.
-  const quitImmediately = () => {
-    if (shuttingDown) return;
-    shuttingDown = true;
-    try {
-      cliUi?.close();
-    } catch {
-      // Best-effort teardown — must not block process exit.
-    }
+  const shutdown = createShutdownCoordinator({
+    closeUi: () => cliUi?.close(),
+    cleanup: async () => {
+      updateManager?.stop();
+      await Promise.allSettled([
+        runningRouter.close().catch((error: unknown) => {
+          logger.error({ error }, 'Router shutdown failed');
+        }),
+        closeReverse(started),
+        dirLock.release().catch((error: unknown) => {
+          logger.error({ error }, 'Lock release failed');
+        }),
+        tracing.close(),
+        logger[Symbol.asyncDispose](),
+      ]);
+    },
+    exit: (code) => process.exit(code),
+    onRestartError: (error) => {
+      process.stderr.write(
+        `\nKlex update installed but restart failed: ${error.message}\n` +
+          'Run Klex again from your terminal to start the installed version.\n',
+      );
+    },
+  });
 
-    const cleanup = Promise.allSettled([
-      runningRouter.close().catch((error: unknown) => {
-        logger.error({ error }, 'Router shutdown failed');
-      }),
-      closeReverse(started),
-      dirLock.release().catch((error: unknown) => {
-        logger.error({ error }, 'Lock release failed');
-      }),
-      tracing.close(),
-      logger[Symbol.asyncDispose](),
-    ]);
-
-    const timeout = new Promise<void>((resolve) => setTimeout(resolve, 3000));
-
-    Promise.race([cleanup, timeout]).finally(() => process.exit(0));
-  };
-
-  process.on('SIGINT', quitImmediately);
-  process.on('SIGTERM', quitImmediately);
+  process.on('SIGINT', shutdown.requestExit);
+  process.on('SIGTERM', shutdown.requestExit);
 
   // Interactive CLI UI — default mode. Headless mode skips the UI.
   if (!cli.headless) {
+    const installation = await discoverManagedInstallation({
+      executablePath: process.execPath,
+      platform: process.platform,
+      target: resolveReleaseTarget().target,
+      version: KLEX_VERSION,
+      onDiagnostic: (error) =>
+        logger.debug(
+          { error },
+          'Self-update is unavailable for this installation',
+        ),
+    });
+    if (installation) {
+      updateManager = new UpdateManager({
+        installation,
+        onRestartRequested: (updatedInstallation) =>
+          shutdown.requestRestart({
+            arguments: process.argv.slice(2),
+            cwd: process.cwd(),
+            environment: process.env,
+            launcher: updatedInstallation.runningExecutable,
+          }),
+      });
+    }
+
     // The ESM SEA entry bundles the interactive UI together with the
     // application. This keeps the executable self-contained; only native
     // addons and runtime binaries remain external filesystem assets.
     const ui = createCliUi({
       logging: logger,
-      onQuit: quitImmediately,
+      onQuit: shutdown.requestExit,
       adminApi: runningAdminApi,
       dataDirectory: cli.dataDirectory,
       logStore,
       dangerousLocalAdminApiPort: cli.dangerousLocalAdminApiPort,
+      updateManager,
     });
     cliUi = ui;
     ui.start();
+    updateManager?.start();
   }
 }
 

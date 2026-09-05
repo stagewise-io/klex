@@ -5,7 +5,7 @@ import { useTextInputActive } from './hooks/use-text-input-active';
 export const MenuKeys = {
   Settings: 's',
   Cloud: 'c',
-  Usage: 'u',
+  Usage: 'g',
   Refresh: 'r',
   Quit: 'q',
   Back: 'escape',

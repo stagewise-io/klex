@@ -179,6 +179,58 @@ describe('UpdateManager', () => {
     });
   });
 
+  it('does not restart when cancellation arrives during validation', async () => {
+    let finishValidation: ((value: ManagedInstallation) => void) | undefined;
+    let validationStarted: (() => void) | undefined;
+    const started = new Promise<void>((resolve) => {
+      validationStarted = resolve;
+    });
+    const restart = vi.fn();
+    const manager = new UpdateManager({
+      installation,
+      fetchImplementation: fetchManifest('1.2.4'),
+      onRestartRequested: restart,
+      runInstaller: vi.fn(async () => undefined),
+      validateInstallation: async () => {
+        validationStarted?.();
+        return new Promise<ManagedInstallation>((resolve) => {
+          finishValidation = resolve;
+        });
+      },
+    });
+    await manager.check();
+    const install = manager.install();
+    await started;
+    const cancellation = manager.cancelInstall();
+    finishValidation?.(validatedInstallation('1.2.4'));
+    await Promise.all([install, cancellation]);
+    expect(restart).not.toHaveBeenCalled();
+    expect(manager.getState()).toMatchObject({
+      status: 'failed',
+      message: 'Update cancelled',
+    });
+  });
+
+  it('stops reading an oversized manifest without a content length', async () => {
+    let pulls = 0;
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        pulls += 1;
+        controller.enqueue(new Uint8Array(600 * 1024));
+      },
+    });
+    const manager = new UpdateManager({
+      installation,
+      fetchImplementation: vi.fn(
+        async () => new Response(body, { status: 200 }),
+      ),
+      onRestartRequested: vi.fn(),
+    });
+    await manager.check();
+    expect(manager.getState()).toEqual({ status: 'idle' });
+    expect(pulls).toBeLessThan(10);
+  });
+
   it('rejects an installer result that cannot be verified', async () => {
     const restart = vi.fn();
     const manager = new UpdateManager({

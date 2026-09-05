@@ -67,8 +67,12 @@ export async function discoverManagedInstallation(
       return null;
     }
 
+    const receiptText = await readFile(
+      join(root, 'install-receipt.json'),
+      'utf8',
+    );
     const receipt = receiptSchema.parse(
-      JSON.parse(await readFile(join(root, 'install-receipt.json'), 'utf8')),
+      JSON.parse(receiptText.replace(/^\uFEFF/, '')),
     );
     const canonicalRoot = await realpath(root);
     const receiptRoot = await realpath(receipt.installDir);

@@ -24,6 +24,9 @@ try {
 # close and remove the lock so another process can acquire it immediately.
 $output = & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File (Join-Path $repoRoot 'install.ps1') -InstallDir $root -Channel bogus 2>&1
 if ($LASTEXITCODE -eq 0) { throw 'The invalid-channel probe unexpectedly succeeded' }
+if (($output | Out-String) -notmatch 'unknown channel: bogus') {
+  throw "Channel validation diagnostic missing: $($output | Out-String)"
+}
 $probe = [IO.File]::Open($lockPath, [IO.FileMode]::OpenOrCreate, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
 $probe.Dispose()
 Remove-Item -LiteralPath $lockPath -Force -ErrorAction SilentlyContinue

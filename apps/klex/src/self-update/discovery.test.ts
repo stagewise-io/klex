@@ -61,6 +61,15 @@ describe('installer-managed installation discovery', () => {
     },
   );
 
+  it('accepts a PowerShell 5.1 receipt with a UTF-8 BOM', async () => {
+    const value = await fixture('win32');
+    await writeFile(
+      join(value.root, 'install-receipt.json'),
+      `\uFEFF${JSON.stringify(value.receipt)}`,
+    );
+    expect(await discover(value)).toMatchObject({ version: '1.2.3' });
+  });
+
   it('rejects development and manually extracted executables', async () => {
     const value = await fixture();
     expect(

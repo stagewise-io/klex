@@ -6,6 +6,7 @@ import {
   type ManagedInstallation,
 } from './discovery';
 import { runImmutableInstaller } from './installer-runner';
+import { readLimitedResponse } from './read-limited-response';
 
 const REPOSITORY = 'stagewise-io/klex';
 const MAX_MANIFEST_BYTES = 2 * 1024 * 1024;
@@ -104,6 +105,11 @@ export class UpdateManager {
     const version = this.#state.version;
     if (!version || this.#offeredRelease?.version !== version)
       return Promise.resolve();
+    this.#setState({
+      status: 'installing',
+      message: 'Preparing update',
+      version,
+    });
     this.#installPromise = this.#performInstall(version).finally(() => {
       this.#installPromise = undefined;
     });
@@ -129,13 +135,14 @@ export class UpdateManager {
         signal: controller.signal,
       });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      const contentLength = Number(response.headers.get('content-length') ?? 0);
-      if (contentLength > MAX_MANIFEST_BYTES)
-        throw new Error('Manifest is too large');
-      const text = await response.text();
-      if (Buffer.byteLength(text) > MAX_MANIFEST_BYTES)
-        throw new Error('Manifest is too large');
-      const manifest = releaseManifestSchema.parse(JSON.parse(text));
+      const bytes = await readLimitedResponse(
+        response,
+        MAX_MANIFEST_BYTES,
+        'Manifest is too large',
+      );
+      const manifest = releaseManifestSchema.parse(
+        JSON.parse(new TextDecoder().decode(bytes)),
+      );
       if (
         manifest.channel !== this.#options.installation.channel ||
         !manifest.artifacts.some(
@@ -191,7 +198,9 @@ export class UpdateManager {
         onProgress: (message) =>
           this.#setState({ status: 'installing', message, version }),
       });
+      if (controller.signal.aborted) throw new Error('Update cancelled');
       const updatedInstallation = await this.#validateInstallation(version);
+      if (controller.signal.aborted) throw new Error('Update cancelled');
       if (!updatedInstallation) {
         throw new Error('Installed update could not be verified');
       }

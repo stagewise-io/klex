@@ -14,7 +14,3 @@ export const KLEX_LOCAL_DATA_STORES = [
   CLOUD_IDENTITY_METADATA_STORE_DEFINITION,
   CLOUD_ENROLLMENT_STORE_DEFINITION,
 ] as const satisfies readonly LocalDataStoreDefinition[];
-
-export function createLocalDataRegistry(): readonly LocalDataStoreDefinition[] {
-  return KLEX_LOCAL_DATA_STORES;
-}

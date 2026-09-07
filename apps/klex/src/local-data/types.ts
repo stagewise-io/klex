@@ -41,6 +41,8 @@ interface StoreDefinitionBase {
   schemaVersion: number;
   compatibilityVersion: number;
   minimumKlexVersion: string;
+  /** Schema assigned to files written before local-data metadata existed. */
+  legacySchemaVersion?: number;
 }
 
 export interface JsonStoreDefinition extends StoreDefinitionBase {
@@ -68,4 +70,5 @@ export interface StoreInspection {
   metadata?: LocalDataMetadata;
   needsMigration: boolean;
   needsInitialization: boolean;
+  needsAdoption: boolean;
 }

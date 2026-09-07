@@ -74,10 +74,7 @@ class AgentDirectoryModule implements AgentDirectory {
         if (!document) continue;
         agents.push({
           directory,
-          officialName:
-            typeof document.payload.officialName === 'string'
-              ? document.payload.officialName
-              : entry.name,
+          officialName: displayNameFromPayload(document.payload, entry.name),
           inUse: await isDirectoryInUse(directory),
         });
       } catch (error) {
@@ -145,6 +142,14 @@ class AgentDirectoryModule implements AgentDirectory {
 
     return { directory, officialName: name, inUse: false };
   }
+}
+
+function displayNameFromPayload(
+  payload: Record<string, unknown>,
+  fallback: string,
+): string {
+  if (typeof payload.officialName !== 'string') return fallback;
+  return Array.from(payload.officialName.trim()).slice(0, 128).join('');
 }
 
 async function readDisplayName(

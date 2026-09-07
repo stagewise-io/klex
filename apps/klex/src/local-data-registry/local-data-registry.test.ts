@@ -2,10 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { validateLocalDataRegistry } from '@/local-data';
 
-import {
-  createLocalDataRegistry,
-  KLEX_LOCAL_DATA_STORES,
-} from './local-data-registry';
+import { KLEX_LOCAL_DATA_STORES } from './local-data-registry';
 
 describe('Klex local-data registry', () => {
   it('contains the complete structured store inventory', () => {
@@ -19,7 +16,7 @@ describe('Klex local-data registry', () => {
   });
 
   it('returns a valid registry with unique IDs and paths', () => {
-    const registry = createLocalDataRegistry();
+    const registry = KLEX_LOCAL_DATA_STORES;
     expect(() => validateLocalDataRegistry(registry)).not.toThrow();
     expect(new Set(registry.map((store) => store.id)).size).toBe(
       registry.length,
@@ -30,7 +27,7 @@ describe('Klex local-data registry', () => {
   });
 
   it('declares a current schema and contiguous migrations for every store', () => {
-    for (const store of createLocalDataRegistry()) {
+    for (const store of KLEX_LOCAL_DATA_STORES) {
       if (store.kind === 'json') {
         expect(
           store.versions.some(({ version }) => version === store.schemaVersion),

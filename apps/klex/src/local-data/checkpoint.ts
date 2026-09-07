@@ -2,15 +2,17 @@ import { createHash, randomUUID } from 'node:crypto';
 import {
   chmod,
   copyFile,
+  lstat,
   mkdir,
   readdir,
   readFile,
+  realpath,
   rename,
   rm,
   stat,
   writeFile,
 } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
+import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 
 import { createClient } from '@libsql/client';
 import { z } from 'zod';
@@ -18,8 +20,11 @@ import { z } from 'zod';
 import type { StoreInspection } from './types';
 
 const ROOT_NAME = '.klex-migrations';
+const checkpointIdSchema = z.string().regex(/^[A-Za-z0-9-]+$/);
+const backupNameSchema = z.string().regex(/^files\/[0-9]+$/);
+
 const manifestSchema = z.object({
-  id: z.string(),
+  id: checkpointIdSchema,
   createdAt: z.string(),
   status: z.enum(['pending', 'successful', 'failed']),
   entries: z.array(
@@ -28,7 +33,7 @@ const manifestSchema = z.object({
       kind: z.enum(['json', 'sqlite']),
       relativePath: z.string(),
       existed: z.boolean(),
-      backupName: z.string().optional(),
+      backupName: backupNameSchema.optional(),
       mode: z.number().int().optional(),
       size: z.number().int().optional(),
       sha256: z.string().optional(),
@@ -39,7 +44,7 @@ const manifestSchema = z.object({
 type CheckpointManifest = z.infer<typeof manifestSchema>;
 
 const journalSchema = z.object({
-  checkpointId: z.string(),
+  checkpointId: checkpointIdSchema,
   startedAt: z.string(),
 });
 
@@ -55,6 +60,10 @@ export async function createCheckpoint(
   const entries: CheckpointManifest['entries'] = [];
   try {
     for (const [index, inspection] of inspections.entries()) {
+      const sourcePath = await resolveContainedPathSecure(
+        dataDirectory,
+        inspection.definition.relativePath,
+      );
       if (!inspection.exists) {
         entries.push({
           storeId: inspection.definition.id,
@@ -65,11 +74,11 @@ export async function createCheckpoint(
         continue;
       }
       if (inspection.definition.kind === 'sqlite')
-        await checkpointWal(inspection.path);
-      const details = await stat(inspection.path);
+        await checkpointWal(sourcePath);
+      const details = await stat(sourcePath);
       const backupName = `files/${index}`;
       const backupPath = join(staging, backupName);
-      await copyFile(inspection.path, backupPath);
+      await copyFile(sourcePath, backupPath);
       await chmod(backupPath, details.mode & 0o777);
       entries.push({
         storeId: inspection.definition.id,
@@ -107,22 +116,27 @@ export async function restoreCheckpoint(
   dataDirectory: string,
   checkpointId: string,
 ): Promise<void> {
-  const checkpointPath = join(
-    migrationRoot(dataDirectory),
-    'checkpoints',
+  const checkpointsPath = join(migrationRoot(dataDirectory), 'checkpoints');
+  const checkpointPath = await resolveContainedPathSecure(
+    checkpointsPath,
     checkpointId,
   );
   const manifest = await readManifest(checkpointPath);
   for (const entry of manifest.entries) {
-    assertSafeRelativePath(entry.relativePath);
-    const target = join(dataDirectory, entry.relativePath);
+    const target = await resolveContainedPathSecure(
+      dataDirectory,
+      entry.relativePath,
+    );
     if (!entry.existed) {
       await removeStoreFiles(target, entry.kind);
       continue;
     }
     if (!entry.backupName || !entry.sha256 || entry.mode === undefined)
       throw new Error(`Checkpoint ${checkpointId} has an incomplete manifest`);
-    const source = join(checkpointPath, entry.backupName);
+    const source = await resolveContainedPathSecure(
+      checkpointPath,
+      entry.backupName,
+    );
     if ((await hashFile(source)) !== entry.sha256)
       throw new Error(
         `Checkpoint ${checkpointId} failed integrity verification`,
@@ -172,14 +186,40 @@ export async function pruneCheckpoints(dataDirectory: string): Promise<void> {
     if (isNodeError(error) && error.code === 'ENOENT') return;
     throw error;
   }
-  const manifests = await Promise.all(
-    directories
-      .filter((entry) => !entry.endsWith('.tmp'))
-      .map(async (entry) => ({
-        directory: entry,
-        manifest: await readManifest(join(checkpointsPath, entry)),
-      })),
+  const activeJournal = await fileExists(
+    join(migrationRoot(dataDirectory), 'journal.json'),
   );
+  if (!activeJournal) {
+    await Promise.all(
+      directories
+        .filter((entry) => entry.endsWith('.tmp'))
+        .map((entry) =>
+          rm(resolveContainedPath(checkpointsPath, entry), {
+            recursive: true,
+            force: true,
+          }),
+        ),
+    );
+  }
+  const manifests = (
+    await Promise.all(
+      directories
+        .filter((entry) => !entry.endsWith('.tmp'))
+        .map(async (entry) => {
+          try {
+            return {
+              directory: entry,
+              manifest: await readManifest(
+                await resolveContainedPathSecure(checkpointsPath, entry),
+              ),
+            };
+          } catch (error) {
+            if (isNodeError(error) && error.code === 'ENOENT') return undefined;
+            throw error;
+          }
+        }),
+    )
+  ).filter((entry) => entry !== undefined);
   const successful = manifests
     .filter((entry) => entry.manifest.status === 'successful')
     .sort((a, b) => b.manifest.createdAt.localeCompare(a.manifest.createdAt));
@@ -206,7 +246,10 @@ export function checkpointDirectory(
   dataDirectory: string,
   checkpointId: string,
 ): string {
-  return join(migrationRoot(dataDirectory), 'checkpoints', checkpointId);
+  return resolveContainedPath(
+    join(migrationRoot(dataDirectory), 'checkpoints'),
+    checkpointId,
+  );
 }
 
 async function setCheckpointStatus(
@@ -214,9 +257,9 @@ async function setCheckpointStatus(
   checkpointId: string,
   status: 'successful' | 'failed',
 ): Promise<void> {
-  const checkpointPath = join(
-    migrationRoot(dataDirectory),
-    'checkpoints',
+  const checkpointsPath = join(migrationRoot(dataDirectory), 'checkpoints');
+  const checkpointPath = await resolveContainedPathSecure(
+    checkpointsPath,
     checkpointId,
   );
   const manifest = await readManifest(checkpointPath);
@@ -229,9 +272,11 @@ async function setCheckpointStatus(
 async function readManifest(
   checkpointPath: string,
 ): Promise<CheckpointManifest> {
-  return manifestSchema.parse(
-    JSON.parse(await readFile(join(checkpointPath, 'manifest.json'), 'utf8')),
+  const manifestPath = await resolveContainedPathSecure(
+    checkpointPath,
+    'manifest.json',
   );
+  return manifestSchema.parse(JSON.parse(await readFile(manifestPath, 'utf8')));
 }
 
 async function checkpointWal(filePath: string): Promise<void> {
@@ -282,14 +327,83 @@ function migrationRoot(dataDirectory: string): string {
   return join(dataDirectory, ROOT_NAME);
 }
 
-function assertSafeRelativePath(relativePath: string): void {
+function resolveContainedPath(root: string, child: string): string {
+  const resolvedRoot = resolve(root);
+  const resolvedChild = resolve(resolvedRoot, child);
+  const relativePath = relative(resolvedRoot, resolvedChild);
   if (
-    relativePath.startsWith('/') ||
-    relativePath.startsWith('../') ||
-    relativePath.includes('/../') ||
-    relativePath.includes('\\')
+    relativePath === '' ||
+    relativePath === '..' ||
+    relativePath.startsWith(`..${process.platform === 'win32' ? '\\' : '/'}`) ||
+    isAbsolute(relativePath)
   )
-    throw new Error(`Unsafe checkpoint path: ${relativePath}`);
+    throw new Error(`Unsafe checkpoint path: ${child}`);
+  return resolvedChild;
+}
+
+async function resolveContainedPathSecure(
+  root: string,
+  child: string,
+): Promise<string> {
+  const resolvedRoot = resolve(root);
+  const resolvedChild = resolveContainedPath(resolvedRoot, child);
+  const canonicalRoot = await realpath(resolvedRoot);
+  const parts = relative(resolvedRoot, resolvedChild).split(/[\\/]/);
+  let current = resolvedRoot;
+  for (const part of parts) {
+    current = join(current, part);
+    try {
+      const details = await lstat(current);
+      if (details.isSymbolicLink())
+        throw new Error(`Unsafe checkpoint path traverses a symlink: ${child}`);
+    } catch (error) {
+      if (isNodeError(error) && error.code === 'ENOENT') break;
+      throw error;
+    }
+  }
+  const existingParent = await nearestExistingDirectory(dirname(resolvedChild));
+  const canonicalParent = await realpath(existingParent);
+  const parentRelative = relative(canonicalRoot, canonicalParent);
+  if (
+    parentRelative === '..' ||
+    parentRelative.startsWith(
+      `..${process.platform === 'win32' ? '\\' : '/'}`,
+    ) ||
+    isAbsolute(parentRelative)
+  )
+    throw new Error(
+      `Unsafe checkpoint path escapes through a symlink: ${child}`,
+    );
+  return resolvedChild;
+}
+
+async function nearestExistingDirectory(path: string): Promise<string> {
+  let candidate = path;
+  while (true) {
+    try {
+      const details = await stat(candidate);
+      if (!details.isDirectory())
+        throw new Error(
+          `Checkpoint path parent is not a directory: ${candidate}`,
+        );
+      return candidate;
+    } catch (error) {
+      if (!isNodeError(error) || error.code !== 'ENOENT') throw error;
+      const parent = dirname(candidate);
+      if (parent === candidate) throw error;
+      candidate = parent;
+    }
+  }
+}
+
+async function fileExists(filePath: string): Promise<boolean> {
+  try {
+    await stat(filePath);
+    return true;
+  } catch (error) {
+    if (isNodeError(error) && error.code === 'ENOENT') return false;
+    throw error;
+  }
 }
 
 function isNodeError(error: unknown): error is NodeJS.ErrnoException {

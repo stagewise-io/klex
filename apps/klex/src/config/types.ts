@@ -202,12 +202,14 @@ const presetProviderSchema = z
     preset: providerPresetSchema,
     auth: endpointAuthSchema,
     knownModels: z.record(z.string(), modelDefinitionSchema).optional(),
+    endpoints: z.never().optional(),
   })
   .passthrough();
 
 const manualProviderSchema = z
   .object({
     endpoints: z.record(z.string(), manualEndpointSchema),
+    preset: z.never().optional(),
   })
   .passthrough();
 

@@ -19,6 +19,7 @@ import type { JsonStoreDefinition, LocalDataMetadata } from './types';
 export interface JsonStoreDocument<T extends object> {
   metadata: LocalDataMetadata;
   payload: T;
+  legacy: boolean;
 }
 
 export async function readJsonStoreDocument(
@@ -51,14 +52,23 @@ export async function readJsonStoreDocument(
       `Local data store "${definition.id}" at "${filePath}" must be a JSON object`,
     );
   }
-  if (!('_klex' in value)) {
+  const legacy = !('_klex' in value);
+  if (legacy && definition.legacySchemaVersion === undefined) {
     throw new Error(
       `Local data store "${definition.id}" at "${filePath}" is unversioned and unsupported. ` +
         'Create a new agent data directory or restore data written by a compatible Klex version.',
     );
   }
 
-  const metadata = localDataMetadataSchema.parse(value._klex);
+  const metadata: LocalDataMetadata = legacy
+    ? {
+        store: definition.id,
+        schemaVersion: definition.legacySchemaVersion as number,
+        compatibilityVersion: 1,
+        minimumKlexVersion: definition.minimumKlexVersion,
+        writtenByKlexVersion: 'legacy',
+      }
+    : localDataMetadataSchema.parse(value._klex);
   assertCompatibleMetadata(dataDirectory, definition, metadata);
   const { _klex: _metadata, ...payload } = value;
   const version = definition.versions.find(
@@ -72,6 +82,7 @@ export async function readJsonStoreDocument(
   return {
     metadata,
     payload: parseStorePayload(version.schema.parse(payload), definition.id),
+    legacy,
   };
 }
 
@@ -109,12 +120,16 @@ export async function writeJsonStoreDocument(
     throw new Error(
       `Missing current schema for local data store "${definition.id}"`,
     );
+  if ('_klex' in payload)
+    throw new Error(
+      `Local data store "${definition.id}" payload cannot contain reserved "_klex" field`,
+    );
   const validated = parseStorePayload(
     currentSchema.schema.parse(payload),
     definition.id,
   );
   const metadata = createLocalDataMetadata(definition, klexVersion, previous);
-  await writeAtomicJson(filePath, { _klex: metadata, ...validated });
+  await writeAtomicJson(filePath, { ...validated, _klex: metadata });
   return metadata;
 }
 
@@ -151,17 +166,20 @@ export async function migrateJsonStore(
       minimumKlexVersion: definition.minimumKlexVersion,
       writtenByKlexVersion: klexVersion,
     };
-    await writeAtomicJson(filePath, { _klex: metadata, ...payload });
+    await writeAtomicJson(filePath, { ...payload, _klex: metadata });
   }
 
-  if (metadata.compatibilityVersion < definition.compatibilityVersion) {
+  if (
+    document.legacy ||
+    metadata.compatibilityVersion < definition.compatibilityVersion
+  ) {
     metadata = {
       ...metadata,
       compatibilityVersion: definition.compatibilityVersion,
       minimumKlexVersion: definition.minimumKlexVersion,
       writtenByKlexVersion: klexVersion,
     };
-    await writeAtomicJson(filePath, { _klex: metadata, ...payload });
+    await writeAtomicJson(filePath, { ...payload, _klex: metadata });
   }
 }
 

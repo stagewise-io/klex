@@ -95,6 +95,7 @@ export const MCP_OAUTH_STORE_DEFINITION: JsonStoreDefinition = {
   schemaVersion: 1,
   compatibilityVersion: 1,
   minimumKlexVersion: '0.3.0',
+  legacySchemaVersion: 1,
   versions: [{ version: 1, schema: oauthStoreSchema }],
   migrations: [],
 };

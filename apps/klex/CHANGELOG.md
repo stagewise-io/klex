@@ -2,6 +2,31 @@
 
 All notable Klex changes are documented here.
 
+## 0.3.0 (2026-09-07)
+
+### Features
+
+- add interactive self-update (be7ff97)
+- add god session monitoring TUI (80f13d8)
+- add god session observability and reset (b56433c)
+- add god-managed soul and identity (3005b3e)
+- add god messages admin TUI (cb88578)
+- add god message session and admin API (d7a1f80)
+
+### Bug Fixes
+
+- speed up Windows downloads (2b7c32b)
+- support piped installs with lockf (bc94fe5)
+- correct Windows lock path trimming (998b4be)
+- address self-update review findings (7f486c3)
+- harden self-update shutdown (d18da25)
+- return success from Windows lock test (bed4e16)
+- harden agent identity and soul validation (63c6bdf)
+
+### Other Changes
+
+- simplify prompts and soul updates (aea5f6c)
+
 ## 0.2.0 (2026-09-05)
 
 ### Breaking Changes

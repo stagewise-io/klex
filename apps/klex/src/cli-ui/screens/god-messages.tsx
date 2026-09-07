@@ -1,4 +1,11 @@
-import { Box, Text, useInput, useStdout } from 'ink';
+import {
+  Box,
+  type DOMElement,
+  Text,
+  useBoxMetrics,
+  useInput,
+  useStdout,
+} from 'ink';
 import Spinner from 'ink-spinner';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
@@ -10,11 +17,7 @@ import { useTextInputActive } from '../hooks/use-text-input-active';
 import { useToast } from '../hooks/use-toast';
 import { MenuKeys, useMenuInput } from '../menu-keys';
 import { formatAge } from '../utils/format-age';
-import {
-  getVisibleChatEntries,
-  maxScrollOffset,
-  toGodChatEntries,
-} from '../utils/god-message-display';
+import { toGodChatEntries } from '../utils/god-message-display';
 import {
   deleteComposerText,
   insertComposerText,
@@ -56,23 +59,16 @@ export function GodMessagesScreen({
   const [cursorOffset, setCursorOffset] = useState(0);
   const [scrollOffset, setScrollOffset] = useState(0);
   const modeRef = useRef(mode);
+  const historyContentRef = useRef<DOMElement>(null);
+  const composerCursorRef = useRef<DOMElement>(null);
   const messageRef = useRef(message);
   const cursorOffsetRef = useRef(cursorOffset);
   modeRef.current = mode;
   messageRef.current = message;
   cursorOffsetRef.current = cursorOffset;
 
-  const {
-    session,
-    allMessages,
-    hasMore,
-    loadingMore,
-    loading,
-    error,
-    loadMore,
-    resetState,
-    refresh,
-  } = useGodSession(apiClient);
+  const { session, messages, loading, error, resetState, refresh } =
+    useGodSession(apiClient);
 
   const { stdout } = useStdout();
   const terminalHeight = stdout.rows || 24;
@@ -80,23 +76,39 @@ export function GodMessagesScreen({
   const chatHeight = Math.max(terminalHeight - 16, 5);
   const showComposer =
     mode === 'compose' || mode === 'sending' || message.length > 0;
-  const composerHeight = showComposer ? 4 : 0;
-  const historyHeight = Math.max(chatHeight - composerHeight, 2);
-  // Each entry renders a role header, content line, and separating blank line.
-  const chatViewportSize = Math.max(Math.floor(historyHeight / 3), 1);
-  const chatEntries = useMemo(
-    () => toGodChatEntries(allMessages),
-    [allMessages],
+  const composerHeight = showComposer
+    ? Math.min(6, Math.max(4, Math.floor(chatHeight / 2)))
+    : 0;
+  const historyHeight = Math.max(chatHeight - composerHeight, 1);
+  const composerViewportHeight = Math.max(composerHeight - 3, 1);
+  const chatEntries = useMemo(() => toGodChatEntries(messages), [messages]);
+  const renderedChatEntries = useMemo(
+    () =>
+      chatEntries.map((entry) => (
+        <Box key={entry.id} flexDirection="column" width="100%">
+          <Text
+            bold
+            color={entry.role === 'user' ? 'yellow' : 'cyan'}
+            wrap="truncate-end"
+          >
+            {entry.role === 'user' ? 'God' : 'Agent'}
+          </Text>
+          <Text wrap="hard">{entry.text}</Text>
+        </Box>
+      )),
+    [chatEntries],
   );
-  const maximumScrollOffset = maxScrollOffset(
-    chatEntries.length,
-    chatViewportSize,
+  const { height: renderedHistoryHeight } = useBoxMetrics(historyContentRef);
+  const { height: composerCursorBottom } = useBoxMetrics(composerCursorRef);
+  const composerScrollOffset = Math.max(
+    composerCursorBottom - composerViewportHeight,
+    0,
   );
-  const chatView = getVisibleChatEntries(
-    chatEntries,
-    chatViewportSize,
-    scrollOffset,
+  const maximumScrollOffset = Math.max(
+    renderedHistoryHeight - historyHeight,
+    0,
   );
+  const effectiveScrollOffset = Math.min(scrollOffset, maximumScrollOffset);
 
   useEffect(() => {
     setActive(mode === 'compose');
@@ -332,13 +344,9 @@ export function GodMessagesScreen({
     }
 
     if (key.upArrow) {
-      setScrollOffset((previous) => {
-        const next = Math.min(previous + 1, maximumScrollOffset);
-        if (next === maximumScrollOffset && hasMore && !loadingMore) {
-          loadMore();
-        }
-        return next;
-      });
+      setScrollOffset((previous) =>
+        Math.min(previous + 1, maximumScrollOffset),
+      );
     } else if (key.downArrow) {
       setScrollOffset((previous) =>
         Math.max(0, Math.min(previous, maximumScrollOffset) - 1),
@@ -412,43 +420,43 @@ export function GodMessagesScreen({
 
         {/* Chat history */}
         <Box flexDirection="column" marginTop={1} height={chatHeight}>
-          <Box flexDirection="column" height={historyHeight}>
+          <Box
+            flexDirection="column"
+            height={historyHeight}
+            overflow="hidden"
+            width="100%"
+          >
             {loading && totalEntries === 0 ? (
               <Text dimColor>
                 <Spinner type="dots" /> Loading messages...
               </Text>
-            ) : chatView.visible.length === 0 ? (
+            ) : chatEntries.length === 0 ? (
               <Text dimColor>
                 No messages yet. Press Enter to compose a god message.
               </Text>
             ) : (
-              <Box flexDirection="column" gap={1}>
-                {chatView.visible.map((entry) => (
-                  <Box key={entry.id} flexDirection="column">
-                    <Text
-                      bold
-                      color={entry.role === 'user' ? 'yellow' : 'cyan'}
-                      wrap="truncate-end"
-                    >
-                      {entry.role === 'user' ? 'God' : 'Agent'}
-                    </Text>
-                    <Text wrap="truncate-end">{entry.text}</Text>
-                  </Box>
-                ))}
+              <Box
+                ref={historyContentRef}
+                flexDirection="column"
+                flexShrink={0}
+                gap={1}
+                position="relative"
+                top={-(maximumScrollOffset - effectiveScrollOffset)}
+                width="100%"
+              >
+                {renderedChatEntries}
               </Box>
             )}
-            {loadingMore ? (
-              <Text dimColor>
-                <Spinner type="dots" /> Loading older messages...
-              </Text>
-            ) : null}
           </Box>
           {showComposer ? (
             <Box
               borderStyle="round"
               borderColor={mode === 'compose' ? 'yellow' : 'gray'}
               flexDirection="column"
+              height={composerHeight}
+              overflow="hidden"
               paddingX={1}
+              width="100%"
             >
               <Text bold color={mode === 'compose' ? 'yellow' : undefined}>
                 {mode === 'compose'
@@ -457,34 +465,57 @@ export function GodMessagesScreen({
                     ? 'Sending message'
                     : 'Draft'}
               </Text>
-              {mode === 'sending' ? (
-                <Text>
-                  <Spinner type="dots" /> Sending...
-                </Text>
-              ) : message.length === 0 ? (
-                <Text dimColor>Type your god message...</Text>
-              ) : mode === 'compose' ? (
-                <Text>
-                  {message.slice(0, cursorOffset)}
-                  <Text inverse>{message[cursorOffset] ?? ' '}</Text>
-                  {message.slice(
-                    cursorOffset + (cursorOffset < message.length ? 1 : 0),
+              {mode === 'compose' && message.length > 0 ? (
+                <Box position="absolute" top={-100000} width="100%">
+                  <Box ref={composerCursorRef} flexShrink={0} width="100%">
+                    <Text wrap="hard">
+                      {message.slice(0, cursorOffset)}
+                      {message[cursorOffset] ?? ' '}
+                    </Text>
+                  </Box>
+                </Box>
+              ) : null}
+              <Box
+                flexDirection="column"
+                height={composerViewportHeight}
+                overflow="hidden"
+              >
+                <Box
+                  flexDirection="column"
+                  flexShrink={0}
+                  position="relative"
+                  top={mode === 'compose' ? -composerScrollOffset : 0}
+                  width="100%"
+                >
+                  {mode === 'sending' ? (
+                    <Text>
+                      <Spinner type="dots" /> Sending...
+                    </Text>
+                  ) : message.length === 0 ? (
+                    <Text dimColor>Type your god message...</Text>
+                  ) : mode === 'compose' ? (
+                    <Text wrap="hard">
+                      {message.slice(0, cursorOffset)}
+                      <Text inverse>{message[cursorOffset] ?? ' '}</Text>
+                      {message.slice(
+                        cursorOffset + (cursorOffset < message.length ? 1 : 0),
+                      )}
+                    </Text>
+                  ) : (
+                    <Text wrap="hard">{message}</Text>
                   )}
-                </Text>
-              ) : (
-                <Text>{message}</Text>
-              )}
+                </Box>
+              </Box>
             </Box>
           ) : null}
         </Box>
 
         {/* Scroll indicator */}
-        {totalEntries > chatViewportSize ? (
+        {maximumScrollOffset > 0 ? (
           <Text dimColor>
-            {chatView.scrollOffset > 0
-              ? `↑ ${chatView.scrollOffset} older · ↓ scroll down`
+            {effectiveScrollOffset > 0
+              ? `↑ ${effectiveScrollOffset} older · ↓ scroll down`
               : 'Following latest'}
-            {hasMore ? ' · more available' : ''}
           </Text>
         ) : null}
 

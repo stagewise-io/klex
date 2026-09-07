@@ -86,7 +86,7 @@ describe('AgentDirectory', () => {
           minimumKlexVersion: '0.3.0',
           writtenByKlexVersion: '0.3.0',
         },
-        officialName: 'Valid',
+        officialName: '  Valid  ',
         providers: {},
         modelSelection: {
           chat: [],
@@ -117,6 +117,10 @@ describe('AgentDirectory', () => {
       'legacy',
       'Valid',
     ]);
-    expect(agents.filter((agent) => agent.compatibilityError)).toHaveLength(2);
+    expect(agents.filter((agent) => agent.compatibilityError)).toHaveLength(1);
+    expect(
+      agents.find((agent) => agent.officialName === 'legacy')
+        ?.compatibilityError,
+    ).toBeUndefined();
   });
 });

@@ -6,8 +6,16 @@ import { klexConfigSchema } from './types';
 
 const klexConfigStorageSchema = z
   .record(z.string(), z.unknown())
-  .refine((value) => klexConfigSchema.safeParse(value).success, {
-    message: 'Stored Klex configuration is invalid',
+  .superRefine((value, context) => {
+    const result = klexConfigSchema.safeParse(value);
+    if (result.success) return;
+    for (const issue of result.error.issues) {
+      context.addIssue({
+        code: 'custom',
+        path: issue.path,
+        message: issue.message,
+      });
+    }
   });
 
 export const CONFIG_STORE_DEFINITION: JsonStoreDefinition = {
@@ -18,6 +26,7 @@ export const CONFIG_STORE_DEFINITION: JsonStoreDefinition = {
   schemaVersion: 1,
   compatibilityVersion: 1,
   minimumKlexVersion: '0.3.0',
+  legacySchemaVersion: 1,
   versions: [{ version: 1, schema: klexConfigStorageSchema }],
   migrations: [],
 };

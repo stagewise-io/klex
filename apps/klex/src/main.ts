@@ -15,7 +15,7 @@ import { createDirectoryLock, type DirectoryLock } from '@/directory-lock';
 import { createGodMessages } from '@/god-messages';
 import { createIntrospector } from '@/introspection';
 import { createLocalData, type LocalData } from '@/local-data';
-import { createLocalDataRegistry } from '@/local-data-registry';
+import { KLEX_LOCAL_DATA_STORES } from '@/local-data-registry';
 import { createLogStore } from '@/log-store';
 import { createMcp } from '@/mcp';
 import { createModelCallLogger } from '@/model-call-logger';
@@ -126,7 +126,7 @@ async function main(): Promise<void> {
             logging: logger,
             dataDirectory: directory,
             klexVersion: KLEX_VERSION,
-            stores: createLocalDataRegistry(),
+            stores: KLEX_LOCAL_DATA_STORES,
           });
           interactiveLocalData = localData;
           await localData.start();
@@ -200,9 +200,16 @@ async function main(): Promise<void> {
       logging: logger,
       dataDirectory,
       klexVersion: KLEX_VERSION,
-      stores: createLocalDataRegistry(),
+      stores: KLEX_LOCAL_DATA_STORES,
     });
-  if (!interactiveLocalData) await localData.start();
+  if (!interactiveLocalData) {
+    try {
+      await localData.start();
+    } catch (error) {
+      await dirLock.release().catch(() => undefined);
+      throw error;
+    }
+  }
 
   const config = createConfig({
     logging: logger,

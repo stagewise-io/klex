@@ -111,6 +111,7 @@ export const MODEL_CALL_STORE_DEFINITION: SqliteStoreDefinition = {
   schemaVersion: MODEL_CALL_SCHEMA_VERSION,
   compatibilityVersion: 1,
   minimumKlexVersion: '0.3.0',
+  legacySchemaVersion: 1,
   initSql: MODEL_CALL_INIT_SQL,
   migrations: MODEL_CALL_MIGRATIONS,
   validate: async (client) => {

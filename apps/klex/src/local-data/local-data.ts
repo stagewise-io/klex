@@ -1,4 +1,4 @@
-import { join } from 'node:path';
+import { join, posix, win32 } from 'node:path';
 
 import type { ModuleLogger, RootLogger } from '@stagewise/logger';
 
@@ -49,15 +49,17 @@ export function validateLocalDataRegistry(
       throw new LocalDataRegistryError(
         `Duplicate local-data store ID: ${store.id}`,
       );
-    if (paths.has(store.relativePath))
+    const normalizedPath = posix.normalize(store.relativePath);
+    if (paths.has(normalizedPath))
       throw new LocalDataRegistryError(
         `Duplicate local-data store path: ${store.relativePath}`,
       );
     if (
-      store.relativePath.startsWith('/') ||
-      store.relativePath === '..' ||
-      store.relativePath.startsWith('../') ||
-      store.relativePath.includes('/../') ||
+      normalizedPath === '.' ||
+      posix.isAbsolute(store.relativePath) ||
+      win32.isAbsolute(store.relativePath) ||
+      normalizedPath === '..' ||
+      normalizedPath.startsWith('../') ||
       store.relativePath.includes('\\')
     )
       throw new LocalDataRegistryError(
@@ -88,6 +90,10 @@ export function validateLocalDataRegistry(
         );
       destinations.add(migration.to);
     }
+    if (store.schemaVersion > 1 && migrations[0]?.from !== 1)
+      throw new LocalDataRegistryError(
+        `Migrations for ${store.id} must start at schema 1`,
+      );
     if (migrations.length > 0) {
       const last = migrations.at(-1);
       if (!last || last.to !== store.schemaVersion)
@@ -116,13 +122,23 @@ export function validateLocalDataRegistry(
           );
       }
     }
+    if (
+      store.legacySchemaVersion !== undefined &&
+      (!Number.isInteger(store.legacySchemaVersion) ||
+        store.legacySchemaVersion < 1 ||
+        store.legacySchemaVersion > store.schemaVersion)
+    )
+      throw new LocalDataRegistryError(
+        `Invalid legacy schema version for ${store.id}`,
+      );
     ids.add(store.id);
-    paths.add(store.relativePath);
+    paths.add(normalizedPath);
   }
 }
 
 class LocalDataModule implements LocalData {
   private started = false;
+  private startPromise: Promise<void> | undefined;
 
   constructor(
     private readonly deps: {
@@ -135,15 +151,32 @@ class LocalDataModule implements LocalData {
     validateLocalDataRegistry(deps.stores);
   }
 
-  async start(): Promise<void> {
-    if (this.started) return;
+  start(): Promise<void> {
+    if (this.started) return Promise.resolve();
+    if (this.startPromise) return this.startPromise;
+    const startPromise = this.startInternal();
+    this.startPromise = startPromise;
+    void startPromise.then(
+      () => {
+        if (this.startPromise === startPromise) this.startPromise = undefined;
+      },
+      () => {
+        if (this.startPromise === startPromise) this.startPromise = undefined;
+      },
+    );
+    return startPromise;
+  }
+
+  private async startInternal(): Promise<void> {
     if (await recoverInterruptedMigration(this.deps.dataDirectory))
       this.deps.logger.warn('Restored an interrupted local-data migration');
 
     const inspections = await this.inspect();
     const targets = inspections.filter(
       (inspection) =>
-        inspection.needsMigration || inspection.needsInitialization,
+        inspection.needsMigration ||
+        inspection.needsInitialization ||
+        inspection.needsAdoption,
     );
     if (targets.length === 0) {
       this.started = true;
@@ -156,7 +189,9 @@ class LocalDataModule implements LocalData {
       const validated = await this.inspect();
       const incomplete = validated.find(
         (inspection) =>
-          inspection.needsInitialization || inspection.needsMigration,
+          inspection.needsInitialization ||
+          inspection.needsMigration ||
+          inspection.needsAdoption,
       );
       if (incomplete)
         throw new Error(
@@ -167,7 +202,12 @@ class LocalDataModule implements LocalData {
         checkpoint.id,
         'successful',
       );
-      await pruneCheckpoints(this.deps.dataDirectory);
+      await pruneCheckpoints(this.deps.dataDirectory).catch((error: unknown) =>
+        this.deps.logger.warn(
+          { error },
+          'Could not prune local-data recovery checkpoints',
+        ),
+      );
       this.deps.logger.info(
         {
           checkpoint: checkpointDirectory(
@@ -203,24 +243,28 @@ class LocalDataModule implements LocalData {
   }
 
   async close(): Promise<void> {
-    this.started = false;
+    try {
+      await this.startPromise;
+    } finally {
+      this.started = false;
+      this.startPromise = undefined;
+    }
   }
 
   async inspect(): Promise<readonly StoreInspection[]> {
     const inspections: StoreInspection[] = [];
     for (const definition of this.deps.stores) {
       const path = join(this.deps.dataDirectory, definition.relativePath);
-      const metadata =
+      const inspection =
         definition.kind === 'json'
-          ? (
-              await readJsonStoreDocument(
-                path,
-                definition,
-                this.deps.dataDirectory,
-              )
-            )?.metadata
+          ? await readJsonStoreDocument(
+              path,
+              definition,
+              this.deps.dataDirectory,
+            )
           : await inspectSqliteStore(path, definition, this.deps.dataDirectory);
-      const exists = metadata !== undefined;
+      const metadata = inspection?.metadata;
+      const exists = inspection !== undefined;
       const needsInitialization =
         !exists && definition.kind === 'sqlite' && definition.createIfMissing;
       if (!exists && definition.required && !needsInitialization)
@@ -233,6 +277,7 @@ class LocalDataModule implements LocalData {
         exists,
         metadata,
         needsInitialization,
+        needsAdoption: inspection?.legacy ?? false,
         needsMigration:
           metadata !== undefined &&
           (metadata.schemaVersion < definition.schemaVersion ||
@@ -265,6 +310,7 @@ class LocalDataModule implements LocalData {
         definition,
         inspection.metadata,
         this.deps.klexVersion,
+        inspection.needsAdoption,
       );
     }
   }

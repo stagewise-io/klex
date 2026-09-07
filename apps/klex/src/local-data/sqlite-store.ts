@@ -19,11 +19,16 @@ const META_KEYS = {
   writtenByKlexVersion: 'writtenByKlexVersion',
 } as const;
 
+export interface SqliteStoreInspection {
+  metadata: LocalDataMetadata;
+  legacy: boolean;
+}
+
 export async function inspectSqliteStore(
   filePath: string,
   definition: SqliteStoreDefinition,
   dataDirectory: string,
-): Promise<LocalDataMetadata | undefined> {
+): Promise<SqliteStoreInspection | undefined> {
   if (!(await fileExists(filePath))) return undefined;
   const client = createClient({ url: `file:${filePath}` });
   try {
@@ -47,35 +52,60 @@ export async function inspectSqliteStore(
       if (typeof key === 'string' && typeof value === 'string')
         values.set(key, value);
     }
-    const metadata: LocalDataMetadata = {
-      store: requiredMeta(values, META_KEYS.store, definition.id),
-      schemaVersion: positiveIntegerMeta(
-        values,
-        META_KEYS.schemaVersion,
-        definition.id,
-      ),
-      compatibilityVersion: positiveIntegerMeta(
-        values,
-        META_KEYS.compatibilityVersion,
-        definition.id,
-      ),
-      minimumKlexVersion: requiredMeta(
-        values,
-        META_KEYS.minimumKlexVersion,
-        definition.id,
-      ),
-      writtenByKlexVersion: requiredMeta(
-        values,
-        META_KEYS.writtenByKlexVersion,
-        definition.id,
-      ),
-    };
+    const legacy = !values.has(META_KEYS.store);
+    let metadata: LocalDataMetadata;
+    if (legacy) {
+      if (definition.legacySchemaVersion === undefined)
+        throw new Error(
+          `SQLite local data store "${definition.id}" at "${filePath}" is unversioned and unsupported`,
+        );
+      const legacyVersion = await readLegacyVersion(client, definition.id);
+      if (legacyVersion !== definition.legacySchemaVersion)
+        throw new Error(
+          `SQLite store "${definition.id}" has unsupported legacy schema ${legacyVersion}`,
+        );
+      metadata = {
+        store: definition.id,
+        schemaVersion: legacyVersion,
+        compatibilityVersion: 1,
+        minimumKlexVersion: definition.minimumKlexVersion,
+        writtenByKlexVersion: 'legacy',
+      };
+    } else {
+      metadata = {
+        store: requiredMeta(values, META_KEYS.store, definition.id),
+        schemaVersion: positiveIntegerMeta(
+          values,
+          META_KEYS.schemaVersion,
+          definition.id,
+        ),
+        compatibilityVersion: positiveIntegerMeta(
+          values,
+          META_KEYS.compatibilityVersion,
+          definition.id,
+        ),
+        minimumKlexVersion: requiredMeta(
+          values,
+          META_KEYS.minimumKlexVersion,
+          definition.id,
+        ),
+        writtenByKlexVersion: requiredMeta(
+          values,
+          META_KEYS.writtenByKlexVersion,
+          definition.id,
+        ),
+      };
+    }
     assertCompatibleMetadata(dataDirectory, definition, metadata);
-    return metadata;
+    if (metadata.schemaVersion === definition.schemaVersion)
+      await definition.validate?.(client);
+    return { metadata, legacy };
   } catch (error) {
-    throw new Error(`Could not inspect SQLite store "${definition.id}"`, {
-      cause: error,
-    });
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new Error(
+      `Could not inspect SQLite store "${definition.id}": ${detail}`,
+      { cause: error },
+    );
   } finally {
     client.close();
   }
@@ -101,6 +131,7 @@ export async function migrateSqliteStore(
   definition: SqliteStoreDefinition,
   metadata: LocalDataMetadata,
   klexVersion: string,
+  needsAdoption = false,
 ): Promise<void> {
   const client = createClient({ url: `file:${filePath}` });
   try {
@@ -132,7 +163,10 @@ export async function migrateSqliteStore(
         );
       }
     }
-    if (metadata.compatibilityVersion < definition.compatibilityVersion) {
+    if (
+      needsAdoption ||
+      metadata.compatibilityVersion < definition.compatibilityVersion
+    ) {
       await writeSqliteMetadata(client, definition, klexVersion);
     }
     await definition.validate?.(client);
@@ -146,12 +180,16 @@ export async function assertCurrentSqliteStore(
   definition: SqliteStoreDefinition,
   dataDirectory: string,
 ): Promise<void> {
-  const metadata = await inspectSqliteStore(
+  const inspection = await inspectSqliteStore(
     filePath,
     definition,
     dataDirectory,
   );
-  if (!metadata || metadata.schemaVersion !== definition.schemaVersion) {
+  if (
+    !inspection ||
+    inspection.legacy ||
+    inspection.metadata.schemaVersion !== definition.schemaVersion
+  ) {
     throw new Error(
       `SQLite store "${definition.id}" was not prepared by local-data startup`,
     );
@@ -202,9 +240,29 @@ function positiveIntegerMeta(
   return value;
 }
 
+async function readLegacyVersion(
+  client: Client,
+  storeId: string,
+): Promise<number> {
+  const result = await client.execute({
+    sql: 'SELECT value FROM meta WHERE key = ?',
+    args: ['version'],
+  });
+  const raw = result.rows[0]?.value;
+  const version = typeof raw === 'string' ? Number(raw) : Number.NaN;
+  if (!Number.isInteger(version) || version < 1)
+    throw new Error(
+      `SQLite store "${storeId}" has invalid legacy meta.version`,
+    );
+  return version;
+}
+
 async function fileExists(filePath: string): Promise<boolean> {
   try {
-    return (await stat(filePath)).isFile();
+    const details = await stat(filePath);
+    if (!details.isFile())
+      throw new Error(`SQLite store path "${filePath}" is not a regular file`);
+    return true;
   } catch (error) {
     if (error instanceof Error && 'code' in error && error.code === 'ENOENT')
       return false;

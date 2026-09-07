@@ -231,19 +231,18 @@ class ConfigModule implements Config {
   async start(): Promise<void> {
     if (this.config) return;
 
-    const document = await readCurrentJsonStore<KlexConfig>(
-      this.deps.configPath,
-      CONFIG_STORE_DEFINITION,
-      this.deps.dataDirectory,
-    );
-    if (!document)
-      throw new Error(
-        `Required config file not found at ${this.deps.configPath}`,
-      );
-    const input = document.payload;
-    this.metadata = document.metadata;
-
     try {
+      const document = await readCurrentJsonStore<KlexConfig>(
+        this.deps.configPath,
+        CONFIG_STORE_DEFINITION,
+        this.deps.dataDirectory,
+      );
+      if (!document)
+        throw new Error(
+          `Required config file not found at ${this.deps.configPath}`,
+        );
+      const input = document.payload;
+      this.metadata = document.metadata;
       this.config = this.parse(input);
       const configuredName =
         typeof input === 'object' && input !== null && 'officialName' in input
@@ -257,7 +256,7 @@ class ConfigModule implements Config {
       }
     } catch (error) {
       this.config = null;
-      if (error instanceof ConfigValidationError) {
+      if (error instanceof ConfigValidationError || error instanceof ZodError) {
         throw new Error(
           `Config at ${this.deps.configPath} is invalid: ${error.message}`,
           { cause: error },
@@ -713,6 +712,7 @@ class ConfigModule implements Config {
         providers: {
           ...current.providers,
           [providerName]: {
+            ...provider,
             endpoints: {
               ...provider.endpoints,
               [endpointName]: endpoint,
@@ -750,6 +750,7 @@ class ConfigModule implements Config {
         );
       }
       const merged: ManualEndpoint = {
+        ...ep,
         ...endpoint,
         ...('knownModels' in ep && ep.knownModels
           ? { knownModels: ep.knownModels }
@@ -760,6 +761,7 @@ class ConfigModule implements Config {
         providers: {
           ...current.providers,
           [providerName]: {
+            ...provider,
             endpoints: { ...provider.endpoints, [endpointName]: merged },
           },
         },
@@ -824,6 +826,7 @@ class ConfigModule implements Config {
         providers: {
           ...current.providers,
           [providerName]: {
+            ...provider,
             endpoints: remainingEndpoints,
           },
         },
@@ -898,6 +901,7 @@ class ConfigModule implements Config {
         providers: {
           ...current.providers,
           [providerName]: {
+            ...provider,
             endpoints: {
               ...provider.endpoints,
               [endpointName]: {
@@ -978,6 +982,7 @@ class ConfigModule implements Config {
         providers: {
           ...current.providers,
           [providerName]: {
+            ...provider,
             endpoints: {
               ...provider.endpoints,
               [endpointName]: {
@@ -1060,6 +1065,7 @@ class ConfigModule implements Config {
         providers: {
           ...current.providers,
           [providerName]: {
+            ...provider,
             endpoints: {
               ...provider.endpoints,
               [endpointName]: {

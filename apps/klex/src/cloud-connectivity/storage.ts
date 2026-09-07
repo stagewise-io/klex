@@ -36,6 +36,7 @@ export const CLOUD_IDENTITY_METADATA_STORE_DEFINITION: JsonStoreDefinition = {
   schemaVersion: 1,
   compatibilityVersion: 1,
   minimumKlexVersion: '0.3.0',
+  legacySchemaVersion: 1,
   versions: [{ version: 1, schema: identityMetadataSchema }],
   migrations: [],
 };
@@ -48,6 +49,7 @@ export const CLOUD_ENROLLMENT_STORE_DEFINITION: JsonStoreDefinition = {
   schemaVersion: 1,
   compatibilityVersion: 1,
   minimumKlexVersion: '0.3.0',
+  legacySchemaVersion: 1,
   versions: [{ version: 1, schema: enrollmentSchema }],
   migrations: [],
 };

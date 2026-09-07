@@ -34,7 +34,7 @@ For every direct, headless, selected, or newly created agent:
 
 1. Ensure the data directory exists.
 2. Acquire its exclusive directory lock.
-3. Construct the central registry.
+3. Load the central registry.
 4. Run local-data recovery and full-registry read-only preflight.
 5. If required, checkpoint and migrate.
 6. Only then start tracing, config, Cloud connectivity, model logging, MCP, the API, and UI.

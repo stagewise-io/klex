@@ -1,3 +1,5 @@
+import { join } from 'node:path';
+
 import { z } from 'zod';
 
 import type { LocalDataMetadata, LocalDataStoreDefinition } from './types';
@@ -34,7 +36,7 @@ export function formatStoreCompatibilityError(
   reason: string,
 ): string {
   return (
-    `Local data store "${definition.id}" at "${dataDirectory}/${definition.relativePath}" ${reason}. ` +
+    `Local data store "${definition.id}" at "${join(dataDirectory, definition.relativePath)}" ${reason}. ` +
     `Data schema=${metadata.schemaVersion}, compatibility=${metadata.compatibilityVersion}, ` +
     `last written by Klex ${metadata.writtenByKlexVersion}; this binary supports ` +
     `schema=${definition.schemaVersion}, compatibility=${definition.compatibilityVersion}. ` +

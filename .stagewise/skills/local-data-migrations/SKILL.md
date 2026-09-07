@@ -29,5 +29,5 @@ Read `apps/klex/src/local-data/architecture.md` before changing persistent state
 - Prefer optional additions. Delay destructive SQLite column/table removal and JSON field removal across multiple release cycles.
 - Keep preflight read-only across the entire registry before the first mutation.
 - Treat checkpoints as disaster recovery, never as routine downgrade or divergent-history merging.
-- Never migrate, regenerate, checkpoint as structured data, or replace `identity/private-key.pem`.
+- Never migrate, regenerate, replace, or include `identity/private-key.pem` as structured data in a checkpoint.
 - Do not fold Cloud API compatibility into local storage versions.

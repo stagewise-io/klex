@@ -1,19 +1,17 @@
-import { randomUUID } from 'node:crypto';
-import {
-  mkdir,
-  readdir,
-  readFile,
-  rename,
-  rm,
-  writeFile,
-} from 'node:fs/promises';
+import { mkdir, readdir, readFile, rm } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
 import type { RootLogger } from '@stagewise/logger';
 
-import { CONFIG_FILE_NAME, type KlexConfig, klexConfigSchema } from '@/config';
+import {
+  CONFIG_FILE_NAME,
+  CONFIG_STORE_DEFINITION,
+  type KlexConfig,
+} from '@/config';
 import { isDirectoryInUse } from '@/directory-lock';
+import { readJsonStoreDocument, writeJsonStoreDocument } from '@/local-data';
+import { KLEX_VERSION } from '@/release';
 
 const DIRECTORY_MODE = 0o700;
 
@@ -21,6 +19,7 @@ export interface DiscoveredAgent {
   directory: string;
   officialName: string;
   inUse: boolean;
+  compatibilityError?: string;
 }
 
 export interface AgentDirectory {
@@ -67,19 +66,35 @@ class AgentDirectoryModule implements AgentDirectory {
       if (!entry.isDirectory()) continue;
       const directory = join(this.deps.rootDirectory, entry.name);
       try {
-        const config = JSON.parse(
-          await readFile(join(directory, CONFIG_FILE_NAME), 'utf8'),
-        ) as unknown;
-        const parsed = klexConfigSchema.parse(config);
+        const document = await readJsonStoreDocument(
+          join(directory, CONFIG_FILE_NAME),
+          CONFIG_STORE_DEFINITION,
+          directory,
+        );
+        if (!document) continue;
         agents.push({
           directory,
-          officialName: parsed.officialName,
+          officialName:
+            typeof document.payload.officialName === 'string'
+              ? document.payload.officialName
+              : entry.name,
           inUse: await isDirectoryInUse(directory),
         });
       } catch (error) {
+        const officialName = await readDisplayName(
+          join(directory, CONFIG_FILE_NAME),
+          entry.name,
+        );
+        agents.push({
+          directory,
+          officialName,
+          inUse: await isDirectoryInUse(directory),
+          compatibilityError:
+            error instanceof Error ? error.message : String(error),
+        });
         this.deps.logger.warn(
           { directory, error },
-          'Skipping invalid agent directory during discovery',
+          'Found incompatible agent directory during discovery',
         );
       }
     }
@@ -114,15 +129,14 @@ class AgentDirectoryModule implements AgentDirectory {
       mcpServers: {},
     };
     const configPath = join(directory, CONFIG_FILE_NAME);
-    const temporaryPath = `${configPath}.${process.pid}.${randomUUID()}.tmp`;
     try {
-      await writeFile(temporaryPath, `${JSON.stringify(config, null, 2)}\n`, {
-        encoding: 'utf8',
-        mode: 0o600,
-      });
-      await rename(temporaryPath, configPath);
+      await writeJsonStoreDocument(
+        configPath,
+        CONFIG_STORE_DEFINITION,
+        config,
+        KLEX_VERSION,
+      );
     } catch (error) {
-      await rm(temporaryPath, { force: true }).catch(() => undefined);
       await rm(directory, { recursive: true, force: true }).catch(
         () => undefined,
       );
@@ -131,6 +145,25 @@ class AgentDirectoryModule implements AgentDirectory {
 
     return { directory, officialName: name, inUse: false };
   }
+}
+
+async function readDisplayName(
+  configPath: string,
+  fallback: string,
+): Promise<string> {
+  try {
+    const value = JSON.parse(await readFile(configPath, 'utf8')) as unknown;
+    if (
+      typeof value === 'object' &&
+      value !== null &&
+      'officialName' in value &&
+      typeof value.officialName === 'string'
+    )
+      return value.officialName;
+  } catch {
+    // The compatibility error returned by discovery carries the actionable detail.
+  }
+  return fallback;
 }
 
 function validateAgentName(value: string): string {

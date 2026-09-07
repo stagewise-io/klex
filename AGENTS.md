@@ -69,8 +69,13 @@ are not verification, and lazy loaders can hide a broken addon until a user hits
 Before adding or changing such a dependency, read
 `.stagewise/skills/native-dependencies/SKILL.md`.
 
+## Local data
+
+Every structured store under an agent data directory participates in the forward-only migration registry. Before changing a config schema, persisted JSON, SQLite schema, metadata, or migration code, read `.stagewise/skills/local-data-migrations/SKILL.md`. New stores must be registered before any service can write them. Never add down migrations or transform `identity/private-key.pem`.
+
 ## Technical docs
 
+- `apps/klex/src/local-data/architecture.md`
 - `apps/klex/src/mcp/architecture.md`
 - `apps/klex/src/session/chat/architecture.md`
 - `packages/mcp-extension-push-notifications/README.md`

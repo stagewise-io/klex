@@ -35,6 +35,19 @@ const logging = {
 
 // --- fixtures ---
 
+function versionedConfig(config: KlexConfig): Record<string, unknown> {
+  return {
+    _klex: {
+      store: 'config',
+      schemaVersion: 1,
+      compatibilityVersion: 1,
+      minimumKlexVersion: '0.3.0',
+      writtenByKlexVersion: '0.3.0',
+    },
+    ...config,
+  };
+}
+
 function manualConfig(modelId = 'model:8b'): KlexConfig {
   return {
     officialName: 'Test Agent',
@@ -126,7 +139,7 @@ async function setup(config = manualConfig()) {
   directories.push(directory);
   await writeFile(
     join(directory, CONFIG_FILE_NAME),
-    `${JSON.stringify(config, null, 2)}\n`,
+    `${JSON.stringify(versionedConfig(config), null, 2)}\n`,
   );
   const module = createConfig({ logging, dataDirectory: directory });
   await module.start();
@@ -251,7 +264,7 @@ describe('Config — lifecycle', () => {
     // BOM. It is invisible in editors but `JSON.parse` rejects it.
     await writeFile(
       join(dir, CONFIG_FILE_NAME),
-      `\uFEFF${JSON.stringify(manualConfig(), null, 2)}\n`,
+      `\uFEFF${JSON.stringify(versionedConfig(manualConfig()), null, 2)}\n`,
     );
     const module = createConfig({ logging, dataDirectory: dir });
     await expect(module.start()).resolves.toBeUndefined();
@@ -263,7 +276,7 @@ describe('Config — lifecycle', () => {
     directories.push(dir);
     await writeFile(
       join(dir, CONFIG_FILE_NAME),
-      `\uFEFF\uFEFF${JSON.stringify(manualConfig(), null, 2)}\n`,
+      `\uFEFF\uFEFF${JSON.stringify(versionedConfig(manualConfig()), null, 2)}\n`,
     );
     const module = createConfig({ logging, dataDirectory: dir });
     await expect(module.start()).rejects.toThrow(/not valid JSON/);
@@ -274,7 +287,21 @@ describe('Config — lifecycle', () => {
     directories.push(dir);
     await writeFile(
       join(dir, CONFIG_FILE_NAME),
-      '{"officialName": "A", "providers": {}, "modelSelection": {}, "mcpServers": {}}',
+      JSON.stringify(
+        versionedConfig({
+          officialName: 'A',
+          providers: {},
+          modelSelection: {
+            chat: [],
+            compaction: [],
+            memory: [],
+            imageVision: [],
+            audioListening: [],
+            voice: { sts: [], tts: [], stt: [] },
+          },
+          mcpServers: {},
+        }),
+      ),
     );
     const module = createConfig({ logging, dataDirectory: dir });
     await expect(module.start()).rejects.toThrow(/invalid/);
@@ -709,7 +736,7 @@ describe('Config — replace (atomic persistence)', () => {
     expect(module.get()).toEqual(next);
     expect(
       JSON.parse(await readFile(join(directory, CONFIG_FILE_NAME), 'utf8')),
-    ).toEqual(next);
+    ).toEqual(versionedConfig(next));
   });
 
   it('leaves prior state and file intact after invalid replacement', async () => {
@@ -737,7 +764,7 @@ describe('Config — replace (atomic persistence)', () => {
     expect(module.get()).toEqual(second);
     expect(
       JSON.parse(await readFile(join(directory, CONFIG_FILE_NAME), 'utf8')),
-    ).toEqual(second);
+    ).toEqual(versionedConfig(second));
   });
 
   it('rejects invalid JSON input', async () => {

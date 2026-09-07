@@ -82,7 +82,7 @@ function GroupedChoiceList({
 
 export function createAgentPicker(deps: {
   agentDirectory: AgentDirectory;
-  prepareCloud?: (directory: string) => Promise<boolean>;
+  prepareAgent?: (directory: string) => Promise<boolean>;
   enrollCloud?: (directory: string, token: string) => Promise<void>;
 }): AgentPicker {
   return {
@@ -92,7 +92,7 @@ export function createAgentPicker(deps: {
 
 async function chooseAgent(deps: {
   agentDirectory: AgentDirectory;
-  prepareCloud?: (directory: string) => Promise<boolean>;
+  prepareAgent?: (directory: string) => Promise<boolean>;
   enrollCloud?: (directory: string, token: string) => Promise<void>;
 }): Promise<string | undefined> {
   const agents = await deps.agentDirectory.discover();
@@ -110,7 +110,7 @@ async function chooseAgent(deps: {
         agents={agents}
         onComplete={finish}
         agentDirectory={deps.agentDirectory}
-        prepareCloud={deps.prepareCloud}
+        prepareAgent={deps.prepareAgent}
         enrollCloud={deps.enrollCloud}
       />,
       { exitOnCtrlC: false },
@@ -136,13 +136,13 @@ function PickerScreen({
   agents,
   onComplete,
   agentDirectory,
-  prepareCloud,
+  prepareAgent,
   enrollCloud,
 }: {
   agents: DiscoveredAgent[];
   onComplete: (directory: string | undefined) => void;
   agentDirectory: AgentDirectory;
-  prepareCloud?: (directory: string) => Promise<boolean>;
+  prepareAgent?: (directory: string) => Promise<boolean>;
   enrollCloud?: (directory: string, token: string) => Promise<void>;
 }) {
   const [creating, setCreating] = useState(false);
@@ -175,11 +175,11 @@ function PickerScreen({
         setError('This agent is already started. Choose another agent.');
         return;
       }
-      if (!prepareCloud) {
+      if (!prepareAgent) {
         onComplete(directory);
         return;
       }
-      void prepareCloud(directory).then(
+      void prepareAgent(directory).then(
         (needsEnrollment) => {
           if (needsEnrollment && enrollCloud) {
             setEnrollmentToken('');
@@ -288,9 +288,11 @@ function PickerScreen({
     ...agents.map((agent) => ({
       label: agent.inUse
         ? `${agent.officialName} (${agent.directory}) — already started`
-        : agent.officialName,
+        : agent.compatibilityError
+          ? `${agent.officialName} — ${agent.compatibilityError}`
+          : agent.officialName,
       value: agent.directory,
-      disabled: agent.inUse,
+      disabled: agent.inUse || Boolean(agent.compatibilityError),
     })),
     { label: 'Create a new Klex Bot', value: '__create__' },
     { label: 'Quit', value: '__quit__' },
@@ -302,8 +304,8 @@ function PickerScreen({
         Select a Klex Bot
       </Text>
       <Text dimColor>
-        Choose an existing bot, or create a new one. Started bots are
-        unavailable.
+        Choose an existing bot, or create a new one. Started or incompatible
+        bots are unavailable.
       </Text>
       <Box marginTop={1} flexDirection="column">
         {error ? <Text color="red">{error}</Text> : null}

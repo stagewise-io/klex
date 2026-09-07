@@ -1,11 +1,17 @@
-import { randomUUID } from 'node:crypto';
-import { readFile, rename, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { ZodError } from 'zod';
 
 import type { ModuleLogger, RootLogger } from '@stagewise/logger';
 
+import {
+  type LocalDataMetadata,
+  readCurrentJsonStore,
+  writeJsonStoreDocument,
+} from '@/local-data';
+import { KLEX_VERSION } from '@/release';
+
+import { CONFIG_STORE_DEFINITION } from './storage-definition';
 import {
   type EndpointAuth,
   type EndpointConfig,
@@ -37,21 +43,6 @@ export const DEFAULT_CONTEXT_SIZE = 200_000;
  * File name used for the persisted agent configuration file.
  */
 export const CONFIG_FILE_NAME = 'config.json';
-
-/**
- * Removes a single leading UTF-8 byte-order mark from decoded text.
- *
- * `readFile(path, 'utf8')` preserves a BOM as `U+FEFF`, and `JSON.parse`
- * rejects it. Editors on Windows write UTF-8 with a BOM by default —
- * PowerShell 5.1's `Set-Content -Encoding UTF8` and older Notepad both do —
- * so a hand-edited config can look perfectly valid yet fail to parse.
- *
- * Only one BOM is stripped: a second `U+FEFF` is genuine content and must
- * still be reported as invalid JSON.
- */
-function stripByteOrderMark(source: string): string {
-  return source.startsWith('\uFEFF') ? source.slice(1) : source;
-}
 
 /**
  * Returns the environment-aware default telemetry level:
@@ -223,6 +214,7 @@ export interface ConfigDependencies {
 
 class ConfigModule implements Config {
   private config: KlexConfig | null = null;
+  private metadata: LocalDataMetadata | undefined;
   private updateQueue: Promise<void> = Promise.resolve();
   private readonly listeners = new Set<ConfigListener>();
   /** Tracks models already warned about missing contextSize. */
@@ -232,41 +224,24 @@ class ConfigModule implements Config {
     private readonly deps: {
       logger: ModuleLogger;
       configPath: string;
+      dataDirectory: string;
     },
   ) {}
 
   async start(): Promise<void> {
     if (this.config) return;
 
-    let source: string;
-    try {
-      source = await readFile(this.deps.configPath, 'utf8');
-    } catch (error) {
-      if (isNodeError(error) && error.code === 'ENOENT') {
-        throw new Error(
-          `Required config file not found at ${this.deps.configPath}`,
-          { cause: error },
-        );
-      }
-
-      throw new Error(`Failed to read config at ${this.deps.configPath}`, {
-        cause: error,
-      });
-    }
-
-    let input: unknown;
-    try {
-      input = JSON.parse(stripByteOrderMark(source));
-    } catch (error) {
-      // Surface the parser's own message: it carries the position of the
-      // offending token, which is the only practical way to locate a stray
-      // comma, comment, or control character in a hand-edited file.
-      const detail = error instanceof Error ? error.message : String(error);
+    const document = await readCurrentJsonStore<KlexConfig>(
+      this.deps.configPath,
+      CONFIG_STORE_DEFINITION,
+      this.deps.dataDirectory,
+    );
+    if (!document)
       throw new Error(
-        `Config at ${this.deps.configPath} is not valid JSON: ${detail}`,
-        { cause: error },
+        `Required config file not found at ${this.deps.configPath}`,
       );
-    }
+    const input = document.payload;
+    this.metadata = document.metadata;
 
     try {
       this.config = this.parse(input);
@@ -564,16 +539,15 @@ class ConfigModule implements Config {
   ): Promise<Readonly<KlexConfig>> {
     this.requireConfig();
     const config = this.parse(input, validateReferences);
-    const temporaryPath = `${this.deps.configPath}.${process.pid}.${randomUUID()}.tmp`;
-
     try {
-      await writeFile(temporaryPath, `${JSON.stringify(config, null, 2)}\n`, {
-        encoding: 'utf8',
-        mode: 0o600,
-      });
-      await rename(temporaryPath, this.deps.configPath);
+      this.metadata = await writeJsonStoreDocument(
+        this.deps.configPath,
+        CONFIG_STORE_DEFINITION,
+        config,
+        KLEX_VERSION,
+        this.metadata,
+      );
     } catch (error) {
-      await unlink(temporaryPath).catch(() => undefined);
       throw new Error(`Failed to persist config at ${this.deps.configPath}`, {
         cause: error,
       });
@@ -1261,10 +1235,6 @@ function resolveConfiguredModel(
   return { definition: endpoint.knownModels?.[localModelId], endpoint };
 }
 
-function isNodeError(error: unknown): error is NodeJS.ErrnoException {
-  return error instanceof Error && 'code' in error;
-}
-
 function splitProviderId(modelId: ModelId): {
   providerId: string;
   rest: string;
@@ -1321,5 +1291,6 @@ export function createConfig(deps: ConfigDependencies): Config {
       bindings: { module: 'config' },
     }),
     configPath: join(deps.dataDirectory, CONFIG_FILE_NAME),
+    dataDirectory: deps.dataDirectory,
   });
 }

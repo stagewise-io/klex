@@ -1,12 +1,3 @@
-import { randomUUID } from 'node:crypto';
-import {
-  chmod,
-  mkdir,
-  readFile,
-  rename,
-  rm,
-  writeFile,
-} from 'node:fs/promises';
 import { dirname } from 'node:path';
 
 import type {
@@ -16,17 +7,27 @@ import type {
 } from '@modelcontextprotocol/client';
 import { z } from 'zod';
 
+import {
+  type JsonStoreDefinition,
+  type LocalDataMetadata,
+  readCurrentJsonStore,
+  writeJsonStoreDocument,
+} from '@/local-data';
+import { KLEX_VERSION } from '@/release';
+
 const DEFAULT_ISSUER = '__default__';
 
-const storedOAuthTokensSchema: z.ZodType<StoredOAuthTokens> = z.object({
-  access_token: z.string(),
-  expires_in: z.coerce.number().optional(),
-  id_token: z.string().optional(),
-  issuer: z.string().optional(),
-  refresh_token: z.string().optional(),
-  scope: z.string().optional(),
-  token_type: z.string(),
-});
+const storedOAuthTokensSchema: z.ZodType<StoredOAuthTokens> = z
+  .object({
+    access_token: z.string(),
+    expires_in: z.coerce.number().optional(),
+    id_token: z.string().optional(),
+    issuer: z.string().optional(),
+    refresh_token: z.string().optional(),
+    scope: z.string().optional(),
+    token_type: z.string(),
+  })
+  .passthrough();
 
 const storedOAuthClientInformationSchema: z.ZodType<StoredOAuthClientInformation> =
   z
@@ -63,25 +64,40 @@ const oauthDiscoveryStateSchema: z.ZodType<OAuthDiscoveryState> = z
   })
   .passthrough();
 
-const serverOAuthStateSchema = z.object({
-  clientInformationByIssuer: z
-    .record(z.string(), storedOAuthClientInformationSchema)
-    .default({}),
-  clientRedirectUrlsByIssuer: z.record(z.string(), z.url()).default({}),
-  codeVerifier: z.string().optional(),
-  discoveryState: oauthDiscoveryStateSchema.optional(),
-  lastTokenIssuer: z.string().optional(),
-  tokensByIssuer: z.record(z.string(), storedOAuthTokensSchema).default({}),
-});
+const serverOAuthStateSchema = z
+  .object({
+    clientInformationByIssuer: z
+      .record(z.string(), storedOAuthClientInformationSchema)
+      .default({}),
+    clientRedirectUrlsByIssuer: z.record(z.string(), z.url()).default({}),
+    codeVerifier: z.string().optional(),
+    discoveryState: oauthDiscoveryStateSchema.optional(),
+    lastTokenIssuer: z.string().optional(),
+    tokensByIssuer: z.record(z.string(), storedOAuthTokensSchema).default({}),
+  })
+  .passthrough();
 
 type ServerOAuthState = z.infer<typeof serverOAuthStateSchema>;
 
-const oauthStoreSchema = z.object({
-  servers: z.record(z.string(), serverOAuthStateSchema).default({}),
-  version: z.literal(1),
-});
+const oauthStoreSchema = z
+  .object({
+    servers: z.record(z.string(), serverOAuthStateSchema).default({}),
+  })
+  .passthrough();
 
 type OAuthStoreData = z.infer<typeof oauthStoreSchema>;
+
+export const MCP_OAUTH_STORE_DEFINITION: JsonStoreDefinition = {
+  kind: 'json',
+  id: 'mcp-oauth',
+  relativePath: 'credentials/mcp-oauth.json',
+  required: false,
+  schemaVersion: 1,
+  compatibilityVersion: 1,
+  minimumKlexVersion: '0.3.0',
+  versions: [{ version: 1, schema: oauthStoreSchema }],
+  migrations: [],
+};
 
 export type OAuthCredentialScope =
   | 'all'
@@ -92,8 +108,12 @@ export type OAuthCredentialScope =
 
 export class McpOAuthStore {
   private mutationQueue: Promise<void> = Promise.resolve();
+  private metadata: LocalDataMetadata | undefined;
+  private readonly dataDirectory: string;
 
-  public constructor(private readonly filePath: string) {}
+  public constructor(private readonly filePath: string) {
+    this.dataDirectory = dirname(dirname(filePath));
+  }
 
   public async clientInformation(
     serverName: string,
@@ -222,20 +242,14 @@ export class McpOAuthStore {
   }
 
   private async read(): Promise<OAuthStoreData> {
-    try {
-      return oauthStoreSchema.parse(
-        JSON.parse(await readFile(this.filePath, 'utf8')),
-      );
-    } catch (error) {
-      if (
-        error instanceof Error &&
-        'code' in error &&
-        error.code === 'ENOENT'
-      ) {
-        return { servers: {}, version: 1 };
-      }
-      throw error;
-    }
+    const document = await readCurrentJsonStore<OAuthStoreData>(
+      this.filePath,
+      MCP_OAUTH_STORE_DEFINITION,
+      this.dataDirectory,
+    );
+    if (!document) return { servers: {} };
+    this.metadata = document.metadata;
+    return document.payload;
   }
 
   private async readServer(
@@ -246,20 +260,12 @@ export class McpOAuthStore {
   }
 
   private async write(data: OAuthStoreData): Promise<void> {
-    const directory = dirname(this.filePath);
-    const temporaryPath = `${this.filePath}.${randomUUID()}.tmp`;
-    await mkdir(directory, { recursive: true, mode: 0o700 });
-
-    try {
-      await writeFile(temporaryPath, `${JSON.stringify(data, null, 2)}\n`, {
-        mode: 0o600,
-      });
-      await chmod(temporaryPath, 0o600);
-      await rename(temporaryPath, this.filePath);
-      await chmod(this.filePath, 0o600);
-    } catch (error) {
-      await rm(temporaryPath, { force: true });
-      throw error;
-    }
+    this.metadata = await writeJsonStoreDocument(
+      this.filePath,
+      MCP_OAUTH_STORE_DEFINITION,
+      data,
+      KLEX_VERSION,
+      this.metadata,
+    );
   }
 }

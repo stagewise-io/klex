@@ -14,6 +14,8 @@ import { ensureDataDirectory } from '@/data-directory';
 import { createDirectoryLock, type DirectoryLock } from '@/directory-lock';
 import { createGodMessages } from '@/god-messages';
 import { createIntrospector } from '@/introspection';
+import { createLocalData, type LocalData } from '@/local-data';
+import { createLocalDataRegistry } from '@/local-data-registry';
 import { createLogStore } from '@/log-store';
 import { createMcp } from '@/mcp';
 import { createModelCallLogger } from '@/model-call-logger';
@@ -88,6 +90,7 @@ async function main(): Promise<void> {
   }
 
   let interactiveCloud: CloudConnectivity | undefined;
+  let interactiveLocalData: LocalData | undefined;
   let interactiveLock: DirectoryLock | undefined;
   const agentDirectory = createAgentDirectory({
     logging: logger,
@@ -101,10 +104,11 @@ async function main(): Promise<void> {
     }
     const selectedDirectory = await createAgentPicker({
       agentDirectory,
-      prepareCloud: async (directory) => {
-        if (!cli.cloudEnabled) return false;
+      prepareAgent: async (directory) => {
         await interactiveCloud?.close().catch(() => undefined);
         interactiveCloud = undefined;
+        await interactiveLocalData?.close().catch(() => undefined);
+        interactiveLocalData = undefined;
         await interactiveLock?.release().catch(() => undefined);
         interactiveLock = undefined;
 
@@ -118,6 +122,16 @@ async function main(): Promise<void> {
 
         let cloud: CloudConnectivity | undefined;
         try {
+          const localData = createLocalData({
+            logging: logger,
+            dataDirectory: directory,
+            klexVersion: KLEX_VERSION,
+            stores: createLocalDataRegistry(),
+          });
+          interactiveLocalData = localData;
+          await localData.start();
+          if (!cli.cloudEnabled) return false;
+
           cloud = createCloudConnectivity({
             logging: logger,
             dataDirectory: directory,
@@ -134,6 +148,8 @@ async function main(): Promise<void> {
         } catch (error) {
           await cloud?.close().catch(() => undefined);
           interactiveCloud = undefined;
+          await interactiveLocalData?.close().catch(() => undefined);
+          interactiveLocalData = undefined;
           await lock.release().catch(() => undefined);
           interactiveLock = undefined;
           throw error;
@@ -145,6 +161,7 @@ async function main(): Promise<void> {
     }).choose();
     if (selectedDirectory === undefined) {
       await interactiveCloud?.close().catch(() => undefined);
+      await interactiveLocalData?.close().catch(() => undefined);
       await interactiveLock?.release().catch(() => undefined);
       return;
     }
@@ -177,11 +194,21 @@ async function main(): Promise<void> {
     });
   if (!interactiveLock) await dirLock.acquire();
 
+  const localData =
+    interactiveLocalData ??
+    createLocalData({
+      logging: logger,
+      dataDirectory,
+      klexVersion: KLEX_VERSION,
+      stores: createLocalDataRegistry(),
+    });
+  if (!interactiveLocalData) await localData.start();
+
   const config = createConfig({
     logging: logger,
     dataDirectory: cli.dataDirectory,
   });
-  const started: { close(): Promise<void> }[] = [];
+  const started: { close(): Promise<void> }[] = [localData];
   let adminApiForUi: AdminApi | undefined;
   let router: ReturnType<typeof createRouter> | undefined;
 

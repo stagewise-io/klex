@@ -6,7 +6,12 @@ import { exportJWK, importPKCS8 } from 'jose';
 
 import type { ModuleLogger } from '@stagewise/logger';
 
-import { IDENTITY_DIR, writeSecureJsonFile } from './storage';
+import {
+  CLOUD_IDENTITY_METADATA_STORE_DEFINITION,
+  IDENTITY_DIR,
+  readCloudJsonFile,
+  writeSecureJsonFile,
+} from './storage';
 import type { CloudAlgorithm, CloudIdentity } from './types';
 
 const PRIVATE_KEY_FILE = 'private-key.pem';
@@ -60,7 +65,11 @@ export async function loadOrCreateIdentity(
       encoding: 'utf8',
       mode: 0o600,
     });
-    await writeSecureJsonFile(metadataPath, metadata);
+    await writeSecureJsonFile(
+      dataDirectory,
+      CLOUD_IDENTITY_METADATA_STORE_DEFINITION,
+      metadata,
+    );
 
     logger.info(
       { kid: metadata.kid },
@@ -77,15 +86,24 @@ export async function loadOrCreateIdentity(
   // Private key exists — load or regenerate metadata, but NEVER touch the key.
   let metadata: IdentityMetadata;
   try {
-    const raw = await readFile(metadataPath, 'utf8');
-    metadata = JSON.parse(raw) as IdentityMetadata;
+    const stored = await readCloudJsonFile<IdentityMetadata>(
+      dataDirectory,
+      CLOUD_IDENTITY_METADATA_STORE_DEFINITION,
+    );
+    if (!stored)
+      throw new Error(`Missing identity metadata at ${metadataPath}`);
+    metadata = stored;
   } catch {
     // Metadata missing but key exists — generate new metadata for the
     // existing key.  This produces a new kid, which means any prior
     // enrollment will be treated as stale (kid mismatch) and the agent
     // will need to re-enroll.
     metadata = createMetadata();
-    await writeSecureJsonFile(metadataPath, metadata);
+    await writeSecureJsonFile(
+      dataDirectory,
+      CLOUD_IDENTITY_METADATA_STORE_DEFINITION,
+      metadata,
+    );
     logger.warn(
       { kid: metadata.kid },
       'Identity metadata missing — generated new metadata for existing private key',

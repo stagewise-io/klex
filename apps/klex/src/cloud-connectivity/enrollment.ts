@@ -1,27 +1,25 @@
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
 import * as readline from 'node:readline/promises';
 
 import type { ModuleLogger } from '@stagewise/logger';
 
 import { publicKeyToJwks } from './identity';
-import { IDENTITY_DIR, writeSecureJsonFile } from './storage';
+import {
+  CLOUD_ENROLLMENT_STORE_DEFINITION,
+  readCloudJsonFile,
+  writeSecureJsonFile,
+} from './storage';
 import type { CloudIdentity, EnrollmentState } from './types';
 
-const ENROLLMENT_FILE = 'enrollment.json';
-
-export function loadEnrollmentState(
+export async function loadEnrollmentState(
   dataDirectory: string,
   kid: string,
-): EnrollmentState {
-  const enrollmentPath = join(dataDirectory, IDENTITY_DIR, ENROLLMENT_FILE);
+): Promise<EnrollmentState> {
   try {
-    const raw = readFileSync(enrollmentPath, 'utf8');
-    const parsed = JSON.parse(raw) as {
-      clientId: string | null;
-      enrolledAt: string | null;
-      kid: string;
-    };
+    const parsed = await readCloudJsonFile<EnrollmentState>(
+      dataDirectory,
+      CLOUD_ENROLLMENT_STORE_DEFINITION,
+    );
+    if (!parsed) return { clientId: null, enrolledAt: null, kid };
     // If the kid doesn't match the current identity, the enrollment is
     // stale (e.g. identity was rotated or metadata was regenerated).
     if (parsed.kid !== kid) {
@@ -37,8 +35,11 @@ export async function saveEnrollmentState(
   dataDirectory: string,
   state: EnrollmentState,
 ): Promise<void> {
-  const enrollmentPath = join(dataDirectory, IDENTITY_DIR, ENROLLMENT_FILE);
-  await writeSecureJsonFile(enrollmentPath, state);
+  await writeSecureJsonFile(
+    dataDirectory,
+    CLOUD_ENROLLMENT_STORE_DEFINITION,
+    state,
+  );
 }
 
 export async function performEnrollment(

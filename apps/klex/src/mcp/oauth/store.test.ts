@@ -101,7 +101,13 @@ describe('McpOAuthStore', () => {
     await writeFile(
       filePath,
       JSON.stringify({
-        version: 1,
+        _klex: {
+          store: 'mcp-oauth',
+          schemaVersion: 1,
+          compatibilityVersion: 1,
+          minimumKlexVersion: '0.3.0',
+          writtenByKlexVersion: '0.3.0',
+        },
         servers: {
           qonto: {
             clientInformationByIssuer: {

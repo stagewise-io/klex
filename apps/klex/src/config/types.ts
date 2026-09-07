@@ -31,7 +31,7 @@ const modelSelectionEntrySchema = z.union([
         .record(z.string(), z.record(z.string(), z.unknown()))
         .optional(),
     })
-    .strict(),
+    .passthrough(),
 ]);
 
 /**
@@ -64,20 +64,24 @@ type ApiFormat = z.infer<typeof apiFormatSchema>;
 
 // Endpoint auth: apiKey (literal or {env:VAR}) plus optional custom headers
 
-const endpointAuthSchema = z.object({
-  apiKey: z.string().optional(),
-  headers: z.record(z.string(), z.string()).optional(),
-});
+const endpointAuthSchema = z
+  .object({
+    apiKey: z.string().optional(),
+    headers: z.record(z.string(), z.string()).optional(),
+  })
+  .passthrough();
 
 type EndpointAuth = z.infer<typeof endpointAuthSchema>;
 
 // Endpoint config
 
-const endpointConfigSchema = z.object({
-  url: z.url(),
-  format: apiFormatSchema,
-  auth: endpointAuthSchema,
-});
+const endpointConfigSchema = z
+  .object({
+    url: z.url(),
+    format: apiFormatSchema,
+    auth: endpointAuthSchema,
+  })
+  .passthrough();
 
 type EndpointConfig = z.infer<typeof endpointConfigSchema>;
 
@@ -151,7 +155,7 @@ const modelInputCapabilitiesSchema = z
     image: imageInputCapabilitySchema.optional(),
     audio: audioInputCapabilitySchema.optional(),
   })
-  .strict();
+  .passthrough();
 
 const modelVoiceCapabilitiesSchema = z
   .object({
@@ -162,14 +166,14 @@ const modelVoiceCapabilitiesSchema = z
     /** Supports transcribing spoken audio to text. */
     stt: z.boolean().optional(),
   })
-  .strict();
+  .passthrough();
 
 const modelCapabilitiesSchema = z
   .object({
     input: modelInputCapabilitiesSchema.optional(),
     voice: modelVoiceCapabilitiesSchema.optional(),
   })
-  .strict();
+  .passthrough();
 
 const modelDefinitionSchema = z
   .object({
@@ -177,7 +181,7 @@ const modelDefinitionSchema = z
     contextSize: z.number().int().positive().optional(),
     capabilities: modelCapabilitiesSchema.optional(),
   })
-  .strict();
+  .passthrough();
 
 type ModelInputCapabilities = z.infer<typeof modelInputCapabilitiesSchema>;
 type ModelCapabilities = z.infer<typeof modelCapabilitiesSchema>;
@@ -199,20 +203,30 @@ const presetProviderSchema = z
     auth: endpointAuthSchema,
     knownModels: z.record(z.string(), modelDefinitionSchema).optional(),
   })
-  .strict();
+  .passthrough();
 
 const manualProviderSchema = z
   .object({
     endpoints: z.record(z.string(), manualEndpointSchema),
   })
-  .strict();
+  .passthrough();
 
-const providerConfigSchema = z.union([
+const providerConfigSchema: z.ZodType<ProviderConfig> = z.union([
   presetProviderSchema,
   manualProviderSchema,
 ]);
 
-type ProviderConfig = z.infer<typeof providerConfigSchema>;
+type PresetProviderConfig = {
+  preset: ProviderPreset;
+  auth: EndpointAuth;
+  knownModels?: Record<string, ModelDefinition>;
+};
+
+type ManualProviderConfig = {
+  endpoints: Record<string, ManualEndpoint>;
+};
+
+type ProviderConfig = PresetProviderConfig | ManualProviderConfig;
 
 // Model selection: which models to use for each purpose
 
@@ -225,26 +239,42 @@ const voiceModelSelectionSchema = z
     /** Speech-to-text models for a future composed voice pipeline, in fallback order. */
     stt: z.array(modelIdSchema).default([]),
   })
-  .strict();
+  .passthrough();
 
-const modelSelectionSchema = z.object({
-  chat: z.array(modelSelectionEntrySchema).default([]),
-  compaction: z.array(modelSelectionEntrySchema).default([]),
-  memory: z.array(modelSelectionEntrySchema).default([]),
-  imageVision: z.array(modelSelectionEntrySchema).default([]),
-  audioListening: z.array(modelSelectionEntrySchema).default([]),
-  voice: voiceModelSelectionSchema.default({ sts: [], tts: [], stt: [] }),
-});
+const modelSelectionSchema: z.ZodType<ModelSelection> = z
+  .object({
+    chat: z.array(modelSelectionEntrySchema).default([]),
+    compaction: z.array(modelSelectionEntrySchema).default([]),
+    memory: z.array(modelSelectionEntrySchema).default([]),
+    imageVision: z.array(modelSelectionEntrySchema).default([]),
+    audioListening: z.array(modelSelectionEntrySchema).default([]),
+    voice: voiceModelSelectionSchema.default({ sts: [], tts: [], stt: [] }),
+  })
+  .passthrough();
 
-type ModelSelection = z.infer<typeof modelSelectionSchema>;
+interface VoiceModelSelection {
+  sts: ModelId[];
+  tts: ModelId[];
+  stt: ModelId[];
+}
+
+interface ModelSelection {
+  chat: ModelSelectionEntry[];
+  compaction: ModelSelectionEntry[];
+  memory: ModelSelectionEntry[];
+  imageVision: ModelSelectionEntry[];
+  audioListening: ModelSelectionEntry[];
+  voice: VoiceModelSelection;
+}
+
 type ModelPurpose = Exclude<keyof ModelSelection, 'voice'>;
-type VoiceModelPurpose = keyof ModelSelection['voice'];
+type VoiceModelPurpose = keyof VoiceModelSelection;
 
 // MCP server config (standard mcp.json shape)
 
 const mcpVersionNegotiationSchema = z.union([
   z.enum(['legacy', 'auto']),
-  z.object({ pin: z.string().min(1) }).strict(),
+  z.object({ pin: z.string().min(1) }).passthrough(),
 ]);
 
 type McpVersionNegotiation = z.infer<typeof mcpVersionNegotiationSchema>;
@@ -259,7 +289,13 @@ const stdioServerConfigSchema = z
   })
   .strict();
 
-type StdioServerConfig = z.infer<typeof stdioServerConfigSchema>;
+interface StdioServerConfig {
+  type?: 'stdio';
+  command: string;
+  args?: string[];
+  env?: Record<string, string>;
+  versionNegotiation?: McpVersionNegotiation;
+}
 
 const httpServerConfigSchema = z
   .object({
@@ -270,44 +306,59 @@ const httpServerConfigSchema = z
   })
   .strict();
 
-type HttpServerConfig = z.infer<typeof httpServerConfigSchema>;
+interface HttpServerConfig {
+  type?: 'http' | 'streamable-http';
+  url: string;
+  headers?: Record<string, string>;
+  versionNegotiation?: McpVersionNegotiation;
+}
 
-const mcpServerConfigSchema = z.union([
+const mcpServerConfigSchema: z.ZodType<McpServerConfig> = z.union([
   stdioServerConfigSchema,
   httpServerConfigSchema,
 ]);
 
-type McpServerConfig = z.infer<typeof mcpServerConfigSchema>;
+type McpServerConfig = StdioServerConfig | HttpServerConfig;
 
 const telemetryLevelSchema = z.enum(['off', 'minimum', 'reduced', 'full']);
 
 type TelemetryLevel = z.infer<typeof telemetryLevelSchema>;
 
-const telemetryConfigSchema = z.object({
-  level: telemetryLevelSchema,
-});
+const telemetryConfigSchema = z
+  .object({
+    level: telemetryLevelSchema,
+  })
+  .passthrough();
 
-const klexConfigSchema = z.object({
-  officialName: z
-    .string()
-    .trim()
-    .min(2)
-    .transform((name) => Array.from(name).slice(0, 128).join(''))
-    .default('Agent'),
-  providers: z.record(z.string(), providerConfigSchema).default({}),
-  modelSelection: modelSelectionSchema.default({
-    chat: [],
-    compaction: [],
-    memory: [],
-    imageVision: [],
-    audioListening: [],
-    voice: { sts: [], tts: [], stt: [] },
-  }),
-  mcpServers: z.record(z.string(), mcpServerConfigSchema).default({}),
-  telemetry: telemetryConfigSchema.optional(),
-});
+const klexConfigSchema: z.ZodType<KlexConfig> = z
+  .object({
+    officialName: z
+      .string()
+      .trim()
+      .min(2)
+      .transform((name) => Array.from(name).slice(0, 128).join(''))
+      .default('Agent'),
+    providers: z.record(z.string(), providerConfigSchema).default({}),
+    modelSelection: modelSelectionSchema.default({
+      chat: [],
+      compaction: [],
+      memory: [],
+      imageVision: [],
+      audioListening: [],
+      voice: { sts: [], tts: [], stt: [] },
+    }),
+    mcpServers: z.record(z.string(), mcpServerConfigSchema).default({}),
+    telemetry: telemetryConfigSchema.optional(),
+  })
+  .passthrough();
 
-type KlexConfig = z.infer<typeof klexConfigSchema>;
+interface KlexConfig {
+  officialName: string;
+  providers: Record<string, ProviderConfig>;
+  modelSelection: ModelSelection;
+  mcpServers: Record<string, McpServerConfig>;
+  telemetry?: { level: TelemetryLevel };
+}
 
 export type {
   ApiFormat,

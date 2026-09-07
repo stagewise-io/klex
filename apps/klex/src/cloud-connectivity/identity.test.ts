@@ -123,14 +123,14 @@ describe('identity', () => {
     it('does not regenerate keypair when metadata references different kid', async () => {
       const first = await loadOrCreateIdentity(dir, logging);
 
-      // Overwrite metadata with a different kid
+      // Overwrite metadata with a different kid while preserving its version marker.
+      const metadataPath = join(dir, 'identity', 'metadata.json');
+      const metadata = JSON.parse(
+        await readFile(metadataPath, 'utf8'),
+      ) as Record<string, unknown>;
       await writeFile(
-        join(dir, 'identity', 'metadata.json'),
-        JSON.stringify({
-          kid: 'klex-key-different-kid',
-          algorithm: 'EdDSA',
-          createdAt: new Date().toISOString(),
-        }),
+        metadataPath,
+        JSON.stringify({ ...metadata, kid: 'klex-key-different-kid' }),
         'utf8',
       );
 

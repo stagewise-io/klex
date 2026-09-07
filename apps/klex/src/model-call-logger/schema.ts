@@ -6,7 +6,11 @@ import {
   text,
 } from 'drizzle-orm/sqlite-core';
 
-import type { MigrationScript, metaTable } from '@/utils/sqlite';
+import type {
+  localDataMetaTable,
+  SqliteMigration,
+  SqliteStoreDefinition,
+} from '@/local-data';
 
 /**
  * Drizzle schema for the model-call logger.
@@ -51,9 +55,9 @@ export const modelCallsTable = sqliteTable(
   ],
 );
 
-/** Schema type with meta table required by migrateDatabase. */
+/** Schema type with the standard local-data metadata table. */
 export type ModelCallSchema = {
-  meta: typeof metaTable;
+  meta: typeof localDataMetaTable;
   model_calls: typeof modelCallsTable;
 };
 
@@ -61,7 +65,7 @@ export type ModelCallSchema = {
 export const MODEL_CALL_SCHEMA_VERSION = 1;
 
 /** Empty migration registry — first version has no migrations. */
-export const MODEL_CALL_MIGRATIONS: MigrationScript[] = [];
+export const MODEL_CALL_MIGRATIONS: SqliteMigration[] = [];
 
 /**
  * Multi-statement SQL for fresh database initialization.
@@ -97,3 +101,19 @@ CREATE TABLE IF NOT EXISTS model_calls (
 CREATE INDEX idx_model_calls_started_at ON model_calls (started_at);
 CREATE INDEX idx_model_calls_split ON model_calls (provider_id, endpoint_id, model_id);
 `;
+
+export const MODEL_CALL_STORE_DEFINITION: SqliteStoreDefinition = {
+  kind: 'sqlite',
+  id: 'model-calls',
+  relativePath: 'model-calls.sqlite',
+  required: false,
+  createIfMissing: true,
+  schemaVersion: MODEL_CALL_SCHEMA_VERSION,
+  compatibilityVersion: 1,
+  minimumKlexVersion: '0.3.0',
+  initSql: MODEL_CALL_INIT_SQL,
+  migrations: MODEL_CALL_MIGRATIONS,
+  validate: async (client) => {
+    await client.execute('SELECT id FROM model_calls LIMIT 1');
+  },
+};

@@ -105,7 +105,7 @@ class CloudConnectivityModule implements CloudConnectivity {
     }
 
     // Cloud enabled — load enrollment state
-    this.enrollment = loadEnrollmentState(
+    this.enrollment = await loadEnrollmentState(
       this.deps.dataDirectory,
       this.identity.kid,
     );

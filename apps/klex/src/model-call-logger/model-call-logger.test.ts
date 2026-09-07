@@ -7,7 +7,11 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import { createLogger } from '@stagewise/logger';
 
+import { createLocalData } from '@/local-data';
+import { KLEX_VERSION } from '@/release';
+
 import { createModelCallLogger } from './model-call-logger';
+import { MODEL_CALL_STORE_DEFINITION } from './schema';
 import type { ModelCallRecord } from './types';
 
 const logger = createLogger({ name: 'test' });
@@ -39,9 +43,19 @@ function makeRecord(overrides: Partial<ModelCallRecord> = {}): ModelCallRecord {
   };
 }
 
+async function prepareModelStore(directory: string): Promise<void> {
+  await createLocalData({
+    logging: logger,
+    dataDirectory: directory,
+    klexVersion: KLEX_VERSION,
+    stores: [MODEL_CALL_STORE_DEFINITION],
+  }).start();
+}
+
 async function createLoggerModule() {
   const directory = await mkdtemp(join(tmpdir(), 'klex-modelcall-'));
   directories.push(directory);
+  await prepareModelStore(directory);
   const module = createModelCallLogger({
     logging: logger,
     dataDirectory: directory,
@@ -757,6 +771,7 @@ describe('ModelCallLogger', () => {
     it('deletes rows older than 365 days on startup', async () => {
       const directory = await mkdtemp(join(tmpdir(), 'klex-modelcall-'));
       directories.push(directory);
+      await prepareModelStore(directory);
 
       // First instance: record an old call and a recent call
       const module1 = createModelCallLogger({

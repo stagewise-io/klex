@@ -52,6 +52,8 @@ and starts the new executable through `current` with the original arguments,
 environment, working directory, and terminal streams. Update and restart aborts
 in-flight agent work; it is not a live handoff.
 
+After restart, the new binary acquires the agent-directory lock and validates all local data before services start. Required forward migrations run from a recovery checkpoint; a failed migration restores that checkpoint and aborts startup. An incompatible downgrade refuses to start without modifying data. Checkpoints are disaster recovery and may lose work created after they were taken; they are not a downgrade or history-merging mechanism.
+
 ### Options
 
 | macOS and Linux | Windows | Meaning |

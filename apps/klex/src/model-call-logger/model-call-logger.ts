@@ -4,12 +4,10 @@ import { drizzle, type LibSQLDatabase } from 'drizzle-orm/libsql';
 
 import type { ModuleLogger, RootLogger } from '@stagewise/logger';
 
-import { metaTable, migrateDatabase } from '@/utils/sqlite';
+import { assertCurrentSqliteStore, localDataMetaTable } from '@/local-data';
 
 import {
-  MODEL_CALL_INIT_SQL,
-  MODEL_CALL_MIGRATIONS,
-  MODEL_CALL_SCHEMA_VERSION,
+  MODEL_CALL_STORE_DEFINITION,
   type ModelCallSchema,
   modelCallsTable,
 } from './schema';
@@ -67,6 +65,11 @@ class ModelCallLoggerModule implements ModelCallLogger {
     if (this.started) return;
 
     const dbPath = `${this.deps.dataDirectory}/model-calls.sqlite`;
+    await assertCurrentSqliteStore(
+      dbPath,
+      MODEL_CALL_STORE_DEFINITION,
+      this.deps.dataDirectory,
+    );
     this.client = createClient({ url: `file:${dbPath}` });
 
     // Enable WAL mode for concurrent read/write access and reduce fsync
@@ -76,15 +79,7 @@ class ModelCallLoggerModule implements ModelCallLogger {
     await this.client.execute('PRAGMA synchronous=NORMAL');
 
     this.db = drizzle(this.client, {
-      schema: { meta: metaTable, model_calls: modelCallsTable },
-    });
-
-    await migrateDatabase({
-      db: this.db as unknown as Parameters<typeof migrateDatabase>[0]['db'],
-      client: this.client,
-      registry: MODEL_CALL_MIGRATIONS,
-      initSql: MODEL_CALL_INIT_SQL,
-      schemaVersion: MODEL_CALL_SCHEMA_VERSION,
+      schema: { meta: localDataMetaTable, model_calls: modelCallsTable },
     });
 
     await this.runRetentionCleanup();

@@ -44,6 +44,11 @@ describe('AgentDirectory', () => {
         await readFile(join(created.directory, 'config.json'), 'utf8'),
       ),
     ).toMatchObject({
+      _klex: {
+        store: 'config',
+        schemaVersion: 1,
+        compatibilityVersion: 1,
+      },
       officialName: 'Ada',
       providers: {},
       modelSelection: { chat: [] },
@@ -74,6 +79,13 @@ describe('AgentDirectory', () => {
     await writeFile(
       join(root, 'valid', 'config.json'),
       JSON.stringify({
+        _klex: {
+          store: 'config',
+          schemaVersion: 1,
+          compatibilityVersion: 1,
+          minimumKlexVersion: '0.3.0',
+          writtenByKlexVersion: '0.3.0',
+        },
         officialName: 'Valid',
         providers: {},
         modelSelection: {
@@ -101,8 +113,10 @@ describe('AgentDirectory', () => {
     }).discover();
 
     expect(agents.map((agent) => agent.officialName)).toEqual([
-      'Agent',
+      'A',
+      'legacy',
       'Valid',
     ]);
+    expect(agents.filter((agent) => agent.compatibilityError)).toHaveLength(2);
   });
 });

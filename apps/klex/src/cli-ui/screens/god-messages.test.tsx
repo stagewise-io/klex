@@ -183,6 +183,97 @@ describe('GodMessagesScreen', () => {
     view.unmount();
   });
 
+  it('hard-wraps long messages within the terminal width', async () => {
+    const longMessage = 'x'.repeat(200);
+    const view = renderScreen(
+      makeClient({
+        getGodMessages: vi.fn().mockResolvedValue({
+          messages: [
+            {
+              id: 'agent-1',
+              role: 'assistant',
+              parts: [{ type: 'text', text: longMessage }],
+            },
+          ],
+          nextCursor: null,
+          hasMore: false,
+        }),
+      }),
+    );
+
+    await vi.waitFor(() => {
+      const messageLines = (view.lastFrame() ?? '')
+        .split('\n')
+        .filter((line) => line.includes('xxxxxxxxxx'));
+      expect(messageLines.length).toBeGreaterThan(1);
+      const contentWidth = view.stdout.columns - 8;
+      expect(
+        messageLines.every((line) => {
+          const content = line.match(/x+/)?.[0] ?? '';
+          return content.length <= contentWidth;
+        }),
+      ).toBe(true);
+    });
+    view.unmount();
+  });
+
+  it('scrolls through every wrapped row of a long message', async () => {
+    const view = renderScreen(
+      makeClient({
+        getGodMessages: vi.fn().mockResolvedValue({
+          messages: [
+            {
+              id: 'agent-1',
+              role: 'assistant',
+              parts: [
+                {
+                  type: 'text',
+                  text: `HEAD-${'x'.repeat(1200)}-TAIL`,
+                },
+              ],
+            },
+          ],
+          nextCursor: null,
+          hasMore: false,
+        }),
+      }),
+    );
+
+    await vi.waitFor(() => {
+      expect(view.lastFrame()).toContain('TAIL');
+      expect(view.lastFrame()).not.toContain('HEAD');
+    });
+    for (let index = 0; index < 20; index += 1) {
+      view.stdin.write('\u001b[A');
+    }
+    await vi.waitFor(() => expect(view.lastFrame()).toContain('HEAD'));
+    view.unmount();
+  });
+
+  it('bounds a long wrapped draft within the terminal height', async () => {
+    const view = renderScreen(makeClient());
+    await vi.waitFor(() => expect(view.lastFrame()).toContain('IDLE'));
+
+    view.stdin.write('\r');
+    view.stdin.write(`HEAD-${'x'.repeat(1200)}-TAIL`);
+
+    await vi.waitFor(() => {
+      expect(view.lastFrame()).toContain('Editing message');
+      expect(view.lastFrame()).toContain('TAIL');
+      expect(view.lastFrame()).not.toContain('HEAD');
+      expect((view.lastFrame() ?? '').split('\n').length).toBeLessThanOrEqual(
+        24,
+      );
+    });
+
+    view.stdin.write('\u001b[H');
+    await vi.waitFor(() => {
+      expect(view.lastFrame()).toContain('HEAD');
+      expect(view.lastFrame()).not.toContain('TAIL');
+    });
+    view.unmount();
+  });
+
   it('composes inline with Enter and sends a non-empty message', async () => {
     const sendGodMessage = vi
       .fn()

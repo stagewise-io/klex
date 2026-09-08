@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" fill="none">
+  <title>Klex</title>
+  <style>@media (prefers-color-scheme: dark) { .blue { fill: #3464FE; } .ghost { fill: #FDFCFC; } .border { stroke: #FDFCFC; } }</style>
+  <rect width="100" height="100" rx="30" class="blue" fill="#2559FE"/>
+  <path d="M73.3615 43.5001C73.7463 32.726 67.3615 22.5001 55.9615 22.5001C42.1615 22.5001 38.0974 31.6806 36.7615 41.7001C33.1615 68.7001 24.6279 70.0751 24.6279 71.8751C24.6279 72.7873 27.1279 76.2501 35.8779 72.5001C39.5112 70.943 42.5042 74.6944 45.2529 75.0001C48.1751 75.3251 49.8928 73.9116 52.7529 73.1251C56.0425 72.2205 59.0658 75.6251 61.5029 75.6251C69.9029 75.6251 72.7615 60.3001 73.3615 43.5001Z" class="ghost" fill="#FDFDFC"/>
+  <ellipse cx="55.8779" cy="41.2501" rx="2.5" ry="3.75" class="blue" fill="#2559FE"/>
+  <ellipse cx="64.6279" cy="41.2501" rx="2.5" ry="3.75" class="blue" fill="#2559FE"/>
+  <rect x="1.5" y="1.5" width="97" height="97" rx="28.5" class="border" stroke="#161515" stroke-opacity="0.03" stroke-width="3"/>
+</svg>

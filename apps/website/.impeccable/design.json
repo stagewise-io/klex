@@ -1,0 +1,276 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-09-08T11:58:08.196Z",
+  "title": "Design System: Klex",
+  "extensions": {
+    "colorMeta": {
+      "signal-blue": {
+        "role": "primary",
+        "displayName": "Signal Blue",
+        "canonical": "oklch(0.5455 0.25 265)",
+        "tonalRamp": [
+          "oklch(0.26 0.082 265)",
+          "oklch(0.37 0.14 265)",
+          "oklch(0.46 0.20 265)",
+          "oklch(0.5455 0.25 265)",
+          "oklch(0.66 0.205 265)",
+          "oklch(0.78 0.12 265)",
+          "oklch(0.86 0.07 265)",
+          "oklch(0.93 0.033 265)"
+        ]
+      },
+      "warm-paper": {
+        "role": "neutral",
+        "displayName": "Warm Paper",
+        "canonical": "oklch(0.992 0.001 85)",
+        "tonalRamp": [
+          "oklch(0.161 0.0003 85)",
+          "oklch(0.234 0.001 85)",
+          "oklch(0.295 0.0015 85)",
+          "oklch(0.46 0.0045 85)",
+          "oklch(0.665 0.0034 85)",
+          "oklch(0.88 0.0024 85)",
+          "oklch(0.96 0.0015 85)",
+          "oklch(0.992 0.001 85)"
+        ]
+      },
+      "soft-paper": {
+        "role": "neutral",
+        "displayName": "Soft Paper",
+        "canonical": "oklch(0.96 0.0015 85)",
+        "tonalRamp": [
+          "oklch(0.161 0.0003 85)",
+          "oklch(0.234 0.001 85)",
+          "oklch(0.295 0.0015 85)",
+          "oklch(0.46 0.0045 85)",
+          "oklch(0.665 0.0034 85)",
+          "oklch(0.88 0.0024 85)",
+          "oklch(0.96 0.0015 85)",
+          "oklch(0.992 0.001 85)"
+        ]
+      },
+      "near-black-ink": {
+        "role": "neutral",
+        "displayName": "Near-Black Ink",
+        "canonical": "oklch(0.198 0.0005 85)",
+        "tonalRamp": [
+          "oklch(0.161 0.0003 85)",
+          "oklch(0.234 0.001 85)",
+          "oklch(0.295 0.0015 85)",
+          "oklch(0.46 0.0045 85)",
+          "oklch(0.665 0.0034 85)",
+          "oklch(0.88 0.0024 85)",
+          "oklch(0.96 0.0015 85)",
+          "oklch(0.992 0.001 85)"
+        ]
+      },
+      "graphite": {
+        "role": "neutral",
+        "displayName": "Graphite",
+        "canonical": "oklch(0.46 0.0045 85)",
+        "tonalRamp": [
+          "oklch(0.161 0.0003 85)",
+          "oklch(0.234 0.001 85)",
+          "oklch(0.295 0.0015 85)",
+          "oklch(0.46 0.0045 85)",
+          "oklch(0.665 0.0034 85)",
+          "oklch(0.88 0.0024 85)",
+          "oklch(0.96 0.0015 85)",
+          "oklch(0.992 0.001 85)"
+        ]
+      },
+      "quiet-line": {
+        "role": "neutral",
+        "displayName": "Quiet Line",
+        "canonical": "oklch(0.92 0.002 85)",
+        "tonalRamp": [
+          "oklch(0.161 0.0003 85)",
+          "oklch(0.234 0.001 85)",
+          "oklch(0.295 0.0015 85)",
+          "oklch(0.46 0.0045 85)",
+          "oklch(0.665 0.0034 85)",
+          "oklch(0.88 0.0024 85)",
+          "oklch(0.92 0.002 85)",
+          "oklch(0.992 0.001 85)"
+        ]
+      },
+      "dark-canvas": {
+        "role": "neutral",
+        "displayName": "Dark Canvas",
+        "canonical": "oklch(0.234 0.001 85)",
+        "tonalRamp": [
+          "oklch(0.161 0.0003 85)",
+          "oklch(0.234 0.001 85)",
+          "oklch(0.295 0.0015 85)",
+          "oklch(0.46 0.0045 85)",
+          "oklch(0.665 0.0034 85)",
+          "oklch(0.88 0.0024 85)",
+          "oklch(0.96 0.0015 85)",
+          "oklch(0.992 0.001 85)"
+        ]
+      }
+    },
+    "typographyMeta": {
+      "display": {
+        "displayName": "Intelligent Display",
+        "purpose": "Hero and major page-level statements only."
+      },
+      "compact-display": {
+        "displayName": "Compact Intelligent Display",
+        "purpose": "Responsive hero display below the compact breakpoint."
+      },
+      "body": {
+        "displayName": "Operational Body",
+        "purpose": "Interface language and readable supporting copy."
+      },
+      "lead": {
+        "displayName": "Supporting Lead",
+        "purpose": "Fluid supporting copy beneath the hero statement."
+      },
+      "brand": {
+        "displayName": "Brand Lockup",
+        "purpose": "The Klex wordmark beside the emblem."
+      },
+      "label": {
+        "displayName": "Compact Label",
+        "purpose": "Status, eyebrow, and metadata text."
+      },
+      "footer": {
+        "displayName": "Footer Utility",
+        "purpose": "Compact footer copyright and credit links."
+      }
+    },
+    "shadows": [
+      {
+        "name": "status-halo",
+        "value": "0 0 0 4px color-mix(in oklch, var(--color-primary-solid) 10%, transparent)",
+        "purpose": "A restrained halo for a small active status signal; not a surface elevation."
+      }
+    ],
+    "motion": [
+      {
+        "name": "state-transition",
+        "value": "color 180ms ease",
+        "purpose": "Quiet feedback for text links and low-complexity states."
+      },
+      {
+        "name": "reduced-motion",
+        "value": "0.01ms",
+        "purpose": "Near-instant transitions when reduced motion is requested."
+      }
+    ],
+    "breakpoints": [
+      {
+        "name": "compact",
+        "value": "680px"
+      }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "The clear default action, compact and friendly.",
+      "html": "<button class=\"ds-btn-primary\">Continue</button>",
+      "css": ".ds-btn-primary { height: 2rem; padding: 0.5rem 0.625rem; border: 1px solid transparent; border-radius: 0.5rem; background: var(--color-primary-solid); color: var(--color-solid-foreground); font: 600 0.875rem/1 \"Geist Variable\", ui-sans-serif, system-ui, sans-serif; transition: background-color 180ms ease, transform 120ms ease; } .ds-btn-primary:hover { background: color-mix(in oklch, var(--color-primary-solid) 90%, var(--color-foreground)); } .ds-btn-primary:focus-visible { outline: 2px solid var(--color-primary-solid); outline-offset: 2px; } .ds-btn-primary:active { transform: translateY(1px); }"
+    },
+    {
+      "name": "Outline Button",
+      "kind": "button",
+      "refersTo": "button-outline",
+      "description": "A restrained secondary action with an honest border.",
+      "html": "<button class=\"ds-btn-outline\">Learn more</button>",
+      "css": ".ds-btn-outline { height: 2rem; padding: 0.5rem 0.625rem; border: 1px solid var(--color-border); border-radius: 0.5rem; background: var(--color-background); color: var(--color-foreground); font: 600 0.875rem/1 \"Geist Variable\", ui-sans-serif, system-ui, sans-serif; transition: background-color 180ms ease, transform 120ms ease; } .ds-btn-outline:hover { background: var(--color-surface-1); } .ds-btn-outline:focus-visible { outline: 2px solid var(--color-primary-solid); outline-offset: 2px; } .ds-btn-outline:active { transform: translateY(1px); }"
+    },
+    {
+      "name": "Ghost Button",
+      "kind": "button",
+      "refersTo": "button-ghost",
+      "description": "A low-emphasis utility action that appears through interaction.",
+      "html": "<button class=\"ds-btn-ghost\">Dismiss</button>",
+      "css": ".ds-btn-ghost { height: 2rem; padding: 0.5rem 0.625rem; border: 0; border-radius: 0.5rem; background: transparent; color: var(--color-foreground); font: 600 0.875rem/1 \"Geist Variable\", ui-sans-serif, system-ui, sans-serif; transition: background-color 180ms ease, transform 120ms ease; } .ds-btn-ghost:hover { background: var(--color-surface-1); } .ds-btn-ghost:focus-visible { outline: 2px solid var(--color-primary-solid); outline-offset: 2px; } .ds-btn-ghost:active { transform: translateY(1px); }"
+    },
+    {
+      "name": "Text Input",
+      "kind": "input",
+      "refersTo": "input",
+      "description": "A compact, transparent field using the shared border and focus language.",
+      "html": "<input class=\"ds-input\" type=\"text\" placeholder=\"Name your Klex\" />",
+      "css": ".ds-input { box-sizing: border-box; width: 100%; height: 2rem; padding: 0.25rem 0.625rem; border: 1px solid var(--color-border); border-radius: 0.5rem; background: transparent; color: var(--color-foreground); font: 400 0.875rem/1.5 \"Geist Variable\", ui-sans-serif, system-ui, sans-serif; transition: border-color 180ms ease, box-shadow 180ms ease; } .ds-input::placeholder { color: var(--color-muted-foreground); } .ds-input:hover { border-color: color-mix(in oklch, var(--color-border), var(--color-foreground) 18%); } .ds-input:focus-visible { border-color: var(--color-primary-solid); outline: none; box-shadow: 0 0 0 3px color-mix(in oklch, var(--color-primary-solid) 50%, transparent); }"
+    },
+    {
+      "name": "Content Card",
+      "kind": "card",
+      "refersTo": "card",
+      "description": "A flat content container separated by a quiet ring rather than a shadow.",
+      "html": "<article class=\"ds-card\"><h3>One durable coworker</h3><p>Identity and context travel with Klex.</p></article>",
+      "css": ".ds-card { display: grid; gap: 0.5rem; padding: 1rem; border-radius: 0.75rem; background: var(--color-background); color: var(--color-foreground); box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--color-foreground) 10%, transparent); font-family: \"Geist Variable\", ui-sans-serif, system-ui, sans-serif; transition: background-color 180ms ease; } .ds-card:hover { background: var(--color-surface-1); } .ds-card:focus-within { outline: 2px solid var(--color-primary-solid); outline-offset: 2px; } .ds-card h3 { margin: 0; font-family: Fraunces, Georgia, serif; font-size: 1rem; font-variation-settings: \"WONK\" 0, \"opsz\" 0; font-optical-sizing: none; } .ds-card p { margin: 0; color: var(--color-muted-foreground); font-size: 0.875rem; line-height: 1.5; }"
+    },
+    {
+      "name": "Minimal Navigation",
+      "kind": "nav",
+      "refersTo": "navigation",
+      "description": "A typography-led navigation pattern with direct link feedback.",
+      "html": "<nav class=\"ds-nav\" aria-label=\"Primary\"><a href=\"#product\">Product</a><a href=\"#docs\">Docs</a></nav>",
+      "css": ".ds-nav { display: flex; align-items: center; gap: 1.5rem; font: 500 0.875rem/1 \"Geist Variable\", ui-sans-serif, system-ui, sans-serif; } .ds-nav a { color: var(--color-muted-foreground); text-decoration: none; text-underline-offset: 0.25rem; transition: color 180ms ease; } .ds-nav a:hover { color: var(--color-foreground); text-decoration: underline; } .ds-nav a:focus-visible { color: var(--color-foreground); outline: 2px solid var(--color-primary-solid); outline-offset: 3px; border-radius: 0.125rem; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Helpful Robot",
+    "overview": "Klex should feel intelligent without feeling difficult. Fraunces gives the brand a thoughtful, human voice; Geist and the stagewise UI foundation keep every interaction direct, legible, and familiar. The result is warm, precise, approachable, intelligent, and human.\n\nThe system is honest and open rather than mysterious or theatrical. It should communicate that a capable autonomous coworker is present while hiding unnecessary machinery. Simple wins: hierarchy comes from type, spacing, a restrained warm-neutral palette, and one clear signal accent rather than decorative effects.",
+    "keyCharacteristics": [
+      "Warm and trustworthy, not sterile.",
+      "Intelligent and editorial, not academic.",
+      "Simple and explicit, not simplistic.",
+      "Flat and honest, with functional depth only where needed.",
+      "Consistent with the shadcn-based `@stagewise/ui` component system."
+    ],
+    "rules": [
+      {
+        "name": "The One Signal Rule",
+        "body": "Use the primary accent to communicate action, focus, or status. Do not spread it across large decorative surfaces.",
+        "section": "colors"
+      },
+      {
+        "name": "The Shared Palette Rule",
+        "body": "Prefer `@stagewise/ui` semantic variables such as `--color-background`, `--color-foreground`, and `--color-primary-solid`; do not hard-code parallel Klex values.",
+        "section": "colors"
+      },
+      {
+        "name": "The Intelligent Serif Rule",
+        "body": "Fraunces is for meaning and hierarchy, not controls or dense operational copy.",
+        "section": "typography"
+      },
+      {
+        "name": "The Fixed Character Rule",
+        "body": "Set Fraunces with the wonk axis at zero and explicitly request the optical-size axis at zero while disabling automatic optical sizing. Browsers may clamp optical size to the font's published minimum.",
+        "section": "typography"
+      },
+      {
+        "name": "The One Clear Thought Rule",
+        "body": "Each major viewport should have one dominant message and enough open space for it to read immediately.",
+        "section": "layout"
+      },
+      {
+        "name": "The Flat-by-Default Rule",
+        "body": "Cards and controls remain visually grounded at rest. Interaction may change tone, border, or position by a single pixel, but should not turn the interface into floating glass.",
+        "section": "elevation"
+      }
+    ],
+    "dos": [
+      "Do use Fraunces to make major statements feel intelligent and human.",
+      "Do use Geist Variable and shared shadcn patterns to keep interaction simple.",
+      "Do consume semantic tokens and components from `@stagewise/ui`.",
+      "Do create hierarchy with whitespace, type, quiet borders, and restrained tonal changes.",
+      "Do keep keyboard focus visible and motion compatible with reduced-motion preferences."
+    ],
+    "donts": [
+      "Don't duplicate the shared palette with local hard-coded approximations.",
+      "Don't use saturated accent color as general decoration.",
+      "Don't add ornamental gradients, glass effects, or persistent shadows to make simple surfaces feel impressive.",
+      "Don't use Fraunces for controls, dense metadata, or long operational copy.",
+      "Don't expose technical complexity when a familiar, obvious interaction will do."
+    ]
+  }
+}

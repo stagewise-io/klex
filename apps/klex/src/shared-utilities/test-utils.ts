@@ -9,6 +9,24 @@ import type {
 
 /** Creates mock ExtensionDeps with sensible defaults. Override any field via `overrides`. */
 export function makeDeps(overrides?: Partial<ExtensionDeps>): ExtensionDeps {
+  const config =
+    overrides?.config ??
+    ({
+      getModelSelection: vi.fn(() => []),
+      resolveModelInfo: vi.fn(() => ({
+        capabilities: {},
+        contextSize: 128_000,
+        displayName: undefined,
+        inputCapabilities: {},
+      })),
+    } as unknown as ExtensionDeps['config']);
+  const modelResolver =
+    overrides?.modelResolver ??
+    ({
+      getLanguageModel: vi.fn(),
+      resolveModel: vi.fn((entry) => config.resolveModel(entry)),
+      resolveModelInfo: vi.fn((entry) => config.resolveModelInfo(entry)),
+    } as unknown as ExtensionDeps['modelResolver']);
   return {
     getHistory: vi.fn(() => []),
     insertMessageAfter: vi.fn(() => true),
@@ -17,14 +35,8 @@ export function makeDeps(overrides?: Partial<ExtensionDeps>): ExtensionDeps {
       sendMessage: vi.fn(),
       close: vi.fn(),
     },
-    config: {
-      getModelSelection: vi.fn(() => []),
-      resolveModelInfo: vi.fn(() => ({
-        contextSize: 128_000,
-        displayName: undefined,
-        inputCapabilities: {},
-      })),
-    } as unknown as ExtensionDeps['config'],
+    config,
+    modelResolver,
     generateText: vi.fn(),
     logger: {
       info: vi.fn(),

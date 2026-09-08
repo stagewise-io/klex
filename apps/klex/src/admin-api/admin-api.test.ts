@@ -8,6 +8,7 @@ import type { GodMessages } from '@/god-messages';
 import type { Introspector } from '@/introspection';
 import type { Mcp } from '@/mcp';
 import type { ModelCallLogger } from '@/model-call-logger';
+import type { ProviderRegistry } from '@/provider-registry';
 
 import { type AdminApi, createAdminApi } from './admin-api';
 
@@ -24,6 +25,10 @@ const config = {} as Config;
 const mcp = {} as Mcp;
 const introspector = {} as Introspector;
 const modelCallLogger = {} as ModelCallLogger;
+const providerRegistry = {
+  listProviderTypes: () => [],
+  listInstances: () => [],
+} as unknown as ProviderRegistry;
 const cloudConnectivity = {
   start: async () => undefined,
   close: async () => undefined,
@@ -62,6 +67,7 @@ describe('AdminApi', () => {
         mcp,
         introspector,
         modelCallLogger,
+        providerRegistry,
         cloudConnectivity,
         godMessages,
         localPort: 19999,
@@ -92,6 +98,7 @@ describe('AdminApi', () => {
         mcp,
         introspector,
         modelCallLogger,
+        providerRegistry,
         cloudConnectivity,
         godMessages,
         localPort: undefined,

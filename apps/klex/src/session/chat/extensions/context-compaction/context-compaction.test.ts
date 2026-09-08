@@ -147,6 +147,15 @@ function makeSummaryMessage(summary: string): ExtendedUIMessage {
 }
 
 function makeDeps(overrides?: Partial<ExtensionDeps>): ExtensionDeps {
+  const config =
+    overrides?.config ??
+    ({
+      getModelSelection: vi.fn(() => ['remote:gpt-4o']),
+      resolveModelInfo: vi.fn(() => ({
+        contextSize: 20_000,
+        displayName: undefined,
+      })),
+    } as unknown as ExtensionDeps['config']);
   return {
     getHistory: vi.fn(() => []),
     insertMessageAfter: vi.fn(() => true),
@@ -155,13 +164,12 @@ function makeDeps(overrides?: Partial<ExtensionDeps>): ExtensionDeps {
       sendMessage: vi.fn(),
       close: vi.fn(),
     },
-    config: {
-      getModelSelection: vi.fn(() => ['remote:gpt-4o']),
-      resolveModelInfo: vi.fn(() => ({
-        contextSize: 20_000,
-        displayName: undefined,
-      })),
-    } as unknown as ExtensionDeps['config'],
+    config,
+    modelResolver: {
+      getLanguageModel: vi.fn(),
+      resolveModel: vi.fn((entry) => config.resolveModel(entry)),
+      resolveModelInfo: vi.fn((entry) => config.resolveModelInfo(entry)),
+    } as unknown as ExtensionDeps['modelResolver'],
     generateText: vi.fn().mockResolvedValue(genFailure()),
     logger: {
       info: vi.fn(),

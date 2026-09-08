@@ -113,6 +113,7 @@ class AgentDirectoryModule implements AgentDirectory {
     }
 
     const config: KlexConfig = {
+      configVersion: 2,
       officialName: name,
       providers: {},
       modelSelection: {

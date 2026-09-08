@@ -1,13 +1,17 @@
 import { Box, Text } from 'ink';
 import SelectInput from 'ink-select-input';
 import TextInput from 'ink-text-input';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 import {
   type AdminApiClient,
   AdminApiClientError,
   entryToModelId,
+  type KnownModel,
+  type KnownModelsResponse,
   type ModelSelection,
+  type ModelSelectionEntry,
+  type ProviderInfo,
 } from '../api-client';
 import { useScreenMeta } from '../hooks/use-screen-meta';
 import { useTextInputActive } from '../hooks/use-text-input-active';
@@ -34,6 +38,17 @@ type Purpose =
   | 'voice.tts'
   | 'voice.stt';
 
+export function containsModelReference(
+  entries: readonly ModelSelectionEntry[],
+  reference: ModelSelectionEntry,
+): boolean {
+  return entries.some(
+    (entry) =>
+      entry.providerId === reference.providerId &&
+      entry.modelId === reference.modelId,
+  );
+}
+
 const PURPOSES: { key: Purpose; label: string }[] = [
   { key: 'chat', label: 'Chat' },
   { key: 'compaction', label: 'Compaction' },
@@ -45,7 +60,29 @@ const PURPOSES: { key: Purpose; label: string }[] = [
   { key: 'voice.stt', label: 'Voice — Speech-to-Text' },
 ];
 
-type Mode = 'list' | 'detail' | 'add-model' | 'delete-confirm';
+function supportsPurpose(model: KnownModel, purpose: Purpose): boolean {
+  if (purpose === 'imageVision')
+    return model.capabilities?.input?.image !== undefined;
+  if (purpose === 'audioListening')
+    return model.capabilities?.input?.audio !== undefined;
+  if (purpose.startsWith('voice.')) {
+    const voice = purpose.split('.')[1] as 'sts' | 'tts' | 'stt';
+    return model.capabilities?.voice?.[voice] === true;
+  }
+  return (
+    model.kind === undefined ||
+    model.kind === 'unknown' ||
+    model.kind === 'language'
+  );
+}
+
+type Mode =
+  | 'list'
+  | 'detail'
+  | 'choose-provider'
+  | 'choose-model'
+  | 'add-manual'
+  | 'delete-confirm';
 
 export function ModelSelectionScreen({
   apiClient,
@@ -57,8 +94,13 @@ export function ModelSelectionScreen({
   const [mode, setMode] = useState<Mode>('list');
   const [selectedPurpose, setSelectedPurpose] = useState<Purpose | null>(null);
   const [pendingModelId, setPendingModelId] = useState('');
+  const [providers, setProviders] = useState<ProviderInfo[]>([]);
+  const [selectedProvider, setSelectedProvider] = useState<ProviderInfo>();
+  const [availableModels, setAvailableModels] =
+    useState<KnownModelsResponse['models']>();
   const [selection, setSelection] = useState<ModelSelection | null>(null);
   const [loading, setLoading] = useState(true);
+  const modelsRequest = useRef(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -69,6 +111,20 @@ export function ModelSelectionScreen({
         if (!cancelled) {
           setSelection(data);
           setLoading(false);
+          void apiClient
+            .getProviders()
+            .then((response) => {
+              if (!cancelled) setProviders(response.providers);
+            })
+            .catch((error) => {
+              if (!cancelled)
+                pushToast(
+                  error instanceof Error
+                    ? error.message
+                    : 'Failed to load providers',
+                  'error',
+                );
+            });
         }
       })
       .catch((err) => {
@@ -88,14 +144,16 @@ export function ModelSelectionScreen({
   }, [apiClient, pushToast]);
 
   useEffect(() => {
-    setActive(mode === 'add-model');
+    setActive(mode === 'add-manual');
   }, [mode, setActive]);
 
   useEffect(() => {
     const titles: Record<Mode, string> = {
       list: 'Model Selection',
       detail: `Model Selection — ${selectedPurpose ?? ''}`,
-      'add-model': `Add Model — ${selectedPurpose ?? ''}`,
+      'choose-provider': `Choose Provider — ${selectedPurpose ?? ''}`,
+      'choose-model': `Choose Model — ${selectedPurpose ?? ''}`,
+      'add-manual': `Add Manual Model — ${selectedPurpose ?? ''}`,
       'delete-confirm': `Delete Model — ${selectedPurpose ?? ''}`,
     };
     const keysByMode: Record<Mode, { key: string; label: string }[]> = {
@@ -108,9 +166,11 @@ export function ModelSelectionScreen({
         { key: 'd', label: 'Delete' },
         { key: 'esc', label: 'Back' },
       ],
-      'add-model': [
+      'choose-provider': [{ key: 'esc', label: 'Cancel' }],
+      'choose-model': [{ key: 'esc', label: 'Providers' }],
+      'add-manual': [
         { key: 'enter', label: 'Add' },
-        { key: 'esc', label: 'Cancel' },
+        { key: 'esc', label: 'Models' },
       ],
       'delete-confirm': [
         { key: 'y', label: 'Confirm' },
@@ -130,12 +190,18 @@ export function ModelSelectionScreen({
       else if (mode === 'detail') {
         setMode('list');
         setSelectedPurpose(null);
+      } else if (mode === 'add-manual') setMode('choose-model');
+      else if (mode === 'choose-model') {
+        modelsRequest.current += 1;
+        setMode('choose-provider');
       } else setMode('detail');
     },
     [MenuKeys.Add]: () => {
       if (mode === 'detail') {
         setPendingModelId('');
-        setMode('add-model');
+        setSelectedProvider(undefined);
+        setAvailableModels(undefined);
+        setMode('choose-provider');
       }
     },
     [MenuKeys.Delete]: () => {
@@ -143,20 +209,18 @@ export function ModelSelectionScreen({
     },
   });
 
-  function getModels(purpose: Purpose): string[] {
+  function getModels(purpose: Purpose): ModelSelectionEntry[] {
     if (!selection) return [];
     if (purpose.startsWith('voice.')) {
       const voiceKey = purpose.split('.')[1] as 'sts' | 'tts' | 'stt';
       return selection.voice[voiceKey];
     }
-    return (
-      selection[purpose as Exclude<Purpose, `voice.${string}`>] ?? []
-    ).map(entryToModelId);
+    return selection[purpose as Exclude<Purpose, `voice.${string}`>] ?? [];
   }
 
   async function patchPurpose(
     purpose: Purpose,
-    modelIds: string[],
+    references: ModelSelectionEntry[],
   ): Promise<boolean> {
     if (!selection) return false;
     let patchBody: Record<string, unknown>;
@@ -167,11 +231,11 @@ export function ModelSelectionScreen({
           sts: selection.voice.sts,
           tts: selection.voice.tts,
           stt: selection.voice.stt,
-          [voiceKey]: modelIds,
+          [voiceKey]: references,
         },
       };
     } else {
-      patchBody = { [purpose]: modelIds };
+      patchBody = { [purpose]: references };
     }
     try {
       const updated = await apiClient.patchModelSelection(patchBody);
@@ -191,41 +255,128 @@ export function ModelSelectionScreen({
     }
   }
 
-  // --- Add model mode ---
+  async function addModel(reference: ModelSelectionEntry): Promise<void> {
+    if (!selectedPurpose) return;
+    const current = getModels(selectedPurpose);
+    if (containsModelReference(current, reference)) {
+      pushToast('Model already in list', 'error');
+      setMode('detail');
+      return;
+    }
+    if (await patchPurpose(selectedPurpose, [...current, reference])) {
+      pushToast('Model added', 'info');
+      setPendingModelId('');
+      setMode('detail');
+    }
+  }
 
-  if (mode === 'add-model' && selectedPurpose) {
+  if (mode === 'choose-provider' && selectedPurpose) {
     return (
-      <Box flexDirection="column">
-        <Box marginTop={1}>
-          <Text>
-            Model ID (provider:model or provider:endpoint:model):{' '}
-            <TextInput
-              value={pendingModelId}
-              onChange={setPendingModelId}
-              placeholder="openai:gpt-4o"
-              onSubmit={async () => {
-                if (!pendingModelId.trim()) return;
-                const current = getModels(selectedPurpose);
-                if (current.includes(pendingModelId.trim())) {
-                  pushToast('Model already in list', 'error');
-                  setMode('detail');
-                  return;
-                }
-                if (
-                  await patchPurpose(selectedPurpose, [
-                    ...current,
-                    pendingModelId.trim(),
-                  ])
-                ) {
-                  pushToast('Model added', 'info');
-                  setPendingModelId('');
-                  setMode('detail');
-                }
-              }}
-              showCursor
-            />
-          </Text>
-        </Box>
+      <SelectInput
+        items={providers.map((provider) => ({
+          label: `${provider.metadata.displayName} (${provider.id})`,
+          value: provider.id,
+        }))}
+        onSelect={async (item) => {
+          const provider = providers.find(({ id }) => id === item.value);
+          if (!provider) return;
+          const request = ++modelsRequest.current;
+          setSelectedProvider(provider);
+          setAvailableModels(undefined);
+          setMode('choose-model');
+          try {
+            const result = await apiClient.getKnownModels(provider.id);
+            if (modelsRequest.current !== request) return;
+            setAvailableModels(result.models);
+          } catch (error) {
+            if (modelsRequest.current !== request) return;
+            pushToast(
+              error instanceof Error ? error.message : 'Failed to load models',
+              'error',
+            );
+            setAvailableModels([]);
+          }
+        }}
+      />
+    );
+  }
+
+  if (mode === 'choose-model' && selectedPurpose && selectedProvider) {
+    if (!availableModels) return <Text dimColor>Loading models...</Text>;
+    const items: Array<{
+      key: string;
+      label: string;
+      value: { kind: 'model'; modelId: string } | { kind: 'manual' };
+    }> = [
+      ...availableModels
+        .filter((model) => supportsPurpose(model, selectedPurpose))
+        .map((model) => {
+          const inferred = model.provenance?.some(({ source }) =>
+            ['shared-catalog', 'provider-family'].includes(source),
+          );
+          return {
+            key: `model:${model.modelId}`,
+            label: `${model.displayName ?? model.modelId} — ${model.modelId} (${model.source}${inferred ? ', inferred' : ''})`,
+            value: { kind: 'model' as const, modelId: model.modelId },
+          };
+        }),
+      ...(selectedProvider.metadata.capabilities.customModels
+        ? [
+            {
+              key: 'manual',
+              label: 'Enter a manual model ID…',
+              value: { kind: 'manual' as const },
+            },
+          ]
+        : []),
+    ];
+    return items.length === 0 ? (
+      <Text dimColor>This provider reports no available models.</Text>
+    ) : (
+      <SelectInput
+        items={items}
+        onSelect={(item) => {
+          if (item.value.kind === 'manual') setMode('add-manual');
+          else
+            void addModel({
+              providerId: selectedProvider.id,
+              modelId: item.value.modelId,
+            });
+        }}
+      />
+    );
+  }
+
+  if (mode === 'add-manual' && selectedPurpose && selectedProvider) {
+    return (
+      <Box marginTop={1}>
+        <Text>Native model ID: </Text>
+        <TextInput
+          value={pendingModelId}
+          onChange={setPendingModelId}
+          placeholder="provider-native/model:id"
+          onSubmit={() => {
+            const modelId = pendingModelId.trim();
+            if (!modelId) return;
+            void apiClient
+              .createKnownModel(selectedProvider.id, {
+                modelId,
+                displayName: modelId,
+              })
+              .then(() =>
+                addModel({ providerId: selectedProvider.id, modelId }),
+              )
+              .catch((error) =>
+                pushToast(
+                  error instanceof Error
+                    ? error.message
+                    : 'Failed to persist manual model',
+                  'error',
+                ),
+              );
+          }}
+          showCursor
+        />
       </Box>
     );
   }
@@ -242,7 +393,9 @@ export function ModelSelectionScreen({
       <Box flexDirection="column">
         <Box marginTop={1}>
           <Text color="red">
-            Delete the last model "{models[models.length - 1]}"? [y/n]
+            Delete the last model "
+            {entryToModelId(models[models.length - 1] as ModelSelectionEntry)}"?
+            [y/n]
           </Text>
         </Box>
         <ConfirmInput
@@ -273,9 +426,9 @@ export function ModelSelectionScreen({
           {models.length > 0 && (
             <Box marginLeft={2} flexDirection="column">
               {models.map((model, idx) => (
-                <Box key={model}>
+                <Box key={`${model.providerId}:${model.modelId}`}>
                   <Text dimColor>{idx + 1}. </Text>
-                  <Text>{model}</Text>
+                  <Text>{entryToModelId(model)}</Text>
                   {idx === 0 && <Text dimColor> (primary)</Text>}
                   {idx > 0 && <Text dimColor> (fallback #{idx})</Text>}
                 </Box>
@@ -294,7 +447,10 @@ export function ModelSelectionScreen({
 
   const items: MenuItem[] = PURPOSES.map((p) => {
     const models = getModels(p.key);
-    const preview = models.length > 0 ? models[0] : '—';
+    const preview =
+      models.length > 0
+        ? entryToModelId(models[0] as ModelSelectionEntry)
+        : '—';
     return {
       label: `${p.label} (${models.length} model${models.length === 1 ? '' : 's'}) — ${preview}`,
       value: p.key,

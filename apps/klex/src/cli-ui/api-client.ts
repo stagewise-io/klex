@@ -1,43 +1,101 @@
 const ADMIN_API_BASE = 'http://localhost:2706';
 
-export interface ProviderResponse {
-  providers: Array<
-    | {
-        name: string;
-        preset: string;
-        auth: { apiKey?: string; headers?: Record<string, string> };
-      }
-    | {
-        name: string;
-        endpoints: Record<
-          string,
-          {
-            url: string;
-            format: string;
-            auth: { apiKey?: string; headers?: Record<string, string> };
-          }
-        >;
-      }
-  >;
+export interface ProviderMetadata {
+  displayName: string;
+  description: string;
+  logoSvg?: string;
+  documentationUrl?: string;
+  capabilities: {
+    modelDiscovery: boolean;
+    connectivityTest: boolean;
+    customModels: boolean;
+  };
 }
 
-export interface EndpointsResponse {
-  endpoints: Array<{
-    name: string;
-    url: string;
-    format: string;
-    auth: { apiKey?: string; headers?: Record<string, string> };
+export interface ProviderTypeInfo extends ProviderMetadata {
+  type: string;
+  settingsSchema: Record<string, unknown>;
+}
+export interface ProviderInfo {
+  id: string;
+  type: string;
+  settings: Record<string, unknown>;
+  metadata: ProviderMetadata;
+  operations: {
+    update: ProviderOperationAvailability;
+    remove: ProviderOperationAvailability;
+  };
+}
+export interface ProviderOperationAvailability {
+  available: boolean;
+  code?: string;
+  message?: string;
+  remediation?: string;
+}
+export interface ProviderResponse {
+  providers: ProviderInfo[];
+}
+export interface ProviderTypesResponse {
+  providerTypes: ProviderTypeInfo[];
+}
+export interface ProviderOperationResponse {
+  ok: boolean;
+  provider?: ProviderInfo;
+}
+export type ModelKind =
+  | 'language'
+  | 'speech-to-speech'
+  | 'text-to-speech'
+  | 'speech-to-text'
+  | 'image-generation'
+  | 'embedding'
+  | 'reranking'
+  | 'moderation'
+  | 'unknown';
+
+export interface KnownModel {
+  modelId: string;
+  kind?: ModelKind;
+  displayName?: string;
+  contextSize?: number;
+  capabilities?: {
+    input?: {
+      image?: {
+        mediaTypes?: string[];
+        maxBytes?: number;
+        maxWidth?: number;
+        maxHeight?: number;
+        maxTotalPixels?: number;
+      };
+      audio?: {
+        mediaTypes?: string[];
+        maxBytes?: number;
+        maxLengthSeconds?: number;
+      };
+    };
+    voice?: { sts?: boolean; tts?: boolean; stt?: boolean };
+    tools?: boolean;
+    reasoning?: boolean;
+  };
+  provenance?: Array<{
+    source:
+      | 'discovered'
+      | 'shared-catalog'
+      | 'provider-family'
+      | 'provider-exact'
+      | 'user';
+    documentationUrl?: string;
+    reviewedAt?: string;
   }>;
+  source: 'manual' | 'discovered' | 'merged';
 }
 
 export interface KnownModelsResponse {
-  models: Array<{
-    modelId: string;
-    endpointName?: string;
-    displayName?: string;
-    contextSize?: number;
-    capabilities?: Record<string, unknown>;
-  }>;
+  models: KnownModel[];
+}
+export interface ConnectivityResponse {
+  latencyMs: number;
+  target?: string;
 }
 
 export interface McpServersResponse {
@@ -50,15 +108,14 @@ export interface McpServersResponse {
   }>;
 }
 
-export type ModelSelectionEntry =
-  | string
-  | {
-      model: string;
-      providerOptions?: Record<string, Record<string, unknown>>;
-    };
+export interface ModelSelectionEntry {
+  providerId: string;
+  modelId: string;
+  providerOptions?: Record<string, Record<string, unknown>>;
+}
 
 export function entryToModelId(entry: ModelSelectionEntry): string {
-  return typeof entry === 'string' ? entry : entry.model;
+  return `${entry.providerId}:${entry.modelId}`;
 }
 
 export interface ModelSelection {
@@ -67,7 +124,11 @@ export interface ModelSelection {
   memory: ModelSelectionEntry[];
   imageVision: ModelSelectionEntry[];
   audioListening: ModelSelectionEntry[];
-  voice: { sts: string[]; tts: string[]; stt: string[] };
+  voice: {
+    sts: ModelSelectionEntry[];
+    tts: ModelSelectionEntry[];
+    stt: ModelSelectionEntry[];
+  };
   warnings?: Array<{ modelId: string; message: string }>;
 }
 
@@ -169,6 +230,8 @@ export class AdminApiClientError extends Error {
   constructor(
     message: string,
     readonly statusCode: number,
+    readonly code?: string,
+    readonly remediation?: string,
   ) {
     super(message);
     this.name = 'AdminApiClientError';
@@ -189,13 +252,13 @@ export class AdminApiClient {
 
   private async request<T>(
     path: string,
-    options?: { method?: string; body?: unknown },
+    options?: { method?: string; body?: unknown; contentType?: string },
   ): Promise<T> {
     const response = await this.fetcher(`${this.baseUrl}${path}`, {
       method: options?.method ?? 'GET',
       headers:
         options?.body !== undefined
-          ? { 'Content-Type': 'application/json' }
+          ? { 'Content-Type': options?.contentType ?? 'application/json' }
           : undefined,
       body:
         options?.body !== undefined ? JSON.stringify(options.body) : undefined,
@@ -205,9 +268,18 @@ export class AdminApiClient {
       const body = await response
         .json()
         .catch(() => ({ error: response.statusText }));
-      const message =
-        (body as { error?: string }).error ?? `HTTP ${response.status}`;
-      throw new AdminApiClientError(message, response.status);
+      const failure = body as {
+        error?: string;
+        code?: string;
+        remediation?: string;
+      };
+      const message = failure.error ?? `HTTP ${response.status}`;
+      throw new AdminApiClientError(
+        message,
+        response.status,
+        failure.code,
+        failure.remediation,
+      );
     }
 
     return (await response.json()) as T;
@@ -215,119 +287,93 @@ export class AdminApiClient {
 
   // --- Providers ---
 
+  getProviderTypes(): Promise<ProviderTypesResponse> {
+    return this.request<ProviderTypesResponse>('/v1/provider-types');
+  }
+
+  canAddProvider(
+    type: string,
+    settings: Record<string, unknown>,
+  ): Promise<ProviderOperationResponse> {
+    return this.request<ProviderOperationResponse>(
+      `/v1/provider-types/${encodeURIComponent(type)}/can-add`,
+      {
+        method: 'POST',
+        body: { settings },
+      },
+    );
+  }
+
   getProviders(): Promise<ProviderResponse> {
     return this.request<ProviderResponse>('/v1/providers');
   }
 
-  createProvider(body: unknown): Promise<ProviderResponse> {
-    return this.request<ProviderResponse>('/v1/providers', {
+  createProvider(body: {
+    id: string;
+    type: string;
+    settings: Record<string, unknown>;
+  }): Promise<ProviderOperationResponse> {
+    return this.request<ProviderOperationResponse>('/v1/providers', {
       method: 'POST',
       body,
     });
   }
 
-  updateProvider(name: string, body: unknown): Promise<ProviderResponse> {
-    return this.request<ProviderResponse>(
-      `/v1/providers/${encodeURIComponent(name)}`,
-      { method: 'PATCH', body },
+  updateProvider(
+    id: string,
+    body: { settings?: Record<string, unknown | null> },
+  ): Promise<ProviderOperationResponse> {
+    return this.request<ProviderOperationResponse>(
+      `/v1/providers/${encodeURIComponent(id)}`,
+      {
+        method: 'PATCH',
+        body,
+        contentType: 'application/merge-patch+json',
+      },
     );
   }
 
-  deleteProvider(name: string): Promise<ProviderResponse> {
-    return this.request<ProviderResponse>(
-      `/v1/providers/${encodeURIComponent(name)}`,
+  deleteProvider(id: string): Promise<ProviderOperationResponse> {
+    return this.request<ProviderOperationResponse>(
+      `/v1/providers/${encodeURIComponent(id)}`,
       { method: 'DELETE' },
     );
   }
 
-  // --- Endpoints ---
-
-  getEndpoints(providerName: string): Promise<EndpointsResponse> {
-    return this.request<EndpointsResponse>(
-      `/v1/providers/${encodeURIComponent(providerName)}/endpoints`,
+  testProvider(id: string): Promise<ConnectivityResponse> {
+    return this.request<ConnectivityResponse>(
+      `/v1/providers/${encodeURIComponent(id)}/test`,
+      { method: 'POST' },
     );
   }
 
-  createEndpoint(
-    providerName: string,
-    body: unknown,
-  ): Promise<EndpointsResponse> {
-    return this.request<EndpointsResponse>(
-      `/v1/providers/${encodeURIComponent(providerName)}/endpoints`,
-      { method: 'POST', body },
-    );
-  }
-
-  updateEndpoint(
-    providerName: string,
-    endpointName: string,
-    body: unknown,
-  ): Promise<EndpointsResponse> {
-    return this.request<EndpointsResponse>(
-      `/v1/providers/${encodeURIComponent(providerName)}/endpoints/${encodeURIComponent(endpointName)}`,
-      { method: 'PATCH', body },
-    );
-  }
-
-  deleteEndpoint(
-    providerName: string,
-    endpointName: string,
-  ): Promise<EndpointsResponse> {
-    return this.request<EndpointsResponse>(
-      `/v1/providers/${encodeURIComponent(providerName)}/endpoints/${encodeURIComponent(endpointName)}`,
-      { method: 'DELETE' },
-    );
-  }
-
-  // --- Known Models ---
-
-  getKnownModels(
-    providerName: string,
-    endpointName?: string,
-  ): Promise<KnownModelsResponse> {
-    const query = endpointName
-      ? `?endpointName=${encodeURIComponent(endpointName)}`
-      : '';
+  getKnownModels(id: string, refresh = false): Promise<KnownModelsResponse> {
     return this.request<KnownModelsResponse>(
-      `/v1/providers/${encodeURIComponent(providerName)}/known-models${query}`,
+      `/v1/providers/${encodeURIComponent(id)}/models${refresh ? '?refresh=true' : ''}`,
     );
   }
 
-  createKnownModel(
-    providerName: string,
-    body: unknown,
-  ): Promise<KnownModelsResponse> {
+  createKnownModel(id: string, body: unknown): Promise<KnownModelsResponse> {
     return this.request<KnownModelsResponse>(
-      `/v1/providers/${encodeURIComponent(providerName)}/known-models`,
+      `/v1/providers/${encodeURIComponent(id)}/models`,
       { method: 'POST', body },
     );
   }
 
   updateKnownModel(
-    providerName: string,
+    id: string,
     modelId: string,
     body: unknown,
-    endpointName?: string,
   ): Promise<KnownModelsResponse> {
-    const query = endpointName
-      ? `?endpointName=${encodeURIComponent(endpointName)}`
-      : '';
     return this.request<KnownModelsResponse>(
-      `/v1/providers/${encodeURIComponent(providerName)}/known-models/${encodeURIComponent(modelId)}${query}`,
+      `/v1/providers/${encodeURIComponent(id)}/models/${encodeURIComponent(modelId)}`,
       { method: 'PATCH', body },
     );
   }
 
-  deleteKnownModel(
-    providerName: string,
-    modelId: string,
-    endpointName?: string,
-  ): Promise<KnownModelsResponse> {
-    const query = endpointName
-      ? `?endpointName=${encodeURIComponent(endpointName)}`
-      : '';
+  deleteKnownModel(id: string, modelId: string): Promise<KnownModelsResponse> {
     return this.request<KnownModelsResponse>(
-      `/v1/providers/${encodeURIComponent(providerName)}/known-models/${encodeURIComponent(modelId)}${query}`,
+      `/v1/providers/${encodeURIComponent(id)}/models/${encodeURIComponent(modelId)}`,
       { method: 'DELETE' },
     );
   }

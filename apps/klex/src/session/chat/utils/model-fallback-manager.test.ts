@@ -2,21 +2,21 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { ModuleLogger } from '@stagewise/logger';
 
-import type { ModelId } from '@/config';
+import type { ModelSelectionEntry } from '@/config';
 
 import { makeTestSpan, testLogger } from '../test-helpers';
 import { ModelFallbackManager } from './model-fallback-manager';
 
-const CHAT_MODELS: readonly `${string}:${string}`[] = [
-  'provider:default',
-  'provider:fallback-a',
-  'provider:fallback-b',
+const CHAT_MODELS: readonly ModelSelectionEntry[] = [
+  { providerId: 'provider', modelId: 'default' },
+  { providerId: 'provider', modelId: 'fallback-a' },
+  { providerId: 'provider', modelId: 'fallback-b' },
 ];
 
 function makeManager(
   cooldownMs = 1000,
   logger: ModuleLogger = testLogger,
-  chatModels: readonly ModelId[] = CHAT_MODELS,
+  chatModels: readonly ModelSelectionEntry[] = CHAT_MODELS,
 ): ModelFallbackManager {
   return new ModelFallbackManager(
     {
@@ -40,7 +40,7 @@ describe('ModelFallbackManager', () => {
   describe('getChatModelEntry — default state', () => {
     it('returns the first model when no fallback has occurred', () => {
       const mgr = makeManager();
-      expect(mgr.getChatModelEntry()).toBe('provider:default');
+      expect(mgr.getChatModelEntry()).toEqual(CHAT_MODELS[0]);
     });
 
     it('returns undefined when no chat models are configured', () => {
@@ -53,7 +53,7 @@ describe('ModelFallbackManager', () => {
     it('advances to the next model', () => {
       const mgr = makeManager();
       mgr.fallbackToNextModel();
-      expect(mgr.getChatModelEntry()).toBe('provider:fallback-a');
+      expect(mgr.getChatModelEntry()).toEqual(CHAT_MODELS[1]);
     });
 
     it('wraps around to the default model when reaching the end', () => {
@@ -111,19 +111,19 @@ describe('ModelFallbackManager', () => {
     it('resets to default model after cooldown expires', () => {
       const mgr = makeManager(50);
       mgr.fallbackToNextModel();
-      expect(mgr.getChatModelEntry()).toBe('provider:fallback-a');
+      expect(mgr.getChatModelEntry()).toEqual(CHAT_MODELS[1]);
       expect(mgr.getFallbackIndex()).toBe(1);
 
       vi.advanceTimersByTime(60);
 
-      expect(mgr.getChatModelEntry()).toBe('provider:default');
+      expect(mgr.getChatModelEntry()).toEqual(CHAT_MODELS[0]);
       expect(mgr.getFallbackIndex()).toBe(0);
     });
 
     it('does NOT reset if cooldown has not expired', () => {
       const mgr = makeManager(60_000);
       mgr.fallbackToNextModel();
-      expect(mgr.getChatModelEntry()).toBe('provider:fallback-a');
+      expect(mgr.getChatModelEntry()).toEqual(CHAT_MODELS[1]);
       expect(mgr.getFallbackIndex()).toBe(1);
     });
 
@@ -153,13 +153,13 @@ describe('ModelFallbackManager', () => {
       const mgr = makeManager(50);
       mgr.recordSuccessfulGeneration();
       expect(mgr.getFallbackIndex()).toBe(0);
-      expect(mgr.getChatModelEntry()).toBe('provider:default');
+      expect(mgr.getChatModelEntry()).toEqual(CHAT_MODELS[0]);
     });
 
     it('refreshes the cooldown timer when on a fallback model', () => {
       const mgr = makeManager(80);
       mgr.fallbackToNextModel();
-      expect(mgr.getChatModelEntry()).toBe('provider:fallback-a');
+      expect(mgr.getChatModelEntry()).toEqual(CHAT_MODELS[1]);
 
       // Advance past the original cooldown window (80ms from fallback)
       vi.advanceTimersByTime(30);
@@ -171,17 +171,17 @@ describe('ModelFallbackManager', () => {
       vi.advanceTimersByTime(60);
 
       // Should still be on fallback because success refreshed the timer
-      expect(mgr.getChatModelEntry()).toBe('provider:fallback-a');
+      expect(mgr.getChatModelEntry()).toEqual(CHAT_MODELS[1]);
 
       // Now advance past the refreshed cooldown to expire
       vi.advanceTimersByTime(90);
-      expect(mgr.getChatModelEntry()).toBe('provider:default');
+      expect(mgr.getChatModelEntry()).toEqual(CHAT_MODELS[0]);
     });
 
     it('keeps the session on fallback across multiple successful generations', () => {
       const mgr = makeManager(100);
       mgr.fallbackToNextModel();
-      expect(mgr.getChatModelEntry()).toBe('provider:fallback-a');
+      expect(mgr.getChatModelEntry()).toEqual(CHAT_MODELS[1]);
 
       // First success refreshes timer
       mgr.recordSuccessfulGeneration();
@@ -192,7 +192,7 @@ describe('ModelFallbackManager', () => {
       vi.advanceTimersByTime(50);
 
       // Should still be on fallback — both refreshes kept it alive
-      expect(mgr.getChatModelEntry()).toBe('provider:fallback-a');
+      expect(mgr.getChatModelEntry()).toEqual(CHAT_MODELS[1]);
       expect(mgr.getFallbackIndex()).toBe(1);
     });
   });
@@ -205,9 +205,9 @@ describe('ModelFallbackManager', () => {
     it('can fall back multiple times in sequence', () => {
       const mgr = makeManager(60_000);
       mgr.fallbackToNextModel();
-      expect(mgr.getChatModelEntry()).toBe('provider:fallback-a');
+      expect(mgr.getChatModelEntry()).toEqual(CHAT_MODELS[1]);
       mgr.fallbackToNextModel();
-      expect(mgr.getChatModelEntry()).toBe('provider:fallback-b');
+      expect(mgr.getChatModelEntry()).toEqual(CHAT_MODELS[2]);
     });
 
     it('refreshes cooldown on each subsequent fallback', () => {
@@ -215,15 +215,15 @@ describe('ModelFallbackManager', () => {
       mgr.fallbackToNextModel();
       vi.advanceTimersByTime(30);
       mgr.fallbackToNextModel();
-      expect(mgr.getChatModelEntry()).toBe('provider:fallback-b');
+      expect(mgr.getChatModelEntry()).toEqual(CHAT_MODELS[2]);
 
       // Should still be on fallback-b (cooldown was refreshed by 2nd fallback)
       vi.advanceTimersByTime(50);
-      expect(mgr.getChatModelEntry()).toBe('provider:fallback-b');
+      expect(mgr.getChatModelEntry()).toEqual(CHAT_MODELS[2]);
 
       // Now advance past the refreshed cooldown to expire
       vi.advanceTimersByTime(90);
-      expect(mgr.getChatModelEntry()).toBe('provider:default');
+      expect(mgr.getChatModelEntry()).toEqual(CHAT_MODELS[0]);
     });
   });
 });

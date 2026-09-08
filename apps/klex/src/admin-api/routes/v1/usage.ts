@@ -16,7 +16,7 @@ export const getUsageRoute = createRoute({
   tags: ['Usage'],
   summary: 'Query model call usage data',
   description:
-    'Returns aggregated or per-event model call usage data, optionally filtered by time range and grouped by model, provider, or endpoint.',
+    'Returns aggregated or per-event model call usage data, optionally filtered by time range and grouped by model, configured provider, or legacy endpoint.',
   request: {
     query: usageQuerySchema,
   },

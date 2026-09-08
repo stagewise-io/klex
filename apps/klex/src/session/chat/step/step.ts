@@ -6,8 +6,8 @@ import { isToolUIPart, type LanguageModel, type ModelMessage } from 'ai';
 
 import type { ModuleLogger } from '@stagewise/logger';
 
-import { type Config, modelIdFromEntry } from '@/config';
-import type { ModelProvider } from '@/model-provider';
+import type { Config } from '@/config';
+import type { ProviderModelResolver } from '@/provider-registry';
 
 import type { ExtensionHandler } from '../extension-handler';
 import type {
@@ -55,7 +55,7 @@ export interface StepDependencies {
   turnContext: Context;
   messages: ExtendedUIMessage[];
   extensionHandler: ExtensionHandler;
-  modelProvider: ModelProvider;
+  modelResolver: ProviderModelResolver;
   fallbackManager: ModelFallbackManager;
   config: Config;
   /**
@@ -206,6 +206,11 @@ class StepModule implements Step {
         let model: LanguageModel;
         let resolvedModel: ResolvedModel;
         let providerOptions: Record<string, JSONObject> | undefined;
+        let telemetryModelContext: {
+          providerType: string;
+          providerId: string;
+          modelId: string;
+        };
         let selectedModelId: string | undefined;
         {
           const entry = this.deps.fallbackManager.getChatModelEntry();
@@ -228,7 +233,7 @@ class StepModule implements Step {
             await this.deps.extensionHandler.runStepCompleteHooks(noModelEvent);
             return noModelEvent;
           }
-          const modelId = modelIdFromEntry(entry);
+          const modelId = entry.modelId;
           selectedModelId = modelId;
           const modelSpan = startChildSpan('fetch_model', {
             attributes: {
@@ -239,11 +244,16 @@ class StepModule implements Step {
           });
           try {
             model = await this.getModel();
-            const resolved = this.deps.config.resolveModel(entry);
-            const info = this.deps.config.resolveModelInfo(entry);
+            const resolved = this.deps.modelResolver.resolveModel(entry);
+            const info = this.deps.modelResolver.resolveModelInfo(entry);
             providerOptions = resolved.providerOptions as
               | Record<string, JSONObject>
               | undefined;
+            telemetryModelContext = {
+              providerType: resolved.providerType,
+              providerId: resolved.providerId,
+              modelId: resolved.modelId,
+            };
             resolvedModel = {
               modelId,
               displayName: info.displayName,
@@ -456,6 +466,7 @@ class StepModule implements Step {
           turnInitialFallbackIndex: this.deps.turnInitialFallbackIndex,
           compacted,
           model,
+          modelContext: telemetryModelContext,
           ...(providerOptions !== undefined && { providerOptions }),
         });
         this.generationRunner = runner;
@@ -522,8 +533,7 @@ class StepModule implements Step {
     if (!entry) {
       throw new Error('No chat model is configured');
     }
-    const modelId = modelIdFromEntry(entry);
-    return this.deps.modelProvider.get(modelId);
+    return this.deps.modelResolver.getLanguageModel(entry);
   }
 }
 

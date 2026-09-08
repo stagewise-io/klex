@@ -65,7 +65,7 @@ class ImageInputOptimizerExt implements Extension {
     const settings = resolveEffectiveVision(model.inputCapabilities);
     if (settings.supports) return {};
 
-    const visionModelIds = resolveVisionModels(this.deps.config);
+    const visionModelIds = resolveVisionModels(this.deps);
     if (visionModelIds.length === 0) return {};
 
     return {
@@ -92,7 +92,7 @@ class ImageInputOptimizerExt implements Extension {
           const toolImageHash = toolBuffer
             ? createHash('sha1').update(toolBuffer).digest('hex').slice(0, 16)
             : null;
-          const toolVisionModelIds = resolveVisionModels(this.deps.config);
+          const toolVisionModelIds = resolveVisionModels(this.deps);
 
           const description = await describeImage(
             this.deps,
@@ -122,7 +122,7 @@ class ImageInputOptimizerExt implements Extension {
     this.imageRegistry.clear();
 
     // Pre-compute vision model availability for the non-vision path.
-    const visionModelIds = resolveVisionModels(this.deps.config);
+    const visionModelIds = resolveVisionModels(this.deps);
     const hasVisionModels = !settings.supports && visionModelIds.length > 0;
 
     // Determine whether the viewImage tool will be offered to this model.

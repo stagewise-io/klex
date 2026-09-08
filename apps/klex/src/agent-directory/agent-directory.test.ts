@@ -46,12 +46,21 @@ describe('AgentDirectory', () => {
     ).toMatchObject({
       _klex: {
         store: 'config',
-        schemaVersion: 1,
-        compatibilityVersion: 1,
+        schemaVersion: 2,
+        compatibilityVersion: 2,
       },
+      configVersion: 2,
       officialName: 'Ada',
       providers: {},
-      modelSelection: { chat: [] },
+      modelSelection: {
+        chat: [],
+        compaction: [],
+        memory: [],
+        imageVision: [],
+        audioListening: [],
+        voice: { sts: [], tts: [], stt: [] },
+      },
+      mcpServers: {},
     });
   });
 

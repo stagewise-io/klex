@@ -19,7 +19,10 @@ import { KLEX_LOCAL_DATA_STORES } from '@/local-data-registry';
 import { createLogStore } from '@/log-store';
 import { createMcp } from '@/mcp';
 import { createModelCallLogger } from '@/model-call-logger';
-import { createModelProvider } from '@/model-provider';
+import {
+  builtInProviderDefinitions,
+  createProviderRegistry,
+} from '@/provider-registry';
 import { KLEX_VERSION, resolveReleaseTarget } from '@/release';
 import { runNativeVerification } from '@/release/verify-native';
 import { createRouter, type RouterApi } from '@/router';
@@ -223,6 +226,13 @@ async function main(): Promise<void> {
     await tracing.start();
     await config.start();
     started.push(config);
+    const providerRegistry = createProviderRegistry({
+      logging: logger,
+      config,
+      definitions: builtInProviderDefinitions,
+    });
+    await providerRegistry.start();
+    started.push(providerRegistry);
 
     // Cloud connectivity: identity is always created; enrollment + token
     // client are initialized only when cloud is enabled.
@@ -236,7 +246,7 @@ async function main(): Promise<void> {
         enrollmentToken: cli.cloudEnrollToken,
         allowDangerousUnsecureCloud: cli.allowDangerousUnsecureCloud,
       });
-    const realtimeProvider = config.resolveRealtimeProvider();
+    const realtimeProvider = providerRegistry.resolveRealtimeProvider();
     const realtimeComposition = realtimeProvider
       ? {
           provider: realtimeProvider,
@@ -246,7 +256,6 @@ async function main(): Promise<void> {
     const realtimeMediaCapability = realtimeComposition
       ? PRODUCTION_REALTIME_MEDIA_CAPABILITY
       : undefined;
-    const modelProvider = createModelProvider({ logging: logger, config });
     const mcp = createMcp({
       logging: logger,
       config,
@@ -273,7 +282,7 @@ async function main(): Promise<void> {
         createChatSession({
           logging: logger,
           config,
-          modelProvider,
+          modelResolver: providerRegistry,
           mcp,
           router: sessionRouter,
           extensionFactories: [
@@ -315,6 +324,7 @@ async function main(): Promise<void> {
       mcp,
       introspector,
       modelCallLogger,
+      providerRegistry,
       cloudConnectivity,
       godMessages,
       localPort: cli.dangerousLocalAdminApiPort,
@@ -333,7 +343,7 @@ async function main(): Promise<void> {
           ownedConnector: realtimeComposition.ownedConnector,
         })
       : undefined;
-    for (const resource of [modelCallLogger, modelProvider, adminApi]) {
+    for (const resource of [modelCallLogger, adminApi]) {
       await resource.start();
       started.push(resource);
     }

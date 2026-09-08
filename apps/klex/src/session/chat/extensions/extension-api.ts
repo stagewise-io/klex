@@ -16,6 +16,7 @@ import type {
   ModelSelectionEntry,
 } from '@/config';
 import type { Mcp } from '@/mcp';
+import type { ProviderModelResolver } from '@/provider-registry';
 import type { RouterApi } from '@/router';
 
 import type { ChatSessionInbox } from '../inbox';
@@ -449,6 +450,7 @@ export interface ExtensionDeps {
    * Access to the application config — model selections, providers, etc.
    */
   config: Config;
+  modelResolver: ProviderModelResolver;
 
   /**
    * Generates text using model fallback, proxied through the session so

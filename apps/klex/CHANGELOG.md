@@ -2,6 +2,18 @@
 
 All notable Klex changes are documented here.
 
+## Unreleased
+
+### Breaking Changes
+
+- replace preset/manual endpoints and string model references with configuration v2 typed provider instances and explicit `{ providerId, modelId }` selections
+
+### Features
+
+- add one registry contract for provider metadata, declarative setup, lifecycle preflight and hooks, automatic model discovery, connectivity tests, and runtime resolution
+- add generic Admin API and CLI provider management for OpenAI, Anthropic, Gemini, Vertex, Bedrock, Azure OpenAI, OpenRouter, compatible vendors and coding plans, ChatGPT Codex Subscription transport, custom protocol endpoints, and Ollama
+- add atomic v1 configuration migration with environment-placeholder, provider-option, voice-selection, known-model capability, and opaque model-ID preservation
+
 ## 0.3.0 (2026-09-07)
 
 ### Features

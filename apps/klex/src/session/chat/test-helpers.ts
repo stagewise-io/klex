@@ -53,11 +53,20 @@ export function makeExtensionHandler() {
   };
 }
 
-export function makeModelProvider() {
+export function makeModelResolver() {
   return {
-    get: vi.fn().mockResolvedValue({} as LanguageModel),
-    start: vi.fn(),
-    close: vi.fn(),
+    getLanguageModel: vi.fn().mockReturnValue({} as LanguageModel),
+    resolveModel: vi.fn(() => ({
+      contextSize: 128_000,
+      displayName: 'Test Model',
+      inputCapabilities: {},
+      providerOptions: undefined,
+    })),
+    resolveModelInfo: vi.fn(() => ({
+      contextSize: 128_000,
+      displayName: 'Test Model',
+      inputCapabilities: {},
+    })),
   };
 }
 

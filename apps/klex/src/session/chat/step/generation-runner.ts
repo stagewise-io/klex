@@ -11,7 +11,6 @@ import {
 
 import type { ModuleLogger } from '@stagewise/logger';
 
-import { modelIdFromEntry } from '@/config';
 import {
   classifyGenerationError,
   type GenerationErrorClassification,
@@ -48,6 +47,12 @@ export interface GenerationRunnerDependencies {
   compacted: boolean;
   /** Initial model to use for the first attempt. */
   model: LanguageModel;
+  /** Explicit configured-provider identity forwarded to telemetry. */
+  modelContext: {
+    providerType: string;
+    providerId: string;
+    modelId: string;
+  };
   /** Provider-specific options resolved from the model selection entry. */
   providerOptions?: Record<string, JSONObject>;
   /**
@@ -131,9 +136,7 @@ export class GenerationRunner {
       this.generationAbortController = generationAbortController;
 
       const currentModelEntry = fallbackManager.getChatModelEntry();
-      const currentModelId = currentModelEntry
-        ? modelIdFromEntry(currentModelEntry)
-        : 'unknown';
+      const currentModelId = currentModelEntry?.modelId ?? 'unknown';
       stepSpan.addEvent('step.generation_attempt', {
         'generation.attempt': attempt,
         'generation.modelId': currentModelId,
@@ -159,10 +162,10 @@ export class GenerationRunner {
           tools: this.deps.tools,
           abortSignal: generationAbortController.signal,
           logger: this.deps.logger,
-          // Generation is only reached with a resolved model. Keep the
-          // telemetry fallback typed as a model id for defensive callers.
-          getChatModelId: () =>
-            currentModelId === 'unknown' ? 'unknown:unknown' : currentModelId,
+          modelContext: {
+            ...this.deps.modelContext,
+            modelId: currentModelId,
+          },
           sessionId: this.deps.sessionId,
           compacted: this.deps.compacted,
           extensionSystemPromptParts: this.deps.extensionSystemPromptParts,

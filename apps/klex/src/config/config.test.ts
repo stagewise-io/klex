@@ -6,22 +6,21 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import type { RootLogger } from '@stagewise/logger';
 
+import { createLocalData } from '@/local-data';
+import { KLEX_VERSION } from '@/release';
+
 import {
   CONFIG_FILE_NAME,
-  ConfigValidationError,
+  type ConfigValidationError,
   createConfig,
-  DEFAULT_CONTEXT_SIZE,
-  openAIRealtimeWebSocketUrl,
+  interpolateEnvironment,
 } from './config';
+import { completeV2Config, emptyModelSelection } from './config.test-fixtures';
+import { CONFIG_STORE_DEFINITION } from './storage-definition';
 import {
-  type EndpointAuth,
-  type EndpointConfig,
-  type KlexConfig,
   klexConfigSchema,
-  type ModelDefinition,
-  type ModelSelectionEntry,
-  type ProviderConfig,
-  type ProviderPreset,
+  migrateLegacyKlexConfig,
+  parseKlexConfig,
 } from './types';
 
 const directories: string[] = [];
@@ -33,755 +32,102 @@ const logging = {
   }),
 } as unknown as RootLogger;
 
-// --- fixtures ---
-
-function versionedConfig(config: KlexConfig): Record<string, unknown> {
-  return {
-    _klex: {
-      store: 'config',
-      schemaVersion: 1,
-      compatibilityVersion: 1,
-      minimumKlexVersion: '0.3.0',
-      writtenByKlexVersion: '0.3.0',
-    },
-    ...config,
-  };
+async function prepareConfigStore(dataDirectory: string): Promise<void> {
+  await createLocalData({
+    logging,
+    dataDirectory,
+    klexVersion: KLEX_VERSION,
+    stores: [CONFIG_STORE_DEFINITION],
+  }).start();
 }
 
-function manualConfig(modelId = 'model:8b'): KlexConfig {
-  return {
-    officialName: 'Test Agent',
-    providers: {
-      local: {
-        endpoints: {
-          chat: {
-            url: 'http://localhost:11434/v1',
-            format: 'chat-completions',
-            auth: {},
-          },
-        },
-      },
-    },
-    modelSelection: {
-      chat: [`local:chat:${modelId}`],
-      compaction: [],
-      memory: [],
-      imageVision: [],
-      audioListening: [],
-      voice: { sts: [], tts: [], stt: [] },
-    },
-    mcpServers: {},
-  };
-}
-
-function presetConfig(
-  preset: ProviderPreset = 'openai',
-  modelId = 'gpt-4o',
-  providerId = 'my-openai',
-): KlexConfig {
-  return {
-    officialName: 'Test Agent',
-    providers: {
-      [providerId]: {
-        preset,
-        auth: { apiKey: 'sk-test' },
-      },
-    },
-    modelSelection: {
-      chat: [`${providerId}:${modelId}`],
-      compaction: [],
-      memory: [],
-      imageVision: [],
-      audioListening: [],
-      voice: { sts: [], tts: [], stt: [] },
-    },
-    mcpServers: {},
-  };
-}
-
-function mixedConfig(): KlexConfig {
-  return {
-    officialName: 'Test Agent',
-    providers: {
-      remote: {
-        preset: 'openai',
-        auth: { apiKey: 'sk-test' },
-      },
-      local: {
-        endpoints: {
-          chat: {
-            url: 'http://localhost:11434/v1',
-            format: 'chat-completions',
-            auth: {},
-          },
-          api: {
-            url: 'http://localhost:8080/v1',
-            format: 'open-responses',
-            auth: { apiKey: 'local-key' },
-          },
-        },
-      },
-    },
-    modelSelection: {
-      chat: ['remote:gpt-4o'],
-      compaction: ['local:chat:model:8b'],
-      memory: ['local:api:test-model'],
-      imageVision: [],
-      audioListening: [],
-      voice: { sts: [], tts: [], stt: [] },
-    },
-    mcpServers: {},
-  };
-}
-
-async function setup(config = manualConfig()) {
-  const directory = await mkdtemp(join(tmpdir(), 'klex-config-'));
-  directories.push(directory);
-  await writeFile(
-    join(directory, CONFIG_FILE_NAME),
-    `${JSON.stringify(versionedConfig(config), null, 2)}\n`,
-  );
-  const module = createConfig({ logging, dataDirectory: directory });
-  await module.start();
-  return { directory, module };
+async function directory(withConfig = false): Promise<string> {
+  const path = await mkdtemp(join(tmpdir(), 'klex-config-v2-'));
+  directories.push(path);
+  if (withConfig) {
+    await writeFile(
+      join(path, CONFIG_FILE_NAME),
+      JSON.stringify({
+        configVersion: 2,
+        officialName: 'Agent',
+        providers: {},
+        modelSelection: emptyModelSelection,
+        mcpServers: {},
+      }),
+    );
+    await prepareConfigStore(path);
+  }
+  return path;
 }
 
 afterEach(async () => {
   await Promise.all(
     directories
       .splice(0)
-      .map((directory) => rm(directory, { recursive: true, force: true })),
+      .map((path) => rm(path, { recursive: true, force: true })),
   );
 });
 
-// --- tests ---
-
-describe('Config — minimal schema', () => {
-  it('defaults a missing official name for legacy configurations', () => {
-    expect(klexConfigSchema.parse({}).officialName).toBe('Agent');
+describe('config v2', () => {
+  it('requires an explicitly provisioned config file', async () => {
+    const dataDirectory = await directory();
+    const config = createConfig({ logging, dataDirectory });
+    await expect(config.start()).rejects.toThrow(
+      'Required config file not found',
+    );
   });
 
-  it('requires a provided official name to have at least two characters', () => {
-    expect(() => klexConfigSchema.parse({ officialName: 'A' })).toThrow();
-    expect(klexConfigSchema.parse({ officialName: 'Ada' })).toMatchObject({
-      officialName: 'Ada',
-      providers: {},
-      modelSelection: { chat: [], compaction: [], memory: [] },
-      mcpServers: {},
+  it('accepts a complete v2 config with multiple same-type instances, custom routing, and manual model overrides', () => {
+    const parsed = klexConfigSchema.parse(completeV2Config);
+
+    expect(parsed.configVersion).toBe(2);
+    expect(parsed.providers['openai-primary']?.type).toBe('openai');
+    expect(parsed.providers['openai-secondary']?.type).toBe('openai');
+    expect(parsed.providers['openai-internal']?.settings).toMatchObject({
+      baseUrl: 'https://models.internal.example/v1',
     });
-  });
-
-  it('trims the official name', () => {
-    expect(
-      klexConfigSchema.parse({ officialName: '  Ada  ' }).officialName,
-    ).toBe('Ada');
-  });
-
-  it('truncates official names to 128 Unicode characters', () => {
-    const officialName = klexConfigSchema.parse({
-      officialName: '😀'.repeat(129),
-    }).officialName;
-
-    expect(Array.from(officialName)).toHaveLength(128);
-  });
-});
-
-describe('Config — voice model selection', () => {
-  it('defaults missing voice selections to empty lists', () => {
-    const input = manualConfig() as unknown as Record<string, unknown>;
-    const selection = input.modelSelection as Record<string, unknown>;
-    delete selection.voice;
-    expect(klexConfigSchema.parse(input).modelSelection.voice).toEqual({
-      sts: [],
-      tts: [],
-      stt: [],
-    });
-  });
-
-  it('resolves a capability-declared OpenAI STS model', async () => {
-    const config = presetConfig('openai', 'gpt-realtime');
-    const provider = config.providers['my-openai'];
-    if (!provider || !('preset' in provider))
-      throw new Error('Expected preset');
-    provider.knownModels = {
-      'gpt-realtime': { capabilities: { voice: { sts: true } } },
-    };
-    config.modelSelection.voice.sts = ['my-openai:gpt-realtime'];
-    const { module } = await setup(config);
-    expect(module.resolveRealtimeProvider()).toEqual({
-      kind: 'openai-realtime',
-      config: {
-        modelId: 'gpt-realtime',
-        apiKey: 'sk-test',
-        websocketUrl: 'wss://api.openai.com/v1/realtime?model=gpt-realtime',
+    expect(parsed.providers['custom-chat']).toMatchObject({
+      type: 'chat-completions',
+      settings: { baseUrl: 'https://inference.example/v1' },
+      knownModels: {
+        'org:model:v2': {
+          displayName: 'Manually overridden name',
+          contextSize: 65_536,
+        },
       },
     });
+    expect(parsed.modelSelection.chat[1]).toEqual({
+      providerId: 'custom-chat',
+      modelId: 'org:model:v2',
+      providerOptions: { openai: { reasoningEffort: 'high' } },
+    });
   });
 
-  it('derives secure and local realtime WebSocket URLs', () => {
-    expect(
-      openAIRealtimeWebSocketUrl('https://api.openai.com/v1/', 'model/a'),
-    ).toBe('wss://api.openai.com/v1/realtime?model=model%2Fa');
-    expect(openAIRealtimeWebSocketUrl('http://localhost:8080/v1', 'm')).toBe(
-      'ws://localhost:8080/v1/realtime?model=m',
-    );
-    expect(() =>
-      openAIRealtimeWebSocketUrl('ftp://example.com/v1', 'm'),
-    ).toThrow('must use HTTP or HTTPS');
-  });
-});
-
-describe('Config — lifecycle', () => {
-  it('throws if config file does not exist', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'klex-config-'));
-    directories.push(dir);
-    const module = createConfig({ logging, dataDirectory: dir });
-    await expect(module.start()).rejects.toThrow(/not found/);
-  });
-
-  it('throws if config file is not valid JSON', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'klex-config-'));
-    directories.push(dir);
-    await writeFile(join(dir, CONFIG_FILE_NAME), '{ not json');
-    const module = createConfig({ logging, dataDirectory: dir });
-    await expect(module.start()).rejects.toThrow(/not valid JSON/);
-  });
-
-  it('includes the parser detail in the invalid JSON error', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'klex-config-'));
-    directories.push(dir);
-    await writeFile(join(dir, CONFIG_FILE_NAME), '{"providers": {},}');
-    const module = createConfig({ logging, dataDirectory: dir });
-    // The parser message carries the offending position, which is the only
-    // practical way to locate the problem in a hand-edited file.
-    await expect(module.start()).rejects.toThrow(/not valid JSON: .*position/i);
-  });
-
-  it('loads a config file written as UTF-8 with a byte-order mark', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'klex-config-'));
-    directories.push(dir);
-    // PowerShell 5.1 `Set-Content -Encoding UTF8` and older Notepad emit a
-    // BOM. It is invisible in editors but `JSON.parse` rejects it.
+  it('migrates preset and single-endpoint v1 providers once and preserves native model colons', async () => {
+    const dataDirectory = await directory();
     await writeFile(
-      join(dir, CONFIG_FILE_NAME),
-      `\uFEFF${JSON.stringify(versionedConfig(manualConfig()), null, 2)}\n`,
-    );
-    const module = createConfig({ logging, dataDirectory: dir });
-    await expect(module.start()).resolves.toBeUndefined();
-    expect(module.resolveModel('local:chat:model:8b').modelId).toBe('model:8b');
-  });
-
-  it('still rejects a second byte-order mark as invalid JSON', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'klex-config-'));
-    directories.push(dir);
-    await writeFile(
-      join(dir, CONFIG_FILE_NAME),
-      `\uFEFF\uFEFF${JSON.stringify(versionedConfig(manualConfig()), null, 2)}\n`,
-    );
-    const module = createConfig({ logging, dataDirectory: dir });
-    await expect(module.start()).rejects.toThrow(/not valid JSON/);
-  });
-
-  it('throws on schema violation with ConfigValidationError wrapped message', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'klex-config-'));
-    directories.push(dir);
-    await writeFile(
-      join(dir, CONFIG_FILE_NAME),
-      JSON.stringify(
-        versionedConfig({
-          officialName: 'A',
-          providers: {},
-          modelSelection: {
-            chat: [],
-            compaction: [],
-            memory: [],
-            imageVision: [],
-            audioListening: [],
-            voice: { sts: [], tts: [], stt: [] },
+      join(dataDirectory, CONFIG_FILE_NAME),
+      JSON.stringify({
+        officialName: 'Migration',
+        providers: {
+          remote: {
+            preset: 'openai',
+            auth: { apiKey: '${env:OPENAI_API_KEY}' },
+            knownModels: { 'org:model:v2': { displayName: 'Model' } },
           },
-          mcpServers: {},
-        }),
-      ),
-    );
-    const module = createConfig({ logging, dataDirectory: dir });
-    await expect(module.start()).rejects.toThrow(/invalid/);
-  });
-
-  it('persists a truncated official name during startup', async () => {
-    const config = manualConfig();
-    config.officialName = '😀'.repeat(129);
-
-    const { directory, module } = await setup(config);
-    const persisted = JSON.parse(
-      await readFile(join(directory, CONFIG_FILE_NAME), 'utf8'),
-    ) as KlexConfig;
-
-    expect(Array.from(module.get().officialName)).toHaveLength(128);
-    expect(persisted.officialName).toBe(module.get().officialName);
-  });
-
-  it('start is idempotent', async () => {
-    const { module } = await setup();
-    await module.start(); // second call should not throw
-    expect(module.get()).toBeDefined();
-  });
-
-  it('throws if methods called before start', () => {
-    const dir = 'unused'; // won't read
-    const module = createConfig({ logging, dataDirectory: dir });
-    expect(() => module.get()).toThrow('Config has not been started');
-    expect(() => module.resolveModel('a:b')).toThrow(
-      'Config has not been started',
-    );
-  });
-
-  it('close resets state so subsequent calls throw', async () => {
-    const { module } = await setup();
-    await module.close();
-    expect(() => module.get()).toThrow('Config has not been started');
-  });
-});
-
-describe('Config — resolveModel (manual providers)', () => {
-  it('resolves model IDs whose local segment contains colons', async () => {
-    const { module } = await setup();
-    expect(module.resolveModel('local:chat:model:8b').modelId).toBe('model:8b');
-  });
-
-  it('resolves a basic 3-segment manual model ID', async () => {
-    const { module } = await setup();
-    const resolved = module.resolveModel('local:chat:model:8b');
-    expect(resolved).toMatchObject({
-      providerId: 'local',
-      endpointId: 'chat',
-      modelId: 'model:8b',
-      isPreset: false,
-    });
-    expect(resolved.endpoint.url).toBe('http://localhost:11434/v1');
-  });
-
-  it('throws on unknown provider', async () => {
-    const { module } = await setup();
-    expect(() => module.resolveModel('unknown:chat:model')).toThrow(
-      /unknown provider/,
-    );
-  });
-
-  it('throws on unknown endpoint', async () => {
-    const { module } = await setup();
-    expect(() => module.resolveModel('local:missing:model')).toThrow(
-      /unknown endpoint/,
-    );
-  });
-
-  it('throws when manual provider model ID lacks endpoint segment', async () => {
-    const { module } = await setup();
-    // 'local:model' — rest is 'model', no second colon
-    expect(() => module.resolveModel('local:model')).toThrow(
-      /requires an endpoint ID/,
-    );
-  });
-
-  it('resolves across multiple endpoints in the same provider', async () => {
-    const { module } = await setup(mixedConfig());
-    const resolved = module.resolveModel('local:api:test-model');
-    expect(resolved.endpointId).toBe('api');
-    expect(resolved.modelId).toBe('test-model');
-    expect(resolved.endpoint.format).toBe('open-responses');
-  });
-});
-
-describe('Config — resolveModel (preset providers)', () => {
-  it('resolves a preset provider model with 2-segment ID', async () => {
-    const { module } = await setup(presetConfig('openai', 'gpt-4o'));
-    const resolved = module.resolveModel('my-openai:gpt-4o');
-    expect(resolved).toMatchObject({
-      providerId: 'my-openai',
-      endpointId: 'openai',
-      modelId: 'gpt-4o',
-      isPreset: true,
-    });
-    expect(resolved.endpoint.url).toBe('https://api.openai.com/v1');
-    expect(resolved.endpoint.format).toBe('openai');
-  });
-
-  it('resolves anthropic preset models', async () => {
-    const { module } = await setup(
-      presetConfig('anthropic', 'claude-sonnet-4-20250514'),
-    );
-    const resolved = module.resolveModel('my-openai:claude-sonnet-4-20250514');
-    expect(resolved.endpointId).toBe('anthropic');
-    expect(resolved.endpoint.format).toBe('anthropic');
-    expect(resolved.endpoint.url).toBe('https://api.anthropic.com/v1');
-  });
-
-  it('resolves google preset models', async () => {
-    const { module } = await setup(
-      presetConfig('google', 'gemini-2.5-pro', 'my-google'),
-    );
-    const resolved = module.resolveModel('my-google:gemini-2.5-pro');
-    expect(resolved.endpointId).toBe('google');
-    expect(resolved.endpoint.format).toBe('google');
-  });
-
-  it('resolves any model ID through a preset provider', async () => {
-    const { module } = await setup(presetConfig());
-    const resolved = module.resolveModel('my-openai:gpt-999');
-    expect(resolved.modelId).toBe('gpt-999');
-    expect(resolved.isPreset).toBe(true);
-  });
-});
-
-describe('Config — resolveModel (mixed providers)', () => {
-  it('resolves models from both preset and manual providers', async () => {
-    const { module } = await setup(mixedConfig());
-    const preset = module.resolveModel('remote:gpt-4o');
-    expect(preset.isPreset).toBe(true);
-
-    const manual = module.resolveModel('local:chat:model:8b');
-    expect(manual.isPreset).toBe(false);
-  });
-
-  it('getModelSelection returns correct arrays per purpose', async () => {
-    const { module } = await setup(mixedConfig());
-    expect(module.getModelSelection('chat')).toEqual(['remote:gpt-4o']);
-    expect(module.getModelSelection('compaction')).toEqual([
-      'local:chat:model:8b',
-    ]);
-    expect(module.getModelSelection('memory')).toEqual([
-      'local:api:test-model',
-    ]);
-  });
-});
-
-describe('Config — resolveModelInfo', () => {
-  it('resolves contextSize from preset provider knownModels', async () => {
-    const config = presetConfig();
-    const provider = config.providers['my-openai'];
-    if (!provider || !('preset' in provider))
-      throw new Error('Expected preset provider');
-    provider.knownModels = {
-      'gpt-4o': { contextSize: 128_000 },
-    };
-    const { module } = await setup(config);
-    expect(module.resolveModelInfo('my-openai:gpt-4o').contextSize).toBe(
-      128_000,
-    );
-  });
-
-  it('resolves contextSize from manual endpoint knownModels', async () => {
-    const config = manualConfig();
-    const local = config.providers.local;
-    if (!local || !('endpoints' in local))
-      throw new Error('Expected manual provider');
-    local.endpoints.chat!.knownModels = {
-      'model:8b': { contextSize: 8_192 },
-    };
-    const { module } = await setup(config);
-    expect(module.resolveModelInfo('local:chat:model:8b').contextSize).toBe(
-      8_192,
-    );
-  });
-
-  it('defaults to DEFAULT_CONTEXT_SIZE when contextSize is absent', async () => {
-    const { module } = await setup(presetConfig());
-    expect(module.resolveModelInfo('my-openai:gpt-4o').contextSize).toBe(
-      DEFAULT_CONTEXT_SIZE,
-    );
-  });
-
-  it('defaults to DEFAULT_CONTEXT_SIZE when knownModels is absent', async () => {
-    const { module } = await setup(manualConfig());
-    expect(module.resolveModelInfo('local:chat:model:8b').contextSize).toBe(
-      DEFAULT_CONTEXT_SIZE,
-    );
-  });
-
-  it('resolveModelInfo returns the resolved context size', async () => {
-    const config = presetConfig();
-    const provider = config.providers['my-openai'];
-    if (!provider || !('preset' in provider))
-      throw new Error('Expected preset provider');
-    provider.knownModels = {
-      'gpt-4o': { contextSize: 64_000 },
-    };
-    const { module } = await setup(config);
-    expect(module.resolveModelInfo('my-openai:gpt-4o').contextSize).toBe(
-      64_000,
-    );
-  });
-
-  it('resolveModelInfo returns DEFAULT_CONTEXT_SIZE for unknown model metadata', async () => {
-    const { module } = await setup(presetConfig());
-    expect(module.resolveModelInfo('my-openai:gpt-999').contextSize).toBe(
-      DEFAULT_CONTEXT_SIZE,
-    );
-  });
-
-  it('accepts displayName in knownModels entries', async () => {
-    const config = presetConfig();
-    const provider = config.providers['my-openai'];
-    if (!provider || !('preset' in provider))
-      throw new Error('Expected preset provider');
-    provider.knownModels = {
-      'gpt-4o': { displayName: 'GPT-4o', contextSize: 128_000 },
-    };
-    const { module } = await setup(config);
-    const info = module.resolveModelInfo('my-openai:gpt-4o');
-    expect(info.contextSize).toBe(128_000);
-    expect(info.displayName).toBe('GPT-4o');
-  });
-
-  it('resolves displayName from manual endpoint knownModels', async () => {
-    const config = manualConfig();
-    const local = config.providers.local;
-    if (!local || !('endpoints' in local))
-      throw new Error('Expected manual provider');
-    local.endpoints.chat!.knownModels = {
-      'model:8b': { displayName: 'Local 8B', contextSize: 8_192 },
-    };
-    const { module } = await setup(config);
-    expect(module.resolveModelInfo('local:chat:model:8b').displayName).toBe(
-      'Local 8B',
-    );
-  });
-
-  it('returns displayName undefined when not declared in knownModels', async () => {
-    const config = presetConfig();
-    const provider = config.providers['my-openai'];
-    if (!provider || !('preset' in provider))
-      throw new Error('Expected preset provider');
-    provider.knownModels = {
-      'gpt-4o': { contextSize: 128_000 },
-    };
-    const { module } = await setup(config);
-    expect(
-      module.resolveModelInfo('my-openai:gpt-4o').displayName,
-    ).toBeUndefined();
-  });
-
-  it('returns displayName undefined when knownModels is absent', async () => {
-    const { module } = await setup(manualConfig());
-    expect(
-      module.resolveModelInfo('local:chat:model:8b').displayName,
-    ).toBeUndefined();
-  });
-
-  it('resolves native media capabilities and normalizes absent capabilities', async () => {
-    const config = presetConfig();
-    const provider = config.providers['my-openai'];
-    if (!provider || !('preset' in provider))
-      throw new Error('Expected preset provider');
-    provider.knownModels = {
-      'gpt-4o': {
-        capabilities: {
-          input: {
-            image: {
-              mediaTypes: ['image/png', 'image/jpeg'],
-              maxBytes: 1_000_000,
-            },
-            audio: {
-              mediaTypes: ['audio/mpeg', 'audio/wav'],
-              maxBytes: 2_000_000,
+          local: {
+            endpoints: {
+              ollama: {
+                url: 'http://localhost:11434/v1',
+                format: 'chat-completions',
+                auth: {},
+                knownModels: { 'model:8b': {} },
+              },
             },
           },
         },
-      },
-    };
-    const { module } = await setup(config);
-
-    expect(
-      module.resolveModelInfo('my-openai:gpt-4o').inputCapabilities,
-    ).toEqual({
-      image: { mediaTypes: ['image/png', 'image/jpeg'], maxBytes: 1_000_000 },
-      audio: { mediaTypes: ['audio/mpeg', 'audio/wav'], maxBytes: 2_000_000 },
-    });
-    expect(
-      module.resolveModelInfo('my-openai:unknown').inputCapabilities,
-    ).toEqual({});
-  });
-
-  it('resolves contextSize independently per endpoint in manual providers', async () => {
-    const config = mixedConfig();
-    const local = config.providers.local;
-    if (!local || !('endpoints' in local))
-      throw new Error('Expected manual provider');
-    local.endpoints.chat!.knownModels = { 'model:8b': { contextSize: 4_096 } };
-    local.endpoints.api!.knownModels = {
-      'test-model': { contextSize: 32_768 },
-    };
-    const { module } = await setup(config);
-    expect(module.resolveModelInfo('local:chat:model:8b').contextSize).toBe(
-      4_096,
-    );
-    expect(module.resolveModelInfo('local:api:test-model').contextSize).toBe(
-      32_768,
-    );
-  });
-});
-
-describe('Config — input capability validation', () => {
-  it.each([
-    { image: { mediaTypes: [], maxBytes: 100 } },
-    { image: { mediaTypes: ['text/plain'], maxBytes: 100 } },
-    { image: { mediaTypes: ['image/png'], maxBytes: 0 } },
-    { image: { mediaTypes: ['image/png'], maxBytes: 100, extra: true } },
-  ])('rejects malformed image capabilities: %j', (inputCapabilities) => {
-    const config = presetConfig();
-    const provider = config.providers['my-openai'];
-    if (!provider || !('preset' in provider))
-      throw new Error('Expected preset provider');
-    provider.knownModels = {
-      'gpt-4o': { capabilities: { input: inputCapabilities } } as never,
-    };
-
-    expect(klexConfigSchema.safeParse(config).success).toBe(false);
-  });
-
-  it.each([
-    { audio: { mediaTypes: [], maxBytes: 100 } },
-    { audio: { mediaTypes: ['text/plain'], maxBytes: 100 } },
-    { audio: { mediaTypes: ['audio/mpeg'], maxBytes: 0 } },
-    { audio: { mediaTypes: ['audio/mpeg'], maxBytes: 100, extra: true } },
-  ])('rejects malformed audio capabilities: %j', (inputCapabilities) => {
-    const config = presetConfig();
-    const provider = config.providers['my-openai'];
-    if (!provider || !('preset' in provider))
-      throw new Error('Expected preset provider');
-    provider.knownModels = {
-      'gpt-4o': { capabilities: { input: inputCapabilities } } as never,
-    };
-
-    expect(klexConfigSchema.safeParse(config).success).toBe(false);
-  });
-
-  it('resolves image capability with dimension constraints from preset provider knownModels', async () => {
-    const config = presetConfig();
-    const provider = config.providers['my-openai'];
-    if (!provider || !('preset' in provider))
-      throw new Error('Expected preset provider');
-    provider.knownModels = {
-      'gpt-4o': {
-        contextSize: 128_000,
-        capabilities: {
-          input: {
-            image: {
-              mediaTypes: ['image/png', 'image/jpeg'],
-              maxBytes: 1_000_000,
-              maxWidth: 1024,
-              maxHeight: 768,
-              maxTotalPixels: 500_000,
-            },
-          },
-        },
-      },
-    };
-    const { module } = await setup(config);
-    const caps = module.resolveModel('my-openai:gpt-4o').inputCapabilities;
-    expect(caps.image).toEqual({
-      mediaTypes: ['image/png', 'image/jpeg'],
-      maxBytes: 1_000_000,
-      maxWidth: 1024,
-      maxHeight: 768,
-      maxTotalPixels: 500_000,
-    });
-  });
-
-  it('resolves image capability with supports=false from manual endpoint knownModels', async () => {
-    const config = manualConfig();
-    const local = config.providers.local;
-    if (!local || !('endpoints' in local))
-      throw new Error('Expected manual provider');
-    local.endpoints.chat!.knownModels = {
-      'model:8b': {
-        contextSize: 8_192,
-        capabilities: { input: {} },
-      },
-    };
-    const { module } = await setup(config);
-    expect(
-      module.resolveModel('local:chat:model:8b').inputCapabilities.image,
-    ).toBeUndefined();
-  });
-
-  it('returns inputCapabilities.image undefined when not declared', async () => {
-    const config = presetConfig();
-    const provider = config.providers['my-openai'];
-    if (!provider || !('preset' in provider))
-      throw new Error('Expected preset provider');
-    provider.knownModels = {
-      'gpt-4o': { contextSize: 128_000 },
-    };
-    const { module } = await setup(config);
-    expect(
-      module.resolveModel('my-openai:gpt-4o').inputCapabilities.image,
-    ).toBeUndefined();
-  });
-
-  it('returns inputCapabilities.image undefined when knownModels is absent', async () => {
-    const { module } = await setup(manualConfig());
-    expect(
-      module.resolveModel('local:chat:model:8b').inputCapabilities.image,
-    ).toBeUndefined();
-  });
-});
-
-describe('Config — replace (atomic persistence)', () => {
-  it('atomically replaces persisted and active config', async () => {
-    const { directory, module } = await setup();
-    const next = manualConfig('model:70b');
-
-    await module.replace(next);
-
-    expect(module.get()).toEqual(next);
-    expect(
-      JSON.parse(await readFile(join(directory, CONFIG_FILE_NAME), 'utf8')),
-    ).toEqual(versionedConfig(next));
-  });
-
-  it('leaves prior state and file intact after invalid replacement', async () => {
-    const { directory, module } = await setup();
-    const before = await readFile(join(directory, CONFIG_FILE_NAME), 'utf8');
-    const invalid = manualConfig();
-    invalid.officialName = 'x';
-
-    await expect(module.replace(invalid)).rejects.toBeInstanceOf(
-      ConfigValidationError,
-    );
-    expect(module.get()).toEqual(manualConfig());
-    expect(await readFile(join(directory, CONFIG_FILE_NAME), 'utf8')).toBe(
-      before,
-    );
-  });
-
-  it('serializes concurrent replacements', async () => {
-    const { directory, module } = await setup();
-    const first = manualConfig('first');
-    const second = manualConfig('second');
-
-    await Promise.all([module.replace(first), module.replace(second)]);
-
-    expect(module.get()).toEqual(second);
-    expect(
-      JSON.parse(await readFile(join(directory, CONFIG_FILE_NAME), 'utf8')),
-    ).toEqual(versionedConfig(second));
-  });
-
-  it('rejects invalid JSON input', async () => {
-    const { module } = await setup();
-    await expect(module.replace('{ not json')).rejects.toThrow();
-    // Active config should be unchanged
-    expect(module.get()).toEqual(manualConfig());
-  });
-
-  it('accepts an agent with no providers or model selections', async () => {
-    const { module } = await setup();
-    await expect(
-      module.replace({
-        officialName: 'Empty Agent',
-        providers: {},
         modelSelection: {
-          chat: [],
+          chat: ['remote:org:model:v2', 'local:ollama:model:8b'],
           compaction: [],
           memory: [],
           imageVision: [],
@@ -790,1201 +136,451 @@ describe('Config — replace (atomic persistence)', () => {
         },
         mcpServers: {},
       }),
-    ).resolves.toBeDefined();
-  });
-});
-
-describe('Config — mutate', () => {
-  it('applies transform and returns updated config', async () => {
-    const { module } = await setup(
-      noSelectionConfig({
-        remote: { preset: 'openai', auth: { apiKey: 'sk-test' } },
-      }),
     );
-    const result = await module.mutate((current) => ({
-      ...current,
-      providers: {
-        ...current.providers,
-        local: {
-          endpoints: {
-            chat: {
-              url: 'http://localhost:11434/v1',
-              format: 'chat-completions',
-              auth: {},
-            },
-          },
-        },
-      },
-    }));
-    expect(result.providers.local).toBeDefined();
-    expect(result.providers.remote).toBeDefined();
-    expect(module.get().providers.local).toBeDefined();
-  });
+    await prepareConfigStore(dataDirectory);
+    const config = createConfig({
+      logging,
+      dataDirectory,
+      env: { OPENAI_API_KEY: 'secret' },
+    });
+    await config.start();
 
-  it('sees latest state after a previous mutation', async () => {
-    const { module } = await setup(
-      noSelectionConfig({
-        remote: { preset: 'openai', auth: { apiKey: 'sk-test' } },
-      }),
-    );
-    await module.mutate((current) => ({
-      ...current,
-      providers: {
-        ...current.providers,
-        first: { preset: 'openai', auth: { apiKey: 'sk-1' } },
-      },
-    }));
-    const result = await module.mutate((current) => ({
-      ...current,
-      providers: {
-        ...current.providers,
-        second: { preset: 'anthropic', auth: { apiKey: 'sk-2' } },
-      },
-    }));
-    expect(result.providers.first).toBeDefined();
-    expect(result.providers.second).toBeDefined();
-    expect(module.get().providers.first).toBeDefined();
-    expect(module.get().providers.second).toBeDefined();
-  });
-
-  it('serializes concurrent mutations', async () => {
-    const { module } = await setup(
-      noSelectionConfig({
-        remote: { preset: 'openai', auth: { apiKey: 'sk-test' } },
-      }),
-    );
-    await Promise.all([
-      module.mutate((current) => ({
-        ...current,
-        providers: {
-          ...current.providers,
-          a: { preset: 'openai', auth: { apiKey: 'sk-a' } },
-        },
-      })),
-      module.mutate((current) => ({
-        ...current,
-        providers: {
-          ...current.providers,
-          b: { preset: 'openai', auth: { apiKey: 'sk-b' } },
-        },
-      })),
+    expect(config.get().providers.remote).toMatchObject({
+      type: 'openai',
+      settings: { apiKey: '${env:OPENAI_API_KEY}' },
+    });
+    expect(config.get().providers.local).toMatchObject({
+      type: 'chat-completions',
+      settings: { baseUrl: 'http://localhost:11434/v1' },
+    });
+    expect(config.get().modelSelection.chat).toEqual([
+      { providerId: 'remote', modelId: 'org:model:v2' },
+      { providerId: 'local', modelId: 'model:8b' },
     ]);
-    expect(module.get().providers.a).toBeDefined();
-    expect(module.get().providers.b).toBeDefined();
-  });
-
-  it('propagates ConfigValidationError from transform', async () => {
-    const { module } = await setup();
-    await expect(
-      module.mutate(() => {
-        throw new ConfigValidationError('test error', { code: 'not_found' });
-      }),
-    ).rejects.toBeInstanceOf(ConfigValidationError);
-    // State should be unchanged
-    expect(module.get()).toEqual(manualConfig());
-  });
-
-  it('does not validate references through mutate (by design)', async () => {
-    // mutate intentionally skips validateModelReferences so that
-    // non-model-selection mutations succeed even when existing
-    // modelSelection has broken references.
-    const { module } = await setup();
-    const result = await module.mutate((current) => ({
-      ...current,
-      modelSelection: {
-        ...current.modelSelection,
-        chat: ['nonexistent:chat:model'],
-      },
-    }));
-    expect(result.modelSelection.chat).toEqual(['nonexistent:chat:model']);
-  });
-});
-
-describe('Config — subscriptions', () => {
-  it('publishes only committed replacements', async () => {
-    const { module } = await setup();
-    const received: Readonly<KlexConfig>[] = [];
-    module.subscribe((config) => {
-      received.push(config);
-    });
-
-    const invalid = manualConfig();
-    invalid.officialName = 'x';
-    await expect(module.replace(invalid)).rejects.toBeInstanceOf(
-      ConfigValidationError,
+    expect(
+      config.resolveModel({ providerId: 'remote', modelId: 'org:model:v2' })
+        .settings,
+    ).toMatchObject({ apiKey: 'secret' });
+    const persisted = JSON.parse(
+      await readFile(join(dataDirectory, CONFIG_FILE_NAME), 'utf8'),
     );
-    const next = manualConfig('committed');
-    await module.replace(next);
-
-    expect(received).toEqual([next]);
+    expect(persisted).toMatchObject(
+      JSON.parse(JSON.stringify(config.get())) as Record<string, unknown>,
+    );
+    expect(persisted._klex).toMatchObject({
+      store: 'config',
+      schemaVersion: 2,
+    });
+    expect(parseKlexConfig(persisted).configVersion).toBe(2);
+    await config.close();
   });
 
-  it('supports unsubscribe and clears listeners on close', async () => {
-    const { module } = await setup();
-    let calls = 0;
-    const unsubscribe = module.subscribe(() => {
-      calls += 1;
+  it('assigns deterministic instance IDs when migrating a multi-endpoint provider', () => {
+    const parsed = migrateLegacyKlexConfig({
+      officialName: 'Migration',
+      providers: {
+        remote: {
+          endpoints: {
+            primary: {
+              url: 'https://primary.example/v1',
+              format: 'chat-completions',
+              auth: {},
+            },
+            fallback: {
+              url: 'https://fallback.example/v1',
+              format: 'open-responses',
+              auth: {},
+            },
+          },
+        },
+      },
+      modelSelection: {
+        chat: [
+          {
+            model: 'remote:primary:org:model:v2',
+            providerOptions: { openai: { reasoningEffort: 'medium' } },
+          },
+          'remote:fallback:org:model:v3',
+        ],
+      },
     });
+
+    expect(Object.keys(parsed.providers).sort()).toEqual([
+      'remote--fallback',
+      'remote--primary',
+    ]);
+    expect(parsed.modelSelection.chat).toEqual([
+      {
+        providerId: 'remote--primary',
+        modelId: 'org:model:v2',
+        providerOptions: { openai: { reasoningEffort: 'medium' } },
+      },
+      { providerId: 'remote--fallback', modelId: 'org:model:v3' },
+    ]);
+  });
+
+  it('preserves complete legacy provider, model, selection, and environment semantics', () => {
+    const parsed = migrateLegacyKlexConfig({
+      officialName: 'Complete migration',
+      providers: {
+        cloud: {
+          preset: 'anthropic',
+          auth: { apiKey: '{env:ANTHROPIC_KEY}' },
+          knownModels: {
+            'claude:model:v1': {
+              displayName: 'Claude override',
+              contextSize: 100_000,
+              capabilities: { voice: { tts: true } },
+            },
+          },
+        },
+        gateways: {
+          endpoints: {
+            primary: {
+              url: 'https://primary.example/v1',
+              format: 'chat-completions',
+              auth: {
+                headers: {
+                  Authorization: 'Bearer {env:GATEWAY_TOKEN}',
+                  'X-Literal': '$${env:DO_NOT_RESOLVE}',
+                },
+              },
+              knownModels: {
+                'org:model:v2': {
+                  capabilities: {
+                    input: {
+                      image: {
+                        mediaTypes: ['image/png'],
+                        maxBytes: 1024,
+                      },
+                    },
+                  },
+                },
+              },
+            },
+            fallback: {
+              url: 'https://fallback.example/v1',
+              format: 'messages',
+              auth: {},
+            },
+          },
+        },
+      },
+      modelSelection: {
+        chat: [
+          {
+            model: 'gateways:primary:org:model:v2',
+            providerOptions: { openai: { reasoningEffort: 'high' } },
+          },
+        ],
+        compaction: ['cloud:claude:model:v1'],
+        memory: [],
+        imageVision: ['gateways:primary:org:model:v2'],
+        audioListening: [],
+        voice: {
+          sts: [],
+          tts: ['cloud:claude:model:v1'],
+          stt: ['gateways:fallback:voice:model:v3'],
+        },
+      },
+      mcpServers: {},
+    });
+
+    expect(parsed.providers.cloud).toMatchObject({
+      type: 'anthropic',
+      settings: { apiKey: '${env:ANTHROPIC_KEY}' },
+      knownModels: {
+        'claude:model:v1': {
+          displayName: 'Claude override',
+          contextSize: 100_000,
+          capabilities: { voice: { tts: true } },
+        },
+      },
+    });
+    expect(parsed.providers['gateways--primary']).toMatchObject({
+      type: 'chat-completions',
+      settings: {
+        headers: {
+          Authorization: 'Bearer ${env:GATEWAY_TOKEN}',
+          'X-Literal': '$${env:DO_NOT_RESOLVE}',
+        },
+      },
+      knownModels: {
+        'org:model:v2': {
+          capabilities: { input: { image: { maxBytes: 1024 } } },
+        },
+      },
+    });
+    expect(parsed.providers['gateways--fallback']?.type).toBe(
+      'anthropic-messages',
+    );
+    expect(parsed.modelSelection).toMatchObject({
+      chat: [
+        {
+          providerId: 'gateways--primary',
+          modelId: 'org:model:v2',
+          providerOptions: { openai: { reasoningEffort: 'high' } },
+        },
+      ],
+      compaction: [{ providerId: 'cloud', modelId: 'claude:model:v1' }],
+      imageVision: [
+        { providerId: 'gateways--primary', modelId: 'org:model:v2' },
+      ],
+      voice: {
+        tts: [{ providerId: 'cloud', modelId: 'claude:model:v1' }],
+        stt: [
+          {
+            providerId: 'gateways--fallback',
+            modelId: 'voice:model:v3',
+          },
+        ],
+      },
+    });
+  });
+
+  it('migrates legacy OpenAI-compatible voice endpoints without blocking startup', () => {
+    const parsed = migrateLegacyKlexConfig({
+      officialName: 'Voice migration',
+      providers: {
+        voice: {
+          endpoints: {
+            realtime: {
+              url: 'https://voice.example/v1',
+              format: 'realtime',
+              auth: { apiKey: '{env:VOICE_KEY}' },
+            },
+          },
+        },
+      },
+      modelSelection: {
+        voice: { sts: ['voice:realtime:voice:model'] },
+      },
+      mcpServers: {},
+    });
+    expect(parsed.providers.voice).toMatchObject({
+      type: 'openai',
+      settings: {
+        baseUrl: 'https://voice.example/v1',
+        apiKey: '${env:VOICE_KEY}',
+      },
+    });
+    expect(parsed.modelSelection.voice.sts).toEqual([
+      { providerId: 'voice', modelId: 'voice:model' },
+    ]);
+  });
+
+  it('commits structural migration before runtime environment validation', async () => {
+    const dataDirectory = await directory();
+    const input = {
+      officialName: 'Atomic migration',
+      providers: {
+        remote: {
+          preset: 'openai',
+          auth: { apiKey: '{env:MISSING}' },
+        },
+      },
+      modelSelection: { chat: ['remote:model'] },
+      mcpServers: {},
+    };
+    const configPath = join(dataDirectory, CONFIG_FILE_NAME);
+    await writeFile(configPath, JSON.stringify(input));
+    await prepareConfigStore(dataDirectory);
+    const config = createConfig({ logging, dataDirectory, env: {} });
+
+    await expect(config.start()).rejects.toThrow(
+      "Required environment variable 'MISSING' is not defined",
+    );
+    expect(JSON.parse(await readFile(configPath, 'utf8'))).toMatchObject({
+      configVersion: 2,
+      providers: {
+        remote: {
+          type: 'openai',
+          settings: { apiKey: '${env:MISSING}' },
+        },
+      },
+      modelSelection: {
+        chat: [{ providerId: 'remote', modelId: 'model' }],
+      },
+    });
+  });
+
+  it('fails migration instead of overwriting colliding instance IDs', () => {
+    expect(() =>
+      migrateLegacyKlexConfig({
+        officialName: 'Migration',
+        providers: {
+          remote: {
+            endpoints: {
+              primary: {
+                url: 'https://primary.example/v1',
+                format: 'chat-completions',
+                auth: {},
+              },
+              fallback: {
+                url: 'https://fallback.example/v1',
+                format: 'chat-completions',
+                auth: {},
+              },
+            },
+          },
+          'remote--primary': {
+            preset: 'openai',
+            auth: {},
+          },
+        },
+      }),
+    ).toThrow("Provider migration ID collision at 'remote--primary'");
+  });
+
+  it('interpolates environment variables recursively without changing persisted placeholders', async () => {
+    const dataDirectory = await directory(true);
+    const config = createConfig({
+      logging,
+      dataDirectory,
+      env: { HOST: 'example.test', TENANT: 'acme', TOKEN: 'resolved' },
+    });
+    await config.start();
+    await config.writeProviderInstance('custom', {
+      type: 'chat-completions',
+      settings: {
+        baseUrl: 'https://${env:HOST}/v1/${env:TENANT}',
+        headers: {
+          Authorization: 'Bearer ${env:TOKEN}',
+          'X-Literal': '$${env:DO_NOT_RESOLVE}',
+        },
+      },
+    });
+
+    expect(
+      config.resolveModel({ providerId: 'custom', modelId: 'model' }).settings,
+    ).toMatchObject({
+      baseUrl: 'https://example.test/v1/acme',
+      headers: {
+        Authorization: 'Bearer resolved',
+        'X-Literal': '${env:DO_NOT_RESOLVE}',
+      },
+    });
+    expect(config.get().providers.custom?.settings).toMatchObject({
+      baseUrl: 'https://${env:HOST}/v1/${env:TENANT}',
+      headers: {
+        Authorization: 'Bearer ${env:TOKEN}',
+        'X-Literal': '$${env:DO_NOT_RESOLVE}',
+      },
+    });
+    await config.close();
+  });
+
+  it('interpolates nested arrays without interpolating object keys', () => {
+    expect(
+      interpolateEnvironment(
+        {
+          nested: [{ value: 'prefix-${env:TOKEN}-suffix' }],
+          '${env:KEY_IS_NOT_INTERPOLATED}': 'value',
+        },
+        { TOKEN: 'resolved', KEY_IS_NOT_INTERPOLATED: 'changed' },
+      ),
+    ).toEqual({
+      nested: [{ value: 'prefix-resolved-suffix' }],
+      '${env:KEY_IS_NOT_INTERPOLATED}': 'value',
+    });
+  });
+
+  it('rejects unresolved environment references', async () => {
+    const dataDirectory = await directory(true);
+    const config = createConfig({ logging, dataDirectory, env: {} });
+    await config.start();
+    const update = config.writeProviderInstance('custom', {
+      type: 'openai',
+      settings: { apiKey: '${env:MISSING}' },
+    });
+    await expect(update).rejects.toMatchObject({
+      name: 'ConfigValidationError',
+      code: 'environment_missing',
+      message: "Required environment variable 'MISSING' is not defined",
+    } satisfies Partial<ConfigValidationError>);
+    expect(config.get().providers.custom).toBeUndefined();
+    await config.close();
+  });
+
+  it('keeps replacement atomic and notifies subscribers after serialized mutations', async () => {
+    const config = createConfig({
+      logging,
+      dataDirectory: await directory(true),
+      env: { API_KEY: 'resolved' },
+    });
+    await config.start();
+    const notifications: string[] = [];
+    const unsubscribe = config.subscribe((value) => {
+      notifications.push(value.officialName);
+    });
+
+    const original = config.get();
+    await expect(
+      config.replace({ configVersion: 2, officialName: '' }),
+    ).rejects.toThrow();
+    expect(config.get()).toEqual(original);
+
+    await Promise.all([
+      config.mutate((current) => ({ ...current, officialName: 'Updated' })),
+      config.addMcpServer('local', { command: 'node', args: ['server.js'] }),
+      config.writeProviderInstance('openai-main', {
+        type: 'openai',
+        settings: { apiKey: '${env:API_KEY}' },
+      }),
+    ]);
+    expect(config.getMcpServers()).toEqual({
+      local: { command: 'node', args: ['server.js'] },
+    });
+    expect(config.get().providers['openai-main']).toMatchObject({
+      type: 'openai',
+      settings: { apiKey: '${env:API_KEY}' },
+    });
+    expect(notifications).toHaveLength(3);
+
+    await config.updateMcpServer('local', { command: 'bun' });
+    await config.writeModelSelection({
+      ...emptyModelSelection,
+      chat: [{ providerId: 'openai-main', modelId: 'gpt-test' }],
+    });
+    expect(config.getModelSelection('chat')).toEqual([
+      { providerId: 'openai-main', modelId: 'gpt-test' },
+    ]);
+    await config.removeMcpServer('local');
+    await config.deleteProviderInstance('openai-main');
+    expect(config.getMcpServers()).toEqual({});
+    expect(config.get().providers).toEqual({});
+
     unsubscribe();
-    await module.replace(manualConfig('ignored'));
-    module.subscribe(() => {
-      calls += 1;
-    });
-    await module.close();
-
-    expect(calls).toBe(0);
+    await config.mutate((current) => ({ ...current, officialName: 'Ignored' }));
+    expect(notifications).toHaveLength(7);
+    await config.close();
   });
 
-  it('isolates synchronous and asynchronous listener failures', async () => {
-    const { module } = await setup();
-    let successfulCalls = 0;
-    module.subscribe(() => {
-      throw new Error('sync failure');
-    });
-    module.subscribe(async () => {
-      throw new Error('async failure');
-    });
-    module.subscribe(() => {
-      successfulCalls += 1;
-    });
-
-    await expect(module.replace(manualConfig('next'))).resolves.toBeDefined();
-    await Promise.resolve();
-    expect(successfulCalls).toBe(1);
-  });
-
-  it('does not await asynchronous listeners', async () => {
-    const { module } = await setup();
-    let release: (() => void) | undefined;
-    module.subscribe(
-      () =>
-        new Promise<void>((resolve) => {
-          release = resolve;
-        }),
-    );
-
-    await expect(module.replace(manualConfig('next'))).resolves.toBeDefined();
-    expect(release).toBeDefined();
-    release?.();
-  });
-});
-
-describe('Config — validation', () => {
-  it('rejects redaction markers in manual provider apiKey', async () => {
-    const { module } = await setup();
-    const config = manualConfig();
-    const local = config.providers.local;
-    if (!local || !('endpoints' in local))
-      throw new Error('Expected fixture provider with endpoints');
-    // biome-ignore lint/style/noNonNullAssertion: guarded by throw above
-    local.endpoints.chat!.auth.apiKey = '[REDACTED]';
-    await expect(module.replace(config)).rejects.toMatchObject({
-      code: 'validation',
-    });
-  });
-
-  it('rejects redaction markers in preset provider apiKey', async () => {
-    const { module } = await setup();
-    const config = presetConfig();
-    const provider = config.providers['my-openai'];
-    if (!provider || !('preset' in provider))
-      throw new Error('Expected preset provider');
-    provider.auth.apiKey = '[REDACTED]';
-    await expect(module.replace(config)).rejects.toMatchObject({
-      code: 'validation',
-    });
-  });
-
-  it('rejects redaction markers in custom header values', async () => {
-    const { module } = await setup();
-    const config = manualConfig();
-    const local = config.providers.local;
-    if (!local || !('endpoints' in local))
-      throw new Error('Expected fixture provider with endpoints');
-    // biome-ignore lint/style/noNonNullAssertion: guarded by throw above
-    local.endpoints.chat!.auth.headers = { 'X-Custom': '[REDACTED]' };
-    await expect(module.replace(config)).rejects.toMatchObject({
-      code: 'validation',
-    });
-  });
-
-  it('rejects redaction markers in MCP HTTP server headers', async () => {
-    const { module } = await setup();
-    const config = manualConfig();
-    config.mcpServers.remote = {
-      url: 'https://example.com/mcp',
-      headers: { Authorization: '[REDACTED]' },
-    };
-    await expect(module.replace(config)).rejects.toMatchObject({
-      code: 'validation',
-    });
-  });
-
-  it('accepts model selection referencing unknown provider', async () => {
-    const { module } = await setup();
-    const config = manualConfig();
-    config.modelSelection.chat = ['nonexistent:chat:model'];
-    await expect(module.replace(config)).resolves.toBeDefined();
-    expect(module.getModelSelection('chat')).toEqual([]);
-  });
-
-  it('accepts model selection referencing unknown endpoint in manual provider', async () => {
-    const { module } = await setup();
-    const config = manualConfig();
-    config.modelSelection.chat = ['local:missing:model'];
-    await expect(module.replace(config)).resolves.toBeDefined();
-    expect(module.getModelSelection('chat')).toEqual([]);
-  });
-
-  it('accepts any model ID for preset providers', async () => {
-    const { module } = await setup();
-    const config = presetConfig();
-    config.modelSelection.chat = ['my-openai:gpt-999'];
-    await expect(module.replace(config)).resolves.toBeDefined();
-  });
-
-  it('accepts unresolved model selection for a manual provider', async () => {
-    const { module } = await setup();
-    const config = manualConfig();
-    config.modelSelection.chat = ['local:model'];
-    await expect(module.replace(config)).resolves.toBeDefined();
-    expect(module.getModelSelection('chat')).toEqual([]);
-  });
-
-  it('rejects provider with both preset and endpoints (strict schema)', async () => {
-    const { module } = await setup();
-    const config = manualConfig();
-    // Force a shape that has both — the z.strict() should reject this
-    const local = config.providers.local;
-    if (!local || !('endpoints' in local))
-      throw new Error('Expected manual provider');
-    (local as Record<string, unknown>).preset = 'openai';
-    await expect(module.replace(config)).rejects.toBeInstanceOf(
-      ConfigValidationError,
-    );
-  });
-
-  it('rejects provider with neither preset nor endpoints', async () => {
-    const { module } = await setup();
-    const config = manualConfig();
-    (config.providers as Record<string, unknown>).local = { auth: {} };
-    await expect(module.replace(config)).rejects.toBeInstanceOf(
-      ConfigValidationError,
-    );
-  });
-});
-
-describe('Config — env var resolution', () => {
-  it('resolves {env:VAR} in preset provider apiKey', async () => {
-    process.env.KLEX_TEST_KEY = 'env-resolved-key';
-    try {
-      const config = presetConfig();
-      const provider = config.providers['my-openai'];
-      if (!provider || !('preset' in provider))
-        throw new Error('Expected preset provider');
-      provider.auth.apiKey = '{env:KLEX_TEST_KEY}';
-      const { module } = await setup(config);
-      const resolved = module.resolveModel('my-openai:gpt-4o');
-      expect(resolved.endpoint.auth.apiKey).toBe('env-resolved-key');
-    } finally {
-      delete process.env.KLEX_TEST_KEY;
-    }
-  });
-
-  it('resolves {env:VAR} in manual endpoint apiKey', async () => {
-    process.env.KLEX_TEST_KEY = 'manual-env-key';
-    try {
-      const config = manualConfig();
-      const local = config.providers.local;
-      if (!local || !('endpoints' in local))
-        throw new Error('Expected manual provider');
-      // biome-ignore lint/style/noNonNullAssertion: guarded by throw above
-      local.endpoints.chat!.auth.apiKey = '{env:KLEX_TEST_KEY}';
-      const { module } = await setup(config);
-      const resolved = module.resolveModel('local:chat:model:8b');
-      expect(resolved.endpoint.auth.apiKey).toBe('manual-env-key');
-    } finally {
-      delete process.env.KLEX_TEST_KEY;
-    }
-  });
-
-  it('throws when env var is not set', async () => {
-    const config = presetConfig();
-    const provider = config.providers['my-openai'];
-    if (!provider || !('preset' in provider))
-      throw new Error('Expected preset provider');
-    provider.auth.apiKey = '{env:NONEXISTENT_VAR_XYZ}';
-    const { module } = await setup(config);
-    expect(() => module.resolveModel('my-openai:gpt-4o')).toThrow(
-      /NONEXISTENT_VAR_XYZ/,
-    );
-  });
-
-  it('passes through literal apiKey values', async () => {
-    const { module } = await setup(presetConfig());
-    const resolved = module.resolveModel('my-openai:gpt-4o');
-    expect(resolved.endpoint.auth.apiKey).toBe('sk-test');
-  });
-});
-
-describe('Config — MCP authentication discovery', () => {
-  it('accepts a URL-only Cloud MCP server', () => {
-    const config = manualConfig();
-    config.mcpServers.slack = {
-      url: 'https://cloud.example/api/integrations/slack/mcp',
-    };
-
-    expect(klexConfigSchema.safeParse(config).success).toBe(true);
-  });
-
-  it('rejects the removed MCP auth field', () => {
-    const base = manualConfig();
-    const config = {
-      ...base,
-      mcpServers: {
-        slack: {
-          url: 'https://cloud.example/api/integrations/slack/mcp',
-          auth: {
-            type: 'cloud',
-            resource: 'https://cloud.example/api/integrations/slack/mcp',
-            scopes: ['mcp:use'],
-          },
+  it('validates explicit object references for voice and arbitrary model IDs', () => {
+    const parsed = klexConfigSchema.parse({
+      configVersion: 2,
+      officialName: 'Agent',
+      providers: {
+        p: {
+          type: 'openai',
+          settings: { apiKey: 'test-key' },
+          knownModels: { 'org:model:v3': {} },
         },
       },
-    };
-
-    expect(klexConfigSchema.safeParse(config).success).toBe(false);
-  });
-});
-
-describe('Config — getMcpServers', () => {
-  it('returns configured MCP servers', async () => {
-    const config = manualConfig();
-    config.mcpServers.remote = {
-      url: 'https://example.com/mcp',
-      headers: { 'x-api-key': 'secret' },
-    };
-    const { module } = await setup(config);
-    const servers = module.getMcpServers();
-    expect(servers.remote).toBeDefined();
-    const remote = servers.remote;
-    expect(remote && 'url' in remote ? remote.url : '').toBe(
-      'https://example.com/mcp',
-    );
-  });
-
-  it('resolves environment references in MCP HTTP headers without mutating persisted config', async () => {
-    process.env.KLEX_TEST_MCP_TOKEN = 'resolved-secret';
-    try {
-      const config = manualConfig();
-      config.mcpServers.remote = {
-        url: 'https://example.com/mcp',
-        headers: {
-          Authorization: '{env:KLEX_TEST_MCP_TOKEN}',
-          'X-Literal': 'literal-value',
-        },
-      };
-      const { module } = await setup(config);
-
-      expect(module.getMcpServers().remote).toMatchObject({
-        headers: {
-          Authorization: 'resolved-secret',
-          'X-Literal': 'literal-value',
-        },
-      });
-      expect(module.get().mcpServers.remote).toMatchObject({
-        headers: { Authorization: '{env:KLEX_TEST_MCP_TOKEN}' },
-      });
-    } finally {
-      delete process.env.KLEX_TEST_MCP_TOKEN;
-    }
-  });
-
-  it('rejects unresolved environment references when MCP servers are consumed', async () => {
-    const config = manualConfig();
-    config.mcpServers.remote = {
-      url: 'https://example.com/mcp',
-      headers: { Authorization: '{env:KLEX_TEST_MISSING_MCP_TOKEN}' },
-    };
-    const { module } = await setup(config);
-
-    expect(() => module.getMcpServers()).toThrow(
-      'Environment variable KLEX_TEST_MISSING_MCP_TOKEN is not set',
-    );
-  });
-
-  it('returns defensive MCP server copies', async () => {
-    const config = manualConfig();
-    config.mcpServers.remote = {
-      url: 'https://example.com/mcp',
-      headers: { 'X-Test': 'original' },
-    };
-    const { module } = await setup(config);
-    const servers = module.getMcpServers();
-    const remote = servers.remote;
-    if (remote && 'url' in remote && remote.headers) {
-      remote.headers['X-Test'] = 'changed';
-    }
-    expect(module.getMcpServers().remote).toMatchObject({
-      headers: { 'X-Test': 'original' },
-    });
-  });
-
-  it('returns empty record when no MCP servers configured', async () => {
-    const { module } = await setup();
-    expect(module.getMcpServers()).toEqual({});
-  });
-
-  it.each([
-    ['legacy', 'legacy'],
-    ['auto', 'auto'],
-    ['pinned', { pin: '2026-07-28' }],
-  ] as const)('accepts %s MCP version negotiation', async (_label, mode) => {
-    const config = manualConfig();
-    config.mcpServers.remote = {
-      url: 'https://example.com/mcp',
-      versionNegotiation: mode,
-    };
-    const { module } = await setup(config);
-    expect(module.getMcpServers().remote?.versionNegotiation).toEqual(mode);
-  });
-
-  it('keeps omitted MCP version negotiation valid', async () => {
-    const config = manualConfig();
-    config.mcpServers.local = { command: 'mcp-server' };
-    const { module } = await setup(config);
-    expect(module.getMcpServers().local?.versionNegotiation).toBeUndefined();
-  });
-
-  it.each(['http', 'streamable-http'] as const)(
-    'accepts the %s transport type used by other MCP clients',
-    async (type) => {
-      const config = manualConfig();
-      config.mcpServers.remote = {
-        type,
-        url: 'https://example.com/mcp',
-      };
-      const { module } = await setup(config);
-      expect(module.getMcpServers().remote).toMatchObject({ type });
-    },
-  );
-
-  it('accepts the explicit stdio transport type', async () => {
-    const config = manualConfig();
-    config.mcpServers.local = { type: 'stdio', command: 'mcp-server' };
-    const { module } = await setup(config);
-    expect(module.getMcpServers().local).toMatchObject({ type: 'stdio' });
-  });
-
-  it.each([{}, { pin: '' }, 'modern'])(
-    'rejects invalid MCP version negotiation: %j',
-    async (versionNegotiation) => {
-      const config = manualConfig() as unknown as Record<string, unknown>;
-      const mcpServers = config.mcpServers as Record<string, unknown>;
-      mcpServers.remote = {
-        url: 'https://example.com/mcp',
-        versionNegotiation,
-      };
-      const { module } = await setup();
-      await expect(module.replace(config)).rejects.toBeInstanceOf(
-        ConfigValidationError,
-      );
-    },
-  );
-});
-
-describe('Config — MCP server CRUD', () => {
-  const stdioServer = { command: 'mcp-server', args: ['--port', '3000'] };
-  const httpServer = { url: 'https://example.com/mcp' };
-
-  it('addMcpServer adds a server', async () => {
-    const { module } = await setup();
-    await module.addMcpServer('new-server', stdioServer);
-    expect(module.getMcpServers()['new-server']).toBeDefined();
-  });
-
-  it('addMcpServer rejects duplicate name', async () => {
-    const { module } = await setup();
-    await module.addMcpServer('new-server', stdioServer);
-    await expect(
-      module.addMcpServer('new-server', httpServer),
-    ).rejects.toMatchObject({ code: 'already_exists' });
-  });
-
-  it('updateMcpServer replaces an existing server', async () => {
-    const { module } = await setup();
-    await module.addMcpServer('srv', stdioServer);
-    await module.updateMcpServer('srv', httpServer);
-    const server = module.getMcpServers().srv;
-    expect(server && 'url' in server ? server.url : '').toBe(
-      'https://example.com/mcp',
-    );
-  });
-
-  it('updateMcpServer rejects unknown server', async () => {
-    const { module } = await setup();
-    await expect(
-      module.updateMcpServer('nonexistent', stdioServer),
-    ).rejects.toMatchObject({ code: 'not_found' });
-  });
-
-  it('removeMcpServer removes a server', async () => {
-    const { module } = await setup();
-    await module.addMcpServer('srv', stdioServer);
-    await module.removeMcpServer('srv');
-    expect(module.getMcpServers().srv).toBeUndefined();
-  });
-
-  it('removeMcpServer rejects unknown server', async () => {
-    const { module } = await setup();
-    await expect(module.removeMcpServer('nonexistent')).rejects.toMatchObject({
-      code: 'not_found',
-    });
-  });
-});
-
-describe('Config — mutate skips validateModelReferences', () => {
-  it('allows mutating non-model-selection fields when modelSelection has broken references', async () => {
-    // Start with a valid config, then use mutate to introduce a broken
-    // model selection reference (mutate skips reference validation).
-    const { module } = await setup(
-      noSelectionConfig({
-        local: {
-          endpoints: {
-            chat: {
-              url: 'http://localhost:11434/v1',
-              format: 'chat-completions',
-              auth: {},
-            },
-          },
-        },
-      }),
-    );
-    await module.mutate((current) => ({
-      ...current,
       modelSelection: {
-        ...current.modelSelection,
-        chat: ['nonexistent:model'],
-      },
-    }));
-
-    // A subsequent non-model-selection mutation should succeed even though
-    // modelSelection references a non-existent provider.
-    await module.addEndpoint('local', 'api', {
-      url: 'http://localhost:8080/v1',
-      format: 'open-responses',
-      auth: {},
-    });
-    const provider = module.get().providers.local;
-    expect(
-      provider && 'endpoints' in provider ? provider.endpoints.api : null,
-    ).toBeDefined();
-  });
-});
-
-function noSelectionConfig(providers: KlexConfig['providers']): KlexConfig {
-  return {
-    officialName: 'Test Agent',
-    providers,
-    modelSelection: {
-      chat: [],
-      compaction: [],
-      memory: [],
-      imageVision: [],
-      audioListening: [],
-      voice: { sts: [], tts: [], stt: [] },
-    },
-    mcpServers: {},
-  };
-}
-
-describe('Config — provider CRUD', () => {
-  const newPresetProvider: ProviderConfig = {
-    preset: 'anthropic',
-    auth: { apiKey: 'sk-new' },
-  };
-
-  const newManualProvider: ProviderConfig = {
-    endpoints: {
-      api: {
-        url: 'http://localhost:9000/v1',
-        format: 'chat-completions',
-        auth: {},
-      },
-    },
-  };
-
-  it('addProvider adds a new preset provider', async () => {
-    const { module } = await setup();
-    await module.addProvider('new-openai', newPresetProvider);
-    const provider = module.get().providers['new-openai'];
-    expect(provider).toBeDefined();
-    expect(provider && 'preset' in provider ? provider.preset : '').toBe(
-      'anthropic',
-    );
-  });
-
-  it('addProvider adds a new manual provider', async () => {
-    const { module } = await setup();
-    await module.addProvider('new-local', newManualProvider);
-    const provider = module.get().providers['new-local'];
-    expect(provider).toBeDefined();
-    expect(
-      provider && 'endpoints' in provider ? provider.endpoints.api : null,
-    ).toBeDefined();
-  });
-
-  it('addProvider rejects duplicate name', async () => {
-    const { module } = await setup();
-    await expect(
-      module.addProvider('local', newManualProvider),
-    ).rejects.toBeInstanceOf(ConfigValidationError);
-  });
-
-  it('updateProvider replaces a preset provider with a manual provider', async () => {
-    const { module } = await setup(
-      noSelectionConfig({
-        'my-openai': { preset: 'openai', auth: { apiKey: 'sk-test' } },
-      }),
-    );
-    await module.updateProvider('my-openai', newManualProvider);
-    const provider = module.get().providers['my-openai'];
-    expect(provider).toBeDefined();
-    expect(
-      provider && 'endpoints' in provider ? provider.endpoints.api : null,
-    ).toBeDefined();
-  });
-
-  it('updateProvider rejects unknown provider', async () => {
-    const { module } = await setup();
-    await expect(
-      module.updateProvider('nonexistent', newPresetProvider),
-    ).rejects.toBeInstanceOf(ConfigValidationError);
-  });
-
-  it('removeProvider deletes the provider', async () => {
-    const { module } = await setup(
-      noSelectionConfig({
-        remote: { preset: 'openai', auth: { apiKey: 'sk-test' } },
-        local: {
-          endpoints: {
-            chat: {
-              url: 'http://localhost:11434/v1',
-              format: 'chat-completions',
-              auth: {},
-            },
-          },
+        chat: [{ providerId: 'p', modelId: 'org:model:v3' }],
+        compaction: [],
+        memory: [],
+        imageVision: [],
+        audioListening: [],
+        voice: {
+          sts: [{ providerId: 'p', modelId: 'voice:model' }],
+          tts: [],
+          stt: [],
         },
-      }),
-    );
-    await module.removeProvider('remote');
-    expect(module.get().providers.remote).toBeUndefined();
-  });
-
-  it('removeProvider cascades — deletes all endpoints within the provider', async () => {
-    const { module } = await setup(
-      noSelectionConfig({
-        remote: { preset: 'openai', auth: { apiKey: 'sk-test' } },
-        local: {
-          endpoints: {
-            chat: {
-              url: 'http://localhost:11434/v1',
-              format: 'chat-completions',
-              auth: {},
-            },
-            api: {
-              url: 'http://localhost:8080/v1',
-              format: 'open-responses',
-              auth: { apiKey: 'local-key' },
-            },
-          },
-        },
-      }),
-    );
-    await module.removeProvider('local');
-    expect(module.get().providers.local).toBeUndefined();
-  });
-
-  it('removeProvider rejects unknown provider', async () => {
-    const { module } = await setup();
-    await expect(module.removeProvider('nonexistent')).rejects.toBeInstanceOf(
-      ConfigValidationError,
-    );
-  });
-
-  it('removeProvider rejects when model selection still references the provider', async () => {
-    const { module } = await setup();
-    // manualConfig has modelSelection.chat = ['local:chat:model:8b']
-    await expect(module.removeProvider('local')).rejects.toMatchObject({
-      code: 'referential_integrity',
-    });
-  });
-});
-
-describe('Config — endpoint CRUD', () => {
-  const newEndpoint: EndpointConfig = {
-    url: 'http://localhost:7000/v1',
-    format: 'open-responses',
-    auth: { apiKey: 'endpoint-key' },
-  };
-
-  it('addEndpoint adds an endpoint to a manual provider', async () => {
-    const { module } = await setup();
-    await module.addEndpoint('local', 'new-ep', newEndpoint);
-    const provider = module.get().providers.local;
-    expect(
-      provider && 'endpoints' in provider ? provider.endpoints['new-ep'] : null,
-    ).toBeDefined();
-  });
-
-  it('addEndpoint rejects unknown provider', async () => {
-    const { module } = await setup();
-    await expect(
-      module.addEndpoint('nonexistent', 'ep', newEndpoint),
-    ).rejects.toBeInstanceOf(ConfigValidationError);
-  });
-
-  it('addEndpoint rejects preset providers', async () => {
-    const { module } = await setup(presetConfig());
-    await expect(
-      module.addEndpoint('my-openai', 'ep', newEndpoint),
-    ).rejects.toBeInstanceOf(ConfigValidationError);
-  });
-
-  it('addEndpoint rejects duplicate endpoint name', async () => {
-    const { module } = await setup(mixedConfig());
-    await expect(
-      module.addEndpoint('local', 'chat', newEndpoint),
-    ).rejects.toBeInstanceOf(ConfigValidationError);
-  });
-
-  it('updateEndpoint replaces the endpoint config', async () => {
-    const { module } = await setup();
-    await module.updateEndpoint('local', 'chat', newEndpoint);
-    const provider = module.get().providers.local;
-    const ep =
-      provider && 'endpoints' in provider ? provider.endpoints.chat : null;
-    expect(ep?.url).toBe('http://localhost:7000/v1');
-    expect(ep?.format).toBe('open-responses');
-  });
-
-  it('updateEndpoint preserves knownModels on the endpoint', async () => {
-    const { module } = await setup();
-    // Add a known model first
-    await module.addKnownModel(
-      'local',
-      'llama3',
-      {
-        displayName: 'Test Model',
-        contextSize: 128_000,
       },
-      'chat',
-    );
-    // Now update the endpoint
-    await module.updateEndpoint('local', 'chat', newEndpoint);
-    const provider = module.get().providers.local;
-    const ep =
-      provider && 'endpoints' in provider ? provider.endpoints.chat : null;
-    expect(ep?.url).toBe('http://localhost:7000/v1');
-    expect(ep?.knownModels?.llama3).toEqual({
-      displayName: 'Test Model',
-      contextSize: 128_000,
+      mcpServers: {},
     });
-  });
-
-  it('updateEndpoint rejects unknown provider', async () => {
-    const { module } = await setup();
-    await expect(
-      module.updateEndpoint('nonexistent', 'ep', newEndpoint),
-    ).rejects.toBeInstanceOf(ConfigValidationError);
-  });
-
-  it('updateEndpoint rejects unknown endpoint', async () => {
-    const { module } = await setup();
-    await expect(
-      module.updateEndpoint('local', 'nonexistent', newEndpoint),
-    ).rejects.toBeInstanceOf(ConfigValidationError);
-  });
-
-  it('updateEndpoint rejects preset providers', async () => {
-    const { module } = await setup(presetConfig());
-    await expect(
-      module.updateEndpoint('my-openai', 'ep', newEndpoint),
-    ).rejects.toBeInstanceOf(ConfigValidationError);
-  });
-
-  it('removeEndpoint removes an endpoint from a manual provider', async () => {
-    const { module } = await setup(
-      noSelectionConfig({
-        local: {
-          endpoints: {
-            chat: {
-              url: 'http://localhost:11434/v1',
-              format: 'chat-completions',
-              auth: {},
-            },
-            api: {
-              url: 'http://localhost:8080/v1',
-              format: 'open-responses',
-              auth: { apiKey: 'local-key' },
-            },
-          },
-        },
-      }),
-    );
-    await module.removeEndpoint('local', 'chat');
-    const provider = module.get().providers.local;
-    expect(
-      provider && 'endpoints' in provider ? provider.endpoints.chat : null,
-    ).toBeUndefined();
-  });
-
-  it('removeEndpoint rejects unknown provider', async () => {
-    const { module } = await setup();
-    await expect(
-      module.removeEndpoint('nonexistent', 'ep'),
-    ).rejects.toBeInstanceOf(ConfigValidationError);
-  });
-
-  it('removeEndpoint rejects unknown endpoint', async () => {
-    const { module } = await setup();
-    await expect(
-      module.removeEndpoint('local', 'nonexistent'),
-    ).rejects.toBeInstanceOf(ConfigValidationError);
-  });
-
-  it('removeEndpoint rejects preset providers', async () => {
-    const { module } = await setup(presetConfig());
-    await expect(
-      module.removeEndpoint('my-openai', 'ep'),
-    ).rejects.toBeInstanceOf(ConfigValidationError);
-  });
-
-  it('removeEndpoint rejects when model selection still references the endpoint', async () => {
-    const { module } = await setup();
-    // manualConfig has modelSelection.chat = ['local:chat:model:8b']
-    await expect(module.removeEndpoint('local', 'chat')).rejects.toMatchObject({
-      code: 'referential_integrity',
-    });
-  });
-});
-
-describe('Config — known model CRUD', () => {
-  const modelDef: ModelDefinition = {
-    displayName: 'Test Model',
-    contextSize: 128_000,
-  };
-
-  // --- Preset provider known models ---
-
-  it('addKnownModel adds a model to a preset provider', async () => {
-    const { module } = await setup(presetConfig());
-    await module.addKnownModel('my-openai', 'gpt-4o-mini', modelDef);
-    const provider = module.get().providers['my-openai']!;
-    if (!('preset' in provider)) throw new Error('Expected preset provider');
-    expect(provider.knownModels?.['gpt-4o-mini']).toEqual(modelDef);
-  });
-
-  it('addKnownModel rejects endpointName on preset provider', async () => {
-    const { module } = await setup(presetConfig());
-    await expect(
-      module.addKnownModel('my-openai', 'gpt-4o', modelDef, 'default'),
-    ).rejects.toBeInstanceOf(ConfigValidationError);
-  });
-
-  it('addKnownModel rejects duplicate modelId on preset provider', async () => {
-    const { module } = await setup(presetConfig());
-    // presetConfig has modelSelection.chat = ['my-openai:gpt-4o'] but
-    // knownModels is not populated — add one first, then duplicate
-    await module.addKnownModel('my-openai', 'gpt-4o', modelDef);
-    await expect(
-      module.addKnownModel('my-openai', 'gpt-4o', modelDef),
-    ).rejects.toBeInstanceOf(ConfigValidationError);
-  });
-
-  it('updateKnownModel updates a preset provider model', async () => {
-    const { module } = await setup(presetConfig());
-    await module.addKnownModel('my-openai', 'gpt-4o', modelDef);
-    await module.updateKnownModel('my-openai', 'gpt-4o', {
-      displayName: 'Updated',
-      contextSize: 64_000,
-    });
-    const provider = module.get().providers['my-openai']!;
-    if (!('preset' in provider)) throw new Error('Expected preset provider');
-    expect(provider.knownModels?.['gpt-4o']).toEqual({
-      displayName: 'Updated',
-      contextSize: 64_000,
-    });
-  });
-
-  it('updateKnownModel rejects unknown model on preset provider', async () => {
-    const { module } = await setup(presetConfig());
-    await expect(
-      module.updateKnownModel('my-openai', 'nonexistent', modelDef),
-    ).rejects.toBeInstanceOf(ConfigValidationError);
-  });
-
-  it('removeKnownModel removes a preset provider model', async () => {
-    const { module } = await setup(presetConfig());
-    await module.addKnownModel('my-openai', 'gpt-4o', modelDef);
-    await module.removeKnownModel('my-openai', 'gpt-4o');
-    const provider = module.get().providers['my-openai']!;
-    if (!('preset' in provider)) throw new Error('Expected preset provider');
-    expect(provider.knownModels?.['gpt-4o']).toBeUndefined();
-  });
-
-  it('removeKnownModel rejects unknown model on preset provider', async () => {
-    const { module } = await setup(presetConfig());
-    await expect(
-      module.removeKnownModel('my-openai', 'nonexistent'),
-    ).rejects.toBeInstanceOf(ConfigValidationError);
-  });
-
-  // --- Manual provider known models ---
-
-  it('addKnownModel adds a model to a manual provider endpoint', async () => {
-    const { module } = await setup();
-    await module.addKnownModel('local', 'llama3', modelDef, 'chat');
-    const provider = module.get().providers.local!;
-    if (!('endpoints' in provider)) throw new Error('Expected manual provider');
-    expect(provider.endpoints.chat?.knownModels?.llama3).toEqual(modelDef);
-  });
-
-  it('addKnownModel rejects missing endpointName on manual provider', async () => {
-    const { module } = await setup();
-    await expect(
-      module.addKnownModel('local', 'llama3', modelDef),
-    ).rejects.toBeInstanceOf(ConfigValidationError);
-  });
-
-  it('addKnownModel rejects unknown endpoint on manual provider', async () => {
-    const { module } = await setup();
-    await expect(
-      module.addKnownModel('local', 'llama3', modelDef, 'nonexistent'),
-    ).rejects.toBeInstanceOf(ConfigValidationError);
-  });
-
-  it('addKnownModel rejects duplicate modelId on manual provider endpoint', async () => {
-    const { module } = await setup();
-    await module.addKnownModel('local', 'llama3', modelDef, 'chat');
-    await expect(
-      module.addKnownModel('local', 'llama3', modelDef, 'chat'),
-    ).rejects.toBeInstanceOf(ConfigValidationError);
-  });
-
-  it('addKnownModel allows same modelId on different endpoints', async () => {
-    const { module } = await setup(
-      noSelectionConfig({
-        local: {
-          endpoints: {
-            chat: {
-              url: 'http://localhost:11434/v1',
-              format: 'chat-completions',
-              auth: {},
-            },
-            api: {
-              url: 'http://localhost:8080/v1',
-              format: 'open-responses',
-              auth: { apiKey: 'local-key' },
-            },
-          },
-        },
-      }),
-    );
-    await module.addKnownModel('local', 'llama3', modelDef, 'chat');
-    await module.addKnownModel('local', 'llama3', modelDef, 'api');
-    const provider = module.get().providers.local!;
-    if (!('endpoints' in provider)) throw new Error('Expected manual provider');
-    expect(provider.endpoints.chat?.knownModels?.llama3).toBeDefined();
-    expect(provider.endpoints.api?.knownModels?.llama3).toBeDefined();
-  });
-
-  it('updateKnownModel updates a manual provider endpoint model', async () => {
-    const { module } = await setup();
-    await module.addKnownModel('local', 'llama3', modelDef, 'chat');
-    await module.updateKnownModel(
-      'local',
-      'llama3',
-      { displayName: 'Updated', contextSize: 64_000 },
-      'chat',
-    );
-    const provider = module.get().providers.local!;
-    if (!('endpoints' in provider)) throw new Error('Expected manual provider');
-    expect(provider.endpoints.chat?.knownModels?.llama3).toEqual({
-      displayName: 'Updated',
-      contextSize: 64_000,
-    });
-  });
-
-  it('updateKnownModel rejects unknown model on manual provider endpoint', async () => {
-    const { module } = await setup();
-    await expect(
-      module.updateKnownModel('local', 'nonexistent', modelDef, 'chat'),
-    ).rejects.toBeInstanceOf(ConfigValidationError);
-  });
-
-  it('removeKnownModel removes a manual provider endpoint model', async () => {
-    const { module } = await setup();
-    await module.addKnownModel('local', 'llama3', modelDef, 'chat');
-    await module.removeKnownModel('local', 'llama3', 'chat');
-    const provider = module.get().providers.local!;
-    if (!('endpoints' in provider)) throw new Error('Expected manual provider');
-    expect(provider.endpoints.chat?.knownModels?.llama3).toBeUndefined();
-  });
-
-  it('removeKnownModel sets knownModels to undefined when last model is removed from manual endpoint', async () => {
-    const { module } = await setup();
-    await module.addKnownModel('local', 'llama3', modelDef, 'chat');
-    await module.removeKnownModel('local', 'llama3', 'chat');
-    const provider = module.get().providers.local!;
-    if (!('endpoints' in provider)) throw new Error('Expected manual provider');
-    expect(provider.endpoints.chat?.knownModels).toBeUndefined();
-  });
-
-  it('removeKnownModel rejects unknown model on manual provider endpoint', async () => {
-    const { module } = await setup();
-    await expect(
-      module.removeKnownModel('local', 'nonexistent', 'chat'),
-    ).rejects.toBeInstanceOf(ConfigValidationError);
-  });
-
-  // --- Common error cases ---
-
-  it('addKnownModel rejects unknown provider', async () => {
-    const { module } = await setup();
-    await expect(
-      module.addKnownModel('nonexistent', 'model', modelDef),
-    ).rejects.toBeInstanceOf(ConfigValidationError);
-  });
-
-  it('updateKnownModel rejects unknown provider', async () => {
-    const { module } = await setup();
-    await expect(
-      module.updateKnownModel('nonexistent', 'model', modelDef),
-    ).rejects.toBeInstanceOf(ConfigValidationError);
-  });
-
-  it('removeKnownModel rejects unknown provider', async () => {
-    const { module } = await setup();
-    await expect(
-      module.removeKnownModel('nonexistent', 'model'),
-    ).rejects.toBeInstanceOf(ConfigValidationError);
-  });
-});
-
-describe('Config — model selection entries (object form)', () => {
-  it('accepts object-form entries with providerOptions', async () => {
-    const config = presetConfig('openai', 'gpt-4o');
-    config.modelSelection.chat = [
-      {
-        model: 'my-openai:gpt-4o',
-        providerOptions: { openai: { store: true } },
-      },
-    ];
-    const { module } = await setup(config);
-
-    const resolved = module.resolveModel(
-      module.getModelSelection('chat')[0] as ModelSelectionEntry,
-    );
-    expect(resolved.providerOptions).toEqual({
-      openai: { store: true },
-    });
-  });
-
-  it('accepts bare-string entries (backward compat)', async () => {
-    const config = presetConfig();
-    const { module } = await setup(config);
-
-    const selection = module.getModelSelection('chat');
-    expect(selection).toEqual(['my-openai:gpt-4o']);
-
-    const resolved = module.resolveModel(selection[0] as ModelSelectionEntry);
-    expect(resolved.providerOptions).toBeUndefined();
-  });
-
-  it('returns undefined providerOptions for object entry without providerOptions', async () => {
-    const config = presetConfig();
-    config.modelSelection.chat = [{ model: 'my-openai:gpt-4o' }];
-    const { module } = await setup(config);
-
-    const resolved = module.resolveModel(
-      module.getModelSelection('chat')[0] as ModelSelectionEntry,
-    );
-    expect(resolved.providerOptions).toBeUndefined();
-  });
-
-  it('resolveModelInfo works with object-form entries', async () => {
-    const config = presetConfig('openai', 'gpt-4o');
-    (
-      config.providers['my-openai'] as {
-        preset: ProviderPreset;
-        auth: EndpointAuth;
-        knownModels?: Record<string, ModelDefinition>;
-      }
-    ).knownModels = {
-      'gpt-4o': { contextSize: 128_000, displayName: 'GPT-4o' },
-    };
-    config.modelSelection.chat = [{ model: 'my-openai:gpt-4o' }];
-    const { module } = await setup(config);
-
-    const info = module.resolveModelInfo(
-      module.getModelSelection('chat')[0] as ModelSelectionEntry,
-    );
-    expect(info.contextSize).toBe(128_000);
-    expect(info.displayName).toBe('GPT-4o');
-  });
-
-  it('validateModelReferences accepts object-form entries', async () => {
-    const config = mixedConfig();
-    config.modelSelection.chat = [{ model: 'remote:gpt-4o' }];
-    config.modelSelection.compaction = [
-      {
-        model: 'local:chat:model:8b',
-        providerOptions: { extra: { foo: 'bar' } },
-      },
-    ];
-    const { module } = await setup(config);
-
-    // Should not throw — all referenced providers/models exist
-    await expect(module.replace(config)).resolves.toBeDefined();
-  });
-
-  it('accepts an object-form entry with a missing provider', async () => {
-    const { module } = await setup(mixedConfig());
-    const config = mixedConfig();
-    config.modelSelection.chat = [{ model: 'missing:gpt-4o' }];
-
-    await expect(module.replace(config)).resolves.toBeDefined();
-    expect(module.getModelSelection('chat')).toEqual([]);
-  });
-
-  it('rejects providerOptions with non-object namespace value', async () => {
-    const { module } = await setup(mixedConfig());
-    const invalid = mixedConfig();
-    invalid.modelSelection.chat = [
-      {
-        model: 'remote:gpt-4o',
-        providerOptions: { openai: 'high' } as never,
-      },
-    ];
-
-    await expect(module.replace(invalid)).rejects.toBeInstanceOf(
-      ConfigValidationError,
-    );
-  });
-
-  it('rejects providerOptions with primitive namespace value', async () => {
-    const { module } = await setup(mixedConfig());
-    const invalid = mixedConfig();
-    invalid.modelSelection.chat = [
-      {
-        model: 'remote:gpt-4o',
-        providerOptions: { openai: 42 } as never,
-      },
-    ];
-
-    await expect(module.replace(invalid)).rejects.toBeInstanceOf(
-      ConfigValidationError,
-    );
+    expect(parsed.modelSelection.voice.sts[0]?.modelId).toBe('voice:model');
   });
 });

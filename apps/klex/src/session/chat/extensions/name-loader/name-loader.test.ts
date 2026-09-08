@@ -17,6 +17,7 @@ function makeDeps(config: Config): ExtensionDeps {
     insertMessageAfter: vi.fn(() => true),
     inbox: { send: vi.fn(), sendMessage: vi.fn(), close: vi.fn() },
     config,
+    modelResolver: {} as ExtensionDeps['modelResolver'],
     generateText: vi.fn(),
     logger: {
       info: vi.fn(),

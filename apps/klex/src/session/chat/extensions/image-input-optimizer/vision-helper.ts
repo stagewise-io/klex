@@ -1,7 +1,6 @@
 import type { FilePart, ImagePart, ModelMessage, TextPart } from 'ai';
 
 import type { ModelSelectionEntry } from '@/config';
-import { modelIdFromEntry } from '@/config';
 import { extractToolResultText } from '@/shared-utilities';
 
 import type { ExtensionDeps } from '../extension-api';
@@ -25,12 +24,12 @@ export const UNSUPPORTED_IMAGE_TEXT =
  * to resolve (e.g. broken provider references) are silently excluded.
  */
 export function resolveVisionModels(
-  config: ExtensionDeps['config'],
+  deps: Pick<ExtensionDeps, 'config' | 'modelResolver'>,
 ): readonly ModelSelectionEntry[] {
-  const entries = config.getModelSelection('imageVision');
+  const entries = deps.config.getModelSelection('imageVision');
   return entries.filter((entry) => {
     try {
-      const info = config.resolveModelInfo(entry);
+      const info = deps.modelResolver.resolveModelInfo(entry);
       return info.inputCapabilities?.image !== undefined;
     } catch {
       return false;
@@ -58,10 +57,10 @@ export async function optimizeForVisionHelper(
 
   const firstEntry = visionModelIds[0];
   if (!firstEntry) return part;
-  const visionModelId = modelIdFromEntry(firstEntry);
+  const visionModelId = firstEntry.modelId;
   let settings: EffectiveVision;
   try {
-    const info = deps.config.resolveModelInfo(firstEntry);
+    const info = deps.modelResolver.resolveModelInfo(firstEntry);
     settings = resolveEffectiveVision(info.inputCapabilities);
   } catch {
     return part;
@@ -69,7 +68,7 @@ export async function optimizeForVisionHelper(
 
   if (!settings.supports) return part;
 
-  const cacheKey = `${imageHash}:${visionModelId}`;
+  const cacheKey = `${imageHash}:${firstEntry.providerId}:${visionModelId}`;
   const cached = cache.get(cacheKey);
   if (cached !== undefined && cached.type !== 'text') return cached;
 
@@ -172,7 +171,7 @@ async function runDescribeImage(
   const chatEntries = deps.config.getModelSelection('chat');
   const visionChatEntries = chatEntries.filter((entry) => {
     try {
-      const info = deps.config.resolveModelInfo(entry);
+      const info = deps.modelResolver.resolveModelInfo(entry);
       return info.inputCapabilities?.image !== undefined;
     } catch {
       return false;

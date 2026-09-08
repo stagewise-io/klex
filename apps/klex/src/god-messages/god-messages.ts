@@ -49,7 +49,7 @@ export interface GodMessages {
 /**
  * Factory that creates a chat session for the god-messages module.
  * Same signature as the router's `createChatSession` dependency —
- * `main.ts` assembles shared deps (config, modelProvider, mcp, etc.)
+ * `main.ts` assembles shared deps (config, modelResolver, mcp, etc.)
  * and provides the extension factory list (with the trust extension).
  */
 export type CreateGodChatSession = (

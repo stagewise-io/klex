@@ -14,8 +14,6 @@ import {
 
 import type { ModuleLogger } from '@stagewise/logger';
 
-import type { ModelId } from '@/config';
-
 import type { ExtendedUIMessage } from '../message-types';
 import type { AgentTools } from '../tools';
 import systemPrompt from './system-prompt.md';
@@ -35,7 +33,11 @@ export interface RunStreamedGenerationParams {
   onUpdate: (msg: ExtendedUIMessage) => void;
   abortSignal: AbortSignal;
   logger: ModuleLogger;
-  getChatModelId: () => ModelId;
+  modelContext: {
+    providerType: string;
+    providerId: string;
+    modelId: string;
+  };
   /** UUID of the session instance — passed to telemetry via runtimeContext. */
   sessionId: string;
   /** Whether the history was compacted by an extension before this generation. */
@@ -85,19 +87,20 @@ export async function runStreamedGeneration(
       functionId: 'chat-session',
       // The AI SDK's restricted telemetry dispatcher strips runtime
       // context keys unless they are explicitly allow-listed here.
-      // Without this, conversation.modelId / conversation.id are removed
-      // before KlexTelemetry.onStart sees them, causing modelId to be
-      // logged as "unknown".
       includeRuntimeContext: {
         'conversation.id': true,
         'conversation.compacted': true,
+        'conversation.providerType': true,
+        'conversation.providerId': true,
         'conversation.modelId': true,
       },
     },
     runtimeContext: {
       'conversation.id': params.sessionId,
       'conversation.compacted': params.compacted,
-      'conversation.modelId': params.getChatModelId(),
+      'conversation.providerType': params.modelContext.providerType,
+      'conversation.providerId': params.modelContext.providerId,
+      'conversation.modelId': params.modelContext.modelId,
     },
     abortSignal: params.abortSignal,
     maxRetries: 0,

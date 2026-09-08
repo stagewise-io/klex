@@ -1,6 +1,6 @@
 import { extendZodWithOpenApi, z } from '@hono/zod-openapi';
 
-import type { ModelId } from '@/config';
+import { providerTypeSchema as configProviderTypeSchema } from '@/config';
 
 // Extend Zod with .openapi() metadata support for spec generation.
 extendZodWithOpenApi(z);
@@ -13,6 +13,7 @@ const errorResponseSchema = z
   .object({
     error: z.string(),
     code: z.string(),
+    remediation: z.string().optional(),
   })
   .openapi('ErrorResponse');
 
@@ -267,30 +268,24 @@ const telemetrySettingsPatchSchema = z
 
 // --- Settings / Model Selection ---
 
-const modelIdSchema = z
-  .string()
-  .regex(/^[^:]+:.+$/, {
-    error:
-      'Model ID must use the format providerId:modelId (preset) or providerId:endpointId:modelId (manual) with non-empty segments',
-  })
-  .openapi('ModelId') as z.ZodType<ModelId>;
+const providerOptionsSchema = z.record(
+  z.string(),
+  z.record(z.string(), z.unknown()),
+);
 
 const modelSelectionEntryOapiSchema = z
-  .union([
-    modelIdSchema,
-    z
-      .object({
-        model: modelIdSchema,
-        providerOptions: z.record(z.string(), z.unknown()).optional(),
-      })
-      .strict(),
-  ])
+  .object({
+    providerId: z.string().min(1),
+    modelId: z.string().min(1),
+    providerOptions: providerOptionsSchema.optional(),
+  })
+  .strict()
   .openapi('ModelSelectionEntry');
 
 const voiceModelSelectionSchema = z.object({
-  sts: z.array(modelIdSchema),
-  tts: z.array(modelIdSchema),
-  stt: z.array(modelIdSchema),
+  sts: z.array(modelSelectionEntryOapiSchema),
+  tts: z.array(modelSelectionEntryOapiSchema),
+  stt: z.array(modelSelectionEntryOapiSchema),
 });
 
 const modelSelectionSchema = z
@@ -330,130 +325,103 @@ const modelSelectionPatchResponseSchema = modelSelectionSchema
 
 // --- Providers ---
 
-const apiFormatSchema = z
-  .enum([
-    'openai',
-    'anthropic',
-    'google',
-    'chat-completions',
-    'open-responses',
-    'messages',
-    'realtime',
-    'speech',
-    'transcriptions',
-  ])
-  .openapi('ApiFormat');
+const providerSettingsSchema = z.record(z.string(), z.unknown());
+const providerTypeParamSchema = z.object({ type: configProviderTypeSchema });
+const providerIdParamSchema = z.object({ id: z.string().min(1) });
 
-const endpointAuthSchema = z
-  .object({
-    apiKey: z.string().optional(),
-    headers: z.record(z.string(), z.string()).optional(),
-  })
-  .openapi('EndpointAuth');
-
-const endpointConfigSchema = z
-  .object({
-    url: z.url(),
-    format: apiFormatSchema,
-    auth: endpointAuthSchema,
-  })
-  .openapi('EndpointConfig');
-
-const providerPresetSchema = z
-  .enum(['openai', 'anthropic', 'google'])
-  .openapi('ProviderPreset');
-
-const providerResponseSchema = z
-  .union([
-    z.object({
-      name: z.string(),
-      preset: providerPresetSchema,
-      auth: endpointAuthSchema,
-    }),
-    z.object({
-      name: z.string(),
-      endpoints: z.record(z.string(), endpointConfigSchema),
-    }),
-  ])
-  .openapi('Provider');
-
-const providersResponseSchema = z
-  .object({
-    providers: z.array(providerResponseSchema),
-  })
-  .openapi('ProvidersResponse');
-
-const createProviderBodySchema = z
-  .union([
-    z.object({
-      name: z.string().min(1),
-      preset: providerPresetSchema,
-      auth: endpointAuthSchema,
-    }),
-    z.object({
-      name: z.string().min(1),
-      endpoints: z.record(z.string(), endpointConfigSchema),
-    }),
-  ])
-  .openapi('CreateProviderBody');
-
-const updateProviderBodySchema = z
-  .object({
-    preset: providerPresetSchema.optional(),
-    auth: endpointAuthSchema.optional(),
-    endpoints: z.record(z.string(), endpointConfigSchema).optional(),
-  })
-  .openapi('UpdateProviderBody');
-
-const providerNameParamSchema = z.object({
-  name: z.string().min(1),
+const providerMetadataSchema = z.object({
+  displayName: z.string(),
+  description: z.string(),
+  logoSvg: z.string().optional(),
+  documentationUrl: z.string().optional(),
+  capabilities: z.object({
+    modelDiscovery: z.boolean(),
+    connectivityTest: z.boolean(),
+    customModels: z.boolean(),
+  }),
 });
 
-const endpointWithNameSchema = z
-  .object({
-    name: z.string(),
-    url: z.url(),
-    format: apiFormatSchema,
-    auth: endpointAuthSchema,
-  })
-  .openapi('EndpointWithName');
+const providerTypeSchema = providerMetadataSchema.extend({
+  type: configProviderTypeSchema,
+  settingsSchema: z.record(z.string(), z.unknown()),
+});
 
-const endpointsResponseSchema = z
-  .object({
-    endpoints: z.array(endpointWithNameSchema),
-  })
-  .openapi('EndpointsResponse');
+const providerTypesResponseSchema = z.object({
+  providerTypes: z.array(providerTypeSchema),
+});
 
-const createEndpointBodySchema = z
-  .object({
-    name: z.string().min(1),
-    url: z.url(),
-    format: apiFormatSchema,
-    auth: endpointAuthSchema,
-  })
-  .openapi('CreateEndpointBody');
+const providerAvailabilitySchema = z.object({
+  available: z.boolean(),
+  code: z.string().optional(),
+  message: z.string().optional(),
+  remediation: z.string().optional(),
+});
 
-const updateEndpointBodySchema = z
-  .object({
-    url: z.url().optional(),
-    format: apiFormatSchema.optional(),
-    auth: endpointAuthSchema.optional(),
-  })
-  .openapi('UpdateEndpointBody');
+const providerResponseSchema = z.object({
+  id: z.string(),
+  type: configProviderTypeSchema,
+  metadata: providerMetadataSchema,
+  settings: providerSettingsSchema,
+  operations: z.object({
+    update: providerAvailabilitySchema,
+    remove: providerAvailabilitySchema,
+  }),
+});
 
-const endpointNameParamSchema = z.object({
-  name: z.string().min(1),
-  endpointName: z.string().min(1),
+const providersResponseSchema = z.object({
+  providers: z.array(providerResponseSchema),
+});
+
+const createProviderBodySchema = z.object({
+  id: z.string().min(1),
+  type: configProviderTypeSchema,
+  settings: providerSettingsSchema,
+});
+
+const updateProviderBodySchema = z.object({
+  settings: providerSettingsSchema.optional(),
+});
+
+const canAddProviderBodySchema = z.object({
+  settings: providerSettingsSchema,
+});
+
+const providerOperationSchema = z.object({
+  ok: z.boolean(),
+  code: z.string().optional(),
+  message: z.string().optional(),
+  provider: providerResponseSchema.optional(),
+});
+
+const connectivityResultSchema = z.object({
+  latencyMs: z.number().nonnegative(),
+  target: z.string().optional(),
 });
 
 // --- Known Models ---
+
+const modelKindSchema = z.enum([
+  'language',
+  'speech-to-speech',
+  'text-to-speech',
+  'speech-to-text',
+  'image-generation',
+  'embedding',
+  'reranking',
+  'moderation',
+  'unknown',
+]);
 
 const imageInputCapabilitySchema = z
   .object({
     mediaTypes: z
       .array(z.string().regex(/^image\/[a-z0-9][a-z0-9.+-]*$/i))
-      .nonempty(),
-    maxBytes: z.number().int().positive(),
+      .nonempty()
+      .optional(),
+    maxBytes: z.number().int().positive().optional(),
+    maxWidth: z.number().int().positive().optional(),
+    maxHeight: z.number().int().positive().optional(),
+    maxTotalPixels: z.number().int().positive().optional(),
   })
   .strict()
   .openapi('ImageInputCapability');
@@ -462,8 +430,10 @@ const audioInputCapabilitySchema = z
   .object({
     mediaTypes: z
       .array(z.string().regex(/^audio\/[a-z0-9][a-z0-9.+-]*$/i))
-      .nonempty(),
-    maxBytes: z.number().int().positive(),
+      .nonempty()
+      .optional(),
+    maxBytes: z.number().int().positive().optional(),
+    maxLengthSeconds: z.number().int().positive().optional(),
   })
   .strict()
   .openapi('AudioInputCapability');
@@ -489,6 +459,8 @@ const modelCapabilitiesSchema = z
   .object({
     input: modelInputCapabilitiesSchema.optional(),
     voice: modelVoiceCapabilitiesSchema.optional(),
+    tools: z.boolean().optional(),
+    reasoning: z.boolean().optional(),
   })
   .strict()
   .openapi('ModelCapabilities');
@@ -496,7 +468,7 @@ const modelCapabilitiesSchema = z
 const knownModelSchema = z
   .object({
     modelId: z.string().min(1),
-    endpointName: z.string().optional(),
+    kind: modelKindSchema.optional(),
     displayName: z.string().optional(),
     contextSize: z.number().int().positive().optional(),
     capabilities: modelCapabilitiesSchema.optional(),
@@ -512,38 +484,60 @@ const knownModelsResponseSchema = z
 const createKnownModelBodySchema = z
   .object({
     modelId: z.string().min(1),
-    endpointName: z.string().min(1).optional(),
+    kind: modelKindSchema.optional(),
     displayName: z.string().optional(),
     contextSize: z.number().int().positive().optional(),
     capabilities: modelCapabilitiesSchema.optional(),
   })
   .refine(
     (d) =>
+      d.kind !== undefined ||
       d.displayName !== undefined ||
       d.contextSize !== undefined ||
       d.capabilities !== undefined,
     {
       message:
-        'At least one of displayName, contextSize, or capabilities must be provided',
+        'At least one of kind, displayName, contextSize, or capabilities must be provided',
     },
   )
   .openapi('CreateKnownModelBody');
 
 const updateKnownModelBodySchema = z
   .object({
+    kind: modelKindSchema.optional(),
     displayName: z.string().optional(),
     contextSize: z.number().int().positive().optional(),
     capabilities: modelCapabilitiesSchema.optional(),
   })
   .openapi('UpdateKnownModelBody');
 
-const knownModelIdParamSchema = z.object({
-  name: z.string().min(1),
-  modelId: z.string().min(1),
+const providerModelSchema = knownModelSchema.extend({
+  source: z.enum(['manual', 'discovered', 'merged']),
+  provenance: z
+    .array(
+      z.object({
+        source: z.enum([
+          'discovered',
+          'shared-catalog',
+          'provider-family',
+          'provider-exact',
+          'user',
+        ]),
+        documentationUrl: z.string().url().optional(),
+        reviewedAt: z.string().optional(),
+      }),
+    )
+    .optional(),
 });
-
-const knownModelQuerySchema = z.object({
-  endpointName: z.string().min(1).optional(),
+const providerModelsResponseSchema = z.object({
+  models: z.array(providerModelSchema),
+});
+const providerModelsQuerySchema = z.object({
+  refresh: z.enum(['true', 'false']).optional(),
+});
+const knownModelIdParamSchema = z.object({
+  id: z.string().min(1),
+  modelId: z.string().min(1),
 });
 
 // --- God Messages ---
@@ -734,7 +728,7 @@ const usageQuerySchema = z.object({
   splitBy: usageSplitBySchema
     .default('none')
     .describe(
-      'Dimension to group results by: none, model, provider, or endpoint',
+      'Dimension to group results by: none, model, provider, providerType, or legacy endpoint',
     ),
   from: z
     .string()
@@ -776,7 +770,7 @@ const usageDataPointSchema = z
       .string()
       .nullable()
       .describe(
-        'Split dimension value (model ID, provider ID, or endpoint ID). Null when splitBy=none.',
+        'Split dimension value (model ID, provider ID/type, or legacy endpoint ID). Null when splitBy=none.',
       ),
     callCount: z
       .number()
@@ -817,14 +811,20 @@ const usageDataPointSchema = z
       .string()
       .nullable()
       .describe('Session UUID. Null for aggregated granularities.'),
+    providerType: z
+      .string()
+      .nullable()
+      .describe(
+        'Provider type. Null for legacy rows and aggregated granularities.',
+      ),
     providerId: z
       .string()
       .nullable()
-      .describe('Provider ID. Null for aggregated granularities.'),
+      .describe('Configured provider ID. Null for aggregated granularities.'),
     endpointId: z
       .string()
       .nullable()
-      .describe('Endpoint ID. Null for aggregated granularities.'),
+      .describe('Legacy endpoint ID. Null for v2 calls and aggregations.'),
     modelId: z
       .string()
       .nullable()
@@ -907,22 +907,17 @@ const cloudEnrollResponseSchema = z
 export {
   agentIdentityPatchSchema,
   agentIdentityResponseSchema,
-  apiFormatSchema,
   audioInputCapabilitySchema,
+  canAddProviderBodySchema,
   cloudEnrollBodySchema,
   cloudEnrollResponseSchema,
   cloudStatusResponseSchema,
-  createEndpointBodySchema,
+  connectivityResultSchema,
   createGodMessageBodySchema,
   createGodMessageResponseSchema,
   createKnownModelBodySchema,
   createMcpServerBodySchema,
   createProviderBodySchema,
-  endpointAuthSchema,
-  endpointConfigSchema,
-  endpointNameParamSchema,
-  endpointsResponseSchema,
-  endpointWithNameSchema,
   errorResponseSchema,
   godMessageResetResponseSchema,
   godMessagesQuerySchema,
@@ -934,7 +929,6 @@ export {
   introspectionNodeSchema,
   introspectionPathParamsSchema,
   knownModelIdParamSchema,
-  knownModelQuerySchema,
   knownModelSchema,
   knownModelsResponseSchema,
   mcpServerAuthorizationSchema,
@@ -943,7 +937,7 @@ export {
   mcpServerNameParamSchema,
   mcpServerResponseSchema,
   mcpServersResponseSchema,
-  modelIdSchema,
+  modelCapabilitiesSchema,
   modelInputCapabilitiesSchema,
   modelSelectionPatchResponseSchema,
   modelSelectionPatchSchema,
@@ -951,17 +945,20 @@ export {
   modelSelectionWarningSchema,
   oauthCallbackAcceptedSchema,
   oauthCallbackBodySchema,
-  providerNameParamSchema,
-  providerPresetSchema,
+  providerIdParamSchema,
+  providerModelsQuerySchema,
+  providerModelsResponseSchema,
+  providerOperationSchema,
   providerResponseSchema,
   providersResponseSchema,
+  providerTypeParamSchema,
+  providerTypesResponseSchema,
   serializedMessagePartSchema,
   serializedMessageSchema,
   telemetryLevelSchema,
   telemetrySettingsPatchSchema,
   telemetrySettingsSchema,
   toolCallHistoryResponseSchema,
-  updateEndpointBodySchema,
   updateKnownModelBodySchema,
   updateMcpServerBodySchema,
   updateProviderBodySchema,

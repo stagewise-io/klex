@@ -93,6 +93,11 @@ function makeDeps(
     turnInitialFallbackIndex: 0,
     compacted: false,
     model: {} as LanguageModel,
+    modelContext: {
+      providerType: 'openai',
+      providerId: 'work',
+      modelId: 'model-a',
+    },
     extensionSystemPromptParts: [] as string[],
     ...overrides,
   };

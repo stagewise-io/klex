@@ -6,7 +6,7 @@ import { isToolUIPart } from 'ai';
 import type { ModuleLogger } from '@stagewise/logger';
 
 import type { Config } from '@/config';
-import type { ModelProvider } from '@/model-provider';
+import type { ProviderModelResolver } from '@/provider-registry';
 import type { Usage } from '@/session/types';
 
 import type { ExtensionHandler } from '../extension-handler';
@@ -26,7 +26,7 @@ export interface TurnDependencies {
   messages: ExtendedUIMessage[];
   inbox: SessionInboxBuffer;
   extensionHandler: ExtensionHandler;
-  modelProvider: ModelProvider;
+  modelResolver: ProviderModelResolver;
   fallbackManager: ModelFallbackManager;
   config: Config;
   /**
@@ -214,7 +214,7 @@ class TurnModule implements Turn {
             turnContext,
             messages: this.deps.messages,
             extensionHandler: this.deps.extensionHandler,
-            modelProvider: this.deps.modelProvider,
+            modelResolver: this.deps.modelResolver,
             fallbackManager: this.deps.fallbackManager,
             config: this.deps.config,
             turnInitialFallbackIndex,

@@ -67,7 +67,7 @@ class AudioInputOptimizerExt implements Extension {
     const settings = resolveEffectiveAudio(model.inputCapabilities);
     if (settings.supports) return {};
 
-    const audioModelIds = resolveAudioModels(this.deps.config);
+    const audioModelIds = resolveAudioModels(this.deps);
     if (audioModelIds.length === 0) return {};
 
     return {
@@ -94,7 +94,7 @@ class AudioInputOptimizerExt implements Extension {
           const toolAudioHash = toolBuffer
             ? createHash('sha1').update(toolBuffer).digest('hex').slice(0, 16)
             : null;
-          const toolAudioModelIds = resolveAudioModels(this.deps.config);
+          const toolAudioModelIds = resolveAudioModels(this.deps);
 
           const description = await describeAudio(
             this.deps,
@@ -124,7 +124,7 @@ class AudioInputOptimizerExt implements Extension {
     this.audioRegistry.clear();
 
     // Pre-compute audio model availability for the non-audio path.
-    const audioModelIds = resolveAudioModels(this.deps.config);
+    const audioModelIds = resolveAudioModels(this.deps);
     const hasAudioModels = !settings.supports && audioModelIds.length > 0;
 
     // Determine whether the listenAudio tool will be offered to this model.

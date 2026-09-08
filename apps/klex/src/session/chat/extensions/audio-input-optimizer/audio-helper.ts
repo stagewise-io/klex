@@ -1,7 +1,6 @@
 import type { FilePart, ModelMessage, TextPart } from 'ai';
 
 import type { ModelSelectionEntry } from '@/config';
-import { modelIdFromEntry } from '@/config';
 import { extractToolResultText } from '@/shared-utilities';
 
 import type { ExtensionDeps } from '../extension-api';
@@ -26,12 +25,12 @@ export const UNSUPPORTED_AUDIO_TEXT =
  * to resolve (e.g. broken provider references) are silently excluded.
  */
 export function resolveAudioModels(
-  config: ExtensionDeps['config'],
+  deps: Pick<ExtensionDeps, 'config' | 'modelResolver'>,
 ): readonly ModelSelectionEntry[] {
-  const entries = config.getModelSelection('audioListening');
+  const entries = deps.config.getModelSelection('audioListening');
   return entries.filter((entry) => {
     try {
-      const info = config.resolveModelInfo(entry);
+      const info = deps.modelResolver.resolveModelInfo(entry);
       return info.inputCapabilities?.audio !== undefined;
     } catch {
       return false;
@@ -58,10 +57,10 @@ export async function optimizeForAudioHelper(
 
   const firstEntry = audioModelIds[0];
   if (!firstEntry) return part;
-  const audioModelId = modelIdFromEntry(firstEntry);
+  const audioModelId = firstEntry.modelId;
   let settings: EffectiveAudio;
   try {
-    const info = deps.config.resolveModelInfo(firstEntry);
+    const info = deps.modelResolver.resolveModelInfo(firstEntry);
     settings = resolveEffectiveAudio(info.inputCapabilities);
   } catch {
     return part;
@@ -69,7 +68,7 @@ export async function optimizeForAudioHelper(
 
   if (!settings.supports) return part;
 
-  const cacheKey = `${audioHash}:${audioModelId}`;
+  const cacheKey = `${audioHash}:${firstEntry.providerId}:${audioModelId}`;
   const cached = cache.get(cacheKey);
   if (cached !== undefined && cached.type !== 'text') return cached;
 
@@ -172,7 +171,7 @@ async function runDescribeAudio(
   const chatEntries = deps.config.getModelSelection('chat');
   const audioChatEntries = chatEntries.filter((entry) => {
     try {
-      const info = deps.config.resolveModelInfo(entry);
+      const info = deps.modelResolver.resolveModelInfo(entry);
       return info.inputCapabilities?.audio !== undefined;
     } catch {
       return false;

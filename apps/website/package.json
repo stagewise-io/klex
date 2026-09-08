@@ -1,0 +1,21 @@
+{
+  "name": "@klex/website",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "build": "tsc && vite build",
+    "dev": "vite",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "4.3.3",
+    "tailwindcss": "4.3.3",
+    "typescript": "6.0.2",
+    "vite": "8.2.2"
+  },
+  "dependencies": {
+    "@stagewise/ui": "0.1.0"
+  }
+}

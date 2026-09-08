@@ -8,7 +8,9 @@
       "!**/coverage",
       "!**/.turbo",
       "!**/pnpm-lock.yaml",
-      "!**/*.gen.ts"
+      "!**/*.gen.ts",
+      "!.agents",
+      "!.impeccable"
     ]
   },
   "vcs": {
@@ -62,6 +64,11 @@
           }
         }
       }
+    }
+  },
+  "css": {
+    "parser": {
+      "tailwindDirectives": true
     }
   },
   "javascript": {

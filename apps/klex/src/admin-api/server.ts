@@ -8,6 +8,7 @@ import type { GodMessages } from '@/god-messages';
 import type { Introspector } from '@/introspection';
 import type { Mcp } from '@/mcp';
 import type { ModelCallLogger } from '@/model-call-logger';
+import type { ProviderRegistry } from '@/provider-registry';
 
 import { createErrorHandler, notFoundHandler, validationHook } from './errors';
 import {
@@ -56,26 +57,24 @@ import {
   startAuthorizationRoute,
 } from './routes/v1/mcp.authorization';
 import {
-  createEndpoint,
-  createEndpointRoute,
+  canAddProvider,
+  canAddProviderRoute,
   createKnownModel,
   createKnownModelRoute,
   createProvider,
   createProviderRoute,
-  deleteEndpoint,
-  deleteEndpointRoute,
   deleteKnownModel,
   deleteKnownModelRoute,
   deleteProvider,
   deleteProviderRoute,
-  getEndpoints,
-  getEndpointsRoute,
-  getKnownModels,
-  getKnownModelsRoute,
+  getProviderModels,
+  getProviderModelsRoute,
   getProviders,
   getProvidersRoute,
-  updateEndpoint,
-  updateEndpointRoute,
+  getProviderTypes,
+  getProviderTypesRoute,
+  testProvider,
+  testProviderRoute,
   updateKnownModel,
   updateKnownModelRoute,
   updateProvider,
@@ -102,6 +101,7 @@ export interface AdminAppDependencies {
   mcp: Mcp;
   introspector: Introspector;
   modelCallLogger: ModelCallLogger;
+  providerRegistry: ProviderRegistry;
   cloudConnectivity: CloudConnectivity;
   godMessages: GodMessages;
   logger: ModuleLogger;
@@ -156,15 +156,14 @@ export function createAdminApp(deps: AdminAppDependencies) {
     .openapi(getGodMessagesRoute, getGodMessages(deps))
     .openapi(resetGodSessionRoute, resetGodSession(deps))
     .openapi(getUsageRoute, getUsage(deps))
+    .openapi(getProviderTypesRoute, getProviderTypes(deps))
+    .openapi(canAddProviderRoute, canAddProvider(deps))
     .openapi(getProvidersRoute, getProviders(deps))
     .openapi(createProviderRoute, createProvider(deps))
     .openapi(updateProviderRoute, updateProvider(deps))
     .openapi(deleteProviderRoute, deleteProvider(deps))
-    .openapi(getEndpointsRoute, getEndpoints(deps))
-    .openapi(createEndpointRoute, createEndpoint(deps))
-    .openapi(updateEndpointRoute, updateEndpoint(deps))
-    .openapi(deleteEndpointRoute, deleteEndpoint(deps))
-    .openapi(getKnownModelsRoute, getKnownModels(deps))
+    .openapi(testProviderRoute, testProvider(deps))
+    .openapi(getProviderModelsRoute, getProviderModels(deps))
     .openapi(createKnownModelRoute, createKnownModel(deps))
     .openapi(updateKnownModelRoute, updateKnownModel(deps))
     .openapi(deleteKnownModelRoute, deleteKnownModel(deps));

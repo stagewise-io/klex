@@ -206,6 +206,7 @@ class ModelCallLoggerModule implements ModelCallLogger {
       errorCount: row.isError ? 1 : 0,
       id: row.id,
       sessionId: row.sessionId,
+      providerType: row.providerType,
       providerId: row.providerId,
       endpointId: row.endpointId,
       modelId: row.modelId,
@@ -281,6 +282,7 @@ ${orderByClause}
       errorCount: Number(row.error_count ?? 0),
       id: null,
       sessionId: null,
+      providerType: null,
       providerId: null,
       endpointId: null,
       modelId: null,
@@ -334,6 +336,7 @@ ${orderByClause}
    */
   private resolveSplitKey(
     row: {
+      providerType: string | null;
       providerId: string | null;
       endpointId: string | null;
       modelId: string | null;

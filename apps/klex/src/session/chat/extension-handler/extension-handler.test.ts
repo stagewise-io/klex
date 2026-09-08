@@ -92,6 +92,7 @@ const noopDeps: BaseExtensionDeps = {
     close: vi.fn(),
   },
   config: { get: () => ({}) } as unknown as BaseExtensionDeps['config'],
+  modelResolver: {} as BaseExtensionDeps['modelResolver'],
   generateText: vi.fn(() =>
     Promise.resolve({
       success: false as const,
@@ -1132,7 +1133,7 @@ describe('ExtensionHandler — generateText wrapper trace attribution', () => {
     });
 
     await receivedDeps!.generateText({
-      modelIds: ['test:model'],
+      modelIds: [{ providerId: 'test', modelId: 'model' }],
       prompt: 'hello',
     });
 
@@ -1163,7 +1164,7 @@ describe('ExtensionHandler — generateText wrapper trace attribution', () => {
     expect(getExtensionIdentifier()).toBeUndefined();
 
     await receivedDeps!.generateText({
-      modelIds: ['test:model'],
+      modelIds: [{ providerId: 'test', modelId: 'model' }],
       prompt: 'hello',
     });
 
@@ -1196,11 +1197,11 @@ describe('ExtensionHandler — generateText wrapper trace attribution', () => {
 
     // Call generateText from ext-a, then ext-b.
     await depsMap.get('io.stagewise/ext-a')!.generateText({
-      modelIds: ['test:a'],
+      modelIds: [{ providerId: 'test', modelId: 'a' }],
       prompt: 'a',
     });
     await depsMap.get('io.stagewise/ext-b')!.generateText({
-      modelIds: ['test:b'],
+      modelIds: [{ providerId: 'test', modelId: 'b' }],
       prompt: 'b',
     });
 
@@ -1228,7 +1229,10 @@ describe('ExtensionHandler — generateText wrapper trace attribution', () => {
     });
 
     const args: GenerateTextArgs = {
-      modelIds: ['test:model-1', 'test:model-2'],
+      modelIds: [
+        { providerId: 'test', modelId: 'model-1' },
+        { providerId: 'test', modelId: 'model-2' },
+      ],
       system: 'you are a test',
       prompt: 'say hello',
       temperature: 0.7,
@@ -1263,7 +1267,7 @@ describe('ExtensionHandler — generateText wrapper trace attribution', () => {
     });
 
     await receivedDeps!.generateText({
-      modelIds: ['test:m'],
+      modelIds: [{ providerId: 'test', modelId: 'm' }],
       prompt: 'hi',
     });
 
@@ -1310,7 +1314,10 @@ describe('ExtensionHandler — generateText wrapper trace attribution', () => {
       onExtensionUsage,
     });
 
-    await receivedDeps!.generateText({ modelIds: ['test:m'], prompt: 'hi' });
+    await receivedDeps!.generateText({
+      modelIds: [{ providerId: 'test', modelId: 'm' }],
+      prompt: 'hi',
+    });
 
     expect(onExtensionUsage).not.toHaveBeenCalled();
   });

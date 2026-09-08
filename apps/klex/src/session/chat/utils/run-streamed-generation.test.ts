@@ -33,7 +33,11 @@ vi.mock('./tools-without-execute', () => ({
 const model = {} as LanguageModel;
 const tools = {} as AgentTools;
 const abortSignal = new AbortController().signal;
-const getChatModelId = vi.fn(() => 'test:model' as never);
+const modelContext = {
+  providerType: 'openai',
+  providerId: 'work',
+  modelId: 'test:model',
+};
 
 async function* fromArray<T>(items: T[]): AsyncIterable<T> {
   for (const item of items) {
@@ -92,7 +96,7 @@ describe('runStreamedGeneration — success', () => {
       onUpdate: vi.fn(),
       abortSignal,
       logger,
-      getChatModelId,
+      modelContext,
       sessionId: 'test-session',
       compacted: false,
     });
@@ -125,7 +129,7 @@ describe('runStreamedGeneration — success', () => {
       onUpdate,
       abortSignal,
       logger,
-      getChatModelId,
+      modelContext,
       sessionId: 'test-session',
       compacted: false,
     });
@@ -157,7 +161,7 @@ describe('runStreamedGeneration — success', () => {
       onUpdate: vi.fn(),
       abortSignal,
       logger,
-      getChatModelId,
+      modelContext,
       sessionId: 'test-session',
       compacted: false,
     });
@@ -198,7 +202,7 @@ describe('runStreamedGeneration — success', () => {
       onUpdate: vi.fn(),
       abortSignal,
       logger,
-      getChatModelId,
+      modelContext,
       sessionId: 'test-session',
       compacted: false,
       providerOptions,
@@ -230,7 +234,7 @@ describe('runStreamedGeneration — success', () => {
       onUpdate: vi.fn(),
       abortSignal,
       logger,
-      getChatModelId,
+      modelContext,
       sessionId: 'test-session',
       compacted: false,
     });
@@ -261,7 +265,7 @@ describe('runStreamedGeneration — success', () => {
       onUpdate: vi.fn(),
       abortSignal,
       logger,
-      getChatModelId,
+      modelContext,
       sessionId: 'session-uuid-123',
       compacted: true,
     });
@@ -274,6 +278,8 @@ describe('runStreamedGeneration — success', () => {
     expect(arg.runtimeContext).toEqual({
       'conversation.id': 'session-uuid-123',
       'conversation.compacted': true,
+      'conversation.providerType': 'openai',
+      'conversation.providerId': 'work',
       'conversation.modelId': 'test:model',
     });
   });
@@ -306,7 +312,7 @@ describe('runStreamedGeneration — success', () => {
       onUpdate: vi.fn(),
       abortSignal,
       logger,
-      getChatModelId,
+      modelContext,
       sessionId: 'test-session',
       compacted: false,
     });
@@ -345,7 +351,7 @@ describe('runStreamedGeneration — empty response', () => {
         onUpdate: vi.fn(),
         abortSignal,
         logger,
-        getChatModelId,
+        modelContext,
         sessionId: 'test-session',
         compacted: false,
       }),
@@ -371,7 +377,7 @@ describe('runStreamedGeneration — error handling', () => {
         onUpdate: vi.fn(),
         abortSignal,
         logger,
-        getChatModelId,
+        modelContext,
         sessionId: 'test-session',
         compacted: false,
       }),
@@ -398,7 +404,7 @@ describe('runStreamedGeneration — error handling', () => {
         onUpdate: vi.fn(),
         abortSignal,
         logger,
-        getChatModelId,
+        modelContext,
         sessionId: 'test-session',
         compacted: false,
       }),

@@ -6,10 +6,10 @@ import { generateText } from 'ai';
 
 import type { ModuleLogger, RootLogger } from '@stagewise/logger';
 
-import { type Config, modelIdFromEntry } from '@/config';
+import type { Config } from '@/config';
 import type { IntrospectionScope } from '@/introspection';
 import type { Mcp } from '@/mcp';
-import type { ModelProvider } from '@/model-provider';
+import type { ProviderModelResolver } from '@/provider-registry';
 import type { RouterApi } from '@/router';
 import type { SessionInboxEvent } from '@/session/inbox';
 import type {
@@ -53,7 +53,7 @@ const MAX_CONSECUTIVE_FAILURES = 5;
 
 export interface ChatSessionDependencies {
   logging: RootLogger;
-  modelProvider: ModelProvider;
+  modelResolver: ProviderModelResolver;
   config: Config;
   mcp: Mcp;
   router: RouterApi;
@@ -150,7 +150,7 @@ class ChatSessionModule implements AgentSession {
     private readonly deps: {
       logger: ModuleLogger;
       logging: RootLogger;
-      modelProvider: ModelProvider;
+      modelResolver: ProviderModelResolver;
       config: Config;
       dataDirectory: string;
       mcp: Mcp;
@@ -228,6 +228,7 @@ class ChatSessionModule implements AgentSession {
       },
       inbox: this.sessionInbox,
       config: this.deps.config,
+      modelResolver: this.deps.modelResolver,
       generateText: (args) => this.generateTextForExtension(args),
       logger: this.deps.logger,
       logging: this.deps.logging,
@@ -297,7 +298,7 @@ class ChatSessionModule implements AgentSession {
       {
         attributes: {
           'gen.extension': true,
-          'gen.modelIds': modelIds.map((e) => modelIdFromEntry(e)).join(','),
+          'gen.modelIds': modelIds.map((e) => e.modelId).join(','),
           'gen.modelCount': modelIds.length,
           'gen.systemProvided': args.system != null,
           'gen.promptProvided': args.prompt != null,
@@ -329,10 +330,10 @@ class ChatSessionModule implements AgentSession {
         let contentFilterCount = 0;
 
         for (const entry of modelIds) {
-          const modelId = modelIdFromEntry(entry);
+          const modelId = entry.modelId;
           try {
-            const model = await this.deps.modelProvider.get(modelId);
-            const resolved = this.deps.config.resolveModel(entry);
+            const model = await this.deps.modelResolver.getLanguageModel(entry);
+            const resolved = this.deps.modelResolver.resolveModel(entry);
             const providerOptions = resolved.providerOptions as
               | Record<string, JSONObject>
               | undefined;
@@ -351,12 +352,16 @@ class ChatSessionModule implements AgentSession {
                       functionId,
                       includeRuntimeContext: {
                         'conversation.id': true,
+                        'conversation.providerType': true,
+                        'conversation.providerId': true,
                         'conversation.modelId': true,
                       },
                     },
                     runtimeContext: {
                       'conversation.id': this.sessionId,
-                      'conversation.modelId': modelId,
+                      'conversation.providerType': resolved.providerType,
+                      'conversation.providerId': resolved.providerId,
+                      'conversation.modelId': resolved.modelId,
                     },
                     ...(providerOptions !== undefined && { providerOptions }),
                   }
@@ -373,12 +378,16 @@ class ChatSessionModule implements AgentSession {
                       functionId,
                       includeRuntimeContext: {
                         'conversation.id': true,
+                        'conversation.providerType': true,
+                        'conversation.providerId': true,
                         'conversation.modelId': true,
                       },
                     },
                     runtimeContext: {
                       'conversation.id': this.sessionId,
-                      'conversation.modelId': modelId,
+                      'conversation.providerType': resolved.providerType,
+                      'conversation.providerId': resolved.providerId,
+                      'conversation.modelId': resolved.modelId,
                     },
                     ...(providerOptions !== undefined && { providerOptions }),
                   },
@@ -641,7 +650,7 @@ class ChatSessionModule implements AgentSession {
           messages: this.messages,
           inbox: this.sessionInbox,
           extensionHandler: this.extensionHandler,
-          modelProvider: this.deps.modelProvider,
+          modelResolver: this.deps.modelResolver,
           fallbackManager: this.fallbackManager,
           config: this.deps.config,
           forceContinue: needsBackoffRetry,
@@ -848,7 +857,7 @@ class ChatSessionModule implements AgentSession {
 
   public getSessionInfo(): SessionInfo {
     const modelEntry = this.fallbackManager.getChatModelEntry();
-    const modelId = modelEntry ? modelIdFromEntry(modelEntry) : null;
+    const modelId = modelEntry ? modelEntry.modelId : null;
     const fallbackIndex = this.fallbackManager.getFallbackIndex();
 
     // Build per-extension usage snapshot.
@@ -989,7 +998,7 @@ export function createChatSession(
       bindings: { module: 'chat-session' },
     }),
     logging: deps.logging,
-    modelProvider: deps.modelProvider,
+    modelResolver: deps.modelResolver,
     config: deps.config,
     dataDirectory: deps.dataDirectory,
     mcp: deps.mcp,

@@ -10,7 +10,7 @@ import {
   testLogger as logger,
   makeExtensionHandler,
   makeFallbackManager,
-  makeModelProvider,
+  makeModelResolver,
 } from '../test-helpers';
 import {
   checkAndFixHistory,
@@ -82,21 +82,31 @@ vi.mock('../utils/convert-to-model-messages', () => ({
 }));
 
 function makeDeps(overrides: Partial<StepDependencies> = {}): StepDependencies {
-  return {
-    logger,
-    turnContext: context.active(),
-    messages: [],
-    extensionHandler: makeExtensionHandler() as never,
-    modelProvider: makeModelProvider() as never,
-    fallbackManager: makeFallbackManager() as never,
-    config: {
+  const config =
+    overrides.config ??
+    ({
       resolveModel: vi.fn(() => ({ providerOptions: undefined })),
       resolveModelInfo: vi.fn(() => ({
         displayName: 'Test Model',
         contextSize: 128_000,
         inputCapabilities: {},
       })),
-    } as never,
+    } as never);
+  const modelResolver =
+    overrides.modelResolver ??
+    ({
+      ...makeModelResolver(),
+      resolveModel: vi.fn((entry) => config.resolveModel(entry)),
+      resolveModelInfo: vi.fn((entry) => config.resolveModelInfo(entry)),
+    } as never);
+  return {
+    logger,
+    turnContext: context.active(),
+    messages: [],
+    extensionHandler: makeExtensionHandler() as never,
+    modelResolver,
+    fallbackManager: makeFallbackManager() as never,
+    config,
     turnInitialFallbackIndex: 0,
     sessionId: 'test-session-id',
     ...overrides,
@@ -588,29 +598,33 @@ describe('Step — model selection', () => {
     setupDefaultMocks();
   });
 
-  it('fetches the model from modelProvider using fallbackManager.getChatModelEntry', async () => {
-    const modelProvider = makeModelProvider();
+  it('fetches the model from modelResolver using fallbackManager.getChatModelEntry', async () => {
+    const modelResolver = makeModelResolver();
     const fallbackManager = makeFallbackManager();
-    fallbackManager.getChatModelEntry.mockReturnValue(
-      'model:claude-3' as never,
-    );
+    const reference = {
+      providerId: 'anthropic-main',
+      modelId: 'claude-3',
+    };
+    fallbackManager.getChatModelEntry.mockReturnValue(reference as never);
 
     const step = createStep(
       makeDeps({
         messages: [makeUserMessage()],
-        modelProvider: modelProvider as never,
+        modelResolver: modelResolver as never,
         fallbackManager: fallbackManager as never,
       }),
     );
     await step.run();
 
     expect(fallbackManager.getChatModelEntry).toHaveBeenCalled();
-    expect(modelProvider.get).toHaveBeenCalledWith('model:claude-3');
+    expect(modelResolver.getLanguageModel).toHaveBeenCalledWith(reference);
   });
 
   it('reports unusable models and advances to the next fallback', async () => {
-    const modelProvider = makeModelProvider();
-    modelProvider.get.mockRejectedValue(new Error('unsupported model format'));
+    const modelResolver = makeModelResolver();
+    modelResolver.getLanguageModel.mockRejectedValue(
+      new Error('unsupported model format'),
+    );
     const fallbackManager = makeFallbackManager();
     fallbackManager.getChatModelEntry.mockReturnValue(
       'speech:text-to-speech' as never,
@@ -620,7 +634,7 @@ describe('Step — model selection', () => {
     const result = await createStep(
       makeDeps({
         messages: [makeUserMessage()],
-        modelProvider: modelProvider as never,
+        modelResolver: modelResolver as never,
         fallbackManager: fallbackManager as never,
         extensionHandler: extensionHandler as never,
       }),
@@ -643,15 +657,15 @@ describe('Step — model selection', () => {
 
   it('fetches the model BEFORE calling runHistoryTransformers', async () => {
     const extensionHandler = makeExtensionHandler();
-    const modelProvider = makeModelProvider();
+    const modelResolver = makeModelResolver();
     const fallbackManager = makeFallbackManager();
     fallbackManager.getChatModelEntry.mockReturnValue(
       'model:claude-3' as never,
     );
 
     const callOrder: string[] = [];
-    modelProvider.get.mockImplementation(async () => {
-      callOrder.push('modelProvider.get');
+    modelResolver.getLanguageModel.mockImplementation(async () => {
+      callOrder.push('modelResolver.getLanguageModel');
       return {} as LanguageModel;
     });
     extensionHandler.runHistoryTransformers.mockImplementation(
@@ -664,14 +678,14 @@ describe('Step — model selection', () => {
     const step = createStep(
       makeDeps({
         messages: [makeUserMessage()],
-        modelProvider: modelProvider as never,
+        modelResolver: modelResolver as never,
         fallbackManager: fallbackManager as never,
         extensionHandler: extensionHandler as never,
       }),
     );
     await step.run();
 
-    expect(callOrder.indexOf('modelProvider.get')).toBeLessThan(
+    expect(callOrder.indexOf('modelResolver.getLanguageModel')).toBeLessThan(
       callOrder.indexOf('runHistoryTransformers'),
     );
   });
@@ -686,7 +700,10 @@ describe('Step — ResolvedModel passing', () => {
   it('passes the correct ResolvedModel to runHistoryTransformers', async () => {
     const extensionHandler = makeExtensionHandler();
     const fallbackManager = makeFallbackManager();
-    fallbackManager.getChatModelEntry.mockReturnValue('remote:gpt-4o' as never);
+    fallbackManager.getChatModelEntry.mockReturnValue({
+      providerId: 'remote',
+      modelId: 'gpt-4o',
+    } as never);
     const config = {
       resolveModel: vi.fn(() => ({ providerOptions: undefined })),
       resolveModelInfo: vi.fn(() => ({
@@ -709,9 +726,10 @@ describe('Step — ResolvedModel passing', () => {
     await step.run();
 
     expect(extensionHandler.runHistoryTransformers).toHaveBeenCalledOnce();
-    const [, modelArg] = extensionHandler.runHistoryTransformers.mock.calls[0]!;
-    expect(modelArg).toEqual({
-      modelId: 'remote:gpt-4o',
+    const historyCall = extensionHandler.runHistoryTransformers.mock.calls[0];
+    expect(historyCall).toBeDefined();
+    expect(historyCall?.[1]).toEqual({
+      modelId: 'gpt-4o',
       displayName: 'GPT-4o',
       contextSize: 128_000,
       inputCapabilities: {
@@ -789,7 +807,10 @@ describe('Step — ResolvedModel passing', () => {
   it('passes the same ResolvedModel to runContextTransformers', async () => {
     const extensionHandler = makeExtensionHandler();
     const fallbackManager = makeFallbackManager();
-    fallbackManager.getChatModelEntry.mockReturnValue('remote:gpt-4o' as never);
+    fallbackManager.getChatModelEntry.mockReturnValue({
+      providerId: 'remote',
+      modelId: 'gpt-4o',
+    } as never);
     const config = {
       resolveModel: vi.fn(() => ({ providerOptions: undefined })),
       resolveModelInfo: vi.fn(() => ({
@@ -812,9 +833,10 @@ describe('Step — ResolvedModel passing', () => {
     await step.run();
 
     expect(extensionHandler.runContextTransformers).toHaveBeenCalledOnce();
-    const [, modelArg] = extensionHandler.runContextTransformers.mock.calls[0]!;
-    expect(modelArg).toEqual({
-      modelId: 'remote:gpt-4o',
+    const contextCall = extensionHandler.runContextTransformers.mock.calls[0];
+    expect(contextCall).toBeDefined();
+    expect(contextCall?.[1]).toEqual({
+      modelId: 'gpt-4o',
       displayName: 'GPT-4o',
       contextSize: 128_000,
       inputCapabilities: {
@@ -830,7 +852,7 @@ describe('Step — generation runner deps', () => {
     setupDefaultMocks();
   });
 
-  it('passes turnInitialFallbackIndex and model to createGenerationRunner, not modelProvider', async () => {
+  it('passes turnInitialFallbackIndex and model to createGenerationRunner, not modelResolver', async () => {
     const step = createStep(
       makeDeps({
         messages: [makeUserMessage()],
@@ -842,7 +864,7 @@ describe('Step — generation runner deps', () => {
     const createCall = vi.mocked(createGenerationRunner).mock.calls[0]?.[0];
     expect(createCall?.turnInitialFallbackIndex).toBe(2);
     expect(createCall?.model).toBeDefined();
-    expect(createCall).not.toHaveProperty('modelProvider');
+    expect(createCall).not.toHaveProperty('modelResolver');
   });
 });
 

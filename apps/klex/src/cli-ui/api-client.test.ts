@@ -44,13 +44,43 @@ describe('AdminApiClient', () => {
       const client = new AdminApiClient('http://test');
       globalThis.fetch = fetchMock;
 
-      await client.createProvider({ name: 'test' });
+      await client.createProvider({ id: 'test', type: 'openai', settings: {} });
       expect(fetchMock).toHaveBeenCalledWith(
         'http://test/v1/providers',
         expect.objectContaining({
           method: 'POST',
-          body: JSON.stringify({ name: 'test' }),
+          body: JSON.stringify({ id: 'test', type: 'openai', settings: {} }),
         }),
+      );
+    });
+
+    it('updates providers with JSON Merge Patch', async () => {
+      const fetchMock = mockFetch(jsonResponse({ ok: true }));
+      const client = new AdminApiClient('http://test');
+      globalThis.fetch = fetchMock;
+
+      await client.updateProvider('test', {
+        settings: { apiKey: null },
+      });
+      expect(fetchMock).toHaveBeenCalledWith(
+        'http://test/v1/providers/test',
+        expect.objectContaining({
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/merge-patch+json' },
+          body: JSON.stringify({ settings: { apiKey: null } }),
+        }),
+      );
+    });
+
+    it('refreshes provider models on demand', async () => {
+      const fetchMock = mockFetch(jsonResponse({ models: [] }));
+      const client = new AdminApiClient('http://test');
+      globalThis.fetch = fetchMock;
+
+      await client.getKnownModels('provider instance', true);
+      expect(fetchMock).toHaveBeenCalledWith(
+        'http://test/v1/providers/provider%20instance/models?refresh=true',
+        expect.objectContaining({ method: 'GET' }),
       );
     });
 
@@ -260,6 +290,27 @@ describe('AdminApiClient', () => {
 
       await expect(client.getProviders()).rejects.toThrow(AdminApiClientError);
       await expect(client.getProviders()).rejects.toThrow('Not found');
+    });
+
+    it('preserves stable codes and remediation in errors', async () => {
+      const fetchMock = vi.fn().mockImplementation(() =>
+        jsonResponse(
+          {
+            error: 'Dependency missing',
+            code: 'dependency_missing',
+            remediation: 'Install the provider CLI',
+          },
+          409,
+        ),
+      );
+      const client = new AdminApiClient('http://test');
+      globalThis.fetch = fetchMock;
+
+      await expect(client.getProviders()).rejects.toMatchObject({
+        statusCode: 409,
+        code: 'dependency_missing',
+        remediation: 'Install the provider CLI',
+      });
     });
 
     it('includes status code in error', async () => {

@@ -36,7 +36,7 @@ function makeCallEndEvent(event: Record<string, unknown>): CallEndEvent {
 }
 
 describe('KlexTelemetry — model ID propagation', () => {
-  it('extracts providerId, endpointId, modelId from a full klex ModelId', () => {
+  it('records explicit provider and native model identity', () => {
     const telemetry = createTelemetry();
     const records: ModelCallRecord[] = [];
     telemetry.setModelCallSink((record) => records.push(record));
@@ -50,7 +50,9 @@ describe('KlexTelemetry — model ID propagation', () => {
         modelId: 'gpt-4o',
         runtimeContext: {
           'conversation.id': 'session-001',
-          'conversation.modelId': 'openai:custom-endpoint:gpt-4o',
+          'conversation.providerType': 'openai',
+          'conversation.providerId': 'work',
+          'conversation.modelId': 'gpt-4o',
         },
         functionId: 'chat-session',
       }),
@@ -66,14 +68,15 @@ describe('KlexTelemetry — model ID propagation', () => {
 
     expect(records).toHaveLength(1);
     const record = records[0]!;
-    expect(record.providerId).toBe('openai');
-    expect(record.endpointId).toBe('custom-endpoint');
+    expect(record.providerType).toBe('openai');
+    expect(record.providerId).toBe('work');
+    expect(record.endpointId).toBeNull();
     expect(record.modelId).toBe('gpt-4o');
     expect(record.sessionId).toBe('session-001');
     expect(record.source).toBe('chat');
   });
 
-  it('extracts providerId and modelId from a two-segment ModelId (no endpoint)', () => {
+  it('records explicit provider identity for extension calls', () => {
     const telemetry = createTelemetry();
     const records: ModelCallRecord[] = [];
     telemetry.setModelCallSink((record) => records.push(record));
@@ -87,7 +90,9 @@ describe('KlexTelemetry — model ID propagation', () => {
         modelId: 'claude-sonnet-4',
         runtimeContext: {
           'conversation.id': 'session-002',
-          'conversation.modelId': 'anthropic:claude-sonnet-4',
+          'conversation.providerType': 'anthropic',
+          'conversation.providerId': 'personal',
+          'conversation.modelId': 'claude-sonnet-4',
         },
         functionId: 'extension:context-compaction',
       }),
@@ -103,7 +108,8 @@ describe('KlexTelemetry — model ID propagation', () => {
 
     expect(records).toHaveLength(1);
     const record = records[0]!;
-    expect(record.providerId).toBe('anthropic');
+    expect(record.providerType).toBe('anthropic');
+    expect(record.providerId).toBe('personal');
     expect(record.endpointId).toBeNull();
     expect(record.modelId).toBe('claude-sonnet-4');
     expect(record.source).toBe('extension');
@@ -199,7 +205,9 @@ describe('KlexTelemetry — model ID propagation', () => {
         modelId: 'gpt-4o',
         runtimeContext: {
           'conversation.id': 'session-003',
-          'conversation.modelId': 'openai:local:gpt-4o:2024-08-06',
+          'conversation.providerType': 'openai',
+          'conversation.providerId': 'local',
+          'conversation.modelId': 'gpt-4o:2024-08-06',
         },
         functionId: 'chat-session',
       }),
@@ -215,9 +223,9 @@ describe('KlexTelemetry — model ID propagation', () => {
 
     expect(records).toHaveLength(1);
     const record = records[0]!;
-    expect(record.providerId).toBe('openai');
-    expect(record.endpointId).toBe('local');
-    // Everything after the second colon is the model ID
+    expect(record.providerType).toBe('openai');
+    expect(record.providerId).toBe('local');
+    expect(record.endpointId).toBeNull();
     expect(record.modelId).toBe('gpt-4o:2024-08-06');
   });
 
@@ -235,7 +243,9 @@ describe('KlexTelemetry — model ID propagation', () => {
         modelId: 'gpt-4o',
         runtimeContext: {
           'conversation.id': 'session-004',
-          'conversation.modelId': 'openai:gpt-4o',
+          'conversation.providerType': 'openai',
+          'conversation.providerId': 'work',
+          'conversation.modelId': 'gpt-4o',
         },
         functionId: 'chat-session',
       }),
@@ -250,7 +260,8 @@ describe('KlexTelemetry — model ID propagation', () => {
 
     expect(records).toHaveLength(1);
     const record = records[0]!;
-    expect(record.providerId).toBe('openai');
+    expect(record.providerType).toBe('openai');
+    expect(record.providerId).toBe('work');
     expect(record.modelId).toBe('gpt-4o');
     expect(record.finishReason).toBe('aborted');
     expect(record.isError).toBe(true);
@@ -271,7 +282,9 @@ describe('KlexTelemetry — model ID propagation', () => {
         modelId: 'gpt-4o',
         runtimeContext: {
           'conversation.id': 'session-005',
-          'conversation.modelId': 'openai:custom:gpt-4o',
+          'conversation.providerType': 'openai',
+          'conversation.providerId': 'custom',
+          'conversation.modelId': 'gpt-4o',
         },
         functionId: 'extension:audio',
       }),
@@ -284,8 +297,9 @@ describe('KlexTelemetry — model ID propagation', () => {
 
     expect(records).toHaveLength(1);
     const record = records[0]!;
-    expect(record.providerId).toBe('openai');
-    expect(record.endpointId).toBe('custom');
+    expect(record.providerType).toBe('openai');
+    expect(record.providerId).toBe('custom');
+    expect(record.endpointId).toBeNull();
     expect(record.modelId).toBe('gpt-4o');
     expect(record.finishReason).toBe('error');
     expect(record.isError).toBe(true);

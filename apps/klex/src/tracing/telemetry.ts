@@ -168,14 +168,12 @@ interface CallState {
   operationId: string;
   /** Session UUID from runtimeContext — set on root span as gen_ai.conversation.id. */
   conversationId: string | undefined;
-  /** Full klex modelId (providerId:endpointId:modelId) from runtimeContext. */
-  fullModelId: string | undefined;
-  /** Provider ID extracted from fullModelId. */
+  /** Registered provider type from runtime context. */
+  providerType: string | undefined;
+  /** Stable configured provider-instance ID from runtime context. */
   providerId: string | undefined;
-  /** Endpoint ID extracted from fullModelId. */
-  endpointId: string | undefined;
-  /** Model ID (final segment of fullModelId). */
-  modelIdOnly: string | undefined;
+  /** Native model ID from runtime context. */
+  modelId: string | undefined;
   /** Wall-clock timestamp (ms) when onStart fired. */
   spanStartTime: number;
   /** Time to first token in ms, set in onLanguageModelCallEnd. */
@@ -262,9 +260,10 @@ export class KlexTelemetry implements Telemetry {
     const record: ModelCallRecord = {
       id: callId,
       sessionId: state.conversationId ?? null,
+      providerType: state.providerType ?? 'unknown',
       providerId: state.providerId ?? 'unknown',
-      endpointId: state.endpointId ?? null,
-      modelId: state.modelIdOnly ?? state.fullModelId ?? 'unknown',
+      endpointId: null,
+      modelId: state.modelId ?? 'unknown',
       source,
       extensionId,
       inputTokens,
@@ -317,50 +316,23 @@ export class KlexTelemetry implements Telemetry {
       typeof runtimeContext?.['conversation.compacted'] === 'boolean'
         ? (runtimeContext['conversation.compacted'] as boolean)
         : undefined;
-    // The full klex modelId (providerId:endpointId:modelId) is passed
-    // via runtimeContext by the session. The AI SDK's restricted telemetry
-    // dispatcher strips runtime context keys unless the caller explicitly
-    // allow-lists them via telemetry.includeRuntimeContext. If that was
-    // not configured, fall back to the AI SDK's internal provider/modelId
-    // fields so we still capture something useful.
-    const fullModelId =
+    // Provider identity is passed as separate runtime-context values. Native
+    // model IDs are opaque and may contain colons, so telemetry must not parse
+    // identity out of a composite string. The SDK fields remain a defensive
+    // fallback for callers that do not allow-list Klex runtime context.
+    const providerType =
+      typeof runtimeContext?.['conversation.providerType'] === 'string'
+        ? (runtimeContext['conversation.providerType'] as string)
+        : genEvent.provider;
+    const providerId =
+      typeof runtimeContext?.['conversation.providerId'] === 'string'
+        ? (runtimeContext['conversation.providerId'] as string)
+        : genEvent.provider;
+    const modelId =
       typeof runtimeContext?.['conversation.modelId'] === 'string'
         ? (runtimeContext['conversation.modelId'] as string)
-        : undefined;
-    const requestModel = fullModelId ?? genEvent.modelId;
-
-    // Parse the klex fullModelId (format: providerId:endpointId:modelId
-    // or providerId:modelId) to extract individual components for trace
-    // metadata. This lets traces be filtered/grouped by provider and endpoint.
-    // Uses indexOf/slice (not split) so model IDs containing colons survive.
-    // The config layer uses the same approach in splitProviderId/resolveModel.
-    let providerId: string | undefined;
-    let endpointId: string | undefined;
-    let modelIdOnly: string | undefined;
-    if (fullModelId) {
-      const firstColon = fullModelId.indexOf(':');
-      if (firstColon !== -1) {
-        providerId = fullModelId.slice(0, firstColon);
-        const rest = fullModelId.slice(firstColon + 1);
-        const secondColon = rest.indexOf(':');
-        if (secondColon !== -1) {
-          // providerId:endpointId:modelId (manual provider)
-          endpointId = rest.slice(0, secondColon);
-          modelIdOnly = rest.slice(secondColon + 1);
-        } else {
-          // providerId:modelId (preset provider, no endpoint)
-          modelIdOnly = rest;
-        }
-      }
-    } else {
-      // Fall back to the AI SDK's own provider/modelId fields when the
-      // runtime context was stripped by the restricted telemetry dispatcher.
-      // These are the bare names (e.g. provider="openai", modelId="gpt-4o")
-      // so they won't include endpoint information, but they prevent
-      // modelId from being logged as "unknown".
-      providerId = genEvent.provider;
-      modelIdOnly = genEvent.modelId;
-    }
+        : genEvent.modelId;
+    const requestModel = modelId;
 
     const spanName = `generate_content ${requestModel}`;
 
@@ -373,18 +345,9 @@ export class KlexTelemetry implements Telemetry {
       'gen_ai.agent.name': genEvent.functionId,
     };
 
-    // Klex Bot-specific metadata: provider and endpoint IDs from the
-    // full model ID. These allow traces to be filtered by provider/endpoint
-    // in the tracing backend.
-    if (providerId != null) {
-      attributes['klex.model.provider_id'] = providerId;
-    }
-    if (endpointId != null) {
-      attributes['klex.model.endpoint_id'] = endpointId;
-    }
-    if (modelIdOnly != null) {
-      attributes['klex.model.model_id'] = modelIdOnly;
-    }
+    attributes['klex.model.provider_type'] = providerType;
+    attributes['klex.model.provider_id'] = providerId;
+    attributes['klex.model.model_id'] = modelId;
 
     // Conversation metadata from runtimeContext.
     if (conversationId != null) {
@@ -452,10 +415,9 @@ export class KlexTelemetry implements Telemetry {
       functionId: genEvent.functionId,
       operationId: genEvent.operationId,
       conversationId,
-      fullModelId,
+      providerType,
       providerId,
-      endpointId,
-      modelIdOnly,
+      modelId,
       spanStartTime: Date.now(),
       ttftMs: undefined,
       totalDurationMs: undefined,
@@ -507,7 +469,7 @@ export class KlexTelemetry implements Telemetry {
       'gen_ai.response.id': event.responseId,
       // Use the full klex modelId if available; fall back to the
       // AI SDK's internal response model name.
-      'gen_ai.response.model': state.fullModelId ?? event.modelId,
+      'gen_ai.response.model': state.modelId ?? event.modelId,
     });
 
     // Performance attributes — only available at model-call end.

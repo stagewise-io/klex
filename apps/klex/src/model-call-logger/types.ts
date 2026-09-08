@@ -8,11 +8,13 @@ export interface ModelCallRecord {
   id: string;
   /** Session UUID — derived from runtimeContext['conversation.id']. In klex, a conversation is a session. */
   sessionId: string | null;
-  /** Provider ID extracted from the klex modelId (providerId:...). */
+  /** Registered transport provider type. */
+  providerType: string;
+  /** Stable configured provider-instance ID. */
   providerId: string;
-  /** Endpoint ID extracted from the klex modelId (providerId:endpointId:modelId). */
+  /** Legacy endpoint ID. Null for all v2 provider calls. */
   endpointId: string | null;
-  /** Model ID (the final segment of the klex modelId). */
+  /** Opaque native model ID. */
   modelId: string;
   /** Source of the call: chat-session generation or extension-initiated. */
   source: ModelCallSource;
@@ -67,7 +69,7 @@ export interface UsageQuery {
 export interface UsageDataPoint {
   /** Time bucket (ISO string). Null for event granularity. */
   bucket: string | null;
-  /** Split key value (model ID, provider ID, endpoint ID). Null for splitBy=none. */
+  /** Split key value for the requested dimension. Null for splitBy=none. */
   splitKey: string | null;
   /** Number of model calls in this bucket/split. */
   callCount: number;
@@ -92,9 +94,11 @@ export interface UsageDataPoint {
   id: string | null;
   /** Session UUID. Null for aggregated granularities. */
   sessionId: string | null;
-  /** Provider ID. Null for aggregated granularities. */
+  /** Provider type. Null for legacy rows and aggregated granularities. */
+  providerType: string | null;
+  /** Configured provider ID. Null for aggregated granularities. */
   providerId: string | null;
-  /** Endpoint ID. Null for aggregated granularities. */
+  /** Legacy endpoint ID. Null for v2 calls and aggregated granularities. */
   endpointId: string | null;
   /** Model ID. Null for aggregated granularities. */
   modelId: string | null;

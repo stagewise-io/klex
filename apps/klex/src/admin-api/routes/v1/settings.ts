@@ -6,12 +6,9 @@ import {
   type Config,
   ConfigValidationError,
   getDefaultTelemetryLevel,
-  type KlexConfig,
-  type ModelSelection,
-  modelIdFromEntry,
-  type ProviderConfig,
   type TelemetryLevel,
 } from '@/config';
+import type { ProviderRegistry } from '@/provider-registry';
 
 import {
   agentIdentityPatchSchema,
@@ -26,6 +23,7 @@ import {
 
 export interface SettingsRouteDependencies {
   config: Config;
+  providerRegistry: ProviderRegistry;
   logger: ModuleLogger;
 }
 
@@ -181,170 +179,30 @@ export const patchModelSelectionRoute = createRoute({
   },
 });
 
-interface ModelSelectionWarning {
-  modelId: string;
-  message: string;
-}
-
-/**
- * Splits a model ID into its components.
- * Format: `providerId:modelId` (preset) or `providerId:endpointId:modelId` (manual).
- */
-function parseModelId(modelId: string): {
-  providerId: string;
-  endpointId: string | undefined;
-  localModelId: string;
-} {
-  const firstColon = modelId.indexOf(':');
-  const providerId = modelId.slice(0, firstColon);
-  const rest = modelId.slice(firstColon + 1);
-  const secondColon = rest.indexOf(':');
-  if (secondColon === -1) {
-    return { providerId, endpointId: undefined, localModelId: rest };
-  }
-  return {
-    providerId,
-    endpointId: rest.slice(0, secondColon),
-    localModelId: rest.slice(secondColon + 1),
-  };
-}
-
-/**
- * Checks whether a model ID references a known model in the provider's
- * knownModels. For preset providers, checks `provider.knownModels`. For
- * manual providers, checks the endpoint's `knownModels`.
- */
-function isKnownModel(
-  provider: ProviderConfig,
-  endpointId: string | undefined,
-  localModelId: string,
-): boolean {
-  if ('preset' in provider) {
-    return provider.knownModels?.[localModelId] !== undefined;
-  }
-  if (!endpointId) return false;
-  return (
-    provider.endpoints[endpointId]?.knownModels?.[localModelId] !== undefined
-  );
-}
-
-/**
- * Validates that all model IDs in the merged selection reference known
- * providers and endpoints. Collects warnings for model IDs that are not
- * declared in knownModels.
- *
- * @returns Array of warnings (empty if all models are known).
- * @throws ConfigValidationError if a model ID references an unknown
- *   provider or endpoint.
- */
-function validateAndCollectWarnings(
-  selection: ModelSelection,
-  config: KlexConfig,
-): ModelSelectionWarning[] {
-  const warnings: ModelSelectionWarning[] = [];
-
-  const selections = [
-    ['chat', selection.chat],
-    ['compaction', selection.compaction],
-    ['memory', selection.memory],
-    ['imageVision', selection.imageVision],
-    ['audioListening', selection.audioListening],
-    ['voice.sts', selection.voice.sts],
-    ['voice.tts', selection.voice.tts],
-    ['voice.stt', selection.voice.stt],
-  ] as const;
-
-  for (const [purpose, entries] of selections) {
-    for (const entry of entries) {
-      const modelId = modelIdFromEntry(entry);
-      const { providerId, endpointId, localModelId } = parseModelId(modelId);
-      const provider = config.providers[providerId];
-
-      if (!provider) {
-        throw new ConfigValidationError(
-          `Model selection '${purpose}' references unknown provider '${providerId}'`,
-          { code: 'referential_integrity' },
-        );
-      }
-
-      if ('preset' in provider) {
-        if (endpointId !== undefined) {
-          throw new ConfigValidationError(
-            `Model selection '${purpose}' uses provider '${providerId}' (preset) with an endpoint ID; preset providers do not have endpoints`,
-            { code: 'referential_integrity' },
-          );
-        }
-      } else {
-        if (endpointId === undefined) {
-          throw new ConfigValidationError(
-            `Model selection '${purpose}' references provider '${providerId}' without an endpoint ID; use '${providerId}:endpointId:modelId' format`,
-            { code: 'referential_integrity' },
-          );
-        }
-        if (!provider.endpoints[endpointId]) {
-          throw new ConfigValidationError(
-            `Model selection '${purpose}' references unknown endpoint '${providerId}:${endpointId}'`,
-            { code: 'referential_integrity' },
-          );
-        }
-      }
-
-      if (!isKnownModel(provider, endpointId, localModelId)) {
-        warnings.push({
-          modelId,
-          message: `Model '${modelId}' is not declared in knownModels for provider '${providerId}'${endpointId ? `, endpoint '${endpointId}'` : ''}`,
-        });
-      }
-    }
-  }
-
-  return warnings;
-}
-
 export function patchModelSelection(
   deps: SettingsRouteDependencies,
 ): RouteHandler<typeof patchModelSelectionRoute> {
   return async (c) => {
     const patch = c.req.valid('json');
 
-    let warnings: ModelSelectionWarning[] = [];
-    try {
-      const config = await deps.config.mutate((current) => {
-        const merged = {
-          chat: patch.chat ?? current.modelSelection.chat,
-          compaction: patch.compaction ?? current.modelSelection.compaction,
-          memory: patch.memory ?? current.modelSelection.memory,
-          imageVision: patch.imageVision ?? current.modelSelection.imageVision,
-          audioListening:
-            patch.audioListening ?? current.modelSelection.audioListening,
-          voice: patch.voice ?? current.modelSelection.voice,
-        } as ModelSelection;
-
-        // Validate only the patched fields — preserved fields are already in
-        // the config and may reference providers/endpoints that were removed.
-        const patchSelection = {
-          chat: patch.chat ?? [],
-          compaction: patch.compaction ?? [],
-          memory: patch.memory ?? [],
-          imageVision: patch.imageVision ?? [],
-          audioListening: patch.audioListening ?? [],
-          voice: patch.voice ?? { sts: [], tts: [], stt: [] },
-        } as ModelSelection;
-        warnings = validateAndCollectWarnings(patchSelection, current);
-
-        return { ...current, modelSelection: merged };
-      });
-      return c.json({ ...config.modelSelection, warnings }, 200);
-    } catch (error) {
-      if (error instanceof ConfigValidationError) {
-        return c.json({ error: error.message, code: 'invalid_request' }, 400);
-      }
-      deps.logger.error({ error }, 'Model selection update failed');
+    const result = await deps.providerRegistry.updateModelSelection(patch);
+    if (result.ok) {
       return c.json(
-        { error: 'Failed to update model selection', code: 'internal_error' },
-        500,
+        { ...result.value.selection, warnings: [...result.value.warnings] },
+        200,
       );
     }
+    if (result.code !== 'internal_error') {
+      return c.json({ error: result.message, code: 'invalid_request' }, 400);
+    }
+    deps.logger.error(
+      { error: result.message },
+      'Model selection update failed',
+    );
+    return c.json(
+      { error: 'Failed to update model selection', code: 'internal_error' },
+      500,
+    );
   };
 }
 

@@ -3,6 +3,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+import { createClient } from '@libsql/client';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { createLogger } from '@stagewise/logger';
@@ -11,7 +12,7 @@ import { createLocalData } from '@/local-data';
 import { KLEX_VERSION } from '@/release';
 
 import { createModelCallLogger } from './model-call-logger';
-import { MODEL_CALL_STORE_DEFINITION } from './schema';
+import { MODEL_CALL_INIT_SQL, MODEL_CALL_STORE_DEFINITION } from './schema';
 import type { ModelCallRecord } from './types';
 
 const logger = createLogger({ name: 'test' });
@@ -23,6 +24,7 @@ function makeRecord(overrides: Partial<ModelCallRecord> = {}): ModelCallRecord {
   return {
     id: randomUUID(),
     sessionId: 'session-001',
+    providerType: 'openai',
     providerId: 'openai',
     endpointId: 'default',
     modelId: 'gpt-4o',
@@ -512,7 +514,7 @@ describe('ModelCallLogger', () => {
       await module.close();
     });
 
-    it('groups by endpoint when splitBy=endpoint', async () => {
+    it('groups historical rows by endpoint when splitBy=endpoint', async () => {
       const { module } = await createLoggerModule();
 
       module.recordCall(
@@ -767,13 +769,90 @@ describe('ModelCallLogger', () => {
     });
   });
 
+  describe('schema migration', () => {
+    it('preserves v1 rows and leaves legacy endpoint identity queryable', async () => {
+      const directory = await mkdtemp(join(tmpdir(), 'klex-modelcall-v1-'));
+      directories.push(directory);
+      const client = createClient({
+        url: `file:${join(directory, 'model-calls.sqlite')}`,
+      });
+      const v1InitSql = MODEL_CALL_INIT_SQL.replace(
+        '  provider_type TEXT,\n',
+        '',
+      ).replace(
+        '(provider_type, provider_id, endpoint_id, model_id)',
+        '(provider_id, endpoint_id, model_id)',
+      );
+      await client.executeMultiple(v1InitSql);
+      await client.execute({
+        sql: 'INSERT INTO meta (key, value) VALUES (?, ?)',
+        args: ['version', '1'],
+      });
+      await client.execute({
+        sql: `INSERT INTO model_calls (
+          id, session_id, provider_id, endpoint_id, model_id, source,
+          extension_id, input_tokens, output_tokens,
+          input_cache_write_tokens, input_cache_read_tokens, ttft_ms,
+          total_duration_ms, finish_reason, is_error, error_type,
+          started_at, finished_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        args: [
+          'legacy-call',
+          'legacy-session',
+          'openai',
+          'custom-endpoint',
+          'gpt-4o',
+          'chat',
+          null,
+          10,
+          5,
+          0,
+          0,
+          100,
+          500,
+          'stop',
+          0,
+          null,
+          '2026-08-14T10:00:00.000Z',
+          '2026-08-14T10:00:00.500Z',
+        ],
+      });
+      client.close();
+      await prepareModelStore(directory);
+
+      const module = createModelCallLogger({
+        logging: logger,
+        dataDirectory: directory,
+      });
+      await module.start();
+      const result = await module.queryUsage({
+        splitBy: 'endpoint',
+        from: null,
+        to: null,
+        granularity: 'event',
+        limit: 10,
+      });
+
+      expect(result).toHaveLength(1);
+      expect(result[0]).toMatchObject({
+        id: 'legacy-call',
+        providerType: null,
+        providerId: 'openai',
+        endpointId: 'custom-endpoint',
+        modelId: 'gpt-4o',
+        splitKey: 'custom-endpoint',
+      });
+      await module.close();
+    });
+  });
+
   describe('retention cleanup', () => {
     it('deletes rows older than 365 days on startup', async () => {
       const directory = await mkdtemp(join(tmpdir(), 'klex-modelcall-'));
       directories.push(directory);
-      await prepareModelStore(directory);
 
       // First instance: record an old call and a recent call
+      await prepareModelStore(directory);
       const module1 = createModelCallLogger({
         logging: logger,
         dataDirectory: directory,

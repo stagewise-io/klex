@@ -9,7 +9,7 @@ import {
   makeExtensionHandler,
   makeFallbackManager,
   makeInbox,
-  makeModelProvider,
+  makeModelResolver,
 } from '../test-helpers';
 import { createTurn, type TurnDependencies } from './turn';
 
@@ -31,7 +31,7 @@ function makeDeps(overrides: Partial<TurnDependencies> = {}): TurnDependencies {
     messages: [],
     inbox: makeInbox(),
     extensionHandler: makeExtensionHandler() as never,
-    modelProvider: makeModelProvider() as never,
+    modelResolver: makeModelResolver() as never,
     fallbackManager: makeFallbackManager() as never,
     config: {
       resolveModel: vi.fn(() => ({

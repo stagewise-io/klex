@@ -1,12 +1,14 @@
 export type {
   CloudEnrollResult,
   CloudStatus,
-  EndpointsResponse,
   IntrospectionNode,
   KnownModelsResponse,
   McpServersResponse,
   ModelSelection,
+  ProviderInfo,
   ProviderResponse,
+  ProviderTypeInfo,
+  ProviderTypesResponse,
   SessionInfo,
   TelemetrySettings,
 } from './api-client';

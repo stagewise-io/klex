@@ -13,64 +13,35 @@ import { KLEX_VERSION } from '@/release';
 
 import { CONFIG_STORE_DEFINITION } from './storage-definition';
 import {
-  type EndpointAuth,
-  type EndpointConfig,
   type KlexConfig,
-  klexConfigSchema,
-  type ManualEndpoint,
   type McpServerConfig,
   type ModelCapabilities,
-  type ModelDefinition,
-  type ModelId,
   type ModelInputCapabilities,
+  type ModelKind,
   type ModelPurpose,
   type ModelSelection,
   type ModelSelectionEntry,
-  modelIdFromEntry,
   type ProviderConfig,
-  resolvePresetEndpoint,
+  parseKlexConfig,
   type TelemetryLevel,
-  type VoiceModelPurpose,
 } from './types';
 
-/**
- * Default context size (in tokens) assumed when a model definition does
- * not specify an explicit `contextSize`.
- */
 export const DEFAULT_CONTEXT_SIZE = 200_000;
-
-/**
- * File name used for the persisted agent configuration file.
- */
 export const CONFIG_FILE_NAME = 'config.json';
-
-/**
- * Returns the environment-aware default telemetry level:
- * `'reduced'` in production, `'full'` otherwise.
- */
-export function getDefaultTelemetryLevel(): TelemetryLevel {
-  return process.env.NODE_ENV === 'production' ? 'reduced' : 'full';
-}
 
 export interface ResolvedModelConfig {
   providerId: string;
-  endpointId: string;
+  providerType: string;
   modelId: string;
-  endpoint: EndpointConfig;
-  isPreset: boolean;
+  kind?: ModelKind;
+  settings: Readonly<Record<string, unknown>>;
   contextSize: number;
-  /** Human-readable name from knownModels, if declared. */
   displayName?: string;
   capabilities: ModelCapabilities;
   inputCapabilities: ModelInputCapabilities;
-  /** Provider-specific options from the model selection entry. */
   providerOptions?: Record<string, Record<string, unknown>>;
 }
 
-/**
- * Model metadata with fallbacks applied. Every consumer of model info
- * gets this — no need to handle missing fields individually.
- */
 export interface ResolvedOpenAIRealtimeConfig {
   modelId: string;
   apiKey: string;
@@ -83,13 +54,9 @@ export type ResolvedRealtimeProvider = {
 };
 
 export interface ModelInfo {
-  /** All declared model capabilities, normalized to an empty object. */
   capabilities: ModelCapabilities;
-  /** Resolved context size in tokens (defaults to {@link DEFAULT_CONTEXT_SIZE}). */
   contextSize: number;
-  /** Human-readable name from `knownModels`, if declared. */
   displayName: string | undefined;
-  /** Native input formats accepted by this model. */
   inputCapabilities: ModelInputCapabilities;
 }
 
@@ -98,6 +65,7 @@ export type ConfigValidationErrorCode =
   | 'already_exists'
   | 'type_mismatch'
   | 'referential_integrity'
+  | 'environment_missing'
   | 'validation';
 
 export class ConfigValidationError extends Error {
@@ -121,95 +89,39 @@ export type ConfigListener = (
 export interface Config {
   start(): Promise<void>;
   close(): Promise<void>;
+  /** Returns the persisted view. Environment placeholders are never expanded here. */
   get(): Readonly<KlexConfig>;
+  /** Returns an ephemeral deep clone with environment placeholders expanded. */
+  getRuntime(): Readonly<KlexConfig>;
   replace(input: unknown): Promise<Readonly<KlexConfig>>;
-  /**
-   * Atomically reads the current config, applies the transform function, and
-   * persists the result. The read-merge-write cycle runs inside the update
-   * queue, preventing lost updates from concurrent mutations.
-   * Throws if the config has not been started.
-   */
   mutate(fn: (config: KlexConfig) => KlexConfig): Promise<Readonly<KlexConfig>>;
   subscribe(listener: ConfigListener): () => void;
   getModelSelection(purpose: ModelPurpose): readonly ModelSelectionEntry[];
   resolveModel(entry: ModelSelectionEntry): ResolvedModelConfig;
-  /**
-   * Returns all model metadata for a given model entry with fallbacks
-   * applied (e.g. `contextSize` defaults to {@link DEFAULT_CONTEXT_SIZE}).
-   */
   resolveModelInfo(entry: ModelSelectionEntry): ModelInfo;
   getMcpServers(): Readonly<Record<string, McpServerConfig>>;
   resolveRealtimeProvider(): ResolvedRealtimeProvider | undefined;
-  /** Creates a new MCP server. Throws if the name already exists. */
   addMcpServer(
     name: string,
     server: McpServerConfig,
   ): Promise<Readonly<KlexConfig>>;
-  /** Updates (replaces) an existing MCP server by name. Throws if not found. */
   updateMcpServer(
     name: string,
     server: McpServerConfig,
   ): Promise<Readonly<KlexConfig>>;
-  /** Removes a single MCP server by name. Throws if not found. */
   removeMcpServer(name: string): Promise<Readonly<KlexConfig>>;
-  /** Updates the model selection section of the config. */
-  updateModelSelection(
-    selection: ModelSelection,
-  ): Promise<Readonly<KlexConfig>>;
-  /** Creates a new provider. Throws if the name already exists. */
-  addProvider(
-    name: string,
+  writeModelSelection(selection: ModelSelection): Promise<Readonly<KlexConfig>>;
+  writeProviderInstance(
+    id: string,
     provider: ProviderConfig,
   ): Promise<Readonly<KlexConfig>>;
-  /** Updates (replaces) an existing provider by name. Throws if not found. */
-  updateProvider(
-    name: string,
-    provider: ProviderConfig,
-  ): Promise<Readonly<KlexConfig>>;
-  /** Removes a provider and all its endpoints. Throws if not found. */
-  removeProvider(name: string): Promise<Readonly<KlexConfig>>;
-  /** Creates a new endpoint on a manual provider. Throws if provider not found, is preset, or endpoint exists. */
-  addEndpoint(
-    providerName: string,
-    endpointName: string,
-    endpoint: EndpointConfig,
-  ): Promise<Readonly<KlexConfig>>;
-  /** Updates an endpoint on a manual provider. Throws if provider/endpoint not found or is preset. */
-  updateEndpoint(
-    providerName: string,
-    endpointName: string,
-    endpoint: EndpointConfig,
-  ): Promise<Readonly<KlexConfig>>;
-  /** Removes an endpoint from a manual provider. Throws if provider/endpoint not found or is preset. */
-  removeEndpoint(
-    providerName: string,
-    endpointName: string,
-  ): Promise<Readonly<KlexConfig>>;
-  /** Adds a known model to a provider. For preset providers, omit endpointName. For manual providers, endpointName is required. Throws on duplicate modelId. */
-  addKnownModel(
-    providerName: string,
-    modelId: string,
-    definition: ModelDefinition,
-    endpointName?: string,
-  ): Promise<Readonly<KlexConfig>>;
-  /** Updates a known model definition. For manual providers, endpointName is required. Throws if not found. */
-  updateKnownModel(
-    providerName: string,
-    modelId: string,
-    definition: ModelDefinition,
-    endpointName?: string,
-  ): Promise<Readonly<KlexConfig>>;
-  /** Removes a known model. For manual providers, endpointName is required. Throws if not found. */
-  removeKnownModel(
-    providerName: string,
-    modelId: string,
-    endpointName?: string,
-  ): Promise<Readonly<KlexConfig>>;
+  deleteProviderInstance(id: string): Promise<Readonly<KlexConfig>>;
 }
 
 export interface ConfigDependencies {
   logging: RootLogger;
   dataDirectory: string;
+  env?: Readonly<NodeJS.ProcessEnv>;
 }
 
 class ConfigModule implements Config {
@@ -217,20 +129,19 @@ class ConfigModule implements Config {
   private metadata: LocalDataMetadata | undefined;
   private updateQueue: Promise<void> = Promise.resolve();
   private readonly listeners = new Set<ConfigListener>();
-  /** Tracks models already warned about missing contextSize. */
-  private readonly warnedMissingContextSize = new Set<ModelId>();
+  private readonly warnedMissingContextSize = new Set<string>();
 
   constructor(
     private readonly deps: {
       logger: ModuleLogger;
       configPath: string;
       dataDirectory: string;
+      env: Readonly<NodeJS.ProcessEnv>;
     },
   ) {}
 
   async start(): Promise<void> {
     if (this.config) return;
-
     try {
       const document = await readCurrentJsonStore<KlexConfig>(
         this.deps.configPath,
@@ -243,22 +154,20 @@ class ConfigModule implements Config {
         );
       const input = document.payload;
       this.metadata = document.metadata;
-      this.config = this.parse(input);
-      const configuredName =
-        typeof input === 'object' && input !== null && 'officialName' in input
-          ? input.officialName
-          : undefined;
-      if (
-        typeof configuredName === 'string' &&
-        Array.from(configuredName.trim()).length > 128
-      ) {
-        await this.replaceNow(this.config);
+      const parsed = this.parse(input);
+      this.config = parsed;
+      if (JSON.stringify(input) !== JSON.stringify(parsed)) {
+        await this.persist(parsed);
       }
     } catch (error) {
       this.config = null;
-      if (error instanceof ConfigValidationError || error instanceof ZodError) {
+      if (
+        error instanceof ConfigValidationError ||
+        error instanceof ZodError ||
+        error instanceof SyntaxError
+      ) {
         throw new Error(
-          `Config at ${this.deps.configPath} is invalid: ${error.message}`,
+          `Config at ${this.deps.configPath} is invalid: ${safeErrorMessage(error)}`,
           { cause: error },
         );
       }
@@ -280,6 +189,10 @@ class ConfigModule implements Config {
     return this.requireConfig();
   }
 
+  getRuntime(): Readonly<KlexConfig> {
+    return interpolateEnvironment(this.requireConfig(), this.deps.env);
+  }
+
   replace(input: unknown): Promise<Readonly<KlexConfig>> {
     const update = this.updateQueue.then(() => this.replaceNow(input));
     this.updateQueue = update.then(
@@ -292,11 +205,9 @@ class ConfigModule implements Config {
   mutate(
     fn: (config: KlexConfig) => KlexConfig,
   ): Promise<Readonly<KlexConfig>> {
-    const update = this.updateQueue.then(async () => {
-      const current = this.requireConfig();
-      const next = fn(current);
-      return this.replaceNow(next, false);
-    });
+    const update = this.updateQueue.then(() =>
+      this.replaceNow(fn(this.requireConfig())),
+    );
     this.updateQueue = update.then(
       () => undefined,
       () => undefined,
@@ -311,113 +222,44 @@ class ConfigModule implements Config {
   }
 
   getModelSelection(purpose: ModelPurpose): readonly ModelSelectionEntry[] {
-    const config = this.requireConfig();
+    const config = this.getRuntime();
     return config.modelSelection[purpose].filter((entry) =>
       this.isValidModelReference(config, entry),
     );
   }
 
-  resolveRealtimeProvider(): ResolvedRealtimeProvider | undefined {
-    const config = this.requireConfig();
-    const modelId = config.modelSelection.voice.sts.find((entry) =>
-      this.isValidModelReference(config, entry),
-    );
-    if (!modelId) return undefined;
-    const resolved = this.resolveModel(modelId);
-    const apiKey = resolved.endpoint.auth.apiKey?.trim();
-    if (!apiKey)
-      throw new Error(`Realtime model ${modelId} requires an API key`);
-    return {
-      kind: 'openai-realtime',
-      config: {
-        modelId: resolved.modelId,
-        apiKey,
-        websocketUrl: openAIRealtimeWebSocketUrl(
-          resolved.endpoint.url,
-          resolved.modelId,
-        ),
-      },
-    };
-  }
-
   resolveModel(entry: ModelSelectionEntry): ResolvedModelConfig {
-    const modelId = modelIdFromEntry(entry);
-    const config = this.requireConfig();
-    const { providerId, rest } = splitProviderId(modelId);
-    const provider = config.providers[providerId];
-
+    const config = this.getRuntime();
+    const provider = config.providers[entry.providerId];
     if (!provider) {
+      throw new ConfigValidationError(
+        `Model '${entry.modelId}' references unknown provider '${entry.providerId}'`,
+        { code: 'not_found' },
+      );
+    }
+    const definition = provider.knownModels?.[entry.modelId];
+    const warningKey = `${entry.providerId}\u0000${entry.modelId}`;
+    if (
+      definition?.contextSize === undefined &&
+      !this.warnedMissingContextSize.has(warningKey)
+    ) {
+      this.warnedMissingContextSize.add(warningKey);
       this.deps.logger.warn(
-        { modelId, providerId },
-        'Ignoring model selection that references an unknown provider',
-      );
-      throw new Error(
-        `Model ${modelId} references unknown provider ${providerId}`,
+        { providerId: entry.providerId, modelId: entry.modelId },
+        `Model does not specify contextSize — defaulting to ${DEFAULT_CONTEXT_SIZE}`,
       );
     }
-
-    let knownModels: Record<string, ModelDefinition> | undefined;
-    let localModelId: string;
-    let endpointConfig: EndpointConfig;
-
-    if ('preset' in provider) {
-      localModelId = rest;
-      knownModels = provider.knownModels;
-      endpointConfig = resolvePresetEndpoint(provider.preset, provider.auth);
-      const info = this.resolveMetadata(
-        modelId,
-        providerId,
-        knownModels,
-        localModelId,
-      );
-      return {
-        providerId,
-        endpointId: provider.preset,
-        modelId: localModelId,
-        endpoint: resolveAuthEnvVars(endpointConfig),
-        isPreset: true,
-        ...info,
-        providerOptions: this.resolveProviderOptions(entry),
-      };
-    }
-
-    const colon = rest.indexOf(':');
-    if (colon === -1) {
-      throw new Error(
-        `Manual provider ${providerId} requires an endpoint ID; use ${providerId}:endpointId:modelId format`,
-      );
-    }
-
-    const endpointId = rest.slice(0, colon);
-    localModelId = rest.slice(colon + 1);
-    const endpoint = provider.endpoints[endpointId];
-
-    if (!endpoint) {
-      this.deps.logger.warn(
-        { modelId, providerId, endpointId },
-        'Ignoring model selection that references an unknown endpoint',
-      );
-      throw new Error(
-        `Model ${modelId} references unknown endpoint ${providerId}:${endpointId}`,
-      );
-    }
-
-    knownModels = endpoint.knownModels;
-    endpointConfig = endpoint;
-    const info = this.resolveMetadata(
-      modelId,
-      providerId,
-      knownModels,
-      localModelId,
-    );
     return {
-      providerId,
-      endpointId,
-      modelId: localModelId,
-      endpoint: resolveAuthEnvVars(endpointConfig),
-      isPreset: false,
-      ...info,
-      providerOptions: this.resolveProviderOptions(entry),
+      providerId: entry.providerId,
+      providerType: provider.type,
+      modelId: entry.modelId,
+      ...(definition?.kind && { kind: definition.kind }),
+      settings: provider.settings,
+      contextSize: definition?.contextSize ?? DEFAULT_CONTEXT_SIZE,
+      ...(definition?.displayName && { displayName: definition.displayName }),
+      capabilities: definition?.capabilities ?? {},
+      inputCapabilities: definition?.capabilities?.input ?? {},
+      ...(entry.providerOptions && { providerOptions: entry.providerOptions }),
     };
   }
 
@@ -427,60 +269,39 @@ class ConfigModule implements Config {
     return { capabilities, contextSize, displayName, inputCapabilities };
   }
 
-  /**
-   * Returns the providerOptions from the selection entry, or undefined
-   * if the entry is a bare string or has no providerOptions set.
-   */
-  private resolveProviderOptions(
-    entry: ModelSelectionEntry,
-  ): Record<string, Record<string, unknown>> | undefined {
-    if (typeof entry === 'string') return undefined;
-    return entry.providerOptions;
-  }
-
-  /**
-   * Resolves metadata (contextSize + displayName) from `knownModels`,
-   * applying the {@link DEFAULT_CONTEXT_SIZE} fallback and warning.
-   */
-  private resolveMetadata(
-    modelId: ModelId,
-    providerId: string,
-    knownModels: Record<string, ModelDefinition> | undefined,
-    localModelId: string,
-  ): ModelInfo {
-    const def = knownModels?.[localModelId];
-    const contextSize = def?.contextSize;
-    if (
-      contextSize === undefined &&
-      !this.warnedMissingContextSize.has(modelId)
-    ) {
-      this.warnedMissingContextSize.add(modelId);
-      this.deps.logger.warn(
-        { modelId, providerId },
-        `Model ${modelId} does not specify contextSize — defaulting to ${DEFAULT_CONTEXT_SIZE}. Explicit contextSize is preferred.`,
+  resolveRealtimeProvider(): ResolvedRealtimeProvider | undefined {
+    const reference = this.getRuntime().modelSelection.voice.sts.find((entry) =>
+      this.isValidModelReference(this.getRuntime(), entry),
+    );
+    if (!reference) return undefined;
+    const resolved = this.resolveModel(reference);
+    if (resolved.providerType !== 'openai') {
+      throw new ConfigValidationError(
+        `Realtime speech requires an 'openai' provider, received '${resolved.providerType}'`,
+        { code: 'type_mismatch' },
       );
     }
-
+    const apiKey = stringSetting(resolved.settings, 'apiKey');
+    if (!apiKey) {
+      throw new ConfigValidationError(
+        'Realtime OpenAI provider requires an API key',
+      );
+    }
+    const baseUrl =
+      stringSetting(resolved.settings, 'baseUrl') ??
+      'https://api.openai.com/v1';
     return {
-      contextSize: contextSize ?? DEFAULT_CONTEXT_SIZE,
-      displayName: def?.displayName,
-      capabilities: def?.capabilities ?? {},
-      inputCapabilities: def?.capabilities?.input ?? {},
+      kind: 'openai-realtime',
+      config: {
+        modelId: resolved.modelId,
+        apiKey,
+        websocketUrl: openAIRealtimeWebSocketUrl(baseUrl, resolved.modelId),
+      },
     };
   }
 
   getMcpServers(): Readonly<Record<string, McpServerConfig>> {
-    const servers = structuredClone(this.requireConfig().mcpServers);
-    for (const server of Object.values(servers)) {
-      if (!('url' in server) || server.headers === undefined) continue;
-      server.headers = Object.fromEntries(
-        Object.entries(server.headers).map(([name, value]) => [
-          name,
-          resolveEnvVar(value),
-        ]),
-      ) as Record<string, string>;
-    }
-    return servers;
+    return this.getRuntime().mcpServers;
   }
 
   async addMcpServer(
@@ -488,11 +309,7 @@ class ConfigModule implements Config {
     server: McpServerConfig,
   ): Promise<Readonly<KlexConfig>> {
     return this.mutate((current) => {
-      if (current.mcpServers[name]) {
-        throw new ConfigValidationError(`MCP server '${name}' already exists`, {
-          code: 'already_exists',
-        });
-      }
+      assertMissing(current.mcpServers, name, 'MCP server');
       return {
         ...current,
         mcpServers: { ...current.mcpServers, [name]: server },
@@ -505,11 +322,7 @@ class ConfigModule implements Config {
     server: McpServerConfig,
   ): Promise<Readonly<KlexConfig>> {
     return this.mutate((current) => {
-      if (!current.mcpServers[name]) {
-        throw new ConfigValidationError(`MCP server '${name}' not found`, {
-          code: 'not_found',
-        });
-      }
+      assertPresent(current.mcpServers, name, 'MCP server');
       return {
         ...current,
         mcpServers: { ...current.mcpServers, [name]: server },
@@ -519,25 +332,51 @@ class ConfigModule implements Config {
 
   async removeMcpServer(name: string): Promise<Readonly<KlexConfig>> {
     return this.mutate((current) => {
-      if (!current.mcpServers[name]) {
-        throw new ConfigValidationError(`MCP server '${name}' not found`, {
-          code: 'not_found',
-        });
-      }
-      const { [name]: _removed, ...remaining } = current.mcpServers;
-      return {
-        ...current,
-        mcpServers: remaining,
-      };
+      assertPresent(current.mcpServers, name, 'MCP server');
+      const servers = { ...current.mcpServers };
+      delete servers[name];
+      return { ...current, mcpServers: servers };
     });
   }
 
-  private async replaceNow(
-    input: unknown,
-    validateReferences = true,
+  async writeModelSelection(
+    selection: ModelSelection,
   ): Promise<Readonly<KlexConfig>> {
+    return this.mutate((current) => ({
+      ...current,
+      modelSelection: selection,
+    }));
+  }
+
+  async writeProviderInstance(
+    id: string,
+    provider: ProviderConfig,
+  ): Promise<Readonly<KlexConfig>> {
+    return this.mutate((current) => ({
+      ...current,
+      providers: { ...current.providers, [id]: provider },
+    }));
+  }
+
+  async deleteProviderInstance(id: string): Promise<Readonly<KlexConfig>> {
+    return this.mutate((current) => {
+      const providers = { ...current.providers };
+      delete providers[id];
+      return { ...current, providers };
+    });
+  }
+
+  private async replaceNow(input: unknown): Promise<Readonly<KlexConfig>> {
     this.requireConfig();
-    const config = this.parse(input, validateReferences);
+    const config = this.parse(input);
+    await this.persist(config);
+    this.config = config;
+    this.deps.logger.info('Config updated');
+    this.publish(config);
+    return config;
+  }
+
+  private async persist(config: KlexConfig): Promise<void> {
     try {
       this.metadata = await writeJsonStoreDocument(
         this.deps.configPath,
@@ -551,11 +390,30 @@ class ConfigModule implements Config {
         cause: error,
       });
     }
+  }
 
-    this.config = config;
-    this.deps.logger.info('Config updated');
-    this.publish(config);
-    return config;
+  private parse(input: unknown): KlexConfig {
+    try {
+      const parsed = parseKlexConfig(input);
+      // Validate interpolation without retaining the materialized secret-bearing view.
+      interpolateEnvironment(parsed, this.deps.env);
+      return parsed;
+    } catch (error) {
+      if (error instanceof ConfigValidationError) throw error;
+      if (error instanceof ZodError) {
+        throw new ConfigValidationError(error.message, { cause: error });
+      }
+      throw new ConfigValidationError(safeErrorMessage(error), {
+        cause: error,
+      });
+    }
+  }
+
+  private isValidModelReference(
+    config: Readonly<KlexConfig>,
+    entry: ModelSelectionEntry,
+  ): boolean {
+    return config.providers[entry.providerId] !== undefined;
   }
 
   private publish(config: Readonly<KlexConfig>): void {
@@ -570,709 +428,95 @@ class ConfigModule implements Config {
     }
   }
 
-  private parse(input: unknown, validateReferences = true): KlexConfig {
-    let config: KlexConfig;
-    try {
-      config = klexConfigSchema.parse(input);
-    } catch (error) {
-      if (error instanceof ZodError) {
-        throw new ConfigValidationError(error.message, {
-          cause: error,
-          code: 'validation',
-        });
-      }
-      throw error;
-    }
-
-    try {
-      if (validateReferences) {
-        this.warnInvalidModelReferences(config);
-        this.validateVoiceSelections(config);
-      }
-      this.validateAuth(config);
-    } catch (error) {
-      if (error instanceof ConfigValidationError) throw error;
-      throw new ConfigValidationError(
-        error instanceof Error ? error.message : 'Invalid config',
-        { cause: error, code: 'validation' },
-      );
-    }
-
-    return config;
-  }
-
-  async updateModelSelection(
-    selection: ModelSelection,
-  ): Promise<Readonly<KlexConfig>> {
-    return this.mutate((current) => ({
-      ...current,
-      modelSelection: selection,
-    }));
-  }
-
-  async addProvider(
-    name: string,
-    provider: ProviderConfig,
-  ): Promise<Readonly<KlexConfig>> {
-    return this.mutate((current) => {
-      if (current.providers[name]) {
-        throw new ConfigValidationError(`Provider '${name}' already exists`, {
-          code: 'already_exists',
-        });
-      }
-      return {
-        ...current,
-        providers: { ...current.providers, [name]: provider },
-      };
-    });
-  }
-
-  async updateProvider(
-    name: string,
-    provider: ProviderConfig,
-  ): Promise<Readonly<KlexConfig>> {
-    return this.mutate((current) => {
-      if (!current.providers[name]) {
-        throw new ConfigValidationError(`Provider '${name}' not found`, {
-          code: 'not_found',
-        });
-      }
-      return {
-        ...current,
-        providers: { ...current.providers, [name]: provider },
-      };
-    });
-  }
-
-  async removeProvider(name: string): Promise<Readonly<KlexConfig>> {
-    return this.mutate((current) => {
-      if (!current.providers[name]) {
-        throw new ConfigValidationError(`Provider '${name}' not found`, {
-          code: 'not_found',
-        });
-      }
-      // Check referential integrity before removal
-      const selectionEntries = {
-        chat: current.modelSelection.chat,
-        compaction: current.modelSelection.compaction,
-        memory: current.modelSelection.memory,
-        imageVision: current.modelSelection.imageVision,
-        audioListening: current.modelSelection.audioListening,
-        'voice.sts': current.modelSelection.voice.sts,
-        'voice.tts': current.modelSelection.voice.tts,
-        'voice.stt': current.modelSelection.voice.stt,
-      };
-      for (const [purpose, entries] of Object.entries(selectionEntries)) {
-        for (const entry of entries) {
-          const modelId = modelIdFromEntry(entry);
-          const { providerId } = splitProviderId(modelId);
-          if (providerId === name) {
-            throw new ConfigValidationError(
-              `Cannot delete provider '${name}' because it is still referenced by model selection '${purpose}'`,
-              { code: 'referential_integrity' },
-            );
-          }
-        }
-      }
-      const { [name]: _removed, ...remaining } = current.providers;
-      return {
-        ...current,
-        providers: remaining,
-      };
-    });
-  }
-
-  async addEndpoint(
-    providerName: string,
-    endpointName: string,
-    endpoint: EndpointConfig,
-  ): Promise<Readonly<KlexConfig>> {
-    return this.mutate((current) => {
-      const provider = current.providers[providerName];
-      if (!provider) {
-        throw new ConfigValidationError(
-          `Provider '${providerName}' not found`,
-          { code: 'not_found' },
-        );
-      }
-      if ('preset' in provider) {
-        throw new ConfigValidationError(
-          `Cannot add endpoints to preset provider '${providerName}'`,
-          { code: 'type_mismatch' },
-        );
-      }
-      if (provider.endpoints[endpointName]) {
-        throw new ConfigValidationError(
-          `Endpoint '${endpointName}' already exists in provider '${providerName}'`,
-          { code: 'already_exists' },
-        );
-      }
-      return {
-        ...current,
-        providers: {
-          ...current.providers,
-          [providerName]: {
-            ...provider,
-            endpoints: {
-              ...provider.endpoints,
-              [endpointName]: endpoint,
-            },
-          },
-        },
-      };
-    });
-  }
-
-  async updateEndpoint(
-    providerName: string,
-    endpointName: string,
-    endpoint: EndpointConfig,
-  ): Promise<Readonly<KlexConfig>> {
-    return this.mutate((current) => {
-      const provider = current.providers[providerName];
-      if (!provider) {
-        throw new ConfigValidationError(
-          `Provider '${providerName}' not found`,
-          { code: 'not_found' },
-        );
-      }
-      if ('preset' in provider) {
-        throw new ConfigValidationError(
-          `Cannot update endpoints on preset provider '${providerName}'`,
-          { code: 'type_mismatch' },
-        );
-      }
-      const ep = provider.endpoints[endpointName];
-      if (!ep) {
-        throw new ConfigValidationError(
-          `Endpoint '${endpointName}' not found in provider '${providerName}'`,
-          { code: 'not_found' },
-        );
-      }
-      const merged: ManualEndpoint = {
-        ...ep,
-        ...endpoint,
-        ...('knownModels' in ep && ep.knownModels
-          ? { knownModels: ep.knownModels }
-          : {}),
-      };
-      return {
-        ...current,
-        providers: {
-          ...current.providers,
-          [providerName]: {
-            ...provider,
-            endpoints: { ...provider.endpoints, [endpointName]: merged },
-          },
-        },
-      };
-    });
-  }
-
-  async removeEndpoint(
-    providerName: string,
-    endpointName: string,
-  ): Promise<Readonly<KlexConfig>> {
-    return this.mutate((current) => {
-      const provider = current.providers[providerName];
-      if (!provider) {
-        throw new ConfigValidationError(
-          `Provider '${providerName}' not found`,
-          { code: 'not_found' },
-        );
-      }
-      if ('preset' in provider) {
-        throw new ConfigValidationError(
-          `Cannot remove endpoints from preset provider '${providerName}'`,
-          { code: 'type_mismatch' },
-        );
-      }
-      if (!provider.endpoints[endpointName]) {
-        throw new ConfigValidationError(
-          `Endpoint '${endpointName}' not found in provider '${providerName}'`,
-          { code: 'not_found' },
-        );
-      }
-      // Check referential integrity before removal
-      const selectionEntries = {
-        chat: current.modelSelection.chat,
-        compaction: current.modelSelection.compaction,
-        memory: current.modelSelection.memory,
-        imageVision: current.modelSelection.imageVision,
-        audioListening: current.modelSelection.audioListening,
-        'voice.sts': current.modelSelection.voice.sts,
-        'voice.tts': current.modelSelection.voice.tts,
-        'voice.stt': current.modelSelection.voice.stt,
-      };
-      for (const [purpose, entries] of Object.entries(selectionEntries)) {
-        for (const entry of entries) {
-          const modelId = modelIdFromEntry(entry);
-          const { providerId, rest } = splitProviderId(modelId);
-          if (providerId === providerName) {
-            const colon = rest.indexOf(':');
-            if (colon !== -1 && rest.slice(0, colon) === endpointName) {
-              throw new ConfigValidationError(
-                `Cannot delete endpoint '${providerName}:${endpointName}' because it is still referenced by model selection '${purpose}'`,
-                { code: 'referential_integrity' },
-              );
-            }
-          }
-        }
-      }
-      const { [endpointName]: _removed, ...remainingEndpoints } =
-        provider.endpoints;
-      return {
-        ...current,
-        providers: {
-          ...current.providers,
-          [providerName]: {
-            ...provider,
-            endpoints: remainingEndpoints,
-          },
-        },
-      };
-    });
-  }
-
-  async addKnownModel(
-    providerName: string,
-    modelId: string,
-    definition: ModelDefinition,
-    endpointName?: string,
-  ): Promise<Readonly<KlexConfig>> {
-    return this.mutate((current) => {
-      const provider = current.providers[providerName];
-      if (!provider) {
-        throw new ConfigValidationError(
-          `Provider '${providerName}' not found`,
-          { code: 'not_found' },
-        );
-      }
-
-      if ('preset' in provider) {
-        if (endpointName !== undefined) {
-          throw new ConfigValidationError(
-            `Preset provider '${providerName}' does not support endpoint-scoped known models`,
-            { code: 'type_mismatch' },
-          );
-        }
-        const existing = provider.knownModels ?? {};
-        if (existing[modelId]) {
-          throw new ConfigValidationError(
-            `Model '${modelId}' already exists in provider '${providerName}'`,
-            { code: 'already_exists' },
-          );
-        }
-        return {
-          ...current,
-          providers: {
-            ...current.providers,
-            [providerName]: {
-              ...provider,
-              knownModels: { ...existing, [modelId]: definition },
-            },
-          },
-        };
-      }
-
-      // Manual provider — endpointName is required
-      if (!endpointName) {
-        throw new ConfigValidationError(
-          `Manual provider '${providerName}' requires an endpoint name for known models`,
-          { code: 'type_mismatch' },
-        );
-      }
-      const endpoint = provider.endpoints[endpointName];
-      if (!endpoint) {
-        throw new ConfigValidationError(
-          `Endpoint '${endpointName}' not found in provider '${providerName}'`,
-          { code: 'not_found' },
-        );
-      }
-      const existing = endpoint.knownModels ?? {};
-      if (existing[modelId]) {
-        throw new ConfigValidationError(
-          `Model '${modelId}' already exists in endpoint '${endpointName}' of provider '${providerName}'`,
-          { code: 'already_exists' },
-        );
-      }
-      return {
-        ...current,
-        providers: {
-          ...current.providers,
-          [providerName]: {
-            ...provider,
-            endpoints: {
-              ...provider.endpoints,
-              [endpointName]: {
-                ...endpoint,
-                knownModels: { ...existing, [modelId]: definition },
-              },
-            },
-          },
-        },
-      };
-    });
-  }
-
-  async updateKnownModel(
-    providerName: string,
-    modelId: string,
-    definition: ModelDefinition,
-    endpointName?: string,
-  ): Promise<Readonly<KlexConfig>> {
-    return this.mutate((current) => {
-      const provider = current.providers[providerName];
-      if (!provider) {
-        throw new ConfigValidationError(
-          `Provider '${providerName}' not found`,
-          { code: 'not_found' },
-        );
-      }
-
-      if ('preset' in provider) {
-        if (endpointName !== undefined) {
-          throw new ConfigValidationError(
-            `Preset provider '${providerName}' does not support endpoint-scoped known models`,
-            { code: 'type_mismatch' },
-          );
-        }
-        const existing = provider.knownModels ?? {};
-        if (!existing[modelId]) {
-          throw new ConfigValidationError(
-            `Model '${modelId}' not found in provider '${providerName}'`,
-            { code: 'not_found' },
-          );
-        }
-        return {
-          ...current,
-          providers: {
-            ...current.providers,
-            [providerName]: {
-              ...provider,
-              knownModels: { ...existing, [modelId]: definition },
-            },
-          },
-        };
-      }
-
-      // Manual provider — endpointName is required
-      if (!endpointName) {
-        throw new ConfigValidationError(
-          `Manual provider '${providerName}' requires an endpoint name for known models`,
-          { code: 'type_mismatch' },
-        );
-      }
-      const endpoint = provider.endpoints[endpointName];
-      if (!endpoint) {
-        throw new ConfigValidationError(
-          `Endpoint '${endpointName}' not found in provider '${providerName}'`,
-          { code: 'not_found' },
-        );
-      }
-      const existing = endpoint.knownModels ?? {};
-      if (!existing[modelId]) {
-        throw new ConfigValidationError(
-          `Model '${modelId}' not found in endpoint '${endpointName}' of provider '${providerName}'`,
-          { code: 'not_found' },
-        );
-      }
-      return {
-        ...current,
-        providers: {
-          ...current.providers,
-          [providerName]: {
-            ...provider,
-            endpoints: {
-              ...provider.endpoints,
-              [endpointName]: {
-                ...endpoint,
-                knownModels: { ...existing, [modelId]: definition },
-              },
-            },
-          },
-        },
-      };
-    });
-  }
-
-  async removeKnownModel(
-    providerName: string,
-    modelId: string,
-    endpointName?: string,
-  ): Promise<Readonly<KlexConfig>> {
-    return this.mutate((current) => {
-      const provider = current.providers[providerName];
-      if (!provider) {
-        throw new ConfigValidationError(
-          `Provider '${providerName}' not found`,
-          { code: 'not_found' },
-        );
-      }
-
-      if ('preset' in provider) {
-        if (endpointName !== undefined) {
-          throw new ConfigValidationError(
-            `Preset provider '${providerName}' does not support endpoint-scoped known models`,
-            { code: 'type_mismatch' },
-          );
-        }
-        const existing = provider.knownModels ?? {};
-        if (!existing[modelId]) {
-          throw new ConfigValidationError(
-            `Model '${modelId}' not found in provider '${providerName}'`,
-            { code: 'not_found' },
-          );
-        }
-        const { [modelId]: _removed, ...remaining } = existing;
-        return {
-          ...current,
-          providers: {
-            ...current.providers,
-            [providerName]: {
-              ...provider,
-              knownModels:
-                Object.keys(remaining).length > 0 ? remaining : undefined,
-            },
-          },
-        };
-      }
-
-      // Manual provider — endpointName is required
-      if (!endpointName) {
-        throw new ConfigValidationError(
-          `Manual provider '${providerName}' requires an endpoint name for known models`,
-          { code: 'type_mismatch' },
-        );
-      }
-      const endpoint = provider.endpoints[endpointName];
-      if (!endpoint) {
-        throw new ConfigValidationError(
-          `Endpoint '${endpointName}' not found in provider '${providerName}'`,
-          { code: 'not_found' },
-        );
-      }
-      const existing = endpoint.knownModels ?? {};
-      if (!existing[modelId]) {
-        throw new ConfigValidationError(
-          `Model '${modelId}' not found in endpoint '${endpointName}' of provider '${providerName}'`,
-          { code: 'not_found' },
-        );
-      }
-      const { [modelId]: _removed, ...remaining } = existing;
-      return {
-        ...current,
-        providers: {
-          ...current.providers,
-          [providerName]: {
-            ...provider,
-            endpoints: {
-              ...provider.endpoints,
-              [endpointName]: {
-                ...endpoint,
-                knownModels:
-                  Object.keys(remaining).length > 0 ? remaining : undefined,
-              },
-            },
-          },
-        },
-      };
-    });
-  }
-
   private requireConfig(): KlexConfig {
-    if (!this.config) {
-      throw new Error('Config has not been started');
-    }
+    if (!this.config) throw new Error('Config has not been started');
     return this.config;
   }
+}
 
-  private validateAuth(config: KlexConfig): void {
-    const providerAuthValues = Object.values(config.providers).flatMap(
-      (provider) => {
-        const authValues: string[] = [];
-        if ('preset' in provider) {
-          if (provider.auth.apiKey) authValues.push(provider.auth.apiKey);
-          authValues.push(...Object.values(provider.auth.headers ?? {}));
-        } else {
-          for (const endpoint of Object.values(provider.endpoints)) {
-            if (endpoint.auth.apiKey) authValues.push(endpoint.auth.apiKey);
-            authValues.push(...Object.values(endpoint.auth.headers ?? {}));
-          }
-        }
-        return authValues;
-      },
-    );
-    const mcpHeaders = Object.values(config.mcpServers).flatMap((server) =>
-      'url' in server ? Object.values(server.headers ?? {}) : [],
-    );
-
-    if ([...providerAuthValues, ...mcpHeaders].includes('[REDACTED]')) {
-      throw new ConfigValidationError(
-        'Auth values must not use the reserved [REDACTED] marker',
-        { code: 'validation' },
-      );
-    }
+/**
+ * Recursively materializes `${env:NAME}` placeholders in string values only.
+ * `$${env:NAME}` escapes a placeholder and becomes the literal `${env:NAME}`.
+ */
+export function interpolateEnvironment<T>(
+  value: T,
+  env: Readonly<NodeJS.ProcessEnv>,
+): T {
+  if (typeof value === 'string') {
+    return interpolateString(value, env) as T;
   }
-
-  private isValidModelReference(
-    config: KlexConfig,
-    entry: ModelSelectionEntry,
-  ): boolean {
-    const { providerId, rest } = splitProviderId(modelIdFromEntry(entry));
-    const provider = config.providers[providerId];
-    if (!provider) return false;
-    if ('preset' in provider) return true;
-    const colon = rest.indexOf(':');
-    return (
-      colon !== -1 && provider.endpoints[rest.slice(0, colon)] !== undefined
-    );
+  if (Array.isArray(value)) {
+    return value.map((item) => interpolateEnvironment(item, env)) as T;
   }
+  if (typeof value === 'object' && value !== null) {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, item]) => [
+        key,
+        interpolateEnvironment(item, env),
+      ]),
+    ) as T;
+  }
+  return value;
+}
 
-  private warnInvalidModelReferences(config: KlexConfig): void {
-    const selections: [string, readonly ModelSelectionEntry[]][] = [
-      ['chat', config.modelSelection.chat],
-      ['compaction', config.modelSelection.compaction],
-      ['memory', config.modelSelection.memory],
-      ['imageVision', config.modelSelection.imageVision],
-      ['audioListening', config.modelSelection.audioListening],
-      ['voice.sts', config.modelSelection.voice.sts],
-      ['voice.tts', config.modelSelection.voice.tts],
-      ['voice.stt', config.modelSelection.voice.stt],
-    ];
-    for (const [purpose, entries] of selections) {
-      for (const entry of entries) {
-        const modelId = modelIdFromEntry(entry);
-        const { providerId, rest } = splitProviderId(modelId);
-        const provider = config.providers[providerId];
-        if (!provider) {
-          this.deps.logger.warn(
-            { modelId, purpose, providerId },
-            'Model selection references unknown provider — entry will be ignored',
-          );
-          continue;
-        }
-
-        if ('preset' in provider) {
-          // Preset providers accept any model name — the API rejects invalid ones.
-          continue;
-        }
-
-        const colon = rest.indexOf(':');
-        if (colon === -1) {
-          this.deps.logger.warn(
-            { modelId, purpose, providerId },
-            'Model selection lacks an endpoint ID — entry will be ignored',
-          );
-          continue;
-        }
-
-        const endpointId = rest.slice(0, colon);
-        const endpoint = provider.endpoints[endpointId];
-        if (!endpoint) {
-          this.deps.logger.warn(
-            { modelId, purpose, providerId, endpointId },
-            'Model selection references unknown endpoint — entry will be ignored',
-          );
-        }
+function interpolateString(
+  value: string,
+  env: Readonly<NodeJS.ProcessEnv>,
+): string {
+  return value.replace(
+    /(\$?)\$\{env:([A-Za-z_][A-Za-z0-9_]*)\}/g,
+    (_match, escaped: string, name: string) => {
+      if (escaped === '$') return `\${env:${name}}`;
+      const replacement = env[name];
+      if (replacement === undefined) {
+        throw new ConfigValidationError(
+          `Required environment variable '${name}' is not defined`,
+          { code: 'environment_missing' },
+        );
       }
-    }
-  }
+      return replacement;
+    },
+  );
+}
 
-  private validateVoiceSelections(config: KlexConfig): void {
-    for (const purpose of [
-      'sts',
-      'tts',
-      'stt',
-    ] as const satisfies readonly VoiceModelPurpose[]) {
-      for (const modelId of config.modelSelection.voice[purpose]) {
-        let resolved: {
-          definition: ModelDefinition | undefined;
-          endpoint: EndpointConfig;
-        };
-        try {
-          resolved = resolveConfiguredModel(config, modelId);
-        } catch (error) {
-          this.deps.logger.warn(
-            { modelId, purpose, error },
-            'Voice model selection is unusable — entry will be ignored',
-          );
-          continue;
-        }
-        const { definition, endpoint } = resolved;
-        if (definition?.capabilities?.voice?.[purpose] !== true) {
-          throw new Error(
-            `Model selection voice.${purpose} references ${modelId}, which must declare capabilities.voice.${purpose}: true`,
-          );
-        }
-        if (
-          purpose === 'sts' &&
-          endpoint.format !== 'openai' &&
-          endpoint.format !== 'realtime'
-        ) {
-          throw new Error(
-            `Model selection voice.sts references ${modelId}, but endpoint format ${endpoint.format} has no installed speech-to-speech adapter`,
-          );
-        }
-      }
-    }
+function assertMissing(
+  record: Readonly<Record<string, unknown>>,
+  name: string,
+  kind: string,
+): void {
+  if (record[name] !== undefined) {
+    throw new ConfigValidationError(`${kind} '${name}' already exists`, {
+      code: 'already_exists',
+    });
   }
 }
 
-function resolveConfiguredModel(
-  config: KlexConfig,
-  modelId: ModelId,
-): { definition: ModelDefinition | undefined; endpoint: EndpointConfig } {
-  const { providerId, rest } = splitProviderId(modelId);
-  const provider = config.providers[providerId];
-  if (!provider) throw new Error(`Unknown provider ${providerId}`);
-  if ('preset' in provider) {
-    return {
-      definition: provider.knownModels?.[rest],
-      endpoint: resolvePresetEndpoint(provider.preset, provider.auth),
-    };
+function assertPresent(
+  record: Readonly<Record<string, unknown>>,
+  name: string,
+  kind: string,
+): void {
+  if (record[name] === undefined) {
+    throw new ConfigValidationError(`${kind} '${name}' not found`, {
+      code: 'not_found',
+    });
   }
-  const colon = rest.indexOf(':');
-  const endpointId = rest.slice(0, colon);
-  const localModelId = rest.slice(colon + 1);
-  const endpoint = provider.endpoints[endpointId];
-  if (!endpoint)
-    throw new Error(`Unknown endpoint ${providerId}:${endpointId}`);
-  return { definition: endpoint.knownModels?.[localModelId], endpoint };
 }
 
-function splitProviderId(modelId: ModelId): {
-  providerId: string;
-  rest: string;
-} {
-  const colon = modelId.indexOf(':');
-  return {
-    providerId: modelId.slice(0, colon),
-    rest: modelId.slice(colon + 1),
-  };
+function stringSetting(
+  settings: Readonly<Record<string, unknown>>,
+  key: string,
+): string | undefined {
+  const value = settings[key];
+  return typeof value === 'string' ? value.trim() : undefined;
 }
 
-const ENV_VAR_PATTERN = /^\{env:\s*(.+?)\s*\}$/;
-
-function resolveEnvVar(value: string | undefined): string | undefined {
-  if (!value) return value;
-  const match = value.match(ENV_VAR_PATTERN);
-  if (!match) return value;
-  // biome-ignore lint/style/noNonNullAssertion: capture group guaranteed by regex match
-  const varName = match[1]!.trim();
-  const envValue = process.env[varName];
-  if (envValue === undefined) {
-    throw new Error(`Environment variable ${varName} is not set`);
-  }
-  return envValue;
+function safeErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : 'Invalid configuration';
 }
 
-function resolveAuthEnvVars(endpoint: EndpointConfig): EndpointConfig {
-  const auth: EndpointAuth = { ...endpoint.auth };
-  if (auth.apiKey !== undefined) {
-    auth.apiKey = resolveEnvVar(auth.apiKey);
-  }
-  return { ...endpoint, auth };
+export function getDefaultTelemetryLevel(): TelemetryLevel {
+  return process.env.NODE_ENV === 'production' ? 'reduced' : 'full';
 }
 
 export function openAIRealtimeWebSocketUrl(
@@ -1280,12 +524,9 @@ export function openAIRealtimeWebSocketUrl(
   modelId: string,
 ): string {
   const url = new URL(endpointUrl);
-  if (url.protocol !== 'http:' && url.protocol !== 'https:')
-    throw new Error('OpenAI realtime endpoint must use HTTP or HTTPS');
   url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
   url.pathname = `${url.pathname.replace(/\/$/, '')}/realtime`;
   url.search = '';
-  url.hash = '';
   url.searchParams.set('model', modelId);
   return url.toString();
 }
@@ -1298,5 +539,6 @@ export function createConfig(deps: ConfigDependencies): Config {
     }),
     configPath: join(deps.dataDirectory, CONFIG_FILE_NAME),
     dataDirectory: deps.dataDirectory,
+    env: deps.env ?? process.env,
   });
 }

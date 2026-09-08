@@ -28,6 +28,7 @@ function makeDataPoint(
     errorCount: 0,
     id: null,
     sessionId: null,
+    providerType: null,
     providerId: null,
     endpointId: null,
     modelId: null,
@@ -246,6 +247,15 @@ describe('GET /v1/usage', () => {
     expect(response.status).toBe(400);
   });
 
+  it('rejects providerType as a grouping dimension', async () => {
+    const deps = makeDeps();
+    const app = createApp(deps);
+    const response = await app.request('/v1/usage?splitBy=providerType');
+
+    expect(response.status).toBe(400);
+    expect(deps.modelCallLogger.queryUsage).not.toHaveBeenCalled();
+  });
+
   // --- datetime validation ----------------------------------------------------
 
   it('returns 400 for invalid from datetime', async () => {
@@ -307,6 +317,7 @@ describe('GET /v1/usage', () => {
       errorCount: 1,
       id: null,
       sessionId: null,
+      providerType: null,
       providerId: null,
       endpointId: null,
       modelId: null,

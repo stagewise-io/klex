@@ -13,6 +13,27 @@ const client = hc<AdminApi>('https://agent.example');
 const health = await client.v1.health.$get();
 ```
 
+## Model providers
+
+The provider contract is registry-driven. Clients do not need provider-specific
+routes or hard-coded forms:
+
+- `GET /v1/provider-types` returns each provider type's display metadata,
+  capabilities, and declarative setup fields.
+- `POST /v1/provider-types/{type}/can-add` checks candidate settings and local
+  prerequisites without changing configuration.
+- `/v1/providers` exposes instance CRUD. Every instance includes its stable ID
+  and provider type; multiple instances may use the same type.
+- `POST /v1/providers/{id}/test` returns the standardized connectivity result.
+- `/v1/providers/{id}/models` exposes merged discovery and manual-model data and
+  manages `knownModels` overrides.
+
+Failures contain a stable `code`, a human-readable `error`, and optional
+`remediation`. Branch on the code rather than parsing messages. Provider settings
+returned by the API are redacted and must never contain resolved environment
+secrets. Model selection uses separate `providerId` and opaque `modelId` fields;
+clients must not split model IDs on colons.
+
 ## MCP OAuth authorization
 
 Version 0.2 adds the consolidated MCP authorization contract. Authorization is

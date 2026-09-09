@@ -156,7 +156,7 @@ class InboxModule implements SessionInboxBuffer {
       this.notifyImmediateEvent(event);
     }
 
-    this.notifyNewInput(event.urgency);
+    this.notifyNewInput(event.urgency ?? SessionInboxUrgency.Default);
   }
 
   sendMessage(message: ExtendedUIMessage, urgency: SessionInboxUrgency): void {
@@ -181,7 +181,11 @@ class InboxModule implements SessionInboxBuffer {
       this.deps.onImmediateEvent(event);
     } catch (err) {
       this.deps.logger?.error(
-        { urgency: SessionInboxUrgency[event.urgency], err },
+        {
+          urgency:
+            SessionInboxUrgency[event.urgency ?? SessionInboxUrgency.Default],
+          err,
+        },
         'Inbox onImmediateEvent callback threw — event may not be in history',
       );
     }
@@ -230,7 +234,8 @@ class InboxModule implements SessionInboxBuffer {
       const pulled = {
         events: events.map((e) => ({
           sourceEnv: e.sourceEnv,
-          urgency: SessionInboxUrgency[e.urgency],
+          urgency:
+            SessionInboxUrgency[e.urgency ?? SessionInboxUrgency.Default],
           context: redactMediaForTelemetry(e.context),
         })),
         nativeMessages: nativeMessages.map((m) => ({

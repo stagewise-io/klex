@@ -9,11 +9,11 @@ import {
   available,
   createOpenAiCompatibleLanguageModel,
   fetchJson,
+  gatewayAttributionHeaders,
   isRecord,
   modelListUrl,
   providerHeaders,
   sanitizedError,
-  setting,
   testDiscoveryConnection,
   unavailable,
 } from './shared';
@@ -23,7 +23,7 @@ const BASE_URL = 'https://openrouter.ai/api/v1';
 export const openRouterProviderDefinition: ProviderDefinition = {
   type: 'openrouter',
   usageGuidance:
-    'Use for OpenRouter model routing. Optional application URL and name settings identify traffic to OpenRouter.',
+    'Use for OpenRouter model routing. Requests are automatically attributed to Klex.',
   metadata: {
     displayName: 'OpenRouter',
     description: 'Models routed through the OpenRouter gateway.',
@@ -36,7 +36,7 @@ export const openRouterProviderDefinition: ProviderDefinition = {
       instance,
       modelId,
       BASE_URL,
-      attributionHeaders(instance),
+      gatewayAttributionHeaders(),
     ),
   discoverModels,
   testConnection: (instance, signal) =>
@@ -54,7 +54,7 @@ async function discoverModels(
       modelListUrl(instance, BASE_URL),
       {
         ...providerHeaders(instance, 'openai'),
-        ...attributionHeaders(instance),
+        ...gatewayAttributionHeaders(),
       },
       signal,
     );
@@ -113,17 +113,4 @@ function stringArray(value: unknown): string[] {
   return Array.isArray(value)
     ? value.filter((item): item is string => typeof item === 'string')
     : [];
-}
-
-function attributionHeaders(
-  instance: ProviderInstance,
-): Record<string, string> {
-  return {
-    ...(setting(instance, 'httpReferer') && {
-      'HTTP-Referer': setting(instance, 'httpReferer'),
-    }),
-    ...(setting(instance, 'appName') && {
-      'X-Title': setting(instance, 'appName'),
-    }),
-  };
 }

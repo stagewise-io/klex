@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { AdminApiClient } from './api-client';
 import { AppFrame } from './components/app-frame';
+import { KeyHint } from './components/key-hint';
 import { UpdateBanner } from './components/update-banner';
 import { useGlobalStatus } from './hooks/use-global-status';
 import {
@@ -148,7 +149,7 @@ function AppRoot({
   const [toasts, setToasts] = useState<Toast[]>([]);
   const quitConfirmationExpiresAt = useRef(0);
   const pushToast = useCallback(
-    (message: string, level: Toast['level'] = 'info') => {
+    (message: Toast['message'], level: Toast['level'] = 'info') => {
       setToasts((prev) => [
         ...prev,
         { id: Date.now() + Math.random(), message, level },
@@ -164,7 +165,11 @@ function AppRoot({
       if (Date.now() > quitConfirmationExpiresAt.current) {
         quitConfirmationExpiresAt.current = Date.now() + 5_000;
         pushToast(
-          'An update is installing. Press q or Ctrl+C again within 5 seconds to cancel it and quit.',
+          <>
+            An update is installing. Press <KeyHint keyName="q" /> or{' '}
+            <KeyHint keyName="Ctrl+C" /> again within 5 seconds to cancel it and
+            quit.
+          </>,
           'warning',
         );
         return;

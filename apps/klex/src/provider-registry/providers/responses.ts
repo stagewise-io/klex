@@ -7,6 +7,7 @@ import type {
 } from '../provider-registry';
 import { resolveCatalogMetadata } from './model-catalog-helpers';
 import {
+  gatewayAttributionHeaders,
   providerHeaders,
   requiredSetting,
   responsesUrl,
@@ -43,6 +44,9 @@ function createLanguageModel(
     name: instance.type,
     url: responsesUrl(requiredSetting(instance, 'baseUrl')),
     apiKey: setting(instance, 'apiKey'),
-    headers: providerHeaders(instance, 'openai'),
+    headers: {
+      ...providerHeaders(instance, 'openai'),
+      ...gatewayAttributionHeaders(),
+    },
   }).languageModel(modelId);
 }

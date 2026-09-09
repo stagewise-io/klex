@@ -30,7 +30,7 @@ const CASES: ReadonlyArray<{
   { type: 'opencode-zen', modelId: 'routed-model', kind: undefined },
   {
     type: 'chatgpt-codex-subscription',
-    modelId: 'gpt-5-codex',
+    modelId: 'gpt-5.6-luna',
     kind: 'language',
   },
   {
@@ -134,6 +134,19 @@ describe('built-in provider model catalogs', () => {
     }
   });
 
+  it('shares researched OpenAI metadata with the Codex subscription', () => {
+    const codex = builtInProviderDefinitions.find(
+      ({ type }) => type === 'chatgpt-codex-subscription',
+    );
+    expect(codex?.resolveModelMetadata?.('gpt-5.6-luna')).toMatchObject({
+      kind: 'language',
+      displayName: 'GPT-5.6 Luna',
+      contextSize: 1_050_000,
+      capabilities: { input: { image: expect.any(Object) } },
+      provenance: [expect.objectContaining({ source: 'provider-exact' })],
+    });
+  });
+
   it('preserves researched context and attachment limits', () => {
     const openai = builtInProviderDefinitions.find(
       ({ type }) => type === 'openai',
@@ -149,6 +162,18 @@ describe('built-in provider model catalogs', () => {
         voice: { stt: true },
       },
     });
+
+    const deepseek = builtInProviderDefinitions.find(
+      ({ type }) => type === 'deepseek',
+    );
+    expect(deepseek?.resolveModelMetadata?.('deepseek-v4-flash')).toMatchObject(
+      {
+        kind: 'language',
+        displayName: 'DeepSeek-V4-Flash',
+        contextSize: 1_000_000,
+        provenance: [expect.objectContaining({ source: 'provider-exact' })],
+      },
+    );
 
     const anthropic = builtInProviderDefinitions.find(
       ({ type }) => type === 'anthropic',

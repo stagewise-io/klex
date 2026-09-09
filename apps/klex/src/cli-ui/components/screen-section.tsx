@@ -1,5 +1,7 @@
-import { Box, Text, useStdout } from 'ink';
+import { Box, Text } from 'ink';
 import type { ReactNode } from 'react';
+
+import { useTerminalSize } from '../hooks/use-terminal-size';
 
 export function ScreenSection({
   title,
@@ -10,8 +12,7 @@ export function ScreenSection({
   children: ReactNode;
   tone?: 'blue' | 'yellow' | 'red';
 }) {
-  const { stdout } = useStdout();
-  const terminalWidth = stdout.columns || 80;
+  const { width: terminalWidth } = useTerminalSize();
   const width = Math.max(terminalWidth - (terminalWidth >= 80 ? 4 : 0), 1);
 
   return (

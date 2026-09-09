@@ -1,18 +1,15 @@
-import {
-  Box,
-  type DOMElement,
-  Text,
-  useBoxMetrics,
-  useInput,
-  useStdout,
-} from 'ink';
-import Spinner from 'ink-spinner';
+import { Box, type DOMElement, Text, useBoxMetrics, useInput } from 'ink';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { type AdminApiClient, AdminApiClientError } from '../api-client';
+import { ActivityIndicator } from '../components/activity-indicator';
+import { ConfirmationPanel } from '../components/confirmation-panel';
+import { EmptyState } from '../components/empty-state';
+import { KeyHint } from '../components/key-hint';
 import { ScreenSection } from '../components/screen-section';
 import { useGodSession } from '../hooks/use-god-session';
 import { useScreenMeta } from '../hooks/use-screen-meta';
+import { useTerminalSize } from '../hooks/use-terminal-size';
 import { useTextInputActive } from '../hooks/use-text-input-active';
 import { useToast } from '../hooks/use-toast';
 import { MenuKeys, useMenuInput } from '../menu-keys';
@@ -70,8 +67,7 @@ export function GodMessagesScreen({
   const { session, messages, loading, error, resetState, refresh } =
     useGodSession(apiClient);
 
-  const { stdout } = useStdout();
-  const terminalHeight = stdout.rows || 24;
+  const { height: terminalHeight } = useTerminalSize();
 
   const chatHeight = Math.max(terminalHeight - 16, 5);
   const showComposer =
@@ -303,40 +299,7 @@ export function GodMessagesScreen({
     setCursorOffset(next.cursorOffset);
   });
 
-  // Reset confirmation key handlers.
   useInput((input, key) => {
-    if (mode === 'confirm-reset') {
-      if (input.toLowerCase() === 'y') {
-        modeRef.current = 'resetting';
-        setMode('resetting');
-        void apiClient
-          .resetGodSession()
-          .then((result) => {
-            resetState();
-            refresh();
-            modeRef.current = 'overview';
-            setMode('overview');
-            pushToast(
-              `God session reset — new session ${result.sessionId.slice(0, 8)}`,
-              'info',
-            );
-          })
-          .catch((err: unknown) => {
-            modeRef.current = 'overview';
-            setMode('overview');
-            pushToast(
-              err instanceof AdminApiClientError
-                ? err.message
-                : 'Failed to reset god session',
-              'error',
-            );
-          });
-      } else if (input.toLowerCase() === 'n' || key.escape) {
-        setMode('overview');
-      }
-      return;
-    }
-
     if (mode !== 'overview') return;
 
     if (input.toLowerCase() === 'r' && canReset) {
@@ -358,24 +321,37 @@ export function GodMessagesScreen({
 
   if (mode === 'confirm-reset') {
     return (
-      <ScreenSection title="Confirm Reset" tone="red">
-        <Text bold color="red">
-          Reset god session?
-        </Text>
-        <Text dimColor>
-          This will terminate the current session and create a fresh one with an
-          empty history. All messages will be lost.
-        </Text>
-        <Box marginTop={1}>
-          <Text>
-            Press{' '}
-            <Text bold color="red">
-              [y]
-            </Text>{' '}
-            to confirm or <Text bold>[n]</Text> / Esc to cancel.
-          </Text>
-        </Box>
-      </ScreenSection>
+      <ConfirmationPanel
+        title="Confirm Reset"
+        onConfirm={async () => {
+          modeRef.current = 'resetting';
+          setMode('resetting');
+          try {
+            const result = await apiClient.resetGodSession();
+            resetState();
+            refresh();
+            modeRef.current = 'overview';
+            setMode('overview');
+            pushToast(
+              `God session reset — new session ${result.sessionId.slice(0, 8)}`,
+              'info',
+            );
+          } catch (err) {
+            modeRef.current = 'overview';
+            setMode('overview');
+            pushToast(
+              err instanceof AdminApiClientError
+                ? err.message
+                : 'Failed to reset god session',
+              'error',
+            );
+          }
+        }}
+        onCancel={() => setMode('overview')}
+      >
+        This will terminate the current session and create a fresh one with an
+        empty history. All messages will be lost.
+      </ConfirmationPanel>
     );
   }
 
@@ -413,9 +389,7 @@ export function GodMessagesScreen({
 
         {error ? <Text color="red">{error.message}</Text> : null}
         {mode === 'resetting' ? (
-          <Text dimColor>
-            <Spinner type="dots" /> Resetting session...
-          </Text>
+          <ActivityIndicator label="Resetting session..." />
         ) : null}
 
         {/* Chat history */}
@@ -427,13 +401,12 @@ export function GodMessagesScreen({
             width="100%"
           >
             {loading && totalEntries === 0 ? (
-              <Text dimColor>
-                <Spinner type="dots" /> Loading messages...
-              </Text>
+              <ActivityIndicator label="Loading messages..." />
             ) : chatEntries.length === 0 ? (
-              <Text dimColor>
-                No messages yet. Press Enter to compose a god message.
-              </Text>
+              <EmptyState>
+                No messages yet. Press <KeyHint keyName="enter" /> to compose a
+                god message.
+              </EmptyState>
             ) : (
               <Box
                 ref={historyContentRef}
@@ -488,9 +461,7 @@ export function GodMessagesScreen({
                   width="100%"
                 >
                   {mode === 'sending' ? (
-                    <Text>
-                      <Spinner type="dots" /> Sending...
-                    </Text>
+                    <ActivityIndicator label="Sending..." />
                   ) : message.length === 0 ? (
                     <Text dimColor>Type your god message...</Text>
                   ) : mode === 'compose' ? (
@@ -527,16 +498,10 @@ export function GodMessagesScreen({
           </Text>
           {mode !== 'resetting' ? (
             <Text dimColor>
-              Press{' '}
-              <Text bold color="yellow">
-                Enter
-              </Text>{' '}
-              to {message ? 'edit draft' : 'compose'} ·{' '}
-              <Text bold color={canReset ? 'red' : 'gray'}>
-                [r]
-              </Text>{' '}
-              to reset
-              {!canReset ? ' (busy)' : ''} · <Text bold>↑↓</Text> scroll
+              Press <KeyHint keyName="enter" color="yellow" /> to{' '}
+              {message ? 'edit draft' : 'compose'} ·{' '}
+              <KeyHint keyName="r" color={canReset ? 'red' : 'gray'} /> to reset
+              {!canReset ? ' (busy)' : ''} · <KeyHint keyName="↑↓" /> scroll
             </Text>
           ) : null}
         </Box>

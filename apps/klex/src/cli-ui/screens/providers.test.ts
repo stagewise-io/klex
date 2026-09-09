@@ -1,11 +1,56 @@
 import { describe, expect, it } from 'vitest';
 
+import { scrollbarTrack } from '../components/scrollable-box';
 import {
   activeSetupFields,
   isConfiguredSecretMarker,
+  nextProviderInstanceId,
   parseSetupValue,
   setupFieldsFromSchema,
 } from './providers';
+
+describe('provider instance ID', () => {
+  it('uses the provider type and skips existing IDs', () => {
+    expect(nextProviderInstanceId('openai', [])).toBe('openai');
+    expect(nextProviderInstanceId('openai', ['openai'])).toBe('openai-2');
+    expect(
+      nextProviderInstanceId('openai', ['openai', 'openai-2', 'other']),
+    ).toBe('openai-3');
+  });
+});
+
+describe('scrollable box scrollbar', () => {
+  it('hides the track when every item is visible', () => {
+    expect(scrollbarTrack(10, 0)).toBe('');
+  });
+
+  it('moves a proportional thumb from the top to the bottom', () => {
+    expect(scrollbarTrack(12, 0).split('\n')).toEqual([
+      '█',
+      '█',
+      '█',
+      '█',
+      '█',
+      '█',
+      '█',
+      '█',
+      '│',
+      '│',
+    ]);
+    expect(scrollbarTrack(12, 11).split('\n')).toEqual([
+      '│',
+      '│',
+      '█',
+      '█',
+      '█',
+      '█',
+      '█',
+      '█',
+      '█',
+      '█',
+    ]);
+  });
+});
 
 describe('provider setup fields', () => {
   it('applies conditional visibility from prior values', () => {
@@ -82,6 +127,29 @@ describe('provider setup fields', () => {
     ]);
   });
 
+  it('omits provider-managed settings', () => {
+    const fields = setupFieldsFromSchema({
+      type: 'openrouter',
+      displayName: 'OpenRouter',
+      description: 'Gateway',
+      capabilities: {
+        modelDiscovery: true,
+        connectivityTest: true,
+        customModels: true,
+      },
+      settingsSchema: {
+        type: 'object',
+        properties: {
+          apiKey: { type: 'string' },
+          httpReferer: { type: 'string', readOnly: true },
+          appName: { type: 'string', readOnly: true },
+        },
+      },
+    });
+
+    expect(fields.map(({ key }) => key)).toEqual(['apiKey']);
+  });
+
   it('normalizes number, boolean, and key-value inputs', () => {
     expect(
       parseSetupValue({ key: 'port', label: 'Port', kind: 'number' }, '8080'),
@@ -107,10 +175,10 @@ describe('provider setup fields', () => {
     expect(
       parseSetupValue(
         { key: 'headers', label: 'Headers', kind: 'secret-key-value' },
-        '{"Authorization":"Bearer ${env:TOKEN}","X-Tenant":"main,backup"}',
+        '{"Authorization":"Bearer $' + '{env:TOKEN}","X-Tenant":"main,backup"}',
       ),
     ).toEqual({
-      Authorization: 'Bearer ${env:TOKEN}',
+      Authorization: 'Bearer $' + '{env:TOKEN}',
       'X-Tenant': 'main,backup',
     });
   });

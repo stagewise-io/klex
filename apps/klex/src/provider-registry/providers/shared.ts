@@ -1,6 +1,6 @@
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import type { LanguageModelV4 } from '@ai-sdk/provider';
-import { generateText } from 'ai';
+import { APICallError, streamText } from 'ai';
 
 import type {
   ProviderConnectionResult,
@@ -90,8 +90,9 @@ export async function testModelConnection(
   target: string,
   createModel: (modelId: string) => LanguageModelV4,
   signal: AbortSignal,
+  defaultModelId?: string,
 ): Promise<ProviderOperationResult<ProviderConnectionResult>> {
-  const modelId = connectionModelId(instance);
+  const modelId = connectionModelId(instance) ?? defaultModelId;
   if (!modelId) {
     return unavailable(
       'invalid_configuration',
@@ -101,12 +102,22 @@ export async function testModelConnection(
   }
   const startedAt = Date.now();
   try {
-    await generateText({
+    let streamError: unknown;
+    const result = streamText({
       model: createModel(modelId),
       prompt: 'Reply with OK.',
       maxOutputTokens: 1,
       abortSignal: signal,
+      onError: ({ error }) => {
+        streamError = error;
+      },
     });
+    try {
+      await result.text;
+    } catch (error) {
+      throw streamError ?? error;
+    }
+    if (streamError) throw streamError;
     return available({
       latencyMs: Math.max(0, Date.now() - startedAt),
       target: new URL(setting(instance, 'baseUrl') ?? target).origin,
@@ -131,6 +142,13 @@ export function requiredSetting(
   const value = setting(instance, key);
   if (!value) throw new Error(`Provider '${instance.id}' requires '${key}'`);
   return value;
+}
+
+export function gatewayAttributionHeaders(): Record<string, string> {
+  return {
+    'HTTP-Referer': 'https://klex.bot',
+    'X-Title': 'Klex',
+  };
 }
 
 export function customHeaders(
@@ -213,6 +231,8 @@ function isStringRecord(value: unknown): value is Record<string, string> {
 export function sanitizedError(error: unknown): string {
   if (error instanceof DOMException && error.name === 'AbortError')
     return 'Request timed out';
+  if (APICallError.isInstance(error) && error.statusCode !== undefined)
+    return `Provider returned HTTP ${error.statusCode}`;
   if (
     error instanceof Error &&
     /^Provider returned HTTP [1-5][0-9]{2}$/.test(error.message)

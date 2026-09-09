@@ -365,11 +365,6 @@ class ProviderRegistryModule implements ProviderRegistry {
       instance.settings,
     );
     if (!preflight.ok) return preflight;
-    const persistable = validatePersistableSecrets(
-      instance.type,
-      preflight.value,
-    );
-    if (!persistable.ok) return persistable;
     const stored: ProviderInstance = { ...instance, settings: preflight.value };
     try {
       await config.writeProviderInstance(stored.id, withoutId(stored));
@@ -408,11 +403,6 @@ class ProviderRegistryModule implements ProviderRegistry {
       ? await this.runHook((signal) => preflight(validated.value, signal))
       : success(undefined);
     if (!checked.ok) return checked;
-    const persistable = validatePersistableSecrets(
-      current.type,
-      validated.value,
-    );
-    if (!persistable.ok) return persistable;
     const updated: ProviderInstance = {
       ...current,
       settings: validated.value,
@@ -561,6 +551,10 @@ class ProviderRegistryModule implements ProviderRegistry {
     };
     const warnings: ModelSelectionWarning[] = [];
     for (const [purpose, entries] of modelSelectionEntries(changed)) {
+      const previousEntries =
+        modelSelectionEntries(current.modelSelection).find(
+          ([currentPurpose]) => currentPurpose === purpose,
+        )?.[1] ?? [];
       for (const entry of entries) {
         const provider = current.providers[entry.providerId];
         if (!provider) {
@@ -569,6 +563,8 @@ class ProviderRegistryModule implements ProviderRegistry {
             `Model selection '${purpose}' references unknown provider '${entry.providerId}'`,
           );
         }
+        const instance = this.getInstance(entry.providerId);
+        if (!instance.ok) return instance;
         const knownModel = provider.knownModels?.[entry.modelId];
         const definition = this.requireDefinition(provider.type);
         const maintainedMetadata = definition.resolveModelMetadata?.(
@@ -576,12 +572,18 @@ class ProviderRegistryModule implements ProviderRegistry {
         );
         const cached = this.modelCache.get(entry.providerId);
         const discovered =
-          cached?.signature === this.settingsSignature(provider.settings)
+          cached?.signature === this.settingsSignature(instance.value.settings)
             ? cached.models.find((model) => model.modelId === entry.modelId)
             : undefined;
+        const alreadySelected = previousEntries.some(
+          (previous) =>
+            previous.providerId === entry.providerId &&
+            previous.modelId === entry.modelId,
+        );
         if (
+          !alreadySelected &&
           !knownModel &&
-          !hasAuthoritativeCapabilityMetadata(maintainedMetadata, discovered)
+          !hasTrustedModelMetadata(maintainedMetadata, discovered)
         ) {
           warnings.push({
             modelId: entry.modelId,
@@ -997,44 +999,12 @@ function validateSettings(
   }
 }
 
-function validatePersistableSecrets(
-  type: ProviderType,
-  settings: ProviderSettings,
-): ProviderOperationResult<ProviderSettings> {
-  const exactEnvironmentReference = /^\$\{env:[A-Za-z_][A-Za-z0-9_]*\}$/;
-  const embeddedEnvironmentReference = /\$\{env:[A-Za-z_][A-Za-z0-9_]*\}/;
-  for (const [key, value] of Object.entries(settings)) {
-    if (!isProviderSecretSetting(type, key)) continue;
-    const isSecretMap = isRecord(value);
-    const values = isSecretMap ? Object.values(value) : [value];
-    if (
-      values.some(
-        (item) =>
-          typeof item === 'string' &&
-          item.length > 0 &&
-          !(
-            isSecretMap
-              ? embeddedEnvironmentReference
-              : exactEnvironmentReference
-          ).test(item),
-      )
-    ) {
-      return failure(
-        'invalid_configuration',
-        `Secret setting '${key}' must use an environment reference`,
-        `Set '${key}' with a \${env:VARIABLE_NAME} reference.`,
-      );
-    }
-  }
-  return success(settings);
-}
-
-function hasAuthoritativeCapabilityMetadata(
+function hasTrustedModelMetadata(
   maintained: Omit<ProviderModel, 'modelId'> | undefined,
   discovered: ProviderModel | undefined,
 ): boolean {
   return (
-    discovered?.capabilities !== undefined ||
+    discovered !== undefined ||
     maintained?.capabilities !== undefined ||
     maintained?.provenance?.some(
       ({ source }) =>

@@ -210,8 +210,8 @@ const openAiSettingsSchema = apiKeySettingsSchema
   .strict();
 const openRouterSettingsSchema = apiKeySettingsSchema
   .extend({
-    httpReferer: environmentAwareUrlSchema.optional(),
-    appName: z.string().min(1).optional(),
+    httpReferer: environmentAwareUrlSchema.optional().meta({ readOnly: true }),
+    appName: z.string().min(1).optional().meta({ readOnly: true }),
   })
   .strict();
 const compatibleEndpointSettingsSchema = z
@@ -303,7 +303,7 @@ const codexSubscriptionSettingsSchema = z
     codexExecutable: z.string().min(1).default('codex'),
     authFile: z.string().min(1).optional(),
     baseUrl: environmentAwareUrlSchema.optional(),
-    testModelId: z.string().min(1).default('gpt-5-codex'),
+    testModelId: z.string().min(1).optional().meta({ readOnly: true }),
   })
   .strict();
 

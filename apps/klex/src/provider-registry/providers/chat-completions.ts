@@ -2,6 +2,7 @@ import type { ProviderDefinition } from '../provider-registry';
 import { resolveCatalogMetadata } from './model-catalog-helpers';
 import {
   createOpenAiCompatibleLanguageModel,
+  gatewayAttributionHeaders,
   testModelConnection,
 } from './shared';
 
@@ -16,7 +17,12 @@ export const chatCompletionsProviderDefinition: ProviderDefinition = {
   resolveModelMetadata: (modelId) =>
     resolveCatalogMetadata(modelId, [], modelId),
   createLanguageModel: (instance, modelId) =>
-    createOpenAiCompatibleLanguageModel(instance, modelId),
+    createOpenAiCompatibleLanguageModel(
+      instance,
+      modelId,
+      undefined,
+      gatewayAttributionHeaders(),
+    ),
   testConnection: (instance, signal) =>
     testModelConnection(
       instance,

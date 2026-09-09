@@ -1,5 +1,4 @@
 import { Box, Text } from 'ink';
-import SelectInput from 'ink-select-input';
 import TextInput from 'ink-text-input';
 import { useEffect, useState } from 'react';
 
@@ -8,7 +7,13 @@ import {
   AdminApiClientError,
   type McpServersResponse,
 } from '../api-client';
-import { StatusBadge } from '../components/status-badge';
+import { ActivityIndicator } from '../components/activity-indicator';
+import { ConfirmationPanel } from '../components/confirmation-panel';
+import { DetailList, DetailRow } from '../components/detail-list';
+import { EmptyState } from '../components/empty-state';
+import { KeyHint } from '../components/key-hint';
+import { MenuList } from '../components/menu-list';
+import { McpStatusBadge } from '../components/status-badge';
 import { usePolling } from '../hooks/use-polling';
 import { useScreenMeta } from '../hooks/use-screen-meta';
 import { useTextInputActive } from '../hooks/use-text-input-active';
@@ -39,6 +44,7 @@ export function McpScreen({ apiClient, onBack }: McpScreenProps) {
   const { setMeta } = useScreenMeta();
   const { setActive } = useTextInputActive();
   const [mode, setMode] = useState<Mode>('list');
+  const [highlightedServer, setHighlightedServer] = useState<string>();
   const [selectedServer, setSelectedServer] = useState<string | null>(null);
   const [pendingName, setPendingName] = useState('');
   const [pendingUrl, setPendingUrl] = useState('');
@@ -305,66 +311,55 @@ export function McpScreen({ apiClient, onBack }: McpScreenProps) {
 
   if (mode === 'delete-confirm' && selectedServer) {
     return (
-      <Box flexDirection="column">
-        <Box marginTop={1}>
-          <Text color="red">
-            Are you sure? Press [y] to confirm, [esc] to cancel.
-          </Text>
-        </Box>
-        <ConfirmInput
-          onConfirm={async () => {
-            try {
-              await apiClient.deleteMcpServer(selectedServer);
-              pushToast('MCP server deleted', 'info');
-              setSelectedServer(null);
-              setMode('list');
-              serversPoll.refresh();
-            } catch (err) {
-              pushToast(
-                err instanceof AdminApiClientError
-                  ? err.message
-                  : 'Delete failed',
-                'error',
-              );
-              setMode('detail');
-            }
-          }}
-          onCancel={() => setMode('detail')}
-        />
-      </Box>
+      <ConfirmationPanel
+        title={`Delete "${selectedServer}"`}
+        onConfirm={async () => {
+          try {
+            await apiClient.deleteMcpServer(selectedServer);
+            pushToast('MCP server deleted', 'info');
+            setSelectedServer(null);
+            setMode('list');
+            serversPoll.refresh();
+          } catch (err) {
+            pushToast(
+              err instanceof AdminApiClientError
+                ? err.message
+                : 'Delete failed',
+              'error',
+            );
+            setMode('detail');
+          }
+        }}
+        onCancel={() => setMode('detail')}
+      >
+        This permanently removes the MCP server configuration.
+      </ConfirmationPanel>
     );
   }
 
   // --- Detail mode ---
 
   if (mode === 'detail' && selectedServer && selectedInfo) {
-    const badge = mcpStatusToBadge(selectedInfo.status);
     return (
       <Box flexDirection="column">
         <Box marginTop={1} flexDirection="column">
-          <Box>
-            <Text dimColor>name: </Text>
-            <Text bold>{selectedInfo.name}</Text>
-          </Box>
-          <Box>
-            <Text dimColor>status: </Text>
-            <StatusBadge status={badge.status} label={badge.label} />
-          </Box>
-          <Box>
-            <Text dimColor>transport: </Text>
-            <Text>{selectedInfo.transport}</Text>
-          </Box>
-          <Box>
-            <Text dimColor>tools: </Text>
-            <Text>{selectedInfo.toolCount}</Text>
-          </Box>
-          <Box>
-            <Text dimColor>push notifications: </Text>
-            <Text>{selectedInfo.supportsPushNotifications ? 'yes' : 'no'}</Text>
-          </Box>
+          <DetailList labelWidth={20}>
+            <DetailRow label="name">
+              <Text bold>{selectedInfo.name}</Text>
+            </DetailRow>
+            <DetailRow label="status">
+              <McpStatusBadge status={selectedInfo.status} />
+            </DetailRow>
+            <DetailRow label="transport">{selectedInfo.transport}</DetailRow>
+            <DetailRow label="tools">{selectedInfo.toolCount}</DetailRow>
+            <DetailRow label="push notifications">
+              {selectedInfo.supportsPushNotifications ? 'yes' : 'no'}
+            </DetailRow>
+          </DetailList>
           <Box marginTop={1}>
             <Text dimColor>
-              Press [e] to edit, [d] to delete, [esc] to go back
+              Press <KeyHint keyName="e" /> to edit, <KeyHint keyName="d" /> to
+              delete, <KeyHint keyName="esc" /> to go back
             </Text>
           </Box>
         </Box>
@@ -379,17 +374,26 @@ export function McpScreen({ apiClient, onBack }: McpScreenProps) {
     label: `${s.name} [${s.status}] — ${s.toolCount} tools${s.supportsPushNotifications ? ' | push' : ''}`,
     value: s.name,
   }));
+  const highlightedServerIndex = Math.max(
+    0,
+    servers.findIndex((server) => server.name === highlightedServer),
+  );
 
   return (
     <Box flexDirection="column">
       <Box marginTop={1} flexDirection="column">
-        {serversPoll.loading && <Text dimColor>Loading...</Text>}
+        {serversPoll.loading && (
+          <ActivityIndicator label="Loading MCP servers..." />
+        )}
         {!serversPoll.loading && servers.length === 0 && (
-          <Text dimColor>No MCP servers configured.</Text>
+          <EmptyState>No MCP servers configured.</EmptyState>
         )}
         {servers.length > 0 && (
-          <SelectInput
+          <MenuList
             items={items}
+            selectedIndex={highlightedServerIndex}
+            visibleCount={10}
+            onHighlight={(item) => setHighlightedServer(item.value)}
             onSelect={(item) => {
               setSelectedServer(item.value);
               setMode('detail');
@@ -399,38 +403,4 @@ export function McpScreen({ apiClient, onBack }: McpScreenProps) {
       </Box>
     </Box>
   );
-}
-
-function mcpStatusToBadge(status: string): {
-  status: 'ok' | 'warn' | 'error' | 'idle';
-  label: string;
-} {
-  switch (status) {
-    case 'connected':
-      return { status: 'ok', label: 'connected' };
-    case 'connecting':
-      return { status: 'warn', label: 'connecting' };
-    case 'authorization_required':
-      return { status: 'warn', label: 'auth required' };
-    case 'authorizing':
-      return { status: 'warn', label: 'authorizing' };
-    case 'error':
-      return { status: 'error', label: 'error' };
-    default:
-      return { status: 'idle', label: 'disconnected' };
-  }
-}
-
-function ConfirmInput({
-  onConfirm,
-  onCancel,
-}: {
-  onConfirm: () => void;
-  onCancel: () => void;
-}) {
-  useMenuInput({
-    y: onConfirm,
-    n: onCancel,
-  });
-  return null;
 }

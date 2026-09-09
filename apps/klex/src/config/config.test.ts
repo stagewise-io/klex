@@ -18,6 +18,7 @@ import {
 import { completeV2Config, emptyModelSelection } from './config.test-fixtures';
 import { CONFIG_STORE_DEFINITION } from './storage-definition';
 import {
+  getProviderSettingsJsonSchema,
   klexConfigSchema,
   migrateLegacyKlexConfig,
   parseKlexConfig,
@@ -69,6 +70,15 @@ afterEach(async () => {
 });
 
 describe('config v2', () => {
+  it('marks OpenRouter attribution settings as provider-managed', () => {
+    expect(getProviderSettingsJsonSchema('openrouter')).toMatchObject({
+      properties: {
+        httpReferer: { readOnly: true },
+        appName: { readOnly: true },
+      },
+    });
+  });
+
   it('requires an explicitly provisioned config file', async () => {
     const dataDirectory = await directory();
     const config = createConfig({ logging, dataDirectory });

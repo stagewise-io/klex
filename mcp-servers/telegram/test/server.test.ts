@@ -255,6 +255,16 @@ describe('Telegram channel', () => {
         text: 'hello',
         receivedAt: '2023-11-14T22:13:20.000Z',
       },
+      {
+        botId: '77',
+        updateId: '10',
+        messageId: '20',
+        chatId: '30',
+        senderId: '40',
+        kind: 'text',
+        text: 'hello',
+        receivedAt: '2023-11-14T22:13:20.000Z',
+      },
     ]);
   });
 
@@ -335,7 +345,12 @@ describe('Telegram channel', () => {
   it('does not download media rejected by chat and sender filters', async () => {
     const fake = createFakeBot();
     await createStartedChannel(fake);
-    await fake.emit({ kind: 'photo', fileId: 'group', chatType: 'group' });
+    await fake.emit({
+      kind: 'photo',
+      fileId: 'group',
+      chatType: 'group',
+      senderId: 41,
+    });
     await fake.emit({ kind: 'voice', fileId: 'bot', senderIsBot: true });
     await fake.emit({ kind: 'audio', fileId: 'blocked', senderId: 41 });
     expect(fake.downloadCalls).toEqual([]);
@@ -375,6 +390,39 @@ describe('Telegram channel', () => {
     });
     await expect(failed.start()).rejects.toThrow('unauthorized');
     expect(failed.status()).toBe('disconnected');
+  });
+
+  it('wildcard mode accepts group chats and non-allowlisted senders', async () => {
+    const received: unknown[] = [];
+    const fake = createFakeBot();
+    const channel = createTelegramChannel({
+      token: 'test-token',
+      allowedUserIds: new Set(['*']),
+      logging,
+      onMessage: (message) => {
+        received.push(message);
+      },
+      botFactory: () => fake.bot,
+    });
+    channels.push(channel);
+    await channel.start();
+
+    await fake.emit();
+    await fake.emit({ chatType: 'group', senderId: 999 });
+    await fake.emit({ senderId: 41 });
+    await fake.emit({ senderIsBot: true });
+    await fake.emit({ text: ' ' });
+
+    expect(received).toHaveLength(3);
+    expect(received[0]).toMatchObject({ senderId: '40', chatId: '30' });
+    expect(received[1]).toMatchObject({ senderId: '999' });
+    expect(received[2]).toMatchObject({ senderId: '41' });
+
+    await expect(
+      channel.sendText({ chatId: '999', message: 'ok' }),
+    ).resolves.toEqual({ messageId: '99' });
+
+    await channel.close();
   });
 });
 

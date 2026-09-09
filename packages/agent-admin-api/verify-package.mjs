@@ -65,7 +65,7 @@ import type { AdminApi } from '@klex/agent-admin-api';
 const client = hc<AdminApi>('https://agent.example');
 void client.v1.health.$get;
 void client.v1.providers.$get;
-void client.v1.providers[':name'].$patch;
+void client.v1.providers[':id'].$patch;
 void client.v1['mcp-servers'].$get;
 void client.v1.introspect.$path;
 `,

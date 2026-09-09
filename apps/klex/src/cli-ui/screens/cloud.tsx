@@ -1,5 +1,4 @@
 import { Box, Text } from 'ink';
-import Spinner from 'ink-spinner';
 import TextInput from 'ink-text-input';
 import { useEffect, useState } from 'react';
 
@@ -8,8 +7,11 @@ import {
   AdminApiClientError,
   type CloudStatus,
 } from '../api-client';
+import { ActivityIndicator } from '../components/activity-indicator';
+import { DetailList, DetailRow } from '../components/detail-list';
+import { KeyHint } from '../components/key-hint';
 import { ScreenSection } from '../components/screen-section';
-import { StatusBadge } from '../components/status-badge';
+import { StatusBadge, TunnelStatusBadge } from '../components/status-badge';
 import { usePolling } from '../hooks/use-polling';
 import { useScreenMeta } from '../hooks/use-screen-meta';
 import { useTextInputActive } from '../hooks/use-text-input-active';
@@ -105,9 +107,7 @@ export function CloudScreen({ apiClient, onBack }: CloudScreenProps) {
         </Box>
         <Box marginTop={1}>
           {mode === 'enrolling' ? (
-            <Text>
-              <Spinner type="dots" /> Enrolling...
-            </Text>
+            <ActivityIndicator label="Enrolling..." />
           ) : (
             <Text>
               Code:{' '}
@@ -155,55 +155,40 @@ export function CloudScreen({ apiClient, onBack }: CloudScreenProps) {
   return (
     <ScreenSection title="Cloud">
       <Box flexDirection="column">
-        {statusPoll.loading && !status && <Text dimColor>Loading...</Text>}
+        {statusPoll.loading && !status && (
+          <ActivityIndicator label="Loading cloud status..." />
+        )}
 
         {status && (
           <>
-            <Box>
-              <Text dimColor>Cloud enabled: </Text>
-              <StatusBadge
-                status={status.cloudEnabled ? 'ok' : 'idle'}
-                label={status.cloudEnabled ? 'yes' : 'no'}
-              />
-            </Box>
-            <Box>
-              <Text dimColor>Enrolled: </Text>
-              <StatusBadge
-                status={status.enrolled ? 'ok' : 'warn'}
-                label={status.enrolled ? 'yes' : 'no'}
-              />
-            </Box>
-            <Text dimColor>Cloud URL: {status.cloudBaseUrl}</Text>
+            <DetailList labelWidth={16}>
+              <DetailRow label="Cloud enabled">
+                <StatusBadge
+                  status={status.cloudEnabled ? 'ok' : 'idle'}
+                  label={status.cloudEnabled ? 'yes' : 'no'}
+                />
+              </DetailRow>
+              <DetailRow label="Enrolled">
+                <StatusBadge
+                  status={status.enrolled ? 'ok' : 'warn'}
+                  label={status.enrolled ? 'yes' : 'no'}
+                />
+              </DetailRow>
+              <DetailRow label="Cloud URL">{status.cloudBaseUrl}</DetailRow>
+            </DetailList>
 
             {status.enrolled ? (
               <Box marginTop={1} flexDirection="column">
                 <Text bold>Enrollment Details</Text>
-                <Text dimColor> Client ID: {status.clientId}</Text>
-                <Text dimColor> Enrolled at: {status.enrolledAt}</Text>
+                <DetailList labelWidth={16}>
+                  <DetailRow label="Client ID">{status.clientId}</DetailRow>
+                  <DetailRow label="Enrolled at">{status.enrolledAt}</DetailRow>
+                </DetailList>
                 <Box marginTop={1} flexDirection="column">
                   <Text bold>Tunnel Connection</Text>
                   <Box marginLeft={2}>
                     <Text dimColor>state: </Text>
-                    <StatusBadge
-                      status={
-                        status.tunnelState === 'connected'
-                          ? 'ok'
-                          : status.tunnelState === 'connecting'
-                            ? 'warn'
-                            : status.tunnelState === 'error'
-                              ? 'error'
-                              : 'idle'
-                      }
-                      label={
-                        status.tunnelState === 'connected'
-                          ? 'connected'
-                          : status.tunnelState === 'connecting'
-                            ? 'connecting'
-                            : status.tunnelState === 'error'
-                              ? 'error — reconnecting'
-                              : 'disconnected'
-                      }
-                    />
+                    <TunnelStatusBadge status={status.tunnelState} />
                   </Box>
                 </Box>
               </Box>
@@ -216,7 +201,9 @@ export function CloudScreen({ apiClient, onBack }: CloudScreenProps) {
                   </Text>
                   <Text dimColor>2. Add a new agent</Text>
                   <Text dimColor>3. Copy the authentication code</Text>
-                  <Text dimColor>4. Press [c] here and paste the code</Text>
+                  <Text dimColor>
+                    4. Press <KeyHint keyName="c" /> here and paste the code
+                  </Text>
                 </Box>
               </Box>
             ) : (

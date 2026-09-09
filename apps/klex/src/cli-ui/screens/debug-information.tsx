@@ -4,6 +4,7 @@ import { useEffect } from 'react';
 import { KLEX_VERSION } from '@/release';
 
 import type { CloudStatus } from '../api-client';
+import { DetailList, DetailRow } from '../components/detail-list';
 import { ScreenSection } from '../components/screen-section';
 import { useScreenMeta } from '../hooks/use-screen-meta';
 import { MenuKeys, useMenuInput } from '../menu-keys';
@@ -33,40 +34,39 @@ export function DebugInformationScreen({
 
   return (
     <ScreenSection title="Runtime">
-      <Row label="Klex version" value={KLEX_VERSION} />
-      <Row label="Node.js" value={process.version} />
-      <Row label="Platform" value={`${process.platform} ${process.arch}`} />
-      <Row label="Data directory" value={dataDirectory} />
-      <Row
-        label="Local Admin API"
-        value={
-          dangerousLocalAdminApiPort === undefined
+      <DetailList labelWidth={20}>
+        <DetailRow label="Klex version">{KLEX_VERSION}</DetailRow>
+        <DetailRow label="Node.js">{process.version}</DetailRow>
+        <DetailRow label="Platform">
+          {process.platform} {process.arch}
+        </DetailRow>
+        <DetailRow label="Data directory">{dataDirectory}</DetailRow>
+        <DetailRow label="Local Admin API">
+          {dangerousLocalAdminApiPort === undefined
             ? 'internal only'
-            : `http://127.0.0.1:${dangerousLocalAdminApiPort}`
-        }
-      />
+            : `http://127.0.0.1:${dangerousLocalAdminApiPort}`}
+        </DetailRow>
+      </DetailList>
       <Box marginTop={1} flexDirection="column">
         <Text bold>Cloud</Text>
-        <Row label="Enabled" value={cloud?.cloudEnabled ? 'yes' : 'no'} />
-        <Row label="Enrolled" value={cloud?.enrolled ? 'yes' : 'no'} />
-        <Row label="Enrollment ID" value={cloud?.clientId ?? 'not available'} />
-        <Row label="Cloud URL" value={cloud?.cloudBaseUrl ?? 'not available'} />
-        <Row
-          label="Tunnel status"
-          value={cloud?.tunnelState ?? 'not available'}
-        />
+        <DetailList labelWidth={20}>
+          <DetailRow label="Enabled">
+            {cloud?.cloudEnabled ? 'yes' : 'no'}
+          </DetailRow>
+          <DetailRow label="Enrolled">
+            {cloud?.enrolled ? 'yes' : 'no'}
+          </DetailRow>
+          <DetailRow label="Enrollment ID">
+            {cloud?.clientId ?? 'not available'}
+          </DetailRow>
+          <DetailRow label="Cloud URL">
+            {cloud?.cloudBaseUrl ?? 'not available'}
+          </DetailRow>
+          <DetailRow label="Tunnel status">
+            {cloud?.tunnelState ?? 'not available'}
+          </DetailRow>
+        </DetailList>
       </Box>
     </ScreenSection>
-  );
-}
-
-function Row({ label, value }: { label: string; value: string }) {
-  return (
-    <Box>
-      <Box width={20}>
-        <Text dimColor>{label}</Text>
-      </Box>
-      <Text>{value}</Text>
-    </Box>
   );
 }

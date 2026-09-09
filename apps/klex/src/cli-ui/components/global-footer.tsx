@@ -1,6 +1,7 @@
 import { Box, Text } from 'ink';
 
 import type { CloudStatus, SessionInfo } from '../api-client';
+import { KeyHint } from './key-hint';
 import { StatusBadge } from './status-badge';
 
 export interface GlobalFooterProps {
@@ -10,23 +11,6 @@ export interface GlobalFooterProps {
   loading: boolean;
   toastCount: number;
   width?: number;
-}
-
-function formatShortcutKey(key: string): string {
-  switch (key) {
-    case 'escape':
-    case 'esc':
-      return 'Esc';
-    case 'return':
-    case 'enter':
-      return 'Enter';
-    case 'backspace':
-      return 'Backspace';
-    case 'delete':
-      return 'Delete';
-    default:
-      return key;
-  }
 }
 
 export function GlobalFooter({
@@ -50,9 +34,7 @@ export function GlobalFooter({
         <Box gap={2} flexWrap="wrap">
           {keys.map((shortcut) => (
             <Text key={shortcut.key}>
-              <Text bold color="blue">
-                [{formatShortcutKey(shortcut.key)}]
-              </Text>{' '}
+              <KeyHint keyName={shortcut.key} />{' '}
               <Text dimColor>{shortcut.label}</Text>
             </Text>
           ))}

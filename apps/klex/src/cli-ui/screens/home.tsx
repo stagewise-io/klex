@@ -8,8 +8,14 @@ import type {
   McpServersResponse,
   SessionInfo,
 } from '../api-client';
+import { DetailList, DetailRow } from '../components/detail-list';
+import { EmptyState } from '../components/empty-state';
 import { ScreenSection } from '../components/screen-section';
-import { StatusBadge } from '../components/status-badge';
+import {
+  McpStatusBadge,
+  StatusBadge,
+  TunnelStatusBadge,
+} from '../components/status-badge';
 import { usePolling } from '../hooks/use-polling';
 import { useScreenMeta } from '../hooks/use-screen-meta';
 import { useToast } from '../hooks/use-toast';
@@ -125,9 +131,9 @@ function SessionsSection({
           </Text>
         )}
       </Box>
-      {sessions === null && !loading && <Text dimColor>No data yet.</Text>}
+      {sessions === null && !loading && <EmptyState>No data yet.</EmptyState>}
       {sessions !== null && sessions.length === 0 && (
-        <Text dimColor>No active sessions.</Text>
+        <EmptyState>No active sessions.</EmptyState>
       )}
       {sessions !== null && sessions.length > 0 && (
         <Box flexDirection="column">
@@ -189,66 +195,25 @@ function CloudSection({
           <Spinner type="dots" />
         </Text>
       )}
-      {!loading && status === null && <Text dimColor>No data.</Text>}
+      {!loading && status === null && <EmptyState>No data.</EmptyState>}
       {!loading && status !== null && !status.cloudEnabled && (
         <Text dimColor>Cloud Connection is disabled</Text>
       )}
       {!loading && status !== null && status.cloudEnabled && (
-        <Box flexDirection="column">
-          <Box>
-            <Text dimColor>Enrollment: </Text>
+        <DetailList labelWidth={16}>
+          <DetailRow label="Enrollment">
             <StatusBadge
               status={status.enrolled ? 'ok' : 'warn'}
               label={status.enrolled ? 'enrolled' : 'not enrolled'}
             />
-          </Box>
-          <Box>
-            <Text dimColor>Tunnel Status: </Text>
-            <StatusBadge
-              status={
-                status.tunnelState === 'connected'
-                  ? 'ok'
-                  : status.tunnelState === 'connecting'
-                    ? 'warn'
-                    : status.tunnelState === 'error'
-                      ? 'error'
-                      : 'idle'
-              }
-              label={
-                status.tunnelState === 'connected'
-                  ? 'connected'
-                  : status.tunnelState === 'connecting'
-                    ? 'connecting'
-                    : status.tunnelState === 'error'
-                      ? 'error — reconnecting'
-                      : 'disconnected'
-              }
-            />
-          </Box>
-        </Box>
+          </DetailRow>
+          <DetailRow label="Tunnel Status">
+            <TunnelStatusBadge status={status.tunnelState} />
+          </DetailRow>
+        </DetailList>
       )}
     </ScreenSection>
   );
-}
-
-function mcpStatusToBadge(status: string): {
-  status: 'ok' | 'warn' | 'error' | 'idle';
-  label: string;
-} {
-  switch (status) {
-    case 'connected':
-      return { status: 'ok', label: 'connected' };
-    case 'connecting':
-      return { status: 'warn', label: 'connecting' };
-    case 'authorization_required':
-      return { status: 'warn', label: 'auth required' };
-    case 'authorizing':
-      return { status: 'warn', label: 'authorizing' };
-    case 'error':
-      return { status: 'error', label: 'error' };
-    default:
-      return { status: 'idle', label: 'disconnected' };
-  }
 }
 
 function McpSection({
@@ -267,26 +232,23 @@ function McpSection({
           </Text>
         )}
       </Box>
-      {servers === null && !loading && <Text dimColor>No data yet.</Text>}
+      {servers === null && !loading && <EmptyState>No data yet.</EmptyState>}
       {servers !== null && servers.length === 0 && (
-        <Text dimColor>No MCP servers configured.</Text>
+        <EmptyState>No MCP servers configured.</EmptyState>
       )}
       {servers !== null && servers.length > 0 && (
         <Box flexDirection="column">
-          {servers.map((server) => {
-            const badge = mcpStatusToBadge(server.status);
-            return (
-              <Box key={server.name}>
-                <Text dimColor>{server.name} </Text>
-                <StatusBadge status={badge.status} label={badge.label} />
-                <Text dimColor>
-                  {' '}
-                  {server.toolCount} tools
-                  {server.supportsPushNotifications ? ' | push' : ''}
-                </Text>
-              </Box>
-            );
-          })}
+          {servers.map((server) => (
+            <Box key={server.name}>
+              <Text dimColor>{server.name} </Text>
+              <McpStatusBadge status={server.status} />
+              <Text dimColor>
+                {' '}
+                {server.toolCount} tools
+                {server.supportsPushNotifications ? ' | push' : ''}
+              </Text>
+            </Box>
+          ))}
         </Box>
       )}
     </ScreenSection>

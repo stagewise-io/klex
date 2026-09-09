@@ -3,6 +3,7 @@ import { useEffect } from 'react';
 
 import { useTextInputActive } from '../hooks/use-text-input-active';
 import type { Toast as ToastType } from '../hooks/use-toast';
+import { KeyHint } from './key-hint';
 
 export interface ToastStackProps {
   toasts: ToastType[];
@@ -57,12 +58,17 @@ function ToastItem({
         : 'Notice';
 
   return (
-    <Box borderStyle="single" borderColor={color} paddingX={1}>
+    <Box borderStyle="single" borderColor={color} paddingX={1} maxWidth="100%">
       <Text bold color={color}>
         {label}:{' '}
       </Text>
-      <Text>{toast.message}</Text>
-      <Text dimColor> [x] Dismiss</Text>
+      <Box flexShrink={1} overflow="hidden">
+        <Text wrap="truncate-end">{toast.message}</Text>
+      </Box>
+      <Text dimColor>
+        {' '}
+        <KeyHint keyName="x" /> Dismiss
+      </Text>
     </Box>
   );
 }

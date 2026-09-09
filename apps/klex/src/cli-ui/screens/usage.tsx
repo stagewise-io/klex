@@ -1,12 +1,20 @@
 import { Box, Text } from 'ink';
-import Spinner from 'ink-spinner';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import {
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+} from 'react';
 
 import type {
   AdminApiClient,
   UsageDataPoint,
   UsageResponse,
 } from '../api-client';
+import { ActivityIndicator } from '../components/activity-indicator';
+import { EmptyState } from '../components/empty-state';
+import { KeyHint } from '../components/key-hint';
 import { usePolling } from '../hooks/use-polling';
 import { useScreenMeta } from '../hooks/use-screen-meta';
 import { useToast } from '../hooks/use-toast';
@@ -17,8 +25,176 @@ export interface UsageScreenProps {
   onBack: () => void;
 }
 
+interface UsageTableCell {
+  content: ReactNode;
+  align?: 'left' | 'right';
+}
+
+function UsageTableRow({ cells }: { cells: UsageTableCell[] }) {
+  return (
+    <Box>
+      <Text dimColor>│ </Text>
+      {cells.map((cell, index) => (
+        <Box key={USAGE_COLUMNS[index]?.key}>
+          <Box
+            width={USAGE_COLUMNS[index]?.width}
+            justifyContent={cell.align === 'right' ? 'flex-end' : 'flex-start'}
+            overflow="hidden"
+          >
+            {cell.content}
+          </Box>
+          <Text dimColor>{index === cells.length - 1 ? ' │' : ' │ '}</Text>
+        </Box>
+      ))}
+    </Box>
+  );
+}
+
+function UsageTableDivider({
+  left,
+  middle,
+  right,
+}: {
+  left: string;
+  middle: string;
+  right: string;
+}) {
+  return (
+    <Text dimColor>
+      {left}
+      {USAGE_COLUMNS.map(({ width }) => '─'.repeat(width + 2)).join(middle)}
+      {right}
+    </Text>
+  );
+}
+
+function UsageTable({
+  models,
+  totals,
+}: {
+  models: ModelUsage[];
+  totals: Omit<ModelUsage, 'modelId'>;
+}) {
+  const header = [
+    'Model',
+    'Calls',
+    'Input',
+    'Output',
+    'Cache W',
+    'Cache R',
+    'Errors',
+  ];
+  return (
+    <Box marginTop={1} flexDirection="column">
+      <UsageTableDivider left="╭" middle="┬" right="╮" />
+      <UsageTableRow
+        cells={header.map((label, index) => ({
+          content: (
+            <Text bold dimColor>
+              {label}
+            </Text>
+          ),
+          align: index === 0 ? 'left' : 'right',
+        }))}
+      />
+      <UsageTableDivider left="├" middle="┼" right="┤" />
+      {models.map((model) => (
+        <UsageTableRow
+          key={model.modelId}
+          cells={[
+            {
+              content: <Text wrap="truncate-end">{model.modelId}</Text>,
+            },
+            { content: <Text>{model.callCount}</Text>, align: 'right' },
+            {
+              content: <Text>{formatTokens(model.inputTokens)}</Text>,
+              align: 'right',
+            },
+            {
+              content: <Text>{formatTokens(model.outputTokens)}</Text>,
+              align: 'right',
+            },
+            {
+              content: (
+                <Text dimColor>
+                  {formatTokens(model.inputCacheWriteTokens)}
+                </Text>
+              ),
+              align: 'right',
+            },
+            {
+              content: (
+                <Text dimColor>{formatTokens(model.inputCacheReadTokens)}</Text>
+              ),
+              align: 'right',
+            },
+            {
+              content: (
+                <Text color={model.errorCount > 0 ? 'red' : undefined}>
+                  {model.errorCount}
+                </Text>
+              ),
+              align: 'right',
+            },
+          ]}
+        />
+      ))}
+      <UsageTableDivider left="├" middle="┼" right="┤" />
+      <UsageTableRow
+        cells={[
+          { content: <Text bold>Total</Text> },
+          { content: <Text bold>{totals.callCount}</Text>, align: 'right' },
+          {
+            content: <Text bold>{formatTokens(totals.inputTokens)}</Text>,
+            align: 'right',
+          },
+          {
+            content: <Text bold>{formatTokens(totals.outputTokens)}</Text>,
+            align: 'right',
+          },
+          {
+            content: (
+              <Text bold dimColor>
+                {formatTokens(totals.inputCacheWriteTokens)}
+              </Text>
+            ),
+            align: 'right',
+          },
+          {
+            content: (
+              <Text bold dimColor>
+                {formatTokens(totals.inputCacheReadTokens)}
+              </Text>
+            ),
+            align: 'right',
+          },
+          {
+            content: (
+              <Text bold color={totals.errorCount > 0 ? 'red' : undefined}>
+                {totals.errorCount}
+              </Text>
+            ),
+            align: 'right',
+          },
+        ]}
+      />
+      <UsageTableDivider left="╰" middle="┴" right="╯" />
+    </Box>
+  );
+}
+
 type Timeframe = 'today' | '24h' | '7d' | '30d' | 'all';
 type Granularity = 'hourly' | 'daily' | 'weekly';
+
+const USAGE_COLUMNS = [
+  { key: 'model', width: 28 },
+  { key: 'calls', width: 6 },
+  { key: 'input', width: 8 },
+  { key: 'output', width: 8 },
+  { key: 'cache-write', width: 8 },
+  { key: 'cache-read', width: 8 },
+  { key: 'errors', width: 6 },
+] as const;
 
 const TIMEFRAMES: { key: Timeframe; label: string }[] = [
   { key: 'today', label: 'Today' },
@@ -200,126 +376,23 @@ export function UsageScreen({ apiClient, onBack }: UsageScreenProps) {
             <Text bold color="cyan">
               {timeframeLabel}
             </Text>
-            <Text dimColor> [t]</Text>
+            <Text dimColor>
+              {' '}
+              <KeyHint keyName="t" />
+            </Text>
           </Box>
         </Box>
 
         <Box marginTop={1}>
           <Text bold>Token Usage by Model</Text>
-          {usagePoll.loading && (
-            <Text>
-              {' '}
-              <Spinner type="dots" />
-            </Text>
-          )}
+          {usagePoll.loading && <ActivityIndicator label="Loading usage..." />}
         </Box>
 
         {models.length === 0 && !usagePoll.loading && (
-          <Text dimColor>No usage data for this timeframe.</Text>
+          <EmptyState>No usage data for this timeframe.</EmptyState>
         )}
 
-        {models.length > 0 && (
-          <Box marginLeft={2} marginTop={1} flexDirection="column">
-            {/* Header */}
-            <Box>
-              <Box width={30}>
-                <Text bold dimColor>
-                  Model
-                </Text>
-              </Box>
-              <Box width={8}>
-                <Text bold dimColor>
-                  Calls
-                </Text>
-              </Box>
-              <Box width={10}>
-                <Text bold dimColor>
-                  Input
-                </Text>
-              </Box>
-              <Box width={10}>
-                <Text bold dimColor>
-                  Output
-                </Text>
-              </Box>
-              <Box width={10}>
-                <Text bold dimColor>
-                  Cache W
-                </Text>
-              </Box>
-              <Box width={10}>
-                <Text bold dimColor>
-                  Cache R
-                </Text>
-              </Box>
-              <Box width={8}>
-                <Text bold dimColor>
-                  Errors
-                </Text>
-              </Box>
-            </Box>
-
-            {/* Rows */}
-            {models.map((m) => (
-              <Box key={m.modelId}>
-                <Box width={30}>
-                  <Text>{m.modelId}</Text>
-                </Box>
-                <Box width={8}>
-                  <Text>{m.callCount}</Text>
-                </Box>
-                <Box width={10}>
-                  <Text>{formatTokens(m.inputTokens)}</Text>
-                </Box>
-                <Box width={10}>
-                  <Text>{formatTokens(m.outputTokens)}</Text>
-                </Box>
-                <Box width={10}>
-                  <Text dimColor>{formatTokens(m.inputCacheWriteTokens)}</Text>
-                </Box>
-                <Box width={10}>
-                  <Text dimColor>{formatTokens(m.inputCacheReadTokens)}</Text>
-                </Box>
-                <Box width={8}>
-                  <Text color={m.errorCount > 0 ? 'red' : undefined}>
-                    {m.errorCount}
-                  </Text>
-                </Box>
-              </Box>
-            ))}
-
-            {/* Totals */}
-            <Box marginTop={1}>
-              <Box width={30}>
-                <Text bold>Total</Text>
-              </Box>
-              <Box width={8}>
-                <Text bold>{totals.callCount}</Text>
-              </Box>
-              <Box width={10}>
-                <Text bold>{formatTokens(totals.inputTokens)}</Text>
-              </Box>
-              <Box width={10}>
-                <Text bold>{formatTokens(totals.outputTokens)}</Text>
-              </Box>
-              <Box width={10}>
-                <Text bold dimColor>
-                  {formatTokens(totals.inputCacheWriteTokens)}
-                </Text>
-              </Box>
-              <Box width={10}>
-                <Text bold dimColor>
-                  {formatTokens(totals.inputCacheReadTokens)}
-                </Text>
-              </Box>
-              <Box width={8}>
-                <Text bold color={totals.errorCount > 0 ? 'red' : undefined}>
-                  {totals.errorCount}
-                </Text>
-              </Box>
-            </Box>
-          </Box>
-        )}
+        {models.length > 0 && <UsageTable models={models} totals={totals} />}
       </Box>
     </Box>
   );

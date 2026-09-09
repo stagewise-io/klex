@@ -4,6 +4,7 @@ import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import type { UpdateManager, UpdateState } from '@/self-update';
 
 import { useTextInputActive } from '../hooks/use-text-input-active';
+import { KeyHint } from './key-hint';
 
 type UpdateBannerManager = Pick<
   UpdateManager,
@@ -84,10 +85,8 @@ export function UpdateBanner({
   );
 
   if (dismissed || inputBlocked) return null;
-  const message = confirming
-    ? `${activeSessionCount} active session${activeSessionCount === 1 ? '' : 's'} will be interrupted. Press u again to update and restart.`
-    : updateMessage(state);
-  if (!message) return null;
+  const message = updateMessage(state);
+  if (!confirming && !message) return null;
 
   return (
     <Box
@@ -96,18 +95,40 @@ export function UpdateBanner({
       flexDirection="column"
       paddingX={1}
     >
-      <Text bold>{message}</Text>
+      <Text bold>
+        {confirming ? (
+          <>
+            {activeSessionCount} active session
+            {activeSessionCount === 1 ? '' : 's'} will be interrupted. Press{' '}
+            <KeyHint keyName="u" /> again to update and restart.
+          </>
+        ) : (
+          message
+        )}
+      </Text>
       {state.status === 'available' && !confirming ? (
         <Box gap={4}>
-          <Text>[u] Update & restart</Text>
-          <Text>[n] Dismiss for now</Text>
+          <Text>
+            <KeyHint keyName="u" /> Update & restart
+          </Text>
+          <Text>
+            <KeyHint keyName="n" /> Dismiss for now
+          </Text>
         </Box>
       ) : null}
-      {confirming ? <Text>[n] Cancel</Text> : null}
+      {confirming ? (
+        <Text>
+          <KeyHint keyName="n" /> Cancel
+        </Text>
+      ) : null}
       {state.status === 'failed' ? (
         <Box gap={4}>
-          <Text>[u] Retry</Text>
-          <Text>[n] Dismiss for now</Text>
+          <Text>
+            <KeyHint keyName="u" /> Retry
+          </Text>
+          <Text>
+            <KeyHint keyName="n" /> Dismiss for now
+          </Text>
         </Box>
       ) : null}
     </Box>

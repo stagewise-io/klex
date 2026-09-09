@@ -59,6 +59,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.restoreAllMocks();
+  vi.unstubAllEnvs();
   vi.unstubAllGlobals();
 });
 
@@ -164,6 +165,13 @@ describe('ProviderRegistry', () => {
       expect(item.metadata.description).not.toBe('');
       expect(item.usageGuidance.length).toBeGreaterThan(40);
     }
+    const registry = createProviderRegistry({ logging, definitions });
+    expect(
+      registry
+        .listProviderTypes()
+        .find(({ type }) => type === 'chatgpt-codex-subscription')?.capabilities
+        .modelDiscovery,
+    ).toBe(true);
   });
 
   it('uses provider-native SDKs for cloud transports', () => {
@@ -444,6 +452,103 @@ describe('ProviderRegistry', () => {
         'gpt-5-codex',
       ).specificationVersion,
     ).toBe('v4');
+  });
+
+  it('discovers picker-visible models from the Codex CLI catalog', async () => {
+    const provider = builtIn('chatgpt-codex-subscription');
+    fsMocks.readFile.mockResolvedValue(
+      JSON.stringify({
+        fetched_at: '2026-09-08T00:00:00Z',
+        models: [
+          {
+            slug: 'gpt-visible',
+            display_name: 'GPT Visible',
+            visibility: 'list',
+            supported_in_api: true,
+            context_window: 272_000,
+            input_modalities: ['text', 'image'],
+          },
+          {
+            slug: 'gpt-hidden',
+            display_name: 'GPT Hidden',
+            visibility: 'hide',
+            supported_in_api: true,
+          },
+          {
+            slug: 'gpt-cli-only',
+            display_name: 'GPT CLI Only',
+            visibility: 'list',
+            supported_in_api: false,
+          },
+        ],
+      }),
+    );
+
+    const result = await discovery(provider)(
+      {
+        id: 'codex-1',
+        type: provider.type,
+        settings: { authFile: '/custom/codex/auth.json' },
+      },
+      signal(),
+    );
+
+    expect(fsMocks.readFile).toHaveBeenCalledWith(
+      '/custom/codex/models_cache.json',
+      expect.objectContaining({ encoding: 'utf8' }),
+    );
+    expect(result).toEqual({
+      ok: true,
+      code: 'available',
+      value: [
+        {
+          modelId: 'gpt-visible',
+          displayName: 'GPT Visible',
+          kind: 'language',
+          contextSize: 272_000,
+          capabilities: { input: { image: {} } },
+        },
+      ],
+    });
+  });
+
+  it('uses CODEX_HOME for discovery and controls catalog failures', async () => {
+    const provider = builtIn('chatgpt-codex-subscription');
+    vi.stubEnv('CODEX_HOME', '/custom/codex-home');
+    fsMocks.readFile.mockResolvedValueOnce(JSON.stringify({ models: [] }));
+
+    await discovery(provider)(
+      { id: 'codex-1', type: provider.type, settings: {} },
+      signal(),
+    );
+    expect(fsMocks.readFile).toHaveBeenCalledWith(
+      '/custom/codex-home/models_cache.json',
+      expect.objectContaining({ encoding: 'utf8' }),
+    );
+
+    fsMocks.readFile.mockResolvedValueOnce('{invalid');
+    await expect(
+      discovery(provider)(
+        { id: 'codex-1', type: provider.type, settings: {} },
+        signal(),
+      ),
+    ).resolves.toMatchObject({
+      ok: false,
+      code: 'discovery_failed',
+      message: 'Codex model catalog is unavailable or invalid',
+    });
+
+    fsMocks.readFile.mockRejectedValueOnce(new Error('ENOENT'));
+    await expect(
+      discovery(provider)(
+        { id: 'codex-1', type: provider.type, settings: {} },
+        signal(),
+      ),
+    ).resolves.toMatchObject({
+      ok: false,
+      code: 'discovery_failed',
+      message: 'Codex model catalog is unavailable or invalid',
+    });
   });
 
   it('normalizes valid settings and constructs every built-in SDK model', () => {

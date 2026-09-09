@@ -1,7 +1,7 @@
 import { Box, Text } from 'ink';
-import SelectInput from 'ink-select-input';
 import { useEffect } from 'react';
 
+import { MenuList } from '../components/menu-list';
 import { ScreenSection } from '../components/screen-section';
 import { useScreenMeta } from '../hooks/use-screen-meta';
 import { MenuKeys, useMenuInput } from '../menu-keys';
@@ -108,7 +108,7 @@ export function SettingsScreen({
         <Text>{dataDirectory}</Text>
       </Box>
       <Box marginTop={1}>
-        <SelectInput items={MENU_ITEMS} onSelect={handleSelect} />
+        <MenuList items={MENU_ITEMS} onSelect={handleSelect} />
       </Box>
     </ScreenSection>
   );

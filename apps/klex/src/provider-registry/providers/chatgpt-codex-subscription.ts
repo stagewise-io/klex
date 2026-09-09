@@ -1,15 +1,17 @@
 import { access, readFile } from 'node:fs/promises';
-import { delimiter, join } from 'node:path';
+import { delimiter, dirname, join } from 'node:path';
 
 import { createOpenResponses } from '@ai-sdk/open-responses';
 import type { LanguageModelV4 } from '@ai-sdk/provider';
 
 import type {
+  ProviderConnectionResult,
   ProviderDefinition,
   ProviderInstance,
+  ProviderModel,
   ProviderOperationResult,
 } from '../provider-registry';
-import { resolveCatalogMetadata } from './model-catalog-helpers';
+import { resolveOpenAiModelMetadata } from './openai';
 import {
   available,
   isRecord,
@@ -21,6 +23,8 @@ import {
 } from './shared';
 
 const BASE_URL = 'https://chatgpt.com/backend-api/codex/responses';
+const LEGACY_TEST_MODEL_ID = 'gpt-5-codex';
+const DEFAULT_TEST_MODEL_ID = 'gpt-5.6-sol';
 
 export const chatGptCodexSubscriptionProviderDefinition: ProviderDefinition = {
   type: 'chatgpt-codex-subscription',
@@ -31,27 +35,112 @@ export const chatGptCodexSubscriptionProviderDefinition: ProviderDefinition = {
     description:
       'Codex model transport authenticated by a local ChatGPT subscription session.',
   },
-  resolveModelMetadata: (modelId) =>
-    resolveCatalogMetadata(modelId, [], modelId, [
-      {
-        prefixes: ['gpt-'],
-        includesAny: ['codex'],
-        metadata: {
-          kind: 'language',
-          capabilities: { input: { image: {} } },
-        },
-      },
-    ]),
+  resolveModelMetadata: resolveOpenAiModelMetadata,
   preflightCreate: (settings) => preflight(settings),
   createLanguageModel,
-  testConnection: (instance, signal) =>
-    testModelConnection(
-      instance,
-      BASE_URL,
-      (modelId) => createLanguageModel(instance, modelId),
-      signal,
-    ),
+  discoverModels,
+  testConnection: testCodexConnection,
 };
+
+async function testCodexConnection(
+  instance: ProviderInstance,
+  signal: AbortSignal,
+): Promise<ProviderOperationResult<ProviderConnectionResult>> {
+  const requestedModel = setting(instance, 'testModelId');
+  const modelId =
+    requestedModel && requestedModel !== LEGACY_TEST_MODEL_ID
+      ? requestedModel
+      : ((await loadConfiguredModel(instance)) ?? DEFAULT_TEST_MODEL_ID);
+  const { testModelId: _testModelId, ...settings } = instance.settings;
+  return testModelConnection(
+    { ...instance, settings: { ...settings, testModelId: modelId } },
+    BASE_URL,
+    (id) => createLanguageModel(instance, id),
+    signal,
+  );
+}
+
+async function loadConfiguredModel(
+  instance: ProviderInstance,
+): Promise<string | undefined> {
+  const configFile = codexFile(instance, 'config.toml');
+  if (!configFile) return undefined;
+  try {
+    const config = await readFile(configFile, 'utf8');
+    const match = /^\s*model\s*=\s*(?:"([^"]+)"|'([^']+)'|([^\s#]+))/m.exec(
+      config,
+    );
+    return match?.[1] ?? match?.[2] ?? match?.[3];
+  } catch {
+    return undefined;
+  }
+}
+
+async function discoverModels(
+  instance: ProviderInstance,
+  signal: AbortSignal,
+): Promise<ProviderOperationResult<readonly ProviderModel[]>> {
+  const cacheFile = codexFile(instance, 'models_cache.json');
+  if (!cacheFile)
+    return unavailable(
+      'discovery_failed',
+      'Cannot determine the Codex model catalog location',
+      'Configure authFile or ensure HOME points to the Codex CLI data directory.',
+    );
+  try {
+    signal.throwIfAborted();
+    const parsed = JSON.parse(
+      await readFile(cacheFile, { encoding: 'utf8', signal }),
+    ) as unknown;
+    if (!isRecord(parsed) || !Array.isArray(parsed.models))
+      throw new Error('Invalid Codex model catalog');
+    const models = parsed.models.flatMap((value): ProviderModel[] => {
+      if (
+        !isRecord(value) ||
+        typeof value.slug !== 'string' ||
+        !value.slug ||
+        value.visibility !== 'list' ||
+        value.supported_in_api !== true
+      )
+        return [];
+      const inputModalities = Array.isArray(value.input_modalities)
+        ? value.input_modalities
+        : [];
+      const capabilities = {
+        input: {
+          ...(inputModalities.includes('image') && { image: {} }),
+          ...(inputModalities.includes('audio') && { audio: {} }),
+        },
+      };
+      return [
+        {
+          modelId: value.slug,
+          kind: 'language',
+          ...(typeof value.display_name === 'string' && value.display_name
+            ? { displayName: value.display_name }
+            : {}),
+          ...(typeof value.context_window === 'number' &&
+          Number.isFinite(value.context_window) &&
+          value.context_window > 0
+            ? { contextSize: value.context_window }
+            : {}),
+          ...(Object.keys(capabilities.input).length > 0
+            ? { capabilities }
+            : {}),
+        },
+      ];
+    });
+    return available(models);
+  } catch (error) {
+    return unavailable(
+      'discovery_failed',
+      signal.aborted
+        ? sanitizedError(error)
+        : 'Codex model catalog is unavailable or invalid',
+      'Run the Codex CLI once to refresh its model catalog, then try again.',
+    );
+  }
+}
 
 async function preflight(
   settings: Readonly<Record<string, unknown>>,
@@ -109,18 +198,31 @@ function authenticatedFetch(instance: ProviderInstance): typeof fetch {
     if (auth.accountId) headers.set('ChatGPT-Account-Id', auth.accountId);
     headers.set('originator', 'codex_cli_rs');
     headers.set('User-Agent', 'codex_cli_rs');
-    return fetch(input, { ...init, headers });
+    return fetch(input, {
+      ...init,
+      headers,
+      body: codexRequestBody(init?.body),
+    });
   };
+}
+
+function codexRequestBody(body: RequestInit['body']): RequestInit['body'] {
+  if (typeof body !== 'string') return body;
+  try {
+    const parsed = JSON.parse(body) as unknown;
+    if (!isRecord(parsed)) return body;
+    const { max_output_tokens: _maxOutputTokens, ...request } = parsed;
+    return JSON.stringify({ ...request, store: false });
+  } catch {
+    return body;
+  }
 }
 
 async function loadAuth(
   instance: ProviderInstance,
 ): Promise<{ accessToken: string; accountId?: string }> {
-  const home =
-    process.env.CODEX_HOME ??
-    (process.env.HOME ? `${process.env.HOME}/.codex` : undefined);
   const authFile =
-    setting(instance, 'authFile') ?? (home ? `${home}/auth.json` : undefined);
+    setting(instance, 'authFile') ?? codexFile(instance, 'auth.json');
   if (!authFile)
     throw new Error('Cannot determine the Codex auth file location');
   const parsed = JSON.parse(await readFile(authFile, 'utf8')) as unknown;
@@ -137,6 +239,18 @@ async function loadAuth(
           'https://api.openai.com/auth.chatgpt_account_id',
         );
   return { accessToken, ...(accountId && { accountId }) };
+}
+
+function codexFile(
+  instance: ProviderInstance,
+  fileName: string,
+): string | undefined {
+  const authFile = setting(instance, 'authFile');
+  if (authFile) return join(dirname(authFile), fileName);
+  const home =
+    process.env.CODEX_HOME ??
+    (process.env.HOME ? join(process.env.HOME, '.codex') : undefined);
+  return home ? join(home, fileName) : undefined;
 }
 
 async function findExecutable(name: string): Promise<string | undefined> {

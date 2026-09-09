@@ -1,7 +1,8 @@
-import { Box, useStdout } from 'ink';
+import { Box } from 'ink';
 import type { ReactNode } from 'react';
 
 import type { CloudStatus, SessionInfo } from '../api-client';
+import { useTerminalSize } from '../hooks/use-terminal-size';
 import type { Toast } from '../hooks/use-toast';
 import { GlobalFooter } from './global-footer';
 import { GlobalHeader } from './global-header';
@@ -32,9 +33,7 @@ export function AppFrame({
   updateBanner,
   children,
 }: AppFrameProps) {
-  const { stdout } = useStdout();
-  const terminalHeight = stdout.rows || 24;
-  const terminalWidth = stdout.columns || 80;
+  const { width: terminalWidth, height: terminalHeight } = useTerminalSize();
 
   return (
     <Box flexDirection="column" height={terminalHeight} width={terminalWidth}>

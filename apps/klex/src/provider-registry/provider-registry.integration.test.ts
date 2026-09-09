@@ -64,7 +64,10 @@ describe('provider registry module integration', () => {
     const discoverModels = vi.fn(async () => ({
       ok: true as const,
       code: 'available' as const,
-      value: [{ modelId: 'vendor:model:v2', displayName: 'Discovered model' }],
+      value: [
+        { modelId: 'autodetected-only' },
+        { modelId: 'vendor:model:v2', displayName: 'Discovered model' },
+      ],
     }));
     const createLanguageModel = vi.fn(
       (instance, modelId) =>
@@ -160,22 +163,29 @@ describe('provider registry module integration', () => {
       registry.addInstance({
         id: 'literal-secret',
         type: 'openrouter',
-        settings: { apiKey: 'must-not-persist' },
+        settings: { apiKey: 'direct-api-key' },
       }),
     ).resolves.toMatchObject({
-      ok: false,
-      code: 'invalid_configuration',
+      ok: true,
+      value: { settings: { apiKey: { configured: true } } },
     });
+    expect(config.get().providers['literal-secret']?.settings.apiKey).toBe(
+      'direct-api-key',
+    );
     await expect(
-      registry.addInstance({
-        id: 'mixed-secret',
-        type: 'openrouter',
-        settings: { apiKey: `prefix-\${env:PRIMARY_KEY}` },
+      registry.updateInstance('literal-secret', {
+        settings: { apiKey: 'updated-direct-api-key' },
       }),
     ).resolves.toMatchObject({
-      ok: false,
-      code: 'invalid_configuration',
+      ok: true,
+      value: { settings: { apiKey: { configured: true } } },
     });
+    expect(config.get().providers['literal-secret']?.settings.apiKey).toBe(
+      'updated-direct-api-key',
+    );
+    await expect(
+      registry.removeInstance('literal-secret'),
+    ).resolves.toMatchObject({ ok: true });
     await expect(
       registry.addInstance({
         id: 'embedded-header-secret',
@@ -247,6 +257,32 @@ describe('provider registry module integration', () => {
     await registry.listModels('provider-primary');
     expect(discoverModels).toHaveBeenCalledTimes(1);
     await expect(
+      registry.updateModelSelection({
+        chat: [
+          { providerId: 'provider-primary', modelId: 'autodetected-only' },
+        ],
+      }),
+    ).resolves.toMatchObject({ ok: true, value: { warnings: [] } });
+    await expect(
+      registry.updateModelSelection({
+        chat: [
+          { providerId: 'provider-primary', modelId: 'autodetected-only' },
+          { providerId: 'provider-primary', modelId: 'unknown-model' },
+        ],
+      }),
+    ).resolves.toMatchObject({
+      ok: true,
+      value: { warnings: [{ modelId: 'unknown-model' }] },
+    });
+    await expect(
+      registry.updateModelSelection({
+        chat: [
+          { providerId: 'provider-primary', modelId: 'unknown-model' },
+          { providerId: 'provider-primary', modelId: 'autodetected-only' },
+        ],
+      }),
+    ).resolves.toMatchObject({ ok: true, value: { warnings: [] } });
+    await expect(
       registry.addKnownModel('provider-primary', 'vendor:model:v2', {
         displayName: 'Manual override',
         contextSize: 32_000,
@@ -257,6 +293,11 @@ describe('provider registry module integration', () => {
     expect(models).toMatchObject({
       ok: true,
       value: [
+        {
+          modelId: 'autodetected-only',
+          source: 'discovered',
+          provenance: [{ source: 'discovered' }],
+        },
         {
           modelId: 'vendor:model:v2',
           displayName: 'Manual override',

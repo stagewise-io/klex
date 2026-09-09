@@ -6,7 +6,12 @@ import type {
   ProviderInstance,
 } from '../provider-registry';
 import { resolveGoogleModelMetadata } from './google-gemini';
-import { customHeaders, setting, testModelConnection } from './shared';
+import {
+  customHeaders,
+  gatewayAttributionHeaders,
+  setting,
+  testModelConnection,
+} from './shared';
 
 export const googleGenerativeProviderDefinition: ProviderDefinition = {
   type: 'google-generative',
@@ -37,6 +42,9 @@ function createLanguageModel(
       baseURL: setting(instance, 'baseUrl'),
     }),
     apiKey: setting(instance, 'apiKey') ?? '',
-    headers: customHeaders(instance),
+    headers: {
+      ...customHeaders(instance),
+      ...gatewayAttributionHeaders(),
+    },
   }).languageModel(modelId);
 }

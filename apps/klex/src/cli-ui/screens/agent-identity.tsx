@@ -147,29 +147,23 @@ export function AgentIdentityScreen({
 
   if (mode === 'edit') {
     return (
-      <Box flexDirection="column">
-        <Box marginTop={1} flexDirection="column">
-          <Text dimColor>
-            Official name ({MIN_NAME}–{MAX_NAME} characters):
-          </Text>
-          <Box marginTop={1}>
-            <TextInput
-              value={pendingName}
-              onChange={(value) => {
-                if (!savingRef.current) setPendingName(value);
-              }}
-              placeholder="Agent name"
-              onSubmit={saveName}
-              showCursor={!saving}
-            />
-          </Box>
-          <Box marginTop={1}>
-            <Text dimColor>
-              {saving ? 'Saving...' : '[enter] Save | [esc] Cancel'}
-            </Text>
-          </Box>
+      <ScreenSection title="Edit agent identity">
+        <Text dimColor>
+          Official name ({MIN_NAME}–{MAX_NAME} characters):
+        </Text>
+        <Box marginTop={1}>
+          <TextInput
+            value={pendingName}
+            onChange={(value) => {
+              if (!savingRef.current) setPendingName(value);
+            }}
+            placeholder="Agent name"
+            onSubmit={saveName}
+            showCursor={!saving}
+          />
         </Box>
-      </Box>
+        {saving ? <Text dimColor>Saving...</Text> : null}
+      </ScreenSection>
     );
   }
 
@@ -177,19 +171,13 @@ export function AgentIdentityScreen({
     <ScreenSection title="Agent Identity">
       {loading && <Text dimColor>Loading...</Text>}
       {!loading && loadError && !identity && (
-        <Box flexDirection="column">
-          <Text color="red">{loadError}</Text>
-          <Text dimColor>[r] Retry | [esc] Back</Text>
-        </Box>
+        <Text color="red">{loadError}</Text>
       )}
       {!loading && identity && (
         <Box flexDirection="column">
           <Box>
             <Text dimColor>Official name: </Text>
             <Text bold>{identity.officialName}</Text>
-          </Box>
-          <Box marginTop={1}>
-            <Text dimColor>[e] Edit | [esc] Back</Text>
           </Box>
         </Box>
       )}

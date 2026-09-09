@@ -2,13 +2,13 @@ import { createContext, type ReactNode, useContext } from 'react';
 
 export interface Toast {
   id: number;
-  message: string;
+  message: ReactNode;
   level: 'error' | 'warning' | 'info';
 }
 
 export interface ToastContextValue {
   toasts: Toast[];
-  pushToast: (message: string, level?: Toast['level']) => void;
+  pushToast: (message: ReactNode, level?: Toast['level']) => void;
   dismissToast: (id: number) => void;
 }
 

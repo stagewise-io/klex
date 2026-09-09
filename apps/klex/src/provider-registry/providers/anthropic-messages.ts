@@ -6,7 +6,12 @@ import type {
   ProviderInstance,
 } from '../provider-registry';
 import { resolveAnthropicModelMetadata } from './anthropic';
-import { providerHeaders, setting, testModelConnection } from './shared';
+import {
+  gatewayAttributionHeaders,
+  providerHeaders,
+  setting,
+  testModelConnection,
+} from './shared';
 
 export const anthropicMessagesProviderDefinition: ProviderDefinition = {
   type: 'anthropic-messages',
@@ -37,6 +42,9 @@ function createLanguageModel(
       baseURL: setting(instance, 'baseUrl'),
     }),
     apiKey: setting(instance, 'apiKey') ?? '',
-    headers: providerHeaders(instance, 'anthropic'),
+    headers: {
+      ...providerHeaders(instance, 'anthropic'),
+      ...gatewayAttributionHeaders(),
+    },
   }).languageModel(modelId);
 }

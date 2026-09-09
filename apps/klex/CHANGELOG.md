@@ -2,6 +2,18 @@
 
 All notable Klex changes are documented here.
 
+## 0.4.0 (2026-09-09)
+
+### Features
+
+- improve CLI model management (d8cd2a1)
+- add local data migration foundation (4d3d101)
+
+### Bug Fixes
+
+- harden local data migrations (579cf82)
+- wrap god messages within terminal (af2df9f)
+
 ## Unreleased
 
 ### Breaking Changes

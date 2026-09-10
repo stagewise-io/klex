@@ -288,6 +288,7 @@ class TimeExt implements Extension {
         inputSchema: z.object({
           timezone: z
             .string()
+            .trim()
             .nullable()
             .default(null)
             .describe(
@@ -295,7 +296,7 @@ class TimeExt implements Extension {
             ),
         }),
         execute: async ({ timezone }) => {
-          const tz = timezone ?? this.timezone;
+          const tz = timezone?.trim() || this.timezone;
           if (!isValidTimezone(tz)) {
             throw new Error(
               `Invalid timezone "${tz}". Use IANA identifier ("Europe/Berlin" or "UTC").`,

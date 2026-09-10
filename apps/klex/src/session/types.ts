@@ -2,6 +2,9 @@ import type { ChatSessionInbox } from './chat/inbox';
 import type { ExtendedUIMessage } from './chat/message-types';
 import type { SessionInboxEvent } from './inbox';
 
+/** Stable identifier assigned to the router-owned primary session. */
+export const DEFAULT_SESSION_ID = 'default';
+
 /**
  * Lifecycle status of a session, queryable by the router.
  *
@@ -56,7 +59,7 @@ export interface UsagePair {
 
 /** Aggregated session information exposed for observability. */
 export interface SessionInfo {
-  /** Unique session identifier (UUID). */
+  /** Unique session identifier. The router-owned primary session uses `default`. */
   id: string;
   /** Coarse lifecycle status. */
   status: SessionStatus;

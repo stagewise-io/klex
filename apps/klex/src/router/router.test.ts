@@ -58,11 +58,15 @@ function setup() {
     close: async () => undefined,
   } as unknown as AgentSession;
   const introspection = createIntrospectionMock();
+  let createdSessionId: string | undefined;
   const router = createRouter({
     logging,
     mcp,
     introspection,
-    createChatSession: () => session,
+    createChatSession: (_hooks, _scope, _router, sessionId) => {
+      createdSessionId = sessionId;
+      return session;
+    },
   });
 
   return {
@@ -72,6 +76,9 @@ function setup() {
     },
     router,
     sent,
+    get createdSessionId() {
+      return createdSessionId;
+    },
   };
 }
 
@@ -83,6 +90,12 @@ const envelope = {
 };
 
 describe('Router Push Notification adaptation', () => {
+  it('creates the standard session with the stable default id', async () => {
+    const harness = setup();
+    await harness.router.start();
+    expect(harness.createdSessionId).toBe('default');
+  });
+
   it('passes through content blocks without validation', async () => {
     const harness = setup();
     await harness.router.start();

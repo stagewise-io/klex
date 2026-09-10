@@ -40,12 +40,12 @@ import {
 import { createImageInputOptimizerExt } from '@/session/chat/extensions/image-input-optimizer';
 import { createJsReplSandboxExt } from '@/session/chat/extensions/js-repl-sandbox';
 import { createNameLoaderExt } from '@/session/chat/extensions/name-loader';
-import { createRemindersExt } from '@/session/chat/extensions/reminders';
 import {
   createSoulExt,
   createSoulExtGod,
 } from '@/session/chat/extensions/soul';
 import { createTimeExt } from '@/session/chat/extensions/time';
+import { createTodosExt } from '@/session/chat/extensions/todos';
 import {
   createProductionMediaTransportConnector,
   createRealtime,
@@ -282,6 +282,7 @@ async function main(): Promise<void> {
         hooks: SessionHooks,
         introspectionScope: ChatSessionDependencies['introspectionScope'],
         sessionRouter: RouterApi,
+        sessionId?: string,
       ) =>
         createChatSession({
           logging: logger,
@@ -296,10 +297,11 @@ async function main(): Promise<void> {
             createTimeExt({ timeUpdatePeriod: TIME_UPDATE_PERIOD_SECONDS }),
             createImageInputOptimizerExt,
             createAudioInputOptimizerExt,
-            createRemindersExt,
+            createTodosExt,
           ],
           dataDirectory,
           hooks,
+          sessionId,
           introspectionScope,
         });
 

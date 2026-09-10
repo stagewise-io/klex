@@ -63,6 +63,8 @@ export interface ChatSessionDependencies {
   /** Parent introspection scope (the "sessions" group). The session creates its own child. */
   introspectionScope: IntrospectionScope;
   hooks?: SessionHooks;
+  /** Stable identifier for durable primary sessions; defaults to a UUID. */
+  sessionId?: string;
 }
 
 class ChatSessionModule implements AgentSession {
@@ -115,7 +117,7 @@ class ChatSessionModule implements AgentSession {
    */
   private pendingImmediate: ExtendedUIMessage[] = [];
 
-  readonly sessionId = randomUUID();
+  readonly sessionId: string;
 
   private readonly sessionSpan: Span;
 
@@ -158,8 +160,10 @@ class ChatSessionModule implements AgentSession {
       extensionFactories: ExtensionFactory[];
       introspectionScope: IntrospectionScope;
       hooks?: SessionHooks;
+      sessionId?: string;
     },
   ) {
+    this.sessionId = deps.sessionId ?? randomUUID();
     // Create a session-level span that lives for the entire session lifetime.
     // All turn / step / generation spans inherit this trace, giving a single
     // trace tree per session in the tracing backend. The span stays open until
@@ -1006,5 +1010,6 @@ export function createChatSession(
     extensionFactories: deps.extensionFactories,
     introspectionScope: deps.introspectionScope,
     hooks: deps.hooks,
+    sessionId: deps.sessionId,
   });
 }

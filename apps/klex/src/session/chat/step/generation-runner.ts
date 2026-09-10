@@ -269,6 +269,7 @@ export class GenerationRunner {
       }
       if (outcome === 'salvage') {
         forceNextStep = true;
+        modelFallbackOccurred = lastClassification?.isModelError === true;
         break;
       }
       if (outcome === 'aborted') {

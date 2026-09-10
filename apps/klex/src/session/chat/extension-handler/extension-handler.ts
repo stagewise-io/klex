@@ -13,6 +13,7 @@ import type {
   ExtensionDeps,
   ExtensionFactory,
   GenerateTextResult,
+  ProvisionalStepContext,
   ResolvedModel,
   StepCompleteEvent,
   TransformationFlags,
@@ -104,6 +105,22 @@ export interface ExtensionHandler {
    * strings are filtered out.
    */
   getSystemPromptParts: () => string[];
+
+  /**
+   * Collect provisional context parts for one generation attempt. Providers
+   * receive isolated history clones and run sequentially in factory order.
+   * This method only aggregates parts; it does not persist them. The step
+   * appends the combined parts as a synthetic user message, then retains that
+   * message after a successful non-fallback result or removes it after failure,
+   * fallback, fatal error, or a thrown preparation/generation error.
+   *
+   * Throws before returning if any provider fails, allowing the step to avoid
+   * partially mutating canonical history.
+   */
+  getProvisionalStepContext: (
+    history: readonly ExtendedUIMessage[],
+    model: ResolvedModel,
+  ) => Promise<ProvisionalStepContext>;
 
   /**
    * Run `historyTransformer` across all extensions in order.
@@ -346,6 +363,32 @@ class ExtensionHandlerModule implements ExtensionHandler {
     }
 
     return parts;
+  }
+
+  async getProvisionalStepContext(
+    history: readonly ExtendedUIMessage[],
+    model: ResolvedModel,
+  ): Promise<ProvisionalStepContext> {
+    const parts: ExtendedUIMessage['parts'] = [];
+
+    for (const ext of this.extensions) {
+      if (!ext.getProvisionalStepContext) continue;
+      try {
+        const result = await ext.getProvisionalStepContext(
+          structuredClone(history),
+          model,
+        );
+        parts.push(...result.parts);
+      } catch (error) {
+        this.extensionDeps.logger.error(
+          { error, extensionIdentifier: this.identifiersByExtension.get(ext) },
+          'Extension provisional step context failed',
+        );
+        throw error;
+      }
+    }
+
+    return { parts };
   }
 
   async runHistoryTransformers(

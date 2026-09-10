@@ -12,6 +12,7 @@ describe('Klex local-data registry', () => {
       'mcp-oauth',
       'cloud-identity-metadata',
       'cloud-enrollment',
+      'time-extension-timezone',
     ]);
   });
 

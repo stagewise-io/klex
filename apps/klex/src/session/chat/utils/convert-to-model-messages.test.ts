@@ -424,8 +424,67 @@ describe('makeConvertDataPart — non-core dispatch', () => {
     };
 
     expect(transformer).toHaveBeenCalledOnce();
-    expect(transformer).toHaveBeenCalledWith({ summary: 'test summary' });
+    expect(transformer).toHaveBeenCalledWith({ summary: 'test summary' }, 0);
     expect(result).toEqual({ type: 'text', text: 'DISPATCHED:test summary' });
+  });
+
+  it('increments occurrence for each call within a conversion pass', async () => {
+    const transformer = vi.fn((_data: { summary: string }) => [
+      { type: 'text' as const, text: 'x' },
+    ]);
+    const transformers = {
+      'context-summary': transformer,
+    } as unknown as DataPartTransformers;
+    // Pass a message with no custom parts so the mock conversion
+    // does not call the transformer — we drive it manually.
+    await convertToModelMessagesExtended(
+      [makeMessage([{ type: 'text', text: 'hello' }])],
+      transformers,
+    );
+    const convert = getConvertDataPart();
+
+    convert(makeContextSummaryPart('a'));
+    convert(makeContextSummaryPart('b'));
+    convert(makeContextSummaryPart('c'));
+
+    expect(transformer).toHaveBeenCalledTimes(3);
+    expect(transformer).toHaveBeenNthCalledWith(1, { summary: 'a' }, 0);
+    expect(transformer).toHaveBeenNthCalledWith(2, { summary: 'b' }, 1);
+    expect(transformer).toHaveBeenNthCalledWith(3, { summary: 'c' }, 2);
+  });
+
+  it('resets occurrence to 0 for each new conversion pass', async () => {
+    const transformer = vi.fn((_data: { summary: string }) => [
+      { type: 'text' as const, text: 'x' },
+    ]);
+    const transformers = {
+      'context-summary': transformer,
+    } as unknown as DataPartTransformers;
+
+    // First conversion pass
+    await convertToModelMessagesExtended(
+      [makeMessage([{ type: 'text', text: 'hello' }])],
+      transformers,
+    );
+    const convert1 = getConvertDataPart();
+    convert1(makeContextSummaryPart('a'));
+    convert1(makeContextSummaryPart('b'));
+
+    // Second conversion pass — counter must reset
+    await convertToModelMessagesExtended(
+      [makeMessage([{ type: 'text', text: 'hello' }])],
+      transformers,
+    );
+    const convert2 = getConvertDataPart();
+    convert2(makeContextSummaryPart('c'));
+    convert2(makeContextSummaryPart('d'));
+
+    // Pass 1: occurrence 0 then 1
+    expect(transformer).toHaveBeenNthCalledWith(1, { summary: 'a' }, 0);
+    expect(transformer).toHaveBeenNthCalledWith(2, { summary: 'b' }, 1);
+    // Pass 2: reset to 0 then 1
+    expect(transformer).toHaveBeenNthCalledWith(3, { summary: 'c' }, 0);
+    expect(transformer).toHaveBeenNthCalledWith(4, { summary: 'd' }, 1);
   });
 });
 

@@ -183,7 +183,7 @@ export const updateMcpServerRoute = createRoute({
   tags: ['MCP Servers'],
   summary: 'Update an MCP server',
   description:
-    'Replaces an MCP server configuration. Remote HTTP servers automatically negotiate MCP OAuth when challenged unless an Authorization header is configured.',
+    'Updates an MCP server configuration. HTTP URL and individual header values can be changed independently. Remote HTTP servers automatically negotiate MCP OAuth when challenged unless an Authorization header is configured.',
   request: {
     params: mcpServerNameParamSchema,
     body: {
@@ -226,9 +226,56 @@ export function updateMcpServer(
 ): RouteHandler<typeof updateMcpServerRoute> {
   return async (c) => {
     const { name } = c.req.valid('param');
-    const server: McpServerConfig = c.req.valid('json');
+    const update = c.req.valid('json');
 
     try {
+      let server: McpServerConfig;
+      if ('command' in update) {
+        server = update;
+      } else {
+        const current = deps.config.get().mcpServers[name];
+        if (!current) {
+          return c.json(
+            { error: 'MCP server not found', code: 'server_not_found' },
+            404,
+          );
+        }
+        if ('command' in current) {
+          if (!update.url) {
+            return c.json(
+              {
+                error: 'URL is required when changing the transport to HTTP',
+                code: 'invalid_config',
+              },
+              400,
+            );
+          }
+          const { headerUpdates: _headerUpdates, ...replacement } = update;
+          server = { ...replacement, url: update.url };
+        } else {
+          const headers = { ...(current.headers ?? {}) };
+          const headerUpdates = Object.entries(update.headerUpdates ?? {});
+          for (const [key, value] of headerUpdates) {
+            if (value !== null) continue;
+            const existingKey = Object.keys(headers).find(
+              (storedKey) => storedKey.toLowerCase() === key.toLowerCase(),
+            );
+            if (existingKey) delete headers[existingKey];
+          }
+          for (const [key, value] of headerUpdates) {
+            if (value === null) continue;
+            const existingKey = Object.keys(headers).find(
+              (storedKey) => storedKey.toLowerCase() === key.toLowerCase(),
+            );
+            if (existingKey) delete headers[existingKey];
+            headers[key] = value;
+          }
+          const { headerUpdates: _headerUpdates, ...httpUpdate } = update;
+          server = { ...current, ...httpUpdate, headers };
+          if (Object.keys(headers).length === 0) delete server.headers;
+        }
+      }
+
       await deps.config.updateMcpServer(name, server);
       return c.json({ servers: deps.mcp.getServerStatuses() }, 200);
     } catch (error) {

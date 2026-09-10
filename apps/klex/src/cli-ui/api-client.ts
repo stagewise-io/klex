@@ -98,6 +98,39 @@ export interface ConnectivityResponse {
   target?: string;
 }
 
+export type McpVersionNegotiation = 'legacy' | 'auto' | { pin: string };
+
+export interface StdioMcpServerRequest {
+  type?: 'stdio';
+  command: string;
+  args?: string[];
+  env?: Record<string, string>;
+  versionNegotiation?: McpVersionNegotiation;
+}
+
+export interface HttpMcpServerRequest {
+  type?: 'http' | 'streamable-http';
+  url: string;
+  headers?: Record<string, string>;
+  versionNegotiation?: McpVersionNegotiation;
+}
+
+export interface HttpMcpServerPatchRequest {
+  type?: 'http' | 'streamable-http';
+  url?: string;
+  headerUpdates?: Record<string, string | null>;
+  versionNegotiation?: McpVersionNegotiation;
+}
+
+export type CreateMcpServerRequest = (
+  | StdioMcpServerRequest
+  | HttpMcpServerRequest
+) & { name: string };
+
+export type UpdateMcpServerRequest =
+  | StdioMcpServerRequest
+  | HttpMcpServerPatchRequest;
+
 export interface McpServersResponse {
   servers: Array<{
     name: string;
@@ -105,6 +138,7 @@ export interface McpServersResponse {
     toolCount: number;
     supportsPushNotifications: boolean;
     transport: string;
+    headerNames: string[];
   }>;
 }
 
@@ -384,14 +418,17 @@ export class AdminApiClient {
     return this.request<McpServersResponse>('/v1/mcp-servers');
   }
 
-  createMcpServer(body: unknown): Promise<McpServersResponse> {
+  createMcpServer(body: CreateMcpServerRequest): Promise<McpServersResponse> {
     return this.request<McpServersResponse>('/v1/mcp-servers', {
       method: 'POST',
       body,
     });
   }
 
-  updateMcpServer(name: string, body: unknown): Promise<McpServersResponse> {
+  updateMcpServer(
+    name: string,
+    body: UpdateMcpServerRequest,
+  ): Promise<McpServersResponse> {
     return this.request<McpServersResponse>(
       `/v1/mcp-servers/${encodeURIComponent(name)}`,
       { method: 'PATCH', body },

@@ -71,16 +71,12 @@ class ImageInputOptimizerExt implements Extension {
     return {
       [VIEW_IMAGE_TOOL_NAME]: tool({
         description:
-          'Get more information about an image that referenced this tool. Only use this tool when an image placeholder in the conversation instructs you to do so. Pass the image ID from the placeholder text and specify "lookFor" to focus on specific aspects of the image.',
+          'Inspect referenced image. Use only for an image placeholder. Pass its ID and a focus.',
         inputSchema: z.object({
-          id: z
-            .string()
-            .describe('The image ID from the placeholder text (e.g. "0-1")'),
+          id: z.string().describe('Placeholder image ID, e.g. "0-1".'),
           lookFor: z
             .string()
-            .describe(
-              'What to specifically look for in the image (e.g. "text content", "colors", "layout")',
-            ),
+            .describe('What to look for, e.g. text, colors, or layout.'),
         }),
         execute: async ({ id, lookFor }) => {
           const imagePart = this.imageRegistry.get(id);

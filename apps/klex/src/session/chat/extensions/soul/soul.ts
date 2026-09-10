@@ -78,9 +78,10 @@ class SoulExt implements Extension {
   }
 
   /**
-   * Returns the soul content for the system prompt. If `SOUL.md` exists
-   * in the global extension directory, its contents are returned verbatim.
-   * Otherwise the mode-appropriate no-soul prompt is returned:
+   * Returns the wrapped soul content for the system prompt. If `SOUL.md`
+   * exists in the global extension directory, its contents are enclosed in
+   * the dedicated soul section. Otherwise the mode-appropriate no-soul prompt
+   * is returned:
    *
    * - `'god'` mode → the aggressive soul-building prompt that instructs
    *   the model to build its soul (obeying god messages that command
@@ -93,7 +94,15 @@ class SoulExt implements Extension {
    */
   getSystemPromptPart(): string {
     const soul = this.readSoul();
-    if (soul !== null) return soul;
+    if (soul !== null) {
+      return `# Your Soul
+
+The \`<soul>\` block contains your own thoughts about yourself. Act reliably upon it, as it describes how you view yourself and who you are.
+
+<soul>
+${soul}
+</soul>`;
+    }
     return this.mode === 'god' ? noSoulPrompt : noSoulPromptRegular;
   }
 

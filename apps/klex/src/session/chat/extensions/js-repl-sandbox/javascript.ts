@@ -79,18 +79,14 @@ class JavaScriptToolModule implements JavaScriptTool {
 
   readonly tools = {
     runInSandbox: {
+      description:
+        'Run JavaScript. Persistent state: globalThis. Top-level await and return work. console.log captures text; return emits JSON. MCP: tools.search(), tools.describe(), then mcp[namespace][name](input).',
       inputSchema: z.object({
-        code: z
-          .string()
-          .describe(
-            'JavaScript code executed in an async QuickJS wrapper. Top-level await is supported. Use console.log(...data) for captured text lines and return for a structured JSON result.',
-          ),
+        code: z.string().describe('JavaScript to execute.'),
       }),
       outputSchema: z
         .json()
-        .describe(
-          'Captured console lines and the returned JSON value. Multiple results are returned as an array in execution order.',
-        ),
+        .describe('Console lines and returned JSON, in execution order.'),
       execute: async ({ code }, options) =>
         this.execute({ code, signal: options.abortSignal }),
     },

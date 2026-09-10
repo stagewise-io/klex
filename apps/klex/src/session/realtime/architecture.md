@@ -37,9 +37,11 @@ Every connected endpoint exposes an idempotent `close()` and a terminal
 `closed` promise. A transport exposes a long-lived `audioSources` discovery
 iterable plus one awaited, backpressured `audioOutput` sink. Each discovered
 source has an immutable participant/track identity, its own ordered readable,
-and a terminal promise. The processor accepts sources through `audioInputs` and
-exposes one generated `audioOutput` iterable. Implementations must bound buffers
-independently, and endpoint teardown owns all source-consumption tasks.
+and a terminal promise. The processor accepts distinct sources concurrently
+through `audioInputs` and exposes one generated `audioOutput` iterable. A
+processor must adapt those inputs to its provider's limits instead of rejecting
+a normal second source. Implementations must bound buffers independently, and
+endpoint teardown owns all source-consumption tasks.
 
 `AudioFrame` is headless signed 16-bit little-endian PCM. Every frame declares
 its sample rate, channel count, sequence, microsecond timestamp, and byte
@@ -64,15 +66,12 @@ returned descriptor, creates a processor, and explicitly routes audio:
 The routing remains explicit application policy rather than automatically
 connecting properties with matching names.
 
-A profile-keyed connector registry is the source of Klex's advertised transport
-profiles and the dispatch boundary for accepted descriptors. `main.ts` derives
-the MCP capability from that registry and then transfers the same instance to
-the enabled `Realtime` module, which closes it during startup rollback or normal
-shutdown. The registry reads
-the common `profile` envelope and delegates full payload validation to the
-matching adapter. The coordinator remains profile-agnostic. Production currently
-registers only `livekit-room`; adding a profile requires adding one registry entry
-and its adapter rather than changing coordinator control flow.
+Production advertises the static `livekit-room` audio capability and transfers
+a typed LiveKit connector to the enabled `Realtime` module, which closes it
+during startup rollback or normal shutdown. The coordinator extracts accepted
+LiveKit descriptors and rejects unknown profiles before connection. Supporting
+another transport will require restoring a typed dispatch boundary rather than
+adding provider-specific branching to media routing.
 
 Each session has one abort controller and one stored `finish()` promise. Remote
 end, transport closure or failure, processor closure or failure, pump failure,
@@ -108,15 +107,21 @@ opens a server-to-server authenticated WebSocket as the model inference plane.
 The WebSocket carries provider control events and 24 kHz mono PCM16. It is not a
 second room or caller transport.
 
-The processor accepts one active attributed input source, converts its 48 kHz
-PCM to 24 kHz before appending input, and converts response audio back to 48 kHz,
-20 ms frames. A replacement may attach after the previous source ends; a
-concurrent second source is rejected because group-call mixing requires an
-explicit timing and gain policy. Both conversions use a
+The processor accepts multiple concurrent attributed sources and attaches them
+to a reusable, processor-owned PCM mixer. The mixer maintains bounded per-source
+buffers, assembles arbitrary chunks into 20 ms playout quanta, lets ready sources
+continue when another source has no complete quantum, and combines overlapping
+samples with saturating PCM16 addition. It emits one 48 kHz mono stream with its
+own sequence and timestamp timeline for OpenAI's single logical input. Source
+failures and malformed frames fail the processor; one source ending does not end
+or reset the aggregate input.
+
+The mixed stream is converted from 48 kHz PCM to OpenAI's 24 kHz input, and
+response audio is converted back to 48 kHz, 20 ms frames. Both conversions use a
 stateful low-pass streaming converter rather than sample dropping. Provider VAD
 creates responses and reports speech interruption. Interruption cancels and
-truncates the active response, resets converter state, and discards buffered or
-stale assistant audio before it reaches LiveKit.
+truncates the active response, resets output converter state, and discards
+buffered or stale assistant audio before it reaches LiveKit.
 
 The provider connection is session-scoped. Setup timeout, malformed provider
 data, provider errors, unexpected close, abort, and explicit close converge on
@@ -146,10 +151,10 @@ ordering, buffering, backpressure, and routing policy. Video representation
 cannot be fixed before choosing between sampled images, decoded frames, encoded
 frames, or native track handles. Text and transcripts are semantic events rather
 than audio-like frames, while provider tool calls belong to Klex orchestration.
-The attributed-source contract preserves participant and track lifecycle, but
-multi-participant inference still requires an explicit mixer or provider-native
-routing policy. Mutable participant metadata and targeted outputs are also
-deferred. These concerns must not be collapsed into one universal frame union
+The attributed-source contract preserves participant and track lifecycle.
+OpenAI currently chooses a mix-all policy; future processors may instead use
+provider-native routing, active-speaker selection, or another explicit policy.
+Mutable participant metadata and targeted outputs are also deferred. These concerns must not be collapsed into one universal frame union
 or automatically piped between endpoints.
 
 The public `realtime.test.ts` covers lifecycle composition and ownership.

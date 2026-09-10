@@ -1,6 +1,6 @@
 import { EventEmitter } from 'node:events';
 
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { RootLogger } from '@stagewise/logger';
 
@@ -91,16 +91,21 @@ async function activate() {
   return { ...harness, update, processor: await harness.promise };
 }
 
-function source(queue: BoundedAsyncQueue<AudioFrame>): AudioSource {
+function source(
+  queue: BoundedAsyncQueue<AudioFrame>,
+  id = 'microphone',
+): AudioSource {
   return {
-    id: 'microphone',
-    metadata: { participantId: 'caller', trackId: 'microphone' },
+    id,
+    metadata: { participantId: `caller-${id}`, trackId: id },
     readable: queue,
     closed: new Promise(() => undefined),
   };
 }
 
 describe('OpenAI realtime processor', () => {
+  afterEach(() => vi.useRealTimers());
+
   it('authenticates, configures PCM and waits for readiness', async () => {
     const harness = await setup();
     expect(harness.authorization()).toBe('Bearer secret-test-key');
@@ -124,10 +129,12 @@ describe('OpenAI realtime processor', () => {
   });
 
   it('downsamples input and packetizes fragmented response audio', async () => {
+    vi.useFakeTimers();
     const { socket, processor } = await activate();
     const input = new BoundedAsyncQueue<AudioFrame>(1);
     await processor.audioInputs.attach(source(input));
     await input.push(frame());
+    await vi.advanceTimersByTimeAsync(20);
     await vi.waitFor(() => expect(socket.sent.length).toBeGreaterThan(1));
     const append = JSON.parse(socket.sent.at(-1) ?? '{}');
     expect(Buffer.from(append.audio, 'base64')).toHaveLength(960);
@@ -152,6 +159,59 @@ describe('OpenAI realtime processor', () => {
     });
     expect(output.value?.data).toHaveLength(1_920);
     await processor.close();
+  });
+
+  it('mixes concurrent inputs and keeps remaining sources active', async () => {
+    vi.useFakeTimers();
+    const { socket, processor } = await activate();
+    const first = new BoundedAsyncQueue<AudioFrame>(1);
+    const second = new BoundedAsyncQueue<AudioFrame>(1);
+    await processor.audioInputs.attach(source(first, 'first'));
+    await processor.audioInputs.attach(source(second, 'second'));
+    const constant = (value: number): AudioFrame => {
+      const data = new Uint8Array(960 * 2);
+      const view = new DataView(data.buffer);
+      for (let index = 0; index < 960; index += 1)
+        view.setInt16(index * 2, value, true);
+      return { ...frame(), data };
+    };
+
+    await Promise.all([
+      first.push(constant(1_000)),
+      second.push(constant(2_000)),
+    ]);
+    await vi.advanceTimersByTimeAsync(20);
+    await vi.waitFor(() => expect(socket.sent.length).toBeGreaterThan(1));
+    const mixedAppend = JSON.parse(socket.sent.at(-1) ?? '{}');
+    const mixed = Buffer.from(mixedAppend.audio, 'base64');
+    expect(mixed.readInt16LE(mixed.byteLength - 2)).toBe(3_000);
+
+    first.close();
+    await second.push(constant(2_000));
+    await vi.advanceTimersByTimeAsync(20);
+    await vi.waitFor(() => expect(socket.sent.length).toBeGreaterThan(2));
+    const remainingAppend = JSON.parse(socket.sent.at(-1) ?? '{}');
+    const remaining = Buffer.from(remainingAppend.audio, 'base64');
+    expect(remaining.readInt16LE(remaining.byteLength - 2)).toBe(2_000);
+    let closed = false;
+    void processor.closed.then(() => {
+      closed = true;
+    });
+    await Promise.resolve();
+    expect(closed).toBe(false);
+    await processor.close();
+  });
+
+  it('fails when an attached source fails', async () => {
+    const { processor } = await activate();
+    const input = new BoundedAsyncQueue<AudioFrame>(1);
+    await processor.audioInputs.attach(source(input));
+    const failure = new Error('input source failed');
+    input.close(failure);
+    await expect(processor.closed).resolves.toMatchObject({
+      type: 'failed',
+      error: failure,
+    });
   });
 
   it('serializes adjacent response deltas while output is backpressured', async () => {

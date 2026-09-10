@@ -7,11 +7,14 @@ import {
   type SessionInboxEvent,
   SessionInboxUrgency,
 } from '@/session/inbox';
-import type {
-  AgentSession,
-  SessionHooks,
-  SessionTerminationInfo,
+import {
+  type AgentSession,
+  DEFAULT_SESSION_ID,
+  type SessionHooks,
+  type SessionTerminationInfo,
 } from '@/session/types';
+
+export { DEFAULT_SESSION_ID } from '@/session/types';
 
 export interface RouterDependencies {
   logging: RootLogger;
@@ -21,6 +24,7 @@ export interface RouterDependencies {
     hooks: SessionHooks,
     introspectionScope: IntrospectionScope,
     router: RouterApi,
+    sessionId: string,
   ) => AgentSession;
 }
 
@@ -59,6 +63,7 @@ class RouterModule implements Router {
         hooks: SessionHooks,
         introspectionScope: IntrospectionScope,
         router: RouterApi,
+        sessionId: string,
       ) => AgentSession;
     },
   ) {}
@@ -243,6 +248,7 @@ class RouterModule implements Router {
       hooks,
       this.sessionsScope ?? this.deps.introspection,
       this,
+      DEFAULT_SESSION_ID,
     );
     this.session = session;
     await session.start().catch((error) => {

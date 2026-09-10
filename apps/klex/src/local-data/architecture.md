@@ -14,6 +14,7 @@ The composition root in `local-data-registry` contains every structured Klex-own
 | `cloud-identity-metadata` | `identity/metadata.json` | JSON | Optional |
 | `cloud-enrollment` | `identity/enrollment.json` | JSON | Optional |
 | `time-extension-timezone` | `extensions/io.stagewise/time/timezone.json` | JSON | Optional |
+| `todos-extension-todos` | `extensions/io.stagewise/todos/todos.json` | JSON | Optional |
 
 `identity/private-key.pem`, `SOUL.md`, locks, logs, downloaded assets, installer receipts, and reconstructable caches are not migration stores. Private identity keys are opaque and must never be transformed by a local-data migration.
 

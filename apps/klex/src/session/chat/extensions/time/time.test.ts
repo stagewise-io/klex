@@ -604,6 +604,26 @@ describe('TimeExt.getTools — getTime', () => {
     expect(deps.inbox.sendMessage).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ['null', null],
+    ['an empty string', ''],
+    ['whitespace', '   '],
+  ])('treats timezone=%s as no override', async (_label, timezone) => {
+    const ext = createTimeExt(DEFAULT_CONFIG).create(makeDeps());
+    const tools = ext.getTools?.({} as never) ?? {};
+    const schema = tools.getTime?.inputSchema as {
+      safeParse: (input: unknown) => { success: boolean };
+    };
+
+    expect(schema.safeParse({ timezone }).success).toBe(true);
+    const result = await tools.getTime?.execute?.(
+      { timezone } as never,
+      { toolCallId: 'test', messages: [] } as never,
+    );
+
+    expect(result?.time).toMatch(/\+00:00$/);
+  });
+
   it('returns time in specified timezone without changing persisted tz', async () => {
     const clock = vi.spyOn(Date, 'now').mockReturnValue(TS_SUN_1530 * 1000);
     const dir = makeTmpDir();

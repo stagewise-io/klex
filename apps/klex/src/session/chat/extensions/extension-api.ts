@@ -536,8 +536,9 @@ export interface ExtensionDeps {
   mcp: Mcp;
 
   /**
-   * UUID of the session that owns this extension. Used for
-   * observability correlation.
+   * Stable identifier of the session that owns this extension. Used for
+   * observability correlation. The router-owned primary session uses `default`;
+   * ad-hoc sessions normally use UUIDs.
    */
   sessionId: string;
 

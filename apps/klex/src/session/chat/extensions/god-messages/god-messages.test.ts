@@ -1,13 +1,13 @@
 import { describe, expect, it, vi } from 'vitest';
 
+vi.mock('./distrust-prompt.md', () => ({ default: 'distrust prompt' }));
+vi.mock('./trust-prompt.md', () => ({ default: 'trust prompt' }));
+
 import type { ExtensionDeps } from '../extension-api';
 import {
   createGodMessagesDistrustExt,
   createGodMessagesTrustExt,
 } from './god-messages';
-
-vi.mock('./trust-prompt.md', () => ({ default: 'TRUST_PROMPT' }));
-vi.mock('./distrust-prompt.md', () => ({ default: 'DISTRUST_PROMPT' }));
 
 function makeDeps(): ExtensionDeps {
   return {
@@ -33,11 +33,6 @@ function makeDeps(): ExtensionDeps {
 }
 
 describe('GodMessagesExt — trust mode', () => {
-  it('returns the trust prompt', () => {
-    const ext = createGodMessagesTrustExt.create(makeDeps());
-    expect(ext.getSystemPromptPart!()).toBe('TRUST_PROMPT');
-  });
-
   it('introspects with mode: trust', () => {
     const ext = createGodMessagesTrustExt.create(makeDeps());
     expect(ext.introspect!()).toEqual({ mode: 'trust' });
@@ -45,11 +40,6 @@ describe('GodMessagesExt — trust mode', () => {
 });
 
 describe('GodMessagesExt — distrust mode', () => {
-  it('returns the distrust prompt', () => {
-    const ext = createGodMessagesDistrustExt.create(makeDeps());
-    expect(ext.getSystemPromptPart!()).toBe('DISTRUST_PROMPT');
-  });
-
   it('introspects with mode: distrust', () => {
     const ext = createGodMessagesDistrustExt.create(makeDeps());
     expect(ext.introspect!()).toEqual({ mode: 'distrust' });

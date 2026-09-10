@@ -26,6 +26,9 @@ const SOUL_FILE = 'SOUL.md';
  */
 const MAX_SOUL_LENGTH = 10_000;
 
+/** Removes nested soul tags that could break the trusted prompt wrapper. */
+const SOUL_TAG_PATTERN = /<\/?soul\b[^>]*>/gi;
+
 /**
  * The mode of a soul extension instance.
  *
@@ -55,14 +58,18 @@ class SoulExt implements Extension {
   }
 
   /**
-   * Reads and returns the soul content if `SOUL.md` exists and is
-   * non-empty after trimming. Returns `null` otherwise. All soul-state
+   * Reads and returns sanitized soul content if `SOUL.md` exists and is
+   * non-empty after trimming. Nested soul tags are removed so file content
+   * cannot break the prompt wrapper. Returns `null` otherwise. All soul-state
    * checks (prompt, tools, execute guard, introspection) go through
    * this method so they stay consistent.
    */
   private readSoul(): string | null {
     if (!existsSync(this.soulPath)) return null;
-    const content = readFileSync(this.soulPath, 'utf-8');
+    const content = readFileSync(this.soulPath, 'utf-8').replace(
+      SOUL_TAG_PATTERN,
+      '',
+    );
     if (content.trim().length === 0) return null;
     return content;
   }

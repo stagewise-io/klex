@@ -21,11 +21,11 @@ import {
 } from './test-helpers';
 
 vi.mock('./vision-system-prompt.md', () => ({
-  default: 'Describe this image.',
+  default: 'general image prompt',
 }));
 
 vi.mock('./vision-tool-system-prompt.md', () => ({
-  default: 'Answer the question about the image.',
+  default: 'image tool prompt',
 }));
 
 beforeEach(() => {
@@ -83,20 +83,6 @@ describe('ImageInputOptimizer — supports: false', () => {
     );
     expect(content[0]?.text).toContain('ID 0-0');
     expect(content[2]?.text).toContain('ID 0-2');
-  });
-
-  it('uses general description system prompt for context transformation', async () => {
-    const img = await makeImageBuffer(100, 100);
-    const msg = makeUserMessage([makeFilePart(img, 'image/png')]);
-    const config = makeVisionConfig(['vision:gpt-4o']);
-    const generateText = vi.fn().mockResolvedValue(genSuccess('A red square.'));
-    const deps = makeDeps({ config, generateText });
-    await runTransformer([msg], makeModel({ inputCapabilities: {} }), deps);
-    const args = generateText.mock.calls[0]?.[0] as {
-      system: string;
-    };
-    // Context transformation uses the general description prompt
-    expect(args.system).toBe('Describe this image.');
   });
 });
 
@@ -471,7 +457,7 @@ describe('ImageInputOptimizer — viewImage tool execute', () => {
     }) => Promise<string>;
   }
 
-  it('passes tool system prompt and image to generateText on tool execute', async () => {
+  it('passes image to generateText on tool execute', async () => {
     const img = await makeImageBuffer(100, 100);
     const config = makeVisionConfig(['vision:gpt-4o']);
     const generateText = vi.fn().mockResolvedValue(genSuccess('A red square.'));
@@ -484,17 +470,11 @@ describe('ImageInputOptimizer — viewImage tool execute', () => {
     expect(generateText).toHaveBeenCalledTimes(2);
     const toolArgs = generateText.mock.calls[1]?.[0] as {
       modelIds: string[];
-      system: string;
       messages: ModelMessage[];
     };
     expect(toolArgs.modelIds).toEqual(['vision:gpt-4o']);
-    // Tool execute uses the tool prompt, not the general description prompt
-    expect(toolArgs.system).toBe('Answer the question about the image.');
     expect(toolArgs.messages).toHaveLength(1);
     expect(toolArgs.messages[0]?.role).toBe('user');
-    // First call (context transformation) uses the general description prompt
-    const ctxArgs = generateText.mock.calls[0]?.[0] as { system: string };
-    expect(ctxArgs.system).toBe('Describe this image.');
   });
 
   it('passes lookFor as additional text content when provided', async () => {

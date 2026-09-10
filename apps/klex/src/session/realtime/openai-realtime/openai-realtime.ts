@@ -3,12 +3,13 @@ import WebSocket, { type ClientOptions, type RawData } from 'ws';
 import type { ModuleLogger, RootLogger } from '@stagewise/logger';
 
 import type { ResolvedOpenAIRealtimeConfig } from '@/config';
-import type {
-  AudioFrame,
-  AudioSource,
-  RealtimeEndpointClosure,
-  RealtimeProcessor,
-  RealtimeProcessorFactory,
+import {
+  type AudioFrame,
+  type AudioSource,
+  createPcmAudioMixer,
+  type RealtimeEndpointClosure,
+  type RealtimeProcessor,
+  type RealtimeProcessorFactory,
 } from '@/media-transport';
 import { BoundedAsyncQueue } from '@/media-transport/async-queue';
 
@@ -51,11 +52,11 @@ class OpenAIRealtimeProcessor implements RealtimeProcessor {
   private readonly outputQueue = new BoundedAsyncQueue<AudioFrame>(1);
   private readonly closure = deferred<RealtimeEndpointClosure>();
   private readonly ready = deferred<void>();
+  private readonly inputMixer = createPcmAudioMixer();
   private readonly inputResampler = createPcmResampler('48-to-24');
   private readonly outputResampler = createPcmResampler('24-to-48');
+  private readonly inputTask: Promise<void>;
   private outputBuffer = new Uint8Array(0);
-  private activeSourceId: string | undefined;
-  private inputTask: Promise<void> | undefined;
   private outputWork = Promise.resolve();
   private sequence = 0;
   private timestampUs = 0;
@@ -74,7 +75,6 @@ class OpenAIRealtimeProcessor implements RealtimeProcessor {
 
   constructor(
     private readonly socket: RealtimeWebSocket,
-    private readonly config: ResolvedOpenAIRealtimeConfig,
     private readonly signal: AbortSignal,
     startupTimeoutMs: number,
     private readonly logger: ModuleLogger,
@@ -88,6 +88,8 @@ class OpenAIRealtimeProcessor implements RealtimeProcessor {
       () => this.fail(new Error('OpenAI realtime setup timed out')),
       startupTimeoutMs,
     );
+    this.inputTask = this.consumeMixedInput();
+    void this.inputTask.catch((error: unknown) => this.fail(error));
     if (signal.aborted) this.handleAbort();
   }
 
@@ -98,20 +100,11 @@ class OpenAIRealtimeProcessor implements RealtimeProcessor {
   private async attachSource(source: AudioSource): Promise<void> {
     await this.ready.promise;
     if (this.settled) throw new Error('OpenAI realtime processor is closed');
-    if (this.activeSourceId !== undefined)
-      throw new Error('OpenAI realtime supports one active audio source');
-    this.activeSourceId = source.id;
-    const task = this.consumeSource(source).finally(() => {
-      if (this.inputTask === task) this.inputTask = undefined;
-      if (this.activeSourceId === source.id) this.activeSourceId = undefined;
-      this.inputResampler.reset();
-    });
-    this.inputTask = task;
-    void task.catch((error: unknown) => this.fail(error));
+    await this.inputMixer.audioInputs.attach(source);
   }
 
-  private async consumeSource(source: AudioSource): Promise<void> {
-    for await (const frame of source.readable) {
+  private async consumeMixedInput(): Promise<void> {
+    for await (const frame of this.inputMixer.audioOutput) {
       if (this.settled) return;
       this.writeAudio(frame);
     }
@@ -343,6 +336,7 @@ class OpenAIRealtimeProcessor implements RealtimeProcessor {
           : new Error('OpenAI realtime setup cancelled'),
       );
     }
+    void this.inputMixer.close();
     this.outputQueue.close(
       closure.type === 'failed' ? closure.error : undefined,
     );
@@ -367,7 +361,6 @@ class OpenAIRealtimeProcessorFactory implements RealtimeProcessorFactory {
     });
     const processor = new OpenAIRealtimeProcessor(
       socket,
-      this.config,
       options.signal,
       this.startupTimeoutMs,
       this.logger,

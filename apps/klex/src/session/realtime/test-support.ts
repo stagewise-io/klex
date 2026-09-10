@@ -247,6 +247,7 @@ export function createDeterministicMediaTransportConnector(): DeterministicMedia
 
 interface DeterministicEchoProcessor extends RealtimeProcessor {
   readonly closeCount: number;
+  readonly attachedSources: readonly Pick<AudioSource, 'id' | 'metadata'>[];
   fail(error: unknown): void;
 }
 
@@ -254,6 +255,7 @@ class DeterministicEchoProcessorModule implements DeterministicEchoProcessor {
   private readonly outputQueue = new BoundedAsyncQueue<AudioFrame>(1);
   private readonly closure = deferred<RealtimeEndpointClosure>();
   private readonly activeSources = new Set<string>();
+  private readonly acceptedSources: Pick<AudioSource, 'id' | 'metadata'>[] = [];
   private readonly tasks = new Set<Promise<void>>();
   private settled = false;
   private closes = 0;
@@ -273,11 +275,16 @@ class DeterministicEchoProcessorModule implements DeterministicEchoProcessor {
     return this.closes;
   }
 
+  get attachedSources(): readonly Pick<AudioSource, 'id' | 'metadata'>[] {
+    return this.acceptedSources;
+  }
+
   private async attachSource(source: AudioSource): Promise<void> {
     if (this.settled) throw new Error('Processor is closed');
     if (this.activeSources.has(source.id))
       throw new Error(`Audio source already attached: ${source.id}`);
     this.activeSources.add(source.id);
+    this.acceptedSources.push({ id: source.id, metadata: source.metadata });
     const task = this.consume(source).finally(() => {
       this.activeSources.delete(source.id);
       this.tasks.delete(task);

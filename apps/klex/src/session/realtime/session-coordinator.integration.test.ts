@@ -131,8 +131,39 @@ describe('MCP to deterministic realtime session', () => {
       timestampUs: 20_000,
       data: Uint8Array.from([1, 2, 3, 4]),
     };
+    const secondSource = await transport.addSource('second-audio', {
+      participantId: 'second-participant',
+      trackId: 'second-track',
+    });
+    await vi.waitFor(() => expect(processor.attachedSources).toHaveLength(2));
+    expect(processor.attachedSources).toEqual([
+      {
+        id: 'default-audio',
+        metadata: {
+          participantId: 'deterministic-participant',
+          trackId: 'default-audio',
+        },
+      },
+      {
+        id: 'second-audio',
+        metadata: {
+          participantId: 'second-participant',
+          trackId: 'second-track',
+        },
+      },
+    ]);
+
+    const secondInput = {
+      ...input,
+      sequence: 2,
+      timestampUs: 40_000,
+      data: Uint8Array.from([5, 6, 7, 8]),
+    };
     await transport.inject(input);
     await expect(transport.receiveSent()).resolves.toEqual(input);
+    await secondSource.inject(secondInput);
+    await expect(transport.receiveSent()).resolves.toEqual(secondInput);
+    expect(coordinator.getActiveSessionCount()).toBe(1);
 
     await connectOptions?.onRealtimeMediaNotification(connection, {
       jsonrpc: '2.0',

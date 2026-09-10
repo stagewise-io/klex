@@ -51,13 +51,32 @@ export class BoundedAsyncQueue<T> implements AsyncIterable<T> {
   }
 
   [Symbol.asyncIterator](): AsyncIterator<T> {
+    const pendingReaders = new Set<QueueReader<T>>();
+    let returned = false;
     return {
-      next: () => this.next(),
-      return: async () => ({ value: undefined, done: true }),
+      next: async () => {
+        if (returned) return { value: undefined, done: true };
+        let pendingReader: QueueReader<T> | undefined;
+        try {
+          return await this.next((reader) => {
+            pendingReader = reader;
+            pendingReaders.add(reader);
+          });
+        } finally {
+          if (pendingReader) pendingReaders.delete(pendingReader);
+        }
+      },
+      return: async () => {
+        returned = true;
+        for (const reader of pendingReaders) this.cancelReader(reader);
+        return { value: undefined, done: true };
+      },
     };
   }
 
-  private async next(): Promise<IteratorResult<T>> {
+  private async next(
+    onPending: (reader: QueueReader<T>) => void,
+  ): Promise<IteratorResult<T>> {
     if (this.items.length > 0) {
       const value = this.items.shift() as T;
       this.promoteWriter();
@@ -68,8 +87,17 @@ export class BoundedAsyncQueue<T> implements AsyncIterable<T> {
       return { value: undefined, done: true };
     }
     return new Promise<IteratorResult<T>>((resolve, reject) => {
-      this.readers.push({ resolve, reject });
+      const reader = { resolve, reject };
+      this.readers.push(reader);
+      onPending(reader);
     });
+  }
+
+  private cancelReader(reader: QueueReader<T>): void {
+    const index = this.readers.indexOf(reader);
+    if (index < 0) return;
+    this.readers.splice(index, 1);
+    reader.resolve({ value: undefined, done: true });
   }
 
   private promoteWriter(): void {

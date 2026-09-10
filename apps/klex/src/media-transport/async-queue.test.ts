@@ -25,6 +25,40 @@ describe('BoundedAsyncQueue', () => {
     await expect(next).resolves.toEqual({ value: undefined, done: true });
   });
 
+  it('cancels a pending read when its iterator returns', async () => {
+    const queue = new BoundedAsyncQueue<number>(1);
+    const iterator = queue[Symbol.asyncIterator]();
+    const next = iterator.next();
+
+    await iterator.return?.();
+
+    await expect(next).resolves.toEqual({ value: undefined, done: true });
+    await queue.push(1);
+    await expect(queue[Symbol.asyncIterator]().next()).resolves.toEqual({
+      value: 1,
+      done: false,
+    });
+  });
+
+  it('cancels every concurrent read when its iterator returns', async () => {
+    const queue = new BoundedAsyncQueue<number>(1);
+    const iterator = queue[Symbol.asyncIterator]();
+    const reads = [iterator.next(), iterator.next(), iterator.next()];
+
+    await iterator.return?.();
+
+    await expect(Promise.all(reads)).resolves.toEqual([
+      { value: undefined, done: true },
+      { value: undefined, done: true },
+      { value: undefined, done: true },
+    ]);
+    await queue.push(1);
+    await expect(queue[Symbol.asyncIterator]().next()).resolves.toEqual({
+      value: 1,
+      done: false,
+    });
+  });
+
   it('rejects pending readers and writers on failure', async () => {
     const readerQueue = new BoundedAsyncQueue<number>(1);
     const read = readerQueue[Symbol.asyncIterator]().next();

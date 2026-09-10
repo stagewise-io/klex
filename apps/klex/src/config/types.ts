@@ -473,6 +473,7 @@ const modelSelectionSchema = z
     imageVision: z.array(modelSelectionEntrySchema).default([]),
     audioListening: z.array(modelSelectionEntrySchema).default([]),
     voice: voiceModelSelectionSchema.default({ sts: [], tts: [], stt: [] }),
+    routing: z.array(modelSelectionEntrySchema).default([]),
   })
   .strict();
 
@@ -545,6 +546,7 @@ const klexConfigSchema = z.object({
     imageVision: [],
     audioListening: [],
     voice: { sts: [], tts: [], stt: [] },
+    routing: [],
   }),
   mcpServers: z.record(z.string(), mcpServerConfigSchema).default({}),
   telemetry: telemetryConfigSchema.optional(),
@@ -566,6 +568,7 @@ const legacyModelSelectionSchema = z
         stt: z.array(z.string()).default([]),
       })
       .default({ sts: [], tts: [], stt: [] }),
+    routing: z.array(legacyModelSelectionEntrySchema).default([]),
   })
   .default({
     chat: [],
@@ -574,6 +577,7 @@ const legacyModelSelectionSchema = z
     imageVision: [],
     audioListening: [],
     voice: { sts: [], tts: [], stt: [] },
+    routing: [],
   });
 
 const legacyKlexConfigSchema = z

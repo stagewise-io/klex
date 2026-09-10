@@ -77,6 +77,16 @@ export interface SessionInfo {
   messageCount: number;
   /** ISO timestamp of session creation. */
   createdAt: string;
+  /** Short unique identifier used by the routing LLM to reference this session. */
+  shortId: string;
+  /**
+   * Free-text activity summary maintained by extensions via
+   * {@link AgentSession.setActivitySummary}. `null` when no extension has
+   * set it. The router includes this in routing decisions so the LLM can
+   * match incoming events against what the session has been doing (e.g.
+   * outgoing MCP calls, active tasks).
+   */
+  activitySummary: string | null;
 }
 
 /**
@@ -142,6 +152,12 @@ export interface AgentSession {
   readonly status: SessionStatus;
 
   /**
+   * Returns the full session info snapshot. The router uses this for
+   * routing decisions, observability, and session lifecycle management.
+   */
+  getSessionInfo(): SessionInfo;
+
+  /**
    * Start the session — spins up owned resources (e.g. the JavaScript
    * sandbox worker). Called by the router after creation. Idempotent.
    */
@@ -164,8 +180,19 @@ export interface AgentSession {
   restorePendingEvents(events: SessionInboxEvent[]): void;
 
   /**
-   * Snapshot of the session's current state for observability.
-   * Used by the router to aggregate session info in the introspection tree.
+   * Sets the short unique ID assigned by the router. Called once after
+   * creation.
    */
-  getSessionInfo(): SessionInfo;
+  setShortId(shortId: string): void;
+
+  /**
+   * Sets the activity summary for this session. Intended to be called by
+   * extensions (via {@link ExtensionDeps.setActivitySummary}) to describe
+   * what the session is currently doing — e.g. "Reviewing PR #42 in
+   * klex-agent; notified chat 999 on Telegram". The router reads this via
+   * {@link SessionInfo.activitySummary} for routing decisions.
+   *
+   * Pass `null` to clear the summary.
+   */
+  setActivitySummary(summary: string | null): void;
 }

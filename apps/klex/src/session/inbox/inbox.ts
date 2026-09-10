@@ -39,6 +39,13 @@ export function getBase64DecodedBytes(data: string): number | undefined {
 
 /**
  * JSON value type for context metadata.
+ *
+ * Producers should keep metadata bare-bones and short: only identifiers and
+ * structural context the router needs to route the event to the right session
+ * (e.g. `chatId`, `userId`, `threadId`). Avoid large payloads, full message
+ * bodies, or verbose descriptions. The router flattens metadata into keys and
+ * caps at 20 keys; long values waste routing-LLM tokens without improving
+ * routing accuracy.
  */
 export type ContextMetadataValue =
   | string
@@ -93,7 +100,12 @@ export type ContextDataUIPart = {
 
 export type SessionInboxEvent = {
   sourceEnv: string;
-  urgency: SessionInboxUrgency;
+  /**
+   * Optional fixed urgency. When set, the router uses this urgency
+   * directly and the routing LLM does not decide it. When absent,
+   * the routing LLM assigns the urgency.
+   */
+  urgency?: SessionInboxUrgency;
   context: ContextDataUIPart;
 };
 
@@ -127,7 +139,7 @@ export interface SessionInbox {
    * @throws {SessionInboxClosedError} if the inbox has been closed.
    *
    * @param event.sourceEnv The environment from which the input originates.
-   * @param event.urgency The urgency of the input. Critical aborts the current generation and appends immediately. Default appends immediately without aborting. Deferrable buffers until the next turn start.
+   * @param event.urgency Optional urgency of the input. When set, the router uses it directly. When absent, the routing LLM assigns it. Critical aborts the current generation and appends immediately. Default appends immediately without aborting. Deferrable buffers until the next turn start.
    * @param event.context The context item that should be sent to the model.
    */
   send: (event: SessionInboxEvent) => void;

@@ -221,7 +221,6 @@ async function main(): Promise<void> {
   const started: { close(): Promise<void> }[] = [localData];
   let adminApiForUi: AdminApi | undefined;
   let router: ReturnType<typeof createRouter> | undefined;
-
   try {
     await tracing.start();
     await config.start();
@@ -302,6 +301,8 @@ async function main(): Promise<void> {
       logging: logger,
       mcp,
       introspection: introspector,
+      config,
+      modelProvider: providerRegistry,
       createChatSession: buildChatSession([
         createNameLoaderExt,
         createSoulExt,

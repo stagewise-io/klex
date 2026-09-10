@@ -132,6 +132,29 @@ describe('Telegram credentials', () => {
       'allowed user IDs',
     );
   });
+
+  it('rejects empty, whitespace, and missing allowlist headers', () => {
+    expect(() => parseTelegramCredentials(request('token', ''))).toThrow(
+      'Missing or empty',
+    );
+    expect(() => parseTelegramCredentials(request('token', ' '))).toThrow(
+      'Missing or empty',
+    );
+    expect(() =>
+      parseTelegramCredentials(
+        new Request('http://localhost/mcp', {
+          method: 'POST',
+          headers: { 'x-telegram-bot-token': 'token' },
+        }),
+      ),
+    ).toThrow('Missing or empty');
+  });
+
+  it('accepts explicit wildcard as allow-all', () => {
+    expect(
+      parseTelegramCredentials(request('token', '*')).allowedUserIds,
+    ).toEqual(new Set(['*']));
+  });
 });
 
 describe('Telegram runtime manager', () => {

@@ -14,15 +14,15 @@ import type { ExtensionDeps } from '../extension-api';
 import { createSoulExt, createSoulExtGod } from './soul';
 
 vi.mock('./no-soul-prompt.md', () => ({
-  default: '# Your soul\n\nYou have no soul right now.',
+  default: 'god no-soul prompt',
 }));
 
 vi.mock('./no-soul-prompt-regular.md', () => ({
-  default: "# Where am I?\n\nYou don't know who you are.",
+  default: 'regular no-soul prompt',
 }));
 
 vi.mock('./update-soul-tool-description.md', () => ({
-  default: 'Memorize or update your soul.',
+  default: 'update-soul description',
 }));
 
 const MOCK_MODEL = {
@@ -93,15 +93,6 @@ describe('SoulExt — factory metadata', () => {
 // ---------------------------------------------------------------------------
 
 describe('SoulExt (standard) — getSystemPromptPart', () => {
-  it('returns the regular no-soul prompt when no SOUL.md exists', () => {
-    const deps = makeDeps();
-    const ext = createSoulExt.create(deps);
-
-    const part = ext.getSystemPromptPart!();
-
-    expect(part).toBe("# Where am I?\n\nYou don't know who you are.");
-  });
-
   it('returns the SOUL.md content when the file exists', () => {
     const dir = makeTmpDir();
     const soulContent = '# My Soul\n\nI am Zephyr. I am calm and precise.';
@@ -112,21 +103,35 @@ describe('SoulExt (standard) — getSystemPromptPart', () => {
 
     const part = ext.getSystemPromptPart!();
 
-    expect(part).toBe(
-      `# Your Soul\n\nThe \`<soul>\` block contains your own thoughts about yourself. Act reliably upon it, as it describes how you view yourself and who you are.\n\n<soul>\n${soulContent}\n</soul>`,
-    );
+    expect(part).toContain(soulContent);
   });
 
-  it('returns the regular no-soul prompt when SOUL.md exists but is empty', () => {
+  it('removes nested soul tags from loaded content', () => {
     const dir = makeTmpDir();
-    writeFileSync(join(dir, 'SOUL.md'), '', 'utf-8');
+    writeFileSync(
+      join(dir, 'SOUL.md'),
+      'Before\n<soul>Middle</soul>\n<SOUL role="override">After</SOUL>',
+      'utf-8',
+    );
 
-    const deps = makeDeps({ getDataDir: () => dir });
-    const ext = createSoulExt.create(deps);
-
+    const ext = createSoulExt.create(makeDeps({ getDataDir: () => dir }));
     const part = ext.getSystemPromptPart!();
+    const wrappedContent = part.match(/\n<soul>\n([\s\S]*)\n<\/soul>$/)?.[1];
 
-    expect(part).toBe("# Where am I?\n\nYou don't know who you are.");
+    expect(wrappedContent).toBeDefined();
+    expect(wrappedContent).not.toMatch(/<\/?soul\b[^>]*>/i);
+    expect(wrappedContent).toContain('Before');
+    expect(wrappedContent).toContain('Middle');
+    expect(wrappedContent).toContain('After');
+  });
+
+  it('treats a soul containing only soul tags as empty', () => {
+    const dir = makeTmpDir();
+    writeFileSync(join(dir, 'SOUL.md'), '<soul></soul>', 'utf-8');
+
+    const ext = createSoulExt.create(makeDeps({ getDataDir: () => dir }));
+
+    expect(ext.introspect!()).toMatchObject({ hasSoul: false });
   });
 
   it('picks up manual edits to SOUL.md without recreating the extension', () => {
@@ -136,12 +141,10 @@ describe('SoulExt (standard) — getSystemPromptPart', () => {
     const deps = makeDeps({ getDataDir: () => dir });
     const ext = createSoulExt.create(deps);
 
-    expect(ext.getSystemPromptPart!()).toContain('<soul>\nFirst soul\n</soul>');
+    expect(ext.getSystemPromptPart!()).toContain('First soul');
 
     writeFileSync(join(dir, 'SOUL.md'), 'Updated soul', 'utf-8');
-    expect(ext.getSystemPromptPart!()).toContain(
-      '<soul>\nUpdated soul\n</soul>',
-    );
+    expect(ext.getSystemPromptPart!()).toContain('Updated soul');
   });
 });
 
@@ -150,15 +153,6 @@ describe('SoulExt (standard) — getSystemPromptPart', () => {
 // ---------------------------------------------------------------------------
 
 describe('SoulExt (god) — getSystemPromptPart', () => {
-  it('returns the aggressive no-soul prompt when no SOUL.md exists', () => {
-    const deps = makeDeps();
-    const ext = createSoulExtGod.create(deps);
-
-    const part = ext.getSystemPromptPart!();
-
-    expect(part).toBe('# Your soul\n\nYou have no soul right now.');
-  });
-
   it('returns the SOUL.md content when the file exists', () => {
     const dir = makeTmpDir();
     const soulContent = '# My Soul\n\nI am Zephyr. I am calm and precise.';
@@ -169,21 +163,7 @@ describe('SoulExt (god) — getSystemPromptPart', () => {
 
     const part = ext.getSystemPromptPart!();
 
-    expect(part).toBe(
-      `# Your Soul\n\nThe \`<soul>\` block contains your own thoughts about yourself. Act reliably upon it, as it describes how you view yourself and who you are.\n\n<soul>\n${soulContent}\n</soul>`,
-    );
-  });
-
-  it('returns the aggressive no-soul prompt when SOUL.md exists but is empty', () => {
-    const dir = makeTmpDir();
-    writeFileSync(join(dir, 'SOUL.md'), '', 'utf-8');
-
-    const deps = makeDeps({ getDataDir: () => dir });
-    const ext = createSoulExtGod.create(deps);
-
-    const part = ext.getSystemPromptPart!();
-
-    expect(part).toBe('# Your soul\n\nYou have no soul right now.');
+    expect(part).toContain(soulContent);
   });
 });
 

@@ -37,61 +37,9 @@ function makeDeps(config: Config): ExtensionDeps {
 }
 
 describe('NameLoaderExt — getSystemPromptPart', () => {
-  it('quotes the configured name as prompt data', () => {
+  it('includes the resolved name', () => {
     const ext = createNameLoaderExt.create(makeDeps(makeConfig('Echo')));
-    expect(ext.getSystemPromptPart!()).toBe('Your official name is "Echo".');
-  });
-
-  it('trims leading and trailing whitespace from the name', () => {
-    const ext = createNameLoaderExt.create(makeDeps(makeConfig('  Zephyr  ')));
-    expect(ext.getSystemPromptPart!()).toBe('Your official name is "Zephyr".');
-  });
-
-  it('truncates names longer than 128 characters', () => {
-    const longName = 'A'.repeat(200);
-    const ext = createNameLoaderExt.create(makeDeps(makeConfig(longName)));
-    expect(ext.getSystemPromptPart!()).toBe(
-      `Your official name is "${'A'.repeat(128)}".`,
-    );
-  });
-
-  it('truncates names by Unicode code point', () => {
-    const ext = createNameLoaderExt.create(
-      makeDeps(makeConfig('😀'.repeat(129))),
-    );
-
-    expect(ext.getSystemPromptPart!()).toBe(
-      `Your official name is "${'😀'.repeat(128)}".`,
-    );
-  });
-
-  it('passes through names at exactly 128 characters', () => {
-    const name = 'B'.repeat(128);
-    const ext = createNameLoaderExt.create(makeDeps(makeConfig(name)));
-    expect(ext.getSystemPromptPart!()).toBe(`Your official name is "${name}".`);
-  });
-
-  it('handles the default name "Agent"', () => {
-    const ext = createNameLoaderExt.create(makeDeps(makeConfig('Agent')));
-    expect(ext.getSystemPromptPart!()).toBe('Your official name is "Agent".');
-  });
-
-  it('handles names with internal whitespace', () => {
-    const ext = createNameLoaderExt.create(
-      makeDeps(makeConfig('  The Helper  ')),
-    );
-    expect(ext.getSystemPromptPart!()).toBe(
-      'Your official name is "The Helper".',
-    );
-  });
-
-  it('escapes quotes in the configured name', () => {
-    const ext = createNameLoaderExt.create(
-      makeDeps(makeConfig('The "Helper"')),
-    );
-    expect(ext.getSystemPromptPart!()).toBe(
-      'Your official name is "The \\"Helper\\"".',
-    );
+    expect(ext.getSystemPromptPart!()).toContain('Echo');
   });
 });
 

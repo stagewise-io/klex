@@ -125,11 +125,11 @@ vi.mock('fluent-ffmpeg', () => {
 });
 
 vi.mock('./audio-system-prompt.md', () => ({
-  default: 'Describe this audio.',
+  default: 'general audio prompt',
 }));
 
 vi.mock('./audio-tool-system-prompt.md', () => ({
-  default: 'Answer the question about the audio.',
+  default: 'audio tool prompt',
 }));
 
 beforeEach(() => {

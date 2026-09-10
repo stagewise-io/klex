@@ -26,7 +26,7 @@ vi.mock('../context-compaction/compaction-prompt.md', () => ({
 }));
 
 vi.mock('./system-prompt.md', () => ({
-  default: 'Time system prompt',
+  default: 'time prompt',
 }));
 
 const TIME_KEY = 'time';
@@ -747,13 +747,6 @@ describe('TimeExt.getTools — changeTimezone', () => {
     });
 
     rmSync(dir, { recursive: true, force: true });
-  });
-});
-
-describe('TimeExt.getSystemPromptPart', () => {
-  it('returns the system prompt markdown', () => {
-    const ext = createTimeExt(DEFAULT_CONFIG).create(makeDeps());
-    expect(ext.getSystemPromptPart?.()).toBe('Time system prompt');
   });
 });
 

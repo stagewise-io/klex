@@ -2,6 +2,13 @@
 
 All notable Klex changes are documented here.
 
+## 0.5.0 (2026-09-10)
+
+### Features
+
+- add timezone-aware time context (f10f6e8)
+- support concurrent realtime audio sources (7ccf2dc)
+
 ## 0.4.0 (2026-09-09)
 
 ### Features

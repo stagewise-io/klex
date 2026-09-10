@@ -117,7 +117,7 @@ At-most-once tool execution via `dispatchedToolCallIds` Set. Owns tool lookup, e
 
 ## Extensions
 
-Hook into history transformation (`onHistoryPreProcessing`, `onHistoryPostProcessing`), register custom data part converters, and can inject context via the inbox. Receive `ExtensionDeps` with `getHistory()` and `inbox` access.
+Extensions can transform UI history and model context, register custom data-part transformers, expose tools, and contribute system prompts. `getProvisionalStepContext` prepares dynamic context after the step decision and model resolution, immediately before inference. Core appends all contributed parts as one synthetic user message: it retains that message when generation completes and removes it when generation fails or falls back to another step. Providers receive isolated history snapshots and run sequentially in factory order; they do not mutate canonical history directly. Inbox access remains available for genuine turn-triggering input, not just-in-time generation context.
 
 ## Error Handling
 

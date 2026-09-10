@@ -468,6 +468,212 @@ describe('Step — extension handler hooks', () => {
   });
 });
 
+describe('Step — provisional step context', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    setupDefaultMocks();
+  });
+
+  it('calls getProvisionalStepContext after model resolution with messages and resolved model', async () => {
+    const extensionHandler = makeExtensionHandler();
+    extensionHandler.getProvisionalStepContext.mockResolvedValue({ parts: [] });
+    const fallbackManager = makeFallbackManager();
+    fallbackManager.getChatModelEntry.mockReturnValue({
+      providerId: 'remote',
+      modelId: 'gpt-4o',
+    } as never);
+    const messages = [makeUserMessage()];
+
+    const step = createStep(
+      makeDeps({
+        messages,
+        extensionHandler: extensionHandler as never,
+        fallbackManager: fallbackManager as never,
+      }),
+    );
+    await step.run();
+
+    expect(extensionHandler.getProvisionalStepContext).toHaveBeenCalledOnce();
+    const callArgs = extensionHandler.getProvisionalStepContext.mock
+      .calls[0] as unknown as [ExtendedUIMessage[], { modelId: string }];
+    expect(callArgs[0]).toBe(messages);
+    expect(callArgs[1]).toMatchObject({ modelId: 'gpt-4o' });
+  });
+
+  it('retains successfully consumed provisional context in canonical history', async () => {
+    const extensionHandler = makeExtensionHandler();
+    const ctxPart = {
+      type: 'data-time',
+      data: { timestamp: 100, tz: 'UTC' },
+    } as never;
+    extensionHandler.getProvisionalStepContext.mockResolvedValue({
+      parts: [ctxPart],
+    });
+
+    const messages = [makeUserMessage('hello')];
+    const step = createStep(
+      makeDeps({
+        messages,
+        extensionHandler: extensionHandler as never,
+      }),
+    );
+    await step.run();
+
+    // The original messages array should now have 2 entries
+    expect(messages).toHaveLength(2);
+    expect(messages[1]?.role).toBe('user');
+    expect(messages[1]?.parts).toEqual([ctxPart]);
+  });
+
+  it('appends provisional context before generation starts', async () => {
+    const extensionHandler = makeExtensionHandler();
+    const ctxPart = {
+      type: 'data-time',
+      data: { timestamp: 100, tz: 'UTC' },
+    } as never;
+    extensionHandler.getProvisionalStepContext.mockResolvedValue({
+      parts: [ctxPart],
+    });
+
+    const messages = [makeUserMessage('hello')];
+    vi.mocked(createGenerationRunner).mockImplementationOnce(
+      () =>
+        ({
+          run: vi.fn(async () => {
+            expect(messages).toHaveLength(2);
+            expect(messages[1]?.role).toBe('user');
+            expect(messages[1]?.parts).toEqual([ctxPart]);
+            return SUCCESS_RESULT;
+          }),
+          abort: vi.fn(),
+          abortTools: vi.fn(),
+        }) as never,
+    );
+
+    await createStep(
+      makeDeps({ messages, extensionHandler: extensionHandler as never }),
+    ).run();
+  });
+
+  it('does not append when getProvisionalStepContext returns empty parts', async () => {
+    const extensionHandler = makeExtensionHandler();
+    extensionHandler.getProvisionalStepContext.mockResolvedValue({
+      parts: [],
+    });
+
+    const messages = [makeUserMessage('hello')];
+    const step = createStep(
+      makeDeps({
+        messages,
+        extensionHandler: extensionHandler as never,
+      }),
+    );
+    await step.run();
+
+    expect(messages).toHaveLength(1);
+  });
+
+  it('removes provisional context when generation fails', async () => {
+    const extensionHandler = makeExtensionHandler();
+    extensionHandler.getProvisionalStepContext.mockResolvedValue({
+      parts: [
+        { type: 'data-time', data: { timestamp: 200, tz: 'UTC' } } as never,
+      ],
+    });
+    vi.mocked(createGenerationRunner).mockImplementationOnce(
+      () =>
+        ({
+          run: vi.fn(async () => ({
+            ...SUCCESS_RESULT,
+            shouldContinue: false,
+            generationFailed: true,
+          })),
+          abort: vi.fn(),
+          abortTools: vi.fn(),
+        }) as never,
+    );
+    const original = makeUserMessage('hello');
+    const messages = [original];
+
+    await createStep(
+      makeDeps({ messages, extensionHandler: extensionHandler as never }),
+    ).run();
+
+    expect(messages).toEqual([original]);
+  });
+
+  it('removes provisional context when generation falls back to a new step', async () => {
+    const extensionHandler = makeExtensionHandler();
+    extensionHandler.getProvisionalStepContext.mockResolvedValue({
+      parts: [
+        { type: 'data-time', data: { timestamp: 200, tz: 'UTC' } } as never,
+      ],
+    });
+    vi.mocked(createGenerationRunner).mockImplementationOnce(
+      () =>
+        ({
+          run: vi.fn(async () => ({
+            ...SUCCESS_RESULT,
+            modelFallbackOccurred: true,
+          })),
+          abort: vi.fn(),
+          abortTools: vi.fn(),
+        }) as never,
+    );
+    const original = makeUserMessage('hello');
+    const messages = [original];
+
+    await createStep(
+      makeDeps({ messages, extensionHandler: extensionHandler as never }),
+    ).run();
+
+    expect(messages).toEqual([original]);
+  });
+
+  it('cancels with fatalError when getProvisionalStepContext throws', async () => {
+    const extensionHandler = makeExtensionHandler();
+    extensionHandler.getProvisionalStepContext.mockRejectedValue(
+      new Error('provisional context failed'),
+    );
+
+    const messages = [makeUserMessage('hello')];
+    const step = createStep(
+      makeDeps({
+        messages,
+        extensionHandler: extensionHandler as never,
+      }),
+    );
+    const result = await step.run();
+
+    expect(result.fatalError).toBe(true);
+    expect(result.shouldContinue).toBe(false);
+    expect(createGenerationRunner).not.toHaveBeenCalled();
+    expect(extensionHandler.runStepCompleteHooks).toHaveBeenCalledOnce();
+  });
+
+  it('does not mutate history when getProvisionalStepContext returns empty parts and no replacement', async () => {
+    const extensionHandler = makeExtensionHandler();
+    extensionHandler.getProvisionalStepContext.mockResolvedValue({
+      parts: [],
+    });
+
+    const messages = [makeUserMessage('hello')];
+    const step = createStep(
+      makeDeps({
+        messages,
+        extensionHandler: extensionHandler as never,
+      }),
+    );
+    await step.run();
+
+    expect(messages).toHaveLength(1);
+    expect(messages[0]?.parts[0]).toEqual({
+      type: 'text',
+      text: 'hello',
+    });
+  });
+});
+
 describe('Step — transformer error cancellation', () => {
   beforeEach(() => {
     vi.clearAllMocks();

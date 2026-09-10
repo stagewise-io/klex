@@ -45,6 +45,7 @@ import {
   createSoulExt,
   createSoulExtGod,
 } from '@/session/chat/extensions/soul';
+import { createTimeExt } from '@/session/chat/extensions/time';
 import {
   createProductionMediaTransportConnector,
   createRealtime,
@@ -57,6 +58,9 @@ import {
   createTelemetrySpanProcessor,
 } from '@/telemetry-manager';
 import { createTracing } from '@/tracing';
+
+/** Minimum seconds between time updates before executable generations. */
+const TIME_UPDATE_PERIOD_SECONDS = 300;
 
 const cli: CliOptions = parseCliArgs(process.argv.slice(2));
 const logStore = createLogStore(500);
@@ -289,6 +293,7 @@ async function main(): Promise<void> {
             ...sessionExtensions,
             createJsReplSandboxExt,
             createContextCompactionExt,
+            createTimeExt({ timeUpdatePeriod: TIME_UPDATE_PERIOD_SECONDS }),
             createImageInputOptimizerExt,
             createAudioInputOptimizerExt,
             createRemindersExt,

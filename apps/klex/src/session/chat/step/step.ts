@@ -71,6 +71,14 @@ export interface StepDependencies {
 // Re-export so callers can import the step result type from the step module.
 export type { StepCompleteEvent } from '../extensions/extension-api';
 
+function removeMessageById(
+  messages: ExtendedUIMessage[],
+  messageId: string,
+): void {
+  const index = messages.findIndex(({ id }) => id === messageId);
+  if (index !== -1) messages.splice(index, 1);
+}
+
 export interface Step {
   run(): Promise<StepCompleteEvent>;
   abortGeneration(reason?: string): void;
@@ -297,59 +305,38 @@ class StepModule implements Step {
           this.deps.fallbackManager.getFallbackIndex(),
         );
 
-        // 2.2.5 - 2.2.7: History preparation pipeline. A single span covers
-        // the entire pipeline (copy → pre-process → convert → post-process)
-        // with events marking each stage. This gives one contiguous trace
-        // segment for the transformation with clear sub-step timing via
-        // event timestamps. History repair is performed earlier (before
-        // the step decision) so that `canStepBeExecuted` sees a clean
-        // state.
-        const transformSpan = startChildSpan('history_transformation', {
-          attributes: {
-            'history.inputMessageCount': this.deps.messages.length,
-            'history.repairCount': repairResult.repaired.length,
-          },
-        });
-
-        // --- Stage 1: Copy ---
-        transformSpan.addEvent('history_copy.start');
-        const messagesCopy = structuredClone(this.deps.messages);
-        transformSpan.addEvent('history_copy.end', {
-          'history_copy.messageCount': messagesCopy.length,
-        });
-
-        // --- Stage 2: History transformers (extensions) ---
-        transformSpan.addEvent('history_pre_process.start');
-        let preResult: {
-          history: ExtendedUIMessage[];
-          flags: TransformationFlags;
-        };
+        // Context is prepared after the step decision and model resolution so
+        // it is fresh for this exact attempt. The synthetic message is visible
+        // to generation immediately, but remains provisional until the runner
+        // completes without failure or step-level fallback.
+        let provisionalContext: Awaited<
+          ReturnType<ExtensionHandler['getProvisionalStepContext']>
+        >;
         try {
-          preResult = await this.deps.extensionHandler.runHistoryTransformers(
-            messagesCopy,
-            resolvedModel,
-          );
+          provisionalContext =
+            await this.deps.extensionHandler.getProvisionalStepContext(
+              this.deps.messages,
+              resolvedModel,
+            );
         } catch (error) {
-          transformSpan.setAttribute('history_pre_process.error', true);
-          transformSpan.end();
           stepSpan.setAttribute('step.cancelled', true);
           stepSpan.setAttribute(
             'step.cancelReason',
-            'history transformer error',
+            'provisional step context error',
           );
           stepSpan.addEvent('step.cancelled', {
-            reason: 'history transformer error',
+            reason: 'provisional step context error',
           });
           this.deps.logger.error(
             { stepId: this.id, error },
-            'Step cancelled: history transformer failed, context integrity cannot be guaranteed',
+            'Step cancelled: provisional step context failed',
           );
           const cancelEvent: StepCompleteEvent = {
             shouldContinue: false,
             forceNextStep: false,
             fatalError: true,
             fatalErrorReason:
-              'A history transformer extension failed; context integrity cannot be guaranteed.',
+              'A provisional step context extension failed; context integrity cannot be guaranteed.',
             generationFailed: false,
             generation: null,
             toolCalls: [],
@@ -358,128 +345,216 @@ class StepModule implements Step {
           await this.deps.extensionHandler.runStepCompleteHooks(cancelEvent);
           return cancelEvent;
         }
-        transformSpan.setAttribute(
-          'history_pre_process.messageCount',
-          preResult.history.length,
-        );
-        transformSpan.setAttribute(
-          'history_pre_process.hasCompacted',
-          preResult.flags.hasCompacted === true,
-        );
-        transformSpan.addEvent('history_pre_process.end', {
-          'history_pre_process.messageCount': preResult.history.length,
-          'history_pre_process.hasCompacted':
+
+        const provisionalMessageId =
+          provisionalContext.parts.length > 0 ? randomUUID() : null;
+        if (provisionalMessageId !== null) {
+          this.deps.messages.push({
+            id: provisionalMessageId,
+            role: 'user',
+            parts: provisionalContext.parts,
+          });
+          stepSpan.addEvent('step.provisional_context_appended', {
+            'step.provisionalContextPartCount': provisionalContext.parts.length,
+          });
+        }
+
+        let retainProvisionalContext = false;
+        try {
+          // 2.2.5 - 2.2.7: History preparation pipeline. A single span covers
+          // the entire pipeline (copy → pre-process → convert → post-process)
+          // with events marking each stage. This gives one contiguous trace
+          // segment for the transformation with clear sub-step timing via
+          // event timestamps. History repair is performed earlier (before
+          // the step decision) so that `canStepBeExecuted` sees a clean
+          // state.
+          const transformSpan = startChildSpan('history_transformation', {
+            attributes: {
+              'history.inputMessageCount': this.deps.messages.length,
+              'history.repairCount': repairResult.repaired.length,
+            },
+          });
+
+          // --- Stage 1: Copy ---
+          transformSpan.addEvent('history_copy.start');
+          const messagesCopy = structuredClone(this.deps.messages);
+          transformSpan.addEvent('history_copy.end', {
+            'history_copy.messageCount': messagesCopy.length,
+          });
+
+          // --- Stage 2: History transformers (extensions) ---
+          transformSpan.addEvent('history_pre_process.start');
+          let preResult: {
+            history: ExtendedUIMessage[];
+            flags: TransformationFlags;
+          };
+          try {
+            preResult = await this.deps.extensionHandler.runHistoryTransformers(
+              messagesCopy,
+              resolvedModel,
+            );
+          } catch (error) {
+            transformSpan.setAttribute('history_pre_process.error', true);
+            transformSpan.end();
+            stepSpan.setAttribute('step.cancelled', true);
+            stepSpan.setAttribute(
+              'step.cancelReason',
+              'history transformer error',
+            );
+            stepSpan.addEvent('step.cancelled', {
+              reason: 'history transformer error',
+            });
+            this.deps.logger.error(
+              { stepId: this.id, error },
+              'Step cancelled: history transformer failed, context integrity cannot be guaranteed',
+            );
+            const cancelEvent: StepCompleteEvent = {
+              shouldContinue: false,
+              forceNextStep: false,
+              fatalError: true,
+              fatalErrorReason:
+                'A history transformer extension failed; context integrity cannot be guaranteed.',
+              generationFailed: false,
+              generation: null,
+              toolCalls: [],
+              modelFallbackOccurred: false,
+            };
+            await this.deps.extensionHandler.runStepCompleteHooks(cancelEvent);
+            return cancelEvent;
+          }
+          transformSpan.setAttribute(
+            'history_pre_process.messageCount',
+            preResult.history.length,
+          );
+          transformSpan.setAttribute(
+            'history_pre_process.hasCompacted',
             preResult.flags.hasCompacted === true,
-        });
-
-        // --- Stage 3: Convert to model messages ---
-        transformSpan.addEvent('history_convert.start');
-        const dataPartTransformers =
-          this.deps.extensionHandler.getDataPartTransformers();
-        let modelMessages: ModelMessage[] =
-          await convertToModelMessagesExtended(
-            preResult.history,
-            dataPartTransformers,
           );
-        transformSpan.addEvent('history_convert.end', {
-          'history_convert.outputMessageCount': modelMessages.length,
-        });
-
-        // --- Stage 4: Context transformers (extensions) ---
-        transformSpan.addEvent('history_post_process.start');
-        let postResult: {
-          history: ModelMessage[];
-          flags: TransformationFlags;
-        };
-        try {
-          postResult = await this.deps.extensionHandler.runContextTransformers(
-            modelMessages,
-            resolvedModel,
-          );
-        } catch (error) {
-          transformSpan.setAttribute('history_post_process.error', true);
-          transformSpan.end();
-          stepSpan.setAttribute('step.cancelled', true);
-          stepSpan.setAttribute(
-            'step.cancelReason',
-            'context transformer error',
-          );
-          stepSpan.addEvent('step.cancelled', {
-            reason: 'context transformer error',
+          transformSpan.addEvent('history_pre_process.end', {
+            'history_pre_process.messageCount': preResult.history.length,
+            'history_pre_process.hasCompacted':
+              preResult.flags.hasCompacted === true,
           });
-          this.deps.logger.error(
-            { stepId: this.id, error },
-            'Step cancelled: context transformer failed, context integrity cannot be guaranteed',
-          );
-          const cancelEvent: StepCompleteEvent = {
-            shouldContinue: false,
-            forceNextStep: false,
-            fatalError: true,
-            fatalErrorReason:
-              'A context transformer extension failed; context integrity cannot be guaranteed.',
-            generationFailed: false,
-            generation: null,
-            toolCalls: [],
-            modelFallbackOccurred: false,
+
+          // --- Stage 3: Convert to model messages ---
+          transformSpan.addEvent('history_convert.start');
+          const dataPartTransformers =
+            this.deps.extensionHandler.getDataPartTransformers();
+          let modelMessages: ModelMessage[] =
+            await convertToModelMessagesExtended(
+              preResult.history,
+              dataPartTransformers,
+            );
+          transformSpan.addEvent('history_convert.end', {
+            'history_convert.outputMessageCount': modelMessages.length,
+          });
+
+          // --- Stage 4: Context transformers (extensions) ---
+          transformSpan.addEvent('history_post_process.start');
+          let postResult: {
+            history: ModelMessage[];
+            flags: TransformationFlags;
           };
-          await this.deps.extensionHandler.runStepCompleteHooks(cancelEvent);
-          return cancelEvent;
-        }
-        transformSpan.setAttribute(
-          'history_post_process.messageCount',
-          postResult.history.length,
-        );
-        transformSpan.addEvent('history_post_process.end', {
-          'history_post_process.messageCount': postResult.history.length,
-        });
+          try {
+            postResult =
+              await this.deps.extensionHandler.runContextTransformers(
+                modelMessages,
+                resolvedModel,
+              );
+          } catch (error) {
+            transformSpan.setAttribute('history_post_process.error', true);
+            transformSpan.end();
+            stepSpan.setAttribute('step.cancelled', true);
+            stepSpan.setAttribute(
+              'step.cancelReason',
+              'context transformer error',
+            );
+            stepSpan.addEvent('step.cancelled', {
+              reason: 'context transformer error',
+            });
+            this.deps.logger.error(
+              { stepId: this.id, error },
+              'Step cancelled: context transformer failed, context integrity cannot be guaranteed',
+            );
+            const cancelEvent: StepCompleteEvent = {
+              shouldContinue: false,
+              forceNextStep: false,
+              fatalError: true,
+              fatalErrorReason:
+                'A context transformer extension failed; context integrity cannot be guaranteed.',
+              generationFailed: false,
+              generation: null,
+              toolCalls: [],
+              modelFallbackOccurred: false,
+            };
+            await this.deps.extensionHandler.runStepCompleteHooks(cancelEvent);
+            return cancelEvent;
+          }
+          transformSpan.setAttribute(
+            'history_post_process.messageCount',
+            postResult.history.length,
+          );
+          transformSpan.addEvent('history_post_process.end', {
+            'history_post_process.messageCount': postResult.history.length,
+          });
 
-        modelMessages = postResult.history;
-        const compacted = preResult.flags.hasCompacted === true;
+          modelMessages = postResult.history;
+          const compacted = preResult.flags.hasCompacted === true;
 
-        transformSpan.setAttribute(
-          'history_transformation.outputMessageCount',
-          modelMessages.length,
-        );
-        transformSpan.end();
+          transformSpan.setAttribute(
+            'history_transformation.outputMessageCount',
+            modelMessages.length,
+          );
+          transformSpan.end();
 
-        stepSpan.addEvent('step.history_prepared', {
-          'step.messageCount': modelMessages.length,
-        });
+          stepSpan.addEvent('step.history_prepared', {
+            'step.messageCount': modelMessages.length,
+          });
 
-        // 2.2.8: Resolve tools and system prompt parts from extensions
-        // for the current model, then run generation via the
-        // GenerationRunner. The runner owns the retry loop, model
-        // fallback, error classification, message salvage, stream
-        // progress tracking, and tool dispatch coordination.
-        const tools = this.deps.extensionHandler.getTools(resolvedModel);
-        const extensionSystemPromptParts =
-          this.deps.extensionHandler.getSystemPromptParts();
-        const runner = createGenerationRunner({
-          logger: this.deps.logger,
-          sessionId: this.deps.sessionId,
-          stepSpan,
-          modelMessages,
-          messages: this.deps.messages,
-          tools,
-          extensionSystemPromptParts,
-          fallbackManager: this.deps.fallbackManager,
-          turnInitialFallbackIndex: this.deps.turnInitialFallbackIndex,
-          compacted,
-          model,
-          modelContext: telemetryModelContext,
-          ...(providerOptions !== undefined && { providerOptions }),
-        });
-        this.generationRunner = runner;
+          // 2.2.8: Resolve tools and system prompt parts from extensions
+          // for the current model, then run generation via the
+          // GenerationRunner. The runner owns the retry loop, model
+          // fallback, error classification, message salvage, stream
+          // progress tracking, and tool dispatch coordination.
+          const tools = this.deps.extensionHandler.getTools(resolvedModel);
+          const extensionSystemPromptParts =
+            this.deps.extensionHandler.getSystemPromptParts();
+          const runner = createGenerationRunner({
+            logger: this.deps.logger,
+            sessionId: this.deps.sessionId,
+            stepSpan,
+            modelMessages,
+            messages: this.deps.messages,
+            tools,
+            extensionSystemPromptParts,
+            fallbackManager: this.deps.fallbackManager,
+            turnInitialFallbackIndex: this.deps.turnInitialFallbackIndex,
+            compacted,
+            model,
+            modelContext: telemetryModelContext,
+            ...(providerOptions !== undefined && { providerOptions }),
+          });
+          this.generationRunner = runner;
 
-        try {
-          const result = await runner.run();
-          // Notify extensions that a step completed. The handler catches
-          // per-extension errors and runs all hooks in parallel, so this
-          // won't break the turn.
-          await this.deps.extensionHandler.runStepCompleteHooks(result);
-          return result;
+          try {
+            const result = await runner.run();
+            retainProvisionalContext =
+              !result.generationFailed &&
+              !result.modelFallbackOccurred &&
+              !result.fatalError;
+            // Notify extensions that a step completed. The handler catches
+            // per-extension errors and runs all hooks in parallel, so this
+            // won't break the turn.
+            await this.deps.extensionHandler.runStepCompleteHooks(result);
+            return result;
+          } finally {
+            this.generationRunner = null;
+          }
         } finally {
-          this.generationRunner = null;
+          if (!retainProvisionalContext && provisionalMessageId !== null) {
+            removeMessageById(this.deps.messages, provisionalMessageId);
+            stepSpan.addEvent('step.provisional_context_rolled_back');
+          }
         }
       });
     } finally {

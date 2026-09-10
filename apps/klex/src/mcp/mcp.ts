@@ -121,6 +121,8 @@ export interface McpServerInfo {
   supportsRealtimeMedia: boolean;
   /** Server type: stdio or http. */
   transport: 'stdio' | 'http';
+  /** Configured HTTP header names. Values are never exposed. */
+  headerNames: string[];
   /**
    * Whether this server can be authorized interactively at all — an HTTP
    * server without explicitly configured credentials.
@@ -1082,6 +1084,10 @@ class McpModule implements Mcp {
           connection?.supportsPushNotifications ?? false,
         supportsRealtimeMedia: connection?.supportsRealtimeMedia ?? false,
         transport,
+        headerNames:
+          transport === 'http' && config && !('command' in config)
+            ? Object.keys(config.headers ?? {}).sort()
+            : [],
         usesInteractiveOAuth:
           transport === 'http' &&
           config !== undefined &&

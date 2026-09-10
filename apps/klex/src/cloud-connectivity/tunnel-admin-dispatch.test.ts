@@ -49,6 +49,7 @@ const authorizingServer: McpServerInfo = {
   supportsPushNotifications: false,
   supportsRealtimeMedia: false,
   transport: 'http',
+  headerNames: [],
   usesInteractiveOAuth: true,
   authorization: {
     id: 'auth-1',

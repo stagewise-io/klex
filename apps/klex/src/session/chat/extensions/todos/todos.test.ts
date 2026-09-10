@@ -696,7 +696,11 @@ describe('Todos extension', () => {
   it('historyTransformer renders first data-todos part as full list', () => {
     const { deps, setHistory } = createMockDeps();
     const ext = createTodosExt.create(deps);
-    const t1 = makeTodo({ id: 'aaaa', description: 'Task A' });
+    const t1 = makeTodo({
+      id: 'aaaa',
+      description: 'Task A',
+      reminderTime: '2025-03-15T11:00:00Z',
+    });
     const history = [
       createTextMessage('user', 'Set a todo'),
       createTodosMessage([t1]),
@@ -712,6 +716,7 @@ describe('Todos extension', () => {
     const text = extractTextParts(result[1]!);
     expect(text).toContain('<todos>');
     expect(text).toContain('1. (ID: aaaa) Task A');
+    expect(text).toContain('reminder: Sat, 15 Mar 2025 11:00:00 GMT');
     expect(text).toContain('</todos>');
     expect(text).not.toContain('New todo added');
     expect(text).not.toContain('Todo cleared');
@@ -721,7 +726,11 @@ describe('Todos extension', () => {
     const { deps, setHistory } = createMockDeps();
     const ext = createTodosExt.create(deps);
     const t1 = makeTodo({ id: 'aaaa', description: 'Task A' });
-    const t2 = makeTodo({ id: 'bbbb', description: 'Task B' });
+    const t2 = makeTodo({
+      id: 'bbbb',
+      description: 'Task B',
+      reminderTime: '2025-04-15T10:00:00Z',
+    });
     const history = [
       createTextMessage('user', 'Start'),
       createTodosMessage([t1]),
@@ -744,6 +753,7 @@ describe('Todos extension', () => {
     const text2 = extractTextParts(result[3]!);
     expect(text2).toContain('New todo added');
     expect(text2).toContain('bbbb');
+    expect(text2).toContain('reminder: Tue, 15 Apr 2025 10:00:00 GMT');
     expect(text2).not.toContain('<todos>');
     // Part 3 (index 5): diff — cleared aaaa
     const text3 = extractTextParts(result[5]!);

@@ -112,7 +112,9 @@ describe('SoulExt (standard) — getSystemPromptPart', () => {
 
     const part = ext.getSystemPromptPart!();
 
-    expect(part).toBe(soulContent);
+    expect(part).toBe(
+      `# Your Soul\n\nThe \`<soul>\` block contains your own thoughts about yourself. Act reliably upon it, as it describes how you view yourself and who you are.\n\n<soul>\n${soulContent}\n</soul>`,
+    );
   });
 
   it('returns the regular no-soul prompt when SOUL.md exists but is empty', () => {
@@ -134,10 +136,12 @@ describe('SoulExt (standard) — getSystemPromptPart', () => {
     const deps = makeDeps({ getDataDir: () => dir });
     const ext = createSoulExt.create(deps);
 
-    expect(ext.getSystemPromptPart!()).toBe('First soul');
+    expect(ext.getSystemPromptPart!()).toContain('<soul>\nFirst soul\n</soul>');
 
     writeFileSync(join(dir, 'SOUL.md'), 'Updated soul', 'utf-8');
-    expect(ext.getSystemPromptPart!()).toBe('Updated soul');
+    expect(ext.getSystemPromptPart!()).toContain(
+      '<soul>\nUpdated soul\n</soul>',
+    );
   });
 });
 
@@ -165,7 +169,9 @@ describe('SoulExt (god) — getSystemPromptPart', () => {
 
     const part = ext.getSystemPromptPart!();
 
-    expect(part).toBe(soulContent);
+    expect(part).toBe(
+      `# Your Soul\n\nThe \`<soul>\` block contains your own thoughts about yourself. Act reliably upon it, as it describes how you view yourself and who you are.\n\n<soul>\n${soulContent}\n</soul>`,
+    );
   });
 
   it('returns the aggressive no-soul prompt when SOUL.md exists but is empty', () => {

@@ -93,13 +93,16 @@ function formatReminderNotice(todoId: string): string {
   return `<todo-reminder>Reminder due for todo ID: ${todoId}</todo-reminder>`;
 }
 
+function formatReminderSuffix(todo: Todo): string {
+  return todo.reminderTime
+    ? ` — reminder: ${formatScheduledFor(todo.reminderTime)}`
+    : '';
+}
+
 function formatFullList(todos: Todo[]): string {
   if (todos.length === 0) return '<todos>\n</todos>';
-  const lines = todos.map((t, i) => {
-    const reminder = t.reminderTime
-      ? ` — reminder: ${formatScheduledFor(t.reminderTime)}`
-      : '';
-    return `${i + 1}. (ID: ${t.id}) ${t.description}${reminder}`;
+  const lines = todos.map((todo, index) => {
+    return `${index + 1}. (ID: ${todo.id}) ${todo.description}${formatReminderSuffix(todo)}`;
   });
   return `<todos>\n${lines.join('\n')}\n</todos>`;
 }
@@ -139,8 +142,10 @@ function computeDiff(prev: Todo[], current: Todo[]): TodosDiff {
 
 function formatDiff(diff: TodosDiff): string {
   const lines: string[] = [];
-  for (const t of diff.added) {
-    lines.push(`New todo added: (ID: ${t.id}) ${t.description}`);
+  for (const todo of diff.added) {
+    lines.push(
+      `New todo added: (ID: ${todo.id}) ${todo.description}${formatReminderSuffix(todo)}`,
+    );
   }
   for (const t of diff.removed) {
     lines.push(`Todo cleared: (ID: ${t.id}) ${t.description}`);
@@ -235,7 +240,7 @@ class TodosExtension implements Extension {
             .min(1)
             .max(MAX_DESCRIPTION_LENGTH)
             .describe(
-              'Task. Include action, requester, conversation IDs, links, priority,and needed context.',
+              'Task. Include action, requester, conversation IDs, links, priority, and needed context.',
             ),
           after: z
             .string()

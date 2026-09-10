@@ -73,15 +73,13 @@ class AudioInputOptimizerExt implements Extension {
     return {
       [LISTEN_AUDIO_TOOL_NAME]: tool({
         description:
-          'Get more information about an audio clip that referenced this tool. Only use this tool when an audio placeholder in the conversation instructs you to do so. Pass the audio ID from the placeholder text and specify "lookFor" to focus on specific aspects of the audio.',
+          'Inspect referenced audio. Use only for an audio placeholder. Pass its ID and a focus.',
         inputSchema: z.object({
-          id: z
-            .string()
-            .describe('The audio ID from the placeholder text (e.g. "0-1")'),
+          id: z.string().describe('Placeholder audio ID, e.g. "0-1".'),
           lookFor: z
             .string()
             .describe(
-              'What to specifically listen for in the audio (e.g. "speech content", "music genre", "background sounds")',
+              'What to hear for, e.g. speech, music genre, or background sounds.',
             ),
         }),
         execute: async ({ id, lookFor }) => {

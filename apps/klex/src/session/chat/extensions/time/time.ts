@@ -284,7 +284,7 @@ class TimeExt implements Extension {
   getTools(): ToolSet {
     return {
       getTime: tool({
-        description: 'Get exact current time.',
+        description: 'Get current time, optionally in one timezone.',
         inputSchema: z.object({
           timezone: z
             .string()
@@ -292,7 +292,7 @@ class TimeExt implements Extension {
             .nullable()
             .default(null)
             .describe(
-              'Optional IANA identifier. Returns time in zone without changing timezone.',
+              'IANA timezone. Empty: current default. Does not change default.',
             ),
         }),
         execute: async ({ timezone }) => {
@@ -308,12 +308,12 @@ class TimeExt implements Extension {
       }),
       changeTimezone: tool({
         description:
-          'Change timezone for all future time and timezone displays. Change only if required for regular work',
+          'Set default timezone for future time context. Only when regular work needs it.',
         inputSchema: z.object({
           timezone: z
             .string()
             .describe(
-              'IANA timezone identifier (e.g. "Europe/Berlin", "America/New_York", "UTC")',
+              'IANA timezone, e.g. "Europe/Berlin", "America/New_York", or "UTC".',
             ),
         }),
         execute: async ({ timezone }) => {

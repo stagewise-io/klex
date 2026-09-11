@@ -1,6 +1,7 @@
 import type { ChatSessionInbox } from './chat/inbox';
 import type { ExtendedUIMessage } from './chat/message-types';
 import type { SessionInboxEvent } from './inbox';
+import type { ConversationHost } from './interaction';
 
 /** Stable identifier assigned to the router-owned primary session. */
 export const DEFAULT_SESSION_ID = 'default';
@@ -21,6 +22,8 @@ export type SessionStatus = 'active' | 'terminated';
  * - `retrying` — all models failed; waiting in exponential backoff before retry.
  * - `success` — the most recent turn completed successfully.
  * - `idle` — inbox is empty; no turn is active.
+ * - `leased` — the generation lane is held by another interaction mode
+ *   (e.g. an active realtime call); chat generation is suspended.
  * - `terminated` — the session has shut down (fatal error or graceful close).
  */
 export type SessionRuntimeState =
@@ -28,6 +31,7 @@ export type SessionRuntimeState =
   | 'retrying'
   | 'success'
   | 'idle'
+  | 'leased'
   | 'terminated';
 
 /** Active model information for a session. */
@@ -132,8 +136,11 @@ export interface ChatSessionHandle extends AgentSession {
 /**
  * This is the interface that AgentSessions must implement in order to become
  * controllable by the Router.
+ *
+ * Every session is a {@link ConversationHost}: the router delegates
+ * interaction-lease acquisition to whichever session is currently primary.
  */
-export interface AgentSession {
+export interface AgentSession extends ConversationHost {
   inbox: {
     send(event: SessionInboxEvent): void;
     close(): void;

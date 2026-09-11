@@ -1,28 +1,14 @@
 import type { ModelMessage } from 'ai';
-import {
-  type DynamicToolUIPart,
-  getToolName,
-  isToolUIPart,
-  type Tool,
-} from 'ai';
+import { type DynamicToolUIPart, getToolName, isToolUIPart } from 'ai';
 
 import type { ModuleLogger } from '@stagewise/logger';
 
-import type { ToolRequestContext } from '@/tool-provider';
+import { normalizeJsonValue, ToolExecutor } from '@/session/interaction';
 import { recordErrorOnSpan } from '@/tracing';
 
 import type { ExtendedUIMessage } from '../message-types';
 import type { AgentTools } from '../tools';
 import { startChildSpan } from '../utils/tracing';
-
-/**
- * Default per-tool execution timeout in milliseconds (5 minutes).
- *
- * Tools that exceed this are force-terminated and marked as
- * `output-error`. This prevents a single unresponsive tool from
- * stalling the entire session loop indefinitely.
- */
-const DEFAULT_TOOL_TIMEOUT_MS = 30 * 1000;
 
 /**
  * Owns at-most-once tool dispatch, tool execution, in-flight tracking, and
@@ -40,22 +26,28 @@ const DEFAULT_TOOL_TIMEOUT_MS = 30 * 1000;
 export class ToolDispatcher {
   private readonly dispatchedToolCallIds = new Set<string>();
   private readonly toolExecutions: Promise<void>[] = [];
-  private readonly toolAbortController = new AbortController();
+  private readonly toolExecutor: ToolExecutor;
 
   constructor(
     private readonly deps: {
       logger: ModuleLogger;
       tools: AgentTools;
       modelMessages: ModelMessage[];
-      /** Per-tool execution timeout in ms. Defaults to 5 minutes. */
+      /** Per-tool execution timeout in ms. Defaults to 30 seconds. */
       toolTimeoutMs?: number;
       /** UUID of the session that owns this dispatcher. */
       sessionId: string;
     },
-  ) {}
-
-  private get toolTimeoutMs(): number {
-    return this.deps.toolTimeoutMs ?? DEFAULT_TOOL_TIMEOUT_MS;
+  ) {
+    this.toolExecutor = new ToolExecutor({
+      logger: deps.logger,
+      tools: deps.tools,
+      modelMessages: deps.modelMessages,
+      sessionId: deps.sessionId,
+      ...(deps.toolTimeoutMs !== undefined && {
+        timeoutMs: deps.toolTimeoutMs,
+      }),
+    });
   }
 
   /** Number of tool calls dispatched so far. */
@@ -102,12 +94,12 @@ export class ToolDispatcher {
 
   /** Aborts all in-flight tool executions. Use only during session shutdown. */
   abortTools(): void {
-    this.toolAbortController.abort();
+    this.toolExecutor.abort();
   }
 
   /** The abort signal passed to tool executions. */
   get toolAbortSignal(): AbortSignal {
-    return this.toolAbortController.signal;
+    return this.toolExecutor.signal;
   }
 
   /**
@@ -206,62 +198,29 @@ export class ToolDispatcher {
     part: DynamicToolUIPart,
     toolName: string,
   ): Promise<void> {
-    const tool = (this.deps.tools as Record<string, Tool | undefined>)[
-      toolName
-    ];
-
-    if (!tool) {
-      throw new Error(`The request tool ${toolName} was not found.`);
-    }
-
-    if (tool.execute) {
-      // Combine the session-level abort signal with a per-execution
-      // timeout so that a hanging tool is force-terminated rather than
-      // blocking the session loop indefinitely.
-      const timeoutController = new AbortController();
-      const timeoutTimer = setTimeout(
-        () => timeoutController.abort(),
-        this.toolTimeoutMs,
-      );
-      const combinedSignal = AbortSignal.any([
-        this.toolAbortController.signal,
-        timeoutController.signal,
-      ]);
-
-      try {
-        const context: ToolRequestContext = {
-          executionId: part.toolCallId,
-          signal: combinedSignal,
-          sessionId: this.deps.sessionId,
-        };
-        const output = await tool.execute(part.input, {
-          toolCallId: part.toolCallId,
-          messages: this.deps.modelMessages,
-          // biome-ignore lint/suspicious/noExplicitAny: AI SDK tool execute context typing is too generic for our internal ToolRequestContext
-          context: context as any,
-          abortSignal: combinedSignal,
-        });
-        Object.assign(part, { output, state: 'output-available' });
-      } catch (e) {
-        const isTimeout =
-          timeoutController.signal.aborted &&
-          !this.toolAbortController.signal.aborted;
-        Object.assign(part, {
-          state: 'output-error',
-          errorText: isTimeout
-            ? `Tool execution timed out after ${this.toolTimeoutMs}ms.`
-            : e instanceof Error
-              ? e.message.slice(0, 512)
-              : 'An unknown error happened during tool execution. Please try again.',
-        });
-      } finally {
-        clearTimeout(timeoutTimer);
-      }
-    } else {
+    const input = normalizeJsonValue(part.input);
+    if (input === undefined) {
       Object.assign(part, {
         state: 'output-error',
-        errorText: 'The tool is not implemented.',
+        errorText: 'The tool input cannot be represented as JSON.',
       });
+      return;
     }
+    const result = await this.toolExecutor.execute({
+      executionId: part.toolCallId,
+      name: toolName,
+      input,
+    });
+    if (result.status === 'success') {
+      Object.assign(part, {
+        output: result.output,
+        state: 'output-available',
+      });
+      return;
+    }
+    Object.assign(part, {
+      state: 'output-error',
+      errorText: result.error,
+    });
   }
 }

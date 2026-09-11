@@ -2,34 +2,25 @@
 
 ## Boundary
 
-The public `Realtime` module is the enabled application's lifecycle boundary
-started and closed by `main.ts`. It requires a resolved provider and takes
-lifecycle ownership of the exact transport connector registry used to advertise
-MCP transport profiles. It resolves the selected processor implementation and
-creates an internal realtime session coordinator. When no compatible provider
-is selected, `main.ts` creates no registry, advertises no Realtime Media
-capability, and creates no `Realtime` module. The coordinator owns accepted
-audio-session lifetimes and remains independent from chat sessions and model
-generations.
+The public `Realtime` module is the enabled application's lifecycle boundary started and closed by `main.ts`. It requires a resolved provider, the router as its `ConversationHost`, and the exact transport connector registry used to advertise MCP transport profiles. It resolves the selected model-session implementation and creates an internal realtime session coordinator. When no compatible provider is selected, `main.ts` creates no registry, advertises no Realtime Media capability, and creates no `Realtime` module.
+
+The coordinator owns accepted media-session lifetimes, but inference is deliberately not independent from chat. Every accepted call must first acquire an exclusive lease on the primary chat session's generation lane. The lease is the only route to canonical context, live notifications, tools, and transcript commitment.
 
 ```text
 MCP Realtime Media control plane
   -> session-offered
-  -> coordinator accept/reject
-  -> MediaTransportConnector
-  -> MediaTransport.audioSources -> RealtimeProcessor.audioInputs
-  -> RealtimeProcessor.audioOutput -> MediaTransport.audioOutput
+  -> acquire primary-session generation lease
+  -> accept/reject
+  -> bootstrap canonical context + update watermark
+  -> MediaTransport.audioSources -> RealtimeModelSession.audioInputs
+  -> ordered canonical updates/tools/transcripts via InteractionLease
+  -> RealtimeModelSession.audioOutput -> MediaTransport.audioOutput
   -> session-ended or local terminal condition
-  -> exactly-once cleanup
+  -> exactly-once cleanup and lease release
 ```
 
 MCP owns capability negotiation, the ephemeral lifecycle stream, connection
-availability, and accept/reject/end operations. A media connector owns its
-media-plane resources. A realtime processor owns inference or transformation
-resources. These roles have distinct creation boundaries but return connected
-endpoints with the same lifecycle but directional audio capabilities. The
-coordinator borrows all three dependencies and closes only the per-session
-transport and processor instances they create.
+availability, and accept/reject/end operations. A media connector owns its media-plane resources. A realtime model session owns provider inference resources and semantic wire conversion. The primary session remains authoritative for canonical history and tool execution. These roles have distinct creation boundaries but share one coordinated lifecycle. The coordinator borrows module-level dependencies and closes only the per-session transport, model session, context handle, and interaction lease it creates.
 
 ## Endpoint and audio contracts
 
@@ -55,9 +46,11 @@ Adapters and processors must bound internal buffering.
 
 ## Session lifecycle
 
-Sessions are keyed by MCP namespace and protocol session ID. An offer is
-rejected if already expired. Otherwise the coordinator accepts it, connects the
-returned descriptor, creates a processor, and explicitly routes audio:
+Sessions are keyed by MCP namespace and external media session ID. An expired offer is rejected. For a valid offer, the coordinator first reserves the primary session's generation lane. Concurrent offers are rejected rather than queued or substituted. Acquisition waits for the chat loop's safe commit boundary: model generation may be interrupted, but a dispatched tool must settle and be committed before bootstrap.
+
+After lease acquisition, the coordinator accepts the remote offer, connects its descriptor, and calls `lease.bootstrap()`. Bootstrap atomically prepares instructions, transformed canonical history, non-secret model metadata, JSON-Schema tool descriptors, a context revision, and an update watermark. The model session is created and made ready before the scoped context handle is committed and audio pumps are enabled. Any setup failure rolls the handle back.
+
+The coordinator then explicitly routes audio:
 
 1. every source from `transport.audioSources` is attached through
    `processor.audioInputs.attach()` without waiting for that source to end;
@@ -73,11 +66,7 @@ LiveKit descriptors and rejects unknown profiles before connection. Supporting
 another transport will require restoring a typed dispatch boundary rather than
 adding provider-specific branching to media routing.
 
-Each session has one abort controller and one stored `finish()` promise. Remote
-end, transport closure or failure, processor closure or failure, pump failure,
-MCP unavailability, and coordinator shutdown all converge on that promise.
-This guarantees idempotent end signaling and exactly-once resource cleanup even
-when terminal events race acceptance or connection.
+Each session has one abort controller and one stored `finish()` promise. Remote end, transport closure or failure, model-session closure or failure, update/event/audio pump failure, lease revocation, MCP unavailability, and coordinator shutdown all converge on that promise. Cleanup order is fixed: abort pumps; await setup convergence; close provider and transport; roll back any unsettled context; commit the canonical session end when applicable; release the lease; await pumps; then notify the remote endpoint when applicable. Releasing before awaiting the update pump is required because release closes the iterable. This guarantees idempotent signaling and exactly-once cleanup even when terminal events race acceptance or connection.
 
 A remote `session-ended` or MCP disconnect does not send `end` back. Local media
 or processor termination and coordinator shutdown send `end` once on a
@@ -99,7 +88,17 @@ The adapter copies buffers at both SDK boundaries. Incoming delivery and outgoin
 SDK playout are bounded, and all writes are awaited. Provider-specific resampling belongs in the model bridge rather than this
 transport.
 
-## OpenAI Realtime processor
+## Semantic updates, tools, and replay
+
+The lease's bootstrap watermark and ordered update iterable remove the snapshot/subscription race. Accepted notifications are canonical before forwarding and preserve stable event IDs, source metadata, monotonic update sequences, and explicit response policy. The model session acknowledges an update only after provider delivery. Pending updates are bounded; overflow revokes the lease instead of dropping canonical input.
+
+OpenAI can request tools, but Klex remains the authority. The adapter emits a provider-neutral tool request. The coordinator commits the call, executes it through the lease's shared schema-validating, timed, cancellable, execution-ID-deduplicated executor, commits the result, then sends provider output. The provider never receives executable tool functions.
+
+Only finalized transcripts become canonical commits. Partial deltas are not history. Interrupted assistant text is limited to the portion synchronized with audio playout. Commit event IDs suppress duplicates.
+
+One bounded provider reconnect grace window is available. A replacement connection is configured, canonical history is reseeded, and unacknowledged updates and tool results are replayed in original order. At most one response is requested after replay. Stable update, transcript, and execution IDs prevent duplicate commits and side effects. Exhausted attempts or an expired grace window ends the call and releases the lane.
+
+## OpenAI Realtime model session
 
 `openai-realtime` preserves the three independent planes: MCP remains the
 control and lifecycle plane, LiveKit remains the caller media plane, and Klex
@@ -123,11 +122,7 @@ creates responses and reports speech interruption. Interruption cancels and
 truncates the active response, resets output converter state, and discards
 buffered or stale assistant audio before it reaches LiveKit.
 
-The provider connection is session-scoped. Setup timeout, malformed provider
-data, provider errors, unexpected close, abort, and explicit close converge on
-one idempotent processor closure. Provider credentials remain in the
-server-side WebSocket authorization header and are never included in media
-frames or logs.
+The provider connection is session-scoped. Setup timeout, malformed provider data, provider errors, exhausted reconnect, abort, and explicit close converge on one idempotent model-session closure. Provider credentials remain in the server-side WebSocket authorization header and are never included in media frames or logs.
 
 Realtime availability is derived from `modelSelection.voice.sts`. Each ordered
 candidate must explicitly declare `capabilities.voice.sts: true`; Klex does not
@@ -141,6 +136,12 @@ Voice, instructions, and VAD use provider-owned defaults until Klex exposes a
 user or agent preference mechanism. Startup starts the `Realtime` module, which subscribes its coordinator before
 MCP connections can deliver offers. Shutdown closes the coordinator and its
 sessions, then the connector and native SDK, and only then MCP.
+
+## Observability and data handling
+
+Lifecycle logs correlate `leaseId`, `canonicalSessionId`, `externalMediaSessionId`, and MCP namespace. Safe-boundary acquisition records `handoffDurationMs`; successful bootstrap records `historyRevision` and `updateWatermark`; update forwarding records `updateSequence`; tool dispatch records `toolExecutionId`; provider recovery records `reconnectAttempt`; and teardown records `releaseReason`. Errors retain these identifiers where the lifecycle has acquired them.
+
+Observability must never include transcript bodies, tool arguments or results, tool secrets, provider credentials, or binary media. Counts, sequence numbers, non-secret tool names, model metadata, closure classes, and bounded error objects are sufficient for diagnosis.
 
 ## Future modalities
 

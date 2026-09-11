@@ -498,7 +498,7 @@ describe('ToolDispatcher — execution timeout', () => {
     expect(toolPart.state).toBe('output-error');
     // Should NOT say "timed out" since it was a session abort
     expect(toolPart.errorText).not.toContain('timed out');
-    expect(toolPart.errorText).toBe('aborted');
+    expect(toolPart.errorText).toBe('Tool execution was aborted.');
 
     vi.useRealTimers();
   });

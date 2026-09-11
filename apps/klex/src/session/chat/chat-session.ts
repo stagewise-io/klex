@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 
 import type { JSONObject } from '@ai-sdk/provider';
 import { type Context, context, type Span, trace } from '@opentelemetry/api';
-import { generateText } from 'ai';
+import { generateText, type ToolSet } from 'ai';
 
 import type { ModuleLogger, RootLogger } from '@stagewise/logger';
 
@@ -12,6 +12,19 @@ import type { Mcp } from '@/mcp';
 import type { ProviderModelResolver } from '@/provider-registry';
 import type { RouterApi } from '@/router';
 import type { SessionInboxEvent } from '@/session/inbox';
+import {
+  assembleInferenceContext,
+  describeInteractionTools,
+  GenerationLaneLeaseManager,
+  type InteractionLease,
+  type InteractionLeaseRequest,
+  type InteractionToolRequest,
+  type InteractionToolResult,
+  type PreparedInferenceContextHandle,
+  type RealtimeCommitEvent,
+  ToolExecutor,
+  toCanonicalMessage,
+} from '@/session/interaction';
 import type {
   AgentSession,
   ChatSessionHandle,
@@ -43,6 +56,7 @@ import type { ExtendedUIMessage } from './message-types';
 import { createTurn, type Turn, type TurnResult } from './turn';
 import { BackoffManager } from './utils/backoff-manager';
 import { ModelFallbackManager } from './utils/model-fallback-manager';
+import systemPrompt from './utils/system-prompt.md';
 import { getExtensionIdentifier, tracer } from './utils/tracing';
 
 /**
@@ -148,6 +162,21 @@ class ChatSessionModule implements AgentSession {
 
   private readonly createdAt: string;
 
+  // --- Generation-lane leasing ---
+
+  private readonly leaseManager: GenerationLaneLeaseManager;
+
+  /** True while the chat generation lane is handed to an interaction lease. */
+  private laneSuspended = false;
+
+  /** Resolvers waiting for the chat lane to reach a quiescent state. */
+  private laneQuiesceWaiters: (() => void)[] = [];
+
+  /** Tool set assembled for the active lease's bootstrap context. */
+  private leaseTools: ToolSet | null = null;
+
+  private leaseToolExecutor: ToolExecutor | null = null;
+
   constructor(
     private readonly deps: {
       logger: ModuleLogger;
@@ -203,6 +232,7 @@ class ChatSessionModule implements AgentSession {
 
     this.sessionInbox = createInbox({
       onImmediateEvent: this.onImmediateEvent,
+      onDeferredEvent: this.onDeferredEvent,
       onImmediateMessage: this.onImmediateMessage,
       onNewInput: this.onNewInput,
       logger: this.deps.logger,
@@ -266,6 +296,19 @@ class ChatSessionModule implements AgentSession {
             total: { ...usage },
           });
         }
+      },
+    });
+
+    this.leaseManager = new GenerationLaneLeaseManager({
+      logger: this.deps.logger,
+      host: {
+        sessionId: this.sessionId,
+        quiesceGenerationLane: (reason) => this.quiesceGenerationLane(reason),
+        resumeGenerationLane: () => this.resumeGenerationLane(),
+        prepareContext: (request) => this.prepareLeaseContext(request),
+        executeTool: (request) => this.executeLeaseTool(request),
+        finalizeLease: () => this.finalizeLeaseState(),
+        commit: (event) => this.commitLeaseEvent(event),
       },
     });
   }
@@ -491,12 +534,16 @@ class ChatSessionModule implements AgentSession {
   // Loop — hosted in the session per architecture.md
   // ---------------------------------------------------------------------------
 
-  private onImmediateEvent = (event: SessionInboxEvent): void => {
-    const message: ExtendedUIMessage = {
+  private inboxEventMessage(event: SessionInboxEvent): ExtendedUIMessage {
+    return {
       role: 'user',
       id: randomUUID(),
       parts: [{ type: 'data-context', data: event.context }],
     };
+  }
+
+  private onImmediateEvent = (event: SessionInboxEvent): boolean => {
+    const message = this.inboxEventMessage(event);
 
     if (this.loopActive) {
       // Queue — will be flushed after the current step commits its
@@ -504,6 +551,16 @@ class ChatSessionModule implements AgentSession {
       this.pendingImmediate.push(message);
     } else {
       this.messages.push(message);
+    }
+
+    // While a lease owns the generation lane, the event is recorded in
+    // canonical history first and then forwarded to the lease holder so
+    // the live call can react to it.
+    if (this.leaseManager.isLeased()) {
+      return this.leaseManager.forward(
+        event,
+        event.urgency !== SessionInboxUrgency.Deferrable,
+      );
     }
 
     // Critical urgency: abort the current generation immediately.
@@ -514,6 +571,17 @@ class ChatSessionModule implements AgentSession {
         'inbox.urgency': SessionInboxUrgency[event.urgency],
       });
     }
+    return false;
+  };
+
+  private onDeferredEvent = (event: SessionInboxEvent): boolean => {
+    if (!this.leaseManager.isLeased()) return false;
+    const message = this.inboxEventMessage(event);
+    const historyIndex = this.messages.length;
+    this.messages.push(message);
+    if (this.leaseManager.forward(event, false)) return true;
+    this.messages.splice(historyIndex, 1);
+    return false;
   };
 
   private onImmediateMessage = (
@@ -550,7 +618,128 @@ class ChatSessionModule implements AgentSession {
     }
   };
 
+  // ---------------------------------------------------------------------------
+  // Generation-lane leasing — the chat loop and a leased interaction mode
+  // (e.g. a realtime call) must never generate concurrently.
+  // ---------------------------------------------------------------------------
+
+  public acquireInteractionLease(
+    request: InteractionLeaseRequest,
+  ): Promise<InteractionLease> {
+    return this.leaseManager.acquire(request);
+  }
+
+  private async quiesceGenerationLane(reason: string): Promise<void> {
+    this.laneSuspended = true;
+    if (this.runtimeState !== 'terminated') this.runtimeState = 'leased';
+    this.sessionSpan.addEvent('session.generation_lane_suspended', {
+      'session.laneReason': reason,
+    });
+
+    // Stop the in-flight generation so the current step reaches its commit
+    // boundary quickly. The turn then yields via shouldYieldGenerationLane.
+    this.currentTurn?.abortGeneration('generation_lane_leased');
+    this.backoffInterrupt?.();
+
+    if (!this.loopActive) return;
+    await new Promise<void>((resolve) => {
+      this.laneQuiesceWaiters.push(resolve);
+    });
+  }
+
+  private releaseQuiesceWaiters(): void {
+    for (const resolve of this.laneQuiesceWaiters.splice(0)) resolve();
+  }
+
+  private resumeGenerationLane(): void {
+    this.laneSuspended = false;
+    if (this.runtimeState === 'leased') this.runtimeState = 'idle';
+    this.sessionSpan.addEvent('session.generation_lane_resumed', {});
+    if (this._status === 'terminated') return;
+    if (this.hasPendingInput || !this.sessionInbox.isEmpty()) {
+      void this.runLoop();
+    }
+  }
+
+  private async prepareLeaseContext(
+    request: InteractionLeaseRequest,
+  ): Promise<PreparedInferenceContextHandle> {
+    const model = {
+      modelId: request.model.modelId,
+      ...(request.model.displayName !== undefined && {
+        displayName: request.model.displayName,
+      }),
+      contextSize: request.model.contextSize,
+      inputCapabilities: request.model.inputCapabilities,
+    };
+    // Capture history and the forwarded-update watermark as one synchronous
+    // boundary. Events accepted after this point stay in the lease update
+    // stream instead of being mistaken for bootstrap context.
+    const history = [...this.messages];
+    const historyRevision = history.length;
+    const updateWatermark = this.leaseManager.updateWatermark;
+    const assembled = await assembleInferenceContext({
+      history,
+      extensionHandler: this.extensionHandler,
+      model,
+      baseInstructions: systemPrompt,
+    });
+
+    this.leaseTools = assembled.tools;
+
+    return {
+      context: {
+        instructions: assembled.instructions,
+        messages: assembled.messages,
+        tools: describeInteractionTools(assembled.tools),
+        model: request.model,
+        historyRevision,
+        updateWatermark,
+      },
+      commit: () => {
+        this.sessionSpan.addEvent('session.lease_context_committed', {
+          'session.historyRevision': historyRevision,
+        });
+      },
+      rollback: () => {
+        this.leaseToolExecutor?.abort();
+        this.leaseTools = null;
+        this.leaseToolExecutor = null;
+        this.sessionSpan.addEvent('session.lease_context_rolled_back', {});
+      },
+    };
+  }
+
+  private finalizeLeaseState(): void {
+    this.leaseToolExecutor?.abort();
+    this.leaseTools = null;
+    this.leaseToolExecutor = null;
+  }
+
+  private async executeLeaseTool(
+    request: InteractionToolRequest,
+  ): Promise<InteractionToolResult> {
+    if (!this.leaseToolExecutor) {
+      this.leaseToolExecutor = new ToolExecutor({
+        logger: this.deps.logger,
+        tools: this.leaseTools ?? {},
+        modelMessages: [],
+        sessionId: this.sessionId,
+        validateInput: true,
+      });
+    }
+    return this.leaseToolExecutor.execute(request);
+  }
+
+  private async commitLeaseEvent(event: RealtimeCommitEvent): Promise<void> {
+    if (this._status === 'terminated') return;
+    this.messages.push(toCanonicalMessage(event));
+  }
+
   private onNewInput = (urgency: SessionInboxUrgency): void => {
+    // Lease-consumed events are filtered by the inbox before this callback.
+    // Native messages still reach it and remain pending until the lane resumes.
+
     // If currently in a backoff wait, interrupt it so the new input is
     // processed immediately.
     if (this.backoffInterrupt) {
@@ -570,6 +759,7 @@ class ChatSessionModule implements AgentSession {
     // history but not buffered in the inbox.
     if (!this.loopActive) {
       this.hasPendingInput = true;
+      if (this.laneSuspended) return;
       void this.runLoop();
     }
   };
@@ -589,6 +779,12 @@ class ChatSessionModule implements AgentSession {
    */
   private async runLoop(): Promise<void> {
     if (this.loopActive) return;
+    if (this.laneSuspended) {
+      // A leased interaction mode owns the generation lane. Input stays
+      // buffered; resumeGenerationLane() restarts the loop later.
+      this.releaseQuiesceWaiters();
+      return;
+    }
     this.loopActive = true;
 
     this.runtimeState = 'working';
@@ -606,6 +802,18 @@ class ChatSessionModule implements AgentSession {
           this.deps.logger.info(
             { sessionId: this.sessionId },
             'Session terminated — stopping loop',
+          );
+          return;
+        }
+
+        // The generation lane was leased to another interaction mode.
+        // Leave the loop; pending input is picked up on resume.
+        if (this.laneSuspended) {
+          this.hasPendingInput = true;
+          this.runtimeState = 'leased';
+          this.deps.logger.info(
+            { sessionId: this.sessionId },
+            'Generation lane leased — chat loop yielding',
           );
           return;
         }
@@ -660,6 +868,7 @@ class ChatSessionModule implements AgentSession {
           forceContinue: needsBackoffRetry,
           forceCheck: needsCheckRetry,
           flushPendingImmediate: this.flushPendingImmediate,
+          shouldYieldGenerationLane: () => this.laneSuspended,
         });
         this.currentTurn = turn;
 
@@ -824,6 +1033,7 @@ class ChatSessionModule implements AgentSession {
       }
     } finally {
       this.loopActive = false;
+      this.releaseQuiesceWaiters();
     }
   }
 
@@ -920,6 +1130,12 @@ class ChatSessionModule implements AgentSession {
       // Interrupt any pending backoff wait so the loop can exit promptly.
       this.backoffInterrupt?.();
 
+      // Revoke an active interaction lease — a leased realtime call must
+      // not outlive its host session.
+      this.leaseManager.revoke('primary-session-closed');
+      this.leaseToolExecutor?.abort();
+      this.releaseQuiesceWaiters();
+
       await this.extensionHandler.close();
       this.sessionSpan.addEvent('session.closed', {
         'session.id': this.sessionId,
@@ -954,6 +1170,8 @@ class ChatSessionModule implements AgentSession {
    * unrecoverable, not during router-initiated graceful shutdown.
    */
   private async terminate(reason: string): Promise<void> {
+    this.leaseManager.revoke('primary-session-terminated');
+
     // Close the inbox first — this blocks any new events from arriving
     // while we drain what's already buffered.
     this.sessionInbox.close();

@@ -43,6 +43,9 @@ export interface ChatSessionInbox extends SessionInbox {
   ) => void;
 }
 
+/** Upper bound of process-local event IDs retained for deduplication. */
+const MAX_TRACKED_EVENT_IDS = 4096;
+
 export type DrainInboxResult = {
   total: number;
   deferredEvents: number;
@@ -107,7 +110,13 @@ export interface InboxDependencies {
    * the event to the message history immediately. For Critical urgency,
    * the session also aborts the running generation.
    */
-  onImmediateEvent: (event: SessionInboxEvent) => void;
+  /** Returns true when an active interaction lease consumed the event. */
+  onImmediateEvent: (event: SessionInboxEvent) => boolean;
+  /**
+   * Called for Deferrable events before buffering. Returning true means the
+   * active interaction lease consumed and canonically recorded the event.
+   */
+  onDeferredEvent?: (event: SessionInboxEvent) => boolean;
   /**
    * Called for Critical and Default urgency native messages. The session
    * appends the message to the message history immediately. For Critical
@@ -144,19 +153,69 @@ class InboxModule implements SessionInboxBuffer {
 
   private closed = false;
 
+  /**
+   * Process-local identity of accepted events, kept bounded in FIFO order.
+   * MCP already deduplicates at-least-once delivery per worker; this guard
+   * additionally protects the canonical history from router retries.
+   */
+  private readonly acceptedEventIds = new Set<string>();
+
   constructor(private readonly deps: InboxDependencies) {}
 
   send(event: SessionInboxEvent): void {
     if (this.closed) throw new SessionInboxClosedError();
 
-    if (event.urgency === SessionInboxUrgency.Deferrable) {
-      this.deferredEvents.push(event);
+    const accepted = this.accept(event);
+    if (!accepted) return;
+
+    let recorded = false;
+    let consumed = false;
+    if (accepted.urgency === SessionInboxUrgency.Deferrable) {
+      consumed = this.notifyDeferredEvent(accepted);
+      if (consumed) {
+        recorded = true;
+      } else {
+        this.deferredEvents.push(accepted);
+        recorded = true;
+      }
     } else {
       // Critical or Default — dispatch immediately via callback.
-      this.notifyImmediateEvent(event);
+      const immediate = this.notifyImmediateEvent(accepted);
+      recorded = immediate.recorded;
+      consumed = immediate.consumed;
     }
 
-    this.notifyNewInput(event.urgency);
+    if (recorded) this.recordAccepted(accepted.eventId);
+    if (!consumed) this.notifyNewInput(accepted.urgency);
+  }
+
+  /**
+   * Assigns a stable event ID when the caller lacks one and rejects
+   * duplicates of already-accepted inputs.
+   *
+   * @returns The event to record, or `null` when it is a duplicate.
+   */
+  private accept(event: SessionInboxEvent): SessionInboxEvent | null {
+    if (event.eventId === undefined) {
+      return { ...event, eventId: randomUUID() };
+    }
+    if (this.acceptedEventIds.has(event.eventId)) {
+      this.deps.logger?.debug(
+        { eventId: event.eventId, sourceEnv: event.sourceEnv },
+        'Inbox dropped duplicate event',
+      );
+      return null;
+    }
+    return event;
+  }
+
+  private recordAccepted(eventId: string | undefined): void {
+    if (eventId === undefined) return;
+    this.acceptedEventIds.add(eventId);
+    if (this.acceptedEventIds.size > MAX_TRACKED_EVENT_IDS) {
+      const oldest = this.acceptedEventIds.values().next();
+      if (!oldest.done) this.acceptedEventIds.delete(oldest.value);
+    }
   }
 
   sendMessage(message: ExtendedUIMessage, urgency: SessionInboxUrgency): void {
@@ -176,14 +235,30 @@ class InboxModule implements SessionInboxBuffer {
     this.closed = true;
   }
 
-  private notifyImmediateEvent(event: SessionInboxEvent): void {
+  private notifyImmediateEvent(event: SessionInboxEvent): {
+    recorded: boolean;
+    consumed: boolean;
+  } {
     try {
-      this.deps.onImmediateEvent(event);
+      return { recorded: true, consumed: this.deps.onImmediateEvent(event) };
     } catch (err) {
       this.deps.logger?.error(
         { urgency: SessionInboxUrgency[event.urgency], err },
         'Inbox onImmediateEvent callback threw — event may not be in history',
       );
+      return { recorded: false, consumed: false };
+    }
+  }
+
+  private notifyDeferredEvent(event: SessionInboxEvent): boolean {
+    try {
+      return this.deps.onDeferredEvent?.(event) ?? false;
+    } catch (err) {
+      this.deps.logger?.error(
+        { eventId: event.eventId, err },
+        'Inbox onDeferredEvent callback threw — buffering event instead',
+      );
+      return false;
     }
   }
 

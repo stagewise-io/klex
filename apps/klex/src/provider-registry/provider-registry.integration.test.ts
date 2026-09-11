@@ -405,4 +405,89 @@ describe('provider registry module integration', () => {
     await registry.close();
     await config.close();
   });
+
+  it('carries merged non-secret realtime model metadata without exposing credentials', async () => {
+    const definition: ProviderDefinition = {
+      type: 'openai',
+      usageGuidance:
+        'Use this provider only to verify realtime model metadata resolution; use the production OpenAI definition for real traffic.',
+      metadata: {
+        displayName: 'Realtime Integration Provider',
+        description: 'Exercises realtime provider metadata resolution.',
+      },
+      createLanguageModel: (instance, modelId) =>
+        ({ providerId: instance.id, modelId }) as unknown as LanguageModelV4,
+      // Maintained metadata is richer than the persisted configuration and must win.
+      resolveModelMetadata: (modelId) =>
+        modelId === 'gpt-realtime'
+          ? {
+              kind: 'language',
+              displayName: 'Maintained Realtime',
+              contextSize: 32_000,
+              capabilities: {
+                voice: { sts: true },
+                input: { audio: { mediaTypes: ['audio/pcm'] } },
+              },
+              provenance: [{ source: 'provider-exact' }],
+            }
+          : undefined,
+      testConnection: async () => ({
+        ok: true,
+        code: 'available',
+        value: { latencyMs: 1 },
+      }),
+    };
+
+    const config = createConfig({
+      logging,
+      dataDirectory: await createDataDirectory(),
+      env: { REALTIME_KEY: 'sk-realtime' },
+    });
+    await config.start();
+    const registry = createProviderRegistry({
+      logging,
+      definitions: [definition],
+      config,
+    });
+    await registry.start();
+
+    expect(registry.resolveRealtimeProvider()).toBeUndefined();
+
+    await expect(
+      registry.addInstance({
+        id: 'openai-voice',
+        type: 'openai',
+        settings: { apiKey: `\${env:REALTIME_KEY}` },
+      }),
+    ).resolves.toMatchObject({ ok: true });
+    const selection = { providerId: 'openai-voice', modelId: 'gpt-realtime' };
+    await expect(
+      registry.updateModelSelection({
+        voice: { sts: [selection], tts: [], stt: [] },
+      }),
+    ).resolves.toMatchObject({ ok: true, value: { warnings: [] } });
+
+    const resolved = registry.resolveRealtimeProvider();
+
+    expect(resolved).toMatchObject({
+      kind: 'openai-realtime',
+      model: {
+        modelId: 'gpt-realtime',
+        displayName: 'Maintained Realtime',
+        contextSize: 32_000,
+        inputCapabilities: { audio: { mediaTypes: ['audio/pcm'] } },
+      },
+      config: {
+        modelId: 'gpt-realtime',
+        apiKey: 'sk-realtime',
+        websocketUrl: expect.stringContaining('gpt-realtime'),
+      },
+    });
+    expect(Object.keys(resolved?.model ?? {}).sort()).toEqual(
+      ['modelId', 'displayName', 'contextSize', 'inputCapabilities'].sort(),
+    );
+
+    await registry.close();
+    await config.close();
+  });
 });

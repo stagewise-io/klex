@@ -6,16 +6,15 @@ import type {
 
 import type { ResolvedRealtimeProvider } from '@/config';
 import type { Mcp } from '@/mcp';
-import type {
-  MediaTransportConnector,
-  RealtimeProcessorFactory,
-} from '@/media-transport';
+import type { MediaTransportConnector } from '@/media-transport';
 import {
   createLiveKitRoomMediaTransportConnector,
   type LiveKitRoomMediaTransportConnector,
   loadLiveKitSdk,
 } from '@/media-transport/livekit-room';
+import type { ConversationHost } from '@/session/interaction';
 
+import type { RealtimeModelSessionFactory } from './model-session';
 import { createOpenAIRealtimeProcessorFactory } from './openai-realtime';
 import {
   createRealtimeSessionCoordinator,
@@ -31,6 +30,8 @@ export interface RealtimeDependencies {
   logging: RootLogger;
   mcp: Mcp;
   provider: ResolvedRealtimeProvider;
+  /** Owner of canonical history, tools, and the generation lane. */
+  conversationHost: ConversationHost;
   /**
    * Transfers lifecycle ownership to the realtime module. The caller must not
    * close or reuse the connector after passing it to `createRealtime`.
@@ -65,6 +66,8 @@ class RealtimeModule implements Realtime {
           mcp: this.deps.mcp,
           mediaTransportConnector: connector,
           processorFactory: this.createProcessorFactory(),
+          conversationHost: this.deps.conversationHost,
+          model: this.deps.provider.model,
         });
       this.coordinator = coordinator;
       try {
@@ -79,7 +82,7 @@ class RealtimeModule implements Realtime {
     return this.startPromise;
   }
 
-  private createProcessorFactory(): RealtimeProcessorFactory {
+  private createProcessorFactory(): RealtimeModelSessionFactory {
     switch (this.deps.provider.kind) {
       case 'openai-realtime':
         return createOpenAIRealtimeProcessorFactory({

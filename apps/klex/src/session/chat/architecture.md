@@ -62,6 +62,34 @@ Both `send()` and `sendMessage()` with Critical urgency abort the running genera
 
 When a session terminates (fatal error, max failures, or explicit close), the inbox is closed first — any subsequent `send()` / `sendMessage()` throws `SessionInboxClosedError`. Deferred events remaining in the buffer are drained via `getEvents()` and passed to the router's `onTerminated` hook, which creates a replacement session and re-dispatches them via `restorePendingEvents()`. Immediate (Critical/Default) events that were already appended to history are lost with the terminated session's history — only deferred events survive.
 
+## Generation-lane leasing
+
+The primary chat session is the sole owner of canonical history, extension instances, and tool execution. Realtime does not create a parallel chat session. It requests an exclusive generation-lane lease through the router's `ConversationHost` interface.
+
+Lease acquisition is a safe-boundary handoff:
+
+1. mark the generation lane as quiescing;
+2. interrupt only an active model stream;
+3. allow already-dispatched tools and the current step commit to settle;
+4. prevent the next chat step from starting;
+5. prepare one atomic inference context and expose its history revision and update watermark.
+
+This ordering preserves chat-originated call framing. Assistant text, a call-opening tool invocation, and its settled result are canonical before realtime bootstrap. A concurrent lease is rejected. Closing or terminating the primary session revokes its lease; normal release resumes the chat lane without generating a duplicate response for inputs already handled during the call.
+
+### Context preparation
+
+Both chat steps and leased interactions use the same context assembly order: provisional extension context, cloned canonical history, history transformers and compaction, model-message conversion, context transformers, tool collection, then base and extension instructions. The returned preparation handle is committed only after provider setup succeeds. Setup failure rolls it back, so provisional context cannot leak into canonical history.
+
+The bootstrap contains provider-neutral `ModelMessage[]`, non-secret model metadata, JSON-Schema tool descriptors, `historyRevision`, and `updateWatermark`. Provider credentials and wire-format conversion remain outside the chat session.
+
+### Canonical updates and commits
+
+Accepted Critical and Default inbox events are first recorded in canonical history, assigned a monotonic session sequence, then published to the active lease. The bootstrap watermark and ordered update stream eliminate the snapshot/subscription race. Stable event IDs support process-local deduplication and reconnect replay. `requestResponse` is explicit; forwarding a notification does not inherently request speech.
+
+Only finalized user and assistant transcripts are committed. Partial deltas remain ephemeral, and interrupted assistant text is truncated to synchronized playout before commitment. Realtime tool calls and results use the session-owned executor and canonical commit path. Execution IDs provide lease-lifetime at-most-once side effects, while commit event IDs make transcript and tool records idempotent.
+
+The pending update buffer is bounded to 256 entries by default. Overflow revokes the lease rather than silently dropping or reordering canonical input. Acknowledged updates are pruned from the replay cursor. These guarantees are process-local because canonical history is currently process-local.
+
 ## Turn
 
 Drains deferrable inbox, then runs steps sequentially until no more generation is needed. Unifies "Continue." injection (backoff retry or salvage `forceNextStep`) and `data-check` injection (check-retry after new input) into a single code path. `completeFailure = hadAnyFailure && !hadAnySuccess` — salvaged content counts as non-failure.

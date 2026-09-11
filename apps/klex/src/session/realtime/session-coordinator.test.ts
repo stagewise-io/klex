@@ -12,11 +12,16 @@ import type {
   McpRealtimeMediaNotificationListener,
 } from '@/mcp';
 import type { AudioFrame } from '@/media-transport';
+import { SessionInboxUrgency } from '@/session/inbox';
+import type { InteractionUpdateEnvelope } from '@/session/interaction';
 
 import { createRealtimeSessionCoordinator } from './session-coordinator';
 import {
+  createDeterministicConversationHost,
   createDeterministicEchoProcessorFactory,
   createDeterministicMediaTransportConnector,
+  DETERMINISTIC_REALTIME_MODEL,
+  type DeterministicConversationHost,
 } from './test-support';
 
 const logging = {
@@ -108,6 +113,24 @@ function createMcpHarness(options?: {
   };
 }
 
+function update(sequence: number): InteractionUpdateEnvelope {
+  return {
+    sequence,
+    eventId: `update-${sequence}`,
+    event: {
+      eventId: `update-${sequence}`,
+      sourceEnv: 'telegram',
+      urgency: SessionInboxUrgency.Default,
+      context: {
+        sourceEnv: 'telegram',
+        metadata: {},
+        content: [{ type: 'text', text: 'Anna: are we live?' }],
+      },
+    },
+    requestResponse: true,
+  };
+}
+
 function offered(
   sessionId = 'session-1',
   expiresAt = '2026-08-01T19:00:00.000Z',
@@ -129,19 +152,23 @@ function ended(sessionId = 'session-1'): RealtimeMediaNotification {
 
 function setup(options?: {
   mcp?: ReturnType<typeof createMcpHarness>;
+  host?: DeterministicConversationHost;
   now?: () => number;
 }) {
   const mcpHarness = options?.mcp ?? createMcpHarness();
   const connector = createDeterministicMediaTransportConnector();
   const processorFactory = createDeterministicEchoProcessorFactory();
+  const host = options?.host ?? createDeterministicConversationHost();
   const coordinator = createRealtimeSessionCoordinator({
     logging,
     mcp: mcpHarness.mcp,
     mediaTransportConnector: connector,
     processorFactory,
+    conversationHost: host,
+    model: DETERMINISTIC_REALTIME_MODEL,
     now: options?.now ?? (() => Date.parse('2026-08-01T18:00:00.000Z')),
   });
-  return { coordinator, connector, mcpHarness, processorFactory };
+  return { coordinator, connector, mcpHarness, processorFactory, host };
 }
 
 describe('realtime session coordinator', () => {
@@ -160,6 +187,8 @@ describe('realtime session coordinator', () => {
       mcp: mcpHarness.mcp,
       mediaTransportConnector: connector,
       processorFactory: createDeterministicEchoProcessorFactory(),
+      conversationHost: createDeterministicConversationHost(),
+      model: DETERMINISTIC_REALTIME_MODEL,
       now: () => Date.parse('2026-08-01T18:00:00.000Z'),
     });
     await coordinator.start();
@@ -320,6 +349,257 @@ describe('realtime session coordinator', () => {
     expect(transport.closeCount).toBe(1);
     expect(processor.closeCount).toBe(1);
     await coordinator.close();
+  });
+
+  it('rejects the offer when no interaction lease is available', async () => {
+    const host = createDeterministicConversationHost();
+    host.rejectAcquisitions(new Error('chat generation in progress'));
+    const { coordinator, connector, mcpHarness } = setup({ host });
+    await coordinator.start();
+    await mcpHarness.notify(offered());
+
+    await vi.waitFor(() =>
+      expect(mcpHarness.rejectRealtimeMediaSession).toHaveBeenCalledWith(
+        'voice',
+        'session-1',
+      ),
+    );
+    await vi.waitFor(() => expect(coordinator.getActiveSessionCount()).toBe(0));
+    expect(mcpHarness.acceptRealtimeMediaSession).not.toHaveBeenCalled();
+    expect(connector.descriptors).toEqual([]);
+    expect(host.requests).toEqual([
+      expect.objectContaining({
+        mode: 'realtime',
+        namespace: 'voice',
+        externalSessionId: 'session-1',
+        model: DETERMINISTIC_REALTIME_MODEL,
+      }),
+    ]);
+    await coordinator.close();
+  });
+
+  it('models acquisition aborts in the deterministic host', async () => {
+    const host = createDeterministicConversationHost();
+    const controller = new AbortController();
+    controller.abort(new Error('offer withdrawn'));
+
+    await expect(
+      host.acquireInteractionLease({
+        mode: 'realtime',
+        externalSessionId: 'session-1',
+        namespace: 'voice',
+        signal: controller.signal,
+        model: DETERMINISTIC_REALTIME_MODEL,
+      }),
+    ).rejects.toThrow('offer withdrawn');
+  });
+
+  it('models primary-session revocation without releasing the lease', async () => {
+    const { coordinator, mcpHarness, host } = setup();
+    await coordinator.start();
+    await mcpHarness.notify(offered());
+    const lease = await host.nextLease();
+
+    host.revokeLeases('primary-session-closed');
+
+    await expect(lease.closed).resolves.toEqual({
+      type: 'revoked',
+      reason: 'primary-session-closed',
+    });
+    await vi.waitFor(() => expect(coordinator.getActiveSessionCount()).toBe(0));
+    expect(lease.releaseCount).toBe(0);
+    await coordinator.close();
+  });
+
+  it('commits the session lifecycle and releases the lease exactly once', async () => {
+    const { coordinator, mcpHarness, host } = setup();
+    await coordinator.start();
+    await mcpHarness.notify(offered());
+    const lease = await host.nextLease();
+
+    await vi.waitFor(() =>
+      expect(lease.commits.map((commit) => commit.type)).toEqual([
+        'session-started',
+      ]),
+    );
+    expect(lease.contextCommits).toBe(1);
+
+    await mcpHarness.notify(ended());
+    await vi.waitFor(() => expect(coordinator.getActiveSessionCount()).toBe(0));
+    expect(lease.commits.map((commit) => commit.type)).toEqual([
+      'session-started',
+      'session-ended',
+    ]);
+    expect(lease.releaseCount).toBe(1);
+    expect(lease.contextRollbacks).toBe(0);
+    expect(host.requests[0]?.signal.aborted).toBe(false);
+
+    await coordinator.close();
+    expect(lease.releaseCount).toBe(1);
+  });
+
+  it('forwards inbox updates to the model and acknowledges them', async () => {
+    const { coordinator, mcpHarness, processorFactory, host } = setup();
+    await coordinator.start();
+    await mcpHarness.notify(offered());
+    const lease = await host.nextLease();
+    const processor = await processorFactory.nextProcessor();
+
+    expect(lease.publish(update(4))).toBe(true);
+    await vi.waitFor(() => {
+      expect(processor.receivedUpdates.map((entry) => entry.eventId)).toEqual([
+        'update-4',
+      ]);
+      expect(lease.acknowledged).toEqual([4]);
+    });
+
+    await mcpHarness.notify(ended());
+    await coordinator.close();
+  });
+
+  it('runs model tool calls through the lease and returns the result', async () => {
+    const { coordinator, mcpHarness, processorFactory, host } = setup();
+    host.setToolHandler((request) => ({
+      executionId: request.executionId,
+      status: 'success',
+      output: { echoed: request.name },
+    }));
+    await coordinator.start();
+    await mcpHarness.notify(offered());
+    const lease = await host.nextLease();
+    const processor = await processorFactory.nextProcessor();
+
+    await processor.emit({
+      type: 'tool-call',
+      eventId: 'call-1',
+      request: {
+        executionId: 'exec-1',
+        name: 'send_message',
+        input: { text: 'hi' },
+      },
+    });
+
+    await vi.waitFor(() => {
+      expect(lease.toolRequests.map((request) => request.executionId)).toEqual([
+        'exec-1',
+      ]);
+      expect(processor.receivedToolResults).toEqual([
+        {
+          executionId: 'exec-1',
+          status: 'success',
+          output: { echoed: 'send_message' },
+        },
+      ]);
+    });
+    expect(lease.commits.map((commit) => commit.type)).toEqual([
+      'session-started',
+      'tool-call',
+      'tool-result',
+    ]);
+
+    await mcpHarness.notify(ended());
+    await coordinator.close();
+  });
+
+  it('commits transcripts emitted by the model session', async () => {
+    const { coordinator, mcpHarness, processorFactory, host } = setup();
+    await coordinator.start();
+    await mcpHarness.notify(offered());
+    const lease = await host.nextLease();
+    const processor = await processorFactory.nextProcessor();
+
+    await processor.emit({
+      type: 'user-transcript',
+      eventId: 'user-1',
+      text: 'Are we live?',
+    });
+    await processor.emit({
+      type: 'assistant-transcript',
+      eventId: 'assistant-1',
+      text: 'We are.',
+      interrupted: true,
+    });
+
+    await vi.waitFor(() =>
+      expect(lease.commits).toEqual([
+        expect.objectContaining({ type: 'session-started' }),
+        expect.objectContaining({
+          type: 'user-transcript',
+          eventId: 'user-1',
+          text: 'Are we live?',
+        }),
+        expect.objectContaining({
+          type: 'assistant-transcript',
+          eventId: 'assistant-1',
+          text: 'We are.',
+          interrupted: true,
+        }),
+      ]),
+    );
+
+    await mcpHarness.notify(ended());
+    await coordinator.close();
+  });
+
+  it('ends the media session when the lease is revoked', async () => {
+    const { coordinator, mcpHarness, processorFactory, connector, host } =
+      setup();
+    await coordinator.start();
+    await mcpHarness.notify(offered());
+    const lease = await host.nextLease();
+    const transport = await connector.nextTransport();
+    const processor = await processorFactory.nextProcessor();
+
+    lease.revoke('primary-session-terminated');
+
+    await vi.waitFor(() =>
+      expect(mcpHarness.endRealtimeMediaSession).toHaveBeenCalledOnce(),
+    );
+    await vi.waitFor(() => expect(coordinator.getActiveSessionCount()).toBe(0));
+    expect(transport.closeCount).toBe(1);
+    expect(processor.closeCount).toBe(1);
+    await coordinator.close();
+  });
+
+  it('releases the lease on setup failure before context preparation', async () => {
+    const mcpHarness = createMcpHarness({
+      accept: async () => ({
+        transport: {
+          kind: 'unknown',
+          descriptor: { ...descriptor, profile: 'unsupported' },
+        },
+      }),
+    });
+    const { coordinator, host } = setup({ mcp: mcpHarness });
+    await coordinator.start();
+    await mcpHarness.notify(offered());
+    const lease = await host.nextLease();
+
+    await vi.waitFor(() => expect(coordinator.getActiveSessionCount()).toBe(0));
+    expect(lease.releaseCount).toBe(1);
+    await expect(lease.closed).resolves.toEqual({
+      type: 'released',
+      reason: 'realtime-session-ended',
+    });
+    await coordinator.close();
+  });
+
+  it('acquires a fresh lease for a session offered after the previous one ended', async () => {
+    const { coordinator, mcpHarness, host } = setup();
+    await coordinator.start();
+    await mcpHarness.notify(offered());
+    const first = await host.nextLease();
+    await mcpHarness.notify(ended());
+    await vi.waitFor(() => expect(coordinator.getActiveSessionCount()).toBe(0));
+
+    await mcpHarness.notify(offered('session-2'));
+    const second = await host.nextLease();
+    expect(second.id).not.toBe(first.id);
+    await vi.waitFor(() => expect(second.commits).toHaveLength(1));
+
+    await coordinator.close();
+    expect(first.releaseCount).toBe(1);
+    expect(second.releaseCount).toBe(1);
   });
 
   it('closes active sessions and itself idempotently', async () => {

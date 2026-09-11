@@ -566,6 +566,54 @@ describe('config v2', () => {
     await config.close();
   });
 
+  it('resolves realtime providers with non-secret model metadata separated from credentials', async () => {
+    const dataDirectory = await directory(true);
+    const config = createConfig({
+      logging,
+      dataDirectory,
+      env: { REALTIME_KEY: 'sk-realtime' },
+    });
+    await config.start();
+    await config.writeProviderInstance('openai-voice', {
+      type: 'openai',
+      settings: { apiKey: '${env:REALTIME_KEY}' },
+      knownModels: {
+        'gpt-realtime': {
+          displayName: 'Realtime Voice',
+          contextSize: 32_000,
+          capabilities: {
+            voice: { sts: true },
+            input: { audio: { mediaTypes: ['audio/pcm'] } },
+          },
+        },
+      },
+    });
+    await config.writeModelSelection({
+      ...emptyModelSelection,
+      voice: {
+        ...emptyModelSelection.voice,
+        sts: [{ providerId: 'openai-voice', modelId: 'gpt-realtime' }],
+      },
+    });
+
+    const resolved = config.resolveRealtimeProvider();
+
+    expect(resolved).toMatchObject({
+      kind: 'openai-realtime',
+      model: {
+        modelId: 'gpt-realtime',
+        displayName: 'Realtime Voice',
+        contextSize: 32_000,
+        inputCapabilities: { audio: { mediaTypes: ['audio/pcm'] } },
+      },
+      config: { modelId: 'gpt-realtime', apiKey: 'sk-realtime' },
+    });
+    // Credentials and endpoints stay confined to the provider construction slice.
+    expect(resolved?.model).not.toHaveProperty('apiKey');
+    expect(resolved?.model).not.toHaveProperty('websocketUrl');
+    await config.close();
+  });
+
   it('validates explicit object references for voice and arbitrary model IDs', () => {
     const parsed = klexConfigSchema.parse({
       configVersion: 2,

@@ -5,6 +5,7 @@ import type { LiveKitRoomTransportDescriptor } from '@stagewise/mcp-extension-re
 
 import type { Mcp } from '@/mcp';
 import type { MediaTransportConnector } from '@/media-transport';
+import type { ConversationHost } from '@/session/interaction';
 
 import {
   createProductionMediaTransportConnector,
@@ -15,6 +16,9 @@ import type { RealtimeSessionCoordinator } from './session-coordinator';
 
 const logging = { child: vi.fn() } as unknown as RootLogger;
 const mcp = {} as Mcp;
+const conversationHost: ConversationHost = {
+  acquireInteractionLease: vi.fn(),
+};
 
 function harness() {
   const order: string[] = [];
@@ -39,6 +43,11 @@ function harness() {
     mcp,
     provider: {
       kind: 'openai-realtime',
+      model: {
+        modelId: 'gpt-realtime',
+        contextSize: 32_000,
+        inputCapabilities: {},
+      },
       config: {
         modelId: 'gpt-realtime',
         apiKey: 'test-key',
@@ -46,6 +55,7 @@ function harness() {
       },
     },
     ownedConnector: connector,
+    conversationHost,
     createCoordinator,
   });
   return {
@@ -88,6 +98,11 @@ describe('createRealtime', () => {
       mcp,
       provider: {
         kind: 'openai-realtime',
+        model: {
+          modelId: 'gpt-realtime',
+          contextSize: 32_000,
+          inputCapabilities: {},
+        },
         config: {
           modelId: 'gpt-realtime',
           apiKey: 'test-key',
@@ -95,6 +110,7 @@ describe('createRealtime', () => {
         },
       },
       ownedConnector: connector,
+      conversationHost,
       createCoordinator: () => coordinator,
     });
     await realtime.start();

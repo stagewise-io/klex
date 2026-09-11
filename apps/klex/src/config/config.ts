@@ -48,8 +48,23 @@ export interface ResolvedOpenAIRealtimeConfig {
   websocketUrl: string;
 }
 
+/**
+ * Non-secret realtime model metadata. Safe to pass into shared context
+ * preparation and extension context hooks — it carries no credentials or
+ * endpoint configuration.
+ */
+export interface RealtimeModelMetadata {
+  modelId: string;
+  displayName?: string;
+  contextSize: number;
+  inputCapabilities: ModelInputCapabilities;
+}
+
 export type ResolvedRealtimeProvider = {
   kind: 'openai-realtime';
+  /** Non-secret metadata describing the resolved realtime model. */
+  model: RealtimeModelMetadata;
+  /** Credentials and endpoint configuration — provider construction only. */
   config: ResolvedOpenAIRealtimeConfig;
 };
 
@@ -292,6 +307,14 @@ class ConfigModule implements Config {
       'https://api.openai.com/v1';
     return {
       kind: 'openai-realtime',
+      model: {
+        modelId: resolved.modelId,
+        ...(resolved.displayName !== undefined && {
+          displayName: resolved.displayName,
+        }),
+        contextSize: resolved.contextSize,
+        inputCapabilities: resolved.inputCapabilities,
+      },
       config: {
         modelId: resolved.modelId,
         apiKey,

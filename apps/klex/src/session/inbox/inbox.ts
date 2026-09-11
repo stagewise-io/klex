@@ -92,6 +92,13 @@ export type ContextDataUIPart = {
 };
 
 export type SessionInboxEvent = {
+  /**
+   * Stable identity of this input. Carries the MCP Push Notification
+   * `eventId` when the input originates from an MCP server. The inbox
+   * assigns an internal ID when the caller lacks one, so every accepted
+   * input can be deduplicated and referenced by leased interaction modes.
+   */
+  eventId?: string;
   sourceEnv: string;
   urgency: SessionInboxUrgency;
   context: ContextDataUIPart;

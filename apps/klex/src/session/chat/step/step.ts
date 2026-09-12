@@ -8,6 +8,11 @@ import type { ModuleLogger } from '@stagewise/logger';
 
 import type { Config } from '@/config';
 import type { ProviderModelResolver } from '@/provider-registry';
+import {
+  convertInferenceHistory,
+  runInferenceContextTransformers,
+  runInferenceHistoryTransformers,
+} from '@/session/interaction';
 
 import type { ExtensionHandler } from '../extension-handler';
 import type {
@@ -17,7 +22,6 @@ import type {
 } from '../extensions/extension-api';
 import type { ExtendedUIMessage } from '../message-types';
 import { checkAndFixHistory } from '../utils/check-and-fix-history';
-import { convertToModelMessagesExtended } from '../utils/convert-to-model-messages';
 import type { ModelFallbackManager } from '../utils/model-fallback-manager';
 import { startChildSpan, tracer } from '../utils/tracing';
 import {
@@ -389,7 +393,8 @@ class StepModule implements Step {
             flags: TransformationFlags;
           };
           try {
-            preResult = await this.deps.extensionHandler.runHistoryTransformers(
+            preResult = await runInferenceHistoryTransformers(
+              this.deps.extensionHandler,
               messagesCopy,
               resolvedModel,
             );
@@ -438,13 +443,10 @@ class StepModule implements Step {
 
           // --- Stage 3: Convert to model messages ---
           transformSpan.addEvent('history_convert.start');
-          const dataPartTransformers =
-            this.deps.extensionHandler.getDataPartTransformers();
-          let modelMessages: ModelMessage[] =
-            await convertToModelMessagesExtended(
-              preResult.history,
-              dataPartTransformers,
-            );
+          let modelMessages: ModelMessage[] = await convertInferenceHistory(
+            this.deps.extensionHandler,
+            preResult.history,
+          );
           transformSpan.addEvent('history_convert.end', {
             'history_convert.outputMessageCount': modelMessages.length,
           });
@@ -456,11 +458,11 @@ class StepModule implements Step {
             flags: TransformationFlags;
           };
           try {
-            postResult =
-              await this.deps.extensionHandler.runContextTransformers(
-                modelMessages,
-                resolvedModel,
-              );
+            postResult = await runInferenceContextTransformers(
+              this.deps.extensionHandler,
+              modelMessages,
+              resolvedModel,
+            );
           } catch (error) {
             transformSpan.setAttribute('history_post_process.error', true);
             transformSpan.end();

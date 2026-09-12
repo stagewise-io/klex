@@ -664,6 +664,7 @@ const godSessionInfoResponseSchema = z
       'retrying',
       'success',
       'idle',
+      'leased',
       'terminated',
     ]),
     model: z.object({

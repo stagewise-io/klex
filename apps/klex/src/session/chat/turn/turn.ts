@@ -49,6 +49,8 @@ export interface TurnDependencies {
    * step's generation, preserving response-before-new-input ordering.
    */
   flushPendingImmediate?: () => void;
+  /** Stops the turn after the current step reaches its commit boundary. */
+  shouldYieldGenerationLane?: () => boolean;
 }
 
 export interface TurnResult {
@@ -235,8 +237,13 @@ class TurnModule implements Turn {
 
           stepCount++;
           totalStepCount = stepCount;
+
           if (stepResult.generation?.usage) {
             lastUsage = extractUsage(stepResult.generation.usage);
+          }
+          if (this.deps.shouldYieldGenerationLane?.()) {
+            turnSpan.addEvent('turn.generation_lane_yielded');
+            break;
           }
 
           // Fatal error — stop the turn immediately.

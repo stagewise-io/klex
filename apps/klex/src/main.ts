@@ -9,6 +9,7 @@ import {
   type CloudConnectivity,
   createCloudConnectivity,
 } from '@/cloud-connectivity';
+import { type RuntimeHandle, startRuntime } from '@/composition/runtime';
 import { createConfig } from '@/config';
 import { ensureDataDirectory } from '@/data-directory';
 import { createDirectoryLock, type DirectoryLock } from '@/directory-lock';
@@ -222,21 +223,23 @@ async function main(): Promise<void> {
     logging: logger,
     dataDirectory: cli.dataDirectory,
   });
-  const started: { close(): Promise<void> }[] = [localData];
+  // Resources started before the runtime modules. The runtime adopts them for
+  // shutdown; this list only drives rollback while the pre-runtime phase runs.
+  const preRuntime: { close(): Promise<void> }[] = [localData];
   let adminApiForUi: AdminApi | undefined;
-  let router: ReturnType<typeof createRouter> | undefined;
+  let runtime: RuntimeHandle | undefined;
 
   try {
     await tracing.start();
     await config.start();
-    started.push(config);
+    preRuntime.push(config);
     const providerRegistry = createProviderRegistry({
       logging: logger,
       config,
       definitions: builtInProviderDefinitions,
     });
     await providerRegistry.start();
-    started.push(providerRegistry);
+    preRuntime.push(providerRegistry);
 
     // Cloud connectivity: identity is always created; enrollment + token
     // client are initialized only when cloud is enabled.
@@ -305,7 +308,7 @@ async function main(): Promise<void> {
           introspectionScope,
         });
 
-    router = createRouter({
+    const router = createRouter({
       logging: logger,
       mcp,
       introspection: introspector,
@@ -348,42 +351,31 @@ async function main(): Promise<void> {
           mcp,
           provider: realtimeComposition.provider,
           ownedConnector: realtimeComposition.ownedConnector,
+          conversationHost: router,
         })
       : undefined;
-    for (const resource of [modelCallLogger, adminApi]) {
-      await resource.start();
-      started.push(resource);
-    }
     cloudConnectivity.setTunnelRequestHandler(adminApi.handle.bind(adminApi));
-    await cloudConnectivity.start();
-    started.push(cloudConnectivity);
-    await realtime?.start();
-    try {
-      await mcp.start();
-    } catch (error) {
-      await realtime?.close();
-      throw error;
-    }
-    started.push(mcp);
-    if (realtime) started.push(realtime);
-    await telemetryManager.start();
-    started.push(telemetryManager);
-    await router.start();
-    started.push(godMessages);
-    await godMessages.start();
-  } catch (error) {
-    await router?.close().catch((error: unknown) => {
-      logger.error({ error }, 'Router shutdown failed');
+    runtime = await startRuntime({
+      logging: logger,
+      adopted: preRuntime,
+      modules: {
+        modelCallLogger,
+        adminApi,
+        cloudConnectivity,
+        router,
+        realtime,
+        mcp,
+        telemetryManager,
+        godMessages,
+      },
     });
-    await closeReverse(started);
-    if (interactiveCloud && !started.includes(interactiveCloud)) {
-      await interactiveCloud.close().catch((closeError: unknown) => {
-        logger.error(
-          { error: closeError },
-          'Interactive cloud shutdown failed',
-        );
-      });
-    }
+  } catch (error) {
+    // `startRuntime` already unwound whatever it started; this rolls back the
+    // pre-runtime phase only. `close()` is idempotent on every module here.
+    await closeReverse(preRuntime);
+    await interactiveCloud?.close().catch((closeError: unknown) => {
+      logger.error({ error: closeError }, 'Interactive cloud shutdown failed');
+    });
     await dirLock.release();
     await tracing.close().catch((closeError: unknown) => {
       logger.error({ error: closeError }, 'Tracing shutdown failed');
@@ -391,7 +383,7 @@ async function main(): Promise<void> {
     throw error;
   }
 
-  const runningRouter = router;
+  const runningRuntime = runtime;
   const runningAdminApi = adminApiForUi;
   let cliUi: { start(): void; close(): void } | undefined;
   let updateManager: UpdateManager | undefined;
@@ -404,11 +396,10 @@ async function main(): Promise<void> {
       if (updateState?.status !== 'restarting') {
         await updateManager?.cancelInstall();
       }
-      const [, , lockRelease] = await Promise.allSettled([
-        runningRouter.close().catch((error: unknown) => {
-          logger.error({ error }, 'Router shutdown failed');
-        }),
-        closeReverse(started),
+      // Ordered teardown: event ingress and realtime sessions stop before the
+      // primary session and its extensions close.
+      await runningRuntime?.close();
+      const [lockRelease] = await Promise.allSettled([
         dirLock.release(),
         tracing.close(),
         logger[Symbol.asyncDispose](),

@@ -728,14 +728,36 @@ class ProviderRegistryModule implements ProviderRegistry {
     const config = this.requireConfig();
     const resolved = config.resolveRealtimeProvider();
     if (!resolved) return undefined;
-    const reference = config.get().modelSelection.voice.sts[0];
+    // Config picks the first valid voice.sts reference. Repeat that validity
+    // check here so duplicate model IDs cannot reselect a stale provider.
+    const reference = config.get().modelSelection.voice.sts.find((entry) => {
+      if (entry.modelId !== resolved.config.modelId) return false;
+      try {
+        config.resolveModel(entry);
+        return true;
+      } catch {
+        return false;
+      }
+    });
     if (!reference) return undefined;
     const model = this.resolveModel(reference);
     if (model.capabilities.voice?.sts !== true)
       throw new Error(
         `Model '${reference.modelId}' does not declare voice.sts capability`,
       );
-    return resolved;
+    // Registry metadata wins: it merges maintained, discovered and
+    // user-declared model info on top of the persisted configuration.
+    return {
+      ...resolved,
+      model: {
+        modelId: model.modelId,
+        ...(model.displayName !== undefined && {
+          displayName: model.displayName,
+        }),
+        contextSize: model.contextSize,
+        inputCapabilities: model.inputCapabilities,
+      },
+    };
   }
 
   async testConnection(

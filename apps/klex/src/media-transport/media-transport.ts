@@ -70,23 +70,6 @@ export interface MediaTransportConnector<Descriptor = unknown> {
   close(): Promise<void>;
 }
 
-/**
- * A connected realtime processor with concurrent attributed inputs and one
- * output. Provider-specific input limits are adapted inside the processor.
- */
-export interface RealtimeProcessor extends RealtimeEndpoint {
-  readonly audioInputs: RealtimeSourceConsumer<AudioFrame, AudioSourceMetadata>;
-  readonly audioOutput: AsyncIterable<AudioFrame>;
-}
-
-export interface RealtimeProcessorFactory {
-  create(options: {
-    namespace: string;
-    sessionId: string;
-    signal: AbortSignal;
-  }): Promise<RealtimeProcessor>;
-}
-
 /** Copies a frame at an ownership boundary. */
 export function cloneAudioFrame(frame: AudioFrame): AudioFrame {
   return { ...frame, data: frame.data.slice() };

@@ -48,12 +48,14 @@ const deferrable = (text: string) =>
 function makeDeps(
   overrides: Partial<{
     onImmediateEvent: ReturnType<typeof vi.fn>;
+    onDeferredEvent: ReturnType<typeof vi.fn>;
     onImmediateMessage: ReturnType<typeof vi.fn>;
     onNewInput: ReturnType<typeof vi.fn>;
   }> = {},
 ): InboxDependencies {
   return {
     onImmediateEvent: overrides.onImmediateEvent ?? vi.fn(),
+    onDeferredEvent: overrides.onDeferredEvent,
     onImmediateMessage: overrides.onImmediateMessage ?? vi.fn(),
     onNewInput: overrides.onNewInput ?? vi.fn(),
   } as InboxDependencies;
@@ -108,11 +110,28 @@ describe('Inbox — send', () => {
     expect(inbox.getEvents()).toEqual([]);
   });
 
-  it('calls onNewInput once per sent event', () => {
+  it('calls onNewInput once per unconsumed sent event', () => {
     inbox.send(critical('a'));
     inbox.send(defaultEvent('b'));
     inbox.send(deferrable('c'));
     expect(onNewInput).toHaveBeenCalledTimes(3);
+  });
+
+  it('does not notify new input when a lease callback consumes an event', () => {
+    const consumedInput = vi.fn();
+    const leasedInbox = createInbox(
+      makeDeps({
+        onImmediateEvent: vi.fn(() => true),
+        onDeferredEvent: vi.fn(() => true),
+        onNewInput: consumedInput,
+      }),
+    );
+
+    leasedInbox.send(defaultEvent('immediate'));
+    leasedInbox.send(deferrable('background'));
+
+    expect(consumedInput).not.toHaveBeenCalled();
+    expect(leasedInbox.getEvents()).toEqual([]);
   });
 
   it('passes urgency to onNewInput', () => {
@@ -418,6 +437,50 @@ describe('Inbox — drain: empty inbox', () => {
     inbox.drain(messages, drainLogger);
 
     expect(messages).toHaveLength(1);
+  });
+});
+
+describe('Inbox — event identity', () => {
+  it('assigns an internal event ID when the caller lacks one', () => {
+    const onImmediateEvent = vi.fn();
+    const inbox = createInbox(makeDeps({ onImmediateEvent }));
+
+    inbox.send(defaultEvent('a'));
+
+    const delivered = onImmediateEvent.mock.calls[0]?.[0] as SessionInboxEvent;
+    expect(delivered.eventId).toMatch(/[0-9a-f-]{36}/);
+  });
+
+  it('preserves a caller-provided event ID', () => {
+    const onImmediateEvent = vi.fn();
+    const inbox = createInbox(makeDeps({ onImmediateEvent }));
+
+    inbox.send({ ...defaultEvent('a'), eventId: 'discord:evt-1' });
+
+    const delivered = onImmediateEvent.mock.calls[0]?.[0] as SessionInboxEvent;
+    expect(delivered.eventId).toBe('discord:evt-1');
+  });
+
+  it('drops a duplicate event ID without notifying the session', () => {
+    const onImmediateEvent = vi.fn();
+    const onNewInput = vi.fn();
+    const inbox = createInbox(makeDeps({ onImmediateEvent, onNewInput }));
+    const event = { ...defaultEvent('a'), eventId: 'discord:evt-1' };
+
+    inbox.send(event);
+    inbox.send(event);
+
+    expect(onImmediateEvent).toHaveBeenCalledTimes(1);
+    expect(onNewInput).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not deduplicate deferred events with distinct IDs', () => {
+    const inbox = createInbox(makeDeps());
+
+    inbox.send({ ...deferrable('a'), eventId: 'evt-1' });
+    inbox.send({ ...deferrable('b'), eventId: 'evt-2' });
+
+    expect(inbox.getEvents()).toHaveLength(2);
   });
 });
 

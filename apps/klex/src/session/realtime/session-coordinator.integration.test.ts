@@ -14,8 +14,10 @@ import {
 
 import { createRealtimeSessionCoordinator } from './session-coordinator';
 import {
+  createDeterministicConversationHost,
   createDeterministicEchoProcessorFactory,
   createDeterministicMediaTransportConnector,
+  DETERMINISTIC_REALTIME_MODEL,
 } from './test-support';
 
 const logging = {
@@ -103,6 +105,8 @@ describe('MCP to deterministic realtime session', () => {
       mcp,
       mediaTransportConnector: connector,
       processorFactory,
+      conversationHost: createDeterministicConversationHost(),
+      model: DETERMINISTIC_REALTIME_MODEL,
       now: () => Date.parse('2026-08-01T18:00:00.000Z'),
     });
 

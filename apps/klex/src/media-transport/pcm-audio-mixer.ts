@@ -53,6 +53,7 @@ class PcmAudioMixerModule implements PcmAudioMixer {
   private readonly sourceTasks = new Set<Promise<void>>();
   private readonly sourceBufferSamples: number;
   private timer: ReturnType<typeof setTimeout> | undefined;
+  private nextPlayoutAtMs: number | undefined;
   private playoutInProgress = false;
   private sequence = 0;
   private timestampUs = 0;
@@ -152,23 +153,32 @@ class PcmAudioMixerModule implements PcmAudioMixer {
   }
 
   private ensureScheduled(): void {
-    if (
-      this.settled ||
-      this.timer ||
-      this.playoutInProgress ||
-      !this.hasReadySource()
-    )
+    if (this.settled || this.timer || this.playoutInProgress) return;
+    if (!this.hasReadySource()) {
+      this.nextPlayoutAtMs = undefined;
       return;
-    this.timer = setTimeout(() => {
-      this.timer = undefined;
-      this.playoutInProgress = true;
-      void this.playout()
-        .catch((error: unknown) => this.fail(error))
-        .finally(() => {
-          this.playoutInProgress = false;
-          this.ensureScheduled();
-        });
-    }, FRAME_DURATION_MS);
+    }
+    const now = performance.now();
+    const scheduledAt = this.nextPlayoutAtMs ?? now + FRAME_DURATION_MS;
+    this.nextPlayoutAtMs = scheduledAt;
+    this.timer = setTimeout(
+      () => {
+        this.timer = undefined;
+        this.playoutInProgress = true;
+        const startedAt = performance.now();
+        this.nextPlayoutAtMs =
+          startedAt - scheduledAt >= FRAME_DURATION_MS
+            ? startedAt + FRAME_DURATION_MS
+            : scheduledAt + FRAME_DURATION_MS;
+        void this.playout()
+          .catch((error: unknown) => this.fail(error))
+          .finally(() => {
+            this.playoutInProgress = false;
+            this.ensureScheduled();
+          });
+      },
+      Math.max(0, scheduledAt - now),
+    );
   }
 
   private async playout(): Promise<void> {
@@ -184,6 +194,7 @@ class PcmAudioMixerModule implements PcmAudioMixer {
       this.releaseSpace(state);
     }
     this.removeDrainedSources();
+    if (!this.hasReadySource()) this.nextPlayoutAtMs = undefined;
     if (contributed) {
       const samples = new Int16Array(FRAME_SAMPLES);
       for (let index = 0; index < samples.length; index += 1)

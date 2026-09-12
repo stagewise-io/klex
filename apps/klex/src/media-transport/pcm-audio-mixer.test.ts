@@ -232,6 +232,65 @@ describe('PCM audio mixer', () => {
     await mixer.close();
   });
 
+  it('keeps playout on an absolute clock when a frame is backpressured', async () => {
+    const mixer = createPcmAudioMixer({ sourceBufferMs: 100 });
+    const input = source('clocked');
+    await mixer.audioInputs.attach(input);
+    await Promise.all(
+      [1, 2, 3].map((value) => input.push(constantFrame(value))),
+    );
+
+    await vi.advanceTimersByTimeAsync(45);
+    const iterator = mixer.audioOutput[Symbol.asyncIterator]();
+    await iterator.next();
+    await Promise.resolve();
+    await iterator.next();
+    const thirdPromise = iterator.next();
+    let thirdSettled = false;
+    void thirdPromise.then(() => {
+      thirdSettled = true;
+    });
+
+    await vi.advanceTimersByTimeAsync(14);
+    expect(thirdSettled).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    await expect(thirdPromise).resolves.toMatchObject({
+      value: { sequence: 2, timestampUs: 40_000 },
+      done: false,
+    });
+    await mixer.close();
+  });
+
+  it('restarts the playout clock after draining while backpressured', async () => {
+    const mixer = createPcmAudioMixer({ sourceBufferMs: 100 });
+    const input = source('restarted');
+    await mixer.audioInputs.attach(input);
+    await Promise.all([1, 2].map((value) => input.push(constantFrame(value))));
+
+    await vi.advanceTimersByTimeAsync(45);
+    await input.push(constantFrame(3));
+    await vi.advanceTimersByTimeAsync(55);
+
+    const iterator = mixer.audioOutput[Symbol.asyncIterator]();
+    await iterator.next();
+    await Promise.resolve();
+    await iterator.next();
+    const thirdPromise = iterator.next();
+    let thirdSettled = false;
+    void thirdPromise.then(() => {
+      thirdSettled = true;
+    });
+
+    await vi.advanceTimersByTimeAsync(19);
+    expect(thirdSettled).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    await expect(thirdPromise).resolves.toMatchObject({
+      value: { sequence: 2, timestampUs: 40_000 },
+      done: false,
+    });
+    await mixer.close();
+  });
+
   it('serializes playout while output is backpressured', async () => {
     const mixer = createPcmAudioMixer({ sourceBufferMs: 100 });
     const input = source('buffered');

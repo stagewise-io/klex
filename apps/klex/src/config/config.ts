@@ -48,6 +48,13 @@ export interface ResolvedOpenAIRealtimeConfig {
   websocketUrl: string;
 }
 
+export interface ResolvedOpenAILiveConfig {
+  modelId: 'gpt-live-1';
+  apiKey: string;
+  baseUrl: string;
+  responsesModelId: string;
+}
+
 /**
  * Non-secret realtime model metadata. Safe to pass into shared context
  * preparation and extension context hooks — it carries no credentials or
@@ -60,13 +67,21 @@ export interface RealtimeModelMetadata {
   inputCapabilities: ModelInputCapabilities;
 }
 
-export type ResolvedRealtimeProvider = {
-  kind: 'openai-realtime';
-  /** Non-secret metadata describing the resolved realtime model. */
-  model: RealtimeModelMetadata;
-  /** Credentials and endpoint configuration — provider construction only. */
-  config: ResolvedOpenAIRealtimeConfig;
-};
+export type ResolvedRealtimeProvider =
+  | {
+      kind: 'openai-realtime';
+      /** Non-secret metadata describing the resolved realtime model. */
+      model: RealtimeModelMetadata;
+      /** Credentials and endpoint configuration — provider construction only. */
+      config: ResolvedOpenAIRealtimeConfig;
+    }
+  | {
+      kind: 'openai-live';
+      /** Non-secret metadata describing the resolved realtime model. */
+      model: RealtimeModelMetadata;
+      /** Credentials and endpoint configuration — provider construction only. */
+      config: ResolvedOpenAILiveConfig;
+    };
 
 export interface ModelInfo {
   capabilities: ModelCapabilities;
@@ -305,16 +320,31 @@ class ConfigModule implements Config {
     const baseUrl =
       stringSetting(resolved.settings, 'baseUrl') ??
       'https://api.openai.com/v1';
+    const model = {
+      modelId: resolved.modelId,
+      ...(resolved.displayName !== undefined && {
+        displayName: resolved.displayName,
+      }),
+      contextSize: resolved.contextSize,
+      inputCapabilities: resolved.inputCapabilities,
+    };
+    if (resolved.modelId === 'gpt-live-1') {
+      return {
+        kind: 'openai-live',
+        model,
+        config: {
+          modelId: resolved.modelId,
+          apiKey,
+          baseUrl,
+          responsesModelId: resolveOpenAILiveResponsesModel(
+            resolved.providerOptions,
+          ),
+        },
+      };
+    }
     return {
       kind: 'openai-realtime',
-      model: {
-        modelId: resolved.modelId,
-        ...(resolved.displayName !== undefined && {
-          displayName: resolved.displayName,
-        }),
-        contextSize: resolved.contextSize,
-        inputCapabilities: resolved.inputCapabilities,
-      },
+      model,
       config: {
         modelId: resolved.modelId,
         apiKey,
@@ -540,6 +570,32 @@ function safeErrorMessage(error: unknown): string {
 
 export function getDefaultTelemetryLevel(): TelemetryLevel {
   return process.env.NODE_ENV === 'production' ? 'reduced' : 'full';
+}
+
+function resolveOpenAILiveResponsesModel(
+  providerOptions:
+    | Readonly<Record<string, Record<string, unknown>>>
+    | undefined,
+): string {
+  const live = providerOptions?.openai?.live;
+  if (live === undefined) return 'gpt-5.6-luna';
+  if (typeof live !== 'object' || live === null || Array.isArray(live)) {
+    throw new ConfigValidationError(
+      'OpenAI Live provider option must be an object',
+    );
+  }
+  const responsesModelId = (live as Record<string, unknown>).responsesModelId;
+  if (responsesModelId === undefined) return 'gpt-5.6-luna';
+  if (
+    typeof responsesModelId !== 'string' ||
+    responsesModelId.trim().length === 0 ||
+    responsesModelId !== responsesModelId.trim()
+  ) {
+    throw new ConfigValidationError(
+      'OpenAI Live responsesModelId must be a non-empty string without surrounding whitespace',
+    );
+  }
+  return responsesModelId;
 }
 
 export function openAIRealtimeWebSocketUrl(

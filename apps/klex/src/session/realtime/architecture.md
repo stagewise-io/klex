@@ -94,7 +94,7 @@ The lease's bootstrap watermark and ordered update iterable remove the snapshot/
 
 OpenAI can request tools, but Klex remains the authority. The adapter emits a provider-neutral tool request. The coordinator commits the call, executes it through the lease's shared schema-validating, timed, cancellable, execution-ID-deduplicated executor, commits the result, then sends provider output. The provider never receives executable tool functions.
 
-Only finalized transcripts become canonical commits. Partial deltas are not history. Interrupted assistant text is limited to the portion synchronized with audio playout. Commit event IDs suppress duplicates.
+Finalized transcripts become ordinary canonical turn commits. Partial deltas are not promoted to turns. Providers without authoritative turn-completion events may instead commit bounded, explicitly approximate transcript groups as `data-context`; these retain speaker and timeline metadata but never claim that assistant output was heard. Interrupted finalized assistant text is limited to the portion synchronized with audio playout. Commit event IDs suppress duplicates.
 
 One bounded provider reconnect grace window is available. A replacement connection is configured, canonical history is reseeded, and unacknowledged updates and tool results are replayed in original order. At most one response is requested after replay. Stable update, transcript, and execution IDs prevent duplicate commits and side effects. Exhausted attempts or an expired grace window ends the call and releases the lane.
 
@@ -136,6 +136,18 @@ Voice, instructions, and VAD use provider-owned defaults until Klex exposes a
 user or agent preference mechanism. Startup starts the `Realtime` module, which subscribes its coordinator before
 MCP connections can deliver offers. Shutdown closes the coordinator and its
 sessions, then the connector and native SDK, and only then MCP.
+
+## OpenAI GPT-Live model session
+
+Maintained `gpt-live-1` metadata selects the separate `openai-live` adapter; `gpt-realtime-*` models continue to select `openai-realtime`. GPT-Live receives full-duplex audio and natural voice instructions, while its configured Responses backend receives bounded canonical startup context, Klex instructions, and JSON-Schema tool descriptors. Startup retains at most 128 messages and 7,000 tokens beneath the provider limit.
+
+Responses delegation stays provider-driven: Klex does not open a separate Responses request. The adapter correlates the outer delegation ID, nested response ID, and stable function `call_id`. Only completed function-call items become provider-neutral tool events. The coordinator remains the sole authority for validation and execution through the interaction lease. Structured outputs return to the matching call, and one continuation is sent only after every call in the completed response settles.
+
+GPT-Live transcript deltas have timeline intervals but no authoritative turn boundary. Exact fragments are grouped deterministically for bounded storage and committed as approximate context with speaker and interval metadata, never as finalized user or assistant turns. Full-duplex overlap is retained. Output audio has no completion or playout timing event, so the adapter does not claim heard output or perform heuristic truncate-on-interruption.
+
+Usage snapshots are cumulative. Logs may record provider session, delegation, response, and execution IDs; duration, context ratio, backend token counts, replacement attempt, and final-usage confirmation. Graceful close first stops updates, waits a bounded interval for collected tool results, requests provider closure, and waits for `session.closed`. One replacement connection is permitted only when no delegated operation is ambiguous; a loss during tool work, a second loss, or an exhausted timeout fails closed without replaying side effects.
+
+Client delegation remains out of scope. Supporting it requires a distinct lease capability for a Klex-owned backend agent run rather than extending the Responses delegation path.
 
 ## Observability and data handling
 

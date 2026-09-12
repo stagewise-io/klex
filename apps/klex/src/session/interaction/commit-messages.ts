@@ -69,6 +69,21 @@ export function toCanonicalMessage(
         },
         `The realtime voice call ended${event.reason ? ` (${event.reason})` : ''}.`,
       );
+    case 'approximate-transcript-group':
+      return contextMessage(
+        event.eventId,
+        {
+          kind: 'realtime-approximate-transcript',
+          timestamp: event.timestamp,
+          provider: 'gpt-live',
+          speaker: event.speaker,
+          startMs: event.startMs,
+          endMs: event.endMs,
+          groupingPolicy: 'provider-grouped-time-interval',
+          approximate: true,
+        },
+        `[Approximate ${event.speaker} realtime transcript, ${event.startMs}-${event.endMs} ms]\n${event.text}`,
+      );
     case 'tool-call':
       return contextMessage(
         event.eventId,

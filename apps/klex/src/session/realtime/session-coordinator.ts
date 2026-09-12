@@ -61,6 +61,7 @@ interface ActiveRealtimeSession {
   contextHandle?: PreparedInferenceContextHandle;
   contextSettled: boolean;
   setup?: Promise<void>;
+  modelEventTask?: Promise<void>;
   tasks: Promise<void>[];
   finish?: Promise<void>;
 }
@@ -222,10 +223,12 @@ class RealtimeSessionCoordinatorModule implements RealtimeSessionCoordinator {
       timestamp: this.timestamp(),
     });
 
+    const modelEventTask = this.consumeModelEvents(session, lease, processor);
+    session.modelEventTask = modelEventTask;
     session.tasks.push(
       this.discoverAudioSources(session, transport, processor),
       this.forwardUpdates(session, lease, processor),
-      this.consumeModelEvents(session, lease, processor),
+      modelEventTask,
       this.monitorLease(session, lease),
       this.pipeAudio(
         session,
@@ -343,6 +346,17 @@ class RealtimeSessionCoordinatorModule implements RealtimeSessionCoordinator {
     processor: RealtimeModelSession,
     event: RealtimeModelEvent,
   ): Promise<void> {
+    if (event.type === 'invalid-tool-call') {
+      await processor.sendToolResult(event.result);
+      return;
+    }
+    if (event.type === 'approximate-transcript-group') {
+      await lease.commit({
+        ...event,
+        timestamp: this.timestamp(),
+      });
+      return;
+    }
     if (event.type !== 'tool-call') {
       await lease.commit({
         type: event.type,
@@ -547,12 +561,16 @@ class RealtimeSessionCoordinatorModule implements RealtimeSessionCoordinator {
     session.finish = (async () => {
       const lease = session.lease;
       if (!lease) session.acquisitionController.abort('realtime-session-ended');
-      session.controller.abort('realtime-session-ended');
+      if (!session.processor)
+        session.controller.abort('realtime-session-ended');
       await session.setup;
       await Promise.allSettled([
         session.processor?.close(),
         session.transport?.close(),
       ]);
+      if (session.modelEventTask)
+        await Promise.allSettled([session.modelEventTask]);
+      session.controller.abort('realtime-session-ended');
       this.settleContext(session, 'rollback');
       // Releasing closes the lease, which ends the update stream the pumps
       // iterate. Awaiting the pumps first would deadlock.

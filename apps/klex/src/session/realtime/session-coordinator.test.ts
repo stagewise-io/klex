@@ -201,17 +201,27 @@ describe('realtime session coordinator', () => {
     await coordinator.close();
   });
 
-  it('accepts an offer, echoes ordered frames, and handles remote end once', async () => {
-    const { coordinator, connector, mcpHarness, processorFactory } = setup();
+  it('accepts an offer, drains final model events, and handles remote end once', async () => {
+    const { coordinator, connector, mcpHarness, processorFactory, host } =
+      setup();
     await coordinator.start();
     await mcpHarness.notify(offered());
     const transport = await connector.nextTransport();
     const processor = await processorFactory.nextProcessor();
+    const lease = await host.nextLease();
 
     await transport.inject(frame(1));
     await transport.inject(frame(2));
     await expect(transport.receiveSent()).resolves.toEqual(frame(1));
     await expect(transport.receiveSent()).resolves.toEqual(frame(2));
+    processor.emitOnClose({
+      type: 'approximate-transcript-group',
+      eventId: 'final-group',
+      speaker: 'assistant',
+      text: 'final words',
+      startMs: 10,
+      endMs: 20,
+    });
 
     await mcpHarness.notify(ended());
     await mcpHarness.notify(ended());
@@ -220,6 +230,16 @@ describe('realtime session coordinator', () => {
     expect(mcpHarness.endRealtimeMediaSession).not.toHaveBeenCalled();
     expect(transport.closeCount).toBe(1);
     expect(processor.closeCount).toBe(1);
+    expect(processor.signalAbortedAtClose).toBe(false);
+    expect(lease.commits).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: 'approximate-transcript-group',
+          eventId: 'final-group',
+          text: 'final words',
+        }),
+      ]),
+    );
     await coordinator.close();
   });
 
@@ -496,6 +516,37 @@ describe('realtime session coordinator', () => {
       'tool-call',
       'tool-result',
     ]);
+
+    await mcpHarness.notify(ended());
+    await coordinator.close();
+  });
+
+  it('returns invalid tool calls without committing fabricated tool activity', async () => {
+    const { coordinator, mcpHarness, processorFactory, host } = setup();
+    await coordinator.start();
+    await mcpHarness.notify(offered());
+    const lease = await host.nextLease();
+    const processor = await processorFactory.nextProcessor();
+
+    await processor.emit({
+      type: 'invalid-tool-call',
+      eventId: 'invalid-call-1',
+      result: {
+        executionId: 'exec-invalid',
+        status: 'error',
+        code: 'invalid-input',
+        error: 'invalid JSON',
+        retryable: false,
+      },
+    });
+
+    await vi.waitFor(() =>
+      expect(processor.receivedToolResults).toHaveLength(1),
+    );
+    expect(lease.commits.map((commit) => commit.type)).toEqual([
+      'session-started',
+    ]);
+    expect(lease.toolRequests).toEqual([]);
 
     await mcpHarness.notify(ended());
     await coordinator.close();

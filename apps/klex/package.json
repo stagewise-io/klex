@@ -83,6 +83,7 @@
     "hono": "4.12.30",
     "ink": "7.1.1",
     "jose": "6.2.10",
+    "js-tiktoken": "1.0.21",
     "oauth4webapi": "3.8.7",
     "quickjs-emscripten-core": "0.32.0",
     "react": "19.2.8",

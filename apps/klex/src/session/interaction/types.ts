@@ -93,6 +93,15 @@ export type RealtimeCommitEvent =
       readonly eventId: string;
       readonly timestamp: string;
       readonly result: InteractionToolResult;
+    }
+  | {
+      readonly type: 'approximate-transcript-group';
+      readonly eventId: string;
+      readonly timestamp: string;
+      readonly speaker: 'user' | 'assistant';
+      readonly text: string;
+      readonly startMs: number;
+      readonly endMs: number;
     };
 
 export type InteractionLeaseClosure =

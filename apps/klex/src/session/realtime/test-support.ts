@@ -263,12 +263,15 @@ export function createDeterministicMediaTransportConnector(): DeterministicMedia
 interface DeterministicEchoProcessor extends RealtimeModelSession {
   readonly context: PreparedInferenceContext;
   readonly closeCount: number;
+  readonly signalAbortedAtClose: boolean | undefined;
   readonly attachedSources: readonly Pick<AudioSource, 'id' | 'metadata'>[];
   readonly receivedUpdates: readonly InteractionUpdateEnvelope[];
   readonly receivedToolResults: readonly InteractionToolResult[];
   fail(error: unknown): void;
   /** Publishes a semantic model event to the coordinator. */
   emit(event: RealtimeModelEvent): Promise<void>;
+  /** Publishes a final semantic event while close is in progress. */
+  emitOnClose(event: RealtimeModelEvent): void;
 }
 
 class DeterministicEchoProcessorModule implements DeterministicEchoProcessor {
@@ -280,8 +283,10 @@ class DeterministicEchoProcessorModule implements DeterministicEchoProcessor {
   private readonly tasks = new Set<Promise<void>>();
   private readonly updates: InteractionUpdateEnvelope[] = [];
   private readonly toolResults: InteractionToolResult[] = [];
+  private closeEvent: RealtimeModelEvent | undefined;
   private settled = false;
   private closes = 0;
+  private abortedAtClose: boolean | undefined;
 
   readonly audioInputs = {
     attach: (source: AudioSource) => this.attachSource(source),
@@ -302,6 +307,10 @@ class DeterministicEchoProcessorModule implements DeterministicEchoProcessor {
     return this.closes;
   }
 
+  get signalAbortedAtClose(): boolean | undefined {
+    return this.abortedAtClose;
+  }
+
   get attachedSources(): readonly Pick<AudioSource, 'id' | 'metadata'>[] {
     return this.acceptedSources;
   }
@@ -316,6 +325,10 @@ class DeterministicEchoProcessorModule implements DeterministicEchoProcessor {
 
   async emit(event: RealtimeModelEvent): Promise<void> {
     await this.eventQueue.push(event);
+  }
+
+  emitOnClose(event: RealtimeModelEvent): void {
+    this.closeEvent = event;
   }
 
   private async attachSource(source: AudioSource): Promise<void> {
@@ -354,6 +367,8 @@ class DeterministicEchoProcessorModule implements DeterministicEchoProcessor {
   async close(): Promise<void> {
     if (this.closes > 0) return;
     this.closes += 1;
+    this.abortedAtClose = this.signal?.aborted ?? false;
+    if (this.closeEvent) await this.eventQueue.push(this.closeEvent);
     this.settle({ type: 'closed', reason: 'local-close' });
   }
 

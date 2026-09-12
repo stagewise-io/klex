@@ -614,6 +614,106 @@ describe('config v2', () => {
     await config.close();
   });
 
+  it('resolves GPT-Live with Responses delegation options', async () => {
+    const config = createConfig({
+      logging,
+      dataDirectory: await directory(true),
+      env: { REALTIME_KEY: 'sk-live' },
+    });
+    await config.start();
+    await config.writeProviderInstance('openai-voice', {
+      type: 'openai',
+      settings: {
+        apiKey: '${env:REALTIME_KEY}',
+        baseUrl: 'https://openai.example/v1',
+      },
+      knownModels: {
+        'gpt-live-1': {
+          contextSize: 128_000,
+          capabilities: { voice: { sts: true }, input: { audio: {} } },
+        },
+      },
+    });
+    await config.writeModelSelection({
+      ...emptyModelSelection,
+      voice: {
+        ...emptyModelSelection.voice,
+        sts: [
+          {
+            providerId: 'openai-voice',
+            modelId: 'gpt-live-1',
+            providerOptions: {
+              openai: { live: { responsesModelId: 'gpt-5.6-terra' } },
+            },
+          },
+        ],
+      },
+    });
+
+    expect(config.resolveRealtimeProvider()).toMatchObject({
+      kind: 'openai-live',
+      model: { modelId: 'gpt-live-1', contextSize: 128_000 },
+      config: {
+        modelId: 'gpt-live-1',
+        apiKey: 'sk-live',
+        baseUrl: 'https://openai.example/v1',
+        responsesModelId: 'gpt-5.6-terra',
+      },
+    });
+    expect(config.resolveRealtimeProvider()?.model).not.toHaveProperty(
+      'apiKey',
+    );
+
+    await config.writeModelSelection({
+      ...emptyModelSelection,
+      voice: {
+        ...emptyModelSelection.voice,
+        sts: [{ providerId: 'openai-voice', modelId: 'gpt-live-1' }],
+      },
+    });
+    expect(config.resolveRealtimeProvider()).toMatchObject({
+      kind: 'openai-live',
+      config: { responsesModelId: 'gpt-5.6-luna' },
+    });
+    await config.close();
+  });
+
+  it('rejects invalid GPT-Live Responses model options', async () => {
+    const config = createConfig({
+      logging,
+      dataDirectory: await directory(true),
+      env: {},
+    });
+    await config.start();
+    await config.writeProviderInstance('openai-voice', {
+      type: 'openai',
+      settings: { apiKey: 'test-key' },
+      knownModels: {
+        'gpt-live-1': { capabilities: { voice: { sts: true } } },
+      },
+    });
+    await config.writeModelSelection({
+      ...emptyModelSelection,
+      voice: {
+        ...emptyModelSelection.voice,
+        sts: [
+          {
+            providerId: 'openai-voice',
+            modelId: 'gpt-live-1',
+            providerOptions: {
+              openai: { live: { responsesModelId: ' ' } },
+            },
+          },
+        ],
+      },
+    });
+
+    expect(() => config.resolveRealtimeProvider()).toThrow(
+      'responsesModelId must be a non-empty string',
+    );
+    await config.close();
+  });
+
   it('validates explicit object references for voice and arbitrary model IDs', () => {
     const parsed = klexConfigSchema.parse({
       configVersion: 2,

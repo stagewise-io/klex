@@ -156,6 +156,18 @@ describe('built-in provider model catalogs', () => {
       contextSize: 128_000,
       capabilities: { input: { image: {}, audio: {} }, voice: { sts: true } },
     });
+    expect(openai?.resolveModelMetadata?.('gpt-live-1')).toMatchObject({
+      kind: 'speech-to-speech',
+      displayName: 'GPT-Live-1',
+      contextSize: 128_000,
+      capabilities: { input: { audio: {} }, voice: { sts: true } },
+    });
+    const unknownLive = openai?.resolveModelMetadata?.('gpt-live-future');
+    expect(unknownLive).toMatchObject({
+      kind: 'language',
+      capabilities: { input: { image: {} } },
+    });
+    expect(unknownLive?.capabilities?.voice?.sts).toBeUndefined();
     expect(openai?.resolveModelMetadata?.('gpt-transcribe')).toMatchObject({
       capabilities: {
         input: { audio: { maxBytes: 25_000_000 } },

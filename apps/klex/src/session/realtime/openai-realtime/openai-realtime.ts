@@ -8,6 +8,7 @@ import {
   type AudioFrame,
   type AudioSource,
   createPcmAudioMixer,
+  createPcmResampler,
   type RealtimeEndpointClosure,
 } from '@/media-transport';
 import { BoundedAsyncQueue } from '@/media-transport/async-queue';
@@ -31,7 +32,6 @@ import {
   toSessionTools,
   userTextItem,
 } from './conversation-items';
-import { createPcmResampler } from './pcm-resampler';
 import { type OpenAIServerEvent, parseServerEvent } from './wire-events';
 
 export interface RealtimeWebSocket {

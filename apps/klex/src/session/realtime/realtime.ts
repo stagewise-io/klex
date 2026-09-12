@@ -14,6 +14,7 @@ import {
 } from '@/media-transport/livekit-room';
 import type { ConversationHost } from '@/session/interaction';
 
+import { createGPTLiveProcessorFactory } from './gpt-live';
 import type { RealtimeModelSessionFactory } from './model-session';
 import { createOpenAIRealtimeProcessorFactory } from './openai-realtime';
 import {
@@ -39,6 +40,7 @@ export interface RealtimeDependencies {
   ownedConnector: MediaTransportConnector<LiveKitRoomTransportDescriptor>;
   createCoordinator?: (
     connector: MediaTransportConnector<LiveKitRoomTransportDescriptor>,
+    processorFactory: RealtimeModelSessionFactory,
   ) => RealtimeSessionCoordinator;
 }
 
@@ -59,13 +61,14 @@ class RealtimeModule implements Realtime {
     this.startPromise = (async () => {
       const connector = this.deps.ownedConnector;
       this.connector = connector;
+      const processorFactory = this.createProcessorFactory();
       const coordinator =
-        this.deps.createCoordinator?.(connector) ??
+        this.deps.createCoordinator?.(connector, processorFactory) ??
         createRealtimeSessionCoordinator({
           logging: this.deps.logging,
           mcp: this.deps.mcp,
           mediaTransportConnector: connector,
-          processorFactory: this.createProcessorFactory(),
+          processorFactory,
           conversationHost: this.deps.conversationHost,
           model: this.deps.provider.model,
         });
@@ -84,6 +87,11 @@ class RealtimeModule implements Realtime {
 
   private createProcessorFactory(): RealtimeModelSessionFactory {
     switch (this.deps.provider.kind) {
+      case 'openai-live':
+        return createGPTLiveProcessorFactory({
+          logging: this.deps.logging,
+          config: this.deps.provider.config,
+        });
       case 'openai-realtime':
         return createOpenAIRealtimeProcessorFactory({
           logging: this.deps.logging,

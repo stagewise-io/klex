@@ -22,6 +22,19 @@ export type RealtimeModelEvent =
       readonly type: 'tool-call';
       readonly eventId: string;
       readonly request: InteractionToolRequest;
+    }
+  | {
+      readonly type: 'invalid-tool-call';
+      readonly eventId: string;
+      readonly result: InteractionToolResult;
+    }
+  | {
+      readonly type: 'approximate-transcript-group';
+      readonly eventId: string;
+      readonly speaker: 'user' | 'assistant';
+      readonly text: string;
+      readonly startMs: number;
+      readonly endMs: number;
     };
 
 export interface RealtimeModelSession extends RealtimeEndpoint {

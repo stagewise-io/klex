@@ -118,6 +118,40 @@ describe('createRealtime', () => {
     expect(connector.close).toHaveBeenCalledOnce();
   });
 
+  it('selects the GPT-Live factory for an openai-live provider', async () => {
+    vi.mocked(logging.child).mockClear();
+    const { connector, coordinator } = harness();
+    const createCoordinator = vi.fn((..._args: unknown[]) => coordinator);
+    const realtime = createRealtime({
+      logging,
+      mcp,
+      provider: {
+        kind: 'openai-live',
+        model: {
+          modelId: 'gpt-live-1',
+          contextSize: 128_000,
+          inputCapabilities: { audio: {} },
+        },
+        config: {
+          modelId: 'gpt-live-1',
+          apiKey: 'test-key',
+          baseUrl: 'https://example.test/v1',
+          responsesModelId: 'gpt-5.6-luna',
+        },
+      },
+      ownedConnector: connector,
+      conversationHost,
+      createCoordinator,
+    });
+    await realtime.start();
+    expect(logging.child).toHaveBeenCalledWith({
+      name: 'gpt-live',
+      bindings: { module: 'gpt-live' },
+    });
+    expect(createCoordinator.mock.calls[0]?.[1]).toBeDefined();
+    await realtime.close();
+  });
+
   it('closes the connector when coordinator startup fails', async () => {
     const { realtime, coordinator, connector } = harness();
     vi.mocked(coordinator.start).mockRejectedValueOnce(

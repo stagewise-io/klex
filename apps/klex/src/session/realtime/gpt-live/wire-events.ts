@@ -236,7 +236,10 @@ function parseResponseEvent(
         ...withKey('itemId', optionalString(item.id)),
         callId: requiredString(item.call_id, name, 'item.call_id'),
         name: requiredString(item.name, name, 'item.name'),
-        argumentsJson: optionalString(item.arguments) ?? '{}',
+        argumentsJson:
+          item.arguments === undefined || item.arguments === ''
+            ? '{}'
+            : requiredString(item.arguments, name, 'item.arguments'),
       },
     };
   }
@@ -341,7 +344,8 @@ function requiredBase64(
     encoded.length % 4 !== 0 ||
     !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(
       encoded,
-    )
+    ) ||
+    Buffer.from(encoded, 'base64').toString('base64') !== encoded
   )
     throw new GPTLiveWireEventError(
       `Live event ${eventType} has malformed base64 ${field}`,

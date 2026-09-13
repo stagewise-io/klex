@@ -38,6 +38,14 @@ export class BoundedAsyncQueue<T> implements AsyncIterable<T> {
     });
   }
 
+  /** Appends one terminal marker without blocking, immediately before close. */
+  pushTerminal(value: T): void {
+    if (this.ended) throw this.closedError();
+    const reader = this.readers.shift();
+    if (reader) reader.resolve({ value, done: false });
+    else this.items.push(value);
+  }
+
   close(error?: unknown): void {
     if (this.ended) return;
     this.ended = true;

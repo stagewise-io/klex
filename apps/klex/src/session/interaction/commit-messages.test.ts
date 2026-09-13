@@ -30,7 +30,10 @@ describe('realtime canonical messages', () => {
         eventId: 'started-1',
         timestamp,
       },
-      kind: 'realtime-session-started',
+      metadata: {
+        kind: 'realtime-session-started',
+        timestamp,
+      },
       text: 'A realtime voice call started. Spoken turns are appended to this conversation.',
     },
     {
@@ -40,25 +43,44 @@ describe('realtime canonical messages', () => {
         timestamp,
         reason: 'remote-end',
       },
-      kind: 'realtime-session-ended',
+      metadata: {
+        kind: 'realtime-session-ended',
+        timestamp,
+        reason: 'remote-end',
+      },
       text: 'The realtime voice call ended (remote-end).',
     },
-  ])('projects $event.type as canonical context', ({ event, kind, text }) => {
-    expect(toCanonicalMessage(event)).toMatchObject({
-      id: event.eventId,
-      role: 'user',
-      parts: [
-        {
-          type: 'data-context',
-          data: {
-            sourceEnv: 'realtime-voice',
-            metadata: { kind, timestamp },
-            content: [{ type: 'text', text }],
+    {
+      event: {
+        type: 'session-ended' as const,
+        eventId: 'ended-without-reason-1',
+        timestamp,
+      },
+      metadata: {
+        kind: 'realtime-session-ended',
+        timestamp,
+      },
+      text: 'The realtime voice call ended.',
+    },
+  ])(
+    'projects $event.type as canonical context',
+    ({ event, metadata, text }) => {
+      expect(toCanonicalMessage(event)).toMatchObject({
+        id: event.eventId,
+        role: 'user',
+        parts: [
+          {
+            type: 'data-context',
+            data: {
+              sourceEnv: 'realtime-voice',
+              metadata,
+              content: [{ type: 'text', text }],
+            },
           },
-        },
-      ],
-    });
-  });
+        ],
+      });
+    },
+  );
 
   it('projects paired tool activity as canonical context', () => {
     const call = toCanonicalMessage({

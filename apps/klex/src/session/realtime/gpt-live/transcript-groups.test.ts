@@ -71,6 +71,127 @@ describe('GPT-Live transcript grouping', () => {
     ]);
   });
 
+  it('merges at inclusive gap, duration, and character boundaries', () => {
+    const gap = createGPTLiveTranscriptGrouper();
+    gap.add({
+      eventId: 'gap-1',
+      speaker: 'user',
+      delta: 'a',
+      startMs: 0,
+      endMs: 10,
+    });
+    gap.add({
+      eventId: 'gap-2',
+      speaker: 'user',
+      delta: 'b',
+      startMs: 760,
+      endMs: 761,
+    });
+    expect(gap.flush().map((group) => group.text)).toEqual(['ab']);
+
+    const duration = createGPTLiveTranscriptGrouper({
+      maxGroupDurationMs: 10,
+    });
+    duration.add({
+      eventId: 'duration-1',
+      speaker: 'user',
+      delta: 'a',
+      startMs: 0,
+      endMs: 1,
+    });
+    duration.add({
+      eventId: 'duration-2',
+      speaker: 'user',
+      delta: 'b',
+      startMs: 9,
+      endMs: 10,
+    });
+    expect(duration.flush().map((group) => group.text)).toEqual(['ab']);
+
+    const characters = createGPTLiveTranscriptGrouper({
+      maxGroupCharacters: 2,
+    });
+    characters.add({
+      eventId: 'characters-1',
+      speaker: 'user',
+      delta: 'a',
+      startMs: 0,
+      endMs: 1,
+    });
+    characters.add({
+      eventId: 'characters-2',
+      speaker: 'user',
+      delta: 'b',
+      startMs: 2,
+      endMs: 3,
+    });
+    expect(characters.flush().map((group) => group.text)).toEqual(['ab']);
+  });
+
+  it('splits just beyond gap, duration, and character boundaries', () => {
+    const gap = createGPTLiveTranscriptGrouper();
+    gap.add({
+      eventId: 'gap-1',
+      speaker: 'user',
+      delta: 'a',
+      startMs: 0,
+      endMs: 10,
+    });
+    const gapResult = gap.add({
+      eventId: 'gap-2',
+      speaker: 'user',
+      delta: 'b',
+      startMs: 761,
+      endMs: 762,
+    });
+    expect([...gapResult, ...gap.flush()].map((group) => group.text)).toEqual([
+      'a',
+      'b',
+    ]);
+
+    const duration = createGPTLiveTranscriptGrouper({
+      maxGroupDurationMs: 10,
+    });
+    duration.add({
+      eventId: 'duration-1',
+      speaker: 'user',
+      delta: 'a',
+      startMs: 0,
+      endMs: 1,
+    });
+    const durationResult = duration.add({
+      eventId: 'duration-2',
+      speaker: 'user',
+      delta: 'b',
+      startMs: 9,
+      endMs: 11,
+    });
+    expect(
+      [...durationResult, ...duration.flush()].map((group) => group.text),
+    ).toEqual(['a', 'b']);
+
+    const characters = createGPTLiveTranscriptGrouper({
+      maxGroupCharacters: 2,
+    });
+    characters.add({
+      eventId: 'characters-1',
+      speaker: 'user',
+      delta: 'a',
+      startMs: 0,
+      endMs: 1,
+    });
+    const characterResult = characters.add({
+      eventId: 'characters-2',
+      speaker: 'user',
+      delta: 'bc',
+      startMs: 2,
+      endMs: 3,
+    });
+    expect(
+      [...characterResult, ...characters.flush()].map((group) => group.text),
+    ).toEqual(['a', 'bc']);
+  });
+
   it('bounds groups by character count and duration', () => {
     const groups = createGPTLiveTranscriptGrouper({
       maxGroupCharacters: 5,
@@ -147,6 +268,33 @@ describe('GPT-Live transcript grouping', () => {
       'earlier',
       'later',
     ]);
+  });
+
+  it('fails closed when out-of-order fragments fill the pending bound', () => {
+    const groups = createGPTLiveTranscriptGrouper({ maxPendingGroups: 1 });
+    groups.add({
+      eventId: 'latest',
+      speaker: 'user',
+      delta: 'latest',
+      startMs: 20,
+      endMs: 21,
+    });
+    groups.add({
+      eventId: 'earlier',
+      speaker: 'user',
+      delta: 'earlier',
+      startMs: 10,
+      endMs: 11,
+    });
+    expect(() =>
+      groups.add({
+        eventId: 'earliest',
+        speaker: 'user',
+        delta: 'earliest',
+        startMs: 0,
+        endMs: 1,
+      }),
+    ).toThrow('pending transcript group limit');
   });
 
   it('rejects a single fragment larger than the group limit', () => {

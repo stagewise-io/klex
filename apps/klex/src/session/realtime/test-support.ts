@@ -368,12 +368,9 @@ class DeterministicEchoProcessorModule implements DeterministicEchoProcessor {
     if (this.closes > 0) return;
     this.closes += 1;
     this.abortedAtClose = this.signal?.aborted ?? false;
-    const closeEventPush =
-      this.closeEvent && !this.settled
-        ? this.eventQueue.push(this.closeEvent).catch(() => undefined)
-        : Promise.resolve();
+    if (this.closeEvent && !this.settled)
+      this.eventQueue.pushTerminal(this.closeEvent);
     this.settle({ type: 'closed', reason: 'local-close' });
-    await closeEventPush;
   }
 
   private readonly handleAbort = (): void => {

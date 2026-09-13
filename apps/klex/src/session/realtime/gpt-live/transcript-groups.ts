@@ -26,6 +26,7 @@ interface MutableGroup {
 export const GPT_LIVE_GROUP_GAP_MS = 750;
 
 const DEFAULT_MAX_SEEN_EVENT_IDS = 4_096;
+const DEFAULT_MAX_PENDING_GROUPS = 256;
 export const GPT_LIVE_MAX_TRANSCRIPT_DELTA_CHARACTERS = 32_000;
 
 const DEFAULT_MAX_GROUP_CHARACTERS = GPT_LIVE_MAX_TRANSCRIPT_DELTA_CHARACTERS;
@@ -33,6 +34,7 @@ const DEFAULT_MAX_GROUP_DURATION_MS = 30_000;
 
 export interface GPTLiveTranscriptGrouperOptions {
   readonly maxSeenEventIds?: number;
+  readonly maxPendingGroups?: number;
   readonly maxGroupCharacters?: number;
   readonly maxGroupDurationMs?: number;
 }
@@ -47,6 +49,7 @@ class GPTLiveTranscriptGrouperModule implements GPTLiveTranscriptGrouper {
   private readonly pending: MutableGroup[] = [];
   private readonly seen = new Map<string, undefined>();
   private readonly maxSeenEventIds: number;
+  private readonly maxPendingGroups: number;
   private readonly maxGroupCharacters: number;
   private readonly maxGroupDurationMs: number;
 
@@ -54,6 +57,10 @@ class GPTLiveTranscriptGrouperModule implements GPTLiveTranscriptGrouper {
     this.maxSeenEventIds = positiveInteger(
       options.maxSeenEventIds ?? DEFAULT_MAX_SEEN_EVENT_IDS,
       'maxSeenEventIds',
+    );
+    this.maxPendingGroups = positiveInteger(
+      options.maxPendingGroups ?? DEFAULT_MAX_PENDING_GROUPS,
+      'maxPendingGroups',
     );
     this.maxGroupCharacters = positiveInteger(
       options.maxGroupCharacters ?? DEFAULT_MAX_GROUP_CHARACTERS,
@@ -90,7 +97,7 @@ class GPTLiveTranscriptGrouperModule implements GPTLiveTranscriptGrouper {
       current.lastStartMs = fragment.startMs;
       return [];
     }
-    if (current !== undefined) this.pending.push(current);
+    if (current !== undefined) this.enqueuePending(current);
     this.active.set(fragment.speaker, {
       eventId: `gpt-live:transcript:${fragment.speaker}:${fragment.eventId}`,
       speaker: fragment.speaker,
@@ -109,12 +116,18 @@ class GPTLiveTranscriptGrouperModule implements GPTLiveTranscriptGrouper {
       if (speaker === fragment.speaker || group.startMs > earliestPendingStart)
         continue;
       this.active.delete(speaker);
-      this.pending.push(group);
+      this.enqueuePending(group);
     }
     const earliestActiveStart = Math.min(
       ...[...this.active.values()].map((group) => group.startMs),
     );
     return this.drainPendingThrough(earliestActiveStart);
+  }
+
+  private enqueuePending(group: MutableGroup): void {
+    if (this.pending.length >= this.maxPendingGroups)
+      throw new Error('GPT-Live pending transcript group limit exceeded');
+    this.pending.push(group);
   }
 
   private drainPendingThrough(
@@ -131,9 +144,11 @@ class GPTLiveTranscriptGrouperModule implements GPTLiveTranscriptGrouper {
   }
 
   flush(): readonly GPTLiveTranscriptGroup[] {
-    this.pending.push(...this.active.values());
+    const groups = [...this.pending.splice(0), ...this.active.values()].sort(
+      (left, right) => left.startMs - right.startMs,
+    );
     this.active.clear();
-    return this.drainPendingThrough(Number.POSITIVE_INFINITY);
+    return groups.map(freeze);
   }
 }
 

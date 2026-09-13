@@ -18,6 +18,21 @@ describe('BoundedAsyncQueue', () => {
     await expect(iterator.next()).resolves.toEqual({ value: 2, done: false });
   });
 
+  it('retains one terminal marker when closing at capacity', async () => {
+    const queue = new BoundedAsyncQueue<number>(1);
+    await queue.push(1);
+    queue.pushTerminal(2);
+    queue.close();
+
+    const iterator = queue[Symbol.asyncIterator]();
+    await expect(iterator.next()).resolves.toEqual({ value: 1, done: false });
+    await expect(iterator.next()).resolves.toEqual({ value: 2, done: false });
+    await expect(iterator.next()).resolves.toEqual({
+      value: undefined,
+      done: true,
+    });
+  });
+
   it('completes pending readers on normal close', async () => {
     const queue = new BoundedAsyncQueue<number>(1);
     const next = queue[Symbol.asyncIterator]().next();

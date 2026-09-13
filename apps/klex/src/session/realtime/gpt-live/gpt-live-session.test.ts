@@ -17,6 +17,7 @@ import {
 class FakeSocket extends EventEmitter implements GPTLiveWebSocket {
   readyState = 0;
   sent: string[] = [];
+  sendError: Error | undefined;
   close = vi.fn(() => {
     this.readyState = 3;
   });
@@ -24,6 +25,7 @@ class FakeSocket extends EventEmitter implements GPTLiveWebSocket {
     this.readyState = 3;
   });
   send(data: string): void {
+    if (this.sendError !== undefined) throw this.sendError;
     this.sent.push(data);
   }
   open(): void {
@@ -210,6 +212,35 @@ describe('GPT-Live model session', () => {
     expect((await next).value?.data).toHaveLength(1_920);
   });
 
+  it('pads and flushes a partial final output frame', async () => {
+    const setupResult = setup();
+    setupResult.socket.open();
+    setupResult.socket.message({
+      type: 'session.started',
+      session: { id: 'live-1' },
+    });
+    const session = await setupResult.creating;
+    const next = session.audioOutput[Symbol.asyncIterator]().next();
+    setupResult.socket.message({
+      type: 'session.output_audio.delta',
+      event_id: 'partial-audio',
+      delta: Buffer.alloc(480).toString('base64'),
+    });
+    setupResult.socket.message({
+      type: 'session.closed',
+      session: { id: 'live-1' },
+      reason: 'content',
+      usage: { seconds: 1 },
+    });
+
+    await expect(next).resolves.toMatchObject({
+      done: false,
+      value: { data: expect.any(Uint8Array) },
+    });
+    expect((await next).value?.data).toHaveLength(1_920);
+    await expect(session.closed).resolves.toMatchObject({ type: 'closed' });
+  });
+
   it('correlates tool results and continues only after every call settles', async () => {
     const setupResult = setup();
     setupResult.socket.open();
@@ -313,6 +344,47 @@ describe('GPT-Live model session', () => {
         entry.includes('response-1:continue'),
       ),
     ).toHaveLength(1);
+  });
+
+  it('fails closed without settling a tool call when result sending fails', async () => {
+    const setupResult = setup();
+    setupResult.socket.open();
+    setupResult.socket.message({
+      type: 'session.started',
+      session: { id: 'live-1' },
+    });
+    const session = await setupResult.creating;
+    const nextEvent = session.events[Symbol.asyncIterator]().next();
+    setupResult.socket.message({
+      type: 'session.delegation.created',
+      offset_ms: 0,
+      delegation: { id: 'd1', target: 'responses', response_id: 'r1' },
+    });
+    setupResult.socket.message({
+      type: 'response.event',
+      delegation_id: 'd1',
+      event: {
+        type: 'response.output_item.done',
+        item: {
+          type: 'function_call',
+          call_id: 'call-1',
+          name: 'lookup',
+          arguments: '{}',
+        },
+      },
+    });
+    await nextEvent;
+    setupResult.socket.sendError = new Error('socket send failed');
+
+    await expect(
+      session.sendToolResult({
+        executionId: 'call-1',
+        status: 'success',
+        output: { ok: true },
+      }),
+    ).rejects.toThrow('socket send failed');
+    await expect(session.closed).resolves.toMatchObject({ type: 'failed' });
+    expect(setupResult.replacementSocket()).toBeUndefined();
   });
 
   it('returns invalid JSON as invalid-input without emitting an executable call', async () => {
@@ -448,6 +520,32 @@ describe('GPT-Live model session', () => {
     });
     replacement?.emit('close');
     await expect(session.closed).resolves.toMatchObject({ type: 'failed' });
+  });
+
+  it('disables replacement after conversation state advances', async () => {
+    const setupResult = setup();
+    setupResult.socket.open();
+    setupResult.socket.message({
+      type: 'session.started',
+      session: { id: 'live-1' },
+    });
+    const session = await setupResult.creating;
+    const queue = new BoundedAsyncQueue<AudioFrame>(1);
+    await session.audioInputs.attach(source(queue));
+    await queue.push(inputFrame());
+    await vi.waitFor(() =>
+      expect(
+        setupResult.socket.sent.some((entry) =>
+          entry.includes('session.input_audio.append'),
+        ),
+      ).toBe(true),
+    );
+
+    setupResult.socket.readyState = 3;
+    setupResult.socket.emit('close');
+
+    await expect(session.closed).resolves.toMatchObject({ type: 'failed' });
+    expect(setupResult.replacementSocket()).toBeUndefined();
   });
 
   it('ignores late events from a replaced socket', async () => {

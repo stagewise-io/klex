@@ -8,6 +8,12 @@ import type {
 
 const tokenizer = getEncoding('o200k_base');
 
+const MAX_HISTORY_TOOL_VALUE_CHARACTERS = 16_384;
+const MAX_HISTORY_TOOL_VALUE_NODES = 128;
+const MAX_HISTORY_TOOL_VALUE_DEPTH = 16;
+const MAX_HISTORY_TOOL_STRING_CHARACTERS = 1_024;
+const MAX_HISTORY_TOOL_COLLECTION_ENTRIES = 128;
+
 export interface GPTLiveSessionConfigOptions {
   readonly responsesModel: string;
   readonly frontendInstructions: string;
@@ -213,9 +219,68 @@ function countInitialItemTokens(item: GPTLiveInitialItem): number {
 
 function safeStringify(value: unknown): string {
   try {
-    return JSON.stringify(value) ?? 'null';
+    const budget = { nodes: MAX_HISTORY_TOOL_VALUE_NODES };
+    const bounded = toBoundedSerializable(value, budget, new WeakSet(), 0);
+    const serialized = JSON.stringify(bounded) ?? 'null';
+    return serialized.length <= MAX_HISTORY_TOOL_VALUE_CHARACTERS
+      ? serialized
+      : `${serialized.slice(0, MAX_HISTORY_TOOL_VALUE_CHARACTERS)}…`;
   } catch {
     return '[unserializable]';
+  }
+}
+
+function toBoundedSerializable(
+  value: unknown,
+  budget: { nodes: number },
+  ancestors: WeakSet<object>,
+  depth: number,
+): unknown {
+  if (budget.nodes <= 0) return '[truncated]';
+  budget.nodes -= 1;
+  if (typeof value === 'string')
+    return value.length <= MAX_HISTORY_TOOL_STRING_CHARACTERS
+      ? value
+      : `${value.slice(0, MAX_HISTORY_TOOL_STRING_CHARACTERS)}…`;
+  if (value === null || typeof value === 'boolean' || typeof value === 'number')
+    return value;
+  if (typeof value !== 'object') return `[unsupported ${typeof value}]`;
+  if (ancestors.has(value)) return '[circular]';
+  if (depth >= MAX_HISTORY_TOOL_VALUE_DEPTH) return '[max depth]';
+
+  ancestors.add(value);
+  try {
+    if (Array.isArray(value)) {
+      const result: unknown[] = [];
+      const count = Math.min(value.length, MAX_HISTORY_TOOL_COLLECTION_ENTRIES);
+      for (let index = 0; index < count && budget.nodes > 0; index += 1)
+        result.push(
+          toBoundedSerializable(value[index], budget, ancestors, depth + 1),
+        );
+      if (count < value.length || budget.nodes <= 0) result.push('[truncated]');
+      return result;
+    }
+
+    const result: Record<string, unknown> = Object.create(null);
+    let count = 0;
+    for (const key in value) {
+      if (!Object.hasOwn(value, key)) continue;
+      if (count >= MAX_HISTORY_TOOL_COLLECTION_ENTRIES || budget.nodes <= 0) {
+        result['[truncated]'] = true;
+        break;
+      }
+      result[key.slice(0, MAX_HISTORY_TOOL_STRING_CHARACTERS)] =
+        toBoundedSerializable(
+          (value as Record<string, unknown>)[key],
+          budget,
+          ancestors,
+          depth + 1,
+        );
+      count += 1;
+    }
+    return result;
+  } finally {
+    ancestors.delete(value);
   }
 }
 

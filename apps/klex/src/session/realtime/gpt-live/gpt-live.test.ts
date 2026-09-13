@@ -136,6 +136,35 @@ describe('GPT-Live wire events', () => {
     expect(
       parseLiveServerEvent(
         responseEvent({
+          type: 'response.output_item.done',
+          item: {
+            type: 'function_call',
+            call_id: 'call-with-empty-arguments',
+            name: 'lookup',
+            arguments: '',
+          },
+        }),
+      ),
+    ).toMatchObject({
+      type: 'response-function-call',
+      call: { argumentsJson: '{}' },
+    });
+    expect(() =>
+      parseLiveServerEvent(
+        responseEvent({
+          type: 'response.output_item.done',
+          item: {
+            type: 'function_call',
+            call_id: 'call-with-invalid-arguments',
+            name: 'lookup',
+            arguments: 3,
+          },
+        }),
+      ),
+    ).toThrow('item.arguments');
+    expect(
+      parseLiveServerEvent(
+        responseEvent({
           type: 'response.completed',
           sequence_number: 3,
           response: {
@@ -189,6 +218,12 @@ describe('GPT-Live wire events', () => {
       parseLiveServerEvent({
         type: 'session.output_audio.delta',
         delta: 'not base64',
+      }),
+    ).toThrow('malformed base64');
+    expect(() =>
+      parseLiveServerEvent({
+        type: 'session.output_audio.delta',
+        delta: 'AB==',
       }),
     ).toThrow('malformed base64');
     expect(() =>
@@ -441,6 +476,69 @@ describe('GPT-Live startup configuration', () => {
       'user',
       'user',
     ]);
+  });
+
+  it('bounds tool history values before tokenization', () => {
+    const prepared = buildGPTLiveSessionConfig(
+      {
+        ...context,
+        messages: [
+          {
+            role: 'assistant',
+            content: [
+              {
+                type: 'tool-call',
+                toolCallId: 'large-call',
+                toolName: 'large',
+                input: { value: 'x'.repeat(1_000_000) },
+              },
+            ],
+          },
+        ],
+      },
+      {
+        responsesModel: 'gpt-5.2',
+        frontendInstructions: 'voice',
+      },
+    );
+
+    expect(prepared.session.input[0]?.content[0].text.length).toBeLessThan(
+      20_000,
+    );
+    expect(prepared.session.input[0]?.content[0].text).toContain('…');
+  });
+
+  it('preserves own prototype keys in bounded tool history values', () => {
+    const input = JSON.parse('{"__proto__":"preserved"}') as Record<
+      string,
+      unknown
+    >;
+    const prepared = buildGPTLiveSessionConfig(
+      {
+        ...context,
+        messages: [
+          {
+            role: 'assistant',
+            content: [
+              {
+                type: 'tool-call',
+                toolCallId: 'prototype-call',
+                toolName: 'prototype',
+                input,
+              },
+            ],
+          },
+        ],
+      },
+      {
+        responsesModel: 'gpt-5.2',
+        frontendInstructions: 'voice',
+      },
+    );
+
+    expect(prepared.session.input[0]?.content[0].text).toContain(
+      '"__proto__":"preserved"',
+    );
   });
 
   it('fails closed when the newest history message exceeds its budget', () => {

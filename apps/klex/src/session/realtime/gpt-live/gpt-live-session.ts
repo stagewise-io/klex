@@ -71,6 +71,7 @@ const STARTUP_TIMEOUT_MS = 10_000;
 const CLOSE_TIMEOUT_MS = 2_000;
 const FINALIZATION_TIMEOUT_MS = 2_000;
 const EVENT_DRAIN_TIMEOUT_MS = 2_000;
+const OUTPUT_DRAIN_TIMEOUT_MS = 2_000;
 const MAX_REPLAYED_UPDATES = 256;
 const MAX_AUDIO_DELTA_BYTES = 96_000;
 const MAX_PENDING_OUTPUT_BYTES = 480_000;
@@ -85,7 +86,7 @@ class GPTLiveSession implements RealtimeModelSession {
   private readonly ready = deferred<void>();
   private readonly inputMixer = createPcmAudioMixer();
   private readonly inputResampler = createPcmResampler('48-to-24');
-  private readonly outputResampler = createPcmResampler('24-to-48');
+  private outputResampler = createPcmResampler('24-to-48');
   private protocolState = createGPTLiveProtocolState();
   private readonly transcriptGrouper = createGPTLiveTranscriptGrouper();
   private readonly delegationResponses = new Map<string, string>();
@@ -108,6 +109,7 @@ class GPTLiveSession implements RealtimeModelSession {
   private settled = false;
   private acceptingUpdates = true;
   private replacementAttempt = 0;
+  private connectionGeneration = 0;
   private socketReady = false;
   private reconnectReady: Deferred<void> | undefined;
   private readonly replayedUpdates: Array<{
@@ -194,16 +196,7 @@ class GPTLiveSession implements RealtimeModelSession {
     if (call === undefined)
       throw new Error(`Unknown GPT-Live tool call ${result.executionId}`);
     if (call.resultSent) return;
-    call.resultSent = true;
-    this.logger.debug(
-      {
-        providerSessionId: this.providerSessionId,
-        toolExecutionId: result.executionId,
-        status: result.status,
-      },
-      'GPT-Live tool result accepted',
-    );
-    this.send({
+    const event = {
       type: 'response.item.create',
       event_id: `${result.executionId}:result`,
       item: {
@@ -219,7 +212,23 @@ class GPTLiveSession implements RealtimeModelSession {
               },
         ),
       },
-    });
+    };
+    try {
+      this.send(event);
+    } catch (error) {
+      this.fail(error);
+      throw error;
+    }
+    call.resultSent = true;
+    this.recoverySafe = false;
+    this.logger.debug(
+      {
+        providerSessionId: this.providerSessionId,
+        toolExecutionId: result.executionId,
+        status: result.status,
+      },
+      'GPT-Live tool result accepted',
+    );
     this.continueResponseIfReady(call.responseId);
   }
 
@@ -321,23 +330,33 @@ class GPTLiveSession implements RealtimeModelSession {
         );
         break;
       case 'output-audio-delta':
+        this.recoverySafe = false;
         this.handleOutputAudio(event.delta);
         break;
       case 'transcript-delta':
-        for (const group of this.transcriptGrouper.add(event))
-          this.emitEvent({ type: 'approximate-transcript-group', ...group });
+        this.recoverySafe = false;
+        try {
+          for (const group of this.transcriptGrouper.add(event))
+            this.emitEvent({ type: 'approximate-transcript-group', ...group });
+        } catch (error) {
+          this.fail(error);
+        }
         break;
       case 'delegation-created':
+        this.recoverySafe = false;
         this.delegationResponses.set(event.delegationId, event.responseId);
         this.delegationStartedAt.set(event.delegationId, Date.now());
         break;
       case 'response-started':
+        this.recoverySafe = false;
         this.delegationResponses.set(event.delegationId, event.responseId);
         break;
       case 'response-function-call':
+        this.recoverySafe = false;
         this.emitToolCall(event.delegationId, event.call);
         break;
       case 'response-terminal': {
+        this.recoverySafe = false;
         if (event.status === 'completed')
           this.completedResponses.add(event.responseId);
         else this.failedResponses.add(event.responseId);
@@ -360,6 +379,7 @@ class GPTLiveSession implements RealtimeModelSession {
         break;
       }
       case 'response-error': {
+        this.recoverySafe = false;
         const responseId = this.delegationResponses.get(event.delegationId);
         if (responseId !== undefined) this.failedResponses.add(responseId);
         this.logger.warn(
@@ -465,6 +485,9 @@ class GPTLiveSession implements RealtimeModelSession {
         },
         'GPT-Live connection lost; opening replacement',
       );
+      this.connectionGeneration += 1;
+      this.outputBuffer = new Uint8Array(0);
+      this.outputResampler = createPcmResampler('24-to-48');
       this.protocolState = createGPTLiveProtocolState();
       this.delegationResponses.clear();
       this.delegationStartedAt.clear();
@@ -519,6 +542,7 @@ class GPTLiveSession implements RealtimeModelSession {
         throw new Error('GPT-Live input requires complete PCM16 samples');
       const audio = this.inputResampler.process(frame.data);
       if (!this.socketReady) continue;
+      this.recoverySafe = false;
       this.send({
         type: 'session.input_audio.append',
         audio: Buffer.from(audio).toString('base64'),
@@ -545,17 +569,23 @@ class GPTLiveSession implements RealtimeModelSession {
       return;
     }
     this.pendingOutputBytes += chunk.byteLength;
+    const generation = this.connectionGeneration;
     this.outputWork = this.outputWork
-      .then(() => this.emitOutputAudio(chunk))
+      .then(() => this.emitOutputAudio(chunk, generation))
       .catch((error: unknown) => this.fail(error))
       .finally(() => {
         this.pendingOutputBytes -= chunk.byteLength;
       });
   }
 
-  private async emitOutputAudio(chunk: Uint8Array): Promise<void> {
+  private async emitOutputAudio(
+    chunk: Uint8Array,
+    generation: number,
+  ): Promise<void> {
+    if (generation !== this.connectionGeneration) return;
     this.outputBuffer = concat(this.outputBuffer, chunk);
     while (this.outputBuffer.byteLength >= OUTPUT_FRAME_BYTES) {
+      if (generation !== this.connectionGeneration) return;
       const providerFrame = this.outputBuffer.slice(0, OUTPUT_FRAME_BYTES);
       this.outputBuffer = this.outputBuffer.slice(OUTPUT_FRAME_BYTES);
       const frame: AudioFrame = {
@@ -733,9 +763,6 @@ class GPTLiveSession implements RealtimeModelSession {
     this.signal.removeEventListener('abort', this.handleAbort);
     for (const group of this.transcriptGrouper.flush())
       this.emitEvent({ type: 'approximate-transcript-group', ...group });
-    this.outputQueue.close(
-      closure.type === 'failed' ? closure.error : undefined,
-    );
     if (!this.readySettled) {
       this.readySettled = true;
       if (closure.type === 'failed') this.ready.reject(closure.error);
@@ -751,12 +778,34 @@ class GPTLiveSession implements RealtimeModelSession {
 
   private async finalize(closure: RealtimeEndpointClosure): Promise<void> {
     await Promise.allSettled([this.inputMixer.close(), this.inputTask]);
+    await this.finalizeOutput(closure);
     await Promise.race([this.eventWork, delay(EVENT_DRAIN_TIMEOUT_MS)]);
     this.eventQueue.close(
       closure.type === 'failed' ? closure.error : undefined,
     );
     this.closure.resolve(closure);
     this.span.end();
+  }
+
+  private async finalizeOutput(
+    closure: RealtimeEndpointClosure,
+  ): Promise<void> {
+    const drain = async (): Promise<void> => {
+      await this.outputWork;
+      if (closure.type !== 'closed' || this.outputBuffer.byteLength === 0)
+        return;
+      const padding = new Uint8Array(
+        OUTPUT_FRAME_BYTES - this.outputBuffer.byteLength,
+      );
+      await this.emitOutputAudio(padding, this.connectionGeneration);
+    };
+    await Promise.race([
+      drain().catch(() => undefined),
+      delay(OUTPUT_DRAIN_TIMEOUT_MS),
+    ]);
+    this.outputQueue.close(
+      closure.type === 'failed' ? closure.error : undefined,
+    );
   }
 }
 

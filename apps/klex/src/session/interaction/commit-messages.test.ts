@@ -121,6 +121,42 @@ describe('realtime canonical messages', () => {
     ]);
   });
 
+  it('projects failed tool results as canonical context', () => {
+    const result = toCanonicalMessage({
+      type: 'tool-result',
+      eventId: 'result-failed-1',
+      timestamp,
+      result: {
+        executionId: 'exec-failed-1',
+        status: 'error',
+        code: 'timeout',
+        error: 'Lookup timed out',
+        retryable: true,
+      },
+    });
+
+    expect(result).toMatchObject({
+      role: 'user',
+      parts: [
+        {
+          data: {
+            metadata: {
+              kind: 'realtime-tool-result',
+              executionId: 'exec-failed-1',
+              status: 'error',
+            },
+            content: [
+              {
+                type: 'text',
+                text: 'Tool failed (timeout): Lookup timed out',
+              },
+            ],
+          },
+        },
+      ],
+    });
+  });
+
   it('stores GPT-Live transcript groups as explicitly approximate context', () => {
     const message = toCanonicalMessage({
       type: 'approximate-transcript-group',

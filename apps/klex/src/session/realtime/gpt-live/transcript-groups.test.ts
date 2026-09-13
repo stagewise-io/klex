@@ -118,6 +118,50 @@ describe('GPT-Live transcript grouping', () => {
     expect(groups.flush()[0]?.text).toBe('once twice again');
   });
 
+  it('flushes interleaved groups in global timeline order', () => {
+    const groups = createGPTLiveTranscriptGrouper();
+    groups.add({
+      eventId: 'user-later',
+      speaker: 'user',
+      delta: 'later',
+      startMs: 100,
+      endMs: 110,
+    });
+    groups.add({
+      eventId: 'assistant-earlier',
+      speaker: 'assistant',
+      delta: 'earlier',
+      startMs: 50,
+      endMs: 60,
+    });
+    groups.add({
+      eventId: 'user-earlier',
+      speaker: 'user',
+      delta: 'first',
+      startMs: 20,
+      endMs: 30,
+    });
+
+    expect(groups.flush().map((group) => group.text)).toEqual([
+      'first',
+      'earlier',
+      'later',
+    ]);
+  });
+
+  it('rejects a single fragment larger than the group limit', () => {
+    const groups = createGPTLiveTranscriptGrouper({ maxGroupCharacters: 5 });
+    expect(() =>
+      groups.add({
+        eventId: 'oversized',
+        speaker: 'user',
+        delta: '123456',
+        startMs: 0,
+        endMs: 1,
+      }),
+    ).toThrow('exceeds group character limit');
+  });
+
   it('deduplicates provider fragments by stable event ID', () => {
     const groups = createGPTLiveTranscriptGrouper();
     const fragment = {

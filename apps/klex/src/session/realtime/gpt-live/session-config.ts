@@ -153,20 +153,30 @@ function toInitialItem(message: ModelMessage): GPTLiveInitialItem | undefined {
         content: [{ type: 'output_text', text }],
       };
     case 'tool':
-      return undefined;
+      return {
+        type: 'message',
+        role: 'user',
+        status: 'completed',
+        content: [{ type: 'input_text', text }],
+      };
   }
 }
 
 function collectText(message: ModelMessage): string {
   if (typeof message.content === 'string') return message.content.trim();
   return message.content
-    .filter(
-      (
-        part,
-      ): part is Extract<(typeof message.content)[number], { type: 'text' }> =>
-        part.type === 'text',
-    )
-    .map((part) => part.text.trim())
+    .map((part) => {
+      switch (part.type) {
+        case 'text':
+          return part.text.trim();
+        case 'tool-call':
+          return `[Prior tool call ${part.toolName} (${part.toolCallId}): ${safeStringify(part.input)}]`;
+        case 'tool-result':
+          return `[Prior tool result ${part.toolName} (${part.toolCallId}): ${safeStringify(part.output)}]`;
+        default:
+          return '';
+      }
+    })
     .filter((text) => text.length > 0)
     .join('\n');
 }
@@ -184,6 +194,8 @@ function retainNewestHistory(
     const item = items[index];
     if (item === undefined) continue;
     const tokens = countInitialItemTokens(item);
+    if (index === items.length - 1 && tokens > maxTokens)
+      throw new Error('Newest GPT-Live history message exceeds token budget');
     if (tokens > maxTokens - usedTokens) continue;
     retained.push(item);
     usedTokens += tokens;
@@ -197,6 +209,14 @@ function countInitialItemTokens(item: GPTLiveInitialItem): number {
   const text = item.content[0]?.text ?? '';
   // Include a conservative per-message allowance for role and envelope tokens.
   return tokenizer.encode(text).length + 8;
+}
+
+function safeStringify(value: unknown): string {
+  try {
+    return JSON.stringify(value) ?? 'null';
+  } catch {
+    return '[unserializable]';
+  }
 }
 
 function toFunctionTools(

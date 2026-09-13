@@ -1,3 +1,5 @@
+import { GPT_LIVE_MAX_TRANSCRIPT_DELTA_CHARACTERS } from './transcript-groups';
+
 export interface GPTLiveProviderError {
   readonly type: string;
   readonly code: string;
@@ -138,7 +140,12 @@ export function parseLiveServerEvent(raw: unknown): GPTLiveServerEvent {
         speaker:
           name === 'session.input_transcript.delta' ? 'user' : 'assistant',
         eventId: requiredString(event.event_id, name, 'event_id'),
-        delta: requiredString(event.delta, name, 'delta'),
+        delta: boundedString(
+          event.delta,
+          name,
+          'delta',
+          GPT_LIVE_MAX_TRANSCRIPT_DELTA_CHARACTERS,
+        ),
         startMs,
         endMs,
       };
@@ -147,7 +154,7 @@ export function parseLiveServerEvent(raw: unknown): GPTLiveServerEvent {
     case 'session.output_audio.delta':
       return {
         type: 'output-audio-delta',
-        delta: requiredString(event.delta, name, 'delta'),
+        delta: requiredBase64(event.delta, name, 'delta'),
       };
 
     case 'session.usage.updated': {
@@ -229,7 +236,7 @@ function parseResponseEvent(
         ...withKey('itemId', optionalString(item.id)),
         callId: requiredString(item.call_id, name, 'item.call_id'),
         name: requiredString(item.name, name, 'item.name'),
-        argumentsJson: requiredString(item.arguments, name, 'item.arguments'),
+        argumentsJson: optionalString(item.arguments) ?? '{}',
       },
     };
   }
@@ -308,6 +315,38 @@ function requiredString(
       `Live event ${eventType} has a malformed ${field}`,
     );
   return value;
+}
+
+function boundedString(
+  value: unknown,
+  eventType: string,
+  field: string,
+  maxLength: number,
+): string {
+  const text = requiredString(value, eventType, field);
+  if (text.length > maxLength)
+    throw new GPTLiveWireEventError(
+      `Live event ${eventType} has an oversized ${field}`,
+    );
+  return text;
+}
+
+function requiredBase64(
+  value: unknown,
+  eventType: string,
+  field: string,
+): string {
+  const encoded = requiredString(value, eventType, field);
+  if (
+    encoded.length % 4 !== 0 ||
+    !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(
+      encoded,
+    )
+  )
+    throw new GPTLiveWireEventError(
+      `Live event ${eventType} has malformed base64 ${field}`,
+    );
+  return encoded;
 }
 
 function optionalString(value: unknown): string | undefined {

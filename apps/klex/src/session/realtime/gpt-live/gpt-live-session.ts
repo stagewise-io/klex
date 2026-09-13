@@ -209,7 +209,15 @@ class GPTLiveSession implements RealtimeModelSession {
       item: {
         type: 'function_call_output',
         call_id: result.executionId,
-        output: safeStringify(result),
+        output: safeStringify(
+          result.status === 'success'
+            ? result.output
+            : {
+                error: result.error,
+                code: result.code,
+                retryable: result.retryable,
+              },
+        ),
       },
     });
     this.continueResponseIfReady(call.responseId);
@@ -243,11 +251,16 @@ class GPTLiveSession implements RealtimeModelSession {
   }
 
   private bindSocket(socket: GPTLiveWebSocket): void {
-    socket.on('open', this.handleOpen);
-    socket.on('message', this.handleMessage);
-    socket.on('error', this.handleError);
-    socket.on('close', this.handleSocketClose);
-    socket.on('unexpected-response', this.handleUnexpectedResponse);
+    const ifCurrent = (action: () => void): void => {
+      if (this.socket === socket) action();
+    };
+    socket.on('open', () => ifCurrent(this.handleOpen));
+    socket.on('message', (data) => ifCurrent(() => this.handleMessage(data)));
+    socket.on('error', (error) => ifCurrent(() => this.handleError(error)));
+    socket.on('close', () => ifCurrent(this.handleSocketClose));
+    socket.on('unexpected-response', (request, response) =>
+      ifCurrent(() => this.handleUnexpectedResponse(socket, request, response)),
+    );
   }
 
   private readonly handleOpen = (): void => {
@@ -379,6 +392,7 @@ class GPTLiveSession implements RealtimeModelSession {
   };
 
   private readonly handleUnexpectedResponse = (
+    socket: GPTLiveWebSocket,
     _request: ClientRequest,
     response: IncomingMessage,
   ): void => {
@@ -393,7 +407,7 @@ class GPTLiveSession implements RealtimeModelSession {
       capturedBytes += Math.min(buffer.length, remaining);
     });
     response.once('end', () => {
-      if (this.settled) return;
+      if (this.settled || this.socket !== socket) return;
       const body = Buffer.concat(chunks).toString('utf8');
       const status = [response.statusCode, response.statusMessage]
         .filter(Boolean)
@@ -411,7 +425,9 @@ class GPTLiveSession implements RealtimeModelSession {
       this.handleError(error);
       this.handleSocketClose();
     });
-    response.once('error', this.handleError);
+    response.once('error', (error) => {
+      if (this.socket === socket) this.handleError(error);
+    });
   };
 
   private readonly handleError = (error: Error): void => {
@@ -715,7 +731,6 @@ class GPTLiveSession implements RealtimeModelSession {
     );
     this.reconnectReady = undefined;
     this.signal.removeEventListener('abort', this.handleAbort);
-    this.inputMixer.close();
     for (const group of this.transcriptGrouper.flush())
       this.emitEvent({ type: 'approximate-transcript-group', ...group });
     this.outputQueue.close(
@@ -731,15 +746,17 @@ class GPTLiveSession implements RealtimeModelSession {
     }
     if (this.socket.readyState === OPEN) this.socket.close();
     else this.socket.terminate();
-    void Promise.race([this.eventWork, delay(EVENT_DRAIN_TIMEOUT_MS)]).finally(
-      () => {
-        this.eventQueue.close(
-          closure.type === 'failed' ? closure.error : undefined,
-        );
-        this.closure.resolve(closure);
-        this.span.end();
-      },
+    void this.finalize(closure);
+  }
+
+  private async finalize(closure: RealtimeEndpointClosure): Promise<void> {
+    await Promise.allSettled([this.inputMixer.close(), this.inputTask]);
+    await Promise.race([this.eventWork, delay(EVENT_DRAIN_TIMEOUT_MS)]);
+    this.eventQueue.close(
+      closure.type === 'failed' ? closure.error : undefined,
     );
+    this.closure.resolve(closure);
+    this.span.end();
   }
 }
 

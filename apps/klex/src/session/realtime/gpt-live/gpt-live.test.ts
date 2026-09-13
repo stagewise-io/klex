@@ -121,6 +121,21 @@ describe('GPT-Live wire events', () => {
     expect(
       parseLiveServerEvent(
         responseEvent({
+          type: 'response.output_item.done',
+          item: {
+            type: 'function_call',
+            call_id: 'call-without-arguments',
+            name: 'lookup',
+          },
+        }),
+      ),
+    ).toMatchObject({
+      type: 'response-function-call',
+      call: { argumentsJson: '{}' },
+    });
+    expect(
+      parseLiveServerEvent(
+        responseEvent({
           type: 'response.completed',
           sequence_number: 3,
           response: {
@@ -170,6 +185,21 @@ describe('GPT-Live wire events', () => {
         delta: 4,
       }),
     ).toThrow('malformed delta');
+    expect(() =>
+      parseLiveServerEvent({
+        type: 'session.output_audio.delta',
+        delta: 'not base64',
+      }),
+    ).toThrow('malformed base64');
+    expect(() =>
+      parseLiveServerEvent({
+        type: 'session.input_transcript.delta',
+        event_id: 'oversized-transcript',
+        delta: 'x'.repeat(32_001),
+        start_ms: 0,
+        end_ms: 1,
+      }),
+    ).toThrow('oversized delta');
     expect(() =>
       parseLiveServerEvent({
         type: 'session.input_transcript.delta',
@@ -232,8 +262,29 @@ describe('GPT-Live startup configuration', () => {
     messages: [
       { role: 'system', content: 'prior developer context' },
       { role: 'user', content: 'first question' },
-      { role: 'assistant', content: 'first answer' },
-      { role: 'tool', content: [] },
+      {
+        role: 'assistant',
+        content: [
+          { type: 'text', text: 'first answer' },
+          {
+            type: 'tool-call',
+            toolCallId: 'lookup-1',
+            toolName: 'lookup',
+            input: { query: 'first' },
+          },
+        ],
+      },
+      {
+        role: 'tool',
+        content: [
+          {
+            type: 'tool-result',
+            toolCallId: 'lookup-1',
+            toolName: 'lookup',
+            output: { type: 'json', value: { found: true } },
+          },
+        ],
+      },
       { role: 'user', content: 'latest question' },
     ],
     tools: [
@@ -351,7 +402,23 @@ describe('GPT-Live startup configuration', () => {
         type: 'message',
         role: 'assistant',
         status: 'completed',
-        content: [{ type: 'output_text', text: 'first answer' }],
+        content: [
+          {
+            type: 'output_text',
+            text: 'first answer\n[Prior tool call lookup (lookup-1): {"query":"first"}]',
+          },
+        ],
+      },
+      {
+        type: 'message',
+        role: 'user',
+        status: 'completed',
+        content: [
+          {
+            type: 'input_text',
+            text: '[Prior tool result lookup (lookup-1): {"type":"json","value":{"found":true}}]',
+          },
+        ],
       },
       {
         type: 'message',
@@ -369,11 +436,27 @@ describe('GPT-Live startup configuration', () => {
       maxHistoryMessages: 2,
     });
 
-    expect(prepared.omittedHistoryMessages).toBe(2);
+    expect(prepared.omittedHistoryMessages).toBe(3);
     expect(prepared.session.input?.map((item) => item.role)).toEqual([
-      'assistant',
+      'user',
       'user',
     ]);
+  });
+
+  it('fails closed when the newest history message exceeds its budget', () => {
+    expect(() =>
+      buildGPTLiveSessionConfig(
+        {
+          ...context,
+          messages: [{ role: 'user', content: 'newest message is too large' }],
+        },
+        {
+          responsesModel: 'gpt-5.2',
+          frontendInstructions: 'voice',
+          maxHistoryTokens: 1,
+        },
+      ),
+    ).toThrow('Newest GPT-Live history message');
   });
 
   it('fails closed when instruction budgets are exceeded', () => {
@@ -517,6 +600,33 @@ describe('GPT-Live protocol state', () => {
         ),
       ),
     ).toThrow('does not match delegation');
+  });
+
+  it('records failed response errors and terminal snapshots', () => {
+    const errorState = createGPTLiveProtocolState();
+    errorState.apply(parseLiveServerEvent(delegation));
+    errorState.apply(
+      parseLiveServerEvent(
+        responseEvent({
+          type: 'error',
+          code: 'backend_error',
+          message: 'failed',
+        }),
+      ),
+    );
+    expect(errorState.response('response-1')?.status).toBe('failed');
+
+    const terminalState = createGPTLiveProtocolState();
+    terminalState.apply(parseLiveServerEvent(delegation));
+    terminalState.apply(
+      parseLiveServerEvent(
+        responseEvent({
+          type: 'response.failed',
+          response: { id: 'response-1' },
+        }),
+      ),
+    );
+    expect(terminalState.response('response-1')?.status).toBe('failed');
   });
 
   it('keeps a terminal status when a conflicting later error arrives', () => {

@@ -267,6 +267,13 @@ describe('GPT-Live model session', () => {
       output: { ok: 2 },
     });
     expect(
+      JSON.parse(
+        setupResult.socket.sent.find((entry) =>
+          entry.includes('call-2:result'),
+        ) ?? '{}',
+      ),
+    ).toMatchObject({ item: { output: '{"ok":2}' } });
+    expect(
       setupResult.socket.sent.some((entry) =>
         entry.includes('response-1:continue'),
       ),
@@ -277,6 +284,17 @@ describe('GPT-Live model session', () => {
       code: 'timeout',
       error: 'timed out',
       retryable: true,
+    });
+    expect(
+      JSON.parse(
+        setupResult.socket.sent.find((entry) =>
+          entry.includes('call-1:result'),
+        ) ?? '{}',
+      ),
+    ).toMatchObject({
+      item: {
+        output: '{"error":"timed out","code":"timeout","retryable":true}',
+      },
     });
     expect(
       setupResult.socket.sent.filter((entry) =>
@@ -430,6 +448,40 @@ describe('GPT-Live model session', () => {
     });
     replacement?.emit('close');
     await expect(session.closed).resolves.toMatchObject({ type: 'failed' });
+  });
+
+  it('ignores late events from a replaced socket', async () => {
+    const setupResult = setup();
+    setupResult.socket.open();
+    setupResult.socket.message({
+      type: 'session.started',
+      session: { id: 'live-1' },
+    });
+    const session = await setupResult.creating;
+    setupResult.socket.readyState = 3;
+    setupResult.socket.emit('close');
+    const replacement = setupResult.replacementSocket();
+    replacement?.open();
+    replacement?.message({
+      type: 'session.started',
+      session: { id: 'live-2' },
+    });
+
+    setupResult.socket.emit('error', new Error('late stale error'));
+    setupResult.socket.emit('close');
+    setupResult.socket.message({
+      type: 'error',
+      error: { type: 'server_error', code: 'stale', message: 'late' },
+    });
+    await Promise.resolve();
+
+    expect(replacement?.readyState).toBe(1);
+    let closed = false;
+    void session.closed.then(() => {
+      closed = true;
+    });
+    await Promise.resolve();
+    expect(closed).toBe(false);
   });
 
   it('replays accepted updates and defers new updates until recovery is ready', async () => {

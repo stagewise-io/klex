@@ -11,6 +11,7 @@ import {
   type AudioFrame,
   type AudioSource,
   createPcmAudioMixer,
+  createPcmAudioPlayoutBuffer,
   createPcmResampler,
   type RealtimeEndpointClosure,
 } from '@/media-transport';
@@ -76,6 +77,8 @@ const CLOSE_TIMEOUT_MS = 2_000;
 const FINALIZATION_TIMEOUT_MS = 2_000;
 const EVENT_DRAIN_TIMEOUT_MS = 2_000;
 const OUTPUT_DRAIN_TIMEOUT_MS = 2_000;
+const OUTPUT_TARGET_BUFFER_MS = 300;
+const OUTPUT_MAX_BUFFER_MS = 1_000;
 const MAX_REPLAYED_UPDATES = 256;
 const MAX_PENDING_OUTPUT_BYTES = 480_000;
 const MAX_TOOL_RESULT_CHARACTERS = 65_536;
@@ -88,7 +91,10 @@ const DEFAULT_FRONTEND_INSTRUCTIONS =
   'You are Klex in a live voice conversation. Speak clearly and briefly. Delegate requests that require reasoning, business rules, or tools to the Responses backend.';
 
 class GPTLiveSession implements RealtimeModelSession {
-  private readonly outputQueue = new BoundedAsyncQueue<AudioFrame>(1);
+  private readonly outputPlayout = createPcmAudioPlayoutBuffer({
+    targetBufferMs: OUTPUT_TARGET_BUFFER_MS,
+    maxBufferMs: OUTPUT_MAX_BUFFER_MS,
+  });
   private readonly eventQueue = new BoundedAsyncQueue<RealtimeModelEvent>(32);
   private readonly closure = deferred<RealtimeEndpointClosure>();
   private readonly ready = deferred<void>();
@@ -136,7 +142,7 @@ class GPTLiveSession implements RealtimeModelSession {
   readonly audioInputs = {
     attach: (source: AudioSource) => this.attachSource(source),
   };
-  readonly audioOutput = this.outputQueue;
+  readonly audioOutput = this.outputPlayout.audioOutput;
   readonly events = this.eventQueue;
   readonly closed = this.closure.promise;
 
@@ -496,6 +502,7 @@ class GPTLiveSession implements RealtimeModelSession {
       );
       this.connectionGeneration += 1;
       this.outputBuffer = new Uint8Array(0);
+      this.outputPlayout.reset();
       this.outputResampler = createPcmResampler('24-to-48');
       this.protocolState = createGPTLiveProtocolState();
       this.delegationResponses.clear();
@@ -606,7 +613,7 @@ class GPTLiveSession implements RealtimeModelSession {
         data: this.outputResampler.process(providerFrame),
       };
       this.timestampUs += OUTPUT_FRAME_DURATION_MS * 1_000;
-      await this.outputQueue.push(frame);
+      await this.outputPlayout.write(frame);
     }
   }
 
@@ -816,9 +823,15 @@ class GPTLiveSession implements RealtimeModelSession {
       drain().catch(() => undefined),
       delay(OUTPUT_DRAIN_TIMEOUT_MS),
     ]);
-    this.outputQueue.close(
-      closure.type === 'failed' ? closure.error : undefined,
-    );
+    const gracefulClose = this.outputPlayout.close({
+      drain: closure.type === 'closed',
+      error: closure.type === 'failed' ? closure.error : undefined,
+    });
+    const closed = await Promise.race([
+      gracefulClose.then(() => true),
+      delay(OUTPUT_DRAIN_TIMEOUT_MS).then(() => false),
+    ]);
+    if (!closed) await this.outputPlayout.close();
   }
 }
 

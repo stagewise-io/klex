@@ -44,12 +44,10 @@ export default defineConfig({
     },
     text: '',
   },
-  // Server output + Vercel adapter are required for the MCP server endpoint.
-  // deployment.site is the canonical URL — needed for sitemaps, OG images,
-  // RSS feeds, JSON-LD, and all agent-discovery manifests to emit absolute URLs.
+  // Canonical site URL — needed for sitemaps, OG images, RSS feeds, JSON-LD,
+  // and all agent-discovery manifests to emit absolute URLs.
+  // Static output (the default) — no server adapter needed.
   deployment: {
-    output: 'server',
-    adapter: 'vercel',
     site: 'https://docs.klex.bot',
   },
   navigation: {
@@ -120,13 +118,12 @@ export default defineConfig({
       { code: 'ar', label: 'العربية', dir: 'rtl' },
     ],
   },
-  // AI-facing features: llms.txt manifest, MCP server, and the
-  // "Open in chat" page action (subset — v0, Scira, and Cursor removed).
+  // AI-facing features: llms.txt manifest and the "Open in chat" page action.
+  // MCP server is disabled — it requires server output which we don't use.
   ai: {
     llmsTxt: true,
     mcp: {
       enabled: false,
-      route: '/mcp',
     },
     openInChat: ['chatgpt', 'claude', 't3'],
   },

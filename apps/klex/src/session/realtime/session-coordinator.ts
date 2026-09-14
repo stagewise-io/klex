@@ -47,6 +47,8 @@ export interface RealtimeSessionCoordinatorDependencies {
   now?: () => number;
 }
 
+const TEARDOWN_PHASE_TIMEOUT_MS = 5_000;
+
 interface ActiveRealtimeSession {
   key: string;
   namespace: string;
@@ -564,18 +566,32 @@ class RealtimeSessionCoordinatorModule implements RealtimeSessionCoordinator {
       if (!session.processor)
         session.controller.abort('realtime-session-ended');
       await session.setup;
-      await Promise.allSettled([
-        session.processor?.close(),
-        session.transport?.close(),
-      ]);
-      if (session.modelEventTask)
-        await Promise.allSettled([session.modelEventTask]);
+      const endpointsClosed = await waitForSettlement(
+        [session.processor?.close(), session.transport?.close()],
+        TEARDOWN_PHASE_TIMEOUT_MS,
+      );
+      if (!endpointsClosed)
+        this.logTeardownTimeout(session, lease, 'endpoint-close');
+      if (endpointsClosed && session.modelEventTask) {
+        const modelEventsDrained = await waitForSettlement(
+          [session.modelEventTask],
+          TEARDOWN_PHASE_TIMEOUT_MS,
+        );
+        if (!modelEventsDrained)
+          this.logTeardownTimeout(session, lease, 'model-event-drain');
+      }
       session.controller.abort('realtime-session-ended');
       this.settleContext(session, 'rollback');
       // Releasing closes the lease, which ends the update stream the pumps
-      // iterate. Awaiting the pumps first would deadlock.
+      // iterate. External endpoint cleanup must not retain generation-lane
+      // ownership indefinitely when a provider or media SDK fails to close.
       await this.releaseLease(session);
-      await Promise.allSettled(session.tasks);
+      const tasksSettled = await waitForSettlement(
+        session.tasks,
+        TEARDOWN_PHASE_TIMEOUT_MS,
+      );
+      if (!tasksSettled)
+        this.logTeardownTimeout(session, lease, 'background-task-drain');
       if (options.notifyRemote && session.accepted && !session.endSent) {
         session.endSent = true;
         await this.deps.mcp
@@ -606,6 +622,24 @@ class RealtimeSessionCoordinatorModule implements RealtimeSessionCoordinator {
     })();
     return session.finish;
   }
+
+  private logTeardownTimeout(
+    session: ActiveRealtimeSession,
+    lease: InteractionLease | undefined,
+    phase: string,
+  ): void {
+    this.deps.logger.warn(
+      {
+        namespace: session.namespace,
+        externalMediaSessionId: session.sessionId,
+        canonicalSessionId: lease?.sessionId,
+        leaseId: lease?.id,
+        phase,
+        timeoutMs: TEARDOWN_PHASE_TIMEOUT_MS,
+      },
+      'Realtime session teardown phase timed out',
+    );
+  }
 }
 
 export function createRealtimeSessionCoordinator(
@@ -623,6 +657,27 @@ export function createRealtimeSessionCoordinator(
     model: deps.model,
     now: deps.now ?? Date.now,
   });
+}
+
+async function waitForSettlement(
+  tasks: readonly (Promise<unknown> | undefined)[],
+  timeoutMs: number,
+): Promise<boolean> {
+  const pending = tasks.filter(
+    (task): task is Promise<unknown> => task !== undefined,
+  );
+  if (pending.length === 0) return true;
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      Promise.allSettled(pending).then(() => true),
+      new Promise<false>((resolve) => {
+        timeout = setTimeout(() => resolve(false), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
 }
 
 function sessionKey(namespace: string, sessionId: string): string {

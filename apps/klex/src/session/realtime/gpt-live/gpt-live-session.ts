@@ -33,7 +33,11 @@ import {
   type GPTLiveSessionConfig,
 } from './session-config';
 import { createGPTLiveTranscriptGrouper } from './transcript-groups';
-import { type GPTLiveServerEvent, parseLiveServerEvent } from './wire-events';
+import {
+  GPT_LIVE_MAX_AUDIO_DELTA_BYTES,
+  type GPTLiveServerEvent,
+  parseLiveServerEvent,
+} from './wire-events';
 
 export interface GPTLiveWebSocket {
   readonly readyState: number;
@@ -73,8 +77,12 @@ const FINALIZATION_TIMEOUT_MS = 2_000;
 const EVENT_DRAIN_TIMEOUT_MS = 2_000;
 const OUTPUT_DRAIN_TIMEOUT_MS = 2_000;
 const MAX_REPLAYED_UPDATES = 256;
-const MAX_AUDIO_DELTA_BYTES = 96_000;
 const MAX_PENDING_OUTPUT_BYTES = 480_000;
+const MAX_TOOL_RESULT_CHARACTERS = 65_536;
+const MAX_TOOL_RESULT_NODES = 512;
+const MAX_TOOL_RESULT_DEPTH = 32;
+const MAX_TOOL_RESULT_STRING_CHARACTERS = 4_096;
+const MAX_TOOL_RESULT_COLLECTION_ENTRIES = 256;
 const DEFAULT_VOICE = 'marin';
 const DEFAULT_FRONTEND_INSTRUCTIONS =
   'You are Klex in a live voice conversation. Speak clearly and briefly. Delegate requests that require reasoning, business rules, or tools to the Responses backend.';
@@ -104,6 +112,7 @@ class GPTLiveSession implements RealtimeModelSession {
   private outputWork = Promise.resolve();
   private pendingOutputBytes = 0;
   private eventWork = Promise.resolve();
+  private finalTranscriptEvents: RealtimeModelEvent[] = [];
   private sequence = 0;
   private timestampUs = 0;
   private settled = false;
@@ -557,7 +566,7 @@ class GPTLiveSession implements RealtimeModelSession {
       if (
         chunk.byteLength === 0 ||
         chunk.byteLength % 2 !== 0 ||
-        chunk.byteLength > MAX_AUDIO_DELTA_BYTES
+        chunk.byteLength > GPT_LIVE_MAX_AUDIO_DELTA_BYTES
       )
         throw new Error('GPT-Live audio delta exceeds its PCM16 bounds');
     } catch (error) {
@@ -761,8 +770,9 @@ class GPTLiveSession implements RealtimeModelSession {
     );
     this.reconnectReady = undefined;
     this.signal.removeEventListener('abort', this.handleAbort);
-    for (const group of this.transcriptGrouper.flush())
-      this.emitEvent({ type: 'approximate-transcript-group', ...group });
+    this.finalTranscriptEvents = this.transcriptGrouper
+      .flush()
+      .map((group) => ({ type: 'approximate-transcript-group', ...group }));
     if (!this.readySettled) {
       this.readySettled = true;
       if (closure.type === 'failed') this.ready.reject(closure.error);
@@ -780,6 +790,9 @@ class GPTLiveSession implements RealtimeModelSession {
     await Promise.allSettled([this.inputMixer.close(), this.inputTask]);
     await this.finalizeOutput(closure);
     await Promise.race([this.eventWork, delay(EVENT_DRAIN_TIMEOUT_MS)]);
+    for (const event of this.finalTranscriptEvents)
+      this.eventQueue.pushTerminal(event);
+    this.finalTranscriptEvents = [];
     this.eventQueue.close(
       closure.type === 'failed' ? closure.error : undefined,
     );
@@ -918,9 +931,66 @@ function concat(left: Uint8Array, right: Uint8Array): Uint8Array {
 
 function safeStringify(value: unknown): string {
   try {
-    return JSON.stringify(value ?? null);
+    const bounded = toBoundedToolResult(
+      value,
+      { nodes: MAX_TOOL_RESULT_NODES },
+      new WeakSet(),
+      0,
+    );
+    const serialized = JSON.stringify(bounded) ?? 'null';
+    return serialized.length <= MAX_TOOL_RESULT_CHARACTERS
+      ? serialized
+      : '"[tool result exceeds serialization limit]"';
   } catch {
     return '"[unserializable tool result]"';
+  }
+}
+
+function toBoundedToolResult(
+  value: unknown,
+  budget: { nodes: number },
+  ancestors: WeakSet<object>,
+  depth: number,
+): unknown {
+  if (budget.nodes <= 0) return '[truncated]';
+  budget.nodes -= 1;
+  if (typeof value === 'string')
+    return value.length <= MAX_TOOL_RESULT_STRING_CHARACTERS
+      ? value
+      : `${value.slice(0, MAX_TOOL_RESULT_STRING_CHARACTERS)}…`;
+  if (value === null || typeof value === 'boolean') return value;
+  if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+  if (typeof value !== 'object') return `[unsupported ${typeof value}]`;
+  if (ancestors.has(value)) return '[circular]';
+  if (depth >= MAX_TOOL_RESULT_DEPTH) return '[max depth]';
+
+  ancestors.add(value);
+  try {
+    if (Array.isArray(value)) {
+      const result: unknown[] = [];
+      const count = Math.min(value.length, MAX_TOOL_RESULT_COLLECTION_ENTRIES);
+      for (let index = 0; index < count && budget.nodes > 0; index += 1)
+        result.push(
+          toBoundedToolResult(value[index], budget, ancestors, depth + 1),
+        );
+      if (count < value.length || budget.nodes <= 0) result.push('[truncated]');
+      return result;
+    }
+
+    const result: Record<string, unknown> = Object.create(null);
+    let count = 0;
+    for (const [key, entry] of Object.entries(value)) {
+      if (count >= MAX_TOOL_RESULT_COLLECTION_ENTRIES || budget.nodes <= 0) {
+        result['[truncated]'] = true;
+        break;
+      }
+      result[key.slice(0, MAX_TOOL_RESULT_STRING_CHARACTERS)] =
+        toBoundedToolResult(entry, budget, ancestors, depth + 1);
+      count += 1;
+    }
+    return result;
+  } finally {
+    ancestors.delete(value);
   }
 }
 
@@ -933,7 +1003,7 @@ function toJsonValue(value: unknown): JSONValue {
     case 'object': {
       if (value === null) return null;
       if (Array.isArray(value)) return value.map(toJsonValue);
-      const record: Record<string, JSONValue> = {};
+      const record: Record<string, JSONValue> = Object.create(null);
       for (const [key, entry] of Object.entries(value))
         record[key] = toJsonValue(entry);
       return record;

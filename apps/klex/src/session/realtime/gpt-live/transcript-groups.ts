@@ -52,6 +52,7 @@ class GPTLiveTranscriptGrouperModule implements GPTLiveTranscriptGrouper {
   private readonly maxPendingGroups: number;
   private readonly maxGroupCharacters: number;
   private readonly maxGroupDurationMs: number;
+  private lastEmittedStartMs = Number.NEGATIVE_INFINITY;
 
   constructor(options: GPTLiveTranscriptGrouperOptions) {
     this.maxSeenEventIds = positiveInteger(
@@ -84,6 +85,7 @@ class GPTLiveTranscriptGrouperModule implements GPTLiveTranscriptGrouper {
       if (oldest === undefined) break;
       this.seen.delete(oldest);
     }
+    if (fragment.startMs < this.lastEmittedStartMs) return [];
     const current = this.active.get(fragment.speaker);
     if (
       current !== undefined &&
@@ -140,7 +142,7 @@ class GPTLiveTranscriptGrouperModule implements GPTLiveTranscriptGrouper {
       (this.pending[count]?.startMs ?? Number.POSITIVE_INFINITY) <= startMs
     )
       count += 1;
-    return this.pending.splice(0, count).map(freeze);
+    return this.freezeEmitted(this.pending.splice(0, count));
   }
 
   flush(): readonly GPTLiveTranscriptGroup[] {
@@ -148,6 +150,15 @@ class GPTLiveTranscriptGrouperModule implements GPTLiveTranscriptGrouper {
       (left, right) => left.startMs - right.startMs,
     );
     this.active.clear();
+    return this.freezeEmitted(groups);
+  }
+
+  private freezeEmitted(
+    groups: readonly MutableGroup[],
+  ): readonly GPTLiveTranscriptGroup[] {
+    const last = groups.at(-1);
+    if (last !== undefined)
+      this.lastEmittedStartMs = Math.max(this.lastEmittedStartMs, last.startMs);
     return groups.map(freeze);
   }
 }

@@ -1,5 +1,10 @@
 import { GPT_LIVE_MAX_TRANSCRIPT_DELTA_CHARACTERS } from './transcript-groups';
 
+export const GPT_LIVE_MAX_AUDIO_DELTA_BYTES = 96_000;
+export const GPT_LIVE_MAX_FUNCTION_ARGUMENT_CHARACTERS = 65_536;
+const GPT_LIVE_MAX_AUDIO_DELTA_BASE64_CHARACTERS =
+  Math.ceil(GPT_LIVE_MAX_AUDIO_DELTA_BYTES / 3) * 4;
+
 export interface GPTLiveProviderError {
   readonly type: string;
   readonly code: string;
@@ -154,7 +159,12 @@ export function parseLiveServerEvent(raw: unknown): GPTLiveServerEvent {
     case 'session.output_audio.delta':
       return {
         type: 'output-audio-delta',
-        delta: requiredBase64(event.delta, name, 'delta'),
+        delta: requiredBase64(
+          event.delta,
+          name,
+          'delta',
+          GPT_LIVE_MAX_AUDIO_DELTA_BASE64_CHARACTERS,
+        ),
       };
 
     case 'session.usage.updated': {
@@ -239,7 +249,12 @@ function parseResponseEvent(
         argumentsJson:
           item.arguments === undefined || item.arguments === ''
             ? '{}'
-            : requiredString(item.arguments, name, 'item.arguments'),
+            : boundedString(
+                item.arguments,
+                name,
+                'item.arguments',
+                GPT_LIVE_MAX_FUNCTION_ARGUMENT_CHARACTERS,
+              ),
       },
     };
   }
@@ -338,8 +353,13 @@ function requiredBase64(
   value: unknown,
   eventType: string,
   field: string,
+  maxLength: number,
 ): string {
   const encoded = requiredString(value, eventType, field);
+  if (encoded.length > maxLength)
+    throw new GPTLiveWireEventError(
+      `Live event ${eventType} has oversized base64 ${field}`,
+    );
   if (
     encoded.length % 4 !== 0 ||
     !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(

@@ -1,0 +1,23 @@
+---
+title: Die Seele des Bots
+description: Steuern Sie, wie Klex-Bots agieren und sich verhalten, mithilfe ihrer Seele.
+---
+
+Die Seele ist eine kompakte Beschreibung des Zwecks, des Charakters und des Verhaltens des Bots.
+Sie wird im Datenverzeichnis des Bots gespeichert und stets in seinen Kontext geladen, wodurch sie die Grundlinie für das Verhalten und die Reaktionen des Bots festlegt.
+
+Die Seele wird nicht direkt geschrieben. Stattdessen kann der Bot eine God-Message empfangen, die beschreibt, wer der Bot ist und wie er sich verhält. Basierend auf dieser God-Message kann der Bot seine Seele erstellen oder aktualisieren.
+
+Die Seele kann nicht außerhalb des God-Messages-Chats aktualisiert werden.
+
+## Erstellung der Bot-Seele
+
+Zu Beginn des Lebenszyklus eines Bots muss der Ersteller den Bot dazu veranlassen, seine Seele zu schreiben. Dies kann auf zwei Arten geschehen:
+
+### [Creator-Modus (nur Cloud)](#creator-mode)
+
+Im Einrichtungsassistenten bietet die Cloud den **Creator-Modus**. Der Creator-Modus gibt Ihnen die Möglichkeit, den Charakter des Bots wie einen Videospielcharakter zu gestalten.
+
+### [God-Message-Modus](#god-message-mode)
+
+Sie können auch eine God-Message über den Einrichtungsassistenten in der Cloud oder der CLI senden. Diese God-Message sollte das erwartete Verhalten des Bots ausreichend detailliert beschreiben, um gute Ergebnisse zu gewährleisten.

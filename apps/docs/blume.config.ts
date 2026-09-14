@@ -97,6 +97,29 @@ export default defineConfig({
       sameAs: ['https://github.com/stagewise-io', 'https://stagewise.io'],
     },
   },
+  // i18n: 11 locales. English lives at the content root; other locales are
+  // top-level directories under docs/ (dir parser). UI chrome auto-translates
+  // via Blume's built-in packs. Arabic uses RTL text direction.
+  i18n: {
+    defaultLocale: 'en',
+    fallbackLocale: 'en',
+    hideDefaultLocalePrefix: true,
+    parser: 'dir',
+    locales: [
+      { code: 'en', label: 'English' },
+      { code: 'zh', label: '中文' },
+      { code: 'ja', label: '日本語' },
+      { code: 'ko', label: '한국어' },
+      { code: 'de', label: 'Deutsch' },
+      { code: 'fr', label: 'Français' },
+      { code: 'es', label: 'Español' },
+      { code: 'pt', label: 'Português' },
+      { code: 'hi', label: 'हिन्दी' },
+      { code: 'uk', label: 'Українська' },
+      { code: 'ru', label: 'Русский' },
+      { code: 'ar', label: 'العربية', dir: 'rtl' },
+    ],
+  },
   // AI-facing features: llms.txt manifest, MCP server, and the
   // "Open in chat" page action (subset — v0, Scira, and Cursor removed).
   ai: {

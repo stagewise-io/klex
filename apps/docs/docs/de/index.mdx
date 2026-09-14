@@ -1,0 +1,43 @@
+---
+title: Einführung
+description: Erste Schritte mit Klex
+---
+
+Klex ist ein quelloffenes, selbst hostbares System zum Erstellen und Betreiben von Bots (vollständig autonomen Agenten) und wurde speziell für Teams entwickelt, um ihre Belegschaft mit KI-gestützten digitalen Mitarbeitern zu erweitern. Klex wird von [stagewise](https://stagewise.io) entwickelt und unter der Apache-2.0-Lizenz bereitgestellt.
+
+<GithubInfo owner="stagewise-io" repo="klex" />
+
+Ein einzelner Klex-Bot verhält sich wie eine eigenständige Identität. Er hat seine eigene Persönlichkeit, seine eigenen Erinnerungen und seine eigene Identität in all Ihren Arbeitsplattformen.
+
+Wir nennen Klex-Bots **nicht** gerne „Assistenten", denn während Sie *sehr wohl* einen Klex-Bot erstellen können, dessen Aufgabe es ist, Ihr Assistent zu sein,
+sind Klex-Bots weitaus leistungsstärker und ermöglichen es Ihnen, ein ganzes Team von Bots zu erstellen, die mit ihren Kollegen zusammenarbeiten, egal ob diese Menschen oder ebenfalls Bots sind.
+
+## Unsere Kernprinzipien
+
+Alles, was wir entwickeln, wird von sechs Prinzipien geleitet:
+
+- **Quelloffen und modellunabhängig** — Kein Vendor-Lock-in. Wechseln Sie jederzeit Modelle oder betreiben Sie Bots auf Ihrer eigenen Infrastruktur.
+- **Eigene Identität** — Bots handeln als sie selbst, nicht im Auftrag von jemand anderem. Jede Integration wird mit diesem Gedanken entwickelt.
+- **Benutzerfreundlichkeit** — Eine KI-gestützte Belegschaft sollte für jeden verfügbar sein. Wir bevorzugen **Benutzerfreundlichkeit vor Anpassung** und halten Einrichtung und Wartung einfach.
+- **Standardkonformität** — Die gesamte externe Kommunikation läuft über [**MCP**](https://modelcontextprotocol.io/docs/2026-07-28/getting-started/intro) — keine benutzerdefinierten Gateways. Kommunikationsplattformen verbinden sich über MCP plus eine kleine Erweiterung, die es Apps ermöglicht, den Bot proaktiv zu triggern. Das Memory-System ist zudem kompatibel mit [**Agent Skills**](https://agentskills.io/home) zum Speichern prozeduraler Erinnerungen.
+- **Introspektierbarkeit** — Das Gedächtnis des Bots wird in reinem Markdown gespeichert. Sie können jederzeit alles lesen und überprüfen, was der Bot weiß.
+- **Anpassbarkeit** — Bots greifen nur auf Maschinen zu, die explizit über MCP verbunden sind — niemals auf den Host, auf dem sie laufen. Sie können ihr eigenes rohes Gedächtnis nicht introspektieren, ihre Persönlichkeit nicht ändern und Host-Einstellungen nicht verändern. Dies hält Operationen konstruktiv sicher.
+
+## Klex Cloud
+
+Unser Bot wird von unserem Cloud-Angebot namens [**Klex Cloud**](https://cloud.klex.bot) begleitet, das Klex-kompatible MCP-Server für eine Vielzahl von Plattformen hostet.
+
+Unsere Cloud hilft zudem dabei, Ihren Bots in diesen Plattformen dedizierte Identitäten (entweder über Konten, Bot-Instanzen oder Apps) zu geben, sodass Sie Bots problemlos mit einer eigenen Identität ausstatten können, über die sie handeln können.
+
+<Panel title="Gut zu wissen">
+Das Cloud-Angebot ist **vollständig optional** und kann ignoriert werden, wenn Sie sicherstellen möchten, dass keine Kommunikationsdaten über Drittanbieter übertragen werden.
+</Panel>
+
+Für Enterprise-Kunden bieten wir eine on-premise hostbare Variante unseres Cloud-Dienstes an, die Compliance mit allen Anforderungen an Datenresilienz etc. gewährleistet.
+
+Wir befinden zudem im Prozess der SOC2-Type-2-Compliance und der ISO-27001-Zertifizierung. Weitere Informationen finden Sie in unserem [Trust Center](https://trust.stagewise.io).
+
+## Nächste Schritte
+
+- [Installieren Sie Klex](/quickstart) und erstellen Sie Ihren ersten Bot.
+- Verstehen Sie die [Architektur](/architecture) und wie Bots mit der Außenwelt interagieren.

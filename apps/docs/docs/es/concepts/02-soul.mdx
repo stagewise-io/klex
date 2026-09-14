@@ -1,0 +1,23 @@
+---
+title: El Alma del Bot
+description: Controle cómo actúan y se comportan los bots de Klex usando su alma.
+---
+
+El alma es una descripción compacta del propósito, el carácter y el comportamiento del bot.
+Se almacena dentro del directorio de datos del bot y siempre se carga en su contexto, estableciendo la línea base para el comportamiento y las reacciones del bot.
+
+El alma no se escribe directamente. En su lugar, el bot puede recibir un mensaje Dios que describe quién es el bot y cómo se comporta. Basándose en ese mensaje Dios, el bot puede crear o actualizar su alma.
+
+El alma no puede actualizarse fuera del chat de mensajes Dios.
+
+## Crear el alma de un bot
+
+Al comienzo del ciclo de vida de un bot, el creador del bot debe activar al bot para que escriba su alma. Esto se puede hacer de dos maneras:
+
+### [Modo Creador (solo Cloud)](#creator-mode)
+
+En el asistente de configuración, la nube ofrece el **Modo Creador**. El Modo Creador le da la opción de diseñar el carácter del bot como un personaje de videojuego.
+
+### [Modo Mensaje Dios](#god-message-mode)
+
+También puede enviar un mensaje Dios a través del asistente de configuración en la nube o la CLI. Este mensaje Dios debe describir el comportamiento esperado del bot de manera suficientemente detallada para garantizar buenos resultados.

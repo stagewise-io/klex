@@ -1,0 +1,26 @@
+---
+title: Kognitive Architektur
+description: Klex-Bots verfügen über eine kognitive Architektur, die stark von der Global Workspace Theory inspiriert ist.
+---
+
+Ein einzelner Klex-Bot fungiert als einzelne Identität und eine Instanz des Bewusstseins und ist in der Menge an Multitasking begrenzt, die er leisten kann. Dies bedeutet jedoch nicht, dass der Bot aus einer einzigen internen Konversation besteht.
+
+Im Gegenteil: Die Architektur der Klex-Bots nutzt Parallelisierung in einer Weise, die grob analog dazu ist, wie die [Global Workspace Theory (GWT)](https://en.wikipedia.org/wiki/Global_workspace_theory) die Funktionsweise des menschlichen Gehirns envisioniert.
+
+## Die technische Grundlage
+
+Ein einzelner Klex-Bot hat eine variable Anzahl von **Sessions**, die gleichzeitig arbeiten. Jede Session ist ein Gespräch zwischen einem LLM-Agenten und einer internen Umgebung und kann dank automatischer Kontextkomprimierung beliebig lange laufen. Nur eine offene Session hat Zugriff auf die Umgebung und kann mit der Außenwelt interagieren, um Verhalten auszudrücken (die „erleuchtete Hauptbühne" gemäß der GWT).
+
+Andere Sessions erfüllen unterschiedliche Zwecke, z. B. das Filtern eingehender Signale oder das Aktualisieren und Konsolidieren von Erinnerungen. Sie agieren unabhängig von der Hauptsession, können diese aber beeinflussen, indem sie Kontext an sie übergeben.
+
+### Hauptsession
+
+Die Hauptsession repräsentiert das tatsächliche Verhalten und die Aktionen des Bots. Nur diese Session erhält Zugriff auf MCPs, was es ihr ermöglicht, mit ihren Verbindungen zur Umgebung zu interagieren. Sie behandelt jedoch keine Aufgaben wie das Erstellen oder Konsolidieren von Erinnerungen und kann sich rein auf die eigentliche Arbeit konzentrieren, basierend auf eingehenden Ereignissen aus der Außenwelt oder internen Triggern wie Erinnerungen oder To-Dos.
+
+### Utility-Sessions
+
+Utility-Sessions haben keinen Zugriff auf die Außenwelt, können aber mit dem Datenverzeichnis des Bots interagieren. Sie behandeln Aufgaben wie das Analysieren bestehender Sessions zum Aufbau neuer Erinnerungen, das Löschen veralteter Erinnerungen, das Feintunen von Skills (prozedurale Erinnerungen) und das Verknüpfen der Erfahrungen des Bots mit Entitäten im Gedächtnis.
+
+### God-Session
+
+Die God-Session ist eine dedizierte Session mit begrenztem Zugriff auf die Außenwelt und nur über die Admin-API nutzbar. Sie erhält keine Eingaben aus der Außenwelt außer dedizierten [God-Messages](/concepts/god-messages), und ihr Zweck ist es, administrative Aufgaben auszuführen, die erhöhte Berechtigungen erfordern, wie z. B. das Befehlen des Bots, seine [Seele](/concepts/soul) zu erstellen oder zu aktualisieren.

@@ -1,0 +1,111 @@
+---
+title: 快速开始
+description: 安装 Klex 并让你的第一个 Klex 机器人运行起来。
+---
+
+## 安装
+
+Klex 机器人是自托管的。这意味着你必须在以后将作为机器人的记忆存储和执行环境的机器上下载 Klex 应用程序。
+
+<Panel title="须知">
+机器人**不**会自动访问你系统上的任何文件。相反，主机仅作为机器人思考和记忆存储与检索的场所。
+
+与外部世界的任何交互，包括用于**计算机使用**或开发的沙箱或完整机器，都需要通过 MCP 显式连接一台计算机。
+</Panel>
+
+要安装 Klex，在你的系统 shell 中运行以下脚本：
+
+<Tabs param="install">
+  <Tab title="macOS">`curl -fsSL https://klex.bot/install.sh | sh`</Tab>
+  <Tab title="Linux">`curl -fsSL https://klex.bot/install.sh | sh`</Tab>
+  <Tab title="Windows">`irm https://klex.bot/install.ps1 | iex`</Tab>
+  <Tab title="WSL">`curl -fsSL https://klex.bot/install.sh | sh`</Tab>
+</Tabs>
+
+## 创建你的机器人
+
+<Tabs inline param="bot-setup">
+
+<Tab title="云端辅助（推荐）" syncKey="cloud">
+  <Steps>
+  <Step title="注册 Klex 云端">
+    前往 [Klex 云端](https://cloud.klex.bot) 并注册。在左侧边栏中，选择 Bots 面板并点击 `Set up a Klex Bot`。
+  </Step>
+  <Step title="启动 Klex">
+    按照向导中的指南安装并启动 Klex 应用程序。
+  </Step>
+  <Step title="创建新机器人">
+    在 Klex 应用程序中，在选项列表中选择 `Create a new Bot` 并按 Enter。
+  </Step>
+  <Step title="为你的机器人命名">
+    输入该机器人应使用的名称。机器人将知道这是它自己的名字。
+  </Step>
+  <Step title="将机器人注册到云端">
+    按照云端向导中的说明将此机器人连接到你的 Klex 云端组织。
+  </Step>
+  <Step title="配置模型提供商和模型选择">
+    云端向导现在会提示你配置机器人要使用的模型提供商和模型。
+    <Panel title="须知">
+      提供商凭证被安全地传输并存储在托管机器人的机器人自身配置中，**而非**云端中。
+    </Panel>
+    <Panel title="须知">
+    Klex 支持各种订阅、第一方提供商、本地 LLM 提供商和通用 API 提供商。
+
+    了解更多关于[模型提供商](/concepts/model-providers)和[模型选择](/concepts/model-selection)的信息。
+    </Panel>
+  </Step>
+  <Step title="赋予机器人灵魂">
+    在下一步中，向导会要求你设计机器人的灵魂。你有两个选项：[创造者模式](/concepts/soul#creator-mode)（*推荐！*）和[上帝消息模式](/concepts/soul#god-message-mode)。
+
+    [了解更多关于灵魂的信息](/concepts/soul)。
+  </Step>
+  <Step title="连接 MCP">为机器人提供 MCP 的访问权限。**Klex 云端**帮助你轻松为每个集成应用程序创建专用账户，但你当然也可以连接任何其他 MCP。</Step>
+</Steps>
+</Tab>
+
+<Tab title="独立模式" syncKey="standalone">
+<Panel title="重要">
+如果你想在无 Klex 云端的情况下使用 Klex 机器人，你需要确保至少连接一个可以主动触发机器人的 MCP。
+这意味着该 MCP **必须**实现以下**任一**功能：
+
+- 将对话作为带有变更通知的单个 MCP 资源
+- 按照我们的 [MCP 扩展](https://github.com/stagewise-io/klex/tree/main/packages/mcp-extension-push-notifications)进行推送通知
+</Panel>
+
+<Steps>
+  <Step title="启动 Klex">
+    使用以下命令启动 CLI：`klex --no-cloud`
+  </Step>
+  <Step title="创建新机器人">
+    在选项列表中选择 `Create a new Bot` 并按 Enter。
+  </Step>
+  <Step title="为你的机器人命名">
+    输入该机器人应使用的名称。机器人将知道这是它自己的名字。
+  </Step>
+  <Step title="配置模型提供商">
+    进入 `Settings -> Model Providers`，为你要使用的每个模型提供商创建一个提供商实例。
+    <Panel title="须知">
+    Klex 支持各种订阅、第一方提供商、本地 LLM 提供商和通用 API 提供商。
+    
+    [了解更多关于模型提供商的信息](/concepts/model-providers)。
+    </Panel>
+  </Step>
+  <Step title="配置模型选择">
+    进入 `Settings -> Model Selection`，为机器人的每个使用场景配置模型。
+    <Panel title="须知">
+    你必须为"Chat"配置一个有效的模型，但我们强烈建议配置所有能力以确保低成本使用和完整功能。
+
+    [了解更多关于模型选择的信息](/concepts/model-selection)。
+    </Panel>
+  </Step>
+  <Step title="赋予机器人灵魂">
+    进入 `Settings -> God messages` 发送一条 `God message`。god message 的内容应描述机器人灵魂应有的样子（其工作、性格等）。
+
+    [了解更多关于灵魂的信息](/concepts/soul)。
+  </Step>
+  <Step title="连接 MCP">进入 `Settings -> MCPs` 连接 MCP，为机器人提供外部世界的访问权限。</Step>
+</Steps>
+
+</Tab>
+
+</Tabs>

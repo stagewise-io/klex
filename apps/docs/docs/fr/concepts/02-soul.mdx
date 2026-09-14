@@ -1,0 +1,23 @@
+---
+title: L'Âme du Bot
+description: Contrôlez les actions et le comportement des bots Klex à l'aide de leur âme.
+---
+
+L'âme est une description compacte du but, du caractère et du comportement du bot.
+Elle est stockée dans le répertoire de données du bot et est toujours chargée dans son contexte, établissant la ligne de base du comportement et des réactions du bot.
+
+L'âme n'est pas écrite directement. Au lieu de cela, le bot peut recevoir un message Dieu qui décrit qui il est et comment il se comporte. Sur la base de ce message Dieu, le bot peut créer ou mettre à jour son âme.
+
+L'âme ne peut pas être mise à jour en dehors du chat des messages Dieu.
+
+## Créer l'âme d'un bot
+
+Au début du cycle de vie d'un bot, le créateur du bot doit déclencher l'écriture de son âme par le bot. Cela peut se faire de deux manières :
+
+### [Mode Créateur (Cloud uniquement)](#creator-mode)
+
+Dans l'assistant de configuration, le cloud propose le **Mode Créateur**. Le Mode Créateur vous donne la possibilité de concevoir le caractère du bot comme un personnage de jeu vidéo.
+
+### [Mode Message Dieu](#god-message-mode)
+
+Vous pouvez également envoyer un message Dieu via l'assistant de configuration dans le Cloud ou la CLI. Ce message Dieu doit décrire le comportement attendu du bot de manière suffisamment détaillée pour garantir de bons résultats.

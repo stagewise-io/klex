@@ -346,6 +346,48 @@ describe('GPT-Live model session', () => {
     ).toHaveLength(1);
   });
 
+  it('bounds serialized tool results before sending them', async () => {
+    const setupResult = setup();
+    setupResult.socket.open();
+    setupResult.socket.message({
+      type: 'session.started',
+      session: { id: 'live-1' },
+    });
+    const session = await setupResult.creating;
+    const nextEvent = session.events[Symbol.asyncIterator]().next();
+    setupResult.socket.message({
+      type: 'session.delegation.created',
+      offset_ms: 0,
+      delegation: { id: 'd1', target: 'responses', response_id: 'r1' },
+    });
+    setupResult.socket.message({
+      type: 'response.event',
+      delegation_id: 'd1',
+      event: {
+        type: 'response.output_item.done',
+        item: {
+          type: 'function_call',
+          call_id: 'large-result',
+          name: 'large',
+          arguments: '{}',
+        },
+      },
+    });
+    await nextEvent;
+
+    await session.sendToolResult({
+      executionId: 'large-result',
+      status: 'success',
+      output: { value: 'x'.repeat(1_000_000) },
+    });
+    const sent = setupResult.socket.sent.find((entry) =>
+      entry.includes('large-result:result'),
+    );
+    const output = JSON.parse(sent ?? '{}').item?.output as string;
+    expect(output.length).toBeLessThanOrEqual(65_536);
+    expect(JSON.parse(output)).toEqual({ value: `${'x'.repeat(4_096)}…` });
+  });
+
   it('fails closed without settling a tool call when result sending fails', async () => {
     const setupResult = setup();
     setupResult.socket.open();
@@ -420,6 +462,43 @@ describe('GPT-Live model session', () => {
         result: { executionId: 'bad', status: 'error', code: 'invalid-input' },
       },
     });
+  });
+
+  it('preserves own prototype keys in tool-call input', async () => {
+    const setupResult = setup();
+    setupResult.socket.open();
+    setupResult.socket.message({
+      type: 'session.started',
+      session: { id: 'live-1' },
+    });
+    const session = await setupResult.creating;
+    const nextEvent = session.events[Symbol.asyncIterator]().next();
+    setupResult.socket.message({
+      type: 'session.delegation.created',
+      offset_ms: 0,
+      delegation: { id: 'd1', target: 'responses', response_id: 'r1' },
+    });
+    setupResult.socket.message({
+      type: 'response.event',
+      delegation_id: 'd1',
+      event: {
+        type: 'response.output_item.done',
+        item: {
+          type: 'function_call',
+          call_id: 'prototype-input',
+          name: 'prototype',
+          arguments: '{"__proto__":{"preserved":true}}',
+        },
+      },
+    });
+
+    const event = (await nextEvent).value;
+    expect(event).toMatchObject({
+      type: 'tool-call',
+      request: { input: { __proto__: { preserved: true } } },
+    });
+    if (event?.type !== 'tool-call') throw new Error('Expected tool call');
+    expect(Object.hasOwn(event.request.input, '__proto__')).toBe(true);
   });
 
   it('appends canonical updates and only requests explicitly responsive speech', async () => {
@@ -730,6 +809,63 @@ describe('GPT-Live model session', () => {
       delta: Buffer.alloc(96_002).toString('base64'),
     });
     await expect(session.closed).resolves.toMatchObject({ type: 'failed' });
+  });
+
+  it('retains final transcripts when ordinary event delivery is blocked', async () => {
+    vi.useFakeTimers();
+    try {
+      const setupResult = setup();
+      setupResult.socket.open();
+      setupResult.socket.message({
+        type: 'session.started',
+        session: { id: 'live-1' },
+      });
+      const session = await setupResult.creating;
+      setupResult.socket.message({
+        type: 'session.delegation.created',
+        offset_ms: 0,
+        delegation: { id: 'd1', target: 'responses', response_id: 'r1' },
+      });
+      for (let index = 0; index < 33; index += 1)
+        setupResult.socket.message({
+          type: 'response.event',
+          delegation_id: 'd1',
+          event: {
+            type: 'response.output_item.done',
+            item: {
+              type: 'function_call',
+              call_id: `blocked-${index}`,
+              name: 'blocked',
+              arguments: '{}',
+            },
+          },
+        });
+      setupResult.socket.message({
+        type: 'session.input_transcript.delta',
+        event_id: 'final-transcript',
+        delta: 'final words',
+        start_ms: 10,
+        end_ms: 20,
+      });
+      setupResult.socket.message({
+        type: 'session.closed',
+        session: { id: 'live-1' },
+        reason: 'content',
+        usage: { seconds: 1 },
+      });
+
+      await vi.advanceTimersByTimeAsync(2_001);
+      await expect(session.closed).resolves.toMatchObject({ type: 'closed' });
+      const observed = [];
+      for await (const event of session.events) observed.push(event);
+      expect(observed.slice(0, 32)).toHaveLength(32);
+      expect(observed.at(-1)).toMatchObject({
+        type: 'approximate-transcript-group',
+        text: 'final words',
+      });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('uses the graceful provider close handshake when aborted', async () => {

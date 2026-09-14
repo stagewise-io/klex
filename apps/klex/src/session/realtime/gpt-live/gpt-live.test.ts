@@ -5,7 +5,12 @@ import type { PreparedInferenceContext } from '@/session/interaction';
 
 import { createGPTLiveProtocolState } from './gpt-live';
 import { buildGPTLiveSessionConfig } from './session-config';
-import { GPTLiveWireEventError, parseLiveServerEvent } from './wire-events';
+import {
+  GPT_LIVE_MAX_AUDIO_DELTA_BYTES,
+  GPT_LIVE_MAX_FUNCTION_ARGUMENT_CHARACTERS,
+  GPTLiveWireEventError,
+  parseLiveServerEvent,
+} from './wire-events';
 
 const delegation = {
   type: 'session.delegation.created',
@@ -181,6 +186,56 @@ describe('GPT-Live wire events', () => {
       inputTokens: 12,
       outputTokens: 7,
     });
+  });
+
+  it('bounds encoded audio and nested function arguments', () => {
+    const exactAudio = Buffer.alloc(GPT_LIVE_MAX_AUDIO_DELTA_BYTES).toString(
+      'base64',
+    );
+    expect(
+      parseLiveServerEvent({
+        type: 'session.output_audio.delta',
+        delta: exactAudio,
+      }),
+    ).toEqual({ type: 'output-audio-delta', delta: exactAudio });
+    expect(() =>
+      parseLiveServerEvent({
+        type: 'session.output_audio.delta',
+        delta: Buffer.alloc(GPT_LIVE_MAX_AUDIO_DELTA_BYTES + 1).toString(
+          'base64',
+        ),
+      }),
+    ).toThrow('oversized base64 delta');
+
+    const exactArguments = 'x'.repeat(
+      GPT_LIVE_MAX_FUNCTION_ARGUMENT_CHARACTERS,
+    );
+    expect(
+      parseLiveServerEvent(
+        responseEvent({
+          type: 'response.output_item.done',
+          item: {
+            type: 'function_call',
+            call_id: 'bounded-call',
+            name: 'bounded',
+            arguments: exactArguments,
+          },
+        }),
+      ),
+    ).toMatchObject({ call: { argumentsJson: exactArguments } });
+    expect(() =>
+      parseLiveServerEvent(
+        responseEvent({
+          type: 'response.output_item.done',
+          item: {
+            type: 'function_call',
+            call_id: 'oversized-call',
+            name: 'oversized',
+            arguments: `${exactArguments}x`,
+          },
+        }),
+      ),
+    ).toThrow('oversized item.arguments');
   });
 
   it('ignores unknown outer, nested, and non-function output events', () => {
@@ -478,6 +533,37 @@ describe('GPT-Live startup configuration', () => {
     ]);
   });
 
+  it('bounds ordinary history text before tokenization', () => {
+    const oversized = 'x'.repeat(131_073);
+    const prepared = buildGPTLiveSessionConfig(
+      {
+        ...context,
+        messages: [
+          { role: 'user', content: oversized },
+          { role: 'user', content: 'newest' },
+        ],
+      },
+      {
+        responsesModel: 'gpt-5.2',
+        frontendInstructions: 'voice',
+      },
+    );
+    expect(prepared.omittedHistoryMessages).toBe(1);
+    expect(prepared.session.input).toMatchObject([
+      { content: [{ text: 'newest' }] },
+    ]);
+
+    expect(() =>
+      buildGPTLiveSessionConfig(
+        { ...context, messages: [{ role: 'user', content: oversized }] },
+        {
+          responsesModel: 'gpt-5.2',
+          frontendInstructions: 'voice',
+        },
+      ),
+    ).toThrow('Newest GPT-Live history message');
+  });
+
   it('bounds tool history values before tokenization', () => {
     const prepared = buildGPTLiveSessionConfig(
       {
@@ -767,6 +853,34 @@ describe('GPT-Live protocol state', () => {
       ),
     ).toThrow('unknown delegation');
     state.apply(parseLiveServerEvent(delegation));
+    state.apply(
+      parseLiveServerEvent(
+        responseEvent({
+          type: 'response.output_item.done',
+          item: {
+            type: 'function_call',
+            call_id: 'call-1',
+            name: 'lookup',
+            arguments: '{}',
+          },
+        }),
+      ),
+    );
+    expect(() =>
+      state.apply(
+        parseLiveServerEvent(
+          responseEvent({
+            type: 'response.output_item.done',
+            item: {
+              type: 'function_call',
+              call_id: 'call-2',
+              name: 'lookup',
+              arguments: '{}',
+            },
+          }),
+        ),
+      ),
+    ).toThrow('function call state limit');
     expect(() =>
       state.apply(
         parseLiveServerEvent({

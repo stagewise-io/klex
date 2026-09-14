@@ -270,6 +270,37 @@ describe('GPT-Live transcript grouping', () => {
     ]);
   });
 
+  it('discards fragments older than an already emitted group', () => {
+    const groups = createGPTLiveTranscriptGrouper();
+    groups.add({
+      eventId: 'later',
+      speaker: 'user',
+      delta: 'later',
+      startMs: 100,
+      endMs: 110,
+    });
+    expect(
+      groups.add({
+        eventId: 'latest',
+        speaker: 'user',
+        delta: 'latest',
+        startMs: 1_000,
+        endMs: 1_010,
+      }),
+    ).toMatchObject([{ text: 'later', startMs: 100 }]);
+
+    expect(
+      groups.add({
+        eventId: 'too-late',
+        speaker: 'assistant',
+        delta: 'too late',
+        startMs: 0,
+        endMs: 10,
+      }),
+    ).toEqual([]);
+    expect(groups.flush()).toMatchObject([{ text: 'latest', startMs: 1_000 }]);
+  });
+
   it('fails closed when out-of-order fragments fill the pending bound', () => {
     const groups = createGPTLiveTranscriptGrouper({ maxPendingGroups: 1 });
     groups.add({

@@ -8,6 +8,7 @@ import type {
 
 const tokenizer = getEncoding('o200k_base');
 
+const MAX_HISTORY_TEXT_CHARACTERS = 131_072;
 const MAX_HISTORY_TOOL_VALUE_CHARACTERS = 16_384;
 const MAX_HISTORY_TOOL_VALUE_NODES = 128;
 const MAX_HISTORY_TOOL_VALUE_DEPTH = 16;
@@ -199,6 +200,12 @@ function retainNewestHistory(
     if (retained.length >= maxMessages) break;
     const item = items[index];
     if (item === undefined) continue;
+    const text = item.content[0]?.text ?? '';
+    if (text.length > MAX_HISTORY_TEXT_CHARACTERS) {
+      if (index === items.length - 1)
+        throw new Error('Newest GPT-Live history message exceeds token budget');
+      continue;
+    }
     const tokens = countInitialItemTokens(item);
     if (index === items.length - 1 && tokens > maxTokens)
       throw new Error('Newest GPT-Live history message exceeds token budget');

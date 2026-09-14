@@ -1,0 +1,26 @@
+---
+title: Cognitive Architecture
+description: Klex bots have a cognitive architecture that's strongly inspired by the Global Workspace Theory.
+---
+
+A single Klex bot acts as a single identity and one instance of consciousness, being limited in the amount of multitasking it can do. This does not mean, however, that the bot consists of a single internal conversation.
+
+On the contrary, the architecture of Klex bots uses parallelization in a way that's roughly analogous to how the [Global Workspace Theory (GWT)](https://en.wikipedia.org/wiki/Global_workspace_theory) envisions the human brain operating.
+
+## The technical foundation
+
+A single Klex bot has a variable number of **sessions** that operate concurrently. Each session is a conversation between an LLM agent and an internal environment, and can operate for arbitrarily long durations thanks to automated context compaction. Only one open session has access to the environment and can interact with the outside world to express behavior (the "illuminated main stage" according to the GWT).
+
+Other sessions serve different purposes, e.g. filtering incoming signals or updating and consolidating memories. They act independently of the main session, but can influence it by passing context into it.
+
+### Main session
+
+The main session represents the bot's actual behavior and actions. Only this session gets access to MCPs, allowing it to interact with its connections to the environment. It does not, however, handle tasks such as creating or consolidating memories, and can purely focus on actual work based on incoming events from the outside world, or internal triggers such as reminders or to-dos.
+
+### Utility sessions
+
+Utility sessions have no access to the outside world, but can interact with the bot's data directory. They handle tasks such as analyzing existing sessions to build new memories, deleting deprecated memories, fine-tuning skills (procedural memories), and linking the bot's experiences to entities in memory.
+
+### God session
+
+The god session is a dedicated session that has limited access to the outside world and is only usable through the Admin API. It does not receive inputs from the outside world other than dedicated [god messages](/concepts/god-messages) and its purpose is to perform administrative tasks that require elevated permissions, such as commanding the bot to create or update its [soul](/concepts/soul).

@@ -30,6 +30,7 @@ import type {
   ToolSnapshot,
 } from '@/tool-provider';
 
+import { isAttioServer } from './attio-workspace';
 import {
   connectMcpServer,
   McpAuthorizationRequiredError,
@@ -109,6 +110,10 @@ export type McpConnectionStatus =
 
 /** A single MCP server with its config and connection status. */
 export interface McpServerInfo {
+  integration?: {
+    provider: 'attio';
+    workspace?: { name: string; slug: string };
+  };
   /** Unique namespace / server name. */
   name: string;
   /** Current connection status. */
@@ -1075,6 +1080,14 @@ class McpModule implements Mcp {
       const transport = config && 'command' in config ? 'stdio' : 'http';
       const pending = this.deps.pendingAuthorizations.findByServer(name);
       statuses.push({
+        ...(config && isAttioServer(config)
+          ? {
+              integration: {
+                provider: 'attio' as const,
+                workspace: connection?.workspace,
+              },
+            }
+          : {}),
         name,
         status: runtime?.status ?? 'disconnected',
         toolCount: connection?.tools.length ?? 0,

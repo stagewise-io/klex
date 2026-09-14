@@ -13,7 +13,10 @@ import type {
 } from '@/mcp';
 import type { AudioFrame } from '@/media-transport';
 import { SessionInboxUrgency } from '@/session/inbox';
-import type { InteractionUpdateEnvelope } from '@/session/interaction';
+import type {
+  InteractionUpdateEnvelope,
+  PreparedInferenceContextHandle,
+} from '@/session/interaction';
 
 import { createRealtimeSessionCoordinator } from './session-coordinator';
 import {
@@ -633,6 +636,80 @@ describe('realtime session coordinator', () => {
       reason: 'realtime-session-ended',
     });
     await coordinator.close();
+  });
+
+  it('rolls back context that finishes bootstrapping after teardown', async () => {
+    vi.useFakeTimers();
+    const pendingBootstrap = deferred<PreparedInferenceContextHandle>();
+    const bootstrapStarted = deferred<void>();
+    let preparedHandle: PreparedInferenceContextHandle | undefined;
+    const host = createDeterministicConversationHost();
+    const acquireLease = host.acquireInteractionLease.bind(host);
+    vi.spyOn(host, 'acquireInteractionLease').mockImplementation(
+      async (request) => {
+        const lease = await acquireLease(request);
+        preparedHandle = await lease.bootstrap();
+        vi.spyOn(lease, 'bootstrap').mockImplementation(() => {
+          bootstrapStarted.resolve(undefined);
+          return pendingBootstrap.promise;
+        });
+        return lease;
+      },
+    );
+    const { coordinator, mcpHarness } = setup({ host });
+    try {
+      await coordinator.start();
+      await mcpHarness.notify(offered());
+      const lease = await host.nextLease();
+      await bootstrapStarted.promise;
+
+      await mcpHarness.notify(ended());
+      const closing = coordinator.close();
+      await vi.advanceTimersByTimeAsync(5_000);
+      await closing;
+      expect(lease.releaseCount).toBe(1);
+      expect(lease.contextRollbacks).toBe(0);
+
+      if (!preparedHandle) throw new Error('Expected prepared context handle');
+      pendingBootstrap.resolve(preparedHandle);
+      await vi.waitFor(() => expect(lease.contextRollbacks).toBe(1));
+    } finally {
+      vi.useRealTimers();
+      await coordinator.close();
+    }
+  });
+
+  it('bounds teardown while accepted-session setup is stuck', async () => {
+    vi.useFakeTimers();
+    const pendingAccept = deferred<RealtimeMediaClientAcceptResult>();
+    const mcpHarness = createMcpHarness({
+      accept: () => pendingAccept.promise,
+    });
+    const { coordinator, host } = setup({ mcp: mcpHarness });
+    try {
+      await coordinator.start();
+      await mcpHarness.notify(offered());
+      const lease = await host.nextLease();
+      await vi.waitFor(() =>
+        expect(mcpHarness.acceptRealtimeMediaSession).toHaveBeenCalledOnce(),
+      );
+
+      await mcpHarness.notify(ended());
+      const closing = coordinator.close();
+      await vi.advanceTimersByTimeAsync(4_999);
+      expect(lease.releaseCount).toBe(0);
+      await vi.advanceTimersByTimeAsync(1);
+      await closing;
+
+      expect(lease.releaseCount).toBe(1);
+      expect(coordinator.getActiveSessionCount()).toBe(0);
+    } finally {
+      pendingAccept.resolve({
+        transport: { kind: 'livekit-room', descriptor },
+      });
+      await Promise.resolve();
+      vi.useRealTimers();
+    }
   });
 
   it('acquires a fresh lease for a session offered after the previous one ended', async () => {

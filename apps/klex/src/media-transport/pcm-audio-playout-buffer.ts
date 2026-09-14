@@ -1,4 +1,4 @@
-import { BoundedAsyncQueue } from './async-queue';
+import { BoundedAsyncQueue, QueueWriteCancelledError } from './async-queue';
 import type { AudioFrame } from './media-transport';
 
 const SAMPLE_RATE_HZ = 48_000;
@@ -107,7 +107,7 @@ class PcmAudioPlayoutBufferModule implements PcmAudioPlayoutBuffer {
     if (this.closing !== undefined) return;
     this.revision += 1;
     this.frames.length = 0;
-    this.outputQueue.clear();
+    this.outputQueue.clear({ discardPendingWriters: true });
     this.setState(this.started ? 'underrun' : 'buffering');
     this.wake();
   }
@@ -128,7 +128,11 @@ class PcmAudioPlayoutBufferModule implements PcmAudioPlayoutBuffer {
       this.failure = options.error;
       this.closing = 'discard';
     }
-    if (this.closing === 'discard') this.frames.length = 0;
+    if (this.closing === 'discard') {
+      this.frames.length = 0;
+      this.outputQueue.clear({ discardPendingWriters: true });
+      this.outputQueue.close(this.failure);
+    }
     this.wake(true);
     await this.task;
   }
@@ -186,7 +190,15 @@ class PcmAudioPlayoutBufferModule implements PcmAudioPlayoutBuffer {
         };
         this.timestampUs += FRAME_DURATION_MS * 1_000;
         if (silence) this.insertedSilenceCount += 1;
-        await this.outputQueue.push(frame);
+        try {
+          await this.outputQueue.push(frame);
+        } catch (error) {
+          if (error instanceof QueueWriteCancelledError) {
+            if (this.shouldDiscard()) break;
+            continue;
+          }
+          throw error;
+        }
         this.options.onEvent?.({
           type: 'frame',
           state: this.state,
@@ -204,10 +216,10 @@ class PcmAudioPlayoutBufferModule implements PcmAudioPlayoutBuffer {
             : deadlineMs + FRAME_DURATION_MS;
       }
       if (this.failure !== undefined || this.closing === 'discard')
-        this.outputQueue.clear();
+        this.outputQueue.clear({ discardPendingWriters: true });
       this.outputQueue.close(this.failure);
     } catch (error) {
-      this.outputQueue.clear();
+      this.outputQueue.clear({ discardPendingWriters: true });
       this.outputQueue.close(error);
       throw error;
     } finally {

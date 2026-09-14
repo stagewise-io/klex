@@ -203,8 +203,11 @@ class RealtimeSessionCoordinatorModule implements RealtimeSessionCoordinator {
     }
 
     const handle = await lease.bootstrap();
+    if (session.controller.signal.aborted) {
+      handle.rollback();
+      return;
+    }
     session.contextHandle = handle;
-    if (session.controller.signal.aborted) return;
 
     const processor = await this.deps.processorFactory.create({
       namespace: session.namespace,
@@ -230,7 +233,6 @@ class RealtimeSessionCoordinatorModule implements RealtimeSessionCoordinator {
     session.tasks.push(
       this.discoverAudioSources(session, transport, processor),
       this.forwardUpdates(session, lease, processor),
-      modelEventTask,
       this.monitorLease(session, lease),
       this.pipeAudio(
         session,
@@ -561,17 +563,27 @@ class RealtimeSessionCoordinatorModule implements RealtimeSessionCoordinator {
   ): Promise<void> {
     if (session.finish) return session.finish;
     session.finish = (async () => {
-      const lease = session.lease;
-      if (!lease) session.acquisitionController.abort('realtime-session-ended');
+      if (!session.lease)
+        session.acquisitionController.abort('realtime-session-ended');
       if (!session.processor)
         session.controller.abort('realtime-session-ended');
-      await session.setup;
+      const setupSettled = await waitForSettlement(
+        [session.setup],
+        TEARDOWN_PHASE_TIMEOUT_MS,
+      );
+      const lease = session.lease;
+      if (!setupSettled) {
+        this.logTeardownTimeout(session, lease, 'setup');
+        session.controller.abort('realtime-session-ended');
+      }
       const endpointsClosed = await waitForSettlement(
         [session.processor?.close(), session.transport?.close()],
         TEARDOWN_PHASE_TIMEOUT_MS,
       );
-      if (!endpointsClosed)
+      if (!endpointsClosed) {
         this.logTeardownTimeout(session, lease, 'endpoint-close');
+        session.controller.abort('realtime-session-ended');
+      }
       if (endpointsClosed && session.modelEventTask) {
         const modelEventsDrained = await waitForSettlement(
           [session.modelEventTask],

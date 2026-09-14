@@ -214,6 +214,42 @@ describe('PcmAudioPlayoutBuffer', () => {
     await buffer.close();
   });
 
+  it('discards a pending pre-reset output frame', async () => {
+    vi.useFakeTimers();
+    const buffer = createPcmAudioPlayoutBuffer({
+      targetBufferMs: 40,
+      maxBufferMs: 40,
+    });
+    const iterator = buffer.audioOutput[Symbol.asyncIterator]();
+    await buffer.write(frame(1));
+    await buffer.write(frame(2));
+    await vi.advanceTimersByTimeAsync(20);
+
+    buffer.reset();
+    await buffer.write(frame(7));
+    await buffer.write(frame(8));
+    const next = iterator.next();
+    await vi.advanceTimersByTimeAsync(20);
+    expect(sample(await nextFrameFrom(next))).toBe(7);
+    await buffer.close();
+  });
+
+  it('forces a blocked output write to settle on discard close', async () => {
+    vi.useFakeTimers();
+    const buffer = createPcmAudioPlayoutBuffer({
+      targetBufferMs: 40,
+      maxBufferMs: 40,
+    });
+    await buffer.write(frame(1));
+    await buffer.write(frame(2));
+    await vi.advanceTimersByTimeAsync(20);
+
+    await expect(buffer.close()).resolves.toBeUndefined();
+    await expect(
+      buffer.audioOutput[Symbol.asyncIterator]().next(),
+    ).resolves.toEqual({ value: undefined, done: true });
+  });
+
   it('drains a response shorter than the target and propagates failure', async () => {
     vi.useFakeTimers();
     const draining = createPcmAudioPlayoutBuffer({

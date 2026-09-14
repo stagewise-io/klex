@@ -9,9 +9,22 @@ interface QueueWriter<T> {
   reject(error: unknown): void;
 }
 
+type QueueOverflow = 'backpressure' | 'drop-oldest';
+
 export interface BoundedAsyncQueueOptions<T> {
-  readonly overflow?: 'backpressure' | 'drop-oldest';
+  readonly overflow?: QueueOverflow;
   readonly onDrop?: (value: T) => void;
+}
+
+export interface BoundedAsyncQueueClearOptions {
+  readonly discardPendingWriters?: boolean;
+}
+
+export class QueueWriteCancelledError extends Error {
+  constructor() {
+    super('Queue write was cancelled');
+    this.name = 'QueueWriteCancelledError';
+  }
 }
 
 /** Internal bounded multi-producer, single-consumer async queue. */
@@ -21,6 +34,7 @@ export class BoundedAsyncQueue<T> implements AsyncIterable<T> {
   private readonly writers: QueueWriter<T>[] = [];
   private ended = false;
   private failure: unknown;
+  private overflow: QueueOverflow;
 
   constructor(
     private readonly capacity: number,
@@ -28,6 +42,7 @@ export class BoundedAsyncQueue<T> implements AsyncIterable<T> {
   ) {
     if (!Number.isInteger(capacity) || capacity < 1)
       throw new Error('Queue capacity must be a positive integer');
+    this.overflow = options.overflow ?? 'backpressure';
   }
 
   async push(value: T): Promise<void> {
@@ -41,7 +56,7 @@ export class BoundedAsyncQueue<T> implements AsyncIterable<T> {
       this.items.push(value);
       return;
     }
-    if (this.options.overflow === 'drop-oldest') {
+    if (this.overflow === 'drop-oldest') {
       const dropped = this.items.shift() as T;
       this.items.push(value);
       this.options.onDrop?.(dropped);
@@ -53,10 +68,20 @@ export class BoundedAsyncQueue<T> implements AsyncIterable<T> {
   }
 
   /** Discards buffered items without closing the queue. */
-  clear(): readonly T[] {
+  clear(options: BoundedAsyncQueueClearOptions = {}): readonly T[] {
     const cleared = this.items.splice(0);
-    this.promoteWriter();
+    if (options.discardPendingWriters) {
+      for (const writer of this.writers.splice(0))
+        writer.reject(new QueueWriteCancelledError());
+    } else {
+      while (this.items.length < this.capacity && this.writers.length > 0)
+        this.promoteWriter();
+    }
     return cleared;
+  }
+
+  setOverflow(overflow: QueueOverflow): void {
+    this.overflow = overflow;
   }
 
   /** Appends one terminal marker without blocking, immediately before close. */

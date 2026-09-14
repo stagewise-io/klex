@@ -111,7 +111,12 @@ class LiveKitAudioSourceModule implements AudioSource {
     this.queue = new BoundedAsyncQueue<AudioFrame>(INCOMING_QUEUE_CAPACITY, {
       overflow: 'drop-oldest',
     });
-    this.readable = this.queue;
+    this.readable = {
+      [Symbol.asyncIterator]: () => {
+        this.queue.setOverflow('backpressure');
+        return this.queue[Symbol.asyncIterator]();
+      },
+    };
     void this.pump();
   }
 

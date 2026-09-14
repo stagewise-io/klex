@@ -9,6 +9,11 @@ interface QueueWriter<T> {
   reject(error: unknown): void;
 }
 
+export interface BoundedAsyncQueueOptions<T> {
+  readonly overflow?: 'backpressure' | 'drop-oldest';
+  readonly onDrop?: (value: T) => void;
+}
+
 /** Internal bounded multi-producer, single-consumer async queue. */
 export class BoundedAsyncQueue<T> implements AsyncIterable<T> {
   private readonly items: T[] = [];
@@ -17,7 +22,10 @@ export class BoundedAsyncQueue<T> implements AsyncIterable<T> {
   private ended = false;
   private failure: unknown;
 
-  constructor(private readonly capacity: number) {
+  constructor(
+    private readonly capacity: number,
+    private readonly options: BoundedAsyncQueueOptions<T> = {},
+  ) {
     if (!Number.isInteger(capacity) || capacity < 1)
       throw new Error('Queue capacity must be a positive integer');
   }
@@ -33,9 +41,22 @@ export class BoundedAsyncQueue<T> implements AsyncIterable<T> {
       this.items.push(value);
       return;
     }
+    if (this.options.overflow === 'drop-oldest') {
+      const dropped = this.items.shift() as T;
+      this.items.push(value);
+      this.options.onDrop?.(dropped);
+      return;
+    }
     await new Promise<void>((resolve, reject) => {
       this.writers.push({ value, resolve, reject });
     });
+  }
+
+  /** Discards buffered items without closing the queue. */
+  clear(): readonly T[] {
+    const cleared = this.items.splice(0);
+    this.promoteWriter();
+    return cleared;
   }
 
   /** Appends one terminal marker without blocking, immediately before close. */

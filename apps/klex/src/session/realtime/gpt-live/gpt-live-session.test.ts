@@ -183,33 +183,51 @@ describe('GPT-Live model session', () => {
     expect(Buffer.from(append.audio, 'base64')).toHaveLength(960);
   });
 
-  it('resamples and frames Live output audio for the media transport', async () => {
-    const setupResult = setup();
-    setupResult.socket.open();
-    setupResult.socket.message({
-      type: 'session.started',
-      event_id: 'started-1',
-      session: { id: 'live-1' },
-    });
-    const session = await setupResult.creating;
-    const next = session.audioOutput[Symbol.asyncIterator]().next();
-    setupResult.socket.message({
-      type: 'session.output_audio.delta',
-      event_id: 'audio-1',
-      delta: Buffer.alloc(960).toString('base64'),
-    });
-    await expect(next).resolves.toMatchObject({
-      done: false,
-      value: {
-        encoding: 'pcm-s16le',
-        sampleRateHz: 48_000,
-        channels: 1,
-        sequence: 0,
-        timestampUs: 0,
-        data: expect.any(Uint8Array),
-      },
-    });
-    expect((await next).value?.data).toHaveLength(1_920);
+  it('buffers Live output and publishes resampled frames at 20 ms cadence', async () => {
+    vi.useFakeTimers();
+    try {
+      const setupResult = setup();
+      setupResult.socket.open();
+      setupResult.socket.message({
+        type: 'session.started',
+        event_id: 'started-1',
+        session: { id: 'live-1' },
+      });
+      const session = await setupResult.creating;
+      const iterator = session.audioOutput[Symbol.asyncIterator]();
+      const first = iterator.next();
+      setupResult.socket.message({
+        type: 'session.output_audio.delta',
+        event_id: 'audio-1',
+        delta: Buffer.alloc(15 * 960).toString('base64'),
+      });
+      await expect(first).resolves.toMatchObject({
+        done: false,
+        value: {
+          encoding: 'pcm-s16le',
+          sampleRateHz: 48_000,
+          channels: 1,
+          sequence: 0,
+          timestampUs: 0,
+          data: expect.any(Uint8Array),
+        },
+      });
+      expect((await first).value?.data).toHaveLength(1_920);
+
+      let secondSettled = false;
+      const second = iterator.next().then((result) => {
+        secondSettled = true;
+        return result;
+      });
+      await vi.advanceTimersByTimeAsync(19);
+      expect(secondSettled).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      await expect(second).resolves.toMatchObject({
+        value: { sequence: 1, timestampUs: 20_000 },
+      });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('pads and flushes a partial final output frame', async () => {

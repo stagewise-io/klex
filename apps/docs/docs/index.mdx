@@ -1,0 +1,43 @@
+---
+title: Introduction
+description: Get started with Klex
+---
+
+Klex is an open-source, self-hostable system for creating and running bots (fully autonomous agents), and is purpose-built for teams to extend their workforce with AI-powered digital coworkers. Klex is built by [stagewise](https://stagewise.io) and licensed under Apache-2.0.
+
+<GithubInfo owner="stagewise-io" repo="klex" />
+
+A single Klex bot acts like an individual identity. It has its own personality, its own memories, and its own identity in all your work platforms.
+
+We **don't** like to call Klex bots "assistants", because while you *can* create a Klex bot that has the job of being your assistant,
+Klex bots are much more powerful than that, allowing you to create a full team of bots that work together with their coworkers, no matter if they're humans or also bots.
+
+## Our core principles
+
+Everything we build is guided by six principles:
+
+- **Open-source and model-agnostic** — No vendor lock-in. Change models at any time, or run bots on your own infrastructure.
+- **Own identity** — Bots act as themselves, not on behalf of someone else. Every integration is built with this in mind.
+- **Ease of use** — An AI-powered workforce should be available to everyone. We favor **ease of use over customization** and keep setup and maintenance simple.
+- **Standard-compliance** — All external communication goes through [**MCP**](https://modelcontextprotocol.io/docs/2026-07-28/getting-started/intro) — no custom gateways. Communication platforms connect via MCP plus a small extension that lets apps proactively trigger the bot. The memory system is also compatible with [**Agent Skills**](https://agentskills.io/home) for storing procedural memory.
+- **Introspectability** — The bot's memory is stored in pure Markdown. You can read and inspect everything the bot knows at any time.
+- **Adaptability** — Bots only access machines explicitly connected via MCP — never the host they run on. They can't introspect their own raw memory, change their personality, or alter host settings. This keeps operations safe by design.
+
+## Klex Cloud
+
+Our bot is accompanied by our cloud offering called [**Klex Cloud**](https://cloud.klex.bot) which hosts Klex-friendly MCP servers for a variety of platforms.
+
+Our cloud also helps with giving your bots dedicated identities (either via accounts, bot instances, or apps) in those platforms, making it easy to give bots their own identity which they can act through.
+
+<Panel title="Good to know">
+The cloud offering is **fully optional** and can be ignored if you want to ensure that no communication data gets transferred via any third-party providers.
+</Panel>
+
+For enterprise customers, we offer an on-premise hostable variant of our cloud service, ensuring compliance with all needs regarding data resiliency, etc.
+
+We are also in the process of getting SOC2 Type 2 compliance and ISO 27001 certification. For more info, [visit our Trust Center](https://trust.stagewise.io).
+
+## Next steps
+
+- [Install Klex](/quickstart) and create your first bot.
+- Understand the [architecture](/architecture) and how bots interact with the outside world.

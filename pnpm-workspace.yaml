@@ -9,9 +9,11 @@ allowBuilds:
   '@ffprobe-installer/linux-arm64': true
   '@ffprobe-installer/linux-x64': true
   '@ffprobe-installer/win32-x64': true
+  '@scarf/scarf': true
   esbuild: true
   ffmpeg-static: true
   protobufjs: false
+  sharp: true
 
 minimumReleaseAge: 2880
 
@@ -19,3 +21,4 @@ minimumReleaseAge: 2880
 # publish; the release-age guard exists for third-party supply-chain risk.
 minimumReleaseAgeExclude:
   - '@klex/cloud-api'
+  - blume@1.6.6

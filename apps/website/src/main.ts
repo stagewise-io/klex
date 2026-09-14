@@ -34,6 +34,7 @@ app.innerHTML = `
       </a>
 
       <nav class="site-nav" aria-label="Primary navigation">
+        <a href="https://docs.klex.bot">Docs</a>
         <a class="cloud-login" href="https://cloud.klex.bot">Cloud Login</a>
       </nav>
     </header>
@@ -41,7 +42,8 @@ app.innerHTML = `
     <main>
       <section class="hero" aria-labelledby="hero-title">
         <div class="hero-intro">
-          <h1 id="hero-title">Meet Klex, your digital coworker.</h1>
+          <p class="hero-eyebrow">Meet Klex Bots</p>
+          <h1 id="hero-title">Your own team of digital coworkers.</h1>
         </div>
 
         <div class="installer" aria-label="Install Klex">

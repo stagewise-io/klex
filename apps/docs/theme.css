@@ -1,0 +1,10 @@
+/* Disable optical sizing for Fraunces (display/headings).
+   Only affects fonts with an opsz axis; Geist and IBM Plex Mono are unaffected. */
+:root {
+  font-optical-sizing: never;
+}
+
+/* Enlarge the header logo from h-5 (1.25rem) to h-7 (1.75rem). */
+[data-blume-header] img {
+  height: 1.75rem;
+}

@@ -1,0 +1,26 @@
+---
+title: Architecture Cognitive
+description: Les bots Klex ont une architecture cognitive fortement inspirée par la théorie de l'espace de travail global.
+---
+
+Un seul bot Klex agit comme une identité unique et une instance de conscience, étant limité dans la quantité de multitâche qu'il peut effectuer. Cela ne signifie cependant pas que le bot se compose d'une seule conversation interne.
+
+Au contraire, l'architecture des bots Klex utilise la parallélisation d'une manière grossièrement analogue à la façon dont la [théorie de l'espace de travail global (GWT)](https://en.wikipedia.org/wiki/Global_workspace_theory) conçoit le fonctionnement du cerveau humain.
+
+## Le fondement technique
+
+Un seul bot Klex possède un nombre variable de **sessions** qui fonctionnent simultanément. Chaque session est une conversation entre un agent LLM et un environnement interne, et peut fonctionner pendant des durées arbitrairement longues grâce à la compression automatique du contexte. Une seule session ouverte a accès à l'environnement et peut interagir avec le monde extérieur pour exprimer un comportement (la « scène principale éclairée » selon la GWT).
+
+D'autres sessions servent différents objectifs, par exemple filtrer les signaux entrants ou mettre à jour et consolider les souvenirs. Elles agissent indépendamment de la session principale, mais peuvent l'influencer en y passant du contexte.
+
+### Session principale
+
+La session principale représente le comportement et les actions réels du bot. Seule cette session a accès aux MCP, ce qui lui permet d'interagir avec ses connexions à l'environnement. Elle ne gère cependant pas des tâches telles que la création ou la consolidation de souvenirs, et peut se concentrer purement sur le travail réel basé sur les événements entrants du monde extérieur, ou les déclencheurs internes tels que les rappels ou les tâches.
+
+### Sessions utilitaires
+
+Les sessions utilitaires n'ont pas accès au monde extérieur, mais peuvent interagir avec le répertoire de données du bot. Elles gèrent des tâches telles que l'analyse des sessions existantes pour construire de nouveaux souvenirs, la suppression des souvenirs obsolètes, l'affinage des compétences (mémoires procédurales) et la liaison des expériences du bot avec des entités en mémoire.
+
+### Session Dieu
+
+La session Dieu est une session dédiée qui a un accès limité au monde extérieur et n'est utilisable que via l'API Admin. Elle ne reçoit pas d'entrées du monde extérieur autres que les [messages Dieu](/concepts/god-messages) dédiés, et son but est d'effectuer des tâches administratives nécessitant des permissions élevées, comme commander au bot de créer ou de mettre à jour son [âme](/concepts/soul).

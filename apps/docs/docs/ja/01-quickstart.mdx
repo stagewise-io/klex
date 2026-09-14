@@ -1,0 +1,111 @@
+---
+title: クイックスタート
+description: Klex をインストールし、最初の Klex ボットを稼働させましょう。
+---
+
+## インストール
+
+Klex ボットはセルフホスト型です。つまり、ボットの思考と記憶の保管および取得を行うマシンに Klex アプリケーションをダウンロードする必要があります。
+
+<Panel title="覚えておくと便利">
+ボットはシステム上のファイルに自動的にアクセス**しません**。代わりに、ホストはボットの思考と記憶の保管および取得が行われる場所としてのみ機能します。
+
+**コンピュータ使用**や開発のためのサンドボックスや完全なマシンを含む、外部世界とのやり取りには、MCP 経由でのコンピュータの明示的な接続が必要です。
+</Panel>
+
+Klex をインストールするには、システムのシェルで以下のスクリプトを実行します：
+
+<Tabs param="install">
+  <Tab title="macOS">`curl -fsSL https://klex.bot/install.sh | sh`</Tab>
+  <Tab title="Linux">`curl -fsSL https://klex.bot/install.sh | sh`</Tab>
+  <Tab title="Windows">`irm https://klex.bot/install.ps1 | iex`</Tab>
+  <Tab title="WSL">`curl -fsSL https://klex.bot/install.sh | sh`</Tab>
+</Tabs>
+
+## ボットの作成
+
+<Tabs inline param="bot-setup">
+
+<Tab title="クラウド支援（推奨）" syncKey="cloud">
+  <Steps>
+  <Step title="Klex クラウドに登録">
+    [Klex クラウド](https://cloud.klex.bot)にアクセスして登録します。左側のサイドバーで Bots パネルを選択し、`Set up a Klex Bot` をクリックします。
+  </Step>
+  <Step title="Klex を起動">
+    ウィザードのガイドに従って Klex アプリをインストールして起動します。
+  </Step>
+  <Step title="新しいボットを作成">
+    Klex アプリで、オプションリストから `Create a new Bot` を選択し、Enter を押します。
+  </Step>
+  <Step title="ボットに名前を付ける">
+    このボットが使用する名前を入力します。ボットはこれが自分の名前だと認識します。
+  </Step>
+  <Step title="ボットをクラウドに登録">
+    クラウドウィザードの指示に従って、このボットを Klex クラウド組織に接続します。
+  </Step>
+  <Step title="モデルプロバイダーとモデル選択を設定">
+    クラウドウィザードが、ボットが使用するモデルプロバイダーとモデルの設定を促します。
+    <Panel title="覚えておくと便利">
+      プロバイダーの認証情報は安全に送信され、ボットをホストするマシンのボット自身の設定に保存されます。クラウドには**保存されません**。
+    </Panel>
+    <Panel title="覚えておくと便利">
+    Klex はさまざまなサブスクリプション、ファーストパーティプロバイダー、ローカル LLM プロバイダー、汎用 API プロバイダーをサポートしています。
+
+    [モデルプロバイダー](/concepts/model-providers)と[モデル選択](/concepts/model-selection)について詳しく学ぶ。
+    </Panel>
+  </Step>
+  <Step title="ボットに魂を与える">
+    次のステップで、ウィザードがボットの魂の設計を求めます。2つのオプションがあります：[クリエイターモード](/concepts/soul#creator-mode)（*推奨！*）と[ゴッドメッセージモード](/concepts/soul#god-message-mode)。
+
+    [魂について詳しく学ぶ](/concepts/soul)。
+  </Step>
+  <Step title="MCP を接続">ボットに MCP へのアクセスを与えます。**Klex クラウド**が統合された各アプリでボット用の専用アカウントを簡単に作成できますが、もちろん他の MCP も接続できます。</Step>
+</Steps>
+</Tab>
+
+<Tab title="スタンドアロン" syncKey="standalone">
+<Panel title="重要">
+Klex クラウドなしで Klex ボットを使用する場合、ボットをプロアクティブにトリガーできる MCP を少なくとも1つ接続する必要があります。
+これは、MCP が以下の**いずれか**を実装**している必要がある**ことを意味します：
+
+- 変更通知付きの個別の MCP リソースとしての会話
+- 当社の [MCP 拡張](https://github.com/stagewise-io/klex/tree/main/packages/mcp-extension-push-notifications)に基づくプッシュ通知
+</Panel>
+
+<Steps>
+  <Step title="Klex を起動">
+    次のコマンドで CLI を起動します：`klex --no-cloud`
+  </Step>
+  <Step title="新しいボットを作成">
+    オプションリストから `Create a new Bot` を選択し、Enter を押します。
+  </Step>
+  <Step title="ボットに名前を付ける">
+    このボットが使用する名前を入力します。ボットはこれが自分の名前だと認識します。
+  </Step>
+  <Step title="モデルプロバイダーを設定">
+    `Settings -> Model Providers` に移動し、使用する各モデルプロバイダーのプロバイダーインスタンスを作成します。
+    <Panel title="覚えておくと便利">
+    Klex はさまざまなサブスクリプション、ファーストパーティプロバイダー、ローカル LLM プロバイダー、汎用 API プロバイダーをサポートしています。
+    
+    [モデルプロバイダーについて詳しく学ぶ](/concepts/model-providers)。
+    </Panel>
+  </Step>
+  <Step title="モデル選択を設定">
+    `Settings -> Model Selection` に移動し、ボットの各ユースケースのモデルを設定します。
+    <Panel title="覚えておくと便利">
+    「Chat」の有効なモデルを設定する必要がありますが、低コストでの使用と完全な機能性を確保するために、すべての機能を設定することを強くお勧めします。
+
+    [モデル選択について詳しく学ぶ](/concepts/model-selection)。
+    </Panel>
+  </Step>
+  <Step title="ボットに魂を与える">
+    `Settings -> God messages` に移動して `God message` を送信します。ゴッドメッセージの内容は、ボットの魂がどのようなものか（仕事、性格など）を記述する必要があります。
+
+    [魂について詳しく学ぶ](/concepts/soul)。
+  </Step>
+  <Step title="MCP を接続">`Settings -> MCPs` に移動し、MCP を接続してボットに外部世界へのアクセスを与えます。</Step>
+</Steps>
+
+</Tab>
+
+</Tabs>

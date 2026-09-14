@@ -125,7 +125,7 @@ export default defineConfig({
   ai: {
     llmsTxt: true,
     mcp: {
-      enabled: true,
+      enabled: false,
       route: '/mcp',
     },
     openInChat: ['chatgpt', 'claude', 't3'],

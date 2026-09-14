@@ -60,6 +60,13 @@ const mcpServerErrorSchema = z
 
 const mcpServerInfoSchema = z
   .object({
+    // Display-only metadata; optional for MCP servers without workspace identity.
+    integration: z
+      .object({
+        provider: z.literal('attio'),
+        workspace: z.object({ name: z.string(), slug: z.string() }).optional(),
+      })
+      .optional(),
     name: z.string(),
     status: mcpConnectionStatusSchema,
     toolCount: z.number().int().min(0),

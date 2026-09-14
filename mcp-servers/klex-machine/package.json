@@ -1,0 +1,64 @@
+{
+  "name": "klex-machine",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Unrestricted filesystem and persistent shell MCP server",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/stagewise-io/klex.git",
+    "directory": "mcp-servers/klex-machine"
+  },
+  "bin": {
+    "klex-machine": "dist/index.js"
+  },
+  "files": [
+    "dist",
+    "LICENSE",
+    "README.md"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "provenance": false
+  },
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "build": "node build.mjs",
+    "dev": "tsx watch src/index.ts serve",
+    "start": "node dist/index.js serve",
+    "typecheck": "tsc --noEmit -p tsconfig.test.json",
+    "test": "vitest run",
+    "verify": "node verify-package.mjs",
+    "prepack": "pnpm build"
+  },
+  "keywords": [
+    "klex",
+    "mcp",
+    "shell",
+    "filesystem"
+  ],
+  "packageManager": "pnpm@11.22.0",
+  "dependencies": {
+    "@hono/node-server": "2.0.10",
+    "@modelcontextprotocol/hono": "2.0.0-beta.4",
+    "@modelcontextprotocol/server": "2.0.0-beta.4",
+    "fast-glob": "3.3.3",
+    "hono": "4.12.30",
+    "ignore": "7.0.5",
+    "jose": "6.2.10",
+    "node-pty": "1.1.0",
+    "oauth4webapi": "3.8.7",
+    "zod": "4.4.3"
+  },
+  "devDependencies": {
+    "@stagewise/mcp-proxy-sdk": "workspace:*",
+    "@stagewise/typescript-config": "workspace:*",
+    "@types/node": "26.1.1",
+    "esbuild": "0.28.1",
+    "tsx": "4.23.1",
+    "typescript": "7.0.2",
+    "vitest": "4.1.10"
+  }
+}

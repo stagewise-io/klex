@@ -3,8 +3,26 @@
   "version": "0.1.0",
   "type": "module",
   "sideEffects": false,
-  "description": "SDK for hosting MCP proxys and connecting remote MCP environments",
+  "description": "SDK for hosting MCP proxies and connecting remote MCP environments",
   "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/stagewise-io/klex.git",
+    "directory": "packages/mcp-proxy-sdk"
+  },
+  "homepage": "https://github.com/stagewise-io/klex/tree/main/packages/mcp-proxy-sdk#readme",
+  "bugs": {
+    "url": "https://github.com/stagewise-io/klex/issues"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "proxy",
+    "websocket"
+  ],
+  "engines": {
+    "node": ">=24"
+  },
   "exports": {
     "./core": {
       "types": "./dist/core/index.d.ts",
@@ -25,11 +43,17 @@
   },
   "files": [
     "dist",
+    "LICENSE",
     "README.md"
   ],
+  "publishConfig": {
+    "access": "public",
+    "provenance": false
+  },
   "scripts": {
     "clean": "rm -rf dist",
     "build": "pnpm run clean && tsc -p tsconfig.build.json",
+    "prepublishOnly": "pnpm run build && pnpm run typecheck && pnpm run test",
     "typecheck": "tsc --noEmit",
     "test": "vitest run"
   },

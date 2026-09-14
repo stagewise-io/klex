@@ -12,6 +12,7 @@ allowBuilds:
   '@scarf/scarf': true
   esbuild: true
   ffmpeg-static: true
+  node-pty: true
   protobufjs: false
   sharp: true
 

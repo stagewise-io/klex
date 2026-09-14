@@ -25,6 +25,34 @@ describe('ProxyServer', () => {
     await active.close();
   });
 
+  it('reports configured public routes', async () => {
+    const active = createProxyServer({
+      authenticateEnvironment: async () => undefined,
+      environmentWebSocketPath: '/machine-connections',
+      parseEnvironmentId: createEnvironmentId,
+      routePrefix: '/machines/',
+    });
+    const address = await active.start();
+
+    expect(address.environmentUrl.pathname).toBe('/machine-connections');
+    expect(address.mcpUrl('target').pathname).toBe('/machines/target/mcp');
+
+    await active.close();
+  });
+
+  it('serves liveness and readiness endpoints', async () => {
+    const active = server();
+    const address = await active.start();
+
+    for (const path of ['/health', '/ready']) {
+      const response = await fetch(`${address.origin}${path}`);
+      expect(response.status).toBe(200);
+      await expect(response.json()).resolves.toEqual({ status: 'ok' });
+    }
+
+    await active.close();
+  });
+
   it('authenticates and registers environment IDs', async () => {
     const environmentId = createEnvironmentId('environment');
     let connectedEnvironmentId: string | undefined;

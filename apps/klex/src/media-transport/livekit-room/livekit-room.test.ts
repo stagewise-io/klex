@@ -228,6 +228,33 @@ describe('LiveKitRoomMediaTransportConnector', () => {
     await transport.close();
   });
 
+  it('backpressures inbound frames after a consumer attaches', async () => {
+    const { connector, room } = setup();
+    const transport = await connector.connect(descriptor, {
+      signal: new AbortController().signal,
+    });
+    const track = new FakeTrack('active');
+    room.emitSubscribed(track);
+    const source = await nextSource(transport);
+    const iterator = source.readable[Symbol.asyncIterator]();
+
+    for (let value = 0; value < 15; value += 1)
+      await track.stream.push(rtcFrame(value));
+    await vi.waitFor(() => expect(track.stream.yielded).toBe(11));
+
+    const received: AudioFrame[] = [];
+    for (let index = 0; index < 15; index += 1) {
+      const result = await iterator.next();
+      if (result.done) throw new Error('Expected an audio frame');
+      received.push(result.value);
+    }
+    expect(received.map((frame) => frame.sequence)).toEqual([
+      0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14,
+    ]);
+
+    await transport.close();
+  });
+
   it('releases an unsubscribed active track and accepts a later track', async () => {
     const { connector, room } = setup();
     const transport = await connector.connect(descriptor, {

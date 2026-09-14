@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { BoundedAsyncQueue } from './async-queue';
+import { BoundedAsyncQueue, QueueWriteCancelledError } from './async-queue';
 
 describe('BoundedAsyncQueue', () => {
   it('blocks writers at capacity and promotes them in order', async () => {
@@ -16,6 +16,36 @@ describe('BoundedAsyncQueue', () => {
     await expect(iterator.next()).resolves.toEqual({ value: 1, done: false });
     await expect(blocked).resolves.toBeUndefined();
     await expect(iterator.next()).resolves.toEqual({ value: 2, done: false });
+  });
+
+  it('promotes every waiting writer that fits after clear', async () => {
+    const queue = new BoundedAsyncQueue<number>(3);
+    await queue.push(1);
+    await queue.push(2);
+    await queue.push(3);
+    const fourth = queue.push(4);
+    const fifth = queue.push(5);
+
+    expect(queue.clear()).toEqual([1, 2, 3]);
+    await expect(Promise.all([fourth, fifth])).resolves.toEqual([
+      undefined,
+      undefined,
+    ]);
+    const iterator = queue[Symbol.asyncIterator]();
+    await expect(iterator.next()).resolves.toEqual({ value: 4, done: false });
+    await expect(iterator.next()).resolves.toEqual({ value: 5, done: false });
+  });
+
+  it('can discard pending writers while clearing', async () => {
+    const queue = new BoundedAsyncQueue<number>(1);
+    await queue.push(1);
+    const pending = queue.push(2);
+
+    expect(queue.clear({ discardPendingWriters: true })).toEqual([1]);
+    await expect(pending).rejects.toBeInstanceOf(QueueWriteCancelledError);
+    const next = queue[Symbol.asyncIterator]().next();
+    queue.close();
+    await expect(next).resolves.toEqual({ value: undefined, done: true });
   });
 
   it('drops the oldest item without blocking when configured', async () => {
@@ -47,6 +77,25 @@ describe('BoundedAsyncQueue', () => {
 
     await expect(next).resolves.toEqual({ value: 1, done: false });
     expect(dropped).not.toHaveBeenCalled();
+  });
+
+  it('can switch from dropping to backpressure', async () => {
+    const queue = new BoundedAsyncQueue<number>(1, {
+      overflow: 'drop-oldest',
+    });
+    await queue.push(1);
+    await queue.push(2);
+    queue.setOverflow('backpressure');
+    const blocked = queue.push(3);
+    const settled = vi.fn();
+    void blocked.then(settled);
+    await Promise.resolve();
+    expect(settled).not.toHaveBeenCalled();
+
+    const iterator = queue[Symbol.asyncIterator]();
+    await expect(iterator.next()).resolves.toEqual({ value: 2, done: false });
+    await expect(blocked).resolves.toBeUndefined();
+    await expect(iterator.next()).resolves.toEqual({ value: 3, done: false });
   });
 
   it('retains one terminal marker when closing at capacity', async () => {

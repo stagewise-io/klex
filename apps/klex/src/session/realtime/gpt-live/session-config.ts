@@ -203,7 +203,9 @@ function retainNewestHistory(
     const text = item.content[0]?.text ?? '';
     if (text.length > MAX_HISTORY_TEXT_CHARACTERS) {
       if (index === items.length - 1)
-        throw new Error('Newest GPT-Live history message exceeds token budget');
+        throw new Error(
+          'Newest GPT-Live history message exceeds text character budget',
+        );
       continue;
     }
     const tokens = countInitialItemTokens(item);

@@ -978,14 +978,16 @@ function toBoundedToolResult(
     }
 
     const result: Record<string, unknown> = Object.create(null);
+    const record = value as Record<string, unknown>;
     let count = 0;
-    for (const [key, entry] of Object.entries(value)) {
+    for (const key in record) {
+      if (!Object.hasOwn(record, key)) continue;
       if (count >= MAX_TOOL_RESULT_COLLECTION_ENTRIES || budget.nodes <= 0) {
         result['[truncated]'] = true;
         break;
       }
       result[key.slice(0, MAX_TOOL_RESULT_STRING_CHARACTERS)] =
-        toBoundedToolResult(entry, budget, ancestors, depth + 1);
+        toBoundedToolResult(record[key], budget, ancestors, depth + 1);
       count += 1;
     }
     return result;

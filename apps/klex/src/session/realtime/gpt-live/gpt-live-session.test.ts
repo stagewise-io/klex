@@ -493,11 +493,11 @@ describe('GPT-Live model session', () => {
     });
 
     const event = (await nextEvent).value;
-    expect(event).toMatchObject({
-      type: 'tool-call',
-      request: { input: { __proto__: { preserved: true } } },
-    });
+    expect(event).toMatchObject({ type: 'tool-call' });
     if (event?.type !== 'tool-call') throw new Error('Expected tool call');
+    expect(event.request.input).toEqual(
+      JSON.parse('{"__proto__":{"preserved":true}}'),
+    );
     expect(Object.hasOwn(event.request.input, '__proto__')).toBe(true);
   });
 

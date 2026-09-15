@@ -249,6 +249,9 @@ describe('FilesystemService', () => {
 
   it('preserves a concurrent child during an exclusive directory move', async () => {
     await service.write({ path: 'source/entry', content: 'source' });
+    if (process.platform !== 'win32') {
+      await chmod(join(directory, 'source'), 0o500);
+    }
     const destinationEntry = join(directory, 'destination/entry');
     const exdev = Object.assign(new Error('cross-device move'), {
       code: 'EXDEV',
@@ -271,6 +274,13 @@ describe('FilesystemService', () => {
     expect(await readFile(join(directory, 'source/entry'), 'utf8')).toBe(
       'source',
     );
+    if (process.platform !== 'win32') {
+      expect((await stat(join(directory, 'destination'))).mode & 0o777).toBe(
+        0o500,
+      );
+      await chmod(join(directory, 'destination'), 0o700);
+      await chmod(join(directory, 'source'), 0o700);
+    }
   });
 
   it('rolls back only entries published before a directory collision', async () => {

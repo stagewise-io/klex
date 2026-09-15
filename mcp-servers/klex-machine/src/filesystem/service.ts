@@ -361,7 +361,7 @@ async function publishExclusiveEntry(
 
   await chmod(source, metadata.mode | 0o700);
   await mkdir(destination, { mode: metadata.mode | 0o700 });
-  await recordPublishedPath(destination, published);
+  await recordPublishedPath(destination, published, undefined, metadata.mode);
   for (const entry of (await readdir(source)).sort()) {
     await publishExclusiveEntry(
       join(source, entry),
@@ -376,6 +376,7 @@ async function recordPublishedPath(
   path: string,
   published: PublishedPath[],
   knownMetadata?: Stats,
+  finalMode?: number,
 ): Promise<void> {
   const metadata = knownMetadata ?? (await lstat(path));
   published.push({
@@ -383,7 +384,7 @@ async function recordPublishedPath(
     device: metadata.dev,
     inode: metadata.ino,
     directory: metadata.isDirectory(),
-    mode: metadata.mode,
+    mode: finalMode ?? metadata.mode,
   });
 }
 

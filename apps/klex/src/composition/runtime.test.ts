@@ -43,7 +43,7 @@ function createModules(options: {
     modelCallLogger: make('model-call-logger'),
     adminApi: make('admin-api'),
     cloudConnectivity: make('cloud-connectivity'),
-    router: make('router'),
+    sessionHost: make('session-host'),
     realtime: options.withRealtime === false ? undefined : make('realtime'),
     mcp: make('mcp'),
     telemetryManager: make('telemetry-manager'),
@@ -56,7 +56,7 @@ function emptyRecord(): Recorded {
 }
 
 describe('runtime composition', () => {
-  it('starts the router before realtime and MCP', () => {
+  it('starts the session host before realtime and MCP', () => {
     const order = runtimeStartupOrder(
       createModules({ recorded: emptyRecord() }),
     ).map((step) => step.name);
@@ -65,14 +65,16 @@ describe('runtime composition', () => {
       'model-call-logger',
       'admin-api',
       'cloud-connectivity',
-      'router',
+      'session-host',
       'realtime',
       'mcp',
       'telemetry-manager',
       'god-messages',
     ]);
-    expect(order.indexOf('router')).toBeLessThan(order.indexOf('mcp'));
-    expect(order.indexOf('router')).toBeLessThan(order.indexOf('realtime'));
+    expect(order.indexOf('session-host')).toBeLessThan(order.indexOf('mcp'));
+    expect(order.indexOf('session-host')).toBeLessThan(
+      order.indexOf('realtime'),
+    );
   });
 
   it('omits realtime when no realtime provider is composed', () => {
@@ -82,7 +84,7 @@ describe('runtime composition', () => {
 
     expect(order).not.toContain('realtime');
     expect(order.indexOf('cloud-connectivity')).toBeLessThan(
-      order.indexOf('router'),
+      order.indexOf('session-host'),
     );
   });
 
@@ -106,18 +108,18 @@ describe('runtime composition', () => {
       'telemetry-manager',
       'realtime',
       'mcp',
-      'router',
+      'session-host',
       'cloud-connectivity',
       'admin-api',
       'model-call-logger',
       'local-data',
     ]);
-    // Event ingress and realtime sessions stop before the primary session.
+    // Event ingress and realtime sessions stop before the default session.
     expect(recorded.closes.indexOf('mcp')).toBeLessThan(
-      recorded.closes.indexOf('router'),
+      recorded.closes.indexOf('session-host'),
     );
     expect(recorded.closes.indexOf('realtime')).toBeLessThan(
-      recorded.closes.indexOf('router'),
+      recorded.closes.indexOf('session-host'),
     );
   });
 
@@ -150,13 +152,13 @@ describe('runtime composition', () => {
       'model-call-logger',
       'admin-api',
       'cloud-connectivity',
-      'router',
+      'session-host',
       'realtime',
     ]);
     expect(recorded.closes).toEqual([
       'mcp',
       'realtime',
-      'router',
+      'session-host',
       'cloud-connectivity',
       'admin-api',
       'model-call-logger',
@@ -187,7 +189,7 @@ describe('runtime composition', () => {
       'god-messages',
       'telemetry-manager',
       'realtime',
-      'router',
+      'session-host',
       'cloud-connectivity',
       'admin-api',
       'model-call-logger',

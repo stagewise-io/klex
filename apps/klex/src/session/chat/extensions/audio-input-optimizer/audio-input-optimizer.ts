@@ -319,6 +319,7 @@ class AudioInputOptimizerExt implements Extension {
   }
 }
 
+/** Converts audio input into model-compatible content or a text fallback. */
 export const createAudioInputOptimizerExt: ExtensionFactory = {
   identifier: AUDIO_INPUT_OPTIMIZER_IDENTIFIER,
   displayName: 'Audio Input Optimizer',

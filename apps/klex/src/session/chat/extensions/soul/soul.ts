@@ -32,7 +32,7 @@ const SOUL_TAG_PATTERN = /<\/?soul\b[^>]*>/gi;
 /**
  * The mode of a soul extension instance.
  *
- * - `'standard'` — used in regular (router) sessions. The extension is
+ * - `'standard'` — used in regular (default) sessions. The extension is
  *   read-only: it injects the soul content (or a confused rejection
  *   prompt when no soul exists) into the system prompt but provides no
  *   tools. The soul cannot be created or updated from a regular session.
@@ -148,12 +148,14 @@ ${soul}
   }
 }
 
+/** Loads and maintains the agent soul for a standard chat session. */
 export const createSoulExt: ExtensionFactory = {
   identifier: 'io.stagewise/soul',
   displayName: 'Soul',
   create: (deps) => new SoulExt(deps, 'standard'),
 };
 
+/** Loads the agent soul with the behavior required by an isolated god session. */
 export const createSoulExtGod: ExtensionFactory = {
   identifier: 'io.stagewise/soul',
   displayName: 'Soul (God)',

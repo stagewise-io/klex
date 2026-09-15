@@ -30,7 +30,12 @@ function makeDeps(config: Config): ExtensionDeps {
       child: () => ({ info: vi.fn() }) as unknown as ExtensionDeps['logger'],
     } as unknown as ExtensionDeps['logging'],
     mcp: {} as unknown as ExtensionDeps['mcp'],
-    router: {} as unknown as ExtensionDeps['router'],
+    sessionContext: {
+      kind: 'default',
+      sessionId: 'test-session-id',
+    } as unknown as ExtensionDeps['sessionContext'],
+    createChildSession:
+      vi.fn() as unknown as ExtensionDeps['createChildSession'],
     sessionId: 'test-session-id',
     getDataDir: vi.fn(() => '/tmp/test'),
   } as ExtensionDeps;

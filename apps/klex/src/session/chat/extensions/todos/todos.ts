@@ -625,4 +625,5 @@ class TodosExtensionFactory implements ExtensionFactory {
   };
 }
 
+/** Adds durable todo management and default-session startup task recovery. */
 export const createTodosExt: ExtensionFactory = new TodosExtensionFactory();

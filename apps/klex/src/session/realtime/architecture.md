@@ -2,14 +2,14 @@
 
 ## Boundary
 
-The public `Realtime` module is the enabled application's lifecycle boundary started and closed by `main.ts`. It requires a resolved provider, the router as its `ConversationHost`, and the exact transport connector registry used to advertise MCP transport profiles. It resolves the selected model-session implementation and creates an internal realtime session coordinator. When no compatible provider is selected, `main.ts` creates no registry, advertises no Realtime Media capability, and creates no `Realtime` module.
+The public `Realtime` module is the enabled application's lifecycle boundary started and closed by `main.ts`. It requires a resolved provider, the session host as its `ConversationHost`, and the exact transport connector registry used to advertise MCP transport profiles. It resolves the selected model-session implementation and creates an internal realtime session coordinator. When no compatible provider is selected, `main.ts` creates no registry, advertises no Realtime Media capability, and creates no `Realtime` module.
 
-The coordinator owns accepted media-session lifetimes, but inference is deliberately not independent from chat. Every accepted call must first acquire an exclusive lease on the primary chat session's generation lane. The lease is the only route to canonical context, live notifications, tools, and transcript commitment.
+The coordinator owns accepted media-session lifetimes, but inference is deliberately not independent from chat. Every accepted call must first acquire an exclusive lease on the default chat session's generation lane. The lease is the only route to canonical context, live notifications, tools, and transcript commitment.
 
 ```text
 MCP Realtime Media control plane
   -> session-offered
-  -> acquire primary-session generation lease
+  -> acquire default-session generation lease
   -> accept/reject
   -> bootstrap canonical context + update watermark
   -> MediaTransport.audioSources -> RealtimeModelSession.audioInputs
@@ -20,7 +20,7 @@ MCP Realtime Media control plane
 ```
 
 MCP owns capability negotiation, the ephemeral lifecycle stream, connection
-availability, and accept/reject/end operations. A media connector owns its media-plane resources. A realtime model session owns provider inference resources and semantic wire conversion. The primary session remains authoritative for canonical history and tool execution. These roles have distinct creation boundaries but share one coordinated lifecycle. The coordinator borrows module-level dependencies and closes only the per-session transport, model session, context handle, and interaction lease it creates.
+availability, and accept/reject/end operations. A media connector owns its media-plane resources. A realtime model session owns provider inference resources and semantic wire conversion. The default session remains authoritative for canonical history and tool execution. These roles have distinct creation boundaries but share one coordinated lifecycle. The coordinator borrows module-level dependencies and closes only the per-session transport, model session, context handle, and interaction lease it creates.
 
 ## Endpoint and audio contracts
 
@@ -46,7 +46,7 @@ Adapters and processors must bound internal buffering.
 
 ## Session lifecycle
 
-Sessions are keyed by MCP namespace and external media session ID. An expired offer is rejected. For a valid offer, the coordinator first reserves the primary session's generation lane. Concurrent offers are rejected rather than queued or substituted. Acquisition waits for the chat loop's safe commit boundary: model generation may be interrupted, but a dispatched tool must settle and be committed before bootstrap.
+Sessions are keyed by MCP namespace and external media session ID. An expired offer is rejected. For a valid offer, the coordinator first reserves the default session's generation lane. Concurrent offers are rejected rather than queued or substituted. Acquisition waits for the chat loop's safe commit boundary: model generation may be interrupted, but a dispatched tool must settle and be committed before bootstrap.
 
 After lease acquisition, the coordinator accepts the remote offer, connects its descriptor, and calls `lease.bootstrap()`. Bootstrap atomically prepares instructions, transformed canonical history, non-secret model metadata, JSON-Schema tool descriptors, a context revision, and an update watermark. The model session is created and made ready before the scoped context handle is committed and audio pumps are enabled. Any setup failure rolls the handle back.
 

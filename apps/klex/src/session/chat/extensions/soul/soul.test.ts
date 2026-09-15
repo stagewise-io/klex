@@ -67,7 +67,12 @@ function makeDeps(
     mcp: {} as unknown as ExtensionDeps['mcp'],
     sessionId: 'test-session-id',
     getDataDir: vi.fn(() => dataDir),
-    router: {} as unknown as ExtensionDeps['router'],
+    sessionContext: {
+      kind: 'default',
+      sessionId: 'test-session-id',
+    } as unknown as ExtensionDeps['sessionContext'],
+    createChildSession:
+      vi.fn() as unknown as ExtensionDeps['createChildSession'],
     ...overrides,
   } as ExtensionDeps;
 }

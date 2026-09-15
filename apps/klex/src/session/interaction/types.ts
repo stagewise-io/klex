@@ -109,8 +109,8 @@ export type InteractionLeaseClosure =
   | {
       readonly type: 'revoked';
       readonly reason:
-        | 'primary-session-closed'
-        | 'primary-session-terminated'
+        | 'default-session-closed'
+        | 'default-session-terminated'
         | 'update-overflow';
     }
   | { readonly type: 'failed'; readonly error: unknown };

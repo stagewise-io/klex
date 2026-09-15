@@ -326,6 +326,7 @@ class ImageInputOptimizerExt implements Extension {
   }
 }
 
+/** Converts image input into model-compatible content or a text fallback. */
 export const createImageInputOptimizerExt: ExtensionFactory = {
   identifier: IMAGE_INPUT_OPTIMIZER_IDENTIFIER,
   displayName: 'Image Input Optimizer',

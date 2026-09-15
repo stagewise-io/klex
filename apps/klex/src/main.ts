@@ -26,14 +26,11 @@ import {
 } from '@/provider-registry';
 import { KLEX_VERSION, resolveReleaseTarget } from '@/release';
 import { runNativeVerification } from '@/release/verify-native';
-import { createRouter, type RouterApi } from '@/router';
 import { discoverManagedInstallation, UpdateManager } from '@/self-update';
-import {
-  type ChatSessionDependencies,
-  createChatSession,
-} from '@/session/chat';
+import { createChatSession } from '@/session/chat';
 import { createAudioInputOptimizerExt } from '@/session/chat/extensions/audio-input-optimizer';
 import { createContextCompactionExt } from '@/session/chat/extensions/context-compaction';
+import type { ExtensionFactory } from '@/session/chat/extensions/extension-api';
 import {
   createGodMessagesDistrustExt,
   createGodMessagesTrustExt,
@@ -52,7 +49,8 @@ import {
   createRealtime,
   PRODUCTION_REALTIME_MEDIA_CAPABILITY,
 } from '@/session/realtime';
-import type { SessionHooks } from '@/session/types';
+import { createSessionHost } from '@/session/session-host';
+import type { SessionFactory } from '@/session/types';
 import { createShutdownCoordinator } from '@/shutdown-coordinator';
 import {
   createTelemetryManager,
@@ -279,54 +277,76 @@ async function main(): Promise<void> {
 
     tracing.setModelCallSink((record) => modelCallLogger.recordCall(record));
 
-    const buildChatSession =
-      (sessionExtensions: ChatSessionDependencies['extensionFactories']) =>
-      (
-        hooks: SessionHooks,
-        introspectionScope: ChatSessionDependencies['introspectionScope'],
-        sessionRouter: RouterApi,
-        sessionId?: string,
-      ) =>
+    /** Shared deps captured by every session created through the factory. */
+    const sharedSessionDeps = {
+      logging: logger,
+      config,
+      modelResolver: providerRegistry,
+      dataDirectory,
+    };
+
+    /**
+     * Creates a SessionFactory that prepends `baseExtensions` to every
+     * session it creates, then appends the per-session extensions supplied
+     * by the caller (the session host or god-messages module).
+     *
+     * Every session gets a child-capable factory with no implicit base
+     * extensions. The spawning extension chooses the child's complete
+     * extension list; ChatSession enforces MCP isolation.
+     */
+    const makeSessionFactory =
+      (baseExtensions: ExtensionFactory[]): SessionFactory =>
+      (params) =>
         createChatSession({
-          logging: logger,
-          config,
-          modelResolver: providerRegistry,
-          mcp,
-          router: sessionRouter,
-          extensionFactories: [
-            ...sessionExtensions,
-            createJsReplSandboxExt,
-            createContextCompactionExt,
-            createTimeExt({ timeUpdatePeriod: TIME_UPDATE_PERIOD_SECONDS }),
-            createImageInputOptimizerExt,
-            createAudioInputOptimizerExt,
-            createTodosExt,
-          ],
-          dataDirectory,
-          hooks,
-          sessionId,
-          introspectionScope,
+          ...sharedSessionDeps,
+          mcp: params.mcp,
+          sessionContext: params.sessionContext,
+          extensionFactories: [...baseExtensions, ...params.extensionFactories],
+          introspectionScope: params.introspectionScope,
+          hooks: params.hooks,
+          sessionFactory: makeSessionFactory([]),
+          ...(params.systemPromptAssembler !== undefined && {
+            systemPromptAssembler: params.systemPromptAssembler,
+          }),
         });
 
-    const router = createRouter({
+    // Default session: full extension set + MCP access.
+    const defaultSessionFactory = makeSessionFactory([
+      createNameLoaderExt,
+      createSoulExt,
+      createGodMessagesDistrustExt,
+      createJsReplSandboxExt,
+      createContextCompactionExt,
+      createTimeExt({ timeUpdatePeriod: TIME_UPDATE_PERIOD_SECONDS }),
+      createImageInputOptimizerExt,
+      createAudioInputOptimizerExt,
+      createTodosExt,
+    ]);
+
+    const sessionHost = createSessionHost({
       logging: logger,
       mcp,
       introspection: introspector,
-      createChatSession: buildChatSession([
-        createNameLoaderExt,
-        createSoulExt,
-        createGodMessagesDistrustExt,
-      ]),
+      sessionFactory: defaultSessionFactory,
     });
+
+    // God session: no MCP, trust-mode god-messages, soul-god variant.
+    // js-repl-sandbox excluded — it requires MCP access.
     const godMessages = createGodMessages({
       logging: logger,
       introspection: introspector,
-      router,
-      createChatSession: buildChatSession([
+      sessionFactory: makeSessionFactory([
         createNameLoaderExt,
         createSoulExtGod,
         createGodMessagesTrustExt,
       ]),
+      extensionFactories: [
+        createContextCompactionExt,
+        createTimeExt({ timeUpdatePeriod: TIME_UPDATE_PERIOD_SECONDS }),
+        createImageInputOptimizerExt,
+        createAudioInputOptimizerExt,
+        createTodosExt,
+      ],
     });
     const adminApi = createAdminApi({
       logging: logger,
@@ -351,7 +371,7 @@ async function main(): Promise<void> {
           mcp,
           provider: realtimeComposition.provider,
           ownedConnector: realtimeComposition.ownedConnector,
-          conversationHost: router,
+          conversationHost: sessionHost,
         })
       : undefined;
     cloudConnectivity.setTunnelRequestHandler(adminApi.handle.bind(adminApi));
@@ -362,7 +382,7 @@ async function main(): Promise<void> {
         modelCallLogger,
         adminApi,
         cloudConnectivity,
-        router,
+        sessionHost,
         realtime,
         mcp,
         telemetryManager,
@@ -397,7 +417,7 @@ async function main(): Promise<void> {
         await updateManager?.cancelInstall();
       }
       // Ordered teardown: event ingress and realtime sessions stop before the
-      // primary session and its extensions close.
+      // default session and its extensions close.
       await runningRuntime?.close();
       const [lockRelease] = await Promise.allSettled([
         dirLock.release(),

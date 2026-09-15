@@ -15,6 +15,21 @@ export interface AssembledInferenceContext {
   readonly flags: TransformationFlags;
 }
 
+/**
+ * Assembles the final system prompt from the base prompt and the
+ * per-extension system prompt parts collected by the extension handler.
+ *
+ * The default implementation ({@link assembleInferenceInstructions})
+ * concatenates base + parts with blank-line separators. A session owner
+ * (e.g. an extension spawning a child session) may supply a custom
+ * assembler to control how extension contributions are combined — or
+ * to replace the base prompt entirely.
+ */
+export type SystemPromptAssembler = (
+  basePrompt: string,
+  extensionParts: readonly string[],
+) => string;
+
 export function assembleInferenceInstructions(
   baseInstructions: string,
   parts: readonly string[],
@@ -56,6 +71,7 @@ export async function assembleInferenceContext(options: {
   extensionHandler: ExtensionHandler;
   model: ResolvedModel;
   baseInstructions: string;
+  systemPromptAssembler?: SystemPromptAssembler;
 }): Promise<AssembledInferenceContext> {
   const historyResult = await runInferenceHistoryTransformers(
     options.extensionHandler,
@@ -74,7 +90,9 @@ export async function assembleInferenceContext(options: {
   return {
     messages: contextResult.history,
     tools: options.extensionHandler.getTools(options.model),
-    instructions: assembleInferenceInstructions(
+    instructions: (
+      options.systemPromptAssembler ?? assembleInferenceInstructions
+    )(
       options.baseInstructions,
       options.extensionHandler.getSystemPromptParts(),
     ),

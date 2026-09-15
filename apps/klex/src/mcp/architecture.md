@@ -9,7 +9,7 @@ The MCP module is the environment boundary between the agent core and external M
 - **Push Notification worker** — subscribes, drains server-managed pending queues, deduplicates, and acknowledges.
 - **Push Notification inbox** — process-local `eventId` deduplication scoped by MCP namespace.
 
-The module exposes `onPushNotification()` to the router. External code does not create or wire the inbox.
+The module exposes `onPushNotification()` to the default session. External code does not create or wire the inbox.
 
 ## Realtime Media boundary
 
@@ -59,7 +59,7 @@ MCP server durable pending queue
   -> establish live subscription and await acknowledgement
   -> retrieve oldest pending notifications in bounded pages
   -> push-notification-inbox.commit() (deduplicate by namespace + eventId)
-  -> publishPushNotification() -> listeners (router)
+  -> publishPushNotification() -> listeners (default session)
   -> acknowledge all accepted or duplicate event IDs
   -> continue live delivery
 ```
@@ -157,11 +157,11 @@ cloud consent is user-driven and asynchronous.
 Pending authorizations are in-memory: each one is a live, blocked connection
 attempt. A restart drops them, and the cloud simply starts a new authorization.
 
-## Interface to Router
+## Interface to Session
 
-The router subscribes through `mcp.onPushNotification(listener)` and receives `McpPushNotification` objects containing `{ namespace, event }`. It converts them into session-inbox events.
+The default session subscribes through `mcp.onPushNotification(listener)` and receives `McpPushNotification` objects containing `{ namespace, event }`. It converts them into session-inbox events.
 
-The router never accesses the Push Notification inbox directly.
+The session never accesses the Push Notification inbox directly.
 
 ## Interface to Main
 

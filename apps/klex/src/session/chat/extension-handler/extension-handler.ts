@@ -55,6 +55,12 @@ export interface ExtensionHandler {
   readonly extensions: readonly Extension[];
 
   /**
+   * Returns the identifiers of all instantiated extensions, in factory order.
+   * Used for loop prevention when creating child sessions.
+   */
+  getIdentifiers: () => string[];
+
+  /**
    * Run `onStepStart` across all extensions **in parallel** via
    * `Promise.allSettled`. The step waits for all hooks to settle
    * before proceeding.
@@ -194,8 +200,14 @@ class ExtensionHandlerModule implements ExtensionHandler {
   /** Maps each extension instance to its factory identifier for logging. */
   private readonly identifiersByExtension: Map<Extension, string>;
 
+  /** Ordered list of extension identifiers, matching factory order. */
+  private readonly orderedIdentifiers: string[];
+
   /** Maps each extension identifier to its factory-declared display name. */
   private readonly displayNamesByIdentifier: Map<string, string | undefined>;
+
+  /** Extensions whose cleanup completed, including startup rollback. */
+  private readonly closedExtensions = new Set<Extension>();
 
   constructor(deps: {
     factories: ExtensionFactory[];
@@ -223,6 +235,7 @@ class ExtensionHandlerModule implements ExtensionHandler {
 
     this.identifiersByExtension = new Map();
     this.displayNamesByIdentifier = new Map();
+    this.orderedIdentifiers = [];
 
     this.extensions = deps.factories.map((factory) => {
       const scopedDeps: ExtensionDeps = {
@@ -258,6 +271,7 @@ class ExtensionHandlerModule implements ExtensionHandler {
 
       const ext = factory.create(scopedDeps);
       this.identifiersByExtension.set(ext, factory.identifier);
+      this.orderedIdentifiers.push(factory.identifier);
       this.displayNamesByIdentifier.set(
         factory.identifier,
         factory.displayName,
@@ -274,6 +288,10 @@ class ExtensionHandlerModule implements ExtensionHandler {
 
       return ext;
     });
+  }
+
+  getIdentifiers(): string[] {
+    return [...this.orderedIdentifiers];
   }
 
   async runStepStartHooks(): Promise<void> {
@@ -302,9 +320,32 @@ class ExtensionHandlerModule implements ExtensionHandler {
   }
 
   async start(): Promise<void> {
-    for (const ext of this.extensions) {
-      if (!ext.onStart) continue;
-      await ext.onStart();
+    const attempted: Extension[] = [];
+    try {
+      for (const ext of this.extensions) {
+        if (!ext.onStart) continue;
+        attempted.push(ext);
+        await ext.onStart();
+      }
+    } catch (error) {
+      // Include the failing extension: onStart may have acquired resources
+      // before throwing. Roll back every attempted start in reverse order.
+      for (const ext of attempted.toReversed()) {
+        if (!ext.onClose) continue;
+        try {
+          await ext.onClose();
+          this.closedExtensions.add(ext);
+        } catch (closeError) {
+          this.extensionDeps.logger.error(
+            {
+              error: closeError,
+              extensionIdentifier: this.identifiersByExtension.get(ext),
+            },
+            'Extension startup rollback failed',
+          );
+        }
+      }
+      throw error;
     }
   }
 
@@ -312,9 +353,10 @@ class ExtensionHandlerModule implements ExtensionHandler {
     // Close in reverse factory order (LIFO) — mirrors resource cleanup.
     for (let i = this.extensions.length - 1; i >= 0; i--) {
       const ext = this.extensions[i]!;
-      if (!ext.onClose) continue;
+      if (!ext.onClose || this.closedExtensions.has(ext)) continue;
       try {
         await ext.onClose();
+        this.closedExtensions.add(ext);
       } catch (error) {
         this.extensionDeps.logger.error(
           { error, extensionIdentifier: this.identifiersByExtension.get(ext) },

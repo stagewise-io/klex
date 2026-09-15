@@ -31,14 +31,14 @@ export class GenerationLaneUnavailableError extends Error {
 
 export class GenerationLaneClosedError extends Error {
   constructor() {
-    super('The primary session is closed — no lease can be acquired.');
+    super('The default session is closed — no lease can be acquired.');
     this.name = 'GenerationLaneClosedError';
     Object.setPrototypeOf(this, GenerationLaneClosedError.prototype);
   }
 }
 
 /**
- * Capabilities the primary chat session must provide so a leased
+ * Capabilities the default chat session must provide so a leased
  * interaction mode can run on canonical session state.
  */
 export interface GenerationLaneHost {
@@ -131,7 +131,7 @@ export class GenerationLaneLeaseManager {
       onRelease: (reason) => this.finalize(lease, reason),
     });
 
-    const onAbort = () => lease.revoke('primary-session-closed');
+    const onAbort = () => lease.revoke('default-session-closed');
     request.signal.addEventListener('abort', onAbort, { once: true });
     lease.closed.then((closure) => {
       request.signal.removeEventListener('abort', onAbort);
@@ -175,7 +175,7 @@ export class GenerationLaneLeaseManager {
   }
 
   revoke(
-    reason: 'primary-session-closed' | 'primary-session-terminated',
+    reason: 'default-session-closed' | 'default-session-terminated',
   ): void {
     this.closed = true;
     this.active?.revoke(reason);

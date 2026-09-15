@@ -15,10 +15,10 @@ import {
   createMcp,
   type McpConnection,
 } from '@/mcp';
-import { createRouter } from '@/router';
 import type { ChatSessionDependencies } from '@/session/chat/chat-session';
 import type { ExtensionFactory } from '@/session/chat/extensions/extension-api';
-import type { ChatSessionHandle } from '@/session/types';
+import { createSessionHost } from '@/session/session-host';
+import type { ChatSessionHandle, SessionFactory } from '@/session/types';
 
 import { createRealtimeSessionCoordinator } from './session-coordinator';
 import {
@@ -84,7 +84,7 @@ function seededMcpToolExtension(): ExtensionFactory {
             additionalProperties: false,
           }),
           execute: (input, options) =>
-            deps.mcp.invoke({ namespace: 'voice', name: 'echo' }, input, {
+            deps.mcp!.invoke({ namespace: 'voice', name: 'echo' }, input, {
               executionId: options.toolCallId,
               sessionId: deps.sessionId,
               signal: options.abortSignal ?? new AbortController().signal,
@@ -95,8 +95,8 @@ function seededMcpToolExtension(): ExtensionFactory {
   };
 }
 
-describe('realtime and primary chat interaction', () => {
-  it('runs the lean happy path through MCP, router, chat, and realtime', async () => {
+describe('realtime and default chat interaction', () => {
+  it('runs the lean happy path through MCP, session host, chat, and realtime', async () => {
     const { createChatSession } = await import('@/session/chat/chat-session');
     let connectOptions: ConnectMcpServerOptions | undefined;
     let chatSession: ChatSessionHandle | undefined;
@@ -183,30 +183,25 @@ describe('realtime and primary chat interaction', () => {
       }),
     };
     const introspection = createIntrospector({ logging });
-    const router = createRouter({
+    const sessionFactory: SessionFactory = (params) => {
+      chatSession = createChatSession({
+        logging,
+        config,
+        modelResolver,
+        mcp: params.mcp,
+        sessionContext: params.sessionContext,
+        extensionFactories: [seededMcpToolExtension()],
+        dataDirectory: join(tmpdir(), 'klex-interaction-e2e'),
+        introspectionScope: params.introspectionScope,
+        hooks: params.hooks,
+      });
+      return chatSession;
+    };
+    const sessionHost = createSessionHost({
       logging,
       mcp,
       introspection,
-      createChatSession: (
-        hooks,
-        introspectionScope,
-        sessionRouter,
-        sessionId,
-      ) => {
-        chatSession = createChatSession({
-          logging,
-          config,
-          modelResolver,
-          mcp,
-          router: sessionRouter,
-          extensionFactories: [seededMcpToolExtension()],
-          dataDirectory: join(tmpdir(), 'klex-interaction-e2e'),
-          introspectionScope,
-          hooks,
-          sessionId,
-        });
-        return chatSession;
-      },
+      sessionFactory,
     });
     const connector = createDeterministicMediaTransportConnector();
     const processorFactory = createDeterministicEchoProcessorFactory();
@@ -215,12 +210,12 @@ describe('realtime and primary chat interaction', () => {
       mcp,
       mediaTransportConnector: connector,
       processorFactory,
-      conversationHost: router,
+      conversationHost: sessionHost,
       model: DETERMINISTIC_REALTIME_MODEL,
       now: () => Date.parse('2026-08-01T18:00:00.000Z'),
     });
 
-    await router.start();
+    await sessionHost.start();
     await coordinator.start();
     await mcp.start();
     await vi.waitFor(() => expect(connectOptions).toBeDefined());
@@ -327,7 +322,7 @@ describe('realtime and primary chat interaction', () => {
     await vi.waitFor(() => expect(coordinator.getActiveSessionCount()).toBe(0));
     expect(chatSession?.getSessionInfo().runtimeState).toBe('idle');
 
-    const releaseProbe = await router.acquireInteractionLease({
+    const releaseProbe = await sessionHost.acquireInteractionLease({
       mode: 'realtime',
       externalSessionId: 'release-probe',
       namespace: 'voice',
@@ -366,6 +361,6 @@ describe('realtime and primary chat interaction', () => {
 
     await coordinator.close();
     await mcp.close();
-    await router.close();
+    await sessionHost.close();
   });
 });

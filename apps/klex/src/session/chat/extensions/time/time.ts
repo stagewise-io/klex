@@ -375,6 +375,7 @@ export interface TimeExtConfig {
   timeUpdatePeriod: number;
 }
 
+/** Adds timezone-aware current-time context to a session at the configured cadence. */
 export function createTimeExt(config: TimeExtConfig): ExtensionFactory {
   if (
     !Number.isFinite(config.timeUpdatePeriod) ||

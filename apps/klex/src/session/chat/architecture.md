@@ -3,7 +3,7 @@
 ## Hierarchy
 
 ```
-Router
+SessionHost
   └─ Session (long-lived, owns messages + inbox + loop)
        └─ Turn (one inbox-drain-to-idle cycle)
             └─ Step (one generation + tool dispatch)
@@ -12,13 +12,13 @@ Router
 
 ## Session
 
-Owns message history, inbox, extension handler, fallback manager, backoff manager, and the run loop. Lives for the application lifetime (or until a fatal error self-terminates it). Exposes `status: 'active' | 'terminated'` so the router can detect dead sessions and replace them.
+Owns message history, inbox, extension handler, fallback manager, backoff manager, and the run loop. Lives for the application lifetime (or until a fatal error self-terminates it). Exposes `status: 'active' | 'terminated'` so the session host can detect dead sessions and replace them.
 
 **Loop:** processes one turn per iteration. Goes idle only when the inbox deferred buffer is empty, no pending immediate input (`hasPendingInput`), no backoff retry is needed, and no check-retry is needed. If a turn fails completely (all models exhausted) and no new inbox input arrives, applies exponential backoff before retrying. Fatal errors (e.g. 400, invalid prompt) terminate the session immediately.
 
 ## Inbox
 
-Three-urgency event buffer fed by the router. Two entry points: `send(event)` for context events (from MCP push notifications, router) and `sendMessage(message, urgency)` for native messages (from extensions). Both share the same urgency semantics.
+Three-urgency event buffer. Two entry points: `send(event)` for context events (from MCP push notifications, session host) and `sendMessage(message, urgency)` for native messages (from extensions). Both share the same urgency semantics.
 
 ### Urgency levels
 
@@ -60,11 +60,11 @@ Both `send()` and `sendMessage()` with Critical urgency abort the running genera
 
 ### Session termination and event recovery
 
-When a session terminates (fatal error, max failures, or explicit close), the inbox is closed first — any subsequent `send()` / `sendMessage()` throws `SessionInboxClosedError`. Deferred events remaining in the buffer are drained via `getEvents()` and passed to the router's `onTerminated` hook, which creates a replacement session and re-dispatches them via `restorePendingEvents()`. Immediate (Critical/Default) events that were already appended to history are lost with the terminated session's history — only deferred events survive.
+When a session terminates (fatal error, max failures, or explicit close), the inbox is closed first — any subsequent `send()` / `sendMessage()` throws `SessionInboxClosedError`. Deferred events remaining in the buffer are drained via `getEvents()` and passed to the session host's `onTerminated` hook, which creates a replacement session and re-dispatches them via `restorePendingEvents()`. Immediate (Critical/Default) events that were already appended to history are lost with the terminated session's history — only deferred events survive.
 
 ## Generation-lane leasing
 
-The primary chat session is the sole owner of canonical history, extension instances, and tool execution. Realtime does not create a parallel chat session. It requests an exclusive generation-lane lease through the router's `ConversationHost` interface.
+The default chat session is the sole owner of canonical history, extension instances, and tool execution. Realtime does not create a parallel chat session. It requests an exclusive generation-lane lease through the session host's `ConversationHost` interface.
 
 Lease acquisition is a safe-boundary handoff:
 
@@ -74,7 +74,7 @@ Lease acquisition is a safe-boundary handoff:
 4. prevent the next chat step from starting;
 5. prepare one atomic inference context and expose its history revision and update watermark.
 
-This ordering preserves chat-originated call framing. Assistant text, a call-opening tool invocation, and its settled result are canonical before realtime bootstrap. A concurrent lease is rejected. Closing or terminating the primary session revokes its lease; normal release resumes the chat lane without generating a duplicate response for inputs already handled during the call.
+This ordering preserves chat-originated call framing. Assistant text, a call-opening tool invocation, and its settled result are canonical before realtime bootstrap. A concurrent lease is rejected. Closing or terminating the default session revokes its lease; normal release resumes the chat lane without generating a duplicate response for inputs already handled during the call.
 
 ### Context preparation
 
@@ -104,7 +104,7 @@ The `messages[]` array is shared by reference across Session/Turn/Step. The crit
 
 ## Native media input
 
-The router maps valid inline MCP image and audio blocks to canonical session content containing `mimeType` and base64 `data`. This representation is AI-SDK-independent, remains in canonical history, preserves its position relative to captions and other text, and is redacted from logs and tracing. Inline media is bounded to 10 MiB at ingress.
+The session maps valid inline MCP image and audio blocks to canonical session content containing `mimeType` and base64 `data`. This representation is AI-SDK-independent, remains in canonical history, preserves its position relative to captions and other text, and is redacted from logs and tracing. Inline media is bounded to 10 MiB at ingress.
 
 Core model-message conversion projects canonical context for the model already selected by the normal fallback order:
 

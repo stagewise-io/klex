@@ -111,7 +111,12 @@ const noopDeps: BaseExtensionDeps = {
     child: () => noopDeps.logger,
   } as unknown as BaseExtensionDeps['logging'],
   mcp: {} as unknown as BaseExtensionDeps['mcp'],
-  router: { sendInput: vi.fn() } as unknown as BaseExtensionDeps['router'],
+  sessionContext: {
+    kind: 'default',
+    sessionId: 'test-session-id',
+  } as unknown as BaseExtensionDeps['sessionContext'],
+  createChildSession:
+    vi.fn() as unknown as BaseExtensionDeps['createChildSession'],
   sessionId: 'test-session-id',
 };
 
@@ -1501,6 +1506,38 @@ describe('ExtensionHandler — start()', () => {
 
     await expect(handler.start()).rejects.toThrow('boom');
     expect(calls).toEqual(['f1']);
+  });
+
+  it('rolls back every attempted extension in reverse order on startup failure', async () => {
+    const calls: string[] = [];
+    const f1 = factoryWith({
+      onStart: async () => {
+        calls.push('start-f1');
+      },
+      onClose: async () => {
+        calls.push('close-f1');
+      },
+    });
+    const f2 = factoryWith({
+      onStart: async () => {
+        calls.push('start-f2');
+        throw new Error('partial startup');
+      },
+      onClose: async () => {
+        calls.push('close-f2');
+      },
+    });
+
+    const handler = createExtensionHandler({
+      ...HANDLER_OPTS,
+      factories: [f1, f2],
+    });
+
+    await expect(handler.start()).rejects.toThrow('partial startup');
+    expect(calls).toEqual(['start-f1', 'start-f2', 'close-f2', 'close-f1']);
+
+    await handler.close();
+    expect(calls).toHaveLength(4);
   });
 });
 

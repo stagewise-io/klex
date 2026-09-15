@@ -18,7 +18,7 @@ afterEach(async () => {
 
 describe('CLI configuration', () => {
   it('uses defaults and resolves the process cwd', async () => {
-    const result = await parseCli(['serve'], {}, directory);
+    const result = await parseCli([], {}, directory);
     expect(result).toEqual({
       action: 'serve',
       config: {
@@ -29,7 +29,7 @@ describe('CLI configuration', () => {
         warnsAboutRemoteAccess: false,
       },
       dataDir: expect.any(String),
-      mode: 'local',
+      mode: 'enrolled',
     });
   });
 
@@ -92,11 +92,22 @@ describe('CLI configuration', () => {
     ).resolves.toMatchObject({ action: 'serve', mode: 'enrolled' });
   });
 
-  it.each(['0', '65536', 'nan', '1.5'])(
+  it.each(['127.1', '127.0.0.1', '::1', '[::1]', '::ffff:127.0.0.1'])(
+    'recognizes loopback literal %s',
+    async (host) => {
+      await expect(
+        parseCli(['serve', '--host', host], {}, directory),
+      ).resolves.toMatchObject({
+        config: { warnsAboutRemoteAccess: false },
+      });
+    },
+  );
+
+  it.each(['-1', '65536', 'nan', '1.5'])(
     'rejects invalid port %s',
     async (port) => {
       await expect(
-        parseCli(['serve', '--port', port], {}, directory),
+        parseCli(['serve', `--port=${port}`], {}, directory),
       ).rejects.toThrow('Invalid port');
     },
   );
@@ -121,13 +132,11 @@ describe('CLI configuration', () => {
     });
     expect(helpText()).toContain('klex-machine serve');
     expect(helpText()).toContain('klex-machine cloud enroll');
+    expect(helpText()).toContain('--cloud-base-url <url>');
     expect(packageVersion()).toBe('0.1.0');
   });
 
-  it('rejects missing and unknown commands', async () => {
-    await expect(parseCli([], {}, directory)).rejects.toThrow(
-      'Expected command',
-    );
+  it('rejects unknown commands', async () => {
     await expect(parseCli(['start'], {}, directory)).rejects.toThrow(
       'Expected command',
     );

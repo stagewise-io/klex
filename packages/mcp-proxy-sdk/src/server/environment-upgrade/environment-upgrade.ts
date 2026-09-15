@@ -119,7 +119,6 @@ class EnvironmentUpgradeHandlerModule implements EnvironmentUpgradeHandler {
         void active.ready.then(
           () => resolve(!active.removal),
           async (cause) => {
-            this.#report(cause);
             await this.#remove(active, cause);
             resolve(false);
           },

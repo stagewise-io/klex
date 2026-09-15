@@ -112,7 +112,10 @@ describe('ProxyHttp', () => {
     const routeRequest = vi.fn(async ({ request: routedRequest }) => {
       expect(routedRequest).toBe(original);
       expect(routedRequest.bodyUsed).toBe(false);
-      return new Response('remote', { status: 202 });
+      return new Response('remote', {
+        status: 202,
+        headers: { Connection: 'keep-alive', 'X-Route': 'remote' },
+      });
     });
     const handler = createProxyHttp({
       proxy: active.proxy,
@@ -124,6 +127,8 @@ describe('ProxyHttp', () => {
 
     expect(response.status).toBe(202);
     await expect(response.text()).resolves.toBe('remote');
+    expect(response.headers.get('connection')).toBeNull();
+    expect(response.headers.get('x-route')).toBe('remote');
     expect(routeRequest).toHaveBeenCalledOnce();
     expect(active.proxy.openExchange).not.toHaveBeenCalled();
   });
@@ -165,6 +170,21 @@ describe('ProxyHttp', () => {
     });
   });
 
+  it('cancels a forwarded exchange when its router subsequently fails', async () => {
+    const active = setup();
+    const handler = createProxyHttp({
+      proxy: active.proxy,
+      parseEnvironmentId: createEnvironmentId,
+      routeRequest: async ({ forwardLocal }) => {
+        await forwardLocal();
+        throw new Error('route failed after forwarding');
+      },
+    });
+
+    expect((await handler.fetch(request())).status).toBe(503);
+    expect(active.exchange.close).toHaveBeenCalledOnce();
+  });
+
   it('allows forwardLocal to be consumed only once', async () => {
     const active = setup();
     const handler = createProxyHttp({
@@ -180,6 +200,7 @@ describe('ProxyHttp', () => {
     });
 
     const response = await handler.fetch(request());
+    expect(response.status).toBe(200);
     active.exchange.end();
     await response.text();
   });

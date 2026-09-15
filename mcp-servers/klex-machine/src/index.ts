@@ -43,6 +43,7 @@ async function main(): Promise<void> {
   const enrollment = await loadMachineEnrollment(result.dataDir);
   const protectedResource = await loadProtectedResourceConfiguration(
     enrollment.oauthProtectedResourceUrl,
+    enrollment.mcpResourceUrl,
   );
   const router = createPrincipalMcpRouter(
     createMachineAuthenticator({

@@ -53,8 +53,12 @@ class ProxyServerModule implements ProxyServer {
       proxy: this.proxy,
     });
     this.httpServer = createServer((request, response) => {
-      const pathname = new URL(request.url ?? '/', 'http://proxy.local')
-        .pathname;
+      let pathname: string | undefined;
+      try {
+        pathname = new URL(request.url ?? '/', 'http://proxy.local').pathname;
+      } catch {
+        pathname = undefined;
+      }
       if (
         request.method === 'GET' &&
         (pathname === '/health' || pathname === '/ready')

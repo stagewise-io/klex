@@ -25,6 +25,7 @@ export function createPrincipalMcpRouter(
           headers: { 'www-authenticate': authenticator.challenge() },
         });
       }
+      if (closed) return new Response('Service unavailable', { status: 503 });
       let mcp = principals.get(principalId);
       if (!mcp) {
         mcp = createMcp(defaultCwd);
@@ -37,7 +38,15 @@ export function createPrincipalMcpRouter(
       closed = true;
       const modules = [...principals.values()];
       principals.clear();
-      await Promise.allSettled(modules.map((module) => module.close()));
+      const results = await Promise.allSettled(
+        modules.map((module) => module.close()),
+      );
+      const failures = results.flatMap((result) =>
+        result.status === 'rejected' ? [result.reason] : [],
+      );
+      if (failures.length > 0) {
+        throw new AggregateError(failures, 'Failed to close principal modules');
+      }
     },
   };
 }

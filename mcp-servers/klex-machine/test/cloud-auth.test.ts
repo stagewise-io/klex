@@ -45,7 +45,7 @@ describe('machine authentication', () => {
       ),
     ).rejects.toThrow('scope');
     expect(authenticator.challenge()).toBe(
-      'Bearer resource_metadata="https://cloud.example/.well-known/oauth-protected-resource/machines/machine-1" scope="mcp:use"',
+      'Bearer resource_metadata="https://cloud.example/.well-known/oauth-protected-resource/machines/machine-1", scope="mcp:use"',
     );
   });
 

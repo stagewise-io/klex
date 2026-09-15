@@ -5,6 +5,7 @@ export interface ProtectedResourceConfiguration {
 
 export async function loadProtectedResourceConfiguration(
   metadataUrl: string,
+  expectedResource: string,
   fetchImplementation: typeof globalThis.fetch = globalThis.fetch,
 ): Promise<ProtectedResourceConfiguration> {
   const response = await fetchImplementation(metadataUrl, {
@@ -27,6 +28,9 @@ export async function loadProtectedResourceConfiguration(
     typeof servers[0] !== 'string'
   ) {
     throw new Error('Protected resource metadata is invalid');
+  }
+  if (metadata.resource !== expectedResource) {
+    throw new Error('Protected resource metadata does not match enrollment');
   }
   return {
     issuer: servers[0],

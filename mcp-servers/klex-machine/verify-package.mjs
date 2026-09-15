@@ -1,6 +1,5 @@
 import { spawn } from 'node:child_process';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
-import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
@@ -69,7 +68,7 @@ try {
   );
   await run(
     'npm',
-    ['install', join(temporaryRoot, metadata.filename)],
+    ['install', '--ignore-scripts', join(temporaryRoot, metadata.filename)],
     temporaryRoot,
   );
   const installedEntry = join(
@@ -93,17 +92,29 @@ try {
     throw new Error('Installed CLI help is incomplete');
   }
 
-  const port = await availablePort();
   child = spawn(
     process.execPath,
-    [installedEntry, 'serve', '--cwd', consumer, '--port', String(port)],
+    [
+      installedEntry,
+      'serve',
+      '--mode',
+      'local',
+      '--cwd',
+      consumer,
+      '--port',
+      '0',
+    ],
     { cwd: consumer, stdio: ['ignore', 'pipe', 'pipe'] },
   );
-  let childError = '';
-  child.stderr.on('data', (chunk) => {
-    childError += String(chunk);
+  let childOutput = '';
+  child.stdout.on('data', (chunk) => {
+    childOutput += String(chunk);
   });
-  await waitForHealth(port, child, () => childError);
+  child.stderr.on('data', (chunk) => {
+    childOutput += String(chunk);
+  });
+  const port = await waitForListeningPort(child, () => childOutput);
+  await waitForHealth(port, child, () => childOutput);
 
   const write = await callTool(port, 'write', {
     path: 'package-smoke.txt',
@@ -145,19 +156,40 @@ try {
 
   process.stdout.write('Packed klex-machine verification passed\n');
 } finally {
-  if (child && child.exitCode === null) {
-    child.kill('SIGTERM');
-    await new Promise((resolve) => child.once('exit', resolve));
-  }
+  if (child && child.exitCode === null) await terminateChild(child);
   await rm(temporaryRoot, { recursive: true, force: true });
+}
+
+async function terminateChild(childProcess) {
+  childProcess.kill('SIGTERM');
+  if (await waitForExit(childProcess, 5_000)) return;
+  childProcess.kill('SIGKILL');
+  if (!(await waitForExit(childProcess, 5_000))) {
+    throw new Error('Timed out terminating packed server');
+  }
+}
+
+function waitForExit(childProcess, timeoutMs) {
+  if (childProcess.exitCode !== null) return Promise.resolve(true);
+  return new Promise((resolvePromise) => {
+    const timer = setTimeout(() => {
+      childProcess.off('exit', onExit);
+      resolvePromise(false);
+    }, timeoutMs);
+    const onExit = () => {
+      clearTimeout(timer);
+      resolvePromise(true);
+    };
+    childProcess.once('exit', onExit);
+  });
 }
 
 function run(command, args, cwd) {
   return new Promise((resolvePromise, reject) => {
-    const process = spawn(command, args, {
+    const process = spawn(commandExecutable(command), args, {
       cwd,
       env: { ...globalThis.process.env, NO_COLOR: '1' },
-      shell: processPlatformNeedsShell(),
+      shell: false,
       stdio: ['ignore', 'pipe', 'pipe'],
     });
     let stdout = '';
@@ -181,21 +213,31 @@ function run(command, args, cwd) {
   });
 }
 
-function processPlatformNeedsShell() {
-  return process.platform === 'win32';
+function commandExecutable(command) {
+  if (process.platform !== 'win32') return command;
+  return command === 'npm' || command === 'pnpm' ? `${command}.cmd` : command;
 }
 
-async function availablePort() {
-  const server = createServer();
-  await new Promise((resolvePromise, reject) => {
-    server.once('error', reject);
-    server.listen(0, '127.0.0.1', resolvePromise);
-  });
-  const address = server.address();
-  if (!address || typeof address === 'string')
-    throw new Error('Could not allocate port');
-  await new Promise((resolvePromise) => server.close(resolvePromise));
-  return address.port;
+async function waitForListeningPort(serverProcess, output) {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    if (serverProcess.exitCode !== null) {
+      throw new Error(
+        `Packed server exited early (${serverProcess.exitCode}): ${output()}`,
+      );
+    }
+    const marker = ' klex-machine MCP server listening ';
+    for (const line of output().split('\n')) {
+      const markerIndex = line.indexOf(marker);
+      if (markerIndex < 0) continue;
+      try {
+        const record = JSON.parse(line.slice(markerIndex + marker.length));
+        if (Number.isInteger(record.port) && record.port > 0)
+          return record.port;
+      } catch {}
+    }
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 50));
+  }
+  throw new Error(`Timed out waiting for packed server port: ${output()}`);
 }
 
 async function waitForHealth(port, serverProcess, errorOutput) {
@@ -206,7 +248,9 @@ async function waitForHealth(port, serverProcess, errorOutput) {
       );
     }
     try {
-      const response = await fetch(`http://127.0.0.1:${port}/health`);
+      const response = await fetch(`http://127.0.0.1:${port}/health`, {
+        signal: AbortSignal.timeout(1_000),
+      });
       if (response.ok) return;
     } catch {}
     await new Promise((resolvePromise) => setTimeout(resolvePromise, 50));
@@ -217,6 +261,7 @@ async function waitForHealth(port, serverProcess, errorOutput) {
 async function callTool(port, name, arguments_) {
   const response = await fetch(`http://127.0.0.1:${port}/mcp`, {
     method: 'POST',
+    signal: AbortSignal.timeout(5_000),
     headers: {
       Accept: 'application/json, text/event-stream',
       'Content-Type': 'application/json',

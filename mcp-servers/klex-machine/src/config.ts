@@ -41,9 +41,9 @@ export async function resolveRuntimeConfig(
 
   const host = raw.host?.trim() || '127.0.0.1';
   const port = Number(raw.port ?? '3123');
-  if (!Number.isInteger(port) || port < 1 || port > 65_535) {
+  if (!Number.isInteger(port) || port < 0 || port > 65_535) {
     throw new Error(
-      `Invalid port: ${raw.port ?? port}. Expected an integer from 1 to 65535.`,
+      `Invalid port: ${raw.port ?? port}. Expected an integer from 0 to 65535.`,
     );
   }
 
@@ -65,9 +65,17 @@ export async function resolveRuntimeConfig(
 
 export function isLoopbackHost(host: string): boolean {
   const normalized = host.replace(/^\[|\]$/g, '').toLowerCase();
-  return (
-    normalized === 'localhost' ||
-    normalized === '::1' ||
-    /^127(?:\.\d{1,3}){3}$/.test(normalized)
-  );
+  if (normalized === 'localhost') return true;
+  try {
+    const canonical = new URL(
+      `http://${normalized.includes(':') ? `[${normalized}]` : normalized}`,
+    ).hostname.replace(/^\[|\]$/g, '');
+    return (
+      canonical === '::1' ||
+      canonical === '::ffff:7f00:1' ||
+      canonical.startsWith('127.')
+    );
+  } catch {
+    return false;
+  }
 }

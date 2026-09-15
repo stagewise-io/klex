@@ -10,6 +10,7 @@ import type { MachinePathResolver } from '../filesystem/paths.js';
 
 const MAX_BUFFER_CHARACTERS = 1024 * 1024;
 const MAX_READ_CHARACTERS = 256 * 1024;
+export const MAX_SHELL_SESSIONS = 32;
 
 export interface ShellSessionInfo {
   id: string;
@@ -44,7 +45,14 @@ interface ShellSession {
 export class ShellService {
   private readonly sessions = new Map<string, ShellSession>();
 
-  constructor(private readonly paths: MachinePathResolver) {}
+  constructor(
+    private readonly paths: MachinePathResolver,
+    private readonly maxSessions = MAX_SHELL_SESSIONS,
+  ) {
+    if (!Number.isInteger(maxSessions) || maxSessions < 1) {
+      throw new Error('maxSessions must be a positive integer');
+    }
+  }
 
   create(
     options: {
@@ -56,6 +64,15 @@ export class ShellService {
       env?: Record<string, string>;
     } = {},
   ): ShellSessionInfo {
+    if (this.sessions.size >= this.maxSessions) {
+      const exited = [...this.sessions.values()].find(
+        (session) => !session.info.running,
+      );
+      if (!exited) {
+        throw new Error(`Shell session limit reached: ${this.maxSessions}`);
+      }
+      this.close(exited.info.id);
+    }
     const cwd = this.paths.resolve(options.cwd ?? '.');
     const shell = options.shell ?? defaultShell();
     const args = options.args ?? defaultShellArgs();
@@ -131,6 +148,9 @@ export class ShellService {
     const requestedCursor = options.cursor ?? session.startCursor;
     if (!Number.isInteger(requestedCursor) || requestedCursor < 0) {
       throw new Error('cursor must be a non-negative integer');
+    }
+    if (requestedCursor > session.endCursor) {
+      throw new Error('cursor is beyond the available shell output');
     }
     const waitMs = options.waitMs ?? 0;
     if (!Number.isInteger(waitMs) || waitMs < 0 || waitMs > 30_000) {

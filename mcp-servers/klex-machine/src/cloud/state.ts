@@ -11,6 +11,8 @@ import { dirname, join } from 'node:path';
 export const IDENTITY_FILE = 'identity/private-key.pem';
 export const ENROLLMENT_FILE = 'identity/enrollment.json';
 
+export class UnsupportedMachineEnrollmentVersionError extends Error {}
+
 export interface MachineEnrollment {
   version: 1;
   keyId: string;
@@ -38,7 +40,7 @@ export function parseMachineEnrollment(value: unknown): MachineEnrollment {
   }
   const record = value as Record<string, unknown>;
   if (record.version !== 1) {
-    throw new Error(
+    throw new UnsupportedMachineEnrollmentVersionError(
       `Unsupported machine enrollment version: ${String(record.version)}`,
     );
   }
@@ -79,6 +81,7 @@ export async function loadMachineEnrollment(
   try {
     return parseMachineEnrollment(JSON.parse(text));
   } catch (error) {
+    if (error instanceof UnsupportedMachineEnrollmentVersionError) throw error;
     throw new Error(`Machine enrollment metadata is corrupt: ${path}`, {
       cause: error,
     });

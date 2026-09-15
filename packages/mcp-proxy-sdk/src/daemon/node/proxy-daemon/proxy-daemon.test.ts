@@ -223,7 +223,14 @@ describe('ProxyDaemon', () => {
         handler,
         heartbeatIntervalMs: 0,
       }),
-    ).toThrow('Heartbeat interval must be a positive number');
+    ).toThrow('Heartbeat interval must be between');
+    expect(() =>
+      createProxyDaemon({
+        connection: () => ({ url }),
+        handler,
+        heartbeatIntervalMs: 2_147_483_648,
+      }),
+    ).toThrow('Heartbeat interval must be between');
 
     const accepted = once(server, 'connection');
     const active = createProxyDaemon({

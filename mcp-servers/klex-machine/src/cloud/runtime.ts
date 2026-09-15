@@ -32,10 +32,13 @@ export async function startCloudMachineRuntime(
     resource: enrollment.proxyConnectionResource,
   });
   const daemon = createProxyDaemon({
-    connection: async () => ({
-      url: enrollment.proxyConnectionUrl,
-      headers: { authorization: `Bearer ${await tokenClient.getToken()}` },
-    }),
+    connection: async () => {
+      tokenClient.invalidate();
+      return {
+        url: enrollment.proxyConnectionUrl,
+        headers: { authorization: `Bearer ${await tokenClient.getToken()}` },
+      };
+    },
     handler,
     reconnect: {},
   });
@@ -43,6 +46,7 @@ export async function startCloudMachineRuntime(
     await daemon.start();
   } catch (error) {
     tokenClient.close();
+    await daemon.close();
     throw error;
   }
   return {

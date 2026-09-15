@@ -1,5 +1,4 @@
-import { constants } from 'node:fs';
-import { access, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { link, mkdir, open, readFile, rm } from 'node:fs/promises';
 import { dirname } from 'node:path';
 
 export interface PublicJwk {
@@ -73,22 +72,34 @@ export async function saveMachineIdentity(
   identity: MachineIdentity,
 ): Promise<void> {
   await mkdir(dirname(path), { recursive: true, mode: 0o700 });
-  if (
-    await access(path, constants.F_OK).then(
-      () => true,
-      () => false,
-    )
-  ) {
-    throw new Error(
-      `Refusing to replace existing machine private key: ${path}`,
-    );
-  }
   const pkcs8 = await crypto.subtle.exportKey('pkcs8', identity.privateKey);
-  await writeFile(path, toPem(pkcs8), {
-    encoding: 'utf8',
-    mode: 0o600,
-    flag: 'wx',
-  });
+  const temporaryPath = `${path}.${process.pid}.${crypto.randomUUID()}.tmp`;
+  try {
+    const file = await open(temporaryPath, 'wx', 0o600);
+    try {
+      await file.writeFile(toPem(pkcs8), 'utf8');
+      await file.sync();
+    } finally {
+      await file.close();
+    }
+    try {
+      await link(temporaryPath, path);
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        'code' in error &&
+        error.code === 'EEXIST'
+      ) {
+        throw new Error(
+          `Refusing to replace existing machine private key: ${path}`,
+          { cause: error },
+        );
+      }
+      throw error;
+    }
+  } finally {
+    await rm(temporaryPath, { force: true });
+  }
 }
 
 export async function loadMachineIdentity(

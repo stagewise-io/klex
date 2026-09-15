@@ -123,12 +123,14 @@ describe('ProxyServer', () => {
 
   it('closes a connection whose setup hook rejects', async () => {
     const disconnected = vi.fn();
+    const onError = vi.fn();
     const active = createProxyServer({
       authenticateEnvironment: async () => createEnvironmentId('environment'),
       onConnected: async () => {
         throw new Error('registration failed');
       },
       onDisconnected: disconnected,
+      hooks: { onError },
       parseEnvironmentId: createEnvironmentId,
     });
     const address = await active.start();
@@ -137,6 +139,7 @@ describe('ProxyServer', () => {
     await once(environment, 'close');
 
     expect(disconnected).not.toHaveBeenCalled();
+    expect(onError).toHaveBeenCalledOnce();
     await active.close();
   });
 

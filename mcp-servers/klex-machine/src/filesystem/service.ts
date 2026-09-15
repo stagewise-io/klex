@@ -1,3 +1,4 @@
+import { isUtf8 } from 'node:buffer';
 import {
   cp,
   lstat,
@@ -79,8 +80,8 @@ export class FilesystemService {
       };
     }
 
-    if (bytes.includes(0)) {
-      throw new Error('File appears to be binary; use encoding "base64"');
+    if (bytes.includes(0) || !isUtf8(bytes)) {
+      throw new Error('File is not valid UTF-8; use encoding "base64"');
     }
     const text = bytes.toString('utf8');
     if (!ranged) {
@@ -142,6 +143,9 @@ export class FilesystemService {
     encoding?: 'utf8' | 'base64';
   }): Promise<{ path: string; bytesWritten: number }> {
     const path = this.paths.resolve(options.path);
+    if (options.encoding === 'base64' && !isCanonicalBase64(options.content)) {
+      throw new Error('content must be valid base64');
+    }
     const bytes = Buffer.from(options.content, options.encoding ?? 'utf8');
     await this.atomicWrite(path, bytes);
     return { path, bytesWritten: bytes.byteLength };
@@ -183,10 +187,7 @@ export class FilesystemService {
 
   async delete(pathInput: string): Promise<{ path: string; deleted: boolean }> {
     const path = this.paths.resolve(pathInput);
-    const existed = await lstat(path).then(
-      () => true,
-      () => false,
-    );
+    const existed = await pathExists(path);
     if (existed) await rm(path, { force: true, recursive: true });
     return { path, deleted: existed };
   }
@@ -200,24 +201,35 @@ export class FilesystemService {
     const source = this.paths.resolve(options.source);
     const destination = this.paths.resolve(options.destination);
     const overwrite = options.overwrite ?? false;
-    if (!overwrite && (await exists(destination))) {
+    if (source === destination) {
+      return { source, destination, moved: options.move ?? false };
+    }
+    await lstat(source);
+    if (!overwrite && (await pathExists(destination))) {
       throw new Error(`Destination already exists: ${destination}`);
     }
     await mkdir(dirname(destination), { recursive: true });
 
     if (options.move) {
       try {
-        if (overwrite) await rm(destination, { force: true, recursive: true });
-        await rename(source, destination);
+        if (overwrite) await replacePath(source, destination);
+        else await rename(source, destination);
       } catch (error) {
         if (!isErrno(error, 'EXDEV')) throw error;
-        await cp(source, destination, {
-          dereference: false,
-          errorOnExist: !overwrite,
-          force: overwrite,
-          recursive: true,
-        });
-        await rm(source, { force: true, recursive: true });
+        const staging = siblingTemporaryPath(destination, 'move');
+        try {
+          await cp(source, staging, {
+            dereference: false,
+            errorOnExist: true,
+            force: false,
+            recursive: true,
+          });
+          if (overwrite) await replacePath(staging, destination);
+          else await rename(staging, destination);
+          await rm(source, { force: true, recursive: true });
+        } finally {
+          await rm(staging, { force: true, recursive: true });
+        }
       }
     } else {
       await cp(source, destination, {
@@ -236,28 +248,61 @@ export class FilesystemService {
     const temporaryDirectory = await mkdtemp(join(parent, '.klex-machine-'));
     const temporaryPath = join(temporaryDirectory, 'content');
     try {
-      const file = await open(temporaryPath, 'wx');
+      const existing = await lstat(path).catch((error: unknown) => {
+        if (isErrno(error, 'ENOENT')) return undefined;
+        throw error;
+      });
+      const file = await open(temporaryPath, 'wx', existing?.mode ?? 0o666);
       try {
+        if (existing) await file.chmod(existing.mode);
         await file.writeFile(bytes);
         await file.sync();
       } finally {
         await file.close();
       }
-      if (process.platform === 'win32') {
-        await rm(path, { force: true });
-      }
-      await rename(temporaryPath, path);
+      await replacePath(temporaryPath, path);
     } finally {
       await rm(temporaryDirectory, { force: true, recursive: true });
     }
   }
 }
 
-async function exists(path: string): Promise<boolean> {
+async function pathExists(path: string): Promise<boolean> {
   return lstat(path).then(
     () => true,
-    () => false,
+    (error: unknown) => {
+      if (isErrno(error, 'ENOENT')) return false;
+      throw error;
+    },
   );
+}
+
+async function replacePath(source: string, destination: string): Promise<void> {
+  const backup = siblingTemporaryPath(destination, 'backup');
+  const hadDestination = await pathExists(destination);
+  if (hadDestination) await rename(destination, backup);
+  try {
+    await rename(source, destination);
+  } catch (error) {
+    if (hadDestination) await rename(backup, destination);
+    throw error;
+  }
+  if (hadDestination) await rm(backup, { force: true, recursive: true });
+}
+
+function siblingTemporaryPath(path: string, purpose: string): string {
+  return join(
+    dirname(path),
+    `.klex-machine-${purpose}-${process.pid}-${crypto.randomUUID()}`,
+  );
+}
+
+function isCanonicalBase64(value: string): boolean {
+  if (value.length === 0) return true;
+  if (value.length % 4 !== 0 || !/^[A-Za-z0-9+/]*={0,2}$/.test(value)) {
+    return false;
+  }
+  return Buffer.from(value, 'base64').toString('base64') === value;
 }
 
 function isErrno(error: unknown, code: string): boolean {

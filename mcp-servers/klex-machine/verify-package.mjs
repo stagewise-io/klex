@@ -68,7 +68,7 @@ try {
   );
   await run(
     'npm',
-    ['install', '--ignore-scripts', join(temporaryRoot, metadata.filename)],
+    ['install', join(temporaryRoot, metadata.filename)],
     temporaryRoot,
   );
   const installedEntry = join(
@@ -189,7 +189,9 @@ function run(command, args, cwd) {
     const process = spawn(commandExecutable(command), args, {
       cwd,
       env: { ...globalThis.process.env, NO_COLOR: '1' },
-      shell: false,
+      shell:
+        globalThis.process.platform === 'win32' &&
+        (command === 'npm' || command === 'pnpm'),
       stdio: ['ignore', 'pipe', 'pipe'],
     });
     let stdout = '';

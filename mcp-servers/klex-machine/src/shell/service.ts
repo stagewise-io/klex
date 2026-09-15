@@ -64,14 +64,12 @@ export class ShellService {
       env?: Record<string, string>;
     } = {},
   ): ShellSessionInfo {
-    if (this.sessions.size >= this.maxSessions) {
-      const exited = [...this.sessions.values()].find(
-        (session) => !session.info.running,
-      );
-      if (!exited) {
-        throw new Error(`Shell session limit reached: ${this.maxSessions}`);
-      }
-      this.close(exited.info.id);
+    const exited =
+      this.sessions.size >= this.maxSessions
+        ? [...this.sessions.values()].find((session) => !session.info.running)
+        : undefined;
+    if (this.sessions.size >= this.maxSessions && !exited) {
+      throw new Error(`Shell session limit reached: ${this.maxSessions}`);
     }
     const cwd = this.paths.resolve(options.cwd ?? '.');
     const shell = options.shell ?? defaultShell();
@@ -89,6 +87,7 @@ export class ShellService {
       // node-pty's ConPTY cleanup helper can crash with AttachConsole errors.
       ...(process.platform === 'win32' ? { useConpty: false } : {}),
     });
+    if (exited) this.close(exited.info.id);
     const info: ShellSessionInfo = {
       id: randomUUID(),
       shell,

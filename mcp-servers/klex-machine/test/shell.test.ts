@@ -95,6 +95,12 @@ describe('ShellService', () => {
     expect(exitedRead.running).toBe(false);
 
     service.create(testShell());
+    expect(service.list()).toHaveLength(2);
+    expect(() => service.create({ ...testShell(), cols: 0 })).toThrow('cols');
+    expect(service.list().some((session) => session.id === exited.id)).toBe(
+      true,
+    );
+
     service.create(testShell());
     expect(service.list()).toHaveLength(2);
     expect(() => service.write(exited.id, 'x')).toThrow('Unknown shell');

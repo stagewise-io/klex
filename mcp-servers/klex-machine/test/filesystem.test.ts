@@ -92,6 +92,31 @@ describe('FilesystemService', () => {
     );
   });
 
+  it('refuses to replace a directory with file content', async () => {
+    await service.mkdir('target/child');
+    await service.write({ path: 'target/child/file', content: 'preserved' });
+
+    await expect(
+      service.write({ path: 'target', content: 'replacement' }),
+    ).rejects.toThrow('Not a file');
+    await expect(
+      readFile(join(directory, 'target/child/file'), 'utf8'),
+    ).resolves.toBe('preserved');
+  });
+
+  it('replaces symlinks without copying their mode to the new file', async () => {
+    if (process.platform === 'win32') return;
+    await service.write({ path: 'source', content: 'source' });
+    await chmod(join(directory, 'source'), 0o777);
+    await symlink(join(directory, 'source'), join(directory, 'link'));
+
+    await service.write({ path: 'link', content: 'replacement' });
+
+    expect((await stat(join(directory, 'link'))).isFile()).toBe(true);
+    expect((await stat(join(directory, 'link'))).mode & 0o777).not.toBe(0o777);
+    expect(await readFile(join(directory, 'source'), 'utf8')).toBe('source');
+  });
+
   it('applies sequential edits atomically', async () => {
     await service.write({ path: 'edit.txt', content: 'a a b' });
     await service.multiEdit('edit.txt', [

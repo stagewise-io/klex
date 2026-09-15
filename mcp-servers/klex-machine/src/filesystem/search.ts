@@ -54,15 +54,15 @@ export class SearchService {
         dot: options.hidden ?? false,
         followSymbolicLinks: false,
         ignore: options.exclude ?? [],
-        markDirectories: false,
+        markDirectories: true,
         onlyFiles: false,
         unique: true,
       },
     );
     const ignored = options.gitignore === false ? null : await loadIgnore(cwd);
     const sorted = entries
+      .filter((entry) => !ignored?.ignores(toIgnorePath(cwd, entry)))
       .map((entry) => resolve(entry))
-      .filter((entry) => !ignored?.ignores(toRelative(cwd, entry)))
       .sort((left, right) => left.localeCompare(right));
     return {
       matches: sorted.slice(0, limit),
@@ -161,7 +161,13 @@ async function loadIgnore(
   });
   if (entries.length === 0) return null;
   const ignored = createIgnore();
-  for (const path of entries.sort()) {
+  for (const path of entries.sort((left, right) => {
+    const leftBase = toRelative(cwd, dirname(left));
+    const rightBase = toRelative(cwd, dirname(right));
+    const leftDepth = leftBase ? leftBase.split('/').length : 0;
+    const rightDepth = rightBase ? rightBase.split('/').length : 0;
+    return leftDepth - rightDepth || left.localeCompare(right);
+  })) {
     const source = await readFile(path, 'utf8').catch(() => null);
     if (source === null) continue;
     const base = toRelative(cwd, dirname(path));
@@ -192,12 +198,22 @@ async function enumerate(
 function rebaseIgnorePatterns(base: string, input: string): string[] {
   if (!base || !input || input.startsWith('#')) return [input];
   const negated = input.startsWith('!');
-  const pattern = (negated ? input.slice(1) : input).replace(/^\//, '');
+  const patternInput = negated ? input.slice(1) : input;
+  const anchored = patternInput.startsWith('/');
+  const pattern = patternInput.replace(/^\//, '');
+  const pathPattern = pattern.endsWith('/') ? pattern.slice(0, -1) : pattern;
   const prefix = negated ? '!' : '';
   const rebased = `${prefix}${base}/${pattern}`;
-  return pattern.includes('/')
+  return anchored || pathPattern.includes('/')
     ? [rebased]
     : [rebased, `${prefix}${base}/**/${pattern}`];
+}
+
+function toIgnorePath(cwd: string, path: string): string {
+  const relativePath = toRelative(cwd, path);
+  return path.endsWith('/') || path.endsWith(sep)
+    ? `${relativePath}/`
+    : relativePath;
 }
 
 function toRelative(cwd: string, path: string): string {

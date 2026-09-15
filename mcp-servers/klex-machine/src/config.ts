@@ -41,7 +41,12 @@ export async function resolveRuntimeConfig(
 
   const host = raw.host?.trim() || '127.0.0.1';
   const port = Number(raw.port ?? '3123');
-  if (!Number.isInteger(port) || port < 0 || port > 65_535) {
+  if (
+    raw.port?.trim() === '' ||
+    !Number.isInteger(port) ||
+    port < 0 ||
+    port > 65_535
+  ) {
     throw new Error(
       `Invalid port: ${raw.port ?? port}. Expected an integer from 0 to 65535.`,
     );
@@ -72,8 +77,8 @@ export function isLoopbackHost(host: string): boolean {
     ).hostname.replace(/^\[|\]$/g, '');
     return (
       canonical === '::1' ||
-      canonical === '::ffff:7f00:1' ||
-      canonical.startsWith('127.')
+      /^::ffff:7f[0-9a-f]{2}:[0-9a-f]{1,4}$/.test(canonical) ||
+      /^127(?:\.\d{1,3}){3}$/.test(canonical)
     );
   } catch {
     return false;

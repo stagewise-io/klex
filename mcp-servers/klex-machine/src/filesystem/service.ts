@@ -224,8 +224,25 @@ export class FilesystemService {
             force: false,
             recursive: true,
           });
-          if (overwrite) await replacePath(staging, destination);
-          else await rename(staging, destination);
+          if (overwrite) {
+            await replacePath(staging, destination);
+          } else {
+            try {
+              await cp(staging, destination, {
+                dereference: false,
+                errorOnExist: true,
+                force: false,
+                recursive: true,
+              });
+            } catch (copyError) {
+              if (!isErrno(copyError, 'ERR_FS_CP_EEXIST')) {
+                await rm(destination, { force: true, recursive: true }).catch(
+                  () => undefined,
+                );
+              }
+              throw copyError;
+            }
+          }
           await rm(source, { force: true, recursive: true });
         } finally {
           await rm(staging, { force: true, recursive: true });
@@ -252,9 +269,13 @@ export class FilesystemService {
         if (isErrno(error, 'ENOENT')) return undefined;
         throw error;
       });
-      const file = await open(temporaryPath, 'wx', existing?.mode ?? 0o666);
+      if (existing && !existing.isFile() && !existing.isSymbolicLink()) {
+        throw new Error(`Not a file: ${path}`);
+      }
+      const existingMode = existing?.isFile() ? existing.mode : 0o666;
+      const file = await open(temporaryPath, 'wx', existingMode);
       try {
-        if (existing) await file.chmod(existing.mode);
+        if (existing?.isFile()) await file.chmod(existing.mode);
         await file.writeFile(bytes);
         await file.sync();
       } finally {
@@ -278,6 +299,10 @@ async function pathExists(path: string): Promise<boolean> {
 }
 
 async function replacePath(source: string, destination: string): Promise<void> {
+  if (process.platform !== 'win32') {
+    await rename(source, destination);
+    return;
+  }
   const backup = siblingTemporaryPath(destination, 'backup');
   const hadDestination = await pathExists(destination);
   if (hadDestination) await rename(destination, backup);
@@ -287,7 +312,9 @@ async function replacePath(source: string, destination: string): Promise<void> {
     if (hadDestination) await rename(backup, destination);
     throw error;
   }
-  if (hadDestination) await rm(backup, { force: true, recursive: true });
+  if (hadDestination) {
+    await rm(backup, { force: true, recursive: true }).catch(() => undefined);
+  }
 }
 
 function siblingTemporaryPath(path: string, purpose: string): string {

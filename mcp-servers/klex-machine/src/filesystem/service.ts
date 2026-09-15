@@ -1,15 +1,19 @@
 import { isUtf8 } from 'node:buffer';
 import {
+  chmod,
   cp,
+  link,
   lstat,
   mkdir,
   mkdtemp,
   open,
   readdir,
   readFile,
+  readlink,
   rename,
   rm,
   stat,
+  symlink,
 } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 
@@ -227,21 +231,7 @@ export class FilesystemService {
           if (overwrite) {
             await replacePath(staging, destination);
           } else {
-            try {
-              await cp(staging, destination, {
-                dereference: false,
-                errorOnExist: true,
-                force: false,
-                recursive: true,
-              });
-            } catch (copyError) {
-              if (!isErrno(copyError, 'ERR_FS_CP_EEXIST')) {
-                await rm(destination, { force: true, recursive: true }).catch(
-                  () => undefined,
-                );
-              }
-              throw copyError;
-            }
+            await publishPathExclusively(staging, destination);
           }
           await rm(source, { force: true, recursive: true });
         } finally {
@@ -299,21 +289,69 @@ async function pathExists(path: string): Promise<boolean> {
 }
 
 async function replacePath(source: string, destination: string): Promise<void> {
-  if (process.platform !== 'win32') {
+  const [sourceMetadata, destinationMetadata] = await Promise.all([
+    lstat(source),
+    lstat(destination).catch((error: unknown) => {
+      if (isErrno(error, 'ENOENT')) return undefined;
+      throw error;
+    }),
+  ]);
+  const requiresBackup =
+    process.platform === 'win32' ||
+    (destinationMetadata !== undefined &&
+      (sourceMetadata.isDirectory() || destinationMetadata.isDirectory()));
+  if (!requiresBackup) {
     await rename(source, destination);
     return;
   }
+
   const backup = siblingTemporaryPath(destination, 'backup');
-  const hadDestination = await pathExists(destination);
-  if (hadDestination) await rename(destination, backup);
+  if (destinationMetadata) await rename(destination, backup);
   try {
     await rename(source, destination);
   } catch (error) {
-    if (hadDestination) await rename(backup, destination);
+    if (destinationMetadata) await rename(backup, destination);
     throw error;
   }
-  if (hadDestination) {
+  if (destinationMetadata) {
     await rm(backup, { force: true, recursive: true }).catch(() => undefined);
+  }
+}
+
+async function publishPathExclusively(
+  source: string,
+  destination: string,
+): Promise<void> {
+  const metadata = await lstat(source);
+  if (metadata.isSymbolicLink()) {
+    await symlink(await readlink(source), destination);
+    return;
+  }
+  if (!metadata.isDirectory()) {
+    await link(source, destination);
+    return;
+  }
+
+  await mkdir(destination, { mode: metadata.mode });
+  const ownershipMarker = join(
+    destination,
+    `.klex-machine-owner-${process.pid}-${crypto.randomUUID()}`,
+  );
+  try {
+    const markerFile = await open(ownershipMarker, 'wx');
+    await markerFile.close();
+    for (const entry of await readdir(source)) {
+      await rename(join(source, entry), join(destination, entry));
+    }
+    await chmod(destination, metadata.mode);
+    await rm(ownershipMarker);
+  } catch (error) {
+    if (await pathExists(ownershipMarker)) {
+      await rm(destination, { force: true, recursive: true }).catch(
+        () => undefined,
+      );
+    }
+    throw error;
   }
 }
 

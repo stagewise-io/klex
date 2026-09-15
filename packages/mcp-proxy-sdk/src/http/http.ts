@@ -208,9 +208,18 @@ function sanitizeResponse(response: Response): Response {
 }
 
 function sanitizeHeaders(headers: Headers): ProxyHeaders {
+  const connectionHeaders = new Set(
+    (headers.get('connection') ?? '')
+      .split(',')
+      .map((name) => name.trim().toLowerCase())
+      .filter(Boolean),
+  );
   const result: ProxyHeaders = {};
   for (const [name, value] of headers) {
-    if (!HOP_BY_HOP.has(name.toLowerCase())) result[name.toLowerCase()] = value;
+    const normalized = name.toLowerCase();
+    if (!HOP_BY_HOP.has(normalized) && !connectionHeaders.has(normalized)) {
+      result[normalized] = value;
+    }
   }
   return result;
 }

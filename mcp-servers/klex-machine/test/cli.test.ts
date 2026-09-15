@@ -92,18 +92,23 @@ describe('CLI configuration', () => {
     ).resolves.toMatchObject({ action: 'serve', mode: 'enrolled' });
   });
 
-  it.each(['127.1', '127.0.0.1', '::1', '[::1]', '::ffff:127.0.0.1'])(
-    'recognizes loopback literal %s',
-    async (host) => {
-      await expect(
-        parseCli(['serve', '--host', host], {}, directory),
-      ).resolves.toMatchObject({
-        config: { warnsAboutRemoteAccess: false },
-      });
-    },
-  );
+  it.each([
+    '127.1',
+    '127.0.0.1',
+    '127.255.255.255',
+    '::1',
+    '[::1]',
+    '::ffff:127.0.0.1',
+    '::ffff:127.0.0.2',
+  ])('recognizes loopback literal %s', async (host) => {
+    await expect(
+      parseCli(['serve', '--host', host], {}, directory),
+    ).resolves.toMatchObject({
+      config: { warnsAboutRemoteAccess: false },
+    });
+  });
 
-  it.each(['-1', '65536', 'nan', '1.5'])(
+  it.each(['', ' ', '-1', '65536', 'nan', '1.5'])(
     'rejects invalid port %s',
     async (port) => {
       await expect(
@@ -111,6 +116,14 @@ describe('CLI configuration', () => {
       ).rejects.toThrow('Invalid port');
     },
   );
+
+  it('does not treat a 127-prefixed hostname as loopback', async () => {
+    await expect(
+      parseCli(['serve', '--host', '127.example.com'], {}, directory),
+    ).resolves.toMatchObject({
+      config: { warnsAboutRemoteAccess: true },
+    });
+  });
 
   it('rejects a missing cwd and a file cwd', async () => {
     const file = join(directory, 'file');

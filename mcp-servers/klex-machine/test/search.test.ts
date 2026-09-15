@@ -84,6 +84,49 @@ describe('SearchService', () => {
     expect(result.filesSearched).toBeGreaterThan(0);
   });
 
+  it('applies nested gitignore anchoring, directory rules, and precedence', async () => {
+    await mkdir(join(directory, 'nested', 'deeper', 'foo'), {
+      recursive: true,
+    });
+    await writeFile(join(directory, 'nested', 'foo'), 'direct');
+    await writeFile(join(directory, 'nested', 'deeper', 'foo', 'file'), 'deep');
+    await writeFile(join(directory, 'nested', '.gitignore'), '/foo\nbar/\n');
+    await mkdir(join(directory, 'nested', 'bar'), { recursive: true });
+    await mkdir(join(directory, 'nested', 'deeper', 'bar'), {
+      recursive: true,
+    });
+    await writeFile(join(directory, 'nested', 'bar', 'file'), 'direct');
+    await writeFile(join(directory, 'nested', 'deeper', 'bar', 'file'), 'deep');
+
+    const anchored = await service.glob({
+      patterns: ['nested/**'],
+      hidden: true,
+    });
+    expect(anchored.matches).not.toContain(join(directory, 'nested', 'foo'));
+    expect(anchored.matches).toContain(
+      join(directory, 'nested', 'deeper', 'foo', 'file'),
+    );
+    expect(anchored.matches).not.toContain(join(directory, 'nested', 'bar'));
+    expect(anchored.matches).not.toContain(
+      join(directory, 'nested', 'deeper', 'bar', 'file'),
+    );
+
+    await mkdir(join(directory, '-nested'), { recursive: true });
+    await writeFile(
+      join(directory, '.gitignore'),
+      'ignored.txt\n!-nested/keep\n',
+    );
+    await writeFile(join(directory, '-nested', '.gitignore'), 'keep\n');
+    await writeFile(join(directory, '-nested', 'keep'), 'hidden by child rule');
+    const precedence = await service.glob({
+      patterns: ['-nested/**'],
+      hidden: true,
+    });
+    expect(precedence.matches).not.toContain(
+      join(directory, '-nested', 'keep'),
+    );
+  });
+
   it('reports truncation and rejects malformed inputs', async () => {
     const result = await service.grep({
       pattern: 'needle',

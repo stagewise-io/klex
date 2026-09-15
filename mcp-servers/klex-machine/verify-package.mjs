@@ -1,10 +1,10 @@
 import { spawn } from 'node:child_process';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 
 const packageRoot = resolve(import.meta.dirname);
-const temporaryRoot = await mkdtemp(join(tmpdir(), 'klex-machine-package-'));
+const temporaryRoot = await mkdtemp(join(tmpdir(), 'klex machine package-'));
 let child;
 
 try {
@@ -99,6 +99,8 @@ try {
       'serve',
       '--mode',
       'local',
+      '--log-level',
+      'info',
       '--cwd',
       consumer,
       '--port',
@@ -186,24 +188,23 @@ function waitForExit(childProcess, timeoutMs) {
 
 function run(command, args, cwd) {
   return new Promise((resolvePromise, reject) => {
-    const process = spawn(commandExecutable(command), args, {
+    const invocation = commandInvocation(command, args);
+    const child = spawn(invocation.executable, invocation.args, {
       cwd,
       env: { ...globalThis.process.env, NO_COLOR: '1' },
-      shell:
-        globalThis.process.platform === 'win32' &&
-        (command === 'npm' || command === 'pnpm'),
+      shell: false,
       stdio: ['ignore', 'pipe', 'pipe'],
     });
     let stdout = '';
     let stderr = '';
-    process.stdout.on('data', (chunk) => {
+    child.stdout.on('data', (chunk) => {
       stdout += String(chunk);
     });
-    process.stderr.on('data', (chunk) => {
+    child.stderr.on('data', (chunk) => {
       stderr += String(chunk);
     });
-    process.once('error', reject);
-    process.once('exit', (code) => {
+    child.once('error', reject);
+    child.once('exit', (code) => {
       if (code === 0) resolvePromise(stdout);
       else
         reject(
@@ -215,9 +216,24 @@ function run(command, args, cwd) {
   });
 }
 
-function commandExecutable(command) {
-  if (process.platform !== 'win32') return command;
-  return command === 'npm' || command === 'pnpm' ? `${command}.cmd` : command;
+function commandInvocation(command, args) {
+  if (process.platform !== 'win32') return { executable: command, args };
+  if (command === 'pnpm') {
+    const pnpmCli = process.env.npm_execpath;
+    if (!pnpmCli) throw new Error('Could not locate the pnpm CLI');
+    return { executable: process.execPath, args: [pnpmCli, ...args] };
+  }
+  if (command === 'npm') {
+    const npmCli = join(
+      dirname(process.execPath),
+      'node_modules',
+      'npm',
+      'bin',
+      'npm-cli.js',
+    );
+    return { executable: process.execPath, args: [npmCli, ...args] };
+  }
+  return { executable: command, args };
 }
 
 async function waitForListeningPort(serverProcess, output) {

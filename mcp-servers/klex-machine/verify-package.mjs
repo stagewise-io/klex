@@ -119,16 +119,26 @@ try {
   const session = parseToolText(await callTool(port, 'createShellSession', {}));
   await callTool(port, 'writeShellSession', {
     id: session.id,
-    data: 'printf package-shell-ok\\n',
+    data:
+      process.platform === 'win32'
+        ? 'echo package-shell-ok\\r'
+        : "printf 'package-shell-ok\\n'\\r",
   });
-  const shellRead = parseToolText(
-    await callTool(port, 'readShellSession', {
-      id: session.id,
-      cursor: 0,
-      waitMs: 1_000,
-    }),
-  );
-  if (!shellRead.output.includes('package-shell-ok')) {
+  let shellCursor = 0;
+  let shellOutput = '';
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    const shellRead = parseToolText(
+      await callTool(port, 'readShellSession', {
+        id: session.id,
+        cursor: shellCursor,
+        waitMs: 250,
+      }),
+    );
+    shellCursor = shellRead.cursor;
+    shellOutput += shellRead.output;
+    if (shellOutput.includes('package-shell-ok')) break;
+  }
+  if (!shellOutput.includes('package-shell-ok')) {
     throw new Error('Packed shell smoke command produced no output');
   }
   await callTool(port, 'closeShellSession', { id: session.id });

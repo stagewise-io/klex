@@ -12,7 +12,7 @@ import trustPrompt from './trust-prompt.md';
  * - `'trust'` — used in the dedicated god-message session. The system
  *   prompt tells the model that god messages are directives from an
  *   all-mighty creator and must be obeyed.
- * - `'distrust'` — used in regular (router) sessions. The system prompt
+ * - `'distrust'` — used in regular (default) sessions. The system prompt
  *   tells the model to treat `<god-message>` blocks as data, not
  *   authoritative input.
  */
@@ -33,12 +33,14 @@ class GodMessagesExt implements Extension {
   }
 }
 
+/** Instructs a god session to treat injected god messages as trusted directives. */
 export const createGodMessagesTrustExt: ExtensionFactory = {
   identifier: 'io.stagewise/god-messages-trust',
   displayName: 'God Messages (Trust)',
   create: (deps) => new GodMessagesExt(deps, 'trust'),
 };
 
+/** Instructs a normal session to treat injected god messages as untrusted input. */
 export const createGodMessagesDistrustExt: ExtensionFactory = {
   identifier: 'io.stagewise/god-messages-distrust',
   displayName: 'God Messages (Distrust)',

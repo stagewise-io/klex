@@ -79,7 +79,12 @@ function createMockDeps(
         }) as unknown as ModuleLogger,
     } as unknown as ExtensionDeps['logging'],
     mcp: {} as unknown as ExtensionDeps['mcp'],
-    router: {} as unknown as ExtensionDeps['router'],
+    sessionContext: {
+      kind: 'default',
+      sessionId,
+    } as unknown as ExtensionDeps['sessionContext'],
+    createChildSession:
+      vi.fn() as unknown as ExtensionDeps['createChildSession'],
     sessionId,
     getDataDir: vi.fn(() => dataDirectory),
   } as unknown as ExtensionDeps;
@@ -612,7 +617,7 @@ describe('Todos extension', () => {
     expect(sendMessage).not.toHaveBeenCalled();
   });
 
-  it('triggers the primary session once on startup when todos are open', async () => {
+  it('triggers the default session once on startup when todos are open', async () => {
     const dataDirectory = mkdtempSync(join(tmpdir(), 'todos-ext-startup-'));
     const seed = createMockDeps([], dataDirectory);
     const seedExt = createTodosExt.create(seed.deps);
@@ -620,11 +625,15 @@ describe('Todos extension', () => {
       description: 'Resume pending work',
     });
 
-    const primary = createMockDeps([], dataDirectory, DEFAULT_SESSION_ID);
-    const primaryExt = createTodosExt.create(primary.deps);
-    await primaryExt.onStart?.();
+    const defaultSession = createMockDeps(
+      [],
+      dataDirectory,
+      DEFAULT_SESSION_ID,
+    );
+    const defaultSessionExt = createTodosExt.create(defaultSession.deps);
+    await defaultSessionExt.onStart?.();
 
-    expect(primary.sendMessage).toHaveBeenCalledWith(
+    expect(defaultSession.sendMessage).toHaveBeenCalledWith(
       expect.objectContaining({
         role: 'user',
         parts: [expect.objectContaining({ type: 'data-todos' })],

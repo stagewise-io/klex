@@ -119,9 +119,9 @@ export class SessionInboxClosedError extends Error {
 /**
  * The session inbox offers a way to send input into an agent.
  *
- * This is the narrow, router-facing interface exposed to environments
- * (MCP servers, etc.) and to the router itself. It deliberately carries
- * no AI SDK types.
+ * This narrow interface is used by MCP notification handling and extensions
+ * that inject structured context events. It deliberately carries no AI SDK
+ * types.
  */
 export interface SessionInbox {
   /**

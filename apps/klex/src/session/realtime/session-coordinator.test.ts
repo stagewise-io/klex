@@ -417,17 +417,17 @@ describe('realtime session coordinator', () => {
     ).rejects.toThrow('offer withdrawn');
   });
 
-  it('models primary-session revocation without releasing the lease', async () => {
+  it('models default-session revocation without releasing the lease', async () => {
     const { coordinator, mcpHarness, host } = setup();
     await coordinator.start();
     await mcpHarness.notify(offered());
     const lease = await host.nextLease();
 
-    host.revokeLeases('primary-session-closed');
+    host.revokeLeases('default-session-closed');
 
     await expect(lease.closed).resolves.toEqual({
       type: 'revoked',
-      reason: 'primary-session-closed',
+      reason: 'default-session-closed',
     });
     await vi.waitFor(() => expect(coordinator.getActiveSessionCount()).toBe(0));
     expect(lease.releaseCount).toBe(0);
@@ -604,7 +604,7 @@ describe('realtime session coordinator', () => {
     const transport = await connector.nextTransport();
     const processor = await processorFactory.nextProcessor();
 
-    lease.revoke('primary-session-terminated');
+    lease.revoke('default-session-terminated');
 
     await vi.waitFor(() =>
       expect(mcpHarness.endRealtimeMediaSession).toHaveBeenCalledOnce(),

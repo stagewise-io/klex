@@ -17,7 +17,11 @@ import type {
 } from '@/config';
 import type { Mcp } from '@/mcp';
 import type { ProviderModelResolver } from '@/provider-registry';
-import type { RouterApi } from '@/router';
+import type {
+  ChildSessionHandle,
+  ChildSessionOptions,
+  SessionContext,
+} from '@/session/types';
 
 import type { ChatSessionInbox } from '../inbox';
 import type { ExtendedUIMessage } from '../message-types';
@@ -532,23 +536,51 @@ export interface ExtensionDeps {
    * The MCP module — client for all MCP servers the session has access
    * to. Extends `ToolProvider` with push notifications, server statuses,
    * and tool call history. Extensions can use the full MCP surface.
+   *
+   * `null` for `god` and `child` sessions, which have no MCP access.
+   * Extensions that require MCP should check for `null` in their
+   * constructor.
    */
-  mcp: Mcp;
+  mcp: Mcp | null;
 
   /**
    * Stable identifier of the session that owns this extension. Used for
-   * observability correlation. The router-owned primary session uses `default`;
-   * ad-hoc sessions normally use UUIDs.
+   * observability correlation. The default session uses `default`;
+   * god and child sessions normally use UUIDs.
    */
   sessionId: string;
 
   /**
-   * The router API — allows extensions to send input events that the
-   * router dispatches to the active session. Unlike {@link inbox}, this
-   * survives session termination: the router creates a replacement
-   * session if the current one has terminated.
+   * Context describing the session's kind and position in the session
+   * tree. Extensions inspect this to decide behavior and which
+   * extensions to load in child sessions.
    */
-  router: RouterApi;
+  sessionContext: SessionContext;
+
+  /**
+   * Spawns an isolated child session owned by this extension. The child
+   * has no MCP access and no push notification subscription — its only
+   * input is messages injected by this extension via the returned
+   * handle's inbox.
+   *
+   * The requested extension list is used exactly as supplied. The spawning
+   * extension is responsible for choosing the child's complete extension set
+   * and avoiding recursive self-loading. Duplicate identifiers are rejected.
+   *
+   * When `options.systemPromptAssembler` is provided, it replaces the
+   * default system prompt assembly logic for the child session. The
+   * assembler receives the base system prompt and all per-extension
+   * system prompt parts (collected via `getSystemPromptPart`), and
+   * returns the finished system prompt. This lets the spawning
+   * extension control how (or whether) extension contributions are
+   * combined into the final prompt.
+   *
+   * Only available on sessions that have a session factory. Absent
+   * (throws when called) on sessions where child creation is disabled.
+   */
+  createChildSession: (
+    options: ChildSessionOptions,
+  ) => Promise<ChildSessionHandle>;
 
   /**
    * Returns an absolute path to a directory the calling extension can
@@ -590,7 +622,9 @@ export interface ExtensionFactory {
   readonly displayName?: string;
 
   /**
-   * Creates the extension instance with the provided dependencies.
+   * Creates the extension instance with the provided dependencies. Construction
+   * must be side-effect free; acquire resources in `onStart` so startup rollback
+   * can release them through `onClose`.
    */
   create: (deps: ExtensionDeps) => Extension;
 }

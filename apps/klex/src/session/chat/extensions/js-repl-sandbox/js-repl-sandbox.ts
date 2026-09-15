@@ -13,6 +13,11 @@ class JsReplSandboxExt implements Extension {
   private readonly javaScriptTool: JavaScriptTool;
 
   constructor(deps: ExtensionDeps) {
+    if (!deps.mcp) {
+      throw new Error(
+        'js-repl-sandbox extension requires MCP access — cannot be loaded in sessions without MCP',
+      );
+    }
     this.javaScriptTool = createJavaScriptTool({
       logging: deps.logging,
       provider: deps.mcp,
@@ -37,6 +42,7 @@ class JsReplSandboxExt implements Extension {
   }
 }
 
+/** Adds a session-scoped JavaScript sandbox and exposes its execution tool. */
 export const createJsReplSandboxExt: ExtensionFactory = {
   identifier: 'io.stagewise/js-repl-sandbox',
   displayName: 'JS REPL Sandbox',

@@ -3,11 +3,11 @@ import { describe, expect, it, vi } from 'vitest';
 import type { RootLogger } from '@stagewise/logger';
 
 import type { IntrospectionScope } from '@/introspection';
-import type { RouterApi } from '@/router';
 import type { ExtendedUIMessage } from '@/session/chat/message-types';
 import { SessionInboxClosedError, SessionInboxUrgency } from '@/session/inbox';
 import type {
   ChatSessionHandle,
+  SessionFactory,
   SessionHooks,
   SessionInfo,
   SessionRuntimeState,
@@ -53,7 +53,7 @@ function createStubSessionFactory() {
   const sessions: StubSession[] = [];
   let sessionCounter = 0;
 
-  const factory = (hooks: SessionHooks): ChatSessionHandle => {
+  const factory: SessionFactory = (params) => {
     const stub: StubSession = {
       sessionId: `session-${++sessionCounter}`,
       startCalls: 0,
@@ -62,7 +62,7 @@ function createStubSessionFactory() {
       status: 'active',
       runtimeState: 'idle',
       messages: [],
-      hooks,
+      hooks: params.hooks ?? {},
       inboxClosed: false,
     };
 
@@ -144,13 +144,12 @@ function sessionHandle(stub: StubSession): ChatSessionHandle {
 function setup() {
   const { factory, sessions } = createStubSessionFactory();
   const logging = createLoggingMock();
-  const router = {} as unknown as RouterApi;
 
   const godMessages = createGodMessages({
     logging,
-    createChatSession: factory as never,
+    sessionFactory: factory,
+    extensionFactories: [],
     introspection: createIntrospectionMock(),
-    router,
   });
 
   return { godMessages, sessions, factory };

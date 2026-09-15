@@ -14,12 +14,12 @@ import type { ExtendedUIMessage } from '../message-types';
 import { tracer } from '../utils/tracing';
 
 export type { SessionInbox, SessionInboxEvent };
-// Re-export router-facing types for convenience — chat-internal consumers
-// can import everything from one place.
+// Re-export context-event inbox types for convenience — chat-internal
+// consumers can import everything from one place.
 export { SessionInboxClosedError, SessionInboxUrgency };
 
 /**
- * Extends the router-facing {@link SessionInbox} with the ability to send
+ * Extends the context-event {@link SessionInbox} with the ability to send
  * native messages directly into the session history. This is the interface
  * that chat-internal consumers (extensions, etc.) use.
  */
@@ -156,7 +156,7 @@ class InboxModule implements SessionInboxBuffer {
   /**
    * Process-local identity of accepted events, kept bounded in FIFO order.
    * MCP already deduplicates at-least-once delivery per worker; this guard
-   * additionally protects the canonical history from router retries.
+   * additionally protects the canonical history from session host retries.
    */
   private readonly acceptedEventIds = new Set<string>();
 

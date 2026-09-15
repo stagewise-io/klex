@@ -7,6 +7,7 @@ import type { ModuleLogger } from '@stagewise/logger';
 
 import type { Config } from '@/config';
 import type { ProviderModelResolver } from '@/provider-registry';
+import type { SystemPromptAssembler } from '@/session/interaction';
 import type { Usage } from '@/session/types';
 
 import type { ExtensionHandler } from '../extension-handler';
@@ -51,6 +52,11 @@ export interface TurnDependencies {
   flushPendingImmediate?: () => void;
   /** Stops the turn after the current step reaches its commit boundary. */
   shouldYieldGenerationLane?: () => boolean;
+  /**
+   * Custom system prompt assembler. When omitted, the default
+   * assembler is used.
+   */
+  systemPromptAssembler?: SystemPromptAssembler;
 }
 
 export interface TurnResult {
@@ -221,6 +227,9 @@ class TurnModule implements Turn {
             config: this.deps.config,
             turnInitialFallbackIndex,
             sessionId: this.deps.sessionId,
+            ...(this.deps.systemPromptAssembler !== undefined && {
+              systemPromptAssembler: this.deps.systemPromptAssembler,
+            }),
           });
           this.currentStep = step;
 

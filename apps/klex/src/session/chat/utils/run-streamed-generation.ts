@@ -14,7 +14,10 @@ import {
 
 import type { ModuleLogger } from '@stagewise/logger';
 
-import { assembleInferenceInstructions } from '@/session/interaction';
+import {
+  assembleInferenceInstructions,
+  type SystemPromptAssembler,
+} from '@/session/interaction';
 
 import type { ExtendedUIMessage } from '../message-types';
 import type { AgentTools } from '../tools';
@@ -52,6 +55,11 @@ export interface RunStreamedGenerationParams {
    * lines) before generation.
    */
   extensionSystemPromptParts?: string[];
+  /**
+   * Custom system prompt assembler. When omitted, the default
+   * {@link assembleInferenceInstructions} is used.
+   */
+  systemPromptAssembler?: SystemPromptAssembler;
 }
 
 /**
@@ -79,7 +87,7 @@ export async function runStreamedGeneration(
     tools: toolsWithoutExecute(params.tools),
     instructions: {
       role: 'system',
-      content: assembleInferenceInstructions(
+      content: (params.systemPromptAssembler ?? assembleInferenceInstructions)(
         systemPrompt,
         params.extensionSystemPromptParts ?? [],
       ),

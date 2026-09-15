@@ -183,15 +183,15 @@ describe('GenerationLaneLeaseManager', () => {
     const manager = new GenerationLaneLeaseManager({ host, logger });
     const lease = await manager.acquire(createRequest());
 
-    manager.revoke('primary-session-closed');
+    manager.revoke('default-session-closed');
 
     expect(await lease.closed).toEqual({
       type: 'revoked',
-      reason: 'primary-session-closed',
+      reason: 'default-session-closed',
     });
     expect(host.resumeGenerationLane).not.toHaveBeenCalled();
     await expect(manager.acquire(createRequest())).rejects.toThrow(
-      /primary session is closed/,
+      /default session is closed/,
     );
   });
 
@@ -225,13 +225,13 @@ describe('GenerationLaneLeaseManager', () => {
       eventId: 'evt-ended',
       timestamp: '2026-01-01T00:00:01.000Z',
     });
-    manager.revoke('primary-session-closed');
+    manager.revoke('default-session-closed');
     allowCommit();
     await Promise.all([admitted, releasing]);
 
     expect(await lease.closed).toEqual({
       type: 'revoked',
-      reason: 'primary-session-closed',
+      reason: 'default-session-closed',
     });
     expect(host.commit).toHaveBeenCalledTimes(1);
     expect(host.resumeGenerationLane).not.toHaveBeenCalled();

@@ -1,16 +1,21 @@
 import { randomUUID } from 'node:crypto';
 
 import type { JSONObject } from '@ai-sdk/provider';
-import { type Context, context, type Span, trace } from '@opentelemetry/api';
+import {
+  type Context,
+  context,
+  ROOT_CONTEXT,
+  type Span,
+  trace,
+} from '@opentelemetry/api';
 import { generateText, type ToolSet } from 'ai';
 
 import type { ModuleLogger, RootLogger } from '@stagewise/logger';
 
 import type { Config } from '@/config';
 import type { IntrospectionScope } from '@/introspection';
-import type { Mcp } from '@/mcp';
+import type { Mcp, McpPushNotification } from '@/mcp';
 import type { ProviderModelResolver } from '@/provider-registry';
-import type { RouterApi } from '@/router';
 import type { SessionInboxEvent } from '@/session/inbox';
 import {
   assembleInferenceContext,
@@ -22,12 +27,18 @@ import {
   type InteractionToolResult,
   type PreparedInferenceContextHandle,
   type RealtimeCommitEvent,
+  type SystemPromptAssembler,
   ToolExecutor,
   toCanonicalMessage,
 } from '@/session/interaction';
+import { mcpPushNotificationToInboxEvent } from '@/session/push-notification-adapter';
 import type {
   AgentSession,
   ChatSessionHandle,
+  ChildSessionHandle,
+  ChildSessionOptions,
+  SessionContext,
+  SessionFactory,
   SessionHooks,
   SessionInfo,
   SessionRuntimeState,
@@ -69,16 +80,25 @@ export interface ChatSessionDependencies {
   logging: RootLogger;
   modelResolver: ProviderModelResolver;
   config: Config;
-  mcp: Mcp;
-  router: RouterApi;
+  mcp: Mcp | null;
   extensionFactories: ExtensionFactory[];
   /** Root data directory of the agent. Used for extension data dirs. */
   dataDirectory: string;
   /** Parent introspection scope (the "sessions" group). The session creates its own child. */
   introspectionScope: IntrospectionScope;
   hooks?: SessionHooks;
-  /** Stable identifier for durable primary sessions; defaults to a UUID. */
-  sessionId?: string;
+  /** Context describing the session's kind and position in the session tree. */
+  sessionContext: SessionContext;
+  /**
+   * Factory for creating child sessions. Absent if child session creation
+   * is disabled for this session.
+   */
+  sessionFactory?: SessionFactory;
+  /**
+   * Custom system prompt assembler. When omitted, the default
+   * assembler is used.
+   */
+  systemPromptAssembler?: SystemPromptAssembler;
 }
 
 class ChatSessionModule implements AgentSession {
@@ -98,7 +118,7 @@ class ChatSessionModule implements AgentSession {
 
   private _status: SessionStatus = 'active';
 
-  /** Prevents double-close (terminate() + router close()). */
+  /** Prevents double-close (terminate() + owner close()). */
   private closePromise: Promise<void> | null = null;
 
   /**
@@ -177,6 +197,22 @@ class ChatSessionModule implements AgentSession {
 
   private leaseToolExecutor: ToolExecutor | null = null;
 
+  // --- Push notification subscription ---
+
+  /** Unsubscribe function for the MCP push notification listener, if subscribed. */
+  private pushNotificationUnsub: (() => void) | null = null;
+
+  /** Shared promise that makes session startup idempotent. */
+  private startPromise: Promise<void> | null = null;
+
+  // --- Child sessions ---
+
+  /** This session's own introspection scope. */
+  private readonly sessionIntrospectionScope: IntrospectionScope;
+
+  /** Introspection scope for child sessions spawned by extensions in this session. */
+  private childSessionsScope: IntrospectionScope | null = null;
+
   constructor(
     private readonly deps: {
       logger: ModuleLogger;
@@ -184,27 +220,33 @@ class ChatSessionModule implements AgentSession {
       modelResolver: ProviderModelResolver;
       config: Config;
       dataDirectory: string;
-      mcp: Mcp;
-      router: RouterApi;
+      mcp: Mcp | null;
       extensionFactories: ExtensionFactory[];
       introspectionScope: IntrospectionScope;
       hooks?: SessionHooks;
-      sessionId?: string;
+      sessionContext: SessionContext;
+      sessionFactory?: SessionFactory;
+      systemPromptAssembler?: SystemPromptAssembler;
     },
   ) {
-    this.sessionId = deps.sessionId ?? randomUUID();
-    // Create a session-level span that lives for the entire session lifetime.
-    // All turn / step / generation spans inherit this trace, giving a single
-    // trace tree per session in the tracing backend. The span stays open until
+    this.sessionId = deps.sessionContext.sessionId;
+    // Create an independent root span that lives for the entire session
+    // lifetime. This keeps child sessions spawned by extensions in their own
+    // traces. All turn / step / generation spans inherit this trace, giving a
+    // single trace tree per session in the tracing backend. The span stays open until
     // close() is called — child spans (turns, steps) are exported as they end,
     // so the trace is visible in real time even while the session span is open.
-    this.sessionSpan = tracer.startSpan('session', {
-      attributes: {
-        'session.id': this.sessionId,
-        'session.createdAt': new Date().toISOString(),
+    this.sessionSpan = tracer.startSpan(
+      'session',
+      {
+        attributes: {
+          'session.id': this.sessionId,
+          'session.createdAt': new Date().toISOString(),
+        },
       },
-    });
-    this.sessionContext = trace.setSpan(context.active(), this.sessionSpan);
+      ROOT_CONTEXT,
+    );
+    this.sessionContext = trace.setSpan(ROOT_CONTEXT, this.sessionSpan);
     this.createdAt = new Date().toISOString();
 
     this.fallbackManager = new ModelFallbackManager({
@@ -227,7 +269,7 @@ class ChatSessionModule implements AgentSession {
         traceId: spanCtx.traceId,
         spanId: spanCtx.spanId,
       },
-      'Session started — trace available in tracing backend',
+      'Session created — trace available in tracing backend',
     );
 
     this.sessionInbox = createInbox({
@@ -242,6 +284,7 @@ class ChatSessionModule implements AgentSession {
     // The parent scope is the "sessions" group — create a child for
     // this specific session using its generated ID.
     const sessionScope = deps.introspectionScope.child(this.sessionId);
+    this.sessionIntrospectionScope = sessionScope;
     sessionScope.introspect(() => this.getSessionInfo());
     const extensionsScope = sessionScope.child('extensions');
 
@@ -267,37 +310,49 @@ class ChatSessionModule implements AgentSession {
       logger: this.deps.logger,
       logging: this.deps.logging,
       mcp: this.deps.mcp,
-      router: this.deps.router,
       sessionId: this.sessionId,
+      sessionContext: this.deps.sessionContext,
+      createChildSession: (options) => this.createChildSession(options),
     };
 
-    this.extensionHandler = createExtensionHandler({
-      factories: deps.extensionFactories,
-      extensionDeps,
-      dataDirectory: this.deps.dataDirectory,
-      sessionId: this.sessionId,
-      introspectionScope: extensionsScope,
-      onExtensionUsage: (identifier, usage) => {
-        const existing = this.extensionUsage.get(identifier);
-        if (existing) {
-          existing.latest = usage;
-          existing.total = {
-            inputTokens: existing.total.inputTokens + usage.inputTokens,
-            outputTokens: existing.total.outputTokens + usage.outputTokens,
-            inputCacheWriteTokens:
-              existing.total.inputCacheWriteTokens +
-              usage.inputCacheWriteTokens,
-            inputCacheReadTokens:
-              existing.total.inputCacheReadTokens + usage.inputCacheReadTokens,
-          };
-        } else {
-          this.extensionUsage.set(identifier, {
-            latest: usage,
-            total: { ...usage },
-          });
-        }
-      },
-    });
+    try {
+      this.extensionHandler = createExtensionHandler({
+        factories: deps.extensionFactories,
+        extensionDeps,
+        dataDirectory: this.deps.dataDirectory,
+        sessionId: this.sessionId,
+        introspectionScope: extensionsScope,
+        onExtensionUsage: (identifier, usage) => {
+          const existing = this.extensionUsage.get(identifier);
+          if (existing) {
+            existing.latest = usage;
+            existing.total = {
+              inputTokens: existing.total.inputTokens + usage.inputTokens,
+              outputTokens: existing.total.outputTokens + usage.outputTokens,
+              inputCacheWriteTokens:
+                existing.total.inputCacheWriteTokens +
+                usage.inputCacheWriteTokens,
+              inputCacheReadTokens:
+                existing.total.inputCacheReadTokens +
+                usage.inputCacheReadTokens,
+            };
+          } else {
+            this.extensionUsage.set(identifier, {
+              latest: usage,
+              total: { ...usage },
+            });
+          }
+        },
+      });
+    } catch (error) {
+      this.sessionInbox.close();
+      deps.introspectionScope.removeChild(this.sessionId);
+      this.sessionSpan.recordException(
+        error instanceof Error ? error : String(error),
+      );
+      this.sessionSpan.end();
+      throw error;
+    }
 
     this.leaseManager = new GenerationLaneLeaseManager({
       logger: this.deps.logger,
@@ -313,9 +368,41 @@ class ChatSessionModule implements AgentSession {
     });
   }
 
-  async start(): Promise<void> {
-    await this.extensionHandler.start();
-    this.deps.logger.info('ChatSession started');
+  start(): Promise<void> {
+    if (this._status === 'terminated') {
+      return Promise.reject(
+        new Error('Cannot start a terminated chat session'),
+      );
+    }
+    if (this.startPromise) return this.startPromise;
+
+    this.startPromise = this.startUnlocked();
+    return this.startPromise;
+  }
+
+  private async startUnlocked(): Promise<void> {
+    // Subscribe before extensions start so the default session is ready for
+    // MCP ingress before MCP workers are started by the composition root.
+    if (this.deps.mcp) {
+      this.pushNotificationUnsub = this.deps.mcp.onPushNotification(
+        (ev: McpPushNotification) => this.handlePushNotification(ev),
+      );
+    }
+
+    try {
+      await this.extensionHandler.start();
+      if (this._status === 'terminated') {
+        throw new Error(
+          `Chat session ${this.sessionId} terminated during startup`,
+        );
+      }
+      this.deps.logger.info('ChatSession started');
+    } catch (error) {
+      this.pushNotificationUnsub?.();
+      this.pushNotificationUnsub = null;
+      this.deps.logger.error({ error }, 'ChatSession startup failed');
+      throw error;
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -683,6 +770,9 @@ class ChatSessionModule implements AgentSession {
       extensionHandler: this.extensionHandler,
       model,
       baseInstructions: systemPrompt,
+      ...(this.deps.systemPromptAssembler !== undefined && {
+        systemPromptAssembler: this.deps.systemPromptAssembler,
+      }),
     });
 
     this.leaseTools = assembled.tools;
@@ -869,6 +959,9 @@ class ChatSessionModule implements AgentSession {
           forceCheck: needsCheckRetry,
           flushPendingImmediate: this.flushPendingImmediate,
           shouldYieldGenerationLane: () => this.laneSuspended,
+          ...(this.deps.systemPromptAssembler !== undefined && {
+            systemPromptAssembler: this.deps.systemPromptAssembler,
+          }),
         });
         this.currentTurn = turn;
 
@@ -1117,6 +1210,15 @@ class ChatSessionModule implements AgentSession {
     this.runtimeState = 'terminated';
 
     this.closePromise = (async () => {
+      // If startup is in flight, let its rollback finish before cleanup. A
+      // rejected startup is expected here and the original caller owns it.
+      await this.startPromise?.catch(() => undefined);
+
+      // Unsubscribe from push notifications first so no new events arrive
+      // while we are shutting down.
+      this.pushNotificationUnsub?.();
+      this.pushNotificationUnsub = null;
+
       // Close the inbox first — no new input can enter the session after
       // this point. Any concurrent send() calls will throw
       // SessionInboxClosedError.
@@ -1132,7 +1234,7 @@ class ChatSessionModule implements AgentSession {
 
       // Revoke an active interaction lease — a leased realtime call must
       // not outlive its host session.
-      this.leaseManager.revoke('primary-session-closed');
+      this.leaseManager.revoke('default-session-closed');
       this.leaseToolExecutor?.abort();
       this.releaseQuiesceWaiters();
 
@@ -1163,21 +1265,21 @@ class ChatSessionModule implements AgentSession {
 
   /**
    * Self-termination path (fatal error). Closes the session and fires the
-   * `onTerminated` hook so the router can react immediately — replace the
+   * `onTerminated` hook so the owner can react immediately — replace the
    * session, preserve history, log, etc.
    *
    * Unlike `close()`, this is only called when the session decides it is
-   * unrecoverable, not during router-initiated graceful shutdown.
+   * unrecoverable, not during owner-initiated graceful shutdown.
    */
   private async terminate(reason: string): Promise<void> {
-    this.leaseManager.revoke('primary-session-terminated');
+    this.leaseManager.revoke('default-session-terminated');
 
     // Close the inbox first — this blocks any new events from arriving
     // while we drain what's already buffered.
     this.sessionInbox.close();
 
-    // Drain remaining deferred inbox events so the router can re-dispatch them
-    // to the replacement session.
+    // Drain remaining deferred inbox events so the session host can re-dispatch
+    // them to the replacement session.
     const pendingEvents = this.sessionInbox.getEvents();
 
     // Now perform the standard close (span end, status update, etc.).
@@ -1199,13 +1301,90 @@ class ChatSessionModule implements AgentSession {
     });
   }
 
+  // ---------------------------------------------------------------------------
+  // MCP push notification handling
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Converts an MCP push notification to a session inbox event and feeds it
+   * into the session's own inbox. Only called when `deps.mcp` is non-null.
+   */
+  private handlePushNotification(ev: McpPushNotification): void {
+    const inboxEvent = mcpPushNotificationToInboxEvent(ev);
+    try {
+      this.sessionInbox.send(inboxEvent);
+    } catch {
+      // Inbox may have been closed between subscription and delivery.
+      // Drop silently — the pending-queue drain on replacement handles recovery.
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Child session creation
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Spawns and fully starts an isolated child session. The child has no MCP
+   * access or push-notification subscription. The spawning extension chooses
+   * the complete extension list explicitly.
+   */
+  public async createChildSession(
+    options: ChildSessionOptions,
+  ): Promise<ChildSessionHandle> {
+    if (!this.deps.sessionFactory) {
+      throw new Error(
+        'Child session creation is not available for this session',
+      );
+    }
+
+    const childSessionId = randomUUID();
+    const childContext: SessionContext = {
+      kind: 'child',
+      sessionId: childSessionId,
+      parentId: this.sessionId,
+    };
+
+    // Create a child-sessions introspection scope lazily.
+    if (!this.childSessionsScope) {
+      this.childSessionsScope =
+        this.sessionIntrospectionScope.child('child-sessions');
+    }
+
+    const child = this.deps.sessionFactory({
+      mcp: null,
+      sessionContext: childContext,
+      extensionFactories: options.extensions,
+      introspectionScope: this.childSessionsScope,
+      ...(options.systemPromptAssembler !== undefined && {
+        systemPromptAssembler: options.systemPromptAssembler,
+      }),
+    });
+
+    try {
+      await child.start();
+      return child;
+    } catch (error) {
+      await child.close().catch((closeError: unknown) => {
+        this.deps.logger.error(
+          { error: closeError, childSessionId },
+          'Failed child session cleanup after startup error',
+        );
+      });
+      this.deps.logger.error(
+        { error, childSessionId },
+        'Child session startup failed',
+      );
+      throw error;
+    }
+  }
+
   restorePendingEvents(events: SessionInboxEvent[]): void {
     for (const event of events) {
       try {
         this.sessionInbox.send(event);
       } catch {
         // Inbox may have been closed between event recovery and send.
-        // Drop silently — the router will not retry.
+        // Drop silently — the owner will not retry.
       }
     }
   }
@@ -1224,10 +1403,13 @@ export function createChatSession(
     config: deps.config,
     dataDirectory: deps.dataDirectory,
     mcp: deps.mcp,
-    router: deps.router,
     extensionFactories: deps.extensionFactories,
     introspectionScope: deps.introspectionScope,
     hooks: deps.hooks,
-    sessionId: deps.sessionId,
+    sessionContext: deps.sessionContext,
+    sessionFactory: deps.sessionFactory,
+    ...(deps.systemPromptAssembler !== undefined && {
+      systemPromptAssembler: deps.systemPromptAssembler,
+    }),
   });
 }

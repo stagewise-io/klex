@@ -15,7 +15,7 @@ export interface RuntimeStartupModules {
   modelCallLogger: RuntimeResource;
   adminApi: RuntimeResource;
   cloudConnectivity: RuntimeResource;
-  router: RuntimeResource;
+  sessionHost: RuntimeResource;
   /** Absent when no realtime provider is configured. */
   realtime?: RuntimeResource | undefined;
   mcp: RuntimeResource;
@@ -31,15 +31,17 @@ export interface RuntimeStartupStep {
 /**
  * Startup order of the runtime modules.
  *
- * The router owns the primary session, installs the MCP Push Notification
- * listener, and grants interaction leases. It therefore starts before the
- * realtime coordinator (which acquires a lease per accepted offer) and before
- * MCP (whose workers publish events as soon as they connect). Starting MCP
- * first would let worker events arrive while no listener is installed, and the
- * pending-queue drain is the only recovery path for that gap.
+ * The session host owns the default session, which subscribes to MCP Push
+ * Notifications upon start, and grants interaction leases. It therefore
+ * starts before the realtime coordinator (which acquires a lease per accepted
+ * offer) and before MCP (whose workers publish events as soon as they
+ * connect). Starting MCP first would let worker events arrive while no
+ * listener is installed, and the pending-queue drain is the only recovery
+ * path for that gap.
  *
  * Shutdown uses an explicit dependency order: active realtime sessions stop
- * before MCP, then the router closes the primary session and its extensions.
+ * before MCP, then the session host closes the default session and its
+ * extensions.
  */
 export function runtimeStartupOrder(
   modules: RuntimeStartupModules,
@@ -48,7 +50,7 @@ export function runtimeStartupOrder(
     { name: 'model-call-logger', resource: modules.modelCallLogger },
     { name: 'admin-api', resource: modules.adminApi },
     { name: 'cloud-connectivity', resource: modules.cloudConnectivity },
-    { name: 'router', resource: modules.router },
+    { name: 'session-host', resource: modules.sessionHost },
     ...(modules.realtime
       ? [{ name: 'realtime', resource: modules.realtime }]
       : []),
@@ -61,8 +63,8 @@ export function runtimeStartupOrder(
 export interface RuntimeHandle {
   /**
    * Closes runtime modules in explicit dependency order, then adopted resources
-   * in reverse adoption order. Realtime and MCP stop before the router so no
-   * external work can reach a closing primary session.
+   * in reverse adoption order. Realtime and MCP stop before the session host so no
+   * external work can reach a closing default session.
    */
   close(): Promise<void>;
 }
@@ -124,7 +126,7 @@ function runtimeShutdownOrder(
     'telemetry-manager',
     'realtime',
     'mcp',
-    'router',
+    'session-host',
     'cloud-connectivity',
     'admin-api',
     'model-call-logger',

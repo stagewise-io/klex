@@ -126,11 +126,8 @@ This allows interoperability between various environments, machines and tools yo
 After every task, Klex will reflect on its actions - and update its internal understanding and memory to do the task more efficiently the next time.
 
 
-## Klex is sessionless:
-There is no dedicated policy that determines which session an incoming message belongs to - every message is sent into the brain of Klex, where an agentic router decides what to do with the message:
-- Delegate to a sub-agent with a smaller/faster model
-- Queue the message into an existing conversation
-- Provide an immediate quick response without delegating
+## Klex presents one durable agent
+Incoming messages from every connected channel enter the same durable default session. Model chats remain private execution units rather than user-managed conversations. Extensions can explicitly create isolated child sessions when a task needs separate context, tools, or model behavior.
 
 
 ### Klex is model-aware:

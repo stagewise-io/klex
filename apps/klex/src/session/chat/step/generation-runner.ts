@@ -11,6 +11,7 @@ import {
 
 import type { ModuleLogger } from '@stagewise/logger';
 
+import type { SystemPromptAssembler } from '@/session/interaction';
 import {
   classifyGenerationError,
   type GenerationErrorClassification,
@@ -61,6 +62,11 @@ export interface GenerationRunnerDependencies {
    * lines) before each generation attempt.
    */
   extensionSystemPromptParts: string[];
+  /**
+   * Custom system prompt assembler. When omitted, the default
+   * assembler is used.
+   */
+  systemPromptAssembler?: SystemPromptAssembler;
 }
 
 /** Outcome of a single generation attempt inside the retry loop. */
@@ -169,6 +175,9 @@ export class GenerationRunner {
           sessionId: this.deps.sessionId,
           compacted: this.deps.compacted,
           extensionSystemPromptParts: this.deps.extensionSystemPromptParts,
+          ...(this.deps.systemPromptAssembler !== undefined && {
+            systemPromptAssembler: this.deps.systemPromptAssembler,
+          }),
           ...(this.deps.providerOptions !== undefined && {
             providerOptions: this.deps.providerOptions,
           }),

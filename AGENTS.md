@@ -23,7 +23,7 @@ Normal flow:
 ```text
 channel or environment
   -> Push Notification
-  -> router and durable memory
+  -> default session and durable memory
   -> model run or subagent
   -> MCP tool call
   -> channel or environment
@@ -51,8 +51,8 @@ Incoming messages become Push Notifications. Agent replies by calling channel to
 
 ## Code boundaries
 
-- `apps/klex/`: brain, memory, routing, MCP clients, config, admin plane.
-- `apps/klex/src/mcp/`: MCP client layer. Owns connection lifecycle, tool registry, subscribe-before-drain recovery, and process-local `eventId` deduplication as an internal submodule. Exposes `onPushNotification()` to the router — no external inbox wiring.
+- `apps/klex/`: brain, memory, session host, MCP clients, config, admin plane.
+- `apps/klex/src/mcp/`: MCP client layer. Owns connection lifecycle, tool registry, subscribe-before-drain recovery, and process-local `eventId` deduplication as an internal submodule. Exposes `onPushNotification()` to the default session — no external inbox wiring.
 - `mcp-servers/`: external channels and work environments.
 - `packages/mcp-extension-push-notifications/`: identity-scoped pending-queue protocol and SDK helpers.
 - `packages/`: shared protocol and runtime libraries.
@@ -77,6 +77,7 @@ Every structured store under an agent data directory participates in the forward
 
 - `apps/klex/src/local-data/architecture.md`
 - `apps/klex/src/mcp/architecture.md`
+- `apps/klex/src/session/architecture.md`
 - `apps/klex/src/session/chat/architecture.md`
 - `packages/mcp-extension-push-notifications/README.md`
 - `packages/mcp-extension-push-notifications/specification/draft/events.md`

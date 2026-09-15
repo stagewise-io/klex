@@ -192,7 +192,11 @@ function run(command, args, cwd) {
     const invocation = commandInvocation(command, args);
     const child = spawn(invocation.executable, invocation.args, {
       cwd,
-      env: { ...globalThis.process.env, NO_COLOR: '1' },
+      env: {
+        ...globalThis.process.env,
+        ...invocation.env,
+        NO_COLOR: '1',
+      },
       shell: false,
       stdio: ['ignore', 'pipe', 'pipe'],
       windowsVerbatimArguments: invocation.windowsVerbatimArguments ?? false,
@@ -237,9 +241,21 @@ function commandInvocation(command, args) {
     if (existsSync(npmCli)) {
       return { executable: process.execPath, args: [npmCli, ...args] };
     }
+    const environment = { KLEX_MACHINE_NPM_COMMAND: npmShim };
+    const argumentVariables = args.map((argument, index) => {
+      const name = `KLEX_MACHINE_NPM_ARG_${index}`;
+      environment[name] = argument;
+      return `%${name}%`;
+    });
     return {
       executable: process.env.ComSpec ?? 'cmd.exe',
-      args: ['/d', '/s', '/c', windowsCommandLine(npmShim, args)],
+      args: [
+        '/d',
+        '/s',
+        '/c',
+        windowsCommandLine('%KLEX_MACHINE_NPM_COMMAND%', argumentVariables),
+      ],
+      env: environment,
       windowsVerbatimArguments: true,
     };
   }

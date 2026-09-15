@@ -1,4 +1,5 @@
 import { isUtf8 } from 'node:buffer';
+import type { Stats } from 'node:fs';
 import {
   chmod,
   cp,
@@ -325,6 +326,7 @@ interface PublishedPath {
   device: number;
   inode: number;
   directory: boolean;
+  mode: number;
 }
 
 async function publishPathExclusively(
@@ -353,14 +355,14 @@ async function publishExclusiveEntry(
   }
   if (!metadata.isDirectory()) {
     await link(source, destination);
-    await recordPublishedPath(destination, published);
+    await recordPublishedPath(destination, published, metadata);
     return;
   }
 
   await chmod(source, metadata.mode | 0o700);
   await mkdir(destination, { mode: metadata.mode | 0o700 });
   await recordPublishedPath(destination, published);
-  for (const entry of await readdir(source)) {
+  for (const entry of (await readdir(source)).sort()) {
     await publishExclusiveEntry(
       join(source, entry),
       join(destination, entry),
@@ -373,31 +375,48 @@ async function publishExclusiveEntry(
 async function recordPublishedPath(
   path: string,
   published: PublishedPath[],
+  knownMetadata?: Stats,
 ): Promise<void> {
-  const metadata = await lstat(path);
+  const metadata = knownMetadata ?? (await lstat(path));
   published.push({
     path,
     device: metadata.dev,
     inode: metadata.ino,
     directory: metadata.isDirectory(),
+    mode: metadata.mode,
   });
 }
 
 async function rollbackPublishedPaths(
   published: PublishedPath[],
 ): Promise<void> {
+  for (const entry of published) {
+    if (!entry.directory) continue;
+    const current = await matchingPublishedPath(entry);
+    if (current)
+      await chmod(entry.path, current.mode | 0o700).catch(() => undefined);
+  }
+
   for (const entry of published.reverse()) {
-    const current = await lstat(entry.path).catch(() => undefined);
-    if (
-      !current ||
-      current.dev !== entry.device ||
-      current.ino !== entry.inode
-    ) {
+    if (!(await matchingPublishedPath(entry))) continue;
+    if (!entry.directory) {
+      await rm(entry.path).catch(() => undefined);
       continue;
     }
-    const remove = entry.directory ? rmdir(entry.path) : rm(entry.path);
-    await remove.catch(() => undefined);
+    await rmdir(entry.path).catch(async () => {
+      await chmod(entry.path, entry.mode).catch(() => undefined);
+    });
   }
+}
+
+async function matchingPublishedPath(
+  entry: PublishedPath,
+): Promise<Stats | undefined> {
+  const current = await lstat(entry.path).catch(() => undefined);
+  if (!current || current.dev !== entry.device || current.ino !== entry.inode) {
+    return undefined;
+  }
+  return current;
 }
 
 async function makeDirectoriesOwnerWritable(path: string): Promise<void> {

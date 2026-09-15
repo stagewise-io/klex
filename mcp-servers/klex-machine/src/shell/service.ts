@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
-import { chmodSync } from 'node:fs';
+import { chmodSync, existsSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { dirname, resolve } from 'node:path';
 
@@ -187,14 +187,18 @@ function ensureSpawnHelperExecutable(): void {
   if (process.platform === 'win32' || spawnHelperPrepared) return;
   const require = createRequire(import.meta.url);
   const packageRoot = dirname(dirname(require.resolve('node-pty')));
-  const helper = resolve(
-    packageRoot,
-    'prebuilds',
-    `${process.platform}-${process.arch}`,
-    'spawn-helper',
-  );
-  chmodSync(helper, 0o755);
-  spawnHelperPrepared = true;
+  const helperDirectories = [
+    'build/Release',
+    'build/Debug',
+    `prebuilds/${process.platform}-${process.arch}`,
+  ];
+  for (const directory of helperDirectories) {
+    const helper = resolve(packageRoot, directory, 'spawn-helper');
+    if (!existsSync(helper)) continue;
+    chmodSync(helper, 0o755);
+    spawnHelperPrepared = true;
+    return;
+  }
 }
 
 function defaultShell(): string {

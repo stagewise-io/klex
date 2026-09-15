@@ -65,7 +65,7 @@ jobs:
           node-version-file: .nvmrc
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: pnpm --filter klex-machine build
+      - run: pnpm --filter klex-machine... build
       - run: pnpm --filter klex-machine typecheck
       - run: pnpm --filter klex-machine test
       - run: pnpm --filter klex-machine verify

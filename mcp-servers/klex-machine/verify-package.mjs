@@ -1,7 +1,8 @@
 import { spawn } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { delimiter, dirname, join, resolve } from 'node:path';
 
 const packageRoot = resolve(import.meta.dirname);
 const temporaryRoot = await mkdtemp(join(tmpdir(), 'klex machine package-'));
@@ -224,16 +225,31 @@ function commandInvocation(command, args) {
     return { executable: process.execPath, args: [pnpmCli, ...args] };
   }
   if (command === 'npm') {
+    const npmShim = findWindowsCommand('npm.cmd');
     const npmCli = join(
-      dirname(process.execPath),
+      dirname(npmShim),
       'node_modules',
       'npm',
       'bin',
       'npm-cli.js',
     );
+    if (!existsSync(npmCli)) {
+      throw new Error(`Could not locate the npm CLI beside ${npmShim}`);
+    }
     return { executable: process.execPath, args: [npmCli, ...args] };
   }
   return { executable: command, args };
+}
+
+function findWindowsCommand(command) {
+  const path = process.env.PATH ?? process.env.Path ?? '';
+  for (const entry of path.split(delimiter)) {
+    const directory = entry.replace(/^"|"$/g, '');
+    if (!directory) continue;
+    const candidate = join(directory, command);
+    if (existsSync(candidate)) return candidate;
+  }
+  throw new Error(`Could not locate ${command} on PATH`);
 }
 
 async function waitForListeningPort(serverProcess, output) {

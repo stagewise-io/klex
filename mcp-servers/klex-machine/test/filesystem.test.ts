@@ -10,10 +10,20 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { MachinePathResolver } from '../src/filesystem/paths.js';
 import { FilesystemService } from '../src/filesystem/service.js';
+
+const fsMocks = vi.hoisted(() => ({ rename: vi.fn() }));
+vi.mock('node:fs/promises', async () => {
+  const actual =
+    await vi.importActual<typeof import('node:fs/promises')>(
+      'node:fs/promises',
+    );
+  fsMocks.rename.mockImplementation(actual.rename);
+  return { ...actual, rename: fsMocks.rename };
+});
 
 let directory: string;
 let service: FilesystemService;
@@ -191,5 +201,48 @@ describe('FilesystemService', () => {
       }),
     ).rejects.toThrow();
     expect(await readFile(join(directory, 'destination'), 'utf8')).toBe('old');
+  });
+
+  it('replaces a non-empty destination directory when moving with overwrite', async () => {
+    await service.write({ path: 'source/new', content: 'new' });
+    await service.write({ path: 'destination/old', content: 'old' });
+
+    await service.copy({
+      source: 'source',
+      destination: 'destination',
+      move: true,
+      overwrite: true,
+    });
+
+    await expect(
+      readFile(join(directory, 'destination/new'), 'utf8'),
+    ).resolves.toBe('new');
+    await expect(
+      readFile(join(directory, 'destination/old')),
+    ).rejects.toThrow();
+    await expect(readFile(join(directory, 'source/new'))).rejects.toThrow();
+  });
+
+  it('preserves a concurrently created destination during EXDEV fallback', async () => {
+    await service.write({ path: 'source', content: 'source' });
+    const destination = join(directory, 'destination');
+    const exdev = Object.assign(new Error('cross-device move'), {
+      code: 'EXDEV',
+    });
+    fsMocks.rename.mockImplementationOnce(async () => {
+      await writeFile(destination, 'concurrent');
+      throw exdev;
+    });
+
+    await expect(
+      service.copy({
+        source: 'source',
+        destination: 'destination',
+        move: true,
+      }),
+    ).rejects.toThrow();
+
+    expect(await readFile(destination, 'utf8')).toBe('concurrent');
+    expect(await readFile(join(directory, 'source'), 'utf8')).toBe('source');
   });
 });

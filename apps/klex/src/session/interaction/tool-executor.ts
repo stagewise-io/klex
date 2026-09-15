@@ -39,12 +39,15 @@ async function validateToolInput(
       : { success: false, error: String(result.error) };
   }
 
+  const rawJsonSchema = await schema.jsonSchema;
   const jsonSchema =
-    schema.jsonSchema.type === 'object' &&
-    schema.jsonSchema.additionalProperties === undefined
-      ? { ...schema.jsonSchema, additionalProperties: true }
-      : schema.jsonSchema;
-  const result = z.fromJSONSchema(jsonSchema).safeParse(input);
+    rawJsonSchema.type === 'object' &&
+    rawJsonSchema.additionalProperties === undefined
+      ? { ...rawJsonSchema, additionalProperties: true }
+      : rawJsonSchema;
+  const result = z
+    .fromJSONSchema(jsonSchema as Parameters<typeof z.fromJSONSchema>[0])
+    .safeParse(input);
   return result.success
     ? { success: true, value: result.data }
     : { success: false, error: result.error.message };

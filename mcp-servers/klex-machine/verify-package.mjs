@@ -193,8 +193,9 @@ function run(command, args, cwd) {
     const child = spawn(invocation.executable, invocation.args, {
       cwd,
       env: { ...globalThis.process.env, NO_COLOR: '1' },
-      shell: invocation.shell ?? false,
+      shell: false,
       stdio: ['ignore', 'pipe', 'pipe'],
+      windowsVerbatimArguments: invocation.windowsVerbatimArguments ?? false,
     });
     let stdout = '';
     let stderr = '';
@@ -236,9 +237,20 @@ function commandInvocation(command, args) {
     if (existsSync(npmCli)) {
       return { executable: process.execPath, args: [npmCli, ...args] };
     }
-    return { executable: npmShim, args, shell: true };
+    return {
+      executable: process.env.ComSpec ?? 'cmd.exe',
+      args: ['/d', '/s', '/c', windowsCommandLine(npmShim, args)],
+      windowsVerbatimArguments: true,
+    };
   }
   return { executable: command, args };
+}
+
+function windowsCommandLine(command, args) {
+  const quoted = [command, ...args].map(
+    (argument) => `"${argument.replaceAll('"', '""')}"`,
+  );
+  return `"${quoted.join(' ')}"`;
 }
 
 function findWindowsCommand(command) {

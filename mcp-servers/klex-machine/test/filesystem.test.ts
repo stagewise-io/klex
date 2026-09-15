@@ -273,6 +273,44 @@ describe('FilesystemService', () => {
     );
   });
 
+  it('rolls back only entries published before a directory collision', async () => {
+    await service.write({ path: 'source/a-created', content: 'created' });
+    await service.write({ path: 'source/b-collision', content: 'source' });
+    const actualFs =
+      await vi.importActual<typeof import('node:fs/promises')>(
+        'node:fs/promises',
+      );
+    fsMocks.rename.mockRejectedValueOnce(
+      Object.assign(new Error('cross-device move'), { code: 'EXDEV' }),
+    );
+    fsMocks.link.mockImplementationOnce(actualFs.link);
+    fsMocks.link.mockImplementationOnce(async (_source, destination) => {
+      await writeFile(destination, 'concurrent');
+      throw Object.assign(new Error('destination exists'), { code: 'EEXIST' });
+    });
+
+    await expect(
+      service.copy({
+        source: 'source',
+        destination: 'destination',
+        move: true,
+      }),
+    ).rejects.toThrow();
+
+    await expect(
+      readFile(join(directory, 'destination/a-created')),
+    ).rejects.toThrow();
+    expect(
+      await readFile(join(directory, 'destination/b-collision'), 'utf8'),
+    ).toBe('concurrent');
+    expect(await readFile(join(directory, 'source/a-created'), 'utf8')).toBe(
+      'created',
+    );
+    expect(await readFile(join(directory, 'source/b-collision'), 'utf8')).toBe(
+      'source',
+    );
+  });
+
   it('moves read-only directories across devices and restores their mode', async () => {
     if (process.platform === 'win32') return;
     await service.write({ path: 'source/entry', content: 'source' });

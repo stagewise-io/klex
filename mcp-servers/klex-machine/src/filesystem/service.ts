@@ -12,6 +12,7 @@ import {
   readlink,
   rename,
   rm,
+  rmdir,
   stat,
   symlink,
 } from 'node:fs/promises';
@@ -319,26 +320,84 @@ async function replacePath(source: string, destination: string): Promise<void> {
   }
 }
 
+interface PublishedPath {
+  path: string;
+  device: number;
+  inode: number;
+  directory: boolean;
+}
+
 async function publishPathExclusively(
   source: string,
   destination: string,
 ): Promise<void> {
+  const published: PublishedPath[] = [];
+  try {
+    await publishExclusiveEntry(source, destination, published);
+  } catch (error) {
+    await rollbackPublishedPaths(published);
+    throw error;
+  }
+}
+
+async function publishExclusiveEntry(
+  source: string,
+  destination: string,
+  published: PublishedPath[],
+): Promise<void> {
   const metadata = await lstat(source);
   if (metadata.isSymbolicLink()) {
     await symlink(await readlink(source), destination);
+    await recordPublishedPath(destination, published);
     return;
   }
   if (!metadata.isDirectory()) {
     await link(source, destination);
+    await recordPublishedPath(destination, published);
     return;
   }
 
   await chmod(source, metadata.mode | 0o700);
   await mkdir(destination, { mode: metadata.mode | 0o700 });
+  await recordPublishedPath(destination, published);
   for (const entry of await readdir(source)) {
-    await publishPathExclusively(join(source, entry), join(destination, entry));
+    await publishExclusiveEntry(
+      join(source, entry),
+      join(destination, entry),
+      published,
+    );
   }
   await chmod(destination, metadata.mode);
+}
+
+async function recordPublishedPath(
+  path: string,
+  published: PublishedPath[],
+): Promise<void> {
+  const metadata = await lstat(path);
+  published.push({
+    path,
+    device: metadata.dev,
+    inode: metadata.ino,
+    directory: metadata.isDirectory(),
+  });
+}
+
+async function rollbackPublishedPaths(
+  published: PublishedPath[],
+): Promise<void> {
+  for (const entry of published.reverse()) {
+    const current = await lstat(entry.path).catch(() => undefined);
+    if (
+      !current ||
+      current.dev !== entry.device ||
+      current.ino !== entry.inode
+    ) {
+      continue;
+    }
+    const remove = entry.directory ? rmdir(entry.path) : rm(entry.path);
+    await remove.catch(() => undefined);
+  }
 }
 
 async function makeDirectoriesOwnerWritable(path: string): Promise<void> {

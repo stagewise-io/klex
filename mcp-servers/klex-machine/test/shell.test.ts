@@ -43,12 +43,18 @@ describe('ShellService', () => {
 
   it('starts in the configured cwd including paths with spaces', async () => {
     const session = service.create(testShell());
-    service.write(session.id, command('pwd', 'cd'));
-    const result = await readUntil(service, session.id, 0, directory);
-    const reported = result.output
-      .split(/\r?\n/)
-      .map((line) => line.trim())
-      .find((line) => line === directory);
+    service.write(
+      session.id,
+      command(
+        "printf '__KLEX_CWD__'; pwd; printf '__KLEX_END__\\n'",
+        'echo __KLEX_CWD__%CD%__KLEX_END__',
+      ),
+    );
+    const result = await readUntilIdle(service, session.id, 0, '__KLEX_END__');
+    const matches = [
+      ...result.output.matchAll(/__KLEX_CWD__(.*?)__KLEX_END__/gs),
+    ];
+    const reported = matches.at(-1)?.[1]?.trim();
     expect(reported).toBeDefined();
     await expect(realpath(reported ?? '')).resolves.toBe(
       await realpath(directory),
@@ -114,25 +120,6 @@ function testShell(): { shell: string; args: string[] } {
 
 function command(posix: string, windows: string): string {
   return `${process.platform === 'win32' ? windows : posix}\r`;
-}
-
-async function readUntil(
-  shell: ShellService,
-  id: string,
-  initialCursor: number,
-  expected: string,
-) {
-  let cursor = initialCursor;
-  let output = '';
-  for (let attempt = 0; attempt < 20; attempt += 1) {
-    const result = await shell.read({ id, cursor, waitMs: 250 });
-    output += result.output;
-    cursor = result.cursor;
-    if (output.includes(expected)) return { ...result, output, cursor };
-  }
-  throw new Error(
-    `Timed out waiting for shell output: ${expected}; got ${output}`,
-  );
 }
 
 async function readUntilIdle(

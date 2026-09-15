@@ -27,6 +27,7 @@ import type {
   RealtimeModelSession,
   RealtimeModelSessionFactory,
 } from '@/session/realtime/model-session';
+import { DEFAULT_SESSION_ID } from '@/session/types';
 
 interface Deferred<T> {
   promise: Promise<T>;
@@ -534,7 +535,7 @@ class DeterministicConversationHostModule
     this.nextId += 1;
     const lease = new SessionInteractionLease({
       id: `lease-${this.nextId}`,
-      sessionId: 'default-session',
+      sessionId: DEFAULT_SESSION_ID,
       mode: request.mode,
       bootstrap: async (): Promise<PreparedInferenceContextHandle> => ({
         context: DETERMINISTIC_CONTEXT,

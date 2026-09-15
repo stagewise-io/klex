@@ -193,7 +193,7 @@ function run(command, args, cwd) {
     const child = spawn(invocation.executable, invocation.args, {
       cwd,
       env: { ...globalThis.process.env, NO_COLOR: '1' },
-      shell: false,
+      shell: invocation.shell ?? false,
       stdio: ['ignore', 'pipe', 'pipe'],
     });
     let stdout = '';
@@ -233,10 +233,10 @@ function commandInvocation(command, args) {
       'bin',
       'npm-cli.js',
     );
-    if (!existsSync(npmCli)) {
-      throw new Error(`Could not locate the npm CLI beside ${npmShim}`);
+    if (existsSync(npmCli)) {
+      return { executable: process.execPath, args: [npmCli, ...args] };
     }
-    return { executable: process.execPath, args: [npmCli, ...args] };
+    return { executable: npmShim, args, shell: true };
   }
   return { executable: command, args };
 }

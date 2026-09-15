@@ -49,6 +49,16 @@ WhatsApp, Slack, Telegram, local chat, and similar systems are MCP servers.
 
 Incoming messages become Push Notifications. Agent replies by calling channel tools. Text emitted directly by a model is not automatically a user message.
 
+## Formatting
+
+Use the repository formatter instead of formatting files by hand. After editing any
+formatter-supported file, run `pnpm format` from the repository root. Before
+finishing, run `pnpm format:check` to verify that the tree is clean.
+
+Instructions to use file-editing tools apply to authored content changes. They do
+not prohibit running the repository's formatting, linting, code-generation, test,
+or other validation commands.
+
 ## Code boundaries
 
 - `apps/klex/`: brain, memory, session host, MCP clients, config, admin plane.

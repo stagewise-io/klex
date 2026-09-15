@@ -69,6 +69,8 @@ export class ShellService {
       cwd,
       env,
       name: 'xterm-256color',
+      // node-pty's ConPTY cleanup helper can crash with AttachConsole errors.
+      ...(process.platform === 'win32' ? { useConpty: false } : {}),
     });
     const info: ShellSessionInfo = {
       id: randomUUID(),

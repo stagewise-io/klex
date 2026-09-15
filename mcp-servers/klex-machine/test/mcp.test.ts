@@ -61,7 +61,12 @@ describe('machine MCP module', () => {
 
   afterAll(async () => {
     await mcp.close();
-    await rm(cwd, { recursive: true, force: true });
+    await rm(cwd, {
+      force: true,
+      maxRetries: 5,
+      recursive: true,
+      retryDelay: 100,
+    });
   });
 
   it('registers filesystem and shell tools', async () => {
@@ -90,14 +95,24 @@ describe('machine MCP module', () => {
     };
     await callTool(mcp, 'writeShellSession', {
       id: created.id,
-      data: 'printf persistent-session\\n',
+      data:
+        process.platform === 'win32'
+          ? 'echo persistent-session\\r'
+          : "printf 'persistent-session\\n'\\r",
     });
-    const read = (await callTool(mcp, 'readShellSession', {
-      id: created.id,
-      cursor: 0,
-      waitMs: 1_000,
-    })) as { output: string };
-    expect(read.output).toContain('persistent-session');
+    let cursor = 0;
+    let output = '';
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      const read = (await callTool(mcp, 'readShellSession', {
+        id: created.id,
+        cursor,
+        waitMs: 250,
+      })) as { output: string; cursor: number };
+      output += read.output;
+      cursor = read.cursor;
+      if (output.includes('persistent-session')) break;
+    }
+    expect(output).toContain('persistent-session');
     await callTool(mcp, 'closeShellSession', { id: created.id });
   });
 });

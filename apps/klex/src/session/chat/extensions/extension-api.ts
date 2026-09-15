@@ -558,10 +558,11 @@ export interface ExtensionDeps {
   sessionContext: SessionContext;
 
   /**
-   * Spawns an isolated child session owned by this extension. The child
-   * has no MCP access and no push notification subscription — its only
-   * input is messages injected by this extension via the returned
-   * handle's inbox.
+   * Spawns an isolated child session owned by this extension. The parent
+   * session owns and cleans up the child while startup is in flight; ownership
+   * transfers to the extension only when this promise resolves. The child has
+   * no MCP access and no push notification subscription — its only input is
+   * messages injected by this extension via the returned handle's inbox.
    *
    * The requested extension list is used exactly as supplied. The spawning
    * extension is responsible for choosing the child's complete extension set

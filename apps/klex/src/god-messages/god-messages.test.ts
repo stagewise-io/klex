@@ -173,6 +173,28 @@ describe('GodMessagesModule — start()', () => {
 
     expect(sessions).toHaveLength(1);
   });
+
+  it('removes its introspection scope when startup fails', async () => {
+    const { factory } = createStubSessionFactory();
+    const removeChild = vi.fn();
+    const introspection = createIntrospectionMock();
+    introspection.removeChild = removeChild;
+    const godMessages = createGodMessages({
+      logging: createLoggingMock(),
+      sessionFactory: (params) => {
+        const session = factory(params);
+        session.start = async () => {
+          throw new Error('startup failed');
+        };
+        return session;
+      },
+      extensionFactories: [],
+      introspection,
+    });
+
+    await expect(godMessages.start()).rejects.toThrow('startup failed');
+    expect(removeChild).toHaveBeenCalledWith('god-sessions');
+  });
 });
 
 describe('GodMessagesModule — sendGodMessage()', () => {

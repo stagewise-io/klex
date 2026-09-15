@@ -94,6 +94,7 @@ class GodMessagesModule implements GodMessages {
       this.session = await this.ensureSession();
     } catch (error) {
       this.started = false;
+      this.removeSessionsScope();
       this.deps.logger.error(
         { error },
         'God messages startup failed because its session could not start',
@@ -164,10 +165,12 @@ class GodMessagesModule implements GodMessages {
     if (pending) await pending.catch(() => undefined);
     const session = this.session;
     this.session = null;
-    if (!session) return;
-    await session.close().catch((error: unknown) => {
-      this.deps.logger.error({ error }, 'God session close failed');
-    });
+    if (session) {
+      await session.close().catch((error: unknown) => {
+        this.deps.logger.error({ error }, 'God session close failed');
+      });
+    }
+    this.removeSessionsScope();
   }
 
   getSessionInfo(): SessionInfo | null {
@@ -295,6 +298,12 @@ class GodMessagesModule implements GodMessages {
       this.deps.logger.error({ error }, 'God session startup failed');
       throw error;
     }
+  }
+
+  private removeSessionsScope(): void {
+    if (!this.sessionsScope) return;
+    this.deps.introspection.removeChild('god-sessions');
+    this.sessionsScope = null;
   }
 
   private ensureSessionsScope() {

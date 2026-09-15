@@ -4,7 +4,7 @@ import type { RootLogger } from '@stagewise/logger';
 
 import type { Config } from '@/config';
 import type { IntrospectionScope } from '@/introspection';
-import type { Mcp } from '@/mcp';
+import type { Mcp, McpPushNotification } from '@/mcp';
 import type {
   ChatSessionHandle,
   ChildSessionHandle,
@@ -73,6 +73,14 @@ function createSession(
   });
 }
 
+function requireExtensionDeps(
+  extensionDeps: ExtensionDeps | undefined,
+): ExtensionDeps {
+  if (!extensionDeps)
+    throw new Error('Extension dependencies were not captured');
+  return extensionDeps;
+}
+
 function createFakeChild(start: () => Promise<void>): ChildSessionHandle {
   const child: ChildSessionHandle = {
     sessionId: 'child-1',
@@ -119,6 +127,44 @@ describe('ChatSession lifecycle', () => {
     );
   });
 
+  it('unsubscribes before closing the inbox and rejects stale MCP delivery', async () => {
+    const listenerRef: {
+      current?: (event: McpPushNotification) => void | Promise<void>;
+    } = {};
+    const notification: McpPushNotification = {
+      namespace: 'local',
+      event: {
+        eventId: 'event-1',
+        sourceId: 'chat:user',
+        type: 'chat.message.received',
+        createdAt: '2026-07-20T10:30:00.000Z',
+        content: [{ type: 'text', text: 'hello' }],
+      },
+    };
+    const deliveryDuringUnsubscribe = vi.fn();
+    const session = createSession({
+      mcp: {
+        onPushNotification: vi.fn((callback) => {
+          listenerRef.current = callback;
+          return () => {
+            callback(notification);
+            deliveryDuringUnsubscribe();
+          };
+        }),
+      } as unknown as Mcp,
+    });
+    await session.start();
+
+    await session.close();
+
+    expect(deliveryDuringUnsubscribe).toHaveBeenCalledOnce();
+    const staleListener = listenerRef.current;
+    if (!staleListener) throw new Error('MCP listener was not registered');
+    expect(() => staleListener(notification)).toThrow(
+      'Session inbox is closed',
+    );
+  });
+
   it('returns a child only after startup and preserves the requested extensions', async () => {
     let extensionDeps: ExtensionDeps | undefined;
     const parentExtension: ExtensionFactory = {
@@ -141,12 +187,15 @@ describe('ChatSession lifecycle', () => {
     };
     const parent = createSession({
       extensions: [parentExtension],
+      mcp: {
+        onPushNotification: vi.fn(() => vi.fn()),
+      } as unknown as Mcp,
       sessionFactory,
     });
     await parent.start();
 
     let resolved = false;
-    const creation = extensionDeps!
+    const creation = requireExtensionDeps(extensionDeps)
       .createChildSession({ extensions: [childExtension] })
       .then((result) => {
         resolved = true;
@@ -168,6 +217,59 @@ describe('ChatSession lifecycle', () => {
     startup.resolve();
     await expect(creation).resolves.toBe(child);
     await parent.close();
+  });
+
+  it('closes a child whose startup outlives its parent', async () => {
+    let extensionDeps: ExtensionDeps | undefined;
+    const extension: ExtensionFactory = {
+      identifier: 'test/parent',
+      create: (deps) => {
+        extensionDeps = deps;
+        return {};
+      },
+    };
+    const startup = Promise.withResolvers<void>();
+    const child = createFakeChild(() => startup.promise);
+    const parent = createSession({
+      extensions: [extension],
+      sessionFactory: () => child as unknown as ChatSessionHandle,
+    });
+    await parent.start();
+
+    const creation = requireExtensionDeps(extensionDeps).createChildSession({
+      extensions: [],
+    });
+    await Promise.resolve();
+    await parent.close();
+
+    expect(child.close).not.toHaveBeenCalled();
+    startup.resolve();
+    await expect(creation).rejects.toThrow(
+      'Parent chat session terminated while child session was starting',
+    );
+    expect(child.close).toHaveBeenCalledOnce();
+  });
+
+  it('rejects child creation after the parent terminates', async () => {
+    let extensionDeps: ExtensionDeps | undefined;
+    const extension: ExtensionFactory = {
+      identifier: 'test/parent',
+      create: (deps) => {
+        extensionDeps = deps;
+        return {};
+      },
+    };
+    const sessionFactory = vi.fn();
+    const parent = createSession({ extensions: [extension], sessionFactory });
+    await parent.start();
+    await parent.close();
+
+    await expect(
+      requireExtensionDeps(extensionDeps).createChildSession({
+        extensions: [],
+      }),
+    ).rejects.toThrow('Cannot create a child from a terminated chat session');
+    expect(sessionFactory).not.toHaveBeenCalled();
   });
 
   it('rolls back session-owned resources when extension construction fails', () => {
@@ -215,7 +317,9 @@ describe('ChatSession lifecycle', () => {
     await parent.start();
 
     await expect(
-      extensionDeps!.createChildSession({ extensions: [] }),
+      requireExtensionDeps(extensionDeps).createChildSession({
+        extensions: [],
+      }),
     ).rejects.toBe(startupError);
     expect(child.close).toHaveBeenCalledOnce();
     await parent.close();

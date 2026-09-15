@@ -1274,8 +1274,11 @@ class ChatSessionModule implements AgentSession {
   private async terminate(reason: string): Promise<void> {
     this.leaseManager.revoke('default-session-terminated');
 
-    // Close the inbox first — this blocks any new events from arriving
-    // while we drain what's already buffered.
+    // Stop MCP ingress before closing the inbox. The listener is synchronous,
+    // so removing it first ensures every callback already entered has either
+    // stored its event or failed before shutdown can continue.
+    this.pushNotificationUnsub?.();
+    this.pushNotificationUnsub = null;
     this.sessionInbox.close();
 
     // Drain remaining deferred inbox events so the session host can re-dispatch
@@ -1311,12 +1314,7 @@ class ChatSessionModule implements AgentSession {
    */
   private handlePushNotification(ev: McpPushNotification): void {
     const inboxEvent = mcpPushNotificationToInboxEvent(ev);
-    try {
-      this.sessionInbox.send(inboxEvent);
-    } catch {
-      // Inbox may have been closed between subscription and delivery.
-      // Drop silently — the pending-queue drain on replacement handles recovery.
-    }
+    this.sessionInbox.send(inboxEvent);
   }
 
   // ---------------------------------------------------------------------------
@@ -1331,6 +1329,9 @@ class ChatSessionModule implements AgentSession {
   public async createChildSession(
     options: ChildSessionOptions,
   ): Promise<ChildSessionHandle> {
+    if (this._status === 'terminated') {
+      throw new Error('Cannot create a child from a terminated chat session');
+    }
     if (!this.deps.sessionFactory) {
       throw new Error(
         'Child session creation is not available for this session',
@@ -1362,6 +1363,11 @@ class ChatSessionModule implements AgentSession {
 
     try {
       await child.start();
+      if (this.closePromise) {
+        throw new Error(
+          'Parent chat session terminated while child session was starting',
+        );
+      }
       return child;
     } catch (error) {
       await child.close().catch((closeError: unknown) => {
@@ -1379,14 +1385,7 @@ class ChatSessionModule implements AgentSession {
   }
 
   restorePendingEvents(events: SessionInboxEvent[]): void {
-    for (const event of events) {
-      try {
-        this.sessionInbox.send(event);
-      } catch {
-        // Inbox may have been closed between event recovery and send.
-        // Drop silently — the owner will not retry.
-      }
-    }
+    for (const event of events) this.sessionInbox.send(event);
   }
 }
 

@@ -90,9 +90,21 @@ function createFakeSession(options: {
         createdAt: '2026-01-01T00:00:00.000Z',
       }),
     ),
-    acquireInteractionLease: vi.fn(),
+    acquireInteractionLease: vi.fn(
+      async () =>
+        ({
+          id: 'lease-1',
+          sessionId: 'default',
+        }) as never,
+    ),
     createChildSession: vi.fn(),
   };
+  return session;
+}
+
+function getSession(sessions: FakeSession[], index: number): FakeSession {
+  const session = sessions[index];
+  if (!session) throw new Error(`Missing fake session at index ${index}`);
   return session;
 }
 
@@ -147,6 +159,54 @@ describe('SessionHost', () => {
     expect(session.close).toHaveBeenCalledOnce();
   });
 
+  it('retains pending events when replacement startup fails and retries later', async () => {
+    const pendingEvent = {
+      eventId: 'pending-retry',
+      sourceEnv: 'test',
+      urgency: SessionInboxUrgency.Default,
+      context: {
+        sourceEnv: 'test',
+        metadata: {},
+        content: [{ type: 'text' as const, text: 'retry me' }],
+      },
+    };
+    const sessions: FakeSession[] = [];
+    let attempt = 0;
+    const host = createHost((params) => {
+      attempt++;
+      const session = createFakeSession({
+        hooks: params.hooks,
+        ...(attempt === 2 && {
+          start: async () => {
+            throw new Error('replacement startup failed');
+          },
+        }),
+      });
+      sessions.push(session);
+      return session;
+    });
+    await host.start();
+
+    const terminated = getSession(sessions, 0);
+    terminated.status = 'terminated';
+    await terminated.hooks?.onTerminated?.({
+      sessionId: 'default',
+      reason: 'fatal test error',
+      pendingEvents: [pendingEvent],
+    });
+
+    expect(sessions).toHaveLength(2);
+    expect(sessions[1]?.close).toHaveBeenCalledOnce();
+
+    await host.acquireInteractionLease({} as never);
+
+    expect(sessions).toHaveLength(3);
+    expect(sessions[2]?.restorePendingEvents).toHaveBeenCalledWith([
+      pendingEvent,
+    ]);
+    await host.close();
+  });
+
   it('replaces a terminated session and restores its pending events', async () => {
     const sessions: FakeSession[] = [];
     const host = createHost((params) => {
@@ -156,7 +216,7 @@ describe('SessionHost', () => {
     });
     await host.start();
 
-    const terminated = sessions[0]!;
+    const terminated = getSession(sessions, 0);
     terminated.status = 'terminated';
     const pendingEvent = {
       eventId: 'pending-1',
@@ -176,7 +236,7 @@ describe('SessionHost', () => {
     });
 
     expect(sessions).toHaveLength(2);
-    const replacement = sessions[1]!;
+    const replacement = getSession(sessions, 1);
     expect(replacement.restorePendingEvents).toHaveBeenCalledWith([
       pendingEvent,
     ]);

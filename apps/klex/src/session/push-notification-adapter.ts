@@ -11,7 +11,7 @@ import {
  * can be fed into a session inbox.
  *
  * - `sourceEnv` ← MCP namespace
- * - `metadata`  ← event type, timestamp, and structured event data
+ * - `metadata`  ← event source ID, type, timestamp, and structured event data
  * - `content`   ← ordered MCP content blocks (text, image, audio,
  *                 resource_link, resource), mapped 1:1
  *
@@ -65,20 +65,14 @@ export function mcpPushNotificationToInboxEvent(
     })
     .filter((block): block is NonNullable<typeof block> => block !== undefined);
 
+  // Spread uses own data properties, so even `__proto__` is inert. Stable
+  // envelope fields come last and cannot be overwritten by event data.
   const metadata: ContextDataUIPart['metadata'] = {
+    ...event.data,
+    sourceId: event.sourceId,
     type: event.type,
     createdAt: event.createdAt,
   };
-
-  // Merge structured event data into metadata so the model sees it
-  // as context descriptors, not user-authored content.
-  // Existing envelope keys take precedence over data keys.
-  if (event.data !== undefined) {
-    for (const [key, value] of Object.entries(event.data)) {
-      if (value === null || key in metadata) continue;
-      metadata[key] = value;
-    }
-  }
 
   return {
     eventId: `${namespace}:${event.eventId}`,

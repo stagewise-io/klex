@@ -3,6 +3,7 @@ import type { ModuleLogger, RootLogger } from '@stagewise/logger';
 import type { RuntimeResource } from '@/composition/runtime';
 import type { IntrospectionScope } from '@/introspection';
 import type { Mcp } from '@/mcp';
+import type { SessionInboxEvent } from '@/session/inbox';
 import type {
   InteractionLease,
   InteractionLeaseRequest,
@@ -43,6 +44,9 @@ class SessionHostModule implements SessionHost {
   private _session: AgentSession | null = null;
   private started = false;
   private sessionsScope: IntrospectionScope | null = null;
+
+  /** Events retained until an active replacement accepts them. */
+  private pendingEvents: SessionInboxEvent[] = [];
 
   /**
    * Serializes every mutation of the session (creation, replacement)
@@ -182,7 +186,10 @@ class SessionHostModule implements SessionHost {
     return this.withSessionLock(async () => {
       if (!this.started) throw new SessionHostUnavailableError();
       const session = this._session;
-      if (session && session.status !== 'terminated') return session;
+      if (session && session.status !== 'terminated') {
+        this.restorePendingEvents(session);
+        return session;
+      }
 
       this.deps.logger.warn(
         { reason: session ? 'terminated' : 'not_found' },
@@ -226,6 +233,7 @@ class SessionHostModule implements SessionHost {
       if (session.status === 'terminated') {
         throw new Error('Default session terminated during startup');
       }
+      this.restorePendingEvents(session);
       return session;
     } catch (error) {
       if (this._session === session) this._session = null;
@@ -246,6 +254,7 @@ class SessionHostModule implements SessionHost {
    * so the user does not lose input.
    */
   private async handleTerminated(info: SessionTerminationInfo): Promise<void> {
+    this.pendingEvents.push(...info.pendingEvents);
     this.deps.logger.warn(
       {
         sessionId: info.sessionId,
@@ -255,30 +264,21 @@ class SessionHostModule implements SessionHost {
       'Session self-terminated — creating replacement and re-dispatching pending input',
     );
 
-    // Create the replacement session (registered with fresh hooks).
-    // Awaiting ensures the session is fully started before pending events
-    // are restored — no race between inbox delivery and resource startup.
-    // The lock serializes this against concurrent lease acquisition.
-    const replacement = await this.withSessionLock(async () => {
-      if (!this.started) return undefined;
+    try {
+      await this.resolveDefaultSession();
+    } catch (error) {
+      this.deps.logger.error(
+        { error, pendingEvents: this.pendingEvents.length },
+        'Default session replacement failed; pending input retained',
+      );
+    }
+  }
 
-      // A lease request may already have replaced the terminated session
-      // through resolveDefaultSession(). Reuse that
-      // replacement rather than creating a second default session.
-      const current = this._session;
-      if (current && current.status !== 'terminated') return current;
-
-      const candidate = await this.createSession();
-      if (this.started) return candidate;
-
-      await candidate.close();
-      if (this._session === candidate) this._session = null;
-      return undefined;
-    });
-
-    // Re-dispatch pending inbox events so the user does not lose input.
-    if (replacement && this.started)
-      replacement.restorePendingEvents(info.pendingEvents);
+  private restorePendingEvents(session: AgentSession): void {
+    if (this.pendingEvents.length === 0) return;
+    const events = this.pendingEvents;
+    session.restorePendingEvents(events);
+    this.pendingEvents = [];
   }
 }
 

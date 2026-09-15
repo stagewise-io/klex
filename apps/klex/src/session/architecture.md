@@ -43,10 +43,14 @@ Responsibilities:
 4. Create the root `sessions` introspection scope
 
 ```typescript
-interface SessionHost extends RuntimeResource, ConversationHost {}
+interface SessionHost extends RuntimeResource {
+  acquireInteractionLease(
+    request: InteractionLeaseRequest,
+  ): Promise<InteractionLease>;
+}
 ```
 
-`SessionHost` implements `ConversationHost` by delegating `acquireInteractionLease` to the current default session. If the session has terminated, it creates a replacement first (same mutation-lock pattern).
+Realtime accepts `SessionHost` as a `ConversationHost` through TypeScript structural typing. The host delegates `acquireInteractionLease` to the current default session. If the session has terminated, it creates a replacement first (same mutation-lock pattern).
 
 ### Session replacement
 

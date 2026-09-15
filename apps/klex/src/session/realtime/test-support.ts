@@ -447,7 +447,7 @@ export interface DeterministicConversationHost extends ConversationHost {
   nextLease(): Promise<DeterministicInteractionLease>;
   /** Makes every following acquisition reject with `error`. */
   rejectAcquisitions(error: unknown): void;
-  /** Models primary-session closure without treating it as a lease release. */
+  /** Models default-session closure without treating it as a lease release. */
   revokeLeases(
     reason: Extract<InteractionLeaseClosure, { type: 'revoked' }>['reason'],
   ): void;
@@ -534,7 +534,7 @@ class DeterministicConversationHostModule
     this.nextId += 1;
     const lease = new SessionInteractionLease({
       id: `lease-${this.nextId}`,
-      sessionId: 'primary-session',
+      sessionId: 'default-session',
       mode: request.mode,
       bootstrap: async (): Promise<PreparedInferenceContextHandle> => ({
         context: DETERMINISTIC_CONTEXT,

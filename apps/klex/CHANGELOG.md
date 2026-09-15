@@ -2,6 +2,26 @@
 
 All notable Klex changes are documented here.
 
+## 0.6.0 (2026-09-15)
+
+### Features
+
+- add GPT-Live responses delegation (5d3b68b)
+- add persistent todos with reminders (a788b22)
+
+### Bug Fixes
+
+- resolve PromiseLike jsonSchema before property access (aaf54a3)
+- address final GPT Live review findings (e37c57a)
+- harden GPT Live protocol boundaries (ab9a3e0)
+- address GPT-Live review findings (fa8251b)
+- prevent PCM mixer playout drift (7499b64)
+- harden extension prompt handling (75721e8)
+
+### Other Changes
+
+- streamline extension prompts (eb15492)
+
 ## 0.5.0 (2026-09-10)
 
 ### Features

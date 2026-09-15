@@ -17,10 +17,21 @@ export interface ProxyHttpHooks {
   readonly onError?: (details: { readonly error: Error }) => void;
 }
 
+export interface ProxyRequestRouteContext {
+  readonly environmentId: EnvironmentId;
+  readonly request: Request;
+  forwardLocal(): Promise<Response>;
+}
+
+export type ProxyRequestRouter = (
+  context: ProxyRequestRouteContext,
+) => Promise<Response>;
+
 export interface ProxyHttpOptions {
   readonly proxy: McpProxy;
   readonly parseEnvironmentId: (value: string) => EnvironmentId;
   readonly routePrefix?: string;
+  readonly routeRequest?: ProxyRequestRouter;
   readonly hooks?: ProxyHttpHooks;
 }
 
@@ -61,6 +72,30 @@ class ProxyHttpModule implements ProxyHttp {
       return new Response('Proxy HTTP handler is closed', { status: 503 });
     const environmentId = this.#environmentId(request);
     if (!environmentId) return new Response(null, { status: 404 });
+    let forwarded = false;
+    const forwardLocal = async (): Promise<Response> => {
+      if (forwarded) throw new Error('forwardLocal may only be called once');
+      forwarded = true;
+      return this.#fetchLocal(environmentId, request);
+    };
+    try {
+      return this.#options.routeRequest
+        ? await this.#options.routeRequest({
+            environmentId,
+            request,
+            forwardLocal,
+          })
+        : await forwardLocal();
+    } catch (cause) {
+      this.#report(cause);
+      return new Response('Environment is unavailable', { status: 503 });
+    }
+  }
+
+  async #fetchLocal(
+    environmentId: EnvironmentId,
+    request: Request,
+  ): Promise<Response> {
     let body: string | undefined;
     try {
       const bytes = new Uint8Array(await request.arrayBuffer());

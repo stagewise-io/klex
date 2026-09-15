@@ -36,6 +36,29 @@ The proxy authenticates environment connections only. Agent credentials, includi
 
 For an existing Node server, use `createProxyNodeHandlers(options)` from `/server`. Frameworks using Web-standard requests can call `createProxyHttp(options).fetch(request)` from `/http`.
 
+### Distributed request routing
+
+Hosts with multiple proxy processes can provide `routeRequest`. The router receives the parsed environment ID, the original untouched `Request`, and a single-use `forwardLocal()` callback. It can choose the local in-memory connection or return a streamed `Response` obtained from the process that owns the connection. Without this option, all requests use the local proxy exactly as before.
+
+```ts
+const server = createProxyServer({
+  authenticateEnvironment,
+  parseEnvironmentId,
+  routeRequest: async ({ environmentId, request, forwardLocal }) => {
+    const owner = await ownership.find(environmentId);
+    return owner.isLocal
+      ? forwardLocal()
+      : fetch(owner.url, request);
+  },
+});
+```
+
+`forwardLocal()` can be called once. Router failures are reported through `hooks.onError` and become `503` responses. The hosting application remains responsible for preserving cancellation and response streaming in its remote transport.
+
+### Environment lifecycle
+
+`onConnected` and `onDisconnected` are awaitable lifecycle hooks. Both receive the same environment ID and connection object, allowing a host to associate an external ownership generation with that exact socket. A rejected connection hook closes and unregisters the socket. Shutdown waits for disconnection hooks, so ownership records can be removed before the process exits.
+
 ## Environment daemon
 
 The daemon accepts any Web-standard handler. MCP environments should pass the official stateless handler boundary rather than connecting an `McpServer` to a synthetic transport.

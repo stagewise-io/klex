@@ -17,26 +17,33 @@ beforeEach(async () => {
 
 afterEach(async () => {
   service.closeAll();
-  await rm(directory, { force: true, recursive: true });
+  await rm(directory, {
+    force: true,
+    maxRetries: 5,
+    recursive: true,
+    retryDelay: 100,
+  });
 });
 
 describe('ShellService', () => {
   it('keeps a PTY alive across writes and cursor reads', async () => {
     const session = service.create(testShell());
-    service.write(session.id, command('printf first', "Write-Output 'first'"));
-    const first = await readUntil(service, session.id, 0, 'first');
-    service.write(
+    service.write(session.id, command('printf first', 'echo first'));
+    const first = await readUntilIdle(service, session.id, 0, 'first');
+    service.write(session.id, command('printf second', 'echo second'));
+    const second = await readUntilIdle(
+      service,
       session.id,
-      command('printf second', "Write-Output 'second'"),
+      first.cursor,
+      'second',
     );
-    const second = await readUntil(service, session.id, first.cursor, 'second');
     expect(second.output).not.toContain('first');
     expect(service.list()).toHaveLength(1);
   });
 
   it('starts in the configured cwd including paths with spaces', async () => {
     const session = service.create(testShell());
-    service.write(session.id, command('pwd', '(Get-Location).Path'));
+    service.write(session.id, command('pwd', 'cd'));
     const result = await readUntil(service, session.id, 0, directory);
     expect(result.output).toContain(directory);
   });
@@ -93,5 +100,28 @@ async function readUntil(
   }
   throw new Error(
     `Timed out waiting for shell output: ${expected}; got ${output}`,
+  );
+}
+
+async function readUntilIdle(
+  shell: ShellService,
+  id: string,
+  initialCursor: number,
+  expected: string,
+) {
+  let cursor = initialCursor;
+  let output = '';
+  let foundExpected = false;
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    const result = await shell.read({ id, cursor, waitMs: 250 });
+    output += result.output;
+    cursor = result.cursor;
+    foundExpected ||= output.includes(expected);
+    if (foundExpected && result.output.length === 0) {
+      return { ...result, output, cursor };
+    }
+  }
+  throw new Error(
+    `Timed out waiting for settled shell output: ${expected}; got ${output}`,
   );
 }

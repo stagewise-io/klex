@@ -64,17 +64,22 @@ export async function parseCli(
       cloudBaseUrl:
         parsed.values['cloud-base-url'] ??
         env.KLEX_MACHINE_CLOUD_BASE_URL ??
-        'https://cloud.stagewise.io',
+        'https://cloud.klex.bot',
       code: value,
       dataDir,
     };
   }
-  if (command !== 'serve' || subcommand || value || extra.length > 0) {
+  if (
+    (command !== undefined && command !== 'serve') ||
+    subcommand ||
+    value ||
+    extra.length > 0
+  ) {
     throw new Error(
       'Expected command: klex-machine serve or klex-machine cloud enroll <code>',
     );
   }
-  const mode = parsed.values.mode ?? env.KLEX_MACHINE_MODE ?? 'local';
+  const mode = parsed.values.mode ?? env.KLEX_MACHINE_MODE ?? 'enrolled';
   if (mode !== 'local' && mode !== 'enrolled' && mode !== 'managed') {
     throw new Error('Invalid mode. Expected local, enrolled, or managed.');
   }
@@ -115,9 +120,9 @@ Options:
   --host <address>    Listener address (default: 127.0.0.1)
   --port <number>     Listener port (default: 3123)
   --log-level <level> trace, debug, info, warn, error, or fatal
-  --mode <mode>       local, enrolled, or managed (default: local)
+  --mode <mode>       local, enrolled, or managed (default: enrolled)
   --data-dir <path>   Identity directory (default: ~/.klex-machine)
-  --cloud-base-url    Cloud API URL used for enrollment
+  --cloud-base-url <url> Cloud API URL used for enrollment
   -h, --help          Show help
   -v, --version       Show version
 

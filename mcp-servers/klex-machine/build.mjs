@@ -1,15 +1,18 @@
 import { chmod, rm } from 'node:fs/promises';
+import { resolve } from 'node:path';
 
 import { build } from 'esbuild';
 
-await rm('dist', { force: true, recursive: true });
+const packageRoot = import.meta.dirname;
+const outputFile = resolve(packageRoot, 'dist/index.js');
+await rm(resolve(packageRoot, 'dist'), { force: true, recursive: true });
 await build({
-  entryPoints: ['src/index.ts'],
+  entryPoints: [resolve(packageRoot, 'src/index.ts')],
   bundle: true,
   platform: 'node',
   format: 'esm',
   target: 'node24',
-  outfile: 'dist/index.js',
+  outfile: outputFile,
   external: ['node-pty'],
   banner: {
     js: "#!/usr/bin/env node\nimport { createRequire as __klexCreateRequire } from 'node:module';\nconst require = __klexCreateRequire(import.meta.url);",
@@ -17,6 +20,6 @@ await build({
   sourcemap: true,
   legalComments: 'eof',
 });
-await chmod('dist/index.js', 0o755);
+if (process.platform !== 'win32') await chmod(outputFile, 0o755);
 
 console.log('Build complete: dist/index.js');

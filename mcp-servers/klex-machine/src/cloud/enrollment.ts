@@ -92,9 +92,6 @@ export async function enrollMachine(
     cloudBaseUrl,
     identity.privateKeyKid,
   );
-  if (enrollment.machineId !== enrollment.clientId) {
-    throw new Error('Enrollment response machine and client IDs do not match');
-  }
   await saveMachineEnrollment(options.dataDir, enrollment);
   return enrollment;
 }

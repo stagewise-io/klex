@@ -63,11 +63,23 @@ describe('SearchService', () => {
     });
   });
 
-  it('skips binary files and ignored files', async () => {
-    await writeFile(join(directory, 'binary'), Buffer.from([0, 1, 2]));
+  it('skips binary files and nested ignored files', async () => {
+    await writeFile(
+      join(directory, 'binary'),
+      Buffer.concat([Buffer.from([0]), Buffer.from('needle')]),
+    );
+    await mkdir(join(directory, 'nested', 'deeper'), { recursive: true });
+    await writeFile(join(directory, 'nested', '.gitignore'), '*.log\n');
+    await writeFile(
+      join(directory, 'nested', 'deeper', 'ignored.log'),
+      'needle',
+    );
     const result = await service.grep({ pattern: 'needle', hidden: true });
-    expect(result.matches.map((match) => match.path)).not.toContain(
-      join(directory, 'ignored.txt'),
+    const paths = result.matches.map((match) => match.path);
+    expect(paths).not.toContain(join(directory, 'ignored.txt'));
+    expect(paths).not.toContain(join(directory, 'binary'));
+    expect(paths).not.toContain(
+      join(directory, 'nested', 'deeper', 'ignored.log'),
     );
     expect(result.filesSearched).toBeGreaterThan(0);
   });
@@ -82,6 +94,9 @@ describe('SearchService', () => {
     });
     expect(result).toMatchObject({ truncated: true });
     await expect(service.grep({ pattern: '[' })).rejects.toThrow();
+    await expect(service.grep({ pattern: '(a+)+$' })).rejects.toThrow(
+      'too complex',
+    );
     await expect(
       service.glob({ patterns: ['**/*'], limit: 0 }),
     ).rejects.toThrow('limit');

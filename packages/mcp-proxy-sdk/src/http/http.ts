@@ -73,20 +73,24 @@ class ProxyHttpModule implements ProxyHttp {
     const environmentId = this.#environmentId(request);
     if (!environmentId) return new Response(null, { status: 404 });
     let forwarded = false;
+    let forwardedResponse: Response | undefined;
     const forwardLocal = async (): Promise<Response> => {
       if (forwarded) throw new Error('forwardLocal may only be called once');
       forwarded = true;
-      return this.#fetchLocal(environmentId, request);
+      forwardedResponse = await this.#fetchLocal(environmentId, request);
+      return forwardedResponse;
     };
     try {
-      return this.#options.routeRequest
+      const response = this.#options.routeRequest
         ? await this.#options.routeRequest({
             environmentId,
             request,
             forwardLocal,
           })
         : await forwardLocal();
+      return sanitizeResponse(response);
     } catch (cause) {
+      await forwardedResponse?.body?.cancel(cause).catch(() => undefined);
       this.#report(cause);
       return new Response('Environment is unavailable', { status: 503 });
     }
@@ -193,6 +197,14 @@ class ProxyHttpModule implements ProxyHttp {
 
 export function createProxyHttp(options: ProxyHttpOptions): ProxyHttp {
   return new ProxyHttpModule(options);
+}
+
+function sanitizeResponse(response: Response): Response {
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers: sanitizeHeaders(response.headers),
+  });
 }
 
 function sanitizeHeaders(headers: Headers): ProxyHeaders {

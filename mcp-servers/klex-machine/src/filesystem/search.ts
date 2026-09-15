@@ -1,14 +1,16 @@
 import { readFile, stat } from 'node:fs/promises';
-import { relative, resolve, sep } from 'node:path';
+import { dirname, relative, resolve, sep } from 'node:path';
 
 import fg from 'fast-glob';
 import createIgnore from 'ignore';
+import safeRegex from 'safe-regex2';
 
 import type { MachinePathResolver } from './paths.js';
 
 export const DEFAULT_SEARCH_LIMIT = 100;
 export const MAX_SEARCH_LIMIT = 1000;
 const MAX_SEARCH_FILE_BYTES = 1024 * 1024;
+const MAX_SEARCH_CANDIDATES = 100_000;
 
 export interface GlobResult {
   matches: string[];
@@ -44,16 +46,19 @@ export class SearchService {
       throw new Error('At least one pattern is required');
     const cwd = this.paths.resolve(options.cwd ?? '.');
     const limit = validateLimit(options.limit);
-    const entries = await fg(options.patterns, {
-      absolute: true,
-      cwd,
-      dot: options.hidden ?? false,
-      followSymbolicLinks: false,
-      ignore: options.exclude ?? [],
-      markDirectories: false,
-      onlyFiles: false,
-      unique: true,
-    });
+    const { entries, truncated: candidatesTruncated } = await enumerate(
+      options.patterns,
+      {
+        absolute: true,
+        cwd,
+        dot: options.hidden ?? false,
+        followSymbolicLinks: false,
+        ignore: options.exclude ?? [],
+        markDirectories: false,
+        onlyFiles: false,
+        unique: true,
+      },
+    );
     const ignored = options.gitignore === false ? null : await loadIgnore(cwd);
     const sorted = entries
       .map((entry) => resolve(entry))
@@ -61,7 +66,7 @@ export class SearchService {
       .sort((left, right) => left.localeCompare(right));
     return {
       matches: sorted.slice(0, limit),
-      truncated: sorted.length > limit,
+      truncated: candidatesTruncated || sorted.length > limit,
     };
   }
 
@@ -82,17 +87,21 @@ export class SearchService {
     if (!Number.isInteger(context) || context < 0 || context > 20) {
       throw new Error('context must be an integer from 0 to 20');
     }
+    if (!safeRegex(options.pattern)) {
+      throw new Error('pattern is too complex for safe evaluation');
+    }
     const flags = options.caseSensitive === false ? 'i' : '';
     const expression = new RegExp(options.pattern, flags);
-    const candidates = await fg(options.include ?? ['**/*'], {
-      absolute: true,
-      cwd,
-      dot: options.hidden ?? false,
-      followSymbolicLinks: false,
-      ignore: options.exclude ?? [],
-      onlyFiles: true,
-      unique: true,
-    });
+    const { entries: candidates, truncated: candidatesTruncated } =
+      await enumerate(options.include ?? ['**/*'], {
+        absolute: true,
+        cwd,
+        dot: options.hidden ?? false,
+        followSymbolicLinks: false,
+        ignore: options.exclude ?? [],
+        onlyFiles: true,
+        unique: true,
+      });
     const ignored = options.gitignore === false ? null : await loadIgnore(cwd);
     const files = candidates
       .map((entry) => resolve(entry))
@@ -101,17 +110,13 @@ export class SearchService {
 
     const matches: GrepMatch[] = [];
     let filesSearched = 0;
-    let truncated = false;
+    let truncated = candidatesTruncated;
     for (const path of files) {
-      if (matches.length >= limit) {
-        truncated = true;
-        break;
-      }
       const metadata = await stat(path).catch(() => null);
       if (!metadata?.isFile() || metadata.size > MAX_SEARCH_FILE_BYTES)
         continue;
-      const bytes = await readFile(path);
-      if (bytes.includes(0)) continue;
+      const bytes = await readFile(path).catch(() => null);
+      if (!bytes || bytes.includes(0)) continue;
       filesSearched += 1;
       const lines = bytes.toString('utf8').split(/\r?\n/);
       for (const [index, text] of lines.entries()) {
@@ -129,6 +134,7 @@ export class SearchService {
           after: lines.slice(index + 1, index + context + 1),
         });
       }
+      if (truncated && matches.length >= limit) break;
     }
     return { matches, filesSearched, truncated };
   }
@@ -145,10 +151,53 @@ function validateLimit(input: number | undefined): number {
 async function loadIgnore(
   cwd: string,
 ): Promise<ReturnType<typeof createIgnore> | null> {
-  const source = await readFile(resolve(cwd, '.gitignore'), 'utf8').catch(
-    () => null,
-  );
-  return source === null ? null : createIgnore().add(source);
+  const { entries } = await enumerate(['**/.gitignore'], {
+    absolute: true,
+    cwd,
+    dot: true,
+    followSymbolicLinks: false,
+    onlyFiles: true,
+    unique: true,
+  });
+  if (entries.length === 0) return null;
+  const ignored = createIgnore();
+  for (const path of entries.sort()) {
+    const source = await readFile(path, 'utf8').catch(() => null);
+    if (source === null) continue;
+    const base = toRelative(cwd, dirname(path));
+    ignored.add(
+      source
+        .split(/\r?\n/)
+        .flatMap((pattern) => rebaseIgnorePatterns(base, pattern)),
+    );
+  }
+  return ignored;
+}
+
+async function enumerate(
+  patterns: string[],
+  options: Parameters<typeof fg.stream>[1],
+): Promise<{ entries: string[]; truncated: boolean }> {
+  const stream = fg.stream(patterns, options);
+  const entries: string[] = [];
+  for await (const entry of stream) {
+    if (entries.length >= MAX_SEARCH_CANDIDATES) {
+      return { entries, truncated: true };
+    }
+    entries.push(String(entry));
+  }
+  return { entries, truncated: false };
+}
+
+function rebaseIgnorePatterns(base: string, input: string): string[] {
+  if (!base || !input || input.startsWith('#')) return [input];
+  const negated = input.startsWith('!');
+  const pattern = (negated ? input.slice(1) : input).replace(/^\//, '');
+  const prefix = negated ? '!' : '';
+  const rebased = `${prefix}${base}/${pattern}`;
+  return pattern.includes('/')
+    ? [rebased]
+    : [rebased, `${prefix}${base}/**/${pattern}`];
 }
 
 function toRelative(cwd: string, path: string): string {

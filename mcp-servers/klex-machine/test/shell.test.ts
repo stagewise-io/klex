@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, realpath, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -45,7 +45,14 @@ describe('ShellService', () => {
     const session = service.create(testShell());
     service.write(session.id, command('pwd', 'cd'));
     const result = await readUntil(service, session.id, 0, directory);
-    expect(result.output).toContain(directory);
+    const reported = result.output
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .find((line) => line === directory);
+    expect(reported).toBeDefined();
+    await expect(realpath(reported ?? '')).resolves.toBe(
+      await realpath(directory),
+    );
   });
 
   it('reports exit state and permits explicit cleanup', async () => {
@@ -66,8 +73,33 @@ describe('ShellService', () => {
     );
   });
 
-  it('validates resize and unknown sessions', () => {
+  it('reclaims exited sessions and rejects running-session exhaustion', async () => {
+    service.closeAll();
+    service = new ShellService(new MachinePathResolver(directory), 2);
+    const exited = service.create(testShell());
+    service.write(exited.id, command('exit 0', 'exit 0'));
+    let exitedRead = await service.read({ id: exited.id, waitMs: 1_000 });
+    for (let attempt = 0; attempt < 10 && exitedRead.running; attempt += 1) {
+      exitedRead = await service.read({
+        id: exited.id,
+        cursor: exitedRead.cursor,
+        waitMs: 100,
+      });
+    }
+    expect(exitedRead.running).toBe(false);
+
+    service.create(testShell());
+    service.create(testShell());
+    expect(service.list()).toHaveLength(2);
+    expect(() => service.write(exited.id, 'x')).toThrow('Unknown shell');
+    expect(() => service.create(testShell())).toThrow('limit reached');
+  });
+
+  it('validates cursors, resize, and unknown sessions', async () => {
     const session = service.create(testShell());
+    await expect(service.read({ id: session.id, cursor: 1 })).rejects.toThrow(
+      'beyond',
+    );
     expect(() => service.resize(session.id, 0, 20)).toThrow('cols');
     expect(() => service.resize('missing', 80, 20)).toThrow('Unknown shell');
     service.resize(session.id, 80, 20);

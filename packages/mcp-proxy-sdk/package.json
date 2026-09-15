@@ -51,7 +51,7 @@
     "provenance": false
   },
   "scripts": {
-    "clean": "rm -rf dist",
+    "clean": "node clean.mjs",
     "build": "pnpm run clean && tsc -p tsconfig.build.json",
     "prepublishOnly": "pnpm run build && pnpm run typecheck && pnpm run test",
     "typecheck": "tsc --noEmit",

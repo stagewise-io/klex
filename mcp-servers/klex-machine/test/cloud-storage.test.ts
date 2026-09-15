@@ -75,7 +75,7 @@ describe('machine enrollment', () => {
       fetch: async () =>
         Response.json({
           machineId: 'machine-1',
-          clientId: 'machine-1',
+          clientId: 'oauth-client-1',
           tokenEndpoint: 'https://cloud.example/api/auth/oauth2/token',
           proxyConnectionResource: 'https://cloud.example/machine-connections',
           proxyConnectionUrl: 'wss://cloud.example/machine-connections',

@@ -1,4 +1,12 @@
-import { mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import {
+  chmod,
+  mkdtemp,
+  readFile,
+  rm,
+  stat,
+  symlink,
+  writeFile,
+} from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -47,13 +55,24 @@ describe('FilesystemService', () => {
     });
   });
 
-  it('supports binary content through base64', async () => {
+  it('supports binary content through base64 and rejects malformed input', async () => {
     const content = Buffer.from([0, 1, 2, 255]).toString('base64');
     await service.write({ path: 'binary', content, encoding: 'base64' });
-    await expect(service.read({ path: 'binary' })).rejects.toThrow('binary');
+    await expect(service.read({ path: 'binary' })).rejects.toThrow('base64');
     await expect(
       service.read({ path: 'binary', encoding: 'base64' }),
     ).resolves.toMatchObject({ content });
+    await expect(
+      service.write({
+        path: 'bad',
+        content: 'not base64!',
+        encoding: 'base64',
+      }),
+    ).rejects.toThrow('valid base64');
+    await writeFile(join(directory, 'invalid-utf8'), Buffer.from([0xc3, 0x28]));
+    await expect(service.read({ path: 'invalid-utf8' })).rejects.toThrow(
+      'valid UTF-8',
+    );
   });
 
   it('lists entries deterministically and identifies symlinks', async () => {
@@ -87,6 +106,15 @@ describe('FilesystemService', () => {
       ]),
     ).rejects.toThrow('file was not changed');
     expect(await readFile(join(directory, 'edit.txt'), 'utf8')).toBe('y a b');
+    if (process.platform !== 'win32') {
+      await chmod(join(directory, 'edit.txt'), 0o600);
+      await service.multiEdit('edit.txt', [
+        { oldString: 'y', newString: 'private' },
+      ]);
+      expect((await stat(join(directory, 'edit.txt'))).mode & 0o777).toBe(
+        0o600,
+      );
+    }
   });
 
   it('creates and permanently deletes directory trees', async () => {
@@ -118,5 +146,25 @@ describe('FilesystemService', () => {
       'source',
     );
     await expect(readFile(join(directory, 'source/file'))).rejects.toThrow();
+
+    await service.write({ path: 'same', content: 'preserved' });
+    await service.copy({
+      source: 'same',
+      destination: 'same',
+      move: true,
+      overwrite: true,
+    });
+    expect(await readFile(join(directory, 'same'), 'utf8')).toBe('preserved');
+
+    await service.write({ path: 'destination', content: 'old' });
+    await expect(
+      service.copy({
+        source: 'missing',
+        destination: 'destination',
+        move: true,
+        overwrite: true,
+      }),
+    ).rejects.toThrow();
+    expect(await readFile(join(directory, 'destination'), 'utf8')).toBe('old');
   });
 });

@@ -40,7 +40,7 @@ export function createMachineAuthenticator(
       return payload.client_id;
     },
     challenge() {
-      return `Bearer resource_metadata="${options.protectedResourceMetadataUrl}" scope="mcp:use"`;
+      return `Bearer resource_metadata="${options.protectedResourceMetadataUrl}", scope="mcp:use"`;
     },
   };
 }

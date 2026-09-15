@@ -9,12 +9,15 @@ This server has the same filesystem, process, and network permissions as its ope
 ## Install and run
 
 ```sh
-pnpm add --global klex-machine
-klex-machine serve
-klex-machine serve --cwd /path/to/project --port 3123
+npm install --global klex-machine
+klex-machine cloud enroll <code>
+klex-machine
+
+# Explicit unauthenticated local mode:
+klex-machine serve --mode local --cwd /path/to/project --port 3123
 ```
 
-The MCP endpoint is `http://127.0.0.1:3123/mcp` and health endpoint is `http://127.0.0.1:3123/health`.
+With no command, the machine starts in enrolled mode using the identity in `~/.klex-machine`. Local mode serves the MCP endpoint at `http://127.0.0.1:3123/mcp` and the health endpoint at `http://127.0.0.1:3123/health`.
 
 Configuration precedence is CLI flag, environment variable, then default:
 
@@ -24,6 +27,9 @@ Configuration precedence is CLI flag, environment variable, then default:
 | `--host` | `KLEX_MACHINE_HOST` | `127.0.0.1` |
 | `--port` | `KLEX_MACHINE_PORT` | `3123` |
 | `--log-level` | `KLEX_MACHINE_LOG_LEVEL` | `info` |
+| `--mode` | `KLEX_MACHINE_MODE` | `enrolled` |
+| `--data-dir` | `KLEX_MACHINE_DATA_DIR` | `~/.klex-machine` |
+| `--cloud-base-url` | `KLEX_MACHINE_CLOUD_BASE_URL` | `https://cloud.klex.bot` |
 
 Relative filesystem paths and new shell sessions start from the configured working directory. Absolute paths remain unrestricted.
 

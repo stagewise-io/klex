@@ -71,17 +71,23 @@ export async function startMachineServer(
 
   const listener = await new Promise<ReturnType<typeof serve>>(
     (resolve, reject) => {
+      const onStartupError = (error: Error) => reject(error);
       const server = serve(
         { fetch: app.fetch, hostname: config.host, port: config.port },
-        () => resolve(server),
+        () => {
+          server.off('error', onStartupError);
+          resolve(server);
+        },
       );
-      server.once('error', reject);
+      server.once('error', onStartupError);
     },
   ).catch(async (error) => {
     await mcp.close();
     throw error;
   });
-  listener.removeAllListeners('error');
+  listener.on('error', (error) => {
+    logger.error({ error }, 'klex-machine listener error');
+  });
 
   const address = listener.address();
   const port =

@@ -88,9 +88,12 @@ class ProxyDaemonModule implements ProxyDaemon {
       options.heartbeatIntervalMs ?? DEFAULT_HEARTBEAT_INTERVAL_MS;
     if (
       !Number.isFinite(this.#heartbeatIntervalMs) ||
-      this.#heartbeatIntervalMs <= 0
+      this.#heartbeatIntervalMs < 1 ||
+      this.#heartbeatIntervalMs > 2_147_483_647
     ) {
-      throw new RangeError('Heartbeat interval must be a positive number');
+      throw new RangeError(
+        'Heartbeat interval must be between 1 and 2147483647 milliseconds',
+      );
     }
   }
 

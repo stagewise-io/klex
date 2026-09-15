@@ -42,6 +42,7 @@ class ProxyNodeHandlersModule implements ProxyNodeHandlers {
       authenticateEnvironment: options.authenticateEnvironment,
       route: options.environmentWebSocketPath,
       onConnected: options.onConnected,
+      onDisconnected: options.onDisconnected,
       onError: options.hooks?.onError,
     });
     this.#nodeHandler = toNodeHandler(this.#http, {

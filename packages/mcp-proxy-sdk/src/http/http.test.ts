@@ -106,6 +106,84 @@ describe('ProxyHttp', () => {
     expect(response.headers.get('connection')).toBeNull();
   });
 
+  it('delegates the untouched request to a custom router', async () => {
+    const active = setup();
+    const original = request('{"remote":true}');
+    const routeRequest = vi.fn(async ({ request: routedRequest }) => {
+      expect(routedRequest).toBe(original);
+      expect(routedRequest.bodyUsed).toBe(false);
+      return new Response('remote', { status: 202 });
+    });
+    const handler = createProxyHttp({
+      proxy: active.proxy,
+      parseEnvironmentId: createEnvironmentId,
+      routeRequest,
+    });
+
+    const response = await handler.fetch(original);
+
+    expect(response.status).toBe(202);
+    await expect(response.text()).resolves.toBe('remote');
+    expect(routeRequest).toHaveBeenCalledOnce();
+    expect(active.proxy.openExchange).not.toHaveBeenCalled();
+  });
+
+  it('lets a custom router select the existing local streaming path', async () => {
+    const active = setup();
+    const routeRequest = vi.fn(({ forwardLocal }) => forwardLocal());
+    const handler = createProxyHttp({
+      proxy: active.proxy,
+      parseEnvironmentId: createEnvironmentId,
+      routeRequest,
+    });
+
+    const response = await handler.fetch(request());
+    const reading = response.text();
+    active.exchange.emit('streamed');
+    active.exchange.end();
+
+    await expect(reading).resolves.toBe('streamed');
+    expect(routeRequest).toHaveBeenCalledOnce();
+    expect(active.proxy.openExchange).toHaveBeenCalledOnce();
+  });
+
+  it('reports router failures as unavailable', async () => {
+    const active = setup();
+    const onError = vi.fn();
+    const handler = createProxyHttp({
+      proxy: active.proxy,
+      parseEnvironmentId: createEnvironmentId,
+      routeRequest: async () => {
+        throw new Error('owner unavailable');
+      },
+      hooks: { onError },
+    });
+
+    expect((await handler.fetch(request())).status).toBe(503);
+    expect(onError).toHaveBeenCalledWith({
+      error: expect.objectContaining({ message: 'owner unavailable' }),
+    });
+  });
+
+  it('allows forwardLocal to be consumed only once', async () => {
+    const active = setup();
+    const handler = createProxyHttp({
+      proxy: active.proxy,
+      parseEnvironmentId: createEnvironmentId,
+      routeRequest: async ({ forwardLocal }) => {
+        const response = await forwardLocal();
+        await expect(forwardLocal()).rejects.toThrow(
+          'forwardLocal may only be called once',
+        );
+        return response;
+      },
+    });
+
+    const response = await handler.fetch(request());
+    active.exchange.end();
+    await response.text();
+  });
+
   it('passes environment authorization responses through', async () => {
     expect((await setup(401).handler.fetch(request())).status).toBe(401);
     expect((await setup(403).handler.fetch(request())).status).toBe(403);

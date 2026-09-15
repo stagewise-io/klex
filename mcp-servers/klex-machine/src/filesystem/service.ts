@@ -233,6 +233,7 @@ export class FilesystemService {
           } else {
             await publishPathExclusively(staging, destination);
           }
+          await makeDirectoriesOwnerWritable(source);
           await rm(source, { force: true, recursive: true });
         } finally {
           await rm(staging, { force: true, recursive: true });
@@ -332,26 +333,20 @@ async function publishPathExclusively(
     return;
   }
 
-  await mkdir(destination, { mode: metadata.mode });
-  const ownershipMarker = join(
-    destination,
-    `.klex-machine-owner-${process.pid}-${crypto.randomUUID()}`,
-  );
-  try {
-    const markerFile = await open(ownershipMarker, 'wx');
-    await markerFile.close();
-    for (const entry of await readdir(source)) {
-      await rename(join(source, entry), join(destination, entry));
-    }
-    await chmod(destination, metadata.mode);
-    await rm(ownershipMarker);
-  } catch (error) {
-    if (await pathExists(ownershipMarker)) {
-      await rm(destination, { force: true, recursive: true }).catch(
-        () => undefined,
-      );
-    }
-    throw error;
+  await chmod(source, metadata.mode | 0o700);
+  await mkdir(destination, { mode: metadata.mode | 0o700 });
+  for (const entry of await readdir(source)) {
+    await publishPathExclusively(join(source, entry), join(destination, entry));
+  }
+  await chmod(destination, metadata.mode);
+}
+
+async function makeDirectoriesOwnerWritable(path: string): Promise<void> {
+  const metadata = await lstat(path);
+  if (!metadata.isDirectory() || metadata.isSymbolicLink()) return;
+  await chmod(path, metadata.mode | 0o700);
+  for (const entry of await readdir(path)) {
+    await makeDirectoriesOwnerWritable(join(path, entry));
   }
 }
 

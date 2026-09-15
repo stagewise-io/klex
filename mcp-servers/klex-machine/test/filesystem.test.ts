@@ -15,14 +15,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { MachinePathResolver } from '../src/filesystem/paths.js';
 import { FilesystemService } from '../src/filesystem/service.js';
 
-const fsMocks = vi.hoisted(() => ({ rename: vi.fn() }));
+const fsMocks = vi.hoisted(() => ({ link: vi.fn(), rename: vi.fn() }));
 vi.mock('node:fs/promises', async () => {
   const actual =
     await vi.importActual<typeof import('node:fs/promises')>(
       'node:fs/promises',
     );
+  fsMocks.link.mockImplementation(actual.link);
   fsMocks.rename.mockImplementation(actual.rename);
-  return { ...actual, rename: fsMocks.rename };
+  return { ...actual, link: fsMocks.link, rename: fsMocks.rename };
 });
 
 let directory: string;
@@ -244,5 +245,54 @@ describe('FilesystemService', () => {
 
     expect(await readFile(destination, 'utf8')).toBe('concurrent');
     expect(await readFile(join(directory, 'source'), 'utf8')).toBe('source');
+  });
+
+  it('preserves a concurrent child during an exclusive directory move', async () => {
+    await service.write({ path: 'source/entry', content: 'source' });
+    const destinationEntry = join(directory, 'destination/entry');
+    const exdev = Object.assign(new Error('cross-device move'), {
+      code: 'EXDEV',
+    });
+    fsMocks.rename.mockRejectedValueOnce(exdev);
+    fsMocks.link.mockImplementationOnce(async () => {
+      await writeFile(destinationEntry, 'concurrent');
+      throw Object.assign(new Error('destination exists'), { code: 'EEXIST' });
+    });
+
+    await expect(
+      service.copy({
+        source: 'source',
+        destination: 'destination',
+        move: true,
+      }),
+    ).rejects.toThrow();
+
+    expect(await readFile(destinationEntry, 'utf8')).toBe('concurrent');
+    expect(await readFile(join(directory, 'source/entry'), 'utf8')).toBe(
+      'source',
+    );
+  });
+
+  it('moves read-only directories across devices and restores their mode', async () => {
+    if (process.platform === 'win32') return;
+    await service.write({ path: 'source/entry', content: 'source' });
+    await chmod(join(directory, 'source'), 0o500);
+    fsMocks.rename.mockRejectedValueOnce(
+      Object.assign(new Error('cross-device move'), { code: 'EXDEV' }),
+    );
+
+    await service.copy({
+      source: 'source',
+      destination: 'destination',
+      move: true,
+    });
+
+    expect((await stat(join(directory, 'destination'))).mode & 0o777).toBe(
+      0o500,
+    );
+    expect(await readFile(join(directory, 'destination/entry'), 'utf8')).toBe(
+      'source',
+    );
+    await chmod(join(directory, 'destination'), 0o700);
   });
 });

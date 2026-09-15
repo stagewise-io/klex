@@ -2,6 +2,13 @@
 
 All notable Klex changes are documented here.
 
+## 0.6.1 (2026-09-15)
+
+### Bug Fixes
+
+- bound realtime session teardown (98f76d2)
+- stabilize realtime audio buffering (cef56e9)
+
 ## 0.6.0 (2026-09-15)
 
 ### Features

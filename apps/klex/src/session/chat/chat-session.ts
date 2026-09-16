@@ -23,6 +23,7 @@ import {
   GenerationLaneLeaseManager,
   type InteractionLease,
   type InteractionLeaseRequest,
+  type InteractionToolExecutionOptions,
   type InteractionToolRequest,
   type InteractionToolResult,
   type PreparedInferenceContextHandle,
@@ -361,7 +362,8 @@ class ChatSessionModule implements AgentSession {
         quiesceGenerationLane: (reason) => this.quiesceGenerationLane(reason),
         resumeGenerationLane: () => this.resumeGenerationLane(),
         prepareContext: (request) => this.prepareLeaseContext(request),
-        executeTool: (request) => this.executeLeaseTool(request),
+        executeTool: (request, options) =>
+          this.executeLeaseTool(request, options),
         finalizeLease: () => this.finalizeLeaseState(),
         commit: (event) => this.commitLeaseEvent(event),
       },
@@ -808,6 +810,7 @@ class ChatSessionModule implements AgentSession {
 
   private async executeLeaseTool(
     request: InteractionToolRequest,
+    options?: InteractionToolExecutionOptions,
   ): Promise<InteractionToolResult> {
     if (!this.leaseToolExecutor) {
       this.leaseToolExecutor = new ToolExecutor({
@@ -818,7 +821,7 @@ class ChatSessionModule implements AgentSession {
         validateInput: true,
       });
     }
-    return this.leaseToolExecutor.execute(request);
+    return this.leaseToolExecutor.execute(request, options);
   }
 
   private async commitLeaseEvent(event: RealtimeCommitEvent): Promise<void> {

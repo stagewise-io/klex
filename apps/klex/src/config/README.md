@@ -118,6 +118,42 @@ the same exact model ID, manual fields override discovered fields. A model may
 still be selected when it is absent from `knownModels`; callers receive a
 warning rather than having the selection rejected.
 
+### Gemini Live speech-to-speech selection
+
+Gemini Live uses the normal provider registry and `modelSelection.voice.sts`;
+it does not use the legacy `realtime` block. Keep the API key in an environment
+variable:
+
+```json
+{
+  "providers": {
+    "google-live": {
+      "type": "google-gemini",
+      "settings": {
+        "apiKey": "${env:GEMINI_API_KEY}"
+      }
+    }
+  },
+  "modelSelection": {
+    "voice": {
+      "sts": [
+        {
+          "providerId": "google-live",
+          "modelId": "gemini-3.8-live"
+        }
+      ],
+      "tts": [],
+      "stt": []
+    }
+  }
+}
+```
+
+Select `gemini-3.8-live-extended-thinking` instead to enable Extended Thinking.
+Its default thinking level is `medium`. Override it per selection with
+`"providerOptions": { "google": { "live": { "thinkingLevel": "low" } } }`;
+accepted values are `low`, `medium`, and `high`.
+
 ## Model capability metadata
 
 Provider model metadata is layered from lowest to highest precedence:
@@ -249,7 +285,10 @@ The mode is resolved once during process startup. Restart Klex after changing it
 active MCP connections cannot renegotiate capabilities in place. The default
 test suite is network-independent. Set `OPENAI_REALTIME_INTEGRATION=1` and
 `OPENAI_API_KEY`, then run `pnpm test:openai-realtime` from `apps/klex` for the
-opt-in provider connection check.
+opt-in OpenAI provider check. For Gemini, set `GEMINI_LIVE_INTEGRATION=1` and
+`GEMINI_API_KEY`, then run `pnpm test:gemini-live`. The Gemini check exercises
+setup, text-triggered audio and output transcription, and clean shutdown for
+both supported Gemini 3.8 Live model IDs.
 
 ## MCP authentication
 

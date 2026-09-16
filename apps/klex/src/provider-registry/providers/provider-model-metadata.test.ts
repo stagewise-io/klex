@@ -175,6 +175,28 @@ describe('built-in provider model catalogs', () => {
       },
     });
 
+    const google = builtInProviderDefinitions.find(
+      ({ type }) => type === 'google-gemini',
+    );
+    for (const [modelId, displayName] of [
+      ['gemini-3.8-live', 'Gemini 3.8 Live'],
+      [
+        'gemini-3.8-live-extended-thinking',
+        'Gemini 3.8 Live Extended Thinking',
+      ],
+    ] as const) {
+      expect(google?.resolveModelMetadata?.(modelId)).toMatchObject({
+        kind: 'speech-to-speech',
+        displayName,
+        contextSize: 131_072,
+        capabilities: {
+          input: { image: {}, audio: {} },
+          voice: { sts: true },
+        },
+        provenance: [expect.objectContaining({ source: 'provider-exact' })],
+      });
+    }
+
     const deepseek = builtInProviderDefinitions.find(
       ({ type }) => type === 'deepseek',
     );

@@ -8,6 +8,7 @@ import { SessionInteractionLease } from './interaction-lease';
 import type {
   InteractionLease,
   InteractionLeaseRequest,
+  InteractionToolExecutionOptions,
   InteractionToolRequest,
   InteractionToolResult,
   PreparedInferenceContextHandle,
@@ -55,7 +56,10 @@ export interface GenerationLaneHost {
     request: InteractionLeaseRequest,
   ): Promise<PreparedInferenceContextHandle>;
   /** Executes a tool through the shared session tool runtime. */
-  executeTool(request: InteractionToolRequest): Promise<InteractionToolResult>;
+  executeTool(
+    request: InteractionToolRequest,
+    options?: InteractionToolExecutionOptions,
+  ): Promise<InteractionToolResult>;
   /** Clears tool and context state owned by the ending lease. */
   finalizeLease(): void;
   /** Persists realtime activity into canonical history. */
@@ -126,7 +130,8 @@ export class GenerationLaneLeaseManager {
         maxPendingUpdates: this.deps.maxPendingUpdates,
       }),
       bootstrap: () => this.deps.host.prepareContext(request),
-      executeTool: (toolRequest) => this.deps.host.executeTool(toolRequest),
+      executeTool: (toolRequest, options) =>
+        this.deps.host.executeTool(toolRequest, options),
       commit: (event) => this.deps.host.commit(event),
       onRelease: (reason) => this.finalize(lease, reason),
     });

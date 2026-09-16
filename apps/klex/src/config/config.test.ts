@@ -614,6 +614,95 @@ describe('config v2', () => {
     await config.close();
   });
 
+  it.each([
+    ['gemini-3.8-live', undefined],
+    ['gemini-3.8-live-extended-thinking', 'high'],
+  ] as const)(
+    'resolves Google Gemini realtime model %s',
+    async (modelId, thinkingLevel) => {
+      const config = createConfig({
+        logging,
+        dataDirectory: await directory(true),
+        env: { GEMINI_KEY: 'gemini-secret' },
+      });
+      await config.start();
+      await config.writeProviderInstance('gemini-voice', {
+        type: 'google-gemini',
+        settings: { apiKey: '${env:GEMINI_KEY}' },
+        knownModels: {
+          [modelId]: {
+            displayName: 'Gemini Voice',
+            contextSize: 131_072,
+            capabilities: { voice: { sts: true }, input: { audio: {} } },
+          },
+        },
+      });
+      await config.writeModelSelection({
+        ...emptyModelSelection,
+        voice: {
+          ...emptyModelSelection.voice,
+          sts: [
+            {
+              providerId: 'gemini-voice',
+              modelId,
+              ...(thinkingLevel && {
+                providerOptions: { google: { live: { thinkingLevel } } },
+              }),
+            },
+          ],
+        },
+      });
+
+      const resolved = config.resolveRealtimeProvider();
+      expect(resolved).toMatchObject({
+        kind: 'gemini-live',
+        model: {
+          modelId,
+          displayName: 'Gemini Voice',
+          contextSize: 131_072,
+          inputCapabilities: { audio: {} },
+        },
+        config: {
+          modelId,
+          apiKey: 'gemini-secret',
+          websocketUrl:
+            'wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent',
+          ...(thinkingLevel && { thinkingLevel }),
+        },
+      });
+      expect(resolved?.model).not.toHaveProperty('apiKey');
+      expect(resolved?.model).not.toHaveProperty('websocketUrl');
+      await config.close();
+    },
+  );
+
+  it('rejects unsupported Gemini realtime models', async () => {
+    const config = createConfig({
+      logging,
+      dataDirectory: await directory(true),
+      env: {},
+    });
+    await config.start();
+    await config.writeProviderInstance('gemini-voice', {
+      type: 'google-gemini',
+      settings: { apiKey: 'test-key' },
+      knownModels: {
+        'gemini-other-live': { capabilities: { voice: { sts: true } } },
+      },
+    });
+    await config.writeModelSelection({
+      ...emptyModelSelection,
+      voice: {
+        ...emptyModelSelection.voice,
+        sts: [{ providerId: 'gemini-voice', modelId: 'gemini-other-live' }],
+      },
+    });
+    expect(() => config.resolveRealtimeProvider()).toThrow(
+      "Unsupported Google Gemini realtime model 'gemini-other-live'",
+    );
+    await config.close();
+  });
+
   it('resolves GPT-Live with Responses delegation options', async () => {
     const config = createConfig({
       logging,

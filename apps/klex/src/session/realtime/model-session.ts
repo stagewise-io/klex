@@ -24,6 +24,11 @@ export type RealtimeModelEvent =
       readonly request: InteractionToolRequest;
     }
   | {
+      readonly type: 'tool-call-cancelled';
+      readonly eventId: string;
+      readonly executionId: string;
+    }
+  | {
       readonly type: 'invalid-tool-call';
       readonly eventId: string;
       readonly result: InteractionToolResult;

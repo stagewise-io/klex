@@ -92,7 +92,7 @@ transport.
 
 The lease's bootstrap watermark and ordered update iterable remove the snapshot/subscription race. Accepted notifications are canonical before forwarding and preserve stable event IDs, source metadata, monotonic update sequences, and explicit response policy. The model session acknowledges an update only after provider delivery. Pending updates are bounded; overflow revokes the lease instead of dropping canonical input.
 
-OpenAI can request tools, but Klex remains the authority. The adapter emits a provider-neutral tool request. The coordinator first commits the call to canonical history, then invokes `InteractionLease.executeTool()`, whose shared executor is schema-validating, timed, cancellable, and execution-ID-deduplicated. It commits the result before sending provider output. The provider never receives executable tool functions.
+Providers can request tools, but Klex remains the authority. The adapter emits a provider-neutral tool request. The coordinator first commits the call to canonical history, then invokes `InteractionLease.executeTool()` in a tracked background task. The shared executor is schema-validating, timed, abort-aware, and execution-ID-deduplicated. Independent calls may execute concurrently. Provider cancellation aborts only the matching execution; session teardown aborts and drains every in-flight execution. Each settled result is committed before provider delivery, while late results from canceled calls are suppressed. The provider never receives executable tool functions.
 
 Finalized transcripts become ordinary canonical turn commits. Partial deltas are not promoted to turns. Providers without authoritative turn-completion events may instead commit bounded, explicitly approximate transcript groups as `data-context`; these retain speaker and timeline metadata but never claim that assistant output was heard. Interrupted finalized assistant text is limited to the portion synchronized with audio playout. Commit event IDs suppress duplicates.
 
@@ -136,6 +136,37 @@ Voice, instructions, and VAD use provider-owned defaults until Klex exposes a
 user or agent preference mechanism. Startup starts the `Realtime` module, which subscribes its coordinator before
 MCP connections can deliver offers. Shutdown closes the coordinator and its
 sessions, then the connector and native SDK, and only then MCP.
+
+## Gemini Live model session
+
+`google-gemini` STS selections for `gemini-3.8-live` and
+`gemini-3.8-live-extended-thinking` select the `gemini-live` adapter. Klex opens
+the Gemini `BidiGenerateContent` WebSocket directly. The API key is added only
+to the server-side connection URL and is excluded from setup frames and logs.
+The first frame configures audio responses, the Kore voice, automatic server
+VAD with interruption, input and output transcription, sliding-window context
+compression, session resumption, canonical instructions, and JSON-Schema tool
+declarations. Extended Thinking additionally sends `thinkingLevel`; its default
+is `medium`, and `low`, `medium`, and `high` are accepted.
+
+Gemini receives mixed 48 kHz mono PCM16 realtime input. Its 24 kHz PCM16 output
+is converted to bounded 48 kHz, 20 ms frames for the transport. Completed input
+and output transcription becomes finalized canonical turns. Speech interruption
+invalidates queued output and marks the synchronized assistant transcript as
+interrupted. Provider tool calls are declared `NON_BLOCKING`, so the coordinator
+may run unrelated calls concurrently. Gemini cancellation IDs map to the
+matching Klex abort controller; a canceled result is committed canonically as
+aborted but is not sent back to Gemini.
+
+The adapter retains the latest resumption handle. On an unexpected connection
+loss it makes at most two replacement attempts within an eight-second grace
+window, supplies that handle in the new setup, then replays undelivered
+canonical updates and tool results. Stable event and execution IDs suppress
+repeated side effects. A malformed frame, provider error, setup timeout,
+exhausted recovery, explicit close, or external abort converges on one
+idempotent model-session closure. `turnComplete` is not treated as global model
+idleness because Extended Thinking may continue reasoning or tool work after a
+spoken segment.
 
 ## OpenAI GPT-Live model session
 

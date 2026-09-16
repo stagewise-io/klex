@@ -14,6 +14,7 @@ import type {
   ConversationHost,
   InteractionLeaseClosure,
   InteractionLeaseRequest,
+  InteractionToolExecutionOptions,
   InteractionToolRequest,
   InteractionToolResult,
   InteractionUpdateEnvelope,
@@ -453,7 +454,10 @@ export interface DeterministicConversationHost extends ConversationHost {
     reason: Extract<InteractionLeaseClosure, { type: 'revoked' }>['reason'],
   ): void;
   setToolHandler(
-    handler: (request: InteractionToolRequest) => InteractionToolResult,
+    handler: (
+      request: InteractionToolRequest,
+      options?: InteractionToolExecutionOptions,
+    ) => InteractionToolResult | Promise<InteractionToolResult>,
   ): void;
 }
 
@@ -495,7 +499,8 @@ class DeterministicConversationHostModule
   private acquisitionError: { error: unknown } | undefined;
   private toolHandler: (
     request: InteractionToolRequest,
-  ) => InteractionToolResult = (request) => ({
+    options?: InteractionToolExecutionOptions,
+  ) => InteractionToolResult | Promise<InteractionToolResult> = (request) => ({
     executionId: request.executionId,
     status: 'success',
     output: { ok: true },
@@ -517,7 +522,10 @@ class DeterministicConversationHostModule
   }
 
   setToolHandler(
-    handler: (request: InteractionToolRequest) => InteractionToolResult,
+    handler: (
+      request: InteractionToolRequest,
+      options?: InteractionToolExecutionOptions,
+    ) => InteractionToolResult | Promise<InteractionToolResult>,
   ): void {
     this.toolHandler = handler;
   }
@@ -546,9 +554,9 @@ class DeterministicConversationHostModule
           counters.contextRollbacks += 1;
         },
       }),
-      executeTool: async (toolRequest) => {
+      executeTool: async (toolRequest, executionOptions) => {
         toolRequests.push(toolRequest);
-        return this.toolHandler(toolRequest);
+        return this.toolHandler(toolRequest, executionOptions);
       },
       commit: async (event) => {
         commits.push(event);

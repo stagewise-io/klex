@@ -115,6 +115,10 @@ export type InteractionLeaseClosure =
     }
   | { readonly type: 'failed'; readonly error: unknown };
 
+export interface InteractionToolExecutionOptions {
+  readonly signal?: AbortSignal;
+}
+
 export interface InteractionLease {
   readonly id: string;
   readonly sessionId: string;
@@ -123,7 +127,10 @@ export interface InteractionLease {
   readonly updates: AsyncIterable<InteractionUpdateEnvelope>;
   bootstrap(): Promise<PreparedInferenceContextHandle>;
   acknowledgeUpdate(sequence: number): void;
-  executeTool(request: InteractionToolRequest): Promise<InteractionToolResult>;
+  executeTool(
+    request: InteractionToolRequest,
+    options?: InteractionToolExecutionOptions,
+  ): Promise<InteractionToolResult>;
   commit(event: RealtimeCommitEvent): Promise<void>;
   release(reason?: string, finalEvent?: RealtimeCommitEvent): Promise<void>;
 }
@@ -144,5 +151,8 @@ export interface ConversationHost {
 
 export interface SessionToolRuntime {
   readonly tools: ToolSet;
-  execute(request: InteractionToolRequest): Promise<InteractionToolResult>;
+  execute(
+    request: InteractionToolRequest,
+    options?: InteractionToolExecutionOptions,
+  ): Promise<InteractionToolResult>;
 }

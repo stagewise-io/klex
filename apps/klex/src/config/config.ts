@@ -28,6 +28,8 @@ import {
 
 export const DEFAULT_CONTEXT_SIZE = 200_000;
 export const CONFIG_FILE_NAME = 'config.json';
+export const GEMINI_LIVE_WEBSOCKET_URL =
+  'wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent';
 
 export interface ResolvedModelConfig {
   providerId: string;
@@ -53,6 +55,17 @@ export interface ResolvedOpenAILiveConfig {
   apiKey: string;
   baseUrl: string;
   responsesModelId: string;
+}
+
+export type GeminiLiveModelId =
+  | 'gemini-3.8-live'
+  | 'gemini-3.8-live-extended-thinking';
+
+export interface ResolvedGeminiLiveConfig {
+  modelId: GeminiLiveModelId;
+  apiKey: string;
+  websocketUrl: string;
+  thinkingLevel?: 'low' | 'medium' | 'high';
 }
 
 /**
@@ -81,6 +94,13 @@ export type ResolvedRealtimeProvider =
       model: RealtimeModelMetadata;
       /** Credentials and endpoint configuration — provider construction only. */
       config: ResolvedOpenAILiveConfig;
+    }
+  | {
+      kind: 'gemini-live';
+      /** Non-secret metadata describing the resolved realtime model. */
+      model: RealtimeModelMetadata;
+      /** Credentials and endpoint configuration — provider construction only. */
+      config: ResolvedGeminiLiveConfig;
     };
 
 export interface ModelInfo {
@@ -305,21 +325,21 @@ class ConfigModule implements Config {
     );
     if (!reference) return undefined;
     const resolved = this.resolveModel(reference);
-    if (resolved.providerType !== 'openai') {
+    if (
+      resolved.providerType !== 'openai' &&
+      resolved.providerType !== 'google-gemini'
+    ) {
       throw new ConfigValidationError(
-        `Realtime speech requires an 'openai' provider, received '${resolved.providerType}'`,
+        `Realtime speech requires an 'openai' or 'google-gemini' provider, received '${resolved.providerType}'`,
         { code: 'type_mismatch' },
       );
     }
     const apiKey = stringSetting(resolved.settings, 'apiKey');
     if (!apiKey) {
       throw new ConfigValidationError(
-        'Realtime OpenAI provider requires an API key',
+        `Realtime ${resolved.providerType === 'openai' ? 'OpenAI' : 'Google Gemini'} provider requires an API key`,
       );
     }
-    const baseUrl =
-      stringSetting(resolved.settings, 'baseUrl') ??
-      'https://api.openai.com/v1';
     const model = {
       modelId: resolved.modelId,
       ...(resolved.displayName !== undefined && {
@@ -328,6 +348,28 @@ class ConfigModule implements Config {
       contextSize: resolved.contextSize,
       inputCapabilities: resolved.inputCapabilities,
     };
+    if (resolved.providerType === 'google-gemini') {
+      if (!isGeminiLiveModelId(resolved.modelId))
+        throw new ConfigValidationError(
+          `Unsupported Google Gemini realtime model '${resolved.modelId}'`,
+          { code: 'type_mismatch' },
+        );
+      return {
+        kind: 'gemini-live',
+        model,
+        config: {
+          modelId: resolved.modelId,
+          apiKey,
+          websocketUrl: GEMINI_LIVE_WEBSOCKET_URL,
+          ...(resolved.modelId === 'gemini-3.8-live-extended-thinking' && {
+            thinkingLevel: resolveGeminiThinkingLevel(resolved.providerOptions),
+          }),
+        },
+      };
+    }
+    const baseUrl =
+      stringSetting(resolved.settings, 'baseUrl') ??
+      'https://api.openai.com/v1';
     if (resolved.modelId === 'gpt-live-1') {
       return {
         kind: 'openai-live',
@@ -596,6 +638,36 @@ function resolveOpenAILiveResponsesModel(
     );
   }
   return responsesModelId;
+}
+
+function isGeminiLiveModelId(modelId: string): modelId is GeminiLiveModelId {
+  return (
+    modelId === 'gemini-3.8-live' ||
+    modelId === 'gemini-3.8-live-extended-thinking'
+  );
+}
+
+function resolveGeminiThinkingLevel(
+  providerOptions: Record<string, Record<string, unknown>> | undefined,
+): 'low' | 'medium' | 'high' {
+  const google = providerOptions?.google;
+  const live = google?.live;
+  if (live === undefined) return 'medium';
+  if (typeof live !== 'object' || live === null || Array.isArray(live))
+    throw new ConfigValidationError(
+      'Google Gemini live provider options must be an object',
+    );
+  const thinkingLevel = (live as Record<string, unknown>).thinkingLevel;
+  if (thinkingLevel === undefined) return 'medium';
+  if (
+    thinkingLevel !== 'low' &&
+    thinkingLevel !== 'medium' &&
+    thinkingLevel !== 'high'
+  )
+    throw new ConfigValidationError(
+      "Google Gemini Live thinkingLevel must be 'low', 'medium', or 'high'",
+    );
+  return thinkingLevel;
 }
 
 export function openAIRealtimeWebSocketUrl(

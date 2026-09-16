@@ -64,6 +64,10 @@ interface ActiveRealtimeSession {
   contextSettled: boolean;
   setup?: Promise<void>;
   modelEventTask?: Promise<void>;
+  readonly toolExecutions: Map<
+    string,
+    { controller: AbortController; task: Promise<void> }
+  >;
   tasks: Promise<void>[];
   finish?: Promise<void>;
 }
@@ -148,6 +152,7 @@ class RealtimeSessionCoordinatorModule implements RealtimeSessionCoordinator {
       accepted: false,
       endSent: false,
       contextSettled: false,
+      toolExecutions: new Map(),
       tasks: [],
     };
     this.sessions.set(key, session);
@@ -333,7 +338,7 @@ class RealtimeSessionCoordinatorModule implements RealtimeSessionCoordinator {
     try {
       for await (const event of processor.events) {
         if (session.controller.signal.aborted) return;
-        await this.handleModelEvent(lease, processor, event);
+        await this.handleModelEvent(session, lease, processor, event);
       }
     } catch (error) {
       if (!session.controller.signal.aborted)
@@ -346,10 +351,17 @@ class RealtimeSessionCoordinatorModule implements RealtimeSessionCoordinator {
   }
 
   private async handleModelEvent(
+    session: ActiveRealtimeSession,
     lease: InteractionLease,
     processor: RealtimeModelSession,
     event: RealtimeModelEvent,
   ): Promise<void> {
+    if (event.type === 'tool-call-cancelled') {
+      session.toolExecutions
+        .get(event.executionId)
+        ?.controller.abort('realtime-provider-cancelled-tool-call');
+      return;
+    }
     if (event.type === 'invalid-tool-call') {
       await processor.sendToolResult(event.result);
       return;
@@ -388,14 +400,44 @@ class RealtimeSessionCoordinatorModule implements RealtimeSessionCoordinator {
       },
       'Executing realtime tool call through canonical session',
     );
-    const result = await lease.executeTool(event.request);
-    await lease.commit({
-      type: 'tool-result',
-      eventId: `${event.eventId}:result`,
-      timestamp: this.timestamp(),
-      result,
-    });
-    await processor.sendToolResult(result);
+    if (session.toolExecutions.has(event.request.executionId)) return;
+    const controller = new AbortController();
+    const task = this.executeRealtimeTool(
+      session,
+      lease,
+      processor,
+      event,
+      controller,
+    );
+    session.toolExecutions.set(event.request.executionId, { controller, task });
+    session.tasks.push(task);
+  }
+
+  private async executeRealtimeTool(
+    session: ActiveRealtimeSession,
+    lease: InteractionLease,
+    processor: RealtimeModelSession,
+    event: Extract<RealtimeModelEvent, { type: 'tool-call' }>,
+    controller: AbortController,
+  ): Promise<void> {
+    try {
+      const result = await lease.executeTool(event.request, {
+        signal: controller.signal,
+      });
+      if (session.controller.signal.aborted) return;
+      await lease.commit({
+        type: 'tool-result',
+        eventId: `${event.eventId}:result`,
+        timestamp: this.timestamp(),
+        result,
+      });
+      if (!controller.signal.aborted) await processor.sendToolResult(result);
+    } catch (error) {
+      if (!controller.signal.aborted && !session.controller.signal.aborted)
+        this.failSession(session, error, 'Realtime tool execution failed');
+    } finally {
+      session.toolExecutions.delete(event.request.executionId);
+    }
   }
 
   private async monitorLease(
@@ -563,6 +605,8 @@ class RealtimeSessionCoordinatorModule implements RealtimeSessionCoordinator {
   ): Promise<void> {
     if (session.finish) return session.finish;
     session.finish = (async () => {
+      for (const execution of session.toolExecutions.values())
+        execution.controller.abort('realtime-session-ended');
       if (!session.lease)
         session.acquisitionController.abort('realtime-session-ended');
       if (!session.processor)

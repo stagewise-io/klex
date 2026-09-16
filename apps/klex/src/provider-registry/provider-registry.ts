@@ -599,10 +599,13 @@ class ProviderRegistryModule implements ProviderRegistry {
               `Model '${entry.modelId}' does not declare voice.${voiceCapability} capability`,
             );
           }
-          if (voiceCapability === 'sts' && provider.type !== 'openai') {
+          if (
+            voiceCapability === 'sts' &&
+            !supportsRealtimeSpeech(provider.type, entry.modelId)
+          ) {
             return failure(
               'invalid_configuration',
-              `Realtime speech requires an 'openai' provider, received '${provider.type}'`,
+              `Realtime speech does not support provider '${provider.type}' with model '${entry.modelId}'`,
             );
           }
         } else if (
@@ -1069,6 +1072,18 @@ function modelSelectionEntries(
     ['voice.tts', selection.voice.tts],
     ['voice.stt', selection.voice.stt],
   ];
+}
+
+function supportsRealtimeSpeech(
+  providerType: ProviderType,
+  modelId: string,
+): boolean {
+  if (providerType === 'openai') return true;
+  return (
+    providerType === 'google-gemini' &&
+    (modelId === 'gemini-3.8-live' ||
+      modelId === 'gemini-3.8-live-extended-thinking')
+  );
 }
 
 function voiceCapabilityForPurpose(

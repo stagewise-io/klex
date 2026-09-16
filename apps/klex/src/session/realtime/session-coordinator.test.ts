@@ -524,6 +524,111 @@ describe('realtime session coordinator', () => {
     await coordinator.close();
   });
 
+  it('runs realtime tool calls concurrently', async () => {
+    const { coordinator, mcpHarness, processorFactory, host } = setup();
+    const first = deferred<{
+      executionId: string;
+      status: 'success';
+      output: { call: string };
+    }>();
+    const second = deferred<{
+      executionId: string;
+      status: 'success';
+      output: { call: string };
+    }>();
+    host.setToolHandler((request) =>
+      request.executionId === 'exec-1' ? first.promise : second.promise,
+    );
+    await coordinator.start();
+    await mcpHarness.notify(offered());
+    const lease = await host.nextLease();
+    const processor = await processorFactory.nextProcessor();
+
+    await processor.emit({
+      type: 'tool-call',
+      eventId: 'call-1',
+      request: { executionId: 'exec-1', name: 'first', input: {} },
+    });
+    await processor.emit({
+      type: 'tool-call',
+      eventId: 'call-2',
+      request: { executionId: 'exec-2', name: 'second', input: {} },
+    });
+
+    await vi.waitFor(() => expect(lease.toolRequests).toHaveLength(2));
+    second.resolve({
+      executionId: 'exec-2',
+      status: 'success',
+      output: { call: 'second' },
+    });
+    first.resolve({
+      executionId: 'exec-1',
+      status: 'success',
+      output: { call: 'first' },
+    });
+    await vi.waitFor(() =>
+      expect(processor.receivedToolResults).toHaveLength(2),
+    );
+
+    await mcpHarness.notify(ended());
+    await coordinator.close();
+  });
+
+  it('aborts a provider-cancelled tool call without returning a result', async () => {
+    const { coordinator, mcpHarness, processorFactory, host } = setup();
+    let executionSignal: AbortSignal | undefined;
+    host.setToolHandler((request, options) => {
+      executionSignal = options?.signal;
+      return new Promise((resolve) =>
+        options?.signal?.addEventListener(
+          'abort',
+          () =>
+            resolve({
+              executionId: request.executionId,
+              status: 'error',
+              code: 'aborted',
+              error: 'Tool execution was aborted.',
+              retryable: true,
+            }),
+          { once: true },
+        ),
+      );
+    });
+    await coordinator.start();
+    await mcpHarness.notify(offered());
+    const lease = await host.nextLease();
+    const processor = await processorFactory.nextProcessor();
+
+    await processor.emit({
+      type: 'tool-call',
+      eventId: 'call-cancelled',
+      request: { executionId: 'exec-cancelled', name: 'slow', input: {} },
+    });
+    await vi.waitFor(() => expect(executionSignal).toBeDefined());
+    await processor.emit({
+      type: 'tool-call-cancelled',
+      eventId: 'cancel-1',
+      executionId: 'exec-cancelled',
+    });
+    await vi.waitFor(() => expect(executionSignal?.aborted).toBe(true));
+    await vi.waitFor(() =>
+      expect(lease.commits.map((commit) => commit.type)).toEqual([
+        'session-started',
+        'tool-call',
+        'tool-result',
+      ]),
+    );
+
+    expect(processor.receivedToolResults).toEqual([]);
+    expect(lease.commits.at(-1)).toMatchObject({
+      type: 'tool-result',
+      result: { executionId: 'exec-cancelled', code: 'aborted' },
+    });
+
+    await mcpHarness.notify(ended());
+    await coordinator.close();
+  });
+
   it('returns invalid tool calls without committing fabricated tool activity', async () => {
     const { coordinator, mcpHarness, processorFactory, host } = setup();
     await coordinator.start();

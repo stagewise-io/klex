@@ -2,6 +2,7 @@ import type {
   InteractionLease,
   InteractionLeaseClosure,
   InteractionMode,
+  InteractionToolExecutionOptions,
   InteractionToolRequest,
   InteractionToolResult,
   InteractionUpdateEnvelope,
@@ -21,7 +22,10 @@ export interface SessionInteractionLeaseDependencies {
   sessionId: string;
   mode: InteractionMode;
   bootstrap(): Promise<PreparedInferenceContextHandle>;
-  executeTool(request: InteractionToolRequest): Promise<InteractionToolResult>;
+  executeTool(
+    request: InteractionToolRequest,
+    options?: InteractionToolExecutionOptions,
+  ): Promise<InteractionToolResult>;
   commit(event: RealtimeCommitEvent): Promise<void>;
   onRelease(reason?: string): Promise<void> | void;
   maxPendingUpdates?: number;
@@ -88,8 +92,11 @@ export class SessionInteractionLease implements InteractionLease {
     }
   }
 
-  executeTool(request: InteractionToolRequest): Promise<InteractionToolResult> {
-    return this.deps.executeTool(request);
+  executeTool(
+    request: InteractionToolRequest,
+    options?: InteractionToolExecutionOptions,
+  ): Promise<InteractionToolResult> {
+    return this.deps.executeTool(request, options);
   }
 
   commit(event: RealtimeCommitEvent): Promise<void> {

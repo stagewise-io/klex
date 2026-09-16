@@ -7,6 +7,7 @@ import type { ModuleLogger } from '@stagewise/logger';
 import type { ToolRequestContext } from '@/tool-provider';
 
 import type {
+  InteractionToolExecutionOptions,
   InteractionToolRequest,
   InteractionToolResult,
   SessionToolRuntime,
@@ -84,11 +85,14 @@ export class ToolExecutor implements SessionToolRuntime {
     return this.deps.tools;
   }
 
-  execute(request: InteractionToolRequest): Promise<InteractionToolResult> {
+  execute(
+    request: InteractionToolRequest,
+    options?: InteractionToolExecutionOptions,
+  ): Promise<InteractionToolResult> {
     const existing = this.executions.get(request.executionId);
     if (existing) return existing;
 
-    const execution = this.executeOnce(request);
+    const execution = this.executeOnce(request, options);
     this.executions.set(request.executionId, execution);
     return execution;
   }
@@ -103,6 +107,7 @@ export class ToolExecutor implements SessionToolRuntime {
 
   private async executeOnce(
     request: InteractionToolRequest,
+    options?: InteractionToolExecutionOptions,
   ): Promise<InteractionToolResult> {
     const tool = (this.deps.tools as Record<string, Tool | undefined>)[
       request.name
@@ -155,6 +160,7 @@ export class ToolExecutor implements SessionToolRuntime {
     const signal = AbortSignal.any([
       this.abortController.signal,
       timeoutController.signal,
+      ...(options?.signal ? [options.signal] : []),
     ]);
     let resolveCancellation!: () => void;
     const cancellation = new Promise<void>((resolve) => {

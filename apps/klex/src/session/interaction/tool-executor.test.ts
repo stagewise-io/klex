@@ -146,6 +146,27 @@ describe('ToolExecutor', () => {
     }
   });
 
+  it('supports per-execution cancellation', async () => {
+    const executor = createExecutor(async () => new Promise(() => undefined));
+    const controller = new AbortController();
+    const execution = executor.execute(
+      {
+        executionId: 'execution-1',
+        name: 'example',
+        input: {},
+      },
+      { signal: controller.signal },
+    );
+
+    controller.abort();
+
+    await expect(execution).resolves.toMatchObject({
+      status: 'error',
+      code: 'aborted',
+      retryable: true,
+    });
+  });
+
   it('normalizes timeouts into retryable error results', async () => {
     const executor = createExecutor(
       async (_input, options) =>

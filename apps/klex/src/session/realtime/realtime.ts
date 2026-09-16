@@ -14,6 +14,7 @@ import {
 } from '@/media-transport/livekit-room';
 import type { ConversationHost } from '@/session/interaction';
 
+import { createGeminiLiveProcessorFactory } from './gemini-live';
 import { createGPTLiveProcessorFactory } from './gpt-live';
 import type { RealtimeModelSessionFactory } from './model-session';
 import { createOpenAIRealtimeProcessorFactory } from './openai-realtime';
@@ -94,6 +95,11 @@ class RealtimeModule implements Realtime {
         });
       case 'openai-realtime':
         return createOpenAIRealtimeProcessorFactory({
+          logging: this.deps.logging,
+          config: this.deps.provider.config,
+        });
+      case 'gemini-live':
+        return createGeminiLiveProcessorFactory({
           logging: this.deps.logging,
           config: this.deps.provider.config,
         });

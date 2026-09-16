@@ -675,6 +675,40 @@ describe('config v2', () => {
       kind: 'openai-live',
       config: { responsesModelId: 'gpt-5.6-luna' },
     });
+    await config.writeProviderInstance('gemini-voice', {
+      type: 'google-gemini',
+      settings: { apiKey: 'sk-gemini-test' },
+      knownModels: {
+        'gemini-3.8-live': {
+          displayName: 'Gemini 3.8 Live',
+          contextSize: 131_072,
+          capabilities: {
+            voice: { sts: true },
+          },
+        },
+      },
+    });
+    await config.writeModelSelection({
+      ...emptyModelSelection,
+      voice: {
+        ...emptyModelSelection.voice,
+        sts: [{ providerId: 'gemini-voice', modelId: 'gemini-3.8-live' }],
+      },
+    });
+    expect(config.resolveRealtimeProvider()).toMatchObject({
+      kind: 'gemini-live',
+      model: {
+        modelId: 'gemini-3.8-live',
+        displayName: 'Gemini 3.8 Live',
+        contextSize: 131_072,
+      },
+      config: {
+        modelId: 'gemini-3.8-live',
+        apiKey: 'sk-gemini-test',
+        websocketUrl:
+          'wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key=sk-gemini-test',
+      },
+    });
     await config.close();
   });
 

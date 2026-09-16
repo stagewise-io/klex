@@ -599,10 +599,14 @@ class ProviderRegistryModule implements ProviderRegistry {
               `Model '${entry.modelId}' does not declare voice.${voiceCapability} capability`,
             );
           }
-          if (voiceCapability === 'sts' && provider.type !== 'openai') {
+          if (
+            voiceCapability === 'sts' &&
+            provider.type !== 'openai' &&
+            provider.type !== 'google-gemini'
+          ) {
             return failure(
               'invalid_configuration',
-              `Realtime speech requires an 'openai' provider, received '${provider.type}'`,
+              `Realtime speech requires an 'openai' or 'google-gemini' provider, received '${provider.type}'`,
             );
           }
         } else if (

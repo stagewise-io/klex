@@ -4,7 +4,7 @@ import {
   createProxyDaemon,
   type ProxyDaemon,
   type ProxyEnvironmentHandler,
-} from '@stagewise/mcp-proxy-sdk/daemon/node';
+} from '@klex/mcp-proxy-sdk/daemon/node';
 
 import { loadMachineIdentity } from './identity.js';
 import { IDENTITY_FILE, loadMachineEnrollment } from './state.js';

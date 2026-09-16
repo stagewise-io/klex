@@ -74,7 +74,7 @@ try {
   const installedManifestPath = join(
     temporaryRoot,
     'node_modules',
-    '@stagewise',
+    '@klex',
     'mcp-proxy-sdk',
     'package.json',
   );
@@ -101,10 +101,10 @@ try {
   await writeFile(
     join(temporaryRoot, 'consumer.ts'),
     [
-      "import * as core from '@stagewise/mcp-proxy-sdk/core';",
-      "import * as http from '@stagewise/mcp-proxy-sdk/http';",
-      "import * as server from '@stagewise/mcp-proxy-sdk/server';",
-      "import * as daemon from '@stagewise/mcp-proxy-sdk/daemon/node';",
+      "import * as core from '@klex/mcp-proxy-sdk/core';",
+      "import * as http from '@klex/mcp-proxy-sdk/http';",
+      "import * as server from '@klex/mcp-proxy-sdk/server';",
+      "import * as daemon from '@klex/mcp-proxy-sdk/daemon/node';",
       'void [core, http, server, daemon];',
       '',
     ].join('\n'),
@@ -136,10 +136,10 @@ try {
   await writeFile(
     join(temporaryRoot, 'runtime-smoke.mjs'),
     [
-      "await import('@stagewise/mcp-proxy-sdk/core');",
-      "await import('@stagewise/mcp-proxy-sdk/http');",
-      "await import('@stagewise/mcp-proxy-sdk/server');",
-      "await import('@stagewise/mcp-proxy-sdk/daemon/node');",
+      "await import('@klex/mcp-proxy-sdk/core');",
+      "await import('@klex/mcp-proxy-sdk/http');",
+      "await import('@klex/mcp-proxy-sdk/server');",
+      "await import('@klex/mcp-proxy-sdk/daemon/node');",
       '',
     ].join('\n'),
   );

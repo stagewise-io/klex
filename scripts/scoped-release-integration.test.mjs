@@ -83,34 +83,34 @@ test('dry-runs independent scoped releases from baseline tags', async () => {
   const sdk = await dryRunFixture({
     baseline: '0.2.0',
     commits: [
-      'fix(klex-machine): unrelated machine fix',
+      'fix(machine): unrelated machine fix',
       'fix(mcp-proxy-sdk): repair proxy transport',
     ],
     packageRoot: 'packages/mcp-proxy-sdk',
     scope: 'mcp-proxy-sdk',
-    tagFormat: `@stagewise/mcp-proxy-sdk-v\${version}`,
+    tagFormat: `@klex/mcp-proxy-sdk-v\${version}`,
   });
   assert.equal(sdk.nextRelease.version, '0.2.1');
-  assert.equal(sdk.nextRelease.gitTag, '@stagewise/mcp-proxy-sdk-v0.2.1');
+  assert.equal(sdk.nextRelease.gitTag, '@klex/mcp-proxy-sdk-v0.2.1');
 
   const machine = await dryRunFixture({
     baseline: '0.1.0',
     commits: [
       'fix(mcp-proxy-sdk): unrelated SDK fix',
-      'feat(klex-machine): add enrollment command',
+      'feat(machine): add enrollment command',
     ],
     packageRoot: 'mcp-servers/klex-machine',
-    scope: 'klex-machine',
-    tagFormat: `klex-machine-v\${version}`,
+    scope: 'machine',
+    tagFormat: `@klex/machine-v\${version}`,
   });
   assert.equal(machine.nextRelease.version, '0.2.0');
-  assert.equal(machine.nextRelease.gitTag, 'klex-machine-v0.2.0');
+  assert.equal(machine.nextRelease.gitTag, '@klex/machine-v0.2.0');
 });
 
 test('dry-run produces no release for unrelated history', async () => {
   const result = await dryRunFixture({
     baseline: '0.5.2',
-    commits: ['fix(klex-machine): unrelated machine fix'],
+    commits: ['fix(machine): unrelated machine fix'],
     packageRoot: 'packages/agent-admin-api',
     scope: 'agent-admin-api',
     tagFormat: `@klex/agent-admin-api-v\${version}`,

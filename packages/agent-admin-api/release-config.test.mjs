@@ -43,7 +43,7 @@ test('releases a patch for any matching scoped commit', async () => {
 
 test('releases a minor for a matching scoped feature', async () => {
   assert.equal(
-    await analyze('feat(klex-machine): add route types', 'klex-machine'),
+    await analyze('feat(machine): add route types', 'machine'),
     'minor',
   );
 });
@@ -54,10 +54,7 @@ test('recognizes an exact scope in a comma-separated scope list', async () => {
     'minor',
   );
   assert.equal(
-    commitHasScope(
-      'fix(mcp-proxy-sdk,klex-machine): repair transport',
-      'klex-machine',
-    ),
+    commitHasScope('fix(mcp-proxy-sdk,machine): repair transport', 'machine'),
     true,
   );
 });
@@ -99,13 +96,13 @@ test('configures independent package roots, scopes, and tag formats', () => {
       config: mcpProxySdkConfig,
       packageRoot: 'packages/mcp-proxy-sdk',
       scope: 'mcp-proxy-sdk',
-      tagFormat: `@stagewise/mcp-proxy-sdk-v\${version}`,
+      tagFormat: `@klex/mcp-proxy-sdk-v\${version}`,
     },
     {
       config: klexMachineConfig,
       packageRoot: 'mcp-servers/klex-machine',
-      scope: 'klex-machine',
-      tagFormat: `klex-machine-v\${version}`,
+      scope: 'machine',
+      tagFormat: `@klex/machine-v\${version}`,
     },
   ];
 

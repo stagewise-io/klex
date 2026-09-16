@@ -69,6 +69,23 @@ or other validation commands.
 
 Keep protocol packages free of application storage policy. Keep environment-specific actions out of agent core.
 
+## npm package ownership
+
+Every publishable npm package must use either the `@klex/*` or `@stagewise/*`
+scope. Unscoped publishable packages are forbidden because npm organizations only
+own names within their scopes.
+
+Use `@klex/*` for packages specific to the Klex product, control plane, runtime,
+deployment, or branded CLI. Use `@stagewise/*` only for product-neutral libraries
+intentionally shared across Stagewise products. Repository location alone does not
+decide ownership; use the product boundary and intended reuse.
+
+Packages that expose command-line binaries remain organization-scoped. Their `bin`
+keys may expose unscoped commands such as `klex-machine`.
+
+Before enabling automated releases for a new public package, create it under the
+correct npm organization and configure trusted publishing from this repository.
+
 ## Native dependencies
 
 `apps/klex` ships as a Node SEA executable, which cannot bundle native modules. Any

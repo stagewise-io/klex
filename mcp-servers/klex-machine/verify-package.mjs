@@ -78,7 +78,8 @@ try {
   const installedEntry = join(
     temporaryRoot,
     'node_modules',
-    'klex-machine',
+    '@klex',
+    'machine',
     'dist',
     'index.js',
   );

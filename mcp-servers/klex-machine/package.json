@@ -1,5 +1,5 @@
 {
-  "name": "klex-machine",
+  "name": "@klex/machine",
   "version": "0.1.0",
   "type": "module",
   "description": "Unrestricted filesystem and persistent shell MCP server",
@@ -25,7 +25,7 @@
     "node": ">=24"
   },
   "scripts": {
-    "build": "pnpm --filter @stagewise/mcp-proxy-sdk build && node build.mjs",
+    "build": "pnpm --filter @klex/mcp-proxy-sdk build && node build.mjs",
     "dev": "tsx watch src/index.ts serve --mode local",
     "start": "node dist/index.js",
     "typecheck": "tsc --noEmit -p tsconfig.test.json",
@@ -54,7 +54,7 @@
     "zod": "4.4.3"
   },
   "devDependencies": {
-    "@stagewise/mcp-proxy-sdk": "workspace:*",
+    "@klex/mcp-proxy-sdk": "workspace:*",
     "@stagewise/typescript-config": "workspace:*",
     "@types/node": "26.1.1",
     "esbuild": "0.28.1",

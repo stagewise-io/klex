@@ -61,6 +61,19 @@ async function dryRunFixture({
     await git(repository, 'push', '--set-upstream', 'origin', 'main', '--tags');
 
     const config = createScopedReleaseConfig({ packageRoot, scope, tagFormat });
+    const releaseEnvironment = { ...process.env };
+    for (const name of [
+      'CI',
+      'CONTINUOUS_INTEGRATION',
+      'GITHUB_ACTIONS',
+      'GITHUB_EVENT_NAME',
+      'GITHUB_EVENT_PATH',
+      'GITHUB_HEAD_REF',
+      'GITHUB_REF',
+      'GITHUB_REF_NAME',
+    ]) {
+      delete releaseEnvironment[name];
+    }
     return await semanticRelease(
       {
         ...config,
@@ -71,6 +84,7 @@ async function dryRunFixture({
         ci: false,
         cwd: repository,
         dryRun: true,
+        env: releaseEnvironment,
         logger: silentLogger,
       },
     );

@@ -85,8 +85,19 @@ test('compares generated Admin API contracts from base and current checkout', as
   assert.ok(
     commands.some(
       ({ command, args }) =>
-        command === 'pnpm' && args.join(' ') === 'build:contract',
+        command === 'pnpm' &&
+        args.join(' ') ===
+          'install --offline --frozen-lockfile --ignore-scripts',
     ),
+  );
+  assert.equal(
+    commands.filter(
+      ({ command, args }) =>
+        command === 'pnpm' &&
+        args.join(' ') ===
+          'exec turbo run build --filter=@klex/agent-admin-api',
+    ).length,
+    2,
   );
   assert.ok(
     commands.some(

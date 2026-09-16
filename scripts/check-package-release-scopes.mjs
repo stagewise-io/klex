@@ -54,10 +54,22 @@ export async function checkGeneratedContract({
       ['worktree', 'add', '--detach', baseWorktree, baseRef],
       root,
     );
-    await run('pnpm', ['build:contract'], join(root, 'apps', 'klex'));
-    await run('pnpm', ['build:contract'], join(baseWorktree, 'apps', 'klex'));
+    await run(
+      'pnpm',
+      ['install', '--offline', '--frozen-lockfile', '--ignore-scripts'],
+      baseWorktree,
+    );
+    const buildContractArgs = [
+      'exec',
+      'turbo',
+      'run',
+      'build',
+      '--filter=@klex/agent-admin-api',
+    ];
+    await run('pnpm', buildContractArgs, root);
+    await run('pnpm', buildContractArgs, baseWorktree);
 
-    const relativeContractPath = join('src', 'generated', 'klex-admin-api.ts');
+    const relativeContractPath = join('dist', 'index.d.ts');
     const headContract = await readFile(
       join(root, 'packages', 'agent-admin-api', relativeContractPath),
       'utf8',

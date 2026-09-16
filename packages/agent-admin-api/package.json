@@ -31,20 +31,15 @@
     "clean": "rm -rf dist",
     "build": "node build.mjs",
     "typecheck": "tsc --noEmit",
-    "test": "node --test release-config.test.mjs ../../scripts/check-agent-admin-api-release.test.mjs",
+    "test": "node --test release-config.test.mjs ../../scripts/check-package-release-scopes.test.mjs ../../scripts/scoped-release-integration.test.mjs",
     "verify": "node verify-package.mjs"
   },
   "devDependencies": {
     "@hono/zod-openapi": "1.5.1",
-    "@semantic-release/commit-analyzer": "13.0.1",
-    "@semantic-release/github": "12.0.9",
-    "@semantic-release/npm": "13.1.5",
-    "@semantic-release/release-notes-generator": "14.1.1",
     "@stagewise/klex": "workspace:*",
     "@stagewise/typescript-config": "workspace:*",
     "@types/node": "26.1.1",
     "hono": "4.12.30",
-    "semantic-release": "25.0.9",
     "typescript": "5.9.3"
   },
   "packageManager": "pnpm@11.22.0"

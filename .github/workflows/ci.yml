@@ -70,8 +70,8 @@ jobs:
       - run: pnpm --filter klex-machine test
       - run: pnpm --filter klex-machine verify
 
-  admin-api-release-scope:
-    name: Agent Admin API Release Scope
+  package-release-scopes:
+    name: Package Release Scopes
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
@@ -86,8 +86,10 @@ jobs:
           node-version-file: .nvmrc
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - name: Verify contract release scope
-        run: node scripts/check-agent-admin-api-release.mjs "$BASE_SHA"
+      - name: Test package release scope checker
+        run: node --test scripts/check-package-release-scopes.test.mjs
+      - name: Verify package release scopes
+        run: node scripts/check-package-release-scopes.mjs "$BASE_SHA"
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
 

@@ -1,7 +1,7 @@
 import { createScopedReleaseConfig } from '../../scripts/scoped-release-config.mjs';
 
 export default createScopedReleaseConfig({
-  packageRoot: 'packages/agent-admin-api',
-  scope: 'agent-admin-api',
-  tagFormat: '@klex/agent-admin-api-v${version}',
+  packageRoot: 'packages/mcp-proxy-sdk',
+  scope: 'mcp-proxy-sdk',
+  tagFormat: '@stagewise/mcp-proxy-sdk-v${version}',
 });

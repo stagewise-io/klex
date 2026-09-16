@@ -30,7 +30,6 @@ import type {
   ToolSnapshot,
 } from '@/tool-provider';
 
-import { isAttioServer } from './attio-workspace';
 import {
   connectMcpServer,
   McpAuthorizationRequiredError,
@@ -110,10 +109,8 @@ export type McpConnectionStatus =
 
 /** A single MCP server with its config and connection status. */
 export interface McpServerInfo {
-  integration?: {
-    provider: 'attio';
-    workspace?: { name: string; slug: string };
-  };
+  /** Identifies the active connection; changes after each successful reconnect. */
+  connectionId?: string;
   /** Unique namespace / server name. */
   name: string;
   /** Current connection status. */
@@ -280,6 +277,7 @@ interface McpServerRuntime {
   signature: string;
   status: Exclude<McpConnectionStatus, 'disconnected'>;
   connection?: McpConnection;
+  connectionId?: string;
   attempt?: McpConnectionAttempt;
   retryAttempt: number;
   retryTimer?: ReturnType<typeof setTimeout>;
@@ -629,6 +627,7 @@ class McpModule implements Mcp {
         }
         runtime.attempt = undefined;
         runtime.connection = connection;
+        runtime.connectionId = randomUUID();
         runtime.status = 'connected';
         runtime.lastError = undefined;
         this.clearRetry(runtime);
@@ -1082,14 +1081,7 @@ class McpModule implements Mcp {
       const transport = config && 'command' in config ? 'stdio' : 'http';
       const pending = this.deps.pendingAuthorizations.findByServer(name);
       statuses.push({
-        ...(config && isAttioServer(config)
-          ? {
-              integration: {
-                provider: 'attio' as const,
-                workspace: connection?.workspace,
-              },
-            }
-          : {}),
+        connectionId: connection ? runtime?.connectionId : undefined,
         name,
         status: runtime?.status ?? 'disconnected',
         toolCount: connection?.tools.length ?? 0,

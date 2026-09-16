@@ -513,6 +513,28 @@ describe('MCP namespace isolation', () => {
     await mcp.close();
   });
 
+  it('changes the connection identity on reconnect and omits it while disconnected', async () => {
+    const { config, mcp } = setup(
+      { server: { url: 'https://example.com/mcp' } },
+      async ({ namespace }) => connection(namespace),
+    );
+    await mcp.start();
+    await waitForNamespace(mcp, 'server');
+    const first = mcp.getServerStatuses()[0]?.connectionId;
+    expect(first).toEqual(expect.any(String));
+    expect(mcp.getServerStatuses()[0]?.connectionId).toBe(first);
+    await config.publish({});
+    expect(mcp.getServerStatuses()).toEqual([]);
+    await config.publish({ server: { url: 'https://example.com/mcp' } });
+    await waitForNamespace(mcp, 'server');
+    expect(mcp.getServerStatuses()[0]?.connectionId).toEqual(
+      expect.any(String),
+    );
+    expect(mcp.getServerStatuses()[0]?.connectionId).not.toBe(first);
+    await mcp.close();
+    expect(mcp.getServerStatuses()[0]?.connectionId).toBeUndefined();
+  });
+
   it('reconnects the same namespace after removal and re-addition', async () => {
     const oldPending = deferred<McpConnection>();
     const late = connection('server');

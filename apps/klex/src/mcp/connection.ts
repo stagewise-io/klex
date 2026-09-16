@@ -27,7 +27,6 @@ import {
 import type { McpServerConfig } from '@/config';
 import type { JsonObject } from '@/tool-provider';
 
-import { isAttioServer, readAttioWorkspace } from './attio-workspace';
 import type {
   OAuthAuthorizationSession,
   OAuthAuthorizationSessionFactory,
@@ -48,7 +47,6 @@ export class McpAuthorizationRequiredError extends Error {
 
 export interface McpConnection {
   readonly namespace: string;
-  readonly workspace?: { name: string; slug: string };
   readonly tools: readonly McpToolDefinition[];
   readonly pushNotifications: RegisteredPushNotificationsClient;
   readonly supportsPushNotifications: boolean;
@@ -104,7 +102,6 @@ class McpServerConnection implements McpConnection {
     readonly realtimeMedia: RegisteredRealtimeMediaClient | undefined,
     readonly supportsRealtimeMedia: boolean,
     private currentTools: readonly McpToolDefinition[],
-    readonly workspace?: { name: string; slug: string },
   ) {}
 
   get tools(): readonly McpToolDefinition[] {
@@ -232,11 +229,6 @@ export async function connectMcpServer(
           : false,
         client.listTools(undefined, { signal: options.signal }),
       ]);
-    const workspace =
-      isAttioServer(options.config) &&
-      result.tools.some((tool) => tool.name === 'whoami')
-        ? await readAttioWorkspace(client, options.signal)
-        : undefined;
     if (closedDuringSetup || options.signal.aborted) {
       throw new Error('MCP connection closed during setup');
     }
@@ -248,7 +240,6 @@ export async function connectMcpServer(
       realtimeMedia,
       supportsRealtimeMedia,
       result.tools,
-      workspace,
     );
     const originalClose = connection.close.bind(connection);
     connection.close = async () => {

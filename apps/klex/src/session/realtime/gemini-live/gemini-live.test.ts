@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { RootLogger } from '@stagewise/logger';
 
 import type { ResolvedGeminiLiveConfig } from '@/config';
+import { SessionInboxUrgency } from '@/session/inbox';
 
 import {
   createGeminiLiveProcessorFactory,
@@ -169,13 +170,59 @@ describe('GeminiLiveSession', () => {
       sessionResumptionUpdate: { newHandle: 'resume-handle', resumable: true },
     });
     sockets[0]!.message({ goAway: { timeLeft: '2s' } });
+    await session.sendUpdate({
+      sequence: 1,
+      eventId: 'reconnect-update',
+      requestResponse: false,
+      event: {
+        eventId: 'reconnect-update',
+        sourceEnv: 'test',
+        urgency: SessionInboxUrgency.Default,
+        context: {
+          sourceEnv: 'test',
+          metadata: {},
+          content: [{ type: 'text', text: 'queued update' }],
+        },
+      },
+    });
+    await session.sendToolResult({
+      executionId: 'reconnect-tool',
+      status: 'success',
+      output: 'queued result',
+    });
     await vi.advanceTimersByTimeAsync(1);
     sockets[1]!.open();
     expect(JSON.parse(sockets[1]!.sent[0] ?? '{}')).toMatchObject({
       setup: { sessionResumption: { handle: 'resume-handle' } },
     });
-    sockets[1]!.message({ setupComplete: {} });
     expect(sockets[1]!.sent).toHaveLength(1);
+    sockets[1]!.message({ setupComplete: {} });
+    expect(
+      sockets[1]!.sent.slice(1).map((message) => JSON.parse(message)),
+    ).toEqual([
+      {
+        clientContent: {
+          turns: [
+            {
+              role: 'user',
+              parts: [{ text: expect.stringContaining('queued update') }],
+            },
+          ],
+          turnComplete: false,
+        },
+      },
+      {
+        toolResponse: {
+          functionResponses: [
+            {
+              id: 'reconnect-tool',
+              name: 'unknown_tool',
+              response: { result: 'queued result' },
+            },
+          ],
+        },
+      },
+    ]);
     await session.close();
     vi.useRealTimers();
   });

@@ -109,6 +109,7 @@ class GeminiLiveSession implements RealtimeModelSession {
   private readonly canceledToolCalls = new Set<string>();
   private readonly toolNames = new Map<string, string>();
   private readonly replayMessages: object[] = [];
+  private readonly reconnectMessages: object[] = [];
 
   readonly audioInputs = {
     attach: (source: AudioSource) => this.attachSource(source),
@@ -194,7 +195,9 @@ class GeminiLiveSession implements RealtimeModelSession {
 
   private handleOpen(token: number): void {
     if (token !== this.connectionToken || this.settled) return;
-    this.send(geminiSetupMessage(this.config, this.context, this.resumeHandle));
+    this.sendNow(
+      geminiSetupMessage(this.config, this.context, this.resumeHandle),
+    );
   }
 
   private handleMessage(token: number, raw: RawData): void {
@@ -239,16 +242,19 @@ class GeminiLiveSession implements RealtimeModelSession {
   }
 
   private completeHandshake(): void {
-    if (!this.resuming) {
+    if (this.resuming) {
+      for (const message of this.reconnectMessages) this.sendNow(message);
+    } else {
       if (!this.seeded) {
         for (const message of geminiHistoryMessages(
           this.context?.messages ?? [],
         ))
-          this.send(message);
+          this.sendNow(message);
         this.seeded = true;
       }
-      for (const message of this.replayMessages) this.send(message);
+      for (const message of this.replayMessages) this.sendNow(message);
     }
+    this.reconnectMessages.length = 0;
     this.resuming = false;
     this.reconnecting = false;
     clearTimeout(this.reconnectTimer);
@@ -469,11 +475,19 @@ class GeminiLiveSession implements RealtimeModelSession {
   }
 
   private send(message: object, dropWhileReconnecting = false): void {
+    if (this.reconnecting) {
+      if (!dropWhileReconnecting) this.reconnectMessages.push(message);
+      return;
+    }
     if (this.socket.readyState !== OPEN) {
-      if (this.reconnecting || dropWhileReconnecting) return;
+      if (dropWhileReconnecting) return;
       this.fail(new Error('Gemini Live connection is not open'));
       return;
     }
+    this.sendNow(message);
+  }
+
+  private sendNow(message: object): void {
     this.socket.send(JSON.stringify(message));
   }
 

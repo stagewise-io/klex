@@ -55,17 +55,18 @@
     "build": "pnpm run clean && tsc -p tsconfig.build.json",
     "prepublishOnly": "pnpm run build && pnpm run typecheck && pnpm run test",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "verify": "node verify-package.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/node": "2.0.0-beta.4",
+    "@types/ws": "8.18.1",
     "ws": "8.18.1",
     "zod": "4.4.3"
   },
   "devDependencies": {
     "@stagewise/typescript-config": "workspace:*",
     "@types/node": "24.10.1",
-    "@types/ws": "8.18.1",
     "typescript": "7.0.2",
     "vitest": "4.1.10"
   },

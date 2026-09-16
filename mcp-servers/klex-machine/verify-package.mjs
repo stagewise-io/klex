@@ -5,6 +5,9 @@ import { tmpdir } from 'node:os';
 import { delimiter, dirname, join, resolve } from 'node:path';
 
 const packageRoot = resolve(import.meta.dirname);
+const packageVersion = JSON.parse(
+  await readFile(join(packageRoot, 'package.json'), 'utf8'),
+).version;
 const temporaryRoot = await mkdtemp(join(tmpdir(), 'klex machine package-'));
 let child;
 
@@ -82,8 +85,11 @@ try {
   const version = (
     await run(process.execPath, [installedEntry, '--version'], consumer)
   ).trim();
-  if (version !== '0.1.0')
-    throw new Error(`Unexpected CLI version: ${version}`);
+  if (version !== packageVersion) {
+    throw new Error(
+      `Unexpected CLI version: expected ${packageVersion}, received ${version}`,
+    );
+  }
   const help = await run(
     process.execPath,
     [installedEntry, '--help'],

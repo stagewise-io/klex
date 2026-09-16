@@ -2,6 +2,21 @@
 
 All notable Klex changes are documented here.
 
+## 0.7.0 (2026-09-16)
+
+### Features
+
+- replace router with session-based architecture (c4f71c1)
+
+### Bug Fixes
+
+- use canonical realtime session ID (1e40144)
+- harden session lifecycle recovery (708d764)
+
+### Other Changes
+
+- stabilize package release checks (175e419)
+
 ## 0.6.1 (2026-09-15)
 
 ### Bug Fixes

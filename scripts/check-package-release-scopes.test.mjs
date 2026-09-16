@@ -1,4 +1,7 @@
 import assert from 'node:assert/strict';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import test from 'node:test';
 
 import {
@@ -40,9 +43,18 @@ test('accepts exact scopes across the complete commit range', () => {
     missingReleaseScopes(
       ['agent-admin-api', 'mcp-proxy-sdk', 'machine'],
       [
-        'fix(agent-admin-api): repair types',
-        'feat(klex,mcp-proxy-sdk): add routing',
-        'docs(machine): document setup',
+        {
+          changedFiles: ['packages/agent-admin-api/src/index.ts'],
+          message: 'fix(agent-admin-api): repair types',
+        },
+        {
+          changedFiles: ['packages/mcp-proxy-sdk/src/index.ts'],
+          message: 'feat(klex,mcp-proxy-sdk): add routing',
+        },
+        {
+          changedFiles: ['mcp-servers/klex-machine/README.md'],
+          message: 'docs(machine): document setup',
+        },
       ],
     ),
     [],
@@ -54,44 +66,95 @@ test('reports missing scopes and rejects lookalikes', () => {
     missingReleaseScopes(
       ['agent-admin-api', 'mcp-proxy-sdk', 'machine'],
       [
-        'fix(agent-admin-api-client): repair client',
-        'fix(mcp-proxy-sdk-extra): repair proxy',
-        'fix: repair machine',
+        {
+          changedFiles: ['packages/agent-admin-api/src/index.ts'],
+          message: 'fix(agent-admin-api-client): repair client',
+        },
+        {
+          changedFiles: ['packages/mcp-proxy-sdk/src/index.ts'],
+          message: 'fix(mcp-proxy-sdk-extra): repair proxy',
+        },
+        {
+          changedFiles: ['mcp-servers/klex-machine/src/index.ts'],
+          message: 'fix: repair machine',
+        },
       ],
     ),
     ['agent-admin-api', 'mcp-proxy-sdk', 'machine'],
   );
 });
 
-test('compares generated Admin API contracts from base and current checkout', async () => {
-  const commands = [];
-  const run = async (command, args, cwd) => {
-    commands.push({ command, args, cwd });
-  };
-
-  await assert.rejects(
-    checkGeneratedContract({
-      baseRef: 'base',
-      root: '/missing/repository',
-      run,
-    }),
+test('rejects scoped commits that do not change files', () => {
+  assert.deepEqual(
+    missingReleaseScopes(
+      ['machine'],
+      [{ changedFiles: [], message: 'feat(machine): empty release marker' }],
+    ),
+    ['machine'],
   );
-  assert.equal(commands[0].command, 'git');
-  assert.deepEqual(commands[0].args.slice(0, 3), [
+});
+
+async function checkContractFixture(baseContract) {
+  const root = await mkdtemp(join(tmpdir(), 'release-scope-test-'));
+  const contractPath = join(
+    'packages',
+    'agent-admin-api',
+    'dist',
+    'index.d.ts',
+  );
+  const commands = [];
+
+  try {
+    await mkdir(join(root, 'packages', 'agent-admin-api', 'dist'), {
+      recursive: true,
+    });
+    await writeFile(join(root, contractPath), 'head contract');
+    const run = async (command, args, cwd) => {
+      commands.push({ command, args, cwd });
+      if (
+        command === 'git' &&
+        args.slice(0, 3).join(' ') === 'worktree add --detach'
+      ) {
+        const baseWorktree = args[3];
+        await mkdir(join(baseWorktree, 'packages', 'agent-admin-api', 'dist'), {
+          recursive: true,
+        });
+        await writeFile(join(baseWorktree, contractPath), baseContract);
+      }
+    };
+
+    const matches = await checkGeneratedContract({
+      baseRef: 'base',
+      root,
+      run,
+    });
+    return { commands, matches };
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+}
+
+test('compares matching and changed generated Admin API contracts', async () => {
+  const matching = await checkContractFixture('head contract');
+  const changed = await checkContractFixture('base contract');
+
+  assert.equal(matching.matches, true);
+  assert.equal(changed.matches, false);
+  assert.equal(matching.commands[0].command, 'git');
+  assert.deepEqual(matching.commands[0].args.slice(0, 3), [
     'worktree',
     'add',
     '--detach',
   ]);
   assert.ok(
-    commands.some(
+    matching.commands.some(
       ({ command, args }) =>
         command === 'pnpm' &&
-        args.join(' ') ===
-          'install --offline --frozen-lockfile --ignore-scripts',
+        args.join(' ') === 'install --frozen-lockfile --ignore-scripts',
     ),
   );
   assert.equal(
-    commands.filter(
+    matching.commands.filter(
       ({ command, args }) =>
         command === 'pnpm' &&
         args.join(' ') ===
@@ -100,7 +163,7 @@ test('compares generated Admin API contracts from base and current checkout', as
     2,
   );
   assert.ok(
-    commands.some(
+    matching.commands.some(
       ({ command, args }) =>
         command === 'git' &&
         args.slice(0, 3).join(' ') === 'worktree remove --force',

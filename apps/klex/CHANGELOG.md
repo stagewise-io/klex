@@ -2,6 +2,12 @@
 
 All notable Klex changes are documented here.
 
+## 0.7.1 (2026-09-16)
+
+### Bug Fixes
+
+- accept JSON Schema tools in Gemini Live (e0543c9)
+
 ## 0.7.0 (2026-09-16)
 
 ### Features

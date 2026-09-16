@@ -101,6 +101,7 @@ async function setup(
           name: 'get_weather',
           description: 'Get weather for a city',
           inputSchema: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
             type: 'object',
             properties: { city: { type: 'string' } },
           },
@@ -146,9 +147,14 @@ describe('Gemini live processor', () => {
     expect(setupMsg.setup.systemInstruction.parts[0].text).toBe(
       'You are Klex Gemini.',
     );
-    expect(setupMsg.setup.tools[0].functionDeclarations[0].name).toBe(
-      'get_weather',
-    );
+    const declaration = setupMsg.setup.tools[0].functionDeclarations[0];
+    expect(declaration.name).toBe('get_weather');
+    expect(declaration.parameters).toBeUndefined();
+    expect(declaration.parametersJsonSchema).toEqual({
+      $schema: 'https://json-schema.org/draft/2020-12/schema',
+      type: 'object',
+      properties: { city: { type: 'string' } },
+    });
 
     harness.socket.message({ setupComplete: {} });
     await expect(harness.promise).resolves.toBeDefined();

@@ -21,11 +21,11 @@ import {
 } from './test-helpers';
 
 vi.mock('./vision-system-prompt.md', () => ({
-  default: 'Describe this image.',
+  default: 'general image prompt',
 }));
 
 vi.mock('./vision-tool-system-prompt.md', () => ({
-  default: 'Answer the question about the image.',
+  default: 'image tool prompt',
 }));
 
 beforeEach(() => {

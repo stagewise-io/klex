@@ -693,6 +693,7 @@ function transformHistoryForCompaction(messages: ExtendedUIMessage[]): string {
   return lines.join('\n');
 }
 
+/** Compacts long session histories while preserving durable conversational context. */
 export const createContextCompactionExt: ExtensionFactory = {
   identifier: 'io.stagewise/context-compaction',
   displayName: 'Context Compaction',

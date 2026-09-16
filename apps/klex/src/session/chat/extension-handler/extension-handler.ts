@@ -13,6 +13,7 @@ import type {
   ExtensionDeps,
   ExtensionFactory,
   GenerateTextResult,
+  ProvisionalStepContext,
   ResolvedModel,
   StepCompleteEvent,
   TransformationFlags,
@@ -106,6 +107,22 @@ export interface ExtensionHandler {
   getSystemPromptParts: () => string[];
 
   /**
+   * Collect provisional context parts for one generation attempt. Providers
+   * receive isolated history clones and run sequentially in factory order.
+   * This method only aggregates parts; it does not persist them. The step
+   * appends the combined parts as a synthetic user message, then retains that
+   * message after a successful non-fallback result or removes it after failure,
+   * fallback, fatal error, or a thrown preparation/generation error.
+   *
+   * Throws before returning if any provider fails, allowing the step to avoid
+   * partially mutating canonical history.
+   */
+  getProvisionalStepContext: (
+    history: readonly ExtendedUIMessage[],
+    model: ResolvedModel,
+  ) => Promise<ProvisionalStepContext>;
+
+  /**
    * Run `historyTransformer` across all extensions in order.
    * Each extension receives the output history of the previous one.
    * Flags from all extensions are merged (OR semantics).
@@ -179,6 +196,9 @@ class ExtensionHandlerModule implements ExtensionHandler {
 
   /** Maps each extension identifier to its factory-declared display name. */
   private readonly displayNamesByIdentifier: Map<string, string | undefined>;
+
+  /** Extensions whose cleanup completed, including startup rollback. */
+  private readonly closedExtensions = new Set<Extension>();
 
   constructor(deps: {
     factories: ExtensionFactory[];
@@ -285,9 +305,32 @@ class ExtensionHandlerModule implements ExtensionHandler {
   }
 
   async start(): Promise<void> {
-    for (const ext of this.extensions) {
-      if (!ext.onStart) continue;
-      await ext.onStart();
+    const attempted: Extension[] = [];
+    try {
+      for (const ext of this.extensions) {
+        if (!ext.onStart) continue;
+        attempted.push(ext);
+        await ext.onStart();
+      }
+    } catch (error) {
+      // Include the failing extension: onStart may have acquired resources
+      // before throwing. Roll back every attempted start in reverse order.
+      for (const ext of attempted.toReversed()) {
+        if (!ext.onClose) continue;
+        try {
+          await ext.onClose();
+          this.closedExtensions.add(ext);
+        } catch (closeError) {
+          this.extensionDeps.logger.error(
+            {
+              error: closeError,
+              extensionIdentifier: this.identifiersByExtension.get(ext),
+            },
+            'Extension startup rollback failed',
+          );
+        }
+      }
+      throw error;
     }
   }
 
@@ -295,9 +338,10 @@ class ExtensionHandlerModule implements ExtensionHandler {
     // Close in reverse factory order (LIFO) — mirrors resource cleanup.
     for (let i = this.extensions.length - 1; i >= 0; i--) {
       const ext = this.extensions[i]!;
-      if (!ext.onClose) continue;
+      if (!ext.onClose || this.closedExtensions.has(ext)) continue;
       try {
         await ext.onClose();
+        this.closedExtensions.add(ext);
       } catch (error) {
         this.extensionDeps.logger.error(
           { error, extensionIdentifier: this.identifiersByExtension.get(ext) },
@@ -346,6 +390,32 @@ class ExtensionHandlerModule implements ExtensionHandler {
     }
 
     return parts;
+  }
+
+  async getProvisionalStepContext(
+    history: readonly ExtendedUIMessage[],
+    model: ResolvedModel,
+  ): Promise<ProvisionalStepContext> {
+    const parts: ExtendedUIMessage['parts'] = [];
+
+    for (const ext of this.extensions) {
+      if (!ext.getProvisionalStepContext) continue;
+      try {
+        const result = await ext.getProvisionalStepContext(
+          structuredClone(history),
+          model,
+        );
+        parts.push(...result.parts);
+      } catch (error) {
+        this.extensionDeps.logger.error(
+          { error, extensionIdentifier: this.identifiersByExtension.get(ext) },
+          'Extension provisional step context failed',
+        );
+        throw error;
+      }
+    }
+
+    return { parts };
   }
 
   async runHistoryTransformers(

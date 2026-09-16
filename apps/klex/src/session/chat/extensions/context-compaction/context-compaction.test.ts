@@ -418,7 +418,7 @@ describe('ContextCompactionExt — compaction trigger', () => {
 });
 
 describe('ContextCompactionExt — runCompaction', () => {
-  it('calls generateText with compaction model IDs and system prompt', async () => {
+  it('calls generateText with compaction model IDs and conversation', async () => {
     const deps = makeDeps({
       getHistory: vi.fn(() => [
         makeTextMessage('user', 'Hello'),
@@ -436,9 +436,6 @@ describe('ContextCompactionExt — runCompaction', () => {
     expect(deps.generateText).toHaveBeenCalledTimes(1);
     const args = vi.mocked(deps.generateText)!.mock.calls[0]![0];
     expect(args.modelIds).toEqual(['remote:gpt-4o']);
-    expect(args.system).toBe(
-      'You are a summarizer. Summarize the conversation.',
-    );
     expect(args.prompt).toContain('<msg role="user">');
   });
 

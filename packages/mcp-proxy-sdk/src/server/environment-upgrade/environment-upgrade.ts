@@ -28,7 +28,12 @@ export interface EnvironmentUpgradeOptions {
   readonly onConnected?: (details: {
     readonly environmentId: EnvironmentId;
     readonly connection: WebSocketEnvironmentConnection;
-  }) => void;
+  }) => void | Promise<void>;
+  readonly onDisconnected?: (details: {
+    readonly environmentId: EnvironmentId;
+    readonly connection: WebSocketEnvironmentConnection;
+    readonly cause?: Error;
+  }) => void | Promise<void>;
   readonly onError?: (details: { readonly error: Error }) => void;
 }
 
@@ -42,9 +47,12 @@ export interface EnvironmentUpgradeHandler {
 }
 
 interface ActiveEnvironment {
+  readonly environmentId: EnvironmentId;
   readonly connection: WebSocketEnvironmentConnection;
   readonly registration: EnvironmentRegistration;
-  ended: boolean;
+  ready: Promise<void>;
+  connected: boolean;
+  removal?: Promise<void>;
 }
 
 class EnvironmentUpgradeHandlerModule implements EnvironmentUpgradeHandler {
@@ -93,16 +101,28 @@ class EnvironmentUpgradeHandlerModule implements EnvironmentUpgradeHandler {
           return;
         }
         const active: ActiveEnvironment = {
+          environmentId,
           connection,
           registration,
-          ended: false,
+          ready: Promise.resolve(),
+          connected: false,
         };
         this.#active.add(active);
         connection.onClose((cause) => {
           void this.#remove(active, cause);
         });
-        this.#options.onConnected?.({ environmentId, connection });
-        resolve(true);
+        active.ready = Promise.resolve(
+          this.#options.onConnected?.({ environmentId, connection }),
+        ).then(() => {
+          active.connected = true;
+        });
+        void active.ready.then(
+          () => resolve(!active.removal),
+          async (cause) => {
+            await this.#remove(active, cause);
+            resolve(false);
+          },
+        );
       });
     });
   }
@@ -118,14 +138,30 @@ class EnvironmentUpgradeHandlerModule implements EnvironmentUpgradeHandler {
   }
 
   async #remove(active: ActiveEnvironment, cause?: Error): Promise<void> {
-    if (active.ended) return;
-    active.ended = true;
-    this.#active.delete(active);
+    if (active.removal) return active.removal;
+    active.removal = this.#finishRemove(active, cause);
+    return active.removal;
+  }
+
+  async #finishRemove(active: ActiveEnvironment, cause?: Error): Promise<void> {
+    await active.ready.catch(() => undefined);
     if (cause) this.#report(cause);
     await Promise.allSettled([
       active.registration.close(),
       active.connection.close(),
     ]);
+    if (active.connected) {
+      try {
+        await this.#options.onDisconnected?.({
+          environmentId: active.environmentId,
+          connection: active.connection,
+          ...(cause ? { cause } : {}),
+        });
+      } catch (disconnectCause) {
+        this.#report(disconnectCause);
+      }
+    }
+    this.#active.delete(active);
   }
 
   #report(cause: unknown): void {

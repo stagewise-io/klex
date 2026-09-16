@@ -46,16 +46,16 @@ describe('Introspector — root scope', () => {
 describe('Introspector — child scopes', () => {
   it('creates a child with the correct path', () => {
     const intro = create();
-    const child = intro.child('router');
-    expect(child.path).toEqual(['router']);
+    const child = intro.child('sessions');
+    expect(child.path).toEqual(['sessions']);
   });
 
   it('can register state on a child', async () => {
     const intro = create();
-    intro.child('router').introspect(() => ({ status: 'running' }));
-    const node = await intro.read(['router']);
+    intro.child('sessions').introspect(() => ({ status: 'running' }));
+    const node = await intro.read(['sessions']);
     expect(node?.state).toEqual({ status: 'running' });
-    expect(node?.path).toEqual(['router']);
+    expect(node?.path).toEqual(['sessions']);
   });
 
   it('supports nested children', async () => {
@@ -70,8 +70,8 @@ describe('Introspector — child scopes', () => {
 
   it('throws on duplicate child IDs', () => {
     const intro = create();
-    intro.child('router');
-    expect(() => intro.child('router')).toThrow(
+    intro.child('sessions');
+    expect(() => intro.child('sessions')).toThrow(
       /Duplicate introspection child ID/,
     );
   });
@@ -89,9 +89,9 @@ describe('Introspector — child scopes', () => {
 describe('Introspector — removeChild', () => {
   it('removes a child', async () => {
     const intro = create();
-    intro.child('router');
-    intro.removeChild('router');
-    expect(await intro.read(['router'])).toBeUndefined();
+    intro.child('sessions');
+    intro.removeChild('sessions');
+    expect(await intro.read(['sessions'])).toBeUndefined();
   });
 
   it('is a no-op for a non-existent child', () => {
@@ -175,8 +175,8 @@ describe('Introspector — read', () => {
 
   it('returns empty children array for a leaf node', async () => {
     const intro = create();
-    intro.child('router').introspect(() => ({ status: 'ok' }));
-    const node = await intro.read(['router']);
+    intro.child('sessions').introspect(() => ({ status: 'ok' }));
+    const node = await intro.read(['sessions']);
     expect(node?.children).toEqual([]);
   });
 
@@ -192,10 +192,10 @@ describe('Introspector — read', () => {
 describe('Introspector — introspect replaces previous provider', () => {
   it('calling introspect twice replaces the state provider', async () => {
     const intro = create();
-    const child = intro.child('router');
+    const child = intro.child('sessions');
     child.introspect(() => ({ v: 1 }));
     child.introspect(() => ({ v: 2 }));
-    const node = await intro.read(['router']);
+    const node = await intro.read(['sessions']);
     expect(node?.state).toEqual({ v: 2 });
   });
 });

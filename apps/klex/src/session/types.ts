@@ -1,13 +1,21 @@
+import type { IntrospectionScope } from '@/introspection';
+import type { Mcp } from '@/mcp';
+
+import type { ExtensionFactory } from './chat/extensions/extension-api';
 import type { ChatSessionInbox } from './chat/inbox';
 import type { ExtendedUIMessage } from './chat/message-types';
 import type { SessionInboxEvent } from './inbox';
+import type { ConversationHost, SystemPromptAssembler } from './interaction';
+
+/** Stable identifier assigned to the default session. */
+export const DEFAULT_SESSION_ID = 'default';
 
 /**
- * Lifecycle status of a session, queryable by the router.
+ * Lifecycle status of a session, queryable by its owner.
  *
  * - `active` — the session is alive and accepting input via its inbox.
  * - `terminated` — the session has shut itself down (e.g. fatal error).
- *   The inbox is closed; the router must not send new input.
+ *   The inbox is closed; the owner must not send new input.
  */
 export type SessionStatus = 'active' | 'terminated';
 
@@ -18,6 +26,8 @@ export type SessionStatus = 'active' | 'terminated';
  * - `retrying` — all models failed; waiting in exponential backoff before retry.
  * - `success` — the most recent turn completed successfully.
  * - `idle` — inbox is empty; no turn is active.
+ * - `leased` — the generation lane is held by another interaction mode
+ *   (e.g. an active realtime call); chat generation is suspended.
  * - `terminated` — the session has shut down (fatal error or graceful close).
  */
 export type SessionRuntimeState =
@@ -25,6 +35,7 @@ export type SessionRuntimeState =
   | 'retrying'
   | 'success'
   | 'idle'
+  | 'leased'
   | 'terminated';
 
 /** Active model information for a session. */
@@ -56,7 +67,7 @@ export interface UsagePair {
 
 /** Aggregated session information exposed for observability. */
 export interface SessionInfo {
-  /** Unique session identifier (UUID). */
+  /** Unique session identifier. The default session uses `default`. */
   id: string;
   /** Coarse lifecycle status. */
   status: SessionStatus;
@@ -81,7 +92,7 @@ export interface SessionInfo {
 
 /**
  * Information passed to {@link SessionHooks.onTerminated} when a session
- * shuts itself down (e.g. fatal error). The router uses this to create a
+ * shuts itself down (e.g. fatal error). The owner uses this to create a
  * replacement session and re-dispatch pending inbox events.
  */
 export interface SessionTerminationInfo {
@@ -89,22 +100,22 @@ export interface SessionTerminationInfo {
   reason: string;
   /**
    * Inbox events that were pending (not yet consumed by a turn) when the
-   * session terminated. The router re-dispatches these to the replacement
+   * session terminated. The owner re-dispatches these to the replacement
    * session so the user does not lose input.
    */
   pendingEvents: SessionInboxEvent[];
 }
 
 /**
- * Hooks that the router registers on a session at creation time.
+ * Hooks that the owner registers on a session at creation time.
  * The session fires these callbacks at lifecycle transition points.
  * All types here depend only on types already in this file, so there is
- * no circular dependency with the router.
+ * no circular dependency with the owner.
  */
 export interface SessionHooks {
   /**
    * Called when a session self-terminates (e.g. fatal generation error).
-   * NOT called during router-initiated graceful shutdown.
+   * NOT called during owner-initiated graceful shutdown.
    */
   onTerminated?(info: SessionTerminationInfo): void | Promise<void>;
 }
@@ -112,7 +123,7 @@ export interface SessionHooks {
 /**
  * Extended {@link AgentSession} handle that exposes chat-specific capabilities.
  *
- * The router interacts with sessions through the narrow {@link AgentSession}
+ * Owners interact with sessions through the narrow {@link AgentSession}
  * interface. Modules that need to send native messages (e.g. the god-messages
  * module) use this wider handle to access {@link ChatSessionInbox.sendMessage}
  * and the session ID.
@@ -124,32 +135,33 @@ export interface ChatSessionHandle extends AgentSession {
   readonly sessionId: string;
   /** Snapshot of the session's message history (shallow copy). */
   getMessages(): readonly ExtendedUIMessage[];
+  /** Creates and fully starts an isolated child session. */
+  createChildSession(options: ChildSessionOptions): Promise<ChildSessionHandle>;
 }
 
 /**
  * This is the interface that AgentSessions must implement in order to become
- * controllable by the Router.
+ * controllable by their owner.
+ *
+ * Every session is a {@link ConversationHost}: the owner delegates
+ * interaction-lease acquisition to the current default session.
  */
-export interface AgentSession {
-  inbox: {
-    send(event: SessionInboxEvent): void;
-    close(): void;
-  };
+export interface AgentSession extends ConversationHost {
   /**
-   * Current lifecycle status. The router checks this before sending input
+   * Current lifecycle status. The owner checks this before acquiring a lease
    * and may replace a terminated session.
    */
   readonly status: SessionStatus;
 
   /**
    * Start the session — spins up owned resources (e.g. the JavaScript
-   * sandbox worker). Called by the router after creation. Idempotent.
+   * sandbox worker). Called by the owner after creation. Idempotent.
    */
   start(): Promise<void>;
 
   /**
    * Gracefully shut down the session — ends the session trace span and
-   * releases any resources. Called by the router during shutdown.
+   * releases any resources. Called by the owner during shutdown.
    *
    * After this call, `status` becomes `'terminated'`.
    */
@@ -157,7 +169,7 @@ export interface AgentSession {
 
   /**
    * Re-dispatch pending inbox events into this session. Called by the
-   * router when replacing a terminated session — the events that were
+   * owner when replacing a terminated session — the events that were
    * pending in the old session are forwarded so the user does not lose
    * input.
    */
@@ -165,7 +177,84 @@ export interface AgentSession {
 
   /**
    * Snapshot of the session's current state for observability.
-   * Used by the router to aggregate session info in the introspection tree.
+   * Used by the owner to aggregate session info in the introspection tree.
    */
   getSessionInfo(): SessionInfo;
 }
+
+// ---------------------------------------------------------------------------
+// Session kinds and context
+// ---------------------------------------------------------------------------
+
+/**
+ * The kind of session, determining its isolation level and capabilities.
+ *
+ * - `default` — the main execution unit. Has MCP access, subscribes to
+ *   push notifications, and receives outside input.
+ * - `god` — an isolated session for god messages. No MCP, no push
+ *   notifications. Input comes only from the god-messages module.
+ * - `child` — a session spawned by an extension. No MCP, no push
+ *   notifications. Input comes only from the parent extension.
+ */
+export type SessionKind = 'default' | 'god' | 'child';
+
+/**
+ * Context describing the session's identity and position in the session tree.
+ * Extensions inspect this to decide session-specific behavior.
+ */
+export interface SessionContext {
+  kind: SessionKind;
+  sessionId: string;
+  /** Parent session ID (child sessions only). */
+  parentId?: string;
+}
+
+/**
+ * Options for creating a child session.
+ */
+export interface ChildSessionOptions {
+  extensions: ExtensionFactory[];
+  /**
+   * Custom system prompt assembler for the child session. Receives the
+   * base system prompt and all per-extension system prompt parts, returns
+   * the finished system prompt. When omitted, the default assembler
+   * concatenates base + parts with blank-line separators.
+   */
+  systemPromptAssembler?: SystemPromptAssembler;
+}
+
+/**
+ * Handle to a child session, owned by the extension that spawned it.
+ */
+export interface ChildSessionHandle {
+  readonly sessionId: string;
+  inbox: ChatSessionInbox;
+  getMessages(): readonly ExtendedUIMessage[];
+  getSessionInfo(): SessionInfo;
+  close(): Promise<void>;
+  /** Creates and fully starts an isolated grandchild session. */
+  createChildSession(options: ChildSessionOptions): Promise<ChildSessionHandle>;
+}
+
+/**
+ * Per-session parameters passed to a {@link SessionFactory} when creating a
+ * session. Shared deps (logging, config, modelResolver, dataDirectory) are
+ * captured by the factory closure itself.
+ */
+export interface SessionFactoryParams {
+  mcp: Mcp | null;
+  sessionContext: SessionContext;
+  extensionFactories: ExtensionFactory[];
+  introspectionScope: IntrospectionScope;
+  hooks?: SessionHooks;
+  systemPromptAssembler?: SystemPromptAssembler;
+}
+
+/**
+ * Factory that creates a {@link ChatSessionHandle} from per-session parameters.
+ * The composition root creates one closure that captures shared deps; callers
+ * supply only session-specific options.
+ */
+export type SessionFactory = (
+  params: SessionFactoryParams,
+) => ChatSessionHandle;

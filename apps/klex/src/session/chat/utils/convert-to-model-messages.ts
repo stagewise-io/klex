@@ -306,6 +306,9 @@ function makeConvertDataPart(
 ): (
   part: DataUIPart<Record<string, unknown>>,
 ) => TextPart | FilePart | undefined {
+  // Per-key occurrence counter, reset for each conversion pass.
+  const occurrenceCounts = new Map<string, number>();
+
   return (part) => {
     // Strip the `data-` prefix to get the data part key.
     const key = part.type.replace(/^data-/, '');
@@ -327,7 +330,10 @@ function makeConvertDataPart(
     const transformer = transformers[key];
     if (!transformer) return undefined;
 
-    const result = transformer(part.data);
+    const occurrence = occurrenceCounts.get(key) ?? 0;
+    occurrenceCounts.set(key, occurrence + 1);
+
+    const result = transformer(part.data, occurrence);
     return result.length > 0 ? result[0] : undefined;
   };
 }

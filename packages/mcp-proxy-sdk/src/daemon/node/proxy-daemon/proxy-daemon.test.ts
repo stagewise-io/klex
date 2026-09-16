@@ -102,6 +102,24 @@ describe('ProxyDaemon', () => {
     expect(active.activeExchangeCount).toBe(0);
   });
 
+  it('keeps idle connections alive with WebSocket pings', async () => {
+    const { server, url } = await createServer();
+    const accepted = once(server, 'connection');
+    const active = createProxyDaemon({
+      connection: () => ({ url }),
+      handler: {
+        fetch: async () => new Response(),
+        close: async () => undefined,
+      },
+      heartbeatIntervalMs: 10,
+    });
+    resources.push(() => active.close());
+    await active.start();
+    const [socket] = (await accepted) as [WebSocket];
+    await once(socket, 'ping');
+    expect(active.state).toBe('connected');
+  });
+
   it('propagates handler failure and proxy cancellation', async () => {
     const { server, url } = await createServer();
     const accepted = once(server, 'connection');
@@ -198,6 +216,21 @@ describe('ProxyDaemon', () => {
     });
     await expect(unsupported.start()).rejects.toThrow('ws: or wss:');
     await unsupported.close();
+
+    expect(() =>
+      createProxyDaemon({
+        connection: () => ({ url }),
+        handler,
+        heartbeatIntervalMs: 0,
+      }),
+    ).toThrow('Heartbeat interval must be between');
+    expect(() =>
+      createProxyDaemon({
+        connection: () => ({ url }),
+        handler,
+        heartbeatIntervalMs: 2_147_483_648,
+      }),
+    ).toThrow('Heartbeat interval must be between');
 
     const accepted = once(server, 'connection');
     const active = createProxyDaemon({

@@ -114,6 +114,19 @@ const MODEL_CATALOG = [
     'https://ai.google.dev/gemini-api/docs/robotics-overview',
   ),
   exactModel(
+    'gemini-3.8-live',
+    {
+      kind: 'speech-to-speech',
+      displayName: 'Gemini 3.8 Live',
+      contextSize: 131_072,
+      capabilities: {
+        input: { image: IMAGE_CAPABILITY, audio: AUDIO_CAPABILITY },
+        voice: { sts: true },
+      },
+    },
+    `${MODEL_DOCS}/gemini-3.8-live`,
+  ),
+  exactModel(
     'gemini-3.1-flash-live-preview',
     {
       kind: 'speech-to-speech',

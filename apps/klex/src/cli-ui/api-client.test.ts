@@ -110,17 +110,43 @@ describe('AdminApiClient', () => {
       );
     });
 
-    it('createMcpServer sends POST', async () => {
+    it('createMcpServer sends a typed HTTP config with headers', async () => {
       const fetchMock = mockFetch(jsonResponse({ servers: [] }));
       const client = new AdminApiClient('http://test');
       globalThis.fetch = fetchMock;
+      const request = {
+        name: 'test-server',
+        type: 'streamable-http' as const,
+        url: 'https://mcp.example.com/mcp',
+        headers: { Authorization: 'Bearer secret' },
+      };
 
-      await client.createMcpServer({ name: 'test-server' });
+      await client.createMcpServer(request);
       expect(fetchMock).toHaveBeenCalledWith(
         'http://test/v1/mcp-servers',
         expect.objectContaining({
           method: 'POST',
-          body: JSON.stringify({ name: 'test-server' }),
+          body: JSON.stringify(request),
+        }),
+      );
+    });
+
+    it('updates one MCP header without sending other tokens', async () => {
+      const fetchMock = mockFetch(jsonResponse({ servers: [] }));
+      const client = new AdminApiClient('http://test');
+      globalThis.fetch = fetchMock;
+
+      await client.updateMcpServer('test server', {
+        headerUpdates: { Authorization: 'Bearer replacement' },
+      });
+
+      expect(fetchMock).toHaveBeenCalledWith(
+        'http://test/v1/mcp-servers/test%20server',
+        expect.objectContaining({
+          method: 'PATCH',
+          body: JSON.stringify({
+            headerUpdates: { Authorization: 'Bearer replacement' },
+          }),
         }),
       );
     });

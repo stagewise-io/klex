@@ -9,6 +9,7 @@ import {
   type CloudConnectivity,
   createCloudConnectivity,
 } from '@/cloud-connectivity';
+import { type RuntimeHandle, startRuntime } from '@/composition/runtime';
 import { createConfig } from '@/config';
 import { ensureDataDirectory } from '@/data-directory';
 import { createDirectoryLock, type DirectoryLock } from '@/directory-lock';
@@ -25,14 +26,11 @@ import {
 } from '@/provider-registry';
 import { KLEX_VERSION, resolveReleaseTarget } from '@/release';
 import { runNativeVerification } from '@/release/verify-native';
-import { createRouter, type RouterApi } from '@/router';
 import { discoverManagedInstallation, UpdateManager } from '@/self-update';
-import {
-  type ChatSessionDependencies,
-  createChatSession,
-} from '@/session/chat';
+import { createChatSession } from '@/session/chat';
 import { createAudioInputOptimizerExt } from '@/session/chat/extensions/audio-input-optimizer';
 import { createContextCompactionExt } from '@/session/chat/extensions/context-compaction';
+import type { ExtensionFactory } from '@/session/chat/extensions/extension-api';
 import {
   createGodMessagesDistrustExt,
   createGodMessagesTrustExt,
@@ -40,23 +38,28 @@ import {
 import { createImageInputOptimizerExt } from '@/session/chat/extensions/image-input-optimizer';
 import { createJsReplSandboxExt } from '@/session/chat/extensions/js-repl-sandbox';
 import { createNameLoaderExt } from '@/session/chat/extensions/name-loader';
-import { createRemindersExt } from '@/session/chat/extensions/reminders';
 import {
   createSoulExt,
   createSoulExtGod,
 } from '@/session/chat/extensions/soul';
+import { createTimeExt } from '@/session/chat/extensions/time';
+import { createTodosExt } from '@/session/chat/extensions/todos';
 import {
   createProductionMediaTransportConnector,
   createRealtime,
   PRODUCTION_REALTIME_MEDIA_CAPABILITY,
 } from '@/session/realtime';
-import type { SessionHooks } from '@/session/types';
+import { createSessionHost } from '@/session/session-host';
+import type { SessionFactory } from '@/session/types';
 import { createShutdownCoordinator } from '@/shutdown-coordinator';
 import {
   createTelemetryManager,
   createTelemetrySpanProcessor,
 } from '@/telemetry-manager';
 import { createTracing } from '@/tracing';
+
+/** Minimum seconds between time updates before executable generations. */
+const TIME_UPDATE_PERIOD_SECONDS = 300;
 
 const cli: CliOptions = parseCliArgs(process.argv.slice(2));
 const logStore = createLogStore(500);
@@ -218,21 +221,23 @@ async function main(): Promise<void> {
     logging: logger,
     dataDirectory: cli.dataDirectory,
   });
-  const started: { close(): Promise<void> }[] = [localData];
+  // Resources started before the runtime modules. The runtime adopts them for
+  // shutdown; this list only drives rollback while the pre-runtime phase runs.
+  const preRuntime: { close(): Promise<void> }[] = [localData];
   let adminApiForUi: AdminApi | undefined;
-  let router: ReturnType<typeof createRouter> | undefined;
+  let runtime: RuntimeHandle | undefined;
 
   try {
     await tracing.start();
     await config.start();
-    started.push(config);
+    preRuntime.push(config);
     const providerRegistry = createProviderRegistry({
       logging: logger,
       config,
       definitions: builtInProviderDefinitions,
     });
     await providerRegistry.start();
-    started.push(providerRegistry);
+    preRuntime.push(providerRegistry);
 
     // Cloud connectivity: identity is always created; enrollment + token
     // client are initialized only when cloud is enabled.
@@ -272,51 +277,76 @@ async function main(): Promise<void> {
 
     tracing.setModelCallSink((record) => modelCallLogger.recordCall(record));
 
-    const buildChatSession =
-      (sessionExtensions: ChatSessionDependencies['extensionFactories']) =>
-      (
-        hooks: SessionHooks,
-        introspectionScope: ChatSessionDependencies['introspectionScope'],
-        sessionRouter: RouterApi,
-      ) =>
+    /** Shared deps captured by every session created through the factory. */
+    const sharedSessionDeps = {
+      logging: logger,
+      config,
+      modelResolver: providerRegistry,
+      dataDirectory,
+    };
+
+    /**
+     * Creates a SessionFactory that prepends `baseExtensions` to every
+     * session it creates, then appends the per-session extensions supplied
+     * by the caller (the session host or god-messages module).
+     *
+     * Every session gets a child-capable factory with no implicit base
+     * extensions. The spawning extension chooses the child's complete
+     * extension list; ChatSession enforces MCP isolation.
+     */
+    const makeSessionFactory =
+      (baseExtensions: ExtensionFactory[]): SessionFactory =>
+      (params) =>
         createChatSession({
-          logging: logger,
-          config,
-          modelResolver: providerRegistry,
-          mcp,
-          router: sessionRouter,
-          extensionFactories: [
-            ...sessionExtensions,
-            createJsReplSandboxExt,
-            createContextCompactionExt,
-            createImageInputOptimizerExt,
-            createAudioInputOptimizerExt,
-            createRemindersExt,
-          ],
-          dataDirectory,
-          hooks,
-          introspectionScope,
+          ...sharedSessionDeps,
+          mcp: params.mcp,
+          sessionContext: params.sessionContext,
+          extensionFactories: [...baseExtensions, ...params.extensionFactories],
+          introspectionScope: params.introspectionScope,
+          hooks: params.hooks,
+          sessionFactory: makeSessionFactory([]),
+          ...(params.systemPromptAssembler !== undefined && {
+            systemPromptAssembler: params.systemPromptAssembler,
+          }),
         });
 
-    router = createRouter({
+    // Default session: full extension set + MCP access.
+    const defaultSessionFactory = makeSessionFactory([
+      createNameLoaderExt,
+      createSoulExt,
+      createGodMessagesDistrustExt,
+      createJsReplSandboxExt,
+      createContextCompactionExt,
+      createTimeExt({ timeUpdatePeriod: TIME_UPDATE_PERIOD_SECONDS }),
+      createImageInputOptimizerExt,
+      createAudioInputOptimizerExt,
+      createTodosExt,
+    ]);
+
+    const sessionHost = createSessionHost({
       logging: logger,
       mcp,
       introspection: introspector,
-      createChatSession: buildChatSession([
-        createNameLoaderExt,
-        createSoulExt,
-        createGodMessagesDistrustExt,
-      ]),
+      sessionFactory: defaultSessionFactory,
     });
+
+    // God session: no MCP, trust-mode god-messages, soul-god variant.
+    // js-repl-sandbox excluded — it requires MCP access.
     const godMessages = createGodMessages({
       logging: logger,
       introspection: introspector,
-      router,
-      createChatSession: buildChatSession([
+      sessionFactory: makeSessionFactory([
         createNameLoaderExt,
         createSoulExtGod,
         createGodMessagesTrustExt,
       ]),
+      extensionFactories: [
+        createContextCompactionExt,
+        createTimeExt({ timeUpdatePeriod: TIME_UPDATE_PERIOD_SECONDS }),
+        createImageInputOptimizerExt,
+        createAudioInputOptimizerExt,
+        createTodosExt,
+      ],
     });
     const adminApi = createAdminApi({
       logging: logger,
@@ -341,42 +371,31 @@ async function main(): Promise<void> {
           mcp,
           provider: realtimeComposition.provider,
           ownedConnector: realtimeComposition.ownedConnector,
+          conversationHost: sessionHost,
         })
       : undefined;
-    for (const resource of [modelCallLogger, adminApi]) {
-      await resource.start();
-      started.push(resource);
-    }
     cloudConnectivity.setTunnelRequestHandler(adminApi.handle.bind(adminApi));
-    await cloudConnectivity.start();
-    started.push(cloudConnectivity);
-    await realtime?.start();
-    try {
-      await mcp.start();
-    } catch (error) {
-      await realtime?.close();
-      throw error;
-    }
-    started.push(mcp);
-    if (realtime) started.push(realtime);
-    await telemetryManager.start();
-    started.push(telemetryManager);
-    await router.start();
-    started.push(godMessages);
-    await godMessages.start();
-  } catch (error) {
-    await router?.close().catch((error: unknown) => {
-      logger.error({ error }, 'Router shutdown failed');
+    runtime = await startRuntime({
+      logging: logger,
+      adopted: preRuntime,
+      modules: {
+        modelCallLogger,
+        adminApi,
+        cloudConnectivity,
+        sessionHost,
+        realtime,
+        mcp,
+        telemetryManager,
+        godMessages,
+      },
     });
-    await closeReverse(started);
-    if (interactiveCloud && !started.includes(interactiveCloud)) {
-      await interactiveCloud.close().catch((closeError: unknown) => {
-        logger.error(
-          { error: closeError },
-          'Interactive cloud shutdown failed',
-        );
-      });
-    }
+  } catch (error) {
+    // `startRuntime` already unwound whatever it started; this rolls back the
+    // pre-runtime phase only. `close()` is idempotent on every module here.
+    await closeReverse(preRuntime);
+    await interactiveCloud?.close().catch((closeError: unknown) => {
+      logger.error({ error: closeError }, 'Interactive cloud shutdown failed');
+    });
     await dirLock.release();
     await tracing.close().catch((closeError: unknown) => {
       logger.error({ error: closeError }, 'Tracing shutdown failed');
@@ -384,7 +403,7 @@ async function main(): Promise<void> {
     throw error;
   }
 
-  const runningRouter = router;
+  const runningRuntime = runtime;
   const runningAdminApi = adminApiForUi;
   let cliUi: { start(): void; close(): void } | undefined;
   let updateManager: UpdateManager | undefined;
@@ -397,11 +416,10 @@ async function main(): Promise<void> {
       if (updateState?.status !== 'restarting') {
         await updateManager?.cancelInstall();
       }
-      const [, , lockRelease] = await Promise.allSettled([
-        runningRouter.close().catch((error: unknown) => {
-          logger.error({ error }, 'Router shutdown failed');
-        }),
-        closeReverse(started),
+      // Ordered teardown: event ingress and realtime sessions stop before the
+      // default session and its extensions close.
+      await runningRuntime?.close();
+      const [lockRelease] = await Promise.allSettled([
         dirLock.release(),
         tracing.close(),
         logger[Symbol.asyncDispose](),

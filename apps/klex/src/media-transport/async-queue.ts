@@ -9,6 +9,24 @@ interface QueueWriter<T> {
   reject(error: unknown): void;
 }
 
+type QueueOverflow = 'backpressure' | 'drop-oldest';
+
+export interface BoundedAsyncQueueOptions<T> {
+  readonly overflow?: QueueOverflow;
+  readonly onDrop?: (value: T) => void;
+}
+
+export interface BoundedAsyncQueueClearOptions {
+  readonly discardPendingWriters?: boolean;
+}
+
+export class QueueWriteCancelledError extends Error {
+  constructor() {
+    super('Queue write was cancelled');
+    this.name = 'QueueWriteCancelledError';
+  }
+}
+
 /** Internal bounded multi-producer, single-consumer async queue. */
 export class BoundedAsyncQueue<T> implements AsyncIterable<T> {
   private readonly items: T[] = [];
@@ -16,10 +34,15 @@ export class BoundedAsyncQueue<T> implements AsyncIterable<T> {
   private readonly writers: QueueWriter<T>[] = [];
   private ended = false;
   private failure: unknown;
+  private overflow: QueueOverflow;
 
-  constructor(private readonly capacity: number) {
+  constructor(
+    private readonly capacity: number,
+    private readonly options: BoundedAsyncQueueOptions<T> = {},
+  ) {
     if (!Number.isInteger(capacity) || capacity < 1)
       throw new Error('Queue capacity must be a positive integer');
+    this.overflow = options.overflow ?? 'backpressure';
   }
 
   async push(value: T): Promise<void> {
@@ -33,9 +56,40 @@ export class BoundedAsyncQueue<T> implements AsyncIterable<T> {
       this.items.push(value);
       return;
     }
+    if (this.overflow === 'drop-oldest') {
+      const dropped = this.items.shift() as T;
+      this.items.push(value);
+      this.options.onDrop?.(dropped);
+      return;
+    }
     await new Promise<void>((resolve, reject) => {
       this.writers.push({ value, resolve, reject });
     });
+  }
+
+  /** Discards buffered items without closing the queue. */
+  clear(options: BoundedAsyncQueueClearOptions = {}): readonly T[] {
+    const cleared = this.items.splice(0);
+    if (options.discardPendingWriters) {
+      for (const writer of this.writers.splice(0))
+        writer.reject(new QueueWriteCancelledError());
+    } else {
+      while (this.items.length < this.capacity && this.writers.length > 0)
+        this.promoteWriter();
+    }
+    return cleared;
+  }
+
+  setOverflow(overflow: QueueOverflow): void {
+    this.overflow = overflow;
+  }
+
+  /** Appends one terminal marker without blocking, immediately before close. */
+  pushTerminal(value: T): void {
+    if (this.ended) throw this.closedError();
+    const reader = this.readers.shift();
+    if (reader) reader.resolve({ value, done: false });
+    else this.items.push(value);
   }
 
   close(error?: unknown): void {
@@ -51,13 +105,32 @@ export class BoundedAsyncQueue<T> implements AsyncIterable<T> {
   }
 
   [Symbol.asyncIterator](): AsyncIterator<T> {
+    const pendingReaders = new Set<QueueReader<T>>();
+    let returned = false;
     return {
-      next: () => this.next(),
-      return: async () => ({ value: undefined, done: true }),
+      next: async () => {
+        if (returned) return { value: undefined, done: true };
+        let pendingReader: QueueReader<T> | undefined;
+        try {
+          return await this.next((reader) => {
+            pendingReader = reader;
+            pendingReaders.add(reader);
+          });
+        } finally {
+          if (pendingReader) pendingReaders.delete(pendingReader);
+        }
+      },
+      return: async () => {
+        returned = true;
+        for (const reader of pendingReaders) this.cancelReader(reader);
+        return { value: undefined, done: true };
+      },
     };
   }
 
-  private async next(): Promise<IteratorResult<T>> {
+  private async next(
+    onPending: (reader: QueueReader<T>) => void,
+  ): Promise<IteratorResult<T>> {
     if (this.items.length > 0) {
       const value = this.items.shift() as T;
       this.promoteWriter();
@@ -68,8 +141,17 @@ export class BoundedAsyncQueue<T> implements AsyncIterable<T> {
       return { value: undefined, done: true };
     }
     return new Promise<IteratorResult<T>>((resolve, reject) => {
-      this.readers.push({ resolve, reject });
+      const reader = { resolve, reject };
+      this.readers.push(reader);
+      onPending(reader);
     });
+  }
+
+  private cancelReader(reader: QueueReader<T>): void {
+    const index = this.readers.indexOf(reader);
+    if (index < 0) return;
+    this.readers.splice(index, 1);
+    reader.resolve({ value: undefined, done: true });
   }
 
   private promoteWriter(): void {

@@ -177,6 +177,18 @@ main {
   text-align: center;
 }
 
+.hero-eyebrow {
+  margin: 0 0 0.375rem;
+  color: var(--primary);
+  font-family: "Fraunces", Georgia, serif;
+  font-optical-sizing: none;
+  font-size: 1.5rem;
+  font-weight: 500;
+  font-style: normal;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
 h1,
 h2,
 h3 {
@@ -198,7 +210,7 @@ h1 {
 
 .installer {
   width: min(100%, 46rem);
-  margin: 1.5rem auto 0;
+  margin: 3rem auto 0;
 }
 
 .installer-tabs {

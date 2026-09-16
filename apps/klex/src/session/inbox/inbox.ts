@@ -92,6 +92,13 @@ export type ContextDataUIPart = {
 };
 
 export type SessionInboxEvent = {
+  /**
+   * Stable identity of this input. Carries the MCP Push Notification
+   * `eventId` when the input originates from an MCP server. The inbox
+   * assigns an internal ID when the caller lacks one, so every accepted
+   * input can be deduplicated and referenced by leased interaction modes.
+   */
+  eventId?: string;
   sourceEnv: string;
   urgency: SessionInboxUrgency;
   context: ContextDataUIPart;
@@ -112,9 +119,9 @@ export class SessionInboxClosedError extends Error {
 /**
  * The session inbox offers a way to send input into an agent.
  *
- * This is the narrow, router-facing interface exposed to environments
- * (MCP servers, etc.) and to the router itself. It deliberately carries
- * no AI SDK types.
+ * This narrow interface is used by MCP notification handling and extensions
+ * that inject structured context events. It deliberately carries no AI SDK
+ * types.
  */
 export interface SessionInbox {
   /**

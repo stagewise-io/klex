@@ -92,15 +92,13 @@ export interface LiveKitRoomMediaTransportConnector
 }
 
 class LiveKitAudioSourceModule implements AudioSource {
-  private readonly queue = new BoundedAsyncQueue<AudioFrame>(
-    INCOMING_QUEUE_CAPACITY,
-  );
+  private readonly queue: BoundedAsyncQueue<AudioFrame>;
   private readonly closure = deferred<RealtimeEndpointClosure>();
   private sequence = 0;
   private settled = false;
 
   readonly metadata: AudioSourceMetadata;
-  readonly readable = this.queue;
+  readonly readable: AsyncIterable<AudioFrame>;
   readonly closed = this.closure.promise;
 
   constructor(
@@ -110,6 +108,15 @@ class LiveKitAudioSourceModule implements AudioSource {
     private readonly onFailure: (error: unknown) => void,
   ) {
     this.metadata = Object.freeze({ participantId, trackId: id });
+    this.queue = new BoundedAsyncQueue<AudioFrame>(INCOMING_QUEUE_CAPACITY, {
+      overflow: 'drop-oldest',
+    });
+    this.readable = {
+      [Symbol.asyncIterator]: () => {
+        this.queue.setOverflow('backpressure');
+        return this.queue[Symbol.asyncIterator]();
+      },
+    };
     void this.pump();
   }
 

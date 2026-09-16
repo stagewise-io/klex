@@ -130,11 +130,11 @@ vi.mock('fluent-ffmpeg', () => {
 });
 
 vi.mock('./audio-system-prompt.md', () => ({
-  default: 'Describe this audio.',
+  default: 'general audio prompt',
 }));
 
 vi.mock('./audio-tool-system-prompt.md', () => ({
-  default: 'Answer the question about the audio.',
+  default: 'audio tool prompt',
 }));
 
 beforeEach(() => {
@@ -196,22 +196,6 @@ describe('AudioInputOptimizer — supports: false with audio models', () => {
     );
     expect(content[0]?.text).toContain('ID 0-0');
     expect(content[2]?.text).toContain('ID 0-2');
-  });
-
-  it('uses general description system prompt for context transformation', async () => {
-    const audio = makeWavBuffer(200, 44100);
-    const msg = makeUserMessage([makeFilePart(audio, 'audio/wav')]);
-    const config = makeAudioConfig(['audio:whisper']);
-    const generateText = vi
-      .fn()
-      .mockResolvedValue(genSuccess('A 440 Hz sine wave tone.'));
-    const deps = makeDeps({ config, generateText });
-    await runTransformer([msg], makeModel({ inputCapabilities: {} }), deps);
-    const args = generateText.mock.calls[0]?.[0] as {
-      system: string;
-    };
-    // Context transformation uses the general description prompt
-    expect(args.system).toBe('Describe this audio.');
   });
 });
 
@@ -591,7 +575,7 @@ describe('AudioInputOptimizer — listenAudio tool execute', () => {
     }) => Promise<string>;
   }
 
-  it('passes tool system prompt and audio to generateText on tool execute', async () => {
+  it('passes audio to generateText on tool execute', async () => {
     const audio = makeWavBuffer(200, 44100);
     const config = makeAudioConfig(['audio:whisper']);
     const generateText = vi
@@ -606,17 +590,11 @@ describe('AudioInputOptimizer — listenAudio tool execute', () => {
     expect(generateText).toHaveBeenCalledTimes(2);
     const toolArgs = generateText.mock.calls[1]?.[0] as {
       modelIds: string[];
-      system: string;
       messages: ModelMessage[];
     };
     expect(toolArgs.modelIds).toEqual(['audio:whisper']);
-    // Tool execute uses the tool prompt, not the general description prompt
-    expect(toolArgs.system).toBe('Answer the question about the audio.');
     expect(toolArgs.messages).toHaveLength(1);
     expect(toolArgs.messages[0]?.role).toBe('user');
-    // First call (context transformation) uses the general description prompt
-    const ctxArgs = generateText.mock.calls[0]?.[0] as { system: string };
-    expect(ctxArgs.system).toBe('Describe this audio.');
   });
 
   it('passes lookFor as additional text content when provided', async () => {

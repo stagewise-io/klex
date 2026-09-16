@@ -1,4 +1,11 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+
+vi.mock('@/session/chat/extensions/time/system-prompt.md', () => ({
+  default: '',
+}));
+vi.mock('@/session/chat/extensions/todos/system-prompt.md', () => ({
+  default: '',
+}));
 
 import { validateLocalDataRegistry } from '@/local-data';
 
@@ -12,6 +19,8 @@ describe('Klex local-data registry', () => {
       'mcp-oauth',
       'cloud-identity-metadata',
       'cloud-enrollment',
+      'time-extension-timezone',
+      'todos-extension-todos',
     ]);
   });
 

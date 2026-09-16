@@ -1,5 +1,5 @@
-# Publish @klex/agent-admin-api when a conventional commit on main includes
-# agent-admin-api in its comma-separated scope list.
+# Publish each npm package independently when a conventional commit on main
+# includes its package scope in the comma-separated scope list.
 
 name: Release
 
@@ -43,10 +43,28 @@ jobs:
         run: pnpm typecheck
       - name: Test workspace
         run: pnpm test
-      - name: Verify publishable package
-        run: pnpm exec turbo run verify --filter @klex/agent-admin-api
-      - name: Release agent-admin-api
-        working-directory: packages/agent-admin-api
+      # Run sequentially because klex-machine rebuilds the SDK while packing;
+      # concurrent package verification could clean the SDK dist directory.
+      - name: Verify publishable packages
+        run: |
+          pnpm exec turbo run verify --filter @klex/agent-admin-api
+          pnpm exec turbo run verify --filter @klex/mcp-proxy-sdk
+          pnpm exec turbo run verify --filter @klex/machine
+      - name: Release mcp-proxy-sdk
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: pnpm exec semantic-release
+        run: >-
+          pnpm exec semantic-release
+          --extends ./packages/mcp-proxy-sdk/.releaserc.js
+      - name: Release klex-machine
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: >-
+          pnpm exec semantic-release
+          --extends ./mcp-servers/klex-machine/.releaserc.js
+      - name: Release agent-admin-api
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: >-
+          pnpm exec semantic-release
+          --extends ./packages/agent-admin-api/.releaserc.js

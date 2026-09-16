@@ -65,8 +65,9 @@ function request(body = '{}', headers: ProxyHeaders = {}) {
     method: 'POST',
     headers: {
       authorization: 'Bearer private',
-      connection: 'keep-alive',
+      connection: 'keep-alive, x-internal',
       'proxy-authorization': 'Bearer proxy-private',
+      'x-internal': 'private extension',
       ...headers,
     },
     body,
@@ -103,7 +104,112 @@ describe('ProxyHttp', () => {
     expect(active.relayed()?.headers.authorization).toBe('Bearer private');
     expect(active.relayed()?.headers.connection).toBeUndefined();
     expect(active.relayed()?.headers['proxy-authorization']).toBeUndefined();
+    expect(active.relayed()?.headers['x-internal']).toBeUndefined();
     expect(response.headers.get('connection')).toBeNull();
+  });
+
+  it('delegates the untouched request to a custom router', async () => {
+    const active = setup();
+    const original = request('{"remote":true}');
+    const routeRequest = vi.fn(async ({ request: routedRequest }) => {
+      expect(routedRequest).toBe(original);
+      expect(routedRequest.bodyUsed).toBe(false);
+      return new Response('remote', {
+        status: 202,
+        headers: {
+          Connection: 'keep-alive, x-internal',
+          'X-Internal': 'private extension',
+          'X-Route': 'remote',
+        },
+      });
+    });
+    const handler = createProxyHttp({
+      proxy: active.proxy,
+      parseEnvironmentId: createEnvironmentId,
+      routeRequest,
+    });
+
+    const response = await handler.fetch(original);
+
+    expect(response.status).toBe(202);
+    await expect(response.text()).resolves.toBe('remote');
+    expect(response.headers.get('connection')).toBeNull();
+    expect(response.headers.get('x-internal')).toBeNull();
+    expect(response.headers.get('x-route')).toBe('remote');
+    expect(routeRequest).toHaveBeenCalledOnce();
+    expect(active.proxy.openExchange).not.toHaveBeenCalled();
+  });
+
+  it('lets a custom router select the existing local streaming path', async () => {
+    const active = setup();
+    const routeRequest = vi.fn(({ forwardLocal }) => forwardLocal());
+    const handler = createProxyHttp({
+      proxy: active.proxy,
+      parseEnvironmentId: createEnvironmentId,
+      routeRequest,
+    });
+
+    const response = await handler.fetch(request());
+    const reading = response.text();
+    active.exchange.emit('streamed');
+    active.exchange.end();
+
+    await expect(reading).resolves.toBe('streamed');
+    expect(routeRequest).toHaveBeenCalledOnce();
+    expect(active.proxy.openExchange).toHaveBeenCalledOnce();
+  });
+
+  it('reports router failures as unavailable', async () => {
+    const active = setup();
+    const onError = vi.fn();
+    const handler = createProxyHttp({
+      proxy: active.proxy,
+      parseEnvironmentId: createEnvironmentId,
+      routeRequest: async () => {
+        throw new Error('owner unavailable');
+      },
+      hooks: { onError },
+    });
+
+    expect((await handler.fetch(request())).status).toBe(503);
+    expect(onError).toHaveBeenCalledWith({
+      error: expect.objectContaining({ message: 'owner unavailable' }),
+    });
+  });
+
+  it('cancels a forwarded exchange when its router subsequently fails', async () => {
+    const active = setup();
+    const handler = createProxyHttp({
+      proxy: active.proxy,
+      parseEnvironmentId: createEnvironmentId,
+      routeRequest: async ({ forwardLocal }) => {
+        await forwardLocal();
+        throw new Error('route failed after forwarding');
+      },
+    });
+
+    expect((await handler.fetch(request())).status).toBe(503);
+    expect(active.exchange.close).toHaveBeenCalledOnce();
+  });
+
+  it('allows forwardLocal to be consumed only once', async () => {
+    const active = setup();
+    const handler = createProxyHttp({
+      proxy: active.proxy,
+      parseEnvironmentId: createEnvironmentId,
+      routeRequest: async ({ forwardLocal }) => {
+        const response = await forwardLocal();
+        await expect(forwardLocal()).rejects.toThrow(
+          'forwardLocal may only be called once',
+        );
+        return response;
+      },
+    });
+
+    const response = await handler.fetch(request());
+    expect(response.status).toBe(200);
+    active.exchange.end();
+    await response.text();
   });
 
   it('passes environment authorization responses through', async () => {

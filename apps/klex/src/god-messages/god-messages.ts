@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import type { ModuleLogger, RootLogger } from '@stagewise/logger';
 
 import type { IntrospectionScope } from '@/introspection';
-import type { RouterApi } from '@/router';
+import type { ExtensionFactory } from '@/session/chat/extensions/extension-api';
 import type { ExtendedUIMessage } from '@/session/chat/message-types';
 import {
   type ContextDataUIPart,
@@ -12,6 +12,8 @@ import {
 } from '@/session/inbox';
 import type {
   ChatSessionHandle,
+  SessionContext,
+  SessionFactory,
   SessionHooks,
   SessionInfo,
   SessionTerminationInfo,
@@ -46,23 +48,12 @@ export interface GodMessages {
   resetSession(): Promise<{ sessionId: string }>;
 }
 
-/**
- * Factory that creates a chat session for the god-messages module.
- * Same signature as the router's `createChatSession` dependency —
- * `main.ts` assembles shared deps (config, modelResolver, mcp, etc.)
- * and provides the extension factory list (with the trust extension).
- */
-export type CreateGodChatSession = (
-  hooks: SessionHooks,
-  introspectionScope: IntrospectionScope,
-  router: RouterApi,
-) => ChatSessionHandle;
-
 export interface GodMessagesDependencies {
   logging: RootLogger;
-  createChatSession: CreateGodChatSession;
+  sessionFactory: SessionFactory;
+  /** Extensions to load in god sessions (typically the trust extension + memory). */
+  extensionFactories: ExtensionFactory[];
   introspection: IntrospectionScope;
-  router: RouterApi;
 }
 
 class GodMessagesModule implements GodMessages {
@@ -89,9 +80,9 @@ class GodMessagesModule implements GodMessages {
   constructor(
     private readonly deps: {
       logger: ModuleLogger;
-      createChatSession: CreateGodChatSession;
+      sessionFactory: SessionFactory;
+      extensionFactories: ExtensionFactory[];
       introspection: IntrospectionScope;
-      router: RouterApi;
     },
   ) {}
 
@@ -99,7 +90,17 @@ class GodMessagesModule implements GodMessages {
     if (this.started) return;
     this.started = true;
     this.ensureSessionsScope();
-    this.session = await this.ensureSession();
+    try {
+      this.session = await this.ensureSession();
+    } catch (error) {
+      this.started = false;
+      this.removeSessionsScope();
+      this.deps.logger.error(
+        { error },
+        'God messages startup failed because its session could not start',
+      );
+      throw error;
+    }
   }
 
   async sendGodMessage(
@@ -164,10 +165,12 @@ class GodMessagesModule implements GodMessages {
     if (pending) await pending.catch(() => undefined);
     const session = this.session;
     this.session = null;
-    if (!session) return;
-    await session.close().catch((error: unknown) => {
-      this.deps.logger.error({ error }, 'God session close failed');
-    });
+    if (session) {
+      await session.close().catch((error: unknown) => {
+        this.deps.logger.error({ error }, 'God session close failed');
+      });
+    }
+    this.removeSessionsScope();
   }
 
   getSessionInfo(): SessionInfo | null {
@@ -266,23 +269,41 @@ class GodMessagesModule implements GodMessages {
       onTerminated: (info) => this.handleTerminated(info),
     };
 
-    const session = this.deps.createChatSession(
+    const sessionId = randomUUID();
+    const sessionContext: SessionContext = {
+      kind: 'god',
+      sessionId,
+    };
+
+    const session = this.deps.sessionFactory({
+      mcp: null,
+      sessionContext,
+      extensionFactories: this.deps.extensionFactories,
+      introspectionScope: sessionsScope,
       hooks,
-      sessionsScope,
-      this.deps.router,
-    );
+    });
 
     this.session = session;
-    // Swallow start() errors — the session may still be partially
-    // functional (inbox works even if tools fail to initialize). If the
-    // session later self-terminates, onTerminated creates a replacement.
-    await session.start().catch((error: unknown) => {
-      this.deps.logger.error(
-        { error },
-        'God session start failed — tools may be unavailable',
-      );
-    });
-    return session;
+    try {
+      await session.start();
+      return session;
+    } catch (error) {
+      if (this.session === session) this.session = null;
+      await session.close().catch((closeError: unknown) => {
+        this.deps.logger.error(
+          { error: closeError },
+          'God session cleanup failed after startup error',
+        );
+      });
+      this.deps.logger.error({ error }, 'God session startup failed');
+      throw error;
+    }
+  }
+
+  private removeSessionsScope(): void {
+    if (!this.sessionsScope) return;
+    this.deps.introspection.removeChild('god-sessions');
+    this.sessionsScope = null;
   }
 
   private ensureSessionsScope() {
@@ -362,8 +383,8 @@ export function createGodMessages(deps: GodMessagesDependencies): GodMessages {
       name: 'god-messages',
       bindings: { module: 'god-messages' },
     }),
-    createChatSession: deps.createChatSession,
+    sessionFactory: deps.sessionFactory,
+    extensionFactories: deps.extensionFactories,
     introspection: deps.introspection,
-    router: deps.router,
   });
 }

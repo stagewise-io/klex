@@ -36,6 +36,7 @@ export interface ProxyDaemonOptions {
   readonly connection: ProxyDaemonConnectionProvider;
   readonly handler: ProxyEnvironmentHandler;
   readonly reconnect?: false | ProxyDaemonReconnectOptions;
+  readonly heartbeatIntervalMs?: number;
 }
 export interface ProxyDaemon {
   start(): Promise<void>;
@@ -59,13 +60,16 @@ const DEFAULT_RECONNECT: ReconnectPolicy = {
   factor: 2,
   jitter: 0.2,
 };
+const DEFAULT_HEARTBEAT_INTERVAL_MS = 25_000;
 
 class ProxyDaemonModule implements ProxyDaemon {
   readonly #connection: ProxyDaemonConnectionProvider;
   readonly #handler: ProxyEnvironmentHandler;
   readonly #reconnect: ReconnectPolicy | false;
+  readonly #heartbeatIntervalMs: number;
   readonly #exchanges = new Map<ProxyExchangeId, VirtualExchange>();
   #socket?: WebSocket;
+  #heartbeatTimer?: ReturnType<typeof setInterval>;
   #sendChain = Promise.resolve();
   #dispatchChain = Promise.resolve();
   #state: ProxyDaemonState = 'idle';
@@ -80,6 +84,17 @@ class ProxyDaemonModule implements ProxyDaemon {
     this.#connection = options.connection;
     this.#handler = options.handler;
     this.#reconnect = normalizeReconnect(options.reconnect);
+    this.#heartbeatIntervalMs =
+      options.heartbeatIntervalMs ?? DEFAULT_HEARTBEAT_INTERVAL_MS;
+    if (
+      !Number.isFinite(this.#heartbeatIntervalMs) ||
+      this.#heartbeatIntervalMs < 1 ||
+      this.#heartbeatIntervalMs > 2_147_483_647
+    ) {
+      throw new RangeError(
+        'Heartbeat interval must be between 1 and 2147483647 milliseconds',
+      );
+    }
   }
 
   get state(): ProxyDaemonState {
@@ -151,6 +166,7 @@ class ProxyDaemonModule implements ProxyDaemon {
       socket.once('close', failed);
       socket.once('error', failed);
     });
+    this.#startHeartbeat(socket);
   }
 
   #queueDispatch(socket: WebSocket, data: RawData, isBinary: boolean): void {
@@ -266,6 +282,7 @@ class ProxyDaemonModule implements ProxyDaemon {
 
   async #handleSocketClose(socket: WebSocket): Promise<void> {
     if (socket !== this.#socket) return;
+    this.#stopHeartbeat();
     this.#socket = undefined;
     await this.#closeExchanges();
     if (this.#closed) return;
@@ -311,7 +328,23 @@ class ProxyDaemonModule implements ProxyDaemon {
     this.#resolveRetry?.();
     this.#resolveRetry = undefined;
   }
+  #startHeartbeat(socket: WebSocket): void {
+    this.#stopHeartbeat();
+    this.#heartbeatTimer = setInterval(() => {
+      if (socket !== this.#socket || socket.readyState !== WebSocket.OPEN)
+        return;
+      socket.ping((error?: Error) => {
+        if (error && socket === this.#socket) socket.terminate();
+      });
+    }, this.#heartbeatIntervalMs);
+    this.#heartbeatTimer.unref();
+  }
+  #stopHeartbeat(): void {
+    if (this.#heartbeatTimer) clearInterval(this.#heartbeatTimer);
+    this.#heartbeatTimer = undefined;
+  }
   async #closeSocket(): Promise<void> {
+    this.#stopHeartbeat();
     const socket = this.#socket;
     if (!socket) return;
     this.#socket = undefined;

@@ -1,7 +1,7 @@
 import { context, trace } from '@opentelemetry/api';
 import { AsyncHooksContextManager } from '@opentelemetry/context-async-hooks';
 import { BasicTracerProvider } from '@opentelemetry/sdk-trace-base';
-import type { ModelMessage, ToolSet } from 'ai';
+import type { ModelMessage } from 'ai';
 import { tool } from 'ai';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
@@ -16,6 +16,7 @@ import type {
   ExtensionFactory,
   GenerateTextArgs,
   GenerateTextResult,
+  ProvisionalStepContext,
   ResolvedModel,
   StepCompleteEvent,
 } from '../extensions/extension-api';
@@ -110,7 +111,12 @@ const noopDeps: BaseExtensionDeps = {
     child: () => noopDeps.logger,
   } as unknown as BaseExtensionDeps['logging'],
   mcp: {} as unknown as BaseExtensionDeps['mcp'],
-  router: { sendInput: vi.fn() } as unknown as BaseExtensionDeps['router'],
+  sessionContext: {
+    kind: 'default',
+    sessionId: 'test-session-id',
+  } as unknown as BaseExtensionDeps['sessionContext'],
+  createChildSession:
+    vi.fn() as unknown as BaseExtensionDeps['createChildSession'],
   sessionId: 'test-session-id',
 };
 
@@ -151,6 +157,7 @@ function factoryWith(
       getTools: overrides.getTools,
       getSystemPromptPart: overrides.getSystemPromptPart,
       onStepStart: overrides.onStepStart,
+      getProvisionalStepContext: overrides.getProvisionalStepContext,
       historyTransformer: overrides.historyTransformer,
       contextTransformer: overrides.contextTransformer,
       onStepComplete: overrides.onStepComplete,
@@ -783,6 +790,107 @@ describe('ExtensionHandler — runStepStartHooks', () => {
   });
 });
 
+describe('ExtensionHandler — getProvisionalStepContext', () => {
+  const fakePart = { type: 'data-time', data: { timestamp: 100, tz: 'UTC' } };
+
+  it('returns empty parts when no extensions define the hook', async () => {
+    const handler = createExtensionHandler({
+      factories: [factoryWith({})],
+      ...HANDLER_OPTS,
+    });
+    const result = await handler.getProvisionalStepContext(
+      [makeMessage('hi')],
+      mockResolvedModel,
+    );
+    expect(result).toEqual({ parts: [] });
+  });
+
+  it('collects parts from all extensions that define the hook, in factory order', async () => {
+    const hook1 = vi.fn(
+      () => ({ parts: [fakePart] }) as ProvisionalStepContext,
+    );
+    const hook2 = vi.fn(
+      () => ({ parts: [fakePart] }) as ProvisionalStepContext,
+    );
+
+    const handler = createExtensionHandler({
+      factories: [
+        factoryWith({ getProvisionalStepContext: hook1 }),
+        factoryWith({ getProvisionalStepContext: hook2 }),
+      ],
+      ...HANDLER_OPTS,
+    });
+
+    const history = [makeMessage('hi')];
+    const result = await handler.getProvisionalStepContext(
+      history,
+      mockResolvedModel,
+    );
+
+    expect(result.parts).toHaveLength(2);
+    expect(hook1).toHaveBeenCalledExactlyOnceWith(history, mockResolvedModel);
+    expect(hook2).toHaveBeenCalledExactlyOnceWith(history, mockResolvedModel);
+    expect((hook1.mock.calls as unknown[][])[0]?.[0]).not.toBe(history);
+    expect((hook2.mock.calls as unknown[][])[0]?.[0]).not.toBe(history);
+  });
+
+  it('skips extensions that do not define the hook', async () => {
+    const hook1 = vi.fn(
+      () => ({ parts: [fakePart] }) as ProvisionalStepContext,
+    );
+
+    const handler = createExtensionHandler({
+      factories: [
+        factoryWith({ getProvisionalStepContext: hook1 }),
+        factoryWith({}),
+      ],
+      ...HANDLER_OPTS,
+    });
+
+    const result = await handler.getProvisionalStepContext(
+      [makeMessage('hi')],
+      mockResolvedModel,
+    );
+
+    expect(result.parts).toHaveLength(1);
+    expect(hook1).toHaveBeenCalledOnce();
+  });
+
+  it('isolates canonical history from provider mutations', async () => {
+    const history = [makeMessage('original')];
+    const hook = vi.fn((snapshot: readonly ExtendedUIMessage[]) => {
+      snapshot[0]?.parts.splice(0);
+      return { parts: [] };
+    });
+    const handler = createExtensionHandler({
+      factories: [factoryWith({ getProvisionalStepContext: hook })],
+      ...HANDLER_OPTS,
+    });
+
+    await handler.getProvisionalStepContext(history, mockResolvedModel);
+
+    expect(history[0]?.parts).toEqual([{ type: 'text', text: 'original' }]);
+  });
+
+  it('logs and re-throws when an extension hook throws', async () => {
+    vi.clearAllMocks();
+    const hook = vi.fn(() => {
+      throw new Error('provisional context failed');
+    });
+
+    const handler = createExtensionHandler({
+      factories: [factoryWith({ getProvisionalStepContext: hook })],
+      ...HANDLER_OPTS,
+    });
+
+    await expect(
+      handler.getProvisionalStepContext([makeMessage('hi')], mockResolvedModel),
+    ).rejects.toThrow('provisional context failed');
+
+    expect(noopDeps.logger.error).toHaveBeenCalled();
+  });
+});
+
 describe('ExtensionHandler — runStepCompleteHooks', () => {
   const stepEvent: StepCompleteEvent = {
     shouldContinue: true,
@@ -1398,6 +1506,38 @@ describe('ExtensionHandler — start()', () => {
 
     await expect(handler.start()).rejects.toThrow('boom');
     expect(calls).toEqual(['f1']);
+  });
+
+  it('rolls back every attempted extension in reverse order on startup failure', async () => {
+    const calls: string[] = [];
+    const f1 = factoryWith({
+      onStart: async () => {
+        calls.push('start-f1');
+      },
+      onClose: async () => {
+        calls.push('close-f1');
+      },
+    });
+    const f2 = factoryWith({
+      onStart: async () => {
+        calls.push('start-f2');
+        throw new Error('partial startup');
+      },
+      onClose: async () => {
+        calls.push('close-f2');
+      },
+    });
+
+    const handler = createExtensionHandler({
+      ...HANDLER_OPTS,
+      factories: [f1, f2],
+    });
+
+    await expect(handler.start()).rejects.toThrow('partial startup');
+    expect(calls).toEqual(['start-f1', 'start-f2', 'close-f2', 'close-f1']);
+
+    await handler.close();
+    expect(calls).toHaveLength(4);
   });
 });
 

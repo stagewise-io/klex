@@ -1,0 +1,43 @@
+---
+title: Introducción
+description: Comience con Klex
+---
+
+Klex es un sistema de código abierto y autoalojable para crear y ejecutar bots (agentes completamente autónomos), y está diseñado específicamente para que los equipos amplíen su fuerza laboral con compañeros digitales impulsados por IA. Klex es desarrollado por [stagewise](https://stagewise.io) y tiene licencia Apache-2.0.
+
+<GithubInfo owner="stagewise-io" repo="klex" />
+
+Un solo bot de Klex actúa como una identidad individual. Tiene su propia personalidad, sus propios recuerdos y su propia identidad en todas sus plataformas de trabajo.
+
+**No** nos gusta llamar a los bots de Klex «asistentes», porque aunque *puedes* crear un bot de Klex que tenga el trabajo de ser tu asistente,
+los bots de Klex son mucho más potentes que eso, permitiéndote crear un equipo completo de bots que trabajan junto con sus compañeros, sin importar si son humanos o también bots.
+
+## Nuestros principios fundamentales
+
+Todo lo que construimos se guía por seis principios:
+
+- **Código abierto y agnóstico a modelos** — Sin dependencia de proveedor. Cambie de modelos en cualquier momento, o ejecute bots en su propia infraestructura.
+- **Identidad propia** — Los bots actúan como sí mismos, no en nombre de otra persona. Cada integración se construye con esto en mente.
+- **Facilidad de uso** — Una fuerza laboral impulsada por IA debería estar disponible para todos. Favorecemos **la facilidad de uso sobre la personalización** y mantenemos la configuración y el mantenimiento simples.
+- **Cumplimiento de estándares** — Toda comunicación externa pasa por [**MCP**](https://modelcontextprotocol.io/docs/2026-07-28/getting-started/intro) — sin puertas de enlace personalizadas. Las plataformas de comunicación se conectan vía MCP más una pequeña extensión que permite a las aplicaciones activar proactivamente al bot. El sistema de memoria también es compatible con [**Agent Skills**](https://agentskills.io/home) para almacenar memoria procedimental.
+- **Introspectabilidad** — La memoria del bot se almacena en Markdown puro. Puede leer e inspeccionar todo lo que el bot sabe en cualquier momento.
+- **Adaptabilidad** — Los bots solo acceden a máquinas conectadas explícitamente vía MCP — nunca al host donde se ejecutan. No pueden introspectar su propia memoria en bruto, cambiar su personalidad ni alterar la configuración del host. Esto mantiene las operaciones seguras por diseño.
+
+## Klex Cloud
+
+Nuestro bot está acompañado por nuestra oferta en la nube llamada [**Klex Cloud**](https://cloud.klex.bot) que aloja servidores MCP compatibles con Klex para una variedad de plataformas.
+
+Nuestra nube también ayuda a dar a sus bots identidades dedicadas (ya sea mediante cuentas, instancias de bots o aplicaciones) en esas plataformas, facilitando dar a los bots su propia identidad a través de la cual pueden actuar.
+
+<Panel title="Buen saber">
+La oferta en la nube es **completamente opcional** y puede ignorarse si desea asegurar que ningún dato de comunicación se transfiera a través de proveedores externos.
+</Panel>
+
+Para clientes empresariales, ofrecemos una variante de nuestro servicio en la nube alojable on-premise, garantizando el cumplimiento de todas las necesidades respecto a la resiliencia de datos, etc.
+
+También estamos en proceso de obtener el cumplimiento SOC2 Type 2 y la certificación ISO 27001. Para más información, [visite nuestro Centro de Confianza](https://trust.stagewise.io).
+
+## Próximos pasos
+
+- [Instale Klex](/quickstart) y cree su primer bot.
+- Entienda la [arquitectura](/architecture) y cómo los bots interactúan con el mundo exterior.

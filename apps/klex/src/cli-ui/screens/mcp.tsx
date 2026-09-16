@@ -19,6 +19,13 @@ import { useScreenMeta } from '../hooks/use-screen-meta';
 import { useTextInputActive } from '../hooks/use-text-input-active';
 import { useToast } from '../hooks/use-toast';
 import { MenuKeys, useMenuInput } from '../menu-keys';
+import {
+  buildHeaderUpdates,
+  buildHttpMcpFormConfig,
+  type HttpHeaderEntry,
+  headersFromEntries,
+  validateHttpMcpUrl,
+} from './mcp-headers';
 
 export interface McpScreenProps {
   apiClient: AdminApiClient;
@@ -34,9 +41,14 @@ type Mode =
   | 'list'
   | 'add-name'
   | 'add-url'
+  | 'add-headers'
+  | 'header-key'
+  | 'header-value'
   | 'delete-confirm'
   | 'detail'
+  | 'edit-http'
   | 'edit-url'
+  | 'edit-headers'
   | 'edit-command';
 
 export function McpScreen({ apiClient, onBack }: McpScreenProps) {
@@ -48,7 +60,18 @@ export function McpScreen({ apiClient, onBack }: McpScreenProps) {
   const [selectedServer, setSelectedServer] = useState<string | null>(null);
   const [pendingName, setPendingName] = useState('');
   const [pendingUrl, setPendingUrl] = useState('');
+  const [pendingHeaders, setPendingHeaders] = useState<HttpHeaderEntry[]>([]);
+  const [headersReturnMode, setHeadersReturnMode] = useState<
+    'add-headers' | 'edit-headers'
+  >('add-headers');
+  const [highlightedHeaderIndex, setHighlightedHeaderIndex] = useState(0);
+  const [highlightedEditOption, setHighlightedEditOption] = useState(0);
+  const [editingHeaderIndex, setEditingHeaderIndex] = useState<number>();
+  const [pendingHeaderKey, setPendingHeaderKey] = useState('');
+  const [pendingHeaderValue, setPendingHeaderValue] = useState('');
   const [pendingCommand, setPendingCommand] = useState('');
+  const [formError, setFormError] = useState<string>();
+  const [submitting, setSubmitting] = useState(false);
 
   const serversPoll = usePolling<McpServersResponse>(
     () => apiClient.getMcpServers(),
@@ -68,10 +91,143 @@ export function McpScreen({ apiClient, onBack }: McpScreenProps) {
     (s) => s.name === selectedServer,
   );
 
+  const beginHeaderEntry = (index?: number) => {
+    const entry = index === undefined ? undefined : pendingHeaders[index];
+    setEditingHeaderIndex(index);
+    setPendingHeaderKey(entry?.key ?? '');
+    setPendingHeaderValue(entry?.value ?? '');
+    setFormError(undefined);
+    setMode('header-key');
+  };
+
+  const continueHeaderEntry = () => {
+    const key = pendingHeaderKey.trim();
+    if (!key) {
+      setFormError('Header name is required');
+      return;
+    }
+
+    const duplicateIndex = pendingHeaders.findIndex(
+      (entry, index) =>
+        index !== editingHeaderIndex &&
+        entry.key.trim().toLowerCase() === key.toLowerCase(),
+    );
+    if (duplicateIndex !== -1) {
+      setFormError(`Header "${key}" already exists`);
+      return;
+    }
+
+    setPendingHeaderKey(key);
+    setFormError(undefined);
+    setMode('header-value');
+  };
+
+  const commitHeaderEntry = async () => {
+    const entry = { key: pendingHeaderKey.trim(), value: pendingHeaderValue };
+    if (headersReturnMode === 'edit-headers' && selectedServer) {
+      setSubmitting(true);
+      try {
+        const previousKey =
+          editingHeaderIndex === undefined
+            ? undefined
+            : pendingHeaders[editingHeaderIndex]?.key;
+        const headerUpdates = buildHeaderUpdates(
+          previousKey,
+          entry.key,
+          entry.value,
+        );
+        await apiClient.updateMcpServer(selectedServer, { headerUpdates });
+        pushToast('MCP header updated', 'info');
+        serversPoll.refresh();
+      } catch (err) {
+        setFormError(
+          err instanceof AdminApiClientError ? err.message : 'Update failed',
+        );
+        setSubmitting(false);
+        return;
+      }
+      setSubmitting(false);
+    }
+
+    setPendingHeaders((headers) => {
+      if (editingHeaderIndex === undefined) return [...headers, entry];
+      return headers.map((header, index) =>
+        index === editingHeaderIndex ? entry : header,
+      );
+    });
+    setEditingHeaderIndex(undefined);
+    setPendingHeaderKey('');
+    setPendingHeaderValue('');
+    setFormError(undefined);
+    setMode(headersReturnMode);
+  };
+
+  const deleteHeaderEntry = async (index: number) => {
+    const entry = pendingHeaders[index];
+    if (!entry) return;
+
+    if (headersReturnMode === 'edit-headers' && selectedServer) {
+      setSubmitting(true);
+      try {
+        await apiClient.updateMcpServer(selectedServer, {
+          headerUpdates: { [entry.key]: null },
+        });
+        pushToast('MCP header removed', 'info');
+        serversPoll.refresh();
+      } catch (err) {
+        setFormError(
+          err instanceof AdminApiClientError ? err.message : 'Delete failed',
+        );
+        setSubmitting(false);
+        return;
+      }
+      setSubmitting(false);
+    }
+
+    setPendingHeaders((headers) =>
+      headers.filter((_, headerIndex) => headerIndex !== index),
+    );
+    setHighlightedHeaderIndex((highlightedIndex) =>
+      Math.max(0, Math.min(highlightedIndex, pendingHeaders.length - 2)),
+    );
+  };
+
+  const submitHttpServer = async () => {
+    if (submitting) return;
+    setSubmitting(true);
+    setFormError(undefined);
+
+    try {
+      const config = buildHttpMcpFormConfig(
+        pendingUrl,
+        headersFromEntries(pendingHeaders),
+      );
+      await apiClient.createMcpServer({
+        name: pendingName.trim(),
+        ...config,
+      });
+      pushToast('MCP server added', 'info');
+      setPendingName('');
+      setMode('list');
+      setPendingUrl('');
+      setPendingHeaders([]);
+      setHighlightedHeaderIndex(0);
+      serversPoll.refresh();
+    } catch (err) {
+      setFormError(
+        err instanceof AdminApiClientError ? err.message : 'Save failed',
+      );
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
   useEffect(() => {
     setActive(
       mode === 'add-name' ||
         mode === 'add-url' ||
+        mode === 'header-key' ||
+        mode === 'header-value' ||
         mode === 'edit-url' ||
         mode === 'edit-command',
     );
@@ -82,9 +238,14 @@ export function McpScreen({ apiClient, onBack }: McpScreenProps) {
       list: 'MCP Servers',
       'add-name': 'Add MCP Server — Name',
       'add-url': `Add MCP Server — URL (${pendingName})`,
+      'add-headers': `Add MCP Server — Headers (${pendingName})`,
+      'header-key': 'Header Name',
+      'header-value': `Header Value (${pendingHeaderKey.trim() || 'new header'})`,
       'delete-confirm': `Delete "${selectedServer}"`,
       detail: `MCP Server: ${selectedServer}`,
+      'edit-http': `Edit MCP Server: ${selectedServer}`,
       'edit-url': `Edit URL: ${selectedServer}`,
+      'edit-headers': `Edit Headers: ${selectedServer}`,
       'edit-command': `Edit Command: ${selectedServer}`,
     };
     const keysByMode: Record<Mode, { key: string; label: string }[]> = {
@@ -98,8 +259,23 @@ export function McpScreen({ apiClient, onBack }: McpScreenProps) {
         { key: 'esc', label: 'Cancel' },
       ],
       'add-url': [
-        { key: 'enter', label: 'Add' },
+        { key: 'enter', label: 'Next' },
         { key: 'esc', label: 'Cancel' },
+      ],
+      'add-headers': [
+        { key: 'a', label: 'Add header' },
+        { key: 'enter', label: 'Edit' },
+        { key: 'd', label: 'Delete' },
+        { key: 's', label: 'Add server' },
+        { key: 'esc', label: 'Back' },
+      ],
+      'header-key': [
+        { key: 'enter', label: 'Next' },
+        { key: 'esc', label: 'Back' },
+      ],
+      'header-value': [
+        { key: 'enter', label: 'Set value' },
+        { key: 'esc', label: 'Back' },
       ],
       'delete-confirm': [
         { key: 'y', label: 'Confirm' },
@@ -110,9 +286,19 @@ export function McpScreen({ apiClient, onBack }: McpScreenProps) {
         { key: 'd', label: 'Delete' },
         { key: 'esc', label: 'Back' },
       ],
+      'edit-http': [
+        { key: 'enter', label: 'Edit' },
+        { key: 'esc', label: 'Back' },
+      ],
       'edit-url': [
         { key: 'enter', label: 'Save' },
         { key: 'esc', label: 'Cancel' },
+      ],
+      'edit-headers': [
+        { key: 'a', label: 'Add header' },
+        { key: 'enter', label: 'Edit' },
+        { key: 'd', label: 'Delete' },
+        { key: 'esc', label: 'Back' },
       ],
       'edit-command': [
         { key: 'enter', label: 'Save' },
@@ -124,31 +310,51 @@ export function McpScreen({ apiClient, onBack }: McpScreenProps) {
       breadcrumb: ['Home', 'Settings'],
       keys: keysByMode[mode],
     });
-  }, [setMeta, mode, pendingName, selectedServer]);
+  }, [setMeta, mode, pendingHeaderKey, pendingName, selectedServer]);
 
   useMenuInput({
     [MenuKeys.Back]: () => {
+      if (submitting) return;
+      setFormError(undefined);
       if (mode === 'list') onBack();
       else if (mode === 'add-name' || mode === 'add-url') setMode('list');
+      else if (mode === 'add-headers') setMode('add-url');
+      else if (mode === 'header-key') setMode(headersReturnMode);
+      else if (mode === 'header-value') setMode('header-key');
       else if (mode === 'detail') {
         setMode('list');
         setSelectedServer(null);
       } else if (
+        mode === 'edit-http' ||
         mode === 'edit-url' ||
         mode === 'edit-command' ||
         mode === 'delete-confirm'
       ) {
         setMode('detail');
+      } else if (mode === 'edit-headers') {
+        setMode('edit-http');
       } else setMode('list');
     },
     [MenuKeys.Add]: () => {
-      if (mode === 'list') setMode('add-name');
+      if (mode === 'list') {
+        setFormError(undefined);
+        setPendingHeaders([]);
+        setHeadersReturnMode('add-headers');
+        setMode('add-name');
+      } else if (mode === 'add-headers' || mode === 'edit-headers') {
+        beginHeaderEntry();
+      }
     },
     [MenuKeys.Edit]: () => {
       if (mode === 'detail' && selectedInfo) {
+        setFormError(undefined);
         if (selectedInfo.transport === 'http') {
           setPendingUrl('');
-          setMode('edit-url');
+          setPendingHeaders(
+            (selectedInfo.headerNames ?? []).map((key) => ({ key, value: '' })),
+          );
+          setHeadersReturnMode('edit-headers');
+          setMode('edit-http');
         } else {
           setPendingCommand('');
           setMode('edit-command');
@@ -158,7 +364,15 @@ export function McpScreen({ apiClient, onBack }: McpScreenProps) {
     [MenuKeys.Delete]: () => {
       if (mode === 'detail' && selectedServer) {
         setMode('delete-confirm');
+      } else if (
+        (mode === 'add-headers' || mode === 'edit-headers') &&
+        pendingHeaders.length > 0
+      ) {
+        void deleteHeaderEntry(highlightedHeaderIndex);
       }
+    },
+    s: () => {
+      if (mode === 'add-headers') void submitHttpServer();
     },
   });
 
@@ -172,7 +386,10 @@ export function McpScreen({ apiClient, onBack }: McpScreenProps) {
             Name:{' '}
             <TextInput
               value={pendingName}
-              onChange={setPendingName}
+              onChange={(value) => {
+                setPendingName(value);
+                setFormError(undefined);
+              }}
               placeholder="server-name"
               onSubmit={() => {
                 if (pendingName.trim()) setMode('add-url');
@@ -193,35 +410,133 @@ export function McpScreen({ apiClient, onBack }: McpScreenProps) {
             URL:{' '}
             <TextInput
               value={pendingUrl}
-              onChange={setPendingUrl}
-              placeholder="http://localhost:3000/sse"
-              onSubmit={async () => {
-                if (!pendingUrl.trim()) return;
+              onChange={(value) => {
+                setPendingUrl(value);
+                setFormError(undefined);
+              }}
+              placeholder="http://localhost:3000/mcp"
+              onSubmit={() => {
                 try {
-                  await apiClient.createMcpServer({
-                    name: pendingName,
-                    transport: 'sse',
-                    url: pendingUrl,
-                  });
-                  pushToast('MCP server added', 'info');
-                  setPendingName('');
-                  setPendingUrl('');
-                  setMode('list');
-                  serversPoll.refresh();
-                } catch (err) {
-                  pushToast(
-                    err instanceof AdminApiClientError
-                      ? err.message
-                      : 'Add failed',
-                    'error',
+                  validateHttpMcpUrl(pendingUrl);
+                  setFormError(undefined);
+                  setMode('add-headers');
+                } catch (error) {
+                  setFormError(
+                    error instanceof Error ? error.message : 'Invalid URL',
                   );
-                  setMode('list');
                 }
               }}
               showCursor
             />
           </Text>
         </Box>
+        {formError ? <Text color="red">{formError}</Text> : null}
+      </Box>
+    );
+  }
+
+  if (mode === 'add-headers' || mode === 'edit-headers') {
+    const headerItems = pendingHeaders.map((header, index) => ({
+      label: `${header.key}: ••••••••`,
+      value: String(index),
+    }));
+    return (
+      <Box flexDirection="column">
+        <Box marginTop={1} flexDirection="column">
+          {headerItems.length === 0 ? (
+            <EmptyState>No custom headers configured.</EmptyState>
+          ) : (
+            <MenuList
+              items={headerItems}
+              selectedIndex={highlightedHeaderIndex}
+              visibleCount={8}
+              onHighlight={(item) =>
+                setHighlightedHeaderIndex(Number(item.value))
+              }
+              onSelect={(item) => beginHeaderEntry(Number(item.value))}
+            />
+          )}
+          {mode === 'add-headers' ? (
+            <Text dimColor>
+              Press <KeyHint keyName="s" /> to add the server.
+            </Text>
+          ) : null}
+          {formError ? <Text color="red">{formError}</Text> : null}
+          {submitting ? <ActivityIndicator label="Saving header..." /> : null}
+        </Box>
+      </Box>
+    );
+  }
+
+  if (mode === 'header-key') {
+    return (
+      <Box flexDirection="column">
+        <Box marginTop={1}>
+          <Text>
+            Name:{' '}
+            <TextInput
+              value={pendingHeaderKey}
+              onChange={(value) => {
+                setPendingHeaderKey(value);
+                setFormError(undefined);
+              }}
+              placeholder="Authorization"
+              onSubmit={continueHeaderEntry}
+              showCursor
+            />
+          </Text>
+        </Box>
+        {formError ? <Text color="red">{formError}</Text> : null}
+      </Box>
+    );
+  }
+
+  if (mode === 'header-value') {
+    return (
+      <Box flexDirection="column">
+        <Box marginTop={1}>
+          <Text>
+            Value:{' '}
+            <TextInput
+              value={pendingHeaderValue}
+              onChange={(value) => {
+                setPendingHeaderValue(value);
+                setFormError(undefined);
+              }}
+              placeholder="Bearer token"
+              onSubmit={() => void commitHeaderEntry()}
+              mask="*"
+              showCursor
+              focus={!submitting}
+            />
+          </Text>
+        </Box>
+        {formError ? <Text color="red">{formError}</Text> : null}
+        {submitting ? <ActivityIndicator label="Saving header..." /> : null}
+      </Box>
+    );
+  }
+
+  if (mode === 'edit-http' && selectedServer) {
+    return (
+      <Box marginTop={1} flexDirection="column">
+        <MenuList
+          items={[
+            { label: 'URL', value: 'url' },
+            {
+              label: `Headers (${pendingHeaders.length})`,
+              value: 'headers',
+            },
+          ]}
+          selectedIndex={highlightedEditOption}
+          visibleCount={2}
+          onHighlight={(item) =>
+            setHighlightedEditOption(item.value === 'url' ? 0 : 1)
+          }
+          onSelect={(item) =>
+            setMode(item.value === 'url' ? 'edit-url' : 'edit-headers')
+          }
+        />
       </Box>
     );
   }
@@ -236,33 +551,37 @@ export function McpScreen({ apiClient, onBack }: McpScreenProps) {
             New URL:{' '}
             <TextInput
               value={pendingUrl}
-              onChange={setPendingUrl}
-              placeholder="http://localhost:3000/sse"
+              onChange={(value) => {
+                setPendingUrl(value);
+                setFormError(undefined);
+              }}
+              placeholder="http://localhost:3000/mcp"
               onSubmit={async () => {
-                if (!pendingUrl.trim()) return;
                 try {
+                  validateHttpMcpUrl(pendingUrl);
+                  setSubmitting(true);
                   await apiClient.updateMcpServer(selectedServer, {
-                    type: 'streamable-http',
-                    url: pendingUrl,
+                    url: pendingUrl.trim(),
                   });
-                  pushToast('MCP server updated', 'info');
+                  pushToast('MCP URL updated', 'info');
                   setPendingUrl('');
-                  setMode('detail');
+                  setMode('edit-http');
                   serversPoll.refresh();
-                } catch (err) {
-                  pushToast(
-                    err instanceof AdminApiClientError
-                      ? err.message
-                      : 'Update failed',
-                    'error',
+                } catch (error) {
+                  setFormError(
+                    error instanceof Error ? error.message : 'Update failed',
                   );
-                  setMode('detail');
+                } finally {
+                  setSubmitting(false);
                 }
               }}
               showCursor
+              focus={!submitting}
             />
           </Text>
         </Box>
+        {formError ? <Text color="red">{formError}</Text> : null}
+        {submitting ? <ActivityIndicator label="Saving URL..." /> : null}
       </Box>
     );
   }
@@ -352,6 +671,11 @@ export function McpScreen({ apiClient, onBack }: McpScreenProps) {
             </DetailRow>
             <DetailRow label="transport">{selectedInfo.transport}</DetailRow>
             <DetailRow label="tools">{selectedInfo.toolCount}</DetailRow>
+            {selectedInfo.transport === 'http' ? (
+              <DetailRow label="headers">
+                {(selectedInfo.headerNames ?? []).join(', ') || 'none'}
+              </DetailRow>
+            ) : null}
             <DetailRow label="push notifications">
               {selectedInfo.supportsPushNotifications ? 'yes' : 'no'}
             </DetailRow>

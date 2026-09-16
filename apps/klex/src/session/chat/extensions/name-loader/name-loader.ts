@@ -35,6 +35,7 @@ class NameLoaderExt implements Extension {
   }
 }
 
+/** Loads the configured agent name into a session's system prompt. */
 export const createNameLoaderExt: ExtensionFactory = {
   identifier: 'io.stagewise/name-loader',
   displayName: 'Name Loader',

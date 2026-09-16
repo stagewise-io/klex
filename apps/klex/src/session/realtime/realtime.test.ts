@@ -5,6 +5,7 @@ import type { LiveKitRoomTransportDescriptor } from '@stagewise/mcp-extension-re
 
 import type { Mcp } from '@/mcp';
 import type { MediaTransportConnector } from '@/media-transport';
+import type { ConversationHost } from '@/session/interaction';
 
 import {
   createProductionMediaTransportConnector,
@@ -15,6 +16,9 @@ import type { RealtimeSessionCoordinator } from './session-coordinator';
 
 const logging = { child: vi.fn() } as unknown as RootLogger;
 const mcp = {} as Mcp;
+const conversationHost: ConversationHost = {
+  acquireInteractionLease: vi.fn(),
+};
 
 function harness() {
   const order: string[] = [];
@@ -39,6 +43,11 @@ function harness() {
     mcp,
     provider: {
       kind: 'openai-realtime',
+      model: {
+        modelId: 'gpt-realtime',
+        contextSize: 32_000,
+        inputCapabilities: {},
+      },
       config: {
         modelId: 'gpt-realtime',
         apiKey: 'test-key',
@@ -46,6 +55,7 @@ function harness() {
       },
     },
     ownedConnector: connector,
+    conversationHost,
     createCoordinator,
   });
   return {
@@ -88,6 +98,11 @@ describe('createRealtime', () => {
       mcp,
       provider: {
         kind: 'openai-realtime',
+        model: {
+          modelId: 'gpt-realtime',
+          contextSize: 32_000,
+          inputCapabilities: {},
+        },
         config: {
           modelId: 'gpt-realtime',
           apiKey: 'test-key',
@@ -95,11 +110,79 @@ describe('createRealtime', () => {
         },
       },
       ownedConnector: connector,
+      conversationHost,
       createCoordinator: () => coordinator,
     });
     await realtime.start();
     await Promise.all([realtime.close(), realtime.close()]);
     expect(connector.close).toHaveBeenCalledOnce();
+  });
+
+  it('selects the GPT-Live factory for an openai-live provider', async () => {
+    vi.mocked(logging.child).mockClear();
+    const { connector, coordinator } = harness();
+    const createCoordinator = vi.fn((..._args: unknown[]) => coordinator);
+    const realtime = createRealtime({
+      logging,
+      mcp,
+      provider: {
+        kind: 'openai-live',
+        model: {
+          modelId: 'gpt-live-1',
+          contextSize: 128_000,
+          inputCapabilities: { audio: {} },
+        },
+        config: {
+          modelId: 'gpt-live-1',
+          apiKey: 'test-key',
+          baseUrl: 'https://example.test/v1',
+          responsesModelId: 'gpt-5.6-luna',
+        },
+      },
+      ownedConnector: connector,
+      conversationHost,
+      createCoordinator,
+    });
+    await realtime.start();
+    expect(logging.child).toHaveBeenCalledWith({
+      name: 'gpt-live',
+      bindings: { module: 'gpt-live' },
+    });
+    expect(createCoordinator.mock.calls[0]?.[1]).toBeDefined();
+    await realtime.close();
+  });
+
+  it('selects the Gemini-Live factory for a gemini-live provider', async () => {
+    vi.mocked(logging.child).mockClear();
+    const { connector, coordinator } = harness();
+    const createCoordinator = vi.fn((..._args: unknown[]) => coordinator);
+    const realtime = createRealtime({
+      logging,
+      mcp,
+      provider: {
+        kind: 'gemini-live',
+        model: {
+          modelId: 'gemini-3.8-live',
+          contextSize: 131_072,
+          inputCapabilities: { audio: {} },
+        },
+        config: {
+          modelId: 'gemini-3.8-live',
+          apiKey: 'test-key',
+          websocketUrl: 'wss://example.test/gemini-live',
+        },
+      },
+      ownedConnector: connector,
+      conversationHost,
+      createCoordinator,
+    });
+    await realtime.start();
+    expect(logging.child).toHaveBeenCalledWith({
+      name: 'gemini-live',
+      bindings: { module: 'gemini-live' },
+    });
+    expect(createCoordinator.mock.calls[0]?.[1]).toBeDefined();
+    await realtime.close();
   });
 
   it('closes the connector when coordinator startup fails', async () => {

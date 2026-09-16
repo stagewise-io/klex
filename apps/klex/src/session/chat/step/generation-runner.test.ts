@@ -289,6 +289,7 @@ describe('GenerationRunner — error finish reason with model fallback', () => {
 
     expect(fallbackSpy).toHaveBeenCalledOnce();
     expect(result.forceNextStep).toBe(true);
+    expect(result.modelFallbackOccurred).toBe(true);
     expect(result.fatalError).toBe(false);
     expect(messages).toContain(genMsg);
   });

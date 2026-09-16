@@ -36,6 +36,7 @@ class ProxyServerModule implements ProxyServer {
   readonly #host: string;
   readonly #port: number;
   readonly #environmentPath: string;
+  readonly #routePrefix: string;
   #address?: ProxyServerAddress;
   #closed = false;
 
@@ -43,6 +44,7 @@ class ProxyServerModule implements ProxyServer {
     this.#host = options.host ?? '127.0.0.1';
     this.#port = options.port ?? 0;
     this.#environmentPath = options.environmentWebSocketPath ?? '/environment';
+    this.#routePrefix = options.routePrefix ?? '/environments/';
     this.proxy = createProxy({
       exchangeOpenTimeoutMs: options.exchangeOpenTimeoutMs,
     });
@@ -51,6 +53,20 @@ class ProxyServerModule implements ProxyServer {
       proxy: this.proxy,
     });
     this.httpServer = createServer((request, response) => {
+      let pathname: string | undefined;
+      try {
+        pathname = new URL(request.url ?? '/', 'http://proxy.local').pathname;
+      } catch {
+        pathname = undefined;
+      }
+      if (
+        request.method === 'GET' &&
+        (pathname === '/health' || pathname === '/ready')
+      ) {
+        response.writeHead(200, { 'content-type': 'application/json' });
+        response.end(JSON.stringify({ status: 'ok' }));
+        return;
+      }
       void this.#handlers.handleHttp(request, response);
     });
     this.httpServer.on('upgrade', (request, socket, head) => {
@@ -84,7 +100,7 @@ class ProxyServerModule implements ProxyServer {
         origin,
         mcpUrl: (environmentId) =>
           new URL(
-            `/environments/${encodeURIComponent(environmentId)}/mcp`,
+            `${this.#routePrefix}${encodeURIComponent(environmentId)}/mcp`,
             origin,
           ),
         environmentUrl: new URL(

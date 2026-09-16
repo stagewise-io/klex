@@ -1,0 +1,23 @@
+---
+title: The Bot's Soul
+description: Control how Klex bots act and behave using their soul.
+---
+
+The soul is a compact description of the bot's purpose, its character, and its behavior.
+It is stored inside the bot's data directory and is always loaded into its context, setting the baseline for the bot's behavior and reactions.
+
+The soul is not written directly. Instead, the bot can receive a god message that describes who the bot is and how it behaves. Based on that god message, the bot can either create or update its soul.
+
+The soul cannot be updated outside the god messages chat.
+
+## Creating a bot's soul
+
+At the beginning of a bot's lifecycle, the creator of the bot must trigger the bot to write its soul. This can be done in two ways:
+
+### [Creator mode (Cloud-only)](#creator-mode)
+
+In the setup wizard, the cloud offers **Creator Mode**. Creator Mode gives you the option to design the character of the bot like a video game character.
+
+### [God message mode](#god-message-mode)
+
+You can also send a god message via the setup wizard in the Cloud or the CLI. This god message should describe the expected behavior of the bot in a sufficiently detailed manner to ensure good results.

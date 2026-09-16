@@ -38,6 +38,7 @@ function makeServerInfo(overrides: Partial<McpServerInfo> = {}): McpServerInfo {
     supportsPushNotifications: false,
     supportsRealtimeMedia: false,
     transport: 'http',
+    headerNames: [],
     usesInteractiveOAuth: false,
     authorization: null,
     lastError: null,
@@ -69,6 +70,12 @@ function makeDeps(
 ): McpRouteDependencies {
   return {
     config: {
+      get: () =>
+        ({
+          mcpServers: {
+            existing: { url: 'https://existing.example.com/mcp' },
+          },
+        }) as unknown as Readonly<KlexConfig>,
       addMcpServer: vi.fn(async () => klexConfigStub),
       updateMcpServer: vi.fn(async () => klexConfigStub),
       removeMcpServer: vi.fn(async () => klexConfigStub),
@@ -503,6 +510,132 @@ describe('PATCH /v1/mcp-servers/:name — update MCP server', () => {
     });
     const body = (await response.json()) as { servers: McpServerInfo[] };
     expect(body.servers).toEqual(statuses);
+  });
+
+  it('updates one header without replacing other stored headers', async () => {
+    const updateMcpServerFn = vi.fn(async () => klexConfigStub);
+    const app = createApp(
+      makeDeps({
+        get: () =>
+          ({
+            mcpServers: {
+              existing: {
+                url: 'https://example.com/mcp',
+                headers: {
+                  Authorization: 'Bearer old',
+                  'X-Tenant': 'acme',
+                },
+              },
+            },
+          }) as unknown as Readonly<KlexConfig>,
+        updateMcpServer: updateMcpServerFn,
+      }),
+    );
+
+    const response = await app.request('/v1/mcp-servers/existing', {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        headerUpdates: { Authorization: 'Bearer new' },
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(updateMcpServerFn).toHaveBeenCalledWith('existing', {
+      url: 'https://example.com/mcp',
+      headers: {
+        Authorization: 'Bearer new',
+        'X-Tenant': 'acme',
+      },
+    });
+  });
+
+  it('applies removals before sets for case-only header renames', async () => {
+    const updateMcpServerFn = vi.fn(async () => klexConfigStub);
+    const app = createApp(
+      makeDeps({
+        get: () =>
+          ({
+            mcpServers: {
+              existing: {
+                url: 'https://example.com/mcp',
+                headers: {
+                  Authorization: 'Bearer old',
+                  'X-Tenant': 'acme',
+                },
+              },
+            },
+          }) as unknown as Readonly<KlexConfig>,
+        updateMcpServer: updateMcpServerFn,
+      }),
+    );
+
+    const response = await app.request('/v1/mcp-servers/existing', {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        headerUpdates: {
+          authorization: 'Bearer new',
+          Authorization: null,
+        },
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(updateMcpServerFn).toHaveBeenCalledWith('existing', {
+      url: 'https://example.com/mcp',
+      headers: {
+        authorization: 'Bearer new',
+        'X-Tenant': 'acme',
+      },
+    });
+  });
+
+  it('rejects full header replacement patches', async () => {
+    const updateMcpServerFn = vi.fn(async () => klexConfigStub);
+    const app = createApp(makeDeps({ updateMcpServer: updateMcpServerFn }));
+
+    const response = await app.request('/v1/mcp-servers/existing', {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ headers: { Authorization: 'Bearer new' } }),
+    });
+
+    expect(response.status).toBe(400);
+    expect(updateMcpServerFn).not.toHaveBeenCalled();
+  });
+
+  it('removes one header without replacing other stored headers', async () => {
+    const updateMcpServerFn = vi.fn(async () => klexConfigStub);
+    const app = createApp(
+      makeDeps({
+        get: () =>
+          ({
+            mcpServers: {
+              existing: {
+                url: 'https://example.com/mcp',
+                headers: {
+                  Authorization: 'Bearer old',
+                  'X-Tenant': 'acme',
+                },
+              },
+            },
+          }) as unknown as Readonly<KlexConfig>,
+        updateMcpServer: updateMcpServerFn,
+      }),
+    );
+
+    const response = await app.request('/v1/mcp-servers/existing', {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ headerUpdates: { Authorization: null } }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(updateMcpServerFn).toHaveBeenCalledWith('existing', {
+      url: 'https://example.com/mcp',
+      headers: { 'X-Tenant': 'acme' },
+    });
   });
 
   it('maps ConfigValidationError to 404', async () => {

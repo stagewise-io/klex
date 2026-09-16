@@ -566,6 +566,188 @@ describe('config v2', () => {
     await config.close();
   });
 
+  it('resolves realtime providers with non-secret model metadata separated from credentials', async () => {
+    const dataDirectory = await directory(true);
+    const config = createConfig({
+      logging,
+      dataDirectory,
+      env: { REALTIME_KEY: 'sk-realtime' },
+    });
+    await config.start();
+    await config.writeProviderInstance('openai-voice', {
+      type: 'openai',
+      settings: { apiKey: '${env:REALTIME_KEY}' },
+      knownModels: {
+        'gpt-realtime': {
+          displayName: 'Realtime Voice',
+          contextSize: 32_000,
+          capabilities: {
+            voice: { sts: true },
+            input: { audio: { mediaTypes: ['audio/pcm'] } },
+          },
+        },
+      },
+    });
+    await config.writeModelSelection({
+      ...emptyModelSelection,
+      voice: {
+        ...emptyModelSelection.voice,
+        sts: [{ providerId: 'openai-voice', modelId: 'gpt-realtime' }],
+      },
+    });
+
+    const resolved = config.resolveRealtimeProvider();
+
+    expect(resolved).toMatchObject({
+      kind: 'openai-realtime',
+      model: {
+        modelId: 'gpt-realtime',
+        displayName: 'Realtime Voice',
+        contextSize: 32_000,
+        inputCapabilities: { audio: { mediaTypes: ['audio/pcm'] } },
+      },
+      config: { modelId: 'gpt-realtime', apiKey: 'sk-realtime' },
+    });
+    // Credentials and endpoints stay confined to the provider construction slice.
+    expect(resolved?.model).not.toHaveProperty('apiKey');
+    expect(resolved?.model).not.toHaveProperty('websocketUrl');
+    await config.close();
+  });
+
+  it('resolves GPT-Live with Responses delegation options', async () => {
+    const config = createConfig({
+      logging,
+      dataDirectory: await directory(true),
+      env: { REALTIME_KEY: 'sk-live' },
+    });
+    await config.start();
+    await config.writeProviderInstance('openai-voice', {
+      type: 'openai',
+      settings: {
+        apiKey: '${env:REALTIME_KEY}',
+        baseUrl: 'https://openai.example/v1',
+      },
+      knownModels: {
+        'gpt-live-1': {
+          contextSize: 128_000,
+          capabilities: { voice: { sts: true }, input: { audio: {} } },
+        },
+      },
+    });
+    await config.writeModelSelection({
+      ...emptyModelSelection,
+      voice: {
+        ...emptyModelSelection.voice,
+        sts: [
+          {
+            providerId: 'openai-voice',
+            modelId: 'gpt-live-1',
+            providerOptions: {
+              openai: { live: { responsesModelId: 'gpt-5.6-terra' } },
+            },
+          },
+        ],
+      },
+    });
+
+    expect(config.resolveRealtimeProvider()).toMatchObject({
+      kind: 'openai-live',
+      model: { modelId: 'gpt-live-1', contextSize: 128_000 },
+      config: {
+        modelId: 'gpt-live-1',
+        apiKey: 'sk-live',
+        baseUrl: 'https://openai.example/v1',
+        responsesModelId: 'gpt-5.6-terra',
+      },
+    });
+    expect(config.resolveRealtimeProvider()?.model).not.toHaveProperty(
+      'apiKey',
+    );
+
+    await config.writeModelSelection({
+      ...emptyModelSelection,
+      voice: {
+        ...emptyModelSelection.voice,
+        sts: [{ providerId: 'openai-voice', modelId: 'gpt-live-1' }],
+      },
+    });
+    expect(config.resolveRealtimeProvider()).toMatchObject({
+      kind: 'openai-live',
+      config: { responsesModelId: 'gpt-5.6-luna' },
+    });
+    await config.writeProviderInstance('gemini-voice', {
+      type: 'google-gemini',
+      settings: { apiKey: 'sk-gemini-test' },
+      knownModels: {
+        'gemini-3.8-live': {
+          displayName: 'Gemini 3.8 Live',
+          contextSize: 131_072,
+          capabilities: {
+            voice: { sts: true },
+          },
+        },
+      },
+    });
+    await config.writeModelSelection({
+      ...emptyModelSelection,
+      voice: {
+        ...emptyModelSelection.voice,
+        sts: [{ providerId: 'gemini-voice', modelId: 'gemini-3.8-live' }],
+      },
+    });
+    expect(config.resolveRealtimeProvider()).toMatchObject({
+      kind: 'gemini-live',
+      model: {
+        modelId: 'gemini-3.8-live',
+        displayName: 'Gemini 3.8 Live',
+        contextSize: 131_072,
+      },
+      config: {
+        modelId: 'gemini-3.8-live',
+        apiKey: 'sk-gemini-test',
+        websocketUrl:
+          'wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key=sk-gemini-test',
+      },
+    });
+    await config.close();
+  });
+
+  it('rejects invalid GPT-Live Responses model options', async () => {
+    const config = createConfig({
+      logging,
+      dataDirectory: await directory(true),
+      env: {},
+    });
+    await config.start();
+    await config.writeProviderInstance('openai-voice', {
+      type: 'openai',
+      settings: { apiKey: 'test-key' },
+      knownModels: {
+        'gpt-live-1': { capabilities: { voice: { sts: true } } },
+      },
+    });
+    await config.writeModelSelection({
+      ...emptyModelSelection,
+      voice: {
+        ...emptyModelSelection.voice,
+        sts: [
+          {
+            providerId: 'openai-voice',
+            modelId: 'gpt-live-1',
+            providerOptions: {
+              openai: { live: { responsesModelId: ' ' } },
+            },
+          },
+        ],
+      },
+    });
+
+    expect(() => config.resolveRealtimeProvider()).toThrow(
+      'responsesModelId must be a non-empty string',
+    );
+    await config.close();
+  });
+
   it('validates explicit object references for voice and arbitrary model IDs', () => {
     const parsed = klexConfigSchema.parse({
       configVersion: 2,

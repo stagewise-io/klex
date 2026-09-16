@@ -2,6 +2,67 @@
 
 All notable Klex changes are documented here.
 
+## 0.7.0 (2026-09-16)
+
+### Features
+
+- replace router with session-based architecture (c4f71c1)
+
+### Bug Fixes
+
+- use canonical realtime session ID (1e40144)
+- harden session lifecycle recovery (708d764)
+
+### Other Changes
+
+- stabilize package release checks (175e419)
+
+## 0.6.1 (2026-09-15)
+
+### Bug Fixes
+
+- bound realtime session teardown (98f76d2)
+- stabilize realtime audio buffering (cef56e9)
+
+## 0.6.0 (2026-09-15)
+
+### Features
+
+- add GPT-Live responses delegation (5d3b68b)
+- add persistent todos with reminders (a788b22)
+
+### Bug Fixes
+
+- resolve PromiseLike jsonSchema before property access (aaf54a3)
+- address final GPT Live review findings (e37c57a)
+- harden GPT Live protocol boundaries (ab9a3e0)
+- address GPT-Live review findings (fa8251b)
+- prevent PCM mixer playout drift (7499b64)
+- harden extension prompt handling (75721e8)
+
+### Other Changes
+
+- streamline extension prompts (eb15492)
+
+## 0.5.0 (2026-09-10)
+
+### Features
+
+- add timezone-aware time context (f10f6e8)
+- support concurrent realtime audio sources (7ccf2dc)
+
+## 0.4.0 (2026-09-09)
+
+### Features
+
+- improve CLI model management (d8cd2a1)
+- add local data migration foundation (4d3d101)
+
+### Bug Fixes
+
+- harden local data migrations (579cf82)
+- wrap god messages within terminal (af2df9f)
+
 ## Unreleased
 
 ### Breaking Changes

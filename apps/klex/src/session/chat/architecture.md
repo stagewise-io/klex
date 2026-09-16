@@ -3,7 +3,7 @@
 ## Hierarchy
 
 ```
-Router
+SessionHost
   └─ Session (long-lived, owns messages + inbox + loop)
        └─ Turn (one inbox-drain-to-idle cycle)
             └─ Step (one generation + tool dispatch)
@@ -12,13 +12,13 @@ Router
 
 ## Session
 
-Owns message history, inbox, extension handler, fallback manager, backoff manager, and the run loop. Lives for the application lifetime (or until a fatal error self-terminates it). Exposes `status: 'active' | 'terminated'` so the router can detect dead sessions and replace them.
+Owns message history, inbox, extension handler, fallback manager, backoff manager, and the run loop. Lives for the application lifetime (or until a fatal error self-terminates it). Exposes `status: 'active' | 'terminated'` so the session host can detect dead sessions and replace them.
 
 **Loop:** processes one turn per iteration. Goes idle only when the inbox deferred buffer is empty, no pending immediate input (`hasPendingInput`), no backoff retry is needed, and no check-retry is needed. If a turn fails completely (all models exhausted) and no new inbox input arrives, applies exponential backoff before retrying. Fatal errors (e.g. 400, invalid prompt) terminate the session immediately.
 
 ## Inbox
 
-Three-urgency event buffer fed by the router. Two entry points: `send(event)` for context events (from MCP push notifications, router) and `sendMessage(message, urgency)` for native messages (from extensions). Both share the same urgency semantics.
+Three-urgency event buffer. Two entry points: `send(event)` for context events (from MCP push notifications, session host) and `sendMessage(message, urgency)` for native messages (from extensions). Both share the same urgency semantics.
 
 ### Urgency levels
 
@@ -60,7 +60,35 @@ Both `send()` and `sendMessage()` with Critical urgency abort the running genera
 
 ### Session termination and event recovery
 
-When a session terminates (fatal error, max failures, or explicit close), the inbox is closed first — any subsequent `send()` / `sendMessage()` throws `SessionInboxClosedError`. Deferred events remaining in the buffer are drained via `getEvents()` and passed to the router's `onTerminated` hook, which creates a replacement session and re-dispatches them via `restorePendingEvents()`. Immediate (Critical/Default) events that were already appended to history are lost with the terminated session's history — only deferred events survive.
+When a session terminates (fatal error, max failures, or explicit close), the inbox is closed first — any subsequent `send()` / `sendMessage()` throws `SessionInboxClosedError`. Deferred events remaining in the buffer are drained via `getEvents()` and passed to the session host's `onTerminated` hook, which creates a replacement session and re-dispatches them via `restorePendingEvents()`. Immediate (Critical/Default) events that were already appended to history are lost with the terminated session's history — only deferred events survive.
+
+## Generation-lane leasing
+
+The default chat session is the sole owner of canonical history, extension instances, and tool execution. Realtime does not create a parallel chat session. It requests an exclusive generation-lane lease through the session host's `ConversationHost` interface.
+
+Lease acquisition is a safe-boundary handoff:
+
+1. mark the generation lane as quiescing;
+2. interrupt only an active model stream;
+3. allow already-dispatched tools and the current step commit to settle;
+4. prevent the next chat step from starting;
+5. prepare one atomic inference context and expose its history revision and update watermark.
+
+This ordering preserves chat-originated call framing. Assistant text, a call-opening tool invocation, and its settled result are canonical before realtime bootstrap. A concurrent lease is rejected. Closing or terminating the default session revokes its lease; normal release resumes the chat lane without generating a duplicate response for inputs already handled during the call.
+
+### Context preparation
+
+Both chat steps and leased interactions use the same context assembly order: provisional extension context, cloned canonical history, history transformers and compaction, model-message conversion, context transformers, tool collection, then base and extension instructions. The returned preparation handle is committed only after provider setup succeeds. Setup failure rolls it back, so provisional context cannot leak into canonical history.
+
+The bootstrap contains provider-neutral `ModelMessage[]`, non-secret model metadata, JSON-Schema tool descriptors, `historyRevision`, and `updateWatermark`. Provider credentials and wire-format conversion remain outside the chat session.
+
+### Canonical updates and commits
+
+Accepted Critical and Default inbox events are first recorded in canonical history, assigned a monotonic session sequence, then published to the active lease. The bootstrap watermark and ordered update stream eliminate the snapshot/subscription race. Stable event IDs support process-local deduplication and reconnect replay. `requestResponse` is explicit; forwarding a notification does not inherently request speech.
+
+Finalized user and assistant transcripts are committed as ordinary turns. Partial deltas remain ephemeral unless a provider exposes no authoritative turn boundary; that adapter may commit bounded approximate transcript groups as `data-context` with explicit speaker and timeline metadata, never as finalized turns or proof of playout. Interrupted finalized assistant text is truncated to synchronized playout before commitment. Realtime tool calls and results use the session-owned executor and canonical commit path. Execution IDs provide lease-lifetime at-most-once side effects, while commit event IDs make transcript and tool records idempotent.
+
+The pending update buffer is bounded to 256 entries by default. Overflow revokes the lease rather than silently dropping or reordering canonical input. Acknowledged updates are pruned from the replay cursor. These guarantees are process-local because canonical history is currently process-local.
 
 ## Turn
 
@@ -76,7 +104,7 @@ The `messages[]` array is shared by reference across Session/Turn/Step. The crit
 
 ## Native media input
 
-The router maps valid inline MCP image and audio blocks to canonical session content containing `mimeType` and base64 `data`. This representation is AI-SDK-independent, remains in canonical history, preserves its position relative to captions and other text, and is redacted from logs and tracing. Inline media is bounded to 10 MiB at ingress.
+The session maps valid inline MCP image and audio blocks to canonical session content containing `mimeType` and base64 `data`. This representation is AI-SDK-independent, remains in canonical history, preserves its position relative to captions and other text, and is redacted from logs and tracing. Inline media is bounded to 10 MiB at ingress.
 
 Core model-message conversion projects canonical context for the model already selected by the normal fallback order:
 
@@ -117,7 +145,7 @@ At-most-once tool execution via `dispatchedToolCallIds` Set. Owns tool lookup, e
 
 ## Extensions
 
-Hook into history transformation (`onHistoryPreProcessing`, `onHistoryPostProcessing`), register custom data part converters, and can inject context via the inbox. Receive `ExtensionDeps` with `getHistory()` and `inbox` access.
+Extensions can transform UI history and model context, register custom data-part transformers, expose tools, and contribute system prompts. `getProvisionalStepContext` prepares dynamic context after the step decision and model resolution, immediately before inference. Core appends all contributed parts as one synthetic user message: it retains that message when generation completes and removes it when generation fails or falls back to another step. Providers receive isolated history snapshots and run sequentially in factory order; they do not mutate canonical history directly. Inbox access remains available for genuine turn-triggering input, not just-in-time generation context.
 
 ## Error Handling
 

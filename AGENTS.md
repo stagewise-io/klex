@@ -23,7 +23,7 @@ Normal flow:
 ```text
 channel or environment
   -> Push Notification
-  -> router and durable memory
+  -> default session and durable memory
   -> model run or subagent
   -> MCP tool call
   -> channel or environment
@@ -49,15 +49,42 @@ WhatsApp, Slack, Telegram, local chat, and similar systems are MCP servers.
 
 Incoming messages become Push Notifications. Agent replies by calling channel tools. Text emitted directly by a model is not automatically a user message.
 
+## Formatting
+
+Use the repository formatter instead of formatting files by hand. After editing any
+formatter-supported file, run `pnpm format` from the repository root. Before
+finishing, run `pnpm format:check` to verify that the tree is clean.
+
+Instructions to use file-editing tools apply to authored content changes. They do
+not prohibit running the repository's formatting, linting, code-generation, test,
+or other validation commands.
+
 ## Code boundaries
 
-- `apps/klex/`: brain, memory, routing, MCP clients, config, admin plane.
-- `apps/klex/src/mcp/`: MCP client layer. Owns connection lifecycle, tool registry, subscribe-before-drain recovery, and process-local `eventId` deduplication as an internal submodule. Exposes `onPushNotification()` to the router — no external inbox wiring.
+- `apps/klex/`: brain, memory, session host, MCP clients, config, admin plane.
+- `apps/klex/src/mcp/`: MCP client layer. Owns connection lifecycle, tool registry, subscribe-before-drain recovery, and process-local `eventId` deduplication as an internal submodule. Exposes `onPushNotification()` to the default session — no external inbox wiring.
 - `mcp-servers/`: external channels and work environments.
 - `packages/mcp-extension-push-notifications/`: identity-scoped pending-queue protocol and SDK helpers.
 - `packages/`: shared protocol and runtime libraries.
 
 Keep protocol packages free of application storage policy. Keep environment-specific actions out of agent core.
+
+## npm package ownership
+
+Every publishable npm package must use either the `@klex/*` or `@stagewise/*`
+scope. Unscoped publishable packages are forbidden because npm organizations only
+own names within their scopes.
+
+Use `@klex/*` for packages specific to the Klex product, control plane, runtime,
+deployment, or branded CLI. Use `@stagewise/*` only for product-neutral libraries
+intentionally shared across Stagewise products. Repository location alone does not
+decide ownership; use the product boundary and intended reuse.
+
+Packages that expose command-line binaries remain organization-scoped. Their `bin`
+keys may expose unscoped commands such as `klex-machine`.
+
+Before enabling automated releases for a new public package, create it under the
+correct npm organization and configure trusted publishing from this repository.
 
 ## Native dependencies
 
@@ -77,6 +104,7 @@ Every structured store under an agent data directory participates in the forward
 
 - `apps/klex/src/local-data/architecture.md`
 - `apps/klex/src/mcp/architecture.md`
+- `apps/klex/src/session/architecture.md`
 - `apps/klex/src/session/chat/architecture.md`
 - `packages/mcp-extension-push-notifications/README.md`
 - `packages/mcp-extension-push-notifications/specification/draft/events.md`

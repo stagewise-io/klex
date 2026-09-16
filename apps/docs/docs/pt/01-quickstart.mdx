@@ -1,0 +1,111 @@
+---
+title: Início Rápido
+description: Instale o Klex e coloque o seu primeiro bot Klex em funcionamento.
+---
+
+## Instalação
+
+Os bots Klex são auto-hospedados. Isto significa que deve descarregar a aplicação Klex numa máquina que posteriormente atuará como armazenamento de memória e ambiente de execução para o bot.
+
+<Panel title="Bom saber">
+O bot **não** tem acesso automático a nenhum ficheiro no seu sistema. Em vez disso, o anfitrião atua apenas como o local onde o pensamento do bot e o armazenamento e recuperação de memória ocorrem.
+
+Qualquer interação com o mundo exterior, incluindo sandboxes ou máquinas completas para **uso de computador** ou desenvolvimento, requer explicitamente a ligação de um computador via MCP.
+</Panel>
+
+Para instalar o Klex, execute o seguinte script no shell do seu sistema：
+
+<Tabs param="install">
+  <Tab title="macOS">`curl -fsSL https://klex.bot/install.sh | sh`</Tab>
+  <Tab title="Linux">`curl -fsSL https://klex.bot/install.sh | sh`</Tab>
+  <Tab title="Windows">`irm https://klex.bot/install.ps1 | iex`</Tab>
+  <Tab title="WSL">`curl -fsSL https://klex.bot/install.sh | sh`</Tab>
+</Tabs>
+
+## Criar o seu bot
+
+<Tabs inline param="bot-setup">
+
+<Tab title="Assistido pela nuvem (recomendado)" syncKey="cloud">
+  <Steps>
+  <Step title="Registe-se no Klex Cloud">
+    Vá ao [Klex Cloud](https://cloud.klex.bot) e registe-se. Na barra lateral esquerda, selecione o painel Bots e clique em `Set up a Klex Bot`.
+  </Step>
+  <Step title="Inicie o Klex">
+    Siga o guia no assistente para instalar e iniciar a aplicação Klex.
+  </Step>
+  <Step title="Crie um novo bot">
+    Na aplicação Klex, selecione `Create a new Bot` na lista de opções e prima Enter.
+  </Step>
+  <Step title="Dê um nome ao bot">
+    Introduza o nome que este bot deve usar. O bot saberá que este é o seu próprio nome.
+  </Step>
+  <Step title="Inscreva o bot na nuvem">
+    Siga as instruções no assistente da nuvem para ligar este bot à sua organização Klex Cloud.
+  </Step>
+  <Step title="Configure fornecedores de modelos e seleção de modelos">
+    O assistente da nuvem irá agora pedir-lhe para configurar os fornecedores de modelos e os modelos que o bot deve usar.
+    <Panel title="Bom saber">
+      As credenciais do fornecedor são transmitidas de forma segura e armazenadas na própria configuração do bot na máquina que aloja o bot, **não** na nuvem.
+    </Panel>
+    <Panel title="Bom saber">
+    O Klex suporta uma variedade de assinaturas, fornecedores próprios, fornecedores LLM locais e fornecedores de API genéricos.
+
+    Saiba mais sobre [fornecedores de modelos](/concepts/model-providers) e [seleção de modelos](/concepts/model-selection).
+    </Panel>
+  </Step>
+  <Step title="Dê a alma ao bot">
+    No próximo passo, o assistente pedir-lhe-á para desenhar a alma do bot. Tem duas opções: [Modo Criador](/concepts/soul#creator-mode) (*recomendado!*) e [Modo Mensagem Deus](/concepts/soul#god-message-mode).
+
+    [Saiba mais sobre a alma](/concepts/soul).
+  </Step>
+  <Step title="Ligue MCPs">Dê ao bot acesso a MCPs. O **Klex Cloud** ajuda-o a criar facilmente contas dedicadas para o bot em cada aplicação integrada, mas pode, claro, ligar qualquer outro MCP.</Step>
+</Steps>
+</Tab>
+
+<Tab title="Autónomo" syncKey="standalone">
+<Panel title="Importante">
+Se pretende utilizar bots Klex sem o Klex Cloud, precisa de garantir que pelo menos um MCP ligado pode acionar proativamente o bot.
+Isto significa que o MCP **deve** implementar **uma das seguintes**：
+
+- Conversas como recursos MCP individuais com notificações de alteração
+- Notificações push conforme a nossa [extensão MCP](https://github.com/stagewise-io/klex/tree/main/packages/mcp-extension-push-notifications)
+</Panel>
+
+<Steps>
+  <Step title="Inicie o Klex">
+    Inicie a CLI com o seguinte comando：`klex --no-cloud`
+  </Step>
+  <Step title="Crie um novo bot">
+    Selecione `Create a new Bot` na lista de opções e prima Enter.
+  </Step>
+  <Step title="Dê um nome ao bot">
+    Introduza o nome que este bot deve usar. O bot saberá que este é o seu próprio nome.
+  </Step>
+  <Step title="Configure fornecedores de modelos">
+    Vá a `Settings -> Providers & Endpoints` e crie uma instância de fornecedor para cada fornecedor de modelos que pretende usar.
+    <Panel title="Bom saber">
+    O Klex suporta uma variedade de assinaturas, fornecedores próprios, fornecedores LLM locais e fornecedores de API genéricos.
+    
+    [Saiba mais sobre fornecedores de modelos](/concepts/model-providers).
+    </Panel>
+  </Step>
+  <Step title="Configure a seleção de modelos">
+    Vá a `Settings -> Model Selection` e configure o modelo para cada caso de uso do bot.
+    <Panel title="Bom saber">
+    Deve configurar um modelo válido para «Chat», mas recomendamos vivamente configurar todas as capacidades para garantir utilização económica e funcionalidade completa.
+
+    [Saiba mais sobre seleção de modelos](/concepts/model-selection).
+    </Panel>
+  </Step>
+  <Step title="Dê a alma ao bot">
+    Vá a `Settings -> God messages` para enviar uma `God message`. O conteúdo da mensagem Deus deve descrever como deve ser a alma do bot (o seu trabalho, o seu carácter, etc.).
+
+    [Saiba mais sobre a alma](/concepts/soul).
+  </Step>
+  <Step title="Ligue MCPs">Vá a `Settings -> MCP Servers` e ligue MCPs para dar ao bot acesso ao mundo exterior.</Step>
+</Steps>
+
+</Tab>
+
+</Tabs>

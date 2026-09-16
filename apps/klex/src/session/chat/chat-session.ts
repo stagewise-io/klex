@@ -1,20 +1,44 @@
 import { randomUUID } from 'node:crypto';
 
 import type { JSONObject } from '@ai-sdk/provider';
-import { type Context, context, type Span, trace } from '@opentelemetry/api';
-import { generateText } from 'ai';
+import {
+  type Context,
+  context,
+  ROOT_CONTEXT,
+  type Span,
+  trace,
+} from '@opentelemetry/api';
+import { generateText, type ToolSet } from 'ai';
 
 import type { ModuleLogger, RootLogger } from '@stagewise/logger';
 
 import type { Config } from '@/config';
 import type { IntrospectionScope } from '@/introspection';
-import type { Mcp } from '@/mcp';
+import type { Mcp, McpPushNotification } from '@/mcp';
 import type { ProviderModelResolver } from '@/provider-registry';
-import type { RouterApi } from '@/router';
 import type { SessionInboxEvent } from '@/session/inbox';
+import {
+  assembleInferenceContext,
+  describeInteractionTools,
+  GenerationLaneLeaseManager,
+  type InteractionLease,
+  type InteractionLeaseRequest,
+  type InteractionToolRequest,
+  type InteractionToolResult,
+  type PreparedInferenceContextHandle,
+  type RealtimeCommitEvent,
+  type SystemPromptAssembler,
+  ToolExecutor,
+  toCanonicalMessage,
+} from '@/session/interaction';
+import { mcpPushNotificationToInboxEvent } from '@/session/push-notification-adapter';
 import type {
   AgentSession,
   ChatSessionHandle,
+  ChildSessionHandle,
+  ChildSessionOptions,
+  SessionContext,
+  SessionFactory,
   SessionHooks,
   SessionInfo,
   SessionRuntimeState,
@@ -43,6 +67,7 @@ import type { ExtendedUIMessage } from './message-types';
 import { createTurn, type Turn, type TurnResult } from './turn';
 import { BackoffManager } from './utils/backoff-manager';
 import { ModelFallbackManager } from './utils/model-fallback-manager';
+import systemPrompt from './utils/system-prompt.md';
 import { getExtensionIdentifier, tracer } from './utils/tracing';
 
 /**
@@ -55,14 +80,25 @@ export interface ChatSessionDependencies {
   logging: RootLogger;
   modelResolver: ProviderModelResolver;
   config: Config;
-  mcp: Mcp;
-  router: RouterApi;
+  mcp: Mcp | null;
   extensionFactories: ExtensionFactory[];
   /** Root data directory of the agent. Used for extension data dirs. */
   dataDirectory: string;
   /** Parent introspection scope (the "sessions" group). The session creates its own child. */
   introspectionScope: IntrospectionScope;
   hooks?: SessionHooks;
+  /** Context describing the session's kind and position in the session tree. */
+  sessionContext: SessionContext;
+  /**
+   * Factory for creating child sessions. Absent if child session creation
+   * is disabled for this session.
+   */
+  sessionFactory?: SessionFactory;
+  /**
+   * Custom system prompt assembler. When omitted, the default
+   * assembler is used.
+   */
+  systemPromptAssembler?: SystemPromptAssembler;
 }
 
 class ChatSessionModule implements AgentSession {
@@ -82,7 +118,7 @@ class ChatSessionModule implements AgentSession {
 
   private _status: SessionStatus = 'active';
 
-  /** Prevents double-close (terminate() + router close()). */
+  /** Prevents double-close (terminate() + owner close()). */
   private closePromise: Promise<void> | null = null;
 
   /**
@@ -115,7 +151,7 @@ class ChatSessionModule implements AgentSession {
    */
   private pendingImmediate: ExtendedUIMessage[] = [];
 
-  readonly sessionId = randomUUID();
+  readonly sessionId: string;
 
   private readonly sessionSpan: Span;
 
@@ -146,6 +182,37 @@ class ChatSessionModule implements AgentSession {
 
   private readonly createdAt: string;
 
+  // --- Generation-lane leasing ---
+
+  private readonly leaseManager: GenerationLaneLeaseManager;
+
+  /** True while the chat generation lane is handed to an interaction lease. */
+  private laneSuspended = false;
+
+  /** Resolvers waiting for the chat lane to reach a quiescent state. */
+  private laneQuiesceWaiters: (() => void)[] = [];
+
+  /** Tool set assembled for the active lease's bootstrap context. */
+  private leaseTools: ToolSet | null = null;
+
+  private leaseToolExecutor: ToolExecutor | null = null;
+
+  // --- Push notification subscription ---
+
+  /** Unsubscribe function for the MCP push notification listener, if subscribed. */
+  private pushNotificationUnsub: (() => void) | null = null;
+
+  /** Shared promise that makes session startup idempotent. */
+  private startPromise: Promise<void> | null = null;
+
+  // --- Child sessions ---
+
+  /** This session's own introspection scope. */
+  private readonly sessionIntrospectionScope: IntrospectionScope;
+
+  /** Introspection scope for child sessions spawned by extensions in this session. */
+  private childSessionsScope: IntrospectionScope | null = null;
+
   constructor(
     private readonly deps: {
       logger: ModuleLogger;
@@ -153,25 +220,33 @@ class ChatSessionModule implements AgentSession {
       modelResolver: ProviderModelResolver;
       config: Config;
       dataDirectory: string;
-      mcp: Mcp;
-      router: RouterApi;
+      mcp: Mcp | null;
       extensionFactories: ExtensionFactory[];
       introspectionScope: IntrospectionScope;
       hooks?: SessionHooks;
+      sessionContext: SessionContext;
+      sessionFactory?: SessionFactory;
+      systemPromptAssembler?: SystemPromptAssembler;
     },
   ) {
-    // Create a session-level span that lives for the entire session lifetime.
-    // All turn / step / generation spans inherit this trace, giving a single
-    // trace tree per session in the tracing backend. The span stays open until
+    this.sessionId = deps.sessionContext.sessionId;
+    // Create an independent root span that lives for the entire session
+    // lifetime. This keeps child sessions spawned by extensions in their own
+    // traces. All turn / step / generation spans inherit this trace, giving a
+    // single trace tree per session in the tracing backend. The span stays open until
     // close() is called — child spans (turns, steps) are exported as they end,
     // so the trace is visible in real time even while the session span is open.
-    this.sessionSpan = tracer.startSpan('session', {
-      attributes: {
-        'session.id': this.sessionId,
-        'session.createdAt': new Date().toISOString(),
+    this.sessionSpan = tracer.startSpan(
+      'session',
+      {
+        attributes: {
+          'session.id': this.sessionId,
+          'session.createdAt': new Date().toISOString(),
+        },
       },
-    });
-    this.sessionContext = trace.setSpan(context.active(), this.sessionSpan);
+      ROOT_CONTEXT,
+    );
+    this.sessionContext = trace.setSpan(ROOT_CONTEXT, this.sessionSpan);
     this.createdAt = new Date().toISOString();
 
     this.fallbackManager = new ModelFallbackManager({
@@ -194,11 +269,12 @@ class ChatSessionModule implements AgentSession {
         traceId: spanCtx.traceId,
         spanId: spanCtx.spanId,
       },
-      'Session started — trace available in tracing backend',
+      'Session created — trace available in tracing backend',
     );
 
     this.sessionInbox = createInbox({
       onImmediateEvent: this.onImmediateEvent,
+      onDeferredEvent: this.onDeferredEvent,
       onImmediateMessage: this.onImmediateMessage,
       onNewInput: this.onNewInput,
       logger: this.deps.logger,
@@ -208,6 +284,7 @@ class ChatSessionModule implements AgentSession {
     // The parent scope is the "sessions" group — create a child for
     // this specific session using its generated ID.
     const sessionScope = deps.introspectionScope.child(this.sessionId);
+    this.sessionIntrospectionScope = sessionScope;
     sessionScope.introspect(() => this.getSessionInfo());
     const extensionsScope = sessionScope.child('extensions');
 
@@ -233,42 +310,99 @@ class ChatSessionModule implements AgentSession {
       logger: this.deps.logger,
       logging: this.deps.logging,
       mcp: this.deps.mcp,
-      router: this.deps.router,
       sessionId: this.sessionId,
+      sessionContext: this.deps.sessionContext,
+      createChildSession: (options) => this.createChildSession(options),
     };
 
-    this.extensionHandler = createExtensionHandler({
-      factories: deps.extensionFactories,
-      extensionDeps,
-      dataDirectory: this.deps.dataDirectory,
-      sessionId: this.sessionId,
-      introspectionScope: extensionsScope,
-      onExtensionUsage: (identifier, usage) => {
-        const existing = this.extensionUsage.get(identifier);
-        if (existing) {
-          existing.latest = usage;
-          existing.total = {
-            inputTokens: existing.total.inputTokens + usage.inputTokens,
-            outputTokens: existing.total.outputTokens + usage.outputTokens,
-            inputCacheWriteTokens:
-              existing.total.inputCacheWriteTokens +
-              usage.inputCacheWriteTokens,
-            inputCacheReadTokens:
-              existing.total.inputCacheReadTokens + usage.inputCacheReadTokens,
-          };
-        } else {
-          this.extensionUsage.set(identifier, {
-            latest: usage,
-            total: { ...usage },
-          });
-        }
+    try {
+      this.extensionHandler = createExtensionHandler({
+        factories: deps.extensionFactories,
+        extensionDeps,
+        dataDirectory: this.deps.dataDirectory,
+        sessionId: this.sessionId,
+        introspectionScope: extensionsScope,
+        onExtensionUsage: (identifier, usage) => {
+          const existing = this.extensionUsage.get(identifier);
+          if (existing) {
+            existing.latest = usage;
+            existing.total = {
+              inputTokens: existing.total.inputTokens + usage.inputTokens,
+              outputTokens: existing.total.outputTokens + usage.outputTokens,
+              inputCacheWriteTokens:
+                existing.total.inputCacheWriteTokens +
+                usage.inputCacheWriteTokens,
+              inputCacheReadTokens:
+                existing.total.inputCacheReadTokens +
+                usage.inputCacheReadTokens,
+            };
+          } else {
+            this.extensionUsage.set(identifier, {
+              latest: usage,
+              total: { ...usage },
+            });
+          }
+        },
+      });
+    } catch (error) {
+      this.sessionInbox.close();
+      deps.introspectionScope.removeChild(this.sessionId);
+      this.sessionSpan.recordException(
+        error instanceof Error ? error : String(error),
+      );
+      this.sessionSpan.end();
+      throw error;
+    }
+
+    this.leaseManager = new GenerationLaneLeaseManager({
+      logger: this.deps.logger,
+      host: {
+        sessionId: this.sessionId,
+        quiesceGenerationLane: (reason) => this.quiesceGenerationLane(reason),
+        resumeGenerationLane: () => this.resumeGenerationLane(),
+        prepareContext: (request) => this.prepareLeaseContext(request),
+        executeTool: (request) => this.executeLeaseTool(request),
+        finalizeLease: () => this.finalizeLeaseState(),
+        commit: (event) => this.commitLeaseEvent(event),
       },
     });
   }
 
-  async start(): Promise<void> {
-    await this.extensionHandler.start();
-    this.deps.logger.info('ChatSession started');
+  start(): Promise<void> {
+    if (this._status === 'terminated') {
+      return Promise.reject(
+        new Error('Cannot start a terminated chat session'),
+      );
+    }
+    if (this.startPromise) return this.startPromise;
+
+    this.startPromise = this.startUnlocked();
+    return this.startPromise;
+  }
+
+  private async startUnlocked(): Promise<void> {
+    // Subscribe before extensions start so the default session is ready for
+    // MCP ingress before MCP workers are started by the composition root.
+    if (this.deps.mcp) {
+      this.pushNotificationUnsub = this.deps.mcp.onPushNotification(
+        (ev: McpPushNotification) => this.handlePushNotification(ev),
+      );
+    }
+
+    try {
+      await this.extensionHandler.start();
+      if (this._status === 'terminated') {
+        throw new Error(
+          `Chat session ${this.sessionId} terminated during startup`,
+        );
+      }
+      this.deps.logger.info('ChatSession started');
+    } catch (error) {
+      this.pushNotificationUnsub?.();
+      this.pushNotificationUnsub = null;
+      this.deps.logger.error({ error }, 'ChatSession startup failed');
+      throw error;
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -487,12 +621,16 @@ class ChatSessionModule implements AgentSession {
   // Loop — hosted in the session per architecture.md
   // ---------------------------------------------------------------------------
 
-  private onImmediateEvent = (event: SessionInboxEvent): void => {
-    const message: ExtendedUIMessage = {
+  private inboxEventMessage(event: SessionInboxEvent): ExtendedUIMessage {
+    return {
       role: 'user',
       id: randomUUID(),
       parts: [{ type: 'data-context', data: event.context }],
     };
+  }
+
+  private onImmediateEvent = (event: SessionInboxEvent): boolean => {
+    const message = this.inboxEventMessage(event);
 
     if (this.loopActive) {
       // Queue — will be flushed after the current step commits its
@@ -500,6 +638,16 @@ class ChatSessionModule implements AgentSession {
       this.pendingImmediate.push(message);
     } else {
       this.messages.push(message);
+    }
+
+    // While a lease owns the generation lane, the event is recorded in
+    // canonical history first and then forwarded to the lease holder so
+    // the live call can react to it.
+    if (this.leaseManager.isLeased()) {
+      return this.leaseManager.forward(
+        event,
+        event.urgency !== SessionInboxUrgency.Deferrable,
+      );
     }
 
     // Critical urgency: abort the current generation immediately.
@@ -510,6 +658,17 @@ class ChatSessionModule implements AgentSession {
         'inbox.urgency': SessionInboxUrgency[event.urgency],
       });
     }
+    return false;
+  };
+
+  private onDeferredEvent = (event: SessionInboxEvent): boolean => {
+    if (!this.leaseManager.isLeased()) return false;
+    const message = this.inboxEventMessage(event);
+    const historyIndex = this.messages.length;
+    this.messages.push(message);
+    if (this.leaseManager.forward(event, false)) return true;
+    this.messages.splice(historyIndex, 1);
+    return false;
   };
 
   private onImmediateMessage = (
@@ -546,7 +705,131 @@ class ChatSessionModule implements AgentSession {
     }
   };
 
+  // ---------------------------------------------------------------------------
+  // Generation-lane leasing — the chat loop and a leased interaction mode
+  // (e.g. a realtime call) must never generate concurrently.
+  // ---------------------------------------------------------------------------
+
+  public acquireInteractionLease(
+    request: InteractionLeaseRequest,
+  ): Promise<InteractionLease> {
+    return this.leaseManager.acquire(request);
+  }
+
+  private async quiesceGenerationLane(reason: string): Promise<void> {
+    this.laneSuspended = true;
+    if (this.runtimeState !== 'terminated') this.runtimeState = 'leased';
+    this.sessionSpan.addEvent('session.generation_lane_suspended', {
+      'session.laneReason': reason,
+    });
+
+    // Stop the in-flight generation so the current step reaches its commit
+    // boundary quickly. The turn then yields via shouldYieldGenerationLane.
+    this.currentTurn?.abortGeneration('generation_lane_leased');
+    this.backoffInterrupt?.();
+
+    if (!this.loopActive) return;
+    await new Promise<void>((resolve) => {
+      this.laneQuiesceWaiters.push(resolve);
+    });
+  }
+
+  private releaseQuiesceWaiters(): void {
+    for (const resolve of this.laneQuiesceWaiters.splice(0)) resolve();
+  }
+
+  private resumeGenerationLane(): void {
+    this.laneSuspended = false;
+    if (this.runtimeState === 'leased') this.runtimeState = 'idle';
+    this.sessionSpan.addEvent('session.generation_lane_resumed', {});
+    if (this._status === 'terminated') return;
+    if (this.hasPendingInput || !this.sessionInbox.isEmpty()) {
+      void this.runLoop();
+    }
+  }
+
+  private async prepareLeaseContext(
+    request: InteractionLeaseRequest,
+  ): Promise<PreparedInferenceContextHandle> {
+    const model = {
+      modelId: request.model.modelId,
+      ...(request.model.displayName !== undefined && {
+        displayName: request.model.displayName,
+      }),
+      contextSize: request.model.contextSize,
+      inputCapabilities: request.model.inputCapabilities,
+    };
+    // Capture history and the forwarded-update watermark as one synchronous
+    // boundary. Events accepted after this point stay in the lease update
+    // stream instead of being mistaken for bootstrap context.
+    const history = [...this.messages];
+    const historyRevision = history.length;
+    const updateWatermark = this.leaseManager.updateWatermark;
+    const assembled = await assembleInferenceContext({
+      history,
+      extensionHandler: this.extensionHandler,
+      model,
+      baseInstructions: systemPrompt,
+      ...(this.deps.systemPromptAssembler !== undefined && {
+        systemPromptAssembler: this.deps.systemPromptAssembler,
+      }),
+    });
+
+    this.leaseTools = assembled.tools;
+
+    return {
+      context: {
+        instructions: assembled.instructions,
+        messages: assembled.messages,
+        tools: describeInteractionTools(assembled.tools),
+        model: request.model,
+        historyRevision,
+        updateWatermark,
+      },
+      commit: () => {
+        this.sessionSpan.addEvent('session.lease_context_committed', {
+          'session.historyRevision': historyRevision,
+        });
+      },
+      rollback: () => {
+        this.leaseToolExecutor?.abort();
+        this.leaseTools = null;
+        this.leaseToolExecutor = null;
+        this.sessionSpan.addEvent('session.lease_context_rolled_back', {});
+      },
+    };
+  }
+
+  private finalizeLeaseState(): void {
+    this.leaseToolExecutor?.abort();
+    this.leaseTools = null;
+    this.leaseToolExecutor = null;
+  }
+
+  private async executeLeaseTool(
+    request: InteractionToolRequest,
+  ): Promise<InteractionToolResult> {
+    if (!this.leaseToolExecutor) {
+      this.leaseToolExecutor = new ToolExecutor({
+        logger: this.deps.logger,
+        tools: this.leaseTools ?? {},
+        modelMessages: [],
+        sessionId: this.sessionId,
+        validateInput: true,
+      });
+    }
+    return this.leaseToolExecutor.execute(request);
+  }
+
+  private async commitLeaseEvent(event: RealtimeCommitEvent): Promise<void> {
+    if (this._status === 'terminated') return;
+    this.messages.push(toCanonicalMessage(event));
+  }
+
   private onNewInput = (urgency: SessionInboxUrgency): void => {
+    // Lease-consumed events are filtered by the inbox before this callback.
+    // Native messages still reach it and remain pending until the lane resumes.
+
     // If currently in a backoff wait, interrupt it so the new input is
     // processed immediately.
     if (this.backoffInterrupt) {
@@ -566,6 +849,7 @@ class ChatSessionModule implements AgentSession {
     // history but not buffered in the inbox.
     if (!this.loopActive) {
       this.hasPendingInput = true;
+      if (this.laneSuspended) return;
       void this.runLoop();
     }
   };
@@ -585,6 +869,12 @@ class ChatSessionModule implements AgentSession {
    */
   private async runLoop(): Promise<void> {
     if (this.loopActive) return;
+    if (this.laneSuspended) {
+      // A leased interaction mode owns the generation lane. Input stays
+      // buffered; resumeGenerationLane() restarts the loop later.
+      this.releaseQuiesceWaiters();
+      return;
+    }
     this.loopActive = true;
 
     this.runtimeState = 'working';
@@ -602,6 +892,18 @@ class ChatSessionModule implements AgentSession {
           this.deps.logger.info(
             { sessionId: this.sessionId },
             'Session terminated — stopping loop',
+          );
+          return;
+        }
+
+        // The generation lane was leased to another interaction mode.
+        // Leave the loop; pending input is picked up on resume.
+        if (this.laneSuspended) {
+          this.hasPendingInput = true;
+          this.runtimeState = 'leased';
+          this.deps.logger.info(
+            { sessionId: this.sessionId },
+            'Generation lane leased — chat loop yielding',
           );
           return;
         }
@@ -656,6 +958,10 @@ class ChatSessionModule implements AgentSession {
           forceContinue: needsBackoffRetry,
           forceCheck: needsCheckRetry,
           flushPendingImmediate: this.flushPendingImmediate,
+          shouldYieldGenerationLane: () => this.laneSuspended,
+          ...(this.deps.systemPromptAssembler !== undefined && {
+            systemPromptAssembler: this.deps.systemPromptAssembler,
+          }),
         });
         this.currentTurn = turn;
 
@@ -820,6 +1126,7 @@ class ChatSessionModule implements AgentSession {
       }
     } finally {
       this.loopActive = false;
+      this.releaseQuiesceWaiters();
     }
   }
 
@@ -903,6 +1210,15 @@ class ChatSessionModule implements AgentSession {
     this.runtimeState = 'terminated';
 
     this.closePromise = (async () => {
+      // If startup is in flight, let its rollback finish before cleanup. A
+      // rejected startup is expected here and the original caller owns it.
+      await this.startPromise?.catch(() => undefined);
+
+      // Unsubscribe from push notifications first so no new events arrive
+      // while we are shutting down.
+      this.pushNotificationUnsub?.();
+      this.pushNotificationUnsub = null;
+
       // Close the inbox first — no new input can enter the session after
       // this point. Any concurrent send() calls will throw
       // SessionInboxClosedError.
@@ -915,6 +1231,12 @@ class ChatSessionModule implements AgentSession {
 
       // Interrupt any pending backoff wait so the loop can exit promptly.
       this.backoffInterrupt?.();
+
+      // Revoke an active interaction lease — a leased realtime call must
+      // not outlive its host session.
+      this.leaseManager.revoke('default-session-closed');
+      this.leaseToolExecutor?.abort();
+      this.releaseQuiesceWaiters();
 
       await this.extensionHandler.close();
       this.sessionSpan.addEvent('session.closed', {
@@ -943,19 +1265,24 @@ class ChatSessionModule implements AgentSession {
 
   /**
    * Self-termination path (fatal error). Closes the session and fires the
-   * `onTerminated` hook so the router can react immediately — replace the
+   * `onTerminated` hook so the owner can react immediately — replace the
    * session, preserve history, log, etc.
    *
    * Unlike `close()`, this is only called when the session decides it is
-   * unrecoverable, not during router-initiated graceful shutdown.
+   * unrecoverable, not during owner-initiated graceful shutdown.
    */
   private async terminate(reason: string): Promise<void> {
-    // Close the inbox first — this blocks any new events from arriving
-    // while we drain what's already buffered.
+    this.leaseManager.revoke('default-session-terminated');
+
+    // Stop MCP ingress before closing the inbox. The listener is synchronous,
+    // so removing it first ensures every callback already entered has either
+    // stored its event or failed before shutdown can continue.
+    this.pushNotificationUnsub?.();
+    this.pushNotificationUnsub = null;
     this.sessionInbox.close();
 
-    // Drain remaining deferred inbox events so the router can re-dispatch them
-    // to the replacement session.
+    // Drain remaining deferred inbox events so the session host can re-dispatch
+    // them to the replacement session.
     const pendingEvents = this.sessionInbox.getEvents();
 
     // Now perform the standard close (span end, status update, etc.).
@@ -977,15 +1304,88 @@ class ChatSessionModule implements AgentSession {
     });
   }
 
-  restorePendingEvents(events: SessionInboxEvent[]): void {
-    for (const event of events) {
-      try {
-        this.sessionInbox.send(event);
-      } catch {
-        // Inbox may have been closed between event recovery and send.
-        // Drop silently — the router will not retry.
-      }
+  // ---------------------------------------------------------------------------
+  // MCP push notification handling
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Converts an MCP push notification to a session inbox event and feeds it
+   * into the session's own inbox. Only called when `deps.mcp` is non-null.
+   */
+  private handlePushNotification(ev: McpPushNotification): void {
+    const inboxEvent = mcpPushNotificationToInboxEvent(ev);
+    this.sessionInbox.send(inboxEvent);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Child session creation
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Spawns and fully starts an isolated child session. The child has no MCP
+   * access or push-notification subscription. The spawning extension chooses
+   * the complete extension list explicitly.
+   */
+  public async createChildSession(
+    options: ChildSessionOptions,
+  ): Promise<ChildSessionHandle> {
+    if (this._status === 'terminated') {
+      throw new Error('Cannot create a child from a terminated chat session');
     }
+    if (!this.deps.sessionFactory) {
+      throw new Error(
+        'Child session creation is not available for this session',
+      );
+    }
+
+    const childSessionId = randomUUID();
+    const childContext: SessionContext = {
+      kind: 'child',
+      sessionId: childSessionId,
+      parentId: this.sessionId,
+    };
+
+    // Create a child-sessions introspection scope lazily.
+    if (!this.childSessionsScope) {
+      this.childSessionsScope =
+        this.sessionIntrospectionScope.child('child-sessions');
+    }
+
+    const child = this.deps.sessionFactory({
+      mcp: null,
+      sessionContext: childContext,
+      extensionFactories: options.extensions,
+      introspectionScope: this.childSessionsScope,
+      ...(options.systemPromptAssembler !== undefined && {
+        systemPromptAssembler: options.systemPromptAssembler,
+      }),
+    });
+
+    try {
+      await child.start();
+      if (this.closePromise) {
+        throw new Error(
+          'Parent chat session terminated while child session was starting',
+        );
+      }
+      return child;
+    } catch (error) {
+      await child.close().catch((closeError: unknown) => {
+        this.deps.logger.error(
+          { error: closeError, childSessionId },
+          'Failed child session cleanup after startup error',
+        );
+      });
+      this.deps.logger.error(
+        { error, childSessionId },
+        'Child session startup failed',
+      );
+      throw error;
+    }
+  }
+
+  restorePendingEvents(events: SessionInboxEvent[]): void {
+    for (const event of events) this.sessionInbox.send(event);
   }
 }
 
@@ -1002,9 +1402,13 @@ export function createChatSession(
     config: deps.config,
     dataDirectory: deps.dataDirectory,
     mcp: deps.mcp,
-    router: deps.router,
     extensionFactories: deps.extensionFactories,
     introspectionScope: deps.introspectionScope,
     hooks: deps.hooks,
+    sessionContext: deps.sessionContext,
+    sessionFactory: deps.sessionFactory,
+    ...(deps.systemPromptAssembler !== undefined && {
+      systemPromptAssembler: deps.systemPromptAssembler,
+    }),
   });
 }

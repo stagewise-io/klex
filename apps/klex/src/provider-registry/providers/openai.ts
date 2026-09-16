@@ -170,6 +170,16 @@ const MODEL_CATALOG = [
     ),
   ),
   exactModel(
+    'gpt-live-1',
+    {
+      kind: 'speech-to-speech',
+      displayName: 'GPT-Live-1',
+      contextSize: 128_000,
+      capabilities: { input: { audio: {} }, voice: { sts: true } },
+    },
+    `${MODEL_DOCS}/gpt-live-1`,
+  ),
+  exactModel(
     'gpt-live-transcribe',
     {
       kind: 'speech-to-text',

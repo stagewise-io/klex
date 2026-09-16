@@ -17,7 +17,11 @@ import type {
 } from '@/config';
 import type { Mcp } from '@/mcp';
 import type { ProviderModelResolver } from '@/provider-registry';
-import type { RouterApi } from '@/router';
+import type {
+  ChildSessionHandle,
+  ChildSessionOptions,
+  SessionContext,
+} from '@/session/types';
 
 import type { ChatSessionInbox } from '../inbox';
 import type { ExtendedUIMessage } from '../message-types';
@@ -70,15 +74,20 @@ export function isDataPartOf<KEY extends string, DATA>(
  * A typed data-part transformer. Extensions use this instead of bare
  * functions to get compile-time safety on the input shape.
  *
+ * The second parameter is the zero-based occurrence index of this
+ * data-part type within the current conversion pass (resets every step).
+ * Extensions that don't need it can omit the parameter.
+ *
  * @example
  * const summaryTransformer = dataPartTransformer<SummaryPart>(
  *   (data) => [{ type: 'text', text: `<summary>${data.summary}</summary>` }],
  * );
  */
 export function dataPartTransformer<DATA>(
-  fn: (data: DATA) => (TextPart | FilePart)[],
-): (data: unknown) => (TextPart | FilePart)[] {
-  return (data: unknown) => fn(data as DATA);
+  fn: (data: DATA, occurrence: number) => (TextPart | FilePart)[],
+): (data: unknown, occurrence?: number) => (TextPart | FilePart)[] {
+  return (data: unknown, occurrence?: number) =>
+    fn(data as DATA, occurrence ?? 0);
 }
 
 /**
@@ -91,6 +100,7 @@ export function dataPartTransformer<DATA>(
  */
 export type RuntimeDataPartTransformer = (
   data: unknown,
+  occurrence?: number,
 ) => (TextPart | FilePart)[];
 
 /**
@@ -120,6 +130,25 @@ export type HistoryProcessingResult =
 export type ContextProcessingResult =
   | ModelMessage[]
   | { history: ModelMessage[]; flags: TransformationFlags };
+
+/**
+ * Context prepared just in time for one imminent model-generation attempt.
+ * It is provisional because returning it does not itself persist anything:
+ * the step owns the synthetic message and decides whether to commit or roll it
+ * back after the attempt.
+ */
+export interface ProvisionalStepContext {
+  /**
+   * Parts to expose to the imminent generation. Core combines parts from all
+   * providers into one synthetic user message in canonical history before
+   * cloning history for inference. It keeps that message only when generation
+   * returns without generation failure, model fallback, or a fatal error.
+   * Otherwise, including when later preparation or generation throws, core
+   * removes the message by its generated ID. Returning an empty array does not
+   * create or mutate a message.
+   */
+  parts: ExtendedUIMessage['parts'];
+}
 
 // ---------------------------------------------------------------------------
 // Resolved model metadata
@@ -360,6 +389,30 @@ export interface Extension {
   onStepStart?: () => void | Promise<void>;
 
   /**
+   * Produces context just in time for one imminent model-generation attempt.
+   * Called after the step is known to be executable and its model is resolved,
+   * but before canonical history is copied for inference.
+   *
+   * Each provider receives an isolated clone of the same canonical history.
+   * Providers run sequentially in factory order, and core combines all returned
+   * parts into one synthetic user message. A provider failure aborts collection
+   * before that message is appended, so canonical history is not partially
+   * mutated.
+   *
+   * The message is provisional, not immediately persistent. The step appends it
+   * before history transformation and conversion so the imminent generation can
+   * consume it. Afterward, the step commits it by leaving it in canonical
+   * history only when generation returns without generation failure, model
+   * fallback, or a fatal error. On those outcomes, or if later preparation or
+   * generation throws, the step rolls it back by its generated message ID.
+   * Returning no parts causes no history mutation.
+   */
+  getProvisionalStepContext?: (
+    history: readonly ExtendedUIMessage[],
+    model: ResolvedModel,
+  ) => ProvisionalStepContext | Promise<ProvisionalStepContext>;
+
+  /**
    * Transforms the UI message history before it is converted to model
    * messages. Extensions are called in order; each receives the output
    * of the previous one. Flags from all extensions are merged (OR
@@ -483,22 +536,52 @@ export interface ExtensionDeps {
    * The MCP module — client for all MCP servers the session has access
    * to. Extends `ToolProvider` with push notifications, server statuses,
    * and tool call history. Extensions can use the full MCP surface.
+   *
+   * `null` for `god` and `child` sessions, which have no MCP access.
+   * Extensions that require MCP should check for `null` in their
+   * constructor.
    */
-  mcp: Mcp;
+  mcp: Mcp | null;
 
   /**
-   * UUID of the session that owns this extension. Used for
-   * observability correlation.
+   * Stable identifier of the session that owns this extension. Used for
+   * observability correlation. The default session uses `default`;
+   * god and child sessions normally use UUIDs.
    */
   sessionId: string;
 
   /**
-   * The router API — allows extensions to send input events that the
-   * router dispatches to the active session. Unlike {@link inbox}, this
-   * survives session termination: the router creates a replacement
-   * session if the current one has terminated.
+   * Context describing the session's kind and position in the session
+   * tree. Extensions inspect this to decide behavior and which
+   * extensions to load in child sessions.
    */
-  router: RouterApi;
+  sessionContext: SessionContext;
+
+  /**
+   * Spawns an isolated child session owned by this extension. The parent
+   * session owns and cleans up the child while startup is in flight; ownership
+   * transfers to the extension only when this promise resolves. The child has
+   * no MCP access and no push notification subscription — its only input is
+   * messages injected by this extension via the returned handle's inbox.
+   *
+   * The requested extension list is used exactly as supplied. The spawning
+   * extension is responsible for choosing the child's complete extension set
+   * and avoiding recursive self-loading. Duplicate identifiers are rejected.
+   *
+   * When `options.systemPromptAssembler` is provided, it replaces the
+   * default system prompt assembly logic for the child session. The
+   * assembler receives the base system prompt and all per-extension
+   * system prompt parts (collected via `getSystemPromptPart`), and
+   * returns the finished system prompt. This lets the spawning
+   * extension control how (or whether) extension contributions are
+   * combined into the final prompt.
+   *
+   * Only available on sessions that have a session factory. Absent
+   * (throws when called) on sessions where child creation is disabled.
+   */
+  createChildSession: (
+    options: ChildSessionOptions,
+  ) => Promise<ChildSessionHandle>;
 
   /**
    * Returns an absolute path to a directory the calling extension can
@@ -540,7 +623,9 @@ export interface ExtensionFactory {
   readonly displayName?: string;
 
   /**
-   * Creates the extension instance with the provided dependencies.
+   * Creates the extension instance with the provided dependencies. Construction
+   * must be side-effect free; acquire resources in `onStart` so startup rollback
+   * can release them through `onClose`.
    */
   create: (deps: ExtensionDeps) => Extension;
 }

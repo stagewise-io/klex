@@ -26,10 +26,13 @@ const SOUL_FILE = 'SOUL.md';
  */
 const MAX_SOUL_LENGTH = 10_000;
 
+/** Removes nested soul tags that could break the trusted prompt wrapper. */
+const SOUL_TAG_PATTERN = /<\/?soul\b[^>]*>/gi;
+
 /**
  * The mode of a soul extension instance.
  *
- * - `'standard'` — used in regular (router) sessions. The extension is
+ * - `'standard'` — used in regular (default) sessions. The extension is
  *   read-only: it injects the soul content (or a confused rejection
  *   prompt when no soul exists) into the system prompt but provides no
  *   tools. The soul cannot be created or updated from a regular session.
@@ -55,14 +58,18 @@ class SoulExt implements Extension {
   }
 
   /**
-   * Reads and returns the soul content if `SOUL.md` exists and is
-   * non-empty after trimming. Returns `null` otherwise. All soul-state
+   * Reads and returns sanitized soul content if `SOUL.md` exists and is
+   * non-empty after trimming. Nested soul tags are removed so file content
+   * cannot break the prompt wrapper. Returns `null` otherwise. All soul-state
    * checks (prompt, tools, execute guard, introspection) go through
    * this method so they stay consistent.
    */
   private readSoul(): string | null {
     if (!existsSync(this.soulPath)) return null;
-    const content = readFileSync(this.soulPath, 'utf-8');
+    const content = readFileSync(this.soulPath, 'utf-8').replace(
+      SOUL_TAG_PATTERN,
+      '',
+    );
     if (content.trim().length === 0) return null;
     return content;
   }
@@ -78,9 +85,10 @@ class SoulExt implements Extension {
   }
 
   /**
-   * Returns the soul content for the system prompt. If `SOUL.md` exists
-   * in the global extension directory, its contents are returned verbatim.
-   * Otherwise the mode-appropriate no-soul prompt is returned:
+   * Returns the wrapped soul content for the system prompt. If `SOUL.md`
+   * exists in the global extension directory, its contents are enclosed in
+   * the dedicated soul section. Otherwise the mode-appropriate no-soul prompt
+   * is returned:
    *
    * - `'god'` mode → the aggressive soul-building prompt that instructs
    *   the model to build its soul (obeying god messages that command
@@ -93,7 +101,15 @@ class SoulExt implements Extension {
    */
   getSystemPromptPart(): string {
     const soul = this.readSoul();
-    if (soul !== null) return soul;
+    if (soul !== null) {
+      return `# Your Soul
+
+The \`<soul>\` block contains your own thoughts about yourself. Act reliably upon it, as it describes how you view yourself and who you are.
+
+<soul>
+${soul}
+</soul>`;
+    }
     return this.mode === 'god' ? noSoulPrompt : noSoulPromptRegular;
   }
 
@@ -132,12 +148,14 @@ class SoulExt implements Extension {
   }
 }
 
+/** Loads and maintains the agent soul for a standard chat session. */
 export const createSoulExt: ExtensionFactory = {
   identifier: 'io.stagewise/soul',
   displayName: 'Soul',
   create: (deps) => new SoulExt(deps, 'standard'),
 };
 
+/** Loads the agent soul with the behavior required by an isolated god session. */
 export const createSoulExtGod: ExtensionFactory = {
   identifier: 'io.stagewise/soul',
   displayName: 'Soul (God)',

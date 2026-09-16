@@ -35,8 +35,10 @@ export interface RealtimeSink<T> {
 }
 
 /**
- * Accepts ownership of consuming a source. Attachment resolves after the
- * source is registered, not after its readable terminates.
+ * Accepts ownership of consuming sources. Attachment resolves after a source
+ * is registered, not after its readable terminates. Consumers must support
+ * distinct sources concurrently and adapt them to downstream limits. They may
+ * reject duplicate active IDs or invalid source data.
  */
 export interface RealtimeSourceConsumer<T, Metadata> {
   attach(source: RealtimeSource<T, Metadata>): Promise<void>;
@@ -66,20 +68,6 @@ export interface MediaTransportConnector<Descriptor = unknown> {
     options: { signal: AbortSignal },
   ): Promise<MediaTransport>;
   close(): Promise<void>;
-}
-
-/** A connected realtime processor with attributed inputs and one output. */
-export interface RealtimeProcessor extends RealtimeEndpoint {
-  readonly audioInputs: RealtimeSourceConsumer<AudioFrame, AudioSourceMetadata>;
-  readonly audioOutput: AsyncIterable<AudioFrame>;
-}
-
-export interface RealtimeProcessorFactory {
-  create(options: {
-    namespace: string;
-    sessionId: string;
-    signal: AbortSignal;
-  }): Promise<RealtimeProcessor>;
 }
 
 /** Copies a frame at an ownership boundary. */

@@ -73,6 +73,7 @@ const mcpServerInfoSchema = z
     supportsPushNotifications: z.boolean(),
     supportsRealtimeMedia: z.boolean(),
     transport: z.enum(['stdio', 'http']),
+    headerNames: z.array(z.string()),
     usesInteractiveOAuth: z.boolean(),
     authorization: mcpServerAuthorizationSchema.nullable(),
     lastError: mcpServerErrorSchema.nullable(),
@@ -135,8 +136,10 @@ const updateMcpServerBodySchema = z
     z
       .object({
         type: z.enum(['http', 'streamable-http']).optional(),
-        url: z.url(),
-        headers: z.record(z.string(), z.string()).optional(),
+        url: z.url().optional(),
+        headerUpdates: z
+          .record(z.string(), z.union([z.string(), z.null()]))
+          .optional(),
         versionNegotiation: mcpVersionNegotiationSchema.optional(),
       })
       .strict(),
@@ -668,6 +671,7 @@ const godSessionInfoResponseSchema = z
       'retrying',
       'success',
       'idle',
+      'leased',
       'terminated',
     ]),
     model: z.object({

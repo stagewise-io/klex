@@ -152,6 +152,39 @@ describe('createRealtime', () => {
     await realtime.close();
   });
 
+  it('selects the Gemini-Live factory for a gemini-live provider', async () => {
+    vi.mocked(logging.child).mockClear();
+    const { connector, coordinator } = harness();
+    const createCoordinator = vi.fn((..._args: unknown[]) => coordinator);
+    const realtime = createRealtime({
+      logging,
+      mcp,
+      provider: {
+        kind: 'gemini-live',
+        model: {
+          modelId: 'gemini-3.8-live',
+          contextSize: 131_072,
+          inputCapabilities: { audio: {} },
+        },
+        config: {
+          modelId: 'gemini-3.8-live',
+          apiKey: 'test-key',
+          websocketUrl: 'wss://example.test/gemini-live',
+        },
+      },
+      ownedConnector: connector,
+      conversationHost,
+      createCoordinator,
+    });
+    await realtime.start();
+    expect(logging.child).toHaveBeenCalledWith({
+      name: 'gemini-live',
+      bindings: { module: 'gemini-live' },
+    });
+    expect(createCoordinator.mock.calls[0]?.[1]).toBeDefined();
+    await realtime.close();
+  });
+
   it('closes the connector when coordinator startup fails', async () => {
     const { realtime, coordinator, connector } = harness();
     vi.mocked(coordinator.start).mockRejectedValueOnce(

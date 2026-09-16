@@ -888,6 +888,52 @@ function authorizationOf(mcp: Mcp, name: string) {
 }
 
 describe('MCP cloud authorization requests', () => {
+  it('reuses initial OAuth discovery when Connect is clicked before consent is ready', async () => {
+    const discovery = deferred<void>();
+    const connect = vi.fn(
+      async ({ namespace, signal }: ConnectMcpServerOptions) => {
+        await discovery.promise;
+        await pendingAuthorizations.register(
+          {
+            serverName: namespace,
+            serverUrl: 'https://protected.example/mcp',
+            authorizationUrl: 'https://auth.example/authorize?state=initial',
+            state: 'initial',
+          },
+          { signal, timeoutMs: 60_000 },
+        );
+        return connection(namespace);
+      },
+    );
+    const { mcp, pendingAuthorizations } = setupAuthorization(
+      { protected: { url: 'https://protected.example/mcp' } },
+      connect,
+    );
+    await mcp.start();
+    const requested = mcp.requestAuthorization('protected');
+    try {
+      expect(connect).toHaveBeenCalledOnce();
+      expect(connect.mock.calls[0]?.[0].signal.aborted).toBe(false);
+      discovery.resolve();
+      expect(await requested).toMatchObject({
+        outcome: 'pending',
+        authorization: { state: 'initial' },
+      });
+      expect(
+        mcp.completeAuthorization(
+          'initial',
+          new URLSearchParams({ code: 'approved' }),
+        ),
+      ).toBe('accepted');
+      await waitForNamespace(mcp, 'protected');
+      expect(connect).toHaveBeenCalledOnce();
+    } finally {
+      discovery.resolve();
+      await requested;
+      await mcp.close();
+    }
+  });
+
   it('reports unknown servers and servers that do not use interactive OAuth', async () => {
     const { mcp } = setupAuthorization(
       {

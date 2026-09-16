@@ -1147,10 +1147,12 @@ class McpModule implements Mcp {
     }
     if (runtime.connection) return { outcome: 'already_connected' };
 
-    this.clearRetry(runtime);
-    runtime.attempt?.controller.abort();
-    runtime.attempt = undefined;
-    this.connectRuntime(runtime);
+    // Adding a server already starts OAuth discovery. Reuse that attempt:
+    // overlapping discovery can overwrite its client registration and PKCE verifier.
+    if (!runtime.attempt) {
+      this.clearRetry(runtime);
+      this.connectRuntime(runtime);
+    }
 
     const authorization = await this.deps.pendingAuthorizations.waitForServer(
       serverName,

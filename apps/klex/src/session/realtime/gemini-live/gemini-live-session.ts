@@ -1,4 +1,5 @@
 import type { JSONValue } from '@ai-sdk/provider';
+import { type Span, SpanStatusCode, trace } from '@opentelemetry/api';
 import WebSocket, { type ClientOptions, type RawData } from 'ws';
 
 import type { ModuleLogger, RootLogger } from '@stagewise/logger';
@@ -38,7 +39,7 @@ export interface GeminiRealtimeWebSocket {
   on(event: 'open', listener: () => void): this;
   on(event: 'message', listener: (data: RawData) => void): this;
   on(event: 'error', listener: (error: Error) => void): this;
-  on(event: 'close', listener: () => void): this;
+  on(event: 'close', listener: (code: number, reason: Buffer) => void): this;
   send(data: string): void;
   close(): void;
   terminate(): void;
@@ -59,6 +60,7 @@ const OPEN = 1;
 const FRAME_BYTES = 960 * 2;
 const STARTUP_TIMEOUT_MS = 10_000;
 const DEFAULT_INSTRUCTIONS = 'You are Klex. Answer clearly and briefly.';
+const tracer = trace.getTracer('klex');
 
 export class GeminiLiveSession implements RealtimeModelSession {
   private readonly outputQueue = new BoundedAsyncQueue<AudioFrame>(1);
@@ -96,6 +98,7 @@ export class GeminiLiveSession implements RealtimeModelSession {
     private readonly logger: ModuleLogger,
     private readonly context: PreparedInferenceContext | undefined,
     private readonly config: ResolvedGeminiLiveConfig,
+    private readonly span: Span,
   ) {
     this.socket = this.attachSocket(connect());
     signal.addEventListener('abort', this.handleAbort, { once: true });
@@ -118,9 +121,18 @@ export class GeminiLiveSession implements RealtimeModelSession {
     socket.on('open', () => this.handleOpen());
     socket.on('message', (data: RawData) => this.handleMessage(data));
     socket.on('error', (error: Error) => this.fail(error));
-    socket.on('close', () => {
+    socket.on('close', (code: number, reason: Buffer) => {
       if (!this.settled) {
-        this.fail(new Error('Gemini live connection closed unexpectedly'));
+        const closeReason = reason.toString();
+        this.span.addEvent('gemini_live.socket_closed', {
+          'gemini_live.close_code': code,
+          ...(closeReason && { 'gemini_live.close_reason': closeReason }),
+        });
+        this.fail(
+          new Error(
+            `Gemini live connection closed unexpectedly (code ${code}${closeReason ? `: ${closeReason}` : ''})`,
+          ),
+        );
       }
     });
     return socket;
@@ -205,6 +217,7 @@ export class GeminiLiveSession implements RealtimeModelSession {
   private handleOpen(): void {
     if (this.settled) return;
     const tools = this.context?.tools ?? [];
+    this.span.addEvent('gemini_live.socket_opened');
     const model = this.config.modelId.startsWith('models/')
       ? this.config.modelId
       : `models/${this.config.modelId}`;
@@ -227,13 +240,16 @@ export class GeminiLiveSession implements RealtimeModelSession {
                 ...(tool.description !== undefined && {
                   description: tool.description,
                 }),
-                parameters: tool.inputSchema,
+                parametersJsonSchema: tool.inputSchema,
               })),
             },
           ],
         }),
       },
     };
+    this.span.addEvent('gemini_live.setup_sent', {
+      'gemini_live.tool_count': tools.length,
+    });
     this.send(setupMessage);
   }
 
@@ -271,10 +287,14 @@ export class GeminiLiveSession implements RealtimeModelSession {
     for (const event of events) {
       switch (event.type) {
         case 'setup-complete':
+          this.span.addEvent('gemini_live.setup_completed');
           this.seedConversation();
           this.resolveReady();
           break;
         case 'provider-error':
+          this.span.addEvent('gemini_live.provider_error', {
+            'error.message': event.error.message ?? 'Unknown error',
+          });
           this.logger.warn(
             { error: event.error },
             'Gemini live provider error received',
@@ -443,6 +463,23 @@ export class GeminiLiveSession implements RealtimeModelSession {
     );
     if (this.socket.readyState === OPEN) this.socket.close();
     else this.socket.terminate();
+    if (closure.type === 'failed') {
+      this.span.recordException(
+        closure.error instanceof Error ? closure.error : String(closure.error),
+      );
+      this.span.setStatus({
+        code: SpanStatusCode.ERROR,
+        message:
+          closure.error instanceof Error
+            ? closure.error.message
+            : String(closure.error),
+      });
+    } else {
+      if (closure.reason !== undefined)
+        this.span.setAttribute('gemini_live.close_reason', closure.reason);
+      this.span.setStatus({ code: SpanStatusCode.OK });
+    }
+    this.span.end();
     this.closure.resolve(closure);
   }
 }
@@ -462,16 +499,47 @@ export class GeminiLiveSessionFactory implements RealtimeModelSessionFactory {
     context?: PreparedInferenceContext;
   }): Promise<RealtimeModelSession> {
     if (options.signal.aborted) throw options.signal.reason;
-    const session = new GeminiLiveSession(
-      () => this.connect(this.config.websocketUrl, {}),
-      options.signal,
-      this.startupTimeoutMs,
-      this.logger,
-      options.context,
-      this.config,
-    );
-    await session.waitUntilReady();
-    return session;
+    const endpoint = new URL(this.config.websocketUrl);
+    const span = tracer.startSpan('gemini_live.session', {
+      attributes: {
+        ...(options.sessionId !== undefined && {
+          'gemini_live.external_media_session_id': options.sessionId,
+        }),
+        ...(options.namespace !== undefined && {
+          'gemini_live.namespace': options.namespace,
+        }),
+        'gemini_live.model': this.config.modelId,
+        'server.address': endpoint.hostname,
+        'server.port': endpoint.port,
+        'url.path': endpoint.pathname,
+        'url.scheme': endpoint.protocol.slice(0, -1),
+      },
+    });
+    let spanTransferred = false;
+    try {
+      const session = new GeminiLiveSession(
+        () => this.connect(this.config.websocketUrl, {}),
+        options.signal,
+        this.startupTimeoutMs,
+        this.logger,
+        options.context,
+        this.config,
+        span,
+      );
+      spanTransferred = true;
+      await session.waitUntilReady();
+      return session;
+    } catch (error) {
+      if (!spanTransferred) {
+        span.recordException(error instanceof Error ? error : String(error));
+        span.setStatus({
+          code: SpanStatusCode.ERROR,
+          message: error instanceof Error ? error.message : String(error),
+        });
+        span.end();
+      }
+      throw error;
+    }
   }
 }
 

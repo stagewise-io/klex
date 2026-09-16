@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import { realpathSync } from 'node:fs';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -31,10 +32,13 @@ export function scopesForChangedFiles(files) {
     .map(({ scope }) => scope);
 }
 
-export function missingReleaseScopes(scopes, commitMessages) {
+export function missingReleaseScopes(scopes, commits) {
   return scopes.filter(
     (scope) =>
-      !commitMessages.some((message) => commitHasScope(message, scope)),
+      !commits.some(
+        ({ changedFiles, message }) =>
+          changedFiles.length > 0 && commitHasScope(message, scope),
+      ),
   );
 }
 
@@ -56,7 +60,7 @@ export async function checkGeneratedContract({
     );
     await run(
       'pnpm',
-      ['install', '--offline', '--frozen-lockfile', '--ignore-scripts'],
+      ['install', '--frozen-lockfile', '--ignore-scripts'],
       baseWorktree,
     );
     const buildContractArgs = [
@@ -120,15 +124,15 @@ export function runCommand(command, args, cwd = repositoryRoot) {
 }
 
 async function main() {
-  const [baseRef, headRef = 'HEAD'] = process.argv.slice(2);
+  const [baseRef] = process.argv.slice(2);
   if (!baseRef) {
     throw new Error(
-      'Usage: node scripts/check-package-release-scopes.mjs <base-ref> [head-ref]',
+      'Usage: node scripts/check-package-release-scopes.mjs <base-ref>',
     );
   }
 
   const changedFiles = (
-    await runCommand('git', ['diff', '--name-only', `${baseRef}...${headRef}`])
+    await runCommand('git', ['diff', '--name-only', `${baseRef}...HEAD`])
   )
     .trim()
     .split('\n')
@@ -145,17 +149,37 @@ async function main() {
     return;
   }
 
-  const commitMessages = (
+  const commitRecords = (
     await runCommand('git', [
       'log',
-      '--format=%B%x00',
-      `${baseRef}..${headRef}`,
+      '--format=%H%x1f%B%x00',
+      `${baseRef}..HEAD`,
     ])
   )
     .split('\0')
-    .map((message) => message.trim())
+    .map((record) => record.trim())
     .filter(Boolean);
-  const missing = missingReleaseScopes(requiredScopes, commitMessages);
+  const commits = await Promise.all(
+    commitRecords.map(async (record) => {
+      const separatorIndex = record.indexOf('\x1f');
+      const hash = record.slice(0, separatorIndex);
+      const message = record.slice(separatorIndex + 1);
+      const changedFiles = (
+        await runCommand('git', [
+          'diff-tree',
+          '--no-commit-id',
+          '--name-only',
+          '-r',
+          hash,
+        ])
+      )
+        .trim()
+        .split('\n')
+        .filter(Boolean);
+      return { changedFiles, message };
+    }),
+  );
+  const missing = missingReleaseScopes(requiredScopes, commits);
 
   if (missing.length > 0) {
     throw new Error(
@@ -170,7 +194,7 @@ async function main() {
 
 const isDirectRun =
   process.argv[1] &&
-  pathToFileURL(resolve(process.argv[1])).href === import.meta.url;
+  pathToFileURL(realpathSync(process.argv[1])).href === import.meta.url;
 if (isDirectRun) {
   await main();
 }

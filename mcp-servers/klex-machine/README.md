@@ -9,7 +9,7 @@ This server has the same filesystem, process, and network permissions as its ope
 ## Install and run
 
 ```sh
-npm install --global klex-machine
+npm install --global @klex/machine
 klex-machine cloud enroll <code>
 klex-machine
 
@@ -38,8 +38,8 @@ Relative filesystem paths and new shell sessions start from the configured worki
 From the Klex monorepo:
 
 ```sh
-pnpm --filter klex-machine build
-pnpm --filter klex-machine typecheck
-pnpm --filter klex-machine test
-pnpm --filter klex-machine verify
+pnpm --filter @klex/machine build
+pnpm --filter @klex/machine typecheck
+pnpm --filter @klex/machine test
+pnpm --filter @klex/machine verify
 ```

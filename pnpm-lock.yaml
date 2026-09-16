@@ -391,7 +391,7 @@ importers:
         specifier: 4.4.3
         version: 4.4.3
     devDependencies:
-      '@stagewise/mcp-proxy-sdk':
+      '@klex/mcp-proxy-sdk':
         specifier: workspace:*
         version: link:../../packages/mcp-proxy-sdk
       '@stagewise/typescript-config':

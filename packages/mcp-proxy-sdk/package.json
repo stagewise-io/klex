@@ -1,5 +1,5 @@
 {
-  "name": "@stagewise/mcp-proxy-sdk",
+  "name": "@klex/mcp-proxy-sdk",
   "version": "0.2.0",
   "type": "module",
   "sideEffects": false,

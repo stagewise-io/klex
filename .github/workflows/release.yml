@@ -48,8 +48,8 @@ jobs:
       - name: Verify publishable packages
         run: |
           pnpm exec turbo run verify --filter @klex/agent-admin-api
-          pnpm exec turbo run verify --filter @stagewise/mcp-proxy-sdk
-          pnpm exec turbo run verify --filter klex-machine
+          pnpm exec turbo run verify --filter @klex/mcp-proxy-sdk
+          pnpm exec turbo run verify --filter @klex/machine
       - name: Release mcp-proxy-sdk
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

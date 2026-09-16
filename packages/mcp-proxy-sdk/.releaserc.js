@@ -3,5 +3,5 @@ import { createScopedReleaseConfig } from '../../scripts/scoped-release-config.m
 export default createScopedReleaseConfig({
   packageRoot: 'packages/mcp-proxy-sdk',
   scope: 'mcp-proxy-sdk',
-  tagFormat: '@stagewise/mcp-proxy-sdk-v${version}',
+  tagFormat: '@klex/mcp-proxy-sdk-v${version}',
 });

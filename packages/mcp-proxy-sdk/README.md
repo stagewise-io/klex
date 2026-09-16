@@ -6,18 +6,18 @@ The package has no root export. Import an explicit subpath so runtime boundaries
 
 ## Public entry points
 
-- `@stagewise/mcp-proxy-sdk/core`: runtime-neutral environment IDs, exchange protocol, connections, and routing.
-- `@stagewise/mcp-proxy-sdk/http`: Web-standard request/response relay with `fetch(Request): Promise<Response>`.
-- `@stagewise/mcp-proxy-sdk/server`: Node HTTP handlers, WebSocket upgrades, and the batteries-included proxy server.
-- `@stagewise/mcp-proxy-sdk/daemon/node`: Node environment daemon backed by `ws`.
+- `@klex/mcp-proxy-sdk/core`: runtime-neutral environment IDs, exchange protocol, connections, and routing.
+- `@klex/mcp-proxy-sdk/http`: Web-standard request/response relay with `fetch(Request): Promise<Response>`.
+- `@klex/mcp-proxy-sdk/server`: Node HTTP handlers, WebSocket upgrades, and the batteries-included proxy server.
+- `@klex/mcp-proxy-sdk/daemon/node`: Node environment daemon backed by `ws`.
 
 `/core` and `/http` do not import Node built-ins. `/server` and `/daemon/node` are Node-only.
 
 ## Proxy
 
 ```ts
-import { createEnvironmentId } from '@stagewise/mcp-proxy-sdk/core';
-import { createProxyServer } from '@stagewise/mcp-proxy-sdk/server';
+import { createEnvironmentId } from '@klex/mcp-proxy-sdk/core';
+import { createProxyServer } from '@klex/mcp-proxy-sdk/server';
 
 const server = createProxyServer({
   authenticateEnvironment: async ({ request }) =>
@@ -65,7 +65,7 @@ The daemon accepts any Web-standard handler. MCP environments should pass the of
 
 ```ts
 import { createMcpHandler, McpServer } from '@modelcontextprotocol/server';
-import { createProxyDaemon } from '@stagewise/mcp-proxy-sdk/daemon/node';
+import { createProxyDaemon } from '@klex/mcp-proxy-sdk/daemon/node';
 
 const mcp = createMcpHandler(
   () => new McpServer({ name: 'computer', version: '1.0.0' }),

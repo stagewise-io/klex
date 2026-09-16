@@ -21,7 +21,7 @@ export const publishablePackages = [
   },
   {
     path: 'mcp-servers/klex-machine/',
-    scope: 'klex-machine',
+    scope: 'machine',
   },
 ];
 

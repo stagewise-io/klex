@@ -12,11 +12,34 @@ import semanticRelease from 'semantic-release';
 import { createScopedReleaseConfig } from './scoped-release-config.mjs';
 
 const exec = promisify(execFile);
+const releaseEnvironmentNames = [
+  'HOME',
+  'HOMEDRIVE',
+  'HOMEPATH',
+  'LANG',
+  'LC_ALL',
+  'PATH',
+  'PATHEXT',
+  'SYSTEMROOT',
+  'TEMP',
+  'TMP',
+  'TMPDIR',
+  'USERPROFILE',
+];
 const silentLogger = {
   error() {},
   log() {},
   success() {},
 };
+
+function createReleaseEnvironment(environment = process.env) {
+  return Object.fromEntries(
+    releaseEnvironmentNames.flatMap((name) => {
+      const value = environment[name];
+      return value === undefined ? [] : [[name, value]];
+    }),
+  );
+}
 
 async function git(cwd, ...args) {
   await exec('git', args, { cwd });
@@ -61,19 +84,7 @@ async function dryRunFixture({
     await git(repository, 'push', '--set-upstream', 'origin', 'main', '--tags');
 
     const config = createScopedReleaseConfig({ packageRoot, scope, tagFormat });
-    const releaseEnvironment = { ...process.env };
-    for (const name of [
-      'CI',
-      'CONTINUOUS_INTEGRATION',
-      'GITHUB_ACTIONS',
-      'GITHUB_EVENT_NAME',
-      'GITHUB_EVENT_PATH',
-      'GITHUB_HEAD_REF',
-      'GITHUB_REF',
-      'GITHUB_REF_NAME',
-    ]) {
-      delete releaseEnvironment[name];
-    }
+    const releaseEnvironment = createReleaseEnvironment();
     return await semanticRelease(
       {
         ...config,
@@ -92,6 +103,21 @@ async function dryRunFixture({
     await rm(temporaryRoot, { recursive: true, force: true });
   }
 }
+
+test('release fixture only receives allowlisted environment variables', () => {
+  assert.deepEqual(
+    createReleaseEnvironment({
+      CI: 'true',
+      GITHUB_TOKEN: 'secret',
+      HOME: '/home/release-test',
+      PATH: '/usr/bin',
+    }),
+    {
+      HOME: '/home/release-test',
+      PATH: '/usr/bin',
+    },
+  );
+});
 
 test('dry-runs independent scoped releases from baseline tags', async () => {
   const sdk = await dryRunFixture({

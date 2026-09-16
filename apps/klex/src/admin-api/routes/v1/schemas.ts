@@ -131,6 +131,7 @@ const mcpServerCapabilitiesSchema = z
 
 const mcpServerInfoSchema = z
   .object({
+    connectionId: z.string().uuid().optional(),
     name: z.string(),
     status: mcpConnectionStatusSchema,
     serverInfo: mcpImplementationSchema.optional(),

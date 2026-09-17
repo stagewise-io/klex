@@ -1,10 +1,10 @@
 import type { McpPushNotification } from '@/mcp';
-
 import {
   type ContextDataUIPart,
+  type ContextMetadataValue,
   type SessionInboxEvent,
   SessionInboxUrgency,
-} from './inbox';
+} from '@/session/inbox';
 
 /**
  * Converts an MCP Push Notification into a {@link SessionInboxEvent} that

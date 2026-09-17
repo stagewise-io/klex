@@ -4,7 +4,7 @@ import type { RootLogger } from '@stagewise/logger';
 
 import type { Config } from '@/config';
 import type { IntrospectionScope } from '@/introspection';
-import type { Mcp, McpPushNotification } from '@/mcp';
+import type { Mcp } from '@/mcp';
 import type {
   ChatSessionHandle,
   ChildSessionHandle,
@@ -102,67 +102,42 @@ function createFakeChild(start: () => Promise<void>): ChildSessionHandle {
 }
 
 describe('ChatSession lifecycle', () => {
-  it('starts extensions and subscribes to MCP only once', async () => {
+  it('starts extensions only once', async () => {
     const onStart = vi.fn(async () => undefined);
-    const unsubscribe = vi.fn();
-    const onPushNotification = vi.fn(() => unsubscribe);
     const extension: ExtensionFactory = {
       identifier: 'test/lifecycle',
       create: () => ({ onStart }),
     };
     const session = createSession({
       extensions: [extension],
-      mcp: { onPushNotification } as unknown as Mcp,
+      mcp: {} as unknown as Mcp,
     });
 
     await Promise.all([session.start(), session.start()]);
 
     expect(onStart).toHaveBeenCalledOnce();
-    expect(onPushNotification).toHaveBeenCalledOnce();
 
     await session.close();
-    expect(unsubscribe).toHaveBeenCalledOnce();
     await expect(session.start()).rejects.toThrow(
       'Cannot start a terminated chat session',
     );
   });
 
-  it('unsubscribes before closing the inbox and rejects stale MCP delivery', async () => {
-    const listenerRef: {
-      current?: (event: McpPushNotification) => void | Promise<void>;
-    } = {};
-    const notification: McpPushNotification = {
-      namespace: 'local',
-      event: {
-        eventId: 'event-1',
-        sourceId: 'chat:user',
-        type: 'chat.message.received',
-        createdAt: '2026-07-20T10:30:00.000Z',
-        content: [{ type: 'text', text: 'hello' }],
-      },
-    };
-    const deliveryDuringUnsubscribe = vi.fn();
+  it('closes the inbox during termination and rejects stale delivery', async () => {
     const session = createSession({
-      mcp: {
-        onPushNotification: vi.fn((callback) => {
-          listenerRef.current = callback;
-          return () => {
-            callback(notification);
-            deliveryDuringUnsubscribe();
-          };
-        }),
-      } as unknown as Mcp,
+      mcp: {} as unknown as Mcp,
     });
     await session.start();
 
     await session.close();
 
-    expect(deliveryDuringUnsubscribe).toHaveBeenCalledOnce();
-    const staleListener = listenerRef.current;
-    if (!staleListener) throw new Error('MCP listener was not registered');
-    expect(() => staleListener(notification)).toThrow(
-      'Session inbox is closed',
-    );
+    expect(() =>
+      session.inbox.send({
+        sourceEnv: 'test',
+        urgency: 1,
+        context: { sourceEnv: 'test', metadata: {}, content: [] },
+      }),
+    ).toThrow('Session inbox is closed');
   });
 
   it('returns a child only after startup and preserves the requested extensions', async () => {
@@ -187,9 +162,7 @@ describe('ChatSession lifecycle', () => {
     };
     const parent = createSession({
       extensions: [parentExtension],
-      mcp: {
-        onPushNotification: vi.fn(() => vi.fn()),
-      } as unknown as Mcp,
+      mcp: {} as unknown as Mcp,
       sessionFactory,
     });
     await parent.start();

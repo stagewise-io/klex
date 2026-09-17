@@ -14,7 +14,7 @@ import type { ModuleLogger, RootLogger } from '@stagewise/logger';
 
 import type { Config } from '@/config';
 import type { IntrospectionScope } from '@/introspection';
-import type { Mcp, McpPushNotification } from '@/mcp';
+import type { Mcp } from '@/mcp';
 import type { ProviderModelResolver } from '@/provider-registry';
 import type { SessionInboxEvent } from '@/session/inbox';
 import {
@@ -31,7 +31,6 @@ import {
   ToolExecutor,
   toCanonicalMessage,
 } from '@/session/interaction';
-import { mcpPushNotificationToInboxEvent } from '@/session/push-notification-adapter';
 import type {
   AgentSession,
   ChatSessionHandle,
@@ -196,11 +195,6 @@ class ChatSessionModule implements AgentSession {
   private leaseTools: ToolSet | null = null;
 
   private leaseToolExecutor: ToolExecutor | null = null;
-
-  // --- Push notification subscription ---
-
-  /** Unsubscribe function for the MCP push notification listener, if subscribed. */
-  private pushNotificationUnsub: (() => void) | null = null;
 
   /** Shared promise that makes session startup idempotent. */
   private startPromise: Promise<void> | null = null;
@@ -381,14 +375,6 @@ class ChatSessionModule implements AgentSession {
   }
 
   private async startUnlocked(): Promise<void> {
-    // Subscribe before extensions start so the default session is ready for
-    // MCP ingress before MCP workers are started by the composition root.
-    if (this.deps.mcp) {
-      this.pushNotificationUnsub = this.deps.mcp.onPushNotification(
-        (ev: McpPushNotification) => this.handlePushNotification(ev),
-      );
-    }
-
     try {
       await this.extensionHandler.start();
       if (this._status === 'terminated') {
@@ -398,8 +384,6 @@ class ChatSessionModule implements AgentSession {
       }
       this.deps.logger.info('ChatSession started');
     } catch (error) {
-      this.pushNotificationUnsub?.();
-      this.pushNotificationUnsub = null;
       this.deps.logger.error({ error }, 'ChatSession startup failed');
       throw error;
     }
@@ -1214,11 +1198,6 @@ class ChatSessionModule implements AgentSession {
       // rejected startup is expected here and the original caller owns it.
       await this.startPromise?.catch(() => undefined);
 
-      // Unsubscribe from push notifications first so no new events arrive
-      // while we are shutting down.
-      this.pushNotificationUnsub?.();
-      this.pushNotificationUnsub = null;
-
       // Close the inbox first — no new input can enter the session after
       // this point. Any concurrent send() calls will throw
       // SessionInboxClosedError.
@@ -1274,11 +1253,6 @@ class ChatSessionModule implements AgentSession {
   private async terminate(reason: string): Promise<void> {
     this.leaseManager.revoke('default-session-terminated');
 
-    // Stop MCP ingress before closing the inbox. The listener is synchronous,
-    // so removing it first ensures every callback already entered has either
-    // stored its event or failed before shutdown can continue.
-    this.pushNotificationUnsub?.();
-    this.pushNotificationUnsub = null;
     this.sessionInbox.close();
 
     // Drain remaining deferred inbox events so the session host can re-dispatch
@@ -1302,19 +1276,6 @@ class ChatSessionModule implements AgentSession {
       reason,
       pendingEvents,
     });
-  }
-
-  // ---------------------------------------------------------------------------
-  // MCP push notification handling
-  // ---------------------------------------------------------------------------
-
-  /**
-   * Converts an MCP push notification to a session inbox event and feeds it
-   * into the session's own inbox. Only called when `deps.mcp` is non-null.
-   */
-  private handlePushNotification(ev: McpPushNotification): void {
-    const inboxEvent = mcpPushNotificationToInboxEvent(ev);
-    this.sessionInbox.send(inboxEvent);
   }
 
   // ---------------------------------------------------------------------------

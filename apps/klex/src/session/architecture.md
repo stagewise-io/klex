@@ -8,7 +8,7 @@ There are three kinds of sessions:
 
 | Kind | MCP | Push notifications | Outside input | Created by |
 |------|-----|--------------------|--------------|------------|
-| `default` | ✅ | ✅ (subscribes in `start()`) | ✅ | `SessionHost` |
+| `default` | ✅ | ✅ when composed with the MCP ingress extension | ✅ | `SessionHost` |
 | `god` | ❌ | ❌ | God messages only | `GodMessages` module |
 | `child` | ❌ | ❌ | Parent extension only | Extension via `createChildSession` |
 
@@ -18,8 +18,9 @@ The `default` session is the main execution unit — it talks to MCP servers, re
 
 ```
 SessionHost
-  └─ default session (owns MCP subscription + push notification → inbox wiring)
+  └─ default session (has MCP access)
        └─ extension handler
+            ├─ MCP ingress extension (push notification → inbox wiring)
             └─ extension (can spawn child sessions)
                  └─ child session (isolated — no MCP, no push notifications)
                       └─ extension handler
@@ -33,7 +34,7 @@ GodMessages module
 
 ## SessionHost
 
-Owns exactly one session (the default) and manages its lifecycle. Does not wire push notifications — the session does that itself.
+Owns exactly one session (the default) and manages its lifecycle. It does not wire push notifications; MCP ingress is owned by an extension in the default session's composition.
 
 Responsibilities:
 
@@ -66,7 +67,7 @@ function mcpPushNotificationToInboxEvent(
 ): SessionInboxEvent
 ```
 
-The default session calls this in its push notification listener and feeds the result into its own inbox via `inbox.send()`.
+The MCP ingress extension calls this from its push notification listener and feeds the result into its session's inbox via `inbox.send()`. Resource-aware ingress may instead suppress or replace an event when a linked resource is already open and live.
 
 ## Session kinds and context
 
@@ -100,29 +101,15 @@ Extensions that are MCP-agnostic (time, todos, soul, context-compaction) work un
 
 ### Push notification subscription
 
-The default session subscribes to MCP push notifications during `start()`:
+MCP access and MCP ingress are independent. Supplying `deps.mcp` makes MCP tools and APIs available to extensions, but it does not implicitly subscribe the session to push notifications.
 
-```
-1. If `deps.mcp` is present, subscribe to `mcp.onPushNotification`.
-2. Start extensions sequentially.
-3. If extension startup throws or the session terminates before startup completes, unsubscribe, close every attempted extension in reverse order, and propagate the startup error.
-4. A default-session startup error rejects `SessionHost.start()` and fails application startup; child-session startup errors reject `createChildSession()` so the spawning extension decides whether to retry or propagate the failure.
-```
+The composition root installs the MCP ingress extension in the default session. During extension startup it subscribes through `mcp.onPushNotification`; during extension shutdown it removes that listener. Sessions without the ingress extension do not receive MCP push notifications even if they have MCP access.
 
-And unsubscribes during `close()`:
-
-```
-1. Wait for any in-flight startup or startup rollback.
-2. Unsubscribe from push notifications.
-3. Close the inbox and abort active generation, tools, backoff, and leases.
-4. Close extensions in reverse order.
-```
-
-The composition root starts `SessionHost` before MCP, so the default session listener is installed before MCP workers connect and drain pending events. MCP persists accepted events before acknowledgement and deduplicates them by `eventId`.
+The composition root starts `SessionHost` before MCP, so the ingress extension's listener is installed before MCP workers connect and drain pending events. MCP persists accepted events before acknowledgement and deduplicates them by `eventId`.
 
 ## Child sessions
 
-Extensions can spawn child sessions — isolated execution units with their own message history, inbox, and extensions. Child sessions have no MCP access and no push notification subscription. Their only input is messages injected by the parent extension via the child session's inbox.
+Extensions can spawn child sessions — isolated execution units with their own message history, inbox, and extensions. Child sessions normally have neither MCP access nor an MCP ingress extension. Their only input is messages injected by the parent extension via the child session's inbox.
 
 ### Spawning
 

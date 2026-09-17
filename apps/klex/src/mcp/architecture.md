@@ -9,7 +9,7 @@ The MCP module is the environment boundary between the agent core and external M
 - **Push Notification worker** — subscribes, drains server-managed pending queues, deduplicates, and acknowledges.
 - **Push Notification inbox** — process-local `eventId` deduplication scoped by MCP namespace.
 
-The module exposes `onPushNotification()` to the default session. External code does not create or wire the inbox.
+The module exposes `onPushNotification()` to the MCP ingress extension installed in the default session. MCP access and MCP ingress are separate capabilities: providing an `Mcp` instance does not implicitly subscribe a session to push notifications. External code does not create or wire the MCP module's internal deduplication inbox.
 
 ## Realtime Media boundary
 
@@ -159,9 +159,9 @@ attempt. A restart drops them, and the cloud simply starts a new authorization.
 
 ## Interface to Session
 
-The default session subscribes through `mcp.onPushNotification(listener)` and receives `McpPushNotification` objects containing `{ namespace, event }`. It converts them into session-inbox events.
+The MCP ingress extension installed in the default session subscribes through `mcp.onPushNotification(listener)` and receives `McpPushNotification` objects containing `{ namespace, event }`. It routes resource-linked notifications and converts delivered events into session-inbox events.
 
-The session never accesses the Push Notification inbox directly.
+A session having MCP access does not subscribe automatically; its extension composition determines whether it handles MCP ingress. Neither the session nor the extension accesses the MCP module's internal Push Notification inbox directly.
 
 ## Interface to Main
 

@@ -1,4 +1,4 @@
-# Todos
+## Todos
 
 Internal short-term tasks. Shown in `<todos>`. Keep at most 20. Merge related. Clear done or obsolete. Use for small steps and later work; use calendars for official or recurring events.
 

@@ -10,8 +10,9 @@ import type {
   ExtensionFactory,
   ResolvedModel,
 } from '../extension-api';
-import noSoulPrompt from './no-soul-prompt.md';
-import noSoulPromptRegular from './no-soul-prompt-regular.md';
+import systemPromptPartNoSoulGod from './system-prompt-part/no-soul-god.md';
+import systemPromptPartNoSoul from './system-prompt-part/no-soul-regular.md';
+import { getSystemPromptPart as systemPromptPartSoul } from './system-prompt-part/with-soul';
 import updateSoulToolDescription from './update-soul-tool-description.md';
 
 /**
@@ -101,16 +102,10 @@ class SoulExt implements Extension {
    */
   getSystemPromptPart(): string {
     const soul = this.readSoul();
-    if (soul !== null) {
-      return `# Your Soul
-
-The \`<soul>\` block contains your own thoughts about yourself. Act reliably upon it, as it describes how you view yourself and who you are.
-
-<soul>
-${soul}
-</soul>`;
-    }
-    return this.mode === 'god' ? noSoulPrompt : noSoulPromptRegular;
+    if (soul !== null) return systemPromptPartSoul(soul);
+    return this.mode === 'god'
+      ? systemPromptPartNoSoulGod
+      : systemPromptPartNoSoul;
   }
 
   /**

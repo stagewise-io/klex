@@ -37,6 +37,7 @@ import {
 } from '@/session/chat/extensions/god-messages';
 import { createImageInputOptimizerExt } from '@/session/chat/extensions/image-input-optimizer';
 import { createJsReplSandboxExt } from '@/session/chat/extensions/js-repl-sandbox';
+import { createMcpIngressExt } from '@/session/chat/extensions/mcp-ingress';
 import { createNameLoaderExt } from '@/session/chat/extensions/name-loader';
 import {
   createSoulExt,
@@ -321,6 +322,7 @@ async function main(): Promise<void> {
       createImageInputOptimizerExt,
       createAudioInputOptimizerExt,
       createTodosExt,
+      createMcpIngressExt(),
     ]);
 
     const sessionHost = createSessionHost({

@@ -1,6 +1,12 @@
 import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 
+import type {
+  ReadResourceResult,
+  Resource,
+  ResourceTemplateType,
+} from '@modelcontextprotocol/client';
+
 import type { ModuleLogger, RootLogger } from '@stagewise/logger';
 import type {
   PushNotification,
@@ -77,6 +83,17 @@ export interface McpRealtimeMediaNotification {
   notification: RealtimeMediaNotification;
 }
 
+export interface McpResourceUpdatedNotification {
+  /** MCP server namespace that fired the update. */
+  namespace: string;
+  /** URI of the resource that was updated. */
+  uri: string;
+}
+
+export type McpResourceUpdatedListener = (
+  event: McpResourceUpdatedNotification,
+) => void | Promise<void>;
+
 export type McpRealtimeMediaNotificationListener = (
   event: McpRealtimeMediaNotification,
 ) => void | Promise<void>;
@@ -115,10 +132,14 @@ export interface McpServerInfo {
   status: McpConnectionStatus;
   /** Number of tools exposed by this server (0 if not connected). */
   toolCount: number;
+  /** Combined count of resources and resource templates (0 if not connected or not yet fetched). */
+  resourceCount: number;
   /** Whether the server supports Push Notifications. */
   supportsPushNotifications: boolean;
   /** Whether the server supports Realtime Media. */
   supportsRealtimeMedia: boolean;
+  /** Whether the server supports resource subscriptions. */
+  supportsResourceSubscription: boolean;
   /** Server type: stdio or http. */
   transport: 'stdio' | 'http';
   /** Configured HTTP header names. Values are never exposed. */
@@ -187,6 +208,22 @@ export interface Mcp extends ToolProvider {
   onRealtimeMediaAvailability(
     listener: McpRealtimeMediaAvailabilityListener,
   ): () => void;
+  /** Subscribes to resource-updated notifications from all MCP servers. */
+  onResourceUpdated(listener: McpResourceUpdatedListener): () => void;
+  /** Subscribes to change notifications for a resource on a specific server. */
+  subscribeResource(
+    namespace: string,
+    uri: string,
+    signal: AbortSignal,
+  ): Promise<void>;
+  /** Unsubscribes from change notifications for a resource on a specific server. */
+  unsubscribeResource(
+    namespace: string,
+    uri: string,
+    signal: AbortSignal,
+  ): Promise<void>;
+  /** Whether a server supports resource subscriptions. */
+  supportsResourceSubscription(namespace: string): boolean;
   acceptRealtimeMediaSession(
     namespace: string,
     sessionId: string,
@@ -219,6 +256,20 @@ export interface Mcp extends ToolProvider {
    * server has none.
    */
   cancelAuthorization(serverName: string): boolean;
+  /** Lists resources and resource templates from the given MCP server.
+   * When `cursor` is provided, returns a single page of resources plus
+   * `nextCursor` for the next page. When omitted, auto-aggregates all pages.
+   * Resource templates are always auto-aggregated (typically few in number). */
+  listResources(
+    namespace: string,
+    cursor?: string,
+  ): Promise<{
+    resources: Resource[];
+    resourceTemplates: ResourceTemplateType[];
+    nextCursor?: string;
+  }>;
+  /** Reads a single resource by URI from the given MCP server. */
+  readResource(namespace: string, uri: string): Promise<ReadResourceResult>;
 }
 
 export type RequestAuthorizationResult =
@@ -269,6 +320,19 @@ interface McpConnectionAttempt {
   controller: AbortController;
 }
 
+interface ResourceCatalogBudget {
+  entries: number;
+  bytes: number;
+}
+
+interface ResourceSubscriptionEntry {
+  count: number;
+  operation: Promise<void>;
+  subscribedConnection: McpConnection | undefined;
+  retryAttempt: number;
+  retryTimer: ReturnType<typeof setTimeout> | undefined;
+}
+
 interface McpServerRuntime {
   namespace: string;
   config: McpServerConfig;
@@ -280,6 +344,8 @@ interface McpServerRuntime {
   retryTimer?: ReturnType<typeof setTimeout>;
   lastError?: McpServerErrorInfo;
   nextRetryAt?: string;
+  /** Cached combined count of resources + resource templates, refreshed after connect. */
+  resourceCount: number;
 }
 
 class McpModule implements Mcp {
@@ -291,6 +357,13 @@ class McpModule implements Mcp {
     new Set<McpRealtimeMediaNotificationListener>();
   private readonly realtimeAvailabilityListeners =
     new Set<McpRealtimeMediaAvailabilityListener>();
+  private readonly resourceUpdatedListeners =
+    new Set<McpResourceUpdatedListener>();
+  /** Tracks reference-counted desired subscriptions. Survives disconnects. */
+  private readonly resourceSubscriptions = new Map<
+    string,
+    Map<string, ResourceSubscriptionEntry>
+  >();
   private readonly realtimeAvailableNamespaces = new Set<string>();
   private registry: McpRegistry = new Map();
   private started = false;
@@ -299,6 +372,10 @@ class McpModule implements Mcp {
   private readonly toolCallHistory: McpToolCallRecord[] = [];
   /** Maximum number of tool call records to keep. */
   private static readonly MAX_TOOL_CALL_HISTORY = 500;
+  /** Protects automatic resource aggregation from a server with endless cursors. */
+  private static readonly MAX_RESOURCE_PAGES = 10_000;
+  private static readonly MAX_RESOURCE_CATALOG_ENTRIES = 10_000;
+  private static readonly MAX_RESOURCE_CATALOG_BYTES = 5 * 1024 * 1024;
 
   constructor(
     private readonly deps: {
@@ -363,6 +440,81 @@ class McpModule implements Mcp {
     };
   }
 
+  onResourceUpdated(listener: McpResourceUpdatedListener): () => void {
+    this.resourceUpdatedListeners.add(listener);
+    let subscribed = true;
+    return () => {
+      if (!subscribed) return;
+      subscribed = false;
+      this.resourceUpdatedListeners.delete(listener);
+    };
+  }
+
+  async subscribeResource(
+    namespace: string,
+    uri: string,
+    signal: AbortSignal,
+  ): Promise<void> {
+    const connection = this.requireConnection(namespace);
+    if (!connection.supportsResourceSubscription) {
+      throw new Error(
+        `MCP server '${namespace}' does not support resource subscriptions`,
+      );
+    }
+
+    const subscriptions = this.getResourceSubscriptions(namespace);
+    let entry = subscriptions.get(uri);
+    if (!entry) {
+      entry = {
+        count: 0,
+        operation: Promise.resolve(),
+        subscribedConnection: undefined,
+        retryAttempt: 0,
+        retryTimer: undefined,
+      };
+      subscriptions.set(uri, entry);
+    }
+
+    entry.count++;
+    try {
+      await this.queueResourceSubscriptionTransition(
+        namespace,
+        uri,
+        entry,
+        signal,
+      );
+    } catch (error) {
+      entry.count--;
+      void this.queueResourceSubscriptionTransition(
+        namespace,
+        uri,
+        entry,
+        AbortSignal.timeout(30_000),
+      ).catch(() => undefined);
+      throw error;
+    }
+  }
+
+  async unsubscribeResource(
+    namespace: string,
+    uri: string,
+    signal: AbortSignal,
+  ): Promise<void> {
+    const entry = this.resourceSubscriptions.get(namespace)?.get(uri);
+    if (!entry || entry.count === 0) return;
+    entry.count--;
+    await this.queueResourceSubscriptionTransition(
+      namespace,
+      uri,
+      entry,
+      signal,
+    );
+  }
+
+  supportsResourceSubscription(namespace: string): boolean {
+    return this.requireConnection(namespace).supportsResourceSubscription;
+  }
+
   async acceptRealtimeMediaSession(
     namespace: string,
     sessionId: string,
@@ -404,6 +556,12 @@ class McpModule implements Mcp {
     await Promise.allSettled(
       connections.map((connection) => connection.close()),
     );
+    for (const subscriptions of this.resourceSubscriptions.values()) {
+      for (const entry of subscriptions.values()) {
+        if (entry.retryTimer) clearTimeout(entry.retryTimer);
+      }
+    }
+    this.resourceSubscriptions.clear();
     this.deps.logger.info('MCP stopped');
   }
 
@@ -528,6 +686,7 @@ class McpModule implements Mcp {
         signature: signature(config),
         status: 'connecting',
         retryAttempt: 0,
+        resourceCount: 0,
       };
       this.servers.set(namespace, runtime);
       this.activateRuntime(runtime);
@@ -593,6 +752,10 @@ class McpModule implements Mcp {
           this.enqueuePushNotification(changed, notification),
         onRealtimeMediaNotification: (changed, notification) =>
           this.publishRealtimeNotification(changed, notification),
+        onResourceUpdated: async (changed, uri) => {
+          if (!this.isCurrentConnection(runtime, changed)) return;
+          await this.publishResourceUpdated(changed, uri);
+        },
         onAuthorizationStatus: (status) => {
           if (!this.isCurrentAttempt(runtime, attempt)) return;
           runtime.status = status;
@@ -641,6 +804,9 @@ class McpModule implements Mcp {
           },
           'MCP server connected',
         );
+        this.resubscribeResources(runtime, connection);
+        // Fetch resource count in the background — don't block connection.
+        void this.refreshResourceCount(runtime, connection);
       })
       .catch((error: unknown) => {
         if (!this.isCurrentAttempt(runtime, attempt)) return;
@@ -889,6 +1055,24 @@ class McpModule implements Mcp {
     );
   }
 
+  private async publishResourceUpdated(
+    connection: McpConnection,
+    uri: string,
+  ): Promise<void> {
+    await Promise.allSettled(
+      [...this.resourceUpdatedListeners].map(async (listener) => {
+        try {
+          await listener({ namespace: connection.namespace, uri });
+        } catch (error) {
+          this.deps.logger.error(
+            { error, namespace: connection.namespace, uri },
+            'MCP resource-updated listener failed',
+          );
+        }
+      }),
+    );
+  }
+
   private stopEventWorker(namespace: string): void {
     const worker = this.eventWorkers.get(namespace);
     if (!worker) return;
@@ -1080,9 +1264,12 @@ class McpModule implements Mcp {
         name,
         status: runtime?.status ?? 'disconnected',
         toolCount: connection?.tools.length ?? 0,
+        resourceCount: runtime?.resourceCount ?? 0,
         supportsPushNotifications:
           connection?.supportsPushNotifications ?? false,
         supportsRealtimeMedia: connection?.supportsRealtimeMedia ?? false,
+        supportsResourceSubscription:
+          connection?.supportsResourceSubscription ?? false,
         transport,
         headerNames:
           transport === 'http' && config && !('command' in config)
@@ -1169,6 +1356,287 @@ class McpModule implements Mcp {
     const pending = this.deps.pendingAuthorizations.findByServer(serverName);
     if (!pending) return false;
     return this.deps.pendingAuthorizations.cancel(pending.id);
+  }
+
+  private getResourceSubscriptions(
+    namespace: string,
+  ): Map<string, ResourceSubscriptionEntry> {
+    let subscriptions = this.resourceSubscriptions.get(namespace);
+    if (!subscriptions) {
+      subscriptions = new Map();
+      this.resourceSubscriptions.set(namespace, subscriptions);
+    }
+    return subscriptions;
+  }
+
+  private queueResourceSubscriptionTransition(
+    namespace: string,
+    uri: string,
+    entry: ResourceSubscriptionEntry,
+    signal: AbortSignal,
+  ): Promise<void> {
+    const operation = entry.operation
+      .catch(() => undefined)
+      .then(async () => {
+        const subscriptions = this.resourceSubscriptions.get(namespace);
+        if (subscriptions?.get(uri) !== entry) return;
+
+        if (entry.count === 0) {
+          const subscribedConnection = entry.subscribedConnection;
+          entry.subscribedConnection = undefined;
+          if (subscribedConnection) {
+            await subscribedConnection.unsubscribeResource(uri, signal);
+          }
+          if (entry.count === 0 && subscriptions.get(uri) === entry) {
+            subscriptions.delete(uri);
+            if (subscriptions.size === 0) {
+              this.resourceSubscriptions.delete(namespace);
+            }
+          }
+          return;
+        }
+
+        const connection = this.requireConnection(namespace);
+        if (!connection.supportsResourceSubscription) {
+          throw new Error(
+            `MCP server '${namespace}' does not support resource subscriptions`,
+          );
+        }
+        if (entry.subscribedConnection === connection) return;
+        await connection.subscribeResource(uri, signal);
+        entry.subscribedConnection = connection;
+        entry.retryAttempt = 0;
+        if (entry.retryTimer) {
+          clearTimeout(entry.retryTimer);
+          entry.retryTimer = undefined;
+        }
+      });
+    entry.operation = operation;
+    return operation;
+  }
+
+  /** Re-subscribes all positively referenced URIs after reconnect. */
+  private resubscribeResources(
+    runtime: McpServerRuntime,
+    connection: McpConnection,
+  ): void {
+    const subscriptions = this.resourceSubscriptions.get(runtime.namespace);
+    if (
+      !subscriptions ||
+      subscriptions.size === 0 ||
+      !connection.supportsResourceSubscription
+    ) {
+      return;
+    }
+    for (const [uri, entry] of subscriptions) {
+      if (entry.count === 0) continue;
+      if (entry.retryTimer) {
+        clearTimeout(entry.retryTimer);
+        entry.retryTimer = undefined;
+      }
+      entry.retryAttempt = 0;
+      this.resubscribeResource(runtime, connection, uri, entry);
+    }
+  }
+
+  private resubscribeResource(
+    runtime: McpServerRuntime,
+    connection: McpConnection,
+    uri: string,
+    entry: ResourceSubscriptionEntry,
+  ): void {
+    void this.queueResourceSubscriptionTransition(
+      runtime.namespace,
+      uri,
+      entry,
+      AbortSignal.timeout(30_000),
+    ).then(
+      () => {
+        this.deps.logger.debug(
+          { namespace: runtime.namespace, uri },
+          'Re-subscribed to resource after reconnect',
+        );
+      },
+      (error: unknown) => {
+        if (
+          entry.count === 0 ||
+          entry.retryTimer ||
+          !this.isCurrentConnection(runtime, connection)
+        ) {
+          return;
+        }
+        const delay = Math.min(30_000, 1_000 * 2 ** entry.retryAttempt);
+        entry.retryAttempt++;
+        entry.retryTimer = setTimeout(() => {
+          entry.retryTimer = undefined;
+          if (this.isCurrentConnection(runtime, connection)) {
+            this.resubscribeResource(runtime, connection, uri, entry);
+          }
+        }, delay);
+        this.deps.logger.warn(
+          { delay, error, namespace: runtime.namespace, uri },
+          'Failed to re-subscribe to resource after reconnect; retry scheduled',
+        );
+      },
+    );
+  }
+
+  private requireConnection(namespace: string): McpConnection {
+    const connection = this.servers.get(namespace)?.connection;
+    if (!connection) throw new Error(`MCP server is unavailable: ${namespace}`);
+    return connection;
+  }
+
+  /** Fetches the combined resource + template count for a server and caches it. */
+  private async refreshResourceCount(
+    runtime: McpServerRuntime,
+    connection: McpConnection,
+  ): Promise<void> {
+    try {
+      const budget: ResourceCatalogBudget = { entries: 0, bytes: 0 };
+      const resourceResult = await this.listAllResources(connection, budget);
+      const resourceTemplates = await this.listAllResourceTemplates(
+        connection,
+        budget,
+      );
+      if (!this.isCurrentConnection(runtime, connection)) return;
+      runtime.resourceCount =
+        resourceResult.resources.length + resourceTemplates.length;
+      this.publishRegistry();
+    } catch {
+      // Resource count is best-effort; failures don't affect connection status.
+    }
+  }
+
+  async listResources(
+    namespace: string,
+    cursor?: string,
+  ): Promise<{
+    resources: Resource[];
+    resourceTemplates: ResourceTemplateType[];
+    nextCursor?: string;
+  }> {
+    const connection = this.requireConnection(namespace);
+    const budget: ResourceCatalogBudget = { entries: 0, bytes: 0 };
+    const resourceResult =
+      cursor === undefined
+        ? await this.listAllResources(connection, budget)
+        : await this.listResourcePage(connection, cursor, budget);
+    const resourceTemplates = await this.listAllResourceTemplates(
+      connection,
+      budget,
+    );
+    // Update cached count for this server.
+    const runtime = this.servers.get(namespace);
+    if (runtime) {
+      runtime.resourceCount =
+        resourceResult.resources.length + resourceTemplates.length;
+    }
+    return {
+      resources: resourceResult.resources,
+      resourceTemplates,
+      ...(resourceResult.nextCursor
+        ? { nextCursor: resourceResult.nextCursor }
+        : {}),
+    };
+  }
+
+  private async listResourcePage(
+    connection: McpConnection,
+    cursor: string,
+    budget: ResourceCatalogBudget,
+  ): Promise<{
+    resources: Resource[];
+    nextCursor?: string;
+  }> {
+    const result = await connection.listResources(
+      AbortSignal.timeout(30_000),
+      cursor,
+    );
+    this.consumeResourceCatalogBudget(budget, result.resources);
+    return result;
+  }
+
+  private async listAllResources(
+    connection: McpConnection,
+    budget: ResourceCatalogBudget,
+  ): Promise<{
+    resources: Resource[];
+    nextCursor?: string;
+  }> {
+    const resources: Resource[] = [];
+    const seenCursors = new Set<string>();
+    let cursor: string | undefined;
+    for (let page = 0; page < McpModule.MAX_RESOURCE_PAGES; page++) {
+      const result = await connection.listResources(
+        AbortSignal.timeout(30_000),
+        cursor,
+      );
+      this.consumeResourceCatalogBudget(budget, result.resources);
+      resources.push(...result.resources);
+      if (!result.nextCursor) return { resources };
+      if (seenCursors.has(result.nextCursor)) {
+        throw new Error('MCP resource pagination returned a repeated cursor');
+      }
+      seenCursors.add(result.nextCursor);
+      cursor = result.nextCursor;
+    }
+    throw new Error('MCP resource pagination exceeded the page safety limit');
+  }
+
+  private async listAllResourceTemplates(
+    connection: McpConnection,
+    budget: ResourceCatalogBudget,
+  ): Promise<ResourceTemplateType[]> {
+    const resourceTemplates: ResourceTemplateType[] = [];
+    const seenCursors = new Set<string>();
+    let cursor: string | undefined;
+    for (let page = 0; page < McpModule.MAX_RESOURCE_PAGES; page++) {
+      const result = await connection.listResourceTemplates(
+        AbortSignal.timeout(30_000),
+        cursor,
+      );
+      this.consumeResourceCatalogBudget(budget, result.resourceTemplates);
+      resourceTemplates.push(...result.resourceTemplates);
+      if (!result.nextCursor) return resourceTemplates;
+      if (seenCursors.has(result.nextCursor)) {
+        throw new Error(
+          'MCP resource-template pagination returned a repeated cursor',
+        );
+      }
+      seenCursors.add(result.nextCursor);
+      cursor = result.nextCursor;
+    }
+    throw new Error(
+      'MCP resource-template pagination exceeded the page safety limit',
+    );
+  }
+
+  private consumeResourceCatalogBudget(
+    budget: ResourceCatalogBudget,
+    entries: unknown[],
+  ): void {
+    const nextEntryCount = budget.entries + entries.length;
+    const nextByteCount =
+      budget.bytes + Buffer.byteLength(JSON.stringify(entries), 'utf8');
+    if (nextEntryCount > McpModule.MAX_RESOURCE_CATALOG_ENTRIES) {
+      throw new Error('MCP resource catalog exceeded the total-entry limit');
+    }
+    if (nextByteCount > McpModule.MAX_RESOURCE_CATALOG_BYTES) {
+      throw new Error(
+        'MCP resource catalog exceeded the serialized-size limit',
+      );
+    }
+    budget.entries = nextEntryCount;
+    budget.bytes = nextByteCount;
+  }
+
+  async readResource(
+    namespace: string,
+    uri: string,
+  ): Promise<ReadResourceResult> {
+    const connection = this.requireConnection(namespace);
+    return connection.readResource(uri, AbortSignal.timeout(30_000));
   }
 
   private addToolCallRecord(record: McpToolCallRecord): void {

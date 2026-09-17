@@ -17,6 +17,7 @@ import {
 } from '@/mcp';
 import type { ChatSessionDependencies } from '@/session/chat/chat-session';
 import type { ExtensionFactory } from '@/session/chat/extensions/extension-api';
+import { createMcpIngressExt } from '@/session/chat/extensions/mcp-ingress';
 import { createSessionHost } from '@/session/session-host';
 import type { ChatSessionHandle, SessionFactory } from '@/session/types';
 
@@ -190,7 +191,7 @@ describe('realtime and default chat interaction', () => {
         modelResolver,
         mcp: params.mcp,
         sessionContext: params.sessionContext,
-        extensionFactories: [seededMcpToolExtension()],
+        extensionFactories: [createMcpIngressExt(), seededMcpToolExtension()],
         dataDirectory: join(tmpdir(), 'klex-interaction-e2e'),
         introspectionScope: params.introspectionScope,
         hooks: params.hooks,
@@ -255,9 +256,9 @@ describe('realtime and default chat interaction', () => {
         }),
       ]),
     );
-    expect(processor.context.tools).toEqual([
-      expect.objectContaining({ name: 'echo' }),
-    ]);
+    expect(processor.context.tools).toEqual(
+      expect.arrayContaining([expect.objectContaining({ name: 'echo' })]),
+    );
 
     const push = {
       method: 'io.stagewise/push-notifications/event',

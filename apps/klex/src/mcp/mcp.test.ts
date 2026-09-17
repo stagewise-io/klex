@@ -89,8 +89,18 @@ function connection(namespace: string): McpConnection {
     pushNotifications: {},
     supportsRealtimeMedia: false,
     realtimeMedia: {},
+    supportsResourceSubscription: false,
     invoke: vi.fn(),
     close: vi.fn(async () => undefined),
+  } as unknown as McpConnection;
+}
+
+function resourceSubscriptionConnection(namespace: string): McpConnection {
+  return {
+    ...connection(namespace),
+    supportsResourceSubscription: true,
+    subscribeResource: vi.fn(async () => undefined),
+    unsubscribeResource: vi.fn(async () => undefined),
   } as unknown as McpConnection;
 }
 
@@ -1064,6 +1074,554 @@ describe('MCP cloud authorization requests', () => {
     expect(mcp.cancelAuthorization('protected')).toBe(true);
     expect(mcp.cancelAuthorization('unknown')).toBe(false);
     expect(authorizationOf(mcp, 'protected')).toBeNull();
+    await mcp.close();
+  });
+});
+
+describe('MCP Resource Subscriptions', () => {
+  it('subscribeResource delegates to the connection', async () => {
+    const conn = resourceSubscriptionConnection('server');
+    const { mcp } = setup(
+      { server: { url: 'https://example.com/mcp' } },
+      async () => conn,
+    );
+    await mcp.start();
+    await waitForNamespace(mcp, 'server');
+
+    await mcp.subscribeResource(
+      'server',
+      'file:///data.txt',
+      AbortSignal.timeout(5_000),
+    );
+    expect(conn.subscribeResource).toHaveBeenCalledWith(
+      'file:///data.txt',
+      expect.any(AbortSignal),
+    );
+    await mcp.close();
+  });
+
+  it('unsubscribeResource delegates to the connection', async () => {
+    const conn = resourceSubscriptionConnection('server');
+    const { mcp } = setup(
+      { server: { url: 'https://example.com/mcp' } },
+      async () => conn,
+    );
+    await mcp.start();
+    await waitForNamespace(mcp, 'server');
+
+    await mcp.subscribeResource(
+      'server',
+      'file:///data.txt',
+      AbortSignal.timeout(5_000),
+    );
+    await mcp.unsubscribeResource(
+      'server',
+      'file:///data.txt',
+      AbortSignal.timeout(5_000),
+    );
+    expect(conn.unsubscribeResource).toHaveBeenCalledWith(
+      'file:///data.txt',
+      expect.any(AbortSignal),
+    );
+    await mcp.close();
+  });
+
+  it('supportsResourceSubscription reflects server capabilities', async () => {
+    const conn = resourceSubscriptionConnection('server');
+    const { mcp } = setup(
+      { server: { url: 'https://example.com/mcp' } },
+      async () => conn,
+    );
+    await mcp.start();
+    await waitForNamespace(mcp, 'server');
+
+    expect(mcp.supportsResourceSubscription('server')).toBe(true);
+    await mcp.close();
+  });
+
+  it('supportsResourceSubscription returns false for unsupported server', async () => {
+    const { mcp } = setup(
+      { server: { url: 'https://example.com/mcp' } },
+      async () => connection('server'),
+    );
+    await mcp.start();
+    await waitForNamespace(mcp, 'server');
+
+    expect(mcp.supportsResourceSubscription('server')).toBe(false);
+    await mcp.close();
+  });
+
+  it('onResourceUpdated listener receives updates', async () => {
+    const conn = resourceSubscriptionConnection('server');
+    let connectOptions: ConnectMcpServerOptions | undefined;
+    const { mcp } = setup(
+      { server: { url: 'https://example.com/mcp' } },
+      async (opts) => {
+        connectOptions = opts;
+        return conn;
+      },
+    );
+    await mcp.start();
+    await waitForNamespace(mcp, 'server');
+
+    const updates: { namespace: string; uri: string }[] = [];
+    const unsub = mcp.onResourceUpdated((event) => {
+      updates.push(event);
+    });
+
+    // Simulate a resource updated notification
+    connectOptions?.onResourceUpdated?.(conn, 'file:///data.txt');
+
+    await vi.waitFor(() => expect(updates).toHaveLength(1));
+    expect(updates.at(0)?.namespace).toBe('server');
+    expect(updates.at(0)?.uri).toBe('file:///data.txt');
+
+    unsub();
+    await mcp.close();
+  });
+
+  it('ignores resource updates from a replaced connection', async () => {
+    const conn1 = resourceSubscriptionConnection('server');
+    const conn2 = resourceSubscriptionConnection('server');
+    const connections = [conn1, conn2];
+    const connectOptions: ConnectMcpServerOptions[] = [];
+    const { config, mcp } = setup(
+      { server: { url: 'https://example.com/mcp' } },
+      async (options) => {
+        connectOptions.push(options);
+        return connections[connectOptions.length - 1] ?? conn2;
+      },
+    );
+    await mcp.start();
+    await waitForNamespace(mcp, 'server');
+    const updates: string[] = [];
+    mcp.onResourceUpdated(({ uri }) => {
+      updates.push(uri);
+    });
+
+    await config.publish({
+      server: { url: 'https://example.com/mcp-replaced' },
+    });
+    await vi.waitFor(() => expect(connectOptions).toHaveLength(2));
+    await connectOptions[0]?.onResourceUpdated?.(conn1, 'file:///stale.txt');
+    await connectOptions[1]?.onResourceUpdated?.(conn2, 'file:///current.txt');
+
+    expect(updates).toEqual(['file:///current.txt']);
+    await mcp.close();
+  });
+
+  it('reconnection re-subscribes tracked URIs', async () => {
+    const conn1 = resourceSubscriptionConnection('server');
+    const connections: McpConnection[] = [conn1];
+    let connectCallCount = 0;
+    const { mcp, config } = setup(
+      { server: { url: 'https://example.com/mcp' } },
+      async () => {
+        const c = connections[connectCallCount] ?? conn1;
+        connectCallCount++;
+        return c;
+      },
+    );
+    await mcp.start();
+    await waitForNamespace(mcp, 'server');
+
+    // Subscribe to a resource
+    await mcp.subscribeResource(
+      'server',
+      'file:///tracked.txt',
+      AbortSignal.timeout(5_000),
+    );
+    expect(conn1.subscribeResource).toHaveBeenCalledTimes(1);
+
+    // Simulate reconnection by publishing a new config (same server)
+    const conn2 = resourceSubscriptionConnection('server');
+    connections.push(conn2);
+    config.publish({ server: { url: 'https://example.com/mcp-v2' } });
+
+    // Wait for reconnect and re-subscription
+    await vi.waitFor(() =>
+      expect(conn2.subscribeResource).toHaveBeenCalledTimes(1),
+    );
+    expect(conn2.subscribeResource).toHaveBeenCalledWith(
+      'file:///tracked.txt',
+      expect.any(AbortSignal),
+    );
+
+    await mcp.close();
+  });
+
+  it('reference-counts consumers of the same resource', async () => {
+    const conn = resourceSubscriptionConnection('server');
+    const { mcp } = setup(
+      { server: { url: 'https://example.com/mcp' } },
+      async () => conn,
+    );
+    await mcp.start();
+    await waitForNamespace(mcp, 'server');
+
+    await mcp.subscribeResource(
+      'server',
+      'file:///shared.txt',
+      AbortSignal.timeout(5_000),
+    );
+    await mcp.subscribeResource(
+      'server',
+      'file:///shared.txt',
+      AbortSignal.timeout(5_000),
+    );
+    expect(conn.subscribeResource).toHaveBeenCalledTimes(1);
+
+    await mcp.unsubscribeResource(
+      'server',
+      'file:///shared.txt',
+      AbortSignal.timeout(5_000),
+    );
+    expect(conn.unsubscribeResource).not.toHaveBeenCalled();
+    await mcp.unsubscribeResource(
+      'server',
+      'file:///shared.txt',
+      AbortSignal.timeout(5_000),
+    );
+    expect(conn.unsubscribeResource).toHaveBeenCalledTimes(1);
+    await mcp.close();
+  });
+
+  it('shares an in-flight first subscription', async () => {
+    let resolveSubscribe: (() => void) | undefined;
+    const conn = resourceSubscriptionConnection('server');
+    vi.mocked(conn.subscribeResource).mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveSubscribe = resolve;
+        }),
+    );
+    const { mcp } = setup(
+      { server: { url: 'https://example.com/mcp' } },
+      async () => conn,
+    );
+    await mcp.start();
+    await waitForNamespace(mcp, 'server');
+
+    const first = mcp.subscribeResource(
+      'server',
+      'file:///shared.txt',
+      AbortSignal.timeout(5_000),
+    );
+    const second = mcp.subscribeResource(
+      'server',
+      'file:///shared.txt',
+      AbortSignal.timeout(5_000),
+    );
+    await vi.waitFor(() =>
+      expect(conn.subscribeResource).toHaveBeenCalledTimes(1),
+    );
+    resolveSubscribe?.();
+    await Promise.all([first, second]);
+    await mcp.close();
+  });
+
+  it('rolls back all references when the shared subscribe fails', async () => {
+    const conn = resourceSubscriptionConnection('server');
+    vi.mocked(conn.subscribeResource).mockRejectedValueOnce(
+      new Error('subscribe failed'),
+    );
+    const { mcp } = setup(
+      { server: { url: 'https://example.com/mcp' } },
+      async () => conn,
+    );
+    await mcp.start();
+    await waitForNamespace(mcp, 'server');
+
+    await expect(
+      mcp.subscribeResource(
+        'server',
+        'file:///shared.txt',
+        AbortSignal.timeout(5_000),
+      ),
+    ).rejects.toThrow('subscribe failed');
+    await mcp.subscribeResource(
+      'server',
+      'file:///shared.txt',
+      AbortSignal.timeout(5_000),
+    );
+    expect(conn.subscribeResource).toHaveBeenCalledTimes(2);
+    await mcp.close();
+  });
+
+  it('keeps a concurrent acquisition live while the final release is in flight', async () => {
+    const unsubscribe = deferred<void>();
+    const conn = resourceSubscriptionConnection('server');
+    vi.mocked(conn.unsubscribeResource).mockReturnValueOnce(
+      unsubscribe.promise,
+    );
+    const { mcp } = setup(
+      { server: { url: 'https://example.com/mcp' } },
+      async () => conn,
+    );
+    await mcp.start();
+    await waitForNamespace(mcp, 'server');
+
+    await mcp.subscribeResource(
+      'server',
+      'file:///raced.txt',
+      AbortSignal.timeout(5_000),
+    );
+    const release = mcp.unsubscribeResource(
+      'server',
+      'file:///raced.txt',
+      AbortSignal.timeout(5_000),
+    );
+    await vi.waitFor(() =>
+      expect(conn.unsubscribeResource).toHaveBeenCalledTimes(1),
+    );
+
+    const acquire = mcp.subscribeResource(
+      'server',
+      'file:///raced.txt',
+      AbortSignal.timeout(5_000),
+    );
+    unsubscribe.resolve(undefined);
+    await Promise.all([release, acquire]);
+    expect(conn.subscribeResource).toHaveBeenCalledTimes(2);
+
+    await mcp.unsubscribeResource(
+      'server',
+      'file:///raced.txt',
+      AbortSignal.timeout(5_000),
+    );
+    expect(conn.unsubscribeResource).toHaveBeenCalledTimes(2);
+    await mcp.close();
+  });
+
+  it('retries a failed reconnect subscription without poisoning the lease', async () => {
+    const conn1 = resourceSubscriptionConnection('server');
+    const conn2 = resourceSubscriptionConnection('server');
+    vi.mocked(conn2.subscribeResource)
+      .mockRejectedValueOnce(new Error('temporary reconnect failure'))
+      .mockResolvedValue(undefined);
+    const connections = [conn1, conn2];
+    let connectCallCount = 0;
+    const { config, mcp } = setup(
+      { server: { url: 'https://example.com/mcp' } },
+      async () => connections[connectCallCount++] ?? conn2,
+    );
+    await mcp.start();
+    await waitForNamespace(mcp, 'server');
+    await mcp.subscribeResource(
+      'server',
+      'file:///retry.txt',
+      AbortSignal.timeout(5_000),
+    );
+
+    await config.publish({
+      server: { url: 'https://example.com/mcp-reconnected' },
+    });
+    await vi.waitFor(
+      () => expect(conn2.subscribeResource).toHaveBeenCalledTimes(2),
+      { timeout: 3_000 },
+    );
+
+    await mcp.unsubscribeResource(
+      'server',
+      'file:///retry.txt',
+      AbortSignal.timeout(5_000),
+    );
+    expect(conn2.unsubscribeResource).toHaveBeenCalledTimes(1);
+    await mcp.close();
+  });
+
+  it('replaces a stale resubscription retry with one for the new connection', async () => {
+    const conn1 = resourceSubscriptionConnection('server');
+    const conn2 = resourceSubscriptionConnection('server');
+    const conn3 = resourceSubscriptionConnection('server');
+    vi.mocked(conn2.subscribeResource).mockRejectedValue(
+      new Error('connection two failed'),
+    );
+    vi.mocked(conn3.subscribeResource)
+      .mockRejectedValueOnce(new Error('connection three failed once'))
+      .mockResolvedValue(undefined);
+    const connections = [conn1, conn2, conn3];
+    let connectCallCount = 0;
+    const { config, mcp } = setup(
+      { server: { url: 'https://example.com/mcp' } },
+      async () => connections[connectCallCount++] ?? conn3,
+    );
+    await mcp.start();
+    await waitForNamespace(mcp, 'server');
+    await mcp.subscribeResource(
+      'server',
+      'file:///retry.txt',
+      AbortSignal.timeout(5_000),
+    );
+
+    await config.publish({
+      server: { url: 'https://example.com/mcp-v2' },
+    });
+    await vi.waitFor(() =>
+      expect(conn2.subscribeResource).toHaveBeenCalledOnce(),
+    );
+    await config.publish({
+      server: { url: 'https://example.com/mcp-v3' },
+    });
+    await vi.waitFor(
+      () => expect(conn3.subscribeResource).toHaveBeenCalledTimes(2),
+      { timeout: 3_000 },
+    );
+
+    await mcp.close();
+  });
+
+  it('aggregates every resource and template page when cursor is omitted', async () => {
+    const conn = resourceSubscriptionConnection('server');
+    conn.listResources = vi.fn().mockImplementation((_signal, cursor) => {
+      if (cursor === 'resources-2') {
+        return { resources: [{ name: 'two', uri: 'file:///two' }] };
+      }
+      return {
+        resources: [{ name: 'one', uri: 'file:///one' }],
+        nextCursor: 'resources-2',
+      };
+    });
+    conn.listResourceTemplates = vi
+      .fn()
+      .mockImplementation((_signal, cursor) => {
+        if (cursor === 'templates-2') {
+          return {
+            resourceTemplates: [{ name: 'two', uriTemplate: 'file:///{two}' }],
+          };
+        }
+        return {
+          resourceTemplates: [{ name: 'one', uriTemplate: 'file:///{one}' }],
+          nextCursor: 'templates-2',
+        };
+      });
+    const { mcp } = setup(
+      { server: { url: 'https://example.com/mcp' } },
+      async () => conn,
+    );
+    await mcp.start();
+    await waitForNamespace(mcp, 'server');
+
+    const result = await mcp.listResources('server');
+    expect(result.resources.map((resource) => resource.name)).toEqual([
+      'one',
+      'two',
+    ]);
+    expect(result.resourceTemplates.map((template) => template.name)).toEqual([
+      'one',
+      'two',
+    ]);
+    expect(conn.listResources).toHaveBeenCalledWith(
+      expect.any(AbortSignal),
+      'resources-2',
+    );
+    expect(conn.listResourceTemplates).toHaveBeenCalledWith(
+      expect.any(AbortSignal),
+      'templates-2',
+    );
+    await mcp.close();
+  });
+
+  it('rejects an aggregated resource catalog above the total-entry limit', async () => {
+    const conn = resourceSubscriptionConnection('server');
+    conn.listResources = vi.fn().mockResolvedValue({
+      resources: Array.from({ length: 10_001 }, (_, index) => ({
+        name: `resource-${index}`,
+        uri: `file:///resource-${index}`,
+      })),
+    });
+    conn.listResourceTemplates = vi
+      .fn()
+      .mockResolvedValue({ resourceTemplates: [] });
+    const { mcp } = setup(
+      { server: { url: 'https://example.com/mcp' } },
+      async () => conn,
+    );
+    await mcp.start();
+    await waitForNamespace(mcp, 'server');
+
+    await expect(mcp.listResources('server')).rejects.toThrow(
+      'total-entry limit',
+    );
+    await mcp.close();
+  });
+
+  it('rejects an aggregated resource catalog above the byte limit', async () => {
+    const conn = resourceSubscriptionConnection('server');
+    conn.listResources = vi.fn().mockResolvedValue({
+      resources: [
+        {
+          name: 'oversized',
+          uri: 'file:///oversized',
+          description: 'x'.repeat(5 * 1024 * 1024),
+        },
+      ],
+    });
+    conn.listResourceTemplates = vi
+      .fn()
+      .mockResolvedValue({ resourceTemplates: [] });
+    const { mcp } = setup(
+      { server: { url: 'https://example.com/mcp' } },
+      async () => conn,
+    );
+    await mcp.start();
+    await waitForNamespace(mcp, 'server');
+
+    await expect(mcp.listResources('server')).rejects.toThrow(
+      'serialized-size limit',
+    );
+    await mcp.close();
+  });
+
+  it('rejects repeated resource pagination cursors', async () => {
+    const conn = resourceSubscriptionConnection('server');
+    conn.listResources = vi.fn().mockResolvedValue({
+      resources: [],
+      nextCursor: 'same',
+    });
+    conn.listResourceTemplates = vi
+      .fn()
+      .mockResolvedValue({ resourceTemplates: [] });
+    const { mcp } = setup(
+      { server: { url: 'https://example.com/mcp' } },
+      async () => conn,
+    );
+    await mcp.start();
+    await waitForNamespace(mcp, 'server');
+
+    await expect(mcp.listResources('server')).rejects.toThrow(
+      'repeated cursor',
+    );
+    await mcp.close();
+  });
+
+  it('starts with fresh resource subscription state after close', async () => {
+    const conn1 = resourceSubscriptionConnection('server');
+    const conn2 = resourceSubscriptionConnection('server');
+    const connections = [conn1, conn2];
+    let connectCallCount = 0;
+    const { mcp } = setup(
+      { server: { url: 'https://example.com/mcp' } },
+      async () => connections[connectCallCount++] ?? conn2,
+    );
+    await mcp.start();
+    await waitForNamespace(mcp, 'server');
+    await mcp.subscribeResource(
+      'server',
+      'file:///a.txt',
+      AbortSignal.timeout(5_000),
+    );
+    await mcp.close();
+
+    await mcp.start();
+    await waitForNamespace(mcp, 'server');
+    await mcp.subscribeResource(
+      'server',
+      'file:///a.txt',
+      AbortSignal.timeout(5_000),
+    );
+
+    expect(conn2.subscribeResource).toHaveBeenCalledOnce();
     await mcp.close();
   });
 });

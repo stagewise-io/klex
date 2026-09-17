@@ -62,7 +62,7 @@ or other validation commands.
 ## Code boundaries
 
 - `apps/klex/`: brain, memory, session host, MCP clients, config, admin plane.
-- `apps/klex/src/mcp/`: MCP client layer. Owns connection lifecycle, tool registry, subscribe-before-drain recovery, and process-local `eventId` deduplication as an internal submodule. Exposes `onPushNotification()` to the default session — no external inbox wiring.
+- `apps/klex/src/mcp/`: MCP client layer. Owns connection lifecycle, tool registry, subscribe-before-drain recovery, and process-local `eventId` deduplication as an internal submodule. Exposes `onPushNotification()` to the MCP ingress extension — no external inbox wiring.
 - `mcp-servers/`: external channels and work environments.
 - `packages/mcp-extension-push-notifications/`: identity-scoped pending-queue protocol and SDK helpers.
 - `packages/`: shared protocol and runtime libraries.

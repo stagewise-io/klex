@@ -165,6 +165,7 @@ describe('connectMcpServer OAuth lifecycle', () => {
         onDisconnect: () => undefined,
         onPushNotification: () => undefined,
         onRealtimeMediaNotification: () => undefined,
+        onResourceUpdated: () => undefined,
         onToolsChanged: () => undefined,
         onAuthorizationStatus: (status) => authorizationStatuses.push(status),
         oauth: {

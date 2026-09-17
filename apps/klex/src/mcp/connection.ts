@@ -3,6 +3,9 @@ import {
   Client,
   type Tool as McpToolDefinition,
   type OAuthClientProvider,
+  type ReadResourceResult,
+  type Resource,
+  type ResourceTemplateType,
   StreamableHTTPClientTransport,
   type Transport,
   UnauthorizedError,
@@ -52,11 +55,29 @@ export interface McpConnection {
   readonly supportsPushNotifications: boolean;
   readonly realtimeMedia: RegisteredRealtimeMediaClient | undefined;
   readonly supportsRealtimeMedia: boolean;
+  /** Whether the server supports resource subscriptions (`resources.subscribe`). */
+  readonly supportsResourceSubscription: boolean;
   invoke(
     tool: McpToolDefinition,
     input: JsonObject,
     signal: AbortSignal,
   ): Promise<CallToolResult>;
+  listResources(
+    signal: AbortSignal,
+    cursor?: string,
+  ): Promise<{ resources: Resource[]; nextCursor?: string }>;
+  listResourceTemplates(
+    signal: AbortSignal,
+    cursor?: string,
+  ): Promise<{
+    resourceTemplates: ResourceTemplateType[];
+    nextCursor?: string;
+  }>;
+  readResource(uri: string, signal: AbortSignal): Promise<ReadResourceResult>;
+  /** Subscribes to change notifications for a resource. */
+  subscribeResource(uri: string, signal: AbortSignal): Promise<void>;
+  /** Unsubscribes from change notifications for a resource. */
+  unsubscribeResource(uri: string, signal: AbortSignal): Promise<void>;
   close(): Promise<void>;
 }
 
@@ -76,6 +97,10 @@ export interface ConnectMcpServerOptions {
   onRealtimeMediaNotification(
     connection: McpConnection,
     notification: RealtimeMediaNotification,
+  ): void | Promise<void>;
+  onResourceUpdated(
+    connection: McpConnection,
+    uri: string,
   ): void | Promise<void>;
   onDisconnect(connection: McpConnection): void;
   onAuthorizationStatus?(
@@ -101,6 +126,7 @@ class McpServerConnection implements McpConnection {
     readonly supportsPushNotifications: boolean,
     readonly realtimeMedia: RegisteredRealtimeMediaClient | undefined,
     readonly supportsRealtimeMedia: boolean,
+    readonly supportsResourceSubscription: boolean,
     private currentTools: readonly McpToolDefinition[],
   ) {}
 
@@ -123,6 +149,62 @@ class McpServerConnection implements McpConnection {
       { name: tool.name, arguments: input },
       { signal, toolDefinition: tool },
     );
+  }
+
+  async listResources(
+    signal: AbortSignal,
+    cursor?: string,
+  ): Promise<{ resources: Resource[]; nextCursor?: string }> {
+    if (this.closed)
+      throw new Error(`MCP server is unavailable: ${this.namespace}`);
+    const result = await this.client.listResources(
+      cursor ? { cursor } : undefined,
+      { signal },
+    );
+    return {
+      resources: result.resources,
+      ...(result.nextCursor ? { nextCursor: result.nextCursor } : {}),
+    };
+  }
+
+  async listResourceTemplates(
+    signal: AbortSignal,
+    cursor?: string,
+  ): Promise<{
+    resourceTemplates: ResourceTemplateType[];
+    nextCursor?: string;
+  }> {
+    if (this.closed)
+      throw new Error(`MCP server is unavailable: ${this.namespace}`);
+    const result = await this.client.listResourceTemplates(
+      cursor ? { cursor } : undefined,
+      { signal },
+    );
+    return {
+      resourceTemplates: result.resourceTemplates,
+      ...(result.nextCursor ? { nextCursor: result.nextCursor } : {}),
+    };
+  }
+
+  async readResource(
+    uri: string,
+    signal: AbortSignal,
+  ): Promise<ReadResourceResult> {
+    if (this.closed)
+      throw new Error(`MCP server is unavailable: ${this.namespace}`);
+    return this.client.readResource({ uri }, { signal });
+  }
+
+  async subscribeResource(uri: string, signal: AbortSignal): Promise<void> {
+    if (this.closed)
+      throw new Error(`MCP server is unavailable: ${this.namespace}`);
+    await this.client.subscribeResource({ uri }, { signal });
+  }
+
+  async unsubscribeResource(uri: string, signal: AbortSignal): Promise<void> {
+    if (this.closed)
+      throw new Error(`MCP server is unavailable: ${this.namespace}`);
+    await this.client.unsubscribeResource({ uri }, { signal });
   }
 
   async close(): Promise<void> {
@@ -173,6 +255,17 @@ export async function connectMcpServer(
         },
       })
     : undefined;
+  // Register a notification handler for resource updates. The SDK dispatches
+  // `notifications/resources/updated` to this handler when the server fires
+  // it (either via legacy unsolicited delivery or via a subscriptions/listen
+  // stream — the handler is era-transparent per the SDK design).
+  client.setNotificationHandler(
+    'notifications/resources/updated',
+    async (notification) => {
+      if (connection)
+        await options.onResourceUpdated(connection, notification.params.uri);
+    },
+  );
   const oauth = await createOAuthTransportOptions(options);
   let transport = createTransport(
     options.config,
@@ -214,6 +307,9 @@ export async function connectMcpServer(
       options.onAuthorizationStatus?.('connecting');
       await client.connect(transport, { signal: options.signal });
     }
+    const capabilities = client.getServerCapabilities();
+    const supportsResourceSubscription =
+      capabilities?.resources?.subscribe === true;
     const [supportsPushNotifications, supportsRealtimeMedia, result] =
       await Promise.all([
         pushNotifications.serverSupportsPushNotifications({
@@ -233,6 +329,7 @@ export async function connectMcpServer(
       supportsPushNotifications,
       realtimeMedia,
       supportsRealtimeMedia,
+      supportsResourceSubscription,
       result.tools,
     );
     const originalClose = connection.close.bind(connection);

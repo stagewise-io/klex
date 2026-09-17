@@ -57,6 +57,23 @@ Error responses include a machine-readable `code` alongside the human-readable
 configured credentials, connected servers, unavailable Cloud authorization,
 and authorization timeouts.
 
+## MCP tool calls
+
+`POST /v1/mcp-servers/:name/tool-calls` accepts `{ toolName, arguments }` and
+returns `{ result }` with the MCP tool result. It invokes an already connected
+server through the normal tool registry and records the call in history. It does
+not create a model run. Tools may modify external data; callers need the same
+admin access as other admin API operations. Provider credentials stay on the agent.
+
+Calls use the request cancellation signal and a 30-second timeout. Missing servers
+or tools return 404, disconnected servers return 409, transport failures return
+502, and aborted/timed-out requests return 504. An MCP `isError` result is returned
+as a successful HTTP response so clients can inspect the provider's tool result.
+
+Server status includes an optional `connectionId` while connected. It changes on
+each successful reconnect, allowing clients to invalidate connection-specific
+metadata without any provider-specific behavior in the agent.
+
 ## God session management
 
 The Admin API contract includes the dedicated God Messages session:

@@ -109,6 +109,8 @@ export type McpConnectionStatus =
 
 /** A single MCP server with its config and connection status. */
 export interface McpServerInfo {
+  /** Identifies the active connection; changes after each successful reconnect. */
+  connectionId?: string;
   /** Unique namespace / server name. */
   name: string;
   /** Current connection status. */
@@ -275,6 +277,7 @@ interface McpServerRuntime {
   signature: string;
   status: Exclude<McpConnectionStatus, 'disconnected'>;
   connection?: McpConnection;
+  connectionId?: string;
   attempt?: McpConnectionAttempt;
   retryAttempt: number;
   retryTimer?: ReturnType<typeof setTimeout>;
@@ -624,6 +627,7 @@ class McpModule implements Mcp {
         }
         runtime.attempt = undefined;
         runtime.connection = connection;
+        runtime.connectionId = randomUUID();
         runtime.status = 'connected';
         runtime.lastError = undefined;
         this.clearRetry(runtime);
@@ -1077,6 +1081,7 @@ class McpModule implements Mcp {
       const transport = config && 'command' in config ? 'stdio' : 'http';
       const pending = this.deps.pendingAuthorizations.findByServer(name);
       statuses.push({
+        connectionId: connection ? runtime?.connectionId : undefined,
         name,
         status: runtime?.status ?? 'disconnected',
         toolCount: connection?.tools.length ?? 0,
@@ -1140,10 +1145,12 @@ class McpModule implements Mcp {
     }
     if (runtime.connection) return { outcome: 'already_connected' };
 
-    this.clearRetry(runtime);
-    runtime.attempt?.controller.abort();
-    runtime.attempt = undefined;
-    this.connectRuntime(runtime);
+    // Adding a server already starts OAuth discovery. Reuse that attempt:
+    // overlapping discovery can overwrite its client registration and PKCE verifier.
+    if (!runtime.attempt) {
+      this.clearRetry(runtime);
+      this.connectRuntime(runtime);
+    }
 
     const authorization = await this.deps.pendingAuthorizations.waitForServer(
       serverName,

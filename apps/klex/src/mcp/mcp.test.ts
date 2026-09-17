@@ -513,6 +513,28 @@ describe('MCP namespace isolation', () => {
     await mcp.close();
   });
 
+  it('changes the connection identity on reconnect and omits it while disconnected', async () => {
+    const { config, mcp } = setup(
+      { server: { url: 'https://example.com/mcp' } },
+      async ({ namespace }) => connection(namespace),
+    );
+    await mcp.start();
+    await waitForNamespace(mcp, 'server');
+    const first = mcp.getServerStatuses()[0]?.connectionId;
+    expect(first).toEqual(expect.any(String));
+    expect(mcp.getServerStatuses()[0]?.connectionId).toBe(first);
+    await config.publish({});
+    expect(mcp.getServerStatuses()).toEqual([]);
+    await config.publish({ server: { url: 'https://example.com/mcp' } });
+    await waitForNamespace(mcp, 'server');
+    expect(mcp.getServerStatuses()[0]?.connectionId).toEqual(
+      expect.any(String),
+    );
+    expect(mcp.getServerStatuses()[0]?.connectionId).not.toBe(first);
+    await mcp.close();
+    expect(mcp.getServerStatuses()[0]?.connectionId).toBeUndefined();
+  });
+
   it('reconnects the same namespace after removal and re-addition', async () => {
     const oldPending = deferred<McpConnection>();
     const late = connection('server');
@@ -888,6 +910,52 @@ function authorizationOf(mcp: Mcp, name: string) {
 }
 
 describe('MCP cloud authorization requests', () => {
+  it('reuses initial OAuth discovery when Connect is clicked before consent is ready', async () => {
+    const discovery = deferred<void>();
+    const connect = vi.fn(
+      async ({ namespace, signal }: ConnectMcpServerOptions) => {
+        await discovery.promise;
+        await pendingAuthorizations.register(
+          {
+            serverName: namespace,
+            serverUrl: 'https://protected.example/mcp',
+            authorizationUrl: 'https://auth.example/authorize?state=initial',
+            state: 'initial',
+          },
+          { signal, timeoutMs: 60_000 },
+        );
+        return connection(namespace);
+      },
+    );
+    const { mcp, pendingAuthorizations } = setupAuthorization(
+      { protected: { url: 'https://protected.example/mcp' } },
+      connect,
+    );
+    await mcp.start();
+    const requested = mcp.requestAuthorization('protected');
+    try {
+      expect(connect).toHaveBeenCalledOnce();
+      expect(connect.mock.calls[0]?.[0].signal.aborted).toBe(false);
+      discovery.resolve();
+      expect(await requested).toMatchObject({
+        outcome: 'pending',
+        authorization: { state: 'initial' },
+      });
+      expect(
+        mcp.completeAuthorization(
+          'initial',
+          new URLSearchParams({ code: 'approved' }),
+        ),
+      ).toBe('accepted');
+      await waitForNamespace(mcp, 'protected');
+      expect(connect).toHaveBeenCalledOnce();
+    } finally {
+      discovery.resolve();
+      await requested;
+      await mcp.close();
+    }
+  });
+
   it('reports unknown servers and servers that do not use interactive OAuth', async () => {
     const { mcp } = setupAuthorization(
       {

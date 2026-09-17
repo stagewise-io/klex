@@ -137,6 +137,7 @@ export async function connectMcpServer(
 ): Promise<McpConnection> {
   let connection: McpServerConnection | undefined;
   let expectedClose = false;
+  let closedDuringSetup = false;
   const client = new Client(
     { name: 'klex', version: '1.0.0' },
     {
@@ -180,6 +181,7 @@ export async function connectMcpServer(
     options.cloudAuth,
   );
   client.onclose = () => {
+    closedDuringSetup = true;
     if (connection && !expectedClose) options.onDisconnect(connection);
   };
 
@@ -212,6 +214,7 @@ export async function connectMcpServer(
         options.cloudAuth,
       );
       options.onAuthorizationStatus?.('connecting');
+      closedDuringSetup = false;
       await client.connect(transport, { signal: options.signal });
     }
     const [supportsPushNotifications, supportsRealtimeMedia, result] =
@@ -226,6 +229,9 @@ export async function connectMcpServer(
           : false,
         client.listTools(undefined, { signal: options.signal }),
       ]);
+    if (closedDuringSetup || options.signal.aborted) {
+      throw new Error('MCP connection closed during setup');
+    }
     connection = new McpServerConnection(
       options.namespace,
       client,

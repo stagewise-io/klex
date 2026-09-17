@@ -27,7 +27,7 @@ class NameLoaderExt implements Extension {
   constructor(private readonly deps: ExtensionDeps) {}
 
   getSystemPromptPart(): string {
-    return `Your official name is ${JSON.stringify(this.resolveName())}.`;
+    return `## Your name\n\n${this.resolveName()}`;
   }
 
   introspect(): Record<string, unknown> {

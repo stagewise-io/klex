@@ -13,11 +13,11 @@ import { describe, expect, it, vi } from 'vitest';
 import type { ExtensionDeps } from '../extension-api';
 import { createSoulExt, createSoulExtGod } from './soul';
 
-vi.mock('./no-soul-prompt.md', () => ({
+vi.mock('./system-prompt-part/no-soul-god.md', () => ({
   default: 'god no-soul prompt',
 }));
 
-vi.mock('./no-soul-prompt-regular.md', () => ({
+vi.mock('./system-prompt-part/no-soul-regular.md', () => ({
   default: 'regular no-soul prompt',
 }));
 

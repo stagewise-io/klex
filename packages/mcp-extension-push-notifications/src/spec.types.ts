@@ -57,6 +57,17 @@ export interface PushNotification {
 
   /** Optional structured JSON data defined by the event type. */
   data?: { [key: string]: JSONValue };
+
+  /**
+   * Optional link to an MCP resource that this notification relates to.
+   * When present, clients that have the resource open may suppress or
+   * replace the notification with a lightweight notice, relying on the
+   * resource subscription for automatic updates instead.
+   */
+  resourceLink?: {
+    /** The URI of the referenced MCP resource. */
+    uri: string;
+  };
 }
 
 /** Parameters for retrieving pending durable events. */

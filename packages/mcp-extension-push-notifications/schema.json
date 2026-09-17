@@ -560,6 +560,16 @@
                     "additionalProperties": {
                       "$ref": "#/$defs/__schema0"
                     }
+                  },
+                  "resourceLink": {
+                    "type": "object",
+                    "properties": {
+                      "uri": {
+                        "type": "string"
+                      }
+                    },
+                    "required": ["uri"],
+                    "additionalProperties": false
                   }
                 },
                 "required": [
@@ -1097,6 +1107,16 @@
                   "additionalProperties": {
                     "$ref": "#/$defs/__schema0"
                   }
+                },
+                "resourceLink": {
+                  "type": "object",
+                  "properties": {
+                    "uri": {
+                      "type": "string"
+                    }
+                  },
+                  "required": ["uri"],
+                  "additionalProperties": false
                 }
               },
               "required": [
@@ -1529,6 +1549,16 @@
                       "additionalProperties": {
                         "$ref": "#/$defs/__schema0"
                       }
+                    },
+                    "resourceLink": {
+                      "type": "object",
+                      "properties": {
+                        "uri": {
+                          "type": "string"
+                        }
+                      },
+                      "required": ["uri"],
+                      "additionalProperties": false
                     }
                   },
                   "required": [
@@ -1936,6 +1966,16 @@
           "additionalProperties": {
             "$ref": "#/$defs/__schema0"
           }
+        },
+        "resourceLink": {
+          "type": "object",
+          "properties": {
+            "uri": {
+              "type": "string"
+            }
+          },
+          "required": ["uri"],
+          "additionalProperties": false
         }
       },
       "required": ["eventId", "sourceId", "type", "createdAt", "content"],

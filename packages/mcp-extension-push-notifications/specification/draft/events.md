@@ -26,6 +26,7 @@ interface PushNotification {
   createdAt: string;
   content: ContentBlock[];
   data?: Record<string, JSONValue>;
+  resourceLink?: { uri: string };
 }
 ```
 
@@ -36,6 +37,14 @@ interface PushNotification {
 - `content` is an ordered array using the canonical MCP `ContentBlock` definition
   from the extension package's pinned MCP SDK revision. It MAY be empty.
 - `data` is optional JSON whose fields and semantics are defined by `type`.
+- `resourceLink` optionally identifies an MCP resource that this notification
+  relates to. The resource URI is scoped to the same MCP server that produced
+  the event. When a client has the referenced resource open with an active
+  subscription, it MAY suppress the notification entirely because the
+  resource subscription delivers updates through a separate mechanism. When the
+  resource is open but not subscribed, a client MAY replace the notification
+  with a lightweight notice. When the resource is not open, the client MUST
+  deliver the full notification so the agent can decide whether to open it.
 
 `content` supports the MCP text, image, audio, embedded-resource, and resource-link
 representations. A producer SHOULD inline only bounded media; base64 increases

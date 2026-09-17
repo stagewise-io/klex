@@ -48,8 +48,8 @@ function postProcess(content: string): string {
     'eventIds: z.array(z.string().min(1)).min(1)',
   );
   output = output.replace(
-    'data: z.record(z.string(), JSONValueSchema).optional()\n});',
-    'data: z.record(z.string(), JSONValueSchema).optional()\n}).strict();',
+    /(export const PushNotificationSchema = z\.object\(\{[\s\S]*?\n\}\));/,
+    (match) => match.replace(/\}\);$/, '}).strict();'),
   );
   output = output.replaceAll('"', "'");
   output = output.replace(

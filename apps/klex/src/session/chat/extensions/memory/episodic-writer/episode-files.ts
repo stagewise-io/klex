@@ -1,10 +1,10 @@
 import {
-  existsSync,
-  mkdirSync,
-  readdirSync,
-  readFileSync,
-  writeFileSync,
-} from 'node:fs';
+  appendFile,
+  mkdir,
+  readdir,
+  readFile,
+  writeFile,
+} from 'node:fs/promises';
 import { join } from 'node:path';
 
 export interface MemoryEntry {
@@ -14,6 +14,7 @@ export interface MemoryEntry {
 
 interface OpenEpisode {
   createdAt: number;
+  date: string;
   entryCount: number;
   path: string;
 }
@@ -51,13 +52,13 @@ export class EpisodeStore {
     this.maxAgeMs = options.maxAgeMs ?? DEFAULT_MAX_AGE_MS;
   }
 
-  store(entry: MemoryEntry): void {
+  async store(entry: MemoryEntry): Promise<void> {
     if (this.resetRequired) {
       this.pendingEntries.push(entry);
       return;
     }
 
-    this.append(entry);
+    await this.append(entry);
   }
 
   /** Closes the current episode and requires a fresh writer context. */
@@ -67,7 +68,7 @@ export class EpisodeStore {
   }
 
   /** Called only after a fresh child session has started. */
-  completeReset(): void {
+  async completeReset(): Promise<void> {
     this.resetRequired = false;
     const entries = this.pendingEntries.splice(0);
     for (let index = 0; index < entries.length; index += 1) {
@@ -77,7 +78,7 @@ export class EpisodeStore {
         this.pendingEntries.unshift(...entries.slice(index));
         break;
       }
-      this.append(entry);
+      await this.append(entry);
     }
   }
 
@@ -98,18 +99,24 @@ export class EpisodeStore {
     };
   }
 
-  private append(entry: MemoryEntry): void {
-    const date = formatUtcDate(this.now());
-    const utcTime = this.toUtcTime(entry.time);
+  private async append(entry: MemoryEntry): Promise<void> {
+    const instant = this.toUtcInstant(entry.time);
+    const date = formatUtcDate(instant);
+    const utcTime = instant.toISOString().slice(11, 16);
     const fingerprint = `${utcTime}: ${normalizeMemoryData(entry.data)}`;
-    this.loadDailyFingerprints(date);
+    await this.loadDailyFingerprints(date);
     if (this.dailyFingerprints.has(fingerprint)) {
       this.duplicateEntriesSkipped += 1;
       return;
     }
 
-    const episode = this.openEpisode ?? this.createEpisode();
-    updateEpisode(episode.path, `- ${utcTime}: ${entry.data}\n`);
+    if (this.openEpisode && this.openEpisode.date !== date) {
+      this.closeOpenEpisode();
+    }
+
+    const episode =
+      this.openEpisode ?? (await this.createEpisode(date, instant));
+    await appendFile(episode.path, `- ${utcTime}: ${entry.data}\n`, 'utf-8');
     this.dailyFingerprints.add(fingerprint);
     episode.entryCount += 1;
     if (episode.entryCount >= this.maxEntries) {
@@ -118,15 +125,20 @@ export class EpisodeStore {
     }
   }
 
-  private loadDailyFingerprints(date: string): void {
+  private async loadDailyFingerprints(date: string): Promise<void> {
     if (this.fingerprintDate === date) return;
     this.fingerprintDate = date;
     this.dailyFingerprints.clear();
     const directory = join(this.options.episodicDir, date);
-    if (!existsSync(directory)) return;
-    for (const filename of readdirSync(directory)) {
+    let filenames: string[];
+    try {
+      filenames = await readdir(directory);
+    } catch {
+      return;
+    }
+    for (const filename of filenames) {
       if (!EPISODE_FILE_PATTERN.test(filename)) continue;
-      const content = readFileSync(join(directory, filename), 'utf-8');
+      const content = await readFile(join(directory, filename), 'utf-8');
       for (const line of content.split('\n')) {
         const match = /^- (\d{2}:\d{2}): (.+)$/.exec(line);
         if (!match?.[1] || !match[2]) continue;
@@ -137,20 +149,22 @@ export class EpisodeStore {
     }
   }
 
-  private createEpisode(): OpenEpisode {
-    const createdAt = this.now();
-    const date = formatUtcDate(createdAt);
+  private async createEpisode(
+    date: string,
+    instant: Date,
+  ): Promise<OpenEpisode> {
     const directory = join(this.options.episodicDir, date);
-    mkdirSync(directory, { recursive: true });
-    const index = nextDailyIndex(directory);
-    const path = join(directory, `${index}-${formatUtcTime(createdAt)}.md`);
-    writeFileSync(path, EPISODE_FRONTMATTER, {
+    await mkdir(directory, { recursive: true });
+    const index = await nextDailyIndex(directory);
+    const path = join(directory, `${index}-${formatUtcTime(instant)}.md`);
+    await writeFile(path, EPISODE_FRONTMATTER, {
       encoding: 'utf-8',
       flag: 'wx',
     });
 
     const episode = {
-      createdAt: createdAt.getTime(),
+      createdAt: this.now().getTime(),
+      date,
       entryCount: 0,
       path,
     };
@@ -169,7 +183,7 @@ export class EpisodeStore {
     this.openEpisode = null;
   }
 
-  private toUtcTime(time: string): string {
+  private toUtcInstant(time: string): Date {
     const [hourText, minuteText] = time.split(':');
     const hour = Number(hourText);
     const minute = Number(minuteText);
@@ -185,7 +199,7 @@ export class EpisodeStore {
     }
 
     const date = localDateAt(this.now(), this.options.timezone);
-    return localTimeToUtc(date, hour, minute, this.options.timezone);
+    return localTimeToUtcInstant(date, hour, minute, this.options.timezone);
   }
 
   private requireReset(): void {
@@ -201,37 +215,19 @@ export class EpisodeStore {
   }
 }
 
-function updateEpisode(path: string, entryLine: string): void {
-  const content = readFileSync(path, 'utf-8');
-  writeFileSync(
-    path,
-    `${withUnanalyzedFrontmatter(content)}${entryLine}`,
-    'utf-8',
-  );
-}
-
-function withUnanalyzedFrontmatter(content: string): string {
-  if (!content.startsWith('---\n')) return `${EPISODE_FRONTMATTER}${content}`;
-
-  const closingDelimiter = content.indexOf('\n---\n', 4);
-  if (closingDelimiter < 0) return `${EPISODE_FRONTMATTER}${content}`;
-
-  const header = content.slice(4, closingDelimiter);
-  const analyzedPattern = /^analyzed\s*:.*$/m;
-  const nextHeader = analyzedPattern.test(header)
-    ? header.replace(analyzedPattern, 'analyzed: false')
-    : `${header}${header ? '\n' : ''}analyzed: false`;
-  return `---\n${nextHeader}\n---\n${content.slice(closingDelimiter + 5)}`;
-}
-
 function normalizeMemoryData(data: string): string {
   return data.trim().toLocaleLowerCase('en-US').replace(/\s+/g, ' ');
 }
 
-function nextDailyIndex(directory: string): number {
-  if (!existsSync(directory)) return 1;
+async function nextDailyIndex(directory: string): Promise<number> {
+  let filenames: string[];
+  try {
+    filenames = await readdir(directory);
+  } catch {
+    return 1;
+  }
   let highest = 0;
-  for (const filename of readdirSync(directory)) {
+  for (const filename of filenames) {
     const match = EPISODE_FILE_PATTERN.exec(filename);
     const index = match?.[1] ? Number.parseInt(match[1], 10) : 0;
     highest = Math.max(highest, index);
@@ -259,12 +255,12 @@ function localDateAt(date: Date, timezone: string): LocalDate {
   };
 }
 
-function localTimeToUtc(
+function localTimeToUtcInstant(
   date: LocalDate,
   hour: number,
   minute: number,
   timezone: string,
-): string {
+): Date {
   const wallTime = Date.UTC(date.year, date.month - 1, date.day, hour, minute);
   let instant = new Date(wallTime);
   for (let attempt = 0; attempt < 3; attempt += 1) {
@@ -292,7 +288,7 @@ function localTimeToUtc(
     if (corrected.getTime() === instant.getTime()) break;
     instant = corrected;
   }
-  return instant.toISOString().slice(11, 16);
+  return instant;
 }
 
 function numberPart(

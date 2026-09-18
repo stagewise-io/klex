@@ -83,6 +83,19 @@ function logger() {
   };
 }
 
+function configWithMemoryModels(count: number) {
+  const entries = Array.from({ length: count }, (_, i) => ({
+    providerId: 'test',
+    modelId: `model-${i}`,
+  }));
+  return {
+    get: () => ({ modelSelection: { memory: entries, chat: entries } }),
+    getModelSelection: vi.fn((purpose: string) =>
+      purpose === 'memory' ? entries : entries,
+    ),
+  } as unknown as ExtensionDeps['config'];
+}
+
 function writerMessage(id: string, size = 16) {
   return {
     id,
@@ -161,7 +174,7 @@ afterEach(() => {
 });
 
 describe('episode store', () => {
-  it('writes exact timestamped lines in a UTC date folder', () => {
+  it('writes exact timestamped lines in a UTC date folder', async () => {
     const root = directory();
     const store = new EpisodeStore({
       episodicDir: root,
@@ -176,7 +189,7 @@ describe('episode store', () => {
       { data: 'slack user U1 = Glenn', time: '14:05' },
       { data: 'retry later', time: '14:05' },
     ];
-    for (const entry of entries) store.store(entry);
+    for (const entry of entries) await store.store(entry);
 
     expect(files(root)).toEqual(['2026-09-18/1-14-05.md']);
     expect(readFileSync(join(root, '2026-09-18', '1-14-05.md'), 'utf-8')).toBe(
@@ -184,14 +197,14 @@ describe('episode store', () => {
     );
   });
 
-  it('resets analyzed to false whenever an episode is updated', () => {
+  it('appends to an episode without rewriting frontmatter', async () => {
     const root = directory();
     const store = new EpisodeStore({
       episodicDir: root,
       onResetRequired: vi.fn(),
       timezone: 'UTC',
     });
-    store.store({ data: 'first', time: '14:05' });
+    await store.store({ data: 'first', time: '14:05' });
     const path = join(root, '2026-09-18', '1-14-05.md');
     writeFileSync(
       path,
@@ -199,14 +212,16 @@ describe('episode store', () => {
       'utf-8',
     );
 
-    store.store({ data: 'second', time: '14:06' });
+    await store.store({ data: 'second', time: '14:06' });
 
+    // Append-only: frontmatter is not rewritten on append.
+    // The new entry is added below the existing content.
     expect(readFileSync(path, 'utf-8')).toBe(
-      '---\nanalyzed: false\ncustom: preserved\n---\n\n- 14:05: first\n- 14:06: second\n',
+      '---\nanalyzed: true\ncustom: preserved\n---\n\n- 14:05: first\n- 14:06: second\n',
     );
   });
 
-  it('skips duplicate entries within a day, including after restart', () => {
+  it('skips duplicate entries within a day, including after restart', async () => {
     const root = directory();
     const first = new EpisodeStore({
       episodicDir: root,
@@ -214,8 +229,8 @@ describe('episode store', () => {
       timezone: 'UTC',
     });
 
-    first.store({ data: 'User prefers German', time: '14:05' });
-    first.store({
+    await first.store({ data: 'User prefers German', time: '14:05' });
+    await first.store({
       data: '  user PREFERS   German  ',
       time: '14:05',
     });
@@ -226,11 +241,11 @@ describe('episode store', () => {
       onResetRequired: vi.fn(),
       timezone: 'UTC',
     });
-    restarted.store({
+    await restarted.store({
       data: 'User prefers German',
       time: '14:05',
     });
-    restarted.store({ data: 'User prefers tea', time: '14:05' });
+    await restarted.store({ data: 'User prefers tea', time: '14:05' });
 
     expect(files(root)).toEqual([
       '2026-09-18/1-14-05.md',
@@ -248,7 +263,7 @@ describe('episode store', () => {
     });
   });
 
-  it('converts each local entry time independently and allows backward jumps', () => {
+  it('files each entry in the UTC date folder matching its converted instant', async () => {
     const root = directory();
     const store = new EpisodeStore({
       episodicDir: root,
@@ -256,16 +271,93 @@ describe('episode store', () => {
       timezone: 'Europe/Berlin',
     });
 
-    store.store({ data: 'late', time: '23:50' });
-    store.store({ data: 'clock moved back', time: '00:10' });
-    store.store({ data: 'same minute', time: '00:10' });
+    // now = 2026-09-18T14:05 UTC → Berlin 16:05.
+    // 23:50 local → 21:50 UTC same day (Sept 18).
+    // 00:10 local → 22:10 UTC previous day (Sept 17).
+    await store.store({ data: 'late', time: '23:50' });
+    await store.store({ data: 'early morning', time: '00:10' });
+    await store.store({ data: 'same minute', time: '00:10' });
 
-    expect(readFileSync(join(root, '2026-09-18', '1-14-05.md'), 'utf-8')).toBe(
-      `${episodeFrontmatter}- 21:50: late\n- 22:10: clock moved back\n- 22:10: same minute\n`,
+    expect(files(root).sort()).toEqual([
+      '2026-09-17/1-22-10.md',
+      '2026-09-18/1-21-50.md',
+    ]);
+    expect(readFileSync(join(root, '2026-09-18', '1-21-50.md'), 'utf-8')).toBe(
+      `${episodeFrontmatter}- 21:50: late\n`,
+    );
+    expect(readFileSync(join(root, '2026-09-17', '1-22-10.md'), 'utf-8')).toBe(
+      `${episodeFrontmatter}- 22:10: early morning\n- 22:10: same minute\n`,
     );
   });
 
-  it('uses the highest daily index regardless of time and resets it at UTC midnight', () => {
+  it('closes and reopens the episode when entries cross UTC midnight', async () => {
+    const root = directory();
+    let now = new Date('2026-09-18T23:30:00.000Z');
+    const store = new EpisodeStore({
+      episodicDir: root,
+      now: () => now,
+      onResetRequired: vi.fn(),
+      timezone: 'UTC',
+    });
+
+    await store.store({ data: 'before midnight', time: '23:59' });
+    // Advance to the next UTC day so 00:01 local maps to Sept 19.
+    now = new Date('2026-09-19T00:05:00.000Z');
+    await store.store({ data: 'after midnight', time: '00:01' });
+
+    expect(files(root).sort()).toEqual([
+      '2026-09-18/1-23-59.md',
+      '2026-09-19/1-00-01.md',
+    ]);
+    expect(readFileSync(join(root, '2026-09-18', '1-23-59.md'), 'utf-8')).toBe(
+      `${episodeFrontmatter}- 23:59: before midnight\n`,
+    );
+    expect(readFileSync(join(root, '2026-09-19', '1-00-01.md'), 'utf-8')).toBe(
+      `${episodeFrontmatter}- 00:01: after midnight\n`,
+    );
+  });
+
+  it('handles west-of-UTC timezone where local evening maps to next UTC day', async () => {
+    const root = directory();
+    const now = new Date('2026-09-18T22:05:00.000Z');
+    const store = new EpisodeStore({
+      episodicDir: root,
+      now: () => now,
+      onResetRequired: vi.fn(),
+      timezone: 'America/New_York',
+    });
+
+    // now = 2026-09-18T22:05 UTC → NY 18:05 (EDT, UTC-4).
+    // 19:00 local → 23:00 UTC same day (Sept 18).
+    // 20:00 local → 00:00 UTC next day (Sept 19).
+    await store.store({ data: 'evening', time: '19:00' });
+    await store.store({ data: 'late evening', time: '20:00' });
+
+    expect(files(root).sort()).toEqual([
+      '2026-09-18/1-23-00.md',
+      '2026-09-19/1-00-00.md',
+    ]);
+  });
+
+  it('deduplicates across UTC-date boundary using the converted instant', async () => {
+    const root = directory();
+    const store = new EpisodeStore({
+      episodicDir: root,
+      onResetRequired: vi.fn(),
+      timezone: 'Europe/Berlin',
+    });
+
+    // 00:10 Berlin → 22:10 UTC on Sept 17.
+    await store.store({ data: 'early morning', time: '00:10' });
+    // Same entry again — should be deduped even though it is in the
+    // previous UTC date folder relative to now().
+    await store.store({ data: 'early morning', time: '00:10' });
+
+    expect(files(root)).toEqual(['2026-09-17/1-22-10.md']);
+    expect(store.introspect()).toMatchObject({ duplicateEntriesSkipped: 1 });
+  });
+
+  it('uses the highest daily index regardless of time and resets it at UTC midnight', async () => {
     const root = directory();
     mkdirSync(join(root, '2026-09-18'));
     writeFileSync(join(root, '2026-09-18', '3-23-59.md'), 'old');
@@ -277,11 +369,11 @@ describe('episode store', () => {
       timezone: 'UTC',
     });
 
-    store.store({ data: 'same day', time: '01:00' });
+    await store.store({ data: 'same day', time: '01:00' });
     store.finishCurrentEpisode();
-    store.completeReset();
+    await store.completeReset();
     now = new Date('2026-09-19T00:01:00.000Z');
-    store.store({ data: 'next day', time: '00:01' });
+    await store.store({ data: 'next day', time: '00:01' });
 
     expect(files(root)).toEqual([
       '2026-09-18/3-23-59.md',
@@ -290,7 +382,7 @@ describe('episode store', () => {
     ]);
   });
 
-  it('queues the next entry until reset after the entry limit', () => {
+  it('queues the next entry until reset after the entry limit', async () => {
     const root = directory();
     const onResetRequired = vi.fn();
     const store = new EpisodeStore({
@@ -300,13 +392,13 @@ describe('episode store', () => {
       timezone: 'UTC',
     });
 
-    store.store({ data: 'one', time: '14:05' });
-    store.store({ data: 'two', time: '14:05' });
-    store.store({ data: 'three', time: '14:05' });
+    await store.store({ data: 'one', time: '14:05' });
+    await store.store({ data: 'two', time: '14:05' });
+    await store.store({ data: 'three', time: '14:05' });
     expect(onResetRequired).toHaveBeenCalledOnce();
     expect(files(root)).toEqual(['2026-09-18/1-14-05.md']);
 
-    store.completeReset();
+    await store.completeReset();
     expect(files(root)).toEqual([
       '2026-09-18/1-14-05.md',
       '2026-09-18/2-14-05.md',
@@ -323,7 +415,7 @@ describe('episode store', () => {
       onResetRequired: callback,
       timezone: 'UTC',
     });
-    store.store({ data: 'one', time: '14:05' });
+    await store.store({ data: 'one', time: '14:05' });
 
     await vi.advanceTimersByTimeAsync(60 * 60 * 1000);
 
@@ -345,6 +437,7 @@ describe('episodic writer owner', () => {
       .mockResolvedValueOnce(second);
     const writer = await createEpisodicWriter(
       {
+        config: configWithMemoryModels(1),
         createChildSession,
         getDataDir: () =>
           join(directory(), 'extensions', 'io.stagewise', 'memory'),
@@ -446,6 +539,7 @@ describe('episodic writer owner', () => {
       .mockResolvedValueOnce(second);
     const writer = await createEpisodicWriter(
       {
+        config: configWithMemoryModels(1),
         createChildSession,
         getDataDir: () => directory(),
         logger: logger(),
@@ -477,6 +571,7 @@ describe('episodic writer owner', () => {
     const log = logger();
     const writer = await createEpisodicWriter(
       {
+        config: configWithMemoryModels(1),
         createChildSession: vi.fn(async () => active),
         getDataDir: () => directory(),
         logger: log,
@@ -501,5 +596,47 @@ describe('episodic writer owner', () => {
       expect.objectContaining({ droppedMessages: 1 }),
       expect.stringContaining('dropped oldest pending input'),
     );
+  });
+
+  it('falls back to chat models when memory models are empty', async () => {
+    const createChildSession = vi
+      .fn<ExtensionDeps['createChildSession']>()
+      .mockResolvedValue(child('fb'));
+    const writer = await createEpisodicWriter(
+      {
+        config: configWithMemoryModels(0),
+        createChildSession,
+        getDataDir: () => directory(),
+        logger: logger(),
+      },
+      'UTC',
+    );
+
+    expect(createChildSession).toHaveBeenCalledOnce();
+    expect(createChildSession.mock.calls[0]?.[0]).toMatchObject({
+      modelPurpose: 'chat',
+    });
+    await writer.close();
+  });
+
+  it('uses memory models when they are configured', async () => {
+    const createChildSession = vi
+      .fn<ExtensionDeps['createChildSession']>()
+      .mockResolvedValue(child('mem'));
+    const writer = await createEpisodicWriter(
+      {
+        config: configWithMemoryModels(1),
+        createChildSession,
+        getDataDir: () => directory(),
+        logger: logger(),
+      },
+      'UTC',
+    );
+
+    expect(createChildSession).toHaveBeenCalledOnce();
+    expect(createChildSession.mock.calls[0]?.[0]).toMatchObject({
+      modelPurpose: 'memory',
+    });
+    await writer.close();
   });
 });

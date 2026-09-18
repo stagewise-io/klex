@@ -13,6 +13,7 @@ import {
   compressHistoryForWriter,
   countPendingUserMessages,
 } from './history-compression';
+import { settleBefore } from './settle-before';
 
 const SHUTDOWN_FLUSH_TIMEOUT_MS = 25_000;
 const COMPACTION_SUMMARY_KEY = 'context-summary';
@@ -258,27 +259,6 @@ class MemoryExt implements Extension {
     this.operation = result.catch(() => undefined);
     return result;
   }
-}
-
-async function settleBefore(
-  promise: Promise<unknown>,
-  deadline: number,
-): Promise<boolean> {
-  const remaining = deadline - Date.now();
-  if (remaining <= 0) return false;
-  return new Promise<boolean>((resolve, reject) => {
-    const timeout = setTimeout(resolve, remaining, false);
-    void promise.then(
-      () => {
-        clearTimeout(timeout);
-        resolve(true);
-      },
-      (error: unknown) => {
-        clearTimeout(timeout);
-        reject(error);
-      },
-    );
-  });
 }
 
 function createWriterMessage(

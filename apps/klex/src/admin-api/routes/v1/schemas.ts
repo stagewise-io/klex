@@ -523,6 +523,7 @@ const updateKnownModelBodySchema = z
   .openapi('UpdateKnownModelBody');
 
 const providerModelSchema = knownModelSchema.extend({
+  createdAt: z.iso.datetime().optional(),
   source: z.enum(['manual', 'discovered', 'merged']),
   provenance: z
     .array(

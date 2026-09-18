@@ -12,6 +12,7 @@ import {
   gatewayAttributionHeaders,
   isRecord,
   modelListUrl,
+  parseModelCreatedAt,
   providerHeaders,
   sanitizedError,
   testDiscoveryConnection,
@@ -62,6 +63,7 @@ async function discoverModels(
     return available(
       body.data.flatMap((item) => {
         if (!isRecord(item) || typeof item.id !== 'string') return [];
+        const createdAt = parseModelCreatedAt(item.created);
         const architecture = isRecord(item.architecture)
           ? item.architecture
           : undefined;
@@ -83,6 +85,7 @@ async function discoverModels(
         return [
           {
             modelId: item.id,
+            ...(createdAt && { createdAt }),
             ...(kind && { kind }),
             ...((architecture || supportedParameters.length > 0) && {
               capabilities: {

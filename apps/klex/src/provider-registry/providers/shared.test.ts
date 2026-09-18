@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { ProviderInstance } from '../provider-registry';
 import {
   gatewayAttributionHeaders,
+  parseModelCreatedAt,
   sanitizedError,
   testModelConnection,
 } from './shared';
@@ -18,6 +19,21 @@ const instance = (settings: Record<string, unknown>): ProviderInstance => ({
   id: 'codex',
   type: 'chatgpt-codex-subscription',
   settings,
+});
+
+describe('parseModelCreatedAt', () => {
+  it.each([
+    undefined,
+    null,
+    0,
+    -1,
+    Infinity,
+    1e20,
+    'invalid',
+    '1970-01-01T00:00:00Z',
+  ])('ignores unknown or invalid timestamps: %s', (value) =>
+    expect(parseModelCreatedAt(value)).toBeUndefined(),
+  );
 });
 
 describe('gatewayAttributionHeaders', () => {

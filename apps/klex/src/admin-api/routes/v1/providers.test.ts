@@ -169,6 +169,7 @@ describe('provider registry routes', () => {
       value: [
         {
           modelId: 'vendor:model:latest',
+          createdAt: '2026-01-02T00:00:00.000Z',
           displayName: 'Latest',
           source: 'merged' as const,
         },
@@ -185,6 +186,7 @@ describe('provider registry routes', () => {
       models: [
         {
           modelId: 'vendor:model:latest',
+          createdAt: '2026-01-02T00:00:00.000Z',
           displayName: 'Latest',
           source: 'merged',
         },

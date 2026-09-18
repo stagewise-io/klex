@@ -217,7 +217,9 @@ describe('ProviderRegistry', () => {
       signal(),
     );
 
-    expect(result.ok && result.value).toEqual([{ modelId: 'gpt-test' }]);
+    expect(result.ok && result.value).toEqual([
+      { modelId: 'gpt-test', createdAt: '2023-07-09T20:36:42.000Z' },
+    ]);
     expect(new URL(String(fetchMock.mock.calls[0]?.[0])).pathname).toBe(
       '/v1/models',
     );
@@ -235,6 +237,7 @@ describe('ProviderRegistry', () => {
           data: [
             {
               id: 'claude-a',
+              created_at: '2026-01-02T02:00:00+02:00',
               display_name: 'Claude A',
               max_input_tokens: 200_000,
               capabilities: {
@@ -266,6 +269,7 @@ describe('ProviderRegistry', () => {
     expect(result.ok && result.value).toEqual([
       {
         modelId: 'claude-a',
+        createdAt: '2026-01-02T00:00:00.000Z',
         displayName: 'Claude A',
         contextSize: 200_000,
         capabilities: { input: { image: {} }, reasoning: true },
@@ -342,6 +346,7 @@ describe('ProviderRegistry', () => {
           data: [
             {
               id: 'vendor/model',
+              created: 1_688_935_002,
               name: 'Model',
               context_length: 64_000,
               architecture: {
@@ -363,6 +368,7 @@ describe('ProviderRegistry', () => {
     expect(openRouterResult.ok && openRouterResult.value).toEqual([
       {
         modelId: 'vendor/model',
+        createdAt: '2023-07-09T20:36:42.000Z',
         displayName: 'Model',
         kind: 'language',
         contextSize: 64_000,

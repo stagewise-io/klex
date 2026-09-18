@@ -247,7 +247,7 @@ describe('compressHistoryForWriter', () => {
         type: 'data-memory-writer-event',
         data: {
           ndjson:
-            ',{"type":"resource-link","uri":"https://x/y","name":"Issue 1"},{"type":"resource","uri":"file:///a","text":"contents"}]}',
+            ',{"type":"resource-link","uri":"https://x/y","name":"Issue 1"},{"type":"resource","uri":"file:///a","text":"contents"}]}\n',
         },
       },
     ]);

@@ -1,6 +1,11 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { settleBefore } from './settle-before';
+
+afterEach(() => {
+  vi.useRealTimers();
+  vi.restoreAllMocks();
+});
 
 describe('settleBefore', () => {
   it('resolves true when the promise settles before the deadline', async () => {
@@ -22,13 +27,27 @@ describe('settleBefore', () => {
     const result = settleBefore(promise, deadline);
     await vi.advanceTimersByTimeAsync(101);
     expect(await result).toBe(false);
-    vi.useRealTimers();
   });
 
   it('rejects when the promise rejects', async () => {
     const promise = Promise.reject(new Error('boom'));
     const deadline = Date.now() + 10_000;
     await expect(settleBefore(promise, deadline)).rejects.toThrow('boom');
+  });
+
+  it('resolves false when the promise settles after the deadline', async () => {
+    vi.useFakeTimers();
+    const deadline = Date.now() + 100;
+    let resolvePromise: () => void;
+    const promise = new Promise<void>((resolve) => {
+      resolvePromise = resolve;
+    });
+    const result = settleBefore(promise, deadline);
+    // Advance past the deadline so the timeout fires.
+    await vi.advanceTimersByTimeAsync(101);
+    // Now resolve the promise — it settles after the deadline.
+    resolvePromise!();
+    expect(await result).toBe(false);
   });
 
   it('clears the timeout when the promise settles first', async () => {
@@ -38,7 +57,5 @@ describe('settleBefore', () => {
     const deadline = Date.now() + 10_000;
     await settleBefore(promise, deadline);
     expect(clearTimeoutSpy).toHaveBeenCalled();
-    clearTimeoutSpy.mockRestore();
-    vi.useRealTimers();
   });
 });

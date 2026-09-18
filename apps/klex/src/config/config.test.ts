@@ -151,6 +151,12 @@ describe('config v2', () => {
     expect(() =>
       klexConfigSchema.parse({ ...base, memoryWriteStepInterval: 1.5 }),
     ).toThrow();
+    expect(() =>
+      klexConfigSchema.parse({
+        ...base,
+        memoryWriteIntervalMs: 2_147_483_648,
+      }),
+    ).toThrow();
   });
 
   it('defaults and validates the episode finish idle threshold', () => {
@@ -170,6 +176,12 @@ describe('config v2', () => {
     ).toThrow();
     expect(() =>
       klexConfigSchema.parse({ ...base, episodeFinishIdleTriggerTimeMs: 1.5 }),
+    ).toThrow();
+    expect(() =>
+      klexConfigSchema.parse({
+        ...base,
+        episodeFinishIdleTriggerTimeMs: 2_147_483_648,
+      }),
     ).toThrow();
   });
 

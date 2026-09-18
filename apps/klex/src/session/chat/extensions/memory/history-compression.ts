@@ -95,14 +95,14 @@ export function compressHistoryForWriter(
 
 function createWriterParts(event: WriterEvent): ExtendedUIMessage['parts'] {
   if (!event.inlineItems || event.media.length === 0) {
-    return [createWriterEventPart(JSON.stringify(event.record))];
+    return [createWriterEventPart(`${JSON.stringify(event.record)}\n`)];
   }
 
   const skeleton = JSON.stringify({ ...event.record, items: [] });
   const marker = '"items":[]';
   const markerIndex = skeleton.indexOf(marker);
   if (markerIndex < 0) {
-    return [createWriterEventPart(JSON.stringify(event.record))];
+    return [createWriterEventPart(`${JSON.stringify(event.record)}\n`)];
   }
 
   const parts: ExtendedUIMessage['parts'] = [];
@@ -120,7 +120,7 @@ function createWriterParts(event: WriterEvent): ExtendedUIMessage['parts'] {
     text = '';
   }
   text += skeleton.slice(markerIndex + marker.length - 1);
-  if (text) parts.push(createWriterEventPart(text));
+  if (text) parts.push(createWriterEventPart(`${text}\n`));
   return parts;
 }
 

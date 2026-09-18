@@ -14,7 +14,7 @@ SessionHost
 
 Owns message history, inbox, extension handler, fallback manager, backoff manager, and the run loop. Lives for the application lifetime (or until a fatal error self-terminates it). Exposes `status: 'active' | 'terminated'` so the session host can detect dead sessions and replace them.
 
-**Loop:** processes one turn per iteration. Goes idle only when the inbox deferred buffer is empty, no pending immediate input (`hasPendingInput`), no backoff retry is needed, and no check-retry is needed. If a turn fails completely (all models exhausted) and no new inbox input arrives, applies exponential backoff before retrying. Fatal errors (e.g. 400, invalid prompt) terminate the session immediately.
+**Loop:** processes one turn per iteration. Goes idle only when the inbox deferred buffer is empty, no pending immediate input, no backoff retry, and no check-retry needed. If a turn fails completely (all models exhausted) and no new input arrives, applies exponential backoff. Fatal errors terminate immediately.
 
 ## Inbox
 
@@ -22,145 +22,87 @@ Three-urgency event buffer. Two entry points: `send(event)` for context events (
 
 ### Urgency levels
 
-- **Critical** — appended to history immediately (via callback). Aborts current generation. Triggers a check-retry turn after the turn ends.
-- **Default** — appended to history immediately (via callback). Does not abort. Triggers a check-retry turn after the turn ends.
+- **Critical** — appended to history immediately. Aborts current generation. Triggers a check-retry turn.
+- **Default** — appended to history immediately. Does not abort. Triggers a check-retry turn.
 - **Deferrable** — buffered in the inbox, drained at turn start. Background context.
 
-### When events enter history
+### Mid-turn ordering
 
-The timing depends on both the urgency and the current session state:
+Critical/Default events arriving during an active turn are queued in `pendingImmediate` instead of being pushed to history immediately. This prevents a stale response from appearing after the new event. The buffer is flushed after each step commits its response, preserving `[..., ASSISTANT_RESPONSE, NEW_USER_EVENT]` ordering.
 
-| Urgency | Session idle | Active turn | Backoff wait | Terminated |
-|---------|-------------|-------------|--------------|------------|
-| **Critical** | Immediately via callback. `hasPendingInput` starts the loop. | Queued in `pendingImmediate`. Generation aborted. Flushed after step commits response. `newInputDuringTurn` → check-retry after turn. | Immediately via callback. Backoff interrupted. `forceContinue` turn processes it. | Blocked — `SessionInboxClosedError`. |
-| **Default** | Immediately via callback. `hasPendingInput` starts the loop. | Queued in `pendingImmediate`. Flushed after step commits response. `newInputDuringTurn` → check-retry after turn. | Immediately via callback. Backoff interrupted. `forceContinue` turn processes it. | Blocked — `SessionInboxClosedError`. |
-| **Deferrable** | Buffered in inbox. `isEmpty()` false → loop starts, turn drains it. | Buffered in inbox. Drained at next turn start. Does NOT set `newInputDuringTurn`. | Buffered in inbox. Backoff interrupted. `forceContinue` turn drains it. | Blocked — `SessionInboxClosedError`. |
-
-### Loop trigger mechanism
-
-Every `send()` and `sendMessage()` call invokes `onNewInput()` after dispatching/buffering. This callback:
-
-- **If the loop is idle** (`loopActive = false`): sets `hasPendingInput = true` and starts `runLoop()`. The flag is necessary because Critical/Default events are already in `messages[]` — the loop's idle check uses `inbox.isEmpty()` which only inspects the deferred buffer, so without the flag the loop would go idle without processing the immediate event.
-- **If the loop is active** (`loopActive = true`): for Critical/Default urgency, sets `newInputDuringTurn = true` (triggers check-retry). For Deferrable, does NOT set the flag — the buffered event will be drained at the next turn start without needing a check-retry. The event itself is queued in `pendingImmediate` (for Critical/Default) to preserve response-before-new-input ordering.
-- **If in a backoff wait**: interrupts the wait via `backoffInterrupt`. The loop resumes and processes the new input.
-
-Both flags are reset to `false` at the start of each turn iteration, so they only capture input that arrives during that specific turn.
-
-### Mid-turn visibility and ordering
-
-Critical and Default events that arrive during an active turn are queued in a `pendingImmediate` buffer instead of being pushed to `messages[]` immediately. This prevents a stale response (generated from the pre-event history) from appearing after the new user event in the conversation. The buffer is flushed after each step commits its response via `flushPendingImmediate()`, ensuring the ordering is always `[..., ASSISTANT_RESPONSE, NEW_USER_EVENT]`.
-
-The `structuredClone` generation copy ensures the generation does not see mid-turn appends. After a turn ends with a valid stop, if non-deferrable input arrived during the turn (`newInputDuringTurn`), the loop runs a check-retry turn with `forceCheck` that injects a `data-check` prompt asking the model to review new input and decide whether to respond.
-
-Deferrable events do not set `newInputDuringTurn` — they are buffered in the inbox and drained at the next turn start, so no check-retry is needed.
-
-### Critical urgency abort
-
-Both `send()` and `sendMessage()` with Critical urgency abort the running generation via `currentTurn.abortGeneration('inbox_interrupt')`. The abort fires only if a turn is active (`currentTurn !== null`). For `sendMessage`, the urgency is passed to `onImmediateMessage` so the session can decide whether to abort.
+After a turn ends with a valid stop, if non-deferrable input arrived during the turn, the loop runs a check-retry turn asking the model to review new input and decide whether to respond.
 
 ### Session termination and event recovery
 
-When a session terminates (fatal error, max failures, or explicit close), the inbox is closed first — any subsequent `send()` / `sendMessage()` throws `SessionInboxClosedError`. Deferred events remaining in the buffer are drained via `getEvents()` and passed to the session host's `onTerminated` hook, which creates a replacement session and re-dispatches them via `restorePendingEvents()`. Immediate (Critical/Default) events that were already appended to history are lost with the terminated session's history — only deferred events survive.
+When a session terminates, the inbox is closed — subsequent `send()` / `sendMessage()` throws `SessionInboxClosedError`. Deferred events remaining in the buffer are passed to the session host's `onTerminated` hook, which creates a replacement session and re-dispatches them. Immediate events already in history are lost with the terminated session.
 
 ## Generation-lane leasing
 
-The default chat session is the sole owner of canonical history, extension instances, and tool execution. Realtime does not create a parallel chat session. It requests an exclusive generation-lane lease through the session host's `ConversationHost` interface.
+The default chat session is the sole owner of canonical history, extensions, and tool execution. Realtime does not create a parallel chat session — it requests an exclusive generation-lane lease through `ConversationHost`.
 
-Lease acquisition is a safe-boundary handoff:
-
-1. mark the generation lane as quiescing;
-2. interrupt only an active model stream;
-3. allow already-dispatched tools and the current step commit to settle;
-4. prevent the next chat step from starting;
-5. prepare one atomic inference context and expose its history revision and update watermark.
-
-This ordering preserves chat-originated call framing. Assistant text, a call-opening tool invocation, and its settled result are canonical before realtime bootstrap. A concurrent lease is rejected. Closing or terminating the default session revokes its lease; normal release resumes the chat lane without generating a duplicate response for inputs already handled during the call.
+Lease acquisition is a safe-boundary handoff: quiesce the generation lane, interrupt only an active model stream, let dispatched tools and the current step commit settle, prevent the next chat step from starting, then prepare one atomic inference context. A concurrent lease is rejected. Normal release resumes the chat lane without generating a duplicate response.
 
 ### Context preparation
 
-Both chat steps and leased interactions use the same context assembly order: provisional extension context, cloned canonical history, history transformers and compaction, model-message conversion, context transformers, tool collection, then base and extension instructions. The returned preparation handle is committed only after provider setup succeeds. Setup failure rolls it back, so provisional context cannot leak into canonical history.
-
-The bootstrap contains provider-neutral `ModelMessage[]`, non-secret model metadata, JSON-Schema tool descriptors, `historyRevision`, and `updateWatermark`. Provider credentials and wire-format conversion remain outside the chat session.
-
-### Canonical updates and commits
-
-Accepted Critical and Default inbox events are first recorded in canonical history, assigned a monotonic session sequence, then published to the active lease. The bootstrap watermark and ordered update stream eliminate the snapshot/subscription race. Stable event IDs support process-local deduplication and reconnect replay. `requestResponse` is explicit; forwarding a notification does not inherently request speech.
-
-Finalized user and assistant transcripts are committed as ordinary turns. Partial deltas remain ephemeral unless a provider exposes no authoritative turn boundary; that adapter may commit bounded approximate transcript groups as `data-context` with explicit speaker and timeline metadata, never as finalized turns or proof of playout. Interrupted finalized assistant text is truncated to synchronized playout before commitment. Realtime tool calls and results use the session-owned executor and canonical commit path. Execution IDs provide lease-lifetime at-most-once side effects, while commit event IDs make transcript and tool records idempotent.
-
-The pending update buffer is bounded to 256 entries by default. Overflow revokes the lease rather than silently dropping or reordering canonical input. Acknowledged updates are pruned from the replay cursor. These guarantees are process-local because canonical history is currently process-local.
+Both chat steps and leased interactions use the same context assembly: provisional extension context, cloned canonical history, history transformers and compaction, model-message conversion, context transformers, tool collection, then instructions. The preparation handle is committed only after provider setup succeeds; setup failure rolls it back.
 
 ## Turn
 
-Drains deferrable inbox, then runs steps sequentially until no more generation is needed. Unifies "Continue." injection (backoff retry or salvage `forceNextStep`) and `data-check` injection (check-retry after new input) into a single code path. `completeFailure = hadAnyFailure && !hadAnySuccess` — salvaged content counts as non-failure.
+Drains deferrable inbox, then runs steps sequentially until no more generation is needed. Unifies "Continue." injection (backoff retry or salvage) and `data-check` injection (check-retry after new input) into a single code path.
 
 ## Step
 
-Coordinator: history repair → decision (can a step run?) → model fetch → history transformation (clone → extension pre-process → model-aware core conversion → extension post-process) → delegate to GenerationRunner.
+Coordinator: history repair → decision (can a step run?) → model fetch → history transformation (clone → extension pre-process → model-aware conversion → extension post-process) → delegate to GenerationRunner.
 
-The step no longer drains the inbox. Immediate (Critical/Default) events are already in `messages[]` via callbacks; Deferrable events are drained at turn start. Generation operates on a `structuredClone` copy, so mid-turn appends are visible to the next step without corrupting the original.
-
-The `messages[]` array is shared by reference across Session/Turn/Step. The critical window (extension processing + generation) operates on a `structuredClone` copy, so mutations can't corrupt the original. The original is only mutated in synchronous sequential code (turn-start drain, history repair, Continue/check injection, response push, immediate inbox appends via callbacks).
+Generation operates on a `structuredClone` copy, so mid-turn appends are visible to the next step without corrupting the original. The original is only mutated in synchronous sequential code (turn-start drain, history repair, Continue/check injection, response push, immediate inbox appends).
 
 ## Native media input
 
-The session maps valid inline MCP image and audio blocks to canonical session content containing `mimeType` and base64 `data`. This representation is AI-SDK-independent, remains in canonical history, preserves its position relative to captions and other text, and is redacted from logs and tracing. Inline media is bounded to 10 MiB at ingress.
+The session maps valid inline MCP image and audio blocks to canonical content containing `mimeType` and base64 `data`. This representation is AI-SDK-independent, remains in canonical history, preserves position relative to captions and text, and is redacted from logs.
 
-Core model-message conversion projects canonical context for the model already selected by the normal fallback order:
-
-- If that model declares a matching native capability and the decoded media fits its byte limit, conversion emits an AI SDK UI file part, which becomes a model `FilePart`.
-- Otherwise conversion emits an explicit `<unsupported-image>` or `<unsupported-audio>` text marker without binary data. Media is never silently omitted.
-
-Media presence does not change model selection. A text-only primary model remains primary. Only an ordinary generation failure advances fallback; the next step then reprojects the untouched canonical history for the newly selected model, so a capable fallback can receive the original media.
-
-Declare native support on a `knownModels` entry:
-
-```json
-{
-  "capabilities": {
-    "input": {
-    "image": {
-      "mediaTypes": ["image/jpeg", "image/png"],
-      "maxBytes": 10485760
-    },
-    "audio": {
-      "mediaTypes": ["audio/mpeg", "audio/wav"],
-      "maxBytes": 10485760
-    }
-  }
-}
-```
-
-Missing `capabilities.input.image` or `capabilities.input.audio` means that modality is unsupported. Klex does not infer capabilities from model names. MIME matching against the selected model's configured list is exact: `audio/ogg` is not sent to a model that declares only `audio/mpeg` and `audio/wav`. Telegram voice commonly arrives as `audio/ogg`, so it degrades explicitly unless the selected model accepts that exact MIME type.
-
-The core path validates MIME type, canonical base64, and decoded byte limits. It does not resize, re-encode, transcode, describe, transcribe, persist, or remotely fetch media. Deterministic format conversion and semantic fallback belong in separate future extensions.
+Model-message conversion projects media for the selected model: if the model declares a matching native capability and the media fits its byte limit, conversion emits a file part; otherwise it emits an explicit `<unsupported-image>` or `<unsupported-audio>` text marker. Media is never silently omitted. Media presence does not change model selection.
 
 ## GenerationRunner
 
-Owns the retry loop, model fallback, error classification, message salvage, stream progress tracking, and the ToolDispatcher. On failure, `decideOutcome` (pure) maps classification + content state to a coarse outcome, then `applyOutcome` performs side effects (span attrs, salvage, fallback) and refines it.
+Owns the retry loop, model fallback, error classification, message salvage, stream progress tracking, and the ToolDispatcher. On failure, `decideOutcome` (pure) maps classification + content state to a coarse outcome, then `applyOutcome` performs side effects and refines it.
 
 ## ToolDispatcher
 
-At-most-once tool execution via `dispatchedToolCallIds` Set. Owns tool lookup, execution, and in-place state mutation (`input-available` → `output-available` / `output-error`). Decoupled from generation abort (separate `toolAbortController`). Post-generation sweep catches tool calls that reached `input-available` after the stream ended. Tool execution is bounded by a configurable timeout (default 30 s).
+At-most-once tool execution via a `dispatchedToolCallIds` set. Owns tool lookup, execution, and in-place state mutation. Decoupled from generation abort. Post-generation sweep catches tool calls that reached `input-available` after the stream ended. Tool execution is bounded by a configurable timeout.
 
 ## Extensions
 
-Extensions can transform UI history and model context, register custom data-part transformers, expose tools, and contribute system prompts. Every session declares its own base prompt; for example, the episodic-memory writer child uses its dedicated writer prompt as that base rather than replacing prompt assembly through an extension. `getProvisionalStepContext` prepares dynamic context after the step decision and model resolution, immediately before inference. Core appends all contributed parts as one synthetic user message: it retains that message when generation completes and removes it when generation fails or falls back to another step. Providers receive isolated history snapshots and run sequentially in factory order; they do not mutate canonical history directly. Inbox access remains available for genuine turn-triggering input, not just-in-time generation context.
+Extensions can transform UI history and model context, register custom data-part transformers, expose tools, and contribute system prompts. Every session declares its own base prompt; the episodic-memory writer child uses its dedicated writer prompt as that base. `getProvisionalStepContext` prepares dynamic context after model resolution, immediately before inference. Providers receive isolated history snapshots and run sequentially in factory order; they do not mutate canonical history directly.
 
 ## Episodic memory
 
-The session composition loads the memory extension only in the default session; once loaded, the extension is always active. During startup it creates one required child session with the dedicated episodic-writer prompt as that child's base prompt and the configured `memory` model list. The child loads the configured agent name and standard soul, context compaction, dedicated writer-input materialization, image and audio input optimizers, and one opaque `memorize` tool, but does not inherit the default agent prompt or MCP access. Failure to create the writer rejects default-session startup.
+The memory extension loads only in the default session. During startup it creates one required child session with the episodic-writer prompt as its base prompt and the configured `memory` model list. The child loads the agent name, standard soul, context compaction, writer-input materialization, image and audio optimizers, and one opaque `memorize` tool. It does not inherit the default agent prompt or MCP access. Failure to create the writer rejects default-session startup.
 
-Main-session context is flushed after three completed steps beyond the writer cursor or one minute after the first such step, whichever happens first; both thresholds are configurable. Continued main-session activity does not postpone the time trigger. A successful flush resets both thresholds. New context-compaction summaries and default-session shutdown also flush immediately. Episode closing remains separate: after the configurable main-session idle interval (five minutes by default), the extension flushes any final delta, waits for the writer to finish, closes the current episode, and replaces the child session so the next episode receives fresh model context. Starting another main-session step cancels only this pending idle close. Context arriving during child replacement is buffered and delivered oldest-first once a writer is ready. The buffer retains at most 48,000 input characters and drops the oldest waiting inputs first while preserving any in-flight input. A terminated writer is replaced and its in-flight input is retried; temporary replacement failures retain buffered work and emit warning logs. Shutdown has one 25-second deadline covering queued operations, the final submission, writer drain, and close.
+### Triggers
 
-The extension tracks the last native message ID delivered to the writer and transforms only the history excerpt after that cursor. A null cursor, or a cursor unexpectedly missing from canonical history, includes all available history. Writer input preserves NDJSON as one complete record per relevant event: `your_action` for the writer's prior tool activity, `your_loud_thought` for its prior output, `your_thought` for its prior reasoning, `context` for external input, and `time_update` for local time. Raw user text is ignored. Context source, metadata, and typed items remain distinct. Context image and audio payloads are materialized as custom media parts inline at their exact positions in the `items` array; the surrounding JSON record is split into text parts immediately before and after each payload, matching regular main-session context materialization. This allows direct model input or optimizer-assisted inspection when the memory model lacks native support. Agent-action records include input, outcome status, and bounded output or error details so attempted work cannot be mistaken for success. JSON serialization escapes embedded newlines, quotes, and delimiters, preventing source content from creating records or changing field boundaries. Text and serialized values retain up to 500 characters: tool names and inputs truncate at the end, while assistant reasoning, text, context content and metadata, tool outputs, and tool errors truncate in the middle to preserve both ends. Context text retains up to 300 characters, context records up to 2,000, and native message records up to 4,000; explicit omission counts mark dropped parts. Each writer submission is capped at 12,000 characters only between complete native messages. The cursor stops at the last included native message, and a new interval is scheduled while complete omitted messages remain pending. Compaction summaries, control data, non-context binary payloads, and unknown parts remain excluded. A transformation or inbox-delivery failure advances nothing so a later trigger can retry it.
+Main-session context is flushed after a configurable number of completed steps beyond the writer cursor or a configurable interval after the first such step, whichever comes first. A successful flush resets both thresholds. New context-compaction summaries and default-session shutdown also flush immediately.
 
-Only one episode is active at a time. The writer stores terse memory entries and never sees paths or manages episode lifecycle. The tool receives each event's inferred local `HH:mm` time. The store receives the agent timezone captured once during process startup, so a configured timezone change takes effect only after restart; it uses that timezone to convert the model-supplied local time and appends entries as `- HH:mm: data` lines in UTC to user-readable Markdown files under `episodic/yyyy-MM-dd/`. Filenames use `index-HH-mm.md`, where the index is the next daily integer and the time is the episode's UTC creation time. Every episode starts with YAML frontmatter containing `analyzed: false`; each subsequent writer update resets that key to `false` while preserving other frontmatter keys. The store rotates after 200 entries or 1 hour, while the parent rotates it after main-session inactivity. Rotation queues writes until the fresh writer child is ready, then starts a new file without rewriting completed episodes.
+### Episode lifecycle
 
-## Error Handling
+After the configurable main-session idle interval, the extension flushes any final delta, waits for the writer to finish, closes the current episode, and replaces the child session so the next episode receives fresh model context. Starting another main-session step cancels the pending idle close. Only one episode is active at a time.
 
-- **Model errors** (5xx, 429, timeouts, `NoOutputGeneratedError`) → fallback to next model, retry.
-- **Fatal errors** (400, `InvalidPromptError`) → terminate session.
-- **Salvage** — partial content with repairable issues → push to history, force next step.
-- **Backoff** — all models exhausted, no new input → exponential backoff. New inbox input interrupts the wait.
-- **Loop guard** — the `runLoop` is wrapped in a top-level try/catch/finally that resets `loopActive` and triggers clean termination on any unhandled error.
+### Writer input
+
+The extension tracks the last native message ID delivered to the writer and transforms only the history excerpt after that cursor. Writer input preserves NDJSON as one complete record per relevant event: `your_action`, `your_loud_thought`, `your_thought`, `context`, and `time_update`. Raw user text is ignored. Context image and audio payloads are materialized as custom media parts inline at their exact positions. Text and serialized values are truncated with character budgets; explicit omission counts mark dropped parts.
+
+### Episode storage
+
+The writer stores terse memory entries and never sees paths or manages episode lifecycle. The `memorize` tool receives each event's inferred local `HH:mm` time. The store converts that to UTC using the agent timezone and appends entries as `- HH:mm: data` lines in Markdown files under `episodic/yyyy-MM-dd/`. Filenames use `index-HH-mm.md`. Every episode starts with YAML frontmatter containing `analyzed: false`. The store rotates after a configurable entry count or age. Rotation queues writes until the fresh writer child is ready.
+
+## Error handling
+
+- **Model errors** (5xx, 429, timeouts, no output) → fallback to next model, retry
+- **Fatal errors** (400, invalid prompt) → terminate session
+- **Salvage** — partial content with repairable issues → push to history, force next step
+- **Backoff** — all models exhausted, no new input → exponential backoff; new inbox input interrupts
+- **Loop guard** — top-level try/catch/finally resets `loopActive` and triggers clean termination on unhandled errors
+
+## See also
+
+- [Session Architecture](../architecture.md) — session kinds, hierarchy, composition root
+- [Extension Architecture](./extensions/context-compaction/architecture.md) — extension interface, hooks, dispatch

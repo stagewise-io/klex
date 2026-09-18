@@ -45,6 +45,7 @@ export class EpisodeStore {
   private fingerprintDate: string | null = null;
   private readonly dailyFingerprints = new Set<string>();
   private duplicateEntriesSkipped = 0;
+  private operationQueue: Promise<void> = Promise.resolve();
 
   constructor(private readonly options: EpisodeStoreOptions) {
     this.now = options.now ?? (() => new Date());
@@ -53,12 +54,14 @@ export class EpisodeStore {
   }
 
   async store(entry: MemoryEntry): Promise<void> {
-    if (this.resetRequired) {
-      this.pendingEntries.push(entry);
-      return;
-    }
+    return this.enqueue(async () => {
+      if (this.resetRequired) {
+        this.pendingEntries.push(entry);
+        return;
+      }
 
-    await this.append(entry);
+      await this.append(entry);
+    });
   }
 
   /** Closes the current episode and requires a fresh writer context. */
@@ -69,17 +72,19 @@ export class EpisodeStore {
 
   /** Called only after a fresh child session has started. */
   async completeReset(): Promise<void> {
-    this.resetRequired = false;
-    const entries = this.pendingEntries.splice(0);
-    for (let index = 0; index < entries.length; index += 1) {
-      const entry = entries[index];
-      if (!entry) continue;
-      if (this.resetRequired) {
-        this.pendingEntries.unshift(...entries.slice(index));
-        break;
+    return this.enqueue(async () => {
+      this.resetRequired = false;
+      const entries = this.pendingEntries.splice(0);
+      for (let index = 0; index < entries.length; index += 1) {
+        const entry = entries[index];
+        if (!entry) continue;
+        if (this.resetRequired) {
+          this.pendingEntries.unshift(...entries.slice(index));
+          break;
+        }
+        await this.append(entry);
       }
-      await this.append(entry);
-    }
+    });
   }
 
   needsReset(): boolean {
@@ -133,7 +138,8 @@ export class EpisodeStore {
     let filenames: string[];
     try {
       filenames = await readdir(directory);
-    } catch {
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
       return;
     }
     for (const filename of filenames) {
@@ -213,6 +219,16 @@ export class EpisodeStore {
     clearTimeout(this.ageTimer);
     this.ageTimer = null;
   }
+
+  /** Serializes async operations that touch episode state and files. */
+  private enqueue<T>(fn: () => Promise<T>): Promise<T> {
+    const result = this.operationQueue.then(fn);
+    this.operationQueue = result.then(
+      () => undefined,
+      () => undefined,
+    );
+    return result;
+  }
 }
 
 function normalizeMemoryData(data: string): string {
@@ -223,7 +239,8 @@ async function nextDailyIndex(directory: string): Promise<number> {
   let filenames: string[];
   try {
     filenames = await readdir(directory);
-  } catch {
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
     return 1;
   }
   let highest = 0;

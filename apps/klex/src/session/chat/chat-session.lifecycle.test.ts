@@ -17,8 +17,6 @@ import type {
   ExtensionFactory,
 } from './extensions/extension-api';
 
-vi.mock('./utils/system-prompt.md', () => ({ default: 'You are Klex.' }));
-
 const logger = {
   debug: vi.fn(),
   error: vi.fn(),
@@ -70,6 +68,7 @@ function createSession(
     introspectionScope: createScope(),
     sessionContext: { kind: 'default', sessionId: 'default' },
     sessionFactory: options.sessionFactory,
+    basePrompt: 'You are Klex.',
   });
 }
 
@@ -81,8 +80,10 @@ function requireExtensionDeps(
   return extensionDeps;
 }
 
-function createFakeChild(start: () => Promise<void>): ChildSessionHandle {
-  const child: ChildSessionHandle = {
+function createFakeChild(
+  start: () => Promise<void>,
+): ChatSessionHandle & ChildSessionHandle {
+  const child: ChatSessionHandle & ChildSessionHandle = {
     sessionId: 'child-1',
     inbox: {
       send: vi.fn(),
@@ -96,13 +97,28 @@ function createFakeChild(start: () => Promise<void>): ChildSessionHandle {
     getMessages: vi.fn(() => []),
     getSessionInfo: vi.fn(),
     createChildSession: vi.fn(),
+    waitForIdle: vi.fn(async () => true),
     status: 'active',
-  } as unknown as ChildSessionHandle;
+  };
   return child;
 }
 
 describe('ChatSession lifecycle', () => {
-  it('starts extensions only once', async () => {
+  it('reports idle immediately when no loop is active', async () => {
+    const session = createSession();
+
+    await expect(session.waitForIdle(100)).resolves.toBe(true);
+    await session.close();
+  });
+
+  it('reports non-idle after termination', async () => {
+    const session = createSession();
+    await session.close();
+
+    await expect(session.waitForIdle(100)).resolves.toBe(false);
+  });
+
+  it('starts extensions and subscribes to MCP only once', async () => {
     const onStart = vi.fn(async () => undefined);
     const extension: ExtensionFactory = {
       identifier: 'test/lifecycle',
@@ -169,7 +185,11 @@ describe('ChatSession lifecycle', () => {
 
     let resolved = false;
     const creation = requireExtensionDeps(extensionDeps)
-      .createChildSession({ extensions: [childExtension] })
+      .createChildSession({
+        extensions: [childExtension],
+        basePrompt: 'You are a child.',
+        modelPurpose: 'memory',
+      })
       .then((result) => {
         resolved = true;
         return result;
@@ -186,6 +206,7 @@ describe('ChatSession lifecycle', () => {
       'child-sessions',
     ]);
     expect(childParams?.extensionFactories).toEqual([childExtension]);
+    expect(childParams?.modelPurpose).toBe('memory');
 
     startup.resolve();
     await expect(creation).resolves.toBe(child);
@@ -205,12 +226,13 @@ describe('ChatSession lifecycle', () => {
     const child = createFakeChild(() => startup.promise);
     const parent = createSession({
       extensions: [extension],
-      sessionFactory: () => child as unknown as ChatSessionHandle,
+      sessionFactory: () => child,
     });
     await parent.start();
 
     const creation = requireExtensionDeps(extensionDeps).createChildSession({
       extensions: [],
+      basePrompt: 'You are a child.',
     });
     await Promise.resolve();
     await parent.close();
@@ -240,6 +262,7 @@ describe('ChatSession lifecycle', () => {
     await expect(
       requireExtensionDeps(extensionDeps).createChildSession({
         extensions: [],
+        basePrompt: 'You are a child.',
       }),
     ).rejects.toThrow('Cannot create a child from a terminated chat session');
     expect(sessionFactory).not.toHaveBeenCalled();
@@ -265,6 +288,7 @@ describe('ChatSession lifecycle', () => {
         extensionFactories: [extension],
         introspectionScope,
         sessionContext: { kind: 'child', sessionId: 'failed-child' },
+        basePrompt: 'You are Klex.',
       }),
     ).toThrow(constructionError);
     expect(introspectionScope.removeChild).toHaveBeenCalledWith('failed-child');
@@ -292,6 +316,7 @@ describe('ChatSession lifecycle', () => {
     await expect(
       requireExtensionDeps(extensionDeps).createChildSession({
         extensions: [],
+        basePrompt: 'You are a child.',
       }),
     ).rejects.toBe(startupError);
     expect(child.close).toHaveBeenCalledOnce();

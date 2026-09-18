@@ -12,7 +12,7 @@ import { generateText, type ToolSet } from 'ai';
 
 import type { ModuleLogger, RootLogger } from '@stagewise/logger';
 
-import type { Config } from '@/config';
+import type { Config, ModelPurpose } from '@/config';
 import type { IntrospectionScope } from '@/introspection';
 import type { Mcp } from '@/mcp';
 import type { ProviderModelResolver } from '@/provider-registry';
@@ -27,7 +27,6 @@ import {
   type InteractionToolResult,
   type PreparedInferenceContextHandle,
   type RealtimeCommitEvent,
-  type SystemPromptAssembler,
   ToolExecutor,
   toCanonicalMessage,
 } from '@/session/interaction';
@@ -66,7 +65,6 @@ import type { ExtendedUIMessage } from './message-types';
 import { createTurn, type Turn, type TurnResult } from './turn';
 import { BackoffManager } from './utils/backoff-manager';
 import { ModelFallbackManager } from './utils/model-fallback-manager';
-import systemPrompt from './utils/system-prompt.md';
 import { getExtensionIdentifier, tracer } from './utils/tracing';
 
 /**
@@ -88,16 +86,19 @@ export interface ChatSessionDependencies {
   hooks?: SessionHooks;
   /** Context describing the session's kind and position in the session tree. */
   sessionContext: SessionContext;
+  /** Configured model list this session uses. Defaults to `chat`. */
+  modelPurpose?: ModelPurpose;
   /**
    * Factory for creating child sessions. Absent if child session creation
    * is disabled for this session.
    */
   sessionFactory?: SessionFactory;
   /**
-   * Custom system prompt assembler. When omitted, the default
-   * assembler is used.
+   * Base system prompt for this session. Every session must explicitly
+   * declare its base prompt. Pass an empty string to suppress the base
+   * prompt entirely.
    */
-  systemPromptAssembler?: SystemPromptAssembler;
+  basePrompt: string;
 }
 
 class ChatSessionModule implements AgentSession {
@@ -159,6 +160,10 @@ class ChatSessionModule implements AgentSession {
   // --- Observability tracking ---
 
   private runtimeState: SessionRuntimeState = 'idle';
+  private readonly idleWaiters = new Set<{
+    resolve: (idle: boolean) => void;
+    timer: NodeJS.Timeout;
+  }>();
 
   private turnCount = 0;
 
@@ -220,7 +225,9 @@ class ChatSessionModule implements AgentSession {
       hooks?: SessionHooks;
       sessionContext: SessionContext;
       sessionFactory?: SessionFactory;
-      systemPromptAssembler?: SystemPromptAssembler;
+      modelPurpose?: ModelPurpose;
+      /** Base system prompt; required for every session. */
+      basePrompt: string;
     },
   ) {
     this.sessionId = deps.sessionContext.sessionId;
@@ -247,7 +254,8 @@ class ChatSessionModule implements AgentSession {
       logger: this.deps.logger,
       span: this.sessionSpan,
       sessionId: this.sessionId,
-      getChatModels: () => this.deps.config.get().modelSelection.chat,
+      getChatModels: () =>
+        this.deps.config.get().modelSelection[this.deps.modelPurpose ?? 'chat'],
     });
 
     this.backoffManager = new BackoffManager({
@@ -753,10 +761,7 @@ class ChatSessionModule implements AgentSession {
       history,
       extensionHandler: this.extensionHandler,
       model,
-      baseInstructions: systemPrompt,
-      ...(this.deps.systemPromptAssembler !== undefined && {
-        systemPromptAssembler: this.deps.systemPromptAssembler,
-      }),
+      baseInstructions: this.deps.basePrompt,
     });
 
     this.leaseTools = assembled.tools;
@@ -902,6 +907,7 @@ class ChatSessionModule implements AgentSession {
           !needsCheckRetry
         ) {
           this.runtimeState = 'idle';
+          this.resolveIdleWaiters(true);
           this.sessionSpan.addEvent('session.idle', {
             'session.id': this.sessionId,
           });
@@ -943,9 +949,7 @@ class ChatSessionModule implements AgentSession {
           forceCheck: needsCheckRetry,
           flushPendingImmediate: this.flushPendingImmediate,
           shouldYieldGenerationLane: () => this.laneSuspended,
-          ...(this.deps.systemPromptAssembler !== undefined && {
-            systemPromptAssembler: this.deps.systemPromptAssembler,
-          }),
+          basePrompt: this.deps.basePrompt,
         });
         this.currentTurn = turn;
 
@@ -1188,10 +1192,36 @@ class ChatSessionModule implements AgentSession {
     return [...this.messages];
   }
 
+  public waitForIdle(timeoutMs: number): Promise<boolean> {
+    if (this._status === 'terminated') return Promise.resolve(false);
+    if (this.runtimeState === 'idle') return Promise.resolve(true);
+    if (timeoutMs <= 0) return Promise.resolve(false);
+
+    return new Promise<boolean>((resolve) => {
+      const waiter = {
+        resolve,
+        timer: setTimeout(() => {
+          this.idleWaiters.delete(waiter);
+          resolve(false);
+        }, timeoutMs),
+      };
+      this.idleWaiters.add(waiter);
+    });
+  }
+
+  private resolveIdleWaiters(idle: boolean): void {
+    for (const waiter of this.idleWaiters) {
+      clearTimeout(waiter.timer);
+      waiter.resolve(idle);
+    }
+    this.idleWaiters.clear();
+  }
+
   async close(): Promise<void> {
     if (this.closePromise) return this.closePromise;
     this._status = 'terminated';
     this.runtimeState = 'terminated';
+    this.resolveIdleWaiters(false);
 
     this.closePromise = (async () => {
       // If startup is in flight, let its rollback finish before cleanup. A
@@ -1317,9 +1347,8 @@ class ChatSessionModule implements AgentSession {
       sessionContext: childContext,
       extensionFactories: options.extensions,
       introspectionScope: this.childSessionsScope,
-      ...(options.systemPromptAssembler !== undefined && {
-        systemPromptAssembler: options.systemPromptAssembler,
-      }),
+      basePrompt: options.basePrompt,
+      modelPurpose: options.modelPurpose,
     });
 
     try {
@@ -1368,8 +1397,7 @@ export function createChatSession(
     hooks: deps.hooks,
     sessionContext: deps.sessionContext,
     sessionFactory: deps.sessionFactory,
-    ...(deps.systemPromptAssembler !== undefined && {
-      systemPromptAssembler: deps.systemPromptAssembler,
-    }),
+    modelPurpose: deps.modelPurpose,
+    basePrompt: deps.basePrompt,
   });
 }

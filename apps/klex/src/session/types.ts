@@ -1,3 +1,4 @@
+import type { ModelPurpose } from '@/config';
 import type { IntrospectionScope } from '@/introspection';
 import type { Mcp } from '@/mcp';
 
@@ -5,7 +6,7 @@ import type { ExtensionFactory } from './chat/extensions/extension-api';
 import type { ChatSessionInbox } from './chat/inbox';
 import type { ExtendedUIMessage } from './chat/message-types';
 import type { SessionInboxEvent } from './inbox';
-import type { ConversationHost, SystemPromptAssembler } from './interaction';
+import type { ConversationHost } from './interaction';
 
 /** Stable identifier assigned to the default session. */
 export const DEFAULT_SESSION_ID = 'default';
@@ -137,6 +138,8 @@ export interface ChatSessionHandle extends AgentSession {
   getMessages(): readonly ExtendedUIMessage[];
   /** Creates and fully starts an isolated child session. */
   createChildSession(options: ChildSessionOptions): Promise<ChildSessionHandle>;
+  /** Waits until the session reaches its idle boundary or the timeout expires. */
+  waitForIdle(timeoutMs: number): Promise<boolean>;
 }
 
 /**
@@ -214,13 +217,15 @@ export interface SessionContext {
  */
 export interface ChildSessionOptions {
   extensions: ExtensionFactory[];
+  /** Configured model list this child session uses. Defaults to `chat`. */
+  modelPurpose?: ModelPurpose;
   /**
-   * Custom system prompt assembler for the child session. Receives the
-   * base system prompt and all per-extension system prompt parts, returns
-   * the finished system prompt. When omitted, the default assembler
-   * concatenates base + parts with blank-line separators.
+   * Base system prompt for the child session. Every child session must
+   * explicitly declare its base prompt. Pass an empty string to suppress
+   * the base prompt entirely (e.g. for a session that should only use
+   * extension-contributed system prompt parts).
    */
-  systemPromptAssembler?: SystemPromptAssembler;
+  basePrompt: string;
 }
 
 /**
@@ -232,6 +237,8 @@ export interface ChildSessionHandle {
   getMessages(): readonly ExtendedUIMessage[];
   getSessionInfo(): SessionInfo;
   close(): Promise<void>;
+  /** Waits until the child reaches its idle boundary or the timeout expires. */
+  waitForIdle(timeoutMs: number): Promise<boolean>;
   /** Creates and fully starts an isolated grandchild session. */
   createChildSession(options: ChildSessionOptions): Promise<ChildSessionHandle>;
 }
@@ -247,7 +254,10 @@ export interface SessionFactoryParams {
   extensionFactories: ExtensionFactory[];
   introspectionScope: IntrospectionScope;
   hooks?: SessionHooks;
-  systemPromptAssembler?: SystemPromptAssembler;
+  /** Configured model list this session uses. Defaults to `chat`. */
+  modelPurpose?: ModelPurpose;
+  /** Base system prompt for this session. */
+  basePrompt: string;
 }
 
 /**

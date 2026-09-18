@@ -39,6 +39,7 @@ function makeDeps(overrides: Partial<TurnDependencies> = {}): TurnDependencies {
         contextSize: 128_000,
       })),
     } as never,
+    basePrompt: 'mock system prompt',
     ...overrides,
   };
 }

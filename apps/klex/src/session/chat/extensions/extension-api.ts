@@ -568,13 +568,8 @@ export interface ExtensionDeps {
    * extension is responsible for choosing the child's complete extension set
    * and avoiding recursive self-loading. Duplicate identifiers are rejected.
    *
-   * When `options.systemPromptAssembler` is provided, it replaces the
-   * default system prompt assembly logic for the child session. The
-   * assembler receives the base system prompt and all per-extension
-   * system prompt parts (collected via `getSystemPromptPart`), and
-   * returns the finished system prompt. This lets the spawning
-   * extension control how (or whether) extension contributions are
-   * combined into the final prompt.
+   * The child uses the explicit base prompt supplied in `options` and
+   * appends system-prompt contributions from its requested extensions.
    *
    * Only available on sessions that have a session factory. Absent
    * (throws when called) on sessions where child creation is disabled.

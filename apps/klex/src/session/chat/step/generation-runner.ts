@@ -11,7 +11,6 @@ import {
 
 import type { ModuleLogger } from '@stagewise/logger';
 
-import type { SystemPromptAssembler } from '@/session/interaction';
 import {
   classifyGenerationError,
   type GenerationErrorClassification,
@@ -63,10 +62,9 @@ export interface GenerationRunnerDependencies {
    */
   extensionSystemPromptParts: string[];
   /**
-   * Custom system prompt assembler. When omitted, the default
-   * assembler is used.
+   * Base system prompt forwarded to each generation attempt.
    */
-  systemPromptAssembler?: SystemPromptAssembler;
+  basePrompt: string;
 }
 
 /** Outcome of a single generation attempt inside the retry loop. */
@@ -175,9 +173,7 @@ export class GenerationRunner {
           sessionId: this.deps.sessionId,
           compacted: this.deps.compacted,
           extensionSystemPromptParts: this.deps.extensionSystemPromptParts,
-          ...(this.deps.systemPromptAssembler !== undefined && {
-            systemPromptAssembler: this.deps.systemPromptAssembler,
-          }),
+          basePrompt: this.deps.basePrompt,
           ...(this.deps.providerOptions !== undefined && {
             providerOptions: this.deps.providerOptions,
           }),
@@ -337,6 +333,7 @@ export class GenerationRunner {
 
     // Wait for all in-flight tool executions to finish before step ends.
     await toolDispatcher.settle();
+    toolDispatcher.reconcile(latestMessage);
     stepSpan.addEvent('step.tools_settled', {
       'step.toolCallCount': toolDispatcher.inFlightCount,
     });

@@ -23,7 +23,6 @@ vi.mock('ai', async (importOriginal) => {
   };
 });
 
-vi.mock('./system-prompt.md', () => ({ default: 'mock system prompt' }));
 vi.mock('./tools-without-execute', () => ({
   toolsWithoutExecute: vi.fn((tools: unknown) => tools),
 }));
@@ -99,6 +98,7 @@ describe('runStreamedGeneration — success', () => {
       modelContext,
       sessionId: 'test-session',
       compacted: false,
+      basePrompt: 'mock system prompt',
     });
 
     expect(result.message).toBe(msg);
@@ -132,6 +132,7 @@ describe('runStreamedGeneration — success', () => {
       modelContext,
       sessionId: 'test-session',
       compacted: false,
+      basePrompt: 'mock system prompt',
     });
 
     expect(onUpdate).toHaveBeenCalledTimes(2);
@@ -164,6 +165,7 @@ describe('runStreamedGeneration — success', () => {
       modelContext,
       sessionId: 'test-session',
       compacted: false,
+      basePrompt: 'mock system prompt',
     });
 
     expect(streamText).toHaveBeenCalledOnce();
@@ -205,6 +207,7 @@ describe('runStreamedGeneration — success', () => {
       modelContext,
       sessionId: 'test-session',
       compacted: false,
+      basePrompt: 'mock system prompt',
       providerOptions,
     });
 
@@ -237,6 +240,7 @@ describe('runStreamedGeneration — success', () => {
       modelContext,
       sessionId: 'test-session',
       compacted: false,
+      basePrompt: 'mock system prompt',
     });
 
     const calls = vi.mocked(streamText).mock.calls;
@@ -268,6 +272,7 @@ describe('runStreamedGeneration — success', () => {
       modelContext,
       sessionId: 'session-uuid-123',
       compacted: true,
+      basePrompt: 'mock system prompt',
     });
 
     const calls = vi.mocked(streamText).mock.calls;
@@ -315,6 +320,7 @@ describe('runStreamedGeneration — success', () => {
       modelContext,
       sessionId: 'test-session',
       compacted: false,
+      basePrompt: 'mock system prompt',
     });
 
     expect(result.finishReason).toBe('error');
@@ -354,6 +360,7 @@ describe('runStreamedGeneration — empty response', () => {
         modelContext,
         sessionId: 'test-session',
         compacted: false,
+        basePrompt: 'mock system prompt',
       }),
     ).rejects.toThrow('No content received during generation.');
   });
@@ -380,6 +387,7 @@ describe('runStreamedGeneration — error handling', () => {
         modelContext,
         sessionId: 'test-session',
         compacted: false,
+        basePrompt: 'mock system prompt',
       }),
     ).rejects.toThrow('Model unavailable');
   });
@@ -407,6 +415,7 @@ describe('runStreamedGeneration — error handling', () => {
         modelContext,
         sessionId: 'test-session',
         compacted: false,
+        basePrompt: 'mock system prompt',
       }),
     ).rejects.toThrow('Stream processing failed');
   });

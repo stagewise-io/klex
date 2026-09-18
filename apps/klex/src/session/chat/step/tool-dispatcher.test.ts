@@ -112,6 +112,32 @@ describe('ToolDispatcher — at-most-once execution', () => {
     expect(toolPart.output).toBe('result');
   });
 
+  it('reconciles results onto replacement stream snapshots', async () => {
+    let finishExecution!: (value: string) => void;
+    const execute = vi.fn(
+      () =>
+        new Promise<string>((resolve) => {
+          finishExecution = resolve;
+        }),
+    );
+    const dispatcher = makeDispatcher(makeTools(execute));
+    const dispatchedPart = makeToolPart('call-1');
+    const retainedPart = makeToolPart('call-1');
+    const retainedMessage = makeAssistantMessage([retainedPart]);
+
+    dispatcher.onUpdate(makeAssistantMessage([dispatchedPart]));
+    dispatcher.onUpdate(retainedMessage);
+    finishExecution('result');
+    await dispatcher.settle();
+    dispatcher.reconcile(retainedMessage);
+
+    expect(execute).toHaveBeenCalledOnce();
+    expect(asToolPart(retainedPart)).toMatchObject({
+      state: 'output-available',
+      output: 'result',
+    });
+  });
+
   it('does NOT dispatch the same tool call twice (same message)', async () => {
     const execute = vi.fn().mockResolvedValue('result');
     const dispatcher = makeDispatcher(makeTools(execute));

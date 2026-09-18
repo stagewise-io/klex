@@ -9,6 +9,7 @@ function createExecutor(
   execute: NonNullable<Tool['execute']>,
   timeoutMs?: number,
   inputSchema: Tool['inputSchema'] = jsonSchema({ type: 'object' }),
+  maxResultBytes?: number,
 ) {
   return new ToolExecutor({
     logger,
@@ -22,6 +23,7 @@ function createExecutor(
     sessionId: 'session-1',
     validateInput: true,
     ...(timeoutMs !== undefined && { timeoutMs }),
+    ...(maxResultBytes !== undefined && { maxResultBytes }),
   });
 }
 
@@ -119,6 +121,39 @@ describe('ToolExecutor', () => {
       code: 'tool-not-found',
       retryable: false,
     });
+  });
+
+  it('rejects an oversized serialized tool result before it reaches history', async () => {
+    const executor = createExecutor(
+      async () => ({ payload: 'x'.repeat(32) }),
+      undefined,
+      undefined,
+      16,
+    );
+
+    await expect(
+      executor.execute({
+        executionId: 'execution-1',
+        name: 'example',
+        input: {},
+      }),
+    ).resolves.toMatchObject({
+      status: 'error',
+      code: 'result-too-large',
+      retryable: false,
+    });
+  });
+
+  it('uses the default result limit when no per-executor limit is supplied', async () => {
+    const executor = createExecutor(async () => ({ value: 1 }));
+
+    await expect(
+      executor.execute({
+        executionId: 'execution-1',
+        name: 'example',
+        input: {},
+      }),
+    ).resolves.toMatchObject({ status: 'success', output: { value: 1 } });
   });
 
   it('enforces the timeout when a tool ignores cancellation', async () => {

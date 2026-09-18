@@ -63,7 +63,8 @@ export type InteractionToolResult =
         | 'aborted'
         | 'execution-failed'
         | 'invalid-input'
-        | 'invalid-output';
+        | 'invalid-output'
+        | 'result-too-large';
       readonly error: string;
       readonly retryable: boolean;
     };

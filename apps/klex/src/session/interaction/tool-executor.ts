@@ -6,6 +6,11 @@ import type { ModuleLogger } from '@stagewise/logger';
 
 import type { ToolRequestContext } from '@/tool-provider';
 
+import {
+  DEFAULT_TOOL_RESULT_MAX_BYTES,
+  exceedsToolResultLimit,
+} from './tool-result-limit';
+
 import type {
   InteractionToolRequest,
   InteractionToolResult,
@@ -77,6 +82,8 @@ export class ToolExecutor implements SessionToolRuntime {
       sessionId: string;
       timeoutMs?: number;
       validateInput?: boolean;
+      /** Maximum serialized JSON size of one tool result. */
+      maxResultBytes?: number;
     },
   ) {}
 
@@ -213,6 +220,24 @@ export class ToolExecutor implements SessionToolRuntime {
           request.executionId,
           'invalid-output',
           'The tool returned a value that cannot be represented as JSON.',
+          false,
+        );
+      }
+      const maxResultBytes =
+        this.deps.maxResultBytes ?? DEFAULT_TOOL_RESULT_MAX_BYTES;
+      if (exceedsToolResultLimit(jsonOutput, maxResultBytes)) {
+        this.deps.logger.warn(
+          {
+            executionId: request.executionId,
+            toolName: request.name,
+            maxResultBytes,
+          },
+          'Tool result exceeded the configured serialized-size limit',
+        );
+        return errorResult(
+          request.executionId,
+          'result-too-large',
+          `The tool result exceeds the configured ${maxResultBytes}-byte limit.`,
           false,
         );
       }

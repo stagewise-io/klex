@@ -4,5 +4,6 @@ export * from './interaction-lease';
 export * from './lease-manager';
 export * from './tool-descriptors';
 export * from './tool-executor';
+export * from './tool-result-limit';
 export * from './types';
 export * from './update-text';

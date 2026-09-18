@@ -5,6 +5,7 @@ import type {
 } from '@stagewise/mcp-extension-realtime-media';
 
 import type { ResolvedRealtimeProvider } from '@/config';
+import type { InteractionModelMetadata } from '@/session/interaction';
 import type { Mcp } from '@/mcp';
 import type { MediaTransportConnector } from '@/media-transport';
 import {
@@ -31,7 +32,10 @@ export interface Realtime {
 export interface RealtimeDependencies {
   logging: RootLogger;
   mcp: Mcp;
-  provider: ResolvedRealtimeProvider;
+  /** Resolved for each new call; active calls retain their existing factory/session. */
+  resolveProvider?: () => ResolvedRealtimeProvider | undefined;
+  /** @deprecated Static provider compatibility for tests/callers. */
+  provider?: ResolvedRealtimeProvider;
   /** Owner of canonical history, tools, and the generation lane. */
   conversationHost: ConversationHost;
   /**
@@ -62,6 +66,8 @@ class RealtimeModule implements Realtime {
     this.startPromise = (async () => {
       const connector = this.deps.ownedConnector;
       this.connector = connector;
+      const provider = this.resolveProvider();
+      if (provider) this.createProviderFactory(provider);
       const processorFactory = this.createProcessorFactory();
       const coordinator =
         this.deps.createCoordinator?.(connector, processorFactory) ??
@@ -71,7 +77,15 @@ class RealtimeModule implements Realtime {
           mediaTransportConnector: connector,
           processorFactory,
           conversationHost: this.deps.conversationHost,
-          model: this.deps.provider.model,
+          resolveCallConfiguration: () => {
+            const provider = this.resolveProvider();
+            if (!provider)
+              throw new Error('Realtime provider is no longer configured');
+            return {
+              model: provider.model as InteractionModelMetadata,
+              processorFactory: this.createProviderFactory(provider),
+            };
+          },
         });
       this.coordinator = coordinator;
       try {
@@ -87,21 +101,38 @@ class RealtimeModule implements Realtime {
   }
 
   private createProcessorFactory(): RealtimeModelSessionFactory {
-    switch (this.deps.provider.kind) {
+    return {
+      create: (options) => {
+        const provider = this.resolveProvider();
+        if (!provider)
+          throw new Error('Realtime provider is no longer configured');
+        return this.createProviderFactory(provider).create(options);
+      },
+    };
+  }
+
+  private resolveProvider(): ResolvedRealtimeProvider | undefined {
+    return this.deps.resolveProvider?.() ?? this.deps.provider;
+  }
+
+  private createProviderFactory(
+    provider: ResolvedRealtimeProvider,
+  ): RealtimeModelSessionFactory {
+    switch (provider.kind) {
       case 'openai-live':
         return createGPTLiveProcessorFactory({
           logging: this.deps.logging,
-          config: this.deps.provider.config,
+          config: provider.config,
         });
       case 'openai-realtime':
         return createOpenAIRealtimeProcessorFactory({
           logging: this.deps.logging,
-          config: this.deps.provider.config,
+          config: provider.config,
         });
       case 'gemini-live':
         return createGeminiLiveProcessorFactory({
           logging: this.deps.logging,
-          config: this.deps.provider.config,
+          config: provider.config,
         });
     }
   }

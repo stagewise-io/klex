@@ -42,8 +42,15 @@ export interface RealtimeSessionCoordinatorDependencies {
   processorFactory: RealtimeModelSessionFactory;
   /** Owner of canonical history, tools, and the generation lane. */
   conversationHost: ConversationHost;
-  /** Non-secret realtime model metadata handed to context preparation. */
-  model: InteractionModelMetadata;
+  /** Resolves provider factory and model metadata as one per-call snapshot. */
+  resolveCallConfiguration?: () => {
+    model: InteractionModelMetadata;
+    processorFactory: RealtimeModelSessionFactory;
+  };
+  /** Resolves non-secret model metadata for each new call. */
+  resolveModel?: () => InteractionModelMetadata;
+  /** @deprecated Static model compatibility for tests/callers. */
+  model?: InteractionModelMetadata;
   now?: () => number;
 }
 
@@ -61,6 +68,10 @@ interface ActiveRealtimeSession {
   processor?: RealtimeModelSession;
   lease?: InteractionLease;
   contextHandle?: PreparedInferenceContextHandle;
+  callConfiguration?: {
+    model: InteractionModelMetadata;
+    processorFactory: RealtimeModelSessionFactory;
+  };
   contextSettled: boolean;
   setup?: Promise<void>;
   modelEventTask?: Promise<void>;
@@ -81,7 +92,10 @@ class RealtimeSessionCoordinatorModule implements RealtimeSessionCoordinator {
       mediaTransportConnector: MediaTransportConnector<LiveKitRoomTransportDescriptor>;
       processorFactory: RealtimeModelSessionFactory;
       conversationHost: ConversationHost;
-      model: InteractionModelMetadata;
+      resolveCallConfiguration: () => {
+        model: InteractionModelMetadata;
+        processorFactory: RealtimeModelSessionFactory;
+      };
       now: () => number;
     },
   ) {}
@@ -179,6 +193,21 @@ class RealtimeSessionCoordinatorModule implements RealtimeSessionCoordinator {
       return;
     }
 
+    try {
+      session.callConfiguration = this.deps.resolveCallConfiguration();
+    } catch (error) {
+      this.deps.logger.info(
+        { error, namespace: session.namespace, sessionId: session.sessionId },
+        'Rejecting realtime session offer: no realtime provider configured',
+      );
+      await this.deps.mcp.rejectRealtimeMediaSession(
+        session.namespace,
+        session.sessionId,
+      );
+      void this.finishSession(session, { notifyRemote: false });
+      return;
+    }
+
     const lease = await this.acquireLease(session);
     if (!lease) return;
     session.lease = lease;
@@ -209,7 +238,9 @@ class RealtimeSessionCoordinatorModule implements RealtimeSessionCoordinator {
     }
     session.contextHandle = handle;
 
-    const processor = await this.deps.processorFactory.create({
+    const processor = await (
+      session.callConfiguration?.processorFactory ?? this.deps.processorFactory
+    ).create({
       namespace: session.namespace,
       sessionId: session.sessionId,
       signal: session.controller.signal,
@@ -265,7 +296,9 @@ class RealtimeSessionCoordinatorModule implements RealtimeSessionCoordinator {
         externalSessionId: session.sessionId,
         namespace: session.namespace,
         signal: session.acquisitionController.signal,
-        model: this.deps.model,
+        model:
+          session.callConfiguration?.model ??
+          this.deps.resolveCallConfiguration().model,
       });
     } catch (error) {
       if (session.acquisitionController.signal.aborted) return undefined;
@@ -666,7 +699,15 @@ export function createRealtimeSessionCoordinator(
     mediaTransportConnector: deps.mediaTransportConnector,
     processorFactory: deps.processorFactory,
     conversationHost: deps.conversationHost,
-    model: deps.model,
+    resolveCallConfiguration:
+      deps.resolveCallConfiguration ??
+      (() => {
+        if (!deps.model) throw new Error('Realtime model is not configured');
+        return {
+          model: deps.resolveModel?.() ?? deps.model,
+          processorFactory: deps.processorFactory,
+        };
+      }),
     now: deps.now ?? Date.now,
   });
 }

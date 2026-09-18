@@ -11,6 +11,9 @@ export const emptyModelSelection: ModelSelection = {
 
 export const completeV2Config: KlexConfig = {
   configVersion: 2,
+  episodeFinishIdleTriggerTimeMs: 300_000,
+  memoryWriteIntervalMs: 60_000,
+  memoryWriteStepInterval: 3,
   officialName: 'Fixture Agent',
   providers: {
     'openai-primary': {
@@ -71,4 +74,5 @@ export const completeV2Config: KlexConfig = {
     workspace: { command: 'workspace-mcp', args: ['--root', '/workspace'] },
   },
   telemetry: { level: 'reduced' },
+  timezone: 'UTC',
 };

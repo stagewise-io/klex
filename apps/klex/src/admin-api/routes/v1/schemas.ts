@@ -251,6 +251,14 @@ const agentIdentityPatchSchema = z
   .strict()
   .openapi('AgentIdentityPatch');
 
+// --- Settings / Timezone ---
+
+const timezoneSettingsSchema = z
+  .object({
+    timezone: z.string(),
+  })
+  .openapi('TimezoneSettings');
+
 // --- Settings / Telemetry ---
 
 const telemetryLevelSchema = z
@@ -962,6 +970,7 @@ export {
   telemetryLevelSchema,
   telemetrySettingsPatchSchema,
   telemetrySettingsSchema,
+  timezoneSettingsSchema,
   toolCallHistoryResponseSchema,
   updateKnownModelBodySchema,
   updateMcpServerBodySchema,

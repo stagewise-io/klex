@@ -11,6 +11,9 @@ type.
 ```json
 {
   "configVersion": 2,
+  "episodeFinishIdleTriggerTimeMs": 300000,
+  "memoryWriteIntervalMs": 60000,
+  "memoryWriteStepInterval": 3,
   "officialName": "Ada",
   "providers": {
     "openai-primary": {
@@ -105,6 +108,20 @@ type.
   }
 }
 ```
+
+`memoryWriteIntervalMs` sends pending main-session history to the memory writer
+after that many milliseconds. The timer starts with the first completed step
+after the previous successful write and does not reset during continued activity.
+It defaults to `60000` (one minute).
+
+`memoryWriteStepInterval` sends pending history after that many completed
+main-session steps since the previous successful write. It defaults to `3`.
+The time and step triggers are independent; whichever is reached first writes the
+pending history and resets both.
+
+`episodeFinishIdleTriggerTimeMs` closes the active episodic-memory episode after
+that many milliseconds without a completed main-session turn. Before closing the
+episode it writes any pending history. It defaults to `300000` (five minutes).
 
 `openai-primary` and `openai-secondary` demonstrate independent instances of
 one provider type. `openai-internal` keeps native OpenAI behavior while routing

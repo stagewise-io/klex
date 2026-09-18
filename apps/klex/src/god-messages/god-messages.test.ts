@@ -150,6 +150,7 @@ function setup() {
     sessionFactory: factory,
     extensionFactories: [],
     introspection: createIntrospectionMock(),
+    basePrompt: 'test base prompt',
   });
 
   return { godMessages, sessions, factory };
@@ -190,6 +191,7 @@ describe('GodMessagesModule — start()', () => {
       },
       extensionFactories: [],
       introspection,
+      basePrompt: 'test base prompt',
     });
 
     await expect(godMessages.start()).rejects.toThrow('startup failed');

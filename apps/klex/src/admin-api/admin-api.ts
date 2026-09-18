@@ -22,6 +22,7 @@ export interface AdminApiDependencies {
   cloudConnectivity: CloudConnectivity;
   godMessages: GodMessages;
   localPort: number | undefined;
+  timezone: string;
 }
 
 export interface AdminApi {
@@ -46,6 +47,7 @@ class AdminApiModule implements AdminApi {
       cloudConnectivity: CloudConnectivity;
       godMessages: GodMessages;
       localPort: number | undefined;
+      timezone: string;
     },
   ) {}
 
@@ -63,6 +65,7 @@ class AdminApiModule implements AdminApi {
       godMessages: this.deps.godMessages,
       logger: this.deps.logger,
       localPort: this.deps.localPort,
+      timezone: this.deps.timezone,
     });
 
     if (this.deps.localPort === undefined) {
@@ -122,5 +125,6 @@ export function createAdminApi(deps: AdminApiDependencies): AdminApi {
     cloudConnectivity: deps.cloudConnectivity,
     godMessages: deps.godMessages,
     localPort: deps.localPort,
+    timezone: deps.timezone,
   });
 }

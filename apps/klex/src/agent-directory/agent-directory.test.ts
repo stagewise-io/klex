@@ -47,9 +47,12 @@ describe('AgentDirectory', () => {
       _klex: {
         store: 'config',
         schemaVersion: 2,
-        compatibilityVersion: 2,
+        compatibilityVersion: 5,
       },
       configVersion: 2,
+      episodeFinishIdleTriggerTimeMs: 300_000,
+      memoryWriteIntervalMs: 60_000,
+      memoryWriteStepInterval: 3,
       officialName: 'Ada',
       providers: {},
       modelSelection: {

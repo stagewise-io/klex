@@ -91,6 +91,9 @@ describe('config v2', () => {
     const parsed = klexConfigSchema.parse(completeV2Config);
 
     expect(parsed.configVersion).toBe(2);
+    expect(parsed.episodeFinishIdleTriggerTimeMs).toBe(300_000);
+    expect(parsed.memoryWriteIntervalMs).toBe(60_000);
+    expect(parsed.memoryWriteStepInterval).toBe(3);
     expect(parsed.providers['openai-primary']?.type).toBe('openai');
     expect(parsed.providers['openai-secondary']?.type).toBe('openai');
     expect(parsed.providers['openai-internal']?.settings).toMatchObject({
@@ -111,6 +114,63 @@ describe('config v2', () => {
       modelId: 'org:model:v2',
       providerOptions: { openai: { reasoningEffort: 'high' } },
     });
+  });
+
+  it('defaults and validates the timezone', () => {
+    const base = {
+      configVersion: 2,
+      officialName: 'Agent',
+      providers: {},
+      modelSelection: emptyModelSelection,
+      mcpServers: {},
+    };
+
+    expect(klexConfigSchema.parse(base).timezone).toBe('UTC');
+    expect(
+      klexConfigSchema.parse({ ...base, timezone: ' Europe/Berlin ' }).timezone,
+    ).toBe('Europe/Berlin');
+    expect(() =>
+      klexConfigSchema.parse({ ...base, timezone: 'Fake/Zone' }),
+    ).toThrow('Timezone must be a valid IANA identifier');
+  });
+
+  it('defaults and validates memory write thresholds', () => {
+    const base = {
+      configVersion: 2,
+      officialName: 'Agent',
+      providers: {},
+      modelSelection: emptyModelSelection,
+      mcpServers: {},
+    };
+
+    expect(klexConfigSchema.parse(base).memoryWriteIntervalMs).toBe(60_000);
+    expect(klexConfigSchema.parse(base).memoryWriteStepInterval).toBe(3);
+    expect(() =>
+      klexConfigSchema.parse({ ...base, memoryWriteIntervalMs: 0 }),
+    ).toThrow();
+    expect(() =>
+      klexConfigSchema.parse({ ...base, memoryWriteStepInterval: 1.5 }),
+    ).toThrow();
+  });
+
+  it('defaults and validates the episode finish idle threshold', () => {
+    const base = {
+      configVersion: 2,
+      officialName: 'Agent',
+      providers: {},
+      modelSelection: emptyModelSelection,
+      mcpServers: {},
+    };
+
+    expect(klexConfigSchema.parse(base).episodeFinishIdleTriggerTimeMs).toBe(
+      300_000,
+    );
+    expect(() =>
+      klexConfigSchema.parse({ ...base, episodeFinishIdleTriggerTimeMs: 0 }),
+    ).toThrow();
+    expect(() =>
+      klexConfigSchema.parse({ ...base, episodeFinishIdleTriggerTimeMs: 1.5 }),
+    ).toThrow();
   });
 
   it('migrates preset and single-endpoint v1 providers once and preserves native model colons', async () => {
@@ -155,6 +215,9 @@ describe('config v2', () => {
     });
     await config.start();
 
+    expect(config.get().episodeFinishIdleTriggerTimeMs).toBe(300_000);
+    expect(config.get().memoryWriteIntervalMs).toBe(60_000);
+    expect(config.get().memoryWriteStepInterval).toBe(3);
     expect(config.get().providers.remote).toMatchObject({
       type: 'openai',
       settings: { apiKey: '${env:OPENAI_API_KEY}' },

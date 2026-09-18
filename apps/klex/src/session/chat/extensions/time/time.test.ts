@@ -1,13 +1,4 @@
 import { randomUUID } from 'node:crypto';
-import {
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  rmSync,
-  writeFileSync,
-} from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -19,7 +10,7 @@ import {
   type ExtensionDeps,
   type ProvisionalStepContext,
 } from '../extension-api';
-import { createTimeExt, type TimeExtConfig } from './time';
+import { createTimeExt, createTimeExtGod, type TimeExtConfig } from './time';
 
 vi.mock('../context-compaction/compaction-prompt.md', () => ({
   default: 'Compaction prompt',
@@ -50,29 +41,12 @@ const TS_SUN_1645 = 1_776_012_300;
 // Monday, 13.4.2026, 9:00 UTC
 const TS_MON_0900 = 1_776_070_800;
 
-const DEFAULT_CONFIG: TimeExtConfig = { timeUpdatePeriod: 300 };
+const DEFAULT_CONFIG: TimeExtConfig = {
+  timeUpdatePeriod: 300,
+  timezone: 'UTC',
+};
 
 // --- helpers ---
-
-function makeTmpDir(): string {
-  return mkdtempSync(join(tmpdir(), 'time-ext-test-'));
-}
-
-function timezonePath(dataDirectory: string): string {
-  return join(
-    dataDirectory,
-    'extensions',
-    'io.stagewise',
-    'time',
-    'timezone.json',
-  );
-}
-
-function writeLegacyTimezone(dataDirectory: string, source: string): void {
-  const path = timezonePath(dataDirectory);
-  mkdirSync(join(path, '..'), { recursive: true });
-  writeFileSync(path, source);
-}
 
 function makeTimeMessage(timestamp: number, tz = 'UTC'): ExtendedUIMessage {
   return {
@@ -151,9 +125,7 @@ function makeDeps(
     mcp: {} as unknown as ExtensionDeps['mcp'],
     sessionId: 'test-session',
     ...overrides,
-    getDataDir: vi.fn(() =>
-      join(dataDirectory, 'extensions', 'io.stagewise', 'time'),
-    ),
+    getDataDir: vi.fn(() => dataDirectory),
   } as ExtensionDeps;
 }
 
@@ -173,25 +145,84 @@ describe('createTimeExt', () => {
   it.each([NaN, Infinity, -Infinity, -1, 1.5])(
     'rejects invalid update period %s',
     (timeUpdatePeriod) => {
-      expect(() => createTimeExt({ timeUpdatePeriod })).toThrow(
-        'timeUpdatePeriod must be a non-negative integer',
-      );
+      expect(() =>
+        createTimeExt({ timeUpdatePeriod, timezone: 'UTC' }),
+      ).toThrow('timeUpdatePeriod must be a non-negative integer');
     },
   );
+
+  it('rejects an invalid configured timezone', () => {
+    expect(() =>
+      createTimeExt({ timeUpdatePeriod: 300, timezone: 'Fake/Zone' }),
+    ).toThrow('timezone must be a valid IANA identifier');
+  });
+
+  it('captures one timezone for every instance created by the factory', () => {
+    const config = { timeUpdatePeriod: 300, timezone: 'Europe/Berlin' };
+    const factory = createTimeExt(config);
+    config.timezone = 'Asia/Tokyo';
+
+    expect(factory.create(makeDeps()).introspect?.()).toMatchObject({
+      timezone: 'Europe/Berlin',
+    });
+  });
 });
 
-describe('TimeExt.onStart', () => {
-  it('loads persisted timezone without injecting', async () => {
-    const dir = makeTmpDir();
-    writeLegacyTimezone(dir, JSON.stringify({ timezone: 'Asia/Tokyo' }));
-    const deps = makeDeps({ getDataDir: () => dir });
-    const ext = createTimeExt(DEFAULT_CONFIG).create(deps);
+describe('TimeExt god tools', () => {
+  it('does not expose timezone updates in standard sessions', () => {
+    const tools = createTimeExt(DEFAULT_CONFIG)
+      .create(makeDeps())
+      .getTools?.({} as never);
 
-    await ext.onStart?.();
+    expect(tools).not.toHaveProperty('updateTimezone');
+  });
 
-    expect(ext.introspect?.()).toMatchObject({ timezone: 'Asia/Tokyo' });
-    expect(deps.inbox.sendMessage).not.toHaveBeenCalled();
-    rmSync(dir, { recursive: true, force: true });
+  it('persists a valid timezone for the next process start', async () => {
+    let persisted: Record<string, unknown> = {
+      timezone: 'UTC',
+      preserved: true,
+    };
+    const mutate = vi.fn(
+      async (
+        update: (current: Record<string, unknown>) => Record<string, unknown>,
+      ) => {
+        persisted = update(persisted);
+        return persisted;
+      },
+    );
+    const ext = createTimeExtGod(DEFAULT_CONFIG).create(
+      makeDeps({ config: { mutate } as unknown as ExtensionDeps['config'] }),
+    );
+    const tools = ext.getTools?.({} as never) ?? {};
+
+    const result = await tools.updateTimezone?.execute?.(
+      { timezone: 'Europe/Berlin' } as never,
+      { toolCallId: 'test', messages: [] } as never,
+    );
+
+    expect(mutate).toHaveBeenCalledOnce();
+    expect(persisted).toEqual({
+      timezone: 'Europe/Berlin',
+      preserved: true,
+    });
+    expect(result).toBe(
+      'Timezone updated, will be active after restart of the agent.',
+    );
+    expect(ext.introspect?.()).toMatchObject({
+      mode: 'god',
+      timezone: 'UTC',
+    });
+  });
+
+  it('rejects invalid timezone updates in the tool schema', () => {
+    const tools = createTimeExtGod(DEFAULT_CONFIG)
+      .create(makeDeps())
+      .getTools?.({} as never);
+    const schema = tools?.updateTimezone?.inputSchema as {
+      safeParse: (input: unknown) => { success: boolean };
+    };
+
+    expect(schema.safeParse({ timezone: 'Fake/Zone' }).success).toBe(false);
   });
 });
 
@@ -211,7 +242,10 @@ describe('TimeExt.getProvisionalStepContext', () => {
 
   it('returns both parts when timezone is missing but time is recent', () => {
     const recentTs = Math.floor(Date.now() / 1000) - 10;
-    const ext = createTimeExt({ timeUpdatePeriod: 300 }).create(makeDeps());
+    const ext = createTimeExt({
+      timeUpdatePeriod: 300,
+      timezone: 'UTC',
+    }).create(makeDeps());
     const result = ext.getProvisionalStepContext?.(
       [makeTimeMessage(recentTs)],
       {} as never,
@@ -225,7 +259,10 @@ describe('TimeExt.getProvisionalStepContext', () => {
 
   it('returns only time when timezone exists and time is stale', () => {
     const oldTs = Math.floor(Date.now() / 1000) - 600;
-    const ext = createTimeExt({ timeUpdatePeriod: 300 }).create(makeDeps());
+    const ext = createTimeExt({
+      timeUpdatePeriod: 300,
+      timezone: 'UTC',
+    }).create(makeDeps());
     const result = ext.getProvisionalStepContext?.(
       [makeTimeAndTimezoneMessage(oldTs)],
       {} as never,
@@ -236,7 +273,10 @@ describe('TimeExt.getProvisionalStepContext', () => {
 
   it('returns no parts when time is recent and timezone exists', () => {
     const recentTs = Math.floor(Date.now() / 1000) - 10;
-    const ext = createTimeExt({ timeUpdatePeriod: 300 }).create(makeDeps());
+    const ext = createTimeExt({
+      timeUpdatePeriod: 300,
+      timezone: 'UTC',
+    }).create(makeDeps());
     const result = ext.getProvisionalStepContext?.(
       [makeTimeAndTimezoneMessage(recentTs)],
       {} as never,
@@ -253,7 +293,10 @@ describe('TimeExt.getProvisionalStepContext', () => {
       makeTextMessage('hello'),
       makeTimeAndTimezoneMessage(recentTs),
     ];
-    const ext = createTimeExt({ timeUpdatePeriod: 300 }).create(makeDeps());
+    const ext = createTimeExt({
+      timeUpdatePeriod: 300,
+      timezone: 'UTC',
+    }).create(makeDeps());
     const result = ext.getProvisionalStepContext?.(
       history,
       {} as never,
@@ -278,7 +321,9 @@ describe('TimeExt.getProvisionalStepContext', () => {
 
   it('always refreshes when the update period is zero', () => {
     const now = Math.floor(Date.now() / 1000);
-    const ext = createTimeExt({ timeUpdatePeriod: 0 }).create(makeDeps());
+    const ext = createTimeExt({ timeUpdatePeriod: 0, timezone: 'UTC' }).create(
+      makeDeps(),
+    );
     const result = ext.getProvisionalStepContext?.(
       [makeTimeAndTimezoneMessage(now)],
       {} as never,
@@ -313,15 +358,13 @@ describe('TimeExt.getProvisionalStepContext', () => {
     ]);
   });
 
-  it('returns time and timezone when timezone has changed', async () => {
+  it('returns time and timezone when the startup timezone differs from history', () => {
     const recentTs = Math.floor(Date.now() / 1000) - 10;
     const history = [makeTimeAndTimezoneMessage(recentTs, 'UTC')];
-    const dir = makeTmpDir();
-    writeLegacyTimezone(dir, JSON.stringify({ timezone: 'Europe/Berlin' }));
-    const ext = createTimeExt(DEFAULT_CONFIG).create(
-      makeDeps({ getDataDir: () => dir }),
-    );
-    await ext.onStart?.();
+    const ext = createTimeExt({
+      timeUpdatePeriod: 300,
+      timezone: 'Europe/Berlin',
+    }).create(makeDeps());
     const result = ext.getProvisionalStepContext?.(
       history,
       {} as never,
@@ -334,8 +377,6 @@ describe('TimeExt.getProvisionalStepContext', () => {
     const tzData = (result.parts[1] as { type: string; data: { tz: string } })
       .data;
     expect(tzData.tz).toBe('Europe/Berlin');
-
-    rmSync(dir, { recursive: true, force: true });
   });
 
   it('returns initial time and timezone for empty history', () => {
@@ -400,17 +441,8 @@ describe('TimeExt.historyTransformer — compacted history', () => {
       makeUserMessage('two'),
       retained,
     ];
-    const dir = makeTmpDir();
-    const deps = makeDeps({
-      getDataDir: () => dir,
-      getHistory: vi.fn(() => original),
-    });
+    const deps = makeDeps({ getHistory: vi.fn(() => original) });
     const ext = createTimeExt(DEFAULT_CONFIG).create(deps);
-    const tools = ext.getTools?.({} as never) ?? {};
-    await tools.changeTimezone?.execute?.(
-      { timezone: 'Asia/Tokyo' } as never,
-      { toolCallId: 'test', messages: [] } as never,
-    );
     const compacted = await runCompaction(original, deps);
     const result = ext.historyTransformer?.(compacted, {} as never);
     if (!result || !Array.isArray(result)) throw new Error('invalid result');
@@ -443,7 +475,6 @@ describe('TimeExt.historyTransformer — compacted history', () => {
         { type: 'text', text: '<summary>Earlier history</summary>' },
       ],
     });
-    rmSync(dir, { recursive: true, force: true });
   });
 
   it('omits synthetic time and uses the current timezone when none existed', async () => {
@@ -457,17 +488,11 @@ describe('TimeExt.historyTransformer — compacted history', () => {
       makeTextMessage('answer'),
       makeUserMessage('two'),
     ];
-    const dir = makeTmpDir();
-    const deps = makeDeps({
-      getDataDir: () => dir,
-      getHistory: vi.fn(() => original),
-    });
-    const ext = createTimeExt(DEFAULT_CONFIG).create(deps);
-    const tools = ext.getTools?.({} as never) ?? {};
-    await tools.changeTimezone?.execute?.(
-      { timezone: 'Asia/Tokyo' } as never,
-      { toolCallId: 'test', messages: [] } as never,
-    );
+    const deps = makeDeps({ getHistory: vi.fn(() => original) });
+    const ext = createTimeExt({
+      timeUpdatePeriod: 300,
+      timezone: 'Asia/Tokyo',
+    }).create(deps);
     const compacted = await runCompaction(original, deps);
     const result = ext.historyTransformer?.(compacted, {} as never);
     if (!result || !Array.isArray(result)) throw new Error('invalid result');
@@ -482,7 +507,6 @@ describe('TimeExt.historyTransformer — compacted history', () => {
     expect(
       result[0]?.parts.some((part) => (part.type as string) === 'data-time'),
     ).toBe(false);
-    rmSync(dir, { recursive: true, force: true });
     clock.mockRestore();
   });
 
@@ -624,10 +648,9 @@ describe('TimeExt.getTools — getTime', () => {
     expect(result?.time).toMatch(/\+00:00$/);
   });
 
-  it('returns time in specified timezone without changing persisted tz', async () => {
+  it('returns time in a specified timezone without changing the startup timezone', async () => {
     const clock = vi.spyOn(Date, 'now').mockReturnValue(TS_SUN_1530 * 1000);
-    const dir = makeTmpDir();
-    const deps = makeDeps({ getDataDir: () => dir });
+    const deps = makeDeps();
     const ext = createTimeExt(DEFAULT_CONFIG).create(deps);
     const tools = ext.getTools?.({} as never) ?? {};
 
@@ -637,10 +660,9 @@ describe('TimeExt.getTools — getTime', () => {
     );
     // Berlin in April is CEST → +02:00
     expect(result?.time).toMatch(/\+02:00$/);
-    // Persisted timezone should still be UTC
+    // The process-wide startup timezone remains unchanged.
     expect(ext.introspect?.()).toMatchObject({ timezone: 'UTC' });
     expect(deps.inbox.sendMessage).not.toHaveBeenCalled();
-    rmSync(dir, { recursive: true, force: true });
     clock.mockRestore();
   });
 
@@ -654,99 +676,6 @@ describe('TimeExt.getTools — getTime', () => {
         { toolCallId: 'test', messages: [] } as never,
       ),
     ).rejects.toThrow(/Invalid timezone "Fake\/Zone".*IANA/);
-  });
-});
-
-describe('TimeExt.getTools — changeTimezone', () => {
-  it('is registered as a tool', () => {
-    const ext = createTimeExt(DEFAULT_CONFIG).create(makeDeps());
-    const tools = ext.getTools?.({} as never) ?? {};
-    expect(tools.changeTimezone).toBeDefined();
-  });
-
-  it('changes timezone and atomically preserves unknown stored fields', async () => {
-    const dir = makeTmpDir();
-    writeLegacyTimezone(
-      dir,
-      JSON.stringify({ timezone: 'UTC', futureField: { keep: true } }),
-    );
-    const deps = makeDeps({ getDataDir: () => dir });
-    const ext = createTimeExt(DEFAULT_CONFIG).create(deps);
-    const tools = ext.getTools?.({} as never) ?? {};
-
-    const result = await tools.changeTimezone?.execute?.(
-      { timezone: 'Europe/Berlin' } as never,
-      { toolCallId: 'test', messages: [] } as never,
-    );
-
-    expect(result).toEqual({ timezone: 'Europe/Berlin' });
-    expect(deps.inbox.sendMessage).not.toHaveBeenCalled();
-    expect(deps.insertMessageAfter).not.toHaveBeenCalled();
-
-    // Verify persistence
-    const persisted = JSON.parse(readFileSync(timezonePath(dir), 'utf-8'));
-    expect(persisted.timezone).toBe('Europe/Berlin');
-    expect(persisted.futureField).toEqual({ keep: true });
-    expect(persisted._klex).toMatchObject({
-      store: 'time-extension-timezone',
-      schemaVersion: 1,
-    });
-
-    rmSync(dir, { recursive: true, force: true });
-  });
-
-  it('rejects invalid timezone with a compact error', async () => {
-    const deps = makeDeps();
-    const ext = createTimeExt(DEFAULT_CONFIG).create(deps);
-    const tools = ext.getTools?.({} as never) ?? {};
-
-    await expect(
-      tools.changeTimezone?.execute?.(
-        { timezone: 'Not/A/Real_Zone' } as never,
-        { toolCallId: 'test', messages: [] } as never,
-      ),
-    ).rejects.toThrow(/Invalid timezone "Not\/A\/Real_Zone".*IANA/);
-    expect(deps.inbox.sendMessage).not.toHaveBeenCalled();
-  });
-
-  it('does not change in-memory state when persistence fails', async () => {
-    const dir = makeTmpDir();
-    writeFileSync(join(dir, 'extensions'), 'not a directory');
-    const ext = createTimeExt(DEFAULT_CONFIG).create(
-      makeDeps({ getDataDir: () => dir }),
-    );
-    const tools = ext.getTools?.({} as never) ?? {};
-
-    await expect(
-      tools.changeTimezone?.execute?.(
-        { timezone: 'Europe/Berlin' } as never,
-        { toolCallId: 'test', messages: [] } as never,
-      ),
-    ).rejects.toThrow();
-    expect(ext.introspect?.()).toMatchObject({ timezone: 'UTC' });
-
-    rmSync(dir, { recursive: true, force: true });
-  });
-
-  it('loaded timezone persists across extension instances', async () => {
-    const dir = makeTmpDir();
-    const deps1 = makeDeps({ getDataDir: () => dir });
-    const ext1 = createTimeExt(DEFAULT_CONFIG).create(deps1);
-    const tools1 = ext1.getTools?.({} as never) ?? {};
-    await tools1.changeTimezone?.execute?.(
-      { timezone: 'America/New_York' } as never,
-      { toolCallId: 'test', messages: [] } as never,
-    );
-
-    // Create a new extension pointing at the same data dir
-    const deps2 = makeDeps({ getDataDir: () => dir });
-    const ext2 = createTimeExt(DEFAULT_CONFIG).create(deps2);
-    await ext2.onStart?.();
-    expect(ext2.introspect?.()).toMatchObject({
-      timezone: 'America/New_York',
-    });
-
-    rmSync(dir, { recursive: true, force: true });
   });
 });
 
@@ -840,35 +769,26 @@ describe('TimeExt.dataPartTransformers — time (Europe/Berlin)', () => {
     expect(result).toEqual([{ type: 'text', text: '<time>18:45</time>' }]);
   });
 
-  it('keeps historical model context stable after the active timezone changes', async () => {
-    const dir = makeTmpDir();
-    const ext = createTimeExt(DEFAULT_CONFIG).create(
-      makeDeps({ getDataDir: () => dir }),
-    );
+  it('renders historical context using its recorded timezone', () => {
+    const ext = createTimeExt(DEFAULT_CONFIG).create(makeDeps());
     const timeTransformer = getTransformer(ext, TIME_KEY);
     const timezoneTransformer = getTransformer(ext, TIMEZONE_KEY);
-    const historicalTime = { timestamp: TS_SUN_1530, tz: 'Europe/Berlin' };
-    const historicalTimezone = {
-      tz: 'Europe/Berlin',
-      timestamp: TS_SUN_1530,
-    };
-    const before = {
-      time: timeTransformer(historicalTime, 0),
-      timezone: timezoneTransformer(historicalTimezone, 0),
-    };
-
-    const tools = ext.getTools?.({} as never) ?? {};
-    await tools.changeTimezone?.execute?.(
-      { timezone: 'Asia/Tokyo' } as never,
-      { toolCallId: 'test', messages: [] } as never,
-    );
 
     expect({
-      time: timeTransformer(historicalTime, 0),
-      timezone: timezoneTransformer(historicalTimezone, 0),
-    }).toEqual(before);
-    expect(ext.introspect?.()).toMatchObject({ timezone: 'Asia/Tokyo' });
-    rmSync(dir, { recursive: true, force: true });
+      time: timeTransformer({ timestamp: TS_SUN_1530, tz: 'Europe/Berlin' }, 0),
+      timezone: timezoneTransformer(
+        { tz: 'Europe/Berlin', timestamp: TS_SUN_1530 },
+        0,
+      ),
+    }).toEqual({
+      time: [{ type: 'text', text: '<time>Sunday, 12.4.2026, 17:30</time>' }],
+      timezone: [
+        {
+          type: 'text',
+          text: '<timezone>Europe/Berlin, CEST, +02:00</timezone>',
+        },
+      ],
+    });
   });
 });
 
@@ -900,8 +820,12 @@ describe('TimeExt.dataPartTransformers — timezone', () => {
 
 describe('TimeExt.introspect', () => {
   it('returns configuration and default timezone', () => {
-    const ext = createTimeExt({ timeUpdatePeriod: 300 }).create(makeDeps());
+    const ext = createTimeExt({
+      timeUpdatePeriod: 300,
+      timezone: 'UTC',
+    }).create(makeDeps());
     expect(ext.introspect?.()).toEqual({
+      mode: 'standard',
       timeUpdatePeriod: 300,
       timezone: 'UTC',
     });
@@ -910,7 +834,10 @@ describe('TimeExt.introspect', () => {
   it('does not keep mutable timestamp state after producing context', () => {
     const history = [makeUserMessage('hello')];
     const deps = makeDeps({ getHistory: vi.fn(() => history) });
-    const ext = createTimeExt({ timeUpdatePeriod: 300 }).create(deps);
+    const ext = createTimeExt({
+      timeUpdatePeriod: 300,
+      timezone: 'UTC',
+    }).create(deps);
     const result = ext.getProvisionalStepContext?.(
       history,
       {} as never,
@@ -922,49 +849,5 @@ describe('TimeExt.introspect', () => {
     };
     expect(state.timeUpdatePeriod).toBe(300);
     expect(state.timezone).toBe('UTC');
-  });
-});
-
-describe('TimeExt — timezone persistence', () => {
-  it('defaults to UTC when no timezone file exists', () => {
-    const dir = makeTmpDir();
-    const ext = createTimeExt(DEFAULT_CONFIG).create(
-      makeDeps({ getDataDir: () => dir }),
-    );
-    expect(ext.introspect?.()).toMatchObject({ timezone: 'UTC' });
-    rmSync(dir, { recursive: true, force: true });
-  });
-
-  it('loads an unversioned legacy timezone file on start', async () => {
-    const dir = makeTmpDir();
-    writeLegacyTimezone(dir, JSON.stringify({ timezone: 'Asia/Tokyo' }));
-    const ext = createTimeExt(DEFAULT_CONFIG).create(
-      makeDeps({ getDataDir: () => dir }),
-    );
-    await ext.onStart?.();
-    expect(ext.introspect?.()).toMatchObject({ timezone: 'Asia/Tokyo' });
-    rmSync(dir, { recursive: true, force: true });
-  });
-
-  it('rejects corrupted persisted timezone data', async () => {
-    const dir = makeTmpDir();
-    writeLegacyTimezone(dir, '{ broken json');
-    const ext = createTimeExt(DEFAULT_CONFIG).create(
-      makeDeps({ getDataDir: () => dir }),
-    );
-    await expect(ext.onStart?.()).rejects.toThrow('not valid JSON');
-    rmSync(dir, { recursive: true, force: true });
-  });
-
-  it('rejects a persisted invalid timezone', async () => {
-    const dir = makeTmpDir();
-    writeLegacyTimezone(dir, JSON.stringify({ timezone: 'Invalid/Zone' }));
-    const ext = createTimeExt(DEFAULT_CONFIG).create(
-      makeDeps({ getDataDir: () => dir }),
-    );
-    await expect(ext.onStart?.()).rejects.toThrow(
-      'not a valid IANA identifier',
-    );
-    rmSync(dir, { recursive: true, force: true });
   });
 });

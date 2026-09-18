@@ -27,6 +27,9 @@ const logger = { error: () => undefined } as unknown as ModuleLogger;
 const reference = { providerId: 'openai-main', modelId: 'org:model:v2' };
 const baseConfig: KlexConfig = {
   configVersion: 2,
+  episodeFinishIdleTriggerTimeMs: 300_000,
+  memoryWriteIntervalMs: 60_000,
+  memoryWriteStepInterval: 3,
   officialName: 'Agent',
   providers: {
     'openai-main': {
@@ -44,6 +47,7 @@ const baseConfig: KlexConfig = {
     voice: { sts: [], tts: [], stt: [] },
   },
   mcpServers: {},
+  timezone: 'UTC',
 };
 
 function app(
@@ -53,6 +57,7 @@ function app(
   const deps: SettingsRouteDependencies = {
     config,
     logger,
+    timezone: 'UTC',
     providerRegistry: providerRegistry as ProviderRegistry,
   };
   return setupTestApp((route) => {

@@ -19,12 +19,14 @@ import {
   modelSelectionSchema,
   telemetrySettingsPatchSchema,
   telemetrySettingsSchema,
+  timezoneSettingsSchema,
 } from './schemas';
 
 export interface SettingsRouteDependencies {
   config: Config;
   providerRegistry: ProviderRegistry;
   logger: ModuleLogger;
+  timezone: string;
 }
 
 export const getAgentIdentityRoute = createRoute({
@@ -204,6 +206,31 @@ export function patchModelSelection(
       500,
     );
   };
+}
+
+// --- Timezone settings ---
+
+export const getTimezoneRoute = createRoute({
+  method: 'get',
+  path: '/v1/settings/timezone',
+  tags: ['Settings'],
+  summary: 'Get timezone setting',
+  description:
+    'Returns the timezone resolved when Klex started. Runtime config changes take effect only after restart.',
+  responses: {
+    200: {
+      content: {
+        'application/json': { schema: timezoneSettingsSchema },
+      },
+      description: 'Startup timezone setting',
+    },
+  },
+});
+
+export function getTimezone(
+  deps: SettingsRouteDependencies,
+): RouteHandler<typeof getTimezoneRoute> {
+  return (c) => c.json({ timezone: deps.timezone }, 200);
 }
 
 // --- Telemetry settings ---

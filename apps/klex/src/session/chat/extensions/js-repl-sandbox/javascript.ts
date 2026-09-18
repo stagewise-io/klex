@@ -80,7 +80,7 @@ class JavaScriptToolModule implements JavaScriptTool {
   readonly tools = {
     runInSandbox: {
       description:
-        'Run JavaScript. Persistent state: globalThis. Top-level await and return work. console.log captures text; return emits JSON. MCP: tools.search(), tools.describe(), then mcp[namespace][name](input).',
+        'Run JavaScript to discover and call MCP tools. Use await tools.search(nonemptyQuery), await tools.describe({ namespace, name }), then await mcp[namespace][name](input). Search results include each tool reference; describe returns its input schema. Sending a message requires calling a send or reply tool. console.log and return only report results to you. Top-level await and return work; persist state on globalThis.',
       inputSchema: z.object({
         code: z.string().describe('JavaScript to execute.'),
       }),

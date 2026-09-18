@@ -144,8 +144,10 @@ describe('ToolExecutor', () => {
     });
   });
 
-  it('uses the default result limit when no per-executor limit is supplied', async () => {
-    const executor = createExecutor(async () => ({ value: 1 }));
+  it('rejects oversized results with the default result limit', async () => {
+    const executor = createExecutor(async () => ({
+      payload: 'x'.repeat(256 * 1024),
+    }));
 
     await expect(
       executor.execute({
@@ -153,7 +155,11 @@ describe('ToolExecutor', () => {
         name: 'example',
         input: {},
       }),
-    ).resolves.toMatchObject({ status: 'success', output: { value: 1 } });
+    ).resolves.toMatchObject({
+      status: 'error',
+      code: 'result-too-large',
+      retryable: false,
+    });
   });
 
   it('enforces the timeout when a tool ignores cancellation', async () => {

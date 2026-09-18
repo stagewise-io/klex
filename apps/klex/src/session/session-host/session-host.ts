@@ -24,6 +24,7 @@ export interface SessionHostDependencies {
   mcp: Mcp;
   introspection: IntrospectionScope;
   sessionFactory: SessionFactory;
+  basePrompt: string;
 }
 
 /** Thrown when a lease is requested while the session host is not running. */
@@ -65,6 +66,7 @@ class SessionHostModule implements SessionHost {
       mcp: Mcp;
       introspection: IntrospectionScope;
       sessionFactory: SessionFactory;
+      basePrompt: string;
     },
   ) {}
 
@@ -226,6 +228,7 @@ class SessionHostModule implements SessionHost {
       extensionFactories: [],
       introspectionScope: this.sessionsScope ?? this.deps.introspection,
       hooks,
+      basePrompt: this.deps.basePrompt,
     });
     this._session = session;
     try {
@@ -291,5 +294,6 @@ export function createSessionHost(deps: SessionHostDependencies): SessionHost {
     mcp: deps.mcp,
     introspection: deps.introspection,
     sessionFactory: deps.sessionFactory,
+    basePrompt: deps.basePrompt,
   });
 }

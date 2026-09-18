@@ -98,6 +98,7 @@ function createFakeSession(options: {
         }) as never,
     ),
     createChildSession: vi.fn(),
+    waitForIdle: vi.fn(async () => true),
   };
   return session;
 }
@@ -114,6 +115,7 @@ function createHost(sessionFactory: SessionFactory) {
     mcp: {} as Mcp,
     introspection: createScope(),
     sessionFactory,
+    basePrompt: 'test base prompt',
   });
 }
 

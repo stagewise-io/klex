@@ -116,7 +116,7 @@ Extensions can spawn child sessions — isolated execution units with their own 
 ```typescript
 interface ChildSessionOptions {
   extensions: ExtensionFactory[];
-  systemPromptAssembler?: SystemPromptAssembler;
+  basePrompt: string;
 }
 
 interface ChildSessionHandle {
@@ -125,6 +125,8 @@ interface ChildSessionHandle {
   getMessages(): readonly ExtendedUIMessage[];
   getSessionInfo(): SessionInfo;
   close(): Promise<void>;
+  /** Waits for the child to reach its idle boundary before the timeout. */
+  waitForIdle(timeoutMs: number): Promise<boolean>;
   /** Creates and fully starts an isolated grandchild session. */
   createChildSession(
     options: ChildSessionOptions,
@@ -135,7 +137,7 @@ interface ChildSessionHandle {
 When an extension calls `deps.createChildSession(options)`:
 
 1. Build a child context with `kind: 'child'` and `parentId: this.sessionId`.
-2. Construct `ChatSession` with `mcp: null`, exactly the requested extensions, optional prompt assembler, and a child introspection scope. Each session starts an independent root trace span; child sessions are not nested under the spawning session's trace. Construction failures remove introspection state and end that span before propagating.
+2. Construct `ChatSession` with `mcp: null`, exactly the requested extensions, the required child-specific base prompt, and a child introspection scope. Each session starts an independent root trace span; child sessions are not nested under the spawning session's trace. Construction failures remove introspection state and end that span before propagating.
 3. Await session startup. Startup failure is logged, cleaned up, and propagated to the extension.
 4. Return the fully started handle.
 
@@ -145,7 +147,7 @@ The spawning extension explicitly chooses every extension loaded by the child. N
 
 ### Lifecycle
 
-Child sessions are owned by the extension that spawned them. The extension is responsible for closing them — typically in its `onClose` hook. If a parent session closes, all child sessions it spawned should be closed as part of the parent session's extension cleanup. There is no global orphan reclamation; ownership is explicit.
+Child sessions are owned by the extension that spawned them. The extension is responsible for closing them — typically in its `onClose` hook. If a parent session closes, all child sessions it spawned should be closed as part of the parent session's extension cleanup. `waitForIdle(timeoutMs)` lets an owner provide bounded drain time before closing a child. There is no global orphan reclamation; ownership is explicit.
 
 ## ExtensionDeps
 

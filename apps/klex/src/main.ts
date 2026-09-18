@@ -38,13 +38,18 @@ import {
 import { createImageInputOptimizerExt } from '@/session/chat/extensions/image-input-optimizer';
 import { createJsReplSandboxExt } from '@/session/chat/extensions/js-repl-sandbox';
 import { createMcpIngressExt } from '@/session/chat/extensions/mcp-ingress';
+import { createMemoryExt } from '@/session/chat/extensions/memory';
 import { createNameLoaderExt } from '@/session/chat/extensions/name-loader';
 import {
   createSoulExt,
   createSoulExtGod,
 } from '@/session/chat/extensions/soul';
-import { createTimeExt } from '@/session/chat/extensions/time';
+import {
+  createTimeExt,
+  createTimeExtGod,
+} from '@/session/chat/extensions/time';
 import { createTodosExt } from '@/session/chat/extensions/todos';
+import systemPrompt from '@/session/chat/utils/system-prompt.md';
 import {
   createProductionMediaTransportConnector,
   createRealtime,
@@ -232,6 +237,7 @@ async function main(): Promise<void> {
     await tracing.start();
     await config.start();
     preRuntime.push(config);
+    const timezone = config.get().timezone;
     const providerRegistry = createProviderRegistry({
       logging: logger,
       config,
@@ -306,9 +312,8 @@ async function main(): Promise<void> {
           introspectionScope: params.introspectionScope,
           hooks: params.hooks,
           sessionFactory: makeSessionFactory([]),
-          ...(params.systemPromptAssembler !== undefined && {
-            systemPromptAssembler: params.systemPromptAssembler,
-          }),
+          modelPurpose: params.modelPurpose,
+          basePrompt: params.basePrompt,
         });
 
     // Default session: full extension set + MCP access.
@@ -318,11 +323,15 @@ async function main(): Promise<void> {
       createGodMessagesDistrustExt,
       createJsReplSandboxExt,
       createContextCompactionExt,
-      createTimeExt({ timeUpdatePeriod: TIME_UPDATE_PERIOD_SECONDS }),
+      createTimeExt({
+        timeUpdatePeriod: TIME_UPDATE_PERIOD_SECONDS,
+        timezone,
+      }),
       createImageInputOptimizerExt,
       createAudioInputOptimizerExt,
       createTodosExt,
       createMcpIngressExt(),
+      createMemoryExt({ timezone }),
     ]);
 
     const sessionHost = createSessionHost({
@@ -330,6 +339,7 @@ async function main(): Promise<void> {
       mcp,
       introspection: introspector,
       sessionFactory: defaultSessionFactory,
+      basePrompt: systemPrompt,
     });
 
     // God session: no MCP, trust-mode god-messages, soul-god variant.
@@ -342,9 +352,13 @@ async function main(): Promise<void> {
         createSoulExtGod,
         createGodMessagesTrustExt,
       ]),
+      basePrompt: systemPrompt,
       extensionFactories: [
         createContextCompactionExt,
-        createTimeExt({ timeUpdatePeriod: TIME_UPDATE_PERIOD_SECONDS }),
+        createTimeExtGod({
+          timeUpdatePeriod: TIME_UPDATE_PERIOD_SECONDS,
+          timezone,
+        }),
         createImageInputOptimizerExt,
         createAudioInputOptimizerExt,
         createTodosExt,
@@ -360,6 +374,7 @@ async function main(): Promise<void> {
       cloudConnectivity,
       godMessages,
       localPort: cli.dangerousLocalAdminApiPort,
+      timezone,
     });
     adminApiForUi = adminApi;
     const telemetryManager = createTelemetryManager({

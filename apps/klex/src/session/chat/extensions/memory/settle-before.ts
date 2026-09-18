@@ -14,7 +14,7 @@ export async function settleBefore(
     void promise.then(
       () => {
         clearTimeout(timeout);
-        resolve(true);
+        resolve(Date.now() <= deadline);
       },
       (error: unknown) => {
         clearTimeout(timeout);

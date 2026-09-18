@@ -24,7 +24,7 @@ SessionHost
             └─ extension (can spawn child sessions)
                  └─ child session (isolated — no MCP, no push notifications)
                       └─ extension handler
-                           └─ extension (can explicitly spawn a grandchild)
+                           └─ extension (can spawn a grandchild)
 ```
 
 ```
@@ -43,216 +43,51 @@ Responsibilities:
 3. Expose the session as `ConversationHost` for realtime
 4. Create the root `sessions` introspection scope
 
-```typescript
-interface SessionHost extends RuntimeResource {
-  acquireInteractionLease(
-    request: InteractionLeaseRequest,
-  ): Promise<InteractionLease>;
-}
-```
-
-Realtime accepts `SessionHost` as a `ConversationHost` through TypeScript structural typing. The host delegates `acquireInteractionLease` to the current default session. If the session has terminated, it creates a replacement first (same mutation-lock pattern).
+Realtime accepts `SessionHost` as a `ConversationHost` through TypeScript structural typing. The host delegates `acquireInteractionLease` to the current default session. If the session has terminated, it creates a replacement first.
 
 ### Session replacement
 
-When the default session self-terminates (fatal error, max failures), `SessionHooks.onTerminated` fires. `SessionHost` creates and starts a replacement, re-dispatches pending deferred inbox events via `restorePendingEvents()`, and updates its reference. If a lease request already created the replacement, the termination hook reuses it instead of creating another session.
+When the default session self-terminates, `SessionHooks.onTerminated` fires. `SessionHost` creates and starts a replacement, re-dispatches pending deferred inbox events, and updates its reference. If a lease request already created the replacement, the termination hook reuses it.
 
 ### Push notification → inbox conversion
 
-The conversion of MCP push notifications to `SessionInboxEvent` is a pure function:
-
-```typescript
-function mcpPushNotificationToInboxEvent(
-  ev: McpPushNotification,
-): SessionInboxEvent
-```
-
-The MCP ingress extension calls this from its push notification listener and feeds the result into its session's inbox via `inbox.send()`. Resource-aware ingress may instead suppress or replace an event when a linked resource is already open and live.
+The MCP ingress extension converts MCP push notifications to `SessionInboxEvent` and feeds them into the session's inbox via `inbox.send()`. Resource-aware ingress may suppress or replace an event when a linked resource is already open and live.
 
 ## Session kinds and context
-
-```typescript
-type SessionKind = 'default' | 'god' | 'child';
-
-interface SessionContext {
-  kind: SessionKind;
-  sessionId: string;
-  /** Parent session ID (child sessions only). */
-  parentId?: string;
-}
-```
 
 Extensions inspect `sessionContext.kind` to decide session-specific behavior. An extension that spawns a child explicitly supplies that child's complete extension list and is responsible for avoiding unwanted recursive composition.
 
 ### MCP access
 
-`ExtensionDeps.mcp` is `Mcp | null`. The `default` session passes the real `Mcp` instance; `god` and `child` sessions pass `null`.
-
-Extensions that require MCP check in their constructor:
-
-```typescript
-constructor(deps: ExtensionDeps) {
-  if (!deps.mcp) throw new Error('js-repl-sandbox requires MCP access');
-  // ...
-}
-```
-
-Extensions that are MCP-agnostic (time, todos, soul, context-compaction) work unchanged in any session kind.
+`ExtensionDeps.mcp` is `Mcp | null`. The `default` session passes the real `Mcp` instance; `god` and `child` sessions pass `null`. Extensions that require MCP check in their constructor.
 
 ### Push notification subscription
 
-MCP access and MCP ingress are independent. Supplying `deps.mcp` makes MCP tools and APIs available to extensions, but it does not implicitly subscribe the session to push notifications.
+MCP access and MCP ingress are independent. Supplying `deps.mcp` makes MCP tools available, but does not implicitly subscribe to push notifications. The composition root installs the MCP ingress extension in the default session only.
 
-The composition root installs the MCP ingress extension in the default session. During extension startup it subscribes through `mcp.onPushNotification`; during extension shutdown it removes that listener. Sessions without the ingress extension do not receive MCP push notifications even if they have MCP access.
-
-The composition root starts `SessionHost` before MCP, so the ingress extension's listener is installed before MCP workers connect and drain pending events. MCP persists accepted events before acknowledgement and deduplicates them by `eventId`.
+The `SessionHost` starts before MCP, so the ingress extension's listener is installed before MCP workers connect and drain pending events. MCP persists accepted events before acknowledgement and deduplicates by `eventId`.
 
 ## Child sessions
 
-Extensions can spawn child sessions — isolated execution units with their own message history, inbox, and extensions. Child sessions normally have neither MCP access nor an MCP ingress extension. Their only input is messages injected by the parent extension via the child session's inbox.
+Extensions can spawn child sessions — isolated execution units with their own message history, inbox, and extensions. Child sessions have no MCP access and no MCP ingress extension. Their only input is messages injected by the parent extension.
 
 ### Spawning
 
-```typescript
-interface ChildSessionOptions {
-  extensions: ExtensionFactory[];
-  basePrompt: string;
-}
-
-interface ChildSessionHandle {
-  readonly sessionId: string;
-  inbox: ChatSessionInbox;
-  getMessages(): readonly ExtendedUIMessage[];
-  getSessionInfo(): SessionInfo;
-  close(): Promise<void>;
-  /** Waits for the child to reach its idle boundary before the timeout. */
-  waitForIdle(timeoutMs: number): Promise<boolean>;
-  /** Creates and fully starts an isolated grandchild session. */
-  createChildSession(
-    options: ChildSessionOptions,
-  ): Promise<ChildSessionHandle>;
-}
-```
-
-When an extension calls `deps.createChildSession(options)`:
-
-1. Build a child context with `kind: 'child'` and `parentId: this.sessionId`.
-2. Construct `ChatSession` with `mcp: null`, exactly the requested extensions, the required child-specific base prompt, and a child introspection scope. Each session starts an independent root trace span; child sessions are not nested under the spawning session's trace. Construction failures remove introspection state and end that span before propagating.
-3. Await session startup. Startup failure is logged, cleaned up, and propagated to the extension.
-4. Return the fully started handle.
+When an extension calls `deps.createChildSession(options)`, a child context with `kind: 'child'` is built, a `ChatSession` is constructed with `mcp: null` and exactly the requested extensions, startup is awaited, and the fully started handle is returned.
 
 ### Extension selection
 
-The spawning extension explicitly chooses every extension loaded by the child. No extensions are inherited or filtered automatically. Factory doc comments describe what each extension contributes so callers can compose a suitable child and avoid recursive self-loading.
+The spawning extension explicitly chooses every extension loaded by the child. No extensions are inherited or filtered automatically.
 
 ### Lifecycle
 
-Child sessions are owned by the extension that spawned them. The extension is responsible for closing them — typically in its `onClose` hook. If a parent session closes, all child sessions it spawned should be closed as part of the parent session's extension cleanup. `waitForIdle(timeoutMs)` lets an owner provide bounded drain time before closing a child. There is no global orphan reclamation; ownership is explicit.
-
-## ExtensionDeps
-
-```typescript
-interface ExtensionDeps {
-  getHistory: () => ExtendedUIMessage[];
-  insertMessageAfter: (afterMessageId: string, message: ExtendedUIMessage) => boolean;
-  inbox: ChatSessionInbox;
-  config: Config;
-  modelResolver: ProviderModelResolver;
-  generateText: (args: GenerateTextArgs) => Promise<GenerateTextResult>;
-  logger: ModuleLogger;
-  logging: RootLogger;
-  mcp: Mcp | null;
-  sessionId: string;
-  sessionContext: SessionContext;
-  createChildSession(
-    options: ChildSessionOptions,
-  ): Promise<ChildSessionHandle>;
-  getDataDir: (global?: boolean) => string;
-}
-```
-
-## ChatSessionDependencies
-
-```typescript
-interface ChatSessionDependencies {
-  logging: RootLogger;
-  modelResolver: ProviderModelResolver;
-  config: Config;
-  mcp: Mcp | null;
-  extensionFactories: ExtensionFactory[];
-  dataDirectory: string;
-  introspectionScope: IntrospectionScope;
-  hooks?: SessionHooks;
-  sessionId?: string;
-  sessionContext: SessionContext;
-  /** Factory for creating child sessions. Absent if disabled. */
-  sessionFactory?: SessionFactory;
-}
-```
-
-The `sessionFactory` is a closure created by the composition root that captures shared deps (config, modelResolver, logging, dataDirectory). The session calls it with child-specific parameters when an extension invokes `createChildSession`.
+Child sessions are owned by the extension that spawned them. The extension is responsible for closing them — typically in its `onClose` hook. `waitForIdle(timeoutMs)` lets an owner provide bounded drain time before closing. There is no global orphan reclamation; ownership is explicit.
 
 ## Composition root
 
-The composition root wires shared deps once and passes a `sessionFactory` to both `SessionHost` and `GodMessages`:
-
-```typescript
-const sharedSessionDeps = {
-  logging: logger,
-  config,
-  modelResolver: providerRegistry,
-  dataDirectory,
-};
-
-const makeSessionFactory =
-  (baseExtensions: ExtensionFactory[]): SessionFactory =>
-  (params) =>
-    createChatSession({
-      ...sharedSessionDeps,
-      mcp: params.mcp,
-      sessionContext: params.sessionContext,
-      extensionFactories: [...baseExtensions, ...params.extensionFactories],
-      introspectionScope: params.introspectionScope,
-      hooks: params.hooks,
-      sessionId: params.sessionId,
-      sessionFactory: makeSessionFactory([]),
-    });
-
-// Default session: full extension set + MCP access.
-const sessionHost = createSessionHost({
-  logging: logger,
-  mcp,
-  introspection: introspector,
-  sessionFactory: makeSessionFactory([
-    createNameLoaderExt,
-    createSoulExt,
-    createGodMessagesDistrustExt,
-    createJsReplSandboxExt,
-    ...commonExtensions,
-  ]),
-});
-
-// God session: no MCP, trust-mode god-messages, soul-god variant.
-const godMessages = createGodMessages({
-  logging: logger,
-  introspection: introspector,
-  sessionFactory: makeSessionFactory([
-    createNameLoaderExt,
-    createSoulExtGod,
-    createGodMessagesTrustExt,
-  ]),
-  extensionFactories: [...commonExtensions],
-});
-
-const realtime = createRealtime({
-  // ...
-  conversationHost: sessionHost,  // SessionHost implements ConversationHost
-});
-```
+The composition root wires shared deps once and passes a `sessionFactory` to both `SessionHost` and `GodMessages`. The factory captures shared deps (config, modelResolver, logging, dataDirectory) and creates chat sessions with child-specific parameters.
 
 ### Startup order
-
-The `SessionHost` starts before MCP (so the default session is ready to subscribe) and before realtime (so `ConversationHost` is available):
 
 ```
 model-call-logger → admin-api → cloud-connectivity
@@ -269,30 +104,18 @@ The `GodMessages` module creates its session via `sessionFactory` with `mcp: nul
 sessions
   └── default
       ├── extensions
-      │   ├── io.stagewise/name-loader
-      │   ├── io.stagewise/soul
-      │   └── ...
       └── child-sessions
           └── <child-session-id>
               ├── extensions
               └── child-sessions
-                  └── <grandchild-session-id>
 
 god-sessions
   └── <god-session-id>
       └── extensions
-          ├── io.stagewise/name-loader
-          ├── io.stagewise/soul
-          └── io.stagewise/god-messages-trust
 ```
 
 Child sessions register under their parent session's `child-sessions` scope, giving full recursive visibility without a second source of lifecycle state.
 
-## What stays unchanged
+## See also
 
-- **`ChatSession` core**: messages, inbox, loop, turns, steps, generation runner, tool dispatcher, fallback/backoff. See [Chat Session Architecture](./chat/architecture.md).
-- **Extension interface** (`Extension`): `onStart`, `onClose`, `getTools`, `getSystemPromptPart`, `getProvisionalStepContext`, `historyTransformer`, `contextTransformer`, `onStepComplete`, `dataPartTransformers`, `introspect`.
-- **Inbox system**: urgency levels, deferred/immediate buffers, mid-turn ordering.
-- **Realtime session coordinator**: lease acquisition through `SessionHost` as `ConversationHost`.
-- **God messages module**: session lifecycle, replacement, reset.
-- **Admin API**: no changes.
+- [Chat Session Architecture](./chat/architecture.md) — session loop, turns, steps, inbox, generation

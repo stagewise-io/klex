@@ -544,8 +544,18 @@ const timezoneSchema = z
 
 const klexConfigSchema = z.object({
   configVersion: z.literal(2).default(2),
-  episodeFinishIdleTriggerTimeMs: z.number().int().positive().default(300_000),
-  memoryWriteIntervalMs: z.number().int().positive().default(60_000),
+  episodeFinishIdleTriggerTimeMs: z
+    .number()
+    .int()
+    .positive()
+    .max(2_147_483_647)
+    .default(300_000),
+  memoryWriteIntervalMs: z
+    .number()
+    .int()
+    .positive()
+    .max(2_147_483_647)
+    .default(60_000),
   memoryWriteStepInterval: z.number().int().positive().default(3),
   officialName: z
     .string()
@@ -601,6 +611,7 @@ const legacyKlexConfigSchema = z
       .number()
       .int()
       .positive()
+      .max(2_147_483_647)
       .default(300_000),
     officialName: z.string().trim().min(2).default('Agent'),
     providers: z

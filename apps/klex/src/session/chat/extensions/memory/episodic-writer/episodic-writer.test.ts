@@ -89,9 +89,9 @@ function configWithMemoryModels(count: number) {
     modelId: `model-${i}`,
   }));
   return {
-    get: () => ({ modelSelection: { memory: entries, chat: entries } }),
+    get: () => ({ modelSelection: { memory: entries, chat: [] } }),
     getModelSelection: vi.fn((purpose: string) =>
-      purpose === 'memory' ? entries : entries,
+      purpose === 'memory' ? entries : [],
     ),
   } as unknown as ExtensionDeps['config'];
 }
@@ -421,6 +421,31 @@ describe('episode store', () => {
 
     expect(callback).toHaveBeenCalledOnce();
   });
+
+  it('serializes concurrent store calls to prevent duplicate races', async () => {
+    const root = directory();
+    const store = new EpisodeStore({
+      episodicDir: root,
+      onResetRequired: vi.fn(),
+      timezone: 'UTC',
+    });
+
+    // Without serialization, both calls could pass the duplicate check
+    // before either adds the fingerprint.
+    await Promise.all([
+      store.store({ data: 'duplicate', time: '14:05' }),
+      store.store({ data: 'duplicate', time: '14:05' }),
+    ]);
+
+    const content = readFileSync(
+      join(root, '2026-09-18', '1-14-05.md'),
+      'utf-8',
+    );
+    const entries = content.split('\n').filter((line) => line.startsWith('- '));
+    expect(entries).toEqual(['- 14:05: duplicate']);
+    expect(store.introspect()).toMatchObject({ duplicateEntriesSkipped: 1 });
+    store.close();
+  });
 });
 
 describe('episodic writer owner', () => {
@@ -523,6 +548,7 @@ describe('episodic writer owner', () => {
       expect.anything(),
     );
     expect(writer.sessionId).toBe('second');
+    await writer.close();
   });
 
   it('replaces a terminated writer and retries its in-flight input', async () => {
@@ -560,6 +586,7 @@ describe('episodic writer owner', () => {
       expect.anything(),
     );
     expect(writer.sessionId).toBe('second');
+    await writer.close();
   });
 
   it('bounds buffered input and drops the oldest waiting messages first', async () => {
@@ -596,6 +623,7 @@ describe('episodic writer owner', () => {
       expect.objectContaining({ droppedMessages: 1 }),
       expect.stringContaining('dropped oldest pending input'),
     );
+    await writer.close();
   });
 
   it('falls back to chat models when memory models are empty', async () => {

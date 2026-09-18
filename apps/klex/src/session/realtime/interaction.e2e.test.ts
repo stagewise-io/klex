@@ -191,7 +191,7 @@ describe('realtime and default chat interaction', () => {
         dataDirectory: join(tmpdir(), 'klex-interaction-e2e'),
         introspectionScope: params.introspectionScope,
         hooks: params.hooks,
-        basePrompt: 'You are Klex.',
+        basePrompt: params.basePrompt,
       });
       return chatSession;
     };

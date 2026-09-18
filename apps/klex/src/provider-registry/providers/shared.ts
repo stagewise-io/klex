@@ -58,17 +58,31 @@ export async function discoverOpenAiCompatibleModels(
     );
     if (!isRecord(body) || !Array.isArray(body.data)) return available([]);
     return available(
-      body.data.flatMap((item) =>
-        isRecord(item) &&
-        typeof item.id === 'string' &&
-        (!languageModelsOnly || !isNonLanguageModel(item.id))
-          ? [{ modelId: item.id }]
-          : [],
-      ),
+      body.data.flatMap((item) => {
+        if (
+          !isRecord(item) ||
+          typeof item.id !== 'string' ||
+          (languageModelsOnly && isNonLanguageModel(item.id))
+        )
+          return [];
+        const createdAt = parseModelCreatedAt(item.created);
+        return [{ modelId: item.id, ...(createdAt && { createdAt }) }];
+      }),
     );
   } catch (error) {
     return unavailable('discovery_failed', sanitizedError(error));
   }
+}
+
+/** Normalize provider Unix seconds or date strings; epoch means unknown. */
+export function parseModelCreatedAt(value: unknown): string | undefined {
+  const date =
+    typeof value === 'number'
+      ? new Date(value * 1000)
+      : typeof value === 'string'
+        ? new Date(value)
+        : undefined;
+  return date && date.getTime() > 0 ? date.toISOString() : undefined;
 }
 
 export async function testDiscoveryConnection(

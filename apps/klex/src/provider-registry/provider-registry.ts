@@ -86,6 +86,8 @@ export interface ModelMetadataProvenance {
 
 export interface ProviderModel {
   modelId: string;
+  /** Provider-reported creation or release time, normalized to UTC. */
+  createdAt?: string;
   kind?: ModelKind;
   displayName?: string;
   contextSize?: number;

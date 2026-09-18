@@ -13,6 +13,7 @@ import {
   fetchJson,
   isRecord,
   modelListUrl,
+  parseModelCreatedAt,
   providerHeaders,
   sanitizedError,
   setting,
@@ -113,8 +114,10 @@ async function discoverModels(
           : undefined;
         const imageInput = supports(capabilities?.image_input);
         const reasoning = supports(capabilities?.thinking);
+        const createdAt = parseModelCreatedAt(item.created_at);
         models.push({
           modelId: item.id,
+          ...(createdAt && { createdAt }),
           ...(typeof item.display_name === 'string' && {
             displayName: item.display_name,
           }),

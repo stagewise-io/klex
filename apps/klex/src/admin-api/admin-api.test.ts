@@ -71,6 +71,7 @@ describe('AdminApi', () => {
         cloudConnectivity,
         godMessages,
         localPort: 19999,
+        timezone: 'UTC',
       });
 
       await api.start();
@@ -102,6 +103,7 @@ describe('AdminApi', () => {
         cloudConnectivity,
         godMessages,
         localPort: undefined,
+        timezone: 'UTC',
       });
 
       await api.start();

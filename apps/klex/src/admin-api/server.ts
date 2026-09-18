@@ -87,6 +87,8 @@ import {
   getModelSelectionRoute,
   getTelemetry,
   getTelemetryRoute,
+  getTimezone,
+  getTimezoneRoute,
   patchAgentIdentity,
   patchAgentIdentityRoute,
   patchModelSelection,
@@ -106,6 +108,7 @@ export interface AdminAppDependencies {
   godMessages: GodMessages;
   logger: ModuleLogger;
   localPort: number | undefined;
+  timezone: string;
 }
 
 export function createAdminApp(deps: AdminAppDependencies) {
@@ -138,6 +141,7 @@ export function createAdminApp(deps: AdminAppDependencies) {
     .openapi(patchModelSelectionRoute, patchModelSelection(deps))
     .openapi(getTelemetryRoute, getTelemetry(deps))
     .openapi(patchTelemetryRoute, patchTelemetry(deps))
+    .openapi(getTimezoneRoute, getTimezone(deps))
     .openapi(
       introspectionRootRoute,
       getIntrospectionRoot({ introspector: deps.introspector }),

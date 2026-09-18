@@ -115,6 +115,10 @@ class AgentDirectoryModule implements AgentDirectory {
     const config: KlexConfig = {
       configVersion: 2,
       officialName: name,
+      episodeFinishIdleTriggerTimeMs: 300_000,
+      memoryWriteIntervalMs: 60_000,
+      memoryWriteStepInterval: 3,
+      timezone: 'UTC',
       providers: {},
       modelSelection: {
         chat: [],

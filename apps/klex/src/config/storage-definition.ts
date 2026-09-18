@@ -50,8 +50,8 @@ export const CONFIG_STORE_DEFINITION: JsonStoreDefinition = {
   relativePath: 'config.json',
   required: true,
   schemaVersion: 2,
-  compatibilityVersion: 2,
-  minimumKlexVersion: '0.3.0',
+  compatibilityVersion: 5,
+  minimumKlexVersion: '0.7.1',
   legacySchemaVersion: 1,
   versions: [
     { version: 1, schema: legacyConfigStorageSchema },

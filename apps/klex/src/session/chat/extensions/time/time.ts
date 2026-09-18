@@ -1,5 +1,3 @@
-import { dirname } from 'node:path';
-
 import { type ToolSet, tool } from 'ai';
 import z from 'zod';
 
@@ -14,12 +12,10 @@ import {
   isDataPartOf,
   type ProvisionalStepContext,
 } from '../extension-api';
-import { readTimezoneStore, writeTimezoneStore } from './storage';
 import systemPromptPart from './system-prompt.md';
 
 const TIME_KEY = 'time';
 const TIMEZONE_KEY = 'timezone';
-const DEFAULT_TZ = 'UTC';
 
 type TimeData = { timestamp: number; tz?: string };
 type TimezoneData = { tz: string; timestamp: number };
@@ -64,7 +60,11 @@ function tzOffset(d: Date, tz: string): string {
   return value === 'GMT' ? '+00:00' : value.replace(/^GMT/, '');
 }
 
-function formatTime(ts: number, tz: string, full: boolean): string {
+export function formatTimeContext(
+  ts: number,
+  tz: string,
+  full: boolean,
+): string {
   const d = new Date(ts * 1000);
   const opts: Intl.DateTimeFormatOptions = full
     ? {
@@ -90,7 +90,7 @@ function formatTime(ts: number, tz: string, full: boolean): string {
 
 function formatTimeWithOffset(ts: number, tz: string): string {
   const d = new Date(ts * 1000);
-  const base = formatTime(ts, tz, true);
+  const base = formatTimeContext(ts, tz, true);
   return `${base} ${tzOffset(d, tz)}`;
 }
 
@@ -195,29 +195,16 @@ function latestTimeContext(history: readonly ExtendedUIMessage[]): {
   return { timestamp, timezone };
 }
 
+type TimeExtMode = 'standard' | 'god';
+
 class TimeExt implements Extension {
   private convDayKey: string | null = null;
-  private readonly dataDirectory: string;
-  private timezone = DEFAULT_TZ;
 
   constructor(
     private readonly deps: ExtensionDeps,
     private readonly cfg: TimeExtConfig,
-  ) {
-    this.dataDirectory = dirname(dirname(dirname(deps.getDataDir(true))));
-  }
-
-  async onStart(): Promise<void> {
-    const persistedTimezone = await readTimezoneStore(this.dataDirectory);
-    if (persistedTimezone !== undefined) {
-      if (!isValidTimezone(persistedTimezone)) {
-        throw new Error(
-          `Stored timezone "${persistedTimezone}" is not a valid IANA identifier.`,
-        );
-      }
-      this.timezone = persistedTimezone;
-    }
-  }
+    private readonly mode: TimeExtMode,
+  ) {}
 
   getProvisionalStepContext(
     history: readonly ExtendedUIMessage[],
@@ -230,17 +217,17 @@ class TimeExt implements Extension {
       now - latest.timestamp >= this.cfg.timeUpdatePeriod;
     const tzMissing = latest.timezone === null;
     const tzChanged =
-      latest.timezone !== null && latest.timezone !== this.timezone;
+      latest.timezone !== null && latest.timezone !== this.cfg.timezone;
 
     if (!timeStale && !tzMissing && !tzChanged) return { parts: [] };
 
     const parts = [
-      createDataPart(TIME_KEY, { timestamp: now, tz: this.timezone }),
+      createDataPart(TIME_KEY, { timestamp: now, tz: this.cfg.timezone }),
     ] as unknown as ExtendedUIMessage['parts'];
     if (tzMissing || tzChanged) {
       parts.push(
         createDataPart(TIMEZONE_KEY, {
-          tz: this.timezone,
+          tz: this.cfg.timezone,
           timestamp: now,
         }) as never,
       );
@@ -264,7 +251,7 @@ class TimeExt implements Extension {
     const timezone =
       latestPart(removed, TIMEZONE_KEY, isTimezoneData) ??
       createDataPart(TIMEZONE_KEY, {
-        tz: this.timezone,
+        tz: this.cfg.timezone,
         timestamp: Math.floor(Date.now() / 1000),
       });
 
@@ -282,7 +269,7 @@ class TimeExt implements Extension {
   }
 
   getTools(): ToolSet {
-    return {
+    const tools: ToolSet = {
       getTime: tool({
         description: 'Get current time, optionally in one timezone.',
         inputSchema: z.object({
@@ -296,7 +283,7 @@ class TimeExt implements Extension {
             ),
         }),
         execute: async ({ timezone }) => {
-          const tz = timezone?.trim() || this.timezone;
+          const tz = timezone?.trim() || this.cfg.timezone;
           if (!isValidTimezone(tz)) {
             throw new Error(
               `Invalid timezone "${tz}". Use IANA identifier ("Europe/Berlin" or "UTC").`,
@@ -306,28 +293,29 @@ class TimeExt implements Extension {
           return { time: formatTimeWithOffset(ts, tz) };
         },
       }),
-      changeTimezone: tool({
+    };
+
+    if (this.mode === 'god') {
+      tools.updateTimezone = tool({
         description:
-          'Set default timezone for future time context. Only when regular work needs it.',
+          'Update the agent timezone in central configuration. The new timezone takes effect only after the agent restarts.',
         inputSchema: z.object({
           timezone: z
             .string()
-            .describe(
-              'IANA timezone, e.g. "Europe/Berlin", "America/New_York", or "UTC".',
-            ),
+            .trim()
+            .refine(isValidTimezone, 'Must be a valid IANA timezone'),
         }),
         execute: async ({ timezone }) => {
-          if (!isValidTimezone(timezone)) {
-            throw new Error(
-              `Invalid timezone "${timezone}". Use IANA identifier ("Europe/Berlin" or "UTC").`,
-            );
-          }
-          await writeTimezoneStore(this.dataDirectory, timezone);
-          this.timezone = timezone;
-          return { timezone };
+          await this.deps.config.mutate((current) => ({
+            ...current,
+            timezone,
+          }));
+          return 'Timezone updated, will be active after restart of the agent.';
         },
-      }),
-    };
+      });
+    }
+
+    return tools;
   }
 
   getSystemPromptPart(): string {
@@ -340,14 +328,14 @@ class TimeExt implements Extension {
       const tz =
         typeof data.tz === 'string' && isValidTimezone(data.tz)
           ? data.tz
-          : DEFAULT_TZ;
+          : this.cfg.timezone;
       const key = dayKey(data.timestamp, tz);
       const full = occurrence === 0 || this.convDayKey !== key;
       this.convDayKey = key;
       return [
         {
           type: 'text',
-          text: `<time>${formatTime(data.timestamp, tz, full)}</time>`,
+          text: `<time>${formatTimeContext(data.timestamp, tz, full)}</time>`,
         },
       ];
     }),
@@ -365,7 +353,8 @@ class TimeExt implements Extension {
   introspect(): Record<string, unknown> {
     return {
       timeUpdatePeriod: this.cfg.timeUpdatePeriod,
-      timezone: this.timezone,
+      timezone: this.cfg.timezone,
+      mode: this.mode,
     };
   }
 }
@@ -373,10 +362,29 @@ class TimeExt implements Extension {
 export interface TimeExtConfig {
   /** Minimum whole seconds between updates before executable generations. */
   timeUpdatePeriod: number;
+  /** IANA timezone resolved once during process startup. */
+  timezone: string;
 }
 
 /** Adds timezone-aware current-time context to a session at the configured cadence. */
 export function createTimeExt(config: TimeExtConfig): ExtensionFactory {
+  return createTimeExtFactory(config, 'standard');
+}
+
+/** Adds time context and god-only access to persist the next-start timezone. */
+export function createTimeExtGod(config: TimeExtConfig): ExtensionFactory {
+  return createTimeExtFactory(config, 'god');
+}
+
+function createTimeExtFactory(
+  config: TimeExtConfig,
+  mode: TimeExtMode,
+): ExtensionFactory {
+  if (!isValidTimezone(config.timezone)) {
+    throw new Error(
+      `timezone must be a valid IANA identifier; received "${config.timezone}".`,
+    );
+  }
   if (
     !Number.isFinite(config.timeUpdatePeriod) ||
     !Number.isInteger(config.timeUpdatePeriod) ||
@@ -385,9 +393,10 @@ export function createTimeExt(config: TimeExtConfig): ExtensionFactory {
     throw new Error('timeUpdatePeriod must be a non-negative integer.');
   }
 
+  const startupConfig = { ...config };
   return {
     identifier: 'io.stagewise/time',
-    displayName: 'Time',
-    create: (deps) => new TimeExt(deps, config),
+    displayName: mode === 'god' ? 'Time (God)' : 'Time',
+    create: (deps) => new TimeExt(deps, startupConfig, mode),
   };
 }

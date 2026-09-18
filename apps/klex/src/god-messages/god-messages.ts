@@ -54,6 +54,7 @@ export interface GodMessagesDependencies {
   /** Extensions to load in god sessions (typically the trust extension + memory). */
   extensionFactories: ExtensionFactory[];
   introspection: IntrospectionScope;
+  basePrompt: string;
 }
 
 class GodMessagesModule implements GodMessages {
@@ -83,6 +84,7 @@ class GodMessagesModule implements GodMessages {
       sessionFactory: SessionFactory;
       extensionFactories: ExtensionFactory[];
       introspection: IntrospectionScope;
+      basePrompt: string;
     },
   ) {}
 
@@ -281,6 +283,7 @@ class GodMessagesModule implements GodMessages {
       extensionFactories: this.deps.extensionFactories,
       introspectionScope: sessionsScope,
       hooks,
+      basePrompt: this.deps.basePrompt,
     });
 
     this.session = session;
@@ -386,5 +389,6 @@ export function createGodMessages(deps: GodMessagesDependencies): GodMessages {
     sessionFactory: deps.sessionFactory,
     extensionFactories: deps.extensionFactories,
     introspection: deps.introspection,
+    basePrompt: deps.basePrompt,
   });
 }

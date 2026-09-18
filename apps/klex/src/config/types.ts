@@ -527,8 +527,26 @@ const telemetryConfigSchema = z.object({
   level: telemetryLevelSchema,
 });
 
+const timezoneSchema = z
+  .string()
+  .trim()
+  .refine(
+    (timezone) => {
+      try {
+        Intl.DateTimeFormat(undefined, { timeZone: timezone });
+        return true;
+      } catch {
+        return false;
+      }
+    },
+    { message: 'Timezone must be a valid IANA identifier' },
+  );
+
 const klexConfigSchema = z.object({
   configVersion: z.literal(2).default(2),
+  episodeFinishIdleTriggerTimeMs: z.number().int().positive().default(300_000),
+  memoryWriteIntervalMs: z.number().int().positive().default(60_000),
+  memoryWriteStepInterval: z.number().int().positive().default(3),
   officialName: z
     .string()
     .trim()
@@ -548,6 +566,7 @@ const klexConfigSchema = z.object({
   }),
   mcpServers: z.record(z.string(), mcpServerConfigSchema).default({}),
   telemetry: telemetryConfigSchema.optional(),
+  timezone: timezoneSchema.default('UTC'),
 });
 
 type KlexConfig = z.infer<typeof klexConfigSchema>;
@@ -578,6 +597,11 @@ const legacyModelSelectionSchema = z
 
 const legacyKlexConfigSchema = z
   .object({
+    episodeFinishIdleTriggerTimeMs: z
+      .number()
+      .int()
+      .positive()
+      .default(300_000),
     officialName: z.string().trim().min(2).default('Agent'),
     providers: z
       .record(providerInstanceIdSchema, legacyProviderConfigSchema)
@@ -652,6 +676,7 @@ function migrateLegacyConfig(legacy: LegacyKlexConfig): KlexConfig {
   const selection = legacy.modelSelection;
   return klexConfigSchema.parse({
     configVersion: 2,
+    episodeFinishIdleTriggerTimeMs: legacy.episodeFinishIdleTriggerTimeMs,
     officialName: legacy.officialName,
     providers,
     modelSelection: {
@@ -802,4 +827,5 @@ export {
   providerInstanceIdSchema,
   providerTypeSchema,
   telemetryLevelSchema,
+  timezoneSchema,
 };

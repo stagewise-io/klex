@@ -12,7 +12,6 @@ import {
   convertInferenceHistory,
   runInferenceContextTransformers,
   runInferenceHistoryTransformers,
-  type SystemPromptAssembler,
 } from '@/session/interaction';
 
 import type { ExtensionHandler } from '../extension-handler';
@@ -72,10 +71,9 @@ export interface StepDependencies {
   turnInitialFallbackIndex: number;
   sessionId: string;
   /**
-   * Custom system prompt assembler. When omitted, the default
-   * assembler is used.
+   * Base system prompt forwarded to the generation runner.
    */
-  systemPromptAssembler?: SystemPromptAssembler;
+  basePrompt: string;
 }
 
 // Re-export so callers can import the step result type from the step module.
@@ -535,9 +533,7 @@ class StepModule implements Step {
             messages: this.deps.messages,
             tools,
             extensionSystemPromptParts,
-            ...(this.deps.systemPromptAssembler !== undefined && {
-              systemPromptAssembler: this.deps.systemPromptAssembler,
-            }),
+            basePrompt: this.deps.basePrompt,
             fallbackManager: this.deps.fallbackManager,
             turnInitialFallbackIndex: this.deps.turnInitialFallbackIndex,
             compacted,

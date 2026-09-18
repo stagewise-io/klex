@@ -109,6 +109,7 @@ function makeDeps(overrides: Partial<StepDependencies> = {}): StepDependencies {
     config,
     turnInitialFallbackIndex: 0,
     sessionId: 'test-session-id',
+    basePrompt: 'mock system prompt',
     ...overrides,
   };
 }

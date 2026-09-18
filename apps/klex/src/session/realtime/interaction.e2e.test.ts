@@ -28,10 +28,6 @@ import {
   DETERMINISTIC_REALTIME_MODEL,
 } from './test-support';
 
-vi.mock('@/session/chat/utils/system-prompt.md', () => ({
-  default: 'You are Klex.',
-}));
-
 const errorLog = vi.fn();
 const warnLog = vi.fn();
 const logging = {
@@ -195,6 +191,7 @@ describe('realtime and default chat interaction', () => {
         dataDirectory: join(tmpdir(), 'klex-interaction-e2e'),
         introspectionScope: params.introspectionScope,
         hooks: params.hooks,
+        basePrompt: 'You are Klex.',
       });
       return chatSession;
     };
@@ -203,6 +200,7 @@ describe('realtime and default chat interaction', () => {
       mcp,
       introspection,
       sessionFactory,
+      basePrompt: 'You are Klex.',
     });
     const connector = createDeterministicMediaTransportConnector();
     const processorFactory = createDeterministicEchoProcessorFactory();

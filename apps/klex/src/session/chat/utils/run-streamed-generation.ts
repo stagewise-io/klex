@@ -14,14 +14,10 @@ import {
 
 import type { ModuleLogger } from '@stagewise/logger';
 
-import {
-  assembleInferenceInstructions,
-  type SystemPromptAssembler,
-} from '@/session/interaction';
+import { assembleInferenceInstructions } from '@/session/interaction';
 
 import type { ExtendedUIMessage } from '../message-types';
 import type { AgentTools } from '../tools';
-import systemPrompt from './system-prompt.md';
 import { toolsWithoutExecute } from './tools-without-execute';
 
 export type StreamedGenerationOutput = {
@@ -56,10 +52,10 @@ export interface RunStreamedGenerationParams {
    */
   extensionSystemPromptParts?: string[];
   /**
-   * Custom system prompt assembler. When omitted, the default
-   * {@link assembleInferenceInstructions} is used.
+   * Base system prompt for this generation. Required — every session
+   * must explicitly declare its base prompt.
    */
-  systemPromptAssembler?: SystemPromptAssembler;
+  basePrompt: string;
 }
 
 /**
@@ -87,8 +83,8 @@ export async function runStreamedGeneration(
     tools: toolsWithoutExecute(params.tools),
     instructions: {
       role: 'system',
-      content: (params.systemPromptAssembler ?? assembleInferenceInstructions)(
-        systemPrompt,
+      content: assembleInferenceInstructions(
+        params.basePrompt,
         params.extensionSystemPromptParts ?? [],
       ),
     },

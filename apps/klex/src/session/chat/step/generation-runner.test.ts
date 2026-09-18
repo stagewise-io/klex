@@ -99,6 +99,7 @@ function makeDeps(
       modelId: 'model-a',
     },
     extensionSystemPromptParts: [] as string[],
+    basePrompt: 'mock system prompt',
     ...overrides,
   };
 }

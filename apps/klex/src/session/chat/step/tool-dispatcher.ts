@@ -26,6 +26,11 @@ import { startChildSpan } from '../utils/tracing';
 export class ToolDispatcher {
   private readonly dispatchedToolCallIds = new Set<string>();
   private readonly toolExecutions: Promise<void>[] = [];
+  private readonly terminalParts = new Map<
+    string,
+    | { state: 'output-available'; output: unknown }
+    | { state: 'output-error'; errorText: string }
+  >();
   private readonly toolExecutor: ToolExecutor;
 
   constructor(
@@ -65,8 +70,30 @@ export class ToolDispatcher {
    * that have reached `input-available` state and haven't been dispatched yet.
    */
   onUpdate(msg: ExtendedUIMessage): void {
+    this.reconcile(msg);
     for (const part of msg.parts) {
       this.dispatchToolCall(part);
+    }
+  }
+
+  /**
+   * Copies completed tool results onto the latest streamed message snapshot.
+   * `readUIMessageStream` replaces tool-part objects as chunks arrive, so the
+   * object originally dispatched may no longer be the one retained in history.
+   */
+  reconcile(message: ExtendedUIMessage | null): void {
+    if (!message) return;
+    for (const part of message.parts) {
+      if (!isToolUIPart(part)) continue;
+      const terminal = this.terminalParts.get(part.toolCallId);
+      if (!terminal) continue;
+      if (terminal.state === 'output-available') {
+        Object.assign(part, terminal);
+        delete (part as DynamicToolUIPart).errorText;
+      } else {
+        Object.assign(part, terminal);
+        delete (part as DynamicToolUIPart).output;
+      }
     }
   }
 
@@ -200,10 +227,12 @@ export class ToolDispatcher {
   ): Promise<void> {
     const input = normalizeJsonValue(part.input);
     if (input === undefined) {
-      Object.assign(part, {
-        state: 'output-error',
+      const terminal = {
+        state: 'output-error' as const,
         errorText: 'The tool input cannot be represented as JSON.',
-      });
+      };
+      this.terminalParts.set(part.toolCallId, terminal);
+      Object.assign(part, terminal);
       return;
     }
     const result = await this.toolExecutor.execute({
@@ -212,15 +241,19 @@ export class ToolDispatcher {
       input,
     });
     if (result.status === 'success') {
-      Object.assign(part, {
+      const terminal = {
         output: result.output,
-        state: 'output-available',
-      });
+        state: 'output-available' as const,
+      };
+      this.terminalParts.set(part.toolCallId, terminal);
+      Object.assign(part, terminal);
       return;
     }
-    Object.assign(part, {
-      state: 'output-error',
+    const terminal = {
+      state: 'output-error' as const,
       errorText: result.error,
-    });
+    };
+    this.terminalParts.set(part.toolCallId, terminal);
+    Object.assign(part, terminal);
   }
 }

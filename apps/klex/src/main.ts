@@ -252,16 +252,11 @@ async function main(): Promise<void> {
         enrollmentToken: cli.cloudEnrollToken,
         allowDangerousUnsecureCloud: cli.allowDangerousUnsecureCloud,
       });
-    const realtimeProvider = providerRegistry.resolveRealtimeProvider();
-    const realtimeComposition = realtimeProvider
-      ? {
-          provider: realtimeProvider,
-          ownedConnector: createProductionMediaTransportConnector(),
-        }
-      : undefined;
-    const realtimeMediaCapability = realtimeComposition
-      ? PRODUCTION_REALTIME_MEDIA_CAPABILITY
-      : undefined;
+    const realtimeComposition = {
+      resolveProvider: () => providerRegistry.resolveRealtimeProvider(),
+      ownedConnector: createProductionMediaTransportConnector(),
+    };
+    const realtimeMediaCapability = PRODUCTION_REALTIME_MEDIA_CAPABILITY;
     const mcp = createMcp({
       logging: logger,
       config,
@@ -367,15 +362,13 @@ async function main(): Promise<void> {
       config,
       spanProcessor,
     });
-    const realtime = realtimeComposition
-      ? createRealtime({
-          logging: logger,
-          mcp,
-          provider: realtimeComposition.provider,
-          ownedConnector: realtimeComposition.ownedConnector,
-          conversationHost: sessionHost,
-        })
-      : undefined;
+    const realtime = createRealtime({
+      logging: logger,
+      mcp,
+      resolveProvider: realtimeComposition.resolveProvider,
+      ownedConnector: realtimeComposition.ownedConnector,
+      conversationHost: sessionHost,
+    });
     cloudConnectivity.setTunnelRequestHandler(adminApi.handle.bind(adminApi));
     runtime = await startRuntime({
       logging: logger,

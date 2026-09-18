@@ -183,7 +183,10 @@ function createHarness(
         memoryWriteStepInterval: options.memoryWriteStepInterval ?? 3,
         timezone: 'UTC',
       }),
-    } as ExtensionDeps['config'],
+      getModelSelection: vi.fn(() => [
+        { providerId: 'test', modelId: 'test-model' },
+      ]),
+    } as unknown as ExtensionDeps['config'],
     logger,
   });
 

@@ -19,6 +19,7 @@ import type { ExtendedUIMessage } from '@/session/chat/message-types';
 import { SessionInboxUrgency } from '@/session/inbox';
 import type { ChildSessionHandle } from '@/session/types';
 
+import { settleBefore } from '../settle-before';
 import { EpisodeStore } from './episode-files';
 import { createWriterInputExt } from './writer-input';
 import writerPrompt from './writer-prompt.md';
@@ -56,8 +57,8 @@ class MemorizeExt implements Extension {
               'When the event happened, as "HH:mm". Infer from the latest known main-session timestamp. Time may move backward when the local clock changes.',
             ),
         }),
-        execute: ({ data, time }) => {
-          this.store.store({ data, time });
+        execute: async ({ data, time }) => {
+          await this.store.store({ data, time });
           return 'Stored';
         },
       }),
@@ -95,7 +96,10 @@ class EpisodicWriterOwner implements EpisodicWriter {
   private closed = false;
 
   constructor(
-    private readonly deps: Pick<ExtensionDeps, 'createChildSession' | 'logger'>,
+    private readonly deps: Pick<
+      ExtensionDeps,
+      'config' | 'createChildSession' | 'logger'
+    >,
     private readonly store: EpisodeStore,
   ) {}
 
@@ -262,7 +266,7 @@ class EpisodicWriterOwner implements EpisodicWriter {
       return;
     }
     this.child = replacement;
-    this.store.completeReset();
+    await this.store.completeReset();
   }
 
   private scheduleRecovery(): void {
@@ -302,6 +306,14 @@ class EpisodicWriterOwner implements EpisodicWriter {
   }
 
   private createChild(): Promise<ChildSessionHandle> {
+    const memoryModels = this.deps.config.getModelSelection('memory');
+    const modelPurpose = memoryModels.length > 0 ? 'memory' : ('chat' as const);
+    if (modelPurpose === 'chat') {
+      this.deps.logger.info(
+        { modelPurpose },
+        'No memory models configured — episodicMemoryWriter falling back to chat models',
+      );
+    }
     return this.deps.createChildSession({
       extensions: [
         createNameLoaderExt,
@@ -313,7 +325,7 @@ class EpisodicWriterOwner implements EpisodicWriter {
         createMemorizeExt(this.store),
       ],
       basePrompt: writerPrompt,
-      modelPurpose: 'memory',
+      modelPurpose,
     });
   }
 }
@@ -343,29 +355,11 @@ function dataCharacterCount(value: unknown): number {
   return 0;
 }
 
-async function settleBefore(
-  promise: Promise<unknown>,
-  deadline: number,
-): Promise<boolean> {
-  const remaining = deadline - Date.now();
-  if (remaining <= 0) return false;
-  return new Promise<boolean>((resolve, reject) => {
-    const timeout = setTimeout(resolve, remaining, false);
-    void promise.then(
-      () => {
-        clearTimeout(timeout);
-        resolve(true);
-      },
-      (error: unknown) => {
-        clearTimeout(timeout);
-        reject(error);
-      },
-    );
-  });
-}
-
 export async function createEpisodicWriter(
-  deps: Pick<ExtensionDeps, 'createChildSession' | 'getDataDir' | 'logger'>,
+  deps: Pick<
+    ExtensionDeps,
+    'config' | 'createChildSession' | 'getDataDir' | 'logger'
+  >,
   timezone: string,
 ): Promise<EpisodicWriter> {
   let owner: EpisodicWriterOwner;

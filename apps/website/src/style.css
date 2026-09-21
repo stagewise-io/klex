@@ -1,6 +1,15 @@
 @import "tailwindcss";
 @import "@stagewise/ui/style.css";
+@import "./marketing.css";
 @source "@stagewise/ui/src";
+
+@font-face {
+  font-family: "Fraunces";
+  src: url("/fonts/fraunces-500.woff2") format("woff2");
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
 
 @theme inline {
   --font-sans: "Geist Variable", ui-sans-serif, system-ui, sans-serif;
@@ -167,12 +176,12 @@ main {
 }
 
 .hero {
-  width: min(100%, 48rem);
+  width: 100%;
   margin: 0 auto;
 }
 
 .hero-intro {
-  max-width: 44rem;
+  max-width: 54rem;
   margin: 0 auto;
   text-align: center;
 }
@@ -201,8 +210,8 @@ h3 {
 
 h1 {
   margin: 0;
-  font-size: clamp(2.75rem, 4.5vw, 4rem);
-  font-weight: 560;
+  font-size: clamp(3.25rem, 7.5vw, 6.25rem);
+  font-weight: 500;
   letter-spacing: -0.045em;
   line-height: 0.98;
   text-wrap: balance;

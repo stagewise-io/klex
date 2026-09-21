@@ -601,7 +601,7 @@ function safeErrorMessage(error: unknown): string {
 }
 
 export function getDefaultTelemetryLevel(): TelemetryLevel {
-  return process.env.NODE_ENV === 'production' ? 'reduced' : 'full';
+  return 'basic';
 }
 
 function resolveOpenAILiveResponsesModel(

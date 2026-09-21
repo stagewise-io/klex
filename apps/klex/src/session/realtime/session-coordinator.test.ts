@@ -17,6 +17,11 @@ import type {
   InteractionUpdateEnvelope,
   PreparedInferenceContextHandle,
 } from '@/session/interaction';
+import * as telemetryMetrics from '@/telemetry-metrics';
+import {
+  getRealtimeSessionCount,
+  setTelemetryActivityEnabled,
+} from '@/telemetry-metrics';
 
 import { createRealtimeSessionCoordinator } from './session-coordinator';
 import {
@@ -66,9 +71,16 @@ function deferred<T>(): {
 
 function createMcpHarness(options?: {
   accept?: () => Promise<RealtimeMediaClientAcceptResult>;
+  throwOnAvailabilitySubscription?: boolean;
 }) {
   const notificationListeners = new Set<McpRealtimeMediaNotificationListener>();
   const availabilityListeners = new Set<McpRealtimeMediaAvailabilityListener>();
+  const notificationUnsubscribe = vi.fn(() => {
+    notificationListeners.clear();
+  });
+  const availabilityUnsubscribe = vi.fn(() => {
+    availabilityListeners.clear();
+  });
   const acceptRealtimeMediaSession = vi.fn(
     options?.accept ??
       (async () => ({
@@ -82,13 +94,15 @@ function createMcpHarness(options?: {
       listener: McpRealtimeMediaNotificationListener,
     ) {
       notificationListeners.add(listener);
-      return () => notificationListeners.delete(listener);
+      return notificationUnsubscribe;
     },
     onRealtimeMediaAvailability(
       listener: McpRealtimeMediaAvailabilityListener,
     ) {
+      if (options?.throwOnAvailabilitySubscription)
+        throw new Error('availability subscription failed');
       availabilityListeners.add(listener);
-      return () => availabilityListeners.delete(listener);
+      return availabilityUnsubscribe;
     },
     acceptRealtimeMediaSession,
     rejectRealtimeMediaSession,
@@ -99,6 +113,8 @@ function createMcpHarness(options?: {
     acceptRealtimeMediaSession,
     rejectRealtimeMediaSession,
     endRealtimeMediaSession,
+    notificationUnsubscribe,
+    availabilityUnsubscribe,
     async notify(notification: RealtimeMediaNotification) {
       await Promise.all(
         [...notificationListeners].map((listener) =>
@@ -175,6 +191,64 @@ function setup(options?: {
 }
 
 describe('realtime session coordinator', () => {
+  it('does not retain an activity provider when closed before start', async () => {
+    const { coordinator } = setup();
+    expect(getRealtimeSessionCount()).toBe(0);
+    await coordinator.close();
+    expect(getRealtimeSessionCount()).toBe(0);
+  });
+
+  it('registers one activity provider across repeated starts and removes it once', async () => {
+    const originalRegister = telemetryMetrics.registerActivityStateProviders;
+    const unregister = vi.fn();
+    const register = vi
+      .spyOn(telemetryMetrics, 'registerActivityStateProviders')
+      .mockImplementation((providers) => {
+        const actualUnregister = originalRegister(providers);
+        return () => {
+          unregister();
+          actualUnregister();
+        };
+      });
+    const { coordinator } = setup();
+    await coordinator.start();
+    await coordinator.start();
+    expect(register).toHaveBeenCalledOnce();
+    expect(getRealtimeSessionCount()).toBe(0);
+    await coordinator.close();
+    await coordinator.close();
+    expect(unregister).toHaveBeenCalledOnce();
+    expect(getRealtimeSessionCount()).toBe(0);
+    register.mockRestore();
+  });
+
+  it('cleans up partial subscriptions and activity state when start fails', async () => {
+    const originalRegister = telemetryMetrics.registerActivityStateProviders;
+    const unregister = vi.fn();
+    const register = vi
+      .spyOn(telemetryMetrics, 'registerActivityStateProviders')
+      .mockImplementation((providers) => {
+        const actualUnregister = originalRegister(providers);
+        return () => {
+          unregister();
+          actualUnregister();
+        };
+      });
+    const mcpHarness = createMcpHarness({
+      throwOnAvailabilitySubscription: true,
+    });
+    const { coordinator } = setup({ mcp: mcpHarness });
+    await expect(coordinator.start()).rejects.toThrow(
+      'availability subscription failed',
+    );
+    expect(mcpHarness.notificationUnsubscribe).toHaveBeenCalledOnce();
+    expect(unregister).toHaveBeenCalledOnce();
+    expect(getRealtimeSessionCount()).toBe(0);
+    await coordinator.close();
+    register.mockRestore();
+    setTelemetryActivityEnabled(false);
+  });
+
   it('ends an accepted session when its transport profile is unsupported', async () => {
     const mcpHarness = createMcpHarness({
       accept: async () => ({

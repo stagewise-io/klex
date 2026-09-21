@@ -241,7 +241,7 @@ export const getTelemetryRoute = createRoute({
   tags: ['Settings'],
   summary: 'Get telemetry settings',
   description:
-    'Returns the current telemetry level. When not explicitly set in config, the environment-aware default is returned.',
+    'Returns the current telemetry level and read-only anonymous installation identifier. When the level is not explicitly set in config, the environment-aware default is returned.',
   responses: {
     200: {
       content: {
@@ -262,9 +262,9 @@ export function getTelemetry(
   deps: SettingsRouteDependencies,
 ): RouteHandler<typeof getTelemetryRoute> {
   return (c) => {
-    const level =
-      deps.config.get().telemetry?.level ?? getDefaultTelemetryLevel();
-    return c.json({ level }, 200);
+    const telemetry = deps.config.get().telemetry;
+    const level = telemetry?.level ?? getDefaultTelemetryLevel();
+    return c.json({ level, instanceId: telemetry?.instanceId ?? null }, 200);
   };
 }
 
@@ -317,11 +317,17 @@ export function patchTelemetry(
           patch.level ?? current.telemetry?.level ?? getDefaultTelemetryLevel();
         return {
           ...current,
-          telemetry: { level },
+          telemetry: {
+            ...current.telemetry,
+            level,
+          },
         };
       });
       const level = config.telemetry?.level ?? getDefaultTelemetryLevel();
-      return c.json({ level }, 200);
+      return c.json(
+        { level, instanceId: config.telemetry?.instanceId ?? null },
+        200,
+      );
     } catch (error) {
       if (error instanceof ConfigValidationError) {
         return c.json({ error: error.message, code: 'invalid_request' }, 400);

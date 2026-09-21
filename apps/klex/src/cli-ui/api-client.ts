@@ -168,6 +168,7 @@ export interface ModelSelection {
 
 export interface TelemetrySettings {
   level: string;
+  instanceId: string | null;
 }
 
 export interface AgentIdentity {

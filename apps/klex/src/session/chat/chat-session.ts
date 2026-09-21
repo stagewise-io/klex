@@ -1247,26 +1247,33 @@ class ChatSessionModule implements AgentSession {
       this.leaseToolExecutor?.abort();
       this.releaseQuiesceWaiters();
 
-      await this.extensionHandler.close();
-      this.sessionSpan.addEvent('session.closed', {
-        'session.id': this.sessionId,
-        'session.messageCount': this.messages.length,
-      });
-      this.sessionSpan.setAttribute(
-        'session.closedAt',
-        new Date().toISOString(),
-      );
-      this.sessionSpan.end();
+      try {
+        await this.extensionHandler.close();
+      } finally {
+        // Cleanup must finish even when an extension (for example, the
+        // episodic writer) rejects during shutdown. Otherwise the terminated
+        // session remains registered and blocks its replacement.
+        try {
+          this.sessionSpan.addEvent('session.closed', {
+            'session.id': this.sessionId,
+            'session.messageCount': this.messages.length,
+          });
+          this.sessionSpan.setAttribute(
+            'session.closedAt',
+            new Date().toISOString(),
+          );
+          this.sessionSpan.end();
+        } finally {
+          // Keep lifecycle bookkeeping independent from telemetry export. A
+          // synchronous exporter failure must not leave a stale child behind.
+          this.deps.introspectionScope.removeChild(this.sessionId);
 
-      // Remove this session from the introspection tree. The session
-      // registered itself as a child of the "sessions" scope in the
-      // constructor — it owns its own lifecycle in the tree.
-      this.deps.introspectionScope.removeChild(this.sessionId);
-
-      this.deps.logger.info(
-        { sessionId: this.sessionId },
-        'Session closed — session span ended',
-      );
+          this.deps.logger.info(
+            { sessionId: this.sessionId },
+            'Session closed — session span ended',
+          );
+        }
+      }
     })();
 
     return this.closePromise;
@@ -1290,8 +1297,17 @@ class ChatSessionModule implements AgentSession {
     const pendingEvents = this.sessionInbox.getEvents();
 
     // Now perform the standard close (span end, status update, etc.).
-    // close() will call sessionInbox.close() again — that's a no-op.
-    await this.close();
+    // close() will call sessionInbox.close() again — that's a no-op. The
+    // replacement hook must still run if extension cleanup fails; otherwise a
+    // fatal session can remain dead with no host notification.
+    try {
+      await this.close();
+    } catch (error) {
+      this.deps.logger.error(
+        { sessionId: this.sessionId, error },
+        'Session cleanup failed during self-termination; notifying session host',
+      );
+    }
 
     this.deps.logger.info(
       {
@@ -1301,11 +1317,18 @@ class ChatSessionModule implements AgentSession {
       'Session self-terminated — firing onTerminated hook',
     );
 
-    await this.deps.hooks?.onTerminated?.({
-      sessionId: this.sessionId,
-      reason,
-      pendingEvents,
-    });
+    try {
+      await this.deps.hooks?.onTerminated?.({
+        sessionId: this.sessionId,
+        reason,
+        pendingEvents,
+      });
+    } catch (error) {
+      this.deps.logger.error(
+        { sessionId: this.sessionId, error },
+        'Session host replacement failed after self-termination',
+      );
+    }
   }
 
   // ---------------------------------------------------------------------------

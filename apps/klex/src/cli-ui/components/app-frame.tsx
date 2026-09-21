@@ -6,6 +6,7 @@ import { useTerminalSize } from '../hooks/use-terminal-size';
 import type { Toast } from '../hooks/use-toast';
 import { GlobalFooter } from './global-footer';
 import { GlobalHeader } from './global-header';
+import { TelemetryWarning } from './telemetry-warning';
 import { ToastStack } from './toast';
 
 export interface AppFrameProps {
@@ -17,6 +18,7 @@ export interface AppFrameProps {
   loading: boolean;
   toasts: Toast[];
   onDismissToast: (id: number) => void;
+  debugTracingEnabled?: boolean;
   updateBanner?: ReactNode;
   children: ReactNode;
 }
@@ -30,6 +32,7 @@ export function AppFrame({
   loading,
   toasts,
   onDismissToast,
+  debugTracingEnabled = false,
   updateBanner,
   children,
 }: AppFrameProps) {
@@ -44,6 +47,7 @@ export function AppFrame({
         loading={loading}
         width={terminalWidth}
       />
+      {debugTracingEnabled ? <TelemetryWarning /> : null}
       <Box
         position="relative"
         flexDirection="column"

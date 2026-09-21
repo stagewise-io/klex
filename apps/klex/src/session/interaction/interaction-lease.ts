@@ -1,3 +1,9 @@
+import {
+  interactionQueueOverflowed,
+  interactionUpdateEnqueued,
+  interactionUpdateRemoved,
+} from '@/telemetry-metrics';
+
 import type {
   InteractionLease,
   InteractionLeaseClosure,
@@ -75,17 +81,24 @@ export class SessionInteractionLease implements InteractionLease {
     return handle;
   }
 
+  getPendingUpdateCount(): number {
+    return this.queue.length;
+  }
+
   acknowledgeUpdate(sequence: number): void {
     this.highestAcknowledgedSequence = Math.max(
       this.highestAcknowledgedSequence,
       sequence,
     );
+    let removed = 0;
     while (
       this.queue[0] &&
       this.queue[0].sequence <= this.highestAcknowledgedSequence
     ) {
       this.queue.shift();
+      removed += 1;
     }
+    if (removed > 0) interactionUpdateRemoved(removed);
   }
 
   executeTool(request: InteractionToolRequest): Promise<InteractionToolResult> {
@@ -120,7 +133,9 @@ export class SessionInteractionLease implements InteractionLease {
       return true;
     }
     this.queue.push(update);
+    interactionUpdateEnqueued();
     if (this.queue.length > this.maxPendingUpdates) {
+      interactionQueueOverflowed();
       this.revoke('update-overflow');
       return false;
     }
@@ -170,7 +185,10 @@ export class SessionInteractionLease implements InteractionLease {
     iteratorId: symbol,
   ): Promise<IteratorResult<InteractionUpdateEnvelope>> {
     const update = this.queue.shift();
-    if (update) return Promise.resolve({ done: false, value: update });
+    if (update) {
+      interactionUpdateRemoved();
+      return Promise.resolve({ done: false, value: update });
+    }
     if (this.closure) return Promise.resolve({ done: true, value: undefined });
     return new Promise((resolve) => this.readers.push({ iteratorId, resolve }));
   }
@@ -190,7 +208,9 @@ export class SessionInteractionLease implements InteractionLease {
   private finish(closure: InteractionLeaseClosure): void {
     this.acceptingCommits = false;
     this.closure = closure;
+    const queued = this.queue.length;
     this.queue.splice(0);
+    if (queued > 0) interactionUpdateRemoved(queued);
     this.resolveClosed(closure);
     for (const reader of this.readers.splice(0)) {
       reader.resolve({ done: true, value: undefined });

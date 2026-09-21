@@ -262,12 +262,13 @@ const timezoneSettingsSchema = z
 // --- Settings / Telemetry ---
 
 const telemetryLevelSchema = z
-  .enum(['off', 'minimum', 'reduced', 'full'])
+  .enum(['no', 'basic', 'advanced'])
   .openapi('TelemetryLevel');
 
 const telemetrySettingsSchema = z
   .object({
     level: telemetryLevelSchema,
+    instanceId: z.string().uuid().nullable(),
   })
   .openapi('TelemetrySettings');
 

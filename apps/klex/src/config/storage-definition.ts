@@ -4,6 +4,7 @@ import type { JsonStoreDefinition } from '@/local-data';
 
 import {
   migrateLegacyKlexConfig,
+  migrateStoredTelemetryConfig,
   parseCurrentStoredKlexConfig,
   parseLegacyKlexConfig,
 } from './types';
@@ -43,19 +44,23 @@ const legacyConfigStorageSchema = preservingSchema((value) => {
 const currentConfigStorageSchema = preservingSchema((value) => {
   parseCurrentStoredKlexConfig(value);
 });
+const migratedConfigStorageSchema = preservingSchema((value) => {
+  migrateStoredTelemetryConfig(value);
+});
 
 export const CONFIG_STORE_DEFINITION: JsonStoreDefinition = {
   kind: 'json',
   id: 'config',
   relativePath: 'config.json',
   required: true,
-  schemaVersion: 2,
-  compatibilityVersion: 5,
+  schemaVersion: 3,
+  compatibilityVersion: 6,
   minimumKlexVersion: '0.7.1',
   legacySchemaVersion: 1,
   versions: [
     { version: 1, schema: legacyConfigStorageSchema },
     { version: 2, schema: currentConfigStorageSchema },
+    { version: 3, schema: migratedConfigStorageSchema },
   ],
   migrations: [
     {
@@ -66,6 +71,12 @@ export const CONFIG_STORE_DEFINITION: JsonStoreDefinition = {
         value.configVersion === 2
           ? parseCurrentStoredKlexConfig(value)
           : migrateLegacyKlexConfig(value),
+    },
+    {
+      from: 2,
+      to: 3,
+      name: 'rename-telemetry-levels',
+      up: (value) => migrateStoredTelemetryConfig(value),
     },
   ],
 };

@@ -70,6 +70,8 @@ function app(
   });
 }
 
+const telemetryInstanceId = '550e8400-e29b-41d4-a716-446655440000';
+
 describe('settings routes', () => {
   it('gets and patches agent identity', async () => {
     const config = {
@@ -92,7 +94,10 @@ describe('settings routes', () => {
   it('gets and patches telemetry settings', async () => {
     const configured = {
       ...baseConfig,
-      telemetry: { level: 'reduced' as const },
+      telemetry: {
+        level: 'advanced' as const,
+        instanceId: telemetryInstanceId,
+      },
     };
     const config = {
       get: () => configured,
@@ -101,14 +106,20 @@ describe('settings routes', () => {
     const settingsApp = app(config);
 
     const getResponse = await settingsApp.request('/v1/settings/telemetry');
-    expect(await getResponse.json()).toEqual({ level: 'reduced' });
+    expect(await getResponse.json()).toEqual({
+      level: 'advanced',
+      instanceId: telemetryInstanceId,
+    });
     const patchResponse = await settingsApp.request('/v1/settings/telemetry', {
       method: 'PATCH',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ level: 'minimum' }),
+      body: JSON.stringify({ level: 'basic' }),
     });
     expect(patchResponse.status).toBe(200);
-    expect(await patchResponse.json()).toEqual({ level: 'minimum' });
+    expect(await patchResponse.json()).toEqual({
+      level: 'basic',
+      instanceId: telemetryInstanceId,
+    });
   });
 
   it('returns explicit provider/model references without colon parsing', async () => {

@@ -21,6 +21,7 @@ import {
   getProviderSettingsJsonSchema,
   klexConfigSchema,
   migrateLegacyKlexConfig,
+  migrateStoredTelemetryConfig,
   parseKlexConfig,
 } from './types';
 
@@ -114,6 +115,19 @@ describe('config v2', () => {
       modelId: 'org:model:v2',
       providerOptions: { openai: { reasoningEffort: 'high' } },
     });
+  });
+
+  it('normalizes legacy telemetry debug fields without persisting them', () => {
+    const migrated = migrateStoredTelemetryConfig({
+      ...completeV2Config,
+      telemetry: {
+        level: 'debug',
+        debugUntil: '2099-01-01T00:00:00.000Z',
+        futureField: 'discarded during normalization',
+      },
+    });
+
+    expect(migrated.telemetry).toEqual({ level: 'advanced' });
   });
 
   it('defaults and validates the timezone', () => {
@@ -254,7 +268,7 @@ describe('config v2', () => {
     );
     expect(persisted._klex).toMatchObject({
       store: 'config',
-      schemaVersion: 2,
+      schemaVersion: 3,
     });
     expect(parseKlexConfig(persisted).configVersion).toBe(2);
     await config.close();

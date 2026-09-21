@@ -1,5 +1,7 @@
 import './style.css';
 
+import { demoMarkup, initializeDemo } from './demo';
+
 const app = document.querySelector<HTMLDivElement>('#app');
 
 if (!app) {
@@ -26,6 +28,7 @@ darkModeQuery.addEventListener('change', ({ matches }) => {
 });
 
 app.innerHTML = `
+  <a class="skip-link" href="#main">Skip to content</a>
   <div class="site-shell">
     <header class="site-header">
       <a class="brand" href="/" aria-label="Klex home">
@@ -39,13 +42,25 @@ app.innerHTML = `
       </nav>
     </header>
 
-    <main>
+    <main id="main">
       <section class="hero" aria-labelledby="hero-title">
         <div class="hero-intro">
-          <p class="hero-eyebrow">Meet Klex Bots</p>
           <h1 id="hero-title">Your own team of digital coworkers.</h1>
+          <p class="hero-description">Bring Klex into the conversation. Delegate the repeatable work, keep the context, and make room for what comes next.</p>
+          <div class="hero-actions"><a class="cloud-login" href="#get-started">Get started locally</a><a class="text-link" href="https://github.com/stagewise-io/klex">Explore the source <span aria-hidden="true">↗</span></a></div>
         </div>
 
+        ${demoMarkup}
+      </section>
+
+      <section class="product-story" aria-labelledby="story-title">
+        <h2 id="story-title">A coworker with<br />the whole picture.</h2>
+        <div class="story-details"><article><h3>One conversation, wherever work happens.</h3><p>Klex keeps one identity and durable memory across connected channels. Pick up the work without starting from scratch.</p></article><article><h3>Your setup. Your choice.</h3><p>Run Klex locally, connect work environments through MCP, and choose your model provider. The code is open to inspect and adapt.</p></article></div>
+      </section>
+
+      <section class="get-started" id="get-started" aria-labelledby="start-title">
+        <h2 id="start-title">Meet your next coworker.</h2>
+        <p>Start locally. Make Klex part of your team.</p>
         <div class="installer" aria-label="Install Klex">
           <div class="installer-tabs" role="tablist" aria-label="Choose your operating system">
             <button class="installer-tab" type="button" role="tab" id="tab-unix" data-platform="unix" aria-controls="install-command-panel">
@@ -80,6 +95,7 @@ app.innerHTML = `
           <li>Runs locally</li>
           <li>Works with any model</li>
         </ul>
+        <p class="setup-link"><a href="https://docs.klex.bot">Read the setup guide</a></p>
       </section>
     </main>
 
@@ -101,6 +117,7 @@ app.innerHTML = `
         </a>
       </nav>
     </footer>
+    <p class="attribution">Connector marks belong to their respective owners. Illustrative interfaces do not imply endorsement. <a href="/attributions.html">Asset credits</a></p>
   </div>
 `;
 
@@ -245,3 +262,4 @@ copyCommandButton.addEventListener('click', async () => {
 });
 
 selectInstaller(detectedPlatform);
+initializeDemo();

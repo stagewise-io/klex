@@ -7,7 +7,7 @@ const mark = (name: string, label: string) =>
 const examples = [
   {
     id: 'slack',
-    label: 'Slack',
+    label: mark('slack', 'Slack'),
     content: `<div class="slack-layout">
       <aside class="slack-sidebar" aria-label="Example Slack workspace"><strong>Acme workspace</strong><p>Channels</p><span># general</span><span class="channel-selected"># launch</span><span># engineering</span><p>Direct messages</p><span>Klex Bot <small>BOT</small></span></aside>
       <div class="slack-conversation"><div class="native-toolbar"><strong># launch</strong><span>Launch planning</span></div>

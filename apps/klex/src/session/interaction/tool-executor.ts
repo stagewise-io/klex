@@ -10,7 +10,6 @@ import {
   DEFAULT_TOOL_RESULT_MAX_BYTES,
   exceedsToolResultLimit,
 } from './tool-result-limit';
-
 import type {
   InteractionToolRequest,
   InteractionToolResult,

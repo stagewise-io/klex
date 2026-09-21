@@ -15,6 +15,9 @@ describe('parseCliArgs', () => {
     delete process.env.KLEX_DATA_DIR;
     delete process.env.KLEX_NO_CLOUD;
     delete process.env.KLEX_CLOUD_BASE_URL;
+    delete process.env.KLEX_TELEMETRY_ENDPOINT;
+    delete process.env.KLEX_TELEMETRY_DEBUG;
+    delete process.env.KLEX_DISABLE_TELEMETRY;
     delete process.env.KLEX_CLOUD_ENROLLMENT_TOKEN;
     delete process.env.KLEX_DANGEROUS_LOCAL_ADMIN_API_PORT;
     delete process.env.KLEX_ALLOW_UNSECURE_CLOUD;
@@ -27,6 +30,9 @@ describe('parseCliArgs', () => {
       'KLEX_DATA_DIR',
       'KLEX_NO_CLOUD',
       'KLEX_CLOUD_BASE_URL',
+      'KLEX_TELEMETRY_ENDPOINT',
+      'KLEX_TELEMETRY_DEBUG',
+      'KLEX_DISABLE_TELEMETRY',
       'KLEX_CLOUD_ENROLLMENT_TOKEN',
       'KLEX_DANGEROUS_LOCAL_ADMIN_API_PORT',
       'KLEX_ALLOW_UNSECURE_CLOUD',
@@ -122,6 +128,41 @@ describe('parseCliArgs', () => {
     process.env.KLEX_DATA_DIR = '';
     const result = parseCliArgs(['--data-dir', '']);
     expect(result.dataDirectory).toBeUndefined();
+  });
+
+  it('uses the default telemetry endpoint', () => {
+    expect(parseCliArgs([]).telemetryEndpoint).toBe(
+      'https://telemetry.klex.bot',
+    );
+  });
+
+  it('resolves telemetry endpoint with CLI precedence', () => {
+    process.env.KLEX_TELEMETRY_ENDPOINT = 'https://env.example/';
+    expect(
+      parseCliArgs(['--telemetry-endpoint', 'https://cli.example/'])
+        .telemetryEndpoint,
+    ).toBe('https://cli.example');
+  });
+
+  it('supports CLI and environment telemetry overrides', () => {
+    process.env.KLEX_TELEMETRY_DEBUG = '1';
+    process.env.KLEX_DISABLE_TELEMETRY = '1';
+    expect(parseCliArgs([])).toMatchObject({
+      telemetryDebug: true,
+      telemetryDisabled: true,
+    });
+    expect(
+      parseCliArgs(['--telemetry-debug', '--disable-telemetry']),
+    ).toMatchObject({ telemetryDebug: true, telemetryDisabled: true });
+  });
+
+  it('allows HTTP only for loopback telemetry endpoints', () => {
+    expect(
+      parseCliArgs(['--telemetry-endpoint', 'http://localhost:4318']),
+    ).toMatchObject({ telemetryEndpoint: 'http://localhost:4318' });
+    expect(() =>
+      parseCliArgs(['--telemetry-endpoint', 'http://telemetry.example.com']),
+    ).toThrow('Telemetry endpoint must use HTTPS');
   });
 
   it('uses KLEX_DATA_DIR env var when no CLI arg provided', () => {

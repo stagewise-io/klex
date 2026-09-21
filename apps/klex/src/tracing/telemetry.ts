@@ -86,7 +86,7 @@ function toolsToDefinitions(
  * Maps AI SDK provider identifiers to OTel semantic convention `gen_ai.system`
  * values.
  */
-function mapProviderName(provider: string): string {
+export function mapProviderName(provider: string): string {
   const lower = provider.toLowerCase();
   const prefixes: [string, string][] = [
     ['google.vertex', 'gcp.vertex_ai'],
@@ -180,6 +180,7 @@ interface CallState {
   ttftMs: number | undefined;
   /** Total response time in ms, set in onLanguageModelCallEnd. */
   totalDurationMs: number | undefined;
+  terminalRecorded: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -214,7 +215,11 @@ export class KlexTelemetry implements Telemetry {
   private readonly callStates = new Map<string, CallState>();
   private modelCallSink: ModelCallSink | null = null;
 
-  constructor(private readonly tracer: Tracer) {}
+  constructor(
+    private readonly tracer: Tracer,
+    private readonly recordContent: boolean,
+    private readonly contentAllowed: () => boolean = () => recordContent,
+  ) {}
 
   private getCallState(callId: string): CallState | undefined {
     return this.callStates.get(callId);
@@ -244,6 +249,8 @@ export class KlexTelemetry implements Telemetry {
     cacheWriteTokens: number,
     cacheReadTokens: number,
   ): void {
+    if (state.terminalRecorded) return;
+    state.terminalRecorded = true;
     if (!this.modelCallSink) return;
 
     // Derive source and extensionId from functionId.
@@ -334,7 +341,7 @@ export class KlexTelemetry implements Telemetry {
         : genEvent.modelId;
     const requestModel = modelId;
 
-    const spanName = `generate_content ${requestModel}`;
+    const spanName = 'generate_content';
 
     const attributes: Attributes = {
       'gen_ai.operation.name': 'generate_content',
@@ -380,7 +387,10 @@ export class KlexTelemetry implements Telemetry {
 
     // Opt-in content attributes (gen_ai semantic conventions).
     // Only recorded when telemetry.recordInputs is not false.
-    const recordInputs = genEvent.recordInputs !== false;
+    const recordInputs =
+      this.recordContent &&
+      this.contentAllowed() &&
+      genEvent.recordInputs === true;
     if (recordInputs) {
       const systemInstructions = instructionsToString(genEvent.instructions);
       if (systemInstructions != null) {
@@ -411,7 +421,10 @@ export class KlexTelemetry implements Telemetry {
     this.callStates.set(genEvent.callId, {
       rootSpan,
       rootContext,
-      recordOutputs: genEvent.recordOutputs !== false,
+      recordOutputs:
+        this.recordContent &&
+        this.contentAllowed() &&
+        genEvent.recordOutputs === true,
       functionId: genEvent.functionId,
       operationId: genEvent.operationId,
       conversationId,
@@ -419,6 +432,7 @@ export class KlexTelemetry implements Telemetry {
       providerId,
       modelId,
       spanStartTime: Date.now(),
+      terminalRecorded: false,
       ttftMs: undefined,
       totalDurationMs: undefined,
     });
@@ -531,7 +545,7 @@ export class KlexTelemetry implements Telemetry {
 
       // Opt-in content attribute: gen_ai.output.messages
       // Only recorded when telemetry.recordOutputs is not false.
-      if (state.recordOutputs) {
+      if (state.recordOutputs && this.contentAllowed()) {
         // Build a minimal output message from the response content.
         const outputMessage: Record<string, unknown> = {
           role: 'assistant',
@@ -584,7 +598,11 @@ export class KlexTelemetry implements Telemetry {
     // Record partial output from completed steps so traces show what
     // was generated before the abort. Each step's text, tool calls, and
     // content are serialized into gen_ai.output.messages.
-    if (state.recordOutputs && event.steps.length > 0) {
+    if (
+      state.recordOutputs &&
+      this.contentAllowed() &&
+      event.steps.length > 0
+    ) {
       const outputMessages = event.steps.map((step) => {
         const msg: Record<string, unknown> = {
           role: 'assistant',
@@ -674,6 +692,16 @@ export class KlexTelemetry implements Telemetry {
  * context (the klex step context).  Register globally via
  * `registerTelemetry(createKlexTelemetry(tracer))`.
  */
-export function createKlexTelemetry(tracer: Tracer): KlexTelemetry {
-  return new KlexTelemetry(tracer);
+export function createKlexTelemetry(
+  tracer: Tracer,
+  options: {
+    recordContent?: boolean;
+    contentAllowed?: () => boolean;
+  } = {},
+): KlexTelemetry {
+  return new KlexTelemetry(
+    tracer,
+    options.recordContent === true,
+    options.contentAllowed,
+  );
 }

@@ -3,6 +3,11 @@ import { randomUUID } from 'node:crypto';
 import type { ModuleLogger } from '@stagewise/logger';
 
 import type { SessionInboxEvent } from '@/session/inbox';
+import {
+  interactionLeaseAcquired,
+  interactionLeaseReleased,
+  registerActivityStateProviders,
+} from '@/telemetry-metrics';
 
 import { SessionInteractionLease } from './interaction-lease';
 import type {
@@ -67,6 +72,7 @@ export class GenerationLaneLeaseManager {
   private acquisition: Promise<InteractionLease> | null = null;
   private sequence = 0;
   private closed = false;
+  private readonly unregisterActivityProvider: () => void;
 
   constructor(
     private readonly deps: {
@@ -74,7 +80,12 @@ export class GenerationLaneLeaseManager {
       logger: ModuleLogger;
       maxPendingUpdates?: number;
     },
-  ) {}
+  ) {
+    this.unregisterActivityProvider = registerActivityStateProviders({
+      getLeaseCount: () => (this.active ? 1 : 0),
+      getQueueDepth: () => this.active?.getPendingUpdateCount() ?? 0,
+    });
+  }
 
   get holder(): InteractionLease | null {
     return this.active;
@@ -144,6 +155,7 @@ export class GenerationLaneLeaseManager {
     });
 
     this.active = lease;
+    interactionLeaseAcquired();
     this.deps.logger.info(
       {
         sessionId: this.deps.host.sessionId,
@@ -178,8 +190,11 @@ export class GenerationLaneLeaseManager {
     reason: 'default-session-closed' | 'default-session-terminated',
   ): void {
     this.closed = true;
-    this.active?.revoke(reason);
-    this.active = null;
+    this.unregisterActivityProvider();
+    const lease = this.active;
+    if (!lease) return;
+    lease.revoke(reason);
+    this.finalize(lease, reason);
   }
 
   private finalize(
@@ -188,6 +203,7 @@ export class GenerationLaneLeaseManager {
   ): void {
     if (this.active !== lease) return;
     this.active = null;
+    interactionLeaseReleased();
     this.deps.host.finalizeLease();
     if (!this.closed) this.deps.host.resumeGenerationLane();
     this.deps.logger.info(

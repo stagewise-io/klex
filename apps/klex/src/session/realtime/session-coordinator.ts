@@ -22,6 +22,10 @@ import type {
   InteractionUpdateEnvelope,
   PreparedInferenceContextHandle,
 } from '@/session/interaction';
+import {
+  registerActivityStateProviders,
+  setRealtimeSessionCount,
+} from '@/telemetry-metrics';
 
 import type {
   RealtimeModelEvent,
@@ -84,6 +88,7 @@ class RealtimeSessionCoordinatorModule implements RealtimeSessionCoordinator {
   private started = false;
   private notificationUnsubscribe: (() => void) | undefined;
   private availabilityUnsubscribe: (() => void) | undefined;
+  private unregisterActivityProvider: (() => void) | undefined;
 
   constructor(
     private readonly deps: {
@@ -103,32 +108,71 @@ class RealtimeSessionCoordinatorModule implements RealtimeSessionCoordinator {
   async start(): Promise<void> {
     if (this.started) return;
     this.started = true;
-    this.notificationUnsubscribe = this.deps.mcp.onRealtimeMediaNotification(
-      (event) => this.handleNotification(event),
-    );
-    this.availabilityUnsubscribe = this.deps.mcp.onRealtimeMediaAvailability(
-      (event) => this.handleAvailability(event),
-    );
-    this.deps.logger.info('Realtime session coordinator started');
+    try {
+      this.unregisterActivityProvider = registerActivityStateProviders({
+        getRealtimeSessionCount: () => this.sessions.size,
+      });
+      this.notificationUnsubscribe = this.deps.mcp.onRealtimeMediaNotification(
+        (event) => this.handleNotification(event),
+      );
+      this.availabilityUnsubscribe = this.deps.mcp.onRealtimeMediaAvailability(
+        (event) => this.handleAvailability(event),
+      );
+      this.deps.logger.info('Realtime session coordinator started');
+    } catch (error) {
+      this.started = false;
+      try {
+        this.detachLifecycleResources();
+      } catch {
+        // Preserve the startup error after attempting every cleanup action.
+      }
+      throw error;
+    }
   }
 
   async close(): Promise<void> {
-    if (!this.started) return;
     this.started = false;
-    this.notificationUnsubscribe?.();
-    this.notificationUnsubscribe = undefined;
-    this.availabilityUnsubscribe?.();
-    this.availabilityUnsubscribe = undefined;
-    await Promise.allSettled(
-      [...this.sessions.values()].map((session) =>
-        this.finishSession(session, { notifyRemote: session.accepted }),
-      ),
-    );
+    let cleanupError: unknown;
+    try {
+      this.detachLifecycleResources();
+    } catch (error) {
+      cleanupError = error;
+    }
+    if (this.sessions.size > 0) {
+      await Promise.allSettled(
+        [...this.sessions.values()].map((session) =>
+          this.finishSession(session, { notifyRemote: session.accepted }),
+        ),
+      );
+    }
     this.deps.logger.info('Realtime session coordinator stopped');
+    if (cleanupError) throw cleanupError;
   }
 
   getActiveSessionCount(): number {
     return this.sessions.size;
+  }
+
+  private detachLifecycleResources(): void {
+    let cleanupError: unknown;
+    const cleanup = (action: (() => void) | undefined): void => {
+      if (!action) return;
+      try {
+        action();
+      } catch (error) {
+        cleanupError ??= error;
+      }
+    };
+    const notificationUnsubscribe = this.notificationUnsubscribe;
+    const availabilityUnsubscribe = this.availabilityUnsubscribe;
+    const unregisterActivityProvider = this.unregisterActivityProvider;
+    this.notificationUnsubscribe = undefined;
+    this.availabilityUnsubscribe = undefined;
+    this.unregisterActivityProvider = undefined;
+    cleanup(notificationUnsubscribe);
+    cleanup(availabilityUnsubscribe);
+    cleanup(unregisterActivityProvider);
+    if (cleanupError) throw cleanupError;
   }
 
   private async handleNotification(
@@ -165,6 +209,7 @@ class RealtimeSessionCoordinatorModule implements RealtimeSessionCoordinator {
       tasks: [],
     };
     this.sessions.set(key, session);
+    setRealtimeSessionCount(this.sessions.size);
     session.setup = this.activateSession(session, offer).catch(
       (error: unknown) => {
         if (!session.controller.signal.aborted) {
@@ -654,6 +699,7 @@ class RealtimeSessionCoordinatorModule implements RealtimeSessionCoordinator {
       }
       if (this.sessions.get(session.key) === session)
         this.sessions.delete(session.key);
+      setRealtimeSessionCount(this.sessions.size);
       this.deps.logger.info(
         {
           namespace: session.namespace,

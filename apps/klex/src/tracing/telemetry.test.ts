@@ -36,6 +36,50 @@ function makeCallEndEvent(event: Record<string, unknown>): CallEndEvent {
 }
 
 describe('KlexTelemetry — model ID propagation', () => {
+  it('emits exactly one terminal model-call record per call ID', () => {
+    const telemetry = createTelemetry();
+    const records: ModelCallRecord[] = [];
+    telemetry.setModelCallSink((record) => records.push(record));
+
+    const start = (callId: string) =>
+      telemetry.onStart(
+        makeStartEvent({
+          callId,
+          operationId: 'ai.generateText',
+          provider: 'openai',
+          modelId: 'gpt-4o',
+          functionId: 'chat-session',
+        }),
+      );
+    const end = (callId: string) =>
+      telemetry.onEnd(
+        makeEndEvent({
+          callId,
+          finishReason: 'stop',
+          usage: { inputTokens: 1, outputTokens: 1 },
+        }),
+      );
+
+    start('call-error-first');
+    telemetry.onError({ callId: 'call-error-first', error: new Error('boom') });
+    end('call-error-first');
+    start('call-end-first');
+    end('call-end-first');
+    telemetry.onError({ callId: 'call-end-first', error: new Error('late') });
+    start('call-independent');
+    end('call-independent');
+    start('call-independent');
+    end('call-independent');
+
+    expect(records).toHaveLength(4);
+    expect(records.map((record) => record.id)).toEqual([
+      'call-error-first',
+      'call-end-first',
+      'call-independent',
+      'call-independent',
+    ]);
+  });
+
   it('records explicit provider and native model identity', () => {
     const telemetry = createTelemetry();
     const records: ModelCallRecord[] = [];

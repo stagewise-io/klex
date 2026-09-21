@@ -76,7 +76,7 @@ describe('TelemetrySpanProcessor', () => {
     const tp = createTelemetrySpanProcessor();
     const { processor, onEnd } = makeDelegate();
     tp.setDelegate(processor);
-    tp.setLevel('off');
+    tp.setLevel('no');
 
     tp.onEnd(makeSpan());
     expect(onEnd).not.toHaveBeenCalled();
@@ -86,36 +86,62 @@ describe('TelemetrySpanProcessor', () => {
     const tp = createTelemetrySpanProcessor();
     const { processor, onEnd } = makeDelegate();
     tp.setDelegate(processor);
-    tp.setLevel('minimum');
+    tp.setLevel('basic');
 
     tp.onEnd(makeSpan({ status: { code: SpanStatusCode.OK } }));
     tp.onEnd(makeSpan({ status: { code: SpanStatusCode.ERROR } }));
 
-    expect(onEnd).toHaveBeenCalledTimes(1);
-    const forwarded = onEnd.mock.calls[0]?.[0] as ReadableSpan;
-    expect(forwarded.status.code).toBe(SpanStatusCode.ERROR);
+    expect(onEnd).toHaveBeenCalledTimes(2);
   });
 
   it('scrubs sensitive attributes when level is "reduced"', () => {
     const tp = createTelemetrySpanProcessor();
     const { processor, onEnd } = makeDelegate();
     tp.setDelegate(processor);
-    tp.setLevel('reduced');
+    tp.setLevel('advanced');
 
     tp.onEnd(makeSpan());
 
     expect(onEnd).toHaveBeenCalledTimes(1);
     const forwarded = onEnd.mock.calls[0]?.[0] as ReadableSpan;
-    expect(forwarded.attributes['gen_ai.input.messages']).toBe('[REDACTED]');
-    expect(forwarded.attributes['gen_ai.output.messages']).toBe('[REDACTED]');
-    expect(forwarded.attributes['custom.attr']).toBe('kept');
+    expect(forwarded.attributes['gen_ai.input.messages']).toBeUndefined();
+    expect(forwarded.attributes['gen_ai.output.messages']).toBeUndefined();
+    expect(forwarded.attributes['custom.attr']).toBeUndefined();
+  });
+
+  it('preserves the standard service instance resource attribute', () => {
+    const tp = createTelemetrySpanProcessor();
+    const { processor, onEnd } = makeDelegate();
+    tp.setDelegate(processor);
+    tp.setLevel('advanced');
+
+    tp.onEnd(
+      makeSpan({
+        resource: {
+          attributes: {
+            'service.name': 'klex',
+            'service.instance.id': 'instance-1',
+            'klex.instance.id': 'legacy-instance',
+            'host.name': 'private-host',
+          },
+          merge: vi.fn(),
+          asyncMerge: vi.fn(),
+        } as unknown as ReadableSpan['resource'],
+      }),
+    );
+
+    const forwarded = onEnd.mock.calls[0]?.[0] as ReadableSpan;
+    expect(forwarded.resource.attributes).toEqual({
+      'service.name': 'klex',
+      'service.instance.id': 'instance-1',
+    });
   });
 
   it('preserves all non-attribute fields when scrubbing in "reduced" mode', () => {
     const tp = createTelemetrySpanProcessor();
     const { processor, onEnd } = makeDelegate();
     tp.setDelegate(processor);
-    tp.setLevel('reduced');
+    tp.setLevel('advanced');
 
     const span = moveSpanContextToPrototype(
       makeSpan({
@@ -131,7 +157,6 @@ describe('TelemetrySpanProcessor', () => {
     expect(forwarded.name).toBe('custom-span');
     expect(forwarded.status).toEqual({
       code: SpanStatusCode.ERROR,
-      message: 'failed',
     });
     expect(forwarded.duration).toEqual([1, 500_000_000]);
     expect(forwarded.droppedAttributesCount).toBe(3);
@@ -146,7 +171,7 @@ describe('TelemetrySpanProcessor', () => {
     const tp = createTelemetrySpanProcessor();
     const { processor, onEnd } = makeDelegate();
     tp.setDelegate(processor);
-    tp.setLevel('full');
+    tp.setLevel('debug');
 
     const span = makeSpan();
     tp.onEnd(span);
@@ -155,29 +180,29 @@ describe('TelemetrySpanProcessor', () => {
     expect(onEnd.mock.calls[0]?.[0]).toBe(span);
   });
 
-  it('defaults to "full" level', () => {
+  it('defaults to "no" level', () => {
     const tp = createTelemetrySpanProcessor();
     const { processor, onEnd } = makeDelegate();
     tp.setDelegate(processor);
 
     tp.onEnd(makeSpan());
-    expect(onEnd).toHaveBeenCalledTimes(1);
+    expect(onEnd).not.toHaveBeenCalled();
   });
 
-  it('always delegates onStart regardless of level', () => {
+  it('does not start spans when level is no', () => {
     const tp = createTelemetrySpanProcessor();
     const { processor, onStart } = makeDelegate();
     tp.setDelegate(processor);
-    tp.setLevel('off');
+    tp.setLevel('no');
 
     const span = {} as Span;
     tp.onStart(span, undefined as never);
-    expect(onStart).toHaveBeenCalledWith(span, undefined);
+    expect(onStart).not.toHaveBeenCalled();
   });
 
   it('does nothing on onEnd when no delegate is set', () => {
     const tp = createTelemetrySpanProcessor();
-    tp.setLevel('full');
+    tp.setLevel('debug');
     // Should not throw
     tp.onEnd(makeSpan());
   });
@@ -212,12 +237,12 @@ describe('TelemetrySpanProcessor', () => {
 
   it('getLevel returns the current level', () => {
     const tp = createTelemetrySpanProcessor();
-    expect(tp.getLevel()).toBe('full');
-    tp.setLevel('off');
-    expect(tp.getLevel()).toBe('off');
-    tp.setLevel('minimum');
-    expect(tp.getLevel()).toBe('minimum');
-    tp.setLevel('reduced');
-    expect(tp.getLevel()).toBe('reduced');
+    expect(tp.getLevel()).toBe('no');
+    tp.setLevel('no');
+    expect(tp.getLevel()).toBe('no');
+    tp.setLevel('basic');
+    expect(tp.getLevel()).toBe('basic');
+    tp.setLevel('advanced');
+    expect(tp.getLevel()).toBe('advanced');
   });
 });

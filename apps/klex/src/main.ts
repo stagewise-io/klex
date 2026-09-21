@@ -1,4 +1,10 @@
-import { createLogger } from '@stagewise/logger';
+import { randomUUID } from 'node:crypto';
+
+import {
+  attachOtelTransport,
+  createLogger,
+  type LogLevel,
+} from '@stagewise/logger';
 
 import { type AdminApi, createAdminApi } from '@/admin-api';
 import { createAgentDirectory, defaultAgentRoot } from '@/agent-directory';
@@ -10,7 +16,11 @@ import {
   createCloudConnectivity,
 } from '@/cloud-connectivity';
 import { type RuntimeHandle, startRuntime } from '@/composition/runtime';
-import { createConfig } from '@/config';
+import {
+  createConfig,
+  getDefaultTelemetryLevel,
+  type RuntimeTelemetryLevel,
+} from '@/config';
 import { ensureDataDirectory } from '@/data-directory';
 import { createDirectoryLock, type DirectoryLock } from '@/directory-lock';
 import { createGodMessages } from '@/god-messages';
@@ -58,11 +68,13 @@ import {
 import { createSessionHost } from '@/session/session-host';
 import type { SessionFactory } from '@/session/types';
 import { createShutdownCoordinator } from '@/shutdown-coordinator';
+import { createTelemetryExportConfiguration } from '@/telemetry-config';
 import {
   createTelemetryManager,
   createTelemetrySpanProcessor,
 } from '@/telemetry-manager';
-import { createTracing } from '@/tracing';
+import { createTelemetryMetrics } from '@/telemetry-metrics';
+import { createTracing, mapProviderName } from '@/tracing';
 
 /** Minimum seconds between time updates before executable generations. */
 const TIME_UPDATE_PERIOD_SECONDS = 300;
@@ -75,18 +87,10 @@ const logger = createLogger({
   verbose: cli.verbose,
   capture: cli.headless ? undefined : (entry) => logStore.add(entry),
   // In interactive (non-headless) mode, suppress all console output so the
-  // Ink TUI has exclusive access to stdout/stderr. OTel transport still sends
-  // logs to the collector. Fatal errors re-enable console output in the
-  // catch handler below.
+  // Ink TUI has exclusive access to stdout/stderr. The OTLP transport is
+  // attached only after persisted telemetry configuration is loaded.
   console: cli.headless,
-  otel: {
-    url: 'http://localhost:4318/v1/logs',
-    resourceAttributes: {
-      'deployment.environment': 'development',
-      'service.name': 'klex',
-      'service.namespace': 'stagewise',
-    },
-  },
+  mask: { caseInsensitive: true },
 });
 
 const spanProcessor = createTelemetrySpanProcessor();
@@ -180,16 +184,6 @@ async function main(): Promise<void> {
     cli.dataDirectory = selectedDirectory;
   }
 
-  const tracing = createTracing({
-    logging: logger,
-    otlpUrl: 'http://localhost:4318/v1/traces',
-    serviceName: 'klex',
-    resourceAttributes: {
-      'deployment.environment': 'development',
-      'service.namespace': 'stagewise',
-    },
-    spanProcessor,
-  });
   // The data directory is the first thing every subsystem writes into, and on a
   // fresh machine it does not exist yet. Create it before the lock, whose
   // exclusive open would otherwise fail with ENOENT.
@@ -232,11 +226,100 @@ async function main(): Promise<void> {
   const preRuntime: { close(): Promise<void> }[] = [localData];
   let adminApiForUi: AdminApi | undefined;
   let runtime: RuntimeHandle | undefined;
+  let tracing: ReturnType<typeof createTracing> | undefined;
 
   try {
-    await tracing.start();
     await config.start();
     preRuntime.push(config);
+    const configuredTelemetry = config.get().telemetry;
+    const telemetryLevel: RuntimeTelemetryLevel = cli.telemetryDisabled
+      ? 'no'
+      : cli.telemetryDebug
+        ? 'debug'
+        : (configuredTelemetry?.level ?? getDefaultTelemetryLevel());
+    spanProcessor.setLevel(telemetryLevel);
+    spanProcessor.setContentAllowed(() => {
+      if (cli.telemetryDisabled) return false;
+      return cli.telemetryDebug;
+    });
+    if (cli.resetTelemetryIdentity || !configuredTelemetry?.instanceId) {
+      await config.mutate((current) => ({
+        ...current,
+        telemetry: {
+          ...current.telemetry,
+          level: current.telemetry?.level ?? getDefaultTelemetryLevel(),
+          instanceId: randomUUID(),
+        },
+      }));
+    }
+    const telemetryExport = createTelemetryExportConfiguration(
+      cli.telemetryEndpoint,
+    );
+    const telemetryInstanceId = config.get().telemetry?.instanceId ?? 'unknown';
+    let telemetryLogsAttached = false;
+    const getTelemetryLogMinLevel = (
+      level: RuntimeTelemetryLevel,
+    ): LogLevel | number | undefined => {
+      switch (level) {
+        case 'no':
+          return 999;
+        case 'basic':
+          return 'WARN';
+        case 'advanced':
+          return 'INFO';
+        case 'debug':
+          return undefined;
+      }
+    };
+    const attachTelemetryLogs = (level: RuntimeTelemetryLevel): void => {
+      if (telemetryLogsAttached) return;
+      telemetryLogsAttached = true;
+      attachOtelTransport(
+        logger,
+        {
+          url: telemetryExport.logsUrl,
+          headers: { ...telemetryExport.headers },
+          minLevel: getTelemetryLogMinLevel(level),
+          resourceAttributes: {
+            'service.name': 'klex',
+            'service.namespace': 'stagewise',
+            'service.instance.id': telemetryInstanceId,
+          },
+        },
+        cli.verbose,
+      );
+    };
+    if (telemetryLevel !== 'no') attachTelemetryLogs(telemetryLevel);
+    tracing = createTracing({
+      logging: logger,
+      otlpUrl: telemetryExport.tracesUrl,
+      otlpHeaders: { ...telemetryExport.headers },
+      serviceName: 'klex',
+      resourceAttributes: {
+        'service.namespace': 'stagewise',
+        'service.instance.id': telemetryInstanceId,
+      },
+      spanProcessor,
+      enabled: telemetryLevel !== 'no',
+      recordContent: true,
+      contentAllowed: () => {
+        if (telemetryLevel !== 'debug') return false;
+        return cli.telemetryDebug;
+      },
+    });
+    await tracing.start();
+    const telemetryMetrics = createTelemetryMetrics({
+      logging: logger.child({ name: 'telemetry-metrics' }),
+      endpoint: telemetryExport.metricsUrl,
+      headers: { ...telemetryExport.headers },
+      dataDirectory,
+      enabled: telemetryLevel !== 'no',
+      instanceId: telemetryInstanceId,
+      serviceVersion: KLEX_VERSION,
+    });
+    await telemetryMetrics.start();
+    await telemetryMetrics.setLevel(telemetryLevel);
+    preRuntime.push(telemetryMetrics);
     const timezone = config.get().timezone;
     const providerRegistry = createProviderRegistry({
       logging: logger,
@@ -277,7 +360,23 @@ async function main(): Promise<void> {
       dataDirectory: cli.dataDirectory,
     });
 
-    tracing.setModelCallSink((record) => modelCallLogger.recordCall(record));
+    tracing.setModelCallSink((record) => {
+      modelCallLogger.recordCall(record);
+      telemetryMetrics.recordModelCall({
+        inputTokens: record.inputTokens,
+        outputTokens: record.outputTokens,
+        inputCacheReadTokens: record.inputCacheReadTokens,
+        inputCacheWriteTokens: record.inputCacheWriteTokens,
+        operationName: 'generate_content',
+        providerName: mapProviderName(record.providerType),
+        source: record.source,
+        finishReason: record.finishReason,
+        isError: record.isError,
+        errorType: record.errorType,
+        totalDurationMs: record.totalDurationMs,
+        ttftMs: record.ttftMs,
+      });
+    });
 
     /** Shared deps captured by every session created through the factory. */
     const sharedSessionDeps = {
@@ -376,6 +475,19 @@ async function main(): Promise<void> {
       logging: logger,
       config,
       spanProcessor,
+      effectiveLevel:
+        cli.telemetryDisabled || cli.telemetryDebug
+          ? telemetryLevel
+          : undefined,
+      onLevelChange: async (level) => {
+        await telemetryMetrics.setLevel(level);
+        if (level === 'no') {
+          await tracing?.setEnabled(false);
+          return;
+        }
+        attachTelemetryLogs(level);
+        await tracing?.setEnabled(true);
+      },
     });
     const realtime = createRealtime({
       logging: logger,
@@ -407,7 +519,7 @@ async function main(): Promise<void> {
       logger.error({ error: closeError }, 'Interactive cloud shutdown failed');
     });
     await dirLock.release();
-    await tracing.close().catch((closeError: unknown) => {
+    await tracing?.close().catch((closeError: unknown) => {
       logger.error({ error: closeError }, 'Tracing shutdown failed');
     });
     throw error;
@@ -431,7 +543,7 @@ async function main(): Promise<void> {
       await runningRuntime?.close();
       const [lockRelease] = await Promise.allSettled([
         dirLock.release(),
-        tracing.close(),
+        tracing?.close(),
         logger[Symbol.asyncDispose](),
       ]);
       if (lockRelease.status === 'rejected') {
@@ -488,6 +600,7 @@ async function main(): Promise<void> {
       dataDirectory: cli.dataDirectory,
       logStore,
       dangerousLocalAdminApiPort: cli.dangerousLocalAdminApiPort,
+      debugTracingEnabled: cli.telemetryDebug && !cli.telemetryDisabled,
       updateManager,
     });
     cliUi = ui;

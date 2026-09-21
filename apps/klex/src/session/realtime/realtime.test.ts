@@ -20,7 +20,7 @@ const conversationHost: ConversationHost = {
   acquireInteractionLease: vi.fn(),
 };
 
-function harness() {
+function harness(options?: { startError?: Error }) {
   const order: string[] = [];
   const connector = {
     connect: vi.fn(),
@@ -31,6 +31,7 @@ function harness() {
   const coordinator = {
     start: vi.fn(async () => {
       order.push('coordinator-start');
+      if (options?.startError) throw options.startError;
     }),
     close: vi.fn(async () => {
       order.push('coordinator-close');
@@ -89,6 +90,14 @@ describe('createRealtime', () => {
       'coordinator-close',
       'connector-close',
     ]);
+  });
+
+  it('closes a coordinator that fails during startup before discarding it', async () => {
+    const startError = new Error('coordinator startup failed');
+    const { realtime, coordinator, connector } = harness({ startError });
+    await expect(realtime.start()).rejects.toBe(startError);
+    expect(coordinator.close).toHaveBeenCalledOnce();
+    expect(connector.close).toHaveBeenCalledOnce();
   });
 
   it('takes lifecycle ownership of an injected connector', async () => {

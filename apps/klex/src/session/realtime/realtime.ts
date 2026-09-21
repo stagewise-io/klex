@@ -5,7 +5,6 @@ import type {
 } from '@stagewise/mcp-extension-realtime-media';
 
 import type { ResolvedRealtimeProvider } from '@/config';
-import type { InteractionModelMetadata } from '@/session/interaction';
 import type { Mcp } from '@/mcp';
 import type { MediaTransportConnector } from '@/media-transport';
 import {
@@ -13,7 +12,10 @@ import {
   type LiveKitRoomMediaTransportConnector,
   loadLiveKitSdk,
 } from '@/media-transport/livekit-room';
-import type { ConversationHost } from '@/session/interaction';
+import type {
+  ConversationHost,
+  InteractionModelMetadata,
+} from '@/session/interaction';
 
 import { createGeminiLiveProcessorFactory } from './gemini-live';
 import { createGPTLiveProcessorFactory } from './gpt-live';
@@ -91,6 +93,7 @@ class RealtimeModule implements Realtime {
       try {
         await coordinator.start();
       } catch (error) {
+        await coordinator.close().catch(() => undefined);
         await connector.close();
         this.connector = undefined;
         this.coordinator = undefined;

@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { SessionInboxUrgency } from '@/session/inbox';
+import {
+  getInteractionTelemetry,
+  setTelemetryActivityEnabled,
+} from '@/telemetry-metrics';
 
 import {
   type GenerationLaneHost,
@@ -92,6 +96,46 @@ describe('GenerationLaneLeaseManager', () => {
     await expect(manager.acquire(createRequest())).rejects.toBeInstanceOf(
       GenerationLaneUnavailableError,
     );
+  });
+
+  it('accounts for acquisition, release, revocation, queue cleanup, and provider shutdown', async () => {
+    setTelemetryActivityEnabled(true);
+    try {
+      const baseline = getInteractionTelemetry();
+      const host = createHost();
+      const manager = new GenerationLaneLeaseManager({
+        host,
+        logger,
+        maxPendingUpdates: 4,
+      });
+      const lease = await manager.acquire(createRequest());
+
+      expect(getInteractionTelemetry().activeLeases).toBe(
+        baseline.activeLeases + 1,
+      );
+      expect(manager.forward(inboxEvent, true)).toBe(true);
+      expect(
+        manager.forward({ ...inboxEvent, sourceEnv: 'slack' }, false),
+      ).toBe(true);
+      expect(getInteractionTelemetry().queuedUpdates).toBe(
+        baseline.queuedUpdates + 2,
+      );
+
+      await lease.release('call-ended');
+      expect(getInteractionTelemetry()).toMatchObject({
+        activeLeases: baseline.activeLeases,
+        queuedUpdates: baseline.queuedUpdates,
+      });
+
+      manager.revoke('default-session-closed');
+      setTelemetryActivityEnabled(true);
+      expect(getInteractionTelemetry()).toMatchObject({
+        activeLeases: baseline.activeLeases,
+        queuedUpdates: baseline.queuedUpdates,
+      });
+    } finally {
+      setTelemetryActivityEnabled(false);
+    }
   });
 
   it('resumes the chat lane after release and frees the lane', async () => {
@@ -283,6 +327,21 @@ describe('GenerationLaneLeaseManager', () => {
     expect(order).toEqual(['user-transcript', 'session-ended']);
     expect(host.finalizeLease).toHaveBeenCalledTimes(1);
     expect(host.resumeGenerationLane).toHaveBeenCalledTimes(1);
+  });
+
+  it('finalizes a lease exactly once across repeated release and revoke calls', async () => {
+    const host = createHost();
+    const manager = new GenerationLaneLeaseManager({ host, logger });
+    const lease = await manager.acquire(createRequest());
+
+    await lease.release('call-ended');
+    await lease.release('duplicate-release');
+    manager.revoke('default-session-closed');
+    manager.revoke('default-session-closed');
+
+    expect(host.finalizeLease).toHaveBeenCalledOnce();
+    expect(host.resumeGenerationLane).toHaveBeenCalledOnce();
+    expect(manager.isLeased()).toBe(false);
   });
 
   it('does not commit the same event twice', async () => {

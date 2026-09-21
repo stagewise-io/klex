@@ -46,8 +46,8 @@ describe('AgentDirectory', () => {
     ).toMatchObject({
       _klex: {
         store: 'config',
-        schemaVersion: 2,
-        compatibilityVersion: 5,
+        schemaVersion: 3,
+        compatibilityVersion: 6,
       },
       configVersion: 2,
       episodeFinishIdleTriggerTimeMs: 300_000,

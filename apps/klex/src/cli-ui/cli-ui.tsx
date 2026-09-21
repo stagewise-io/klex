@@ -28,6 +28,7 @@ import { McpScreen } from './screens/mcp';
 import { ModelSelectionScreen } from './screens/model-selection';
 import { ProvidersScreen } from './screens/providers';
 import { SettingsScreen } from './screens/settings';
+import { TelemetryScreen } from './screens/telemetry';
 import { UsageScreen } from './screens/usage';
 import type { CliUiDependencies } from './types';
 
@@ -46,6 +47,7 @@ class CliUiModule implements CliUi {
   private readonly dataDirectory: string;
   private readonly logStore: CliUiDependencies['logStore'];
   private readonly dangerousLocalAdminApiPort: number | undefined;
+  private readonly debugTracingEnabled: boolean;
   private readonly updateManager: CliUiDependencies['updateManager'];
   private inkInstance: ReturnType<typeof render> | undefined;
   private terminalCleared = false;
@@ -56,6 +58,7 @@ class CliUiModule implements CliUi {
     this.dataDirectory = deps.dataDirectory;
     this.logStore = deps.logStore;
     this.dangerousLocalAdminApiPort = deps.dangerousLocalAdminApiPort;
+    this.debugTracingEnabled = deps.debugTracingEnabled;
     this.updateManager = deps.updateManager;
   }
 
@@ -74,6 +77,7 @@ class CliUiModule implements CliUi {
         dataDirectory={this.dataDirectory}
         logStore={this.logStore}
         dangerousLocalAdminApiPort={this.dangerousLocalAdminApiPort}
+        debugTracingEnabled={this.debugTracingEnabled}
         onQuit={() => this.requestQuit()}
         updateManager={this.updateManager}
       />,
@@ -133,6 +137,7 @@ function AppRoot({
   dataDirectory,
   logStore,
   dangerousLocalAdminApiPort,
+  debugTracingEnabled = false,
   onQuit,
   updateManager,
 }: {
@@ -140,12 +145,12 @@ function AppRoot({
   dataDirectory: string;
   logStore: CliUiDependencies['logStore'];
   dangerousLocalAdminApiPort: number | undefined;
+  debugTracingEnabled?: boolean;
   onQuit: () => void;
   updateManager: CliUiDependencies['updateManager'];
 }) {
   const navigation = useNavigationState();
   const globalStatus = useGlobalStatus(apiClient);
-
   const [toasts, setToasts] = useState<Toast[]>([]);
   const quitConfirmationExpiresAt = useRef(0);
   const pushToast = useCallback(
@@ -196,6 +201,7 @@ function AppRoot({
               toasts={toasts}
               onDismissToast={dismissToast}
               dangerousLocalAdminApiPort={dangerousLocalAdminApiPort}
+              debugTracingEnabled={debugTracingEnabled}
               onRefreshGlobal={globalStatus.refresh}
               updateManager={updateManager}
             />
@@ -231,6 +237,7 @@ function FrameLayout({
   toasts,
   onDismissToast,
   dangerousLocalAdminApiPort,
+  debugTracingEnabled,
   onRefreshGlobal,
   updateManager,
 }: {
@@ -244,6 +251,7 @@ function FrameLayout({
   toasts: Toast[];
   onDismissToast: (id: number) => void;
   dangerousLocalAdminApiPort: number | undefined;
+  debugTracingEnabled: boolean;
   onRefreshGlobal: () => void;
   updateManager: CliUiDependencies['updateManager'];
 }) {
@@ -264,6 +272,7 @@ function FrameLayout({
       loading={loading}
       toasts={toasts}
       onDismissToast={onDismissToast}
+      debugTracingEnabled={debugTracingEnabled}
       updateBanner={
         updateManager ? (
           <UpdateBanner
@@ -291,6 +300,7 @@ function FrameLayout({
         cloud={cloud}
         dangerousLocalAdminApiPort={dangerousLocalAdminApiPort}
         onRefreshGlobal={onRefreshGlobal}
+        debugTracingEnabled={debugTracingEnabled}
       />
     </AppFrame>
   );
@@ -305,6 +315,7 @@ function ScreenRouter({
   cloud,
   dangerousLocalAdminApiPort,
   onRefreshGlobal,
+  debugTracingEnabled,
 }: {
   apiClient: AdminApiClient;
   dataDirectory: string;
@@ -314,6 +325,7 @@ function ScreenRouter({
   cloud: import('./api-client').CloudStatus | null;
   dangerousLocalAdminApiPort: number | undefined;
   onRefreshGlobal: () => void;
+  debugTracingEnabled: boolean;
 }) {
   switch (navigation.current) {
     case 'home':
@@ -404,7 +416,11 @@ function ScreenRouter({
       );
     case 'telemetry':
       return (
-        <ComingSoon title="Telemetry" onBack={() => navigation.goBack()} />
+        <TelemetryScreen
+          apiClient={apiClient}
+          debugTracingEnabled={debugTracingEnabled}
+          onBack={() => navigation.goBack()}
+        />
       );
     default:
       return (
@@ -419,23 +435,4 @@ function ScreenRouter({
         />
       );
   }
-}
-
-function ComingSoon({ title, onBack }: { title: string; onBack: () => void }) {
-  const { setMeta } = useScreenMeta();
-  useEffect(() => {
-    setMeta({
-      title,
-      breadcrumb: ['Home', 'Settings'],
-      keys: [{ key: 'esc', label: 'Back' }],
-    });
-  }, [setMeta, title]);
-  useMenuInput({ [MenuKeys.Back]: onBack });
-  return (
-    <Box flexDirection="column">
-      <Box marginTop={1}>
-        <Text dimColor>This screen is not yet implemented.</Text>
-      </Box>
-    </Box>
-  );
 }

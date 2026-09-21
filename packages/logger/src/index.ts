@@ -27,6 +27,13 @@ export interface CapturedLogEntry {
   sequence: number;
 }
 
+export interface OTelLoggerOptions {
+  url: string;
+  headers?: Record<string, string>;
+  resourceAttributes: Record<string, unknown>;
+  minLevel?: LogLevel | number;
+}
+
 export interface LoggerOptions {
   name?: string;
   minLevel?: LogLevel;
@@ -39,10 +46,7 @@ export interface LoggerOptions {
     keys?: string[];
     caseInsensitive?: boolean;
   };
-  otel?: {
-    url: string;
-    resourceAttributes: Record<string, unknown>;
-  };
+  otel?: OTelLoggerOptions;
 }
 
 // --- compact formatter ------------------------------------------------------
@@ -246,15 +250,111 @@ export function createLogger(opts?: LoggerOptions): RootLogger {
   }
 
   if (opts?.otel) {
-    const transport = httpTransport<ILogObj>({
-      url: opts.otel.url,
-      format: otlpFormat({ resource: opts.otel.resourceAttributes }),
-      encodeBody: otlpBatchBody,
-      name: 'otlp',
-    });
-    if (!verbose) transport.minLevel = 'INFO';
-    logger.attachTransport(transport);
+    attachOtelTransport(logger, opts.otel, verbose);
   }
 
   return logger;
+}
+
+const SAFE_OTEL_FIELDS = new Set([
+  'module',
+  'operation',
+  'provider',
+  'providerType',
+  'modelType',
+  'count',
+  'durationMs',
+  'inputTokens',
+  'outputTokens',
+  'stepCount',
+  'mcpCount',
+  'errorType',
+  'errorCode',
+  'event',
+]);
+
+function sanitizeOtelString(value: string): string {
+  return value
+    .replace(/bearer\s+[a-z0-9._~-]+/gi, 'Bearer [REDACTED]')
+    .replace(
+      /(?:api[_-]?key|token|secret|password)[=:]\s*[^\s,;]+/gi,
+      '[REDACTED]',
+    )
+    .replace(/(?:https?:\/\/|file:\/\/)[^\s]+/gi, '[URL_REDACTED]')
+    .slice(0, 512);
+}
+
+function sanitizeOtelValue(value: unknown): unknown {
+  if (typeof value === 'string') return sanitizeOtelString(value);
+  if (typeof value === 'number' || typeof value === 'boolean') return value;
+  if (value instanceof Error) return { name: value.name };
+  return '[REDACTED]';
+}
+
+function sanitizeOtelRecord(
+  record: ILogObj,
+  metadataProperty: string,
+): ILogObj {
+  const source = record as Record<PropertyKey, unknown>;
+  const output: Record<PropertyKey, unknown> = {};
+
+  // The OTLP formatter reads tslog metadata through the configured property.
+  // Copy only that metadata object; symbols can retain the original masked
+  // argument array, including arbitrary message bodies.
+  const metadata = source[metadataProperty];
+  if (metadata && typeof metadata === 'object') {
+    output[metadataProperty] = metadata;
+  }
+
+  const structuredFields = source['0'];
+  if (structuredFields && typeof structuredFields === 'object') {
+    const safeFields: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(structuredFields)) {
+      if (SAFE_OTEL_FIELDS.has(key)) safeFields[key] = sanitizeOtelValue(value);
+    }
+    output['0'] = safeFields;
+  }
+
+  if (source['1'] && typeof source['1'] === 'object') {
+    const safeFields: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(source['1'])) {
+      if (SAFE_OTEL_FIELDS.has(key)) safeFields[key] = sanitizeOtelValue(value);
+    }
+    output['1'] = safeFields;
+  }
+
+  for (const key of Object.keys(source)) {
+    if (key === '_meta' || key === '0' || key === '1') continue;
+    if (SAFE_OTEL_FIELDS.has(key)) output[key] = sanitizeOtelValue(source[key]);
+  }
+  return output as ILogObj;
+}
+
+export function attachOtelTransport(
+  logger: RootLogger,
+  options: OTelLoggerOptions,
+  verbose = true,
+): void {
+  const otlpFormatter = otlpFormat({
+    resource: options.resourceAttributes,
+  }) as unknown as LogFormatter<ILogObj>;
+  const transport = httpTransport<ILogObj>({
+    url: options.url,
+    format: (record, settings) => {
+      const metadataProperty = settings.meta?.property ?? '_logMeta';
+      return otlpFormatter(
+        sanitizeOtelRecord(record, metadataProperty) as ILogObjMeta,
+        settings,
+      );
+    },
+    encodeBody: otlpBatchBody,
+    name: 'otlp',
+    headers: options.headers,
+  });
+  if ('minLevel' in options) {
+    transport.minLevel = options.minLevel;
+  } else if (!verbose) {
+    transport.minLevel = 'INFO';
+  }
+  logger.attachTransport(transport);
 }

@@ -519,13 +519,35 @@ const mcpServerConfigSchema = z.union([
 
 type McpServerConfig = z.infer<typeof mcpServerConfigSchema>;
 
-const telemetryLevelSchema = z.enum(['off', 'minimum', 'reduced', 'full']);
+const telemetryLevelSchema = z.enum(['no', 'basic', 'advanced']);
+const storedTelemetryLevelSchema = z.enum(['no', 'basic', 'advanced']);
+
+const legacyTelemetryLevelSchema = z.enum([
+  'off',
+  'minimum',
+  'reduced',
+  'full',
+  'debug',
+]);
 
 type TelemetryLevel = z.infer<typeof telemetryLevelSchema>;
+type RuntimeTelemetryLevel = TelemetryLevel | 'debug';
+type StoredTelemetryLevel = z.infer<typeof storedTelemetryLevelSchema>;
+type LegacyTelemetryLevel = z.infer<typeof legacyTelemetryLevelSchema>;
 
-const telemetryConfigSchema = z.object({
-  level: telemetryLevelSchema,
-});
+const telemetryConfigSchema = z
+  .object({
+    level: telemetryLevelSchema,
+    instanceId: z.string().uuid().optional(),
+  })
+  .strict();
+
+const storedTelemetryConfigSchema = z
+  .object({
+    level: z.union([storedTelemetryLevelSchema, legacyTelemetryLevelSchema]),
+    instanceId: z.string().uuid().optional(),
+  })
+  .passthrough();
 
 const timezoneSchema = z
   .string()
@@ -619,13 +641,70 @@ const legacyKlexConfigSchema = z
       .default({}),
     modelSelection: legacyModelSelectionSchema,
     mcpServers: z.record(z.string(), mcpServerConfigSchema).default({}),
-    telemetry: telemetryConfigSchema.optional(),
+    telemetry: storedTelemetryConfigSchema.optional(),
   })
   .strict();
 
 const currentStoredKlexConfigSchema = klexConfigSchema
   .extend({ configVersion: z.literal(2) })
   .strict();
+
+const legacyCurrentStoredKlexConfigSchema = klexConfigSchema
+  .extend({
+    configVersion: z.literal(2),
+    telemetry: storedTelemetryConfigSchema.optional(),
+  })
+  .strict();
+
+function mapTelemetryLevel(level: LegacyTelemetryLevel): TelemetryLevel {
+  switch (level) {
+    case 'off':
+      return 'no';
+    case 'minimum':
+      return 'basic';
+    case 'reduced':
+      return 'advanced';
+    case 'full':
+    case 'debug':
+      return 'advanced';
+  }
+}
+
+function migrateTelemetryConfig(
+  telemetry:
+    | {
+        level: StoredTelemetryLevel | LegacyTelemetryLevel;
+        instanceId?: string;
+        debugUntil?: string;
+        [key: string]: unknown;
+      }
+    | undefined,
+):
+  | ({
+      level: TelemetryLevel;
+      instanceId?: string;
+    } & Record<string, unknown>)
+  | undefined {
+  if (!telemetry) return undefined;
+  return {
+    level: telemetryLevelSchema.safeParse(telemetry.level).success
+      ? (telemetry.level as TelemetryLevel)
+      : mapTelemetryLevel(telemetry.level as LegacyTelemetryLevel),
+    ...(telemetry.instanceId ? { instanceId: telemetry.instanceId } : {}),
+  };
+}
+
+function migrateStoredKlexConfig(input: unknown): KlexConfig {
+  const parsed = legacyCurrentStoredKlexConfigSchema.parse(input);
+  return klexConfigSchema.parse({
+    ...parsed,
+    telemetry: migrateTelemetryConfig(parsed.telemetry),
+  });
+}
+
+export function migrateStoredTelemetryConfig(input: unknown): KlexConfig {
+  return migrateStoredKlexConfig(input);
+}
 
 type LegacyKlexConfig = z.infer<typeof legacyKlexConfigSchema>;
 type LegacyProviderConfig = z.infer<typeof legacyProviderConfigSchema>;
@@ -703,7 +782,7 @@ function migrateLegacyConfig(legacy: LegacyKlexConfig): KlexConfig {
       },
     },
     mcpServers: legacy.mcpServers,
-    telemetry: legacy.telemetry,
+    telemetry: migrateTelemetryConfig(legacy.telemetry),
   });
 }
 
@@ -816,6 +895,7 @@ export type {
   ModelVoiceCapabilities,
   ProviderConfig,
   ProviderType,
+  RuntimeTelemetryLevel,
   StdioServerConfig,
   TelemetryLevel,
   VoiceModelPurpose,

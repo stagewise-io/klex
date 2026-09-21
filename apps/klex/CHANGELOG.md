@@ -2,6 +2,24 @@
 
 All notable Klex changes are documented here.
 
+## 0.8.0 (2026-09-21)
+
+### Features
+
+- add episodic memory writer (a5d4267)
+
+### Bug Fixes
+
+- cap timeout configs, simplify architecture docs, and harden memory extension (375453b)
+- convert memorize time to UTC from agent timezone (f17392a)
+- preserve streamed tool outcomes (802e463)
+- bound serialized tool results (72fef3c)
+
+### Other Changes
+
+- cover default oversized result limit (bf63def)
+- restructure soul extension and update system prompts (bccb0c4)
+
 ## 0.7.1 (2026-09-16)
 
 ### Bug Fixes

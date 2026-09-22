@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  createTelemetryPolicy,
   isAllowedTelemetryAttribute,
+  isAlwaysForbiddenTelemetryAttribute,
   isTelemetryContentAttribute,
 } from './telemetry-policy';
 
@@ -40,5 +42,46 @@ describe('telemetry policy', () => {
       expect(isAllowedTelemetryAttribute(name)).toBe(true);
     }
     expect(isAllowedTelemetryAttribute('gen_ai.input.messages')).toBe(false);
+    expect(isAllowedTelemetryAttribute('klex.session.id', 'advanced')).toBe(
+      true,
+    );
+    expect(isAllowedTelemetryAttribute('klex.session.id', 'basic')).toBe(false);
+  });
+
+  it('exposes immutable, level-specific policy snapshots', () => {
+    const policy = createTelemetryPolicy('no');
+    expect(policy.getSnapshot()).toMatchObject({
+      level: 'no',
+      telemetryWorkAllowed: false,
+      traceMode: 'none',
+      metricDetail: 'none',
+    });
+
+    policy.setLevel('advanced');
+    expect(policy.getSnapshot()).toMatchObject({
+      level: 'advanced',
+      telemetryWorkAllowed: true,
+      detailedMetricsEnabled: true,
+      detailedTracesEnabled: true,
+      contentAllowed: false,
+    });
+
+    policy.setLevel('debug');
+    expect(policy.getSnapshot().contentAllowed).toBe(true);
+    expect(Object.isFrozen(policy.getSnapshot())).toBe(true);
+  });
+
+  it('always rejects credential and host identity attribute names', () => {
+    for (const name of [
+      'authorization',
+      'http.request.header.authorization',
+      'api_key',
+      'password',
+      'host.name',
+      'user.name',
+    ]) {
+      expect(isAlwaysForbiddenTelemetryAttribute(name)).toBe(true);
+      expect(isAllowedTelemetryAttribute(name, 'debug')).toBe(false);
+    }
   });
 });

@@ -25,6 +25,9 @@ function makeSpan(overrides: Partial<ReadableSpan> = {}): ReadableSpan {
     attributes: {
       'gen_ai.input.messages': 'secret-prompt',
       'gen_ai.output.messages': 'secret-response',
+      'gen_ai.request.model': 'gpt-test',
+      'klex.session.id': 'session-1',
+      'klex.session.name': 'Primary session',
       'custom.attr': 'kept',
     },
     links: [],
@@ -106,6 +109,9 @@ describe('TelemetrySpanProcessor', () => {
     const forwarded = onEnd.mock.calls[0]?.[0] as ReadableSpan;
     expect(forwarded.attributes['gen_ai.input.messages']).toBeUndefined();
     expect(forwarded.attributes['gen_ai.output.messages']).toBeUndefined();
+    expect(forwarded.attributes['gen_ai.request.model']).toBe('gpt-test');
+    expect(forwarded.attributes['klex.session.id']).toBe('session-1');
+    expect(forwarded.attributes['klex.session.name']).toBe('Primary session');
     expect(forwarded.attributes['custom.attr']).toBeUndefined();
   });
 
@@ -167,18 +173,26 @@ describe('TelemetrySpanProcessor', () => {
     expect(forwarded.events).toBe(span.events);
   });
 
-  it('forwards spans unchanged when level is "debug"', () => {
+  it('preserves debug content while rejecting always-forbidden attributes', () => {
     const tp = createTelemetrySpanProcessor();
     const { processor, onEnd } = makeDelegate();
     tp.setDelegate(processor);
     tp.setLevel('debug');
     tp.setContentAllowed(() => true);
 
-    const span = makeSpan();
+    const span = makeSpan({
+      attributes: {
+        'gen_ai.input.messages': 'debug prompt',
+        authorization: 'Bearer secret',
+      },
+    });
     tp.onEnd(span);
 
-    expect(onEnd).toHaveBeenCalledTimes(1);
-    expect(onEnd.mock.calls[0]?.[0]).toBe(span);
+    const forwarded = onEnd.mock.calls[0]?.[0] as ReadableSpan;
+    expect(forwarded.attributes).toEqual({
+      'gen_ai.input.messages': 'debug prompt',
+    });
+    expect(forwarded).not.toBe(span);
   });
 
   it('downgrades expired debug content permission to advanced privacy', () => {
@@ -231,7 +245,11 @@ describe('TelemetrySpanProcessor', () => {
 
     const forwarded = onEnd.mock.calls[0]?.[0] as ReadableSpan;
     expect(forwarded).not.toBe(span);
-    expect(forwarded.attributes).toEqual({});
+    expect(forwarded.attributes).toEqual({
+      'gen_ai.request.model': 'gpt-test',
+      'klex.session.id': 'session-1',
+      'klex.session.name': 'Primary session',
+    });
     expect(forwarded.status).toEqual({ code: SpanStatusCode.ERROR });
     expect(forwarded.events[0]?.attributes).toEqual({
       'exception.type': 'Error',

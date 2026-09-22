@@ -1,3 +1,17 @@
+## Export and shutdown timing
+
+Metrics export every 30 seconds by default. Traces and logs use five-second
+batch intervals. These are operational choices, not universal OpenTelemetry
+requirements: the OpenTelemetry JavaScript metrics examples commonly use 60
+seconds, while shorter intervals such as 15 seconds are also documented for
+push-based metrics. Klex uses 30 seconds to reduce short-process loss without
+creating a request per sample.
+
+On shutdown, Klex stops runtime producers, explicitly force-flushes metrics and
+traces, then disposes providers and logs. The default shutdown budget is 15
+seconds, configurable with `KLEX_SHUTDOWN_TIMEOUT_MS` from 1,000 to 120,000 ms.
+The budget must exceed the exporter timeout on deployments with slow or distant
+backends.
 # Klex telemetry
 
 Klex supports three configurable remote telemetry levels plus a separate process-only debug override. Telemetry is sent to `https://telemetry.klex.bot` by default; set `KLEX_TELEMETRY_ENDPOINT` or pass `--telemetry-endpoint` to override the OTLP base URL. CLI values take precedence over environment values.
@@ -6,9 +20,9 @@ Configurable levels:
 
 - `no`: no OTLP logs, traces, or metrics are exported or collected.
 - `basic`: lifecycle, aggregate usage, sanitized warnings/errors, and process metrics. Prompts, responses, tool payloads, session identifiers, and arbitrary fields are excluded.
-- `advanced`: more operational span detail and bounded error diagnostics, still without AI content or stack traces.
+- `advanced`: more operational span detail, bounded error diagnostics, and identity-bearing per-session metrics for active-session state, history size, tool calls, and last-call token/cache usage. It still excludes AI content and stack traces. Session IDs, names, parent relationships, and tool names make advanced exports sensitive operational data.
 
-Debug is a temporary startup override and is never persisted or exposed through the settings API. Use `--telemetry-debug` or `KLEX_TELEMETRY_DEBUG=1` to enable all log levels and content-enabled tracing for the process lifetime. Debug still applies the OTLP privacy sanitizer; free-form log bodies and non-allowlisted fields are not exported. Debug tracing should be disabled when no longer needed.
+Debug is a temporary startup override and is never persisted or exposed through the settings API. Use `--telemetry-debug` or `KLEX_TELEMETRY_DEBUG=1` to enable all log levels, the advanced per-session metric schema, and content-enabled tracing for the process lifetime. Debug still applies the OTLP log privacy sanitizer; free-form log bodies and non-allowlisted log fields are not exported. Debug tracing should be disabled when no longer needed.
 
 The installation-scoped telemetry identity is a random UUID stored in the agent config. It does not include hostnames, usernames, network addresses, or machine fingerprints. Rotate it with `--reset-telemetry-identity`.
 

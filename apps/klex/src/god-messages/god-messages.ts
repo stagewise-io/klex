@@ -274,6 +274,7 @@ class GodMessagesModule implements GodMessages {
     const sessionId = randomUUID();
     const sessionContext: SessionContext = {
       kind: 'god',
+      name: 'god',
       sessionId,
     };
 

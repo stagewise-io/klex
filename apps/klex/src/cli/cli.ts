@@ -192,6 +192,7 @@ Environment:
   KLEX_TELEMETRY_ENDPOINT      OTLP telemetry base URL
   KLEX_TELEMETRY_DEBUG         Enable debug telemetry when set to 1
   KLEX_DISABLE_TELEMETRY       Disable all remote telemetry when set to 1
+  KLEX_SHUTDOWN_TIMEOUT_MS      Maximum graceful shutdown time in milliseconds (default: 15000)
 `,
   );
 }

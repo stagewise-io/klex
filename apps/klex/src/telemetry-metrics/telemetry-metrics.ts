@@ -1,5 +1,12 @@
 import { readdir, stat } from 'node:fs/promises';
-import { availableParallelism } from 'node:os';
+import {
+  arch,
+  availableParallelism,
+  freemem,
+  type as osType,
+  release,
+  totalmem,
+} from 'node:os';
 import { join } from 'node:path';
 
 import {
@@ -13,12 +20,14 @@ import { OTLPMetricExporter } from '@opentelemetry/exporter-metrics-otlp-http';
 import {
   AggregationType,
   MeterProvider,
-  PeriodicExportingMetricReader,
+  MetricReader,
   type PushMetricExporter,
 } from '@opentelemetry/sdk-metrics';
-import { resources } from '@opentelemetry/sdk-node';
 
 import type { ModuleLogger } from '@stagewise/logger';
+
+import type { TelemetryPolicy } from '@/telemetry-policy';
+import { createTelemetryResourceFromAttributes } from '@/telemetry-resource';
 
 import {
   getInteractionTelemetry,
@@ -27,7 +36,9 @@ import {
   setTelemetryActivityEnabled,
 } from './activity';
 
-const DEFAULT_EXPORT_INTERVAL_MS = 60_000;
+// OpenTelemetry's common default is 60 seconds. Klex uses 30 seconds to
+// reduce short-process loss while keeping export overhead bounded.
+const DEFAULT_EXPORT_INTERVAL_MS = 30_000;
 const DEFAULT_PERFORMANCE_SAMPLE_INTERVAL_MS = 5_000;
 const DEFAULT_FILESYSTEM_SAMPLE_INTERVAL_MS = 60_000;
 const TOKEN_BUCKET_BOUNDARIES = [
@@ -50,6 +61,8 @@ export interface TelemetryMetricsDependencies {
   enabled: boolean;
   instanceId: string;
   serviceVersion?: string;
+  resourceAttributes?: Record<string, string>;
+  policy?: Readonly<Pick<TelemetryPolicy, 'getSnapshot'>>;
   exportIntervalMs?: number;
   performanceSampleIntervalMs?: number;
   filesystemSampleIntervalMs?: number;
@@ -58,8 +71,10 @@ export interface TelemetryMetricsDependencies {
 export interface TelemetryMetrics {
   start(): Promise<void>;
   close(): Promise<void>;
+  forceFlush(): Promise<void>;
   recordModelCall(usage: ModelCallUsage): void;
   registerSession(session: SessionTelemetryState): void;
+  unregisterSession(sessionId: string): void;
   updateSession(
     sessionId: string,
     update: Partial<Omit<SessionTelemetryState, 'id' | 'name'>>,
@@ -72,13 +87,22 @@ export interface TelemetryMetrics {
 export interface SessionTelemetryState {
   id: string;
   name: string;
+  kind: 'default' | 'god' | 'child';
+  extensionIdentifier?: string;
+  parentId?: string;
   active: boolean;
   runtimeState: string;
   historyLength: number;
   transformedHistoryLength: number;
+  lastCallInputTokens?: number;
+  lastCallCacheReadTokens?: number;
+  lastCallCacheWriteTokens?: number;
+  lastCallCacheReadRatio?: number;
+  lastCallSource?: 'chat' | 'extension';
 }
 
 export interface ModelCallUsage {
+  sessionId?: string | null;
   inputTokens: number;
   outputTokens: number;
   inputCacheReadTokens: number;
@@ -93,41 +117,111 @@ export interface ModelCallUsage {
   ttftMs?: number | null;
 }
 
-class GatedMetricExporter implements PushMetricExporter {
-  private enabled = true;
+class ControllableMetricReader extends MetricReader {
+  private timer: NodeJS.Timeout | null = null;
+  private exportPromise: Promise<void> | null = null;
+  private enabled = false;
 
-  constructor(private readonly delegate: PushMetricExporter) {}
+  constructor(
+    private readonly exporter: PushMetricExporter,
+    private readonly exportIntervalMs: number,
+    private readonly exportTimeoutMs: number,
+  ) {
+    super({
+      aggregationSelector: exporter.selectAggregation?.bind(exporter),
+      aggregationTemporalitySelector:
+        exporter.selectAggregationTemporality?.bind(exporter),
+    });
+  }
 
   setEnabled(enabled: boolean): void {
+    if (this.enabled === enabled) return;
     this.enabled = enabled;
-  }
-
-  export(
-    metricData: Parameters<PushMetricExporter['export']>[0],
-    resultCallback: Parameters<PushMetricExporter['export']>[1],
-  ): void {
-    if (!this.enabled) {
-      resultCallback({ code: 0 });
+    if (!enabled) {
+      if (this.timer) clearInterval(this.timer);
+      this.timer = null;
       return;
     }
-    this.delegate.export(metricData, resultCallback);
+    this.timer = setInterval(() => void this.runOnce(), this.exportIntervalMs);
+    this.timer.unref();
   }
 
-  forceFlush(): Promise<void> {
-    return this.delegate.forceFlush();
+  private async runOnce(): Promise<void> {
+    if (!this.enabled || this.exportPromise)
+      return this.exportPromise ?? undefined;
+    const currentExport = this.collectAndExport();
+    this.exportPromise = currentExport;
+    try {
+      await currentExport;
+    } catch (error) {
+      // Telemetry is fail-open: an unavailable collector must never create an
+      // unhandled rejection or interrupt the application runtime.
+      process.emitWarning(
+        error instanceof Error ? error : new Error(String(error)),
+        { type: 'TelemetryMetricExportWarning' },
+      );
+    } finally {
+      if (this.exportPromise === currentExport) this.exportPromise = null;
+    }
   }
 
-  shutdown(): Promise<void> {
-    return this.delegate.shutdown();
+  private async collectAndExport(): Promise<void> {
+    const { resourceMetrics, errors } = await this.collect({
+      timeoutMillis: this.exportTimeoutMs,
+    });
+    for (const error of errors) {
+      // This logger-independent path avoids recursively reporting failures
+      // through the telemetry pipeline that is failing.
+      process.emitWarning(
+        error instanceof Error ? error : new Error(String(error)),
+        { type: 'TelemetryMetricCollectionWarning' },
+      );
+    }
+    if (resourceMetrics.scopeMetrics.length === 0) return;
+    await new Promise<void>((resolve, reject) => {
+      const timeout = setTimeout(
+        () => reject(new Error('Metric export timed out')),
+        this.exportTimeoutMs,
+      );
+      timeout.unref();
+      this.exporter.export(resourceMetrics, (result) => {
+        clearTimeout(timeout);
+        if (result.code === 0) resolve();
+        else reject(result.error ?? new Error('Metric export failed'));
+      });
+    });
+  }
+
+  protected async onForceFlush(): Promise<void> {
+    if (this.exportPromise) await this.exportPromise;
+    if (this.enabled) await this.runOnce();
+    await this.exporter.forceFlush();
+  }
+
+  protected async onShutdown(): Promise<void> {
+    const wasEnabled = this.enabled;
+    this.setEnabled(false);
+    if (this.exportPromise) await this.exportPromise;
+    if (wasEnabled) {
+      this.enabled = true;
+      try {
+        await this.runOnce();
+      } finally {
+        this.enabled = false;
+      }
+    }
+    await this.exporter.shutdown();
   }
 }
 
 class TelemetryMetricsModule implements TelemetryMetrics {
   private provider: MeterProvider | null = null;
   private globalProviderRegistered = false;
-  private gatedExporter: GatedMetricExporter | null = null;
+  private reader: ControllableMetricReader | null = null;
   private performanceTimer: NodeJS.Timeout | null = null;
   private filesystemTimer: NodeJS.Timeout | null = null;
+  private filesystemSample: Promise<void> | null = null;
+  private filesystemGeneration = 0;
   private started = false;
   private enabled: boolean;
   private lastCpu = process.cpuUsage();
@@ -147,19 +241,29 @@ class TelemetryMetricsModule implements TelemetryMetrics {
   private sessionRuntimeState: ObservableGauge | null = null;
   private sessionHistoryLength: ObservableGauge | null = null;
   private sessionTransformedHistoryLength: ObservableGauge | null = null;
+  private sessionLastCallInputTokens: ObservableGauge | null = null;
+  private sessionLastCallCacheReadTokens: ObservableGauge | null = null;
+  private sessionLastCallCacheWriteTokens: ObservableGauge | null = null;
+  private sessionLastCallCacheReadRatio: ObservableGauge | null = null;
   private toolCalls: Counter | null = null;
+  private queueOverflow: Counter | null = null;
+  private closed = false;
+  private pendingLevel: MetricsTelemetryLevel | null = null;
+  private transitionPromise: Promise<void> | null = null;
   private readonly sessions = new Map<string, SessionTelemetryState>();
   // Node does not expose portable per-process network byte counters. We do not
   // substitute system-wide counters because that would misattribute traffic.
 
   constructor(private readonly deps: TelemetryMetricsDependencies) {
     this.enabled = deps.enabled;
+    this.level = deps.enabled ? 'basic' : 'no';
   }
 
   async start(): Promise<void> {
-    if (this.started || !this.enabled) return;
-    this.started = true;
-    setTelemetryActivityEnabled(true);
+    if (this.provider) {
+      if (this.enabled && !this.started) this.activate();
+      return;
+    }
 
     const exportIntervalMs =
       this.deps.exportIntervalMs ?? DEFAULT_EXPORT_INTERVAL_MS;
@@ -169,28 +273,29 @@ class TelemetryMetricsModule implements TelemetryMetrics {
     const filesystemSampleIntervalMs =
       this.deps.filesystemSampleIntervalMs ??
       DEFAULT_FILESYSTEM_SAMPLE_INTERVAL_MS;
-    const exporter = new GatedMetricExporter(
+    const exporter =
       this.deps.exporterFactory?.() ??
-        new OTLPMetricExporter({
-          url: this.deps.endpoint,
-          headers: this.deps.headers,
-        }),
-    );
-    this.gatedExporter = exporter;
-    const reader = new PeriodicExportingMetricReader({
+      new OTLPMetricExporter({
+        url: this.deps.endpoint,
+        headers: this.deps.headers,
+      });
+    const reader = new ControllableMetricReader(
       exporter,
-      exportIntervalMillis: exportIntervalMs,
-      exportTimeoutMillis: Math.min(exportIntervalMs, 10_000),
-    });
+      exportIntervalMs,
+      Math.min(exportIntervalMs, 10_000),
+    );
+    this.reader = reader;
     const provider = new MeterProvider({
-      resource: resources.resourceFromAttributes({
-        'service.name': 'klex',
-        'service.namespace': 'stagewise',
-        ...(this.deps.serviceVersion
-          ? { 'service.version': this.deps.serviceVersion }
-          : {}),
-        'service.instance.id': this.deps.instanceId,
-      }),
+      resource: createTelemetryResourceFromAttributes(
+        this.deps.resourceAttributes ?? {
+          'service.name': 'klex',
+          'service.namespace': 'stagewise',
+          ...(this.deps.serviceVersion
+            ? { 'service.version': this.deps.serviceVersion }
+            : {}),
+          'service.instance.id': this.deps.instanceId,
+        },
+      ),
       readers: [reader],
       views: [
         {
@@ -318,6 +423,36 @@ class TelemetryMetricsModule implements TelemetryMetrics {
         if (!this.started || !this.enabled) return;
         observable.observe(process.uptime());
       });
+    const platformAttributes = {
+      'host.arch': normalizePlatformValue(arch()),
+      'os.type': normalizePlatformValue(osType()),
+      'os.version': normalizeOsVersion(release()),
+    };
+    meter
+      .createObservableGauge('klex.host.logical_processor.count', {
+        description: 'Logical processors available to the Klex process',
+        unit: '{processor}',
+      })
+      .addCallback((observable) => {
+        if (!this.started || !isDetailedLevel(this.currentLevel())) return;
+        observable.observe(availableParallelism(), platformAttributes);
+      });
+    meter
+      .createObservableGauge('klex.host.memory.capacity', {
+        description: 'Host memory capacity visible to the Klex process',
+        unit: 'By',
+      })
+      .addCallback((observable) => {
+        if (!this.started || !isDetailedLevel(this.currentLevel())) return;
+        observable.observe(totalmem(), {
+          ...platformAttributes,
+          'klex.memory.state': 'total',
+        });
+        observable.observe(freemem(), {
+          ...platformAttributes,
+          'klex.memory.state': 'available',
+        });
+      });
     this.memorySamples = meter.createHistogram('klex.process.memory.rss', {
       description: 'Distribution of Klex process RSS samples',
       unit: 'By',
@@ -347,14 +482,13 @@ class TelemetryMetricsModule implements TelemetryMetrics {
         if (!this.started || !this.enabled) return;
         observable.observe(getInteractionTelemetry().queuedUpdates);
       });
-    const queueOverflow = meter.createCounter(
+    this.queueOverflow = meter.createCounter(
       'klex.interaction.queue.overflow',
       {
         description: 'Interaction queue overflow events',
         unit: '{event}',
       },
     );
-    setQueueOverflowRecorder(() => queueOverflow.add(1));
     meter
       .createObservableGauge('klex.realtime.session.active', {
         description: 'Active realtime sessions',
@@ -369,7 +503,12 @@ class TelemetryMetricsModule implements TelemetryMetrics {
       unit: '1',
     });
     this.sessionActive.addCallback((observable) => {
-      if (!this.started || !this.enabled || this.level !== 'advanced') return;
+      if (
+        !this.started ||
+        !this.enabled ||
+        !isDetailedLevel(this.currentLevel())
+      )
+        return;
       for (const session of this.sessions.values()) {
         observable.observe(session.active ? 1 : 0, sessionAttributes(session));
       }
@@ -379,7 +518,12 @@ class TelemetryMetricsModule implements TelemetryMetrics {
       { description: 'Runtime state of each known session', unit: '1' },
     );
     this.sessionRuntimeState.addCallback((observable) => {
-      if (!this.started || !this.enabled || this.level !== 'advanced') return;
+      if (
+        !this.started ||
+        !this.enabled ||
+        !isDetailedLevel(this.currentLevel())
+      )
+        return;
       for (const session of this.sessions.values()) {
         observable.observe(1, {
           ...sessionAttributes(session),
@@ -395,7 +539,12 @@ class TelemetryMetricsModule implements TelemetryMetrics {
       },
     );
     this.sessionHistoryLength.addCallback((observable) => {
-      if (!this.started || !this.enabled || this.level !== 'advanced') return;
+      if (
+        !this.started ||
+        !this.enabled ||
+        !isDetailedLevel(this.currentLevel())
+      )
+        return;
       for (const session of this.sessions.values()) {
         observable.observe(session.historyLength, sessionAttributes(session));
       }
@@ -408,11 +557,108 @@ class TelemetryMetricsModule implements TelemetryMetrics {
       },
     );
     this.sessionTransformedHistoryLength.addCallback((observable) => {
-      if (!this.started || !this.enabled || this.level !== 'advanced') return;
+      if (
+        !this.started ||
+        !this.enabled ||
+        !isDetailedLevel(this.currentLevel())
+      )
+        return;
       for (const session of this.sessions.values()) {
         observable.observe(
           session.transformedHistoryLength,
           sessionAttributes(session),
+        );
+      }
+    });
+    this.sessionLastCallInputTokens = meter.createObservableGauge(
+      'klex.session.last_call.input_tokens',
+      {
+        description:
+          'Provider-reported input tokens in the most recently completed model call for each active session',
+        unit: '{token}',
+      },
+    );
+    this.sessionLastCallInputTokens.addCallback((observable) => {
+      if (
+        !this.started ||
+        !this.enabled ||
+        !isDetailedLevel(this.currentLevel())
+      )
+        return;
+      for (const session of this.sessions.values()) {
+        if (session.lastCallInputTokens === undefined) continue;
+        observable.observe(
+          session.lastCallInputTokens,
+          sessionLastCallAttributes(session),
+        );
+      }
+    });
+    this.sessionLastCallCacheReadTokens = meter.createObservableGauge(
+      'klex.session.last_call.cache_read_tokens',
+      {
+        description:
+          'Cache-read input tokens in the most recently completed model call for each active session',
+        unit: '{token}',
+      },
+    );
+    this.sessionLastCallCacheReadTokens.addCallback((observable) => {
+      if (
+        !this.started ||
+        !this.enabled ||
+        !isDetailedLevel(this.currentLevel())
+      )
+        return;
+      for (const session of this.sessions.values()) {
+        if (session.lastCallCacheReadTokens === undefined) continue;
+        observable.observe(
+          session.lastCallCacheReadTokens,
+          sessionLastCallAttributes(session),
+        );
+      }
+    });
+    this.sessionLastCallCacheWriteTokens = meter.createObservableGauge(
+      'klex.session.last_call.cache_write_tokens',
+      {
+        description:
+          'Cache-write input tokens in the most recently completed model call for each active session',
+        unit: '{token}',
+      },
+    );
+    this.sessionLastCallCacheWriteTokens.addCallback((observable) => {
+      if (
+        !this.started ||
+        !this.enabled ||
+        !isDetailedLevel(this.currentLevel())
+      )
+        return;
+      for (const session of this.sessions.values()) {
+        if (session.lastCallCacheWriteTokens === undefined) continue;
+        observable.observe(
+          session.lastCallCacheWriteTokens,
+          sessionLastCallAttributes(session),
+        );
+      }
+    });
+    this.sessionLastCallCacheReadRatio = meter.createObservableGauge(
+      'klex.session.last_call.cache_read_ratio',
+      {
+        description:
+          'Fraction of last-call input tokens reported as cache reads for each active session',
+        unit: '1',
+      },
+    );
+    this.sessionLastCallCacheReadRatio.addCallback((observable) => {
+      if (
+        !this.started ||
+        !this.enabled ||
+        !isDetailedLevel(this.currentLevel())
+      )
+        return;
+      for (const session of this.sessions.values()) {
+        if (session.lastCallCacheReadRatio === undefined) continue;
+        observable.observe(
+          session.lastCallCacheReadRatio,
+          sessionLastCallAttributes(session),
         );
       }
     });
@@ -431,6 +677,24 @@ class TelemetryMetricsModule implements TelemetryMetrics {
         observable.observe(this.dataDirectoryBytes);
       });
 
+    if (this.enabled) {
+      this.activate(performanceSampleIntervalMs, filesystemSampleIntervalMs);
+    }
+  }
+
+  private activate(
+    performanceSampleIntervalMs = this.deps.performanceSampleIntervalMs ??
+      DEFAULT_PERFORMANCE_SAMPLE_INTERVAL_MS,
+    filesystemSampleIntervalMs = this.deps.filesystemSampleIntervalMs ??
+      DEFAULT_FILESYSTEM_SAMPLE_INTERVAL_MS,
+  ): void {
+    if (this.started) return;
+    this.started = true;
+    setTelemetryActivityEnabled(true);
+    this.reader?.setEnabled(true);
+    setQueueOverflowRecorder(() => {
+      if (this.started && this.enabled) this.queueOverflow?.add(1);
+    });
     this.resetCpuBaseline();
     this.sampleMemory();
     this.performanceTimer = setInterval(() => {
@@ -448,7 +712,20 @@ class TelemetryMetricsModule implements TelemetryMetrics {
 
   recordModelCall(usage: ModelCallUsage): void {
     if (!this.started || !this.enabled) return;
-    const advanced = this.level === 'advanced' || this.level === 'debug';
+    const advanced = isDetailedLevel(this.currentLevel());
+    if (advanced && usage.sessionId) {
+      const session = this.sessions.get(usage.sessionId);
+      if (session) {
+        session.lastCallInputTokens = usage.inputTokens;
+        session.lastCallCacheReadTokens = usage.inputCacheReadTokens;
+        session.lastCallCacheWriteTokens = usage.inputCacheWriteTokens;
+        session.lastCallCacheReadRatio =
+          usage.inputTokens > 0
+            ? usage.inputCacheReadTokens / usage.inputTokens
+            : undefined;
+        session.lastCallSource = usage.source;
+      }
+    }
     const dimensions = {
       'gen_ai.operation.name': usage.operationName ?? 'generate_content',
       'gen_ai.provider.name': normalizeProviderName(
@@ -502,20 +779,37 @@ class TelemetryMetricsModule implements TelemetryMetrics {
   }
 
   registerSession(session: SessionTelemetryState): void {
+    if (
+      this.deps.policy &&
+      !this.deps.policy.getSnapshot().detailedMetricsEnabled
+    ) {
+      return;
+    }
     this.sessions.set(session.id, { ...session });
+  }
+
+  unregisterSession(sessionId: string): void {
+    this.sessions.delete(sessionId);
   }
 
   updateSession(
     sessionId: string,
     update: Partial<Omit<SessionTelemetryState, 'id' | 'name'>>,
   ): void {
+    if (
+      this.deps.policy &&
+      !this.deps.policy.getSnapshot().detailedMetricsEnabled
+    ) {
+      return;
+    }
     const current = this.sessions.get(sessionId);
     if (!current) return;
     Object.assign(current, update);
   }
 
   recordToolCall(sessionId: string, toolName: string, success: boolean): void {
-    if (!this.started || !this.enabled || this.level !== 'advanced') return;
+    if (!this.started || !this.enabled || !isDetailedLevel(this.currentLevel()))
+      return;
     const session = this.sessions.get(sessionId);
     this.toolCalls?.add(1, {
       ...(session
@@ -526,47 +820,86 @@ class TelemetryMetricsModule implements TelemetryMetrics {
     });
   }
 
-  async setEnabled(enabled: boolean): Promise<void> {
-    if (this.enabled === enabled && (enabled === false || this.started)) return;
-    this.enabled = enabled;
-    this.level = enabled ? (this.level === 'no' ? 'basic' : this.level) : 'no';
-    if (!enabled) {
-      await this.close();
-      return;
-    }
-    setTelemetryActivityEnabled(true);
-    if (this.started) {
-      this.resetCpuBaseline();
-      this.sampleMemory();
-    } else {
-      await this.start();
-    }
+  setEnabled(enabled: boolean): Promise<void> {
+    return this.setLevel(
+      enabled ? (this.level === 'no' ? 'basic' : this.level) : 'no',
+    );
+  }
+
+  async forceFlush(): Promise<void> {
+    if (this.closed || !this.started) return;
+    await this.provider?.forceFlush();
   }
 
   async close(): Promise<void> {
-    this.started = false;
+    if (this.closed) return;
+    this.pendingLevel = null;
+    await this.transitionPromise;
+    const provider = this.provider;
+    // Flush while collection callbacks are still active. Deactivating first
+    // would make the callbacks return no data during provider shutdown.
+    await provider?.forceFlush();
+    this.closed = true;
+    this.deactivate(false);
+    if (provider) await provider.shutdown();
     this.enabled = false;
     this.level = 'no';
+    this.sessions.clear();
+  }
+
+  private deactivate(disableReader = true): void {
+    if (!this.started && disableReader) this.reader?.setEnabled(false);
+    this.started = false;
+    this.filesystemGeneration += 1;
     setTelemetryActivityEnabled(false);
-    this.gatedExporter?.setEnabled(false);
     setQueueOverflowRecorder(null);
     if (this.performanceTimer) clearInterval(this.performanceTimer);
     if (this.filesystemTimer) clearInterval(this.filesystemTimer);
     this.performanceTimer = null;
     this.filesystemTimer = null;
-    if (this.provider) await this.provider.shutdown();
-    this.provider = null;
-    this.gatedExporter = null;
-    this.tokens = null;
-    this.ttft = null;
-    this.memorySamples = null;
-    this.cpuSamples = null;
+    if (disableReader) this.reader?.setEnabled(false);
   }
 
-  async setLevel(level: MetricsTelemetryLevel): Promise<void> {
-    if (this.level === level && this.enabled === (level !== 'no')) return;
-    this.level = level;
-    await this.setEnabled(level !== 'no');
+  setLevel(level: MetricsTelemetryLevel): Promise<void> {
+    if (this.closed) return Promise.resolve();
+    this.pendingLevel = level;
+    if (!this.transitionPromise) {
+      this.transitionPromise = this.processLevelTransitions().finally(() => {
+        this.transitionPromise = null;
+      });
+    }
+    return this.transitionPromise;
+  }
+
+  private async processLevelTransitions(): Promise<void> {
+    while (!this.closed && this.pendingLevel !== null) {
+      const level = this.pendingLevel;
+      this.pendingLevel = null;
+      if (this.level === level && this.enabled === (level !== 'no')) continue;
+      const previousLevel = this.level;
+      const previousEnabled = this.enabled;
+      try {
+        this.level = level;
+        this.enabled = level !== 'no';
+        if (this.enabled) {
+          await this.start();
+          if (this.level === level && this.enabled) this.activate();
+        } else {
+          this.deactivate();
+        }
+        if (!isDetailedLevel(level)) this.sessions.clear();
+      } catch (error) {
+        this.level = previousLevel;
+        this.enabled = previousEnabled;
+        if (previousEnabled) this.activate();
+        else this.deactivate();
+        throw error;
+      }
+    }
+  }
+
+  private currentLevel(): MetricsTelemetryLevel {
+    return this.deps.policy?.getSnapshot().level ?? this.level;
   }
 
   private resetCpuBaseline(): void {
@@ -600,13 +933,29 @@ class TelemetryMetricsModule implements TelemetryMetrics {
     this.memorySamples?.record(this.latestMemoryRssBytes);
   }
 
-  private async sampleDataDirectory(): Promise<void> {
-    if (!this.started || !this.enabled) return;
+  private sampleDataDirectory(): Promise<void> {
+    if (!this.started || !this.enabled) return Promise.resolve();
+    if (this.filesystemSample) return this.filesystemSample;
+    const generation = this.filesystemGeneration;
+    const sample = this.collectDataDirectorySize(generation).finally(() => {
+      if (this.filesystemSample === sample) this.filesystemSample = null;
+    });
+    this.filesystemSample = sample;
+    return sample;
+  }
+
+  private async collectDataDirectorySize(generation: number): Promise<void> {
     try {
       const dataDirectoryBytes = await directorySize(this.deps.dataDirectory);
-      if (!this.started || !this.enabled) return;
+      if (
+        generation !== this.filesystemGeneration ||
+        !this.started ||
+        !this.enabled
+      )
+        return;
       this.dataDirectoryBytes = dataDirectoryBytes;
     } catch (error) {
+      if (generation !== this.filesystemGeneration) return;
       this.deps.logging.debug(
         { error },
         'Unable to sample data-directory size',
@@ -615,10 +964,36 @@ class TelemetryMetricsModule implements TelemetryMetrics {
   }
 }
 
+function isDetailedLevel(level: MetricsTelemetryLevel): boolean {
+  return level === 'advanced' || level === 'debug';
+}
+
+function normalizePlatformValue(value: string): string {
+  const normalized = value.toLowerCase().replace(/[^a-z0-9._-]/g, '_');
+  return normalized.slice(0, 32) || 'unknown';
+}
+
+function normalizeOsVersion(value: string): string {
+  return normalizePlatformValue(value.split('-')[0] ?? value);
+}
+
 function sessionAttributes(session: SessionTelemetryState): Attributes {
   return {
     'klex.session.id': session.id,
     'klex.session.name': session.name,
+    ...(session.extensionIdentifier
+      ? { 'klex.session.extension': session.extensionIdentifier }
+      : {}),
+    ...(session.parentId ? { 'klex.session.parent.id': session.parentId } : {}),
+  };
+}
+
+function sessionLastCallAttributes(session: SessionTelemetryState): Attributes {
+  return {
+    ...sessionAttributes(session),
+    ...(session.lastCallSource
+      ? { 'klex.call.source': session.lastCallSource }
+      : {}),
   };
 }
 

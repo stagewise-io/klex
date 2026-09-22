@@ -7,15 +7,15 @@ Basic and advanced exports use an allowlist. Arbitrary logger fields and free-fo
 - `service.name`: `klex`
 - `service.namespace`: `stagewise`
 - `service.version`: application version, when available
-- `klex.instance.id`: random installation-scoped UUID
+- `service.instance.id`: random installation-scoped UUID
 
-Basic and advanced allowlisted exports contain no hostname, username, home directory, IP address, MAC address, API credential, session ID, or conversation ID. Debug tracing is an explicit exception: debug spans may include conversation identifiers and AI request/output content; operators must treat debug exports as sensitive.
+Basic allowlisted exports contain no hostname, username, home directory, IP address, MAC address, API credential, session ID, or conversation ID. Advanced metrics intentionally include session IDs, names, kinds, parent relationships, runtime state, history sizes, tool names, and last-call token/cache state for per-session operations dashboards. Debug includes the same per-session metrics and may additionally include conversation identifiers and AI request/output content in spans. Operators must treat advanced and debug exports as sensitive operational data.
 
 ## Metrics
 
 Metrics are gated synchronously by the effective telemetry level. `no` performs no sampling, recording, observing, or export; disabling telemetry clears transient activity measurements, and enabling telemetry rehydrates activity gauges from current O(1) lease, queue, and realtime-session state without recording disabled-period events. CPU and RSS are sampled every 5 seconds and exported every 60 seconds by default. Filesystem size is sampled every 60 seconds.
 
-Every enabled level preserves standard GenAI operation and normalized provider dimensions. Token metrics additionally include `gen_ai.token.type`, and operation duration includes bounded `klex.outcome` at basic and above. Advanced and debug additionally include bounded `klex.call.source` and normalized `error.type`; cache token metrics are advanced/debug only and use bounded `klex.cache.type`. Debug may include additional tracing detail, but does not relax metric privacy or cardinality policy.
+Every enabled level preserves standard GenAI operation and normalized provider dimensions. Token metrics additionally include `gen_ai.token.type`, and operation duration includes bounded `klex.outcome` at basic and above. Advanced and debug additionally include bounded `klex.call.source`, normalized `error.type`, aggregate cache-token histograms, and identity-bearing per-session metrics. Debug may include additional tracing detail but uses the same per-session metric schema as advanced.
 
 | Name | Type | Unit | Attributes |
 | --- | --- | --- | --- |
@@ -33,12 +33,21 @@ Every enabled level preserves standard GenAI operation and normalized provider d
 | `klex.interaction.queue.depth` | Observable gauge | `{update}` | none |
 | `klex.interaction.queue.overflow` | Counter | `{event}` | none |
 | `klex.realtime.session.active` | Observable gauge | `{session}` | none |
+| `klex.session.active` | Observable gauge | `1` | advanced/debug: session identity attributes |
+| `klex.session.runtime_state` | Observable gauge | `1` | advanced/debug: session identity and `klex.session.runtime.state` |
+| `klex.session.history.length` | Observable gauge | `{message}` | advanced/debug: session identity attributes |
+| `klex.session.history.transformed_length` | Observable gauge | `{message}` | advanced/debug: session identity attributes |
+| `klex.session.last_call.input_tokens` | Observable gauge | `{token}` | advanced/debug: session identity and `klex.call.source` |
+| `klex.session.last_call.cache_read_tokens` | Observable gauge | `{token}` | advanced/debug: session identity and `klex.call.source` |
+| `klex.session.last_call.cache_write_tokens` | Observable gauge | `{token}` | advanced/debug: session identity and `klex.call.source` |
+| `klex.session.last_call.cache_read_ratio` | Observable gauge | `1` | advanced/debug: session identity and `klex.call.source` |
+| `klex.session.tool.calls` | Counter | `{call}` | advanced/debug: session identity, tool name, and outcome |
 
-CPU and RSS histograms preserve distributions of 5-second samples. Token boundaries are `1` through `67,108,864`; duration boundaries range from `0.01` to `81.92` seconds; CPU boundaries range from `0.01` through `1`; RSS boundaries range from `64 MiB` through `4 GiB`. Metrics use bounded, low-cardinality dimensions and contain no model prompts, completions, tool payloads, session IDs, or arbitrary user-controlled labels.
+CPU and RSS histograms preserve distributions of 5-second samples. Token boundaries are `1` through `67,108,864`; duration boundaries range from `0.01` to `81.92` seconds; CPU boundaries range from `0.01` through `1`; RSS boundaries range from `64 MiB` through `4 GiB`. Basic metrics use bounded, low-cardinality dimensions and contain no model prompts, completions, tool payloads, session IDs, or arbitrary user-controlled labels. Advanced/debug per-session metrics intentionally trade cardinality and identifiability for operational visibility. Their session identity attributes are `klex.session.id`, `klex.session.name`, `klex.session.kind`, and optional `klex.session.parent.id`.
 
 ## Model-call semantics
 
-Every terminal model call is counted once by `callId`, including success, error, and abort outcomes. Text-generation calls use `gen_ai.operation.name = generate_content`; provider identifiers are normalized to OTel-compatible values. `chat` and `extension` are represented only by `klex.call.source` at advanced level.
+Every terminal model call is counted once by `callId`, including success, error, and abort outcomes. Text-generation calls use `gen_ai.operation.name = generate_content`; provider identifiers are normalized to OTel-compatible values. `chat` and `extension` are represented by `klex.call.source` at advanced/debug. Per-session last-call gauges update on each terminal model call. `input_tokens` is the provider-reported token count for the final transformed request. `cache_read_ratio` is cache-read tokens divided by input tokens and is omitted when the denominator is zero.
 
 ## Debug
 

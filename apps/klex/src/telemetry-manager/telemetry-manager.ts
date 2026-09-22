@@ -6,6 +6,10 @@ import {
   type KlexConfig,
   type RuntimeTelemetryLevel,
 } from '@/config';
+import {
+  createTelemetryPolicy,
+  type TelemetryPolicy,
+} from '@/telemetry-policy';
 
 import type { TelemetrySpanProcessor } from './span-processor';
 
@@ -13,6 +17,7 @@ export interface TelemetryManagerDependencies {
   logging: RootLogger;
   config: Config;
   spanProcessor: TelemetrySpanProcessor;
+  policy?: TelemetryPolicy;
   effectiveLevel?: RuntimeTelemetryLevel;
   onLevelChange?: (level: RuntimeTelemetryLevel) => Promise<void>;
 }
@@ -55,6 +60,7 @@ class TelemetryManagerModule implements TelemetryManager {
       rootLogger: RootLogger;
       config: Config;
       spanProcessor: TelemetrySpanProcessor;
+      policy: TelemetryPolicy;
       effectiveLevel?: RuntimeTelemetryLevel;
       onLevelChange?: (level: RuntimeTelemetryLevel) => Promise<void>;
     },
@@ -118,6 +124,7 @@ class TelemetryManagerModule implements TelemetryManager {
   }
 
   private async applyLevel(level: RuntimeTelemetryLevel): Promise<void> {
+    this.deps.policy.setLevel(level);
     this.deps.spanProcessor.setLevel(level);
     this.updateOtlpTransport(level);
     await this.deps.onLevelChange?.(level);
@@ -150,6 +157,7 @@ export function createTelemetryManager(
     rootLogger: deps.logging,
     config: deps.config,
     spanProcessor: deps.spanProcessor,
+    policy: deps.policy ?? createTelemetryPolicy('no'),
     effectiveLevel: deps.effectiveLevel,
     onLevelChange: deps.onLevelChange,
   });

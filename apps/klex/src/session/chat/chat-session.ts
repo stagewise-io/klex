@@ -44,6 +44,7 @@ import type {
   Usage,
   UsagePair,
 } from '@/session/types';
+import type { TelemetryMetrics } from '@/telemetry-metrics';
 
 import {
   createExtensionHandler,
@@ -99,6 +100,7 @@ export interface ChatSessionDependencies {
    * prompt entirely.
    */
   basePrompt: string;
+  telemetryMetrics?: TelemetryMetrics;
 }
 
 class ChatSessionModule implements AgentSession {
@@ -228,6 +230,7 @@ class ChatSessionModule implements AgentSession {
       modelPurpose?: ModelPurpose;
       /** Base system prompt; required for every session. */
       basePrompt: string;
+      telemetryMetrics?: TelemetryMetrics;
     },
   ) {
     this.sessionId = deps.sessionContext.sessionId;
@@ -249,6 +252,14 @@ class ChatSessionModule implements AgentSession {
     );
     this.sessionContext = trace.setSpan(ROOT_CONTEXT, this.sessionSpan);
     this.createdAt = new Date().toISOString();
+    this.deps.telemetryMetrics?.registerSession({
+      id: this.sessionId,
+      name: this.sessionId,
+      active: true,
+      runtimeState: this.runtimeState,
+      historyLength: this.messages.length,
+      transformedHistoryLength: this.messages.length,
+    });
 
     this.fallbackManager = new ModelFallbackManager({
       logger: this.deps.logger,
@@ -867,6 +878,7 @@ class ChatSessionModule implements AgentSession {
     this.loopActive = true;
 
     this.runtimeState = 'working';
+    this.syncTelemetrySession();
 
     let needsBackoffRetry = false;
     let needsCheckRetry = false;
@@ -890,6 +902,8 @@ class ChatSessionModule implements AgentSession {
         if (this.laneSuspended) {
           this.hasPendingInput = true;
           this.runtimeState = 'leased';
+          this.syncTelemetrySession();
+          this.syncTelemetrySession();
           this.deps.logger.info(
             { sessionId: this.sessionId },
             'Generation lane leased — chat loop yielding',
@@ -907,6 +921,8 @@ class ChatSessionModule implements AgentSession {
           !needsCheckRetry
         ) {
           this.runtimeState = 'idle';
+          this.syncTelemetrySession();
+          this.syncTelemetrySession();
           this.resolveIdleWaiters(true);
           this.sessionSpan.addEvent('session.idle', {
             'session.id': this.sessionId,
@@ -937,6 +953,7 @@ class ChatSessionModule implements AgentSession {
         const turn = createTurn({
           logger: this.deps.logger,
           sessionId: this.sessionId,
+          telemetryMetrics: this.deps.telemetryMetrics,
           sessionContext: this.sessionContext,
           sessionSpan: this.sessionSpan,
           messages: this.messages,
@@ -987,6 +1004,8 @@ class ChatSessionModule implements AgentSession {
         // Fatal error — terminate the session.
         if (turnResult.fatalError) {
           this.runtimeState = 'terminated';
+          this.syncTelemetrySession();
+          this.syncTelemetrySession();
           this.deps.logger.error(
             { sessionId: this.sessionId },
             'Fatal turn error — terminating session',
@@ -1002,6 +1021,8 @@ class ChatSessionModule implements AgentSession {
         // Track success/failure for backoff.
         if (turnResult.completeFailure) {
           this.runtimeState = 'retrying';
+          this.syncTelemetrySession();
+          this.syncTelemetrySession();
           this.backoffManager.recordFailure();
           needsBackoffRetry = true;
           needsCheckRetry = false;
@@ -1030,6 +1051,7 @@ class ChatSessionModule implements AgentSession {
           }
         } else {
           this.runtimeState = 'success';
+          this.syncTelemetrySession();
           this.backoffManager.recordSuccess();
           needsBackoffRetry = false;
           // Check if new non-deferrable input arrived during this turn.
@@ -1186,6 +1208,18 @@ class ChatSessionModule implements AgentSession {
       messageCount: this.messages.length,
       createdAt: this.createdAt,
     };
+  }
+
+  private syncTelemetrySession(
+    transformedHistoryLength = this.messages.length,
+  ): void {
+    this.deps.telemetryMetrics?.updateSession(this.sessionId, {
+      active: this._status !== 'terminated',
+      runtimeState:
+        this._status === 'terminated' ? 'terminated' : this.runtimeState,
+      historyLength: this.messages.length,
+      transformedHistoryLength,
+    });
   }
 
   public getMessages(): readonly ExtendedUIMessage[] {

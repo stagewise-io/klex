@@ -1,6 +1,7 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { SessionInboxUrgency } from '@/session/inbox';
+import * as telemetryMetrics from '@/telemetry-metrics';
 import {
   getInteractionTelemetry,
   setTelemetryActivityEnabled,
@@ -54,6 +55,16 @@ function createHost(overrides: Partial<GenerationLaneHost> = {}) {
   return host;
 }
 
+const managers: GenerationLaneLeaseManager[] = [];
+
+function createManager(
+  deps: ConstructorParameters<typeof GenerationLaneLeaseManager>[0],
+): GenerationLaneLeaseManager {
+  const manager = new GenerationLaneLeaseManager(deps);
+  managers.push(manager);
+  return manager;
+}
+
 function createRequest(): InteractionLeaseRequest {
   return {
     mode: 'realtime',
@@ -75,9 +86,16 @@ const inboxEvent = {
 };
 
 describe('GenerationLaneLeaseManager', () => {
+  afterEach(() => {
+    for (const manager of managers.splice(0)) {
+      manager.revoke('default-session-closed');
+    }
+    setTelemetryActivityEnabled(false);
+  });
+
   it('quiesces the chat lane before issuing a lease', async () => {
     const host = createHost();
-    const manager = new GenerationLaneLeaseManager({ host, logger });
+    const manager = createManager({ host, logger });
 
     const lease = await manager.acquire(createRequest());
 
@@ -87,7 +105,7 @@ describe('GenerationLaneLeaseManager', () => {
   });
 
   it('rejects a second lease while one is active', async () => {
-    const manager = new GenerationLaneLeaseManager({
+    const manager = createManager({
       host: createHost(),
       logger,
     });
@@ -103,7 +121,7 @@ describe('GenerationLaneLeaseManager', () => {
     try {
       const baseline = getInteractionTelemetry();
       const host = createHost();
-      const manager = new GenerationLaneLeaseManager({
+      const manager = createManager({
         host,
         logger,
         maxPendingUpdates: 4,
@@ -121,14 +139,17 @@ describe('GenerationLaneLeaseManager', () => {
         baseline.queuedUpdates + 2,
       );
 
-      await lease.release('call-ended');
+      manager.revoke('default-session-closed');
+      expect(manager.isLeased()).toBe(false);
+      expect(host.finalizeLease).toHaveBeenCalledOnce();
       expect(getInteractionTelemetry()).toMatchObject({
         activeLeases: baseline.activeLeases,
         queuedUpdates: baseline.queuedUpdates,
       });
 
-      manager.revoke('default-session-closed');
-      setTelemetryActivityEnabled(true);
+      await lease.release('call-ended');
+      manager.revoke('default-session-terminated');
+      expect(host.finalizeLease).toHaveBeenCalledOnce();
       expect(getInteractionTelemetry()).toMatchObject({
         activeLeases: baseline.activeLeases,
         queuedUpdates: baseline.queuedUpdates,
@@ -138,9 +159,48 @@ describe('GenerationLaneLeaseManager', () => {
     }
   });
 
+  it('removes the activity provider exactly once on shutdown', () => {
+    const originalRegister = telemetryMetrics.registerActivityStateProviders;
+    const unregister = vi.fn();
+    const register = vi
+      .spyOn(telemetryMetrics, 'registerActivityStateProviders')
+      .mockImplementation((providers) => {
+        const actualUnregister = originalRegister(providers);
+        return () => {
+          unregister();
+          actualUnregister();
+        };
+      });
+    const manager = createManager({ host: createHost(), logger });
+
+    manager.revoke('default-session-closed');
+    manager.revoke('default-session-closed');
+
+    expect(register).toHaveBeenCalledOnce();
+    expect(unregister).toHaveBeenCalledOnce();
+  });
+
+  it('restores lease telemetry on release and shutdown', async () => {
+    setTelemetryActivityEnabled(true);
+    const baseline = getInteractionTelemetry();
+    const manager = createManager({ host: createHost(), logger });
+
+    const lease = await manager.acquire(createRequest());
+    await lease.release('call-ended');
+    expect(getInteractionTelemetry().activeLeases).toBe(baseline.activeLeases);
+
+    const secondLease = await manager.acquire(createRequest());
+    manager.revoke('default-session-closed');
+    await secondLease.closed;
+    expect(getInteractionTelemetry().activeLeases).toBe(baseline.activeLeases);
+
+    setTelemetryActivityEnabled(true);
+    expect(getInteractionTelemetry().activeLeases).toBe(baseline.activeLeases);
+  });
+
   it('resumes the chat lane after release and frees the lane', async () => {
     const host = createHost();
-    const manager = new GenerationLaneLeaseManager({ host, logger });
+    const manager = createManager({ host, logger });
     const lease = await manager.acquire(createRequest());
 
     await lease.release('call-ended');
@@ -154,7 +214,7 @@ describe('GenerationLaneLeaseManager', () => {
   });
 
   it('forwards inbox events to the lease holder with monotonic sequences', async () => {
-    const manager = new GenerationLaneLeaseManager({
+    const manager = createManager({
       host: createHost(),
       logger,
     });
@@ -198,7 +258,7 @@ describe('GenerationLaneLeaseManager', () => {
         };
       }),
     });
-    const manager = new GenerationLaneLeaseManager({ host, logger });
+    const manager = createManager({ host, logger });
     const lease = await manager.acquire(createRequest());
 
     expect(manager.forward(inboxEvent, false)).toBe(true);
@@ -215,7 +275,7 @@ describe('GenerationLaneLeaseManager', () => {
   });
 
   it('drops forwarded events when no lease is active', () => {
-    const manager = new GenerationLaneLeaseManager({
+    const manager = createManager({
       host: createHost(),
       logger,
     });
@@ -224,7 +284,7 @@ describe('GenerationLaneLeaseManager', () => {
 
   it('revokes the active lease and keeps the lane closed', async () => {
     const host = createHost();
-    const manager = new GenerationLaneLeaseManager({ host, logger });
+    const manager = createManager({ host, logger });
     const lease = await manager.acquire(createRequest());
 
     manager.revoke('default-session-closed');
@@ -254,7 +314,7 @@ describe('GenerationLaneLeaseManager', () => {
         await commitAllowed;
       }),
     });
-    const manager = new GenerationLaneLeaseManager({ host, logger });
+    const manager = createManager({ host, logger });
     const lease = await manager.acquire(createRequest());
     const admitted = lease.commit({
       type: 'user-transcript',
@@ -300,7 +360,7 @@ describe('GenerationLaneLeaseManager', () => {
         }
       }),
     });
-    const manager = new GenerationLaneLeaseManager({ host, logger });
+    const manager = createManager({ host, logger });
     const lease = await manager.acquire(createRequest());
     const admitted = lease.commit({
       type: 'user-transcript',
@@ -331,7 +391,7 @@ describe('GenerationLaneLeaseManager', () => {
 
   it('finalizes a lease exactly once across repeated release and revoke calls', async () => {
     const host = createHost();
-    const manager = new GenerationLaneLeaseManager({ host, logger });
+    const manager = createManager({ host, logger });
     const lease = await manager.acquire(createRequest());
 
     await lease.release('call-ended');
@@ -346,7 +406,7 @@ describe('GenerationLaneLeaseManager', () => {
 
   it('does not commit the same event twice', async () => {
     const host = createHost();
-    const manager = new GenerationLaneLeaseManager({ host, logger });
+    const manager = createManager({ host, logger });
     const lease = await manager.acquire(createRequest());
 
     const event = {

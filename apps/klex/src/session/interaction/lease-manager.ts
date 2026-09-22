@@ -189,6 +189,7 @@ export class GenerationLaneLeaseManager {
   revoke(
     reason: 'default-session-closed' | 'default-session-terminated',
   ): void {
+    if (this.closed) return;
     this.closed = true;
     this.unregisterActivityProvider();
     const lease = this.active;

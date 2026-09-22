@@ -36,7 +36,7 @@ function makeCallEndEvent(event: Record<string, unknown>): CallEndEvent {
 }
 
 describe('KlexTelemetry — model ID propagation', () => {
-  it('emits exactly one terminal model-call record per call ID', () => {
+  it('emits exactly one terminal model-call record per generation lifecycle', () => {
     const telemetry = createTelemetry();
     const records: ModelCallRecord[] = [];
     telemetry.setModelCallSink((record) => records.push(record));

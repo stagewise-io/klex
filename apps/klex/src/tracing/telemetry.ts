@@ -390,7 +390,7 @@ export class KlexTelemetry implements Telemetry {
     const recordInputs =
       this.recordContent &&
       this.contentAllowed() &&
-      genEvent.recordInputs === true;
+      genEvent.recordInputs !== false;
     if (recordInputs) {
       const systemInstructions = instructionsToString(genEvent.instructions);
       if (systemInstructions != null) {
@@ -424,7 +424,7 @@ export class KlexTelemetry implements Telemetry {
       recordOutputs:
         this.recordContent &&
         this.contentAllowed() &&
-        genEvent.recordOutputs === true,
+        genEvent.recordOutputs !== false,
       functionId: genEvent.functionId,
       operationId: genEvent.operationId,
       conversationId,

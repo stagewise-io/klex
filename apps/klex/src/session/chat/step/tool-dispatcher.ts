@@ -42,6 +42,7 @@ export class ToolDispatcher {
       toolTimeoutMs?: number;
       /** UUID of the session that owns this dispatcher. */
       sessionId: string;
+      recordToolCall?: (toolName: string, success: boolean) => void;
     },
   ) {
     this.toolExecutor = new ToolExecutor({
@@ -186,6 +187,7 @@ export class ToolDispatcher {
               new Error(p.errorText ?? 'Tool execution failed'),
             );
           }
+          this.deps.recordToolCall?.(toolName, p.state === 'output-available');
           toolSpan.end();
           this.deps.logger.debug(
             {
@@ -201,6 +203,7 @@ export class ToolDispatcher {
         .catch((error) => {
           // Only reached for unexpected errors that escape executeTool
           // (e.g. tool not found, internal assertion failures).
+          this.deps.recordToolCall?.(toolName, false);
           recordErrorOnSpan(toolSpan, error);
           toolSpan.end();
           this.deps.logger.error(

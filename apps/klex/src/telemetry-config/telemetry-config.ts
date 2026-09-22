@@ -32,7 +32,7 @@ export function resolveTelemetryEndpoint(value?: string): string {
   }
   url.search = '';
   url.hash = '';
-  return url.toString().replace(/\/$/, '');
+  return url.toString().replace(/\/+$/, '');
 }
 
 export function createTelemetryExportConfiguration(
@@ -66,8 +66,27 @@ function parseHeaders(
   }
   return Object.fromEntries(
     Object.entries(parsed).map(([key, item]) => {
+      if (!/^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/.test(key)) {
+        throw new Error(
+          `${TELEMETRY_HEADERS_ENV} contains an invalid header name`,
+        );
+      }
       if (typeof item !== 'string') {
         throw new Error(`${TELEMETRY_HEADERS_ENV} values must be strings`);
+      }
+      const hasControlCharacter = [...item].some((character) => {
+        const code = character.charCodeAt(0);
+        return (
+          code <= 0x08 ||
+          (code >= 0x0a && code <= 0x0c) ||
+          (code >= 0x0e && code <= 0x1f) ||
+          code === 0x7f
+        );
+      });
+      if (hasControlCharacter) {
+        throw new Error(
+          `${TELEMETRY_HEADERS_ENV} contains an invalid header value`,
+        );
       }
       return [key, item];
     }),

@@ -7,9 +7,9 @@ Basic and advanced exports use an allowlist. Arbitrary logger fields and free-fo
 - `service.name`: `klex`
 - `service.namespace`: `stagewise`
 - `service.version`: application version, when available
-- `service.instance.id`: random installation-scoped UUID
+- `klex.instance.id`: random installation-scoped UUID
 
-No hostname, username, home directory, IP address, MAC address, API credential, session ID, or conversation ID is exported.
+Basic and advanced allowlisted exports contain no hostname, username, home directory, IP address, MAC address, API credential, session ID, or conversation ID. Debug tracing is an explicit exception: debug spans may include conversation identifiers and AI request/output content; operators must treat debug exports as sensitive.
 
 ## Metrics
 

@@ -34,11 +34,11 @@ describe('TelemetryScreen', () => {
       </ScreenMetaProvider>,
     );
 
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    const frame = view.lastFrame() ?? '';
-
-    expect(frame).toContain('Anonymous instance ID');
-    expect(frame).toContain(telemetryInstanceId);
-    expect(frame).toContain('Read-only identifier');
+    await vi.waitFor(() => {
+      const frame = view.lastFrame() ?? '';
+      expect(frame).toContain('Anonymous instance ID');
+      expect(frame).toContain(telemetryInstanceId);
+      expect(frame).toContain('Read-only identifier');
+    });
   });
 });

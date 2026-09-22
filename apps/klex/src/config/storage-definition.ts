@@ -55,7 +55,7 @@ export const CONFIG_STORE_DEFINITION: JsonStoreDefinition = {
   required: true,
   schemaVersion: 3,
   compatibilityVersion: 6,
-  minimumKlexVersion: '0.7.1',
+  minimumKlexVersion: '0.8.0',
   legacySchemaVersion: 1,
   versions: [
     { version: 1, schema: legacyConfigStorageSchema },

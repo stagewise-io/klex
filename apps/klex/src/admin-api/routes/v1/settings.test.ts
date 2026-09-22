@@ -40,6 +40,7 @@ const baseConfig: KlexConfig = {
   },
   modelSelection: {
     chat: [reference],
+    deepThinking: [],
     compaction: [],
     memory: [],
     imageVision: [],

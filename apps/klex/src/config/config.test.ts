@@ -71,6 +71,73 @@ afterEach(async () => {
 });
 
 describe('config v2', () => {
+  it('advances compatibility metadata for deep-thinking model selection', async () => {
+    expect(CONFIG_STORE_DEFINITION.compatibilityVersion).toBe(6);
+    expect(CONFIG_STORE_DEFINITION.minimumKlexVersion).toBe('0.8.0');
+
+    const dataDirectory = await directory();
+    await writeFile(
+      join(dataDirectory, CONFIG_FILE_NAME),
+      JSON.stringify({
+        configVersion: 2,
+        officialName: 'Agent',
+        providers: {},
+        modelSelection: {
+          ...emptyModelSelection,
+          deepThinking: [{ providerId: 'remote', modelId: 'reasoner' }],
+        },
+        mcpServers: {},
+      }),
+    );
+    await prepareConfigStore(dataDirectory);
+
+    const persisted = JSON.parse(
+      await readFile(join(dataDirectory, CONFIG_FILE_NAME), 'utf8'),
+    ) as {
+      _klex: { compatibilityVersion: number; minimumKlexVersion: string };
+    };
+    expect(persisted._klex).toMatchObject({
+      compatibilityVersion: 6,
+      minimumKlexVersion: '0.8.0',
+    });
+  });
+
+  it('rejects a deep-thinking config for an older reader before mutation', async () => {
+    const dataDirectory = await directory();
+    await writeFile(
+      join(dataDirectory, CONFIG_FILE_NAME),
+      JSON.stringify({
+        configVersion: 2,
+        officialName: 'Agent',
+        providers: {},
+        modelSelection: {
+          ...emptyModelSelection,
+          deepThinking: [{ providerId: 'remote', modelId: 'reasoner' }],
+        },
+        mcpServers: {},
+      }),
+    );
+    await prepareConfigStore(dataDirectory);
+    const configPath = join(dataDirectory, CONFIG_FILE_NAME);
+    const beforeDowngrade = await readFile(configPath);
+
+    const olderDefinition = {
+      ...CONFIG_STORE_DEFINITION,
+      compatibilityVersion: 5,
+      minimumKlexVersion: '0.7.0',
+    };
+    await expect(
+      createLocalData({
+        logging,
+        dataDirectory,
+        klexVersion: '0.7.0',
+        stores: [olderDefinition],
+      }).start(),
+    ).rejects.toThrow(/compatibility/);
+
+    expect(await readFile(configPath)).toEqual(beforeDowngrade);
+  });
+
   it('accepts legacy telemetry levels before the v2-to-v3 migration', () => {
     const version = CONFIG_STORE_DEFINITION.versions.find(
       ({ version }) => version === 2,
@@ -93,6 +160,73 @@ describe('config v2', () => {
         expected,
       );
     }
+  });
+
+  it('advances compatibility metadata for deep-thinking model selection', async () => {
+    expect(CONFIG_STORE_DEFINITION.compatibilityVersion).toBe(6);
+    expect(CONFIG_STORE_DEFINITION.minimumKlexVersion).toBe('0.8.0');
+
+    const dataDirectory = await directory();
+    await writeFile(
+      join(dataDirectory, CONFIG_FILE_NAME),
+      JSON.stringify({
+        configVersion: 2,
+        officialName: 'Agent',
+        providers: {},
+        modelSelection: {
+          ...emptyModelSelection,
+          deepThinking: [{ providerId: 'remote', modelId: 'reasoner' }],
+        },
+        mcpServers: {},
+      }),
+    );
+    await prepareConfigStore(dataDirectory);
+
+    const persisted = JSON.parse(
+      await readFile(join(dataDirectory, CONFIG_FILE_NAME), 'utf8'),
+    ) as {
+      _klex: { compatibilityVersion: number; minimumKlexVersion: string };
+    };
+    expect(persisted._klex).toMatchObject({
+      compatibilityVersion: 6,
+      minimumKlexVersion: '0.8.0',
+    });
+  });
+
+  it('rejects a deep-thinking config for an older reader before mutation', async () => {
+    const dataDirectory = await directory();
+    await writeFile(
+      join(dataDirectory, CONFIG_FILE_NAME),
+      JSON.stringify({
+        configVersion: 2,
+        officialName: 'Agent',
+        providers: {},
+        modelSelection: {
+          ...emptyModelSelection,
+          deepThinking: [{ providerId: 'remote', modelId: 'reasoner' }],
+        },
+        mcpServers: {},
+      }),
+    );
+    await prepareConfigStore(dataDirectory);
+    const configPath = join(dataDirectory, CONFIG_FILE_NAME);
+    const beforeDowngrade = await readFile(configPath);
+
+    const olderDefinition = {
+      ...CONFIG_STORE_DEFINITION,
+      compatibilityVersion: 5,
+      minimumKlexVersion: '0.7.0',
+    };
+    await expect(
+      createLocalData({
+        logging,
+        dataDirectory,
+        klexVersion: '0.7.0',
+        stores: [olderDefinition],
+      }).start(),
+    ).rejects.toThrow(/compatibility/);
+
+    expect(await readFile(configPath)).toEqual(beforeDowngrade);
   });
 
   it('marks OpenRouter attribution settings as provider-managed', () => {

@@ -1,6 +1,9 @@
 import { extendZodWithOpenApi, z } from '@hono/zod-openapi';
 
-import { providerTypeSchema as configProviderTypeSchema } from '@/config';
+import {
+  providerTypeSchema as configProviderTypeSchema,
+  MODEL_PURPOSES,
+} from '@/config';
 
 // Extend Zod with .openapi() metadata support for spec generation.
 extendZodWithOpenApi(z);
@@ -307,6 +310,7 @@ const modelSelectionSchema = z
     memory: z.array(modelSelectionEntryOapiSchema),
     imageVision: z.array(modelSelectionEntryOapiSchema).default([]),
     audioListening: z.array(modelSelectionEntryOapiSchema).default([]),
+    deepThinking: z.array(modelSelectionEntryOapiSchema).default([]),
     voice: voiceModelSelectionSchema,
   })
   .openapi('ModelSelection');
@@ -318,6 +322,7 @@ const modelSelectionPatchSchema = z
     memory: z.array(modelSelectionEntryOapiSchema).optional(),
     imageVision: z.array(modelSelectionEntryOapiSchema).optional(),
     audioListening: z.array(modelSelectionEntryOapiSchema).optional(),
+    deepThinking: z.array(modelSelectionEntryOapiSchema).optional(),
     voice: voiceModelSelectionSchema.optional(),
   })
   .openapi('ModelSelectionPatch');
@@ -667,6 +672,11 @@ const usageSchema = z.object({
 
 const godSessionInfoResponseSchema = z
   .object({
+    name: z.string(),
+    extensionIdentifier: z.string().optional(),
+    kind: z.enum(['default', 'god', 'child']),
+    parentId: z.string().nullable(),
+    modelPurpose: z.enum(MODEL_PURPOSES),
     id: z.string(),
     status: z.enum(['active', 'terminated']),
     runtimeState: z.enum([

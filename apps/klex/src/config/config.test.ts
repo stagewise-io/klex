@@ -71,6 +71,30 @@ afterEach(async () => {
 });
 
 describe('config v2', () => {
+  it('accepts legacy telemetry levels before the v2-to-v3 migration', () => {
+    const version = CONFIG_STORE_DEFINITION.versions.find(
+      ({ version }) => version === 2,
+    );
+    if (!version) throw new Error('Missing config schema version 2');
+
+    for (const [level, expected] of [
+      ['off', 'no'],
+      ['minimum', 'basic'],
+      ['reduced', 'advanced'],
+      ['full', 'advanced'],
+      ['debug', 'advanced'],
+    ] as const) {
+      const input: Record<string, unknown> = {
+        ...completeV2Config,
+        telemetry: { level },
+      };
+      expect(() => version.schema.parse(input)).not.toThrow();
+      expect(migrateStoredTelemetryConfig(input).telemetry?.level).toBe(
+        expected,
+      );
+    }
+  });
+
   it('marks OpenRouter attribution settings as provider-managed', () => {
     expect(getProviderSettingsJsonSchema('openrouter')).toMatchObject({
       properties: {

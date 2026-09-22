@@ -646,10 +646,6 @@ const legacyKlexConfigSchema = z
   .strict();
 
 const currentStoredKlexConfigSchema = klexConfigSchema
-  .extend({ configVersion: z.literal(2) })
-  .strict();
-
-const legacyCurrentStoredKlexConfigSchema = klexConfigSchema
   .extend({
     configVersion: z.literal(2),
     telemetry: storedTelemetryConfigSchema.optional(),
@@ -695,7 +691,7 @@ function migrateTelemetryConfig(
 }
 
 function migrateStoredKlexConfig(input: unknown): KlexConfig {
-  const parsed = legacyCurrentStoredKlexConfigSchema.parse(input);
+  const parsed = currentStoredKlexConfigSchema.parse(input);
   return klexConfigSchema.parse({
     ...parsed,
     telemetry: migrateTelemetryConfig(parsed.telemetry),
@@ -718,7 +714,7 @@ function parseLegacyKlexConfig(input: unknown): LegacyKlexConfig {
   return legacyKlexConfigSchema.parse(input);
 }
 
-function parseCurrentStoredKlexConfig(input: unknown): KlexConfig {
+function parseCurrentStoredKlexConfig(input: unknown): Record<string, unknown> {
   return currentStoredKlexConfigSchema.parse(input);
 }
 

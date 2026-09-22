@@ -2,6 +2,12 @@
 
 All notable Klex changes are documented here.
 
+## 0.9.1 (2026-09-22)
+
+### Bug Fixes
+
+- preserve span context during telemetry scrubbing (254755e)
+
 ## 0.9.0 (2026-09-22)
 
 ### Features

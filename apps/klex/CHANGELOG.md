@@ -2,6 +2,16 @@
 
 All notable Klex changes are documented here.
 
+## 0.9.0 (2026-09-22)
+
+### Features
+
+- expose optional model creation timestamps (5e25abe)
+
+### Bug Fixes
+
+- bundle production React reconciler (6ac5ec7)
+
 ## 0.8.0 (2026-09-21)
 
 ### Features

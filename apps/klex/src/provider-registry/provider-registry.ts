@@ -541,6 +541,7 @@ class ProviderRegistryModule implements ProviderRegistry {
       imageVision: patch.imageVision ?? current.modelSelection.imageVision,
       audioListening:
         patch.audioListening ?? current.modelSelection.audioListening,
+      deepThinking: patch.deepThinking ?? current.modelSelection.deepThinking,
       voice: patch.voice ?? current.modelSelection.voice,
     };
     const changed: ModelSelection = {
@@ -549,6 +550,7 @@ class ProviderRegistryModule implements ProviderRegistry {
       memory: patch.memory ?? [],
       imageVision: patch.imageVision ?? [],
       audioListening: patch.audioListening ?? [],
+      deepThinking: patch.deepThinking ?? [],
       voice: patch.voice ?? { sts: [], tts: [], stt: [] },
     };
     const warnings: ModelSelectionWarning[] = [];
@@ -1071,6 +1073,7 @@ function modelSelectionEntries(
     ['memory', selection.memory],
     ['imageVision', selection.imageVision],
     ['audioListening', selection.audioListening],
+    ['deepThinking', selection.deepThinking],
     ['voice.sts', selection.voice.sts],
     ['voice.tts', selection.voice.tts],
     ['voice.stt', selection.voice.stt],

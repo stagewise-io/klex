@@ -20,7 +20,11 @@ import { setupTestApp } from './test-utils';
 
 function makeSessionInfo(overrides: Partial<SessionInfo> = {}): SessionInfo {
   return {
+    name: 'god-session',
     id: 'test-session-id',
+    kind: 'god',
+    parentId: null,
+    modelPurpose: 'chat',
     status: 'active',
     runtimeState: 'idle',
     model: { id: 'openai:gpt-4o', isFallback: false, fallbackIndex: 0 },

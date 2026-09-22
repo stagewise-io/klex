@@ -122,6 +122,7 @@ class AgentDirectoryModule implements AgentDirectory {
       providers: {},
       modelSelection: {
         chat: [],
+        deepThinking: [],
         compaction: [],
         memory: [],
         imageVision: [],

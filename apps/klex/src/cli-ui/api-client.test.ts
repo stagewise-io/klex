@@ -226,6 +226,163 @@ describe('AdminApiClient', () => {
     });
   });
 
+  describe('sessions', () => {
+    it('reads default and nested child sessions from introspection', async () => {
+      const nodes = new Map<string, unknown>([
+        [
+          'http://test/v1/introspect',
+          {
+            path: [],
+            state: null,
+            children: [{ id: 'sessions', hasState: true, hasChildren: true }],
+          },
+        ],
+        [
+          'http://test/v1/introspect/sessions',
+          {
+            path: ['sessions'],
+            state: { sessions: [] },
+            children: [{ id: 'default', hasState: true, hasChildren: true }],
+          },
+        ],
+        [
+          'http://test/v1/introspect/sessions/default',
+          {
+            path: ['sessions', 'default'],
+            state: { id: 'default', kind: 'default', modelPurpose: 'chat' },
+            children: [
+              { id: 'child-sessions', hasState: false, hasChildren: true },
+            ],
+          },
+        ],
+        [
+          'http://test/v1/introspect/sessions/default/child-sessions',
+          {
+            path: ['sessions', 'default', 'child-sessions'],
+            state: null,
+            children: [{ id: 'child/one', hasState: true, hasChildren: false }],
+          },
+        ],
+        [
+          'http://test/v1/introspect/sessions/default/child-sessions/child%2Fone',
+          {
+            path: ['sessions', 'default', 'child-sessions', 'child/one'],
+            state: {
+              id: 'child/one',
+              kind: 'child',
+              parentId: 'default',
+              modelPurpose: 'deepThinking',
+            },
+            children: [],
+          },
+        ],
+      ]);
+      globalThis.fetch = vi.fn(async (input) => {
+        const node = nodes.get(String(input));
+        return node
+          ? jsonResponse(node)
+          : jsonResponse({ error: 'not found', code: 'not_found' }, 404);
+      }) as typeof fetch;
+      const client = new AdminApiClient('http://test');
+
+      const sessions = await client.getSessions();
+
+      expect(sessions).toEqual([
+        expect.objectContaining({ id: 'default', kind: 'default' }),
+        expect.objectContaining({
+          id: 'child/one',
+          kind: 'child',
+          modelPurpose: 'deepThinking',
+        }),
+      ]);
+    });
+
+    it('falls back to sessions state when no child nodes exist', async () => {
+      const nodes = new Map<string, unknown>([
+        [
+          'http://test/v1/introspect',
+          { path: [], state: null, children: [{ id: 'sessions' }] },
+        ],
+        [
+          'http://test/v1/introspect/sessions',
+          {
+            path: ['sessions'],
+            state: {
+              sessions: [
+                { id: 'default', kind: 'default', modelPurpose: 'chat' },
+              ],
+            },
+            children: [],
+          },
+        ],
+      ]);
+      globalThis.fetch = vi.fn(async (input) => {
+        const node = nodes.get(String(input));
+        return node
+          ? jsonResponse(node)
+          : jsonResponse({ error: 'not found', code: 'not_found' }, 404);
+      }) as typeof fetch;
+
+      await expect(
+        new AdminApiClient('http://test').getSessions(),
+      ).resolves.toEqual([expect.objectContaining({ id: 'default' })]);
+    });
+
+    it('keeps surviving sessions when a descendant returns 404', async () => {
+      const nodes = new Map<string, unknown>([
+        [
+          'http://test/v1/introspect',
+          { path: [], state: null, children: [{ id: 'sessions' }] },
+        ],
+        [
+          'http://test/v1/introspect/sessions',
+          {
+            path: ['sessions'],
+            state: { sessions: [] },
+            children: [{ id: 'default' }],
+          },
+        ],
+        [
+          'http://test/v1/introspect/sessions/default',
+          {
+            path: ['sessions', 'default'],
+            state: { id: 'default', kind: 'default', modelPurpose: 'chat' },
+            children: [{ id: 'child-sessions' }],
+          },
+        ],
+        [
+          'http://test/v1/introspect/sessions/default/child-sessions',
+          {
+            path: ['sessions', 'default', 'child-sessions'],
+            state: null,
+            children: [{ id: 'gone' }, { id: 'surviving' }],
+          },
+        ],
+        [
+          'http://test/v1/introspect/sessions/default/child-sessions/surviving',
+          {
+            path: ['sessions', 'default', 'child-sessions', 'surviving'],
+            state: { id: 'surviving', kind: 'child', modelPurpose: 'chat' },
+            children: [],
+          },
+        ],
+      ]);
+      globalThis.fetch = vi.fn(async (input) => {
+        const node = nodes.get(String(input));
+        return node
+          ? jsonResponse(node)
+          : jsonResponse({ error: 'not found', code: 'not_found' }, 404);
+      }) as typeof fetch;
+
+      await expect(
+        new AdminApiClient('http://test').getSessions(),
+      ).resolves.toEqual([
+        expect.objectContaining({ id: 'default' }),
+        expect.objectContaining({ id: 'surviving' }),
+      ]);
+    });
+  });
+
   describe('god session', () => {
     it('getGodSession sends GET to /v1/god-messages/session', async () => {
       const fetchMock = mockFetch(

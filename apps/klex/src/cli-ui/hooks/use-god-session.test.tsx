@@ -13,6 +13,10 @@ import { type UseGodSessionResult, useGodSession } from './use-god-session';
 function session(id: string): SessionInfo {
   return {
     id,
+    name: 'god-session',
+    kind: 'god',
+    parentId: null,
+    modelPurpose: 'chat',
     status: 'active',
     runtimeState: 'idle',
     model: { id: 'test:model', isFallback: false, fallbackIndex: 0 },

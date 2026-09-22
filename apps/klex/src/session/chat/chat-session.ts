@@ -1200,6 +1200,13 @@ class ChatSessionModule implements AgentSession {
     }
 
     return {
+      name: this.deps.sessionContext.name,
+      ...(this.deps.sessionContext.extensionIdentifier
+        ? { extensionIdentifier: this.deps.sessionContext.extensionIdentifier }
+        : {}),
+      kind: this.deps.sessionContext.kind,
+      parentId: this.deps.sessionContext.parentId ?? null,
+      modelPurpose: this.deps.modelPurpose ?? 'chat',
       id: this.sessionId,
       status: this._status,
       runtimeState:
@@ -1266,33 +1273,26 @@ class ChatSessionModule implements AgentSession {
 
   async close(): Promise<void> {
     if (this.closePromise) return this.closePromise;
-    this._status = 'terminated';
-    this.runtimeState = 'terminated';
-    this.resolveIdleWaiters(false);
+    if (this.runtimeState !== 'terminated') {
+      this._status = 'terminated';
+      this.runtimeState = 'terminated';
+      this.resolveIdleWaiters(false);
 
-    this.closePromise = (async () => {
-      // If startup is in flight, let its rollback finish before cleanup. A
-      // rejected startup is expected here and the original caller owns it.
-      await this.startPromise?.catch(() => undefined);
-
-      // Close the inbox first — no new input can enter the session after
-      // this point. Any concurrent send() calls will throw
-      // SessionInboxClosedError.
+      // Establish the cancellation edge synchronously. Nothing may enter or
+      // continue running after close() returns its promise to the owner.
       this.sessionInbox.close();
-
-      // Abort in-flight generation and tool execution so that pending
-      // network requests and background tasks are cancelled immediately.
       this.currentTurn?.abortGeneration('session_shutdown');
       this.currentTurn?.abortTools();
-
-      // Interrupt any pending backoff wait so the loop can exit promptly.
       this.backoffInterrupt?.();
-
-      // Revoke an active interaction lease — a leased realtime call must
-      // not outlive its host session.
       this.leaseManager.revoke('default-session-closed');
       this.leaseToolExecutor?.abort();
       this.releaseQuiesceWaiters();
+    }
+
+    this.closePromise = (async () => {
+      // If startup is in flight, let its rollback finish before asynchronous
+      // cleanup. A rejected startup is expected here and its caller owns it.
+      await this.startPromise?.catch(() => undefined);
 
       try {
         await this.extensionHandler.close();
@@ -1322,7 +1322,12 @@ class ChatSessionModule implements AgentSession {
           );
         }
       }
-    })();
+    })().catch((error: unknown) => {
+      // A failed cleanup must remain retryable. Owners such as deep-thinker
+      // retain failed child handles and may invoke close() again.
+      this.closePromise = null;
+      throw error;
+    });
 
     return this.closePromise;
   }
@@ -1422,6 +1427,7 @@ class ChatSessionModule implements AgentSession {
       introspectionScope: this.childSessionsScope,
       basePrompt: options.basePrompt,
       modelPurpose: options.modelPurpose,
+      hooks: options.hooks,
     });
 
     try {

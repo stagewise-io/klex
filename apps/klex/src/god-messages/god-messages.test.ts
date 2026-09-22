@@ -92,6 +92,10 @@ function createStubSessionFactory() {
       getMessages: () => [...stub.messages],
       getSessionInfo: (): SessionInfo => ({
         id: stub.sessionId,
+        name: 'god-session',
+        kind: 'god',
+        parentId: null,
+        modelPurpose: 'chat',
         status: stub.status,
         runtimeState: stub.runtimeState,
         model: { id: null, isFallback: false, fallbackIndex: 0 },

@@ -1,3 +1,5 @@
+import type { ModelPurpose } from '@/config';
+
 const ADMIN_API_BASE = 'http://localhost:2706';
 
 export interface ProviderMetadata {
@@ -158,6 +160,7 @@ export interface ModelSelection {
   memory: ModelSelectionEntry[];
   imageVision: ModelSelectionEntry[];
   audioListening: ModelSelectionEntry[];
+  deepThinking: ModelSelectionEntry[];
   voice: {
     sts: ModelSelectionEntry[];
     tts: ModelSelectionEntry[];
@@ -220,6 +223,11 @@ export interface IntrospectionNode {
 
 export interface SessionInfo {
   id: string;
+  name: string;
+  extensionIdentifier?: string;
+  kind: 'default' | 'god' | 'child';
+  parentId: string | null;
+  modelPurpose: ModelPurpose;
   status: string;
   runtimeState: string;
   model: { id: string | null; isFallback: boolean; fallbackIndex: number };
@@ -556,13 +564,56 @@ export class AdminApiClient {
 
   async getSessions(): Promise<SessionInfo[]> {
     const root = await this.getIntrospectionRoot();
-    const sessionsChild = root.children.find((c) => c.id === 'sessions');
-    if (!sessionsChild) return [];
+    if (!root.children.some((child) => child.id === 'sessions')) return [];
 
     const sessionsNode = await this.getIntrospection('sessions');
-    if (!sessionsNode.state) return [];
+    if (sessionsNode.children.length === 0 && sessionsNode.state) {
+      const state = sessionsNode.state as { sessions?: unknown };
+      if (Array.isArray(state.sessions)) {
+        return state.sessions as SessionInfo[];
+      }
+    }
+    const results = await Promise.all(
+      sessionsNode.children.map((child) =>
+        this.readSessionTree(['sessions', child.id]),
+      ),
+    );
+    return results.flat();
+  }
 
-    const sessions = sessionsNode.state as { sessions?: SessionInfo[] };
-    return sessions.sessions ?? [];
+  private async getIntrospectionOrNull(
+    path: string[],
+  ): Promise<IntrospectionNode | null> {
+    try {
+      return await this.getIntrospection(
+        path.map((segment) => encodeURIComponent(segment)).join('/'),
+      );
+    } catch (error) {
+      if (error instanceof AdminApiClientError && error.statusCode === 404) {
+        return null;
+      }
+      throw error;
+    }
+  }
+
+  private async readSessionTree(path: string[]): Promise<SessionInfo[]> {
+    const node = await this.getIntrospectionOrNull(path);
+    if (!node) return [];
+
+    const sessions = node.state ? [node.state as unknown as SessionInfo] : [];
+    const childrenGroup = node.children.find(
+      (child) => child.id === 'child-sessions',
+    );
+    if (!childrenGroup) return sessions;
+
+    const groupPath = [...path, childrenGroup.id];
+    const group = await this.getIntrospectionOrNull(groupPath);
+    if (!group) return sessions;
+    const descendants = await Promise.all(
+      group.children.map((child) =>
+        this.readSessionTree([...groupPath, child.id]),
+      ),
+    );
+    return [...sessions, ...descendants.flat()];
   }
 }

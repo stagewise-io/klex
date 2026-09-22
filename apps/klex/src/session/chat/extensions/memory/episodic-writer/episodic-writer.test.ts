@@ -133,6 +133,9 @@ function child(
     getSessionInfo: vi.fn(() => {
       const currentStatus = typeof status === 'function' ? status() : status;
       return {
+        kind: 'child' as const,
+        parentId: 'default',
+        modelPurpose: 'memory' as const,
         id,
         status: currentStatus,
         runtimeState: currentStatus === 'active' ? 'idle' : 'terminated',
@@ -158,7 +161,7 @@ function child(
     close: vi.fn(async () => undefined),
     waitForIdle,
     createChildSession: vi.fn(),
-  } as ChildSessionHandle;
+  } as unknown as ChildSessionHandle;
 }
 
 beforeEach(() => {

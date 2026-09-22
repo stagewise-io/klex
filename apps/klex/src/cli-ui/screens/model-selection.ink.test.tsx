@@ -13,6 +13,7 @@ import { ModelSelectionScreen } from './model-selection';
 
 const emptySelection: ModelSelection = {
   chat: [],
+  deepThinking: [],
   compaction: [],
   memory: [],
   imageVision: [],
@@ -103,6 +104,40 @@ async function typeText(
 }
 
 describe('ModelSelectionScreen', () => {
+  it('lists and patches the deep-thinking model purpose', async () => {
+    const initial: ModelSelection = { ...emptySelection };
+    const patchModelSelection = vi.fn().mockResolvedValue(initial);
+    const view = renderScreen(
+      makeClient({
+        getModelSelection: vi.fn().mockResolvedValue(initial),
+        patchModelSelection,
+      }),
+    );
+
+    await vi.waitFor(() => expect(view.lastFrame()).toContain('Deep Thinking'));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    view.stdin.write('\u001B[B');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    view.stdin.write('\r');
+    await vi.waitFor(() => expect(view.lastFrame()).toContain('No models'));
+    view.stdin.write('a');
+    await vi.waitFor(() =>
+      expect(view.lastFrame()).toContain('openai-primary'),
+    );
+    view.stdin.write('\r');
+    await vi.waitFor(() => expect(view.lastFrame()).toContain('Latest'));
+    view.stdin.write('\r');
+
+    await vi.waitFor(() =>
+      expect(patchModelSelection).toHaveBeenCalledWith({
+        deepThinking: [
+          { providerId: 'openai-primary', modelId: 'vendor:model:latest' },
+        ],
+      }),
+    );
+    view.unmount();
+  });
+
   it('reorders model priority with Shift+Arrow keys', async () => {
     const initial: ModelSelection = {
       ...emptySelection,

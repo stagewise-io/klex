@@ -153,6 +153,9 @@ function SessionRow({ session }: { session: SessionInfo }) {
   return (
     <Box flexDirection="column">
       <Box>
+        <Text dimColor>name:</Text>
+        <Text> {session.name}</Text>
+        <Text> </Text>
         <Text dimColor>id:</Text>
         <Text> {session.id}</Text>
         <Text> </Text>
@@ -164,6 +167,13 @@ function SessionRow({ session }: { session: SessionInfo }) {
         />
       </Box>
       <Box marginLeft={2} flexDirection="column">
+        <Text dimColor>
+          kind: {session.kind} | purpose: {session.modelPurpose}
+          {session.extensionIdentifier
+            ? ` | owner: ${session.extensionIdentifier}`
+            : ''}
+          {session.parentId ? ` | parent: ${session.parentId}` : ''}
+        </Text>
         <Text dimColor>
           age: {age} | turns: {session.turns} | steps: {session.steps} | msgs:{' '}
           {session.messageCount}

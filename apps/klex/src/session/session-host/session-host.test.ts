@@ -69,6 +69,10 @@ function createFakeSession(options: {
     getSessionInfo: vi.fn(
       (): SessionInfo => ({
         id: 'default',
+        name: 'default',
+        kind: 'default',
+        parentId: null,
+        modelPurpose: 'chat',
         status: session.status,
         runtimeState: session.status === 'active' ? 'idle' : 'terminated',
         model: { id: null, isFallback: false, fallbackIndex: 0 },

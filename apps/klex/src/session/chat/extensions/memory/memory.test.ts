@@ -110,6 +110,11 @@ function createChild(
     inbox,
     getMessages: vi.fn(() => []),
     getSessionInfo: vi.fn(() => ({
+      name: 'episodic-memory-writer',
+      extensionIdentifier: 'memory',
+      kind: 'child' as const,
+      parentId: 'default',
+      modelPurpose: 'memory' as const,
       id: 'writer',
       status: 'active' as const,
       runtimeState: 'idle' as const,

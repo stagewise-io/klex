@@ -10,6 +10,10 @@ import { GodMessagesScreen } from './god-messages';
 function session(runtimeState = 'idle'): SessionInfo {
   return {
     id: 'session-12345678',
+    name: 'god-session',
+    kind: 'god',
+    parentId: null,
+    modelPurpose: 'chat',
     status: 'active',
     runtimeState,
     model: { id: 'test:model', isFallback: false, fallbackIndex: 0 },

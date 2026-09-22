@@ -83,6 +83,10 @@ The spawning extension explicitly chooses every extension loaded by the child. N
 
 Child sessions are owned by the extension that spawned them. The extension is responsible for closing them — typically in its `onClose` hook. `waitForIdle(timeoutMs)` lets an owner provide bounded drain time before closing. There is no global orphan reclamation; ownership is explicit.
 
+### Deep-thinker child sessions
+
+The deep-thinker extension creates isolated child sessions with model purpose `deepThinking`. Each child receives the same agent soul and current-time extensions, a dedicated system prompt, the latest durable context-compaction summary plus the configurable newest non-summary parent-message suffix (five ordinary messages by default), and an explicit task message. The parent tracks a handle, child session ID, report count, start time, and lifecycle status through the session introspection tree. Active deep thinkers are also published to the main session as a custom `deep-thinkers` data part. Findings are delivered to the parent as typed `deep-thinker-report` data parts. An explicit `final: true` report is the only report classified as a final verdict; reaching the configured report limit emits `termination: 'limit-reached'` and closes the child without promoting an intermediate finding. Start and delivery failures are returned through tool results or recorded in logs; retained lifecycle entries expose active, closing, and close-failed state through introspection.
+
 ## Composition root
 
 The composition root wires shared deps once and passes a `sessionFactory` to both `SessionHost` and `GodMessages`. The factory captures shared deps (config, modelResolver, logging, dataDirectory) and creates chat sessions with child-specific parameters.
@@ -114,7 +118,7 @@ god-sessions
       └── extensions
 ```
 
-Child sessions register under their parent session's `child-sessions` scope, giving full recursive visibility without a second source of lifecycle state.
+Child sessions register under their parent session's `child-sessions` scope, giving full recursive visibility without a second source of lifecycle state. Session metadata includes the session kind, parent ID, and model purpose so operators can distinguish ordinary, memory-writer, and deep-thinker execution units.
 
 ## See also
 

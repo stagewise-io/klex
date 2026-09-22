@@ -40,6 +40,7 @@ import { discoverManagedInstallation, UpdateManager } from '@/self-update';
 import { createChatSession } from '@/session/chat';
 import { createAudioInputOptimizerExt } from '@/session/chat/extensions/audio-input-optimizer';
 import { createContextCompactionExt } from '@/session/chat/extensions/context-compaction';
+import { createDeepThinkerExt } from '@/session/chat/extensions/deep-thinker';
 import type { ExtensionFactory } from '@/session/chat/extensions/extension-api';
 import {
   createGodMessagesDistrustExt,
@@ -426,6 +427,11 @@ async function main(): Promise<void> {
           basePrompt: params.basePrompt,
         });
 
+    const defaultTimeExt = createTimeExt({
+      timeUpdatePeriod: TIME_UPDATE_PERIOD_SECONDS,
+      timezone,
+    });
+
     // Default session: full extension set + MCP access.
     const defaultSessionFactory = makeSessionFactory([
       createNameLoaderExt,
@@ -433,15 +439,18 @@ async function main(): Promise<void> {
       createGodMessagesDistrustExt,
       createJsReplSandboxExt,
       createContextCompactionExt,
-      createTimeExt({
-        timeUpdatePeriod: TIME_UPDATE_PERIOD_SECONDS,
-        timezone,
-      }),
+      defaultTimeExt,
       createImageInputOptimizerExt,
       createAudioInputOptimizerExt,
       createTodosExt,
       createMcpIngressExt(),
       createMemoryExt({ timezone }),
+      createDeepThinkerExt({
+        childExtensionFactories: [createSoulExt, defaultTimeExt],
+        maxActiveSessions: 2,
+        maxReportsPerSession: 3,
+        maxContextMessages: 5,
+      }),
     ]);
 
     const sessionHost = createSessionHost({

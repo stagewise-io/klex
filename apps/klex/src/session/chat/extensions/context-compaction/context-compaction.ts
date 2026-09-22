@@ -1,7 +1,6 @@
 import { randomUUID } from 'node:crypto';
 
 import { context, type Span, trace } from '@opentelemetry/api';
-import { getToolName, isToolUIPart, type TextPart } from 'ai';
 
 import type { ExtendedUIMessage } from '../../message-types';
 import { startChildSpan } from '../../utils/tracing';
@@ -16,6 +15,11 @@ import {
   isDataPartOf,
   type StepCompleteEvent,
 } from '../extension-api';
+import {
+  CONTEXT_SUMMARY_KEY,
+  escapeXml,
+  serializeHistoryAsXml,
+} from '../history-xml';
 import compactionPrompt from './compaction-prompt.md';
 
 /**
@@ -26,9 +30,6 @@ import compactionPrompt from './compaction-prompt.md';
 export type ContextSummaryDataUIPart = {
   summary: string;
 };
-
-/** Data part key used by this extension. */
-const SUMMARY_KEY = 'context-summary';
 
 /**
  * Hard upper bound for the compaction threshold in tokens. The dynamic
@@ -75,15 +76,6 @@ export const MIN_ASSISTANT_MESSAGES_AFTER_SUMMARY = 1;
  * check must be satisfied to trigger.
  */
 export const COMPACTION_HYSTERESIS_RATIO = 0.1;
-
-/** Max chars kept from user/assistant text parts. */
-const TEXT_TRUNCATE_LIMIT = 500;
-/** Max chars kept from tool output. */
-const OUTPUT_TRUNCATE_LIMIT = 300;
-/** Max chars kept from context parts. */
-const CONTEXT_TRUNCATE_LIMIT = 200;
-/** Max chars kept from a previous summary. */
-const SUMMARY_TRUNCATE_LIMIT = 800;
 
 class ContextCompactionExt implements Extension {
   /**
@@ -194,7 +186,7 @@ class ContextCompactionExt implements Extension {
     // Collect indices of all summary messages (newest first).
     const summaryIndices: number[] = [];
     for (let i = history.length - 1; i >= 0; i--) {
-      if (history[i]!.parts.some((p) => isDataPartOf(SUMMARY_KEY, p))) {
+      if (history[i]!.parts.some((p) => isDataPartOf(CONTEXT_SUMMARY_KEY, p))) {
         summaryIndices.push(i);
       }
     }
@@ -239,7 +231,7 @@ class ContextCompactionExt implements Extension {
     const filtered = sliced.filter(
       (msg, i) =>
         i === 0 || // always keep the cutoff summary (first element)
-        !msg.parts.some((p) => isDataPartOf(SUMMARY_KEY, p)),
+        !msg.parts.some((p) => isDataPartOf(CONTEXT_SUMMARY_KEY, p)),
     );
 
     return {
@@ -256,12 +248,14 @@ class ContextCompactionExt implements Extension {
   }
 
   dataPartTransformers: DataPartTransformers = {
-    [SUMMARY_KEY]: dataPartTransformer<ContextSummaryDataUIPart>((data) => [
-      {
-        type: 'text',
-        text: `<summary>${escapeXml(data.summary)}</summary>`,
-      },
-    ]),
+    [CONTEXT_SUMMARY_KEY]: dataPartTransformer<ContextSummaryDataUIPart>(
+      (data) => [
+        {
+          type: 'text',
+          text: `<summary>${escapeXml(data.summary)}</summary>`,
+        },
+      ],
+    ),
   };
 
   async onStepComplete(event: StepCompleteEvent): Promise<void> {
@@ -408,7 +402,7 @@ class ContextCompactionExt implements Extension {
     // compaction model has access to the previous summary as context.
     // If there is no summary, compact the entire history.
     const lastSummaryIndex = history.findLastIndex((m) =>
-      m.parts.some((p) => isDataPartOf(SUMMARY_KEY, p)),
+      m.parts.some((p) => isDataPartOf(CONTEXT_SUMMARY_KEY, p)),
     );
     const sliceStart = lastSummaryIndex === -1 ? 0 : lastSummaryIndex;
     const slice = history.slice(sliceStart);
@@ -428,7 +422,9 @@ class ContextCompactionExt implements Extension {
       return false;
     }
 
-    const transcript = transformHistoryForCompaction(slice);
+    const transcript = serializeHistoryAsXml(slice, {
+      summaryKey: CONTEXT_SUMMARY_KEY,
+    });
     span.setAttribute('compaction.transcriptLength', transcript.length);
 
     if (transcript.trim().length === 0) {
@@ -529,7 +525,7 @@ class ContextCompactionExt implements Extension {
     const summaryMessage = {
       id: randomUUID(),
       role: 'assistant',
-      parts: [createDataPart(SUMMARY_KEY, { summary })],
+      parts: [createDataPart(CONTEXT_SUMMARY_KEY, { summary })],
     } as unknown as ExtendedUIMessage;
 
     // Insert the summary directly after the last message that was part
@@ -562,94 +558,6 @@ class ContextCompactionExt implements Extension {
 /**
  * Truncates a string to `limit` chars, appending `…` if truncated.
  */
-function truncate(text: string, limit: number): string {
-  if (text.length <= limit) return text;
-  return `${text.slice(0, limit)}…`;
-}
-
-/**
- * Compacts a JSON-serializable value into a single-line string with no
- * whitespace between tokens.
- */
-function compactJson(value: unknown): string {
-  try {
-    return JSON.stringify(value);
-  } catch {
-    return '[unserializable]';
-  }
-}
-
-/**
- * Extracts a text representation from a tool output value.
- * Tool outputs in the AI SDK can be strings, objects, or arrays.
- */
-function toolOutputToString(output: unknown): string {
-  if (typeof output === 'string') return output;
-  return compactJson(output);
-}
-
-/**
- * Escapes XML special characters in a string so it can be safely
- * embedded inside XML tag content or attribute values.
- */
-function escapeXml(text: string): string {
-  return text
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&apos;');
-}
-
-/**
- * Renders a single message part as a compact XML fragment.
- * Returns an empty string for parts that should be skipped.
- */
-function partToXml(part: ExtendedUIMessage['parts'][number]): string {
-  if (part.type === 'text') {
-    return `<text>${escapeXml(truncate(part.text, TEXT_TRUNCATE_LIMIT))}</text>`;
-  }
-
-  if (isDataPartOf(SUMMARY_KEY, part)) {
-    const { summary } = (part as { data: ContextSummaryDataUIPart }).data;
-    return `<summary>${escapeXml(truncate(summary, SUMMARY_TRUNCATE_LIMIT))}</summary>`;
-  }
-
-  if (part.type === 'data-context') {
-    const contentTags = part.data.content
-      .map((c) => {
-        if (c.type === 'text') {
-          return `<text>${escapeXml(truncate(c.text, CONTEXT_TRUNCATE_LIMIT))}</text>`;
-        }
-        // Non-text content (image/video/audio) — compact placeholder
-        return `<${c.type} />`;
-      })
-      .join('');
-    return `<ctx env="${escapeXml(part.data.sourceEnv)}">${contentTags}</ctx>`;
-  }
-
-  if (isToolUIPart(part)) {
-    const toolName = getToolName(part);
-
-    if (part.state === 'output-available' && part.output !== undefined) {
-      const output = toolOutputToString(part.output);
-      return `<tool name="${escapeXml(toolName)}"><output>${escapeXml(truncate(output, OUTPUT_TRUNCATE_LIMIT))}</output></tool>`;
-    }
-    if (part.state === 'output-error') {
-      const errText = part.errorText ?? 'unknown error';
-      return `<tool name="${escapeXml(toolName)}"><error>${escapeXml(truncate(errText, OUTPUT_TRUNCATE_LIMIT))}</error></tool>`;
-    }
-    if (part.state === 'output-denied') {
-      return `<tool name="${escapeXml(toolName)}"><denied /></tool>`;
-    }
-    // Tool call with no output yet — just the name
-    return `<tool name="${escapeXml(toolName)}" />`;
-  }
-
-  // Skip: data-continue and any unknown parts
-  return '';
-}
-
 /**
  * Counts non-summary user and assistant messages after the given
  * index in the history. Summary messages are excluded from the
@@ -663,34 +571,11 @@ function countMessagesByRoleAfter(
   let assistantCount = 0;
   for (let i = index + 1; i < history.length; i++) {
     const msg = history[i]!;
-    if (msg.parts.some((p) => isDataPartOf(SUMMARY_KEY, p))) continue;
+    if (msg.parts.some((p) => isDataPartOf(CONTEXT_SUMMARY_KEY, p))) continue;
     if (msg.role === 'user') userCount++;
     else if (msg.role === 'assistant') assistantCount++;
   }
   return { userCount, assistantCount };
-}
-
-/**
- * Transforms a slice of chat history into a dense XML transcript
- * suitable for the compaction model. Each message is wrapped in a
- * `<msg role="user|assistant">` tag containing compact child tags
- * for each part (`<text>`, `<tool>`, `<ctx>`, `<summary>`).
- */
-function transformHistoryForCompaction(messages: ExtendedUIMessage[]): string {
-  const lines: string[] = [];
-
-  for (const msg of messages) {
-    const inner = msg.parts
-      .map((p) => partToXml(p))
-      .filter((s) => s.length > 0)
-      .join('');
-
-    if (inner.length > 0) {
-      lines.push(`<msg role="${msg.role}">${inner}</msg>`);
-    }
-  }
-
-  return lines.join('\n');
 }
 
 /** Compacts long session histories while preserving durable conversational context. */

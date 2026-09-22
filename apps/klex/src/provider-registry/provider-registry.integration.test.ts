@@ -362,6 +362,10 @@ describe('provider registry module integration', () => {
       registry.updateModelSelection({ chat: [selection] }),
     ).resolves.toMatchObject({ ok: true, value: { warnings: [] } });
     await expect(
+      registry.updateModelSelection({ deepThinking: [selection] }),
+    ).resolves.toMatchObject({ ok: true, value: { warnings: [] } });
+    expect(config.get().modelSelection.deepThinking).toEqual([selection]);
+    await expect(
       registry.updateModelSelection({
         voice: { sts: [selection], tts: [], stt: [] },
       }),
@@ -396,6 +400,10 @@ describe('provider registry module integration', () => {
       registry.removeInstance('provider-primary'),
     ).resolves.toMatchObject({ ok: false, code: 'referential_integrity' });
     await registry.updateModelSelection({ chat: [] });
+    await expect(
+      registry.removeInstance('provider-primary'),
+    ).resolves.toMatchObject({ ok: false, code: 'referential_integrity' });
+    await registry.updateModelSelection({ deepThinking: [] });
     await expect(
       registry.removeInstance('provider-primary'),
     ).resolves.toMatchObject({ ok: true });

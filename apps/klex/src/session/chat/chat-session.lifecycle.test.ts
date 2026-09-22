@@ -167,6 +167,40 @@ describe('ChatSession lifecycle', () => {
     );
   });
 
+  it('aborts generation and tools synchronously while cleanup is pending', async () => {
+    const cleanup = Promise.withResolvers<void>();
+    const extension: ExtensionFactory = {
+      identifier: 'test/pending-cleanup',
+      create: () => ({ onClose: vi.fn(() => cleanup.promise) }),
+    };
+    const session = createSession({ extensions: [extension] });
+    const abortGeneration = vi.fn();
+    const abortTools = vi.fn();
+    (
+      session as unknown as {
+        currentTurn: {
+          abortGeneration: (reason: string) => void;
+          abortTools: () => void;
+        };
+      }
+    ).currentTurn = { abortGeneration, abortTools };
+
+    const closing = session.close();
+
+    expect(abortGeneration).toHaveBeenCalledWith('session_shutdown');
+    expect(abortTools).toHaveBeenCalledOnce();
+    expect(() =>
+      session.inbox.send({
+        sourceEnv: 'test',
+        urgency: 1,
+        context: { sourceEnv: 'test', metadata: {}, content: [] },
+      }),
+    ).toThrow('Session inbox is closed');
+
+    cleanup.resolve();
+    await closing;
+  });
+
   it('closes the inbox during termination and rejects stale delivery', async () => {
     const session = createSession({
       mcp: {} as unknown as Mcp,

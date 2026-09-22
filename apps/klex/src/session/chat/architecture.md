@@ -88,11 +88,15 @@ After the configurable main-session idle interval, the extension flushes any fin
 
 ### Writer input
 
-The extension tracks the last native message ID delivered to the writer and transforms only the history excerpt after that cursor. Writer input preserves NDJSON as one complete record per relevant event: `your_action`, `your_loud_thought`, `your_thought`, `context`, and `time_update`. Raw user text is ignored. Context image and audio payloads are materialized as custom media parts inline at their exact positions. Text and serialized values are truncated with character budgets; explicit omission counts mark dropped parts.
+The extension tracks the last native message ID delivered to the writer and transforms only the history excerpt after that cursor. Writer input preserves NDJSON as one complete record per relevant event: `your_action`, `your_loud_thought`, `your_thought`, `context`, and `time_update`. Raw user text is intentionally ignored by episodic-memory compression; deep-thinker uses the separate bounded XML history serializer so it can preserve recent user messages and the latest context-compaction summary. Context image and audio payloads are materialized as custom media parts inline at their exact positions. Text and serialized values are truncated with character budgets; explicit omission counts mark dropped parts.
 
 ### Episode storage
 
 The writer stores terse memory entries and never sees paths or manages episode lifecycle. The `memorize` tool receives each event's inferred local `HH:mm` time. The store converts that to UTC using the agent timezone and appends entries as `- HH:mm: data` lines in Markdown files under `episodic/yyyy-MM-dd/`. Filenames use `index-HH-mm.md`. Every episode starts with YAML frontmatter containing `analyzed: false`. The store rotates after a configurable entry count or age. Rotation queues writes until the fresh writer child is ready.
+
+## Deep-thinker context and lifecycle
+
+Deep-thinker receives the latest durable context-compaction summary plus the configurable newest non-summary message suffix from the parent (five ordinary messages by default), serialized through `history-xml.ts`. The durable summary is selected independently and does not consume the ordinary-message quota. This is deliberately separate from the episodic-memory NDJSON protocol: memory records are optimized for durable storage and omit raw user text, while the deep thinker needs recent conversation evidence for the current task. The deep thinker has no MCP access and can only receive the task, parent updates, and lifecycle messages. The parent publishes active deep-thinker state as a custom `deep-thinkers` data part so it remains available in the main session context. The first visible snapshot is a compact Markdown table inside `<deep-thinkers mode="full">`; subsequent changes use one line per change inside `<deep-thinkers mode="change">`. After compaction, the history transformer reinjects the last known full snapshot. Reports are intermediate until the child explicitly marks one final; report-limit closure is surfaced as `termination="limit-reached"` rather than a verdict.
 
 ## Error handling
 

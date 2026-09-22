@@ -131,7 +131,7 @@ describe('compressHistoryForWriter', () => {
     });
   });
 
-  it('emits semantic event records and ignores raw user text', () => {
+  it('ignores raw user text while preserving semantic event records', () => {
     const result = compressHistoryForWriter(
       [
         textMessage('user', 'question', 'u1'),

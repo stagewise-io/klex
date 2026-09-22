@@ -34,6 +34,7 @@ interface MenuItem {
 
 type Purpose =
   | 'chat'
+  | 'deepThinking'
   | 'compaction'
   | 'memory'
   | 'imageVision'
@@ -55,6 +56,7 @@ export function containsModelReference(
 
 const PURPOSES: { key: Purpose; label: string }[] = [
   { key: 'chat', label: 'Chat' },
+  { key: 'deepThinking', label: 'Deep Thinking' },
   { key: 'compaction', label: 'Compaction' },
   { key: 'memory', label: 'Memory' },
   { key: 'imageVision', label: 'Image Vision' },

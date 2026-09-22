@@ -68,6 +68,16 @@ export interface UsagePair {
 
 /** Aggregated session information exposed for observability. */
 export interface SessionInfo {
+  /** Stable human-readable session name used in the UI and observability. */
+  name: string;
+  /** Owning extension identifier for child sessions. */
+  extensionIdentifier?: string;
+  /** Session kind used to distinguish default, god, and child sessions. */
+  kind: SessionKind;
+  /** Parent session identifier for child sessions. */
+  parentId: string | null;
+  /** Model-selection purpose used by this session. */
+  modelPurpose: ModelPurpose;
   /** Unique session identifier. The default session uses `default`. */
   id: string;
   /** Coarse lifecycle status. */
@@ -235,6 +245,8 @@ export interface ChildSessionOptions {
    * extension-contributed system prompt parts).
    */
   basePrompt: string;
+  /** Lifecycle callbacks owned by the extension that spawned the child. */
+  hooks?: SessionHooks;
 }
 
 /**

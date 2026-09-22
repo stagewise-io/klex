@@ -40,7 +40,7 @@ export interface ChatSessionInbox extends SessionInbox {
   sendMessage: (
     message: ExtendedUIMessage,
     urgency: SessionInboxUrgency,
-  ) => void;
+  ) => boolean;
 }
 
 /** Upper bound of process-local event IDs retained for deduplication. */
@@ -218,17 +218,22 @@ class InboxModule implements SessionInboxBuffer {
     }
   }
 
-  sendMessage(message: ExtendedUIMessage, urgency: SessionInboxUrgency): void {
+  sendMessage(
+    message: ExtendedUIMessage,
+    urgency: SessionInboxUrgency,
+  ): boolean {
     if (this.closed) throw new SessionInboxClosedError();
 
+    let delivered = true;
     if (urgency === SessionInboxUrgency.Deferrable) {
       this.deferredMessages.push({ message });
     } else {
       // Critical or Default — dispatch immediately via callback.
-      this.notifyImmediateMessage(message, urgency);
+      delivered = this.notifyImmediateMessage(message, urgency);
     }
 
     this.notifyNewInput(urgency);
+    return delivered;
   }
 
   close(): void {
@@ -265,14 +270,16 @@ class InboxModule implements SessionInboxBuffer {
   private notifyImmediateMessage(
     message: ExtendedUIMessage,
     urgency: SessionInboxUrgency,
-  ): void {
+  ): boolean {
     try {
       this.deps.onImmediateMessage(message, urgency);
+      return true;
     } catch (err) {
       this.deps.logger?.error(
         { messageId: message.id, urgency: SessionInboxUrgency[urgency], err },
         'Inbox onImmediateMessage callback threw — message may not be in history',
       );
+      return false;
     }
   }
 

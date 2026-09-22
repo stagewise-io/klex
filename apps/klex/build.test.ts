@@ -22,6 +22,17 @@ describe('createBuildOptions', () => {
     }
   });
 
+  it('defines production mode only for SEA artifacts', () => {
+    for (const target of ['main', 'worker'] as const) {
+      expect(
+        createBuildOptions(true)[target].define?.['process.env.NODE_ENV'],
+      ).toBe(JSON.stringify('production'));
+      expect(
+        createBuildOptions(false)[target].define?.['process.env.NODE_ENV'],
+      ).toBeUndefined();
+    }
+  });
+
   it('keeps the __dirname redirect that fluent-ffmpeg needs in SEA builds', () => {
     expect(createBuildOptions(true).main.define?.__dirname).toBe(
       'import.meta.dirname',

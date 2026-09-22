@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 const childPrompt = readFileSync(
-  new URL('./deep-thinker-system-prompt.md', import.meta.url),
+  new URL('./consult-system-prompt.md', import.meta.url),
   'utf8',
 );
 const parentPrompt = readFileSync(
@@ -11,12 +11,12 @@ const parentPrompt = readFileSync(
   'utf8',
 );
 
-describe('deep-thinker system prompt contracts', () => {
+describe('consult system prompt contracts', () => {
   it('documents the exact parent state and report blocks', () => {
-    expect(parentPrompt).toMatch(/<deep-thinkers full>/);
-    expect(parentPrompt).toMatch(/<deep-thinkers change>/);
+    expect(parentPrompt).toMatch(/<consults full>/);
+    expect(parentPrompt).toMatch(/<consults change>/);
     expect(parentPrompt).toMatch(
-      /<deep-thinker-report\s+handle=\.\.\.\s+\[final\]>/i,
+      /<consult-report\s+handle=\.\.\.\s+\[final\]>/i,
     );
     expect(parentPrompt).toMatch(/final/i);
     expect(parentPrompt).not.toMatch(/status=/i);
@@ -27,6 +27,6 @@ describe('deep-thinker system prompt contracts', () => {
     expect(childPrompt).toMatch(/<main-session-context>/);
     expect(childPrompt).toMatch(/report/i);
     expect(childPrompt).toMatch(/final/i);
-    expect(childPrompt).toMatch(/finished/i);
+    expect(childPrompt).toMatch(/complete/i);
   });
 });

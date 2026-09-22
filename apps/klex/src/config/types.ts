@@ -471,7 +471,7 @@ export const MODEL_PURPOSES = [
   'memory',
   'imageVision',
   'audioListening',
-  'deepThinking',
+  'consult',
 ] as const;
 
 const modelSelectionSchema = z
@@ -481,7 +481,7 @@ const modelSelectionSchema = z
     memory: z.array(modelSelectionEntrySchema).default([]),
     imageVision: z.array(modelSelectionEntrySchema).default([]),
     audioListening: z.array(modelSelectionEntrySchema).default([]),
-    deepThinking: z.array(modelSelectionEntrySchema).default([]),
+    consult: z.array(modelSelectionEntrySchema).default([]),
     voice: voiceModelSelectionSchema.default({ sts: [], tts: [], stt: [] }),
   })
   .strict();
@@ -604,7 +604,7 @@ const klexConfigSchema = z.object({
     memory: [],
     imageVision: [],
     audioListening: [],
-    deepThinking: [],
+    consult: [],
     voice: { sts: [], tts: [], stt: [] },
   }),
   mcpServers: z.record(z.string(), mcpServerConfigSchema).default({}),
@@ -621,7 +621,7 @@ const legacyModelSelectionSchema = z
     memory: z.array(legacyModelSelectionEntrySchema).default([]),
     imageVision: z.array(legacyModelSelectionEntrySchema).default([]),
     audioListening: z.array(legacyModelSelectionEntrySchema).default([]),
-    deepThinking: z.array(legacyModelSelectionEntrySchema).default([]),
+    consult: z.array(legacyModelSelectionEntrySchema).default([]),
     voice: z
       .object({
         sts: z.array(z.string()).default([]),
@@ -636,7 +636,7 @@ const legacyModelSelectionSchema = z
     memory: [],
     imageVision: [],
     audioListening: [],
-    deepThinking: [],
+    consult: [],
     voice: { sts: [], tts: [], stt: [] },
   });
 
@@ -784,7 +784,7 @@ function migrateLegacyConfig(legacy: LegacyKlexConfig): KlexConfig {
       memory: migrateList(selection.memory),
       imageVision: migrateList(selection.imageVision),
       audioListening: migrateList(selection.audioListening),
-      deepThinking: migrateList(selection.deepThinking),
+      consult: migrateList(selection.consult),
       voice: {
         sts: migrateList(selection.voice.sts),
         tts: migrateList(selection.voice.tts),

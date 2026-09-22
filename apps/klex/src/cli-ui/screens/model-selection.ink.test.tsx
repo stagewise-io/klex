@@ -13,7 +13,7 @@ import { ModelSelectionScreen } from './model-selection';
 
 const emptySelection: ModelSelection = {
   chat: [],
-  deepThinking: [],
+  consult: [],
   compaction: [],
   memory: [],
   imageVision: [],
@@ -104,7 +104,7 @@ async function typeText(
 }
 
 describe('ModelSelectionScreen', () => {
-  it('lists and patches the deep-thinking model purpose', async () => {
+  it('lists and patches the consult model purpose', async () => {
     const initial: ModelSelection = { ...emptySelection };
     const patchModelSelection = vi.fn().mockResolvedValue(initial);
     const view = renderScreen(
@@ -114,7 +114,7 @@ describe('ModelSelectionScreen', () => {
       }),
     );
 
-    await vi.waitFor(() => expect(view.lastFrame()).toContain('Deep Thinking'));
+    await vi.waitFor(() => expect(view.lastFrame()).toContain('Consult'));
     await new Promise((resolve) => setTimeout(resolve, 0));
     view.stdin.write('\u001B[B');
     await new Promise((resolve) => setTimeout(resolve, 0));
@@ -130,7 +130,7 @@ describe('ModelSelectionScreen', () => {
 
     await vi.waitFor(() =>
       expect(patchModelSelection).toHaveBeenCalledWith({
-        deepThinking: [
+        consult: [
           { providerId: 'openai-primary', modelId: 'vendor:model:latest' },
         ],
       }),

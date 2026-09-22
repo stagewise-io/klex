@@ -6,7 +6,7 @@ export const emptyModelSelection: ModelSelection = {
   memory: [],
   imageVision: [],
   audioListening: [],
-  deepThinking: [],
+  consult: [],
   voice: { sts: [], tts: [], stt: [] },
 };
 
@@ -70,7 +70,7 @@ export const completeV2Config: KlexConfig = {
     ],
     compaction: [{ providerId: 'openai-secondary', modelId: 'gpt-4.1-mini' }],
     imageVision: [{ providerId: 'custom-chat', modelId: 'org:model:v2' }],
-    deepThinking: [{ providerId: 'openai-primary', modelId: 'gpt-4.1' }],
+    consult: [{ providerId: 'openai-primary', modelId: 'gpt-4.1' }],
   },
   mcpServers: {
     workspace: { command: 'workspace-mcp', args: ['--root', '/workspace'] },

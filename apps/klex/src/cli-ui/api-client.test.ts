@@ -271,7 +271,7 @@ describe('AdminApiClient', () => {
               id: 'child/one',
               kind: 'child',
               parentId: 'default',
-              modelPurpose: 'deepThinking',
+              modelPurpose: 'consult',
             },
             children: [],
           },
@@ -292,7 +292,7 @@ describe('AdminApiClient', () => {
         expect.objectContaining({
           id: 'child/one',
           kind: 'child',
-          modelPurpose: 'deepThinking',
+          modelPurpose: 'consult',
         }),
       ]);
     });

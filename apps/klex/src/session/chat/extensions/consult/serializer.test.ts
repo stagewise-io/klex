@@ -7,7 +7,7 @@ import {
   updatePrompt,
 } from './serializer';
 
-describe('deep-thinker serializer', () => {
+describe('consult serializer', () => {
   it('wraps serialized XML history as context', () => {
     const history = '<msg role="user"><text>task</text></msg>';
     expect(contextPrompt(history)).toBe(
@@ -39,7 +39,7 @@ describe('deep-thinker serializer', () => {
         final: true,
       }),
     ).toBe(
-      '<deep-thinker-report handle=handle-1 final>\nprefer &lt;option-a&gt;\n</deep-thinker-report>',
+      '<consult-report handle=handle-1 final>\nprefer &lt;option-a&gt;\n</consult-report>',
     );
   });
 
@@ -57,7 +57,7 @@ describe('deep-thinker serializer', () => {
           },
         ],
       }),
-    ).toBe('<deep-thinkers full>\nhandle-1: running\n</deep-thinkers>');
+    ).toBe('<consults full>\nhandle-1: running\n</consults>');
   });
 
   it('serializes state changes as one line per change', () => {
@@ -68,7 +68,7 @@ describe('deep-thinker serializer', () => {
         changes: ['handle-1 started. status: running', 'handle-2 deleted.'],
       }),
     ).toBe(
-      '<deep-thinkers change>\nhandle-1 started. status: running\nhandle-2 deleted.\n</deep-thinkers>',
+      '<consults change>\nhandle-1 started. status: running\nhandle-2 deleted.\n</consults>',
     );
   });
 });

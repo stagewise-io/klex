@@ -34,7 +34,11 @@ function scrubSpanAttributes(span: ReadableSpan): ReadableSpan {
   for (const [key, value] of Object.entries(span.attributes)) {
     scrubbed[key] = SENSITIVE_ATTRIBUTE_KEYS.has(key) ? '[REDACTED]' : value;
   }
-  return { ...span, attributes: scrubbed };
+  return {
+    ...span,
+    attributes: scrubbed,
+    spanContext: () => span.spanContext(),
+  };
 }
 
 /**

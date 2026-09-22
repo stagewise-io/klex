@@ -90,6 +90,24 @@ describe('CLI configuration', () => {
     await expect(
       parseCli(['serve', '--mode', 'enrolled'], {}, directory),
     ).resolves.toMatchObject({ action: 'serve', mode: 'enrolled' });
+    await expect(
+      parseCli(
+        [
+          'cloud',
+          'bootstrap',
+          '--enrollment-code-file',
+          '-',
+          '--cloud-base-url',
+          'https://cloud.example',
+        ],
+        {},
+        directory,
+      ),
+    ).resolves.toMatchObject({
+      action: 'managed-bootstrap',
+      cloudBaseUrl: 'https://cloud.example',
+      enrollmentCodeFile: '-',
+    });
   });
 
   it.each([
@@ -145,8 +163,15 @@ describe('CLI configuration', () => {
     });
     expect(helpText()).toContain('klex-machine serve');
     expect(helpText()).toContain('klex-machine cloud enroll');
+    expect(helpText()).toContain('klex-machine cloud bootstrap');
     expect(helpText()).toContain('--cloud-base-url <url>');
     expect(packageVersion()).toBe('0.1.0');
+  });
+
+  it('rejects managed bootstrap without a secret input', async () => {
+    await expect(
+      parseCli(['cloud', 'bootstrap'], {}, directory),
+    ).rejects.toThrow('--enrollment-code-file');
   });
 
   it('rejects unknown commands', async () => {

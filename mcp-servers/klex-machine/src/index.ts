@@ -21,7 +21,15 @@ async function main(): Promise<void> {
     process.stdout.write(`Enrolled machine ${enrollment.machineId}\n`);
     return;
   }
-  if (result.mode === 'local') {
+  if (result.action === 'managed-bootstrap') {
+    const { bootstrapManagedMachine } = await import('./cloud/managed.js');
+    await bootstrapManagedMachine({
+      cloudBaseUrl: result.cloudBaseUrl,
+      dataDir: result.dataDir,
+      enrollmentCodeFile: result.enrollmentCodeFile,
+    });
+  }
+  if (result.action === 'serve' && result.mode === 'local') {
     const { startMachineServer } = await import('./server.js');
     await startMachineServer(result.config);
     return;

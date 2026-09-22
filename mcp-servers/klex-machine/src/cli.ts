@@ -16,6 +16,13 @@ export type CliResult =
   | { action: 'version' }
   | { action: 'enroll'; cloudBaseUrl: string; code: string; dataDir: string }
   | {
+      action: 'managed-bootstrap';
+      cloudBaseUrl: string;
+      config: RuntimeConfig;
+      dataDir: string;
+      enrollmentCodeFile: string;
+    }
+  | {
       action: 'serve';
       config: RuntimeConfig;
       dataDir: string;
@@ -39,6 +46,7 @@ export async function parseCli(
       mode: { type: 'string' },
       'data-dir': { type: 'string' },
       'cloud-base-url': { type: 'string' },
+      'enrollment-code-file': { type: 'string' },
       help: { type: 'boolean', short: 'h' },
       version: { type: 'boolean', short: 'v' },
     },
@@ -53,6 +61,16 @@ export async function parseCli(
       resolve(homedir(), '.klex-machine'),
   );
   const [command, subcommand, value, ...extra] = parsed.positionals;
+  const cloudBaseUrl =
+    parsed.values['cloud-base-url'] ??
+    env.KLEX_MACHINE_CLOUD_BASE_URL ??
+    'https://cloud.klex.bot';
+  const raw: RawRuntimeConfig = {
+    cwd: parsed.values.cwd ?? env.KLEX_MACHINE_CWD,
+    host: parsed.values.host ?? env.KLEX_MACHINE_HOST,
+    port: parsed.values.port ?? env.KLEX_MACHINE_PORT,
+    logLevel: parsed.values['log-level'] ?? env.KLEX_MACHINE_LOG_LEVEL,
+  };
   if (
     command === 'cloud' &&
     subcommand === 'enroll' &&
@@ -61,12 +79,31 @@ export async function parseCli(
   ) {
     return {
       action: 'enroll',
-      cloudBaseUrl:
-        parsed.values['cloud-base-url'] ??
-        env.KLEX_MACHINE_CLOUD_BASE_URL ??
-        'https://cloud.klex.bot',
+      cloudBaseUrl,
       code: value,
       dataDir,
+    };
+  }
+  if (
+    command === 'cloud' &&
+    subcommand === 'bootstrap' &&
+    !value &&
+    !extra.length
+  ) {
+    const enrollmentCodeFile =
+      parsed.values['enrollment-code-file'] ??
+      env.KLEX_MACHINE_ENROLLMENT_CODE_FILE;
+    if (!enrollmentCodeFile) {
+      throw new Error(
+        'Managed bootstrap requires --enrollment-code-file <path|->',
+      );
+    }
+    return {
+      action: 'managed-bootstrap',
+      cloudBaseUrl,
+      config: await resolveRuntimeConfig(raw, processCwd),
+      dataDir,
+      enrollmentCodeFile,
     };
   }
   if (
@@ -76,7 +113,7 @@ export async function parseCli(
     extra.length > 0
   ) {
     throw new Error(
-      'Expected command: klex-machine serve or klex-machine cloud enroll <code>',
+      'Expected command: klex-machine serve, klex-machine cloud enroll <code>, or klex-machine cloud bootstrap',
     );
   }
   const mode = parsed.values.mode ?? env.KLEX_MACHINE_MODE ?? 'enrolled';
@@ -84,12 +121,6 @@ export async function parseCli(
     throw new Error('Invalid mode. Expected local, enrolled, or managed.');
   }
 
-  const raw: RawRuntimeConfig = {
-    cwd: parsed.values.cwd ?? env.KLEX_MACHINE_CWD,
-    host: parsed.values.host ?? env.KLEX_MACHINE_HOST,
-    port: parsed.values.port ?? env.KLEX_MACHINE_PORT,
-    logLevel: parsed.values['log-level'] ?? env.KLEX_MACHINE_LOG_LEVEL,
-  };
   return {
     action: 'serve',
     config: await resolveRuntimeConfig(raw, processCwd),
@@ -114,6 +145,7 @@ export function helpText(): string {
 Usage:
   klex-machine serve [options]
   klex-machine cloud enroll <code> [options]
+  klex-machine cloud bootstrap --enrollment-code-file <path|-> [options]
 
 Options:
   --cwd <path>        Default working directory
@@ -123,6 +155,7 @@ Options:
   --mode <mode>       local, enrolled, or managed (default: enrolled)
   --data-dir <path>   Identity directory (default: ~/.klex-machine)
   --cloud-base-url <url> Cloud API URL used for enrollment
+  --enrollment-code-file <path|-> Read and remove a one-time code file, or read stdin with -
   -h, --help          Show help
   -v, --version       Show version
 
@@ -133,5 +166,6 @@ Environment:
   KLEX_MACHINE_LOG_LEVEL
   KLEX_MACHINE_MODE
   KLEX_MACHINE_DATA_DIR
-  KLEX_MACHINE_CLOUD_BASE_URL`;
+  KLEX_MACHINE_CLOUD_BASE_URL
+  KLEX_MACHINE_ENROLLMENT_CODE_FILE`;
 }

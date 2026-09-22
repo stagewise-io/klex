@@ -33,6 +33,18 @@ async function defaultReadStdin(): Promise<string> {
   return Buffer.concat(chunks).toString('utf8');
 }
 
+async function validateEnrollmentIdentity(
+  dataDir: string,
+  enrollment: MachineEnrollment,
+): Promise<void> {
+  const identity = await loadMachineIdentity(join(dataDir, IDENTITY_FILE));
+  if (identity.privateKeyKid !== enrollment.keyId) {
+    throw new Error(
+      'Managed machine identity does not match enrollment metadata',
+    );
+  }
+}
+
 async function loadExistingEnrollment(
   dataDir: string,
 ): Promise<MachineEnrollment | undefined> {
@@ -48,17 +60,15 @@ async function loadExistingEnrollment(
       'Managed machine state is incomplete: private key is missing',
     );
   }
-  if (!hasEnrollment) return undefined;
-
-  const [identity, enrollment] = await Promise.all([
-    loadMachineIdentity(identityPath),
-    loadMachineEnrollment(dataDir),
-  ]);
-  if (identity.privateKeyKid !== enrollment.keyId) {
+  if (hasIdentity && !hasEnrollment) {
     throw new Error(
-      'Managed machine identity does not match enrollment metadata',
+      'Managed machine state is incomplete: enrollment metadata is missing',
     );
   }
+  if (!hasEnrollment) return undefined;
+
+  const enrollment = await loadMachineEnrollment(dataDir);
+  await validateEnrollmentIdentity(dataDir, enrollment);
   return enrollment;
 }
 
@@ -101,13 +111,6 @@ export async function bootstrapManagedMachine(
     dataDir: options.dataDir,
     fetch: options.fetch,
   });
-  const identity = await loadMachineIdentity(
-    join(options.dataDir, IDENTITY_FILE),
-  );
-  if (identity.privateKeyKid !== enrollment.keyId) {
-    throw new Error(
-      'Managed machine identity does not match enrollment metadata',
-    );
-  }
+  await validateEnrollmentIdentity(options.dataDir, enrollment);
   return enrollment;
 }

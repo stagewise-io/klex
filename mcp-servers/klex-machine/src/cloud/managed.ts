@@ -79,6 +79,12 @@ export async function bootstrapManagedMachine(
 ): Promise<MachineEnrollment> {
   const existing = await loadExistingEnrollment(options.dataDir);
   if (existing) {
+    const cloudBaseUrl = options.cloudBaseUrl.replace(/\/$/, '');
+    if (existing.cloudBaseUrl !== cloudBaseUrl) {
+      throw new Error(
+        'Managed machine enrollment belongs to a different cloud deployment',
+      );
+    }
     if (options.enrollmentCodeFile !== '-') {
       await rm(options.enrollmentCodeFile, { force: true });
     }

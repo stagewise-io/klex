@@ -11,9 +11,9 @@ export const emptyModelSelection: ModelSelection = {
 
 export const completeV2Config: KlexConfig = {
   configVersion: 2,
-  episodeFinishIdleTriggerTimeMs: 300_000,
-  memoryWriteIntervalMs: 60_000,
-  memoryWriteStepInterval: 3,
+  episodeFinishIdleTriggerTimeMs: 60_000,
+  memoryWriteIntervalMs: 120_000,
+  memoryWriteStepInterval: 10,
   officialName: 'Fixture Agent',
   providers: {
     'openai-primary': {

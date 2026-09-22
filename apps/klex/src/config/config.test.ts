@@ -116,9 +116,9 @@ describe('config v2', () => {
     const parsed = klexConfigSchema.parse(completeV2Config);
 
     expect(parsed.configVersion).toBe(2);
-    expect(parsed.episodeFinishIdleTriggerTimeMs).toBe(300_000);
-    expect(parsed.memoryWriteIntervalMs).toBe(60_000);
-    expect(parsed.memoryWriteStepInterval).toBe(3);
+    expect(parsed.episodeFinishIdleTriggerTimeMs).toBe(60_000);
+    expect(parsed.memoryWriteIntervalMs).toBe(120_000);
+    expect(parsed.memoryWriteStepInterval).toBe(10);
     expect(parsed.providers['openai-primary']?.type).toBe('openai');
     expect(parsed.providers['openai-secondary']?.type).toBe('openai');
     expect(parsed.providers['openai-internal']?.settings).toMatchObject({
@@ -181,8 +181,8 @@ describe('config v2', () => {
       mcpServers: {},
     };
 
-    expect(klexConfigSchema.parse(base).memoryWriteIntervalMs).toBe(60_000);
-    expect(klexConfigSchema.parse(base).memoryWriteStepInterval).toBe(3);
+    expect(klexConfigSchema.parse(base).memoryWriteIntervalMs).toBe(120_000);
+    expect(klexConfigSchema.parse(base).memoryWriteStepInterval).toBe(10);
     expect(() =>
       klexConfigSchema.parse({ ...base, memoryWriteIntervalMs: 0 }),
     ).toThrow();
@@ -207,7 +207,7 @@ describe('config v2', () => {
     };
 
     expect(klexConfigSchema.parse(base).episodeFinishIdleTriggerTimeMs).toBe(
-      300_000,
+      60_000,
     );
     expect(() =>
       klexConfigSchema.parse({ ...base, episodeFinishIdleTriggerTimeMs: 0 }),
@@ -265,9 +265,9 @@ describe('config v2', () => {
     });
     await config.start();
 
-    expect(config.get().episodeFinishIdleTriggerTimeMs).toBe(300_000);
-    expect(config.get().memoryWriteIntervalMs).toBe(60_000);
-    expect(config.get().memoryWriteStepInterval).toBe(3);
+    expect(config.get().episodeFinishIdleTriggerTimeMs).toBe(60_000);
+    expect(config.get().memoryWriteIntervalMs).toBe(120_000);
+    expect(config.get().memoryWriteStepInterval).toBe(10);
     expect(config.get().providers.remote).toMatchObject({
       type: 'openai',
       settings: { apiKey: '${env:OPENAI_API_KEY}' },

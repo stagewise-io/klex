@@ -178,9 +178,9 @@ function createHarness(
     getDataDir: () => '/tmp/klex-memory-test',
     config: {
       get: () => ({
-        episodeFinishIdleTriggerTimeMs: 300_000,
-        memoryWriteIntervalMs: options.memoryWriteIntervalMs ?? 60_000,
-        memoryWriteStepInterval: options.memoryWriteStepInterval ?? 3,
+        episodeFinishIdleTriggerTimeMs: 60_000,
+        memoryWriteIntervalMs: options.memoryWriteIntervalMs ?? 120_000,
+        memoryWriteStepInterval: options.memoryWriteStepInterval ?? 10,
         timezone: 'UTC',
       }),
       getModelSelection: vi.fn(() => [
@@ -254,6 +254,7 @@ describe('memory extension', () => {
   it('writes after three completed steps with pending history', async () => {
     const { extension, child, history } = createHarness({
       history: [contextMessage([{ type: 'text', text: 'ctx-0' }], 'u0')],
+      memoryWriteStepInterval: 3,
     });
     await extension.onStart?.();
 
@@ -284,7 +285,11 @@ describe('memory extension', () => {
     const history = Array.from({ length: 50 }, (_, index) =>
       contextMessage([{ type: 'text', text: `ctx-${index}` }], `u${index}`),
     );
-    const { extension, logger } = createHarness({ history, child });
+    const { extension, logger } = createHarness({
+      history,
+      child,
+      memoryWriteStepInterval: 3,
+    });
     await extension.onStart?.();
 
     await extension.onStepComplete?.(completedStep);
@@ -308,7 +313,10 @@ describe('memory extension', () => {
     const history = Array.from({ length: 30 }, (_, index) =>
       textMessage('assistant', `a${index}`, `${index}-${'x'.repeat(500)}`),
     );
-    const { extension, child } = createHarness({ history });
+    const { extension, child } = createHarness({
+      history,
+      memoryWriteStepInterval: 3,
+    });
     await extension.onStart?.();
 
     await extension.onStepComplete?.(completedStep);
@@ -321,7 +329,7 @@ describe('memory extension', () => {
     });
     expect(state(extension).lastProcessedMessageId).not.toBe('a29');
 
-    await vi.advanceTimersByTimeAsync(60_000);
+    await vi.advanceTimersByTimeAsync(120_000);
 
     expect(child.inbox.sendMessage).toHaveBeenCalledTimes(2);
     expect(state(extension)).toMatchObject({
@@ -334,7 +342,10 @@ describe('memory extension', () => {
     const history = Array.from({ length: 50 }, (_, index) =>
       filteredUserMessage(`u${index}`),
     );
-    const { extension, child } = createHarness({ history });
+    const { extension, child } = createHarness({
+      history,
+      memoryWriteStepInterval: 3,
+    });
     await extension.onStart?.();
 
     await extension.onStepComplete?.(completedStep);
@@ -385,13 +396,13 @@ describe('memory extension', () => {
       shouldContinue: true,
     });
 
-    await vi.advanceTimersByTimeAsync(30_000);
+    await vi.advanceTimersByTimeAsync(60_000);
     history.push(textMessage('assistant', 'more-assistant-work'));
     await extension.onStepComplete?.({
       ...completedStep,
       shouldContinue: true,
     });
-    await vi.advanceTimersByTimeAsync(29_999);
+    await vi.advanceTimersByTimeAsync(59_999);
     expect(child.inbox.sendMessage).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(1);
 
@@ -407,7 +418,7 @@ describe('memory extension', () => {
     await extension.onStart?.();
     await extension.onStepComplete?.(completedStep);
 
-    await vi.advanceTimersByTimeAsync(299_999);
+    await vi.advanceTimersByTimeAsync(59_999);
     await extension.onStepStart?.();
     await vi.advanceTimersByTimeAsync(1);
 
@@ -419,7 +430,7 @@ describe('memory extension', () => {
     await extension.onStart?.();
     await extension.onStepComplete?.(completedStep);
 
-    await vi.advanceTimersByTimeAsync(300_000);
+    await vi.advanceTimersByTimeAsync(60_000);
 
     expect(child.waitForIdle).toHaveBeenCalled();
     expect(child.close).toHaveBeenCalledOnce();
@@ -430,7 +441,10 @@ describe('memory extension', () => {
     const history = Array.from({ length: 50 }, (_, index) =>
       contextMessage([{ type: 'text', text: `ctx-${index}` }], `u${index}`),
     );
-    const { extension, child } = createHarness({ history });
+    const { extension, child } = createHarness({
+      history,
+      memoryWriteStepInterval: 3,
+    });
     await extension.onStart?.();
 
     await extension.onStepComplete?.(completedStep);

@@ -571,14 +571,14 @@ const klexConfigSchema = z.object({
     .int()
     .positive()
     .max(2_147_483_647)
-    .default(300_000),
+    .default(60_000),
   memoryWriteIntervalMs: z
     .number()
     .int()
     .positive()
     .max(2_147_483_647)
-    .default(60_000),
-  memoryWriteStepInterval: z.number().int().positive().default(3),
+    .default(120_000),
+  memoryWriteStepInterval: z.number().int().positive().default(10),
   officialName: z
     .string()
     .trim()
@@ -634,7 +634,7 @@ const legacyKlexConfigSchema = z
       .int()
       .positive()
       .max(2_147_483_647)
-      .default(300_000),
+      .default(60_000),
     officialName: z.string().trim().min(2).default('Agent'),
     providers: z
       .record(providerInstanceIdSchema, legacyProviderConfigSchema)

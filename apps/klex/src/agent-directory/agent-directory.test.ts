@@ -50,9 +50,9 @@ describe('AgentDirectory', () => {
         compatibilityVersion: 6,
       },
       configVersion: 2,
-      episodeFinishIdleTriggerTimeMs: 300_000,
-      memoryWriteIntervalMs: 60_000,
-      memoryWriteStepInterval: 3,
+      episodeFinishIdleTriggerTimeMs: 60_000,
+      memoryWriteIntervalMs: 120_000,
+      memoryWriteStepInterval: 10,
       officialName: 'Ada',
       providers: {},
       modelSelection: {

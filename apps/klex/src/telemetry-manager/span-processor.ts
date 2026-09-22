@@ -9,6 +9,7 @@ import type {
 import type { RuntimeTelemetryLevel } from '@/config';
 import {
   isAllowedTelemetryAttribute,
+  isAlwaysForbiddenTelemetryAttribute,
   isTelemetryContentAttribute,
 } from '@/telemetry-policy';
 
@@ -19,6 +20,8 @@ const SAFE_RESOURCE_ATTRIBUTES = new Set([
   'service.version',
   'deployment.environment',
   'service.instance.id',
+  'process.runtime.name',
+  'process.runtime.version',
 ]);
 const SAFE_EXCEPTION_ATTRIBUTES = new Set(['exception.type']);
 
@@ -50,12 +53,14 @@ function safeResourceAttributes(attributes: Attributes): Attributes {
   return result;
 }
 
-function safeAttributes(attributes: Attributes): Attributes {
+function safeAttributes(
+  attributes: Attributes,
+  level: RuntimeTelemetryLevel,
+): Attributes {
   const result: Attributes = {};
   for (const [key, value] of Object.entries(attributes)) {
     if (
-      key !== 'gen_ai.response.model' &&
-      isAllowedTelemetryAttribute(key) &&
+      isAllowedTelemetryAttribute(key, level) &&
       !isTelemetryContentAttribute(key)
     ) {
       result[key] = sanitizeValue(value) as Attributes[string];
@@ -64,7 +69,20 @@ function safeAttributes(attributes: Attributes): Attributes {
   return result;
 }
 
-function safeEvents(events: readonly TimedEvent[]): TimedEvent[] {
+function safeDebugAttributes(attributes: Attributes): Attributes {
+  const result: Attributes = {};
+  for (const [key, value] of Object.entries(attributes)) {
+    if (!isAlwaysForbiddenTelemetryAttribute(key)) {
+      result[key] = sanitizeValue(value) as Attributes[string];
+    }
+  }
+  return result;
+}
+
+function safeEvents(
+  events: readonly TimedEvent[],
+  debug = false,
+): TimedEvent[] {
   return events.map((event) => {
     if (event.name === 'exception') {
       const attributes: Attributes = {};
@@ -79,16 +97,23 @@ function safeEvents(events: readonly TimedEvent[]): TimedEvent[] {
       ...event,
       name: sanitizeString(event.name),
       attributes: event.attributes
-        ? safeAttributes(event.attributes)
+        ? debug
+          ? safeDebugAttributes(event.attributes)
+          : safeAttributes(event.attributes, debug ? 'advanced' : 'basic')
         : undefined,
     };
   });
 }
 
-function safeLinks(links: readonly Link[]): Link[] {
+function safeLinks(
+  links: readonly Link[],
+  level: RuntimeTelemetryLevel,
+): Link[] {
   return links.map((link) => ({
     ...link,
-    attributes: link.attributes ? safeAttributes(link.attributes) : undefined,
+    attributes: link.attributes
+      ? safeAttributes(link.attributes, level)
+      : undefined,
   }));
 }
 
@@ -114,19 +139,24 @@ function scrubSpan(
     spanContext: span.spanContext.bind(span),
     name: sanitizeString(span.name),
     attributes:
-      level === 'debug' ? span.attributes : safeAttributes(span.attributes),
+      level === 'debug'
+        ? safeDebugAttributes(span.attributes)
+        : safeAttributes(span.attributes, level),
     status,
     events:
-      level === 'debug'
-        ? span.events
-        : span.events.length > 0
-          ? safeEvents(span.events)
-          : span.events,
+      span.events.length > 0
+        ? safeEvents(span.events, level === 'debug')
+        : span.events,
     links:
       level === 'debug'
-        ? span.links
+        ? span.links.map((link) => ({
+            ...link,
+            attributes: link.attributes
+              ? safeDebugAttributes(link.attributes)
+              : undefined,
+          }))
         : span.links.length > 0
-          ? safeLinks(span.links)
+          ? safeLinks(span.links, level)
           : span.links,
     resource,
   };
@@ -139,7 +169,10 @@ function scrubSpan(
  */
 export class TelemetrySpanProcessor implements SpanProcessor {
   private delegate: SpanProcessor | null = null;
-  private level: RuntimeTelemetryLevel = 'no';
+  private level: RuntimeTelemetryLevel;
+  constructor(initialLevel: RuntimeTelemetryLevel = 'no') {
+    this.level = initialLevel;
+  }
   private contentAllowed: () => boolean = () => true;
 
   setContentAllowed(contentAllowed: () => boolean): void {
@@ -169,12 +202,7 @@ export class TelemetrySpanProcessor implements SpanProcessor {
       this.level === 'debug' && !this.contentAllowed()
         ? 'advanced'
         : this.level;
-    const resourceIsSafe = Object.keys(span.resource.attributes).every((key) =>
-      SAFE_RESOURCE_ATTRIBUTES.has(key),
-    );
-    delegate.onEnd(
-      level === 'debug' && resourceIsSafe ? span : scrubSpan(span, level),
-    );
+    delegate.onEnd(scrubSpan(span, level));
   }
 
   forceFlush(): Promise<void> {
@@ -186,6 +214,8 @@ export class TelemetrySpanProcessor implements SpanProcessor {
   }
 }
 
-export function createTelemetrySpanProcessor(): TelemetrySpanProcessor {
-  return new TelemetrySpanProcessor();
+export function createTelemetrySpanProcessor(
+  initialLevel: RuntimeTelemetryLevel = 'no',
+): TelemetrySpanProcessor {
+  return new TelemetrySpanProcessor(initialLevel);
 }

@@ -348,6 +348,10 @@ export function attachOtelTransport(
     encodeBody: otlpBatchBody,
     name: 'otlp',
     headers: options.headers,
+    batchSize: 100,
+    flushIntervalMs: 5_000,
+    maxBufferedLines: 10_000,
+    timeoutMs: 10_000,
   });
   if ('minLevel' in options) {
     transport.minLevel = options.minLevel;

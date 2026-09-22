@@ -41,4 +41,37 @@ describe('TelemetryScreen', () => {
       expect(frame).toContain('Read-only identifier');
     });
   });
+
+  it('explains that debug tracing overrides the configured level', async () => {
+    const apiClient = {
+      getTelemetry: vi.fn().mockResolvedValue({
+        level: 'basic',
+        instanceId: telemetryInstanceId,
+      }),
+      patchTelemetry: vi.fn(),
+    } as unknown as AdminApiClient;
+    const view = render(
+      <ScreenMetaProvider>
+        <ToastContext.Provider
+          value={{
+            toasts: [],
+            pushToast: vi.fn(),
+            dismissToast: vi.fn(),
+          }}
+        >
+          <TelemetryScreen
+            apiClient={apiClient}
+            debugTracingEnabled
+            onBack={vi.fn()}
+          />
+        </ToastContext.Provider>
+      </ScreenMetaProvider>,
+    );
+
+    await vi.waitFor(() => {
+      const frame = view.lastFrame() ?? '';
+      expect(frame).toContain('Effective level: Advanced (temporary).');
+      expect(frame).toContain('Admin API level changes are ignored');
+    });
+  });
 });

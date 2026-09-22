@@ -44,7 +44,7 @@ import type {
   Usage,
   UsagePair,
 } from '@/session/types';
-import type { TelemetryMetrics } from '@/telemetry-metrics';
+import type { TelemetryRecorder } from '@/telemetry-recorder';
 
 import {
   createExtensionHandler,
@@ -100,7 +100,7 @@ export interface ChatSessionDependencies {
    * prompt entirely.
    */
   basePrompt: string;
-  telemetryMetrics?: TelemetryMetrics;
+  telemetryMetrics?: TelemetryRecorder;
 }
 
 class ChatSessionModule implements AgentSession {
@@ -230,7 +230,7 @@ class ChatSessionModule implements AgentSession {
       modelPurpose?: ModelPurpose;
       /** Base system prompt; required for every session. */
       basePrompt: string;
-      telemetryMetrics?: TelemetryMetrics;
+      telemetryMetrics?: TelemetryRecorder;
     },
   ) {
     this.sessionId = deps.sessionContext.sessionId;
@@ -241,11 +241,18 @@ class ChatSessionModule implements AgentSession {
     // close() is called — child spans (turns, steps) are exported as they end,
     // so the trace is visible in real time even while the session span is open.
     this.sessionSpan = tracer.startSpan(
-      'session',
+      this.deps.sessionContext.name,
       {
         attributes: {
           'session.id': this.sessionId,
+          'session.name': this.deps.sessionContext.name,
           'session.createdAt': new Date().toISOString(),
+          ...(this.deps.sessionContext.extensionIdentifier
+            ? {
+                'session.extension':
+                  this.deps.sessionContext.extensionIdentifier,
+              }
+            : {}),
         },
       },
       ROOT_CONTEXT,
@@ -254,7 +261,14 @@ class ChatSessionModule implements AgentSession {
     this.createdAt = new Date().toISOString();
     this.deps.telemetryMetrics?.registerSession({
       id: this.sessionId,
-      name: this.sessionId,
+      name: this.deps.sessionContext.name,
+      kind: this.deps.sessionContext.kind,
+      ...(this.deps.sessionContext.extensionIdentifier
+        ? { extensionIdentifier: this.deps.sessionContext.extensionIdentifier }
+        : {}),
+      ...(this.deps.sessionContext.parentId
+        ? { parentId: this.deps.sessionContext.parentId }
+        : {}),
       active: true,
       runtimeState: this.runtimeState,
       historyLength: this.messages.length,
@@ -359,6 +373,7 @@ class ChatSessionModule implements AgentSession {
       });
     } catch (error) {
       this.sessionInbox.close();
+      this.deps.telemetryMetrics?.unregisterSession(this.sessionId);
       deps.introspectionScope.removeChild(this.sessionId);
       this.sessionSpan.recordException(
         error instanceof Error ? error : String(error),
@@ -1005,7 +1020,6 @@ class ChatSessionModule implements AgentSession {
         if (turnResult.fatalError) {
           this.runtimeState = 'terminated';
           this.syncTelemetrySession();
-          this.syncTelemetrySession();
           this.deps.logger.error(
             { sessionId: this.sessionId },
             'Fatal turn error — terminating session',
@@ -1021,7 +1035,6 @@ class ChatSessionModule implements AgentSession {
         // Track success/failure for backoff.
         if (turnResult.completeFailure) {
           this.runtimeState = 'retrying';
-          this.syncTelemetrySession();
           this.syncTelemetrySession();
           this.backoffManager.recordFailure();
           needsBackoffRetry = true;
@@ -1300,6 +1313,7 @@ class ChatSessionModule implements AgentSession {
         } finally {
           // Keep lifecycle bookkeeping independent from telemetry export. A
           // synchronous exporter failure must not leave a stale child behind.
+          this.deps.telemetryMetrics?.unregisterSession(this.sessionId);
           this.deps.introspectionScope.removeChild(this.sessionId);
 
           this.deps.logger.info(
@@ -1389,8 +1403,10 @@ class ChatSessionModule implements AgentSession {
     const childSessionId = randomUUID();
     const childContext: SessionContext = {
       kind: 'child',
+      name: options.name,
       sessionId: childSessionId,
       parentId: this.sessionId,
+      extensionIdentifier: options.extensionIdentifier,
     };
 
     // Create a child-sessions introspection scope lazily.
@@ -1454,6 +1470,7 @@ export function createChatSession(
     hooks: deps.hooks,
     sessionContext: deps.sessionContext,
     sessionFactory: deps.sessionFactory,
+    telemetryMetrics: deps.telemetryMetrics,
     modelPurpose: deps.modelPurpose,
     basePrompt: deps.basePrompt,
   });

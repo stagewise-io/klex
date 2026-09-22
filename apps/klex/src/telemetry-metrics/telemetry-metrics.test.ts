@@ -1,3 +1,4 @@
+import { metrics as metricApi } from '@opentelemetry/api';
 import {
   DataPointType,
   type PushMetricExporter,
@@ -10,13 +11,16 @@ import { createTelemetryMetrics } from './telemetry-metrics';
 class FakeExporter implements PushMetricExporter {
   readonly exports: unknown[] = [];
   shutdownCount = 0;
+  exportFailure: Error | undefined;
 
   export(
     metrics: Parameters<PushMetricExporter['export']>[0],
     callback: Parameters<PushMetricExporter['export']>[1],
   ): void {
     this.exports.push(metrics);
-    callback({ code: 0 });
+    callback(
+      this.exportFailure ? { code: 1, error: this.exportFailure } : { code: 0 },
+    );
   }
 
   forceFlush(): Promise<void> {
@@ -82,6 +86,116 @@ function createMetrics(exporter: FakeExporter, enabled = true) {
 }
 
 describe('TelemetryMetrics', () => {
+  it('keeps the global meter usable across disable and re-enable', async () => {
+    vi.useFakeTimers();
+    const exporter = new FakeExporter();
+    const telemetryMetrics = createMetrics(exporter, false);
+
+    await telemetryMetrics.start();
+    const counter = metricApi
+      .getMeter('telemetry-lifecycle-regression')
+      .createCounter('klex.test.lifecycle');
+    await telemetryMetrics.setLevel('basic');
+    counter.add(1);
+    await telemetryMetrics.setLevel('no');
+    await telemetryMetrics.setLevel('advanced');
+    counter.add(2);
+    await vi.advanceTimersByTimeAsync(60_000);
+
+    const points = metricsNamed(exporter, 'klex.test.lifecycle').flatMap(
+      (metric) => metric.dataPoints ?? [],
+    );
+    expect(points).toHaveLength(1);
+    expect(points[0]?.value).toBe(3);
+    await telemetryMetrics.close();
+    vi.useRealTimers();
+  });
+
+  it('keeps one provider through the complete level state machine', async () => {
+    vi.useFakeTimers();
+    const exporter = new FakeExporter();
+    let exporterCreations = 0;
+    const telemetryMetrics = createTelemetryMetrics({
+      logging: { debug: vi.fn() } as never,
+      endpoint: 'http://localhost:4318/v1/metrics',
+      exporterFactory: () => {
+        exporterCreations += 1;
+        return exporter;
+      },
+      dataDirectory: process.cwd(),
+      enabled: false,
+      instanceId: '00000000-0000-4000-8000-000000000001',
+    });
+
+    await telemetryMetrics.start();
+    await telemetryMetrics.setLevel('basic');
+    await telemetryMetrics.setLevel('advanced');
+    await telemetryMetrics.setLevel('no');
+    await telemetryMetrics.setLevel('debug');
+    await telemetryMetrics.close();
+    await telemetryMetrics.close();
+
+    expect(exporterCreations).toBe(1);
+    expect(exporter.shutdownCount).toBe(1);
+    vi.useRealTimers();
+  });
+
+  it('keeps the disabled state coherent when provider startup fails', async () => {
+    vi.useFakeTimers();
+    const exporter = new FakeExporter();
+    let fail = true;
+    const telemetryMetrics = createTelemetryMetrics({
+      logging: { debug: vi.fn() } as never,
+      endpoint: 'http://localhost:4318/v1/metrics',
+      exporterFactory: () => {
+        if (fail) throw new Error('exporter construction failed');
+        return exporter;
+      },
+      dataDirectory: process.cwd(),
+      enabled: false,
+      instanceId: '00000000-0000-4000-8000-000000000001',
+    });
+    await expect(telemetryMetrics.start()).rejects.toThrow(
+      'exporter construction failed',
+    );
+    await vi.advanceTimersByTimeAsync(120_000);
+    expect(exporter.exports).toHaveLength(0);
+
+    fail = false;
+    await telemetryMetrics.start();
+    await telemetryMetrics.setLevel('basic');
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(exporter.exports).toHaveLength(2);
+    await telemetryMetrics.close();
+    expect(exporter.exports).toHaveLength(4);
+    vi.useRealTimers();
+  });
+
+  it('serializes rapid transitions with the latest level winning', async () => {
+    vi.useFakeTimers();
+    const exporter = new FakeExporter();
+    const telemetryMetrics = createMetrics(exporter, false);
+    await telemetryMetrics.start();
+
+    await Promise.all([
+      telemetryMetrics.setLevel('basic'),
+      telemetryMetrics.setLevel('no'),
+      telemetryMetrics.setLevel('advanced'),
+    ]);
+    telemetryMetrics.recordModelCall({
+      inputTokens: 1,
+      outputTokens: 0,
+      inputCacheReadTokens: 0,
+      inputCacheWriteTokens: 0,
+      totalDurationMs: 1,
+    });
+    await vi.advanceTimersByTimeAsync(60_000);
+
+    expect(metricsNamed(exporter, 'gen_ai.client.token.usage')).toHaveLength(1);
+    await telemetryMetrics.close();
+    vi.useRealTimers();
+  });
+
   it('samples performance at 5 seconds without exporting until 60 seconds', async () => {
     vi.useFakeTimers();
     const exporter = new FakeExporter();
@@ -102,6 +216,24 @@ describe('TelemetryMetrics', () => {
     await metrics.close();
     await metrics.close();
     expect(exporter.shutdownCount).toBe(1);
+    vi.useRealTimers();
+  });
+
+  it('collects and exports a final metric batch during shutdown', async () => {
+    vi.useFakeTimers();
+    const exporter = new FakeExporter();
+    const metrics = createMetrics(exporter);
+
+    await metrics.start();
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(exporter.exports).toHaveLength(0);
+
+    await metrics.close();
+
+    expect(exporter.exports).toHaveLength(2);
+    expect(JSON.stringify(exporter.exports.at(-1))).toContain(
+      'klex.process.memory.rss',
+    );
     vi.useRealTimers();
   });
 
@@ -182,6 +314,8 @@ describe('TelemetryMetrics', () => {
     expect(serialized).not.toContain('klex.call.source');
     expect(serialized).not.toContain('raw secret error');
     expect(serialized).not.toContain('klex.cache.type');
+    expect(serialized).not.toContain('klex.host.logical_processor.count');
+    expect(serialized).not.toContain('klex.host.memory.capacity');
     await metrics.close();
     vi.useRealTimers();
   });
@@ -313,6 +447,19 @@ describe('TelemetryMetrics', () => {
         }),
       ]),
     );
+    expect(
+      metricsNamed(exporter, 'klex.host.logical_processor.count')[0]
+        ?.dataPoints?.[0]?.attributes,
+    ).toEqual(
+      expect.objectContaining({
+        'host.arch': expect.any(String),
+        'os.type': expect.any(String),
+        'os.version': expect.any(String),
+      }),
+    );
+    expect(
+      metricsNamed(exporter, 'klex.host.memory.capacity')[0]?.dataPoints,
+    ).toHaveLength(2);
     await metrics.close();
     vi.useRealTimers();
   });
@@ -403,37 +550,90 @@ describe('TelemetryMetrics', () => {
     vi.useRealTimers();
   });
 
-  it('exports advanced per-session and tool telemetry without content', async () => {
-    vi.useFakeTimers();
-    const exporter = new FakeExporter();
-    const metrics = createMetrics(exporter);
+  it.each(['advanced', 'debug'] as const)(
+    'exports %s per-session state and last-call telemetry',
+    async (level) => {
+      vi.useFakeTimers();
+      const exporter = new FakeExporter();
+      const metrics = createMetrics(exporter);
 
-    metrics.registerSession({
-      id: 'session-1',
-      name: 'primary',
-      active: true,
-      runtimeState: 'working',
-      historyLength: 12,
-      transformedHistoryLength: 8,
-    });
-    await metrics.start();
-    await metrics.setLevel('advanced');
-    metrics.recordToolCall('session-1', 'search', true);
-    await vi.advanceTimersByTimeAsync(60_000);
+      metrics.registerSession({
+        id: 'session-1',
+        name: 'primary',
+        kind: 'child',
+        extensionIdentifier: 'memory',
+        parentId: 'main-session',
+        active: true,
+        runtimeState: 'working',
+        historyLength: 12,
+        transformedHistoryLength: 8,
+      });
+      await metrics.start();
+      await metrics.setLevel(level);
+      metrics.recordModelCall({
+        sessionId: 'session-1',
+        inputTokens: 100,
+        outputTokens: 20,
+        inputCacheReadTokens: 60,
+        inputCacheWriteTokens: 10,
+        source: 'extension',
+        totalDurationMs: 100,
+      });
+      metrics.recordToolCall('session-1', 'search', true);
+      await vi.advanceTimersByTimeAsync(60_000);
 
-    const payload = JSON.stringify(exporter.exports);
-    expect(payload).toContain('klex.session.active');
-    expect(payload).toContain('klex.session.history.length');
-    expect(payload).toContain('klex.session.history.transformed_length');
-    expect(payload).toContain('klex.session.tool.calls');
-    expect(payload).toContain('session-1');
-    expect(payload).toContain('primary');
-    expect(payload).toContain('search');
-    expect(payload).not.toContain('secret-content');
+      const payload = JSON.stringify(exporter.exports);
+      expect(payload).toContain('klex.session.active');
+      expect(payload).toContain('klex.session.history.length');
+      expect(payload).toContain('klex.session.history.transformed_length');
+      expect(payload).toContain('klex.session.last_call.input_tokens');
+      expect(payload).toContain('klex.session.last_call.cache_read_tokens');
+      expect(payload).toContain('klex.session.last_call.cache_write_tokens');
+      expect(payload).toContain('klex.session.last_call.cache_read_ratio');
+      expect(payload).toContain('klex.session.tool.calls');
+      expect(payload).toContain('session-1');
+      expect(payload).toContain('main-session');
+      expect(payload).toContain('primary');
+      expect(payload).toContain('memory');
+      expect(payload).toContain('search');
+      expect(payload).not.toContain('secret-content');
 
-    await metrics.close();
-    vi.useRealTimers();
-  });
+      const inputPoint = metricsNamed(
+        exporter,
+        'klex.session.last_call.input_tokens',
+      ).flatMap((metric) => metric.dataPoints ?? [])[0];
+      expect(inputPoint).toEqual(
+        expect.objectContaining({
+          value: 100,
+          attributes: expect.objectContaining({
+            'klex.session.id': 'session-1',
+            'klex.session.name': 'primary',
+            'klex.session.extension': 'memory',
+            'klex.session.parent.id': 'main-session',
+            'klex.call.source': 'extension',
+          }),
+        }),
+      );
+      expect(
+        metricsNamed(
+          exporter,
+          'klex.session.last_call.cache_read_ratio',
+        ).flatMap((metric) => metric.dataPoints ?? [])[0]?.value,
+      ).toBe(0.6);
+
+      metrics.unregisterSession('session-1');
+      expect(
+        (
+          metrics as unknown as {
+            sessions: Map<string, unknown>;
+          }
+        ).sessions.has('session-1'),
+      ).toBe(false);
+
+      await metrics.close();
+      vi.useRealTimers();
+    },
+  );
 
   it('does not add timers when enabling repeatedly', async () => {
     vi.useFakeTimers();
@@ -447,5 +647,16 @@ describe('TelemetryMetrics', () => {
 
     await metrics.close();
     vi.useRealTimers();
+  });
+
+  it('fails open when the telemetry endpoint is unavailable', async () => {
+    const exporter = new FakeExporter();
+    exporter.exportFailure = new Error('collector unavailable');
+    const telemetryMetrics = createMetrics(exporter, false);
+
+    await telemetryMetrics.start();
+    await telemetryMetrics.setLevel('basic');
+    await expect(telemetryMetrics.forceFlush()).resolves.toBeUndefined();
+    await expect(telemetryMetrics.close()).resolves.toBeUndefined();
   });
 });

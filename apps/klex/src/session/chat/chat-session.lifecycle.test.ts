@@ -10,6 +10,7 @@ import type {
   ChildSessionHandle,
   SessionFactory,
 } from '@/session/types';
+import type { TelemetryMetrics } from '@/telemetry-metrics';
 
 import { createChatSession } from './chat-session';
 import type {
@@ -56,6 +57,7 @@ function createSession(
     extensions?: ExtensionFactory[];
     mcp?: Mcp | null;
     sessionFactory?: SessionFactory;
+    telemetryMetrics?: TelemetryMetrics;
   } = {},
 ): ChatSessionHandle {
   return createChatSession({
@@ -66,8 +68,9 @@ function createSession(
     mcp: options.mcp ?? null,
     extensionFactories: options.extensions ?? [],
     introspectionScope: createScope(),
-    sessionContext: { kind: 'default', sessionId: 'default' },
+    sessionContext: { kind: 'default', name: 'main', sessionId: 'default' },
     sessionFactory: options.sessionFactory,
+    telemetryMetrics: options.telemetryMetrics,
     basePrompt: 'You are Klex.',
   });
 }
@@ -116,6 +119,31 @@ describe('ChatSession lifecycle', () => {
     await session.close();
 
     await expect(session.waitForIdle(100)).resolves.toBe(false);
+  });
+
+  it('registers and unregisters session telemetry with stable labels', async () => {
+    const registerSession = vi.fn();
+    const unregisterSession = vi.fn();
+    const session = createSession({
+      telemetryMetrics: {
+        registerSession,
+        unregisterSession,
+      } as unknown as TelemetryMetrics,
+    });
+
+    expect(registerSession).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: 'default',
+        name: 'main',
+        kind: 'default',
+        active: true,
+      }),
+    );
+
+    await session.close();
+
+    expect(unregisterSession).toHaveBeenCalledOnce();
+    expect(unregisterSession).toHaveBeenCalledWith('default');
   });
 
   it('starts extensions and subscribes to MCP only once', async () => {
@@ -186,6 +214,8 @@ describe('ChatSession lifecycle', () => {
     let resolved = false;
     const creation = requireExtensionDeps(extensionDeps)
       .createChildSession({
+        name: 'test-child',
+        extensionIdentifier: 'test-extension',
         extensions: [childExtension],
         basePrompt: 'You are a child.',
         modelPurpose: 'memory',
@@ -231,6 +261,8 @@ describe('ChatSession lifecycle', () => {
     await parent.start();
 
     const creation = requireExtensionDeps(extensionDeps).createChildSession({
+      name: 'test-child',
+      extensionIdentifier: 'test-extension',
       extensions: [],
       basePrompt: 'You are a child.',
     });
@@ -261,6 +293,8 @@ describe('ChatSession lifecycle', () => {
 
     await expect(
       requireExtensionDeps(extensionDeps).createChildSession({
+        name: 'test-child',
+        extensionIdentifier: 'test-extension',
         extensions: [],
         basePrompt: 'You are a child.',
       }),
@@ -287,7 +321,11 @@ describe('ChatSession lifecycle', () => {
         mcp: null,
         extensionFactories: [extension],
         introspectionScope,
-        sessionContext: { kind: 'child', sessionId: 'failed-child' },
+        sessionContext: {
+          kind: 'child',
+          name: 'failed-child',
+          sessionId: 'failed-child',
+        },
         basePrompt: 'You are Klex.',
       }),
     ).toThrow(constructionError);
@@ -315,6 +353,8 @@ describe('ChatSession lifecycle', () => {
 
     await expect(
       requireExtensionDeps(extensionDeps).createChildSession({
+        name: 'test-child',
+        extensionIdentifier: 'test-extension',
         extensions: [],
         basePrompt: 'You are a child.',
       }),

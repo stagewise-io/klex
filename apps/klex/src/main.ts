@@ -67,13 +67,19 @@ import {
 } from '@/session/realtime';
 import { createSessionHost } from '@/session/session-host';
 import type { SessionFactory } from '@/session/types';
-import { createShutdownCoordinator } from '@/shutdown-coordinator';
+import {
+  createShutdownCoordinator,
+  DEFAULT_SHUTDOWN_TIMEOUT_MS,
+} from '@/shutdown-coordinator';
 import { createTelemetryExportConfiguration } from '@/telemetry-config';
 import {
   createTelemetryManager,
   createTelemetrySpanProcessor,
 } from '@/telemetry-manager';
 import { createTelemetryMetrics } from '@/telemetry-metrics';
+import { createTelemetryPolicy } from '@/telemetry-policy';
+import { createTelemetryRecorder } from '@/telemetry-recorder';
+import { createTelemetryResourceAttributes } from '@/telemetry-resource';
 import { createTracing, mapProviderName } from '@/tracing';
 
 /** Minimum seconds between time updates before executable generations. */
@@ -93,8 +99,6 @@ const logger = createLogger({
   console: cli.headless,
   mask: { caseInsensitive: true },
 });
-
-const spanProcessor = createTelemetrySpanProcessor();
 
 async function main(): Promise<void> {
   logger.info(`Klex Bot v${KLEX_VERSION}`);
@@ -228,17 +232,24 @@ async function main(): Promise<void> {
   let adminApiForUi: AdminApi | undefined;
   let runtime: RuntimeHandle | undefined;
   let tracing: ReturnType<typeof createTracing> | undefined;
+  let telemetryMetrics: ReturnType<typeof createTelemetryMetrics> | undefined;
 
   try {
     await config.start();
     preRuntime.push(config);
     const configuredTelemetry = config.get().telemetry;
+    // Debug tracing is a temporary runtime override. Keep the policy and all
+    // metric/log pipelines at least advanced, while the span processor uses
+    // debug mode to include the additional trace detail for this invocation.
     const telemetryLevel: RuntimeTelemetryLevel = cli.telemetryDisabled
       ? 'no'
       : cli.telemetryDebug
-        ? 'debug'
+        ? 'advanced'
         : (configuredTelemetry?.level ?? getDefaultTelemetryLevel());
-    spanProcessor.setLevel(telemetryLevel);
+    const telemetryPolicy = createTelemetryPolicy(telemetryLevel);
+    const spanProcessor = createTelemetrySpanProcessor(
+      cli.telemetryDebug ? 'debug' : telemetryLevel,
+    );
     spanProcessor.setContentAllowed(() => {
       if (cli.telemetryDisabled) return false;
       return cli.telemetryDebug;
@@ -257,6 +268,12 @@ async function main(): Promise<void> {
       cli.telemetryEndpoint,
     );
     const telemetryInstanceId = config.get().telemetry?.instanceId ?? 'unknown';
+    const telemetryResourceAttributes = createTelemetryResourceAttributes({
+      serviceName: 'klex',
+      serviceNamespace: 'stagewise',
+      serviceVersion: KLEX_VERSION,
+      serviceInstanceId: telemetryInstanceId,
+    });
     let telemetryLogsAttached = false;
     const getTelemetryLogMinLevel = (
       level: RuntimeTelemetryLevel,
@@ -281,11 +298,7 @@ async function main(): Promise<void> {
           url: telemetryExport.logsUrl,
           headers: { ...telemetryExport.headers },
           minLevel: getTelemetryLogMinLevel(level),
-          resourceAttributes: {
-            'service.name': 'klex',
-            'service.namespace': 'stagewise',
-            'service.instance.id': telemetryInstanceId,
-          },
+          resourceAttributes: telemetryResourceAttributes,
         },
         cli.verbose,
       );
@@ -296,20 +309,15 @@ async function main(): Promise<void> {
       otlpUrl: telemetryExport.tracesUrl,
       otlpHeaders: { ...telemetryExport.headers },
       serviceName: 'klex',
-      resourceAttributes: {
-        'service.namespace': 'stagewise',
-        'service.instance.id': telemetryInstanceId,
-      },
+      resourceAttributes: telemetryResourceAttributes,
       spanProcessor,
+      policy: telemetryPolicy,
       enabled: telemetryLevel !== 'no',
       recordContent: true,
-      contentAllowed: () => {
-        if (telemetryLevel !== 'debug') return false;
-        return cli.telemetryDebug;
-      },
+      contentAllowed: () => cli.telemetryDebug,
     });
     await tracing.start();
-    const telemetryMetrics = createTelemetryMetrics({
+    telemetryMetrics = createTelemetryMetrics({
       logging: logger.child({ name: 'telemetry-metrics' }),
       endpoint: telemetryExport.metricsUrl,
       headers: { ...telemetryExport.headers },
@@ -317,10 +325,15 @@ async function main(): Promise<void> {
       enabled: telemetryLevel !== 'no',
       instanceId: telemetryInstanceId,
       serviceVersion: KLEX_VERSION,
+      resourceAttributes: telemetryResourceAttributes,
+      policy: telemetryPolicy,
     });
     await telemetryMetrics.start();
-    await telemetryMetrics.setLevel(telemetryLevel);
     preRuntime.push(telemetryMetrics);
+    const telemetryRecorder = createTelemetryRecorder(
+      telemetryMetrics,
+      telemetryPolicy,
+    );
     const timezone = config.get().timezone;
     const providerRegistry = createProviderRegistry({
       logging: logger,
@@ -363,7 +376,8 @@ async function main(): Promise<void> {
 
     tracing.setModelCallSink((record) => {
       modelCallLogger.recordCall(record);
-      telemetryMetrics.recordModelCall({
+      telemetryRecorder.recordModelCall({
+        sessionId: record.sessionId,
         inputTokens: record.inputTokens,
         outputTokens: record.outputTokens,
         inputCacheReadTokens: record.inputCacheReadTokens,
@@ -385,7 +399,7 @@ async function main(): Promise<void> {
       config,
       modelResolver: providerRegistry,
       dataDirectory,
-      telemetryMetrics,
+      telemetryMetrics: telemetryRecorder,
     };
 
     /**
@@ -477,12 +491,13 @@ async function main(): Promise<void> {
       logging: logger,
       config,
       spanProcessor,
+      policy: telemetryPolicy,
       effectiveLevel:
         cli.telemetryDisabled || cli.telemetryDebug
           ? telemetryLevel
           : undefined,
       onLevelChange: async (level) => {
-        await telemetryMetrics.setLevel(level);
+        await telemetryMetrics?.setLevel(level);
         if (level === 'no') {
           await tracing?.setEnabled(false);
           return;
@@ -532,7 +547,20 @@ async function main(): Promise<void> {
   let cliUi: { start(): void; close(): void } | undefined;
   let updateManager: UpdateManager | undefined;
 
+  const flushTelemetry = async (): Promise<void> => {
+    const telemetryFlushes = await Promise.allSettled([
+      telemetryMetrics?.forceFlush(),
+      tracing?.forceFlush(),
+    ]);
+    for (const result of telemetryFlushes) {
+      if (result.status === 'rejected') {
+        logger.warn({ error: result.reason }, 'Telemetry flush failed');
+      }
+    }
+  };
+
   const shutdown = createShutdownCoordinator({
+    beforeCleanup: flushTelemetry,
     closeUi: () => cliUi?.close(),
     cleanup: async () => {
       const updateState = updateManager?.getState();
@@ -543,18 +571,28 @@ async function main(): Promise<void> {
       // Ordered teardown: event ingress and realtime sessions stop before the
       // default session and its extensions close.
       await runningRuntime?.close();
-      const [lockRelease] = await Promise.allSettled([
+      // Flush telemetry after producers stop, while providers are still alive.
+      // This avoids relying solely on provider shutdown hooks under the outer
+      // shutdown deadline.
+      await flushTelemetry();
+      // Dispose pre-runtime providers only after the explicit flush phase.
+      await closeReverse(preRuntime);
+      const [lockRelease, tracingClose] = await Promise.allSettled([
         dirLock.release(),
         tracing?.close(),
-        logger[Symbol.asyncDispose](),
       ]);
+      // Logger disposal is last so shutdown diagnostics and buffered OTLP logs
+      // are drained after every other telemetry provider has stopped.
+      await logger[Symbol.asyncDispose]();
       if (lockRelease.status === 'rejected') {
         throw new Error('Could not release the agent-directory lock', {
           cause: lockRelease.reason,
         });
       }
+      if (tracingClose.status === 'rejected') throw tracingClose.reason;
     },
     exit: (code) => process.exit(code),
+    timeoutMs: resolveShutdownTimeoutMs(process.env.KLEX_SHUTDOWN_TIMEOUT_MS),
     onRestartError: (error) => {
       process.stderr.write(
         `\nKlex update installed but restart failed: ${error.message}\n` +
@@ -609,6 +647,19 @@ async function main(): Promise<void> {
     ui.start();
     updateManager?.start();
   }
+}
+
+function resolveShutdownTimeoutMs(value: string | undefined): number {
+  if (!value) return DEFAULT_SHUTDOWN_TIMEOUT_MS;
+  const parsed = Number(value);
+  if (Number.isFinite(parsed) && parsed >= 1_000 && parsed <= 120_000) {
+    return Math.floor(parsed);
+  }
+  logger.warn(
+    { value, fallback: DEFAULT_SHUTDOWN_TIMEOUT_MS },
+    'Ignoring invalid KLEX_SHUTDOWN_TIMEOUT_MS',
+  );
+  return DEFAULT_SHUTDOWN_TIMEOUT_MS;
 }
 
 async function closeReverse(

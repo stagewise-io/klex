@@ -1,5 +1,7 @@
 import { spawn } from 'node:child_process';
 
+export const DEFAULT_SHUTDOWN_TIMEOUT_MS = 15_000;
+
 export type ShutdownMode = 'exit' | 'restart';
 
 export interface RestartRequest {
@@ -10,6 +12,7 @@ export interface RestartRequest {
 }
 
 export interface ShutdownCoordinatorOptions {
+  readonly beforeCleanup?: () => Promise<void>;
   readonly cleanup: () => Promise<void>;
   readonly closeUi: () => void;
   readonly exit: (code: number) => void;
@@ -38,11 +41,15 @@ export function createShutdownCoordinator(
       // Best effort: cleanup and process lifecycle must still proceed.
     }
 
+    // Start telemetry flushing before teardown so slow runtime cleanup does not
+    // consume the entire export window.
+    void options.beforeCleanup?.();
+
     let timeoutHandle: NodeJS.Timeout | undefined;
     const timeout = new Promise<{ status: 'timeout' }>((resolve) => {
       timeoutHandle = setTimeout(
         () => resolve({ status: 'timeout' }),
-        options.timeoutMs ?? 3000,
+        options.timeoutMs ?? DEFAULT_SHUTDOWN_TIMEOUT_MS,
       );
     });
     const cleanup = options.cleanup().then(

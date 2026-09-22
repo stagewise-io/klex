@@ -16,6 +16,7 @@ import { createImageInputOptimizerExt } from '@/session/chat/extensions/image-in
 import { createNameLoaderExt } from '@/session/chat/extensions/name-loader';
 import { createSoulExt } from '@/session/chat/extensions/soul';
 import type { ExtendedUIMessage } from '@/session/chat/message-types';
+import { getExtensionIdentifier } from '@/session/chat/utils/tracing';
 import { SessionInboxUrgency } from '@/session/inbox';
 import type { ChildSessionHandle } from '@/session/types';
 
@@ -315,6 +316,8 @@ class EpisodicWriterOwner implements EpisodicWriter {
       );
     }
     return this.deps.createChildSession({
+      name: 'episodic-memory-writer',
+      extensionIdentifier: getExtensionIdentifier() ?? 'memory',
       extensions: [
         createNameLoaderExt,
         createSoulExt,

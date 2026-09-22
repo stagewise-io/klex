@@ -8,7 +8,7 @@ import type { ModuleLogger } from '@stagewise/logger';
 import type { Config } from '@/config';
 import type { ProviderModelResolver } from '@/provider-registry';
 import type { Usage } from '@/session/types';
-import type { TelemetryMetrics } from '@/telemetry-metrics';
+import type { TelemetryRecorder } from '@/telemetry-recorder';
 
 import type { ExtensionHandler } from '../extension-handler';
 import type { SessionInboxBuffer } from '../inbox';
@@ -22,7 +22,7 @@ import { extractUsage } from '../utils/usage';
 export interface TurnDependencies {
   logger: ModuleLogger;
   sessionId: string;
-  telemetryMetrics?: TelemetryMetrics;
+  telemetryMetrics?: TelemetryRecorder;
   sessionContext: Context;
   sessionSpan: Span;
   messages: ExtendedUIMessage[];

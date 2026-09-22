@@ -206,16 +206,25 @@ export type SessionKind = 'default' | 'god' | 'child';
  * Extensions inspect this to decide session-specific behavior.
  */
 export interface SessionContext {
+  /** Internal isolation/capability classification. Not exported as telemetry. */
   kind: SessionKind;
+  /** Stable human-readable session name used in tracing and telemetry. */
+  name: string;
   sessionId: string;
   /** Parent session ID (child sessions only). */
   parentId?: string;
+  /** Extension identifier that owns a child session. */
+  extensionIdentifier?: string;
 }
 
 /**
  * Options for creating a child session.
  */
 export interface ChildSessionOptions {
+  /** Required name used as the session span name and telemetry identity. */
+  name: string;
+  /** Set internally from the calling extension's identifier. */
+  extensionIdentifier: string;
   extensions: ExtensionFactory[];
   /** Configured model list this child session uses. Defaults to `chat`. */
   modelPurpose?: ModelPurpose;

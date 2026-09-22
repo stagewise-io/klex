@@ -230,6 +230,12 @@ class ExtensionHandlerModule implements ExtensionHandler {
     this.extensions = deps.factories.map((factory) => {
       const scopedDeps: ExtensionDeps = {
         ...deps.extensionDeps,
+        extensionIdentifier: factory.identifier,
+        createChildSession: (options) =>
+          deps.extensionDeps.createChildSession({
+            ...options,
+            extensionIdentifier: factory.identifier,
+          }),
         getDataDir: (global = false) =>
           global
             ? join(deps.dataDirectory, 'extensions', factory.identifier)

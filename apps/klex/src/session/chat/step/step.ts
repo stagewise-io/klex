@@ -13,7 +13,7 @@ import {
   runInferenceContextTransformers,
   runInferenceHistoryTransformers,
 } from '@/session/interaction';
-import type { TelemetryMetrics } from '@/telemetry-metrics';
+import type { TelemetryRecorder } from '@/telemetry-recorder';
 
 import type { ExtensionHandler } from '../extension-handler';
 import type {
@@ -71,7 +71,7 @@ export interface StepDependencies {
    */
   turnInitialFallbackIndex: number;
   sessionId: string;
-  telemetryMetrics?: TelemetryMetrics;
+  telemetryMetrics?: TelemetryRecorder;
   /**
    * Base system prompt forwarded to the generation runner.
    */

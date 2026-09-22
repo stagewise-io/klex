@@ -220,6 +220,7 @@ class SessionHostModule implements SessionHost {
     };
     const sessionContext: SessionContext = {
       kind: 'default',
+      name: 'main',
       sessionId: DEFAULT_SESSION_ID,
     };
     const session = this.deps.sessionFactory({

@@ -557,6 +557,9 @@ export interface ExtensionDeps {
    */
   sessionContext: SessionContext;
 
+  /** Identifier of the extension receiving these dependencies. */
+  readonly extensionIdentifier?: string;
+
   /**
    * Spawns an isolated child session owned by this extension. The parent
    * session owns and cleans up the child while startup is in flight; ownership

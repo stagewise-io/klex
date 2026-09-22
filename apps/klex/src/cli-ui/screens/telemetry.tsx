@@ -99,6 +99,7 @@ export function TelemetryScreen({
   );
   const selectedDescription =
     LEVELS[selectedIndex]?.description ?? 'Select a telemetry level.';
+  const effectiveLevel = debugTracingEnabled ? 'advanced' : level;
   const items = useMemo<MenuItem<TelemetryLevel>[]>(
     () => LEVELS.map(({ value, label }) => ({ value, label })),
     [],
@@ -180,12 +181,20 @@ export function TelemetryScreen({
             <MenuList
               items={items}
               selectedIndex={selectedIndex}
-              isFocused={!saving && Boolean(settings)}
-              onSelect={(item) => void saveLevel(item)}
+              isFocused={!saving && Boolean(settings) && !debugTracingEnabled}
+              onSelect={
+                debugTracingEnabled ? undefined : (item) => void saveLevel(item)
+              }
             />
             <Box marginTop={1} flexDirection="column">
               <Text>{selectedDescription}</Text>
               {saving ? <Text dimColor>Saving...</Text> : null}
+              {debugTracingEnabled ? (
+                <Text color="yellow">
+                  Changes are ignored while debug tracing is active. Effective
+                  level: Advanced (temporary).
+                </Text>
+              ) : null}
             </Box>
           </Box>
         </>
@@ -196,8 +205,9 @@ export function TelemetryScreen({
             Debug tracing is active for this process.
           </Text>
           <Text dimColor>
-            It is startup-only and may collect more detailed telemetry. Restart
-            without the debug flag to disable it.
+            It is startup-only, temporarily forces Advanced telemetry, and may
+            collect chat content and detailed traces. Admin API level changes
+            are ignored until debug tracing is disabled.
           </Text>
         </Box>
       ) : (

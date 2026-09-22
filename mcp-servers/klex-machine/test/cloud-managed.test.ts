@@ -1,4 +1,11 @@
-import { access, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import {
+  access,
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  writeFile,
+} from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -86,6 +93,39 @@ describe('managed machine bootstrap', () => {
     await expect(access(restartCodeFile)).rejects.toThrow();
   });
 
+  it('fails closed when identity does not match enrollment metadata', async () => {
+    const directory = await temporaryDirectory();
+    const firstCodeFile = join(directory, 'first-code');
+    await writeFile(firstCodeFile, 'first-secret');
+    await bootstrapManagedMachine({
+      cloudBaseUrl: 'https://cloud.example',
+      dataDir: directory,
+      enrollmentCodeFile: firstCodeFile,
+      fetch: async () => enrollmentResponse(),
+    });
+
+    const enrollmentPath = join(directory, ENROLLMENT_FILE);
+    const enrollment = JSON.parse(
+      await readFile(enrollmentPath, 'utf8'),
+    ) as Record<string, unknown>;
+    enrollment.keyId = 'different-key';
+    await writeFile(enrollmentPath, `${JSON.stringify(enrollment)}\n`);
+
+    const restartCodeFile = join(directory, 'restart-code');
+    await writeFile(restartCodeFile, 'must-not-be-used');
+    const fetch = vi.fn(async () => enrollmentResponse());
+    await expect(
+      bootstrapManagedMachine({
+        cloudBaseUrl: 'https://cloud.example',
+        dataDir: directory,
+        enrollmentCodeFile: restartCodeFile,
+        fetch,
+      }),
+    ).rejects.toThrow('does not match enrollment metadata');
+
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
   it('fails closed when persisted enrollment belongs to another cloud', async () => {
     const directory = await temporaryDirectory();
     const firstCodeFile = join(directory, 'first-code');
@@ -108,6 +148,34 @@ describe('managed machine bootstrap', () => {
         fetch,
       }),
     ).rejects.toThrow('different cloud deployment');
+
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it('fails closed when a private key exists without enrollment metadata', async () => {
+    const directory = await temporaryDirectory();
+    const firstCodeFile = join(directory, 'first-code');
+    await writeFile(firstCodeFile, 'first-secret');
+    await expect(
+      bootstrapManagedMachine({
+        cloudBaseUrl: 'https://cloud.example',
+        dataDir: directory,
+        enrollmentCodeFile: firstCodeFile,
+        fetch: async () => new Response(null, { status: 503 }),
+      }),
+    ).rejects.toThrow('HTTP 503');
+
+    const retryCodeFile = join(directory, 'retry-code');
+    await writeFile(retryCodeFile, 'must-not-be-used');
+    const fetch = vi.fn(async () => enrollmentResponse());
+    await expect(
+      bootstrapManagedMachine({
+        cloudBaseUrl: 'https://cloud.example',
+        dataDir: directory,
+        enrollmentCodeFile: retryCodeFile,
+        fetch,
+      }),
+    ).rejects.toThrow('enrollment metadata is missing');
 
     expect(fetch).not.toHaveBeenCalled();
   });

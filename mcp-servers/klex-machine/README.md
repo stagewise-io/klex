@@ -43,7 +43,7 @@ klex-machine cloud bootstrap \
   --data-dir /var/lib/klex-machine
 ```
 
-Use `--enrollment-code-file -` to read the code from standard input. Never put an enrollment code in a command argument or environment variable. Bootstrap removes a file input after reading it, enrolls atomically, validates that enrollment metadata matches the private key, and starts enrolled mode in the same process. On restart it reuses matching identity and enrollment state without contacting the enrollment endpoint. Missing private keys, corrupt metadata, or a key-ID mismatch fail closed.
+Use `--enrollment-code-file -` to read the code from standard input. Never put an enrollment code in a command argument or environment variable. Bootstrap removes a file input after reading it, enrolls atomically, validates that enrollment metadata matches the private key, and starts enrolled mode in the same process. On restart it reuses matching identity and enrollment state without contacting the enrollment endpoint. Missing private keys, missing or corrupt metadata, or a key-ID mismatch fail closed.
 
 The template must provide Node.js 24 or newer, a writable owner-only data directory that survives E2B pause/resume, a writable working directory, outbound HTTPS to the paired Cloud deployment, and normal `SIGTERM` delivery. The process should run as an unprivileged user and be supervised with restart-on-failure. It must not expose the local unauthenticated HTTP listener publicly.
 

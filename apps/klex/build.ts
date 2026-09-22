@@ -116,6 +116,7 @@ export function createBuildOptions(isSea: boolean): {
             // at runtime instead of reporting its release version.
             define: {
               ...sharedOptions.define,
+              'process.env.NODE_ENV': JSON.stringify('production'),
               __dirname: 'import.meta.dirname',
             },
           }
@@ -124,6 +125,14 @@ export function createBuildOptions(isSea: boolean): {
     },
     worker: {
       ...sharedOptions,
+      ...(isSea
+        ? {
+            define: {
+              ...sharedOptions.define,
+              'process.env.NODE_ENV': JSON.stringify('production'),
+            },
+          }
+        : {}),
       entryPoints: [
         'src/session/chat/extensions/js-repl-sandbox/worker-entry.ts',
       ],

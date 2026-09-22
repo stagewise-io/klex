@@ -71,7 +71,7 @@ afterEach(async () => {
 });
 
 describe('config v2', () => {
-  it('advances compatibility metadata for deep-thinking model selection', async () => {
+  it('advances compatibility metadata for consult model selection', async () => {
     expect(CONFIG_STORE_DEFINITION.compatibilityVersion).toBe(6);
     expect(CONFIG_STORE_DEFINITION.minimumKlexVersion).toBe('0.8.0');
 
@@ -84,7 +84,7 @@ describe('config v2', () => {
         providers: {},
         modelSelection: {
           ...emptyModelSelection,
-          deepThinking: [{ providerId: 'remote', modelId: 'reasoner' }],
+          consult: [{ providerId: 'remote', modelId: 'reasoner' }],
         },
         mcpServers: {},
       }),
@@ -102,7 +102,7 @@ describe('config v2', () => {
     });
   });
 
-  it('rejects a deep-thinking config for an older reader before mutation', async () => {
+  it('rejects a consult config for an older reader before mutation', async () => {
     const dataDirectory = await directory();
     await writeFile(
       join(dataDirectory, CONFIG_FILE_NAME),
@@ -112,7 +112,7 @@ describe('config v2', () => {
         providers: {},
         modelSelection: {
           ...emptyModelSelection,
-          deepThinking: [{ providerId: 'remote', modelId: 'reasoner' }],
+          consult: [{ providerId: 'remote', modelId: 'reasoner' }],
         },
         mcpServers: {},
       }),
@@ -162,7 +162,7 @@ describe('config v2', () => {
     }
   });
 
-  it('advances compatibility metadata for deep-thinking model selection', async () => {
+  it('advances compatibility metadata for consult model selection', async () => {
     expect(CONFIG_STORE_DEFINITION.compatibilityVersion).toBe(6);
     expect(CONFIG_STORE_DEFINITION.minimumKlexVersion).toBe('0.8.0');
 
@@ -175,7 +175,7 @@ describe('config v2', () => {
         providers: {},
         modelSelection: {
           ...emptyModelSelection,
-          deepThinking: [{ providerId: 'remote', modelId: 'reasoner' }],
+          consult: [{ providerId: 'remote', modelId: 'reasoner' }],
         },
         mcpServers: {},
       }),
@@ -193,7 +193,7 @@ describe('config v2', () => {
     });
   });
 
-  it('rejects a deep-thinking config for an older reader before mutation', async () => {
+  it('rejects a consult config for an older reader before mutation', async () => {
     const dataDirectory = await directory();
     await writeFile(
       join(dataDirectory, CONFIG_FILE_NAME),
@@ -203,7 +203,7 @@ describe('config v2', () => {
         providers: {},
         modelSelection: {
           ...emptyModelSelection,
-          deepThinking: [{ providerId: 'remote', modelId: 'reasoner' }],
+          consult: [{ providerId: 'remote', modelId: 'reasoner' }],
         },
         mcpServers: {},
       }),

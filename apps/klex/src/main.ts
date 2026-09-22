@@ -39,8 +39,8 @@ import { runNativeVerification } from '@/release/verify-native';
 import { discoverManagedInstallation, UpdateManager } from '@/self-update';
 import { createChatSession } from '@/session/chat';
 import { createAudioInputOptimizerExt } from '@/session/chat/extensions/audio-input-optimizer';
+import { createConsultExt } from '@/session/chat/extensions/consult';
 import { createContextCompactionExt } from '@/session/chat/extensions/context-compaction';
-import { createDeepThinkerExt } from '@/session/chat/extensions/deep-thinker';
 import type { ExtensionFactory } from '@/session/chat/extensions/extension-api';
 import {
   createGodMessagesDistrustExt,
@@ -445,7 +445,7 @@ async function main(): Promise<void> {
       createTodosExt,
       createMcpIngressExt(),
       createMemoryExt({ timezone }),
-      createDeepThinkerExt({
+      createConsultExt({
         childExtensionFactories: [createSoulExt, defaultTimeExt],
         maxActiveSessions: 2,
         maxReportsPerSession: 3,

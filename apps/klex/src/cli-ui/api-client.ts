@@ -160,7 +160,7 @@ export interface ModelSelection {
   memory: ModelSelectionEntry[];
   imageVision: ModelSelectionEntry[];
   audioListening: ModelSelectionEntry[];
-  deepThinking: ModelSelectionEntry[];
+  consult: ModelSelectionEntry[];
   voice: {
     sts: ModelSelectionEntry[];
     tts: ModelSelectionEntry[];

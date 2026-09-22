@@ -310,7 +310,7 @@ const modelSelectionSchema = z
     memory: z.array(modelSelectionEntryOapiSchema),
     imageVision: z.array(modelSelectionEntryOapiSchema).default([]),
     audioListening: z.array(modelSelectionEntryOapiSchema).default([]),
-    deepThinking: z.array(modelSelectionEntryOapiSchema).default([]),
+    consult: z.array(modelSelectionEntryOapiSchema).default([]),
     voice: voiceModelSelectionSchema,
   })
   .openapi('ModelSelection');
@@ -322,7 +322,7 @@ const modelSelectionPatchSchema = z
     memory: z.array(modelSelectionEntryOapiSchema).optional(),
     imageVision: z.array(modelSelectionEntryOapiSchema).optional(),
     audioListening: z.array(modelSelectionEntryOapiSchema).optional(),
-    deepThinking: z.array(modelSelectionEntryOapiSchema).optional(),
+    consult: z.array(modelSelectionEntryOapiSchema).optional(),
     voice: voiceModelSelectionSchema.optional(),
   })
   .openapi('ModelSelectionPatch');

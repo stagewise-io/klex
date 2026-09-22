@@ -1323,7 +1323,7 @@ class ChatSessionModule implements AgentSession {
         }
       }
     })().catch((error: unknown) => {
-      // A failed cleanup must remain retryable. Owners such as deep-thinker
+      // A failed cleanup must remain retryable. Owners such as consult
       // retain failed child handles and may invoke close() again.
       this.closePromise = null;
       throw error;

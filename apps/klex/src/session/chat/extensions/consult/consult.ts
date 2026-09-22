@@ -17,15 +17,15 @@ import {
   type ProvisionalStepContext,
 } from '../extension-api';
 import { CONTEXT_SUMMARY_KEY, serializeHistoryAsXml } from '../history-xml';
-import deepThinkerSystemPrompt from './deep-thinker-system-prompt.md';
+import consultSystemPrompt from './consult-system-prompt.md';
 import mainSystemPrompt from './main-system-prompt.md';
 import {
+  CONSULT_REPORT_KEY,
+  CONSULTS_KEY,
+  type ConsultReportData,
+  type ConsultSession,
+  type ConsultSessionContextData,
   contextPrompt,
-  DEEP_THINKER_REPORT_KEY,
-  DEEP_THINKERS_KEY,
-  type DeepThinkSessionContextData as DeepThinkerSessionContextData,
-  type DeepThinkReportData,
-  type DeepThinkSession,
   reportPrompt,
   sessionsPrompt,
   updatePrompt,
@@ -56,25 +56,25 @@ const updateSchema = z.object({
   handle: z
     .string()
     .regex(/^dt\d+$/)
-    .describe('Short deep thinker handle, such as dt1 or dt2'),
+    .describe('Short consult handle, such as dt1 or dt2'),
   content: z
     .string()
     .trim()
     .min(1)
     .max(4_000)
-    .describe('Important new info for deep thinker.'),
+    .describe('Important new info for consult.'),
 });
 
 const abortSchema = z.object({
   handle: z
     .string()
     .regex(/^dt\d+$/)
-    .describe('Short deep thinker handle, such as dt1 or dt2'),
+    .describe('Short consult handle, such as dt1 or dt2'),
 });
 
 function sessionChanges(
-  previous: DeepThinkSession[],
-  current: DeepThinkSession[],
+  previous: ConsultSession[],
+  current: ConsultSession[],
 ): string[] {
   const previousByHandle = new Map(
     previous.map((session) => [session.handle, session]),
@@ -98,7 +98,7 @@ function sessionChanges(
   return changes;
 }
 
-type DeepThinkEntry = {
+type ConsultEntry = {
   child: ChildSessionHandle;
   generationId: string;
   reportCount: number;
@@ -106,15 +106,15 @@ type DeepThinkEntry = {
   status: 'running' | 'finished';
 };
 
-export interface DeepThinkerExtConfig {
+export interface ConsultExtConfig {
   childExtensionFactories: ExtensionFactory[];
   maxActiveSessions: number;
   maxReportsPerSession: number;
-  /** Number of most recent parent messages sent to each deep thinker. */
+  /** Number of most recent parent messages sent to each consult. */
   maxContextMessages?: number;
 }
 
-class DeepThinkerReporter implements Extension {
+class ConsultReporter implements Extension {
   constructor(
     private readonly report: (
       content: string,
@@ -142,26 +142,26 @@ function createReporterFactory(
   report: (content: string, final: boolean) => Promise<boolean>,
 ): ExtensionFactory {
   return {
-    identifier: 'io.stagewise/deep-thinker-reporter',
-    displayName: 'deep-thinker-reporter',
-    create: () => new DeepThinkerReporter(report),
+    identifier: 'io.stagewise/consult-reporter',
+    displayName: 'consult-reporter',
+    create: () => new ConsultReporter(report),
   };
 }
 
-class DeepThinkerExtension implements Extension {
-  private readonly entries = new Map<string, DeepThinkEntry>();
+class ConsultExtension implements Extension {
+  private readonly entries = new Map<string, ConsultEntry>();
   private readonly allocatedHandles = new Set<string>();
   private closed = false;
   private readonly startOperations = new Set<Promise<unknown>>();
 
   constructor(
     private readonly deps: ExtensionDeps,
-    private readonly config: DeepThinkerExtConfig,
+    private readonly config: ConsultExtConfig,
   ) {}
 
   getTools(): ToolSet {
     return {
-      startDeepThinker: {
+      startConsult: {
         inputSchema: startSchema,
         outputSchema: z.discriminatedUnion('status', [
           z.object({
@@ -181,7 +181,7 @@ class DeepThinkerExtension implements Extension {
         ]),
         execute: async ({ task }) => this.start(task),
       },
-      updateDeepThinker: {
+      updateConsult: {
         description: 'Send relevant new info',
         inputSchema: updateSchema,
         outputSchema: z.object({
@@ -189,7 +189,7 @@ class DeepThinkerExtension implements Extension {
         }),
         execute: async ({ handle, content }) => this.update(handle, content),
       },
-      abortDeepThinker: {
+      abortConsult: {
         description: 'Use if too slow, off rails or no longer needed',
         inputSchema: abortSchema,
         outputSchema: z.object({
@@ -205,12 +205,12 @@ class DeepThinkerExtension implements Extension {
   }
 
   dataPartTransformers = {
-    [DEEP_THINKER_REPORT_KEY]: dataPartTransformer<DeepThinkReportData>(
-      (data) => [{ type: 'text', text: reportPrompt(data) }],
-    ),
-    [DEEP_THINKERS_KEY]: dataPartTransformer<DeepThinkerSessionContextData>(
-      (data) => [{ type: 'text', text: sessionsPrompt(data) }],
-    ),
+    [CONSULT_REPORT_KEY]: dataPartTransformer<ConsultReportData>((data) => [
+      { type: 'text', text: reportPrompt(data) },
+    ]),
+    [CONSULTS_KEY]: dataPartTransformer<ConsultSessionContextData>((data) => [
+      { type: 'text', text: sessionsPrompt(data) },
+    ]),
   };
 
   getProvisionalStepContext(
@@ -248,7 +248,7 @@ class DeepThinkerExtension implements Extension {
       {
         ...first,
         parts: [
-          createDataPart(DEEP_THINKERS_KEY, {
+          createDataPart(CONSULTS_KEY, {
             mode: 'full',
             sessions: previous,
           }) as never,
@@ -260,11 +260,11 @@ class DeepThinkerExtension implements Extension {
   }
 
   private sessionContextPart(
-    data: DeepThinkerSessionContextData,
+    data: ConsultSessionContextData,
   ): ProvisionalStepContext {
     return {
       parts: [
-        createDataPart(DEEP_THINKERS_KEY, data),
+        createDataPart(CONSULTS_KEY, data),
       ] as unknown as ExtendedUIMessage['parts'],
     };
   }
@@ -294,7 +294,7 @@ class DeepThinkerExtension implements Extension {
     if (this.allocatedHandles.size >= this.config.maxActiveSessions) {
       return { reason: 'capacity-reached', status: 'failed' };
     }
-    if (this.deps.config.getModelSelection('deepThinking').length === 0) {
+    if (this.deps.config.getModelSelection('consult').length === 0) {
       return { reason: 'no-model', status: 'failed' };
     }
     const handle = this.allocateHandle();
@@ -303,14 +303,14 @@ class DeepThinkerExtension implements Extension {
     const reporter = createReporterFactory((content, final) =>
       this.receiveReport(handle, generationId, content, final),
     );
-    let child: DeepThinkEntry['child'];
+    let child: ConsultEntry['child'];
     try {
       child = await this.deps.createChildSession({
-        name: `deep-thinker-${handle}`,
-        extensionIdentifier: 'deep-thinker',
+        name: `consult-${handle}`,
+        extensionIdentifier: 'consult',
         extensions: [...this.config.childExtensionFactories, reporter],
-        modelPurpose: 'deepThinking',
-        basePrompt: deepThinkerSystemPrompt,
+        modelPurpose: 'consult',
+        basePrompt: consultSystemPrompt,
         hooks: {
           onTerminated: ({ sessionId, reason }) =>
             this.childTerminated(handle, generationId, sessionId, reason),
@@ -318,10 +318,7 @@ class DeepThinkerExtension implements Extension {
       });
     } catch (error) {
       this.releaseHandle(handle);
-      this.deps.logger.error(
-        { error, handle },
-        'Deep-thinker child start failed',
-      );
+      this.deps.logger.error({ error, handle }, 'Consult child start failed');
       return { reason: 'child-start-failed', status: 'failed' };
     }
     if (this.closed) {
@@ -338,7 +335,7 @@ class DeepThinkerExtension implements Extension {
       return { reason: 'extension-closed', status: 'failed' };
     }
 
-    const entry: DeepThinkEntry = {
+    const entry: ConsultEntry = {
       child,
       generationId,
       reportCount: 0,
@@ -348,7 +345,7 @@ class DeepThinkerExtension implements Extension {
     this.entries.set(handle, entry);
     this.deps.logger.info(
       { handle, childSessionId: child.sessionId },
-      'Deep-thinker child started',
+      'Consult child started',
     );
 
     try {
@@ -376,7 +373,7 @@ class DeepThinkerExtension implements Extension {
       entry.status = 'finished';
       this.deps.logger.error(
         { error, handle, childSessionId: child.sessionId },
-        'Deep-thinker task delivery failed',
+        'Consult task delivery failed',
       );
       await this.finishClosingEntry(handle, entry);
       return { reason: 'task-delivery-failed', status: 'failed' };
@@ -402,7 +399,7 @@ class DeepThinkerExtension implements Extension {
       entry.status = 'finished';
       this.deps.logger.error(
         { error, handle, childSessionId: entry.child.sessionId },
-        'Deep-thinker context delivery failed',
+        'Consult context delivery failed',
       );
       await this.finishClosingEntry(handle, entry);
       return { status: 'not-found' as const };
@@ -417,7 +414,7 @@ class DeepThinkerExtension implements Extension {
     if (closed) {
       this.deps.logger.info(
         { handle, childSessionId: entry.child.sessionId },
-        'Deep-thinker child aborted',
+        'Consult child aborted',
       );
       return { status: 'closed' as const };
     }
@@ -443,7 +440,7 @@ class DeepThinkerExtension implements Extension {
     const terminal = final || limitReached;
     this.deps.logger.info(
       { handle, reportCount: entry.reportCount, final, limitReached },
-      'Deep-thinker report received',
+      'Consult report received',
     );
     if (!terminal) {
       return this.emitReport(handle, content);
@@ -476,11 +473,11 @@ class DeepThinkerExtension implements Extension {
     if (this.closed || entry.status !== 'running') return;
     this.deps.logger.error(
       { handle, childSessionId, reason },
-      'Deep-thinker child terminated before a final report',
+      'Consult child terminated before a final report',
     );
     this.tryEmitReport(
       handle,
-      'Deep thinking stopped before producing a final verdict.',
+      'Consult stopped before producing a final verdict.',
       false,
       childSessionId,
     );
@@ -493,7 +490,7 @@ class DeepThinkerExtension implements Extension {
           id: randomUUID(),
           role: 'user',
           parts: [
-            createDataPart(DEEP_THINKER_REPORT_KEY, {
+            createDataPart(CONSULT_REPORT_KEY, {
               handle,
               content,
               ...(final ? { final: true } : {}),
@@ -525,7 +522,7 @@ class DeepThinkerExtension implements Extension {
     return deleted;
   }
 
-  private sessionContextData(): { sessions: DeepThinkSession[] } {
+  private sessionContextData(): { sessions: ConsultSession[] } {
     return {
       sessions: [...this.entries].map(([handle, entry]) => ({
         childSessionId: entry.child.sessionId,
@@ -539,7 +536,7 @@ class DeepThinkerExtension implements Extension {
 
   private latestSessionContext(
     history: readonly ExtendedUIMessage[],
-  ): DeepThinkSession[] | null {
+  ): ConsultSession[] | null {
     for (
       let messageIndex = history.length - 1;
       messageIndex >= 0;
@@ -552,10 +549,10 @@ class DeepThinkerExtension implements Extension {
         partIndex--
       ) {
         const part = message.parts[partIndex]!;
-        if (isDataPartOf(DEEP_THINKERS_KEY, part as never)) {
+        if (isDataPartOf(CONSULTS_KEY, part as never)) {
           const data = (
             part as unknown as {
-              data: DeepThinkerSessionContextData;
+              data: ConsultSessionContextData;
             }
           ).data;
           return data.sessions;
@@ -581,7 +578,7 @@ class DeepThinkerExtension implements Extension {
     } catch (error) {
       this.deps.logger.error(
         { error, handle, childSessionId },
-        'Deep-thinker report delivery failed',
+        'Consult report delivery failed',
       );
     }
   }
@@ -600,7 +597,7 @@ class DeepThinkerExtension implements Extension {
 
   private async finishClosingEntry(
     handle: string,
-    entry: DeepThinkEntry,
+    entry: ConsultEntry,
   ): Promise<boolean> {
     const closed = await this.closeChildBestEffort(handle, entry.child);
     if (closed) this.deleteEntry(handle);
@@ -618,7 +615,7 @@ class DeepThinkerExtension implements Extension {
       } catch (error) {
         this.deps.logger.error(
           { attempt, error, handle, childSessionId: child.sessionId },
-          'Deep-thinker child close failed',
+          'Consult child close failed',
         );
       }
     }
@@ -632,17 +629,15 @@ function validatePositiveInteger(value: number, name: string): void {
   }
 }
 
-export function createDeepThinkerExt(
-  config: DeepThinkerExtConfig,
-): ExtensionFactory {
+export function createConsultExt(config: ConsultExtConfig): ExtensionFactory {
   validatePositiveInteger(config.maxActiveSessions, 'maxActiveSessions');
   validatePositiveInteger(config.maxReportsPerSession, 'maxReportsPerSession');
   if (config.maxContextMessages !== undefined) {
     validatePositiveInteger(config.maxContextMessages, 'maxContextMessages');
   }
   return {
-    identifier: 'io.stagewise/deep-thinker',
-    displayName: 'deep-thinker',
-    create: (deps) => new DeepThinkerExtension(deps, config),
+    identifier: 'io.stagewise/consult',
+    displayName: 'consult',
+    create: (deps) => new ConsultExtension(deps, config),
   };
 }

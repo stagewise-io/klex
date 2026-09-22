@@ -1,0 +1,42 @@
+.hero-mascot {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 1rem;
+  margin: -1.5rem auto 2.5rem;
+}
+.klex-mascot {
+  display: block;
+  width: 128px;
+  height: 112px;
+  flex: none;
+  overflow: visible;
+}
+.mascot-controls {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  font-size: 0.8125rem;
+}
+.mascot-controls strong {
+  margin-bottom: 0.25rem;
+}
+.mascot-controls button {
+  min-height: 44px;
+  padding: 0.5rem 0;
+  border: 0;
+  background: transparent;
+  color: var(--muted-foreground);
+  font: inherit;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 0.25em;
+}
+.mascot-controls button:hover {
+  color: var(--foreground);
+}
+@media (prefers-reduced-motion: reduce) {
+  .mascot-pause {
+    display: none;
+  }
+}

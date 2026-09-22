@@ -195,6 +195,14 @@ The hero is constrained to roughly 62.5rem, while its supporting copy stays near
 
 **The One Clear Thought Rule.** Each major viewport should have one dominant message and enough open space for it to read immediately.
 
+## Marketing page composition
+
+The extended page retains this identity and leads with the supplied hero copy: “Meet Klex Bots,” “Your own Team of Digital Coworkers,” and “Klex Bots are digital co-workers with their own machines and identities - that work with the tools your company already uses.” The primary action is “Create a Klex Bot,” linking to `https://cloud.klex.bot` in the header, hero, and closing section. Source exploration and local installation remain secondary paths.
+
+Native illustrative connector tabs demonstrate familiar tools. The following sections explain shared digital coworkers, then five capabilities: data and model choice, intentional permissions, persistent identity across machines, team participation, and lasting context. Company tabs for Marcel, Tobi, and Jeff explicitly show pending interviews; they contain no fabricated quotations. Kristine, Jonathan, and Nat illustrate product management, engineering, and quality review workflows, with examples labeled as illustrations. Guides use native `details` disclosures for handbook, identity, and shared-board advice.
+
+Quiet dividers and generous spacing structure the page. At 680px and below, capability and coworker columns stack, section spacing contracts, and company tabs remain available. Reduced-motion preferences suppress transitions; the mascot also exposes a motion pause control. This composition has no screenshot or Figma pixel-verification claim.
+
 ## Elevation & Depth
 
 The system is flat and honest. Spacing, typography, tonal surfaces, and quiet borders establish hierarchy. Shadows are not a default surface treatment; reserve them for functional overlays or a small state halo that would otherwise be ambiguous.

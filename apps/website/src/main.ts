@@ -1,6 +1,9 @@
+import './sections.css';
 import './style.css';
 
 import { demoMarkup, initializeDemo } from './demo';
+import { mascotMarkup, mountMascot } from './mascot';
+import { initializeCompanyTabs, sectionsMarkup } from './sections';
 
 const app = document.querySelector<HTMLDivElement>('#app');
 
@@ -38,29 +41,33 @@ app.innerHTML = `
 
       <nav class="site-nav" aria-label="Primary navigation">
         <a href="https://docs.klex.bot">Docs</a>
-        <a class="cloud-login" href="https://cloud.klex.bot">Cloud Login</a>
+        <a class="cloud-login" href="https://cloud.klex.bot">Create a Klex Bot</a>
       </nav>
     </header>
 
     <main id="main">
       <section class="hero" aria-labelledby="hero-title">
         <div class="hero-intro">
-          <h1 id="hero-title">Your own team of digital coworkers.</h1>
-          <p class="hero-description">Bring Klex into the conversation. Delegate the repeatable work, keep the context, and make room for what comes next.</p>
-          <div class="hero-actions"><a class="cloud-login" href="#get-started">Get started locally</a><a class="text-link" href="https://github.com/stagewise-io/klex">Explore the source <span aria-hidden="true">↗</span></a></div>
+          <p class="meet-klex">Meet Klex Bots</p>
+          <h1 id="hero-title">Your own Team of Digital Coworkers</h1>
+          <p class="hero-description">Klex Bots are digital co-workers with their own machines and identities - that work with the tools your company already uses.</p>
+          <div class="hero-actions"><a class="cloud-login" href="https://cloud.klex.bot">Create a Klex Bot</a><a class="text-link" href="https://github.com/stagewise-io/klex">Explore the source <span aria-hidden="true">↗</span></a></div>
         </div>
 
+        <div class="hero-mascot" id="hero-mascot">
+          ${mascotMarkup()}
+          <div class="mascot-controls"><strong>Klex Bot</strong><button type="button" id="mascot-hello">Say hello</button><button type="button" class="mascot-pause" id="mascot-pause" aria-pressed="false">Pause mascot motion</button></div>
+        </div>
         ${demoMarkup}
       </section>
 
-      <section class="product-story" aria-labelledby="story-title">
-        <h2 id="story-title">A coworker with<br />the whole picture.</h2>
-        <div class="story-details"><article><h3>One conversation, wherever work happens.</h3><p>Klex keeps one identity and durable memory across connected channels. Pick up the work without starting from scratch.</p></article><article><h3>Your setup. Your choice.</h3><p>Run Klex locally, connect work environments through MCP, and choose your model provider. The code is open to inspect and adapt.</p></article></div>
-      </section>
+      ${sectionsMarkup}
 
       <section class="get-started" id="get-started" aria-labelledby="start-title">
         <h2 id="start-title">Meet your next coworker.</h2>
-        <p>Start locally. Make Klex part of your team.</p>
+        <p>Make Klex part of your team.</p>
+        <a class="cloud-login" href="https://cloud.klex.bot">Create a Klex Bot</a>
+        <p class="local-option">Or run an open-source bot on your own infrastructure.</p>
         <div class="installer" aria-label="Install Klex">
           <div class="installer-tabs" role="tablist" aria-label="Choose your operating system">
             <button class="installer-tab" type="button" role="tab" id="tab-unix" data-platform="unix" aria-controls="install-command-panel">
@@ -263,3 +270,45 @@ copyCommandButton.addEventListener('click', async () => {
 
 selectInstaller(detectedPlatform);
 initializeDemo();
+initializeCompanyTabs();
+
+const mascotHost = document.querySelector<HTMLElement>('#hero-mascot');
+if (mascotHost) {
+  const mascot = mountMascot(mascotHost);
+  const events = new AbortController();
+  const hello = document.querySelector<HTMLButtonElement>('#mascot-hello');
+  const pause = document.querySelector<HTMLButtonElement>('#mascot-pause');
+  hello?.addEventListener('click', () => mascot.hello(), {
+    signal: events.signal,
+  });
+  pause?.addEventListener(
+    'click',
+    () => {
+      const paused = pause.getAttribute('aria-pressed') !== 'true';
+      pause.setAttribute('aria-pressed', String(paused));
+      mascot.setPaused(paused);
+    },
+    { signal: events.signal },
+  );
+  // Preserve back/forward-cache pages; dispose on navigation and Vite replacement.
+  const cleanup = () => {
+    mascot.dispose();
+    events.abort();
+  };
+  window.addEventListener(
+    'pagehide',
+    (event) => {
+      if (event.persisted) mascot.setPaused(true);
+      else cleanup();
+    },
+    { signal: events.signal },
+  );
+  window.addEventListener(
+    'pageshow',
+    () => {
+      mascot.setPaused(pause?.getAttribute('aria-pressed') === 'true');
+    },
+    { signal: events.signal },
+  );
+  import.meta.hot?.dispose(cleanup);
+}

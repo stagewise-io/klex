@@ -1,0 +1,299 @@
+.meet-klex {
+  margin: 0 0 1.5rem;
+  font-size: 1.125rem;
+  font-weight: 500;
+}
+
+h1 {
+  letter-spacing: -0.04em;
+  font-size: clamp(3.25rem, 7.5vw, 6rem);
+}
+.get-started h2 {
+  letter-spacing: -0.04em;
+}
+.content-section {
+  width: min(100%, 62.5rem);
+  padding: 6rem 0;
+  border-bottom: 1px solid var(--border);
+}
+.content-section h2 {
+  margin: 0;
+  font-size: clamp(2.25rem, 4vw, 3.5rem);
+  font-weight: 500;
+  line-height: 1.12;
+  letter-spacing: -0.035em;
+  text-wrap: balance;
+}
+.content-section p {
+  line-height: 1.7;
+}
+.positioning {
+  text-align: center;
+  padding-block: 8rem;
+}
+.positioning h2 {
+  max-width: 55rem;
+  margin-inline: auto;
+  color: var(--muted-foreground);
+}
+.positioning h2 span {
+  color: var(--foreground);
+}
+.positioning > p {
+  max-width: 42rem;
+  margin: 2rem auto 0;
+  color: var(--muted-foreground);
+  font-size: 1.125rem;
+}
+.capabilities {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6rem;
+}
+.section-intro > p {
+  color: var(--muted-foreground);
+  margin-block: 1.5rem 2.5rem;
+}
+.section-intro > img {
+  width: 120px;
+  height: 120px;
+}
+.capability-list article {
+  padding: 1.75rem 0;
+  border-top: 1px solid var(--border);
+}
+.capability-list article:first-child {
+  padding-top: 0;
+  border-top: 0;
+}
+.capability-list article:last-child {
+  padding-bottom: 0;
+}
+.capability-list h3 {
+  margin: 0;
+  font-size: 1.65rem;
+  font-weight: 500;
+  line-height: 1.2;
+}
+.capability-list p {
+  color: var(--muted-foreground);
+  margin: 0.75rem 0 0;
+}
+.company-stories h2 {
+  max-width: 43rem;
+  margin: 0 auto 2.5rem;
+  text-align: center;
+}
+.company-tabs {
+  display: flex;
+  justify-content: center;
+  gap: 0.5rem;
+}
+.company-tabs button {
+  min-height: 48px;
+  padding: 0.75rem 1rem;
+  background: transparent;
+  color: var(--muted-foreground);
+  border: 0;
+  border-bottom: 2px solid transparent;
+  font: inherit;
+  cursor: pointer;
+}
+.company-tabs button:hover {
+  color: var(--foreground);
+  background: var(--muted);
+}
+.company-tabs button[aria-selected="true"] {
+  color: var(--foreground);
+  border-bottom-color: var(--primary);
+}
+.company-panel {
+  padding: 3rem 1.5rem;
+  text-align: center;
+  background: var(--muted);
+  margin-top: 1.5rem;
+  border-radius: 12px;
+}
+.company-panel p {
+  margin: 0.5rem 0;
+  color: var(--muted-foreground);
+}
+.company-panel .story-pending {
+  font-family: "Fraunces", Georgia, serif;
+  font-size: 2rem;
+  color: var(--foreground);
+}
+.company-panel:focus-visible {
+  outline: 3px solid var(--ring);
+  outline-offset: 4px;
+}
+.section-description {
+  color: var(--muted-foreground);
+  margin: 1.5rem 0 3rem;
+}
+.bot-story {
+  display: grid;
+  grid-template-columns: 0.9fr 1.1fr;
+  align-items: center;
+  gap: 4rem;
+  padding: 3.5rem 0;
+  border-top: 1px solid var(--border);
+}
+.bot-story:last-child {
+  padding-bottom: 0;
+}
+.bot-identity {
+  display: flex;
+  gap: 1rem;
+  align-items: center;
+}
+.bot-identity h3 {
+  font-size: 1.65rem;
+  font-weight: 500;
+  margin: 0;
+}
+.bot-identity span {
+  font-size: 0.875rem;
+  color: var(--muted-foreground);
+}
+.bot-story h4 {
+  margin: 1.5rem 0 0.75rem;
+  font-size: 1.25rem;
+  font-weight: 550;
+  line-height: 1.4;
+}
+.bot-story-copy > p {
+  color: var(--muted-foreground);
+  margin: 0;
+}
+.story-example {
+  background: #fff;
+  color: #24292f;
+  border: 1px solid #d1d9e0;
+  border-radius: 12px;
+  overflow: hidden;
+  font-size: 0.875rem;
+  color-scheme: light;
+}
+.story-app-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 1rem;
+  background: #f6f8fa;
+  border-bottom: 1px solid #d1d9e0;
+}
+.story-app-bar strong {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.story-app-bar > span {
+  margin-left: auto;
+  font-size: 0.75rem;
+  color: #59636e;
+}
+.story-message {
+  display: flex;
+  gap: 0.75rem;
+  padding: 1.5rem 1rem;
+}
+.story-message p {
+  margin: 0.5rem 0 1rem;
+}
+.story-result {
+  display: inline-block;
+  padding: 0.25rem 0.65rem;
+  background: #eff1f3;
+  border-radius: 6px;
+  font-size: 0.75rem;
+}
+.story-flow {
+  margin: 0;
+  padding: 1rem;
+  border-top: 1px solid #d1d9e0;
+  color: #59636e;
+  font-size: 0.75rem;
+}
+.guides h2 {
+  max-width: 44rem;
+}
+.guides details {
+  border-top: 1px solid var(--border);
+  padding: 1.5rem 0;
+}
+.guides summary {
+  cursor: pointer;
+  font-size: 1.25rem;
+  font-weight: 500;
+  padding-right: 1rem;
+}
+.guides summary::marker {
+  color: var(--primary);
+}
+.guides summary:hover {
+  color: var(--primary);
+}
+.guides summary:focus-visible {
+  outline: 3px solid var(--ring);
+  outline-offset: 6px;
+}
+.guides details p {
+  max-width: 65ch;
+  margin-bottom: 0;
+  color: var(--muted-foreground);
+}
+.get-started .local-option {
+  margin-top: 3rem;
+  font-size: 0.875rem;
+}
+.get-started .installer {
+  margin-top: 1.5rem;
+}
+@media (max-width: 680px) {
+  .content-section {
+    padding-block: 3.5rem;
+  }
+  .capabilities,
+  .bot-story {
+    grid-template-columns: 1fr;
+    gap: 2rem;
+  }
+  .section-intro > img {
+    display: none;
+  }
+  .section-intro > p {
+    margin-bottom: 0;
+  }
+  .company-tabs {
+    gap: 0;
+  }
+  .company-tabs button {
+    flex: 1;
+    padding: 0.75rem 0.4rem;
+    font-size: 0.8125rem;
+  }
+  .bot-story {
+    padding-block: 2.5rem;
+  }
+  .story-app-bar {
+    gap: 0.5rem;
+  }
+  .site-nav {
+    gap: 0.75rem;
+  }
+  .site-header .klex-logo {
+    width: 5rem;
+  }
+  .site-header .cloud-login {
+    font-size: 0.75rem;
+    padding-inline: 0.65rem;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    transition: none !important;
+  }
+}

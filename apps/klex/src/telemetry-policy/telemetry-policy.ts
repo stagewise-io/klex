@@ -7,8 +7,8 @@ const SAFE_SPAN_ATTRIBUTES = new Set([
   'gen_ai.response.model',
   'gen_ai.usage.input_tokens',
   'gen_ai.usage.output_tokens',
-  'gen_ai.usage.cache_read_input_tokens',
-  'gen_ai.usage.cache_creation_input_tokens',
+  'gen_ai.usage.cache_read.input_tokens',
+  'gen_ai.usage.cache_creation.input_tokens',
   'gen_ai.usage.reasoning_tokens',
   'gen_ai.server.time_to_first_token',
   'gen_ai.response.finish_reason',
@@ -16,6 +16,7 @@ const SAFE_SPAN_ATTRIBUTES = new Set([
   'klex.outcome',
   'klex.error.category',
   'klex.error.type',
+  'error.type',
   'klex.retryable',
 ]);
 

@@ -85,6 +85,7 @@ const logStore = createLogStore(500);
 const logger = createLogger({
   name: 'klex',
   verbose: cli.verbose,
+  minLevel: cli.telemetryDebug ? 'DEBUG' : undefined,
   capture: cli.headless ? undefined : (entry) => logStore.add(entry),
   // In interactive (non-headless) mode, suppress all console output so the
   // Ink TUI has exclusive access to stdout/stderr. The OTLP transport is
@@ -384,6 +385,7 @@ async function main(): Promise<void> {
       config,
       modelResolver: providerRegistry,
       dataDirectory,
+      telemetryMetrics,
     };
 
     /**

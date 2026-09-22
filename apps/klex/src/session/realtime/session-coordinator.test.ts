@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { RootLogger } from '@stagewise/logger';
 import type {
@@ -191,8 +191,14 @@ function setup(options?: {
 }
 
 describe('realtime session coordinator', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    setTelemetryActivityEnabled(false);
+  });
+
   it('does not retain an activity provider when closed before start', async () => {
     const { coordinator } = setup();
+    setTelemetryActivityEnabled(true);
     expect(getRealtimeSessionCount()).toBe(0);
     await coordinator.close();
     expect(getRealtimeSessionCount()).toBe(0);
@@ -211,6 +217,7 @@ describe('realtime session coordinator', () => {
         };
       });
     const { coordinator } = setup();
+    setTelemetryActivityEnabled(true);
     await coordinator.start();
     await coordinator.start();
     expect(register).toHaveBeenCalledOnce();
@@ -219,25 +226,26 @@ describe('realtime session coordinator', () => {
     await coordinator.close();
     expect(unregister).toHaveBeenCalledOnce();
     expect(getRealtimeSessionCount()).toBe(0);
-    register.mockRestore();
   });
 
   it('cleans up partial subscriptions and activity state when start fails', async () => {
     const originalRegister = telemetryMetrics.registerActivityStateProviders;
     const unregister = vi.fn();
-    const register = vi
-      .spyOn(telemetryMetrics, 'registerActivityStateProviders')
-      .mockImplementation((providers) => {
-        const actualUnregister = originalRegister(providers);
-        return () => {
-          unregister();
-          actualUnregister();
-        };
-      });
+    vi.spyOn(
+      telemetryMetrics,
+      'registerActivityStateProviders',
+    ).mockImplementation((providers) => {
+      const actualUnregister = originalRegister(providers);
+      return () => {
+        unregister();
+        actualUnregister();
+      };
+    });
     const mcpHarness = createMcpHarness({
       throwOnAvailabilitySubscription: true,
     });
     const { coordinator } = setup({ mcp: mcpHarness });
+    setTelemetryActivityEnabled(true);
     await expect(coordinator.start()).rejects.toThrow(
       'availability subscription failed',
     );
@@ -245,8 +253,6 @@ describe('realtime session coordinator', () => {
     expect(unregister).toHaveBeenCalledOnce();
     expect(getRealtimeSessionCount()).toBe(0);
     await coordinator.close();
-    register.mockRestore();
-    setTelemetryActivityEnabled(false);
   });
 
   it('ends an accepted session when its transport profile is unsupported', async () => {

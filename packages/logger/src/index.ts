@@ -197,9 +197,7 @@ export function createLogger(opts?: LoggerOptions): RootLogger {
     name: opts?.name,
     minLevel: opts?.capture
       ? 'DEBUG'
-      : verbose
-        ? (opts?.minLevel ?? 'DEBUG')
-        : 'INFO',
+      : (opts?.minLevel ?? (verbose ? 'DEBUG' : 'INFO')),
     type: consoleOutput
       ? verbose
         ? (opts?.type ?? 'pretty')
@@ -224,7 +222,7 @@ export function createLogger(opts?: LoggerOptions): RootLogger {
     let sequence = 0;
     logger.attachTransport((record) => {
       const recordObj = record as Record<string, unknown>;
-      const meta = recordObj['_meta'] as
+      const meta = recordObj._meta as
         | { date?: Date; logLevelName?: string; name?: string }
         | undefined;
       capture({

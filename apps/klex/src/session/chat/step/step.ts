@@ -13,6 +13,7 @@ import {
   runInferenceContextTransformers,
   runInferenceHistoryTransformers,
 } from '@/session/interaction';
+import type { TelemetryMetrics } from '@/telemetry-metrics';
 
 import type { ExtensionHandler } from '../extension-handler';
 import type {
@@ -70,6 +71,7 @@ export interface StepDependencies {
    */
   turnInitialFallbackIndex: number;
   sessionId: string;
+  telemetryMetrics?: TelemetryMetrics;
   /**
    * Base system prompt forwarded to the generation runner.
    */
@@ -439,6 +441,10 @@ class StepModule implements Step {
             'history_pre_process.hasCompacted',
             preResult.flags.hasCompacted === true,
           );
+          this.deps.telemetryMetrics?.updateSession(this.deps.sessionId, {
+            historyLength: this.deps.messages.length,
+            transformedHistoryLength: preResult.history.length,
+          });
           transformSpan.addEvent('history_pre_process.end', {
             'history_pre_process.messageCount': preResult.history.length,
             'history_pre_process.hasCompacted':
@@ -539,6 +545,7 @@ class StepModule implements Step {
             compacted,
             model,
             modelContext: telemetryModelContext,
+            telemetryMetrics: this.deps.telemetryMetrics,
             ...(providerOptions !== undefined && { providerOptions }),
           });
           this.generationRunner = runner;

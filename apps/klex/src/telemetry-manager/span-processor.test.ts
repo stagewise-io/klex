@@ -72,7 +72,7 @@ function makeDelegate(): {
 }
 
 describe('TelemetrySpanProcessor', () => {
-  it('drops all spans when level is "off"', () => {
+  it('drops all spans when level is "no"', () => {
     const tp = createTelemetrySpanProcessor();
     const { processor, onEnd } = makeDelegate();
     tp.setDelegate(processor);
@@ -82,7 +82,7 @@ describe('TelemetrySpanProcessor', () => {
     expect(onEnd).not.toHaveBeenCalled();
   });
 
-  it('forwards only error spans when level is "minimum"', () => {
+  it('forwards all spans when level is "basic"', () => {
     const tp = createTelemetrySpanProcessor();
     const { processor, onEnd } = makeDelegate();
     tp.setDelegate(processor);
@@ -94,7 +94,7 @@ describe('TelemetrySpanProcessor', () => {
     expect(onEnd).toHaveBeenCalledTimes(2);
   });
 
-  it('scrubs sensitive attributes when level is "reduced"', () => {
+  it('applies the telemetry allowlist when level is "advanced"', () => {
     const tp = createTelemetrySpanProcessor();
     const { processor, onEnd } = makeDelegate();
     tp.setDelegate(processor);
@@ -137,7 +137,7 @@ describe('TelemetrySpanProcessor', () => {
     });
   });
 
-  it('preserves all non-attribute fields when scrubbing in "reduced" mode', () => {
+  it('preserves all non-attribute fields when scrubbing in "advanced" mode', () => {
     const tp = createTelemetrySpanProcessor();
     const { processor, onEnd } = makeDelegate();
     tp.setDelegate(processor);
@@ -167,17 +167,81 @@ describe('TelemetrySpanProcessor', () => {
     expect(forwarded.events).toBe(span.events);
   });
 
-  it('forwards spans unchanged when level is "full"', () => {
+  it('forwards spans unchanged when level is "debug"', () => {
     const tp = createTelemetrySpanProcessor();
     const { processor, onEnd } = makeDelegate();
     tp.setDelegate(processor);
     tp.setLevel('debug');
+    tp.setContentAllowed(() => true);
 
     const span = makeSpan();
     tp.onEnd(span);
 
     expect(onEnd).toHaveBeenCalledTimes(1);
     expect(onEnd.mock.calls[0]?.[0]).toBe(span);
+  });
+
+  it('downgrades expired debug content permission to advanced privacy', () => {
+    const tp = createTelemetrySpanProcessor();
+    const { processor, onEnd } = makeDelegate();
+    tp.setDelegate(processor);
+    tp.setLevel('debug');
+    tp.setContentAllowed(() => false);
+
+    const span = makeSpan({
+      status: { code: SpanStatusCode.ERROR, message: 'secret status' },
+      events: [
+        {
+          name: 'exception',
+          time: [0, 0],
+          attributes: {
+            'exception.type': 'Error',
+            'exception.message': 'secret exception',
+          },
+        },
+        {
+          name: 'secret-event',
+          time: [0, 0],
+          attributes: { 'custom.attr': 'secret event' },
+        },
+      ],
+      links: [
+        {
+          context: {
+            traceId: '1'.repeat(32),
+            spanId: '1'.repeat(16),
+            traceFlags: 0,
+            isRemote: false,
+          },
+          attributes: { 'custom.attr': 'secret link' },
+        },
+      ],
+      resource: {
+        attributes: {
+          'service.name': 'klex',
+          'service.instance.id': 'instance-1',
+          'host.name': 'private-host',
+        },
+        merge: vi.fn(),
+        asyncMerge: vi.fn(),
+      } as unknown as ReadableSpan['resource'],
+    });
+
+    tp.onEnd(span);
+
+    const forwarded = onEnd.mock.calls[0]?.[0] as ReadableSpan;
+    expect(forwarded).not.toBe(span);
+    expect(forwarded.attributes).toEqual({});
+    expect(forwarded.status).toEqual({ code: SpanStatusCode.ERROR });
+    expect(forwarded.events[0]?.attributes).toEqual({
+      'exception.type': 'Error',
+    });
+    expect(forwarded.events[1]?.attributes).toEqual({});
+    expect(forwarded.links[0]?.attributes).toEqual({});
+    expect(forwarded.resource.attributes).toEqual({
+      'service.name': 'klex',
+      'service.instance.id': 'instance-1',
+    });
   });
 
   it('defaults to "no" level', () => {

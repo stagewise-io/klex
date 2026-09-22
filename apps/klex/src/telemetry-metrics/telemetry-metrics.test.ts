@@ -105,7 +105,7 @@ describe('TelemetryMetrics', () => {
     vi.useRealTimers();
   });
 
-  it('does not record a CPU sample immediately after re-enabling', async () => {
+  it('resets the CPU baseline before post-opt-in histogram samples', async () => {
     vi.useFakeTimers();
     const exporter = new FakeExporter();
     const metrics = createMetrics(exporter);
@@ -113,10 +113,18 @@ describe('TelemetryMetrics', () => {
     await metrics.start();
     await metrics.setEnabled(false);
     await metrics.setEnabled(true);
-    await vi.advanceTimersByTimeAsync(1_000);
-    expect(exporter.exports).toHaveLength(0);
-    await vi.advanceTimersByTimeAsync(4_000);
-    expect(exporter.exports).toHaveLength(0);
+    await vi.advanceTimersByTimeAsync(60_000);
+
+    expect(exporter.exports).toHaveLength(1);
+    const cpuMetrics = metricsNamed(
+      exporter,
+      'klex.process.cpu.utilization.distribution',
+    );
+    expect(cpuMetrics).toHaveLength(1);
+    for (const point of cpuMetrics[0]?.dataPoints ?? []) {
+      const value = point.value as { sum?: number } | undefined;
+      expect(value?.sum ?? 0).toBeLessThanOrEqual(1);
+    }
 
     await metrics.close();
     vi.useRealTimers();
@@ -379,14 +387,50 @@ describe('TelemetryMetrics', () => {
       ['gen_ai.client.operation.duration', DataPointType.HISTOGRAM],
       ['gen_ai.client.token.usage', DataPointType.HISTOGRAM],
       ['gen_ai.client.operation.time_to_first_chunk', DataPointType.HISTOGRAM],
+      ['klex.gen_ai.client.cache.token.usage', DataPointType.HISTOGRAM],
       ['process.uptime', DataPointType.GAUGE],
       ['klex.interaction.lease.active', DataPointType.GAUGE],
+      ['klex.interaction.queue.depth', DataPointType.GAUGE],
       ['klex.interaction.queue.overflow', DataPointType.SUM],
+      ['klex.realtime.session.active', DataPointType.GAUGE],
+      ['klex.process.memory.rss', DataPointType.HISTOGRAM],
       ['klex.process.cpu.utilization.distribution', DataPointType.HISTOGRAM],
     ]);
     for (const [name, type] of expectedTypes) {
       expect(metricsNamed(exporter, name)[0]?.dataPointType, name).toBe(type);
     }
+    await metrics.close();
+    vi.useRealTimers();
+  });
+
+  it('exports advanced per-session and tool telemetry without content', async () => {
+    vi.useFakeTimers();
+    const exporter = new FakeExporter();
+    const metrics = createMetrics(exporter);
+
+    metrics.registerSession({
+      id: 'session-1',
+      name: 'primary',
+      active: true,
+      runtimeState: 'working',
+      historyLength: 12,
+      transformedHistoryLength: 8,
+    });
+    await metrics.start();
+    await metrics.setLevel('advanced');
+    metrics.recordToolCall('session-1', 'search', true);
+    await vi.advanceTimersByTimeAsync(60_000);
+
+    const payload = JSON.stringify(exporter.exports);
+    expect(payload).toContain('klex.session.active');
+    expect(payload).toContain('klex.session.history.length');
+    expect(payload).toContain('klex.session.history.transformed_length');
+    expect(payload).toContain('klex.session.tool.calls');
+    expect(payload).toContain('session-1');
+    expect(payload).toContain('primary');
+    expect(payload).toContain('search');
+    expect(payload).not.toContain('secret-content');
+
     await metrics.close();
     vi.useRealTimers();
   });

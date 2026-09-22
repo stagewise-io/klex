@@ -2,7 +2,13 @@ import { readdir, stat } from 'node:fs/promises';
 import { availableParallelism } from 'node:os';
 import { join } from 'node:path';
 
-import { type Histogram, metrics } from '@opentelemetry/api';
+import {
+  type Attributes,
+  type Counter,
+  type Histogram,
+  metrics,
+  type ObservableGauge,
+} from '@opentelemetry/api';
 import { OTLPMetricExporter } from '@opentelemetry/exporter-metrics-otlp-http';
 import {
   AggregationType,
@@ -53,8 +59,23 @@ export interface TelemetryMetrics {
   start(): Promise<void>;
   close(): Promise<void>;
   recordModelCall(usage: ModelCallUsage): void;
+  registerSession(session: SessionTelemetryState): void;
+  updateSession(
+    sessionId: string,
+    update: Partial<Omit<SessionTelemetryState, 'id' | 'name'>>,
+  ): void;
+  recordToolCall(sessionId: string, toolName: string, success: boolean): void;
   setEnabled(enabled: boolean): Promise<void>;
   setLevel(level: MetricsTelemetryLevel): Promise<void>;
+}
+
+export interface SessionTelemetryState {
+  id: string;
+  name: string;
+  active: boolean;
+  runtimeState: string;
+  historyLength: number;
+  transformedHistoryLength: number;
 }
 
 export interface ModelCallUsage {
@@ -103,6 +124,7 @@ class GatedMetricExporter implements PushMetricExporter {
 
 class TelemetryMetricsModule implements TelemetryMetrics {
   private provider: MeterProvider | null = null;
+  private globalProviderRegistered = false;
   private gatedExporter: GatedMetricExporter | null = null;
   private performanceTimer: NodeJS.Timeout | null = null;
   private filesystemTimer: NodeJS.Timeout | null = null;
@@ -121,6 +143,12 @@ class TelemetryMetricsModule implements TelemetryMetrics {
   private level: MetricsTelemetryLevel = 'no';
   private memorySamples: Histogram | null = null;
   private cpuSamples: Histogram | null = null;
+  private sessionActive: ObservableGauge | null = null;
+  private sessionRuntimeState: ObservableGauge | null = null;
+  private sessionHistoryLength: ObservableGauge | null = null;
+  private sessionTransformedHistoryLength: ObservableGauge | null = null;
+  private toolCalls: Counter | null = null;
+  private readonly sessions = new Map<string, SessionTelemetryState>();
   // Node does not expose portable per-process network byte counters. We do not
   // substitute system-wide counters because that would misattribute traffic.
 
@@ -229,7 +257,10 @@ class TelemetryMetricsModule implements TelemetryMetrics {
       ],
     });
     this.provider = provider;
-    metrics.setGlobalMeterProvider(provider);
+    if (!this.globalProviderRegistered) {
+      metrics.setGlobalMeterProvider(provider);
+      this.globalProviderRegistered = true;
+    }
 
     const meter = provider.getMeter('klex.resources');
     meter
@@ -333,6 +364,63 @@ class TelemetryMetricsModule implements TelemetryMetrics {
         if (!this.started || !this.enabled) return;
         observable.observe(getRealtimeSessionCount());
       });
+    this.sessionActive = meter.createObservableGauge('klex.session.active', {
+      description: 'Whether each known session is active',
+      unit: '1',
+    });
+    this.sessionActive.addCallback((observable) => {
+      if (!this.started || !this.enabled || this.level !== 'advanced') return;
+      for (const session of this.sessions.values()) {
+        observable.observe(session.active ? 1 : 0, sessionAttributes(session));
+      }
+    });
+    this.sessionRuntimeState = meter.createObservableGauge(
+      'klex.session.runtime_state',
+      { description: 'Runtime state of each known session', unit: '1' },
+    );
+    this.sessionRuntimeState.addCallback((observable) => {
+      if (!this.started || !this.enabled || this.level !== 'advanced') return;
+      for (const session of this.sessions.values()) {
+        observable.observe(1, {
+          ...sessionAttributes(session),
+          'klex.session.runtime.state': session.runtimeState,
+        });
+      }
+    });
+    this.sessionHistoryLength = meter.createObservableGauge(
+      'klex.session.history.length',
+      {
+        description: 'Full message history length of each session',
+        unit: '{message}',
+      },
+    );
+    this.sessionHistoryLength.addCallback((observable) => {
+      if (!this.started || !this.enabled || this.level !== 'advanced') return;
+      for (const session of this.sessions.values()) {
+        observable.observe(session.historyLength, sessionAttributes(session));
+      }
+    });
+    this.sessionTransformedHistoryLength = meter.createObservableGauge(
+      'klex.session.history.transformed_length',
+      {
+        description: 'Message history length after transformation',
+        unit: '{message}',
+      },
+    );
+    this.sessionTransformedHistoryLength.addCallback((observable) => {
+      if (!this.started || !this.enabled || this.level !== 'advanced') return;
+      for (const session of this.sessions.values()) {
+        observable.observe(
+          session.transformedHistoryLength,
+          sessionAttributes(session),
+        );
+      }
+    });
+    this.toolCalls = meter.createCounter('klex.session.tool.calls', {
+      description: 'Tool calls made by each session',
+      unit: '{call}',
+    });
+
     meter
       .createObservableGauge('klex.data_directory.size', {
         description: 'Data-directory filesystem allocation in bytes',
@@ -355,7 +443,7 @@ class TelemetryMetricsModule implements TelemetryMetrics {
       filesystemSampleIntervalMs,
     );
     this.filesystemTimer.unref();
-    await this.sampleDataDirectory();
+    void this.sampleDataDirectory();
   }
 
   recordModelCall(usage: ModelCallUsage): void {
@@ -413,26 +501,54 @@ class TelemetryMetricsModule implements TelemetryMetrics {
     }
   }
 
+  registerSession(session: SessionTelemetryState): void {
+    this.sessions.set(session.id, { ...session });
+  }
+
+  updateSession(
+    sessionId: string,
+    update: Partial<Omit<SessionTelemetryState, 'id' | 'name'>>,
+  ): void {
+    const current = this.sessions.get(sessionId);
+    if (!current) return;
+    Object.assign(current, update);
+  }
+
+  recordToolCall(sessionId: string, toolName: string, success: boolean): void {
+    if (!this.started || !this.enabled || this.level !== 'advanced') return;
+    const session = this.sessions.get(sessionId);
+    this.toolCalls?.add(1, {
+      ...(session
+        ? sessionAttributes(session)
+        : { 'klex.session.id': sessionId }),
+      'klex.tool.name': toolName,
+      'klex.tool.outcome': success ? 'success' : 'error',
+    });
+  }
+
   async setEnabled(enabled: boolean): Promise<void> {
-    if (this.enabled === enabled) return;
+    if (this.enabled === enabled && (enabled === false || this.started)) return;
     this.enabled = enabled;
     this.level = enabled ? (this.level === 'no' ? 'basic' : this.level) : 'no';
-    setTelemetryActivityEnabled(enabled);
-    this.gatedExporter?.setEnabled(enabled);
-    if (enabled) {
-      if (this.started) {
-        this.resetCpuBaseline();
-        this.sampleMemory();
-      } else {
-        await this.start();
-      }
+    if (!enabled) {
+      await this.close();
+      return;
+    }
+    setTelemetryActivityEnabled(true);
+    if (this.started) {
+      this.resetCpuBaseline();
+      this.sampleMemory();
+    } else {
+      await this.start();
     }
   }
 
   async close(): Promise<void> {
-    if (!this.started) return;
     this.started = false;
+    this.enabled = false;
+    this.level = 'no';
     setTelemetryActivityEnabled(false);
+    this.gatedExporter?.setEnabled(false);
     setQueueOverflowRecorder(null);
     if (this.performanceTimer) clearInterval(this.performanceTimer);
     if (this.filesystemTimer) clearInterval(this.filesystemTimer);
@@ -487,7 +603,9 @@ class TelemetryMetricsModule implements TelemetryMetrics {
   private async sampleDataDirectory(): Promise<void> {
     if (!this.started || !this.enabled) return;
     try {
-      this.dataDirectoryBytes = await directorySize(this.deps.dataDirectory);
+      const dataDirectoryBytes = await directorySize(this.deps.dataDirectory);
+      if (!this.started || !this.enabled) return;
+      this.dataDirectoryBytes = dataDirectoryBytes;
     } catch (error) {
       this.deps.logging.debug(
         { error },
@@ -495,6 +613,13 @@ class TelemetryMetricsModule implements TelemetryMetrics {
       );
     }
   }
+}
+
+function sessionAttributes(session: SessionTelemetryState): Attributes {
+  return {
+    'klex.session.id': session.id,
+    'klex.session.name': session.name,
+  };
 }
 
 function normalizeProviderName(provider: string): string {

@@ -47,6 +47,14 @@ function makeSpan(overrides: Partial<ReadableSpan> = {}): ReadableSpan {
   };
 }
 
+function moveSpanContextToPrototype(span: ReadableSpan): ReadableSpan {
+  const { spanContext, ...properties } = span;
+  return Object.assign(
+    Object.create({ spanContext }),
+    properties,
+  ) as ReadableSpan;
+}
+
 function makeDelegate(): {
   processor: SpanProcessor;
   onEnd: ReturnType<typeof vi.fn>;
@@ -109,12 +117,14 @@ describe('TelemetrySpanProcessor', () => {
     tp.setDelegate(processor);
     tp.setLevel('reduced');
 
-    const span = makeSpan({
-      name: 'custom-span',
-      status: { code: SpanStatusCode.ERROR, message: 'failed' },
-      duration: [1, 500_000_000],
-      droppedAttributesCount: 3,
-    });
+    const span = moveSpanContextToPrototype(
+      makeSpan({
+        name: 'custom-span',
+        status: { code: SpanStatusCode.ERROR, message: 'failed' },
+        duration: [1, 500_000_000],
+        droppedAttributesCount: 3,
+      }),
+    );
     tp.onEnd(span);
 
     const forwarded = onEnd.mock.calls[0]?.[0] as ReadableSpan;
@@ -125,7 +135,7 @@ describe('TelemetrySpanProcessor', () => {
     });
     expect(forwarded.duration).toEqual([1, 500_000_000]);
     expect(forwarded.droppedAttributesCount).toBe(3);
-    expect(forwarded.spanContext).toBe(span.spanContext);
+    expect(forwarded.spanContext()).toEqual(span.spanContext());
     expect(forwarded.resource).toBe(span.resource);
     expect(forwarded.instrumentationScope).toBe(span.instrumentationScope);
     expect(forwarded.links).toBe(span.links);

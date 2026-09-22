@@ -76,7 +76,7 @@ describe('managed machine bootstrap', () => {
     await writeFile(restartCodeFile, 'must-not-be-used');
     const fetch = vi.fn(async () => enrollmentResponse());
     await bootstrapManagedMachine({
-      cloudBaseUrl: 'https://cloud.example',
+      cloudBaseUrl: 'https://cloud.example/',
       dataDir: directory,
       enrollmentCodeFile: restartCodeFile,
       fetch,
@@ -84,6 +84,32 @@ describe('managed machine bootstrap', () => {
 
     expect(fetch).not.toHaveBeenCalled();
     await expect(access(restartCodeFile)).rejects.toThrow();
+  });
+
+  it('fails closed when persisted enrollment belongs to another cloud', async () => {
+    const directory = await temporaryDirectory();
+    const firstCodeFile = join(directory, 'first-code');
+    await writeFile(firstCodeFile, 'first-secret');
+    await bootstrapManagedMachine({
+      cloudBaseUrl: 'https://cloud.example',
+      dataDir: directory,
+      enrollmentCodeFile: firstCodeFile,
+      fetch: async () => enrollmentResponse(),
+    });
+
+    const replacementCodeFile = join(directory, 'replacement-code');
+    await writeFile(replacementCodeFile, 'replacement-secret');
+    const fetch = vi.fn(async () => enrollmentResponse());
+    await expect(
+      bootstrapManagedMachine({
+        cloudBaseUrl: 'https://other-cloud.example',
+        dataDir: directory,
+        enrollmentCodeFile: replacementCodeFile,
+        fetch,
+      }),
+    ).rejects.toThrow('different cloud deployment');
+
+    expect(fetch).not.toHaveBeenCalled();
   });
 
   it('fails closed when enrollment exists without a private key', async () => {

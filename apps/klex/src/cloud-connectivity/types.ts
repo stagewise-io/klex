@@ -25,6 +25,13 @@ export interface CloudConnectivity {
     handler: (request: Request) => Response | Promise<Response>,
   ): void;
   start(): Promise<void>;
+  /**
+   * Announces shutdown to Klex Cloud: closes the tunnel gracefully, waits
+   * (bounded) for the close handshake, and disables reconnects. Outbound token
+   * acquisition keeps working until {@link close}, so other modules can still
+   * shut down authenticated connections. Idempotent.
+   */
+  disconnect(): Promise<void>;
   close(): Promise<void>;
   getAccessToken(resource: string, scopes: string[]): Promise<string>;
   invalidateAccessToken(resource: string): void;

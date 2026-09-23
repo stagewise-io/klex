@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -18,10 +19,10 @@ import {
 import { completeV2Config, emptyModelSelection } from './config.test-fixtures';
 import { CONFIG_STORE_DEFINITION } from './storage-definition';
 import {
+  dropLegacyTelemetryConfig,
   getProviderSettingsJsonSchema,
   klexConfigSchema,
   migrateLegacyKlexConfig,
-  migrateStoredTelemetryConfig,
   parseKlexConfig,
 } from './types';
 
@@ -73,7 +74,7 @@ afterEach(async () => {
 describe('config v2', () => {
   it('advances compatibility metadata for consult model selection', async () => {
     expect(CONFIG_STORE_DEFINITION.compatibilityVersion).toBe(6);
-    expect(CONFIG_STORE_DEFINITION.minimumKlexVersion).toBe('0.8.0');
+    expect(CONFIG_STORE_DEFINITION.minimumKlexVersion).toBe('0.9.2');
 
     const dataDirectory = await directory();
     await writeFile(
@@ -98,7 +99,7 @@ describe('config v2', () => {
     };
     expect(persisted._klex).toMatchObject({
       compatibilityVersion: 6,
-      minimumKlexVersion: '0.8.0',
+      minimumKlexVersion: '0.9.2',
     });
   });
 
@@ -138,33 +139,86 @@ describe('config v2', () => {
     expect(await readFile(configPath)).toEqual(beforeDowngrade);
   });
 
-  it('accepts legacy telemetry levels before the v2-to-v3 migration', () => {
-    const version = CONFIG_STORE_DEFINITION.versions.find(
-      ({ version }) => version === 2,
-    );
-    if (!version) throw new Error('Missing config schema version 2');
-
-    for (const [level, expected] of [
-      ['off', 'no'],
-      ['minimum', 'basic'],
-      ['reduced', 'advanced'],
-      ['full', 'advanced'],
-      ['debug', 'advanced'],
-    ] as const) {
+  it('accepts legacy telemetry settings only in stored schemas before 4', () => {
+    for (const telemetry of [
+      { level: 'off' },
+      { level: 'minimum' },
+      { level: 'advanced', instanceId: randomUUID() },
+      { level: 'debug', debugUntil: '2099-01-01T00:00:00.000Z' },
+    ]) {
       const input: Record<string, unknown> = {
         ...completeV2Config,
-        telemetry: { level },
+        telemetry,
       };
-      expect(() => version.schema.parse(input)).not.toThrow();
-      expect(migrateStoredTelemetryConfig(input).telemetry?.level).toBe(
-        expected,
-      );
+      for (const { version, schema } of CONFIG_STORE_DEFINITION.versions) {
+        if (version === 1) continue;
+        if (version >= 4) {
+          expect(() => schema.parse(input)).toThrow();
+        } else {
+          expect(() => schema.parse(input)).not.toThrow();
+        }
+      }
+      expect(dropLegacyTelemetryConfig(input)).not.toHaveProperty('telemetry');
     }
+  });
+
+  it('removes telemetry from a schema 3 config file during migration', async () => {
+    const dataDirectory = await directory();
+    const configPath = join(dataDirectory, CONFIG_FILE_NAME);
+    await writeFile(
+      configPath,
+      JSON.stringify({
+        _klex: {
+          store: 'config',
+          schemaVersion: 3,
+          compatibilityVersion: 6,
+          minimumKlexVersion: '0.8.0',
+          writtenByKlexVersion: '0.9.1',
+        },
+        ...completeV2Config,
+        telemetry: { level: 'advanced', instanceId: randomUUID() },
+      }),
+    );
+
+    await prepareConfigStore(dataDirectory);
+
+    const persisted = JSON.parse(await readFile(configPath, 'utf8')) as Record<
+      string,
+      unknown
+    >;
+    expect(persisted).not.toHaveProperty('telemetry');
+    expect(persisted._klex).toMatchObject({
+      store: 'config',
+      schemaVersion: 4,
+    });
+  });
+
+  it('rejects a schema 4 config for a schema 3 reader before mutation', async () => {
+    const dataDirectory = await directory(true);
+    const configPath = join(dataDirectory, CONFIG_FILE_NAME);
+    const beforeDowngrade = await readFile(configPath);
+
+    const olderDefinition = {
+      ...CONFIG_STORE_DEFINITION,
+      schemaVersion: 3,
+      versions: CONFIG_STORE_DEFINITION.versions.slice(0, 3),
+      migrations: CONFIG_STORE_DEFINITION.migrations.slice(0, 2),
+    };
+    await expect(
+      createLocalData({
+        logging,
+        dataDirectory,
+        klexVersion: '0.9.1',
+        stores: [olderDefinition],
+      }).start(),
+    ).rejects.toThrow(/newer Klex version/);
+
+    expect(await readFile(configPath)).toEqual(beforeDowngrade);
   });
 
   it('advances compatibility metadata for consult model selection', async () => {
     expect(CONFIG_STORE_DEFINITION.compatibilityVersion).toBe(6);
-    expect(CONFIG_STORE_DEFINITION.minimumKlexVersion).toBe('0.8.0');
+    expect(CONFIG_STORE_DEFINITION.minimumKlexVersion).toBe('0.9.2');
 
     const dataDirectory = await directory();
     await writeFile(
@@ -189,7 +243,7 @@ describe('config v2', () => {
     };
     expect(persisted._klex).toMatchObject({
       compatibilityVersion: 6,
-      minimumKlexVersion: '0.8.0',
+      minimumKlexVersion: '0.9.2',
     });
   });
 
@@ -273,19 +327,6 @@ describe('config v2', () => {
       modelId: 'org:model:v2',
       providerOptions: { openai: { reasoningEffort: 'high' } },
     });
-  });
-
-  it('normalizes legacy telemetry debug fields without persisting them', () => {
-    const migrated = migrateStoredTelemetryConfig({
-      ...completeV2Config,
-      telemetry: {
-        level: 'debug',
-        debugUntil: '2099-01-01T00:00:00.000Z',
-        futureField: 'discarded during normalization',
-      },
-    });
-
-    expect(migrated.telemetry).toEqual({ level: 'advanced' });
   });
 
   it('defaults and validates the timezone', () => {
@@ -426,7 +467,7 @@ describe('config v2', () => {
     );
     expect(persisted._klex).toMatchObject({
       store: 'config',
-      schemaVersion: 3,
+      schemaVersion: 4,
     });
     expect(parseKlexConfig(persisted).configVersion).toBe(2);
     await config.close();

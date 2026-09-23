@@ -1,10 +1,13 @@
 import {
+  type Attributes,
   type Context,
   context,
   type Span,
   type SpanOptions,
   trace,
 } from '@opentelemetry/api';
+
+import type { SessionContext } from '@/session/types';
 
 /**
  * Shared tracer for the chat module. All spans in the session → turn → step
@@ -42,6 +45,43 @@ export const tracer = trace.getTracer('klex');
  */
 export function startChildSpan(name: string, options?: SpanOptions): Span {
   return tracer.startSpan(name, options, context.active());
+}
+
+// ---------------------------------------------------------------------------
+// Session root spans
+// ---------------------------------------------------------------------------
+
+/**
+ * Name of the root span of a chat session trace: `session {name}`.
+ *
+ * Every chat session — main, god, and extension-owned child sessions — uses
+ * this one scheme so traces are grouped by stable session role in the
+ * tracing backend. Session names must therefore be low-cardinality role
+ * names (`main`, `god`, `consult`, `memory-retrieval`, ...), never
+ * per-instance values; instance identity lives in `klex.session.id`.
+ */
+export function sessionSpanName(sessionContext: SessionContext): string {
+  return `session ${sessionContext.name}`;
+}
+
+/**
+ * Identity attributes shared by the session root span and session logs.
+ * Child-only fields are present exactly when the session is extension-owned.
+ */
+export function sessionIdentityAttributes(
+  sessionContext: SessionContext,
+): Attributes {
+  return {
+    'klex.session.id': sessionContext.sessionId,
+    'klex.session.name': sessionContext.name,
+    'klex.session.kind': sessionContext.kind,
+    ...(sessionContext.extensionIdentifier
+      ? { 'klex.session.extension': sessionContext.extensionIdentifier }
+      : {}),
+    ...(sessionContext.parentId
+      ? { 'klex.session.parent.id': sessionContext.parentId }
+      : {}),
+  };
 }
 
 // ---------------------------------------------------------------------------

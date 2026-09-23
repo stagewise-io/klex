@@ -1,10 +1,7 @@
 import { randomUUID } from 'node:crypto';
+import { resolve } from 'node:path';
 
-import {
-  attachOtelTransport,
-  createLogger,
-  type LogLevel,
-} from '@stagewise/logger';
+import { attachOtelTransport, createLogger } from '@stagewise/logger';
 
 import { type AdminApi, createAdminApi } from '@/admin-api';
 import { createAgentDirectory, defaultAgentRoot } from '@/agent-directory';
@@ -16,11 +13,7 @@ import {
   createCloudConnectivity,
 } from '@/cloud-connectivity';
 import { type RuntimeHandle, startRuntime } from '@/composition/runtime';
-import {
-  createConfig,
-  getDefaultTelemetryLevel,
-  type RuntimeTelemetryLevel,
-} from '@/config';
+import { createConfig } from '@/config';
 import { ensureDataDirectory } from '@/data-directory';
 import { createDirectoryLock, type DirectoryLock } from '@/directory-lock';
 import { createGodMessages } from '@/god-messages';
@@ -72,15 +65,22 @@ import {
   createShutdownCoordinator,
   DEFAULT_SHUTDOWN_TIMEOUT_MS,
 } from '@/shutdown-coordinator';
-import { createTelemetryExportConfiguration } from '@/telemetry-config';
+import {
+  createTelemetryExportConfiguration,
+  describeTelemetryWarning,
+  formatTelemetryWarning,
+} from '@/telemetry-config';
 import {
   createTelemetryManager,
   createTelemetrySpanProcessor,
+  otlpMinLevel,
 } from '@/telemetry-manager';
 import { createTelemetryMetrics } from '@/telemetry-metrics';
 import { createTelemetryPolicy } from '@/telemetry-policy';
-import { createTelemetryRecorder } from '@/telemetry-recorder';
-import { createTelemetryResourceAttributes } from '@/telemetry-resource';
+import {
+  createIdentityResourceAttributes,
+  createTelemetryResourceAttributes,
+} from '@/telemetry-resource';
 import { createTracing, mapProviderName } from '@/tracing';
 
 /** Minimum seconds between time updates before executable generations. */
@@ -92,17 +92,42 @@ const logStore = createLogStore(500);
 const logger = createLogger({
   name: 'klex',
   verbose: cli.verbose,
-  minLevel: cli.telemetryDebug ? 'DEBUG' : undefined,
+  minLevel: cli.telemetryLevel === 'debug' ? 'TRACE' : undefined,
   capture: cli.headless ? undefined : (entry) => logStore.add(entry),
   // In interactive (non-headless) mode, suppress all console output so the
   // Ink TUI has exclusive access to stdout/stderr. The OTLP transport is
-  // attached only after persisted telemetry configuration is loaded.
+  // attached only when a telemetry endpoint was supplied at startup.
   console: cli.headless,
   mask: { caseInsensitive: true },
 });
 
+const telemetryWarning = describeTelemetryWarning(
+  cli.telemetryLevel,
+  cli.telemetryEndpoint,
+);
+
 async function main(): Promise<void> {
-  logger.info(`Klex Bot v${KLEX_VERSION}`);
+  if (telemetryWarning) {
+    // Headless output is the only place a human sees this; the interactive UI
+    // renders its own persistent banner instead.
+    if (cli.headless) {
+      process.stderr.write(formatTelemetryWarning(telemetryWarning));
+    }
+    logger.warn(
+      {
+        telemetryLevel: cli.telemetryLevel,
+        telemetryEndpoint: cli.telemetryEndpoint,
+      },
+      `${telemetryWarning.title}. ${telemetryWarning.lines.join(' ')}`,
+    );
+  }
+  logger.info(
+    {
+      'event.name': 'klex.started',
+      'service.version': KLEX_VERSION,
+    },
+    'Klex Bot started',
+  );
 
   // Diagnostic path: load every native dependency and exit without starting any
   // subsystem. Used by the packaged executable smoke test to prove native addons
@@ -234,107 +259,85 @@ async function main(): Promise<void> {
   let runtime: RuntimeHandle | undefined;
   let tracing: ReturnType<typeof createTracing> | undefined;
   let telemetryMetrics: ReturnType<typeof createTelemetryMetrics> | undefined;
+  let runtimeCloud: CloudConnectivity | undefined;
 
   try {
     await config.start();
     preRuntime.push(config);
-    const configuredTelemetry = config.get().telemetry;
-    // Debug tracing is a temporary runtime override. Keep the policy and all
-    // metric/log pipelines at least advanced, while the span processor uses
-    // debug mode to include the additional trace detail for this invocation.
-    const telemetryLevel: RuntimeTelemetryLevel = cli.telemetryDisabled
-      ? 'no'
-      : cli.telemetryDebug
-        ? 'advanced'
-        : (configuredTelemetry?.level ?? getDefaultTelemetryLevel());
+    // Telemetry is resolved from CLI/env only. Any legacy `telemetry` entry in
+    // config.json is ignored. No endpoint means no exporter is ever built.
+    const telemetryLevel = cli.telemetryLevel;
     const telemetryPolicy = createTelemetryPolicy(telemetryLevel);
-    const spanProcessor = createTelemetrySpanProcessor(
-      cli.telemetryDebug ? 'debug' : telemetryLevel,
-    );
-    spanProcessor.setContentAllowed(() => {
-      if (cli.telemetryDisabled) return false;
-      return cli.telemetryDebug;
-    });
-    if (cli.resetTelemetryIdentity || !configuredTelemetry?.instanceId) {
-      await config.mutate((current) => ({
-        ...current,
-        telemetry: {
-          ...current.telemetry,
-          level: current.telemetry?.level ?? getDefaultTelemetryLevel(),
-          instanceId: randomUUID(),
-        },
-      }));
-    }
-    const telemetryExport = createTelemetryExportConfiguration(
-      cli.telemetryEndpoint,
-    );
-    const telemetryInstanceId = config.get().telemetry?.instanceId ?? 'unknown';
+    const spanProcessor = createTelemetrySpanProcessor(telemetryLevel);
+    const telemetryExport = cli.telemetryEndpoint
+      ? createTelemetryExportConfiguration(cli.telemetryEndpoint)
+      : undefined;
+    // OTel `service.instance.id` is per process instance; the stable identity
+    // is the enrolled cloud client id carried in the resource attributes.
+    const telemetryInstanceId = randomUUID();
     const telemetryResourceAttributes = createTelemetryResourceAttributes({
       serviceName: 'klex',
       serviceNamespace: 'stagewise',
       serviceVersion: KLEX_VERSION,
       serviceInstanceId: telemetryInstanceId,
     });
-    let telemetryLogsAttached = false;
-    const getTelemetryLogMinLevel = (
-      level: RuntimeTelemetryLevel,
-    ): LogLevel | number | undefined => {
-      switch (level) {
-        case 'no':
-          return 999;
-        case 'basic':
-          return 'WARN';
-        case 'advanced':
-          return 'INFO';
-        case 'debug':
-          return undefined;
-      }
-    };
-    const attachTelemetryLogs = (level: RuntimeTelemetryLevel): void => {
-      if (telemetryLogsAttached) return;
-      telemetryLogsAttached = true;
-      attachOtelTransport(
-        logger,
-        {
-          url: telemetryExport.logsUrl,
-          headers: { ...telemetryExport.headers },
-          minLevel: getTelemetryLogMinLevel(level),
-          resourceAttributes: telemetryResourceAttributes,
-        },
-        cli.verbose,
-      );
-    };
-    if (telemetryLevel !== 'no') attachTelemetryLogs(telemetryLevel);
+    // Identity attributes shared by all signals: enrolled cloud client id from
+    // basic, agent name from advanced, data directory at debug. Evaluated per
+    // export so runtime level changes and later enrollment are picked up.
+    const getCloudClientId = () =>
+      runtimeCloud?.getEnrollmentState().clientId ?? null;
+    const identityResourceAttributes = createIdentityResourceAttributes({
+      getLevel: () => telemetryPolicy.getSnapshot().level,
+      agent: {
+        agentName: config.get().officialName,
+        dataDirectory: resolve(dataDirectory),
+      },
+      getCloudClientId,
+    });
+    spanProcessor.setDynamicResourceAttributes(identityResourceAttributes);
+    const telemetryLogTransport = telemetryExport
+      ? attachOtelTransport(
+          logger,
+          {
+            url: telemetryExport.logsUrl,
+            headers: { ...telemetryExport.headers },
+            minLevel: otlpMinLevel(telemetryPolicy.getSnapshot().logThreshold),
+            telemetryLevel: () => telemetryPolicy.getSnapshot().level,
+            resourceAttributes: telemetryResourceAttributes,
+            dynamicResourceAttributes: identityResourceAttributes,
+          },
+          cli.verbose,
+        )
+      : undefined;
     tracing = createTracing({
       logging: logger,
-      otlpUrl: telemetryExport.tracesUrl,
-      otlpHeaders: { ...telemetryExport.headers },
+      otlpUrl: telemetryExport?.tracesUrl,
+      otlpHeaders: { ...telemetryExport?.headers },
       serviceName: 'klex',
       resourceAttributes: telemetryResourceAttributes,
       spanProcessor,
       policy: telemetryPolicy,
-      enabled: telemetryLevel !== 'no',
-      recordContent: true,
-      contentAllowed: () => cli.telemetryDebug,
+      // Traces are exported only at advanced and debug, so span-level agent
+      // identity never reaches basic telemetry.
+      agentName: config.get().officialName,
+      getAgentId: getCloudClientId,
+      enabled: telemetryPolicy.getSnapshot().tracesEnabled,
     });
     await tracing.start();
     telemetryMetrics = createTelemetryMetrics({
       logging: logger.child({ name: 'telemetry-metrics' }),
-      endpoint: telemetryExport.metricsUrl,
-      headers: { ...telemetryExport.headers },
+      endpoint: telemetryExport?.metricsUrl,
+      headers: { ...telemetryExport?.headers },
       dataDirectory,
       enabled: telemetryLevel !== 'no',
       instanceId: telemetryInstanceId,
       serviceVersion: KLEX_VERSION,
       resourceAttributes: telemetryResourceAttributes,
+      dynamicResourceAttributes: identityResourceAttributes,
       policy: telemetryPolicy,
     });
     await telemetryMetrics.start();
     preRuntime.push(telemetryMetrics);
-    const telemetryRecorder = createTelemetryRecorder(
-      telemetryMetrics,
-      telemetryPolicy,
-    );
     const timezone = config.get().timezone;
     const providerRegistry = createProviderRegistry({
       logging: logger,
@@ -356,6 +359,7 @@ async function main(): Promise<void> {
         enrollmentToken: cli.cloudEnrollToken,
         allowDangerousUnsecureCloud: cli.allowDangerousUnsecureCloud,
       });
+    runtimeCloud = cloudConnectivity;
     const realtimeComposition = {
       resolveProvider: () => providerRegistry.resolveRealtimeProvider(),
       ownedConnector: createProductionMediaTransportConnector(),
@@ -377,7 +381,7 @@ async function main(): Promise<void> {
 
     tracing.setModelCallSink((record) => {
       modelCallLogger.recordCall(record);
-      telemetryRecorder.recordModelCall({
+      telemetryMetrics?.recordModelCall({
         sessionId: record.sessionId,
         inputTokens: record.inputTokens,
         outputTokens: record.outputTokens,
@@ -400,7 +404,7 @@ async function main(): Promise<void> {
       config,
       modelResolver: providerRegistry,
       dataDirectory,
-      telemetryMetrics: telemetryRecorder,
+      telemetryMetrics,
     };
 
     /**
@@ -425,6 +429,7 @@ async function main(): Promise<void> {
           sessionFactory: makeSessionFactory([]),
           modelPurpose: params.modelPurpose,
           basePrompt: params.basePrompt,
+          parentSpanContext: params.parentSpanContext,
         });
 
     const defaultTimeExt = createTimeExt({
@@ -498,22 +503,12 @@ async function main(): Promise<void> {
     adminApiForUi = adminApi;
     const telemetryManager = createTelemetryManager({
       logging: logger,
-      config,
+      level: telemetryLevel,
       spanProcessor,
       policy: telemetryPolicy,
-      effectiveLevel:
-        cli.telemetryDisabled || cli.telemetryDebug
-          ? telemetryLevel
-          : undefined,
-      onLevelChange: async (level) => {
-        await telemetryMetrics?.setLevel(level);
-        if (level === 'no') {
-          await tracing?.setEnabled(false);
-          return;
-        }
-        attachTelemetryLogs(level);
-        await tracing?.setEnabled(true);
-      },
+      logTransport: telemetryLogTransport,
+      metrics: telemetryMetrics,
+      tracing,
     });
     const realtime = createRealtime({
       logging: logger,
@@ -572,6 +567,13 @@ async function main(): Promise<void> {
     beforeCleanup: flushTelemetry,
     closeUi: () => cliUi?.close(),
     cleanup: async () => {
+      // Tell Klex Cloud first: the agent stops accepting tunneled work now,
+      // and a slow teardown below must not consume the shutdown deadline
+      // before the cloud learns about it. Token access stays available for
+      // modules that still close authenticated connections.
+      await runtimeCloud?.disconnect().catch((error: unknown) => {
+        logger.warn({ error }, 'Klex Cloud disconnect failed');
+      });
       const updateState = updateManager?.getState();
       updateManager?.stop();
       if (updateState?.status !== 'restarting') {
@@ -612,6 +614,9 @@ async function main(): Promise<void> {
 
   process.on('SIGINT', shutdown.requestExit);
   process.on('SIGTERM', shutdown.requestExit);
+  // Closing the terminal (or the console window on Windows) sends SIGHUP.
+  // Without a handler Node terminates immediately and skips cloud notification.
+  process.on('SIGHUP', shutdown.requestExit);
 
   // Interactive CLI UI — default mode. Headless mode skips the UI.
   if (!cli.headless) {
@@ -649,7 +654,7 @@ async function main(): Promise<void> {
       dataDirectory: cli.dataDirectory,
       logStore,
       dangerousLocalAdminApiPort: cli.dangerousLocalAdminApiPort,
-      debugTracingEnabled: cli.telemetryDebug && !cli.telemetryDisabled,
+      telemetryWarning,
       updateManager,
     });
     cliUi = ui;

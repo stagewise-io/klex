@@ -23,7 +23,6 @@ import {
   type ModelSelectionEntry,
   type ProviderConfig,
   parseKlexConfig,
-  type TelemetryLevel,
 } from './types';
 
 export const DEFAULT_CONTEXT_SIZE = 200_000;
@@ -598,10 +597,6 @@ function stringSetting(
 
 function safeErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : 'Invalid configuration';
-}
-
-export function getDefaultTelemetryLevel(): TelemetryLevel {
-  return 'basic';
 }
 
 function resolveOpenAILiveResponsesModel(

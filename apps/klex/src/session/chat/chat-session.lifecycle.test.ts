@@ -128,6 +128,8 @@ describe('ChatSession lifecycle', () => {
       telemetryMetrics: {
         registerSession,
         unregisterSession,
+        recordSessionLifecycle: vi.fn(),
+        recordSessionStateChange: vi.fn(),
       } as unknown as TelemetryMetrics,
     });
 

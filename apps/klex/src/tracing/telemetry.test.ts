@@ -1,7 +1,13 @@
 import { trace } from '@opentelemetry/api';
+import {
+  BasicTracerProvider,
+  InMemorySpanExporter,
+  SimpleSpanProcessor,
+} from '@opentelemetry/sdk-trace-base';
 import { describe, expect, it } from 'vitest';
 
 import type { ModelCallRecord } from '@/model-call-logger';
+import { createTelemetrySpanProcessor } from '@/telemetry-manager';
 
 import { createKlexTelemetry, type KlexTelemetry } from './telemetry';
 
@@ -34,6 +40,102 @@ function makeAbortEvent(event: Record<string, unknown>): AbortEvent {
 function makeCallEndEvent(event: Record<string, unknown>): CallEndEvent {
   return event as unknown as CallEndEvent;
 }
+
+describe('KlexTelemetry — model content', () => {
+  it('exports model inputs and outputs through the debug span pipeline', async () => {
+    const exporter = new InMemorySpanExporter();
+    const spanProcessor = createTelemetrySpanProcessor('debug');
+    spanProcessor.setDelegate(new SimpleSpanProcessor(exporter));
+    const provider = new BasicTracerProvider({
+      spanProcessors: [spanProcessor],
+    });
+    const telemetry = createKlexTelemetry(provider.getTracer('test'), {
+      contentAllowed: () => true,
+    });
+
+    telemetry.onStart(
+      makeStartEvent({
+        callId: 'content-call',
+        operationId: 'ai.generateText',
+        provider: 'openai',
+        modelId: 'gpt-test',
+        functionId: 'chat-session',
+        instructions: 'System instructions',
+        messages: [{ role: 'user', content: 'Model input' }],
+        recordInputs: true,
+        recordOutputs: true,
+      }),
+    );
+    telemetry.onEnd(
+      makeEndEvent({
+        callId: 'content-call',
+        finishReason: 'stop',
+        usage: { inputTokens: 2, outputTokens: 3 },
+        content: [{ type: 'text', text: 'Model output' }],
+        text: 'Model output',
+      }),
+    );
+    await provider.forceFlush();
+
+    const span = exporter.getFinishedSpans()[0];
+    expect(span?.attributes['gen_ai.system_instructions']).toBe(
+      'System instructions',
+    );
+    expect(span?.attributes['gen_ai.input.messages']).toContain('Model input');
+    expect(span?.attributes['gen_ai.output.messages']).toContain(
+      'Model output',
+    );
+
+    await provider.shutdown();
+  });
+});
+
+describe('KlexTelemetry — agent identity', () => {
+  it('records the configured agent name and enrolled agent id', async () => {
+    const exporter = new InMemorySpanExporter();
+    const spanProcessor = createTelemetrySpanProcessor('advanced');
+    spanProcessor.setDelegate(new SimpleSpanProcessor(exporter));
+    const provider = new BasicTracerProvider({
+      spanProcessors: [spanProcessor],
+    });
+    let agentId: string | null = null;
+    const telemetry = createKlexTelemetry(provider.getTracer('test'), {
+      agentName: '  Klex  ',
+      getAgentId: () => agentId,
+    });
+    const run = (callId: string, functionId: string) => {
+      telemetry.onStart(
+        makeStartEvent({
+          callId,
+          operationId: 'ai.generateText',
+          provider: 'openai',
+          modelId: 'gpt-test',
+          functionId,
+        }),
+      );
+      telemetry.onEnd(
+        makeEndEvent({
+          callId,
+          finishReason: 'stop',
+          usage: { inputTokens: 1, outputTokens: 1 },
+        }),
+      );
+    };
+
+    run('before-enrollment', 'chat-session');
+    agentId = 'client-1';
+    run('after-enrollment', 'extension:vision');
+    await provider.forceFlush();
+
+    const [first, second] = exporter.getFinishedSpans();
+    expect(first?.attributes['gen_ai.agent.name']).toBe('Klex');
+    expect(first?.attributes['gen_ai.agent.id']).toBeUndefined();
+    expect(first?.attributes['klex.call.source']).toBe('chat');
+    expect(second?.attributes['gen_ai.agent.id']).toBe('client-1');
+    expect(second?.attributes['klex.call.source']).toBe('extension');
+    await provider.shutdown();
+  });
+});
 
 describe('KlexTelemetry — model ID propagation', () => {
   it('emits exactly one terminal model-call record per generation lifecycle', () => {

@@ -1,3 +1,4 @@
+import { context, isSpanContextValid, trace } from '@opentelemetry/api';
 import {
   type ILogObj,
   type ILogObjMeta,
@@ -27,11 +28,25 @@ export interface CapturedLogEntry {
   sequence: number;
 }
 
+export type TelemetryLogLevel = 'no' | 'basic' | 'advanced' | 'debug';
+
 export interface OTelLoggerOptions {
   url: string;
   headers?: Record<string, string>;
   resourceAttributes: Record<string, unknown>;
   minLevel?: LogLevel | number;
+  /** Current remote telemetry policy, evaluated for every exported record. */
+  telemetryLevel?: TelemetryLogLevel | (() => TelemetryLogLevel);
+  /**
+   * Trusted resource attributes that may change at runtime (for example an
+   * enrolled cloud client id). Evaluated per record and merged over
+   * `resourceAttributes`; the supplier owns any level gating.
+   */
+  dynamicResourceAttributes?: () => Record<string, unknown>;
+}
+
+export interface OTelTransportControl {
+  setMinLevel(level: LogLevel | number | undefined): void;
 }
 
 export interface LoggerOptions {
@@ -114,7 +129,6 @@ function extractFields(
     for (const key of Object.keys(obj)) {
       if (key !== '__proto__') fields[key] = obj[key];
     }
-    return Object.keys(fields).length > 0 ? fields : null;
   }
 
   if (
@@ -126,7 +140,6 @@ function extractFields(
     for (const key of Object.keys(obj)) {
       if (key !== '__proto__') fields[key] = obj[key];
     }
-    return Object.keys(fields).length > 0 ? fields : null;
   }
 
   for (const key of Object.keys(record)) {
@@ -187,6 +200,154 @@ const compactFormatter: LogFormatter<ILogObj> = (
   return line;
 };
 
+// --- canonical schema -------------------------------------------------------
+
+/**
+ * Maps shorthand and legacy field names onto the shared telemetry schema:
+ * OpenTelemetry semantic-convention names where one exists (`gen_ai.*`,
+ * `error.*`), otherwise the `klex.*` names also used by spans and metrics.
+ */
+const CANONICAL_FIELD_NAMES: Readonly<Record<string, string>> = {
+  module: 'klex.module',
+  event: 'event.name',
+  source: 'klex.call.source',
+  outcome: 'klex.outcome',
+  operation: 'klex.operation.name',
+  operationName: 'klex.operation.name',
+  provider: 'gen_ai.provider.name',
+  providerType: 'klex.model.provider_type',
+  providerId: 'klex.model.provider_id',
+  modelType: 'gen_ai.request.model',
+  sessionId: 'klex.session.id',
+  sessionName: 'klex.session.name',
+  sessionKind: 'klex.session.kind',
+  sessionParentId: 'klex.session.parent.id',
+  sessionExtension: 'klex.session.extension',
+  stateFrom: 'klex.session.state.from',
+  stateTo: 'klex.session.state.to',
+  stateValue: 'klex.session.state.value',
+  lifecycleEvent: 'klex.session.lifecycle.event',
+  retryReason: 'klex.retry.reason',
+  toolName: 'gen_ai.tool.name',
+  toolCallId: 'gen_ai.tool.call.id',
+  durationMs: 'duration_ms',
+  errorType: 'error.type',
+  errorCode: 'error.code',
+  finishReason: 'gen_ai.response.finish_reasons',
+  inputTokens: 'gen_ai.usage.input_tokens',
+  outputTokens: 'gen_ai.usage.output_tokens',
+  cacheReadTokens: 'gen_ai.usage.cache_read.input_tokens',
+  cacheWriteTokens: 'gen_ai.usage.cache_creation.input_tokens',
+  ttftMs: 'klex.time_to_first_chunk_ms',
+  stepCount: 'klex.step.count',
+  mcpCount: 'klex.mcp.count',
+  // Legacy dotted names kept as aliases for older call sites.
+  'code.namespace': 'klex.module',
+  'event.source': 'klex.call.source',
+  'event.outcome': 'klex.outcome',
+  'operation.name': 'klex.operation.name',
+  'provider.name': 'gen_ai.provider.name',
+  'provider.type': 'klex.model.provider_type',
+  'provider.id': 'klex.model.provider_id',
+  'gen_ai.response.finish_reason': 'gen_ai.response.finish_reasons',
+  'gen_ai.usage.cache_read_tokens': 'gen_ai.usage.cache_read.input_tokens',
+  'gen_ai.usage.cache_write_tokens': 'gen_ai.usage.cache_creation.input_tokens',
+  'gen_ai.server.time_to_first_token_ms': 'klex.time_to_first_chunk_ms',
+};
+
+/** Semantic-convention fields whose value is an array of strings. */
+const STRING_ARRAY_FIELDS = new Set(['gen_ai.response.finish_reasons']);
+
+function toSnakeCase(value: string): string {
+  return value
+    .replace(/([a-z0-9])([A-Z])/g, '$1_$2')
+    .replace(/[\s-]+/g, '_')
+    .toLowerCase();
+}
+
+function canonicalFieldName(key: string): string {
+  if (CANONICAL_FIELD_NAMES[key]) return CANONICAL_FIELD_NAMES[key];
+  if (key.includes('.')) {
+    return key
+      .split('.')
+      .map((segment) => toSnakeCase(segment))
+      .join('.');
+  }
+  return toSnakeCase(key);
+}
+
+function normalizeStructuredFields(
+  fields: Record<string, unknown>,
+): Record<string, unknown> {
+  const output: Record<string, unknown> = {};
+
+  // Explicit canonical fields win over compatibility aliases regardless of
+  // insertion order.
+  for (const [key, value] of Object.entries(fields)) {
+    const canonical = canonicalFieldName(key);
+    if (canonical === key) output[canonical] = value;
+  }
+  for (const [key, value] of Object.entries(fields)) {
+    const canonical = canonicalFieldName(key);
+    if (!(canonical in output)) output[canonical] = value;
+  }
+  for (const key of STRING_ARRAY_FIELDS) {
+    if (typeof output[key] === 'string') output[key] = [output[key]];
+  }
+  return output;
+}
+
+function eventName(loggerName: string | undefined, message: string): string {
+  const namespace = toSnakeCase(loggerName || 'klex').replace(/_+/g, '.');
+  const action = message
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '.')
+    .replace(/^\.+|\.+$/g, '')
+    .slice(0, 96);
+  return `${namespace}.${action || 'log'}`;
+}
+
+function isStructuredFields(value: unknown): value is Record<string, unknown> {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    !Array.isArray(value) &&
+    !(value instanceof Error)
+  );
+}
+
+function normalizeLogArguments(
+  args: unknown[],
+  loggerName: string | undefined,
+): unknown[] {
+  const objectIndex = isStructuredFields(args[0])
+    ? 0
+    : isStructuredFields(args[1])
+      ? 1
+      : -1;
+  const message =
+    typeof args[0] === 'string'
+      ? args[0]
+      : typeof args[1] === 'string'
+        ? args[1]
+        : '';
+
+  if (objectIndex < 0 && !message) return args;
+
+  const fields = normalizeStructuredFields(
+    objectIndex >= 0 ? (args[objectIndex] as Record<string, unknown>) : {},
+  );
+  fields['event.name'] ??= eventName(loggerName, message);
+  fields['logger.name'] ??= loggerName || 'klex';
+
+  if (objectIndex >= 0) {
+    const normalized = [...args];
+    normalized[objectIndex] = fields;
+    return normalized;
+  }
+  return [fields, message];
+}
+
 // --- factory ----------------------------------------------------------------
 
 export function createLogger(opts?: LoggerOptions): RootLogger {
@@ -195,9 +356,9 @@ export function createLogger(opts?: LoggerOptions): RootLogger {
 
   const logger = new TslogLogger<ILogObj>({
     name: opts?.name,
-    minLevel: opts?.capture
-      ? 'DEBUG'
-      : (opts?.minLevel ?? (verbose ? 'DEBUG' : 'INFO')),
+    // An explicit minimum (e.g. TRACE for telemetry debug) always wins; capture
+    // only raises the default so the local log store sees DEBUG records.
+    minLevel: opts?.minLevel ?? (opts?.capture || verbose ? 'DEBUG' : 'INFO'),
     type: consoleOutput
       ? verbose
         ? (opts?.type ?? 'pretty')
@@ -217,12 +378,22 @@ export function createLogger(opts?: LoggerOptions): RootLogger {
       : undefined,
   });
 
+  logger.use((logContext) => {
+    logContext.args = normalizeLogArguments(
+      logContext.args,
+      logContext.settings.name,
+    );
+    return logContext;
+  });
+
   if (opts?.capture) {
     const capture = opts.capture;
     let sequence = 0;
+    // tslog v5 stores metadata under `settings.meta.property` (`_logMeta`).
+    const metaProperty = logger.settings.meta?.property ?? '_logMeta';
     logger.attachTransport((record) => {
       const recordObj = record as Record<string, unknown>;
-      const meta = recordObj._meta as
+      const meta = recordObj[metaProperty] as
         | { date?: Date; logLevelName?: string; name?: string }
         | undefined;
       capture({
@@ -230,7 +401,7 @@ export function createLogger(opts?: LoggerOptions): RootLogger {
         level: meta?.logLevelName ?? 'INFO',
         loggerName: meta?.name ?? '',
         message: extractMessage(recordObj),
-        fields: extractFields(recordObj, '_meta'),
+        fields: extractFields(recordObj, metaProperty),
         sequence: sequence++,
       });
     });
@@ -254,77 +425,255 @@ export function createLogger(opts?: LoggerOptions): RootLogger {
   return logger;
 }
 
-const SAFE_OTEL_FIELDS = new Set([
-  'module',
-  'operation',
-  'provider',
-  'providerType',
-  'modelType',
+/** `basic`: aggregate, non-identifying fields only. */
+const BASIC_OTEL_FIELDS = new Set([
+  'klex.module',
+  'event.name',
+  'logger.name',
+  'klex.call.source',
+  'klex.outcome',
+  'klex.operation.name',
+  'gen_ai.operation.name',
+  'gen_ai.provider.name',
+  'klex.model.provider_type',
+  'gen_ai.response.finish_reasons',
+  'gen_ai.usage.input_tokens',
+  'gen_ai.usage.output_tokens',
+  'gen_ai.usage.cache_read.input_tokens',
+  'gen_ai.usage.cache_creation.input_tokens',
+  'klex.time_to_first_chunk_ms',
+  'duration_ms',
+  'error.type',
+  'error.code',
   'count',
-  'durationMs',
-  'inputTokens',
-  'outputTokens',
-  'stepCount',
-  'mcpCount',
-  'errorType',
-  'errorCode',
-  'event',
+  'delta',
 ]);
 
-function sanitizeOtelString(value: string): string {
+/** Credential-bearing field names. Redacted at every level. */
+const CREDENTIAL_LOG_FIELD_PATTERN =
+  /(?:api[_-]?key|authorization|cookie|credentials?|password|secret|(?:^|[._-])(?:access|auth|refresh)?[_-]?token(?:$|[._-])|headers?)/i;
+/** Host/person-identifying field names. Redacted below `debug`. */
+const PRIVACY_LOG_FIELD_PATTERN =
+  /(?:^|[._-])(?:host(?:name)?|user(?:name)?|home|mac|ip|email|phone)(?:$|[._-])/i;
+/**
+ * User/model content, matched against each dot-separated name segment whose
+ * final snake_case word is a content noun (`text`, `tool_result`,
+ * `input_messages`) — but not counters such as `input_tokens`.
+ */
+const CONTENT_LOG_SEGMENT_PATTERN =
+  /(?:^|_)(?:prompts?|completions?|instructions?|messages?|contents?|text|body|arguments?|args|inputs?|outputs?|results?|transcripts?|summary|query)$/i;
+
+function isContentLogField(key: string): boolean {
+  return key
+    .split('.')
+    .some((segment) => CONTENT_LOG_SEGMENT_PATTERN.test(toSnakeCase(segment)));
+}
+
+function isSensitiveAdvancedField(key: string): boolean {
+  return (
+    CREDENTIAL_LOG_FIELD_PATTERN.test(key) ||
+    PRIVACY_LOG_FIELD_PATTERN.test(key) ||
+    isContentLogField(key)
+  );
+}
+
+function scrubCredentials(value: string): string {
   return value
-    .replace(/bearer\s+[a-z0-9._~-]+/gi, 'Bearer [REDACTED]')
+    .replace(/bearer\s+[a-z0-9._~+/=-]+/gi, 'Bearer [REDACTED]')
     .replace(
-      /(?:api[_-]?key|token|secret|password)[=:]\s*[^\s,;]+/gi,
+      /(?:api[_-]?key|token|secret|password)[=:]\s*[^\s,;&]+/gi,
       '[REDACTED]',
     )
+    .replace(/(\b[a-z][a-z0-9+.-]*:\/\/)[^\s/@]+@/gi, '$1[REDACTED]@');
+}
+
+/** `basic`/`advanced`: credentials and every URL are removed. */
+function sanitizeOtelString(value: string, maxLength = 512): string {
+  return scrubCredentials(value)
     .replace(/(?:https?:\/\/|file:\/\/)[^\s]+/gi, '[URL_REDACTED]')
-    .slice(0, 512);
+    .slice(0, maxLength);
 }
 
 function sanitizeOtelValue(value: unknown): unknown {
   if (typeof value === 'string') return sanitizeOtelString(value);
   if (typeof value === 'number' || typeof value === 'boolean') return value;
+  if (Array.isArray(value)) {
+    return value
+      .filter(
+        (entry) =>
+          typeof entry === 'string' ||
+          typeof entry === 'number' ||
+          typeof entry === 'boolean',
+      )
+      .slice(0, 32)
+      .map((entry) => sanitizeOtelValue(entry));
+  }
   if (value instanceof Error) return { name: value.name };
   return '[REDACTED]';
+}
+
+/**
+ * `advanced`: every field is kept, but credential, host/person, and content
+ * field names are redacted at any depth, strings lose URLs and are capped,
+ * and errors are reduced to their type and code.
+ */
+function sanitizeAdvancedOtelValue(value: unknown, depth = 0): unknown {
+  if (depth > 4) return '[MAX_DEPTH]';
+  if (typeof value === 'string') return sanitizeOtelString(value);
+  if (
+    typeof value === 'number' ||
+    typeof value === 'boolean' ||
+    value === null
+  ) {
+    return value;
+  }
+  if (value instanceof Error) return errorSummary(value);
+  if (Array.isArray(value)) {
+    return value
+      .slice(0, 32)
+      .map((entry) => sanitizeAdvancedOtelValue(entry, depth + 1));
+  }
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.entries(value)
+        .slice(0, 64)
+        .map(([key, entry]) => [
+          key,
+          isSensitiveAdvancedField(key)
+            ? '[REDACTED]'
+            : sanitizeAdvancedOtelValue(entry, depth + 1),
+        ]),
+    );
+  }
+  return '[REDACTED]';
+}
+
+function errorSummary(value: unknown): Record<string, unknown> {
+  const summary: Record<string, unknown> = {};
+  const type = errorType(value);
+  if (type) summary.name = type;
+  const code =
+    value && typeof value === 'object'
+      ? (value as { code?: unknown }).code
+      : undefined;
+  if (typeof code === 'string' || typeof code === 'number') {
+    summary.code = code;
+  }
+  return summary;
+}
+
+/** `debug`: only credentials are removed; content, URLs and paths are kept. */
+function sanitizeDebugOtelString(value: string): string {
+  return scrubCredentials(value).slice(0, 65_536);
+}
+
+function sanitizeFullOtelValue(value: unknown, depth = 0): unknown {
+  if (depth > 8) return '[MAX_DEPTH]';
+  if (typeof value === 'string') return sanitizeDebugOtelString(value);
+  if (
+    typeof value === 'number' ||
+    typeof value === 'boolean' ||
+    value === null
+  ) {
+    return value;
+  }
+  if (value instanceof Error) {
+    return {
+      name: value.name,
+      message: sanitizeDebugOtelString(value.message),
+      ...(value.stack ? { stack: sanitizeDebugOtelString(value.stack) } : {}),
+      ...(value.cause !== undefined
+        ? { cause: sanitizeFullOtelValue(value.cause, depth + 1) }
+        : {}),
+    };
+  }
+  if (Array.isArray(value)) {
+    return value
+      .slice(0, 64)
+      .map((entry) => sanitizeFullOtelValue(entry, depth + 1));
+  }
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.entries(value)
+        .slice(0, 128)
+        .map(([key, entry]) => [
+          key,
+          CREDENTIAL_LOG_FIELD_PATTERN.test(key)
+            ? '[REDACTED]'
+            : sanitizeFullOtelValue(entry, depth + 1),
+        ]),
+    );
+  }
+  return String(value);
+}
+
+function errorType(value: unknown): string | undefined {
+  if (value instanceof Error) return value.name;
+  if (value && typeof value === 'object') {
+    const name = (value as { name?: unknown }).name;
+    if (typeof name === 'string') return name;
+  }
+  return undefined;
 }
 
 function sanitizeOtelRecord(
   record: ILogObj,
   metadataProperty: string,
+  messageKey: string,
+  level: Exclude<TelemetryLogLevel, 'no'> = 'basic',
 ): ILogObj {
-  const source = record as Record<PropertyKey, unknown>;
-  const output: Record<PropertyKey, unknown> = {};
-
-  // The OTLP formatter reads tslog metadata through the configured property.
-  // Copy only that metadata object; symbols can retain the original masked
-  // argument array, including arbitrary message bodies.
+  const source = record as Record<string, unknown>;
+  const output: Record<string, unknown> = {};
   const metadata = source[metadataProperty];
   if (metadata && typeof metadata === 'object') {
     output[metadataProperty] = metadata;
   }
 
-  const structuredFields = source['0'];
-  if (structuredFields && typeof structuredFields === 'object') {
-    const safeFields: Record<string, unknown> = {};
-    for (const [key, value] of Object.entries(structuredFields)) {
-      if (SAFE_OTEL_FIELDS.has(key)) safeFields[key] = sanitizeOtelValue(value);
-    }
-    output['0'] = safeFields;
+  const message = extractMessage(source);
+  if (message) {
+    output[messageKey] =
+      level === 'debug'
+        ? sanitizeDebugOtelString(message)
+        : sanitizeOtelString(message);
   }
 
-  if (source['1'] && typeof source['1'] === 'object') {
-    const safeFields: Record<string, unknown> = {};
-    for (const [key, value] of Object.entries(source['1'])) {
-      if (SAFE_OTEL_FIELDS.has(key)) safeFields[key] = sanitizeOtelValue(value);
+  const fields = normalizeStructuredFields(
+    extractFields(source, metadataProperty) ?? {},
+  );
+  const loggerName =
+    metadata && typeof metadata === 'object'
+      ? (metadata as { name?: unknown }).name
+      : undefined;
+  fields['event.name'] ??= eventName(
+    typeof loggerName === 'string' ? loggerName : undefined,
+    message,
+  );
+  fields['logger.name'] ??=
+    typeof loggerName === 'string' ? loggerName : 'klex';
+
+  for (const [key, value] of Object.entries(fields)) {
+    if (key === 'error') {
+      const type = errorType(value);
+      if (type && !('error.type' in fields)) output['error.type'] = type;
+      if (level === 'debug') output.error = sanitizeFullOtelValue(value);
+      else if (level === 'advanced') output.error = errorSummary(value);
+      continue;
     }
-    output['1'] = safeFields;
+    if (level === 'basic') {
+      if (BASIC_OTEL_FIELDS.has(key)) output[key] = sanitizeOtelValue(value);
+      continue;
+    }
+    if (level === 'advanced') {
+      output[key] = isSensitiveAdvancedField(key)
+        ? '[REDACTED]'
+        : sanitizeAdvancedOtelValue(value);
+      continue;
+    }
+    output[key] = CREDENTIAL_LOG_FIELD_PATTERN.test(key)
+      ? '[REDACTED]'
+      : sanitizeFullOtelValue(value);
   }
 
-  for (const key of Object.keys(source)) {
-    if (key === '_meta' || key === '0' || key === '1') continue;
-    if (SAFE_OTEL_FIELDS.has(key)) output[key] = sanitizeOtelValue(source[key]);
-  }
   return output as ILogObj;
 }
 
@@ -332,16 +681,55 @@ export function attachOtelTransport(
   logger: RootLogger,
   options: OTelLoggerOptions,
   verbose = true,
-): void {
-  const otlpFormatter = otlpFormat({
-    resource: options.resourceAttributes,
-  }) as unknown as LogFormatter<ILogObj>;
+): OTelTransportControl {
+  const createFormatter = (resource: Record<string, unknown>) =>
+    otlpFormat({
+      resource,
+      getSpanContext: () => {
+        const spanContext = trace.getSpan(context.active())?.spanContext();
+        return spanContext && isSpanContextValid(spanContext)
+          ? spanContext
+          : undefined;
+      },
+    }) as unknown as LogFormatter<ILogObj>;
+  let otlpFormatter = createFormatter(options.resourceAttributes);
+  let dynamicKey = '';
+  // tslog binds the resource when the formatter is created, so rebuild it only
+  // when the dynamic attributes actually change.
+  const currentFormatter = (): LogFormatter<ILogObj> => {
+    if (!options.dynamicResourceAttributes) return otlpFormatter;
+    let dynamic: Record<string, unknown> = {};
+    try {
+      dynamic = options.dynamicResourceAttributes();
+    } catch {
+      // Telemetry is fail-open: keep the last known resource.
+      return otlpFormatter;
+    }
+    const key = JSON.stringify(dynamic);
+    if (key !== dynamicKey) {
+      dynamicKey = key;
+      otlpFormatter = createFormatter({
+        ...options.resourceAttributes,
+        ...dynamic,
+      });
+    }
+    return otlpFormatter;
+  };
   const transport = httpTransport<ILogObj>({
     url: options.url,
     format: (record, settings) => {
       const metadataProperty = settings.meta?.property ?? '_logMeta';
-      return otlpFormatter(
-        sanitizeOtelRecord(record, metadataProperty) as ILogObjMeta,
+      const level =
+        typeof options.telemetryLevel === 'function'
+          ? options.telemetryLevel()
+          : (options.telemetryLevel ?? 'basic');
+      return currentFormatter()(
+        sanitizeOtelRecord(
+          record,
+          metadataProperty,
+          settings.json.messageKey,
+          level === 'no' ? 'basic' : level,
+        ) as ILogObjMeta,
         settings,
       );
     },
@@ -359,4 +747,9 @@ export function attachOtelTransport(
     transport.minLevel = 'INFO';
   }
   logger.attachTransport(transport);
+  return {
+    setMinLevel(level) {
+      transport.minLevel = level;
+    },
+  };
 }

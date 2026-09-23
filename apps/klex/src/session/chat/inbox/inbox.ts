@@ -133,6 +133,8 @@ export interface InboxDependencies {
    * arrivals (which do not trigger check-retry) from Critical/Default.
    */
   onNewInput: (urgency: SessionInboxUrgency) => void;
+  /** Records changes to the deferred inbox item count. */
+  onDepthChange?: (delta: number) => void;
   /** Optional logger for recording unexpected errors from the callback. */
   logger?: ModuleLogger;
 }
@@ -176,6 +178,7 @@ class InboxModule implements SessionInboxBuffer {
         recorded = true;
       } else {
         this.deferredEvents.push(accepted);
+        this.deps.onDepthChange?.(1);
         recorded = true;
       }
     } else {
@@ -227,6 +230,7 @@ class InboxModule implements SessionInboxBuffer {
     let delivered = true;
     if (urgency === SessionInboxUrgency.Deferrable) {
       this.deferredMessages.push({ message });
+      this.deps.onDepthChange?.(1);
     } else {
       // Critical or Default — dispatch immediately via callback.
       delivered = this.notifyImmediateMessage(message, urgency);
@@ -374,11 +378,17 @@ class InboxModule implements SessionInboxBuffer {
   }
 
   getEvents(): SessionInboxEvent[] {
-    return this.deferredEvents.splice(0);
+    const events = this.deferredEvents.splice(0);
+    if (events.length > 0) this.deps.onDepthChange?.(-events.length);
+    return events;
   }
 
   getMessages(): ExtendedUIMessage[] {
-    return this.deferredMessages.splice(0).map((entry) => entry.message);
+    const messages = this.deferredMessages
+      .splice(0)
+      .map((entry) => entry.message);
+    if (messages.length > 0) this.deps.onDepthChange?.(-messages.length);
+    return messages;
   }
 
   isEmpty(): boolean {

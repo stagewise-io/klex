@@ -85,16 +85,12 @@ import {
   getAgentIdentityRoute,
   getModelSelection,
   getModelSelectionRoute,
-  getTelemetry,
-  getTelemetryRoute,
   getTimezone,
   getTimezoneRoute,
   patchAgentIdentity,
   patchAgentIdentityRoute,
   patchModelSelection,
   patchModelSelectionRoute,
-  patchTelemetry,
-  patchTelemetryRoute,
 } from './routes/v1/settings';
 import { getUsage, getUsageRoute } from './routes/v1/usage';
 
@@ -139,8 +135,6 @@ export function createAdminApp(deps: AdminAppDependencies) {
     .openapi(patchAgentIdentityRoute, patchAgentIdentity(deps))
     .openapi(getModelSelectionRoute, getModelSelection(deps))
     .openapi(patchModelSelectionRoute, patchModelSelection(deps))
-    .openapi(getTelemetryRoute, getTelemetry(deps))
-    .openapi(patchTelemetryRoute, patchTelemetry(deps))
     .openapi(getTimezoneRoute, getTimezone(deps))
     .openapi(
       introspectionRootRoute,

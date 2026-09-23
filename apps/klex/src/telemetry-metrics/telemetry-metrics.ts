@@ -1,20 +1,15 @@
 import { readdir, stat } from 'node:fs/promises';
-import {
-  arch,
-  availableParallelism,
-  freemem,
-  type as osType,
-  release,
-  totalmem,
-} from 'node:os';
+import { availableParallelism, freemem, totalmem } from 'node:os';
 import { join } from 'node:path';
 
 import {
   type Attributes,
   type Counter,
+  context,
   type Histogram,
   metrics,
   type ObservableGauge,
+  type UpDownCounter,
 } from '@opentelemetry/api';
 import { OTLPMetricExporter } from '@opentelemetry/exporter-metrics-otlp-http';
 import {
@@ -22,6 +17,7 @@ import {
   MeterProvider,
   MetricReader,
   type PushMetricExporter,
+  type ResourceMetrics,
 } from '@opentelemetry/sdk-metrics';
 
 import type { ModuleLogger } from '@stagewise/logger';
@@ -41,6 +37,9 @@ import {
 const DEFAULT_EXPORT_INTERVAL_MS = 30_000;
 const DEFAULT_PERFORMANCE_SAMPLE_INTERVAL_MS = 5_000;
 const DEFAULT_FILESYSTEM_SAMPLE_INTERVAL_MS = 60_000;
+const TERMINAL_SESSION_RETENTION_MS = 60 * 60 * 1_000;
+const MAX_METRIC_TOOL_NAMES = 256;
+const MAX_METRIC_ATTRIBUTE_LENGTH = 128;
 const TOKEN_BUCKET_BOUNDARIES = [
   1, 4, 16, 64, 256, 1024, 4096, 16384, 65536, 262144, 1048576, 4194304,
   16777216, 67108864,
@@ -49,12 +48,50 @@ const DURATION_BUCKET_BOUNDARIES = [
   0.01, 0.02, 0.04, 0.08, 0.16, 0.32, 0.64, 1.28, 2.56, 5.12, 10.24, 20.48,
   40.96, 81.92,
 ];
+/**
+ * `klex.token.type` values of the per-session last-call gauge. Cache types are
+ * subsets of `input`, so aggregating across every type double-counts cached
+ * input tokens.
+ */
+const INPUT_TOKEN_TYPE = 'input';
+const CACHE_READ_TOKEN_TYPE = 'cache_read';
+const CACHE_WRITE_TOKEN_TYPE = 'cache_write';
+/**
+ * Providers report no per-modality breakdown through the AI SDK usage object,
+ * so GenAI token counters use the convention's `unknown` modality.
+ */
+const UNKNOWN_TOKEN_MODALITY = 'unknown';
+/** Closed set of interaction tool error codes, exported as `error.type`. */
+const TOOL_ERROR_TYPES = new Set([
+  'tool-not-found',
+  'tool-not-implemented',
+  'timeout',
+  'aborted',
+  'execution-failed',
+  'invalid-input',
+  'invalid-output',
+  'result-too-large',
+]);
 const TELEMETRY_LEVELS = ['no', 'basic', 'advanced', 'debug'] as const;
+const TELEMETRY_LEVEL_VALUES: Record<MetricsTelemetryLevel, number> = {
+  no: 0,
+  basic: 1,
+  advanced: 2,
+  debug: 3,
+};
 export type MetricsTelemetryLevel = (typeof TELEMETRY_LEVELS)[number];
+
+/** Used when no endpoint is configured, so no network exporter exists. */
+const DISCARDING_METRIC_EXPORTER: PushMetricExporter = {
+  export: (_metrics, resultCallback) => resultCallback({ code: 0 }),
+  forceFlush: async () => undefined,
+  shutdown: async () => undefined,
+};
 
 export interface TelemetryMetricsDependencies {
   logging: ModuleLogger;
-  endpoint: string;
+  /** OTLP metrics URL. Without it, collected metrics are discarded locally. */
+  endpoint?: string;
   headers?: Record<string, string>;
   exporterFactory?: () => PushMetricExporter;
   dataDirectory: string;
@@ -62,6 +99,11 @@ export interface TelemetryMetricsDependencies {
   instanceId: string;
   serviceVersion?: string;
   resourceAttributes?: Record<string, string>;
+  /**
+   * Level-gated identity attributes merged into the resource of every
+   * export (evaluated per export, so they follow runtime level changes).
+   */
+  dynamicResourceAttributes?: () => Record<string, string>;
   policy?: Readonly<Pick<TelemetryPolicy, 'getSnapshot'>>;
   exportIntervalMs?: number;
   performanceSampleIntervalMs?: number;
@@ -73,13 +115,30 @@ export interface TelemetryMetrics {
   close(): Promise<void>;
   forceFlush(): Promise<void>;
   recordModelCall(usage: ModelCallUsage): void;
+  recordOperationRetry(
+    sessionId: string,
+    operationName?: string,
+    reason?: string,
+  ): void;
   registerSession(session: SessionTelemetryState): void;
   unregisterSession(sessionId: string): void;
   updateSession(
     sessionId: string,
     update: Partial<Omit<SessionTelemetryState, 'id' | 'name'>>,
   ): void;
-  recordToolCall(sessionId: string, toolName: string, success: boolean): void;
+  recordSessionStateChange(sessionId: string, from: string, to: string): void;
+  recordInboxChange(sessionId: string, delta: number): void;
+  recordSessionLifecycle(
+    sessionId: string,
+    event: 'created' | 'closed' | 'unregistered',
+  ): void;
+  recordToolCall(
+    sessionId: string,
+    toolName: string,
+    success: boolean,
+    durationMs?: number,
+    errorType?: string,
+  ): void;
   setEnabled(enabled: boolean): Promise<void>;
   setLevel(level: MetricsTelemetryLevel): Promise<void>;
 }
@@ -126,6 +185,7 @@ class ControllableMetricReader extends MetricReader {
     private readonly exporter: PushMetricExporter,
     private readonly exportIntervalMs: number,
     private readonly exportTimeoutMs: number,
+    private readonly dynamicResourceAttributes?: () => Record<string, string>,
   ) {
     super({
       aggregationSelector: exporter.selectAggregation?.bind(exporter),
@@ -178,18 +238,37 @@ class ControllableMetricReader extends MetricReader {
       );
     }
     if (resourceMetrics.scopeMetrics.length === 0) return;
+    const payload = this.withDynamicResource(resourceMetrics);
     await new Promise<void>((resolve, reject) => {
       const timeout = setTimeout(
         () => reject(new Error('Metric export timed out')),
         this.exportTimeoutMs,
       );
       timeout.unref();
-      this.exporter.export(resourceMetrics, (result) => {
+      this.exporter.export(payload, (result) => {
         clearTimeout(timeout);
         if (result.code === 0) resolve();
         else reject(result.error ?? new Error('Metric export failed'));
       });
     });
+  }
+
+  private withDynamicResource(
+    resourceMetrics: ResourceMetrics,
+  ): ResourceMetrics {
+    let dynamic: Record<string, string> = {};
+    try {
+      dynamic = this.dynamicResourceAttributes?.() ?? {};
+    } catch {
+      // Telemetry is fail-open: export without the optional attributes.
+    }
+    if (Object.keys(dynamic).length === 0) return resourceMetrics;
+    return {
+      ...resourceMetrics,
+      resource: resourceMetrics.resource.merge(
+        createTelemetryResourceFromAttributes(dynamic),
+      ),
+    };
   }
 
   protected async onForceFlush(): Promise<void> {
@@ -223,40 +302,52 @@ class TelemetryMetricsModule implements TelemetryMetrics {
   private filesystemSample: Promise<void> | null = null;
   private filesystemGeneration = 0;
   private started = false;
-  private enabled: boolean;
   private lastCpu = process.cpuUsage();
   private lastSampleAt = process.hrtime.bigint();
   private latestMemoryRssBytes = 0;
   private latestCpuUserUtilization = 0;
   private latestCpuSystemUtilization = 0;
   private dataDirectoryBytes = 0;
-  private tokens: Histogram | null = null;
+  private inputTokenUsage: Counter | null = null;
+  private outputTokenUsage: Counter | null = null;
+  private cacheReadTokenUsage: Counter | null = null;
+  private cacheWriteTokenUsage: Counter | null = null;
+  private inputTokensPerOperation: Histogram | null = null;
+  private outputTokensPerOperation: Histogram | null = null;
   private ttft: Histogram | null = null;
   private duration: Histogram | null = null;
-  private cacheTokens: Histogram | null = null;
   private level: MetricsTelemetryLevel = 'no';
   private memorySamples: Histogram | null = null;
   private cpuSamples: Histogram | null = null;
+  private telemetryLevel: ObservableGauge | null = null;
   private sessionActive: ObservableGauge | null = null;
   private sessionRuntimeState: ObservableGauge | null = null;
   private sessionHistoryLength: ObservableGauge | null = null;
   private sessionTransformedHistoryLength: ObservableGauge | null = null;
-  private sessionLastCallInputTokens: ObservableGauge | null = null;
-  private sessionLastCallCacheReadTokens: ObservableGauge | null = null;
-  private sessionLastCallCacheWriteTokens: ObservableGauge | null = null;
+  private sessionLastCallTokens: ObservableGauge | null = null;
   private sessionLastCallCacheReadRatio: ObservableGauge | null = null;
-  private toolCalls: Counter | null = null;
+  private toolDuration: Histogram | null = null;
+  private operationRetries: Counter | null = null;
+  private sessionStateChanges: Counter | null = null;
+  private inboxChanges: UpDownCounter | null = null;
+  private sessionLifecycle: Counter | null = null;
   private queueOverflow: Counter | null = null;
   private closed = false;
   private pendingLevel: MetricsTelemetryLevel | null = null;
   private transitionPromise: Promise<void> | null = null;
   private readonly sessions = new Map<string, SessionTelemetryState>();
+  private readonly terminalSessionTimestamps = new Map<string, number>();
+  private readonly metricToolNames = new Set<string>();
   // Node does not expose portable per-process network byte counters. We do not
   // substitute system-wide counters because that would misattribute traffic.
 
   constructor(private readonly deps: TelemetryMetricsDependencies) {
-    this.enabled = deps.enabled;
     this.level = deps.enabled ? 'basic' : 'no';
+  }
+
+  /** Collection is enabled for every level except `no`; `level` is the only state. */
+  private get enabled(): boolean {
+    return this.level !== 'no';
   }
 
   async start(): Promise<void> {
@@ -275,14 +366,17 @@ class TelemetryMetricsModule implements TelemetryMetrics {
       DEFAULT_FILESYSTEM_SAMPLE_INTERVAL_MS;
     const exporter =
       this.deps.exporterFactory?.() ??
-      new OTLPMetricExporter({
-        url: this.deps.endpoint,
-        headers: this.deps.headers,
-      });
+      (this.deps.endpoint
+        ? new OTLPMetricExporter({
+            url: this.deps.endpoint,
+            headers: this.deps.headers,
+          })
+        : DISCARDING_METRIC_EXPORTER);
     const reader = new ControllableMetricReader(
       exporter,
       exportIntervalMs,
       Math.min(exportIntervalMs, 10_000),
+      this.deps.dynamicResourceAttributes,
     );
     this.reader = reader;
     const provider = new MeterProvider({
@@ -298,13 +392,21 @@ class TelemetryMetricsModule implements TelemetryMetrics {
       ),
       readers: [reader],
       views: [
+        ...[
+          'gen_ai.client.inference.operation.input_tokens',
+          'gen_ai.client.inference.operation.output_tokens',
+        ].map((instrumentName) => ({
+          instrumentName,
+          aggregation: {
+            type: AggregationType.EXPLICIT_BUCKET_HISTOGRAM as const,
+            options: { boundaries: TOKEN_BUCKET_BOUNDARIES },
+          },
+        })),
         {
-          instrumentName: 'gen_ai.client.token.usage',
+          instrumentName: 'gen_ai.execute_tool.duration',
           aggregation: {
             type: AggregationType.EXPLICIT_BUCKET_HISTOGRAM,
-            options: {
-              boundaries: TOKEN_BUCKET_BOUNDARIES,
-            },
+            options: { boundaries: DURATION_BUCKET_BOUNDARIES },
           },
         },
         {
@@ -324,13 +426,6 @@ class TelemetryMetricsModule implements TelemetryMetrics {
           aggregation: {
             type: AggregationType.EXPLICIT_BUCKET_HISTOGRAM,
             options: { boundaries: DURATION_BUCKET_BOUNDARIES },
-          },
-        },
-        {
-          instrumentName: 'klex.gen_ai.client.cache.token.usage',
-          aggregation: {
-            type: AggregationType.EXPLICIT_BUCKET_HISTOGRAM,
-            options: { boundaries: TOKEN_BUCKET_BOUNDARIES },
           },
         },
         {
@@ -392,10 +487,66 @@ class TelemetryMetricsModule implements TelemetryMetrics {
           'cpu.mode': 'system',
         });
       });
-    this.tokens = meter.createHistogram('gen_ai.client.token.usage', {
-      description: 'Input and output tokens used by model calls',
-      unit: '{token}',
+    this.telemetryLevel = meter.createObservableGauge('klex.telemetry.level', {
+      description: 'Active telemetry level: 0 no, 1 basic, 2 advanced, 3 debug',
+      unit: '1',
     });
+    this.telemetryLevel.addCallback((observable) => {
+      if (!this.started || !this.enabled) return;
+      observable.observe(TELEMETRY_LEVEL_VALUES[this.level], {
+        'klex.telemetry.level.name': this.level,
+      });
+    });
+    // OTel GenAI token metrics: counters for cumulative usage (cache counters
+    // are subsets of input) and per-operation histograms for distributions.
+    this.inputTokenUsage = meter.createCounter(
+      'gen_ai.client.inference.usage.input_tokens',
+      {
+        description:
+          'The number of input (prompt) tokens used, including cached tokens',
+        unit: '{token}',
+      },
+    );
+    this.outputTokenUsage = meter.createCounter(
+      'gen_ai.client.inference.usage.output_tokens',
+      {
+        description:
+          'The number of output (completion) tokens used, including reasoning tokens',
+        unit: '{token}',
+      },
+    );
+    this.cacheReadTokenUsage = meter.createCounter(
+      'gen_ai.client.inference.usage.cache_read.input_tokens',
+      {
+        description:
+          'The number of input tokens served from a provider-managed cache',
+        unit: '{token}',
+      },
+    );
+    this.cacheWriteTokenUsage = meter.createCounter(
+      'gen_ai.client.inference.usage.cache_write.input_tokens',
+      {
+        description:
+          'The number of input tokens written to a provider-managed cache',
+        unit: '{token}',
+      },
+    );
+    this.inputTokensPerOperation = meter.createHistogram(
+      'gen_ai.client.inference.operation.input_tokens',
+      {
+        description:
+          'The number of input (prompt) tokens used per inference operation',
+        unit: '{token}',
+      },
+    );
+    this.outputTokensPerOperation = meter.createHistogram(
+      'gen_ai.client.inference.operation.output_tokens',
+      {
+        description:
+          'The number of output (completion) tokens used per inference operation',
+        unit: '{token}',
+      },
+    );
     this.ttft = meter.createHistogram(
       'gen_ai.client.operation.time_to_first_chunk',
       {
@@ -407,13 +558,6 @@ class TelemetryMetricsModule implements TelemetryMetrics {
       description: 'Duration of completed model operations',
       unit: 's',
     });
-    this.cacheTokens = meter.createHistogram(
-      'klex.gen_ai.client.cache.token.usage',
-      {
-        description: 'Prompt cache token usage',
-        unit: '{token}',
-      },
-    );
     meter
       .createObservableGauge('process.uptime', {
         description: 'Time the Klex process has been running',
@@ -423,11 +567,6 @@ class TelemetryMetricsModule implements TelemetryMetrics {
         if (!this.started || !this.enabled) return;
         observable.observe(process.uptime());
       });
-    const platformAttributes = {
-      'host.arch': normalizePlatformValue(arch()),
-      'os.type': normalizePlatformValue(osType()),
-      'os.version': normalizeOsVersion(release()),
-    };
     meter
       .createObservableGauge('klex.host.logical_processor.count', {
         description: 'Logical processors available to the Klex process',
@@ -435,7 +574,7 @@ class TelemetryMetricsModule implements TelemetryMetrics {
       })
       .addCallback((observable) => {
         if (!this.started || !isDetailedLevel(this.currentLevel())) return;
-        observable.observe(availableParallelism(), platformAttributes);
+        observable.observe(availableParallelism());
       });
     meter
       .createObservableGauge('klex.host.memory.capacity', {
@@ -445,11 +584,9 @@ class TelemetryMetricsModule implements TelemetryMetrics {
       .addCallback((observable) => {
         if (!this.started || !isDetailedLevel(this.currentLevel())) return;
         observable.observe(totalmem(), {
-          ...platformAttributes,
           'klex.memory.state': 'total',
         });
         observable.observe(freemem(), {
-          ...platformAttributes,
           'klex.memory.state': 'available',
         });
       });
@@ -499,7 +636,7 @@ class TelemetryMetricsModule implements TelemetryMetrics {
         observable.observe(getRealtimeSessionCount());
       });
     this.sessionActive = meter.createObservableGauge('klex.session.active', {
-      description: 'Whether each known session is active',
+      description: 'Whether each known session is currently working',
       unit: '1',
     });
     this.sessionActive.addCallback((observable) => {
@@ -510,12 +647,19 @@ class TelemetryMetricsModule implements TelemetryMetrics {
       )
         return;
       for (const session of this.sessions.values()) {
-        observable.observe(session.active ? 1 : 0, sessionAttributes(session));
+        observable.observe(
+          session.runtimeState === 'working' ? 1 : 0,
+          sessionAttributes(session),
+        );
       }
     });
     this.sessionRuntimeState = meter.createObservableGauge(
       'klex.session.runtime_state',
-      { description: 'Runtime state of each known session', unit: '1' },
+      {
+        description:
+          'Numeric runtime state of each known session: 0 idle, 1 working, 2 retrying, 3 leased, 4 success, 5 terminated',
+        unit: '1',
+      },
     );
     this.sessionRuntimeState.addCallback((observable) => {
       if (
@@ -524,11 +668,12 @@ class TelemetryMetricsModule implements TelemetryMetrics {
         !isDetailedLevel(this.currentLevel())
       )
         return;
+      this.pruneTerminalSessions();
       for (const session of this.sessions.values()) {
-        observable.observe(1, {
-          ...sessionAttributes(session),
-          'klex.session.runtime.state': session.runtimeState,
-        });
+        observable.observe(
+          runtimeStateValue(session.runtimeState),
+          sessionAttributes(session),
+        );
       }
     });
     this.sessionHistoryLength = meter.createObservableGauge(
@@ -570,15 +715,15 @@ class TelemetryMetricsModule implements TelemetryMetrics {
         );
       }
     });
-    this.sessionLastCallInputTokens = meter.createObservableGauge(
-      'klex.session.last_call.input_tokens',
+    this.sessionLastCallTokens = meter.createObservableGauge(
+      'klex.session.last_call.tokens',
       {
         description:
-          'Provider-reported input tokens in the most recently completed model call for each active session',
+          'Provider-reported tokens in the most recently completed model call for each active session, partitioned by klex.token.type (cache types are subsets of input)',
         unit: '{token}',
       },
     );
-    this.sessionLastCallInputTokens.addCallback((observable) => {
+    this.sessionLastCallTokens.addCallback((observable) => {
       if (
         !this.started ||
         !this.enabled ||
@@ -586,57 +731,18 @@ class TelemetryMetricsModule implements TelemetryMetrics {
       )
         return;
       for (const session of this.sessions.values()) {
-        if (session.lastCallInputTokens === undefined) continue;
-        observable.observe(
-          session.lastCallInputTokens,
-          sessionLastCallAttributes(session),
-        );
-      }
-    });
-    this.sessionLastCallCacheReadTokens = meter.createObservableGauge(
-      'klex.session.last_call.cache_read_tokens',
-      {
-        description:
-          'Cache-read input tokens in the most recently completed model call for each active session',
-        unit: '{token}',
-      },
-    );
-    this.sessionLastCallCacheReadTokens.addCallback((observable) => {
-      if (
-        !this.started ||
-        !this.enabled ||
-        !isDetailedLevel(this.currentLevel())
-      )
-        return;
-      for (const session of this.sessions.values()) {
-        if (session.lastCallCacheReadTokens === undefined) continue;
-        observable.observe(
-          session.lastCallCacheReadTokens,
-          sessionLastCallAttributes(session),
-        );
-      }
-    });
-    this.sessionLastCallCacheWriteTokens = meter.createObservableGauge(
-      'klex.session.last_call.cache_write_tokens',
-      {
-        description:
-          'Cache-write input tokens in the most recently completed model call for each active session',
-        unit: '{token}',
-      },
-    );
-    this.sessionLastCallCacheWriteTokens.addCallback((observable) => {
-      if (
-        !this.started ||
-        !this.enabled ||
-        !isDetailedLevel(this.currentLevel())
-      )
-        return;
-      for (const session of this.sessions.values()) {
-        if (session.lastCallCacheWriteTokens === undefined) continue;
-        observable.observe(
-          session.lastCallCacheWriteTokens,
-          sessionLastCallAttributes(session),
-        );
+        const attributes = sessionLastCallAttributes(session);
+        for (const [tokenType, value] of [
+          [INPUT_TOKEN_TYPE, session.lastCallInputTokens],
+          [CACHE_READ_TOKEN_TYPE, session.lastCallCacheReadTokens],
+          [CACHE_WRITE_TOKEN_TYPE, session.lastCallCacheWriteTokens],
+        ] as const) {
+          if (value === undefined) continue;
+          observable.observe(value, {
+            ...attributes,
+            'klex.token.type': tokenType,
+          });
+        }
       }
     });
     this.sessionLastCallCacheReadRatio = meter.createObservableGauge(
@@ -662,9 +768,33 @@ class TelemetryMetricsModule implements TelemetryMetrics {
         );
       }
     });
-    this.toolCalls = meter.createCounter('klex.session.tool.calls', {
-      description: 'Tool calls made by each session',
-      unit: '{call}',
+    // Call and error counts derive from this histogram's count, split by
+    // `error.type` (absent on success).
+    this.toolDuration = meter.createHistogram('gen_ai.execute_tool.duration', {
+      description: 'The duration of a single tool execution',
+      unit: 's',
+    });
+    this.operationRetries = meter.createCounter('klex.operation.retries', {
+      description: 'Retry attempts for Klex operations',
+      unit: '{retry}',
+    });
+    this.sessionStateChanges = meter.createCounter(
+      'klex.session.state.changes',
+      {
+        description: 'Runtime state transitions for each session',
+        unit: '{transition}',
+      },
+    );
+    this.inboxChanges = meter.createUpDownCounter(
+      'klex.session.inbox.changes',
+      {
+        description: 'Items added to or removed from each session inbox',
+        unit: '{item}',
+      },
+    );
+    this.sessionLifecycle = meter.createCounter('klex.session.lifecycle', {
+      description: 'Session lifecycle events',
+      unit: '{event}',
     });
 
     meter
@@ -726,26 +856,43 @@ class TelemetryMetricsModule implements TelemetryMetrics {
         session.lastCallSource = usage.source;
       }
     }
+    const metricContext = context.active();
     const dimensions = {
       'gen_ai.operation.name': usage.operationName ?? 'generate_content',
       'gen_ai.provider.name': normalizeProviderName(
         usage.providerName ?? 'unknown',
       ),
     };
-    if (usage.inputTokens > 0) {
-      this.tokens?.record(usage.inputTokens, {
-        ...dimensions,
-        'gen_ai.token.type': 'input',
-      });
+    // Token counts are aggregate numbers without content, so every enabled
+    // level exports them, including the cache subsets.
+    const usageDimensions = {
+      ...dimensions,
+      'gen_ai.token.modality': UNKNOWN_TOKEN_MODALITY,
+    };
+    for (const [counter, value] of [
+      [this.inputTokenUsage, usage.inputTokens],
+      [this.outputTokenUsage, usage.outputTokens],
+      [this.cacheReadTokenUsage, usage.inputCacheReadTokens],
+      [this.cacheWriteTokenUsage, usage.inputCacheWriteTokens],
+    ] as const) {
+      if (value > 0) counter?.add(value, usageDimensions, metricContext);
     }
-    if (usage.outputTokens > 0) {
-      this.tokens?.record(usage.outputTokens, {
-        ...dimensions,
-        'gen_ai.token.type': 'output',
-      });
+    // Failed and aborted calls carry no provider usage; recording their
+    // placeholder zeros would distort the per-operation distributions.
+    if (!usage.isError) {
+      this.inputTokensPerOperation?.record(
+        usage.inputTokens,
+        dimensions,
+        metricContext,
+      );
+      this.outputTokensPerOperation?.record(
+        usage.outputTokens,
+        dimensions,
+        metricContext,
+      );
     }
     if (usage.ttftMs !== undefined && usage.ttftMs !== null) {
-      this.ttft?.record(usage.ttftMs / 1_000, dimensions);
+      this.ttft?.record(usage.ttftMs / 1_000, dimensions, metricContext);
     }
     if (usage.totalDurationMs !== undefined && usage.totalDurationMs !== null) {
       const outcome = usage.isError
@@ -753,29 +900,47 @@ class TelemetryMetricsModule implements TelemetryMetrics {
           ? 'aborted'
           : 'error'
         : 'success';
-      this.duration?.record(usage.totalDurationMs / 1_000, {
-        ...dimensions,
-        'klex.outcome': outcome,
-        ...(advanced && usage.source
-          ? { 'klex.call.source': usage.source }
-          : {}),
-        ...(advanced && usage.errorType
-          ? { 'error.type': normalizeErrorType(usage.errorType) }
-          : {}),
-      });
-    }
-    if (advanced) {
-      if (usage.inputCacheReadTokens > 0)
-        this.cacheTokens?.record(usage.inputCacheReadTokens, {
+      this.duration?.record(
+        usage.totalDurationMs / 1_000,
+        {
           ...dimensions,
-          'klex.cache.type': 'read',
-        });
-      if (usage.inputCacheWriteTokens > 0)
-        this.cacheTokens?.record(usage.inputCacheWriteTokens, {
-          ...dimensions,
-          'klex.cache.type': 'write',
-        });
+          'klex.outcome': outcome,
+          ...(advanced && usage.source
+            ? { 'klex.call.source': usage.source }
+            : {}),
+          // OTel: `error.type` is conditionally required when the operation
+          // failed. The normalized value is a closed enum, so it is safe at
+          // every enabled level.
+          ...(usage.isError
+            ? {
+                'error.type': usage.errorType
+                  ? normalizeErrorType(usage.errorType)
+                  : '_OTHER',
+              }
+            : {}),
+        },
+        metricContext,
+      );
     }
+  }
+
+  recordOperationRetry(
+    sessionId: string,
+    operationName = 'session_turn',
+    reason = 'unknown',
+  ): void {
+    if (!this.started || !this.enabled || !isDetailedLevel(this.currentLevel()))
+      return;
+    const session = this.sessions.get(sessionId);
+    this.operationRetries?.add(
+      1,
+      {
+        'klex.operation.name': operationName,
+        'klex.retry.reason': reason,
+        ...(session ? { 'klex.session.kind': session.kind } : {}),
+      },
+      context.active(),
+    );
   }
 
   registerSession(session: SessionTelemetryState): void {
@@ -785,11 +950,30 @@ class TelemetryMetricsModule implements TelemetryMetrics {
     ) {
       return;
     }
+    this.terminalSessionTimestamps.delete(session.id);
     this.sessions.set(session.id, { ...session });
   }
 
   unregisterSession(sessionId: string): void {
-    this.sessions.delete(sessionId);
+    const session = this.sessions.get(sessionId);
+    if (!session) return;
+    // Keep the terminal sample available to the next metric collection. The
+    // backend needs this final point to render the session as ended rather
+    // than making the series disappear while the session is still alive in
+    // historical graphs.
+    session.active = false;
+    session.runtimeState = 'terminated';
+    this.terminalSessionTimestamps.set(sessionId, Date.now());
+  }
+
+  private pruneTerminalSessions(): void {
+    const cutoff = Date.now() - TERMINAL_SESSION_RETENTION_MS;
+    for (const [sessionId, endedAt] of this.terminalSessionTimestamps) {
+      if (endedAt <= cutoff) {
+        this.terminalSessionTimestamps.delete(sessionId);
+        this.sessions.delete(sessionId);
+      }
+    }
   }
 
   updateSession(
@@ -807,17 +991,90 @@ class TelemetryMetricsModule implements TelemetryMetrics {
     Object.assign(current, update);
   }
 
-  recordToolCall(sessionId: string, toolName: string, success: boolean): void {
+  recordSessionStateChange(sessionId: string, from: string, to: string): void {
     if (!this.started || !this.enabled || !isDetailedLevel(this.currentLevel()))
       return;
     const session = this.sessions.get(sessionId);
-    this.toolCalls?.add(1, {
-      ...(session
-        ? sessionAttributes(session)
-        : { 'klex.session.id': sessionId }),
-      'klex.tool.name': toolName,
-      'klex.tool.outcome': success ? 'success' : 'error',
-    });
+    this.sessionStateChanges?.add(
+      1,
+      {
+        ...(session ? sessionRoleAttributes(session) : {}),
+        'klex.session.state.from': from,
+        'klex.session.state.to': to,
+      },
+      context.active(),
+    );
+  }
+
+  recordInboxChange(sessionId: string, delta: number): void {
+    if (
+      !this.started ||
+      !this.enabled ||
+      !isDetailedLevel(this.currentLevel()) ||
+      delta === 0
+    )
+      return;
+    const session = this.sessions.get(sessionId);
+    this.inboxChanges?.add(
+      delta,
+      session ? sessionRoleAttributes(session) : {},
+      context.active(),
+    );
+  }
+
+  recordSessionLifecycle(
+    sessionId: string,
+    event: 'created' | 'closed' | 'unregistered',
+  ): void {
+    if (!this.started || !this.enabled || !isDetailedLevel(this.currentLevel()))
+      return;
+    const session = this.sessions.get(sessionId);
+    this.sessionLifecycle?.add(
+      1,
+      {
+        ...(session ? sessionRoleAttributes(session) : {}),
+        'klex.session.lifecycle.event': event,
+      },
+      context.active(),
+    );
+  }
+
+  recordToolCall(
+    sessionId: string,
+    toolName: string,
+    success: boolean,
+    durationMs?: number,
+    errorType?: string,
+  ): void {
+    if (!this.started || !this.enabled || !isDetailedLevel(this.currentLevel()))
+      return;
+    if (durationMs === undefined) return;
+    const session = this.sessions.get(sessionId);
+    this.toolDuration?.record(
+      durationMs / 1_000,
+      {
+        ...(session ? sessionRoleAttributes(session) : {}),
+        'gen_ai.tool.name': this.normalizeMetricToolName(toolName),
+        'gen_ai.tool.type': 'function',
+        ...(success
+          ? {}
+          : {
+              'error.type':
+                errorType && TOOL_ERROR_TYPES.has(errorType)
+                  ? errorType
+                  : '_OTHER',
+            }),
+      },
+      context.active(),
+    );
+  }
+
+  private normalizeMetricToolName(toolName: string): string {
+    const normalized = normalizeMetricAttribute(toolName);
+    if (this.metricToolNames.has(normalized)) return normalized;
+    if (this.metricToolNames.size >= MAX_METRIC_TOOL_NAMES) return '_other';
+    this.metricToolNames.add(normalized);
+    return normalized;
   }
 
   setEnabled(enabled: boolean): Promise<void> {
@@ -842,9 +1099,9 @@ class TelemetryMetricsModule implements TelemetryMetrics {
     this.closed = true;
     this.deactivate(false);
     if (provider) await provider.shutdown();
-    this.enabled = false;
     this.level = 'no';
     this.sessions.clear();
+    this.terminalSessionTimestamps.clear();
   }
 
   private deactivate(disableReader = true): void {
@@ -875,23 +1132,23 @@ class TelemetryMetricsModule implements TelemetryMetrics {
     while (!this.closed && this.pendingLevel !== null) {
       const level = this.pendingLevel;
       this.pendingLevel = null;
-      if (this.level === level && this.enabled === (level !== 'no')) continue;
+      if (this.level === level) continue;
       const previousLevel = this.level;
-      const previousEnabled = this.enabled;
       try {
         this.level = level;
-        this.enabled = level !== 'no';
         if (this.enabled) {
           await this.start();
           if (this.level === level && this.enabled) this.activate();
         } else {
           this.deactivate();
         }
-        if (!isDetailedLevel(level)) this.sessions.clear();
+        if (!isDetailedLevel(level)) {
+          this.sessions.clear();
+          this.terminalSessionTimestamps.clear();
+        }
       } catch (error) {
         this.level = previousLevel;
-        this.enabled = previousEnabled;
-        if (previousEnabled) this.activate();
+        if (this.enabled) this.activate();
         else this.deactivate();
         throw error;
       }
@@ -968,23 +1225,67 @@ function isDetailedLevel(level: MetricsTelemetryLevel): boolean {
   return level === 'advanced' || level === 'debug';
 }
 
-function normalizePlatformValue(value: string): string {
-  const normalized = value.toLowerCase().replace(/[^a-z0-9._-]/g, '_');
-  return normalized.slice(0, 32) || 'unknown';
+function runtimeStateValue(state: string): number {
+  switch (state) {
+    case 'working':
+      return 1;
+    case 'retrying':
+      return 2;
+    case 'leased':
+      return 3;
+    case 'success':
+      return 4;
+    case 'terminated':
+      return 5;
+    default:
+      return 0;
+  }
 }
 
-function normalizeOsVersion(value: string): string {
-  return normalizePlatformValue(value.split('-')[0] ?? value);
+function normalizeMetricAttribute(value: string): string {
+  const normalized = Array.from(value.trim(), (character) => {
+    const code = character.charCodeAt(0);
+    return code <= 0x1f || code === 0x7f ? '_' : character;
+  })
+    .join('')
+    .slice(0, MAX_METRIC_ATTRIBUTE_LENGTH);
+  return normalized || 'unknown';
+}
+
+/**
+ * Bounded session role dimensions for counters and histograms. Per-session
+ * ids are unbounded over time, so they only appear on the pruned per-session
+ * gauges (`sessionAttributes`); traces carry them for drill-down.
+ */
+function sessionRoleAttributes(session: SessionTelemetryState): Attributes {
+  return {
+    'klex.session.name': normalizeMetricAttribute(session.name),
+    'klex.session.kind': session.kind,
+    ...(session.extensionIdentifier
+      ? {
+          'klex.session.extension': normalizeMetricAttribute(
+            session.extensionIdentifier,
+          ),
+        }
+      : {}),
+  };
 }
 
 function sessionAttributes(session: SessionTelemetryState): Attributes {
   return {
-    'klex.session.id': session.id,
-    'klex.session.name': session.name,
+    'klex.session.id': normalizeMetricAttribute(session.id),
+    'klex.session.name': normalizeMetricAttribute(session.name),
+    'klex.session.kind': session.kind,
     ...(session.extensionIdentifier
-      ? { 'klex.session.extension': session.extensionIdentifier }
+      ? {
+          'klex.session.extension': normalizeMetricAttribute(
+            session.extensionIdentifier,
+          ),
+        }
       : {}),
-    ...(session.parentId ? { 'klex.session.parent.id': session.parentId } : {}),
+    ...(session.parentId
+      ? { 'klex.session.parent.id': normalizeMetricAttribute(session.parentId) }
+      : {}),
   };
 }
 

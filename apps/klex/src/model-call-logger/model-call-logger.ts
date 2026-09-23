@@ -134,6 +134,31 @@ class ModelCallLoggerModule implements ModelCallLogger {
     }
 
     this.writeQueue.push(record);
+    this.deps.logger.info(
+      {
+        'event.name': 'model.call_completed',
+        ...(record.sessionId ? { 'klex.session.id': record.sessionId } : {}),
+        'gen_ai.operation.name': 'generate_content',
+        'gen_ai.provider.name': record.providerType,
+        'klex.model.provider_type': record.providerType,
+        'klex.model.provider_id': record.providerId,
+        'gen_ai.request.model': record.modelId,
+        'klex.call.source': record.source,
+        'klex.outcome': record.isError ? 'error' : 'success',
+        'gen_ai.response.finish_reasons': [record.finishReason],
+        'gen_ai.usage.input_tokens': record.inputTokens,
+        'gen_ai.usage.output_tokens': record.outputTokens,
+        'gen_ai.usage.cache_read.input_tokens': record.inputCacheReadTokens,
+        'gen_ai.usage.cache_creation.input_tokens':
+          record.inputCacheWriteTokens,
+        duration_ms: record.totalDurationMs,
+        ...(record.ttftMs === null
+          ? {}
+          : { 'klex.time_to_first_chunk_ms': record.ttftMs }),
+        ...(record.errorType ? { 'error.type': record.errorType } : {}),
+      },
+      'Model call completed',
+    );
 
     if (this.writeQueue.length >= FLUSH_BATCH_SIZE) {
       this.flushQueue().catch((error: unknown) => {

@@ -7,7 +7,6 @@ export type Screen =
   | 'model-selection'
   | 'debug-information'
   | 'logs'
-  | 'telemetry'
   | 'usage'
   | 'god-messages'
   | 'agent-identity';
@@ -19,6 +18,7 @@ export interface CliUiDependencies {
   dataDirectory: string;
   logStore: import('@/log-store').LogStore;
   dangerousLocalAdminApiPort: number | undefined;
-  debugTracingEnabled: boolean;
+  /** Persistent banner shown while telemetry is exporting. */
+  telemetryWarning: import('@/telemetry-config').TelemetryWarning | undefined;
   updateManager?: import('@/self-update').UpdateManager;
 }

@@ -6,6 +6,7 @@ import {
   context,
   ROOT_CONTEXT,
   type Span,
+  type SpanContext,
   trace,
 } from '@opentelemetry/api';
 import { generateText, type ToolSet } from 'ai';
@@ -44,7 +45,7 @@ import type {
   Usage,
   UsagePair,
 } from '@/session/types';
-import type { TelemetryRecorder } from '@/telemetry-recorder';
+import type { TelemetryMetrics } from '@/telemetry-metrics';
 
 import {
   createExtensionHandler,
@@ -66,7 +67,12 @@ import type { ExtendedUIMessage } from './message-types';
 import { createTurn, type Turn, type TurnResult } from './turn';
 import { BackoffManager } from './utils/backoff-manager';
 import { ModelFallbackManager } from './utils/model-fallback-manager';
-import { getExtensionIdentifier, tracer } from './utils/tracing';
+import {
+  getExtensionIdentifier,
+  sessionIdentityAttributes,
+  sessionSpanName,
+  tracer,
+} from './utils/tracing';
 
 /**
  * Maximum consecutive complete-failure turns before the session terminates.
@@ -100,7 +106,30 @@ export interface ChatSessionDependencies {
    * prompt entirely.
    */
   basePrompt: string;
-  telemetryMetrics?: TelemetryRecorder;
+  telemetryMetrics?: TelemetryMetrics;
+  /**
+   * Span that spawned this session (child sessions only). The session root
+   * span links to it so the separate child trace stays navigable from and
+   * to the parent trace.
+   */
+  parentSpanContext?: SpanContext;
+}
+
+function runtimeStateValue(state: SessionRuntimeState): number {
+  switch (state) {
+    case 'working':
+      return 1;
+    case 'retrying':
+      return 2;
+    case 'leased':
+      return 3;
+    case 'success':
+      return 4;
+    case 'terminated':
+      return 5;
+    default:
+      return 0;
+  }
 }
 
 class ChatSessionModule implements AgentSession {
@@ -230,30 +259,47 @@ class ChatSessionModule implements AgentSession {
       modelPurpose?: ModelPurpose;
       /** Base system prompt; required for every session. */
       basePrompt: string;
-      telemetryMetrics?: TelemetryRecorder;
+      telemetryMetrics?: TelemetryMetrics;
+      parentSpanContext?: SpanContext;
     },
   ) {
     this.sessionId = deps.sessionContext.sessionId;
-    // Create an independent root span that lives for the entire session
-    // lifetime. This keeps child sessions spawned by extensions in their own
-    // traces. All turn / step / generation spans inherit this trace, giving a
-    // single trace tree per session in the tracing backend. The span stays open until
-    // close() is called — child spans (turns, steps) are exported as they end,
-    // so the trace is visible in real time even while the session span is open.
+    // Create an independent root span named `session {name}` that lives for
+    // the entire session lifetime. Main, god, and extension-owned child
+    // sessions share this naming and attribute scheme; each gets its own
+    // trace. All turn / step / generation / tool spans inherit this trace,
+    // giving a single trace tree per session in the tracing backend. Child
+    // session roots link to the parent span that spawned them. The span stays
+    // open until close() is called — child spans (turns, steps) are exported
+    // as they end, so the trace is visible in real time.
+    const sessionAttributes = sessionIdentityAttributes(
+      this.deps.sessionContext,
+    );
     this.sessionSpan = tracer.startSpan(
-      this.deps.sessionContext.name,
+      sessionSpanName(this.deps.sessionContext),
       {
         attributes: {
-          'session.id': this.sessionId,
-          'session.name': this.deps.sessionContext.name,
-          'session.createdAt': new Date().toISOString(),
-          ...(this.deps.sessionContext.extensionIdentifier
-            ? {
-                'session.extension':
-                  this.deps.sessionContext.extensionIdentifier,
-              }
-            : {}),
+          ...sessionAttributes,
+          'klex.session.created_at': new Date().toISOString(),
         },
+        ...(deps.parentSpanContext
+          ? {
+              links: [
+                {
+                  context: deps.parentSpanContext,
+                  attributes: {
+                    'klex.link.type': 'parent_session',
+                    ...(deps.sessionContext.parentId
+                      ? {
+                          'klex.session.parent.id':
+                            deps.sessionContext.parentId,
+                        }
+                      : {}),
+                  },
+                },
+              ],
+            }
+          : {}),
       },
       ROOT_CONTEXT,
     );
@@ -274,6 +320,29 @@ class ChatSessionModule implements AgentSession {
       historyLength: this.messages.length,
       transformedHistoryLength: this.messages.length,
     });
+    this.deps.telemetryMetrics?.recordSessionLifecycle(
+      this.sessionId,
+      'created',
+    );
+    const sessionLogFields = sessionAttributes;
+    this.deps.logger.info(
+      {
+        'event.name': 'session.lifecycle_changed',
+        ...sessionLogFields,
+        'klex.session.lifecycle.event': 'created',
+      },
+      'Session lifecycle changed',
+    );
+    this.deps.logger.info(
+      {
+        'event.name': 'session.state_changed',
+        ...sessionLogFields,
+        'klex.session.state.from': 'unregistered',
+        'klex.session.state.to': this.runtimeState,
+        'klex.session.state.value': runtimeStateValue(this.runtimeState),
+      },
+      'Session state changed',
+    );
 
     this.fallbackManager = new ModelFallbackManager({
       logger: this.deps.logger,
@@ -304,6 +373,17 @@ class ChatSessionModule implements AgentSession {
       onDeferredEvent: this.onDeferredEvent,
       onImmediateMessage: this.onImmediateMessage,
       onNewInput: this.onNewInput,
+      onDepthChange: (delta) => {
+        this.deps.telemetryMetrics?.recordInboxChange(this.sessionId, delta);
+        this.deps.logger.info(
+          {
+            'event.name': 'session.inbox_changed',
+            'klex.session.id': this.sessionId,
+            delta,
+          },
+          'Session inbox changed',
+        );
+      },
       logger: this.deps.logger,
     });
 
@@ -443,12 +523,16 @@ class ChatSessionModule implements AgentSession {
 
     // Start a child span under the session span so every extension-initiated
     // generation appears in the session trace tree. The AI SDK's own internal
-    // telemetry spans also nest under this span because we run the call inside
-    // a context.with block with the session context as parent.
+    // telemetry spans nest under this span because the call runs inside a
+    // context.with block with this span as the active span.
     const span = tracer.startSpan(
-      'generate_content',
+      'extension.generate_text',
       {
         attributes: {
+          'klex.operation.name': 'extension.generate_text',
+          ...(extensionIdentifier
+            ? { 'klex.extension.id': extensionIdentifier }
+            : {}),
           'gen.extension': true,
           'gen.modelIds': modelIds.map((e) => e.modelId).join(','),
           'gen.modelCount': modelIds.length,
@@ -468,168 +552,179 @@ class ChatSessionModule implements AgentSession {
     );
 
     try {
-      return await context.with(this.sessionContext, async () => {
-        if (modelIds.length === 0) {
-          span.addEvent('gen.no_models');
-          span.setAttribute('gen.outcome', 'no-models');
-          return {
-            success: false as const,
-            failureReason: 'no-models' as const,
-          };
-        }
+      // Run under the wrapper span so the per-model `generate_content` spans
+      // emitted by the AI SDK integration nest beneath it.
+      return await context.with(
+        trace.setSpan(this.sessionContext, span),
+        async () => {
+          if (modelIds.length === 0) {
+            span.addEvent('gen.no_models');
+            span.setAttribute('gen.outcome', 'no-models');
+            return {
+              success: false as const,
+              failureReason: 'no-models' as const,
+            };
+          }
 
-        const failures: string[] = [];
-        let contentFilterCount = 0;
+          const failures: string[] = [];
+          let contentFilterCount = 0;
 
-        for (const entry of modelIds) {
-          const modelId = entry.modelId;
-          try {
-            const model = await this.deps.modelResolver.getLanguageModel(entry);
-            const resolved = this.deps.modelResolver.resolveModel(entry);
-            const providerOptions = resolved.providerOptions as
-              | Record<string, JSONObject>
-              | undefined;
-            const result = await generateText(
-              args.messages
-                ? {
-                    model,
-                    system: args.system,
-                    messages: args.messages,
-                    tools: args.tools,
-                    temperature: args.temperature,
-                    maxOutputTokens: args.maxOutputTokens,
-                    maxRetries: args.maxRetries ?? 0,
-                    telemetry: {
-                      isEnabled: true,
-                      functionId,
-                      includeRuntimeContext: {
-                        'conversation.id': true,
-                        'conversation.providerType': true,
-                        'conversation.providerId': true,
-                        'conversation.modelId': true,
+          for (const entry of modelIds) {
+            const modelId = entry.modelId;
+            try {
+              const model =
+                await this.deps.modelResolver.getLanguageModel(entry);
+              const resolved = this.deps.modelResolver.resolveModel(entry);
+              const providerOptions = resolved.providerOptions as
+                | Record<string, JSONObject>
+                | undefined;
+              const result = await generateText(
+                args.messages
+                  ? {
+                      model,
+                      system: args.system,
+                      messages: args.messages,
+                      tools: args.tools,
+                      temperature: args.temperature,
+                      maxOutputTokens: args.maxOutputTokens,
+                      maxRetries: args.maxRetries ?? 0,
+                      telemetry: {
+                        isEnabled: true,
+                        functionId,
+                        recordInputs: true,
+                        recordOutputs: true,
+                        includeRuntimeContext: {
+                          'conversation.id': true,
+                          'conversation.providerType': true,
+                          'conversation.providerId': true,
+                          'conversation.modelId': true,
+                        },
                       },
-                    },
-                    runtimeContext: {
-                      'conversation.id': this.sessionId,
-                      'conversation.providerType': resolved.providerType,
-                      'conversation.providerId': resolved.providerId,
-                      'conversation.modelId': resolved.modelId,
-                    },
-                    ...(providerOptions !== undefined && { providerOptions }),
-                  }
-                : {
-                    model,
-                    system: args.system,
-                    prompt: args.prompt ?? '',
-                    tools: args.tools,
-                    temperature: args.temperature,
-                    maxOutputTokens: args.maxOutputTokens,
-                    maxRetries: args.maxRetries ?? 0,
-                    telemetry: {
-                      isEnabled: true,
-                      functionId,
-                      includeRuntimeContext: {
-                        'conversation.id': true,
-                        'conversation.providerType': true,
-                        'conversation.providerId': true,
-                        'conversation.modelId': true,
+                      runtimeContext: {
+                        'conversation.id': this.sessionId,
+                        'conversation.providerType': resolved.providerType,
+                        'conversation.providerId': resolved.providerId,
+                        'conversation.modelId': resolved.modelId,
                       },
+                      ...(providerOptions !== undefined && { providerOptions }),
+                    }
+                  : {
+                      model,
+                      system: args.system,
+                      prompt: args.prompt ?? '',
+                      tools: args.tools,
+                      temperature: args.temperature,
+                      maxOutputTokens: args.maxOutputTokens,
+                      maxRetries: args.maxRetries ?? 0,
+                      telemetry: {
+                        isEnabled: true,
+                        functionId,
+                        recordInputs: true,
+                        recordOutputs: true,
+                        includeRuntimeContext: {
+                          'conversation.id': true,
+                          'conversation.providerType': true,
+                          'conversation.providerId': true,
+                          'conversation.modelId': true,
+                        },
+                      },
+                      runtimeContext: {
+                        'conversation.id': this.sessionId,
+                        'conversation.providerType': resolved.providerType,
+                        'conversation.providerId': resolved.providerId,
+                        'conversation.modelId': resolved.modelId,
+                      },
+                      ...(providerOptions !== undefined && { providerOptions }),
                     },
-                    runtimeContext: {
-                      'conversation.id': this.sessionId,
-                      'conversation.providerType': resolved.providerType,
-                      'conversation.providerId': resolved.providerId,
-                      'conversation.modelId': resolved.modelId,
-                    },
-                    ...(providerOptions !== undefined && { providerOptions }),
-                  },
-            );
-
-            // Per-extension usage tracking is handled by the
-            // onExtensionUsage callback in the extension handler wrapper.
-
-            // The AI SDK does not throw for content-filter responses —
-            // it returns a result with finishReason: 'content-filter' and
-            // the refusal text as result.text. Intercept this so the
-            // extension sees a structured failure instead of a fake
-            // success with useless refusal text.
-            if (result.finishReason === 'content-filter') {
-              const msg = `${modelId}: content-filter response`;
-              failures.push(msg);
-              contentFilterCount++;
-              this.deps.logger.warn(
-                { modelId, finishReason: result.finishReason },
-                'Extension generateText returned content-filter — trying next model',
               );
-              span.addEvent('gen.model_content_filter', {
+
+              // Per-extension usage tracking is handled by the
+              // onExtensionUsage callback in the extension handler wrapper.
+
+              // The AI SDK does not throw for content-filter responses —
+              // it returns a result with finishReason: 'content-filter' and
+              // the refusal text as result.text. Intercept this so the
+              // extension sees a structured failure instead of a fake
+              // success with useless refusal text.
+              if (result.finishReason === 'content-filter') {
+                const msg = `${modelId}: content-filter response`;
+                failures.push(msg);
+                contentFilterCount++;
+                this.deps.logger.warn(
+                  { modelId, finishReason: result.finishReason },
+                  'Extension generateText returned content-filter — trying next model',
+                );
+                span.addEvent('gen.model_content_filter', {
+                  'gen.modelId': modelId,
+                  'gen.finishReason': result.finishReason,
+                });
+                continue;
+              }
+
+              span.setAttribute('gen.outcome', 'success');
+              span.setAttribute('gen.modelId', modelId);
+              span.setAttribute('gen.finishReason', result.finishReason);
+              span.setAttribute(
+                'gen.usage.inputTokens',
+                result.usage.inputTokens ?? 0,
+              );
+              span.setAttribute(
+                'gen.usage.outputTokens',
+                result.usage.outputTokens ?? 0,
+              );
+              span.setAttribute(
+                'gen.usage.totalTokens',
+                result.usage.totalTokens ?? 0,
+              );
+              span.setAttribute('gen.outputLength', result.text.length);
+              span.addEvent('gen.success', {
                 'gen.modelId': modelId,
                 'gen.finishReason': result.finishReason,
               });
-              continue;
+
+              return {
+                success: true as const,
+                text: result.text,
+                modelId,
+                usage: result.usage,
+              };
+            } catch (error) {
+              const msg =
+                error instanceof Error ? error.message : String(error);
+              failures.push(`${modelId}: ${msg}`);
+              this.deps.logger.warn(
+                { error, modelId },
+                'Extension generateText model failed — trying next',
+              );
+              span.addEvent('gen.model_failed', {
+                'gen.modelId': modelId,
+                'gen.error': msg,
+              });
             }
-
-            span.setAttribute('gen.outcome', 'success');
-            span.setAttribute('gen.modelId', modelId);
-            span.setAttribute('gen.finishReason', result.finishReason);
-            span.setAttribute(
-              'gen.usage.inputTokens',
-              result.usage.inputTokens ?? 0,
-            );
-            span.setAttribute(
-              'gen.usage.outputTokens',
-              result.usage.outputTokens ?? 0,
-            );
-            span.setAttribute(
-              'gen.usage.totalTokens',
-              result.usage.totalTokens ?? 0,
-            );
-            span.setAttribute('gen.outputLength', result.text.length);
-            span.addEvent('gen.success', {
-              'gen.modelId': modelId,
-              'gen.finishReason': result.finishReason,
-            });
-
-            return {
-              success: true as const,
-              text: result.text,
-              modelId,
-              usage: result.usage,
-            };
-          } catch (error) {
-            const msg = error instanceof Error ? error.message : String(error);
-            failures.push(`${modelId}: ${msg}`);
-            this.deps.logger.warn(
-              { error, modelId },
-              'Extension generateText model failed — trying next',
-            );
-            span.addEvent('gen.model_failed', {
-              'gen.modelId': modelId,
-              'gen.error': msg,
-            });
           }
-        }
 
-        const allContentFilter =
-          contentFilterCount > 0 && contentFilterCount === modelIds.length;
+          const allContentFilter =
+            contentFilterCount > 0 && contentFilterCount === modelIds.length;
 
-        span.setAttribute(
-          'gen.outcome',
-          allContentFilter ? 'content-filter' : 'all-models-failed',
-        );
-        span.setAttribute('gen.failureDetails', failures.join('; '));
-        span.setAttribute('gen.contentFilterCount', contentFilterCount);
-        span.addEvent('gen.all_models_failed', {
-          allContentFilter,
-        });
+          span.setAttribute(
+            'gen.outcome',
+            allContentFilter ? 'content-filter' : 'all-models-failed',
+          );
+          span.setAttribute('gen.failureDetails', failures.join('; '));
+          span.setAttribute('gen.contentFilterCount', contentFilterCount);
+          span.addEvent('gen.all_models_failed', {
+            allContentFilter,
+          });
 
-        return {
-          success: false as const,
-          failureReason: allContentFilter
-            ? ('content-filter' as const)
-            : ('all-models-failed' as const),
-          failureDetails: failures.join('; '),
-        };
-      });
+          return {
+            success: false as const,
+            failureReason: allContentFilter
+              ? ('content-filter' as const)
+              : ('all-models-failed' as const),
+            failureDetails: failures.join('; '),
+          };
+        },
+      );
     } finally {
       span.end();
     }
@@ -672,7 +767,7 @@ class ChatSessionModule implements AgentSession {
     if (event.urgency === SessionInboxUrgency.Critical && this.currentTurn) {
       this.currentTurn.abortGeneration('inbox_interrupt');
       this.sessionSpan.addEvent('session.generation_aborted', {
-        'session.abortReason': 'inbox_interrupt',
+        'klex.session.abort_reason': 'inbox_interrupt',
         'inbox.urgency': SessionInboxUrgency[event.urgency],
       });
     }
@@ -705,7 +800,7 @@ class ChatSessionModule implements AgentSession {
     if (urgency === SessionInboxUrgency.Critical && this.currentTurn) {
       this.currentTurn.abortGeneration('inbox_interrupt');
       this.sessionSpan.addEvent('session.generation_aborted', {
-        'session.abortReason': 'inbox_interrupt',
+        'klex.session.abort_reason': 'inbox_interrupt',
         'inbox.urgency': SessionInboxUrgency[urgency],
       });
     }
@@ -736,9 +831,9 @@ class ChatSessionModule implements AgentSession {
 
   private async quiesceGenerationLane(reason: string): Promise<void> {
     this.laneSuspended = true;
-    if (this.runtimeState !== 'terminated') this.runtimeState = 'leased';
+    if (this.runtimeState !== 'terminated') this.setRuntimeState('leased');
     this.sessionSpan.addEvent('session.generation_lane_suspended', {
-      'session.laneReason': reason,
+      'klex.session.lane_reason': reason,
     });
 
     // Stop the in-flight generation so the current step reaches its commit
@@ -758,7 +853,7 @@ class ChatSessionModule implements AgentSession {
 
   private resumeGenerationLane(): void {
     this.laneSuspended = false;
-    if (this.runtimeState === 'leased') this.runtimeState = 'idle';
+    if (this.runtimeState === 'leased') this.setRuntimeState('idle');
     this.sessionSpan.addEvent('session.generation_lane_resumed', {});
     if (this._status === 'terminated') return;
     if (this.hasPendingInput || !this.sessionInbox.isEmpty()) {
@@ -803,7 +898,7 @@ class ChatSessionModule implements AgentSession {
       },
       commit: () => {
         this.sessionSpan.addEvent('session.lease_context_committed', {
-          'session.historyRevision': historyRevision,
+          'klex.session.history_revision': historyRevision,
         });
       },
       rollback: () => {
@@ -831,9 +926,21 @@ class ChatSessionModule implements AgentSession {
         modelMessages: [],
         sessionId: this.sessionId,
         validateInput: true,
+        recordToolCall: (toolName, success, durationMs, errorType) =>
+          this.deps.telemetryMetrics?.recordToolCall(
+            this.sessionId,
+            toolName,
+            success,
+            durationMs,
+            errorType,
+          ),
       });
     }
-    return this.leaseToolExecutor.execute(request);
+    // Lease tools are invoked from realtime transports without an ambient
+    // OTel context. Pin them to the session trace so `execute_tool` spans do
+    // not become orphan root traces.
+    const executor = this.leaseToolExecutor;
+    return context.with(this.sessionContext, () => executor.execute(request));
   }
 
   private async commitLeaseEvent(event: RealtimeCommitEvent): Promise<void> {
@@ -892,8 +999,7 @@ class ChatSessionModule implements AgentSession {
     }
     this.loopActive = true;
 
-    this.runtimeState = 'working';
-    this.syncTelemetrySession();
+    this.setRuntimeState('working');
 
     let needsBackoffRetry = false;
     let needsCheckRetry = false;
@@ -916,9 +1022,7 @@ class ChatSessionModule implements AgentSession {
         // Leave the loop; pending input is picked up on resume.
         if (this.laneSuspended) {
           this.hasPendingInput = true;
-          this.runtimeState = 'leased';
-          this.syncTelemetrySession();
-          this.syncTelemetrySession();
+          this.setRuntimeState('leased');
           this.deps.logger.info(
             { sessionId: this.sessionId },
             'Generation lane leased — chat loop yielding',
@@ -935,12 +1039,10 @@ class ChatSessionModule implements AgentSession {
           !needsBackoffRetry &&
           !needsCheckRetry
         ) {
-          this.runtimeState = 'idle';
-          this.syncTelemetrySession();
-          this.syncTelemetrySession();
+          this.setRuntimeState('idle');
           this.resolveIdleWaiters(true);
           this.sessionSpan.addEvent('session.idle', {
-            'session.id': this.sessionId,
+            'klex.session.id': this.sessionId,
           });
           this.deps.logger.info(
             { sessionId: this.sessionId },
@@ -1018,24 +1120,37 @@ class ChatSessionModule implements AgentSession {
 
         // Fatal error — terminate the session.
         if (turnResult.fatalError) {
-          this.runtimeState = 'terminated';
-          this.syncTelemetrySession();
+          this.setRuntimeState('terminated');
           this.deps.logger.error(
             { sessionId: this.sessionId },
             'Fatal turn error — terminating session',
           );
           this.sessionSpan.addEvent('session.fatal_error', {
-            'session.id': this.sessionId,
+            'klex.session.id': this.sessionId,
           });
-          this.sessionSpan.setAttribute('session.terminated', true);
+          this.sessionSpan.setAttribute('klex.session.terminated', true);
           await this.terminate(turnResult.fatalErrorReason ?? 'unknown');
           return;
         }
 
         // Track success/failure for backoff.
         if (turnResult.completeFailure) {
-          this.runtimeState = 'retrying';
-          this.syncTelemetrySession();
+          this.setRuntimeState('retrying');
+          const retryReason = turnResult.fatalErrorReason ?? 'turn_failure';
+          this.deps.telemetryMetrics?.recordOperationRetry(
+            this.sessionId,
+            'session_turn',
+            retryReason,
+          );
+          this.deps.logger.warn(
+            {
+              'event.name': 'operation.retried',
+              'klex.session.id': this.sessionId,
+              'klex.operation.name': 'session_turn',
+              'klex.retry.reason': retryReason,
+            },
+            'Session turn will be retried',
+          );
           this.backoffManager.recordFailure();
           needsBackoffRetry = true;
           needsCheckRetry = false;
@@ -1055,16 +1170,15 @@ class ChatSessionModule implements AgentSession {
               'Max consecutive failures reached — terminating session',
             );
             this.sessionSpan.addEvent('session.max_failures_exceeded', {
-              'session.consecutiveFailures':
+              'klex.session.consecutive_failures':
                 this.backoffManager.getConsecutiveFailures(),
             });
-            this.sessionSpan.setAttribute('session.terminated', true);
+            this.sessionSpan.setAttribute('klex.session.terminated', true);
             await this.terminate('max_consecutive_failures');
             return;
           }
         } else {
-          this.runtimeState = 'success';
-          this.syncTelemetrySession();
+          this.setRuntimeState('success');
           this.backoffManager.recordSuccess();
           needsBackoffRetry = false;
           // Check if new non-deferrable input arrived during this turn.
@@ -1098,13 +1212,13 @@ class ChatSessionModule implements AgentSession {
             'All models failed — retrying immediately (within immediate retry budget)',
           );
           this.sessionSpan.addEvent('session.backoff_immediate_retry', {
-            'session.consecutiveFailures':
+            'klex.session.consecutive_failures':
               this.backoffManager.getConsecutiveFailures(),
           });
           continue;
         }
 
-        this.runtimeState = 'retrying';
+        this.setRuntimeState('retrying');
         this.deps.logger.warn(
           {
             sessionId: this.sessionId,
@@ -1114,9 +1228,9 @@ class ChatSessionModule implements AgentSession {
           'All models failed — waiting before retry (exponential backoff)',
         );
         this.sessionSpan.addEvent('session.backoff_wait', {
-          'session.consecutiveFailures':
+          'klex.session.consecutive_failures':
             this.backoffManager.getConsecutiveFailures(),
-          'session.backoffDelayMs': delay,
+          'klex.session.backoff_delay_ms': delay,
         });
 
         // Wait for the delay, interruptible by new inbox input.
@@ -1135,10 +1249,10 @@ class ChatSessionModule implements AgentSession {
         'Unhandled error in session loop — terminating session',
       );
       this.sessionSpan.addEvent('session.unhandled_error', {
-        'session.id': this.sessionId,
+        'klex.session.id': this.sessionId,
         error: String(error),
       });
-      this.sessionSpan.setAttribute('session.terminated', true);
+      this.sessionSpan.setAttribute('klex.session.terminated', true);
       try {
         await this.terminate('unhandled_loop_error');
       } catch (terminateError) {
@@ -1230,10 +1344,38 @@ class ChatSessionModule implements AgentSession {
     };
   }
 
+  private setRuntimeState(next: SessionRuntimeState): void {
+    if (this.runtimeState === next) return;
+    const previous = this.runtimeState;
+    this.runtimeState = next;
+    this.deps.telemetryMetrics?.recordSessionStateChange(
+      this.sessionId,
+      previous,
+      next,
+    );
+    this.deps.logger.info(
+      {
+        'event.name': 'session.state_changed',
+        'klex.session.id': this.sessionId,
+        'klex.session.name': this.deps.sessionContext.name,
+        'klex.session.kind': this.deps.sessionContext.kind,
+        'klex.session.state.from': previous,
+        'klex.session.state.to': next,
+        'klex.session.state.value': runtimeStateValue(next),
+      },
+      'Session state changed',
+    );
+    this.sessionSpan.addEvent('session.state_changed', {
+      'klex.session.state.from': previous,
+      'klex.session.state.to': next,
+    });
+    this.syncTelemetrySession();
+  }
+
   private syncTelemetrySession(
     transformedHistoryLength = this.messages.length,
   ): void {
-    this.deps.telemetryMetrics?.updateSession(this.sessionId, {
+    this.deps.telemetryMetrics?.updateSession?.(this.sessionId, {
       active: this._status !== 'terminated',
       runtimeState:
         this._status === 'terminated' ? 'terminated' : this.runtimeState,
@@ -1275,7 +1417,7 @@ class ChatSessionModule implements AgentSession {
     if (this.closePromise) return this.closePromise;
     if (this.runtimeState !== 'terminated') {
       this._status = 'terminated';
-      this.runtimeState = 'terminated';
+      this.setRuntimeState('terminated');
       this.resolveIdleWaiters(false);
 
       // Establish the cancellation edge synchronously. Nothing may enter or
@@ -1302,23 +1444,47 @@ class ChatSessionModule implements AgentSession {
         // session remains registered and blocks its replacement.
         try {
           this.sessionSpan.addEvent('session.closed', {
-            'session.id': this.sessionId,
-            'session.messageCount': this.messages.length,
+            'klex.session.id': this.sessionId,
+            'klex.session.message_count': this.messages.length,
           });
           this.sessionSpan.setAttribute(
-            'session.closedAt',
+            'klex.session.closed_at',
             new Date().toISOString(),
           );
           this.sessionSpan.end();
         } finally {
           // Keep lifecycle bookkeeping independent from telemetry export. A
           // synchronous exporter failure must not leave a stale child behind.
+          this.deps.telemetryMetrics?.recordSessionLifecycle(
+            this.sessionId,
+            'closed',
+          );
+          this.deps.telemetryMetrics?.recordSessionLifecycle(
+            this.sessionId,
+            'unregistered',
+          );
           this.deps.telemetryMetrics?.unregisterSession(this.sessionId);
           this.deps.introspectionScope.removeChild(this.sessionId);
 
           this.deps.logger.info(
-            { sessionId: this.sessionId },
-            'Session closed — session span ended',
+            {
+              'event.name': 'session.lifecycle_changed',
+              'klex.session.id': this.sessionId,
+              'klex.session.name': this.deps.sessionContext.name,
+              'klex.session.kind': this.deps.sessionContext.kind,
+              'klex.session.lifecycle.event': 'closed',
+            },
+            'Session lifecycle changed',
+          );
+          this.deps.logger.info(
+            {
+              'event.name': 'session.lifecycle_changed',
+              'klex.session.id': this.sessionId,
+              'klex.session.name': this.deps.sessionContext.name,
+              'klex.session.kind': this.deps.sessionContext.kind,
+              'klex.session.lifecycle.event': 'unregistered',
+            },
+            'Session lifecycle changed',
           );
         }
       }
@@ -1420,6 +1586,16 @@ class ChatSessionModule implements AgentSession {
         this.sessionIntrospectionScope.child('child-sessions');
     }
 
+    // Link the child trace to the span that spawned it: the active span when
+    // it belongs to this session's trace (e.g. the extension tool call),
+    // otherwise the session root span.
+    const ownTraceId = this.sessionSpan.spanContext().traceId;
+    const activeSpan = trace.getActiveSpan();
+    const spawningSpan =
+      activeSpan && activeSpan.spanContext().traceId === ownTraceId
+        ? activeSpan
+        : this.sessionSpan;
+
     const child = this.deps.sessionFactory({
       mcp: null,
       sessionContext: childContext,
@@ -1428,6 +1604,14 @@ class ChatSessionModule implements AgentSession {
       basePrompt: options.basePrompt,
       modelPurpose: options.modelPurpose,
       hooks: options.hooks,
+      parentSpanContext: spawningSpan.spanContext(),
+    });
+    spawningSpan.addEvent('session.child_created', {
+      'klex.session.child.id': child.sessionId,
+      'klex.session.child.name': childContext.name,
+      ...(childContext.extensionIdentifier
+        ? { 'klex.session.child.extension': childContext.extensionIdentifier }
+        : {}),
     });
 
     try {
@@ -1479,5 +1663,6 @@ export function createChatSession(
     telemetryMetrics: deps.telemetryMetrics,
     modelPurpose: deps.modelPurpose,
     basePrompt: deps.basePrompt,
+    parentSpanContext: deps.parentSpanContext,
   });
 }

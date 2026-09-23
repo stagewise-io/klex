@@ -1,3 +1,4 @@
+import { EventEmitter } from 'node:events';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -704,5 +705,88 @@ describe('CloudConnectivity', () => {
       cloud.invalidateAccessToken('https://api.klex.bot'),
     ).not.toThrow();
     await cloud.close();
+  });
+
+  describe('shutdown notification', () => {
+    class FakeSocket extends EventEmitter {
+      readonly CLOSED = 3;
+      readyState = 1;
+      close = vi.fn(() => {
+        this.readyState = this.CLOSED;
+        this.emit('close', 1000, Buffer.from('stopped'));
+      });
+      terminate = vi.fn(() => {
+        this.readyState = this.CLOSED;
+      });
+    }
+
+    function captureTunnelSocket(socket: FakeSocket) {
+      startAgentTunnelMock.mockImplementationOnce(async (options) => {
+        const finishRequest = (
+          options as {
+            finishRequest?: (request: { end(): void }, ws: unknown) => void;
+          }
+        ).finishRequest;
+        const request = { end: vi.fn() };
+        finishRequest?.(request, socket);
+        expect(request.end).toHaveBeenCalled();
+        tunnelHandlers.open = options.onConnect ?? (() => undefined);
+        return { agentId: null, stop: tunnelStopMock };
+      });
+    }
+
+    it('disconnect stops the tunnel, awaits the close handshake, and keeps tokens available', async () => {
+      const socket = new FakeSocket();
+      captureTunnelSocket(socket);
+      // The package's stop() sends GOAWAY and starts the close handshake but
+      // resolves before the server acknowledges it.
+      tunnelStopMock.mockImplementationOnce(async () => {
+        setTimeout(() => socket.close(), 10);
+      });
+      const cloud = await startEnrolledCloud();
+      tunnelHandlers.open?.();
+
+      await cloud.disconnect();
+
+      expect(tunnelStopMock).toHaveBeenCalledTimes(1);
+      expect(socket.readyState).toBe(socket.CLOSED);
+      expect(socket.terminate).not.toHaveBeenCalled();
+      expect(cloud.getTunnelState()).toBe('disconnected');
+      await expect(
+        cloud.getAccessToken('https://api.klex.bot', ['mcp:use']),
+      ).resolves.toBe('mock-access-token');
+      expect(tokenClientCloseMock).not.toHaveBeenCalled();
+
+      await cloud.disconnect();
+      await cloud.close();
+      expect(tunnelStopMock).toHaveBeenCalledTimes(1);
+      expect(tokenClientCloseMock).toHaveBeenCalled();
+    });
+
+    it('terminates the socket when the cloud does not acknowledge the close', async () => {
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+      const socket = new FakeSocket();
+      captureTunnelSocket(socket);
+      const cloud = await startEnrolledCloud();
+
+      const disconnecting = cloud.disconnect();
+      await vi.advanceTimersByTimeAsync(3_000);
+      await disconnecting;
+
+      expect(socket.terminate).toHaveBeenCalled();
+      await cloud.close();
+    });
+
+    it('does not reconnect after disconnect', async () => {
+      const cloud = await startEnrolledCloud();
+      await cloud.disconnect();
+      startAgentTunnelMock.mockClear();
+
+      tunnelHandlers.error?.(new Error('late failure'));
+      tunnelHandlers.close?.(1006, 'late close');
+
+      expect(startAgentTunnelMock).not.toHaveBeenCalled();
+      await cloud.close();
+    });
   });
 });

@@ -11,7 +11,7 @@ import {
 
 import type { ModuleLogger } from '@stagewise/logger';
 
-import type { TelemetryRecorder } from '@/telemetry-recorder';
+import type { TelemetryMetrics } from '@/telemetry-metrics';
 import {
   classifyGenerationError,
   type GenerationErrorClassification,
@@ -32,7 +32,7 @@ import { ToolDispatcher } from './tool-dispatcher';
 export interface GenerationRunnerDependencies {
   logger: ModuleLogger;
   sessionId: string;
-  telemetryMetrics?: TelemetryRecorder;
+  telemetryMetrics?: TelemetryMetrics;
   stepSpan: Span;
   modelMessages: ModelMessage[];
   messages: ExtendedUIMessage[];
@@ -118,11 +118,13 @@ export class GenerationRunner {
       tools: this.deps.tools,
       modelMessages: this.deps.modelMessages,
       sessionId: this.deps.sessionId,
-      recordToolCall: (toolName, success) =>
+      recordToolCall: (toolName, success, durationMs, errorType) =>
         this.deps.telemetryMetrics?.recordToolCall(
           this.deps.sessionId,
           toolName,
           success,
+          durationMs,
+          errorType,
         ),
     });
     this.toolDispatcher = toolDispatcher;

@@ -504,6 +504,9 @@ importers:
 
   packages/logger:
     dependencies:
+      '@opentelemetry/api':
+        specifier: 1.9.1
+        version: 1.9.1
       tslog:
         specifier: 5.0.1
         version: 5.0.1

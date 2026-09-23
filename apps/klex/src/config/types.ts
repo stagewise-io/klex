@@ -529,35 +529,12 @@ const mcpServerConfigSchema = z.union([
 
 type McpServerConfig = z.infer<typeof mcpServerConfigSchema>;
 
-const telemetryLevelSchema = z.enum(['no', 'basic', 'advanced']);
-const storedTelemetryLevelSchema = z.enum(['no', 'basic', 'advanced']);
-
-const legacyTelemetryLevelSchema = z.enum([
-  'off',
-  'minimum',
-  'reduced',
-  'full',
-  'debug',
-]);
-
-type TelemetryLevel = z.infer<typeof telemetryLevelSchema>;
-type RuntimeTelemetryLevel = TelemetryLevel | 'debug';
-type StoredTelemetryLevel = z.infer<typeof storedTelemetryLevelSchema>;
-type LegacyTelemetryLevel = z.infer<typeof legacyTelemetryLevelSchema>;
-
-const telemetryConfigSchema = z
-  .object({
-    level: telemetryLevelSchema,
-    instanceId: z.string().uuid().optional(),
-  })
-  .strict();
-
-const storedTelemetryConfigSchema = z
-  .object({
-    level: z.union([storedTelemetryLevelSchema, legacyTelemetryLevelSchema]),
-    instanceId: z.string().uuid().optional(),
-  })
-  .passthrough();
+/**
+ * Stored schemas 1–3 may carry a `telemetry` object from before telemetry
+ * moved to CLI/env configuration. Those historical schemas accept it without
+ * interpreting it; the 3→4 migration drops it and schema 4 rejects it.
+ */
+const removedTelemetryFieldSchema = z.unknown().optional();
 
 const timezoneSchema = z
   .string()
@@ -608,7 +585,6 @@ const klexConfigSchema = z.object({
     voice: { sts: [], tts: [], stt: [] },
   }),
   mcpServers: z.record(z.string(), mcpServerConfigSchema).default({}),
-  telemetry: telemetryConfigSchema.optional(),
   timezone: timezoneSchema.default('UTC'),
 });
 
@@ -654,65 +630,26 @@ const legacyKlexConfigSchema = z
       .default({}),
     modelSelection: legacyModelSelectionSchema,
     mcpServers: z.record(z.string(), mcpServerConfigSchema).default({}),
-    telemetry: storedTelemetryConfigSchema.optional(),
+    telemetry: removedTelemetryFieldSchema,
   })
   .strict();
 
-const currentStoredKlexConfigSchema = klexConfigSchema
+/** Stored schemas 2 and 3: the v2 config shape plus the removed `telemetry`. */
+const storedKlexConfigV2Schema = klexConfigSchema
   .extend({
     configVersion: z.literal(2),
-    telemetry: storedTelemetryConfigSchema.optional(),
+    telemetry: removedTelemetryFieldSchema,
   })
   .strict();
 
-function mapTelemetryLevel(level: LegacyTelemetryLevel): TelemetryLevel {
-  switch (level) {
-    case 'off':
-      return 'no';
-    case 'minimum':
-      return 'basic';
-    case 'reduced':
-      return 'advanced';
-    case 'full':
-    case 'debug':
-      return 'advanced';
-  }
-}
+/** Stored schema 4: the runtime config shape; unknown keys are rejected. */
+const storedKlexConfigSchema = klexConfigSchema
+  .extend({ configVersion: z.literal(2) })
+  .strict();
 
-function migrateTelemetryConfig(
-  telemetry:
-    | {
-        level: StoredTelemetryLevel | LegacyTelemetryLevel;
-        instanceId?: string;
-        debugUntil?: string;
-        [key: string]: unknown;
-      }
-    | undefined,
-):
-  | ({
-      level: TelemetryLevel;
-      instanceId?: string;
-    } & Record<string, unknown>)
-  | undefined {
-  if (!telemetry) return undefined;
-  return {
-    level: telemetryLevelSchema.safeParse(telemetry.level).success
-      ? (telemetry.level as TelemetryLevel)
-      : mapTelemetryLevel(telemetry.level as LegacyTelemetryLevel),
-    ...(telemetry.instanceId ? { instanceId: telemetry.instanceId } : {}),
-  };
-}
-
-function migrateStoredKlexConfig(input: unknown): KlexConfig {
-  const parsed = currentStoredKlexConfigSchema.parse(input);
-  return klexConfigSchema.parse({
-    ...parsed,
-    telemetry: migrateTelemetryConfig(parsed.telemetry),
-  });
-}
-
-export function migrateStoredTelemetryConfig(input: unknown): KlexConfig {
-  return migrateStoredKlexConfig(input);
+/** 3→4 migration: normalizes to the runtime shape, dropping `telemetry`. */
+function dropLegacyTelemetryConfig(input: unknown): KlexConfig {
+  return klexConfigSchema.parse(storedKlexConfigV2Schema.parse(input));
 }
 
 type LegacyKlexConfig = z.infer<typeof legacyKlexConfigSchema>;
@@ -727,8 +664,12 @@ function parseLegacyKlexConfig(input: unknown): LegacyKlexConfig {
   return legacyKlexConfigSchema.parse(input);
 }
 
-function parseCurrentStoredKlexConfig(input: unknown): Record<string, unknown> {
-  return currentStoredKlexConfigSchema.parse(input);
+function parseStoredKlexConfigV2(input: unknown): Record<string, unknown> {
+  return storedKlexConfigV2Schema.parse(input);
+}
+
+function parseStoredKlexConfig(input: unknown): Record<string, unknown> {
+  return storedKlexConfigSchema.parse(input);
 }
 
 function migrateLegacyKlexConfig(input: unknown): KlexConfig {
@@ -792,7 +733,6 @@ function migrateLegacyConfig(legacy: LegacyKlexConfig): KlexConfig {
       },
     },
     mcpServers: legacy.mcpServers,
-    telemetry: migrateTelemetryConfig(legacy.telemetry),
   });
 }
 
@@ -905,12 +845,11 @@ export type {
   ModelVoiceCapabilities,
   ProviderConfig,
   ProviderType,
-  RuntimeTelemetryLevel,
   StdioServerConfig,
-  TelemetryLevel,
   VoiceModelPurpose,
 };
 export {
+  dropLegacyTelemetryConfig,
   getProviderSettingsJsonSchema,
   isProviderSecretSetting,
   klexConfigSchema,
@@ -920,13 +859,13 @@ export {
   modelIdSchema,
   modelKindSchema,
   modelSelectionSchema,
-  parseCurrentStoredKlexConfig,
   parseKlexConfig,
   parseLegacyKlexConfig,
   parseProviderSettings,
+  parseStoredKlexConfig,
+  parseStoredKlexConfigV2,
   providerConfigSchema,
   providerInstanceIdSchema,
   providerTypeSchema,
-  telemetryLevelSchema,
   timezoneSchema,
 };

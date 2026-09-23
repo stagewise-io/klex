@@ -28,7 +28,6 @@ import { McpScreen } from './screens/mcp';
 import { ModelSelectionScreen } from './screens/model-selection';
 import { ProvidersScreen } from './screens/providers';
 import { SettingsScreen } from './screens/settings';
-import { TelemetryScreen } from './screens/telemetry';
 import { UsageScreen } from './screens/usage';
 import type { CliUiDependencies } from './types';
 
@@ -47,7 +46,7 @@ class CliUiModule implements CliUi {
   private readonly dataDirectory: string;
   private readonly logStore: CliUiDependencies['logStore'];
   private readonly dangerousLocalAdminApiPort: number | undefined;
-  private readonly debugTracingEnabled: boolean;
+  private readonly telemetryWarning: CliUiDependencies['telemetryWarning'];
   private readonly updateManager: CliUiDependencies['updateManager'];
   private inkInstance: ReturnType<typeof render> | undefined;
   private terminalCleared = false;
@@ -58,7 +57,7 @@ class CliUiModule implements CliUi {
     this.dataDirectory = deps.dataDirectory;
     this.logStore = deps.logStore;
     this.dangerousLocalAdminApiPort = deps.dangerousLocalAdminApiPort;
-    this.debugTracingEnabled = deps.debugTracingEnabled;
+    this.telemetryWarning = deps.telemetryWarning;
     this.updateManager = deps.updateManager;
   }
 
@@ -77,7 +76,7 @@ class CliUiModule implements CliUi {
         dataDirectory={this.dataDirectory}
         logStore={this.logStore}
         dangerousLocalAdminApiPort={this.dangerousLocalAdminApiPort}
-        debugTracingEnabled={this.debugTracingEnabled}
+        telemetryWarning={this.telemetryWarning}
         onQuit={() => this.requestQuit()}
         updateManager={this.updateManager}
       />,
@@ -137,7 +136,7 @@ function AppRoot({
   dataDirectory,
   logStore,
   dangerousLocalAdminApiPort,
-  debugTracingEnabled = false,
+  telemetryWarning,
   onQuit,
   updateManager,
 }: {
@@ -145,7 +144,7 @@ function AppRoot({
   dataDirectory: string;
   logStore: CliUiDependencies['logStore'];
   dangerousLocalAdminApiPort: number | undefined;
-  debugTracingEnabled?: boolean;
+  telemetryWarning: CliUiDependencies['telemetryWarning'];
   onQuit: () => void;
   updateManager: CliUiDependencies['updateManager'];
 }) {
@@ -201,7 +200,7 @@ function AppRoot({
               toasts={toasts}
               onDismissToast={dismissToast}
               dangerousLocalAdminApiPort={dangerousLocalAdminApiPort}
-              debugTracingEnabled={debugTracingEnabled}
+              telemetryWarning={telemetryWarning}
               onRefreshGlobal={globalStatus.refresh}
               updateManager={updateManager}
             />
@@ -237,7 +236,7 @@ function FrameLayout({
   toasts,
   onDismissToast,
   dangerousLocalAdminApiPort,
-  debugTracingEnabled,
+  telemetryWarning,
   onRefreshGlobal,
   updateManager,
 }: {
@@ -251,7 +250,7 @@ function FrameLayout({
   toasts: Toast[];
   onDismissToast: (id: number) => void;
   dangerousLocalAdminApiPort: number | undefined;
-  debugTracingEnabled: boolean;
+  telemetryWarning: CliUiDependencies['telemetryWarning'];
   onRefreshGlobal: () => void;
   updateManager: CliUiDependencies['updateManager'];
 }) {
@@ -272,7 +271,7 @@ function FrameLayout({
       loading={loading}
       toasts={toasts}
       onDismissToast={onDismissToast}
-      debugTracingEnabled={debugTracingEnabled}
+      telemetryWarning={telemetryWarning}
       updateBanner={
         updateManager ? (
           <UpdateBanner
@@ -300,7 +299,6 @@ function FrameLayout({
         cloud={cloud}
         dangerousLocalAdminApiPort={dangerousLocalAdminApiPort}
         onRefreshGlobal={onRefreshGlobal}
-        debugTracingEnabled={debugTracingEnabled}
       />
     </AppFrame>
   );
@@ -315,7 +313,6 @@ function ScreenRouter({
   cloud,
   dangerousLocalAdminApiPort,
   onRefreshGlobal,
-  debugTracingEnabled,
 }: {
   apiClient: AdminApiClient;
   dataDirectory: string;
@@ -325,7 +322,6 @@ function ScreenRouter({
   cloud: import('./api-client').CloudStatus | null;
   dangerousLocalAdminApiPort: number | undefined;
   onRefreshGlobal: () => void;
-  debugTracingEnabled: boolean;
 }) {
   switch (navigation.current) {
     case 'home':
@@ -349,7 +345,6 @@ function ScreenRouter({
           onOpenCloud={() => navigation.navigate('cloud')}
           onOpenMcp={() => navigation.navigate('mcp-servers')}
           onOpenModelSelection={() => navigation.navigate('model-selection')}
-          onOpenTelemetry={() => navigation.navigate('telemetry')}
           onOpenDebugInformation={() =>
             navigation.navigate('debug-information')
           }
@@ -411,14 +406,6 @@ function ScreenRouter({
       return (
         <AgentIdentityScreen
           apiClient={apiClient}
-          onBack={() => navigation.goBack()}
-        />
-      );
-    case 'telemetry':
-      return (
-        <TelemetryScreen
-          apiClient={apiClient}
-          debugTracingEnabled={debugTracingEnabled}
           onBack={() => navigation.goBack()}
         />
       );

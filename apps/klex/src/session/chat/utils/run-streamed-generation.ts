@@ -70,7 +70,17 @@ export async function runStreamedGeneration(
   params: RunStreamedGenerationParams,
 ): Promise<StreamedGenerationOutput> {
   const id = randomUUID();
-  params.logger.trace('START_GENERATION', { id });
+  params.logger.trace(
+    {
+      'event.name': 'generation.started',
+      generationId: id,
+      sessionId: params.sessionId,
+      providerType: params.modelContext.providerType,
+      modelId: params.modelContext.modelId,
+      messageCount: params.modelMessages.length,
+    },
+    'Generation started',
+  );
 
   let message: ExtendedUIMessage = {
     id: id,
@@ -148,6 +158,16 @@ export async function runStreamedGeneration(
     usage: usage,
   };
 
-  params.logger.trace('FINISH_GENERATION', response);
+  params.logger.trace(
+    {
+      'event.name': 'generation.finished',
+      generationId: id,
+      sessionId: params.sessionId,
+      finishReason,
+      partCount: message.parts.length,
+      hasError: response.error !== undefined,
+    },
+    'Generation finished',
+  );
   return response;
 }

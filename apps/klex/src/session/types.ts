@@ -1,3 +1,5 @@
+import type { SpanContext } from '@opentelemetry/api';
+
 import type { ModelPurpose } from '@/config';
 import type { IntrospectionScope } from '@/introspection';
 import type { Mcp } from '@/mcp';
@@ -216,9 +218,16 @@ export type SessionKind = 'default' | 'god' | 'child';
  * Extensions inspect this to decide session-specific behavior.
  */
 export interface SessionContext {
-  /** Internal isolation/capability classification. Not exported as telemetry. */
+  /**
+   * Isolation/capability classification. Exported as `klex.session.kind`
+   * at advanced telemetry and above.
+   */
   kind: SessionKind;
-  /** Stable human-readable session name used in tracing and telemetry. */
+  /**
+   * Stable low-cardinality role name (`main`, `god`, `consult`, ...). The
+   * session root span is named `session {name}`; per-instance identity
+   * belongs in `sessionId`.
+   */
   name: string;
   sessionId: string;
   /** Parent session ID (child sessions only). */
@@ -231,7 +240,10 @@ export interface SessionContext {
  * Options for creating a child session.
  */
 export interface ChildSessionOptions {
-  /** Required name used as the session span name and telemetry identity. */
+  /**
+   * Stable role name for the child (root span `session {name}`, metric
+   * label). Must not contain per-instance values such as handles or IDs.
+   */
   name: string;
   /** Set internally from the calling extension's identifier. */
   extensionIdentifier: string;
@@ -279,6 +291,11 @@ export interface SessionFactoryParams {
   modelPurpose?: ModelPurpose;
   /** Base system prompt for this session. */
   basePrompt: string;
+  /**
+   * Span that spawned the session (child sessions only). The new session's
+   * root span links to it.
+   */
+  parentSpanContext?: SpanContext;
 }
 
 /**

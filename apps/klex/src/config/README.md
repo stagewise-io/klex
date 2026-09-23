@@ -102,12 +102,14 @@ type.
       "stt": []
     }
   },
-  "mcpServers": {},
-  "telemetry": {
-    "level": "reduced"
-  }
+  "mcpServers": {}
 }
 ```
+
+Telemetry is not a config setting. It is configured per process with CLI
+arguments or environment variables (see `apps/klex/telemetry.md`). A legacy
+`telemetry` entry in an existing file is accepted, ignored, and dropped on the
+next write.
 
 `memoryWriteIntervalMs` sends pending main-session history to the memory writer
 after that many milliseconds. The timer starts with the first completed step

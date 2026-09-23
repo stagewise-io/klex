@@ -23,15 +23,19 @@ import {
 
 export interface TracingDependencies {
   logging: RootLogger;
-  otlpUrl: string;
+  /** OTLP traces URL. Without it no exporter is ever created. */
+  otlpUrl?: string;
   otlpHeaders?: Record<string, string>;
   serviceName: string;
   resourceAttributes?: Record<string, string>;
   spanProcessor: TelemetrySpanProcessor;
   enabled?: boolean;
-  recordContent?: boolean;
-  contentAllowed?: () => boolean;
+  /** Content capture is permitted only while the policy allows it (debug). */
   policy?: Readonly<Pick<TelemetryPolicy, 'getSnapshot'>>;
+  /** Configured agent name, recorded as `gen_ai.agent.name` on model spans. */
+  agentName?: string;
+  /** Stable agent id (enrolled cloud client id), as `gen_ai.agent.id`. */
+  getAgentId?: () => string | null | undefined;
 }
 
 export interface Tracing {
@@ -51,15 +55,15 @@ class TracingModule implements Tracing {
   constructor(
     private readonly deps: {
       logger: ModuleLogger;
-      otlpUrl: string;
+      otlpUrl: string | undefined;
       otlpHeaders: Record<string, string>;
       serviceName: string;
       resourceAttributes: Record<string, string>;
       spanProcessor: TelemetrySpanProcessor;
       enabled: boolean;
-      recordContent: boolean;
-      contentAllowed: () => boolean;
       policy?: Readonly<Pick<TelemetryPolicy, 'getSnapshot'>>;
+      agentName?: string;
+      getAgentId?: () => string | null | undefined;
     },
   ) {
     const resource = createTelemetryResourceFromAttributes({
@@ -69,10 +73,11 @@ class TracingModule implements Tracing {
     const sampler: Sampler | undefined = deps.policy
       ? {
           shouldSample: () => ({
-            decision:
-              deps.policy?.getSnapshot().level === 'no'
-                ? SamplingDecision.NOT_RECORD
-                : SamplingDecision.RECORD_AND_SAMPLED,
+            // Spans are exported only at advanced/debug; skip recording
+            // work entirely at no/basic.
+            decision: deps.policy?.getSnapshot().tracesEnabled
+              ? SamplingDecision.RECORD_AND_SAMPLED
+              : SamplingDecision.NOT_RECORD,
           }),
           toString: () => 'TelemetryPolicySampler',
         }
@@ -90,15 +95,16 @@ class TracingModule implements Tracing {
 
     const tracer = this.provider.getTracer(deps.serviceName);
     this.telemetryInstance = createKlexTelemetry(tracer, {
-      recordContent: deps.recordContent,
-      contentAllowed: deps.contentAllowed,
+      contentAllowed: () => deps.policy?.getSnapshot().contentAllowed ?? false,
+      agentName: deps.agentName,
+      getAgentId: deps.getAgentId,
     });
     registerTelemetry(this.telemetryInstance);
   }
 
   async start(): Promise<void> {
     if (this.providerShutdown || !this.deps.enabled) return;
-    if (this.exporterProcessor) return;
+    if (this.exporterProcessor || !this.deps.otlpUrl) return;
 
     const exporter = new OTLPTraceExporter({
       url: this.deps.otlpUrl,
@@ -164,8 +170,8 @@ export function createTracing(deps: TracingDependencies): Tracing {
     resourceAttributes: deps.resourceAttributes ?? {},
     spanProcessor: deps.spanProcessor,
     enabled: deps.enabled ?? true,
-    recordContent: deps.recordContent ?? false,
-    contentAllowed: deps.contentAllowed ?? (() => deps.recordContent === true),
     policy: deps.policy,
+    agentName: deps.agentName,
+    getAgentId: deps.getAgentId,
   });
 }

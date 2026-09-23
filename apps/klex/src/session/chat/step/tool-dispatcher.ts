@@ -4,11 +4,9 @@ import { type DynamicToolUIPart, getToolName, isToolUIPart } from 'ai';
 import type { ModuleLogger } from '@stagewise/logger';
 
 import { normalizeJsonValue, ToolExecutor } from '@/session/interaction';
-import { recordErrorOnSpan } from '@/tracing';
 
 import type { ExtendedUIMessage } from '../message-types';
 import type { AgentTools } from '../tools';
-import { startChildSpan } from '../utils/tracing';
 
 /**
  * Owns at-most-once tool dispatch, tool execution, in-flight tracking, and
@@ -42,7 +40,12 @@ export class ToolDispatcher {
       toolTimeoutMs?: number;
       /** UUID of the session that owns this dispatcher. */
       sessionId: string;
-      recordToolCall?: (toolName: string, success: boolean) => void;
+      recordToolCall?: (
+        toolName: string,
+        success: boolean,
+        durationMs: number,
+        errorType?: string,
+      ) => void;
     },
   ) {
     this.toolExecutor = new ToolExecutor({
@@ -53,6 +56,7 @@ export class ToolDispatcher {
       ...(deps.toolTimeoutMs !== undefined && {
         timeoutMs: deps.toolTimeoutMs,
       }),
+      recordToolCall: deps.recordToolCall,
     });
   }
 
@@ -158,64 +162,18 @@ export class ToolDispatcher {
       'Tool execution started',
     );
 
-    const toolSpan = startChildSpan(`execute_tool ${toolName}`, {
-      attributes: {
-        'gen_ai.operation.name': 'execute_tool',
-        'gen_ai.tool.name': toolName,
-        'gen_ai.tool.call.id': part.toolCallId,
-        'gen_ai.tool.type': 'function',
-      },
-    });
-
     this.toolExecutions.push(
-      this.executeTool(part as DynamicToolUIPart, toolName)
-        .then(() => {
-          // biome-ignore lint/suspicious/noExplicitAny: execution mutates part state in place, TS can't track it
-          const p = part as any;
-          toolSpan.setAttribute('gen_ai.tool.state', p.state);
-          if (p.state === 'output-available' && p.output !== undefined) {
-            toolSpan.setAttribute(
-              'gen_ai.tool.output',
-              JSON.stringify(p.output),
-            );
-          } else if (p.state === 'output-error') {
-            // executeTool swallows tool errors and converts them to
-            // output-error state, so the promise resolves. Record the
-            // error on the span here so the trace surfaces it.
-            recordErrorOnSpan(
-              toolSpan,
-              new Error(p.errorText ?? 'Tool execution failed'),
-            );
-          }
-          this.deps.recordToolCall?.(toolName, p.state === 'output-available');
-          toolSpan.end();
-          this.deps.logger.debug(
-            {
-              toolName,
-              toolCallId: part.toolCallId,
-              input: p.input,
-              output: p.output,
-              state: p.state,
-            },
-            'Tool execution finished',
-          );
-        })
-        .catch((error) => {
-          // Only reached for unexpected errors that escape executeTool
-          // (e.g. tool not found, internal assertion failures).
-          this.deps.recordToolCall?.(toolName, false);
-          recordErrorOnSpan(toolSpan, error);
-          toolSpan.end();
-          this.deps.logger.error(
-            {
-              toolName,
-              toolCallId: part.toolCallId,
-              input: part.input,
-              error,
-            },
-            'Tool execution failed',
-          );
-        }),
+      this.executeTool(part as DynamicToolUIPart, toolName).catch((error) => {
+        // Only reached for unexpected errors that escape ToolExecutor.
+        this.deps.logger.error(
+          {
+            toolName,
+            toolCallId: part.toolCallId,
+            error,
+          },
+          'Tool execution failed',
+        );
+      }),
     );
   };
 

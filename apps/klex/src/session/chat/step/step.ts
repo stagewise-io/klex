@@ -13,7 +13,7 @@ import {
   runInferenceContextTransformers,
   runInferenceHistoryTransformers,
 } from '@/session/interaction';
-import type { TelemetryRecorder } from '@/telemetry-recorder';
+import type { TelemetryMetrics } from '@/telemetry-metrics';
 
 import type { ExtensionHandler } from '../extension-handler';
 import type {
@@ -71,7 +71,7 @@ export interface StepDependencies {
    */
   turnInitialFallbackIndex: number;
   sessionId: string;
-  telemetryMetrics?: TelemetryRecorder;
+  telemetryMetrics?: TelemetryMetrics;
   /**
    * Base system prompt forwarded to the generation runner.
    */
@@ -105,7 +105,14 @@ class StepModule implements Step {
   private generationRunner: GenerationRunner | null = null;
 
   constructor(private readonly deps: StepDependencies) {
-    deps.logger.trace('START_STEP', { id: this.id });
+    deps.logger.trace(
+      {
+        'event.name': 'session.step.created',
+        stepId: this.id,
+        sessionId: deps.sessionId,
+      },
+      'Session step created',
+    );
   }
 
   async run(): Promise<StepCompleteEvent> {

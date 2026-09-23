@@ -169,11 +169,6 @@ export interface ModelSelection {
   warnings?: Array<{ modelId: string; message: string }>;
 }
 
-export interface TelemetrySettings {
-  level: string;
-  instanceId: string | null;
-}
-
 export interface AgentIdentity {
   officialName: string;
 }
@@ -470,17 +465,6 @@ export class AdminApiClient {
 
   patchModelSelection(body: unknown): Promise<ModelSelection> {
     return this.request<ModelSelection>('/v1/settings/model-selection', {
-      method: 'PATCH',
-      body,
-    });
-  }
-
-  getTelemetry(): Promise<TelemetrySettings> {
-    return this.request<TelemetrySettings>('/v1/settings/telemetry');
-  }
-
-  patchTelemetry(body: unknown): Promise<TelemetrySettings> {
-    return this.request<TelemetrySettings>('/v1/settings/telemetry', {
       method: 'PATCH',
       body,
     });

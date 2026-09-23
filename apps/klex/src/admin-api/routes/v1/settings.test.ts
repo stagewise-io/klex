@@ -11,14 +11,10 @@ import {
   getAgentIdentityRoute,
   getModelSelection,
   getModelSelectionRoute,
-  getTelemetry,
-  getTelemetryRoute,
   patchAgentIdentity,
   patchAgentIdentityRoute,
   patchModelSelection,
   patchModelSelectionRoute,
-  patchTelemetry,
-  patchTelemetryRoute,
   type SettingsRouteDependencies,
 } from './settings';
 import { setupTestApp } from './test-utils';
@@ -66,12 +62,8 @@ function app(
     route.openapi(patchAgentIdentityRoute, patchAgentIdentity(deps));
     route.openapi(getModelSelectionRoute, getModelSelection(deps));
     route.openapi(patchModelSelectionRoute, patchModelSelection(deps));
-    route.openapi(getTelemetryRoute, getTelemetry(deps));
-    route.openapi(patchTelemetryRoute, patchTelemetry(deps));
   });
 }
-
-const telemetryInstanceId = '550e8400-e29b-41d4-a716-446655440000';
 
 describe('settings routes', () => {
   it('gets and patches agent identity', async () => {
@@ -92,35 +84,10 @@ describe('settings routes', () => {
     expect(await patchResponse.json()).toEqual({ officialName: 'Renamed' });
   });
 
-  it('gets and patches telemetry settings', async () => {
-    const configured = {
-      ...baseConfig,
-      telemetry: {
-        level: 'advanced' as const,
-        instanceId: telemetryInstanceId,
-      },
-    };
-    const config = {
-      get: () => configured,
-      mutate: vi.fn(async (fn) => fn(configured)),
-    } as unknown as Config;
-    const settingsApp = app(config);
-
-    const getResponse = await settingsApp.request('/v1/settings/telemetry');
-    expect(await getResponse.json()).toEqual({
-      level: 'advanced',
-      instanceId: telemetryInstanceId,
-    });
-    const patchResponse = await settingsApp.request('/v1/settings/telemetry', {
-      method: 'PATCH',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ level: 'basic' }),
-    });
-    expect(patchResponse.status).toBe(200);
-    expect(await patchResponse.json()).toEqual({
-      level: 'basic',
-      instanceId: telemetryInstanceId,
-    });
+  it('no longer exposes telemetry settings', async () => {
+    const config = { get: () => baseConfig } as unknown as Config;
+    const response = await app(config).request('/v1/settings/telemetry');
+    expect(response.status).toBe(404);
   });
 
   it('returns explicit provider/model references without colon parsing', async () => {

@@ -13,7 +13,6 @@ export interface SettingsScreenProps {
   onOpenCloud: () => void;
   onOpenMcp: () => void;
   onOpenModelSelection: () => void;
-  onOpenTelemetry: () => void;
   onOpenDebugInformation: () => void;
   onOpenLogs: () => void;
   onOpenGodMessages: () => void;
@@ -31,7 +30,6 @@ const MENU_ITEMS: MenuItem[] = [
   { label: 'Providers & Endpoints', value: 'providers' },
   { label: 'MCP Servers', value: 'mcp' },
   { label: 'Model Selection', value: 'model-selection' },
-  { label: 'Telemetry', value: 'telemetry' },
   { label: 'Debug Information', value: 'debug-information' },
   { label: 'Logs', value: 'logs' },
   { label: 'God Messages', value: 'god-messages' },
@@ -44,7 +42,6 @@ export function SettingsScreen({
   onOpenCloud,
   onOpenMcp,
   onOpenModelSelection,
-  onOpenTelemetry,
   onOpenDebugInformation,
   onOpenLogs,
   onOpenGodMessages,
@@ -84,9 +81,6 @@ export function SettingsScreen({
         break;
       case 'model-selection':
         onOpenModelSelection();
-        break;
-      case 'telemetry':
-        onOpenTelemetry();
         break;
       case 'debug-information':
         onOpenDebugInformation();

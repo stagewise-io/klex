@@ -10,6 +10,12 @@ function createExecutor(
   timeoutMs?: number,
   inputSchema: Tool['inputSchema'] = jsonSchema({ type: 'object' }),
   maxResultBytes?: number,
+  recordToolCall?: (
+    toolName: string,
+    success: boolean,
+    durationMs: number,
+    errorType?: string,
+  ) => void,
 ) {
   return new ToolExecutor({
     logger,
@@ -24,6 +30,7 @@ function createExecutor(
     validateInput: true,
     ...(timeoutMs !== undefined && { timeoutMs }),
     ...(maxResultBytes !== undefined && { maxResultBytes }),
+    recordToolCall,
   });
 }
 
@@ -44,6 +51,32 @@ describe('ToolExecutor', () => {
 
     expect(execute).toHaveBeenCalledTimes(1);
     expect(duplicate).toEqual(first);
+  });
+
+  it('records one terminal telemetry event for duplicate callers', async () => {
+    const recordToolCall = vi.fn();
+    const executor = createExecutor(
+      async () => ({ value: 1 }),
+      undefined,
+      undefined,
+      undefined,
+      recordToolCall,
+    );
+    const request = {
+      executionId: 'execution-1',
+      name: 'example',
+      input: { value: 1 },
+    } as const;
+
+    await Promise.all([executor.execute(request), executor.execute(request)]);
+
+    expect(recordToolCall).toHaveBeenCalledTimes(1);
+    expect(recordToolCall).toHaveBeenCalledWith(
+      'example',
+      true,
+      expect.any(Number),
+      undefined,
+    );
   });
 
   it('rejects invalid input before tool execution', async () => {

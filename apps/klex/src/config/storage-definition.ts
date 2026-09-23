@@ -3,10 +3,11 @@ import { z } from 'zod';
 import type { JsonStoreDefinition } from '@/local-data';
 
 import {
+  dropLegacyTelemetryConfig,
   migrateLegacyKlexConfig,
-  migrateStoredTelemetryConfig,
-  parseCurrentStoredKlexConfig,
   parseLegacyKlexConfig,
+  parseStoredKlexConfig,
+  parseStoredKlexConfigV2,
 } from './types';
 
 function preservingSchema(
@@ -36,16 +37,16 @@ function preservingSchema(
 
 const legacyConfigStorageSchema = preservingSchema((value) => {
   if (value.configVersion === 2) {
-    parseCurrentStoredKlexConfig(value);
+    parseStoredKlexConfigV2(value);
     return;
   }
   parseLegacyKlexConfig(value);
 });
-const currentConfigStorageSchema = preservingSchema((value) => {
-  parseCurrentStoredKlexConfig(value);
+const v2ConfigStorageSchema = preservingSchema((value) => {
+  parseStoredKlexConfigV2(value);
 });
-const migratedConfigStorageSchema = preservingSchema((value) => {
-  migrateStoredTelemetryConfig(value);
+const currentConfigStorageSchema = preservingSchema((value) => {
+  parseStoredKlexConfig(value);
 });
 
 export const CONFIG_STORE_DEFINITION: JsonStoreDefinition = {
@@ -53,14 +54,16 @@ export const CONFIG_STORE_DEFINITION: JsonStoreDefinition = {
   id: 'config',
   relativePath: 'config.json',
   required: true,
-  schemaVersion: 3,
+  schemaVersion: 4,
   compatibilityVersion: 6,
-  minimumKlexVersion: '0.8.0',
+  minimumKlexVersion: '0.9.2',
   legacySchemaVersion: 1,
   versions: [
     { version: 1, schema: legacyConfigStorageSchema },
-    { version: 2, schema: currentConfigStorageSchema },
-    { version: 3, schema: migratedConfigStorageSchema },
+    { version: 2, schema: v2ConfigStorageSchema },
+    // Schema 3 renamed telemetry levels; it shares the v2 shape.
+    { version: 3, schema: v2ConfigStorageSchema },
+    { version: 4, schema: currentConfigStorageSchema },
   ],
   migrations: [
     {
@@ -69,14 +72,22 @@ export const CONFIG_STORE_DEFINITION: JsonStoreDefinition = {
       name: 'unify-model-provider-registry',
       up: (value) =>
         value.configVersion === 2
-          ? parseCurrentStoredKlexConfig(value)
+          ? parseStoredKlexConfigV2(value)
           : migrateLegacyKlexConfig(value),
     },
     {
       from: 2,
       to: 3,
+      // Historical step. Telemetry levels are no longer interpreted, so this
+      // step only validates; the 3→4 step removes the field.
       name: 'rename-telemetry-levels',
-      up: (value) => migrateStoredTelemetryConfig(value),
+      up: (value) => parseStoredKlexConfigV2(value),
+    },
+    {
+      from: 3,
+      to: 4,
+      name: 'drop-telemetry-config',
+      up: (value) => dropLegacyTelemetryConfig(value),
     },
   ],
 };

@@ -4,4 +4,4 @@ export type {
   TelemetryManager,
   TelemetryManagerDependencies,
 } from './telemetry-manager';
-export { createTelemetryManager } from './telemetry-manager';
+export { createTelemetryManager, otlpMinLevel } from './telemetry-manager';

@@ -85,16 +85,18 @@ describe('TelemetrySpanProcessor', () => {
     expect(onEnd).not.toHaveBeenCalled();
   });
 
-  it('forwards all spans when level is "basic"', () => {
+  it('drops all spans when level is "basic"', () => {
     const tp = createTelemetrySpanProcessor();
-    const { processor, onEnd } = makeDelegate();
+    const { processor, onEnd, onStart } = makeDelegate();
     tp.setDelegate(processor);
     tp.setLevel('basic');
 
+    tp.onStart({} as Span, undefined as never);
     tp.onEnd(makeSpan({ status: { code: SpanStatusCode.OK } }));
     tp.onEnd(makeSpan({ status: { code: SpanStatusCode.ERROR } }));
 
-    expect(onEnd).toHaveBeenCalledTimes(2);
+    expect(onStart).not.toHaveBeenCalled();
+    expect(onEnd).not.toHaveBeenCalled();
   });
 
   it('applies the telemetry allowlist when level is "advanced"', () => {
@@ -143,6 +145,76 @@ describe('TelemetrySpanProcessor', () => {
     });
   });
 
+  it('gates agent identity resource attributes by level', () => {
+    const resource = {
+      attributes: {
+        'service.name': 'klex',
+        'service.instance.id': 'instance-1',
+        'klex.cloud.client_id': 'client-1',
+        'klex.agent.name': 'Klex',
+        'klex.agent.data_dir': '/Users/someone/.klex/agents/Klex',
+        'host.name': 'private-host',
+      },
+      merge: vi.fn(),
+      asyncMerge: vi.fn(),
+    } as unknown as ReadableSpan['resource'];
+    const exported = (level: 'basic' | 'advanced' | 'debug') => {
+      const tp = createTelemetrySpanProcessor(level);
+      const { processor, onEnd } = makeDelegate();
+      tp.setDelegate(processor);
+      tp.onEnd(makeSpan({ resource }));
+      const forwarded = onEnd.mock.calls[0]?.[0] as ReadableSpan | undefined;
+      return forwarded?.resource.attributes;
+    };
+
+    // Nothing is exported at basic.
+    expect(exported('basic')).toBeUndefined();
+    expect(exported('advanced')).toEqual({
+      'service.name': 'klex',
+      'service.instance.id': 'instance-1',
+      'klex.cloud.client_id': 'client-1',
+      'klex.agent.name': 'Klex',
+    });
+    expect(exported('debug')).toEqual({
+      'service.name': 'klex',
+      'service.instance.id': 'instance-1',
+      'klex.cloud.client_id': 'client-1',
+      'klex.agent.name': 'Klex',
+      'klex.agent.data_dir': '/Users/someone/.klex/agents/Klex',
+    });
+  });
+
+  it('merges dynamic identity resource attributes at export time', () => {
+    const tp = createTelemetrySpanProcessor('debug');
+    const { processor, onEnd } = makeDelegate();
+    tp.setDelegate(processor);
+    let clientId: string | null = null;
+    tp.setDynamicResourceAttributes(() =>
+      clientId ? { 'klex.cloud.client_id': clientId } : {},
+    );
+
+    tp.onEnd(makeSpan());
+    clientId = 'client-1';
+    tp.onEnd(makeSpan());
+
+    const first = onEnd.mock.calls[0]?.[0] as ReadableSpan;
+    const second = onEnd.mock.calls[1]?.[0] as ReadableSpan;
+    expect(first.resource.attributes['klex.cloud.client_id']).toBeUndefined();
+    expect(second.resource.attributes['klex.cloud.client_id']).toBe('client-1');
+  });
+
+  it('does not drop spans when the dynamic resource supplier throws', () => {
+    const tp = createTelemetrySpanProcessor('advanced');
+    const { processor, onEnd } = makeDelegate();
+    tp.setDelegate(processor);
+    tp.setDynamicResourceAttributes(() => {
+      throw new Error('boom');
+    });
+
+    tp.onEnd(makeSpan());
+    expect(onEnd).toHaveBeenCalledTimes(1);
+  });
+
   it('preserves all non-attribute fields when scrubbing in "advanced" mode', () => {
     const tp = createTelemetrySpanProcessor();
     const { processor, onEnd } = makeDelegate();
@@ -178,7 +250,6 @@ describe('TelemetrySpanProcessor', () => {
     const { processor, onEnd } = makeDelegate();
     tp.setDelegate(processor);
     tp.setLevel('debug');
-    tp.setContentAllowed(() => true);
 
     const span = makeSpan({
       attributes: {
@@ -195,12 +266,32 @@ describe('TelemetrySpanProcessor', () => {
     expect(forwarded).not.toBe(span);
   });
 
-  it('downgrades expired debug content permission to advanced privacy', () => {
+  it('preserves array-valued debug content without index-based truncation', () => {
     const tp = createTelemetrySpanProcessor();
     const { processor, onEnd } = makeDelegate();
     tp.setDelegate(processor);
     tp.setLevel('debug');
-    tp.setContentAllowed(() => false);
+
+    tp.onEnd(
+      makeSpan({
+        attributes: {
+          'gen_ai.input.messages': ['first message', 'second message'],
+        },
+      }),
+    );
+
+    const forwarded = onEnd.mock.calls[0]?.[0] as ReadableSpan;
+    expect(forwarded.attributes['gen_ai.input.messages']).toEqual([
+      'first message',
+      'second message',
+    ]);
+  });
+
+  it('uses the current advanced level when debug is disabled before span end', () => {
+    const tp = createTelemetrySpanProcessor();
+    const { processor, onEnd } = makeDelegate();
+    tp.setDelegate(processor);
+    tp.setLevel('advanced');
 
     const span = makeSpan({
       status: { code: SpanStatusCode.ERROR, message: 'secret status' },
@@ -217,6 +308,14 @@ describe('TelemetrySpanProcessor', () => {
           name: 'secret-event',
           time: [0, 0],
           attributes: { 'custom.attr': 'secret event' },
+        },
+        {
+          name: 'session-event',
+          time: [0, 0],
+          attributes: {
+            'klex.session.id': 'session-1',
+            'custom.attr': 'secret event',
+          },
         },
       ],
       links: [
@@ -255,6 +354,10 @@ describe('TelemetrySpanProcessor', () => {
       'exception.type': 'Error',
     });
     expect(forwarded.events[1]?.attributes).toEqual({});
+    // Advanced span events use the advanced allowlist, not the basic one.
+    expect(forwarded.events[2]?.attributes).toEqual({
+      'klex.session.id': 'session-1',
+    });
     expect(forwarded.links[0]?.attributes).toEqual({});
     expect(forwarded.resource.attributes).toEqual({
       'service.name': 'klex',

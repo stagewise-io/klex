@@ -306,7 +306,9 @@ class ConsultExtension implements Extension {
     let child: ConsultEntry['child'];
     try {
       child = await this.deps.createChildSession({
-        name: `consult-${handle}`,
+        // Stable role name: it becomes the `session consult` span name and a
+        // metric label. The handle ↔ session id mapping is logged below.
+        name: 'consult',
         extensionIdentifier: 'consult',
         extensions: [...this.config.childExtensionFactories, reporter],
         modelPurpose: 'consult',

@@ -1,6 +1,8 @@
 import { Box } from 'ink';
 import type { ReactNode } from 'react';
 
+import type { TelemetryWarning as TelemetryWarningNotice } from '@/telemetry-config';
+
 import type { CloudStatus, SessionInfo } from '../api-client';
 import { useTerminalSize } from '../hooks/use-terminal-size';
 import type { Toast } from '../hooks/use-toast';
@@ -18,7 +20,7 @@ export interface AppFrameProps {
   loading: boolean;
   toasts: Toast[];
   onDismissToast: (id: number) => void;
-  debugTracingEnabled?: boolean;
+  telemetryWarning?: TelemetryWarningNotice;
   updateBanner?: ReactNode;
   children: ReactNode;
 }
@@ -32,7 +34,7 @@ export function AppFrame({
   loading,
   toasts,
   onDismissToast,
-  debugTracingEnabled = false,
+  telemetryWarning,
   updateBanner,
   children,
 }: AppFrameProps) {
@@ -47,7 +49,9 @@ export function AppFrame({
         loading={loading}
         width={terminalWidth}
       />
-      {debugTracingEnabled ? <TelemetryWarning /> : null}
+      {telemetryWarning ? (
+        <TelemetryWarning warning={telemetryWarning} />
+      ) : null}
       <Box
         position="relative"
         flexDirection="column"

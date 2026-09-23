@@ -1,13 +1,14 @@
-import type { LogLevel, ModuleLogger, RootLogger } from '@stagewise/logger';
+import type {
+  LogLevel,
+  ModuleLogger,
+  OTelTransportControl,
+  RootLogger,
+} from '@stagewise/logger';
 
 import {
-  type Config,
-  getDefaultTelemetryLevel,
-  type KlexConfig,
-  type RuntimeTelemetryLevel,
-} from '@/config';
-import {
   createTelemetryPolicy,
+  type RuntimeTelemetryLevel,
+  type TelemetryLogThreshold,
   type TelemetryPolicy,
 } from '@/telemetry-policy';
 
@@ -15,11 +16,16 @@ import type { TelemetrySpanProcessor } from './span-processor';
 
 export interface TelemetryManagerDependencies {
   logging: RootLogger;
-  config: Config;
+  /**
+   * Process-wide level resolved from CLI arguments and environment variables.
+   * Fixed for the lifetime of the process; config is never consulted.
+   */
+  level: RuntimeTelemetryLevel;
   spanProcessor: TelemetrySpanProcessor;
+  logTransport?: OTelTransportControl;
+  metrics?: { setLevel(level: RuntimeTelemetryLevel): Promise<void> };
+  tracing?: { setEnabled(enabled: boolean): Promise<void> };
   policy?: TelemetryPolicy;
-  effectiveLevel?: RuntimeTelemetryLevel;
-  onLevelChange?: (level: RuntimeTelemetryLevel) => Promise<void>;
 }
 
 export interface TelemetryManager {
@@ -27,122 +33,62 @@ export interface TelemetryManager {
   close(): Promise<void>;
 }
 
+/** Numeric tslog level above FATAL; blocks every record. */
+const OTLP_LEVEL_OFF = 999;
+
 /**
- * Maps a telemetry level to the minimum log level for the OTLP transport.
- * - `no` — a very high numeric level blocks all logs.
- * - `basic` — only `WARN` and above are sent.
- * - `advanced` — `INFO` and above are sent.
- * - `debug` — `undefined` restores the transport's default.
+ * Translates the policy's log threshold into the OTLP transport minimum.
+ * The level → threshold mapping itself lives only in the telemetry policy.
  */
-function getOtlpMinLevel(
-  level: RuntimeTelemetryLevel,
-): LogLevel | number | undefined {
-  switch (level) {
-    case 'no':
-      return 999;
-    case 'basic':
-      return 'WARN';
-    case 'advanced':
-      return 'INFO';
-    case 'debug':
-      return undefined;
-  }
+export function otlpMinLevel(
+  threshold: TelemetryLogThreshold,
+): LogLevel | number {
+  return threshold === 'OFF' ? OTLP_LEVEL_OFF : threshold;
 }
 
 class TelemetryManagerModule implements TelemetryManager {
-  private unsubscribe: (() => void) | null = null;
-  private pendingLevel: RuntimeTelemetryLevel | null = null;
-  private transitionPromise: Promise<void> | null = null;
+  private startPromise: Promise<void> | null = null;
 
   constructor(
     private readonly deps: {
       logger: ModuleLogger;
-      rootLogger: RootLogger;
-      config: Config;
+      level: RuntimeTelemetryLevel;
       spanProcessor: TelemetrySpanProcessor;
+      logTransport?: OTelTransportControl;
+      metrics?: { setLevel(level: RuntimeTelemetryLevel): Promise<void> };
+      tracing?: { setEnabled(enabled: boolean): Promise<void> };
       policy: TelemetryPolicy;
-      effectiveLevel?: RuntimeTelemetryLevel;
-      onLevelChange?: (level: RuntimeTelemetryLevel) => Promise<void>;
     },
   ) {}
 
-  async start(): Promise<void> {
-    if (this.unsubscribe) return;
-
-    const level =
-      this.deps.effectiveLevel ?? this.resolveLevel(this.deps.config.get());
-    await this.requestLevel(level);
-
-    this.unsubscribe = this.deps.config.subscribe((config) => {
-      if (this.deps.effectiveLevel === undefined) {
-        void this.requestLevel(this.resolveLevel(config)).catch((error) => {
-          this.deps.logger.error(
-            { error },
-            'Failed to apply telemetry level change',
-          );
-        });
-      }
-    });
+  start(): Promise<void> {
+    this.startPromise ??= this.applyLevel(this.deps.level);
+    return this.startPromise;
   }
 
   async close(): Promise<void> {
-    this.unsubscribe?.();
-    this.unsubscribe = null;
-    this.pendingLevel = null;
-    await this.transitionPromise;
-    this.transitionPromise = null;
-  }
-
-  private resolveLevel(config: Readonly<KlexConfig>): RuntimeTelemetryLevel {
-    return config.telemetry?.level ?? getDefaultTelemetryLevel();
-  }
-
-  private requestLevel(level: RuntimeTelemetryLevel): Promise<void> {
-    this.pendingLevel = level;
-    if (!this.transitionPromise) {
-      this.transitionPromise = this.processTransitions().finally(() => {
-        this.transitionPromise = null;
-        if (this.pendingLevel !== null) {
-          void this.requestLevel(this.pendingLevel).catch((error) => {
-            this.deps.logger.error(
-              { error },
-              'Failed to apply queued telemetry level change',
-            );
-          });
-        }
-      });
-    }
-    return this.transitionPromise;
-  }
-
-  private async processTransitions(): Promise<void> {
-    while (this.pendingLevel !== null) {
-      const level = this.pendingLevel;
-      this.pendingLevel = null;
-      await this.applyLevel(level);
-    }
+    await this.startPromise?.catch(() => undefined);
+    this.startPromise = null;
   }
 
   private async applyLevel(level: RuntimeTelemetryLevel): Promise<void> {
     this.deps.policy.setLevel(level);
     this.deps.spanProcessor.setLevel(level);
-    this.updateOtlpTransport(level);
-    await this.deps.onLevelChange?.(level);
+    this.deps.logTransport?.setMinLevel(
+      otlpMinLevel(this.deps.policy.getSnapshot().logThreshold),
+    );
+    await Promise.all([
+      this.deps.metrics?.setLevel(level),
+      this.deps.tracing?.setEnabled(
+        this.deps.policy.getSnapshot().tracesEnabled,
+      ),
+    ]);
     if (level !== 'no') {
       this.deps.logger.info(
         { telemetryLevel: level },
         'Telemetry level applied',
       );
     }
-  }
-
-  private updateOtlpTransport(level: RuntimeTelemetryLevel): void {
-    const transport = this.deps.rootLogger.settings.attachedTransports.find(
-      (t) => t.name === 'otlp',
-    );
-    if (!transport) return;
-
-    transport.minLevel = getOtlpMinLevel(level);
   }
 }
 
@@ -154,11 +100,11 @@ export function createTelemetryManager(
       name: 'telemetry-manager',
       bindings: { module: 'telemetry-manager' },
     }),
-    rootLogger: deps.logging,
-    config: deps.config,
+    level: deps.level,
     spanProcessor: deps.spanProcessor,
+    logTransport: deps.logTransport,
+    metrics: deps.metrics,
+    tracing: deps.tracing,
     policy: deps.policy ?? createTelemetryPolicy('no'),
-    effectiveLevel: deps.effectiveLevel,
-    onLevelChange: deps.onLevelChange,
   });
 }

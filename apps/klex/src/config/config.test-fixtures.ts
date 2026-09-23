@@ -75,6 +75,5 @@ export const completeV2Config: KlexConfig = {
   mcpServers: {
     workspace: { command: 'workspace-mcp', args: ['--root', '/workspace'] },
   },
-  telemetry: { level: 'advanced' },
   timezone: 'UTC',
 };

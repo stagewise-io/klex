@@ -22,6 +22,7 @@ import type {
 } from 'ai';
 
 import type { ModelCallRecord, ModelCallSource } from '@/model-call-logger';
+import { normalizeAgentName } from '@/telemetry-resource';
 
 // Extract the exact event types the Telemetry interface expects for
 // onStart / onEnd. These are unions (OperationStartEvent / OperationEndEvent)
@@ -194,13 +195,14 @@ interface CallState {
  * - `onStart` creates a `generate_content {modelId}` span as a child of the
  *   active context (the step context). It reads `conversation.id` and
  *   `conversation.compacted` from the `runtimeContext` to set
- *   `gen_ai.conversation.id` and `gen_ai.conversation.compacted` attributes.
+ *   `gen_ai.conversation.id` and `klex.conversation.compacted` attributes.
  * - `onLanguageModelCallStart` is a no-op — the single root span replaces
  *   the redundant model-call span.
  * - `executeLanguageModelCall` runs the provider call within the root span's
  *   context so the SDK's internal HTTP spans nest correctly.
  * - `onLanguageModelCallEnd` records response id, response model, usage,
- *   finish reasons, cache tokens, and performance metrics on the root span.
+ *   finish reasons, cache/reasoning tokens, and performance metrics on the
+ *   root span.
  * - `onStepStart` / `onStepEnd` are no-ops — the klex `step` span is
  *   managed by `step.ts` and there is no multi-step tool loop (tools are
  *   passed without `execute`).
@@ -209,17 +211,22 @@ interface CallState {
  * - `onError` records the error on all open spans, including the OTel
  *   `error.type` attribute.
  *
- * All attribute keys follow the OTel gen_ai semantic conventions.
+ * `gen_ai.*` keys follow the OTel GenAI semantic conventions. Values without a
+ * convention (outcome, cache ratio, reasoning tokens, timings) use `klex.*`.
  */
 export class KlexTelemetry implements Telemetry {
   private readonly callStates = new Map<string, CallState>();
   private modelCallSink: ModelCallSink | null = null;
+  private readonly agentName: string;
 
   constructor(
     private readonly tracer: Tracer,
-    private readonly recordContent: boolean,
-    private readonly contentAllowed: () => boolean = () => recordContent,
-  ) {}
+    private readonly contentAllowed: () => boolean = () => false,
+    agentName = '',
+    private readonly getAgentId: () => string | null | undefined = () => null,
+  ) {
+    this.agentName = normalizeAgentName(agentName);
+  }
 
   private getCallState(callId: string): CallState | undefined {
     return this.callStates.get(callId);
@@ -345,12 +352,24 @@ export class KlexTelemetry implements Telemetry {
 
     const attributes: Attributes = {
       'gen_ai.operation.name': 'generate_content',
-      'gen_ai.system': providerName,
       'gen_ai.provider.name': providerName,
       'gen_ai.request.model': requestModel,
       'gen_ai.request.stream': genEvent.operationId === 'ai.streamText',
-      'gen_ai.agent.name': genEvent.functionId,
+      'klex.call.source': genEvent.functionId?.startsWith('extension:')
+        ? 'extension'
+        : 'chat',
     };
+    // Agent identity (OTel GenAI): the configured agent name and, once
+    // enrolled, the stable cloud client id. Spans are exported only at
+    // advanced/debug, so this never reaches basic telemetry.
+    if (this.agentName) attributes['gen_ai.agent.name'] = this.agentName;
+    let agentId: string | null | undefined;
+    try {
+      agentId = this.getAgentId();
+    } catch {
+      agentId = null;
+    }
+    if (agentId) attributes['gen_ai.agent.id'] = agentId;
 
     attributes['klex.model.provider_type'] = providerType;
     attributes['klex.model.provider_id'] = providerId;
@@ -361,7 +380,7 @@ export class KlexTelemetry implements Telemetry {
       attributes['gen_ai.conversation.id'] = conversationId;
     }
     if (compacted != null) {
-      attributes['gen_ai.conversation.compacted'] = compacted;
+      attributes['klex.conversation.compacted'] = compacted;
     }
 
     // Optional request parameters from LanguageModelCallOptions.
@@ -388,9 +407,7 @@ export class KlexTelemetry implements Telemetry {
     // Opt-in content attributes (gen_ai semantic conventions).
     // Only recorded when telemetry.recordInputs is not false.
     const recordInputs =
-      this.recordContent &&
-      this.contentAllowed() &&
-      genEvent.recordInputs !== false;
+      this.contentAllowed() && genEvent.recordInputs !== false;
     if (recordInputs) {
       const systemInstructions = instructionsToString(genEvent.instructions);
       if (systemInstructions != null) {
@@ -421,10 +438,7 @@ export class KlexTelemetry implements Telemetry {
     this.callStates.set(genEvent.callId, {
       rootSpan,
       rootContext,
-      recordOutputs:
-        this.recordContent &&
-        this.contentAllowed() &&
-        genEvent.recordOutputs !== false,
+      recordOutputs: this.contentAllowed() && genEvent.recordOutputs !== false,
       functionId: genEvent.functionId,
       operationId: genEvent.operationId,
       conversationId,
@@ -490,13 +504,13 @@ export class KlexTelemetry implements Telemetry {
     if (event.performance) {
       const perfAttrs: Attributes = {};
       if (event.performance.responseTimeMs != null) {
-        perfAttrs['gen_ai.client.operation.duration'] = msToSeconds(
+        perfAttrs['klex.model.response_time'] = msToSeconds(
           event.performance.responseTimeMs,
         );
         state.totalDurationMs = event.performance.responseTimeMs;
       }
       if (event.performance.timeToFirstOutputMs != null) {
-        perfAttrs['gen_ai.response.time_to_first_chunk'] = msToSeconds(
+        perfAttrs['klex.model.time_to_first_chunk'] = msToSeconds(
           event.performance.timeToFirstOutputMs,
         );
         state.ttftMs = event.performance.timeToFirstOutputMs;
@@ -518,11 +532,39 @@ export class KlexTelemetry implements Telemetry {
     ) {
       const textEndEvent = event as InferTelemetryEvent<GenerateTextEndEvent>;
 
+      const usage = textEndEvent.usage;
       state.rootSpan.setAttributes({
         'gen_ai.response.finish_reasons': [textEndEvent.finishReason],
-        'gen_ai.usage.input_tokens': textEndEvent.usage.inputTokens,
-        'gen_ai.usage.output_tokens': textEndEvent.usage.outputTokens,
+        'gen_ai.usage.input_tokens': usage.inputTokens,
+        'gen_ai.usage.output_tokens': usage.outputTokens,
+        'klex.outcome':
+          textEndEvent.finishReason === 'error' ? 'error' : 'success',
       });
+      if (usage.inputTokenDetails?.noCacheTokens != null) {
+        state.rootSpan.setAttribute(
+          'klex.usage.uncached_input_tokens',
+          usage.inputTokenDetails.noCacheTokens,
+        );
+      }
+      if (usage.outputTokenDetails?.reasoningTokens != null) {
+        state.rootSpan.setAttribute(
+          'klex.usage.reasoning_tokens',
+          usage.outputTokenDetails.reasoningTokens,
+        );
+      }
+      const cacheReadTokens = usage.inputTokenDetails?.cacheReadTokens;
+      if (
+        cacheReadTokens != null &&
+        usage.inputTokens != null &&
+        usage.inputTokens > 0
+      ) {
+        // AI SDK input tokens include cached tokens, so this is the share of
+        // the prompt served from the provider cache (0..1).
+        state.rootSpan.setAttribute(
+          'klex.usage.cache_read_ratio',
+          cacheReadTokens / usage.inputTokens,
+        );
+      }
 
       // Set error.type when the generation ended in an error state.
       if (textEndEvent.finishReason === 'error') {
@@ -590,6 +632,7 @@ export class KlexTelemetry implements Telemetry {
     // Mark the generation as aborted on the root span.
     state.rootSpan.setAttribute('gen_ai.response.finish_reasons', ['aborted']);
     state.rootSpan.setAttribute('error.type', 'aborted');
+    state.rootSpan.setAttribute('klex.outcome', 'aborted');
     state.rootSpan.setStatus({
       code: SpanStatusCode.ERROR,
       message: 'Generation aborted',
@@ -626,7 +669,7 @@ export class KlexTelemetry implements Telemetry {
         event.reason instanceof Error
           ? `${event.reason.name}: ${event.reason.message}`
           : String(event.reason);
-      state.rootSpan.setAttribute('gen_ai.abort.reason', reasonStr);
+      state.rootSpan.setAttribute('klex.abort.reason', reasonStr);
     }
 
     // Forward model call record to the sink (if registered).
@@ -658,6 +701,7 @@ export class KlexTelemetry implements Telemetry {
     const actualError = maybeEvent.error ?? error;
 
     recordErrorOnSpan(state.rootSpan, actualError);
+    state.rootSpan.setAttribute('klex.outcome', 'error');
 
     // Forward model call record to the sink (if registered).
     // Best-effort: if onEnd already forwarded a record for this callId,
@@ -695,13 +739,18 @@ export class KlexTelemetry implements Telemetry {
 export function createKlexTelemetry(
   tracer: Tracer,
   options: {
-    recordContent?: boolean;
+    /** Evaluated per call; content is captured only while this returns true. */
     contentAllowed?: () => boolean;
+    /** Configured agent name, recorded as `gen_ai.agent.name`. */
+    agentName?: string;
+    /** Evaluated per call; stable agent id recorded as `gen_ai.agent.id`. */
+    getAgentId?: () => string | null | undefined;
   } = {},
 ): KlexTelemetry {
   return new KlexTelemetry(
     tracer,
-    options.recordContent === true,
     options.contentAllowed,
+    options.agentName,
+    options.getAgentId,
   );
 }

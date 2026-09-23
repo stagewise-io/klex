@@ -262,25 +262,6 @@ const timezoneSettingsSchema = z
   })
   .openapi('TimezoneSettings');
 
-// --- Settings / Telemetry ---
-
-const telemetryLevelSchema = z
-  .enum(['no', 'basic', 'advanced'])
-  .openapi('TelemetryLevel');
-
-const telemetrySettingsSchema = z
-  .object({
-    level: telemetryLevelSchema,
-    instanceId: z.string().uuid().nullable(),
-  })
-  .openapi('TelemetrySettings');
-
-const telemetrySettingsPatchSchema = z
-  .object({
-    level: telemetryLevelSchema.optional(),
-  })
-  .openapi('TelemetrySettingsPatch');
-
 // --- Settings / Model Selection ---
 
 const providerOptionsSchema = z.record(
@@ -979,9 +960,6 @@ export {
   providerTypesResponseSchema,
   serializedMessagePartSchema,
   serializedMessageSchema,
-  telemetryLevelSchema,
-  telemetrySettingsPatchSchema,
-  telemetrySettingsSchema,
   timezoneSettingsSchema,
   toolCallHistoryResponseSchema,
   updateKnownModelBodySchema,

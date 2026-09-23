@@ -5,7 +5,14 @@ import { parseArgs } from 'node:util';
 import { createLogger } from '@stagewise/logger';
 
 import { KLEX_VERSION } from '@/release';
-import { resolveTelemetryEndpoint } from '@/telemetry-config';
+import {
+  resolveTelemetryEndpoint,
+  resolveTelemetryMode,
+  TELEMETRY_DEBUG_ENV,
+  TELEMETRY_DISABLE_ENV,
+  TELEMETRY_ENDPOINT_ENV,
+  type TelemetryMode,
+} from '@/telemetry-config';
 
 export interface CliOptions {
   /** Explicit agent directory, or undefined in interactive discovery mode. */
@@ -14,10 +21,10 @@ export interface CliOptions {
   agentRoot: string;
   cloudEnabled: boolean;
   cloudBaseUrl: string;
-  telemetryEndpoint: string;
-  resetTelemetryIdentity: boolean;
-  telemetryDebug: boolean;
-  telemetryDisabled: boolean;
+  /** OTLP base URL. Undefined means telemetry is off. */
+  telemetryEndpoint: string | undefined;
+  /** Effective process-wide telemetry level. Never read from config. */
+  telemetryLevel: TelemetryMode;
   cloudEnrollToken: string | undefined;
   headless: boolean;
   dangerousLocalAdminApiPort: number | undefined;
@@ -63,6 +70,8 @@ export function parseCliArgs(argv: string[]): CliOptions {
       headless: { type: 'boolean', short: 'H' },
       'cloud-base-url': { type: 'string' },
       'telemetry-endpoint': { type: 'string' },
+      // Deprecated no-op: the telemetry identity is now per process. Still
+      // accepted so existing launch scripts keep working.
       'reset-telemetry-identity': { type: 'boolean' },
       'telemetry-debug': { type: 'boolean' },
       'disable-telemetry': { type: 'boolean' },
@@ -112,17 +121,20 @@ export function parseCliArgs(argv: string[]): CliOptions {
     process.env.KLEX_CLOUD_BASE_URL ??
     'https://cloud.klex.bot';
 
-  const telemetryEndpoint = resolveTelemetryEndpoint(
-    values['telemetry-endpoint'] ??
-      process.env.KLEX_TELEMETRY_ENDPOINT ??
-      'https://telemetry.klex.bot',
-  );
-
-  const resetTelemetryIdentity = values['reset-telemetry-identity'] ?? false;
-  const telemetryDebug =
-    values['telemetry-debug'] ?? process.env.KLEX_TELEMETRY_DEBUG === '1';
+  // Telemetry is opt-in: no default endpoint, and nothing is read from config.
   const telemetryDisabled =
-    values['disable-telemetry'] ?? process.env.KLEX_DISABLE_TELEMETRY === '1';
+    values['disable-telemetry'] ?? process.env[TELEMETRY_DISABLE_ENV] === '1';
+  const telemetryDebug =
+    values['telemetry-debug'] ?? process.env[TELEMETRY_DEBUG_ENV] === '1';
+  const endpoint = resolveTelemetryEndpoint(
+    values['telemetry-endpoint'] ?? process.env[TELEMETRY_ENDPOINT_ENV],
+  );
+  const telemetryLevel = resolveTelemetryMode({
+    endpoint,
+    debug: telemetryDebug,
+    disabled: telemetryDisabled,
+  });
+  const telemetryEndpoint = telemetryLevel === 'no' ? undefined : endpoint;
 
   const cloudEnrollToken =
     values['cloud-enroll-token'] ?? process.env.KLEX_CLOUD_ENROLLMENT_TOKEN;
@@ -150,9 +162,7 @@ export function parseCliArgs(argv: string[]): CliOptions {
     cloudEnabled,
     cloudBaseUrl,
     telemetryEndpoint,
-    resetTelemetryIdentity,
-    telemetryDebug,
-    telemetryDisabled,
+    telemetryLevel,
     cloudEnrollToken,
     headless,
     dangerousLocalAdminApiPort,
@@ -176,10 +186,9 @@ Options:
   -h, --help                   Show this help message
   --version                    Print the version and exit
   --cloud-base-url <url>       Klex Cloud API base URL (overrides KLEX_CLOUD_BASE_URL, default: https://cloud.klex.bot)
-  --telemetry-endpoint <url>   OTLP telemetry base URL (overrides KLEX_TELEMETRY_ENDPOINT, default: https://telemetry.klex.bot)
-  --reset-telemetry-identity  Rotate the installation-scoped telemetry identity
-  --telemetry-debug             Enable debug telemetry for this process (overrides KLEX_TELEMETRY_DEBUG)
-  --disable-telemetry            Disable all remote telemetry (overrides KLEX_DISABLE_TELEMETRY)
+  --telemetry-endpoint <url>   Enable telemetry and export to this OTLP base URL (overrides KLEX_TELEMETRY_ENDPOINT; telemetry is off without it)
+  --telemetry-debug            Also export chat content and PII for this process; requires an endpoint (overrides KLEX_TELEMETRY_DEBUG)
+  --disable-telemetry          Force telemetry off even if an endpoint is set (overrides KLEX_DISABLE_TELEMETRY)
   --no-cloud                   Disable Klex Cloud connectivity (overrides KLEX_NO_CLOUD)
   --cloud                      Enable Klex Cloud connectivity (overrides KLEX_NO_CLOUD)
   --cloud-enroll-token <code>  Enrollment token for headless enrollment (overrides KLEX_CLOUD_ENROLLMENT_TOKEN)
@@ -189,9 +198,10 @@ Options:
 
 Environment:
   KLEX_HOME                    Root directory for all Klex data (default: ~/.klex)
-  KLEX_TELEMETRY_ENDPOINT      OTLP telemetry base URL
-  KLEX_TELEMETRY_DEBUG         Enable debug telemetry when set to 1
-  KLEX_DISABLE_TELEMETRY       Disable all remote telemetry when set to 1
+  KLEX_TELEMETRY_ENDPOINT      Enable telemetry and export to this OTLP base URL
+  KLEX_TELEMETRY_HEADERS       JSON object of extra OTLP request headers
+  KLEX_TELEMETRY_DEBUG         Enable debug telemetry (chat content and PII) when set to 1; requires an endpoint
+  KLEX_DISABLE_TELEMETRY       Force telemetry off when set to 1
   KLEX_SHUTDOWN_TIMEOUT_MS      Maximum graceful shutdown time in milliseconds (default: 15000)
 `,
   );

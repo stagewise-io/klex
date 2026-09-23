@@ -130,30 +130,53 @@ describe('parseCliArgs', () => {
     expect(result.dataDirectory).toBeUndefined();
   });
 
-  it('uses the default telemetry endpoint', () => {
-    expect(parseCliArgs([]).telemetryEndpoint).toBe(
-      'https://telemetry.klex.bot',
-    );
+  it('disables telemetry by default with no endpoint', () => {
+    expect(parseCliArgs([])).toMatchObject({
+      telemetryEndpoint: undefined,
+      telemetryLevel: 'no',
+    });
   });
 
-  it('resolves telemetry endpoint with CLI precedence', () => {
+  it('enables advanced telemetry when an endpoint is supplied', () => {
     process.env.KLEX_TELEMETRY_ENDPOINT = 'https://env.example/';
+    expect(parseCliArgs([])).toMatchObject({
+      telemetryEndpoint: 'https://env.example',
+      telemetryLevel: 'advanced',
+    });
     expect(
       parseCliArgs(['--telemetry-endpoint', 'https://cli.example/'])
         .telemetryEndpoint,
     ).toBe('https://cli.example');
   });
 
-  it('supports CLI and environment telemetry overrides', () => {
+  it('enables debug telemetry only with an explicit opt-in', () => {
+    const endpoint = ['--telemetry-endpoint', 'https://cli.example'];
+    expect(parseCliArgs([...endpoint, '--telemetry-debug'])).toMatchObject({
+      telemetryLevel: 'debug',
+    });
+    process.env.KLEX_TELEMETRY_DEBUG = '1';
+    expect(parseCliArgs(endpoint).telemetryLevel).toBe('debug');
+    expect(
+      parseCliArgs([...endpoint, '--no-telemetry-debug']).telemetryLevel,
+    ).toBe('advanced');
+  });
+
+  it('rejects debug telemetry without an endpoint', () => {
+    expect(() => parseCliArgs(['--telemetry-debug'])).toThrow(
+      'Debug telemetry requires an endpoint',
+    );
+  });
+
+  it('lets disable-telemetry override an endpoint', () => {
+    process.env.KLEX_TELEMETRY_ENDPOINT = 'https://env.example';
     process.env.KLEX_TELEMETRY_DEBUG = '1';
     process.env.KLEX_DISABLE_TELEMETRY = '1';
     expect(parseCliArgs([])).toMatchObject({
-      telemetryDebug: true,
-      telemetryDisabled: true,
+      telemetryEndpoint: undefined,
+      telemetryLevel: 'no',
     });
-    expect(
-      parseCliArgs(['--telemetry-debug', '--disable-telemetry']),
-    ).toMatchObject({ telemetryDebug: true, telemetryDisabled: true });
+    delete process.env.KLEX_DISABLE_TELEMETRY;
+    expect(parseCliArgs(['--disable-telemetry']).telemetryLevel).toBe('no');
   });
 
   it('allows HTTP only for loopback telemetry endpoints', () => {

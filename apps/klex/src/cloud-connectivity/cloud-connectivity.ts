@@ -4,6 +4,7 @@ import {
   createCloudApiClient,
   startAgentTunnel,
 } from '@klex/cloud-api';
+import type WebSocket from 'ws';
 
 import type { ModuleLogger, RootLogger } from '@stagewise/logger';
 
@@ -38,6 +39,10 @@ const CLOUD_API_SCOPES = ['agent:access'];
 const API_RESOURCE_PATH = '/v1';
 const RETRY_INITIAL_MS = 1_000;
 const RETRY_MAX_MS = 30_000;
+/** Upper bound for the WebSocket close handshake after GOAWAY. Shutdown must
+ * not hang on an unresponsive cloud, but it must give the close frame a chance
+ * to reach the server before the process exits. */
+const TUNNEL_CLOSE_TIMEOUT_MS = 3_000;
 
 class CloudConnectivityModule implements CloudConnectivity {
   private identity: CloudIdentity | null = null;
@@ -45,6 +50,11 @@ class CloudConnectivityModule implements CloudConnectivity {
   private tokenClient: TokenClient | null = null;
   private cloudApiClient: CloudApiClient | null = null;
   private tunnel: AgentTunnelHandle | null = null;
+  /** Socket of the most recent tunnel connection attempt, captured so
+   * shutdown can await the close handshake the package does not expose. */
+  private tunnelSocket: WebSocket | null = null;
+  /** Set once shutdown was announced; prevents any further (re)connects. */
+  private tunnelDisconnected = false;
   private tunnelRequestHandler:
     | ((request: Request) => Response | Promise<Response>)
     | null = null;
@@ -156,7 +166,14 @@ class CloudConnectivityModule implements CloudConnectivity {
   }
 
   private async connectTunnel(): Promise<void> {
-    if (!this.started || this.connecting || !this.tokenClient) return;
+    if (
+      !this.started ||
+      this.tunnelDisconnected ||
+      this.connecting ||
+      !this.tokenClient
+    ) {
+      return;
+    }
     this.connecting = true;
     const generation = this.connectionGeneration;
 
@@ -170,6 +187,12 @@ class CloudConnectivityModule implements CloudConnectivity {
         reconnect: true,
         reconnectDelayMs: RETRY_INITIAL_MS,
         maxReconnectDelayMs: RETRY_MAX_MS,
+        // ws hands over the socket of every (re)connect attempt here. The
+        // callback owns ending the upgrade request.
+        finishRequest: (upgradeRequest, socket) => {
+          this.tunnelSocket = socket;
+          upgradeRequest.end();
+        },
         onRequest: async (request) => {
           const handler = this.tunnelRequestHandler;
           if (!handler) {
@@ -234,6 +257,7 @@ class CloudConnectivityModule implements CloudConnectivity {
       });
       if (!this.started || generation !== this.connectionGeneration) {
         await tunnel.stop();
+        await this.awaitTunnelSocketClosed();
         return;
       }
       this.tunnel = tunnel;
@@ -333,7 +357,12 @@ class CloudConnectivityModule implements CloudConnectivity {
     this.deps.logger.info({ clientId }, 'Enrollment successful');
   }
 
-  private async resetCloudSession(): Promise<void> {
+  /**
+   * Closes the tunnel gracefully (GOAWAY + WebSocket close 1000) and waits,
+   * bounded, for the close handshake so the cloud learns about the shutdown
+   * instead of detecting a dropped connection later.
+   */
+  private async stopTunnel(): Promise<void> {
     this.connectionGeneration += 1;
     if (this.retryTimer) {
       clearTimeout(this.retryTimer);
@@ -341,9 +370,54 @@ class CloudConnectivityModule implements CloudConnectivity {
     }
     this.retryAttempt = 0;
     this.connecting = false;
-    await this.tunnel?.stop();
+    const tunnel = this.tunnel;
     this.tunnel = null;
+    if (tunnel) {
+      await tunnel.stop();
+    } else {
+      // A connection attempt may still be in its handshake; close it too.
+      try {
+        this.tunnelSocket?.close(1000, 'stopped');
+      } catch {
+        // Socket already gone.
+      }
+    }
+    await this.awaitTunnelSocketClosed();
     this.tunnelState = 'disconnected';
+  }
+
+  private async awaitTunnelSocketClosed(): Promise<void> {
+    const socket = this.tunnelSocket;
+    this.tunnelSocket = null;
+    if (!socket || socket.readyState === socket.CLOSED) return;
+    const closed = await new Promise<boolean>((resolve) => {
+      const timer = setTimeout(() => resolve(false), TUNNEL_CLOSE_TIMEOUT_MS);
+      socket.once('close', () => {
+        clearTimeout(timer);
+        resolve(true);
+      });
+    });
+    if (!closed) {
+      this.deps.logger.warn(
+        { timeoutMs: TUNNEL_CLOSE_TIMEOUT_MS },
+        'Klex Cloud did not acknowledge tunnel close in time; terminating socket',
+      );
+      socket.terminate();
+    }
+  }
+
+  async disconnect(): Promise<void> {
+    if (this.tunnelDisconnected) return;
+    this.tunnelDisconnected = true;
+    const wasOpen = this.tunnel !== null || this.tunnelSocket !== null;
+    await this.stopTunnel();
+    if (wasOpen) {
+      this.deps.logger.info('Klex Cloud tunnel closed for shutdown');
+    }
+  }
+
+  private async resetCloudSession(): Promise<void> {
+    await this.stopTunnel();
     this.cloudApiClient = null;
     this.tokenClient?.close();
     this.tokenClient = null;
@@ -429,6 +503,7 @@ class CloudConnectivityModule implements CloudConnectivity {
   async close(): Promise<void> {
     if (!this.started) return;
     this.started = false;
+    this.tunnelDisconnected = true;
 
     await this.resetCloudSession();
 

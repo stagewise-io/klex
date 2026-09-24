@@ -17,7 +17,7 @@ Levels:
 
 While telemetry is active, Klex shows a persistent warning naming the endpoint: a yellow banner in the interactive UI (and a framed notice on stderr in headless mode) for `advanced`, and a red, high-contrast banner for `debug`.
 
-The telemetry identity is a random UUID generated per process. It does not include hostnames, usernames, network addresses, or machine fingerprints. `--reset-telemetry-identity` is accepted as a deprecated no-op.
+The telemetry identity is a random UUID generated per process. It does not include hostnames, usernames, network addresses, or machine fingerprints.
 
 ## Export and shutdown timing
 

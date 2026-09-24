@@ -1,6 +1,8 @@
 import { Box, Text } from 'ink';
 import TextInput from 'ink-text-input';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+
+import type { EnrollmentTracker, TrackEnrollment } from '@/product-analytics';
 
 import {
   type AdminApiClient,
@@ -21,16 +23,38 @@ import { MenuKeys, useMenuInput } from '../menu-keys';
 export interface CloudScreenProps {
   apiClient: AdminApiClient;
   onBack: () => void;
+  trackEnrollment?: TrackEnrollment;
 }
 
 type Mode = 'overview' | 'enroll-input' | 'enrolling';
 
-export function CloudScreen({ apiClient, onBack }: CloudScreenProps) {
+export function CloudScreen({
+  apiClient,
+  onBack,
+  trackEnrollment,
+}: CloudScreenProps) {
   const { pushToast } = useToast();
   const { setMeta } = useScreenMeta();
   const { setActive } = useTextInputActive();
   const [mode, setMode] = useState<Mode>('overview');
   const [enrollCode, setEnrollCode] = useState('');
+  // One flow per visit to the enrollment input. Leaving the screen while it
+  // is open counts as aborted.
+  const enrollmentFlow = useRef<EnrollmentTracker | undefined>(undefined);
+  const finishEnrollment = (
+    outcome: Parameters<EnrollmentTracker['finish']>[0],
+    flow = enrollmentFlow.current,
+  ) => {
+    flow?.finish(outcome);
+    if (enrollmentFlow.current === flow) enrollmentFlow.current = undefined;
+  };
+  useEffect(
+    () => () => {
+      enrollmentFlow.current?.finish('aborted');
+      enrollmentFlow.current = undefined;
+    },
+    [],
+  );
 
   const statusPoll = usePolling<CloudStatus>(
     () => apiClient.getCloudStatus(),
@@ -76,8 +100,13 @@ export function CloudScreen({ apiClient, onBack }: CloudScreenProps) {
 
   useMenuInput({
     [MenuKeys.Back]: () => {
-      if (mode === 'overview') onBack();
-      else setMode('overview');
+      if (mode === 'overview') {
+        onBack();
+        return;
+      }
+      // An in-flight request still reports its own result.
+      if (mode === 'enroll-input') finishEnrollment('aborted');
+      setMode('overview');
     },
     [MenuKeys.Cloud]: () => {
       if (
@@ -86,6 +115,7 @@ export function CloudScreen({ apiClient, onBack }: CloudScreenProps) {
         statusPoll.data.cloudEnabled &&
         !statusPoll.data.enrolled
       ) {
+        enrollmentFlow.current = trackEnrollment?.('cloud_screen');
         setMode('enroll-input');
       }
     },
@@ -117,9 +147,13 @@ export function CloudScreen({ apiClient, onBack }: CloudScreenProps) {
                 placeholder="Paste enrollment code..."
                 onSubmit={async () => {
                   if (!enrollCode.trim()) return;
+                  // Captured: the user may leave and start a new flow while
+                  // this request is in flight.
+                  const flow = enrollmentFlow.current;
                   setMode('enrolling');
                   try {
                     const result = await apiClient.enroll(enrollCode.trim());
+                    finishEnrollment('enrolled', flow);
                     pushToast(
                       `Enrolled successfully! Client ID: ${result.clientId}`,
                       'info',
@@ -128,6 +162,8 @@ export function CloudScreen({ apiClient, onBack }: CloudScreenProps) {
                     statusPoll.refresh();
                     setMode('overview');
                   } catch (err) {
+                    flow?.attemptFailed();
+                    finishEnrollment('failed', flow);
                     pushToast(
                       err instanceof AdminApiClientError
                         ? err.message

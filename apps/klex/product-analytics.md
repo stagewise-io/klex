@@ -15,12 +15,13 @@ When analytics are off, Klex creates no PostHog client, starts no timers, and ma
 
 ## What is sent
 
-Klex sends two event types to PostHog EU (`https://eu.i.posthog.com`). Both closed property sets are defined and strictly validated in `src/product-analytics/schema.ts`.
+Klex sends four event types to PostHog EU (`https://eu.i.posthog.com`). All closed property sets are defined and strictly validated in `src/product-analytics/schema.ts`.
 
-- `klex_agent_started`: once per process, right after analytics start. It carries only the shared properties below. It is sent in the background and never delays startup. It confirms a build's key within seconds, and comparing started with shutdown counts shows how many processes end without a graceful shutdown.
-- `klex_usage_window`: one per window. A window ends every 2 hours and at graceful shutdown. It adds aggregate counts and resource readings for that window.
+- `klex_agent_started`: at most once per process, once an agent directory has been opened (locked, migrated, config loaded). That is headless mode with a valid `--data-dir`, or interactive mode after the user picks an agent. Quitting the picker, a missing `--data-dir` in headless mode, or a directory that fails to open sends none. It carries only the shared properties below. It is sent in the background and never delays startup. Comparing started with shutdown counts shows how many processes end without a graceful shutdown.
+- `klex_usage_window`: one per window. A window ends every 2 hours and at graceful shutdown. It adds aggregate counts and resource readings for that window. Analytics start before the agent picker, so a process that quits from the picker still sends one shutdown window.
+- `klex_enrollment_started` and `klex_enrollment_finished`: one pair per cloud enrollment flow (below).
 
-Shared by both events:
+Shared by all events:
 
 - `klex_version`, `telemetry_enabled_at_start`, `cloud_enabled`, `os_platform`, `os_arch`, `os_release`, `node_version`.
 - `deployment`: `self_hosted`, `cloud`, or `other`, from `--deployment <name>`, else `KLEX_DEPLOYMENT`. The flag wins even when blank. Unset or blank means `self_hosted`; any unrecognised value is sent as `other`, so free-form labels never reach PostHog. Hosting launchers such as Klex Cloud images set `KLEX_DEPLOYMENT=cloud`. Whoever launches the process controls it, so it is a label, not proof of where the process runs. It is independent of `cloud_enabled` and `cloud_enrolled`, which describe the cloud connection, not the host.
@@ -34,6 +35,18 @@ Only in `klex_usage_window`:
 - Runtime notes: `os_platform` is `darwin`, `linux`, `win32`, …. `os_release` is the kernel major only (`24`, `6`); on Windows it is `major.minor.build` (`10.0.22631`), because Windows 10 and 11 both report `10.0`.
 - Resources: `process_uptime_s`, `cpu_avg_pct` (average over the window, percent of one core, can exceed 100), `memory_rss_mb` and `memory_heap_used_mb` (at event time), `memory_rss_peak_mb` (peak since process start). These come from Node's process counters when the event is built. There is no background sampler, so short spikes inside a window show up only in the peak RSS.
 
+### Cloud enrollment
+
+A flow starts when Klex asks for an enrollment code or sends one it was given. `enrollment_method` says where:
+
+| Method | Starts when | Ends when |
+| --- | --- | --- |
+| `agent_picker` | The picker shows the code prompt for an unenrolled agent | Enrolled; Esc, quit or switching agent (`aborted`) |
+| `cloud_screen` | The user opens the code input on the Cloud screen | Enrolled; a rejected code (`failed`, the screen returns to its overview); Back or leaving the screen (`aborted`) |
+| `token` | A `--cloud-enroll-token` / `KLEX_CLOUD_ENROLLMENT_TOKEN` request is sent (only when not already enrolled) | Enrolled or `failed` |
+
+`klex_enrollment_finished` adds `enrollment_outcome` (`enrolled`, `failed`, `aborted`), `failed_attempts` (rejected codes within the flow, including a final one; the picker allows retries), and `duration_s`. Flows still open at graceful shutdown finish as `aborted` before the last window is sent. Codes, tokens, error messages, and cloud or client IDs are never sent.
+
 Klex never sends session, agent, cloud, or client IDs, key IDs, names, paths, model or provider names, prompts, content, tool names, hostnames, usernames, full OS version strings, or disk usage. If an event fails schema validation, it is dropped rather than sent partially.
 
 ## Identity
@@ -46,7 +59,7 @@ The HTTP request itself reveals the sender's IP address. The PostHog project mus
 
 - Events are sent with `captureImmediate`, bypassing the SDK queue. Delivery is best effort: the SDK retries a request twice, after which that window is lost. There is no local outbox.
 - Graceful shutdown (SIGINT, SIGTERM, SIGHUP, self-update restart) sends the final window within a 3 s budget inside `KLEX_SHUTDOWN_TIMEOUT_MS`. Anything unsent at the deadline is dropped.
-- A crash, SIGKILL, OOM kill, or power loss loses the current window (up to 2 h of counts). The start event has already been sent by then.
+- A crash, SIGKILL, OOM kill, or power loss loses the current window (up to 2 h of counts) and leaves any open enrollment flow without a finished event. The start event has already been sent by then.
 - Analytics never block or crash startup. If the client cannot be created, analytics stay off for that process.
 
 ## Debug logs

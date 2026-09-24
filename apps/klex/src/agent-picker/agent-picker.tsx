@@ -84,6 +84,8 @@ export function createAgentPicker(deps: {
   agentDirectory: AgentDirectory;
   prepareAgent?: (directory: string) => Promise<boolean>;
   enrollCloud?: (directory: string, token: string) => Promise<void>;
+  /** The user left the enrollment step with Escape. */
+  onEnrollmentCancelled?: (directory: string) => void;
 }): AgentPicker {
   return {
     choose: () => chooseAgent(deps),
@@ -94,6 +96,7 @@ async function chooseAgent(deps: {
   agentDirectory: AgentDirectory;
   prepareAgent?: (directory: string) => Promise<boolean>;
   enrollCloud?: (directory: string, token: string) => Promise<void>;
+  onEnrollmentCancelled?: (directory: string) => void;
 }): Promise<string | undefined> {
   const agents = await deps.agentDirectory.discover();
   return new Promise((resolve) => {
@@ -112,6 +115,7 @@ async function chooseAgent(deps: {
         agentDirectory={deps.agentDirectory}
         prepareAgent={deps.prepareAgent}
         enrollCloud={deps.enrollCloud}
+        onEnrollmentCancelled={deps.onEnrollmentCancelled}
       />,
       { exitOnCtrlC: false },
     );
@@ -138,12 +142,14 @@ function PickerScreen({
   agentDirectory,
   prepareAgent,
   enrollCloud,
+  onEnrollmentCancelled,
 }: {
   agents: DiscoveredAgent[];
   onComplete: (directory: string | undefined) => void;
   agentDirectory: AgentDirectory;
   prepareAgent?: (directory: string) => Promise<boolean>;
   enrollCloud?: (directory: string, token: string) => Promise<void>;
+  onEnrollmentCancelled?: (directory: string) => void;
 }) {
   const [creating, setCreating] = useState(false);
   const [name, setName] = useState('');
@@ -154,8 +160,10 @@ function PickerScreen({
 
   useInput((input, key) => {
     if (key.escape) {
-      if (enrolling) setEnrolling(undefined);
-      else if (creating) setCreating(false);
+      if (enrolling) {
+        onEnrollmentCancelled?.(enrolling);
+        setEnrolling(undefined);
+      } else if (creating) setCreating(false);
       else onComplete(undefined);
     } else if (input.toLowerCase() === 'q' && !creating && !enrolling) {
       onComplete(undefined);

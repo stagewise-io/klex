@@ -48,6 +48,7 @@ class CliUiModule implements CliUi {
   private readonly dangerousLocalAdminApiPort: number | undefined;
   private readonly telemetryWarning: CliUiDependencies['telemetryWarning'];
   private readonly updateManager: CliUiDependencies['updateManager'];
+  private readonly trackEnrollment: CliUiDependencies['trackEnrollment'];
   private inkInstance: ReturnType<typeof render> | undefined;
   private terminalCleared = false;
 
@@ -59,6 +60,7 @@ class CliUiModule implements CliUi {
     this.dangerousLocalAdminApiPort = deps.dangerousLocalAdminApiPort;
     this.telemetryWarning = deps.telemetryWarning;
     this.updateManager = deps.updateManager;
+    this.trackEnrollment = deps.trackEnrollment;
   }
 
   start(): void {
@@ -79,6 +81,7 @@ class CliUiModule implements CliUi {
         telemetryWarning={this.telemetryWarning}
         onQuit={() => this.requestQuit()}
         updateManager={this.updateManager}
+        trackEnrollment={this.trackEnrollment}
       />,
       {
         exitOnCtrlC: false,
@@ -139,6 +142,7 @@ function AppRoot({
   telemetryWarning,
   onQuit,
   updateManager,
+  trackEnrollment,
 }: {
   apiClient: AdminApiClient;
   dataDirectory: string;
@@ -147,6 +151,7 @@ function AppRoot({
   telemetryWarning: CliUiDependencies['telemetryWarning'];
   onQuit: () => void;
   updateManager: CliUiDependencies['updateManager'];
+  trackEnrollment: CliUiDependencies['trackEnrollment'];
 }) {
   const navigation = useNavigationState();
   const globalStatus = useGlobalStatus(apiClient);
@@ -203,6 +208,7 @@ function AppRoot({
               telemetryWarning={telemetryWarning}
               onRefreshGlobal={globalStatus.refresh}
               updateManager={updateManager}
+              trackEnrollment={trackEnrollment}
             />
           </TextInputActiveProvider>
         </ScreenMetaProvider>
@@ -239,6 +245,7 @@ function FrameLayout({
   telemetryWarning,
   onRefreshGlobal,
   updateManager,
+  trackEnrollment,
 }: {
   apiClient: AdminApiClient;
   dataDirectory: string;
@@ -253,6 +260,7 @@ function FrameLayout({
   telemetryWarning: CliUiDependencies['telemetryWarning'];
   onRefreshGlobal: () => void;
   updateManager: CliUiDependencies['updateManager'];
+  trackEnrollment: CliUiDependencies['trackEnrollment'];
 }) {
   const { meta } = useScreenMeta();
 
@@ -299,6 +307,7 @@ function FrameLayout({
         cloud={cloud}
         dangerousLocalAdminApiPort={dangerousLocalAdminApiPort}
         onRefreshGlobal={onRefreshGlobal}
+        trackEnrollment={trackEnrollment}
       />
     </AppFrame>
   );
@@ -313,6 +322,7 @@ function ScreenRouter({
   cloud,
   dangerousLocalAdminApiPort,
   onRefreshGlobal,
+  trackEnrollment,
 }: {
   apiClient: AdminApiClient;
   dataDirectory: string;
@@ -322,6 +332,7 @@ function ScreenRouter({
   cloud: import('./api-client').CloudStatus | null;
   dangerousLocalAdminApiPort: number | undefined;
   onRefreshGlobal: () => void;
+  trackEnrollment: CliUiDependencies['trackEnrollment'];
 }) {
   switch (navigation.current) {
     case 'home':
@@ -366,7 +377,11 @@ function ScreenRouter({
       );
     case 'cloud':
       return (
-        <CloudScreen apiClient={apiClient} onBack={() => navigation.goBack()} />
+        <CloudScreen
+          apiClient={apiClient}
+          onBack={() => navigation.goBack()}
+          trackEnrollment={trackEnrollment}
+        />
       );
     case 'model-selection':
       return (

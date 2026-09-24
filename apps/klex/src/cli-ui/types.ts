@@ -21,4 +21,6 @@ export interface CliUiDependencies {
   /** Persistent banner shown while telemetry is exporting. */
   telemetryWarning: import('@/telemetry-config').TelemetryWarning | undefined;
   updateManager?: import('@/self-update').UpdateManager;
+  /** Product-analytics hook for the Cloud screen enrollment flow. */
+  trackEnrollment?: import('@/product-analytics').TrackEnrollment;
 }

@@ -160,6 +160,9 @@ function PickerScreen({
 
   useInput((input, key) => {
     if (key.escape) {
+      // An in-flight request decides the outcome: cancelling here would
+      // report an abort and then open the agent if the request succeeds.
+      if (enrollmentSubmitting) return;
       if (enrolling) {
         onEnrollmentCancelled?.(enrolling);
         setEnrolling(undefined);

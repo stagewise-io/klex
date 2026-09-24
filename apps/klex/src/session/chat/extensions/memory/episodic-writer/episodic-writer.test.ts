@@ -15,6 +15,7 @@ import type {
   ExtensionDeps,
   ResolvedModel,
 } from '@/session/chat/extensions/extension-api';
+import { LINES_FORMAT_PROMPT } from '@/session/chat/utils/history-view';
 import type { ChildSessionHandle } from '@/session/types';
 
 import { EpisodeStore, type MemoryEntry } from './episode-files';
@@ -61,6 +62,7 @@ vi.mock(
   '@/session/chat/extensions/context-compaction/compaction-prompt.md',
   () => ({ default: 'Summarize.' }),
 );
+vi.mock('../retrieval/retrieval-prompt.md', () => ({ default: 'Retrieve.' }));
 vi.mock('./writer-prompt.md', () => ({ default: 'Remember.' }));
 
 const directories: string[] = [];
@@ -474,7 +476,9 @@ describe('episodic writer owner', () => {
       'Europe/Berlin',
     );
     const firstOptions = createChildSession.mock.calls[0]?.[0];
-    expect(firstOptions?.basePrompt).toBe('Remember.');
+    expect(firstOptions?.basePrompt).toBe(
+      `Remember.\n\n${LINES_FORMAT_PROMPT}`,
+    );
     expect(firstOptions?.modelPurpose).toBe('memory');
     expect(
       firstOptions?.extensions.map((extension) => extension.identifier),
@@ -496,9 +500,9 @@ describe('episodic writer owner', () => {
     );
     expect(
       writerInputExtension?.dataPartTransformers?.['memory-writer-event']?.({
-        ndjson: '{"type":"context"}',
+        text: 'context github',
       }),
-    ).toEqual([{ type: 'text', text: '{"type":"context"}' }]);
+    ).toEqual([{ type: 'text', text: 'context github' }]);
     expect(
       writerInputExtension?.dataPartTransformers?.['memory-writer-image']?.({
         data: 'aW1hZ2U=',
@@ -543,7 +547,7 @@ describe('episodic writer owner', () => {
     expect(first.close).toHaveBeenCalledOnce();
     expect(createChildSession).toHaveBeenCalledTimes(2);
     expect(createChildSession.mock.calls[1]?.[0]).toMatchObject({
-      basePrompt: 'Remember.',
+      basePrompt: `Remember.\n\n${LINES_FORMAT_PROMPT}`,
       modelPurpose: 'memory',
     });
     expect(second.inbox.sendMessage).toHaveBeenCalledWith(

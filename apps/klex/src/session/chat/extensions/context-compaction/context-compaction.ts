@@ -2,6 +2,14 @@ import { randomUUID } from 'node:crypto';
 
 import { context, type Span, trace } from '@opentelemetry/api';
 
+import type { ModelPurpose } from '@/config';
+import { escapeXml } from '@/session/chat/utils/escape-xml';
+import {
+  CONTEXT_SUMMARY_KEY,
+  createTranscriptHistoryView,
+  LINES_FORMAT_PROMPT,
+} from '@/session/chat/utils/history-view';
+
 import type { ExtendedUIMessage } from '../../message-types';
 import { startChildSpan } from '../../utils/tracing';
 import {
@@ -15,12 +23,10 @@ import {
   isDataPartOf,
   type StepCompleteEvent,
 } from '../extension-api';
-import {
-  CONTEXT_SUMMARY_KEY,
-  escapeXml,
-  serializeHistoryAsXml,
-} from '../history-xml';
 import compactionPrompt from './compaction-prompt.md';
+
+const COMPACTION_TRANSCRIPT_VIEW = createTranscriptHistoryView();
+const COMPACTION_SYSTEM_PROMPT = `${compactionPrompt}\n\n${LINES_FORMAT_PROMPT}`;
 
 /**
  * Custom data part that stores a history summary of the chat session.
@@ -39,8 +45,8 @@ export const MAX_COMPACTION_THRESHOLD = 100_000;
 
 /**
  * Fraction of the model's max context size at which compaction triggers.
- * The threshold is 50% of the smallest context size among all configured
- * chat and compaction models.
+ * The threshold is 50% of the smallest context size among the selected
+ * threshold-purpose models.
  */
 export const CONTEXT_SIZE_THRESHOLD_RATIO = 0.5;
 
@@ -121,7 +127,10 @@ class ContextCompactionExt implements Extension {
    */
   private summaryAppliedThisStep = false;
 
-  constructor(private readonly deps: ExtensionDeps) {}
+  constructor(
+    private readonly deps: ExtensionDeps,
+    private readonly thresholdModelPurpose: ModelPurpose = 'chat',
+  ) {}
 
   onStepStart(): void {
     this.summaryAppliedThisStep = false;
@@ -130,7 +139,7 @@ class ContextCompactionExt implements Extension {
   /**
    * Computes the compaction threshold as the minimum of
    * {@link MAX_COMPACTION_THRESHOLD} and 50% of the smallest context size
-   * among all configured chat and compaction models. Falls back to
+   * among all configured threshold-purpose models. Falls back to
    * {@link FALLBACK_COMPACTION_THRESHOLD} when no models are configured.
    *
    * The result is cached for the lifetime of the extension instance.
@@ -138,7 +147,9 @@ class ContextCompactionExt implements Extension {
   private getCompactionThreshold(): number {
     if (this.cachedThreshold !== null) return this.cachedThreshold;
 
-    const modelIds = [...this.deps.config.getModelSelection('chat')];
+    const modelIds = [
+      ...this.deps.config.getModelSelection(this.thresholdModelPurpose),
+    ];
 
     if (modelIds.length === 0) {
       this.cachedThreshold = FALLBACK_COMPACTION_THRESHOLD;
@@ -186,7 +197,7 @@ class ContextCompactionExt implements Extension {
     // Collect indices of all summary messages (newest first).
     const summaryIndices: number[] = [];
     for (let i = history.length - 1; i >= 0; i--) {
-      if (history[i]!.parts.some((p) => isDataPartOf(CONTEXT_SUMMARY_KEY, p))) {
+      if (history[i]?.parts.some((p) => isDataPartOf(CONTEXT_SUMMARY_KEY, p))) {
         summaryIndices.push(i);
       }
     }
@@ -327,17 +338,18 @@ class ContextCompactionExt implements Extension {
     let span: Span | null = null;
     let success = false;
     try {
-      span = startChildSpan('context_compaction', {
+      const childSpan = startChildSpan('context_compaction', {
         attributes: {
           'compaction.lastStepInputTokens': this.lastStepInputTokens,
           'compaction.postCompactionBaseline': this.postCompactionBaseline,
           'compaction.threshold': this.getCompactionThreshold(),
         },
       });
+      span = childSpan;
 
       success = await context.with(
-        trace.setSpan(context.active(), span),
-        async () => this.runCompactionInner(span!),
+        trace.setSpan(context.active(), childSpan),
+        async () => this.runCompactionInner(childSpan),
       );
     } catch (error) {
       this.deps.logger.error(
@@ -422,9 +434,7 @@ class ContextCompactionExt implements Extension {
       return false;
     }
 
-    const transcript = serializeHistoryAsXml(slice, {
-      summaryKey: CONTEXT_SUMMARY_KEY,
-    });
+    const transcript = COMPACTION_TRANSCRIPT_VIEW.render(slice).text;
     span.setAttribute('compaction.transcriptLength', transcript.length);
 
     if (transcript.trim().length === 0) {
@@ -442,12 +452,16 @@ class ContextCompactionExt implements Extension {
     // The summary will be inserted right after it so it stays in the
     // correct position even if new messages have been appended to the
     // history while compaction was running.
-    const lastSliceMessageId = slice[slice.length - 1]!.id;
+    const lastSliceMessage = slice.at(-1);
+    if (!lastSliceMessage) {
+      throw new Error('Cannot record an empty compaction slice');
+    }
+    const lastSliceMessageId = lastSliceMessage.id;
     span.setAttribute('compaction.lastSliceMessageId', lastSliceMessageId);
 
     const result = await this.deps.generateText({
       modelIds,
-      system: compactionPrompt,
+      system: COMPACTION_SYSTEM_PROMPT,
       prompt: transcript,
     });
 
@@ -476,7 +490,7 @@ class ContextCompactionExt implements Extension {
           span.addEvent('compaction.fallback_to_chat_models_after_failure');
           const fallbackResult = await this.deps.generateText({
             modelIds: chatModelIds,
-            system: compactionPrompt,
+            system: COMPACTION_SYSTEM_PROMPT,
             prompt: transcript,
           });
 
@@ -556,9 +570,6 @@ class ContextCompactionExt implements Extension {
 }
 
 /**
- * Truncates a string to `limit` chars, appending `…` if truncated.
- */
-/**
  * Counts non-summary user and assistant messages after the given
  * index in the history. Summary messages are excluded from the
  * count because they will be stripped from the transformed result.
@@ -570,8 +581,9 @@ function countMessagesByRoleAfter(
   let userCount = 0;
   let assistantCount = 0;
   for (let i = index + 1; i < history.length; i++) {
-    const msg = history[i]!;
-    if (msg.parts.some((p) => isDataPartOf(CONTEXT_SUMMARY_KEY, p))) continue;
+    const msg = history[i];
+    if (!msg || msg.parts.some((p) => isDataPartOf(CONTEXT_SUMMARY_KEY, p)))
+      continue;
     if (msg.role === 'user') userCount++;
     else if (msg.role === 'assistant') assistantCount++;
   }
@@ -584,3 +596,13 @@ export const createContextCompactionExt: ExtensionFactory = {
   displayName: 'Context Compaction',
   create: (deps) => new ContextCompactionExt(deps),
 };
+
+/** Creates compaction with a purpose-specific context-size threshold. */
+export function createContextCompactionExtForPurpose(
+  purpose: ModelPurpose,
+): ExtensionFactory {
+  return {
+    ...createContextCompactionExt,
+    create: (deps) => new ContextCompactionExt(deps, purpose),
+  };
+}

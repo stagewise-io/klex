@@ -15,13 +15,13 @@ const EVENT_KEY = 'memory-writer-event';
 const IMAGE_KEY = 'memory-writer-image';
 const AUDIO_KEY = 'memory-writer-audio';
 
-type WriterEventData = { ndjson: string };
+type WriterEventData = { text: string };
 type WriterMediaData = { data: string; mediaType: string };
 
 class WriterInputExt implements Extension {
   dataPartTransformers: DataPartTransformers = {
     [EVENT_KEY]: dataPartTransformer<WriterEventData>((data) => [
-      { type: 'text', text: data.ndjson },
+      { type: 'text', text: data.text },
     ]),
     [IMAGE_KEY]: dataPartTransformer<WriterMediaData>((data) => [
       createFilePart(data),
@@ -39,9 +39,9 @@ export const createWriterInputExt: ExtensionFactory = {
 };
 
 export function createWriterEventPart(
-  ndjson: string,
+  text: string,
 ): ExtendedUIMessage['parts'][number] {
-  return createDataPart(EVENT_KEY, { ndjson }) as never;
+  return createDataPart(EVENT_KEY, { text }) as never;
 }
 
 export function createWriterMediaPart(

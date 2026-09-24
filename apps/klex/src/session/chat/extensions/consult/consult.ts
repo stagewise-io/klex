@@ -3,6 +3,10 @@ import { randomUUID } from 'node:crypto';
 import type { ToolSet } from 'ai';
 import z from 'zod';
 
+import {
+  createTranscriptHistoryView,
+  LINES_FORMAT_PROMPT,
+} from '@/session/chat/utils/history-view';
 import type { ChildSessionHandle } from '@/session/types';
 
 import { SessionInboxUrgency } from '../../inbox';
@@ -16,7 +20,6 @@ import {
   isDataPartOf,
   type ProvisionalStepContext,
 } from '../extension-api';
-import { CONTEXT_SUMMARY_KEY, serializeHistoryAsXml } from '../history-xml';
 import consultSystemPrompt from './consult-system-prompt.md';
 import mainSystemPrompt from './main-system-prompt.md';
 import {
@@ -30,6 +33,10 @@ import {
   sessionsPrompt,
   updatePrompt,
 } from './serializer';
+
+const CONSULT_CONTEXT_MAX_CHARACTERS = 12_000;
+const CONSULT_BASE_PROMPT = `${consultSystemPrompt.trimEnd()}\n\n${LINES_FORMAT_PROMPT}`;
+const CONSULT_DEFAULT_CONTEXT_MESSAGES = 5;
 
 const reportSchema = z.object({
   content: z
@@ -312,7 +319,7 @@ class ConsultExtension implements Extension {
         extensionIdentifier: 'consult',
         extensions: [...this.config.childExtensionFactories, reporter],
         modelPurpose: 'consult',
-        basePrompt: consultSystemPrompt,
+        basePrompt: CONSULT_BASE_PROMPT,
         hooks: {
           onTerminated: ({ sessionId, reason }) =>
             this.childTerminated(handle, generationId, sessionId, reason),
@@ -352,12 +359,12 @@ class ConsultExtension implements Extension {
 
     try {
       const history = this.deps.getHistory();
-      const serializedContext = serializeHistoryAsXml(history, {
-        includeUnknownData: false,
-        maxCharacters: 12_000,
-        recentMessageLimit: this.config.maxContextMessages ?? 5,
-        summaryKey: CONTEXT_SUMMARY_KEY,
-      });
+      const serializedContext = createTranscriptHistoryView({
+        keep: 'newest',
+        maxCharacters: CONSULT_CONTEXT_MAX_CHARACTERS,
+        recentMessageLimit:
+          this.config.maxContextMessages ?? CONSULT_DEFAULT_CONTEXT_MESSAGES,
+      }).render(history).text;
       const delivered = child.inbox.sendMessage(
         {
           id: randomUUID(),

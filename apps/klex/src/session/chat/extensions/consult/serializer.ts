@@ -1,4 +1,4 @@
-import { escapeXml } from '../history-xml';
+import { escapeXml } from '@/session/chat/utils/escape-xml';
 
 export const CONSULT_REPORT_KEY = 'consult-report';
 export const CONSULTS_KEY = 'consults';

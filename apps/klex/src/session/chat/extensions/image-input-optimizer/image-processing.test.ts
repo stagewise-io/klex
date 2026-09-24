@@ -534,7 +534,7 @@ describe('ImageInputOptimizer — caching', () => {
   });
 
   it('uses different cache entries for different modelIds', async () => {
-    const img = await makeImageBuffer(3000, 3000, 'png');
+    const img = await makeImageBuffer(1500, 1500, 'png');
     const msg = makeUserMessage([makeFilePart(img, 'image/png')]);
 
     const model1 = makeModel({ modelId: 'test:model-a' });

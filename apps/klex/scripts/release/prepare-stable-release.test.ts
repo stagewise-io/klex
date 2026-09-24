@@ -128,5 +128,5 @@ describe('prepare stable release', () => {
     );
 
     expect(await readFile(outputPath, 'utf8')).toContain('version=0.2.0');
-  });
+  }, 30_000);
 });

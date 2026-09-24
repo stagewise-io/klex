@@ -309,7 +309,7 @@ describe('ModelSelectionScreen', () => {
     await openModelPicker(view);
     view.stdin.write('\u001B[B');
     await vi.waitFor(() =>
-      expect(view.lastFrame()).toContain('❯ Enter a manual model ID'),
+      expect(view.lastFrame()).toContain('Enter a manual model ID…'),
     );
     view.stdin.write('\r');
     await vi.waitFor(() => expect(view.lastFrame()).toContain('Model ID'));

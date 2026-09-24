@@ -16,6 +16,10 @@ import type { ModuleLogger, RootLogger } from '@stagewise/logger';
 import type { Config, ModelPurpose } from '@/config';
 import type { IntrospectionScope } from '@/introspection';
 import type { Mcp } from '@/mcp';
+import type {
+  AnalyticsSessionHandle,
+  ProductAnalyticsRecorder,
+} from '@/product-analytics';
 import type { ProviderModelResolver } from '@/provider-registry';
 import type { SessionInboxEvent } from '@/session/inbox';
 import {
@@ -107,6 +111,8 @@ export interface ChatSessionDependencies {
    */
   basePrompt: string;
   telemetryMetrics?: TelemetryMetrics;
+  /** Aggregate-only product analytics; receives counts, never identity. */
+  productAnalytics?: ProductAnalyticsRecorder;
   /**
    * Span that spawned this session (child sessions only). The session root
    * span links to it so the separate child trace stays navigable from and
@@ -200,6 +206,9 @@ class ChatSessionModule implements AgentSession {
 
   private stepCount = 0;
 
+  /** Opaque aggregate counter; holds no session identity. */
+  private readonly analyticsSession: AnalyticsSessionHandle | undefined;
+
   // --- Chat usage tracking ---
 
   private latestChatUsage: Usage | null = null;
@@ -260,6 +269,7 @@ class ChatSessionModule implements AgentSession {
       /** Base system prompt; required for every session. */
       basePrompt: string;
       telemetryMetrics?: TelemetryMetrics;
+      productAnalytics?: ProductAnalyticsRecorder;
       parentSpanContext?: SpanContext;
     },
   ) {
@@ -324,6 +334,7 @@ class ChatSessionModule implements AgentSession {
       this.sessionId,
       'created',
     );
+    this.analyticsSession = this.deps.productAnalytics?.openSession();
     const sessionLogFields = sessionAttributes;
     this.deps.logger.info(
       {
@@ -454,6 +465,7 @@ class ChatSessionModule implements AgentSession {
     } catch (error) {
       this.sessionInbox.close();
       this.deps.telemetryMetrics?.unregisterSession(this.sessionId);
+      this.analyticsSession?.close();
       deps.introspectionScope.removeChild(this.sessionId);
       this.sessionSpan.recordException(
         error instanceof Error ? error : String(error),
@@ -1100,6 +1112,7 @@ class ChatSessionModule implements AgentSession {
         // Update observability counters.
         this.turnCount++;
         this.stepCount += turnResult.stepCount;
+        this.analyticsSession?.recordTurn(turnResult.stepCount);
         if (turnResult.usage) {
           this.latestChatUsage = turnResult.usage;
           this.totalChatUsage = {
@@ -1466,6 +1479,7 @@ class ChatSessionModule implements AgentSession {
             'unregistered',
           );
           this.deps.telemetryMetrics?.unregisterSession(this.sessionId);
+          this.analyticsSession?.close();
           this.deps.introspectionScope.removeChild(this.sessionId);
 
           this.deps.logger.info(
@@ -1663,6 +1677,7 @@ export function createChatSession(
     sessionContext: deps.sessionContext,
     sessionFactory: deps.sessionFactory,
     telemetryMetrics: deps.telemetryMetrics,
+    productAnalytics: deps.productAnalytics,
     modelPurpose: deps.modelPurpose,
     basePrompt: deps.basePrompt,
     parentSpanContext: deps.parentSpanContext,

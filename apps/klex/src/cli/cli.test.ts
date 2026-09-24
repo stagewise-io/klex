@@ -22,6 +22,8 @@ describe('parseCliArgs', () => {
     delete process.env.KLEX_DANGEROUS_LOCAL_ADMIN_API_PORT;
     delete process.env.KLEX_ALLOW_UNSECURE_CLOUD;
     delete process.env.KLEX_HEADLESS;
+    delete process.env.KLEX_NO_ANALYTICS;
+    delete process.env.DO_NOT_TRACK;
   });
 
   afterEach(() => {
@@ -37,6 +39,8 @@ describe('parseCliArgs', () => {
       'KLEX_DANGEROUS_LOCAL_ADMIN_API_PORT',
       'KLEX_ALLOW_UNSECURE_CLOUD',
       'KLEX_HEADLESS',
+      'KLEX_NO_ANALYTICS',
+      'DO_NOT_TRACK',
     ]) {
       if (key in originalEnv) {
         // biome-ignore lint/suspicious/noExplicitAny: restore env
@@ -45,6 +49,43 @@ describe('parseCliArgs', () => {
         delete process.env[key as keyof typeof process.env];
       }
     }
+  });
+
+  describe('analytics', () => {
+    it('is enabled by default', () => {
+      expect(parseCliArgs([]).analyticsEnabled).toBe(true);
+    });
+
+    it('is disabled by --no-analytics', () => {
+      expect(parseCliArgs(['--no-analytics']).analyticsEnabled).toBe(false);
+    });
+
+    it('is disabled by KLEX_NO_ANALYTICS=1', () => {
+      process.env.KLEX_NO_ANALYTICS = '1';
+      expect(parseCliArgs([]).analyticsEnabled).toBe(false);
+    });
+
+    it('is disabled by DO_NOT_TRACK=1', () => {
+      process.env.DO_NOT_TRACK = '1';
+      expect(parseCliArgs([]).analyticsEnabled).toBe(false);
+    });
+
+    it('ignores env values other than 1', () => {
+      process.env.KLEX_NO_ANALYTICS = '0';
+      process.env.DO_NOT_TRACK = '0';
+      expect(parseCliArgs([]).analyticsEnabled).toBe(true);
+    });
+
+    it('lets --analytics override the env opt-out', () => {
+      process.env.KLEX_NO_ANALYTICS = '1';
+      process.env.DO_NOT_TRACK = '1';
+      expect(parseCliArgs(['--analytics']).analyticsEnabled).toBe(true);
+    });
+
+    it('keeps --no-analytics off regardless of env', () => {
+      process.env.KLEX_NO_ANALYTICS = '0';
+      expect(parseCliArgs(['--no-analytics']).analyticsEnabled).toBe(false);
+    });
   });
 
   it('leaves the data directory unset for interactive discovery', () => {

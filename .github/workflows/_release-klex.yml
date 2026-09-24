@@ -44,6 +44,10 @@ on:
         required: false
       AZURE_CERTIFICATE_PROFILE_NAME:
         required: false
+      # Public PostHog project key for aggregate product analytics. Missing
+      # means the build ships with analytics inert.
+      KLEX_POSTHOG_KEY:
+        required: false
 
 permissions:
   contents: read
@@ -228,6 +232,7 @@ jobs:
           AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
           AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
           AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          KLEX_POSTHOG_KEY: ${{ secrets.KLEX_POSTHOG_KEY }}
           KLEX_RELEASE: '1'
           KLEX_RELEASE_CHANNEL: ${{ inputs.channel }}
           KLEX_VERSION: ${{ inputs.version }}

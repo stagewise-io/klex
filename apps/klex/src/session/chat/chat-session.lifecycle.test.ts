@@ -5,6 +5,7 @@ import type { RootLogger } from '@stagewise/logger';
 import type { Config } from '@/config';
 import type { IntrospectionScope } from '@/introspection';
 import type { Mcp } from '@/mcp';
+import type { ProductAnalyticsRecorder } from '@/product-analytics';
 import type {
   ChatSessionHandle,
   ChildSessionHandle,
@@ -56,6 +57,7 @@ function createSession(
   options: {
     extensions?: ExtensionFactory[];
     mcp?: Mcp | null;
+    productAnalytics?: ProductAnalyticsRecorder;
     sessionFactory?: SessionFactory;
     telemetryMetrics?: TelemetryMetrics;
   } = {},
@@ -71,8 +73,17 @@ function createSession(
     sessionContext: { kind: 'default', name: 'main', sessionId: 'default' },
     sessionFactory: options.sessionFactory,
     telemetryMetrics: options.telemetryMetrics,
+    productAnalytics: options.productAnalytics,
     basePrompt: 'You are Klex.',
   });
+}
+
+function fakeProductAnalytics() {
+  const handle = { recordTurn: vi.fn(), close: vi.fn() };
+  const recorder: ProductAnalyticsRecorder = {
+    openSession: vi.fn(() => handle),
+  };
+  return { handle, recorder };
 }
 
 function requireExtensionDeps(
@@ -146,6 +157,59 @@ describe('ChatSession lifecycle', () => {
 
     expect(unregisterSession).toHaveBeenCalledOnce();
     expect(unregisterSession).toHaveBeenCalledWith('default');
+  });
+
+  it('opens a product analytics handle and closes it on session close', async () => {
+    const analytics = fakeProductAnalytics();
+    const session = createSession({ productAnalytics: analytics.recorder });
+
+    expect(analytics.recorder.openSession).toHaveBeenCalledOnce();
+    expect(analytics.recorder.openSession).toHaveBeenCalledWith();
+    expect(analytics.handle.close).not.toHaveBeenCalled();
+
+    await session.close();
+    await session.close();
+
+    expect(analytics.handle.close).toHaveBeenCalledOnce();
+    expect(analytics.handle.recordTurn).not.toHaveBeenCalled();
+  });
+
+  it('closes the product analytics handle when an extension close rejects', async () => {
+    const analytics = fakeProductAnalytics();
+    const extension: ExtensionFactory = {
+      identifier: 'test/rejecting-close',
+      create: () => ({
+        onClose: vi.fn(async () => {
+          throw new Error('extension close failed');
+        }),
+      }),
+    };
+    const session = createSession({
+      extensions: [extension],
+      productAnalytics: analytics.recorder,
+    });
+
+    await session.close().catch(() => undefined);
+
+    expect(analytics.handle.close).toHaveBeenCalledOnce();
+  });
+
+  it('closes the product analytics handle when construction fails', () => {
+    const analytics = fakeProductAnalytics();
+    const extension: ExtensionFactory = {
+      identifier: 'test/construction-failure',
+      create: () => {
+        throw new Error('extension construction failed');
+      },
+    };
+
+    expect(() =>
+      createSession({
+        extensions: [extension],
+        productAnalytics: analytics.recorder,
+      }),
+    ).toThrow('extension construction failed');
+    expect(analytics.handle.close).toHaveBeenCalledOnce();
   });
 
   it('starts extensions and subscribes to MCP only once', async () => {

@@ -25,6 +25,11 @@ export interface CliOptions {
   telemetryEndpoint: string | undefined;
   /** Effective process-wide telemetry level. Never read from config. */
   telemetryLevel: TelemetryMode;
+  /**
+   * Aggregate-only product analytics. On by default; CLI/env only, never
+   * configurable from the UI or config.json.
+   */
+  analyticsEnabled: boolean;
   cloudEnrollToken: string | undefined;
   headless: boolean;
   dangerousLocalAdminApiPort: number | undefined;
@@ -72,6 +77,7 @@ export function parseCliArgs(argv: string[]): CliOptions {
       'telemetry-endpoint': { type: 'string' },
       'telemetry-debug': { type: 'boolean' },
       'disable-telemetry': { type: 'boolean' },
+      analytics: { type: 'boolean' },
       cloud: { type: 'boolean' },
       'cloud-enroll-token': { type: 'string' },
       'dangerous-local-admin-api-port': { type: 'string' },
@@ -133,6 +139,13 @@ export function parseCliArgs(argv: string[]): CliOptions {
   });
   const telemetryEndpoint = telemetryLevel === 'no' ? undefined : endpoint;
 
+  // CLI wins over env. --no-analytics sets values.analytics to false.
+  const analyticsEnabled =
+    values.analytics !== undefined
+      ? values.analytics
+      : process.env.KLEX_NO_ANALYTICS !== '1' &&
+        process.env.DO_NOT_TRACK !== '1';
+
   const cloudEnrollToken =
     values['cloud-enroll-token'] ?? process.env.KLEX_CLOUD_ENROLLMENT_TOKEN;
 
@@ -160,6 +173,7 @@ export function parseCliArgs(argv: string[]): CliOptions {
     cloudBaseUrl,
     telemetryEndpoint,
     telemetryLevel,
+    analyticsEnabled,
     cloudEnrollToken,
     headless,
     dangerousLocalAdminApiPort,
@@ -186,6 +200,7 @@ Options:
   --telemetry-endpoint <url>   Enable telemetry and export to this OTLP base URL (overrides KLEX_TELEMETRY_ENDPOINT; telemetry is off without it)
   --telemetry-debug            Also export chat content and PII for this process; requires an endpoint (overrides KLEX_TELEMETRY_DEBUG)
   --disable-telemetry          Force telemetry off even if an endpoint is set (overrides KLEX_DISABLE_TELEMETRY)
+  --no-analytics               Disable anonymous aggregate usage analytics (overrides KLEX_NO_ANALYTICS and DO_NOT_TRACK)
   --no-cloud                   Disable Klex Cloud connectivity (overrides KLEX_NO_CLOUD)
   --cloud                      Enable Klex Cloud connectivity (overrides KLEX_NO_CLOUD)
   --cloud-enroll-token <code>  Enrollment token for headless enrollment (overrides KLEX_CLOUD_ENROLLMENT_TOKEN)
@@ -199,6 +214,11 @@ Environment:
   KLEX_TELEMETRY_HEADERS       JSON object of extra OTLP request headers
   KLEX_TELEMETRY_DEBUG         Enable debug telemetry (chat content and PII) when set to 1; requires an endpoint
   KLEX_DISABLE_TELEMETRY       Force telemetry off when set to 1
+  KLEX_NO_ANALYTICS            Disable anonymous usage analytics when set to 1. Analytics send only
+                               aggregate counts every 2 h (sessions, turns, steps), OS and
+                               architecture, Node version, and process CPU and memory;
+                               no prompts, content, names, paths or persistent IDs
+  DO_NOT_TRACK                 Same as KLEX_NO_ANALYTICS when set to 1
   KLEX_SHUTDOWN_TIMEOUT_MS      Maximum graceful shutdown time in milliseconds (default: 15000)
 `,
   );

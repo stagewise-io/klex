@@ -87,6 +87,7 @@
     "jose": "6.2.10",
     "js-tiktoken": "1.0.21",
     "oauth4webapi": "3.8.7",
+    "posthog-node": "5.52.5",
     "quickjs-emscripten-core": "0.32.0",
     "react": "19.2.8",
     "sharp": "0.35.3",

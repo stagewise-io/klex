@@ -17,7 +17,6 @@ let contexts: BuildContext[] = [];
 let restartTimer: NodeJS.Timeout | undefined;
 let restartQueue = Promise.resolve();
 let shuttingDown = false;
-let watching = false;
 const buildSucceeded = new Map<string, boolean>();
 
 function watchPlugin(name: string): Plugin {
@@ -26,7 +25,7 @@ function watchPlugin(name: string): Plugin {
     setup(build) {
       build.onEnd((result: BuildResult) => {
         buildSucceeded.set(name, result.errors.length === 0);
-        if (watching && result.errors.length === 0) {
+        if (result.errors.length === 0) {
           scheduleRestart();
         }
       });
@@ -39,7 +38,11 @@ function scheduleRestart(): void {
     clearTimeout(restartTimer);
   }
   restartTimer = setTimeout(() => {
-    if ([...buildSucceeded.values()].every(Boolean)) {
+    // Every bundle must have built at least once and have no errors.
+    if (
+      buildSucceeded.size === contexts.length &&
+      [...buildSucceeded.values()].every(Boolean)
+    ) {
       restartQueue = restartQueue.then(restartAgent);
     }
   }, RESTART_DELAY_MS);
@@ -117,13 +120,10 @@ async function main(): Promise<void> {
     }),
   ]);
 
-  await Promise.all(contexts.map((buildContext) => buildContext.rebuild()));
-  await restartAgent();
+  // watch() runs its own initial build, whose onEnd starts the first agent.
+  // A separate rebuild() + start before it made that build restart the agent,
+  // so every dev launch started two processes.
   await Promise.all(contexts.map((buildContext) => buildContext.watch()));
-  // Enable restart-on-rebuild only AFTER watch()'s initial build completes.
-  // watch() always does an initial build even if rebuild() already ran;
-  // setting watching=true before that would trigger a spurious restart.
-  watching = true;
   console.log('Watching for changes...');
 }
 

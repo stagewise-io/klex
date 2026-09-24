@@ -70,9 +70,6 @@ export function parseCliArgs(argv: string[]): CliOptions {
       headless: { type: 'boolean', short: 'H' },
       'cloud-base-url': { type: 'string' },
       'telemetry-endpoint': { type: 'string' },
-      // Deprecated no-op: the telemetry identity is now per process. Still
-      // accepted so existing launch scripts keep working.
-      'reset-telemetry-identity': { type: 'boolean' },
       'telemetry-debug': { type: 'boolean' },
       'disable-telemetry': { type: 'boolean' },
       cloud: { type: 'boolean' },

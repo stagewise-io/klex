@@ -9,7 +9,7 @@ Every production runtime log uses the same OTLP shape: the stable human-readable
 - `service.name`: `klex`
 - `service.namespace`: `stagewise`
 - `service.version`: application version, when available
-- `service.instance.id`: random installation-scoped UUID
+- `service.instance.id`: random per-process UUID
 - `host.arch`: normalized host architecture
 - `os.type`: normalized operating-system type
 - `os.version`: normalized operating-system version
@@ -22,7 +22,7 @@ Trace, metric, and log resources additionally carry level-gated identity attribu
 - `klex.agent.name` (advanced, debug): configured agent `officialName`, captured at startup (trimmed, at most 128 characters)
 - `klex.agent.data_dir` (debug only): absolute path of the agent data directory
 
-`service.instance.id` is stored in the agent's config and is therefore already unique per agent directory at every level; use it as the stable join key and the identity attributes as human-readable labels.
+`service.instance.id` is regenerated on every start and is never persisted, so it identifies a single process run. Use it to group data from one run; use `klex.cloud.client_id` (when enrolled) or `klex.agent.name` to correlate runs of the same agent across restarts.
 
 Traces are exported only at advanced and debug. GenAI spans (`generate_content`, `execute_tool`) carry `gen_ai.agent.name` (the configured agent name, or `extension:{identifier}` for extension-initiated generations) and, when enrolled, `gen_ai.agent.id` (the cloud client id). Because traces are never exported at basic, `gen_ai.agent.name` is advanced/debug only. Advanced spans carry GenAI metadata (operation, provider, request/response model, finish reasons, token usage including cache read/creation tokens and cache ratios) but never prompt, output, system instruction, tool argument/result content, or free-text error messages. Debug spans may additionally carry that content; credential-bearing attribute names are dropped at every level.
 

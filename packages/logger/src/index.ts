@@ -210,7 +210,7 @@ const compactFormatter: LogFormatter<ILogObj> = (
 // --- canonical schema -------------------------------------------------------
 
 /**
- * Maps shorthand and legacy field names onto the shared telemetry schema:
+ * Maps shorthand field names onto the shared telemetry schema:
  * OpenTelemetry semantic-convention names where one exists (`gen_ai.*`,
  * `error.*`), otherwise the `klex.*` names also used by spans and metrics.
  */
@@ -248,18 +248,6 @@ const CANONICAL_FIELD_NAMES: Readonly<Record<string, string>> = {
   ttftMs: 'klex.time_to_first_chunk_ms',
   stepCount: 'klex.step.count',
   mcpCount: 'klex.mcp.count',
-  // Legacy dotted names kept as aliases for older call sites.
-  'code.namespace': 'klex.module',
-  'event.source': 'klex.call.source',
-  'event.outcome': 'klex.outcome',
-  'operation.name': 'klex.operation.name',
-  'provider.name': 'gen_ai.provider.name',
-  'provider.type': 'klex.model.provider_type',
-  'provider.id': 'klex.model.provider_id',
-  'gen_ai.response.finish_reason': 'gen_ai.response.finish_reasons',
-  'gen_ai.usage.cache_read_tokens': 'gen_ai.usage.cache_read.input_tokens',
-  'gen_ai.usage.cache_write_tokens': 'gen_ai.usage.cache_creation.input_tokens',
-  'gen_ai.server.time_to_first_token_ms': 'klex.time_to_first_chunk_ms',
 };
 
 /** Semantic-convention fields whose value is an array of strings. */

@@ -3,8 +3,6 @@ import { join } from 'node:path';
 import { type ToolSet, tool } from 'ai';
 import z from 'zod';
 
-import type { ModuleLogger } from '@stagewise/logger';
-
 import { createAudioInputOptimizerExt } from '@/session/chat/extensions/audio-input-optimizer';
 import { createContextCompactionExt } from '@/session/chat/extensions/context-compaction';
 import type {
@@ -16,6 +14,7 @@ import { createImageInputOptimizerExt } from '@/session/chat/extensions/image-in
 import { createNameLoaderExt } from '@/session/chat/extensions/name-loader';
 import { createSoulExt } from '@/session/chat/extensions/soul';
 import type { ExtendedUIMessage } from '@/session/chat/message-types';
+import { LINES_FORMAT_PROMPT } from '@/session/chat/utils/history-view';
 import { getExtensionIdentifier } from '@/session/chat/utils/tracing';
 import { SessionInboxUrgency } from '@/session/inbox';
 import type { ChildSessionHandle } from '@/session/types';
@@ -327,7 +326,7 @@ class EpisodicWriterOwner implements EpisodicWriter {
         createAudioInputOptimizerExt,
         createMemorizeExt(this.store),
       ],
-      basePrompt: writerPrompt,
+      basePrompt: `${writerPrompt}\n\n${LINES_FORMAT_PROMPT}`,
       modelPurpose,
     });
   }

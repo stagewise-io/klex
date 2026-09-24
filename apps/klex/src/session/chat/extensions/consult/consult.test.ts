@@ -523,7 +523,7 @@ describe('consult extension', () => {
     expect(message?.parts).toEqual([
       {
         type: 'text',
-        text: '<main-session-context>\n<history-truncated />\n<msg role="user"><summary>compressed durable context</summary></msg>\n<msg role="assistant"><text>recent finding one</text></msg>\n<msg role="user"><text>recent finding two</text></msg>\n</main-session-context>',
+        text: '<main-session-context>\n[… earlier history omitted]\n\nsummary\n¦compressed durable context\n\nyour_output\n¦recent finding one\n\nuser\n¦recent finding two\n</main-session-context>',
       },
       { type: 'text', text: 'decide plainly' },
     ]);

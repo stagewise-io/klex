@@ -8,9 +8,6 @@
   column-gap: 4rem;
   align-items: center;
 }
-.coworker-demo:has(.klex-bot-roster) > .demo-disclaimer {
-  grid-column: 1 / -1;
-}
 .klex-bot-roster {
   min-width: 0;
 }

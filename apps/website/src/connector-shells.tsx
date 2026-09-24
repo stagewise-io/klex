@@ -80,7 +80,6 @@ function ShellFrame({
       <header className="workflow-toolbar">
         <img src={connector.logoSrc} width="24" height="24" alt="" />
         <strong>{scenario.location}</strong>
-        <span>Demo</span>
       </header>
       {children}
     </>

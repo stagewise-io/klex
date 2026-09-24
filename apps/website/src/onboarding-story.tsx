@@ -14,10 +14,6 @@ function OnboardingStory() {
       <KlexBotRoster>
         {(selection) => <ConnectorPanels selection={selection} />}
       </KlexBotRoster>
-      <p className="demo-disclaimer">
-        Illustrative coworkers and workflows, not live connections. Available
-        capabilities depend on the MCP servers you connect.
-      </p>
     </section>
   );
 }

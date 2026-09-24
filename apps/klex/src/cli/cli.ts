@@ -217,11 +217,13 @@ Environment:
   KLEX_TELEMETRY_HEADERS       JSON object of extra OTLP request headers
   KLEX_TELEMETRY_DEBUG         Enable debug telemetry (chat content and PII) when set to 1; requires an endpoint
   KLEX_DISABLE_TELEMETRY       Force telemetry off when set to 1
-  KLEX_NO_ANALYTICS            Disable anonymous usage analytics when set to 1. Analytics send only
-                               aggregate counts every 2 h (sessions, turns, steps), OS and
-                               architecture, Node version, and process CPU and memory;
+  KLEX_NO_ANALYTICS            Disable anonymous usage analytics when set to 1. Analytics send one
+                               start event, then aggregate counts every 2 h (sessions, turns, steps),
+                               OS and architecture, Node version, and process CPU and memory;
                                no prompts, content, names, paths or persistent IDs
   DO_NOT_TRACK                 Same as KLEX_NO_ANALYTICS when set to 1
+  KLEX_DEPLOYMENT              Deployment label reported in analytics: self_hosted (default) or cloud;
+                               set by hosting launchers, other values are reported as other
   KLEX_SHUTDOWN_TIMEOUT_MS      Maximum graceful shutdown time in milliseconds (default: 15000)
 `,
   );

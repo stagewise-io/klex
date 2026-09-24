@@ -41,4 +41,4 @@ The HTTP request itself reveals the sender's IP address. The PostHog project mus
 
 ## Builds
 
-The PostHog project key is compiled in by `build.ts` from `KLEX_POSTHOG_KEY` (host override: `KLEX_POSTHOG_HOST`). Release and nightly workflows pass it from the `KLEX_POSTHOG_KEY` repository secret. Builds without a key, including `tsx`, vitest, CI test builds, and forks, have analytics permanently inert.
+The PostHog project key is compiled in by `build.ts` from `POSTHOG_KEY`. The optional `POSTHOG_HOST` overrides the endpoint (default `https://eu.i.posthog.com`). Release and nightly workflows pass both from the `POSTHOG_KEY` and `POSTHOG_HOST` repository variables. The project key is public by design, since it ships inside the binary, so it is a variable rather than a secret. Builds without a key, including `tsx`, vitest, CI test builds, and forks, have analytics permanently inert.

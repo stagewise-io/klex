@@ -7,3 +7,4 @@ export {
   type ProductAnalyticsRecorder,
   resolvePostHogBuildConfig,
 } from './product-analytics';
+export { type Deployment, resolveDeployment } from './schema';

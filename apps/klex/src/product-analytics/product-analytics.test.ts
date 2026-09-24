@@ -12,6 +12,11 @@ import {
 } from './product-analytics';
 import type { ResourceSample } from './runtime';
 import {
+  AGENT_STARTED_EVENT,
+  type AnalyticsEvent,
+  agentStartedPropertiesSchema,
+  resolveDeployment,
+  USAGE_WINDOW_EVENT,
   type UsageWindowProperties,
   usageWindowPropertiesSchema,
 } from './schema';
@@ -32,15 +37,19 @@ function fakeResources(): () => ResourceSample {
 }
 
 function fakeTransport(hang = false) {
+  const events: AnalyticsEvent[] = [];
+  /** Usage windows only, in send order. */
   const sent: UsageWindowProperties[] = [];
   const transport: ProductAnalyticsTransport = {
-    send: vi.fn(async (properties: UsageWindowProperties) => {
-      if (hang) return new Promise<void>(() => undefined);
-      sent.push(properties);
+    send: vi.fn(async (event: AnalyticsEvent) => {
+      if (hang) return new Promise<boolean>(() => undefined);
+      events.push(event);
+      if (event.event === USAGE_WINDOW_EVENT) sent.push(event.properties);
+      return true;
     }),
     close: vi.fn(async () => undefined),
   };
-  return { sent, transport };
+  return { events, sent, transport };
 }
 
 function deps(
@@ -53,6 +62,7 @@ function deps(
     apiKey: API_KEY,
     host: 'https://eu.i.posthog.com',
     klexVersion: '0.0.0-test',
+    deployment: 'self_hosted' as const,
     telemetryEnabledAtStart: false,
     cloudEnabled: true,
     getConnectedMcpCount: () => 2,
@@ -79,6 +89,44 @@ describe('product analytics', () => {
     vi.useRealTimers();
   });
 
+  it('sends one start event without blocking start()', async () => {
+    const fake = fakeTransport();
+    const analytics = createProductAnalytics(
+      deps(fake.transport, { deployment: 'cloud' }),
+    );
+    await analytics.start();
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(fake.events).toHaveLength(1);
+    const [started] = fake.events;
+    expect(started?.event).toBe(AGENT_STARTED_EVENT);
+    expect(Object.keys(started?.properties ?? {}).sort()).toEqual(
+      Object.keys(agentStartedPropertiesSchema.shape).sort(),
+    );
+    expect(started?.properties).toMatchObject({
+      $process_person_profile: false,
+      deployment: 'cloud',
+      klex_version: '0.0.0-test',
+      os_platform: 'linux',
+    });
+    await analytics.close();
+    // Start event first, then exactly one shutdown window.
+    expect(fake.events.map((event) => event.event)).toEqual([
+      AGENT_STARTED_EVENT,
+      USAGE_WINDOW_EVENT,
+    ]);
+  });
+
+  it('does not wait for a hanging start event in start()', async () => {
+    const fake = fakeTransport(true);
+    const analytics = createProductAnalytics(deps(fake.transport));
+    await expect(analytics.start()).resolves.toBeUndefined();
+    expect(fake.transport.send).toHaveBeenCalledTimes(1);
+    const closing = analytics.close();
+    await vi.advanceTimersByTimeAsync(SHUTDOWN_DEADLINE_MS);
+    await expect(closing).resolves.toBeUndefined();
+  });
+
   it('sends one privacy-safe event per 2 h window', async () => {
     const fake = fakeTransport();
     const analytics = createProductAnalytics(deps(fake.transport));
@@ -96,6 +144,7 @@ describe('product analytics', () => {
     );
     expect(properties).toMatchObject({
       $process_person_profile: false,
+      deployment: 'self_hosted',
       window_reason: 'interval',
       window_duration_s: WINDOW_INTERVAL_MS / 1_000,
       cloud_enrolled: true,
@@ -247,6 +296,19 @@ describe('product analytics', () => {
     await analytics.close();
     expect(options.createTransport).not.toHaveBeenCalled();
     expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it.each([
+    [undefined, 'self_hosted'],
+    ['', 'self_hosted'],
+    ['  ', 'self_hosted'],
+    ['cloud', 'cloud'],
+    [' Cloud ', 'cloud'],
+    ['self_hosted', 'self_hosted'],
+    ['acme-prod-eu', 'other'],
+    ['other', 'other'],
+  ])('resolves KLEX_DEPLOYMENT %j to %s', (value, expected) => {
+    expect(resolveDeployment(value)).toBe(expected);
   });
 
   it('provides an explicit no-op', async () => {

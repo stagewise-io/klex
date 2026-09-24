@@ -17,6 +17,11 @@ import {
   windowResources,
 } from './runtime';
 import {
+  AGENT_STARTED_EVENT,
+  AGENT_STARTED_SCHEMA_VERSION,
+  type AnalyticsEvent,
+  agentStartedPropertiesSchema,
+  type Deployment,
   USAGE_WINDOW_EVENT,
   USAGE_WINDOW_SCHEMA_VERSION,
   type UsageWindowProperties,
@@ -53,8 +58,14 @@ export function resolvePostHogBuildConfig(): {
 
 /** Delivery seam. Best effort: failures are logged, never retried. */
 export interface ProductAnalyticsTransport {
-  send(properties: UsageWindowProperties): Promise<void>;
+  /** Resolves `true` when PostHog accepted the event, `false` otherwise. */
+  send(event: AnalyticsEvent): Promise<boolean>;
   close(timeoutMs: number): Promise<void>;
+}
+
+/** Enough of the key to tell projects apart in logs. The key is public. */
+function keyPreview(apiKey: string): string {
+  return `${apiKey.slice(0, 8)}…`;
 }
 
 export interface ProductAnalyticsDependencies {
@@ -62,6 +73,7 @@ export interface ProductAnalyticsDependencies {
   apiKey: string | undefined;
   host: string;
   klexVersion: string;
+  deployment: Deployment;
   telemetryEnabledAtStart: boolean;
   cloudEnabled: boolean;
   /** Late-bound; read at interval flushes only. */
@@ -107,18 +119,32 @@ function createPostHogTransport(config: {
     requestTimeout: 10_000,
     fetchRetryCount: 2,
   });
-  // `captureImmediate` resolves even on transport failure and emits `error`.
+  // `captureImmediate` resolves even on transport failure and only emits
+  // `error`. Sends are sequential, so an error counter bracketing the call
+  // attributes the failure to it. Only the message is kept: it carries the
+  // HTTP status, never the key.
+  let errors = 0;
+  let lastError = '';
   client.on('error', (error: unknown) => {
-    config.logger.debug({ error }, 'Product analytics send failed');
+    errors++;
+    lastError = error instanceof Error ? error.message : String(error);
   });
   return {
-    send: (properties) =>
-      client.captureImmediate({
+    send: async ({ event, properties }) => {
+      const before = errors;
+      await client.captureImmediate({
         distinctId: config.distinctId,
-        event: USAGE_WINDOW_EVENT,
+        event,
         properties,
         disableGeoip: true,
-      }),
+      });
+      if (errors === before) return true;
+      config.logger.debug(
+        { event, error: lastError },
+        'Product analytics send failed',
+      );
+      return false;
+    },
     close: (timeoutMs) => client.shutdown(timeoutMs),
   };
 }
@@ -144,6 +170,8 @@ class ProductAnalyticsModule implements ProductAnalytics {
   private transport: ProductAnalyticsTransport | undefined;
   private timer: NodeJS.Timeout | undefined;
   private windowStart = 0;
+  /** In-flight start event. Never awaited by `start()`. */
+  private startedSend: Promise<void> = Promise.resolve();
   private closePromise: Promise<void> | undefined;
 
   constructor(
@@ -176,6 +204,16 @@ class ProductAnalyticsModule implements ProductAnalytics {
         void this.flush('interval');
       }, WINDOW_INTERVAL_MS);
       this.timer.unref();
+      this.logger.debug(
+        {
+          host: this.deps.host,
+          key: keyPreview(this.deps.apiKey),
+          deployment: this.deps.deployment,
+        },
+        'Product analytics enabled',
+      );
+      // Fire and forget: a slow or unreachable PostHog must not delay startup.
+      this.startedSend = this.sendStarted();
     } catch (error) {
       // Fail open: analytics must never block or crash startup.
       this.transport = undefined;
@@ -189,7 +227,9 @@ class ProductAnalyticsModule implements ProductAnalytics {
       const transport = this.transport;
       if (!transport) return;
       await withDeadline(
-        this.flush('shutdown').then(() => transport.close(1_000)),
+        this.startedSend
+          .then(() => this.flush('shutdown'))
+          .then(() => transport.close(1_000)),
         SHUTDOWN_DEADLINE_MS,
       );
     })().catch((error: unknown) => {
@@ -198,13 +238,78 @@ class ProductAnalyticsModule implements ProductAnalytics {
     return this.closePromise;
   }
 
+  private async sendStarted(): Promise<void> {
+    try {
+      const runtime = this.runtime;
+      if (!runtime) return;
+      const parsed = agentStartedPropertiesSchema.safeParse({
+        ...this.baseProperties(runtime),
+        schema_version: AGENT_STARTED_SCHEMA_VERSION,
+      });
+      if (!parsed.success) {
+        this.logDropped(AGENT_STARTED_EVENT, parsed.error.issues);
+        return;
+      }
+      await this.deliver({
+        event: AGENT_STARTED_EVENT,
+        properties: parsed.data,
+      });
+    } catch (error) {
+      this.logger.debug({ error }, 'Product analytics start event failed');
+    }
+  }
+
   private async flush(reason: WindowReason): Promise<void> {
     try {
       const properties = this.snapshot(reason);
-      if (properties) await this.transport?.send(properties);
+      if (properties) {
+        await this.deliver({ event: USAGE_WINDOW_EVENT, properties });
+      }
     } catch (error) {
       this.logger.debug({ error }, 'Product analytics flush failed');
     }
+  }
+
+  private async deliver(event: AnalyticsEvent): Promise<void> {
+    const transport = this.transport;
+    if (!transport) return;
+    if (await transport.send(event)) {
+      this.logger.debug(
+        {
+          event: event.event,
+          reason:
+            event.event === USAGE_WINDOW_EVENT
+              ? event.properties.window_reason
+              : undefined,
+        },
+        'Product analytics event sent',
+      );
+    }
+  }
+
+  private baseProperties(runtime: RuntimeInfo) {
+    return {
+      $process_person_profile: false as const,
+      klex_version: this.deps.klexVersion,
+      deployment: this.deps.deployment,
+      telemetry_enabled_at_start: this.deps.telemetryEnabledAtStart,
+      cloud_enabled: this.deps.cloudEnabled,
+      os_platform: runtime.platform,
+      os_arch: runtime.arch,
+      os_release: runtime.release,
+      node_version: runtime.nodeVersion,
+    };
+  }
+
+  private logDropped(
+    event: string,
+    issues: readonly { path: readonly PropertyKey[] }[],
+  ): void {
+    // Never send a partial event. Issue paths name keys only, not values.
+    this.logger.debug(
+      { event, issues: issues.map((issue) => issue.path.join('.')) },
+      'Product analytics event dropped by schema validation',
+    );
   }
 
   private snapshot(reason: WindowReason): UsageWindowProperties | undefined {
@@ -231,13 +336,10 @@ class ProductAnalyticsModule implements ProductAnalytics {
         : { mcp: null, enrolled: null };
 
     const parsed = usageWindowPropertiesSchema.safeParse({
-      $process_person_profile: false,
+      ...this.baseProperties(runtime),
       schema_version: USAGE_WINDOW_SCHEMA_VERSION,
-      klex_version: this.deps.klexVersion,
       window_reason: reason,
       window_duration_s: durationS,
-      telemetry_enabled_at_start: this.deps.telemetryEnabledAtStart,
-      cloud_enabled: this.deps.cloudEnabled,
       cloud_enrolled: gauges.enrolled,
       mcp_connected_count: gauges.mcp,
       sessions_active: sessions.sessionsActive,
@@ -247,10 +349,6 @@ class ProductAnalyticsModule implements ProductAnalytics {
       steps_total: sessions.stepsTotal,
       turns_per_session_max: sessions.turnsPerSessionMax,
       steps_per_session_max: sessions.stepsPerSessionMax,
-      os_platform: runtime.platform,
-      os_arch: runtime.arch,
-      os_release: runtime.release,
-      node_version: runtime.nodeVersion,
       process_uptime_s: resources.uptimeS,
       cpu_avg_pct: resources.cpuAvgPct,
       memory_rss_mb: resources.rssMb,
@@ -258,11 +356,7 @@ class ProductAnalyticsModule implements ProductAnalytics {
       memory_rss_peak_mb: resources.rssPeakMb,
     });
     if (!parsed.success) {
-      // Never send a partial event. Issue paths name keys only, not values.
-      this.logger.debug(
-        { issues: parsed.error.issues.map((issue) => issue.path.join('.')) },
-        'Product analytics window dropped by schema validation',
-      );
+      this.logDropped(USAGE_WINDOW_EVENT, parsed.error.issues);
       return undefined;
     }
     return parsed.data;
@@ -299,13 +393,17 @@ export function createDisabledProductAnalytics(): ProductAnalytics {
 export function createProductAnalytics(
   deps: ProductAnalyticsDependencies & { enabled: boolean },
 ): ProductAnalytics {
+  const logger = deps.logging.child({
+    name: 'product-analytics',
+    bindings: { module: 'product-analytics' },
+  });
   const { apiKey } = deps;
-  if (!deps.enabled || !apiKey) return createDisabledProductAnalytics();
-  return new ProductAnalyticsModule(
-    { ...deps, apiKey },
-    deps.logging.child({
-      name: 'product-analytics',
-      bindings: { module: 'product-analytics' },
-    }),
-  );
+  if (!deps.enabled || !apiKey) {
+    logger.debug(
+      { reason: deps.enabled ? 'no-key' : 'opted-out' },
+      'Product analytics disabled',
+    );
+    return createDisabledProductAnalytics();
+  }
+  return new ProductAnalyticsModule({ ...deps, apiKey }, logger);
 }

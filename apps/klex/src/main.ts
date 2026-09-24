@@ -25,6 +25,7 @@ import { createMcp } from '@/mcp';
 import { createModelCallLogger } from '@/model-call-logger';
 import {
   createProductAnalytics,
+  resolveDeployment,
   resolvePostHogBuildConfig,
 } from '@/product-analytics';
 import {
@@ -280,6 +281,8 @@ async function main(): Promise<void> {
       enabled: cli.analyticsEnabled,
       logging: logger,
       klexVersion: KLEX_VERSION,
+      // Set by the launcher (our cloud images), not by users.
+      deployment: resolveDeployment(process.env.KLEX_DEPLOYMENT),
       telemetryEnabledAtStart: cli.telemetryLevel !== 'no',
       cloudEnabled: cli.cloudEnabled,
       getConnectedMcpCount: () =>

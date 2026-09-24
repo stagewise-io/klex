@@ -42,11 +42,6 @@
 .workflow-toolbar strong {
   font-weight: 500;
 }
-.workflow-toolbar > span {
-  margin-left: auto;
-  color: #616061;
-  font-size: 0.75rem;
-}
 .workflow-content {
   padding: 1.25rem 1.5rem;
 }

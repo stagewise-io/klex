@@ -167,6 +167,28 @@ button:focus-visible {
   transform: translateY(1px);
 }
 
+.github-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.75rem;
+  height: 2.75rem;
+  margin-right: -0.75rem;
+  border-radius: var(--radius-lg);
+  color: var(--muted-foreground);
+  transition: color 160ms ease;
+}
+
+.github-link:hover {
+  color: var(--foreground);
+}
+
+.github-link:focus-visible {
+  color: var(--foreground);
+  outline: none;
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--ring) 50%, transparent);
+}
+
 main {
   min-width: 0;
   display: flex;
@@ -424,6 +446,10 @@ h1 {
   .site-nav {
     gap: 0.25rem;
     font-size: 0.75rem;
+  }
+
+  .github-link {
+    margin-right: 0;
   }
 
   .cloud-login {

@@ -105,6 +105,38 @@ h1 {
 .collaboration-chatter i:nth-child(2) {
   transform: translateY(-2px);
 }
+.containment-bot {
+  position: absolute;
+  bottom: 5%;
+  left: 50%;
+  width: 46%;
+  transform: translateX(-50%);
+}
+.containment-bot .klex-mascot,
+.containment-cage {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+.containment-cage {
+  position: absolute;
+  inset: 0;
+  overflow: visible;
+}
+.cage-bar,
+.cage-rail,
+.cage-shackle {
+  stroke: oklch(0.6 0.015 255);
+}
+.cage-rail-fill {
+  fill: oklch(0.52 0.015 255);
+}
+.cage-lock {
+  fill: oklch(0.82 0.11 85);
+}
+.cage-keyhole {
+  fill: oklch(0.42 0.04 70);
+}
 .capability-illustration {
   --capability-tilt: -5deg;
   position: absolute;
@@ -192,40 +224,18 @@ h1 {
   display: block;
   height: 1.2em;
 }
+.company-stories {
+  width: min(100%, 72rem);
+}
 .company-stories h2 {
   margin: 0 auto 2.5rem;
   text-align: center;
 }
-.company-tabs {
-  display: flex;
-  justify-content: center;
-  gap: 0.5rem;
-}
-.company-tabs button {
-  min-height: 48px;
-  padding: 0.75rem 1rem;
-  background: transparent;
-  color: var(--muted-foreground);
-  border: 1px solid transparent;
-  border-radius: 8px;
-  font: inherit;
-  cursor: pointer;
-}
-.company-tabs button:hover {
-  color: var(--foreground);
-  background: var(--muted);
-}
-.company-tabs button[aria-selected="true"] {
-  color: var(--foreground);
-  background: var(--muted);
-  border-color: var(--border);
-}
 .company-panel {
   display: grid;
-  grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr);
-  align-items: start;
+  grid-template-columns: minmax(0, 2.2fr) minmax(0, 1fr);
+  align-items: center;
   gap: 2.5rem;
-  margin-top: 2.5rem;
 }
 .company-media {
   background: var(--muted);
@@ -247,50 +257,80 @@ h1 {
 .company-copy p:last-child {
   margin-bottom: 0;
 }
-.company-read-more {
-  grid-column: 1 / -1;
-  margin: 0;
-  text-align: center;
-}
-.company-read-more [aria-disabled="true"] {
-  text-decoration: underline;
-  text-underline-offset: 0.2em;
-}
-.company-panel:focus-visible,
-.company-tabs button:focus-visible {
-  outline: 3px solid var(--ring);
-  outline-offset: 4px;
-}
 .guides h2 {
   max-width: 44rem;
 }
 .guides ul {
+  display: grid;
+  justify-items: start;
+  gap: 1.125rem;
   margin: 2rem 0 0;
-  padding-left: 1.5rem;
+  padding: 0;
   font-size: 1.125rem;
-  line-height: 1.7;
+  line-height: 1.5;
+  list-style: none;
 }
-.guides li + li {
-  margin-top: 0.75rem;
+.guides a {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  color: var(--muted-foreground);
+  text-decoration: none;
+  cursor: pointer;
+  transition: color 150ms ease-out;
+}
+.guides a::after {
+  content: "→" / "";
+  transition: transform 150ms ease-out;
+}
+.guides a:hover,
+.guides a:focus-visible {
+  color: var(--foreground);
+}
+.guides a:hover::after,
+.guides a:focus-visible::after {
+  transform: translateX(0.25rem);
+}
+.faq {
+  border-bottom: none;
 }
 .faq-items {
-  margin-top: 2rem;
-  border-top: 1px solid var(--border);
-}
-.faq-items details {
-  border-bottom: 1px solid var(--border);
+  display: grid;
+  gap: 0.25rem;
+  margin: 2rem -1rem 0;
 }
 .faq-items summary {
-  padding: 1.5rem 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.75rem 1rem;
+  border-radius: var(--radius-lg);
   color: var(--muted-foreground);
   font-size: 1.125rem;
-  font-weight: 600;
+  font-weight: 400;
   line-height: 1.5;
+  list-style: none;
   cursor: pointer;
   overflow-wrap: anywhere;
+  transition: color 150ms ease-out;
 }
-.faq-items summary::marker {
-  color: var(--muted-foreground);
+.faq-items summary::-webkit-details-marker {
+  display: none;
+}
+.faq-items summary::after {
+  flex: none;
+  width: 0.5rem;
+  height: 0.5rem;
+  margin-right: 0.25rem;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  content: "";
+  transform: translateY(-25%) rotate(45deg);
+  transition: transform 150ms ease-out;
+}
+.faq-items details[open] > summary::after {
+  transform: translateY(25%) rotate(-135deg);
 }
 .faq-items details[open] > summary,
 .faq-items summary:hover {
@@ -298,14 +338,31 @@ h1 {
 }
 .faq-items summary:focus-visible {
   color: var(--foreground);
-  outline: none;
+  outline: 3px solid color-mix(in oklab, var(--ring) 50%, transparent);
+  outline-offset: 0;
 }
 .faq-items p {
   max-width: 70ch;
   margin: 0;
-  padding-bottom: 1.5rem;
+  padding: 0 1rem 1rem;
   color: var(--muted-foreground);
   overflow-wrap: anywhere;
+}
+@media (min-width: 681px) {
+  .capabilities-reversed > article:is(:first-child, :nth-child(3)) {
+    padding-block: 1rem 11rem;
+  }
+  .capabilities-reversed > article:nth-child(2) {
+    padding-block: 11rem 1rem;
+  }
+  .capabilities-reversed .capability-illustration {
+    top: auto;
+    bottom: 0.75rem;
+  }
+  .capabilities-reversed .capability-collaboration {
+    top: 0;
+    bottom: auto;
+  }
 }
 @media (max-width: 900px) {
   .company-panel {
@@ -341,13 +398,11 @@ h1 {
   [data-capability-bot="Momo"] {
     align-self: flex-end;
   }
-  .company-tabs {
-    gap: 0;
+  .capabilities-reversed .capability-illustration {
+    margin-block: 1.5rem 0.5rem;
   }
-  .company-tabs button {
-    flex: 1;
-    padding: 0.75rem 0.4rem;
-    font-size: 0.8125rem;
+  .capabilities-reversed .capability-collaboration {
+    margin-block: 0.5rem 1.5rem;
   }
   .site-nav {
     gap: 0.75rem;

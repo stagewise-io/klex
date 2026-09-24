@@ -230,14 +230,6 @@ a {
   display: block;
   padding-top: 0.75rem;
 }
-.demo-disclaimer {
-  grid-column: 1 / -1;
-  margin: 0.875rem 0 0;
-  text-align: center;
-  color: var(--muted-foreground);
-  font-size: 0.75rem;
-  line-height: 1.6;
-}
 .google-top,
 .github-top {
   display: flex;

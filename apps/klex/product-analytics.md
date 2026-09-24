@@ -18,7 +18,7 @@ When analytics are off, Klex creates no PostHog client, starts no timers, and ma
 Klex sends four event types to PostHog EU (`https://eu.i.posthog.com`). All closed property sets are defined and strictly validated in `src/product-analytics/schema.ts`.
 
 - `klex_agent_started`: at most once per process, once an agent directory has been opened (locked, migrated, config loaded). That is headless mode with a valid `--data-dir`, or interactive mode after the user picks an agent. Quitting the picker, a missing `--data-dir` in headless mode, or a directory that fails to open sends none. It carries only the shared properties below. It is sent in the background and never delays startup. Comparing started with shutdown counts shows how many processes end without a graceful shutdown.
-- `klex_usage_window`: one per window. A window ends every 2 hours and at graceful shutdown. It adds aggregate counts and resource readings for that window. Analytics start before the agent picker, so a process that quits from the picker still sends one shutdown window.
+- `klex_usage_window`: one per window. A window ends every 2 hours and at graceful shutdown. It adds aggregate counts and resource readings for that window. Windows cover agent runtime only: the first window starts at `klex_agent_started`, so every window follows the start event of the same process (same `distinct_id`). A process that never opens an agent (picker quit, failed startup) sends no window; it may still send enrollment events.
 - `klex_enrollment_started` and `klex_enrollment_finished`: one pair per cloud enrollment flow (below).
 
 Shared by all events:

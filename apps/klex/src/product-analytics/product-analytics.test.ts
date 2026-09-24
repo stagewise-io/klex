@@ -93,14 +93,32 @@ describe('product analytics', () => {
     vi.useRealTimers();
   });
 
-  it('sends nothing on start() alone', async () => {
+  it('sends no usage window when no agent was started', async () => {
+    // Picker quit or failed startup: no window, not even at close.
     const fake = fakeTransport();
     const analytics = createProductAnalytics(deps(fake.transport));
     await analytics.start();
-    await vi.advanceTimersByTimeAsync(0);
+    expect(vi.getTimerCount()).toBe(0);
+    await vi.advanceTimersByTimeAsync(WINDOW_INTERVAL_MS);
+    await analytics.close();
     expect(fake.transport.send).not.toHaveBeenCalled();
+    expect(fake.transport.close).toHaveBeenCalledTimes(1);
+  });
+
+  it('starts the window clock at agentStarted(), not at start()', async () => {
+    const fake = fakeTransport();
+    const analytics = createProductAnalytics(deps(fake.transport));
+    await analytics.start();
+    // Time spent in the agent picker.
+    await vi.advanceTimersByTimeAsync(60_000);
+    analytics.agentStarted();
+    await vi.advanceTimersByTimeAsync(WINDOW_INTERVAL_MS);
+    expect(fake.sent).toHaveLength(1);
+    expect(fake.sent[0]?.window_duration_s).toBe(WINDOW_INTERVAL_MS / 1_000);
     await analytics.close();
     expect(fake.events.map((event) => event.event)).toEqual([
+      AGENT_STARTED_EVENT,
+      USAGE_WINDOW_EVENT,
       USAGE_WINDOW_EVENT,
     ]);
   });
@@ -146,6 +164,71 @@ describe('product analytics', () => {
     await expect(closing).resolves.toBeUndefined();
   });
 
+  it('sends the shutdown window even while an earlier send hangs', async () => {
+    const events: string[] = [];
+    const transport: ProductAnalyticsTransport = {
+      send: vi.fn(async (event: AnalyticsEvent) => {
+        if (event.event === AGENT_STARTED_EVENT) {
+          return new Promise<boolean>(() => undefined);
+        }
+        events.push(event.event);
+        return true;
+      }),
+      close: vi.fn(async () => undefined),
+    };
+    const analytics = createProductAnalytics(deps(transport));
+    await analytics.start();
+    analytics.agentStarted();
+    const closing = analytics.close();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(events).toEqual([USAGE_WINDOW_EVENT]);
+    await vi.advanceTimersByTimeAsync(SHUTDOWN_DEADLINE_MS);
+    await closing;
+  });
+
+  it('waits for an in-flight interval window at close', async () => {
+    let releaseWindow: (() => void) | undefined;
+    const delivered: string[] = [];
+    const transport: ProductAnalyticsTransport = {
+      send: vi.fn(async (event: AnalyticsEvent) => {
+        if (
+          event.event === USAGE_WINDOW_EVENT &&
+          event.properties.window_reason === 'interval'
+        ) {
+          await new Promise<void>((resolve) => {
+            releaseWindow = resolve;
+          });
+        }
+        delivered.push(
+          event.event === USAGE_WINDOW_EVENT
+            ? event.properties.window_reason
+            : event.event,
+        );
+        return true;
+      }),
+      close: vi.fn(async () => undefined),
+    };
+    const analytics = createProductAnalytics(deps(transport));
+    await analytics.start();
+    analytics.agentStarted();
+    await vi.advanceTimersByTimeAsync(WINDOW_INTERVAL_MS);
+    expect(releaseWindow).toBeDefined();
+
+    let closed = false;
+    const closing = analytics.close().then(() => {
+      closed = true;
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(closed).toBe(false);
+    expect(transport.close).not.toHaveBeenCalled();
+    releaseWindow?.();
+    await closing;
+    expect(delivered.sort()).toEqual(
+      [AGENT_STARTED_EVENT, 'interval', 'shutdown'].sort(),
+    );
+    expect(transport.close).toHaveBeenCalledTimes(1);
+  });
+
   it('ignores agentStarted() before start() and after close()', async () => {
     const fake = fakeTransport();
     const analytics = createProductAnalytics(deps(fake.transport));
@@ -154,9 +237,8 @@ describe('product analytics', () => {
     await analytics.close();
     analytics.agentStarted();
     await vi.advanceTimersByTimeAsync(0);
-    expect(fake.events.map((event) => event.event)).toEqual([
-      USAGE_WINDOW_EVENT,
-    ]);
+    expect(fake.transport.send).not.toHaveBeenCalled();
+    expect(vi.getTimerCount()).toBe(0);
   });
 
   it('tracks a successful enrollment after failed attempts', async () => {
@@ -246,14 +328,16 @@ describe('product analytics', () => {
       'agent_picker:enrolled',
       'cloud_screen:aborted',
     ]);
-    expect(fake.events.at(-1)?.event).toBe(USAGE_WINDOW_EVENT);
-    expect(fake.events).toHaveLength(5);
+    // Enrollment only, no agent: no usage window.
+    expect(fake.sent).toHaveLength(0);
+    expect(fake.events).toHaveLength(4);
   });
 
   it('sends one privacy-safe event per 2 h window', async () => {
     const fake = fakeTransport();
     const analytics = createProductAnalytics(deps(fake.transport));
     await analytics.start();
+    analytics.agentStarted();
     const session = analytics.openSession();
     session.recordTurn(3);
     session.recordTurn(1);
@@ -292,6 +376,7 @@ describe('product analytics', () => {
     const fake = fakeTransport();
     const analytics = createProductAnalytics(deps(fake.transport));
     await analytics.start();
+    analytics.agentStarted();
     analytics.openSession().recordTurn(1);
 
     const first = analytics.close();
@@ -316,6 +401,7 @@ describe('product analytics', () => {
     const fake = fakeTransport(true);
     const analytics = createProductAnalytics(deps(fake.transport));
     await analytics.start();
+    analytics.agentStarted();
 
     let closed = false;
     const closing = analytics.close().then(() => {
@@ -358,6 +444,7 @@ describe('product analytics', () => {
       deps(fake.transport, { klexVersion: '' }),
     );
     await analytics.start();
+    analytics.agentStarted();
     await vi.advanceTimersByTimeAsync(WINDOW_INTERVAL_MS);
     expect(fake.transport.send).not.toHaveBeenCalled();
     await analytics.close();
@@ -376,6 +463,7 @@ describe('product analytics', () => {
       }),
     );
     await analytics.start();
+    analytics.agentStarted();
     await vi.advanceTimersByTimeAsync(WINDOW_INTERVAL_MS);
     expect(fake.transport.send).not.toHaveBeenCalled();
     await analytics.close();
@@ -394,6 +482,7 @@ describe('product analytics', () => {
       }),
     );
     await analytics.start();
+    analytics.agentStarted();
     await vi.advanceTimersByTimeAsync(WINDOW_INTERVAL_MS);
     expect(fake.sent).toHaveLength(0);
     await vi.advanceTimersByTimeAsync(WINDOW_INTERVAL_MS);

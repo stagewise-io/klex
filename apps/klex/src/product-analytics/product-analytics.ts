@@ -127,9 +127,13 @@ export const NOOP_ENROLLMENT_TRACKER: EnrollmentTracker = Object.freeze({
 export type TrackEnrollment = (method: EnrollmentMethod) => EnrollmentTracker;
 
 export interface ProductAnalytics extends ProductAnalyticsRecorder {
-  /** Creates the client and starts the window clock. Sends nothing. */
+  /** Creates the client. Sends nothing; enrollment events work from here. */
   start(): Promise<void>;
-  /** Sends `klex_agent_started`. Once per process; later calls are ignored. */
+  /**
+   * Sends `klex_agent_started` and starts the usage-window clock. Once per
+   * process; later calls are ignored. Without it no usage window is sent, so
+   * every window follows the start event of the same process.
+   */
   agentStarted(): void;
   trackEnrollment: TrackEnrollment;
   /** Aborts open enrollment flows, then flushes the shutdown window. */
@@ -151,9 +155,10 @@ function createPostHogTransport(config: {
     fetchRetryCount: 2,
   });
   // `captureImmediate` resolves even on transport failure and only emits
-  // `error`. Sends are sequential, so an error counter bracketing the call
-  // attributes the failure to it. Only the message is kept: it carries the
-  // HTTP status, never the key.
+  // `error`. An error counter bracketing the call detects a failure. Sends can
+  // overlap, so a failure may be logged against a concurrent event too; this
+  // only affects debug logs. Only the message is kept: it carries the HTTP
+  // status, never the key.
   let errors = 0;
   let lastError = '';
   client.on('error', (error: unknown) => {
@@ -167,6 +172,8 @@ function createPostHogTransport(config: {
         distinctId: config.distinctId,
         event,
         properties,
+        // Explicit, so ordering follows capture time, not arrival order.
+        timestamp: new Date(),
         disableGeoip: true,
       });
       if (errors === before) return true;
@@ -202,7 +209,7 @@ class ProductAnalyticsModule implements ProductAnalytics {
   private timer: NodeJS.Timeout | undefined;
   private windowStart = 0;
   private agentStartedSent = false;
-  /** In-flight one-off events. Never awaited by callers; drained by close. */
+  /** In-flight sends, including interval windows. Drained by close. */
   private readonly pending = new Set<Promise<void>>();
   private readonly openFlows = new Set<EnrollmentTracker>();
   private closePromise: Promise<void> | undefined;
@@ -231,12 +238,6 @@ class ProductAnalyticsModule implements ProductAnalytics {
         logger: this.logger,
       });
       this.runtime = this.deps.runtimeInfo ?? readRuntimeInfo();
-      this.lastSample = this.sample();
-      this.windowStart = this.now();
-      this.timer = setInterval(() => {
-        void this.flush('interval');
-      }, WINDOW_INTERVAL_MS);
-      this.timer.unref();
       this.logger.debug(
         {
           host: this.deps.host,
@@ -257,6 +258,19 @@ class ProductAnalyticsModule implements ProductAnalytics {
     this.agentStartedSent = true;
     // Fire and forget: a slow or unreachable PostHog must not delay startup.
     this.background(this.sendAgentStarted());
+    try {
+      // Windows cover agent runtime only: the picker, a failed startup or a
+      // quit before any agent opened produce no usage window.
+      this.lastSample = this.sample();
+      this.windowStart = this.now();
+      this.timer = setInterval(() => {
+        this.background(this.flush('interval'));
+      }, WINDOW_INTERVAL_MS);
+      this.timer.unref();
+    } catch (error) {
+      // No baseline means `snapshot` returns nothing; analytics fail open.
+      this.logger.debug({ error }, 'Product analytics window clock failed');
+    }
   }
 
   trackEnrollment(method: EnrollmentMethod): EnrollmentTracker {
@@ -294,10 +308,14 @@ class ProductAnalyticsModule implements ProductAnalytics {
       for (const flow of [...this.openFlows]) flow.finish('aborted');
       const transport = this.transport;
       if (!transport) return;
+      // The shutdown window goes out alongside in-flight sends, not after
+      // them: a slow earlier send must not starve the final counts. Order in
+      // PostHog follows the capture timestamp, which is set at send time, so
+      // the window still sorts after its start event.
+      const sends = [...this.pending];
+      if (this.agentStartedSent) sends.push(this.flush('shutdown'));
       await withDeadline(
-        Promise.allSettled([...this.pending])
-          .then(() => this.flush('shutdown'))
-          .then(() => transport.close(1_000)),
+        Promise.allSettled(sends).then(() => transport.close(1_000)),
         SHUTDOWN_DEADLINE_MS,
       );
     })().catch((error: unknown) => {

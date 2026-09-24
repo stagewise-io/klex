@@ -4,6 +4,7 @@ import { parseArgs } from 'node:util';
 
 import { createLogger } from '@stagewise/logger';
 
+import { type Deployment, resolveDeployment } from '@/product-analytics';
 import { KLEX_VERSION } from '@/release';
 import {
   resolveTelemetryEndpoint,
@@ -30,6 +31,11 @@ export interface CliOptions {
    * configurable from the UI or config.json.
    */
   analyticsEnabled: boolean;
+  /**
+   * Deployment label reported in analytics. Resolved here so the reported
+   * value is always the one the CLI/env precedence produced.
+   */
+  deployment: Deployment;
   cloudEnrollToken: string | undefined;
   headless: boolean;
   dangerousLocalAdminApiPort: number | undefined;
@@ -81,6 +87,7 @@ export function parseCliArgs(argv: string[]): CliOptions {
       'telemetry-debug': { type: 'boolean' },
       'disable-telemetry': { type: 'boolean' },
       analytics: { type: 'boolean' },
+      deployment: { type: 'string' },
       cloud: { type: 'boolean' },
       'cloud-enroll-token': { type: 'string' },
       'dangerous-local-admin-api-port': { type: 'string' },
@@ -149,11 +156,16 @@ export function parseCliArgs(argv: string[]): CliOptions {
       : process.env.KLEX_NO_ANALYTICS !== '1' &&
         process.env.DO_NOT_TRACK !== '1';
 
+  // CLI wins over env, even when blank (blank resolves to self_hosted).
+  const deployment = resolveDeployment(
+    values.deployment ?? process.env.KLEX_DEPLOYMENT,
+  );
+
   const cloudEnrollToken =
     values['cloud-enroll-token'] ?? process.env.KLEX_CLOUD_ENROLLMENT_TOKEN;
 
-  const headless =
-    values.headless === true || process.env.KLEX_HEADLESS === '1';
+  // CLI wins over env. --no-headless sets values.headless to false.
+  const headless = values.headless ?? process.env.KLEX_HEADLESS === '1';
 
   const dangerousLocalAdminApiPort = portOrUndefined(
     values['dangerous-local-admin-api-port'] ??
@@ -177,6 +189,7 @@ export function parseCliArgs(argv: string[]): CliOptions {
     telemetryEndpoint,
     telemetryLevel,
     analyticsEnabled,
+    deployment,
     cloudEnrollToken,
     headless,
     dangerousLocalAdminApiPort,
@@ -197,6 +210,7 @@ Usage: klex [options]
 Options:
   -d, --data-dir <path>        Directory for agent data (overrides KLEX_DATA_DIR; interactive mode otherwise discovers agents under KLEX_HOME)
   -H, --headless               Run without the interactive CLI UI (overrides KLEX_HEADLESS)
+  --no-headless                Run with the interactive CLI UI (overrides KLEX_HEADLESS)
   -h, --help                   Show this help message
   --version                    Print the version and exit
   --cloud-base-url <url>       Klex Cloud API base URL (overrides KLEX_CLOUD_BASE_URL, default: https://cloud.klex.bot)
@@ -204,6 +218,8 @@ Options:
   --telemetry-debug            Also export chat content and PII for this process; requires an endpoint (overrides KLEX_TELEMETRY_DEBUG)
   --disable-telemetry          Force telemetry off even if an endpoint is set (overrides KLEX_DISABLE_TELEMETRY)
   --no-analytics               Disable anonymous aggregate usage analytics (overrides KLEX_NO_ANALYTICS and DO_NOT_TRACK)
+  --analytics                  Enable analytics even if KLEX_NO_ANALYTICS or DO_NOT_TRACK is set
+  --deployment <name>          Deployment label for analytics: self_hosted or cloud (overrides KLEX_DEPLOYMENT)
   --no-cloud                   Disable Klex Cloud connectivity (overrides KLEX_NO_CLOUD)
   --cloud                      Enable Klex Cloud connectivity (overrides KLEX_NO_CLOUD)
   --cloud-enroll-token <code>  Enrollment token for headless enrollment (overrides KLEX_CLOUD_ENROLLMENT_TOKEN)

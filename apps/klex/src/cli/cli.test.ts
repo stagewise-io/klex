@@ -24,6 +24,7 @@ describe('parseCliArgs', () => {
     delete process.env.KLEX_HEADLESS;
     delete process.env.KLEX_NO_ANALYTICS;
     delete process.env.DO_NOT_TRACK;
+    delete process.env.KLEX_DEPLOYMENT;
   });
 
   afterEach(() => {
@@ -41,6 +42,7 @@ describe('parseCliArgs', () => {
       'KLEX_HEADLESS',
       'KLEX_NO_ANALYTICS',
       'DO_NOT_TRACK',
+      'KLEX_DEPLOYMENT',
     ]) {
       if (key in originalEnv) {
         // biome-ignore lint/suspicious/noExplicitAny: restore env
@@ -283,7 +285,39 @@ describe('parseCliArgs', () => {
     });
   });
 
+  describe('deployment', () => {
+    it('defaults to self_hosted', () => {
+      expect(parseCliArgs([]).deployment).toBe('self_hosted');
+    });
+
+    it('reads KLEX_DEPLOYMENT without a CLI arg', () => {
+      process.env.KLEX_DEPLOYMENT = 'cloud';
+      expect(parseCliArgs([]).deployment).toBe('cloud');
+    });
+
+    it('--deployment overrides KLEX_DEPLOYMENT', () => {
+      process.env.KLEX_DEPLOYMENT = 'cloud';
+      expect(parseCliArgs(['--deployment', 'self_hosted']).deployment).toBe(
+        'self_hosted',
+      );
+    });
+
+    it('a blank --deployment still overrides KLEX_DEPLOYMENT', () => {
+      process.env.KLEX_DEPLOYMENT = 'cloud';
+      expect(parseCliArgs(['--deployment=']).deployment).toBe('self_hosted');
+    });
+
+    it('maps unknown CLI values to other', () => {
+      expect(parseCliArgs(['--deployment', 'acme']).deployment).toBe('other');
+    });
+  });
+
   describe('headless', () => {
+    it('--no-headless overrides KLEX_HEADLESS=1', () => {
+      process.env.KLEX_HEADLESS = '1';
+      expect(parseCliArgs(['--no-headless']).headless).toBe(false);
+    });
+
     it('defaults to false when no args or env var provided', () => {
       const result = parseCliArgs([]);
       expect(result.headless).toBe(false);

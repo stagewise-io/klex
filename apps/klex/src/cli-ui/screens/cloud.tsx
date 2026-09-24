@@ -41,6 +41,8 @@ export function CloudScreen({
   // One flow per visit to the enrollment input. Leaving the screen while it
   // is open counts as aborted.
   const enrollmentFlow = useRef<EnrollmentTracker | undefined>(undefined);
+  // Set while a request is in flight; its handler reports the outcome.
+  const enrollmentInFlight = useRef(false);
   const finishEnrollment = (
     outcome: Parameters<EnrollmentTracker['finish']>[0],
     flow = enrollmentFlow.current,
@@ -50,7 +52,9 @@ export function CloudScreen({
   };
   useEffect(
     () => () => {
-      enrollmentFlow.current?.finish('aborted');
+      if (!enrollmentInFlight.current) {
+        enrollmentFlow.current?.finish('aborted');
+      }
       enrollmentFlow.current = undefined;
     },
     [],
@@ -150,6 +154,7 @@ export function CloudScreen({
                   // Captured: the user may leave and start a new flow while
                   // this request is in flight.
                   const flow = enrollmentFlow.current;
+                  enrollmentInFlight.current = true;
                   setMode('enrolling');
                   try {
                     const result = await apiClient.enroll(enrollCode.trim());
@@ -172,6 +177,7 @@ export function CloudScreen({
                     );
                     setMode('overview');
                   } finally {
+                    enrollmentInFlight.current = false;
                     setMode('overview');
                   }
                 }}

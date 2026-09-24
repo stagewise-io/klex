@@ -76,7 +76,10 @@ import {
   otlpMinLevel,
 } from '@/telemetry-manager';
 import { createTelemetryMetrics } from '@/telemetry-metrics';
-import { createTelemetryPolicy } from '@/telemetry-policy';
+import {
+  createTelemetryPolicy,
+  TELEMETRY_EVENT_LOG_NAMES,
+} from '@/telemetry-policy';
 import {
   createIdentityResourceAttributes,
   createTelemetryResourceAttributes,
@@ -303,6 +306,7 @@ async function main(): Promise<void> {
             headers: { ...telemetryExport.headers },
             minLevel: otlpMinLevel(telemetryPolicy.getSnapshot().logThreshold),
             telemetryLevel: () => telemetryPolicy.getSnapshot().level,
+            eventsBelowMinLevel: TELEMETRY_EVENT_LOG_NAMES,
             resourceAttributes: telemetryResourceAttributes,
             dynamicResourceAttributes: identityResourceAttributes,
           },

@@ -30,7 +30,7 @@ Basic allowlisted exports contain no hostname, username, home directory, IP addr
 
 ## Discrete event logs
 
-Advanced and debug emit one structured log record for each discrete runtime event. These records are not sampled and preserve event order through their timestamps and log-record sequence. They complement sampled gauges; dashboards that need an exact transition timeline must use these logs rather than `klex.session.runtime_state`.
+Basic and advanced export logs at WARN and above; debug exports TRACE and above. Advanced and debug additionally emit one structured INFO log record for each discrete runtime event listed below; these are the only records exported below the WARN threshold at advanced. These records are not sampled and preserve event order through their timestamps and log-record sequence. They complement sampled gauges; dashboards that need an exact transition timeline must use these logs rather than `klex.session.runtime_state`.
 
 | `event.name` | Fields |
 | --- | --- |

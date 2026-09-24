@@ -104,7 +104,7 @@ class TurnModule implements Turn {
         attributes: {
           'turn.id': this.id,
           'klex.session.id': this.deps.sessionId,
-          'session.messageCount': this.deps.messages.length,
+          'klex.session.message_count': this.deps.messages.length,
         },
       },
       this.deps.sessionContext,
@@ -227,6 +227,7 @@ class TurnModule implements Turn {
             config: this.deps.config,
             turnInitialFallbackIndex,
             sessionId: this.deps.sessionId,
+            telemetryMetrics: this.deps.telemetryMetrics,
             basePrompt: this.deps.basePrompt,
           });
           this.currentStep = step;

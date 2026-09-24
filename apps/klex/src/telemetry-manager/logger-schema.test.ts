@@ -165,4 +165,83 @@ describe('runtime log schema', () => {
       );
     }
   });
+
+  it.each([
+    ['advanced', ['Session state changed', 'Disk low']],
+    ['basic', ['Disk low']],
+  ] as const)(
+    'exports WARN+ plus allowlisted INFO events at %s',
+    async (telemetryLevel, expected) => {
+      const records = await exportRecords(telemetryLevel, (logger) => {
+        const child = logger.child({ name: 'chat-session', bindings: {} });
+        child.info(
+          { event: 'session.state_changed', sessionId: 'session-1' },
+          'Session state changed',
+        );
+        child.info({ event: 'session.other' }, 'Not allowlisted');
+        child.debug({ event: 'session.state_changed' }, 'Below INFO');
+        child.info('Free-form info');
+        child.warn({ event: 'disk.low' }, 'Disk low');
+      });
+      // Basic exports no message bodies; compare event names there.
+      if (telemetryLevel === 'basic') {
+        expect(records.map((r) => attributeMap(r)['event.name'])).toEqual([
+          { stringValue: 'disk.low' },
+        ]);
+      } else {
+        expect(records.map((r) => r.body?.stringValue)).toEqual(expected);
+      }
+    },
+  );
 });
+
+interface ExportedRecord {
+  body?: { stringValue?: string };
+  attributes?: { key: string; value: Record<string, unknown> }[];
+}
+
+async function exportRecords(
+  telemetryLevel: 'basic' | 'advanced',
+  emit: (logger: RootLogger) => void,
+): Promise<ExportedRecord[]> {
+  const records: ExportedRecord[] = [];
+  const server = createServer((request, response) => {
+    const chunks: Buffer[] = [];
+    request.on('data', (chunk: Buffer) => chunks.push(chunk));
+    request.on('end', () => {
+      const payload = JSON.parse(Buffer.concat(chunks).toString('utf8')) as {
+        resourceLogs: { scopeLogs: { logRecords: ExportedRecord[] }[] }[];
+      };
+      for (const resource of payload.resourceLogs) {
+        for (const scope of resource.scopeLogs) {
+          records.push(...scope.logRecords);
+        }
+      }
+      response.writeHead(200).end();
+    });
+  });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  try {
+    const { port } = server.address() as AddressInfo;
+    const logger = createLogger({
+      name: 'klex',
+      console: false,
+      minLevel: 'TRACE',
+      otel: {
+        url: `http://127.0.0.1:${port}/v1/logs`,
+        resourceAttributes: { 'service.name': 'klex' },
+        telemetryLevel,
+        minLevel: 'WARN',
+        eventsBelowMinLevel: ['session.state_changed'],
+      },
+    });
+    loggers.push(logger);
+    emit(logger);
+    await logger.flush();
+    return records;
+  } finally {
+    await new Promise<void>((resolve, reject) =>
+      server.close((error) => (error ? reject(error) : resolve())),
+    );
+  }
+}

@@ -82,7 +82,21 @@ const CONTENT_NAME_PATTERN =
 
 export type TelemetryTraceMode = 'none' | 'coarse' | 'detailed' | 'content';
 export type TelemetryMetricDetail = 'none' | 'aggregate' | 'detailed';
-export type TelemetryLogThreshold = 'OFF' | 'WARN' | 'INFO' | 'TRACE';
+export type TelemetryLogThreshold = 'OFF' | 'WARN' | 'TRACE';
+
+/**
+ * Metadata-only discrete event records (logged at INFO) that are exported
+ * below the WARN threshold at `advanced`, so timelines and event lists keep
+ * working without exporting the full log stream.
+ */
+export const TELEMETRY_EVENT_LOG_NAMES: readonly string[] = Object.freeze([
+  'session.state_changed',
+  'session.lifecycle_changed',
+  'session.inbox_changed',
+  'operation.retried',
+  'tool.call_completed',
+  'model.call_completed',
+]);
 
 export interface TelemetryPolicySnapshot {
   readonly level: RuntimeTelemetryLevel;
@@ -112,14 +126,9 @@ function snapshotForLevel(
   const detailed = level === 'advanced' || level === 'debug';
   return Object.freeze({
     level,
-    logThreshold:
-      level === 'no'
-        ? 'OFF'
-        : level === 'basic'
-          ? 'WARN'
-          : level === 'advanced'
-            ? 'INFO'
-            : 'TRACE',
+    // Logs export warnings and above by default; only debug exports the
+    // full stream.
+    logThreshold: level === 'no' ? 'OFF' : level === 'debug' ? 'TRACE' : 'WARN',
     // Traces are a diagnostic signal: `basic` exports metrics and warnings
     // only, never spans.
     traceMode: !detailed
@@ -203,9 +212,16 @@ export function isAllowedTelemetryAttribute(
   return ADVANCED_STRING_SPAN_ATTRIBUTES.has(name) || isNonTextualValue(value);
 }
 
-/** Credential-bearing attribute names, rejected at every level. */
+/**
+ * Credential-bearing attribute names, rejected at every level. camelCase
+ * names (`accessToken`, `authHeader`) are split first so they match the same
+ * word-boundary pattern as dotted and snake_case names.
+ */
 export function isAlwaysForbiddenTelemetryAttribute(name: string): boolean {
-  return CREDENTIAL_NAME_PATTERN.test(name);
+  return (
+    CREDENTIAL_NAME_PATTERN.test(name) ||
+    CREDENTIAL_NAME_PATTERN.test(name.replace(/([a-z0-9])([A-Z])/g, '$1_$2'))
+  );
 }
 
 /** Host/user-identifying attribute names, exported only at `debug`. */

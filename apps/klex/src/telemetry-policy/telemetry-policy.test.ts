@@ -121,9 +121,23 @@ describe('telemetry policy', () => {
       'http.request.header.authorization',
       'api_key',
       'password',
+      'accessToken',
+      'authToken',
+      'clientSecret',
+      'apiKey',
     ]) {
       expect(isAlwaysForbiddenTelemetryAttribute(name)).toBe(true);
       expect(isAllowedTelemetryAttribute(name, 'debug', 'x')).toBe(false);
+    }
+  });
+
+  it('does not treat token counters as credentials', () => {
+    for (const name of [
+      'inputTokens',
+      'gen_ai.usage.input_tokens',
+      'maxTokens',
+    ]) {
+      expect(isAlwaysForbiddenTelemetryAttribute(name)).toBe(false);
     }
   });
 

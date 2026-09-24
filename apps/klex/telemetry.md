@@ -12,8 +12,8 @@ Telemetry is **off by default** and there is no default endpoint. It is configur
 Levels:
 
 - `no` (default): no OTLP logs, traces, or metrics are exported or collected.
-- `advanced` (endpoint set): lifecycle, aggregate usage, process metrics, operational span detail, bounded error diagnostics, and identity-bearing per-session metrics for active-session state, history size, tool calls, and last-call token/cache usage, with full-verbosity sanitized logs. It excludes AI content and stack traces. Session IDs, names, parent relationships, and tool names make advanced exports sensitive operational data.
-- `debug` (endpoint and explicit opt-in): adds all log levels, full structured logs, and content-enabled tracing. **Debug exports chat content, prompts, tool payloads, and other PII.** All exported log messages are best-effort sanitized for credentials, secrets, and URLs; debug additionally preserves arbitrary structured fields after recursively redacting sensitive field names. Use only with a collector you control. Passing `--telemetry-debug` without an endpoint is a startup error.
+- `advanced` (endpoint set): lifecycle, aggregate usage, process metrics, operational span detail, bounded error diagnostics, and identity-bearing per-session metrics for active-session state, history size, tool calls, and last-call token/cache usage, with sanitized WARN-and-above logs plus the discrete event logs below. It excludes AI content and stack traces. Session IDs, names, parent relationships, and tool names make advanced exports sensitive operational data.
+- `debug` (endpoint and explicit opt-in): adds all log levels (TRACE and above), full structured logs, and content-enabled tracing. **Debug exports chat content, prompts, tool payloads, and other PII.** All exported log messages are best-effort sanitized for credentials, secrets, and URLs; debug additionally preserves arbitrary structured fields after recursively redacting sensitive field names. Use only with a collector you control. Passing `--telemetry-debug` without an endpoint is a startup error.
 
 While telemetry is active, Klex shows a persistent warning naming the endpoint: a yellow banner in the interactive UI (and a framed notice on stderr in headless mode) for `advanced`, and a red, high-contrast banner for `debug`.
 
@@ -25,7 +25,7 @@ Metrics export every 30 seconds by default. Traces and logs use five-second batc
 
 Counters and histograms are recorded when events happen and observable metrics are collected at export time; the 30-second interval only controls delivery. Logs and completed spans are batched every five seconds. On shutdown, Klex stops runtime producers, explicitly force-flushes metrics and traces, then disposes providers and logs. The default shutdown budget is 15 seconds, configurable with `KLEX_SHUTDOWN_TIMEOUT_MS` from 1,000 to 120,000 ms. The budget must exceed the exporter timeout on deployments with slow or distant backends.
 
-Advanced and debug also emit structured logs for every session state transition, lifecycle event, inbox change, retry, completed tool call, and completed model call. Use these discrete events for timelines and event lists. Do not infer exact transition times from 30-second gauge samples.
+Advanced and debug also emit structured logs (INFO, exported despite the WARN threshold at advanced) for every session state transition, lifecycle event, inbox change, retry, completed tool call, and completed model call. Use these discrete events for timelines and event lists. Do not infer exact transition times from 30-second gauge samples.
 
 ## Grafana state-transition timeline
 

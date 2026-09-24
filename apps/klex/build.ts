@@ -67,9 +67,9 @@ const applicationVersion = resolveApplicationVersion();
 
 // Product analytics. An empty key compiles a build with analytics inert, which
 // is the default for local, test and fork builds. The key is never logged.
-const postHogKey = process.env.KLEX_POSTHOG_KEY?.trim() ?? '';
+const postHogKey = process.env.POSTHOG_KEY?.trim() ?? '';
 const postHogHost =
-  process.env.KLEX_POSTHOG_HOST?.trim() || 'https://eu.i.posthog.com';
+  process.env.POSTHOG_HOST?.trim() || 'https://eu.i.posthog.com';
 
 const sharedOptions: BuildOptions = {
   tsconfig: 'tsconfig.json',

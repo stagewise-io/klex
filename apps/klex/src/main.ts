@@ -24,6 +24,10 @@ import { createLogStore } from '@/log-store';
 import { createMcp } from '@/mcp';
 import { createModelCallLogger } from '@/model-call-logger';
 import {
+  createProductAnalytics,
+  resolvePostHogBuildConfig,
+} from '@/product-analytics';
+import {
   builtInProviderDefinitions,
   createProviderRegistry,
 } from '@/provider-registry';
@@ -263,10 +267,29 @@ async function main(): Promise<void> {
   let tracing: ReturnType<typeof createTracing> | undefined;
   let telemetryMetrics: ReturnType<typeof createTelemetryMetrics> | undefined;
   let runtimeCloud: CloudConnectivity | undefined;
+  let runtimeMcp: ReturnType<typeof createMcp> | undefined;
 
   try {
     await config.start();
     preRuntime.push(config);
+    // Aggregate-only product analytics. On by default, independent of the
+    // opt-in OTel telemetry. MCP and cloud are late-bound: they exist only
+    // after this point.
+    const productAnalytics = createProductAnalytics({
+      ...resolvePostHogBuildConfig(),
+      enabled: cli.analyticsEnabled,
+      logging: logger,
+      klexVersion: KLEX_VERSION,
+      telemetryEnabledAtStart: cli.telemetryLevel !== 'no',
+      cloudEnabled: cli.cloudEnabled,
+      getConnectedMcpCount: () =>
+        runtimeMcp
+          ?.getServerStatuses()
+          .filter((server) => server.status === 'connected').length,
+      getCloudEnrolled: () => runtimeCloud?.isEnrolled(),
+    });
+    await productAnalytics.start();
+    preRuntime.push(productAnalytics);
     // Telemetry is resolved from CLI/env only. Any legacy `telemetry` entry in
     // config.json is ignored. No endpoint means no exporter is ever built.
     const telemetryLevel = cli.telemetryLevel;
@@ -376,6 +399,7 @@ async function main(): Promise<void> {
       dataDirectory: cli.dataDirectory,
       cloudConnectivity,
     });
+    runtimeMcp = mcp;
     const introspector = createIntrospector({ logging: logger });
 
     const modelCallLogger = createModelCallLogger({
@@ -409,6 +433,7 @@ async function main(): Promise<void> {
       modelResolver: providerRegistry,
       dataDirectory,
       telemetryMetrics,
+      productAnalytics,
     };
 
     /**

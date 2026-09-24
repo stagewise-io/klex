@@ -65,10 +65,18 @@ const nativeShimPlugin: esbuild.Plugin = {
 
 const applicationVersion = resolveApplicationVersion();
 
+// Product analytics. An empty key compiles a build with analytics inert, which
+// is the default for local, test and fork builds. The key is never logged.
+const postHogKey = process.env.KLEX_POSTHOG_KEY?.trim() ?? '';
+const postHogHost =
+  process.env.KLEX_POSTHOG_HOST?.trim() || 'https://eu.i.posthog.com';
+
 const sharedOptions: BuildOptions = {
   tsconfig: 'tsconfig.json',
   define: {
     __KLEX_VERSION__: JSON.stringify(applicationVersion),
+    __KLEX_POSTHOG_KEY__: JSON.stringify(postHogKey),
+    __KLEX_POSTHOG_HOST__: JSON.stringify(postHogHost),
   },
   plugins: [aliasPlugin],
   bundle: true,

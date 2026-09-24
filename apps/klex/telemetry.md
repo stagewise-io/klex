@@ -2,6 +2,8 @@
 
 Telemetry is **off by default** and there is no default endpoint. It is configured only per process through CLI arguments or environment variables; it is not part of `config.json`, the settings UI, or the Admin API. Legacy `telemetry` entries in existing config files are ignored. CLI values take precedence over environment values.
 
+Aggregate product analytics are a separate, on-by-default system with their own opt-out; see [product-analytics.md](./product-analytics.md).
+
 | Setting | CLI | Environment |
 | --- | --- | --- |
 | OTLP base URL (enables telemetry) | `--telemetry-endpoint <url>` | `KLEX_TELEMETRY_ENDPOINT` |

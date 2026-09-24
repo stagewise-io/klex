@@ -23,7 +23,9 @@ Klex sends two event types to PostHog EU (`https://eu.i.posthog.com`). Both clos
 Shared by both events:
 
 - `klex_version`, `telemetry_enabled_at_start`, `cloud_enabled`, `os_platform`, `os_arch`, `os_release`, `node_version`.
-- `deployment`: `self_hosted`, `cloud`, or `other`, from `KLEX_DEPLOYMENT`. Unset or blank means `self_hosted`; any unrecognised value is sent as `other`, so free-form labels never reach PostHog. Hosting launchers such as Klex Cloud images set `KLEX_DEPLOYMENT=cloud`. Whoever launches the process controls it, so it is a label, not proof of where the process runs. It is independent of `cloud_enabled` and `cloud_enrolled`, which describe the cloud connection, not the host.
+- `deployment`: `self_hosted`, `cloud`, or `other`, from `--deployment <name>`, else `KLEX_DEPLOYMENT`. The flag wins even when blank. Unset or blank means `self_hosted`; any unrecognised value is sent as `other`, so free-form labels never reach PostHog. Hosting launchers such as Klex Cloud images set `KLEX_DEPLOYMENT=cloud`. Whoever launches the process controls it, so it is a label, not proof of where the process runs. It is independent of `cloud_enabled` and `cloud_enrolled`, which describe the cloud connection, not the host.
+
+Every CLI- or env-controlled property (`deployment`, `telemetry_enabled_at_start`, `cloud_enabled`, and whether analytics run at all) is taken from the resolved CLI options, where a flag always takes precedence over its env var. Analytics never re-read the environment, so the reported value always matches what the process uses.
 
 Only in `klex_usage_window`:
 

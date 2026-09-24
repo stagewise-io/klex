@@ -1136,7 +1136,9 @@ class ChatSessionModule implements AgentSession {
         // Track success/failure for backoff.
         if (turnResult.completeFailure) {
           this.setRuntimeState('retrying');
-          const retryReason = turnResult.fatalErrorReason ?? 'turn_failure';
+          // Fatal turns return above, so a retry is always a turn failure.
+          // Free-text error reasons must not become telemetry labels.
+          const retryReason = 'turn_failure';
           this.deps.telemetryMetrics?.recordOperationRetry(
             this.sessionId,
             'session_turn',

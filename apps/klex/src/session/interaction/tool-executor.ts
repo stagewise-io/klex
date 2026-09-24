@@ -5,6 +5,7 @@ import { z } from 'zod';
 
 import type { ModuleLogger } from '@stagewise/logger';
 
+import { isAlwaysForbiddenTelemetryAttribute } from '@/telemetry-policy';
 import type { ToolRequestContext } from '@/tool-provider';
 
 import {
@@ -40,7 +41,15 @@ function boundedToolAttribute(value: unknown): string {
     return Object.fromEntries(
       Object.entries(entry)
         .slice(0, 64)
-        .map(([key, item]) => [key, project(item, depth + 1)]),
+        .map(([key, item]) => [
+          key,
+          // Tool arguments and results are exported at `debug`, where only
+          // credentials are removed. The span processor sees this value as one
+          // JSON string, so credential-named keys are redacted here.
+          isAlwaysForbiddenTelemetryAttribute(key)
+            ? '[REDACTED]'
+            : project(item, depth + 1),
+        ]),
     );
   };
 

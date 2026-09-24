@@ -397,6 +397,32 @@ describe('ToolDispatcher — execution outcomes', () => {
     // since the throw happens before Object.assign
     expect(dispatcher.dispatchedCount).toBe(1);
   });
+
+  it('records a tool-call metric when the input is not JSON-serializable', async () => {
+    const execute = vi.fn();
+    const recordToolCall = vi.fn();
+    const dispatcher = new ToolDispatcher({
+      logger,
+      tools: makeTools(execute),
+      modelMessages: [],
+      sessionId: 'test-session-id',
+      recordToolCall,
+    });
+    const part = makeToolPart('call-1');
+    (part as { input: unknown }).input = { value: 1n };
+
+    dispatcher.onUpdate(makeAssistantMessage([part]));
+    await dispatcher.settle();
+
+    expect(execute).not.toHaveBeenCalled();
+    expect(asToolPart(part).state).toBe('output-error');
+    expect(recordToolCall).toHaveBeenCalledWith(
+      'testTool',
+      false,
+      0,
+      'invalid-input',
+    );
+  });
 });
 
 describe('ToolDispatcher — execution timeout', () => {

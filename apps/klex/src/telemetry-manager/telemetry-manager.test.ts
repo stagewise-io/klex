@@ -57,7 +57,7 @@ describe('telemetry manager', () => {
     ['no', 999, false],
     // Traces are advanced/debug only.
     ['basic', 'WARN', false],
-    ['advanced', 'INFO', true],
+    ['advanced', 'WARN', true],
     ['debug', 'TRACE', true],
   ] as const)(
     'applies the %s pipeline configuration at startup',

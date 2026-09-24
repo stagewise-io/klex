@@ -188,6 +188,13 @@ export class ToolDispatcher {
   ): Promise<void> {
     const input = normalizeJsonValue(part.input);
     if (input === undefined) {
+      // ToolExecutor never runs for this call, so record the failure here to
+      // keep tool-call metrics complete.
+      try {
+        this.deps.recordToolCall?.(toolName, false, 0, 'invalid-input');
+      } catch {
+        // Telemetry must never change the tool result.
+      }
       const terminal = {
         state: 'output-error' as const,
         errorText: 'The tool input cannot be represented as JSON.',

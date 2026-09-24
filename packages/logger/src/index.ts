@@ -5,6 +5,7 @@ import {
   type ISettings,
   type LogFormatter,
   type TLogLevelName,
+  type Transport,
   Logger as TslogLogger,
 } from 'tslog';
 import { otlpBatchBody, otlpFormat } from 'tslog/otel';
@@ -43,6 +44,12 @@ export interface OTelLoggerOptions {
    * `resourceAttributes`; the supplier owns any level gating.
    */
   dynamicResourceAttributes?: () => Record<string, unknown>;
+  /**
+   * Explicit `event.name` values exported below `minLevel` at `advanced` and
+   * `debug`. Intended for fixed, metadata-only event records; free-form logs
+   * stay subject to `minLevel`.
+   */
+  eventsBelowMinLevel?: readonly string[];
 }
 
 export interface OTelTransportControl {
@@ -630,7 +637,8 @@ function sanitizeOtelRecord(
   }
 
   const message = extractMessage(source);
-  if (message) {
+  // `basic` exports aggregate fields only; message bodies are free text.
+  if (message && level !== 'basic') {
     output[messageKey] =
       level === 'debug'
         ? sanitizeDebugOtelString(message)
@@ -644,10 +652,16 @@ function sanitizeOtelRecord(
     metadata && typeof metadata === 'object'
       ? (metadata as { name?: unknown }).name
       : undefined;
-  fields['event.name'] ??= eventName(
-    typeof loggerName === 'string' ? loggerName : undefined,
-    message,
-  );
+  const loggerNameValue =
+    typeof loggerName === 'string' ? loggerName : undefined;
+  const derivedEventName = eventName(loggerNameValue, message);
+  // At `basic`, an event name derived from the message would re-export the
+  // message text, so only explicit names survive.
+  if (level === 'basic' && fields['event.name'] === derivedEventName) {
+    fields['event.name'] = eventName(loggerNameValue, '');
+  }
+  fields['event.name'] ??=
+    level === 'basic' ? eventName(loggerNameValue, '') : derivedEventName;
   fields['logger.name'] ??=
     typeof loggerName === 'string' ? loggerName : 'klex';
 
@@ -675,6 +689,25 @@ function sanitizeOtelRecord(
   }
 
   return output as ILogObj;
+}
+
+const LOG_LEVEL_IDS: Record<string, number> = {
+  SILLY: 0,
+  TRACE: 1,
+  DEBUG: 2,
+  INFO: 3,
+  WARN: 4,
+  ERROR: 5,
+  FATAL: 6,
+};
+
+/** Exempt events are emitted at INFO; lower levels are never exempt. */
+const EXEMPT_EVENT_MIN_LEVEL_ID = LOG_LEVEL_IDS.INFO as number;
+
+function levelId(level: LogLevel | number): number {
+  return typeof level === 'number'
+    ? level
+    : (LOG_LEVEL_IDS[level.toUpperCase()] ?? 0);
 }
 
 export function attachOtelTransport(
@@ -715,14 +748,44 @@ export function attachOtelTransport(
     }
     return otlpFormatter;
   };
+  const currentLevel = (): TelemetryLogLevel =>
+    typeof options.telemetryLevel === 'function'
+      ? options.telemetryLevel()
+      : (options.telemetryLevel ?? 'basic');
+  const metadataProperty = logger.settings.meta?.property ?? '_logMeta';
+  const exemptEvents = new Set(options.eventsBelowMinLevel ?? []);
+  let minLevel: LogLevel | number | undefined =
+    'minLevel' in options ? options.minLevel : verbose ? undefined : 'INFO';
+  // tslog filters by the transport minimum before formatting. Exempt events
+  // need a lower transport minimum; `write` then applies the real threshold.
+  const transportMinLevel = (): LogLevel | number | undefined => {
+    if (exemptEvents.size === 0 || minLevel === undefined) return minLevel;
+    return Math.min(levelId(minLevel), EXEMPT_EVENT_MIN_LEVEL_ID);
+  };
+  const shouldExport = (record: ILogObj, level: TelemetryLogLevel): boolean => {
+    if (level === 'no') return false;
+    if (minLevel === undefined) return true;
+    const source = record as Record<string, unknown>;
+    const metadata = source[metadataProperty] as
+      | { logLevelId?: unknown }
+      | undefined;
+    const recordLevel =
+      typeof metadata?.logLevelId === 'number' ? metadata.logLevelId : 0;
+    if (recordLevel >= levelId(minLevel)) return true;
+    if (level !== 'advanced' && level !== 'debug') return false;
+    const name = extractFields(source, metadataProperty)?.['event.name'];
+    return (
+      typeof name === 'string' &&
+      exemptEvents.has(name) &&
+      recordLevel >= EXEMPT_EVENT_MIN_LEVEL_ID
+    );
+  };
   const transport = httpTransport<ILogObj>({
     url: options.url,
     format: (record, settings) => {
-      const metadataProperty = settings.meta?.property ?? '_logMeta';
-      const level =
-        typeof options.telemetryLevel === 'function'
-          ? options.telemetryLevel()
-          : (options.telemetryLevel ?? 'basic');
+      const level = currentLevel();
+      // `no` records are dropped in `write`; the most restrictive projection
+      // keeps the formatter total.
       return currentFormatter()(
         sanitizeOtelRecord(
           record,
@@ -741,15 +804,31 @@ export function attachOtelTransport(
     maxBufferedLines: 10_000,
     timeoutMs: 10_000,
   });
-  if ('minLevel' in options) {
-    transport.minLevel = options.minLevel;
-  } else if (!verbose) {
-    transport.minLevel = 'INFO';
-  }
-  logger.attachTransport(transport);
+  // `no` must suppress export entirely, including when the level is
+  // resolved dynamically per record.
+  const gatedTransport: Transport<ILogObj> = {
+    name: transport.name,
+    format: transport.format,
+    write: (record, line) =>
+      shouldExport(record, currentLevel())
+        ? transport.write(record, line)
+        : undefined,
+    ...(transport.flush
+      ? { flush: () => transport.flush?.() ?? Promise.resolve() }
+      : {}),
+    ...(transport[Symbol.asyncDispose]
+      ? {
+          [Symbol.asyncDispose]: () =>
+            transport[Symbol.asyncDispose]?.() ?? Promise.resolve(),
+        }
+      : {}),
+  };
+  gatedTransport.minLevel = transportMinLevel();
+  logger.attachTransport(gatedTransport);
   return {
     setMinLevel(level) {
-      transport.minLevel = level;
+      minLevel = level;
+      gatedTransport.minLevel = transportMinLevel();
     },
   };
 }

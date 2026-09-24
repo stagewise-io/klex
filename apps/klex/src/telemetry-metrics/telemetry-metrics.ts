@@ -72,6 +72,12 @@ const TOOL_ERROR_TYPES = new Set([
   'invalid-output',
   'result-too-large',
 ]);
+/** Closed set of `klex.retry.reason` values; free text never becomes a label. */
+const OPERATION_RETRY_REASONS = ['turn_failure', 'unknown'] as const;
+export type OperationRetryReason = (typeof OPERATION_RETRY_REASONS)[number];
+const OPERATION_RETRY_REASON_SET: ReadonlySet<string> = new Set(
+  OPERATION_RETRY_REASONS,
+);
 const TELEMETRY_LEVELS = ['no', 'basic', 'advanced', 'debug'] as const;
 const TELEMETRY_LEVEL_VALUES: Record<MetricsTelemetryLevel, number> = {
   no: 0,
@@ -118,7 +124,7 @@ export interface TelemetryMetrics {
   recordOperationRetry(
     sessionId: string,
     operationName?: string,
-    reason?: string,
+    reason?: OperationRetryReason,
   ): void;
   registerSession(session: SessionTelemetryState): void;
   unregisterSession(sessionId: string): void;
@@ -927,7 +933,7 @@ class TelemetryMetricsModule implements TelemetryMetrics {
   recordOperationRetry(
     sessionId: string,
     operationName = 'session_turn',
-    reason = 'unknown',
+    reason: OperationRetryReason = 'unknown',
   ): void {
     if (!this.started || !this.enabled || !isDetailedLevel(this.currentLevel()))
       return;
@@ -936,7 +942,10 @@ class TelemetryMetricsModule implements TelemetryMetrics {
       1,
       {
         'klex.operation.name': operationName,
-        'klex.retry.reason': reason,
+        // Guards untyped callers; the attribute must stay low-cardinality.
+        'klex.retry.reason': OPERATION_RETRY_REASON_SET.has(reason)
+          ? reason
+          : '_OTHER',
         ...(session ? { 'klex.session.kind': session.kind } : {}),
       },
       context.active(),

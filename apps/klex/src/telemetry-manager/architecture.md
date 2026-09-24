@@ -9,7 +9,7 @@ Klex remote telemetry has four effective levels. The persisted spelling for disa
 | Remote export and buffering | None | Enabled | Enabled | Enabled |
 | Process sampling | None | CPU/RSS 5 s, filesystem 60 s | Basic plus host capacity | Advanced |
 | Metrics | None | Aggregate health, operations, turns, steps, queues | Basic plus model/provider/session/tool/extension identity | Advanced schema |
-| Logs | None | Structured WARN+ | Structured INFO+ | Structured DEBUG+ |
+| Logs | None | Structured WARN+ | Structured WARN+ plus allowlisted INFO event records | Structured TRACE+ |
 | Traces | Non-recording | Coarse failures/operations only | Sanitized detailed topology | Detailed, content-bearing |
 | Session/model/tool/extension identifiers | None | None | Allowed | Allowed |
 | Prompts, completions, messages, tool arguments/results | None | Never | Never | Explicitly allowed |

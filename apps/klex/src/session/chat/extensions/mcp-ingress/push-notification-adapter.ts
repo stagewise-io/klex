@@ -1,7 +1,6 @@
 import type { McpPushNotification } from '@/mcp';
 import {
   type ContextDataUIPart,
-  type ContextMetadataValue,
   type SessionInboxEvent,
   SessionInboxUrgency,
 } from '@/session/inbox';
@@ -11,7 +10,8 @@ import {
  * can be fed into a session inbox.
  *
  * - `sourceEnv` ← MCP namespace
- * - `metadata`  ← event source ID, type, timestamp, and structured event data
+ * - `metadata`  ← event source ID, type, timestamp, `resourceLink` URI (when
+ *                 set), and structured event data
  * - `content`   ← ordered MCP content blocks (text, image, audio,
  *                 resource_link, resource), mapped 1:1
  *
@@ -72,6 +72,7 @@ export function mcpPushNotificationToInboxEvent(
     sourceId: event.sourceId,
     type: event.type,
     createdAt: event.createdAt,
+    ...(event.resourceLink ? { resourceLink: event.resourceLink.uri } : {}),
   };
 
   return {

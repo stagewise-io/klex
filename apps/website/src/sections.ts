@@ -169,8 +169,8 @@ export const sectionsMarkup = `
 </section>
   <section class="capabilities capabilities-reversed content-section" data-capability-theme="hosting" aria-label="Klex Bot hosting and safety">
 <article><h2>Klex Bots are <strong>Open-Source</strong> and can be <strong>self-hosted.</strong></h2><p>If you want to keep your Klex Bot's data, you can self-host it and connect it to the cloud. Read more about it <a href="https://docs.klex.bot">here.</a></p>${capabilityIllustration('Harry', true)}</article>
-<article>${containmentIllustration()}<h2>Klex-Bots <strong>are safe to run</strong> on any machine.</h2><p>Klex Bots don't have access to the machines they're running on. Every action they take flow through tools and connectors that you monitor and control.</p></article>
-<article><h2>Klex-Bots <strong>won't break</strong> on an update.</h2><p>A Klex Bot doesn't have access to the machine that it's running on. Every potential impact happens via configured tools and connectors.</p>${capabilityIllustration('Momo', true)}</article>
+<article>${containmentIllustration()}<h2>Klex Bots <strong>are safe to run</strong> on any machine.</h2><p>Klex Bots don't have access to the machines they're running on. Every action they take flows through connectors that you monitor and control. Including every MCP and machine.</p></article>
+<article><h2>Klex Bots <strong>won't break</strong> on an update.</h2><p>A Klex Bot doesn't have access to the machine that it's running on. Every potential impact happens via configured tools and connectors.</p>${capabilityIllustration('Momo', true)}</article>
   </section>
   <section class="guides content-section" aria-labelledby="guides-title">
     <h2 id="guides-title">How to operate a Bot-Native Company yourself</h2>

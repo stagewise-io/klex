@@ -199,6 +199,7 @@ describe('ProvidersScreen', () => {
       );
       expect(view.lastFrame()).toContain('╭');
     });
+    await new Promise((resolve) => setTimeout(resolve, 0));
     await typeText(view, 'secret');
     await vi.waitFor(() => expect(view.lastFrame()).toContain('******'));
     expect(view.lastFrame()).not.toContain('secret');
@@ -302,12 +303,33 @@ describe('ProvidersScreen', () => {
     view.unmount();
   });
 
-  it('opens provider details without presenting a removal blocker as an action result', async () => {
+  it('tests provider connectivity and reports latency', async () => {
     const testProvider = vi.fn().mockResolvedValue({
       latencyMs: 42,
-      target: 'https://models.example.test',
+      target: 'vertex.googleapis.com',
     });
-    const view = renderScreen(makeClient([provider(false)], { testProvider }));
+    const view = renderScreen(makeClient([provider()], { testProvider }));
+    await vi.waitFor(() => expect(view.lastFrame()).toContain('test-primary'));
+    view.stdin.write('\r');
+    await vi.waitFor(() =>
+      expect(view.lastFrame()).toContain('❯ Edit settings'),
+    );
+    view.stdin.write('\u001B[B');
+    await vi.waitFor(() =>
+      expect(view.lastFrame()).toContain('❯ Test connectivity'),
+    );
+    view.stdin.write('\r');
+    await vi.waitFor(() =>
+      expect(view.lastFrame()).toContain(
+        'Connected in 42ms — vertex.googleapis.com',
+      ),
+    );
+    expect(testProvider).toHaveBeenCalledWith('test-primary');
+    view.unmount();
+  });
+
+  it('opens provider details without presenting a removal blocker as an action result', async () => {
+    const view = renderScreen(makeClient([provider(false)]));
     await vi.waitFor(() => expect(view.lastFrame()).toContain('test-primary'));
     view.stdin.write('\r');
     await vi.waitFor(() => {
@@ -318,15 +340,6 @@ describe('ProvidersScreen', () => {
       expect(view.lastFrame()).not.toContain(
         'Remove it from model selection first.',
       );
-    });
-    view.stdin.write('\u001B[B');
-    await vi.waitFor(() =>
-      expect(view.lastFrame()).toContain('❯ Test connectivity'),
-    );
-    view.stdin.write('\r');
-    await vi.waitFor(() => {
-      expect(testProvider).toHaveBeenCalledWith('test-primary');
-      expect(view.lastFrame()).toContain('Connected in 42ms');
     });
     view.unmount();
   });

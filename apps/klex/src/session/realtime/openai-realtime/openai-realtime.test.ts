@@ -929,7 +929,12 @@ describe('OpenAI realtime processor', () => {
       event: inboxEvent,
       requestResponse: true,
     });
-    await flush(20);
+    await vi.waitFor(
+      () => {
+        expect(sockets).toHaveLength(2);
+      },
+      { timeout: 1_000, interval: 5 },
+    );
     const replacement = sockets[1];
     if (!replacement) throw new Error('replacement socket was never created');
     replacement.open();

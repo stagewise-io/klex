@@ -1,0 +1,39 @@
+.klex-bot-roster {
+  position: relative;
+  width: 100%;
+  min-width: 0;
+  height: 48rem;
+}
+.klex-bot-slot {
+  position: absolute;
+  width: 17rem;
+  height: 20rem;
+  display: grid;
+  align-items: center;
+  left: calc((100% - 17rem) / 2);
+  top: 14rem;
+}
+.klex-bot-slot:has(:focus-within) {
+  z-index: 2;
+}
+.klex-bot-roster-status {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+@media (max-width: 680px) {
+  .klex-bot-roster {
+    display: grid;
+    justify-items: center;
+    gap: 2rem;
+    height: auto;
+  }
+  .klex-bot-roster .klex-bot-slot {
+    position: static;
+    transform: none !important;
+    width: min(100%, 20rem);
+  }
+}

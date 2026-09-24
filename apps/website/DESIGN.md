@@ -246,6 +246,10 @@ Navigation is typography-led and minimal. Use Geist for labels, semantic text co
 
 The status pattern pairs a small circular signal with a compact uppercase-style label. The signal may use a restrained halo, but it should remain secondary to the page's primary message.
 
+### Klex Bot Card
+
+The Figma bot-card reference governs this prototype: inactive cards place the mascot left of a name, role at acme Inc., and small overlapping circular connector necklace. Active cards expand into a centered name/title, large mascot, larger necklace, and identity below. Google, GitHub, and Slack use crisp brand marks on white circles. White mascot eyes and no ground shadow match the reference; pink, coral, and pale blue distinguish the illustrative coworkers. Fraunces labels use a reference-specific 1.375rem compact and 1.75rem expanded scale. A soft offset shadow signals connector preview. Hover/focus preview remains separate from click/Enter/Space activation, with visible focus rings, pressed states, status announcements, and reduced-motion support. The shared four-bot roster places the active bot at the left center of an orbit, with three compact coworkers above, right, and below. Jonathan starts active; activation transfers exclusively on click or Enter/Space. Blue classic, pink diamond, pale-blue circle, and coral box forms have distinct finite bob, wobble, tilt, and blink gestures. The group has 4rem separation from the connector panels; below 1200px the zones stack, and at 680px the cards stack in stable DOM order. The development demo route shares the same roster.
+
 ## Do's and Don'ts
 
 ### Do:

@@ -1,0 +1,69 @@
+.bot-card-demo {
+  max-width: 48rem;
+  padding: 3rem 1rem;
+  margin: auto;
+  display: grid;
+  justify-items: center;
+  gap: 2rem;
+}
+.bot-card-demo header {
+  text-align: center;
+  max-width: 36rem;
+}
+.bot-card-demo header img {
+  display: inline-block;
+}
+.bot-card-demo h1 {
+  font:
+    500 2.5rem / 1.15 "Fraunces",
+    Georgia,
+    serif;
+  margin: 2rem 0 1rem;
+}
+.bot-card-demo header p,
+.bot-card-demo footer {
+  color: var(--muted-foreground);
+  line-height: 1.6;
+}
+.bot-card-demo-controls {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 1rem;
+  font-size: 0.875rem;
+}
+.bot-card-demo-controls button {
+  padding: 0.5rem 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  cursor: pointer;
+}
+.bot-card-demo-controls button:hover {
+  background: var(--muted);
+}
+.bot-card-demo :is(a, button):focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 5px;
+}
+.bot-card-demo footer {
+  font-size: 0.75rem;
+  text-align: center;
+}
+.bot-card-demo footer a {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.bot-card-demo-roster {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
+  gap: 3rem;
+  width: 100%;
+}
+@media (max-width: 680px) {
+  .bot-card-demo-roster {
+    grid-template-columns: minmax(0, 1fr);
+    justify-items: center;
+  }
+}

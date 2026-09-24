@@ -121,3 +121,59 @@ export const BODY_SHAPES = [
     ],
   },
 ] as const satisfies readonly BodyShape[];
+
+export const FAMILY_SHAPES = {
+  classic: BODY_SHAPES[0],
+  box: {
+    id: 'box',
+    name: 'Box',
+    eyeX: -5,
+    eyeY: 67,
+    outline: [
+      [34, 28],
+      [48, 28],
+      [112, 28],
+      [126, 28],
+      [126, 42],
+      [126, 110],
+      [126, 124],
+      [112, 124],
+      [48, 124],
+      [34, 124],
+      [34, 110],
+      [34, 42],
+    ],
+  },
+  circle: {
+    id: 'circle',
+    name: 'Circle',
+    eyeX: 0,
+    eyeY: 70,
+    outline: Array.from({ length: 24 }, (_, i): readonly [number, number] => {
+      const angle = (i * Math.PI) / 12;
+      return [80 + Math.cos(angle) * 53, 75 + Math.sin(angle) * 53];
+    }),
+  },
+  diamond: {
+    id: 'diamond',
+    name: 'Diamond',
+    eyeX: 0,
+    eyeY: 73,
+    outline: [
+      [80, 14],
+      [94, 32],
+      [132, 72],
+      [139, 80],
+      [127, 91],
+      [91, 124],
+      [80, 134],
+      [69, 124],
+      [33, 91],
+      [21, 80],
+      [28, 72],
+      [66, 32],
+    ],
+  },
+} as const satisfies Record<string, BodyShape>;
+
+export type MascotForm = keyof typeof FAMILY_SHAPES;

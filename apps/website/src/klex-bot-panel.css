@@ -1,0 +1,29 @@
+.coworker-demo:has(.klex-bot-roster) {
+  position: relative;
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(96rem, calc(100vw - 3rem));
+  margin-top: 3rem;
+  grid-template-columns: 35rem minmax(0, 1fr);
+  column-gap: 4rem;
+  align-items: center;
+}
+.coworker-demo:has(.klex-bot-roster) > .demo-disclaimer {
+  grid-column: 1 / -1;
+}
+.klex-bot-roster {
+  min-width: 0;
+}
+@media (max-width: 1199px) {
+  .coworker-demo:has(.klex-bot-roster) {
+    left: auto;
+    transform: none;
+    grid-template-columns: minmax(0, 1fr);
+    width: min(100%, 55rem);
+  }
+  .klex-bot-roster {
+    width: min(100%, 35rem);
+    justify-self: center;
+    margin-bottom: 1rem;
+  }
+}

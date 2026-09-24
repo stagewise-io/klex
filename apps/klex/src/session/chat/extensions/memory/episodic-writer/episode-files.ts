@@ -7,6 +7,8 @@ import {
 } from 'node:fs/promises';
 import { join } from 'node:path';
 
+import { parseEpisodeEntries } from '@/session/chat/extensions/memory/retrieval';
+
 export interface MemoryEntry {
   data: string;
   time: string;
@@ -144,12 +146,12 @@ export class EpisodeStore {
     }
     for (const filename of filenames) {
       if (!EPISODE_FILE_PATTERN.test(filename)) continue;
+      const relativeFile = `${date}/${filename}`;
       const content = await readFile(join(directory, filename), 'utf-8');
-      for (const line of content.split('\n')) {
-        const match = /^- (\d{2}:\d{2}): (.+)$/.exec(line);
-        if (!match?.[1] || !match[2]) continue;
+      for (const entry of parseEpisodeEntries(content, relativeFile)) {
+        const time = entry.occurredAt.slice(11, 16);
         this.dailyFingerprints.add(
-          `${match[1]}: ${normalizeMemoryData(match[2])}`,
+          `${time}: ${normalizeMemoryData(entry.text)}`,
         );
       }
     }

@@ -11,7 +11,47 @@ import {
 } from '../extension-api';
 import { createMemoryExt } from './memory';
 
+vi.mock('@/local-data', () => ({
+  inspectSqliteStore: vi.fn().mockResolvedValue({
+    legacy: false,
+    metadata: {
+      store: 'episodic-search-index',
+      schemaVersion: 1,
+      compatibilityVersion: 1,
+      minimumKlexVersion: '0.9.2',
+      writtenByKlexVersion: 'test',
+    },
+  }),
+  initializeSqliteStore: vi.fn().mockResolvedValue(undefined),
+  migrateSqliteStore: vi.fn().mockResolvedValue(undefined),
+}));
 vi.mock('../time/system-prompt.md', () => ({ default: 'Time.' }));
+vi.mock('./retrieval/retrieval-prompt.md', () => ({
+  default: 'Retrieve memory.',
+}));
+vi.mock('./system-prompt-part.md', () => ({
+  default: 'Memory system prompt.',
+}));
+vi.mock('./retrieval/search-index', async () => {
+  const actual = await vi.importActual<
+    typeof import('./retrieval/search-index')
+  >('./retrieval/search-index');
+  return {
+    ...actual,
+    EpisodicSearchIndex: vi.fn(function MockEpisodicSearchIndex() {
+      return {
+        start: vi.fn().mockResolvedValue(undefined),
+        close: vi.fn().mockResolvedValue(undefined),
+        getStatus: vi.fn().mockReturnValue('ready'),
+        getState: vi.fn().mockReturnValue({
+          status: 'ready',
+          lastReconciledAt: null,
+        }),
+        clearOwner: vi.fn(),
+      };
+    }),
+  };
+});
 vi.mock('../soul/system-prompt-part/no-soul-god.md', () => ({
   default: 'No soul.',
 }));
@@ -97,6 +137,7 @@ function compactionMessage(id: string): ExtendedUIMessage {
 function createChild(
   options: {
     sendMessage?: ChildSessionHandle['inbox']['sendMessage'];
+    sessionId?: string;
     waitForIdle?: ChildSessionHandle['waitForIdle'];
   } = {},
 ): ChildSessionHandle {
@@ -106,7 +147,7 @@ function createChild(
     close: vi.fn(),
   };
   return {
-    sessionId: 'writer',
+    sessionId: options.sessionId ?? 'writer',
     inbox,
     getMessages: vi.fn(() => []),
     getSessionInfo: vi.fn(() => ({
@@ -157,6 +198,7 @@ function createHarness(
   extension: Extension;
   history: ExtendedUIMessage[];
   child: ChildSessionHandle;
+  retrievalChild: ChildSessionHandle;
   createChildSession: ExtensionDeps['createChildSession'];
   logger: {
     debug: ReturnType<typeof vi.fn>;
@@ -167,8 +209,10 @@ function createHarness(
 } {
   const history = options.history ?? [];
   const child = options.child ?? createChild();
+  const retrievalChild = createChild({ sessionId: 'retrieval' });
   const createChildSession =
-    options.createChildSession ?? vi.fn(async () => child);
+    options.createChildSession ??
+    vi.fn().mockResolvedValueOnce(child).mockResolvedValue(retrievalChild);
   const logger = {
     trace: vi.fn(),
     debug: vi.fn(),
@@ -199,6 +243,7 @@ function createHarness(
     extension: createMemoryExt({ timezone: 'UTC' }).create(deps),
     history,
     child,
+    retrievalChild,
     createChildSession,
     logger,
   };
@@ -232,13 +277,22 @@ describe('memory extension', () => {
 
     await extension.onStart?.();
 
-    expect(createChildSession).toHaveBeenCalledOnce();
-    expect(createChildSession).toHaveBeenCalledWith(
+    expect(createChildSession).toHaveBeenCalledTimes(2);
+    expect(createChildSession).toHaveBeenNthCalledWith(
+      1,
       expect.objectContaining({
         basePrompt: expect.stringContaining('episodic memory writer'),
         modelPurpose: 'memory',
       }),
     );
+    expect(createChildSession).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        basePrompt: expect.stringContaining('Retrieve memory.'),
+        modelPurpose: 'memory',
+      }),
+    );
+    expect(extension.getTools?.({} as never)).toHaveProperty('recall');
   });
 
   it('logs and rethrows writer startup failure', async () => {
@@ -370,7 +424,7 @@ describe('memory extension', () => {
           expect.objectContaining({
             type: 'data-memory-writer-event',
             data: {
-              ndjson: expect.stringMatching(
+              text: expect.stringMatching(
                 /^(?![\s\S]*<\/?main_session_context>)[\s\S]*important work[\s\S]*$/,
               ),
             },
@@ -416,7 +470,7 @@ describe('memory extension', () => {
     await extension.onStepStart?.();
     await vi.advanceTimersByTimeAsync(1);
 
-    expect(createChildSession).toHaveBeenCalledOnce();
+    expect(createChildSession).toHaveBeenCalledTimes(2);
   });
 
   it('resets writer context on idle even without pending history', async () => {
@@ -428,7 +482,7 @@ describe('memory extension', () => {
 
     expect(child.waitForIdle).toHaveBeenCalled();
     expect(child.close).toHaveBeenCalledOnce();
-    expect(createChildSession).toHaveBeenCalledTimes(2);
+    expect(createChildSession).toHaveBeenCalledTimes(3);
   });
 
   it('does not resend the same delta on repeated completion hooks', async () => {
@@ -458,6 +512,47 @@ describe('memory extension', () => {
     expect(child.inbox.sendMessage).toHaveBeenCalledOnce();
     expect(waitForIdle).toHaveBeenCalledWith(25_000);
     expect(child.close).toHaveBeenCalledOnce();
+  });
+
+  it('streams each new delta to the retrieval child exactly once', async () => {
+    const history = [contextMessage([{ type: 'text', text: 'hello' }], 'u0')];
+    const { extension, retrievalChild } = createHarness({ history });
+    await extension.onStart?.();
+    const observations = vi.mocked(retrievalChild.inbox.sendMessage);
+
+    extension.onStepStart?.();
+    expect(observations).toHaveBeenCalledOnce();
+    expect(observations.mock.calls[0]?.[0].parts[0]).toMatchObject({
+      type: 'text',
+      text: expect.stringMatching(/^<observation>[\s\S]*hello/u),
+    });
+
+    await extension.onStepComplete?.(completedStep);
+    expect(observations).toHaveBeenCalledOnce();
+
+    history.push(textMessage('assistant', 'a1', 'reply'));
+    await extension.onStepComplete?.(completedStep);
+    expect(observations).toHaveBeenCalledOnce();
+    expect(state(extension).lastObservedMessageId).toBe('a1');
+
+    history.push(contextMessage([{ type: 'text', text: 'again' }], 'u1'));
+    extension.onStepStart?.();
+    expect(observations).toHaveBeenCalledTimes(2);
+    expect(JSON.stringify(observations.mock.calls[1])).not.toContain('hello');
+  });
+
+  it('keeps the observation cursor independent of the writer cursor', async () => {
+    const history = [contextMessage([{ type: 'text', text: 'x' }], 'u0')];
+    const { extension, child } = createHarness({ history });
+    await extension.onStart?.();
+
+    extension.onStepStart?.();
+
+    expect(state(extension)).toMatchObject({
+      lastObservedMessageId: 'u0',
+      lastProcessedMessageId: null,
+    });
+    expect(child.inbox.sendMessage).not.toHaveBeenCalled();
   });
 
   it('logs busy buffered work and still force-closes the writer', async () => {

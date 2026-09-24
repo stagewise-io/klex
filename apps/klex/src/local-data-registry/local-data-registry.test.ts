@@ -1,8 +1,55 @@
 import { describe, expect, it, vi } from 'vitest';
 
+// Store definitions come from extension barrels; stub their prompt imports.
 vi.mock('@/session/chat/extensions/todos/system-prompt.md', () => ({
   default: '',
 }));
+vi.mock('@/session/chat/extensions/time/system-prompt.md', () => ({
+  default: '',
+}));
+vi.mock('@/session/chat/extensions/memory/system-prompt-part.md', () => ({
+  default: '',
+}));
+vi.mock(
+  '@/session/chat/extensions/memory/retrieval/retrieval-prompt.md',
+  () => ({ default: '' }),
+);
+vi.mock(
+  '@/session/chat/extensions/memory/episodic-writer/writer-prompt.md',
+  () => ({ default: '' }),
+);
+vi.mock(
+  '@/session/chat/extensions/soul/system-prompt-part/no-soul-god.md',
+  () => ({ default: '' }),
+);
+vi.mock(
+  '@/session/chat/extensions/soul/system-prompt-part/no-soul-regular.md',
+  () => ({ default: '' }),
+);
+vi.mock(
+  '@/session/chat/extensions/soul/update-soul-tool-description.md',
+  () => ({ default: '' }),
+);
+vi.mock(
+  '@/session/chat/extensions/audio-input-optimizer/audio-system-prompt.md',
+  () => ({ default: '' }),
+);
+vi.mock(
+  '@/session/chat/extensions/audio-input-optimizer/audio-tool-system-prompt.md',
+  () => ({ default: '' }),
+);
+vi.mock(
+  '@/session/chat/extensions/image-input-optimizer/vision-system-prompt.md',
+  () => ({ default: '' }),
+);
+vi.mock(
+  '@/session/chat/extensions/image-input-optimizer/vision-tool-system-prompt.md',
+  () => ({ default: '' }),
+);
+vi.mock(
+  '@/session/chat/extensions/context-compaction/compaction-prompt.md',
+  () => ({ default: '' }),
+);
 
 import { validateLocalDataRegistry } from '@/local-data';
 
@@ -17,6 +64,7 @@ describe('Klex local-data registry', () => {
       'cloud-identity-metadata',
       'cloud-enrollment',
       'todos-extension-todos',
+      'episodic-search-index',
     ]);
   });
 

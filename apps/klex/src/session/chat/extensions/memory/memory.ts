@@ -1,5 +1,9 @@
 import { randomUUID } from 'node:crypto';
 
+import { type ToolSet, tool } from 'ai';
+
+import { CONTEXT_SUMMARY_KEY } from '@/session/chat/utils/history-view';
+
 import type { ExtendedUIMessage } from '../../message-types';
 import {
   type Extension,
@@ -13,10 +17,17 @@ import {
   compressHistoryForWriter,
   countPendingUserMessages,
 } from './history-compression';
+import {
+  createMemoryRetrievalCoordinator,
+  type MemoryRetrievalCoordinator,
+  RecallRejectedError,
+  recallInputSchema,
+  renderObservation,
+} from './retrieval';
 import { settleBefore } from './settle-before';
+import systemPromptPart from './system-prompt-part.md';
 
 const SHUTDOWN_FLUSH_TIMEOUT_MS = 25_000;
-const COMPACTION_SUMMARY_KEY = 'context-summary';
 
 type MemoryWriteReason =
   | 'step-threshold'
@@ -27,8 +38,11 @@ type MemoryWriteReason =
 
 class MemoryExt implements Extension {
   private episodicMemoryWriter: EpisodicWriter | null = null;
+  private retrievalCoordinator: MemoryRetrievalCoordinator | null = null;
   private closed = false;
   private lastProcessedMessageId: string | null = null;
+  /** Retrieval observation cursor; independent of the writer cursor. */
+  private lastObservedMessageId: string | null = null;
   private pendingStepCount = 0;
   private memoryWriteTimer: NodeJS.Timeout | null = null;
   private episodeFinishTimer: NodeJS.Timeout | null = null;
@@ -46,10 +60,6 @@ class MemoryExt implements Extension {
         this.deps,
         this.timezone,
       );
-      this.deps.logger.info(
-        { episodicMemoryWriterId: this.episodicMemoryWriter.sessionId },
-        'Memory extension started with episodicMemoryWriter session',
-      );
     } catch (error) {
       this.deps.logger.error(
         { error },
@@ -57,12 +67,29 @@ class MemoryExt implements Extension {
       );
       throw error;
     }
+    const retrievalCoordinator = createMemoryRetrievalCoordinator(this.deps);
+    try {
+      await retrievalCoordinator.start();
+      this.retrievalCoordinator = retrievalCoordinator;
+    } catch (error) {
+      await retrievalCoordinator.close().catch(() => undefined);
+      this.deps.logger.warn(
+        { error },
+        'Memory retrieval unavailable — continuing with episodic writing',
+      );
+    }
+    this.deps.logger.info(
+      { episodicMemoryWriterId: this.episodicMemoryWriter.sessionId },
+      'Memory extension started with episodicMemoryWriter session',
+    );
   }
 
   async onClose(): Promise<void> {
     this.closed = true;
     this.clearMemoryWriteTimer();
     this.clearEpisodeFinishTimer();
+    await this.retrievalCoordinator?.close();
+    this.retrievalCoordinator = null;
     const writer = this.episodicMemoryWriter;
     if (!writer) return;
 
@@ -105,11 +132,51 @@ class MemoryExt implements Extension {
     this.deps.logger.info('Memory extension closed');
   }
 
+  getTools(): ToolSet {
+    const coordinator = this.retrievalCoordinator;
+    if (!coordinator) return {};
+    return {
+      recall: tool({
+        description:
+          'Ask memory in the background. Answers arrive later in `<memory>` blocks, including when I remember nothing. Meanwhile continue silently unless memory is strictly required.',
+        inputSchema: recallInputSchema,
+        execute: async (input) => {
+          try {
+            coordinator.remember(input);
+            return 'Recalling...';
+          } catch (error) {
+            this.deps.logger.debug(
+              { error },
+              'Memory retrieval request rejected',
+            );
+            if (error instanceof RecallRejectedError) {
+              return error.reason === 'attempt-limit'
+                ? 'Already recalled this for the current task. Continue with what you know.'
+                : 'Memory is busy recovering. Continue with what you know.';
+            }
+            return 'Recall not possible. Memory broken. Continue on best-effort basis.';
+          }
+        },
+      }),
+    };
+  }
+
+  getSystemPromptPart(): string {
+    return systemPromptPart;
+  }
+
   onStepStart(): void {
     this.clearEpisodeFinishTimer();
+    this.retrievalCoordinator?.setMainTurnActive(true);
+    // New incoming context reaches the retriever before main generates.
+    this.observeDelta();
   }
 
   onStepComplete(event: StepCompleteEvent): Promise<void> {
+    if (!this.closed) {
+      this.retrievalCoordinator?.setMainTurnActive(event.shouldContinue);
+      if (!event.fatalError) this.observeDelta();
+    }
     return this.serialize(async () => {
       if (this.closed || event.fatalError) return;
       const history = this.deps.getHistory();
@@ -136,6 +203,7 @@ class MemoryExt implements Extension {
       episodicMemoryWriterId: this.episodicMemoryWriter?.sessionId ?? null,
       timezone: this.timezone,
       lastProcessedMessageId: this.lastProcessedMessageId,
+      lastObservedMessageId: this.lastObservedMessageId,
       pendingUserMessageCount: countPendingUserMessages(
         this.deps.getHistory(),
         this.lastProcessedMessageId,
@@ -143,7 +211,30 @@ class MemoryExt implements Extension {
       pendingStepCount: this.pendingStepCount,
       memoryWriteTimerActive: this.memoryWriteTimer !== null,
       episodeFinishTimerActive: this.episodeFinishTimer !== null,
+      retrieval: this.retrievalCoordinator?.introspect() ?? null,
     };
+  }
+
+  /**
+   * Streams the history delta since the observation cursor to the
+   * retrieval child. Synchronous, so the cursor needs no serialization.
+   * The cursor only advances once the delta is accepted; while the child is
+   * unavailable the delta keeps growing (bounded by the observation budget).
+   */
+  private observeDelta(): void {
+    const coordinator = this.retrievalCoordinator;
+    if (this.closed || !coordinator) return;
+    try {
+      const { text, cursor } = renderObservation(
+        this.deps.getHistory(),
+        this.lastObservedMessageId,
+      );
+      if (!text || coordinator.observe({ text })) {
+        this.lastObservedMessageId = cursor;
+      }
+    } catch (error) {
+      this.deps.logger.debug({ error }, 'Memory observation failed');
+    }
   }
 
   private async flushMemory(reason: MemoryWriteReason): Promise<boolean> {
@@ -200,9 +291,7 @@ class MemoryExt implements Extension {
     return history
       .slice(cursorIndex < 0 ? 0 : cursorIndex + 1)
       .some((message) =>
-        message.parts.some((part) =>
-          isDataPartOf(COMPACTION_SUMMARY_KEY, part),
-        ),
+        message.parts.some((part) => isDataPartOf(CONTEXT_SUMMARY_KEY, part)),
       );
   }
 

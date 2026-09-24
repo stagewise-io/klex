@@ -22,6 +22,13 @@ import {
   type AnalyticsEvent,
   agentStartedPropertiesSchema,
   type Deployment,
+  ENROLLMENT_FINISHED_EVENT,
+  ENROLLMENT_SCHEMA_VERSION,
+  ENROLLMENT_STARTED_EVENT,
+  type EnrollmentMethod,
+  type EnrollmentOutcome,
+  enrollmentFinishedPropertiesSchema,
+  enrollmentStartedPropertiesSchema,
   USAGE_WINDOW_EVENT,
   USAGE_WINDOW_SCHEMA_VERSION,
   type UsageWindowProperties,
@@ -100,8 +107,32 @@ export interface ProductAnalyticsRecorder {
   openSession(): AnalyticsSessionHandle;
 }
 
+/**
+ * One enrollment flow. Creating it sends `klex_enrollment_started`; the first
+ * `finish()` sends `klex_enrollment_finished`. Never throws.
+ */
+export interface EnrollmentTracker {
+  /** One enrollment request was rejected. Non-terminal: the flow may retry. */
+  attemptFailed(): void;
+  /** Terminal and idempotent: only the first call sends. */
+  finish(outcome: EnrollmentOutcome): void;
+}
+
+export const NOOP_ENROLLMENT_TRACKER: EnrollmentTracker = Object.freeze({
+  attemptFailed: () => {},
+  finish: () => {},
+});
+
+/** Narrow handle given to enrollment UIs and cloud connectivity. */
+export type TrackEnrollment = (method: EnrollmentMethod) => EnrollmentTracker;
+
 export interface ProductAnalytics extends ProductAnalyticsRecorder {
+  /** Creates the client and starts the window clock. Sends nothing. */
   start(): Promise<void>;
+  /** Sends `klex_agent_started`. Once per process; later calls are ignored. */
+  agentStarted(): void;
+  trackEnrollment: TrackEnrollment;
+  /** Aborts open enrollment flows, then flushes the shutdown window. */
   close(): Promise<void>;
 }
 
@@ -170,8 +201,10 @@ class ProductAnalyticsModule implements ProductAnalytics {
   private transport: ProductAnalyticsTransport | undefined;
   private timer: NodeJS.Timeout | undefined;
   private windowStart = 0;
-  /** In-flight start event. Never awaited by `start()`. */
-  private startedSend: Promise<void> = Promise.resolve();
+  private agentStartedSent = false;
+  /** In-flight one-off events. Never awaited by callers; drained by close. */
+  private readonly pending = new Set<Promise<void>>();
+  private readonly openFlows = new Set<EnrollmentTracker>();
   private closePromise: Promise<void> | undefined;
 
   constructor(
@@ -212,8 +245,6 @@ class ProductAnalyticsModule implements ProductAnalytics {
         },
         'Product analytics enabled',
       );
-      // Fire and forget: a slow or unreachable PostHog must not delay startup.
-      this.startedSend = this.sendStarted();
     } catch (error) {
       // Fail open: analytics must never block or crash startup.
       this.transport = undefined;
@@ -221,13 +252,50 @@ class ProductAnalyticsModule implements ProductAnalytics {
     }
   }
 
+  agentStarted(): void {
+    if (!this.transport || this.closePromise || this.agentStartedSent) return;
+    this.agentStartedSent = true;
+    // Fire and forget: a slow or unreachable PostHog must not delay startup.
+    this.background(this.sendAgentStarted());
+  }
+
+  trackEnrollment(method: EnrollmentMethod): EnrollmentTracker {
+    if (!this.transport || this.closePromise) return NOOP_ENROLLMENT_TRACKER;
+    const startedAt = this.now();
+    let failedAttempts = 0;
+    let done = false;
+    const flow: EnrollmentTracker = {
+      attemptFailed: () => {
+        if (!done) failedAttempts++;
+      },
+      finish: (outcome) => {
+        if (done) return;
+        done = true;
+        this.openFlows.delete(flow);
+        this.background(
+          this.sendEnrollmentFinished({
+            method,
+            outcome,
+            failedAttempts,
+            durationS: Math.round(Math.max(0, this.now() - startedAt) / 1_000),
+          }),
+        );
+      },
+    };
+    this.openFlows.add(flow);
+    this.background(this.sendEnrollmentStarted(method));
+    return flow;
+  }
+
   close(): Promise<void> {
     this.closePromise ??= (async () => {
       clearInterval(this.timer);
+      // A flow still open at shutdown was left without an answer.
+      for (const flow of [...this.openFlows]) flow.finish('aborted');
       const transport = this.transport;
       if (!transport) return;
       await withDeadline(
-        this.startedSend
+        Promise.allSettled([...this.pending])
           .then(() => this.flush('shutdown'))
           .then(() => transport.close(1_000)),
         SHUTDOWN_DEADLINE_MS,
@@ -238,7 +306,64 @@ class ProductAnalyticsModule implements ProductAnalytics {
     return this.closePromise;
   }
 
-  private async sendStarted(): Promise<void> {
+  private background(send: Promise<void>): void {
+    this.pending.add(send);
+    void send.finally(() => this.pending.delete(send));
+  }
+
+  private async sendEnrollmentStarted(method: EnrollmentMethod): Promise<void> {
+    try {
+      const runtime = this.runtime;
+      if (!runtime) return;
+      const parsed = enrollmentStartedPropertiesSchema.safeParse({
+        ...this.baseProperties(runtime),
+        schema_version: ENROLLMENT_SCHEMA_VERSION,
+        enrollment_method: method,
+      });
+      if (!parsed.success) {
+        this.logDropped(ENROLLMENT_STARTED_EVENT, parsed.error.issues);
+        return;
+      }
+      await this.deliver({
+        event: ENROLLMENT_STARTED_EVENT,
+        properties: parsed.data,
+      });
+    } catch (error) {
+      this.logger.debug({ error }, 'Product analytics enrollment event failed');
+    }
+  }
+
+  private async sendEnrollmentFinished(flow: {
+    method: EnrollmentMethod;
+    outcome: EnrollmentOutcome;
+    failedAttempts: number;
+    durationS: number;
+  }): Promise<void> {
+    try {
+      const runtime = this.runtime;
+      if (!runtime) return;
+      const parsed = enrollmentFinishedPropertiesSchema.safeParse({
+        ...this.baseProperties(runtime),
+        schema_version: ENROLLMENT_SCHEMA_VERSION,
+        enrollment_method: flow.method,
+        enrollment_outcome: flow.outcome,
+        failed_attempts: flow.failedAttempts,
+        duration_s: flow.durationS,
+      });
+      if (!parsed.success) {
+        this.logDropped(ENROLLMENT_FINISHED_EVENT, parsed.error.issues);
+        return;
+      }
+      await this.deliver({
+        event: ENROLLMENT_FINISHED_EVENT,
+        properties: parsed.data,
+      });
+    } catch (error) {
+      this.logger.debug({ error }, 'Product analytics enrollment event failed');
+    }
+  }
+
+  private async sendAgentStarted(): Promise<void> {
     try {
       const runtime = this.runtime;
       if (!runtime) return;
@@ -280,7 +405,9 @@ class ProductAnalyticsModule implements ProductAnalytics {
           reason:
             event.event === USAGE_WINDOW_EVENT
               ? event.properties.window_reason
-              : undefined,
+              : event.event === ENROLLMENT_FINISHED_EVENT
+                ? event.properties.enrollment_outcome
+                : undefined,
         },
         'Product analytics event sent',
       );
@@ -377,6 +504,12 @@ class DisabledProductAnalytics implements ProductAnalytics {
   }
 
   async start(): Promise<void> {}
+
+  agentStarted(): void {}
+
+  trackEnrollment(): EnrollmentTracker {
+    return NOOP_ENROLLMENT_TRACKER;
+  }
 
   async close(): Promise<void> {}
 }

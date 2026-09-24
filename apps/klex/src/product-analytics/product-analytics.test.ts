@@ -15,6 +15,10 @@ import {
   AGENT_STARTED_EVENT,
   type AnalyticsEvent,
   agentStartedPropertiesSchema,
+  ENROLLMENT_FINISHED_EVENT,
+  ENROLLMENT_STARTED_EVENT,
+  enrollmentFinishedPropertiesSchema,
+  enrollmentStartedPropertiesSchema,
   resolveDeployment,
   USAGE_WINDOW_EVENT,
   type UsageWindowProperties,
@@ -89,12 +93,26 @@ describe('product analytics', () => {
     vi.useRealTimers();
   });
 
-  it('sends one start event without blocking start()', async () => {
+  it('sends nothing on start() alone', async () => {
+    const fake = fakeTransport();
+    const analytics = createProductAnalytics(deps(fake.transport));
+    await analytics.start();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fake.transport.send).not.toHaveBeenCalled();
+    await analytics.close();
+    expect(fake.events.map((event) => event.event)).toEqual([
+      USAGE_WINDOW_EVENT,
+    ]);
+  });
+
+  it('sends one agent-started event per process', async () => {
     const fake = fakeTransport();
     const analytics = createProductAnalytics(
       deps(fake.transport, { deployment: 'cloud' }),
     );
     await analytics.start();
+    analytics.agentStarted();
+    analytics.agentStarted();
     await vi.advanceTimersByTimeAsync(0);
 
     expect(fake.events).toHaveLength(1);
@@ -117,14 +135,119 @@ describe('product analytics', () => {
     ]);
   });
 
-  it('does not wait for a hanging start event in start()', async () => {
+  it('does not block on a hanging agent-started event', async () => {
     const fake = fakeTransport(true);
     const analytics = createProductAnalytics(deps(fake.transport));
-    await expect(analytics.start()).resolves.toBeUndefined();
+    await analytics.start();
+    expect(analytics.agentStarted()).toBeUndefined();
     expect(fake.transport.send).toHaveBeenCalledTimes(1);
     const closing = analytics.close();
     await vi.advanceTimersByTimeAsync(SHUTDOWN_DEADLINE_MS);
     await expect(closing).resolves.toBeUndefined();
+  });
+
+  it('ignores agentStarted() before start() and after close()', async () => {
+    const fake = fakeTransport();
+    const analytics = createProductAnalytics(deps(fake.transport));
+    analytics.agentStarted();
+    await analytics.start();
+    await analytics.close();
+    analytics.agentStarted();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fake.events.map((event) => event.event)).toEqual([
+      USAGE_WINDOW_EVENT,
+    ]);
+  });
+
+  it('tracks a successful enrollment after failed attempts', async () => {
+    const fake = fakeTransport();
+    const analytics = createProductAnalytics(deps(fake.transport));
+    await analytics.start();
+    const flow = analytics.trackEnrollment('agent_picker');
+    await vi.advanceTimersByTimeAsync(0);
+
+    const [started] = fake.events;
+    expect(started?.event).toBe(ENROLLMENT_STARTED_EVENT);
+    expect(Object.keys(started?.properties ?? {}).sort()).toEqual(
+      Object.keys(enrollmentStartedPropertiesSchema.shape).sort(),
+    );
+    expect(started?.properties).toMatchObject({
+      $process_person_profile: false,
+      enrollment_method: 'agent_picker',
+    });
+
+    flow.attemptFailed();
+    flow.attemptFailed();
+    await vi.advanceTimersByTimeAsync(42_000);
+    flow.finish('enrolled');
+    flow.finish('aborted');
+    flow.attemptFailed();
+    await vi.advanceTimersByTimeAsync(0);
+
+    const finished = fake.events.filter(
+      (event) => event.event === ENROLLMENT_FINISHED_EVENT,
+    );
+    expect(finished).toHaveLength(1);
+    expect(Object.keys(finished[0]?.properties ?? {}).sort()).toEqual(
+      Object.keys(enrollmentFinishedPropertiesSchema.shape).sort(),
+    );
+    expect(finished[0]?.properties).toMatchObject({
+      enrollment_method: 'agent_picker',
+      enrollment_outcome: 'enrolled',
+      failed_attempts: 2,
+      duration_s: 42,
+    });
+    await analytics.close();
+  });
+
+  it.each([
+    ['failed', 'token'],
+    ['aborted', 'cloud_screen'],
+  ] as const)('tracks a %s %s enrollment', async (outcome, method) => {
+    const fake = fakeTransport();
+    const analytics = createProductAnalytics(deps(fake.transport));
+    await analytics.start();
+    const flow = analytics.trackEnrollment(method);
+    if (outcome === 'failed') flow.attemptFailed();
+    flow.finish(outcome);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fake.events.at(-1)).toMatchObject({
+      event: ENROLLMENT_FINISHED_EVENT,
+      properties: {
+        enrollment_method: method,
+        enrollment_outcome: outcome,
+        failed_attempts: outcome === 'failed' ? 1 : 0,
+      },
+    });
+    await analytics.close();
+  });
+
+  it('aborts open enrollment flows on close and sends them first', async () => {
+    const fake = fakeTransport();
+    const analytics = createProductAnalytics(deps(fake.transport));
+    await analytics.start();
+    const open = analytics.trackEnrollment('cloud_screen');
+    analytics.trackEnrollment('agent_picker').finish('enrolled');
+
+    await analytics.close();
+    open.finish('enrolled');
+    // Flows started after close are inert.
+    analytics.trackEnrollment('token').finish('failed');
+    await vi.advanceTimersByTimeAsync(0);
+
+    const finished = fake.events.flatMap((event) =>
+      event.event === ENROLLMENT_FINISHED_EVENT
+        ? [
+            `${event.properties.enrollment_method}:${event.properties.enrollment_outcome}`,
+          ]
+        : [],
+    );
+    expect(finished.sort()).toEqual([
+      'agent_picker:enrolled',
+      'cloud_screen:aborted',
+    ]);
+    expect(fake.events.at(-1)?.event).toBe(USAGE_WINDOW_EVENT);
+    expect(fake.events).toHaveLength(5);
   });
 
   it('sends one privacy-safe event per 2 h window', async () => {
@@ -291,9 +414,13 @@ describe('product analytics', () => {
     const options = deps(fake.transport, overrides);
     const analytics = createProductAnalytics(options);
     await analytics.start();
+    analytics.agentStarted();
+    const flow = analytics.trackEnrollment('agent_picker');
+    flow.attemptFailed();
     analytics.openSession().recordTurn(1);
     await vi.advanceTimersByTimeAsync(WINDOW_INTERVAL_MS);
     await analytics.close();
+    flow.finish('enrolled');
     expect(options.createTransport).not.toHaveBeenCalled();
     expect(vi.getTimerCount()).toBe(0);
   });
@@ -314,6 +441,8 @@ describe('product analytics', () => {
   it('provides an explicit no-op', async () => {
     const analytics = createDisabledProductAnalytics();
     await analytics.start();
+    analytics.agentStarted();
+    analytics.trackEnrollment('token').finish('enrolled');
     analytics.openSession().recordTurn(1);
     await analytics.close();
     expect(vi.getTimerCount()).toBe(0);

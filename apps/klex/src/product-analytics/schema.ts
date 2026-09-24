@@ -4,6 +4,25 @@ export const USAGE_WINDOW_EVENT = 'klex_usage_window';
 export const USAGE_WINDOW_SCHEMA_VERSION = 2;
 export const AGENT_STARTED_EVENT = 'klex_agent_started';
 export const AGENT_STARTED_SCHEMA_VERSION = 1;
+export const ENROLLMENT_STARTED_EVENT = 'klex_enrollment_started';
+export const ENROLLMENT_FINISHED_EVENT = 'klex_enrollment_finished';
+export const ENROLLMENT_SCHEMA_VERSION = 1;
+
+/**
+ * Where an enrollment flow ran: the agent-picker wizard, the in-app Cloud
+ * screen, or a token supplied via `--cloud-enroll-token` /
+ * `KLEX_CLOUD_ENROLLMENT_TOKEN`.
+ */
+export const ENROLLMENT_METHODS = [
+  'agent_picker',
+  'cloud_screen',
+  'token',
+] as const;
+export type EnrollmentMethod = (typeof ENROLLMENT_METHODS)[number];
+
+/** Terminal state of one enrollment flow. */
+export const ENROLLMENT_OUTCOMES = ['enrolled', 'failed', 'aborted'] as const;
+export type EnrollmentOutcome = (typeof ENROLLMENT_OUTCOMES)[number];
 
 /**
  * Where the process runs. Set by the launcher through `KLEX_DEPLOYMENT`;
@@ -30,8 +49,9 @@ const baseShape = {
 };
 
 /**
- * Closed property set of `klex_agent_started`. Sent once per process right
- * after analytics start. Strict: an unknown key fails validation.
+ * Closed property set of `klex_agent_started`. Sent once per process when an
+ * agent directory was opened: headless with a valid `--data-dir`, or after
+ * the user picked an agent. Strict: an unknown key fails validation.
  */
 export const agentStartedPropertiesSchema = z.strictObject({
   ...baseShape,
@@ -72,9 +92,46 @@ export const usageWindowPropertiesSchema = z.strictObject({
 
 export type UsageWindowProperties = z.infer<typeof usageWindowPropertiesSchema>;
 
+/** Closed property set of `klex_enrollment_started`. */
+export const enrollmentStartedPropertiesSchema = z.strictObject({
+  ...baseShape,
+  schema_version: z.literal(ENROLLMENT_SCHEMA_VERSION),
+  enrollment_method: z.enum(ENROLLMENT_METHODS),
+});
+
+export type EnrollmentStartedProperties = z.infer<
+  typeof enrollmentStartedPropertiesSchema
+>;
+
+/**
+ * Closed property set of `klex_enrollment_finished`. Exactly one per started
+ * flow, unless the process dies without a graceful shutdown.
+ */
+export const enrollmentFinishedPropertiesSchema = z.strictObject({
+  ...baseShape,
+  schema_version: z.literal(ENROLLMENT_SCHEMA_VERSION),
+  enrollment_method: z.enum(ENROLLMENT_METHODS),
+  enrollment_outcome: z.enum(ENROLLMENT_OUTCOMES),
+  /** Rejected enrollment requests within the flow, including a final one. */
+  failed_attempts: count,
+  duration_s: count,
+});
+
+export type EnrollmentFinishedProperties = z.infer<
+  typeof enrollmentFinishedPropertiesSchema
+>;
+
 export type AnalyticsEvent =
   | { event: typeof AGENT_STARTED_EVENT; properties: AgentStartedProperties }
-  | { event: typeof USAGE_WINDOW_EVENT; properties: UsageWindowProperties };
+  | { event: typeof USAGE_WINDOW_EVENT; properties: UsageWindowProperties }
+  | {
+      event: typeof ENROLLMENT_STARTED_EVENT;
+      properties: EnrollmentStartedProperties;
+    }
+  | {
+      event: typeof ENROLLMENT_FINISHED_EVENT;
+      properties: EnrollmentFinishedProperties;
+    };
 
 /** Blank or unset means self-hosted; anything unrecognised is `other`. */
 export function resolveDeployment(value: string | undefined): Deployment {

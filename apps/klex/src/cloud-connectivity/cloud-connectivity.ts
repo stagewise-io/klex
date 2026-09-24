@@ -30,6 +30,17 @@ export interface CloudConnectivityDependencies {
   cloudBaseUrl: string;
   enrollmentToken: string | undefined;
   allowDangerousUnsecureCloud: boolean;
+  /**
+   * Observes token enrollment. Called only when a token enrollment request is
+   * actually made, i.e. a token was supplied and the agent was not enrolled.
+   */
+  onTokenEnrollment?: () => TokenEnrollmentObserver;
+}
+
+/** Structural subset of the product-analytics enrollment tracker. */
+export interface TokenEnrollmentObserver {
+  attemptFailed(): void;
+  finish(outcome: 'enrolled' | 'failed'): void;
 }
 
 const CLOUD_API_SCOPES = ['agent:access'];
@@ -73,6 +84,7 @@ class CloudConnectivityModule implements CloudConnectivity {
       cloudBaseUrl: string;
       enrollmentToken: string | undefined;
       allowDangerousUnsecureCloud: boolean;
+      onTokenEnrollment?: () => TokenEnrollmentObserver;
     },
   ) {}
 
@@ -297,6 +309,7 @@ class CloudConnectivityModule implements CloudConnectivity {
     if (!enrollmentToken) return;
 
     this.deps.logger.info('Enrolling agent in Klex Cloud (headless mode)');
+    const observer = this.deps.onTokenEnrollment?.();
     try {
       const clientId = await performEnrollment(
         this.deps.cloudBaseUrl,
@@ -304,7 +317,10 @@ class CloudConnectivityModule implements CloudConnectivity {
         identity,
       );
       await this.persistEnrollment(clientId, identity.kid);
+      observer?.finish('enrolled');
     } catch (error) {
+      observer?.attemptFailed();
+      observer?.finish('failed');
       this.deps.logger.error({ error }, 'Headless cloud enrollment failed');
       throw new Error(
         `Headless enrollment failed: ${error instanceof Error ? error.message : String(error)}`,
@@ -527,5 +543,6 @@ export function createCloudConnectivity(
     cloudBaseUrl: deps.cloudBaseUrl,
     enrollmentToken: deps.enrollmentToken,
     allowDangerousUnsecureCloud: deps.allowDangerousUnsecureCloud,
+    onTokenEnrollment: deps.onTokenEnrollment,
   });
 }

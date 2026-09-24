@@ -25,7 +25,10 @@ import { createMcp } from '@/mcp';
 import { createModelCallLogger } from '@/model-call-logger';
 import {
   createProductAnalytics,
+  type EnrollmentTracker,
+  type ProductAnalytics,
   resolvePostHogBuildConfig,
+  type TrackEnrollment,
 } from '@/product-analytics';
 import {
   builtInProviderDefinitions,
@@ -113,6 +116,9 @@ const telemetryWarning = describeTelemetryWarning(
   cli.telemetryEndpoint,
 );
 
+/** Set once created so a fatal startup error still flushes analytics. */
+let startupProductAnalytics: ProductAnalytics | undefined;
+
 async function main(): Promise<void> {
   if (telemetryWarning) {
     // Headless output is the only place a human sees this; the interactive UI
@@ -143,6 +149,38 @@ async function main(): Promise<void> {
     process.exit(await runNativeVerification());
   }
 
+  if (cli.dataDirectory === undefined && cli.headless) {
+    throw new Error(
+      'Headless mode requires --data-dir or KLEX_DATA_DIR to identify an agent directory',
+    );
+  }
+
+  let runtimeCloud: CloudConnectivity | undefined;
+  let runtimeMcp: ReturnType<typeof createMcp> | undefined;
+  // Aggregate-only product analytics. On by default, independent of the
+  // opt-in OTel telemetry. Started before the agent picker so its enrollment
+  // flow is observable; `klex_agent_started` is sent only once an agent
+  // directory has been opened. Every input is the CLI-resolved value (flag
+  // over env), never re-read from env. MCP and cloud are late-bound.
+  const productAnalytics = createProductAnalytics({
+    ...resolvePostHogBuildConfig(),
+    enabled: cli.analyticsEnabled,
+    logging: logger,
+    klexVersion: KLEX_VERSION,
+    deployment: cli.deployment,
+    telemetryEnabledAtStart: cli.telemetryLevel !== 'no',
+    cloudEnabled: cli.cloudEnabled,
+    getConnectedMcpCount: () =>
+      runtimeMcp
+        ?.getServerStatuses()
+        .filter((server) => server.status === 'connected').length,
+    getCloudEnrolled: () => runtimeCloud?.isEnrolled(),
+  });
+  startupProductAnalytics = productAnalytics;
+  await productAnalytics.start();
+  const trackEnrollment: TrackEnrollment = (method) =>
+    productAnalytics.trackEnrollment(method);
+
   let interactiveCloud: CloudConnectivity | undefined;
   let interactiveLocalData: LocalData | undefined;
   let interactiveLock: DirectoryLock | undefined;
@@ -151,14 +189,18 @@ async function main(): Promise<void> {
     rootDirectory: cli.agentRoot || defaultAgentRoot(),
   });
   if (cli.dataDirectory === undefined) {
-    if (cli.headless) {
-      throw new Error(
-        'Headless mode requires --data-dir or KLEX_DATA_DIR to identify an agent directory',
-      );
-    }
+    // The picker's enrollment wizard. Open while the token prompt is shown.
+    let pickerEnrollment: EnrollmentTracker | undefined;
+    const finishPickerEnrollment = (
+      outcome: Parameters<EnrollmentTracker['finish']>[0],
+    ) => {
+      pickerEnrollment?.finish(outcome);
+      pickerEnrollment = undefined;
+    };
     const selectedDirectory = await createAgentPicker({
       agentDirectory,
       prepareAgent: async (directory) => {
+        finishPickerEnrollment('aborted');
         await interactiveCloud?.close().catch(() => undefined);
         interactiveCloud = undefined;
         await interactiveLocalData?.close().catch(() => undefined);
@@ -195,10 +237,16 @@ async function main(): Promise<void> {
             // otherwise the wizard collects one below.
             enrollmentToken: cli.cloudEnrollToken,
             allowDangerousUnsecureCloud: cli.allowDangerousUnsecureCloud,
+            onTokenEnrollment: () => trackEnrollment('token'),
           });
           interactiveCloud = cloud;
           await cloud.start();
-          return !cloud.isEnrolled();
+          const needsEnrollment = !cloud.isEnrolled();
+          // The picker shows its token prompt exactly when this is true.
+          if (needsEnrollment) {
+            pickerEnrollment = trackEnrollment('agent_picker');
+          }
+          return needsEnrollment;
         } catch (error) {
           await cloud?.close().catch(() => undefined);
           interactiveCloud = undefined;
@@ -210,13 +258,23 @@ async function main(): Promise<void> {
         }
       },
       enrollCloud: async (_directory, token) => {
-        await interactiveCloud?.enroll(token);
+        try {
+          await interactiveCloud?.enroll(token);
+        } catch (error) {
+          // The picker keeps the prompt open for another attempt.
+          pickerEnrollment?.attemptFailed();
+          throw error;
+        }
+        finishPickerEnrollment('enrolled');
       },
+      onEnrollmentCancelled: () => finishPickerEnrollment('aborted'),
     }).choose();
+    finishPickerEnrollment('aborted');
     if (selectedDirectory === undefined) {
       await interactiveCloud?.close().catch(() => undefined);
       await interactiveLocalData?.close().catch(() => undefined);
       await interactiveLock?.release().catch(() => undefined);
+      await productAnalytics.close();
       return;
     }
     cli.dataDirectory = selectedDirectory;
@@ -266,32 +324,14 @@ async function main(): Promise<void> {
   let runtime: RuntimeHandle | undefined;
   let tracing: ReturnType<typeof createTracing> | undefined;
   let telemetryMetrics: ReturnType<typeof createTelemetryMetrics> | undefined;
-  let runtimeCloud: CloudConnectivity | undefined;
-  let runtimeMcp: ReturnType<typeof createMcp> | undefined;
 
   try {
     await config.start();
     preRuntime.push(config);
-    // Aggregate-only product analytics. On by default, independent of the
-    // opt-in OTel telemetry. MCP and cloud are late-bound: they exist only
-    // after this point.
-    const productAnalytics = createProductAnalytics({
-      ...resolvePostHogBuildConfig(),
-      enabled: cli.analyticsEnabled,
-      logging: logger,
-      klexVersion: KLEX_VERSION,
-      // Resolved by the CLI (flag over KLEX_DEPLOYMENT), never re-read from env.
-      deployment: cli.deployment,
-      telemetryEnabledAtStart: cli.telemetryLevel !== 'no',
-      cloudEnabled: cli.cloudEnabled,
-      getConnectedMcpCount: () =>
-        runtimeMcp
-          ?.getServerStatuses()
-          .filter((server) => server.status === 'connected').length,
-      getCloudEnrolled: () => runtimeCloud?.isEnrolled(),
-    });
-    await productAnalytics.start();
+    // The agent directory is now locked, migrated and has a valid config:
+    // headless with a valid --data-dir, or the agent the user picked.
     preRuntime.push(productAnalytics);
+    productAnalytics.agentStarted();
     // Telemetry is resolved from CLI/env only. Any legacy `telemetry` entry in
     // config.json is ignored. No endpoint means no exporter is ever built.
     const telemetryLevel = cli.telemetryLevel;
@@ -387,6 +427,7 @@ async function main(): Promise<void> {
         cloudBaseUrl: cli.cloudBaseUrl,
         enrollmentToken: cli.cloudEnrollToken,
         allowDangerousUnsecureCloud: cli.allowDangerousUnsecureCloud,
+        onTokenEnrollment: () => trackEnrollment('token'),
       });
     runtimeCloud = cloudConnectivity;
     const realtimeComposition = {
@@ -687,6 +728,7 @@ async function main(): Promise<void> {
       dangerousLocalAdminApiPort: cli.dangerousLocalAdminApiPort,
       telemetryWarning,
       updateManager,
+      trackEnrollment,
     });
     cliUi = ui;
     ui.start();
@@ -722,6 +764,8 @@ main().catch(async (error: unknown) => {
   // startup errors are visible instead of silently swallowed.
   logger.settings.type = 'pretty';
   logger.fatal({ error }, 'Klex Bot startup failed');
+  // Idempotent: a no-op when the pre-runtime rollback already closed it.
+  await startupProductAnalytics?.close();
   await logger[Symbol.asyncDispose]();
   process.exitCode = 1;
 });

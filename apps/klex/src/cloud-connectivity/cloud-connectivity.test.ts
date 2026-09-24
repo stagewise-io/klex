@@ -462,6 +462,77 @@ describe('CloudConnectivity', () => {
     await cloud.close();
   });
 
+  function tokenObserver() {
+    const calls: string[] = [];
+    return {
+      calls,
+      onTokenEnrollment: vi.fn(() => ({
+        attemptFailed: () => calls.push('attemptFailed'),
+        finish: (outcome: string) => calls.push(`finish:${outcome}`),
+      })),
+    };
+  }
+
+  it.each([
+    ['succeeds', 'finish:enrolled'],
+    ['fails', 'attemptFailed,finish:failed'],
+  ])('reports token enrollment that %s', async (result, expected) => {
+    if (result === 'succeeds') {
+      vi.mocked(performEnrollment).mockResolvedValue('client-123');
+    } else {
+      vi.mocked(performEnrollment).mockRejectedValue(new Error('invalid'));
+    }
+    const observer = tokenObserver();
+    const cloud = createCloudConnectivity({
+      logging,
+      dataDirectory: dir,
+      cloudEnabled: true,
+      cloudBaseUrl: 'https://cloud.klex.bot',
+      enrollmentToken: 'ABCD-EFGH',
+      allowDangerousUnsecureCloud: false,
+      onTokenEnrollment: observer.onTokenEnrollment,
+    });
+
+    await cloud.start().catch(() => undefined);
+
+    expect(observer.onTokenEnrollment).toHaveBeenCalledTimes(1);
+    expect(observer.calls.join(',')).toBe(expected);
+    await cloud.close();
+  });
+
+  it('does not report token enrollment without a request', async () => {
+    const observer = tokenObserver();
+    const withoutToken = createCloudConnectivity({
+      logging,
+      dataDirectory: dir,
+      cloudEnabled: true,
+      cloudBaseUrl: 'https://cloud.klex.bot',
+      enrollmentToken: undefined,
+      allowDangerousUnsecureCloud: false,
+      onTokenEnrollment: observer.onTokenEnrollment,
+    });
+    await withoutToken.start();
+    await withoutToken.close();
+
+    // Already enrolled: the token is ignored.
+    await (await startEnrolledCloud()).close();
+    vi.mocked(performEnrollment).mockClear();
+    const enrolled = createCloudConnectivity({
+      logging,
+      dataDirectory: dir,
+      cloudEnabled: true,
+      cloudBaseUrl: 'https://cloud.klex.bot',
+      enrollmentToken: 'ABCD-EFGH',
+      allowDangerousUnsecureCloud: false,
+      onTokenEnrollment: observer.onTokenEnrollment,
+    });
+    await enrolled.start();
+    await enrolled.close();
+
+    expect(performEnrollment).not.toHaveBeenCalled();
+    expect(observer.onTokenEnrollment).not.toHaveBeenCalled();
+  });
+
   it('cloud enabled, interactive enrollment via enroll() fails: throws error', async () => {
     vi.mocked(performEnrollment).mockRejectedValue(
       new Error('Enrollment failed (400): invalid code'),

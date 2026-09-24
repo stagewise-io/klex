@@ -7,8 +7,8 @@ export interface MemoryRetrievalConfig {
   /** Recalls buffered while the retrieval child is unavailable. */
   maxBufferedRecalls: number;
   /**
-   * After a recall, surfaced memory wakes the main session and bypasses
-   * duplicate suppression for this long.
+   * How long a recall id stays answerable. Surfaces citing an open recall id
+   * wake the main session and bypass duplicate suppression.
    */
   recallAnswerWindowMs: number;
   /** Retrieval-child tool budgets below apply per child turn. */
@@ -53,7 +53,11 @@ export interface SurfacedMemory {
   scope: string;
   memory: string;
   followUps: string[];
+  /** Id of the `<recall>` this memory answers; absent for observations. */
+  recallId?: string;
 }
+
+export const RECALL_ID_MAX_LENGTH = 32;
 
 export const compactRecallScopeSchema = z
   .string()
@@ -81,8 +85,11 @@ export function recallFingerprint(input: RecallInput): string {
   return `${input.question.trim().toLocaleLowerCase('en-US')}\u0000${input.scope?.trim().toLocaleLowerCase('en-US') ?? ''}`;
 }
 
-/** Renders a recall as the retrieval child's inbox message text. */
-export function renderRecall(input: RecallInput): string {
+/**
+ * Renders a recall as the retrieval child's inbox message text. `id` is
+ * coordinator-generated and cited back via `surfaceMemory.recallId`.
+ */
+export function renderRecall(input: RecallInput, id: string): string {
   const scope = input.scope?.trim() || 'unspecified scope';
-  return `<recall>\n[${scope}] ${input.question.trim()}\n</recall>`;
+  return `<recall id="${id}">\n[${scope}] ${input.question.trim()}\n</recall>`;
 }

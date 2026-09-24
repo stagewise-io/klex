@@ -8,6 +8,8 @@ import { isMemoryResultMessage } from './memory-result';
 
 /** Default character budget of one rendered observation. */
 const DEFAULT_OBSERVATION_MAX_CHARACTERS = 2_000;
+/** Share of the budget one context record may use. */
+const CONTEXT_RECORD_SHARE = 0.75;
 
 /**
  * Incoming data only: user text, context events, and one-line tool-call
@@ -37,22 +39,34 @@ const OBSERVATION_HISTORY_FILTER: HistoryFilterOptions = {
 export interface RenderedObservation {
   /** Line-format observation; empty when nothing observable happened. */
   text: string;
-  /** Last message in scope; resume from here next time. */
+  /** Last message consumed by `text`; resume from here next time. */
   cursor: string | null;
+  /** Messages after `cursor` did not fit and need another batch. */
+  hasMore: boolean;
 }
 
 /**
- * Renders the main-session history after `cursor` as a retrieval
- * observation, keeping the newest content within `maxCharacters`.
+ * Renders the oldest batch of main-session history after `cursor` that fits
+ * `maxCharacters`. Nothing is dropped between batches: `cursor` stops at
+ * the last included message. Each message is clipped to the budget on its
+ * own (`[… N more parts]`), so every batch makes progress.
  */
 export function renderObservation(
   history: readonly ExtendedUIMessage[],
   cursor: string | null,
   maxCharacters = DEFAULT_OBSERVATION_MAX_CHARACTERS,
 ): RenderedObservation {
-  const { text, cursor: next } = createHistoryView({
+  const rendered = createHistoryView({
     filter: OBSERVATION_HISTORY_FILTER,
-    budget: { keep: 'newest', maxCharacters },
+    lines: {
+      messageLimit: maxCharacters,
+      contextLimit: Math.floor(maxCharacters * CONTEXT_RECORD_SHARE),
+    },
+    budget: { keep: 'oldest', maxCharacters },
   }).render(history, { kind: 'after-cursor', cursor });
-  return { text, cursor: next };
+  return {
+    text: rendered.text,
+    cursor: rendered.cursor,
+    hasMore: rendered.truncated,
+  };
 }

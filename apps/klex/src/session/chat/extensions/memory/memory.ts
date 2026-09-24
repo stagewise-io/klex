@@ -28,6 +28,8 @@ import { settleBefore } from './settle-before';
 import systemPromptPart from './system-prompt-part.md';
 
 const SHUTDOWN_FLUSH_TIMEOUT_MS = 25_000;
+/** Observation batches sent per step; the rest drains on later steps. */
+const MAX_OBSERVATION_BATCHES_PER_STEP = 4;
 
 type MemoryWriteReason =
   | 'step-threshold'
@@ -67,17 +69,10 @@ class MemoryExt implements Extension {
       );
       throw error;
     }
-    const retrievalCoordinator = createMemoryRetrievalCoordinator(this.deps);
-    try {
-      await retrievalCoordinator.start();
-      this.retrievalCoordinator = retrievalCoordinator;
-    } catch (error) {
-      await retrievalCoordinator.close().catch(() => undefined);
-      this.deps.logger.warn(
-        { error },
-        'Memory retrieval unavailable — continuing with episodic writing',
-      );
-    }
+    // Kept even when startup fails: the coordinator retries in the
+    // background and answers recalls itself once it gives up.
+    this.retrievalCoordinator = createMemoryRetrievalCoordinator(this.deps);
+    await this.retrievalCoordinator.start();
     this.deps.logger.info(
       { episodicMemoryWriterId: this.episodicMemoryWriter.sessionId },
       'Memory extension started with episodicMemoryWriter session',
@@ -217,21 +212,29 @@ class MemoryExt implements Extension {
 
   /**
    * Streams the history delta since the observation cursor to the
-   * retrieval child. Synchronous, so the cursor needs no serialization.
-   * The cursor only advances once the delta is accepted; while the child is
-   * unavailable the delta keeps growing (bounded by the observation budget).
+   * retrieval child in oldest-first, budget-sized batches. Synchronous, so
+   * the cursor needs no serialization. The cursor only advances past
+   * delivered batches; while the child is unavailable the backlog waits,
+   * and a large backlog drains over several steps.
    */
   private observeDelta(): void {
     const coordinator = this.retrievalCoordinator;
     if (this.closed || !coordinator) return;
     try {
-      const { text, cursor } = renderObservation(
-        this.deps.getHistory(),
-        this.lastObservedMessageId,
-      );
-      if (!text || coordinator.observe({ text })) {
+      for (let batch = 0; batch < MAX_OBSERVATION_BATCHES_PER_STEP; batch++) {
+        const history = this.deps.getHistory();
+        const { text, cursor, hasMore } = renderObservation(
+          history,
+          this.lastObservedMessageId,
+        );
+        if (text && !coordinator.observe({ text })) return;
+        if (cursor === this.lastObservedMessageId) return;
         this.lastObservedMessageId = cursor;
+        if (!hasMore) return;
       }
+      this.deps.logger.debug(
+        'Memory observation backlog remains — draining on the next step',
+      );
     } catch (error) {
       this.deps.logger.debug({ error }, 'Memory observation failed');
     }

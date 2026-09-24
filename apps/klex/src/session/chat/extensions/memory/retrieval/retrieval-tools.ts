@@ -12,6 +12,7 @@ import type {
 import {
   compactRecallScopeSchema,
   type MemoryRetrievalConfig,
+  RECALL_ID_MAX_LENGTH,
   type SurfacedMemory,
 } from './retrieval';
 import type { EpisodicSearchIndex } from './search-index';
@@ -84,7 +85,7 @@ class RetrievalToolsExt implements Extension {
     return {
       surfaceMemory: tool({
         description:
-          'Report one relevant memory to my main self. Only reported memories reach me; plain text is discarded. Optional followUps: short questions this memory could further answer.',
+          'Report one relevant memory to my main self. Only reported memories reach me; plain text is discarded. recallId: the id of the <recall> this answers; omit for observations. Optional followUps: short questions this memory could further answer.',
         inputSchema: z.object({
           scope: compactRecallScopeSchema,
           memory: z
@@ -98,12 +99,23 @@ class RetrievalToolsExt implements Extension {
             )
             .max(retrieval.maxFollowUpsPerMemory)
             .default([]),
+          recallId: z
+            .string()
+            .trim()
+            .min(1)
+            .max(RECALL_ID_MAX_LENGTH)
+            .optional(),
         }),
-        execute: async ({ scope, memory, followUps }) => {
+        execute: async ({ scope, memory, followUps, recallId }) => {
           this.budget.surfaced += 1;
           if (this.budget.surfaced > retrieval.maxSurfacedMemoriesPerTurn)
             return { error: 'surface budget exhausted' };
-          this.options.onSurface({ scope, memory, followUps });
+          this.options.onSurface({
+            scope,
+            memory,
+            followUps,
+            ...(recallId ? { recallId } : {}),
+          });
           return { ok: true };
         },
       }),

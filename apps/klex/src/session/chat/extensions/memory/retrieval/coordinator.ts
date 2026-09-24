@@ -68,11 +68,17 @@ export class RecallRejectedError extends Error {
 }
 
 export interface MemoryRetrievalCoordinator {
+  /**
+   * Prepares the search index and the retrieval child. Never throws:
+   * transient failures are retried in the background, permanent ones leave
+   * the coordinator unavailable so recalls fail fast.
+   */
   start(): Promise<void>;
   /**
    * Triggers a recall in the retrieval child. Fire-and-forget: the child
    * alone decides what reaches the main session, including "no memory".
-   * Buffered while the child is unavailable.
+   * Buffered while the child is unavailable; throws a plain `Error` when
+   * retrieval failed permanently.
    */
   remember(input: RecallInput): void;
   /**
@@ -96,13 +102,18 @@ class MemoryRetrievalCoordinatorImpl implements MemoryRetrievalCoordinator {
   private index: EpisodicSearchIndex | null = null;
   private recoveryTimer: NodeJS.Timeout | null = null;
   private recoveryDelayMs = RETRIEVAL_RECOVERY_DELAY_MS;
+  private recovering: Promise<void> | null = null;
+  private started = false;
   private closed = false;
   private available = false;
+  /** Set on unrecoverable index failure; retrieval stays off. */
+  private broken: Error | null = null;
   private attemptTaskKey: string | null = null;
   private readonly attempts = new Map<string, number>();
   private mainTurnActive = false;
-  /** Surfaces before this time answer a recall. */
-  private recallAnswerUntil = 0;
+  private nextRecallId = 0;
+  /** Recall id -> time until which surfaces may answer it. */
+  private readonly openRecalls = new Map<string, number>();
   private readonly surfacedFingerprints = new Set<string>();
   private recallsSent = 0;
   private observationsSent = 0;
@@ -121,28 +132,14 @@ class MemoryRetrievalCoordinatorImpl implements MemoryRetrievalCoordinator {
   }
 
   async start(): Promise<void> {
-    if (this.closed || this.index) return;
-    const dataDir = this.deps.getDataDir(true);
-    const databasePath = join(dataDir, 'episodic-search.sqlite');
-    await prepareSearchIndexStore(databasePath, dataDir, this.deps.logger);
-    const store = new EpisodicMarkdownStore(join(dataDir, 'episodic'));
-    this.index = new EpisodicSearchIndex(databasePath, store);
-    await this.index.start();
-
-    try {
-      this.child = await this.createChild();
-      this.available = true;
-    } catch (error) {
-      this.deps.logger.warn(
-        { error },
-        'Memory retrieval child failed to start — recalls will be buffered',
-      );
-      this.scheduleRecovery();
-    }
+    if (this.closed || this.started) return;
+    this.started = true;
+    await this.recover();
   }
 
   remember(input: RecallInput): void {
     const parsed = recallInputSchema.parse(input);
+    if (this.broken) throw new Error('Memory retrieval is unavailable');
     this.resetAttemptsIfTaskChanged();
     const fingerprint = recallFingerprint(parsed);
     const attempts = this.attempts.get(fingerprint) ?? 0;
@@ -163,7 +160,9 @@ class MemoryRetrievalCoordinatorImpl implements MemoryRetrievalCoordinator {
   }
 
   observe(input: { text: string }): boolean {
-    if (this.closed || !this.config.proactiveEnabled) return true;
+    if (this.closed || this.broken || !this.config.proactiveEnabled) {
+      return true;
+    }
     const text = input.text.trim();
     if (!text) return true;
     const child = this.liveChild();
@@ -191,6 +190,7 @@ class MemoryRetrievalCoordinatorImpl implements MemoryRetrievalCoordinator {
     this.recoveryTimer = null;
     this.buffered.length = 0;
     this.attempts.clear();
+    this.openRecalls.clear();
     this.surfacedFingerprints.clear();
     const child = this.child;
     this.child = null;
@@ -211,7 +211,9 @@ class MemoryRetrievalCoordinatorImpl implements MemoryRetrievalCoordinator {
     return {
       childSessionId: this.child?.sessionId ?? null,
       available: this.available,
+      broken: this.broken !== null,
       bufferedRecalls: this.buffered.length,
+      openRecalls: this.openRecalls.size,
       indexedStatus: this.index?.getStatus() ?? 'unstarted',
       recallsSent: this.recallsSent,
       observationsSent: this.observationsSent,
@@ -236,15 +238,31 @@ class MemoryRetrievalCoordinatorImpl implements MemoryRetrievalCoordinator {
     this.child = null;
     this.available = false;
     void stale.close().catch(() => undefined);
-    void this.replaceChild();
+    void this.recover();
     return null;
   }
 
   private sendRecall(child: ChildSessionHandle, input: RecallInput): void {
-    this.sendToChild(child, renderRecall(input));
+    this.nextRecallId += 1;
+    const recallId = `r${this.nextRecallId}`;
+    this.pruneOpenRecalls();
+    this.openRecalls.set(
+      recallId,
+      Date.now() + this.config.recallAnswerWindowMs,
+    );
+    this.sendToChild(child, renderRecall(input, recallId));
     this.recallsSent += 1;
-    this.recallAnswerUntil = Date.now() + this.config.recallAnswerWindowMs;
-    this.deps.logger.debug('Memory recall sent to retrieval child');
+    this.deps.logger.debug(
+      { recallId },
+      'Memory recall sent to retrieval child',
+    );
+  }
+
+  private pruneOpenRecalls(): void {
+    const now = Date.now();
+    for (const [recallId, until] of this.openRecalls) {
+      if (until <= now) this.openRecalls.delete(recallId);
+    }
   }
 
   private sendToChild(child: ChildSessionHandle, text: string): void {
@@ -266,7 +284,15 @@ class MemoryRetrievalCoordinatorImpl implements MemoryRetrievalCoordinator {
 
   private handleSurface(memory: SurfacedMemory): void {
     if (this.closed) return;
-    const answersRecall = Date.now() < this.recallAnswerUntil;
+    this.pruneOpenRecalls();
+    const answersRecall =
+      memory.recallId !== undefined && this.openRecalls.has(memory.recallId);
+    if (memory.recallId !== undefined && !answersRecall) {
+      this.deps.logger.debug(
+        { recallId: memory.recallId },
+        'Surfaced memory cites no open recall — treating it as proactive',
+      );
+    }
     const fingerprint = [memory.scope, memory.memory]
       .map((value) => value.trim().replace(/\s+/gu, ' '))
       .join('|')
@@ -291,45 +317,104 @@ class MemoryRetrievalCoordinatorImpl implements MemoryRetrievalCoordinator {
       answersRecall || this.mainTurnActive
         ? SessionInboxUrgency.Default
         : SessionInboxUrgency.Deferrable;
+    this.deliverToMain(renderSurfacedMemory(memory), urgency);
+    this.deps.logger.debug(
+      { answersRecall, urgency },
+      'Surfaced memory delivered to main session',
+    );
+  }
+
+  /**
+   * The only path from memory into the main session. Wraps every text in a
+   * `<memory>` block; callers pass raw memory text.
+   */
+  private deliverToMain(text: string, urgency: SessionInboxUrgency): void {
     try {
       this.deps.inbox.sendMessage(
         {
           id: randomUUID(),
           role: 'user',
-          parts: [{ type: 'text', text: renderSurfacedMemory(memory) }],
+          parts: [{ type: 'text', text: wrapMemoryResult(text) }],
         } as ExtendedUIMessage,
         urgency,
       );
-      this.deps.logger.debug(
-        { answersRecall, urgency },
-        'Surfaced memory delivered to main session',
-      );
     } catch (error) {
-      this.deps.logger.debug(
-        { error },
-        'Surfaced memory could not be delivered',
-      );
+      this.deps.logger.debug({ error }, 'Memory could not be delivered');
     }
   }
 
-  private async replaceChild(): Promise<void> {
-    if (this.closed || this.child) return;
+  /** Single-flight: prepares the index if needed, then the child. */
+  private recover(): Promise<void> {
+    this.recovering ??= this.tryRecover().finally(() => {
+      this.recovering = null;
+    });
+    return this.recovering;
+  }
+
+  private async tryRecover(): Promise<void> {
+    if (this.closed || this.broken || this.child) return;
     try {
-      this.child = await this.createChild();
+      await this.ensureIndex();
+      const child = await this.createChild();
       if (this.closed) {
-        await this.child.close().catch(() => undefined);
-        this.child = null;
+        await child.close().catch(() => undefined);
         return;
       }
+      this.child = child;
       this.available = true;
       this.recoveryDelayMs = RETRIEVAL_RECOVERY_DELAY_MS;
       this.flushBuffered();
     } catch (error) {
+      if (this.closed) return;
+      if (isPermanentIndexError(error)) {
+        this.markBroken(error as Error);
+        return;
+      }
       this.deps.logger.warn(
-        { error },
-        'Memory retrieval child replacement failed',
+        { error, retryInMs: this.recoveryDelayMs },
+        'Memory retrieval unavailable — retrying, recalls are buffered',
       );
       this.scheduleRecovery();
+    }
+  }
+
+  private async ensureIndex(): Promise<void> {
+    if (this.index) return;
+    const dataDir = this.deps.getDataDir(true);
+    const databasePath = join(dataDir, 'episodic-search.sqlite');
+    await prepareSearchIndexStore(databasePath, dataDir, this.deps.logger);
+    const store = new EpisodicMarkdownStore(join(dataDir, 'episodic'));
+    const index = new EpisodicSearchIndex(databasePath, store);
+    try {
+      await index.start();
+    } catch (error) {
+      await index.close().catch(() => undefined);
+      throw error;
+    }
+    if (this.closed) {
+      await index.close().catch(() => undefined);
+      return;
+    }
+    this.index = index;
+  }
+
+  /**
+   * Turns retrieval off for the session. Recalls already acknowledged with
+   * "Recalling..." get one explicit answer instead of silence.
+   */
+  private markBroken(error: Error): void {
+    this.broken = error;
+    this.available = false;
+    const pending = this.buffered.splice(0).length;
+    this.deps.logger.error(
+      { error, pendingRecalls: pending },
+      'Memory retrieval disabled — search index cannot be opened',
+    );
+    if (pending > 0) {
+      this.deliverToMain(
+        "I can't remember anything right now — my memory is unavailable.",
+        SessionInboxUrgency.Default,
+      );
     }
   }
 
@@ -350,7 +435,7 @@ class MemoryRetrievalCoordinatorImpl implements MemoryRetrievalCoordinator {
     if (this.closed || this.recoveryTimer) return;
     this.recoveryTimer = setTimeout(() => {
       this.recoveryTimer = null;
-      void this.replaceChild();
+      void this.recover();
     }, this.recoveryDelayMs);
     this.recoveryDelayMs = Math.min(this.recoveryDelayMs * 2, 30_000);
   }
@@ -384,6 +469,11 @@ class MemoryRetrievalCoordinatorImpl implements MemoryRetrievalCoordinator {
       modelPurpose,
     });
   }
+}
+
+/** A store written by a newer schema; retrying cannot help. */
+function isPermanentIndexError(error: unknown): boolean {
+  return error instanceof Error && /schema=\d+/u.test(error.message);
 }
 
 async function prepareSearchIndexStore(
@@ -459,7 +549,7 @@ function renderSurfacedMemory(memory: SurfacedMemory): string {
       `Follow-ups I could recall: ${memory.followUps.map((q) => `"${q}"`).join(' · ')}`,
     );
   }
-  return wrapMemoryResult(lines.join('\n'));
+  return lines.join('\n');
 }
 
 export function createMemoryRetrievalCoordinator(

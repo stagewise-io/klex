@@ -1,8 +1,17 @@
 import type { ExtendedUIMessage } from '@/session/chat/message-types';
 
-/** Wraps retrieval output so the main session and filters can recognize it. */
+/** Opening or closing `memory` tag, tolerant of whitespace and attributes. */
+const MEMORY_TAG = /<(\s*\/?\s*memory\b)/giu;
+
+/**
+ * Wraps retrieval output so the main session and filters can recognize it.
+ * The only way memory may enter the main session. Memory tags inside `text`
+ * are defused, so content can neither close the block early nor open a
+ * forged one.
+ */
 export function wrapMemoryResult(text: string): string {
-  return `<memory>\n${text.trim()}\n</memory>`;
+  const body = text.trim().replace(MEMORY_TAG, '\uFF1C$1');
+  return `<memory>\n${body}\n</memory>`;
 }
 
 /** True for user messages carrying a memory-retrieval result. */

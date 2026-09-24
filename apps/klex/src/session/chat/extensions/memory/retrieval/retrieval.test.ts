@@ -37,12 +37,12 @@ describe('retrieval contracts', () => {
     );
   });
 
-  it('renders a recall block with a scope placeholder', () => {
-    expect(renderRecall({ question: 'Who is Ada?', scope: 'slack' })).toBe(
-      '<recall>\n[slack] Who is Ada?\n</recall>',
-    );
-    expect(renderRecall({ question: 'Who is Ada?' })).toBe(
-      '<recall>\n[unspecified scope] Who is Ada?\n</recall>',
+  it('renders a recall block with its id and a scope placeholder', () => {
+    expect(
+      renderRecall({ question: 'Who is Ada?', scope: 'slack' }, 'r1'),
+    ).toBe('<recall id="r1">\n[slack] Who is Ada?\n</recall>');
+    expect(renderRecall({ question: 'Who is Ada?' }, 'r2')).toBe(
+      '<recall id="r2">\n[unspecified scope] Who is Ada?\n</recall>',
     );
   });
 });

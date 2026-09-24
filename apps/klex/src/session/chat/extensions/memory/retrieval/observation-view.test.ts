@@ -126,6 +126,7 @@ describe('renderObservation', () => {
     expect(renderObservation(HISTORY.slice(0, 4), 'a1')).toEqual({
       text: '',
       cursor: 't1',
+      hasMore: false,
     });
   });
 
@@ -148,20 +149,46 @@ describe('renderObservation', () => {
     expect(renderObservation(history, null)).toEqual({
       text: '',
       cursor: 'm2',
+      hasMore: false,
     });
   });
 
-  it('keeps the newest content within the character budget', () => {
+  it('drains a backlog oldest-first in budget-sized batches without loss', () => {
     const long = Array.from({ length: 40 }, (_, i) =>
       msg(`n${i}`, 'user', [
         { type: 'text', text: `entry-${i} ${'y'.repeat(200)}` },
       ]),
     );
-    const bounded = renderObservation(long, null, 1_000);
+    const seen: string[] = [];
+    let cursor: string | null = null;
+    for (let batch = 0; batch < 40; batch++) {
+      const next = renderObservation(long, cursor, 1_000);
+      expect(next.text.length).toBeLessThanOrEqual(1_000);
+      expect(next.cursor).not.toBe(cursor);
+      seen.push(...(next.text.match(/entry-\d+/gu) ?? []));
+      cursor = next.cursor;
+      if (!next.hasMore) break;
+    }
 
-    expect(bounded.text.length).toBeLessThanOrEqual(1_000);
-    expect(bounded.text).toContain('entry-39');
-    expect(bounded.text).not.toContain('entry-0 ');
-    expect(bounded.cursor).toBe('n39');
+    expect(seen).toEqual(long.map((_, i) => `entry-${i}`));
+    expect(cursor).toBe('n39');
+  });
+
+  it('clips a single oversized message instead of dropping it', () => {
+    const oversized = msg('big', 'user', [
+      ...Array.from({ length: 12 }, (_, i) => ({
+        type: 'data-context',
+        data: {
+          sourceEnv: 'slack',
+          content: [{ type: 'text', text: `part-${i} ${'z'.repeat(400)}` }],
+        },
+      })),
+    ]);
+    const next = renderObservation([oversized], null);
+
+    expect(next.text.length).toBeLessThanOrEqual(2_000);
+    expect(next.text).toContain('part-0');
+    expect(next.text).toMatch(/\[… \d+ more parts\]$/u);
+    expect(next).toMatchObject({ cursor: 'big', hasMore: false });
   });
 });

@@ -7,6 +7,7 @@ import test from 'node:test';
 import {
   checkGeneratedContract,
   missingReleaseScopes,
+  normalizeDeclarations,
   publishablePackages,
   scopesForChangedFiles,
 } from './check-package-release-scopes.mjs';
@@ -108,7 +109,7 @@ async function checkContractFixture(baseContract) {
     await mkdir(join(root, 'packages', 'agent-admin-api', 'dist'), {
       recursive: true,
     });
-    await writeFile(join(root, contractPath), 'head contract');
+    await writeFile(join(root, contractPath), HEAD_CONTRACT);
     const run = async (command, args, cwd) => {
       commands.push({ command, args, cwd });
       if (
@@ -134,9 +135,66 @@ async function checkContractFixture(baseContract) {
   }
 }
 
+const HEAD_CONTRACT = `export type Route = {
+    status: 200;
+    output: { id: string };
+} | {
+    status: 500;
+    output: { error: string; code: string | number };
+};
+`;
+
+const sameContract = (a, b) =>
+  normalizeDeclarations(a) === normalizeDeclarations(b);
+
+test('treats reordered unions as the same contract', () => {
+  assert.ok(
+    sameContract(
+      HEAD_CONTRACT,
+      `export type Route = {
+    status: 500;
+    output: { error: string; code: number | string };
+} | {
+    status: 200;
+    output: { id: string };
+};
+`,
+    ),
+  );
+  assert.ok(
+    sameContract(
+      'export declare const f: (() => void) | string | null;',
+      '/** doc */\nexport declare const f:\n  | null\n  | string\n  | (() => void);',
+    ),
+  );
+});
+
+test('detects real contract changes', () => {
+  const base = 'export type T = { a: string; b: 200 | 404 };';
+  for (const changed of [
+    'export type T = { a: string; b: 200 | 404; c: string };',
+    'export type T = { a?: string; b: 200 | 404 };',
+    'export type T = { a: string; b: 201 | 404 };',
+    'export type T = { a: string; b: 200 | 404 | 500 };',
+    'export type T = { a: string | undefined; b: 200 | 404 };',
+    'export type U = { a: string; b: 200 | 404 };',
+  ]) {
+    assert.equal(sameContract(base, changed), false, changed);
+  }
+  assert.equal(
+    sameContract(
+      'export type F = ((x: string) => 1) & ((x: number) => 2);',
+      'export type F = ((x: number) => 2) & ((x: string) => 1);',
+    ),
+    false,
+  );
+});
+
 test('compares matching and changed generated Admin API contracts', async () => {
-  const matching = await checkContractFixture('head contract');
-  const changed = await checkContractFixture('base contract');
+  const matching = await checkContractFixture(HEAD_CONTRACT);
+  const changed = await checkContractFixture(
+    HEAD_CONTRACT.replace('status: 200', 'status: 201'),
+  );
 
   assert.equal(matching.matches, true);
   assert.equal(changed.matches, false);

@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process';
 import { realpathSync } from 'node:fs';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import process from 'node:process';
@@ -30,6 +31,58 @@ export function scopesForChangedFiles(files) {
   return publishablePackages
     .filter(({ path }) => files.some((file) => file.startsWith(path)))
     .map(({ scope }) => scope);
+}
+
+/**
+ * The compiler that emits the contract. The root `typescript` (7.x) has no
+ * classic compiler API, so resolve it from the contract package instead.
+ */
+function loadContractCompiler() {
+  return createRequire(
+    join(repositoryRoot, 'packages', 'agent-admin-api', 'package.json'),
+  )('typescript');
+}
+
+/**
+ * Canonical form of a declaration file for contract comparison.
+ *
+ * `tsc` orders union members by internal type ids, which shift with file
+ * processing order, so an unchanged contract can emit a reordered union.
+ * Union order carries no meaning, so members are sorted innermost-first.
+ * Intersections stay as emitted: member order can affect overloads.
+ * Printing also drops comments and formatting differences.
+ */
+export function normalizeDeclarations(source, ts = loadContractCompiler()) {
+  const file = ts.createSourceFile(
+    'index.d.ts',
+    source,
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TS,
+  );
+  const printer = ts.createPrinter({ removeComments: true });
+  const print = (node) =>
+    printer.printNode(ts.EmitHint.Unspecified, node, file);
+  const sortUnions = (context) => {
+    const visit = (node) => {
+      const next = ts.visitEachChild(node, visit, context);
+      if (!ts.isUnionTypeNode(next)) return next;
+      const members = next.types
+        .map((type) => ({ key: print(type), type }))
+        .sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
+      return context.factory.updateUnionTypeNode(
+        next,
+        context.factory.createNodeArray(members.map(({ type }) => type)),
+      );
+    };
+    return (root) => ts.visitNode(root, visit);
+  };
+  const result = ts.transform(file, [sortUnions]);
+  try {
+    return printer.printFile(result.transformed[0]);
+  } finally {
+    result.dispose();
+  }
 }
 
 export function missingReleaseScopes(scopes, commits) {
@@ -83,7 +136,10 @@ export async function checkGeneratedContract({
       'utf8',
     );
 
-    return headContract === baseContract;
+    return (
+      normalizeDeclarations(headContract) ===
+      normalizeDeclarations(baseContract)
+    );
   } finally {
     await run(
       'git',

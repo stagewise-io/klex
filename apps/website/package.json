@@ -11,12 +11,17 @@
   },
   "devDependencies": {
     "@tailwindcss/vite": "4.3.3",
+    "@types/react": "19.2.18",
+    "@types/react-dom": "^19.3.0",
     "tailwindcss": "4.3.3",
     "typescript": "6.0.2",
     "vite": "8.2.2"
   },
   "dependencies": {
-    "@stagewise/ui": "0.1.0"
+    "@stagewise/ui": "0.1.0",
+    "motion": "^13.4.0",
+    "react": "19.2.8",
+    "react-dom": "19.2.8"
   },
   "engines": {
     "node": ">=24"

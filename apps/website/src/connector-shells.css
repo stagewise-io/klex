@@ -1,0 +1,253 @@
+.workflow-panels {
+  grid-template-rows: repeat(3, 3rem) auto;
+  min-height: 720px;
+}
+.workflow-slack {
+  grid-area: 1 / 1 / 5 / 11;
+  z-index: 1;
+}
+.workflow-github {
+  grid-area: 2 / 3 / 5 / 13;
+  z-index: 2;
+}
+.workflow-linear {
+  grid-area: 3 / 2 / 5 / 12;
+  z-index: 3;
+}
+.workflow-google {
+  grid-area: 4 / 1 / 5 / 11;
+  z-index: 4;
+}
+.workflow-panel {
+  min-height: 540px;
+  transition: opacity 160ms ease-out;
+}
+.workflow-panel[aria-current="true"] {
+  z-index: 5;
+}
+.workflow-panel-content {
+  animation: workflow-reveal 180ms ease-out;
+}
+.workflow-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 1rem 1.25rem;
+  border-bottom: 1px solid #e5e5e5;
+  background: #f7f8fa;
+}
+.workflow-toolbar img {
+  border-radius: 6px;
+}
+.workflow-toolbar strong {
+  font-weight: 500;
+}
+.workflow-toolbar > span {
+  margin-left: auto;
+  color: #616061;
+  font-size: 0.75rem;
+}
+.workflow-content {
+  padding: 1.25rem 1.5rem;
+}
+.workflow-content h3 {
+  margin: 0 0 0.75rem;
+  text-wrap: balance;
+}
+.workflow-content h4 {
+  font-size: 0.875rem;
+  margin: 0 0 1rem;
+}
+.workflow-muted {
+  color: #616061;
+  font-size: 0.75rem;
+}
+.workflow-status {
+  display: inline-block;
+  border-radius: 1rem;
+  background: #edf0ff;
+  color: #414ba0;
+  padding: 0.2rem 0.6rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+.workflow-tabs {
+  display: flex;
+  gap: 1.5rem;
+  padding: 0.75rem 1.25rem 0;
+  border-bottom: 1px solid #e5e5e5;
+  font-size: 0.75rem;
+}
+.workflow-tabs > * {
+  padding-bottom: 0.6rem;
+}
+.workflow-tabs strong {
+  border-bottom: 2px solid #df8b70;
+}
+.workflow-blocks {
+  margin: 1.25rem 0;
+  display: grid;
+  gap: 0.85rem;
+}
+.workflow-blocks dt {
+  color: #616061;
+  font-size: 0.75rem;
+  margin-bottom: 0.2rem;
+}
+.workflow-blocks dd {
+  margin: 0;
+}
+.workflow-thread {
+  border-top: 1px solid #e5e5e5;
+  padding-top: 1rem;
+}
+.workflow-messages {
+  display: grid;
+  gap: 1.125rem;
+}
+.workflow-message {
+  display: flex;
+  gap: 0.65rem;
+  min-width: 0;
+}
+.workflow-message > div {
+  min-width: 0;
+  flex: 1;
+}
+.workflow-author {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  flex-wrap: wrap;
+}
+.workflow-author time {
+  margin-left: auto;
+}
+.workflow-message p {
+  margin: 0.25rem 0 0;
+}
+.workflow-avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  flex: 0 0 32px;
+  border-radius: 7px;
+  background: #f4f3f1;
+  overflow: hidden;
+  font-size: 0.7rem;
+}
+.workflow-avatar img,
+.workflow-avatar .klex-card-mascot {
+  width: 100%;
+  height: 100%;
+}
+.workflow-avatar .klex-card-mascot {
+  padding: 3px;
+}
+.workflow-review-status {
+  display: block;
+  margin: 0.15rem 0;
+}
+.workflow-calendar-date {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 1rem 1.5rem;
+  background: #f0f5ff;
+  font-size: 0.75rem;
+}
+.workflow-guests {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: center;
+  margin: 1rem 0;
+  font-size: 0.75rem;
+}
+.workflow-guests > span {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+.workflow-slack-layout {
+  display: grid;
+  grid-template-columns: 125px minmax(0, 1fr);
+  min-height: 540px;
+}
+.workflow-slack-layout .slack-sidebar {
+  overflow-wrap: anywhere;
+  font-size: 0.75rem;
+}
+.workflow-slack-layout .slack-sidebar strong {
+  padding-inline: 0;
+  overflow-wrap: normal;
+}
+.workflow-conversation {
+  min-width: 0;
+  padding: 0 1rem 1rem;
+}
+.workflow-conversation .date-divider {
+  color: #616061;
+  font-weight: 400;
+}
+.workflow-composer {
+  margin-top: 1.5rem;
+  border: 1px solid #c9c9c9;
+  border-radius: 6px;
+  padding: 0.75rem;
+  color: #616061;
+}
+.workflow-composer small {
+  display: block;
+  margin-top: 1.5rem;
+}
+@keyframes workflow-reveal {
+  from {
+    opacity: 0.8;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@media (max-width: 680px) {
+  .workflow-panels {
+    display: block;
+    min-height: 0;
+  }
+  .workflow-panel {
+    width: 100%;
+    min-height: 0;
+  }
+  .workflow-panel[aria-hidden="true"] {
+    display: none;
+  }
+  .workflow-slack-layout {
+    grid-template-columns: minmax(0, 1fr);
+    min-height: 0;
+  }
+  .workflow-slack-layout .slack-sidebar {
+    display: none;
+  }
+  .workflow-content,
+  .workflow-toolbar,
+  .workflow-calendar-date {
+    padding: 1rem;
+  }
+  .workflow-author time {
+    width: 100%;
+    margin-left: 0;
+  }
+  .workflow-panel {
+    overflow-wrap: anywhere;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .workflow-panel {
+    transition: none;
+  }
+  .workflow-panel-content {
+    animation: none;
+  }
+}

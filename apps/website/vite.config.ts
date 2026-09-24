@@ -48,5 +48,6 @@ function klexInstallerAssets(): Plugin {
 }
 
 export default defineConfig({
+  server: { allowedHosts: ['.trycloudflare.com'] },
   plugins: [klexInstallerAssets(), tailwindcss()],
 });

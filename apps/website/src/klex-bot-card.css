@@ -1,0 +1,236 @@
+.klex-bot-card {
+  position: relative;
+  isolation: isolate;
+  width: min(100%, 20rem);
+  color: var(--foreground);
+  height: 20rem;
+  --expansion: 0;
+  --avatar-size: calc(4.8rem + 5.6rem * var(--expansion));
+  --connector-size: calc(2.2rem + 1.4rem * var(--expansion));
+  /* Reserve the wrapped title plus a clear gap at the compact morph endpoint. */
+  --compact-necklace-top: max(
+    11.8rem,
+    calc(8.8rem + var(--role-height, 2.2rem) + 0.75rem)
+  );
+}
+.klex-bot-card:focus-within {
+  z-index: 2;
+}
+.klex-card-select {
+  display: block;
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  border-radius: 0.5rem;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.klex-card-name {
+  top: calc(7rem - 6rem * var(--expansion));
+  position: absolute;
+  left: calc(5.6rem * (1 - var(--expansion)) + 50% * var(--expansion));
+  transform: translateX(calc(-50% * var(--expansion)));
+  white-space: nowrap;
+  font:
+    500 calc(1.125rem + 0.275rem * var(--expansion)) / 1.15 "Geist Variable",
+    ui-sans-serif,
+    system-ui,
+    sans-serif;
+}
+.klex-card-role {
+  top: calc(8.55rem - 6.1rem * var(--expansion));
+  position: absolute;
+  left: calc(5.6rem * (1 - var(--expansion)) + 50% * var(--expansion));
+  transform: translateX(calc(-50% * var(--expansion)));
+  width: max-content;
+  max-width: calc(100% - 5.6rem * (1 - var(--expansion)));
+  margin-top: 0.25rem;
+  font:
+    400 calc(0.8125rem + 0.0625rem * var(--expansion)) / 1.35 "Geist Variable",
+    ui-sans-serif,
+    system-ui,
+    sans-serif;
+  color: var(--muted-foreground);
+}
+.klex-card-avatar {
+  position: absolute;
+  left: calc((100% - var(--avatar-size)) / 2 * var(--expansion));
+  top: calc(7rem - 3.75rem * var(--expansion));
+  display: block;
+  width: var(--avatar-size);
+}
+.klex-card-mascot {
+  display: block;
+}
+.klex-card-mascot svg {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+.klex-card-mascot svg > ellipse {
+  display: none;
+}
+.klex-card-mascot [data-pupil] {
+  fill: white;
+}
+.klex-card-necklace {
+  position: absolute;
+  top: calc(
+    var(--compact-necklace-top) *
+    (1 - var(--expansion)) +
+    12.25rem *
+    var(--expansion)
+  );
+  left: calc(5.6rem * (1 - var(--expansion)) + 50% * var(--expansion));
+  transform: translateX(calc(-50% * var(--expansion)));
+  width: max-content;
+  max-width: calc(100% - 5.6rem * (1 - var(--expansion)));
+  display: flex;
+  flex-wrap: wrap;
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  gap: 0.5rem 0;
+}
+.klex-bot-card[data-active="false"] .klex-card-role {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.klex-card-necklace li {
+  position: relative;
+}
+.klex-card-necklace li + li {
+  margin-left: calc(-0.6rem - 0.2rem * var(--expansion));
+}
+.klex-card-necklace li:has([aria-pressed="true"]) {
+  z-index: 2;
+}
+.klex-card-necklace li:has(:focus-visible) {
+  z-index: 4;
+}
+.klex-bot-card[data-active="true"]
+  .klex-card-necklace
+  li:has([data-preview="true"]) {
+  z-index: 3;
+}
+.klex-card-connector {
+  display: grid;
+  place-items: center;
+  width: var(--connector-size);
+  height: var(--connector-size);
+  padding: 0.3rem;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  outline: none;
+  background: white;
+  color: #202124;
+  cursor: pointer;
+}
+.klex-card-connector:disabled {
+  cursor: default;
+}
+.klex-bot-card[data-active="true"] .klex-card-connector[data-preview="true"] {
+  transform: translateY(-3px) scale(1.12);
+}
+.klex-card-connector img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+.klex-card-connector-label {
+  font-size: 0.75rem;
+  overflow-wrap: anywhere;
+}
+.klex-bot-card[data-active="true"] .klex-card-connector[data-preview="true"],
+.klex-card-connector[aria-pressed="true"] {
+  box-shadow: 0 3px 10px color-mix(in oklab, var(--foreground) 14%, transparent);
+}
+.klex-card-connector:focus-visible {
+  outline: none;
+  border-radius: 50%;
+  border-color: var(--muted-foreground);
+}
+.klex-card-select:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 5px;
+}
+.klex-card-detail {
+  position: absolute;
+  top: 16.5rem;
+  width: 100%;
+  overflow-wrap: anywhere;
+  text-align: center;
+}
+.klex-card-identity {
+  margin: 0;
+  font:
+    500 0.875rem / 1.4 "Geist Variable",
+    ui-sans-serif,
+    system-ui,
+    sans-serif;
+}
+@keyframes klex-card-mascot-bob {
+  0%,
+  100% {
+    transform: translateY(0) rotate(0);
+  }
+  35% {
+    transform: translateY(-5px);
+  }
+  65% {
+    transform: translateY(-2px);
+  }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .klex-card-connector {
+    transition: transform 160ms ease-out;
+  }
+}
+@media (hover: hover) and (prefers-reduced-motion: no-preference) {
+  .klex-bot-card:hover .klex-card-mascot {
+    animation: var(--mascot-gesture, klex-card-mascot-bob) 600ms ease-out;
+  }
+}
+
+.klex-bot-card[data-gesture="wobble"] {
+  --mascot-gesture: klex-card-mascot-wobble;
+}
+.klex-bot-card[data-gesture="tilt"] {
+  --mascot-gesture: klex-card-mascot-tilt;
+}
+.klex-bot-card[data-gesture="blink"] {
+  --mascot-gesture: none;
+}
+@keyframes klex-card-mascot-wobble {
+  30% {
+    transform: rotate(-6deg);
+  }
+  65% {
+    transform: rotate(4deg);
+  }
+}
+@keyframes klex-card-mascot-tilt {
+  45% {
+    transform: translateY(-2px) rotate(7deg);
+  }
+}
+@keyframes klex-card-mascot-blink {
+  45%,
+  55% {
+    transform: scaleY(0.1);
+  }
+}
+.klex-card-mascot [data-pupil] {
+  transform-box: fill-box;
+  transform-origin: center;
+}
+@media (hover: hover) and (prefers-reduced-motion: no-preference) {
+  .klex-bot-card[data-gesture="blink"]:hover [data-pupil] {
+    animation: klex-card-mascot-blink 600ms ease-out;
+  }
+}

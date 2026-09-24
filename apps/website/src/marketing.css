@@ -24,7 +24,7 @@ a {
 }
 .hero-description {
   max-width: 35rem;
-  margin: 1.75rem auto;
+  margin: 1.75rem 0;
   color: var(--muted-foreground);
   font-size: 1.125rem;
   line-height: 1.65;
@@ -32,85 +32,59 @@ a {
 }
 .hero-actions {
   display: flex;
-  justify-content: center;
+  justify-content: flex-start;
   align-items: center;
   gap: 1.5rem;
-  margin-bottom: 3.5rem;
+  margin-bottom: 0;
 }
-.text-link {
-  display: inline-flex;
+#onboarding-story {
+  grid-column: 1 / -1;
+  min-width: 0;
+}
+.coworker-demo {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  width: min(100%, 55rem);
+  margin-inline: auto;
   align-items: center;
-  min-height: 44px;
-  font-size: 0.875rem;
-  text-decoration: none;
-  gap: 0.75rem;
-}
-.text-link:hover {
-  text-decoration: underline;
+  gap: 2rem;
 }
 .connector-demo {
-  max-width: 62.5rem;
-  margin: 0 auto;
+  display: grid;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  grid-template-rows: repeat(3, 4rem) auto;
+  align-items: start;
+  isolation: isolate;
+  min-width: 0;
+  min-height: 652px;
 }
-.demo-heading {
-  display: flex;
-  justify-content: space-between;
-  gap: 1rem;
-  margin-bottom: 1rem;
-  font-size: 0.875rem;
-  font-weight: 550;
+.connector-slack {
+  grid-area: 1 / 1 / 5 / 11;
+  z-index: 1;
 }
-.demo-caption {
-  color: var(--muted-foreground);
-  font-weight: 400;
+.connector-github {
+  grid-area: 2 / 3 / 5 / 13;
+  z-index: 2;
 }
-.connector-tabs {
-  display: flex;
-  gap: 0.5rem;
-  padding: 0.75rem;
-  border: 1px solid var(--border);
-  border-bottom: 0;
-  border-radius: 0.75rem 0.75rem 0 0;
-  background: var(--muted);
+.connector-calendar {
+  grid-area: 3 / 2 / 5 / 12;
+  z-index: 3;
 }
-.connector-tabs button {
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  gap: 0.625rem;
-  min-height: 44px;
-  padding: 0.5rem 1.125rem;
-  border: 1px solid transparent;
-  border-radius: 0.5rem;
-  background: transparent;
-  color: var(--muted-foreground);
-  font: inherit;
-  font-size: 0.875rem;
-  cursor: pointer;
+.connector-gmail {
+  grid-area: 4 / 1 / 5 / 11;
+  z-index: 4;
 }
-.connector-tabs button:hover {
-  background: var(--background);
-  color: var(--foreground);
-}
-.connector-tabs button[aria-selected="true"] {
-  background: var(--background);
-  color: var(--foreground);
-  border-color: var(--border);
-  text-decoration: underline;
-  text-decoration-color: var(--primary);
-  text-underline-offset: 0.5rem;
-}
-.connector-tabs img {
-  width: 21px;
-  height: 21px;
-}
-.dark .connector-tabs img {
-  filter: invert(1);
+.connector-panel[aria-current="true"] {
+  z-index: 5;
+  opacity: 1;
 }
 .connector-panel {
+  opacity: 0.8;
   min-height: 460px;
   border: 1px solid var(--border);
-  border-radius: 0 0 0.75rem 0.75rem;
+  border-radius: 0.75rem;
+  box-shadow: 0 12px 32px #20212418;
   overflow: hidden;
   background: #fff;
   color: #202124;
@@ -138,7 +112,7 @@ a {
 }
 .slack-layout {
   display: grid;
-  grid-template-columns: 190px 1fr;
+  grid-template-columns: 130px minmax(0, 1fr);
   min-height: 460px;
 }
 .slack-sidebar {
@@ -218,6 +192,10 @@ a {
   padding: 5px;
   background: #f3f3f1;
 }
+.bot-avatar .klex-mascot {
+  width: 100%;
+  height: 100%;
+}
 .bot-label {
   display: inline-block;
   padding: 0.05rem 0.25rem;
@@ -253,6 +231,7 @@ a {
   padding-top: 0.75rem;
 }
 .demo-disclaimer {
+  grid-column: 1 / -1;
   margin: 0.875rem 0 0;
   text-align: center;
   color: var(--muted-foreground);
@@ -279,7 +258,7 @@ a {
 }
 .mail-layout {
   display: grid;
-  grid-template-columns: 160px 1fr;
+  grid-template-columns: 110px minmax(0, 1fr);
 }
 .mail-sidebar {
   display: flex;
@@ -513,20 +492,6 @@ a {
   .hero-description {
     font-size: 1rem;
   }
-  .demo-heading {
-    font-size: 0.75rem;
-  }
-  .connector-tabs {
-    gap: 0;
-    padding: 0.5rem 0.25rem;
-  }
-  .connector-tabs button {
-    flex: 1;
-    flex-direction: column;
-    padding: 0.5rem 0.25rem;
-    font-size: 0.75rem;
-    gap: 0.4rem;
-  }
   .connector-panel {
     min-height: 520px;
     font-size: 0.8125rem;
@@ -594,5 +559,29 @@ a {
   }
   .get-started {
     padding-top: 3.5rem;
+  }
+}
+
+@media (min-width: 681px) and (max-width: 1000px) {
+  .mail-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .mail-sidebar {
+    display: none;
+  }
+  .email-body {
+    margin-left: 0.5rem;
+  }
+}
+@media (max-width: 680px) {
+  .connector-demo {
+    display: flex;
+    flex-direction: column;
+    gap: 1.5rem;
+    min-height: 460px;
+  }
+  .connector-panel {
+    width: 100%;
+    min-height: 0;
   }
 }

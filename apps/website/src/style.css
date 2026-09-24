@@ -168,22 +168,28 @@ button:focus-visible {
 }
 
 main {
+  min-width: 0;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  padding: 3.5rem 0 5rem;
+  padding: 10rem 0 5rem;
 }
 
 .hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1.7fr) minmax(0, 1fr);
+  align-items: center;
+  gap: 5rem 3rem;
   width: 100%;
   margin: 0 auto;
+  padding-bottom: 5rem;
 }
 
 .hero-intro {
-  max-width: 54rem;
-  margin: 0 auto;
-  text-align: center;
+  max-width: 44rem;
+  margin: 0;
+  text-align: left;
 }
 
 .hero-eyebrow {
@@ -210,7 +216,7 @@ h3 {
 
 h1 {
   margin: 0;
-  font-size: clamp(3.25rem, 7.5vw, 6.25rem);
+  font-size: clamp(3.25rem, 5.5vw, 5rem);
   font-weight: 500;
   letter-spacing: -0.045em;
   line-height: 0.98;
@@ -397,6 +403,11 @@ h1 {
 }
 
 @media (max-width: 680px) {
+  .hero {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 2.5rem;
+    padding-bottom: 2.5rem;
+  }
   .site-shell {
     width: min(calc(100% - 2rem), 74rem);
   }
@@ -438,7 +449,7 @@ h1 {
   }
 
   main {
-    padding: 2.25rem 0 4rem;
+    padding: 6rem 0 4rem;
   }
 
   h1 {

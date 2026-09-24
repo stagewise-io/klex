@@ -1,10 +1,15 @@
 import { emotePose, REST_EMOTE } from './emotes';
 
-const between = (min: number, max: number) => min + Math.random() * (max - min);
-
 // Each mounted Klex owns its clocks. New pauses are drawn after every action,
 // so a row of avatars does not repeat the same loop with a fixed offset.
-export function createIdle() {
+export function createIdle(
+  seed = 1,
+  style: 'full' | 'breath' | 'quiet' = 'full',
+) {
+  const between = (min: number, max: number) => {
+    seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+    return min + (seed / 4294967296) * (max - min);
+  };
   let time = between(0, 12);
   const breathDuration = between(4.4, 5.6);
   let blinkIn = between(2.5, 6);
@@ -42,9 +47,13 @@ export function createIdle() {
       }
     },
     pose(weight: number) {
+      if (style === 'quiet') weight *= 0.2;
       const breath = (time * Math.PI * 2) / breathDuration;
       const blink = emotePose('blink', blinkTime / blinkDuration).blinkLeft;
-      const glance = emotePose('look-right', glanceTime / glanceDuration).lookX;
+      const glance =
+        style === 'full'
+          ? emotePose('look-right', glanceTime / glanceDuration).lookX
+          : 0;
       return {
         ...REST_EMOTE,
         compression: (1 - Math.cos(breath)) * 0.009 * weight,

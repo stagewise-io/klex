@@ -1,109 +1,292 @@
-const avatar = '<img src="/klex-avatar.svg" alt="" width="64" height="64" />';
+import { botIdentities } from './bot-avatar';
+import { capabilityShapes, collaborationShapes } from './capability-mascots';
+import { mascotMarkup, mountMascot } from './mascot';
 
-const capabilities = [
-  [
-    'Your data. Your choice.',
-    'Klex is open-source. Self-host your bots and keep their data on infrastructure you control. Choose the model providers that work for your company.',
-  ],
-  [
-    'Give access with intention.',
-    'Bots act through connected tools. Choose the connectors, scope their permissions, and monitor the work they perform.',
-  ],
-  [
-    'Machines change. Your bot stays.',
-    'A bot’s identity and memory live separately from its work environments. Machine updates affect the connected environment, while the bot keeps its context.',
-  ],
-  [
-    'A teammate in the thread.',
-    'Each bot has its own identity. Bring it into a Slack thread so the whole team can ask questions, share context, and follow the work.',
-  ],
-  [
-    'Context that carries forward.',
-    'Memory preserves relationships, facts, and processes across conversations. Your team can build on what the bot already knows.',
-  ],
-];
+const capabilityBots = ['Harry', 'Momo'] as const;
+const capabilityIllustration = (name: (typeof capabilityBots)[number]) =>
+  `<div class="capability-illustration" data-capability-bot="${name}" aria-hidden="true">${mascotMarkup(botIdentities[name].color, capabilityShapes[name])}</div>`;
 
-const stories = [
+const collaborators = [
   {
-    name: 'Kristine',
-    role: 'Product Manager',
-    title: 'From customer signal to a clear next step.',
-    description:
-      'Kristine takes reports from Slack and PostHog, checks GitHub for context, and creates Linear issues for the team.',
-    app: 'slack',
-    label: '# product-feedback',
-    message:
-      'The checkout reports point to the same issue. I checked GitHub and created a Linear issue with the reproduction steps.',
-    result: 'Ready for engineering',
-    detail: 'Slack + PostHog → GitHub → Linear',
+    name: 'Sarah',
+    shape: collaborationShapes.listener,
+    position: 'top',
+    gaze: [0, 9],
+    expression: 'happy',
   },
   {
-    name: 'Jonathan',
-    role: 'Engineer',
-    title: 'Give the issue to someone who can build it.',
-    description:
-      'Jonathan has his own computer sandbox. He uses Codex to work through Linear issues and prepare pull requests for review.',
-    app: 'github',
-    label: 'checkout / pull requests',
-    message: 'Fix checkout retry handling',
-    result: 'Pull request ready for review',
-    detail: 'Linear → Computer sandbox + Codex → GitHub',
+    name: 'Harry',
+    shape: collaborationShapes.fin,
+    position: 'left',
+    gaze: [10, -5],
+    expression: 'surprised',
   },
   {
-    name: 'Nat',
-    role: 'Quality Engineer',
-    title: 'Your standards, in every review.',
-    description:
-      'Nat reviews pull requests against your company handbook, bringing the team’s shared expectations into the review.',
-    app: 'github',
-    label: 'Pull request review',
-    message:
-      'Checked against the company handbook: the retry path needs a regression test before this is ready to merge.',
-    result: 'Changes requested',
-    detail: 'GitHub → Company handbook → Review',
+    name: 'Momo',
+    shape: collaborationShapes.antenna,
+    position: 'right',
+    gaze: [-10, -5],
+    expression: 'happy',
+  },
+] as const;
+
+const collaborationIllustration = `<div class="capability-collaboration" aria-hidden="true">
+  ${collaborators
+    .map(
+      ({ name, shape, position }) =>
+        `<div class="collaboration-bot collaboration-bot-${position}" data-collaborator="${name}">${mascotMarkup(botIdentities[name].color, shape)}</div>`,
+    )
+    .join('')}
+  <span class="collaboration-chatter"><i></i><i></i><i></i></span>
+</div>`;
+
+// Activity bots stay live; the conversation poses need no idle clocks.
+export function initializeCapabilityMascots() {
+  const disposers: (() => void)[] = [];
+  const disposeActivities = () => disposers.forEach((dispose) => dispose());
+  for (const name of capabilityBots) {
+    const host = document.querySelector<HTMLElement>(
+      `[data-capability-bot="${name}"]`,
+    );
+    if (!host) continue;
+    const identity = botIdentities[name];
+    const mascot = mountMascot(
+      host,
+      identity.personality,
+      capabilityShapes[name],
+    );
+    mascot.setActivity(name === 'Harry' ? 'working' : 'note-taking');
+    disposers.push(mascot.dispose);
+  }
+
+  for (const { name, shape, gaze, expression } of collaborators) {
+    const host = document.querySelector<HTMLElement>(
+      `[data-collaborator="${name}"]`,
+    );
+    if (!host) continue;
+    const mascot = mountMascot(host, botIdentities[name].personality, shape);
+    mascot.setPaused(true);
+    mascot.setExpression(expression);
+    mascot.lookAt(gaze[0], gaze[1]);
+    mascot.dispose();
+  }
+
+  const section = document.querySelector<HTMLElement>('.capabilities');
+  if (!section) return disposeActivities;
+  let visible = false;
+  const sync = () => {
+    section.toggleAttribute('data-floating', visible && !document.hidden);
+  };
+  const observer = new IntersectionObserver(([entry]) => {
+    visible = entry?.isIntersecting ?? false;
+    sync();
+  });
+  observer.observe(section);
+  document.addEventListener('visibilitychange', sync);
+  return () => {
+    disposeActivities();
+    observer.disconnect();
+    document.removeEventListener('visibilitychange', sync);
+    section.removeAttribute('data-floating');
+  };
+}
+
+type CompanyStory = {
+  name: string;
+  label: string;
+  image: { src: string; alt: string; width: number; height: number };
+};
+
+const companyStories: CompanyStory[] = [
+  {
+    name: 'Marcel',
+    label: 'Marcel AI-Startup',
+    image: {
+      src: '/company-stories/marcel.png',
+      alt: 'Marcel seated at a laptop in an office',
+      width: 1672,
+      height: 941,
+    },
+  },
+  {
+    name: 'Tobi',
+    label: 'Tobi Software-Agency',
+    image: {
+      src: '/company-stories/tobi.png',
+      alt: 'Tobi seated at a laptop beside an office window',
+      width: 1672,
+      height: 941,
+    },
+  },
+  {
+    name: 'Jeff',
+    label: 'Jeff Trucking company',
+    image: {
+      src: '/company-stories/jeff.png',
+      alt: 'Jeff at a laptop with dispatch monitors and trucks in the background',
+      width: 1672,
+      height: 941,
+    },
   },
 ];
 
 export const sectionsMarkup = `
   <section class="positioning content-section" aria-labelledby="positioning-title">
     <h2 id="positioning-title">Personal AI-Assistants don't work for your business.<br /><span>Klex Bots are Digital Coworkers that do.</span></h2>
-    <p>Once a Klex Bot is set up, it can be used by your whole company. It’s like asking David where he saved the notes of yesterday's conference. Or asking Sara to organize the latest Linear issues.</p>
   </section>
-  <section class="capabilities content-section" aria-labelledby="capabilities-title">
-    <div class="section-intro"><h2 id="capabilities-title">Built to belong<br />in your company.</h2><p>Its own identity. Shared context.<br />Tools you control.</p>${avatar}</div>
-    <div class="capability-list">${capabilities.map(([title, description]) => `<article><h3>${title}</h3><p>${description}</p></article>`).join('')}</div>
+  <section class="capabilities content-section" aria-label="Klex Bot capabilities">
+<article>${capabilityIllustration('Harry')}<h2>Klex Bots are Open-Source and can be self-hosted.</h2><p>If you want to keep your Klex Bot's data, you can self-host it and connect it to the cloud. <a href="https://docs.klex.bot">Read more about it here.</a></p></article>
+<article><h2>Klex Bots collaborate and communicate like a team.</h2><p>Klex Bots have their own identities to connect to the tools your company uses. They exchange ideas and work on a Slack thread just like you and your team.</p>${collaborationIllustration}</article>
+<article>${capabilityIllustration('Momo')}<h2>Klex Bots learn <span class="capability-nouns-label">relationships, facts, and processes</span><span class="capability-noun" aria-hidden="true"><span class="capability-noun-size">relationships</span><span class="capability-noun-size">facts</span><span class="capability-noun-size">processes</span><span class="capability-noun-reel"><span>relationships</span><span>facts</span></span></span></h2><p>Klex ships with the best memory implementation by default. It will work and learn out of the box.</p></article>
   </section>
   <section class="company-stories content-section" aria-labelledby="companies-title">
     <h2 id="companies-title">Listen to companies that are already bot-native:</h2>
-    <div class="company-tabs" role="tablist" aria-label="Company stories">${['Marcel AI-Startup', 'Tobi Software-Agency', 'Jeff Trucking company'].map((label, index) => `<button type="button" role="tab" id="company-tab-${index}" aria-controls="company-panel-${index}" aria-selected="${index === 0}" tabindex="${index === 0 ? 0 : -1}">${label}</button>`).join('')}</div>
-    ${['Marcel', 'Tobi', 'Jeff'].map((name, index) => `<div class="company-panel" role="tabpanel" id="company-panel-${index}" aria-labelledby="company-tab-${index}" tabindex="0" ${index === 0 ? '' : 'hidden'}><p>${name}’s story</p><p class="story-pending">Interview coming soon.</p><p>We’ll share the conversation here when it’s available.</p></div>`).join('')}
-  </section>
-  <section class="team-stories content-section" aria-labelledby="team-title">
-    <h2 id="team-title">Meet your digital coworkers.</h2>
-    <p class="section-description">A product team, working together. Illustrative workflows using connected tools.</p>
-    ${stories.map((story) => `<article class="bot-story"><div class="bot-story-copy"><div class="bot-identity">${avatar}<div><h3>${story.name}</h3><span>${story.role}</span></div></div><h4>${story.title}</h4><p>${story.description}</p></div><div class="story-example"><div class="story-app-bar"><img src="/connectors/${story.app}.svg" alt="${story.app === 'slack' ? 'Slack' : 'GitHub'}" width="22" height="22" /><strong>${story.label}</strong><span>Example</span></div><div class="story-message"><img class="avatar bot-avatar" src="/klex-avatar.svg" alt="" width="36" height="36" /><div><strong>${story.name}</strong> <span class="bot-label">BOT</span><p>${story.message}</p><span class="story-result">${story.result}</span></div></div><p class="story-flow">${story.detail}</p></div></article>`).join('')}
-  </section>
+    <div class="company-tabs" role="tablist" aria-label="Company stories">${companyStories.map(({ label }, index) => `<button type="button" role="tab" id="company-tab-${index}" aria-controls="company-panel" aria-selected="${index === 0}" tabindex="${index === 0 ? 0 : -1}">${label}</button>`).join('')}</div>
+    <div class="company-panel" role="tabpanel" id="company-panel" aria-labelledby="company-tab-0" tabindex="0">
+      <div class="company-media"></div>
+      <div class="company-copy">
+<p>Kristine is our Product Manager Klex Bot. She takes bug-reports from Slack, PostHog, checks GitHub issues and creates Linear issues. She tells Jonathan what to work on next.</p>
+<p>Jonathan is our Engineering Bot. He has his own computer-sandbox and uses Codex to work on Linear issues and submit PRs.</p>
+<p>Nat is our Quality Engineer. He reviews every Pull Request and makes sure the code diffs are aligned with the coding principles of the company which are written down in the company handbook.</p>
+</div>
+<p class="company-read-more"><a role="link" aria-disabled="true">Read more to learn about the bot-native structure of CompanyA →</a></p>
+</div>
+</section>
   <section class="guides content-section" aria-labelledby="guides-title">
-    <h2 id="guides-title">Guides on How to Operate a Bot-Native Company</h2>
-    <p class="section-description">Start with the habits that make a team work well together.</p>
-    <details><summary>Write a handbook your bots can use</summary><p>Document how your team makes decisions, what good work looks like, and when to ask a person for help. Keep the handbook in a shared location accessible through a connector, and ask your bots to consult it before reviewing work.</p></details>
-    <details><summary>Give every coworker an identity</summary><p>Give each bot a clear name and role. Set up its own accounts in connected tools, with only the permissions its work requires. Make its role visible so teammates know which bot to involve.</p></details>
-    <details><summary>Keep work on shared boards</summary><p>Track assignments, owners, and acceptance criteria in the same board your team uses. Ask bots to link their updates to the issue and put review requests where a teammate can act on them.</p></details>
+    <h2 id="guides-title">Guides on How to Operate a Bot-Native Company:</h2>
+    <ul><li>Create a company-handbook</li><li>Create separate identities and permissions for bots</li><li>Use shared messaging boards</li></ul>
+  </section>
+  <section class="faq content-section" aria-labelledby="faq-title">
+    <h2 id="faq-title">FAQ:</h2>
+    <div class="faq-items">
+      <details>
+        <summary>What can a Klex Bot do?</summary>
+        <p>Real work. By connecting the tools that your company uses, Klex Bots perform real tasks and deliver real work.</p>
+      </details>
+      <details>
+        <summary>How can I connect the apps of my company?</summary>
+        <p>The Klex Cloud lets you create a new identity for every new Klex Bot per app. That way, a Klex Bot called Jonathan will become @jonathan on your team’s Slack.</p>
+      </details>
+      <details>
+        <summary>What can it see?</summary>
+        <p>It can only see through connectors, so it will only see what you connect and give permissions to.</p>
+      </details>
+      <details>
+        <summary>Can it handle recurring tasks?</summary>
+        <p>Absolutely - ask it to set up a schedule and it will repeatedly start working on the specified task.</p>
+      </details>
+      <details>
+        <summary>Will it work while I’m away?</summary>
+        <p>That’s the whole point. Klex Bots will work while you sleep, attend a conference or hold a meetup.</p>
+      </details>
+      <details>
+        <summary>Can I use more than one Klex Bot?</summary>
+        <p>You should use more than one Klex Bot. Every Bot should get a distinct identity and a narrow job. The Bots will collaborate and become a real team.</p>
+      </details>
+    </div>
   </section>
 `;
+
+export function mountCapabilityNoun() {
+  const slot = document.querySelector<HTMLElement>('.capability-noun');
+  const reel = slot?.querySelector<HTMLElement>('.capability-noun-reel');
+  if (!slot || !reel) return () => {};
+
+  const nouns = ['relationships', 'facts', 'processes'];
+  const preference = matchMedia('(prefers-reduced-motion: reduce)');
+  const events = new AbortController();
+  let index = 0;
+  let visible = false;
+  let timer = 0;
+  let animation: Animation | undefined;
+  const render = () => {
+    reel.children[0].textContent = nouns[index];
+    reel.children[1].textContent = nouns[(index + 1) % nouns.length];
+  };
+  const schedule = () => {
+    window.clearTimeout(timer);
+    if (!visible || document.hidden || preference.matches) return;
+    timer = window.setTimeout(() => {
+      animation = reel.animate(
+        [{ transform: 'translateY(0)' }, { transform: 'translateY(-50%)' }],
+        { duration: 480, easing: 'cubic-bezier(0.16, 1, 0.3, 1)' },
+      );
+      animation.onfinish = () => {
+        index = (index + 1) % nouns.length;
+        render();
+        animation = undefined;
+        schedule();
+      };
+    }, 3000);
+  };
+  const sync = () => {
+    animation?.cancel();
+    animation = undefined;
+    if (preference.matches) index = 0;
+    render();
+    schedule();
+  };
+  const observer = new IntersectionObserver(([entry]) => {
+    visible = entry?.isIntersecting ?? false;
+    sync();
+  });
+  observer.observe(slot);
+  preference.addEventListener('change', sync, { signal: events.signal });
+  document.addEventListener('visibilitychange', sync, {
+    signal: events.signal,
+  });
+  window.addEventListener(
+    'pagehide',
+    () => {
+      visible = false;
+      sync();
+    },
+    { signal: events.signal },
+  );
+  window.addEventListener(
+    'pageshow',
+    () => {
+      observer.unobserve(slot);
+      observer.observe(slot);
+    },
+    { signal: events.signal },
+  );
+  return () => {
+    events.abort();
+    observer.disconnect();
+    window.clearTimeout(timer);
+    animation?.cancel();
+  };
+}
 
 export function initializeCompanyTabs() {
   const tabs = Array.from(
     document.querySelectorAll<HTMLButtonElement>('.company-tabs [role="tab"]'),
   );
+  const media = document.querySelector<HTMLDivElement>('.company-media');
+  let activeIndex = -1;
   const select = (index: number) => {
+    const story = companyStories[index];
+    if (!story || activeIndex === index) return;
+    activeIndex = index;
+    // The prototype supplies one shared story for the three company tabs.
+    document
+      .getElementById('company-panel')
+      ?.setAttribute('aria-labelledby', `company-tab-${index}`);
     tabs.forEach((tab, i) => {
       tab.setAttribute('aria-selected', String(i === index));
       tab.tabIndex = i === index ? 0 : -1;
-      const panel = document.getElementById(`company-panel-${i}`);
-      if (panel) panel.hidden = i !== index;
     });
+    if (!media) return;
+
+    const image = new Image(story.image.width, story.image.height);
+    image.alt = story.image.alt;
+    image.loading = 'lazy';
+    image.decoding = 'async';
+    image.src = story.image.src;
+    media.replaceChildren(image);
   };
+  select(0);
   tabs.forEach((tab, index) => {
     tab.addEventListener('click', () => select(index));
     tab.addEventListener('keydown', (event) => {

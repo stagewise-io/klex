@@ -8,9 +8,6 @@ h1 {
   letter-spacing: -0.04em;
   font-size: clamp(3.25rem, 7.5vw, 6rem);
 }
-.get-started h2 {
-  letter-spacing: -0.04em;
-}
 .content-section {
   width: min(100%, 62.5rem);
   padding: 6rem 0;
@@ -46,41 +43,156 @@ h1 {
   font-size: 1.125rem;
 }
 .capabilities {
+  width: min(100%, 72rem);
+  padding-block: 8rem;
   display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 6rem;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: clamp(2rem, 5vw, 4.5rem);
 }
-.section-intro > p {
+.capabilities > article {
+  position: relative;
+  /* Reserve room for the complete tilted silhouette, independent of copy height. */
+  padding-block: 1rem 11rem;
+}
+.capabilities > article:is(:first-child, :nth-child(3)) {
+  padding-block: 11rem 1rem;
+}
+/* A reserved, scalable conversation circle below the copy. */
+.capability-collaboration {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  width: min(100%, 15rem);
+  aspect-ratio: 3 / 2;
+  pointer-events: none;
+}
+.collaboration-bot {
+  position: absolute;
+  width: 42%;
+}
+.collaboration-bot .klex-mascot {
+  width: 100%;
+  height: auto;
+}
+.collaboration-bot-top {
+  top: -5%;
+  left: 29%;
+}
+.collaboration-bot-left {
+  bottom: 0;
+  left: 0;
+  transform: rotate(12deg);
+}
+.collaboration-bot-right {
+  right: 0;
+  bottom: 0;
+  transform: rotate(-12deg);
+}
+.collaboration-chatter {
+  position: absolute;
+  top: 52%;
+  left: 44%;
+  display: flex;
+  gap: 3px;
   color: var(--muted-foreground);
-  margin-block: 1.5rem 2.5rem;
 }
-.section-intro > img {
-  width: 120px;
-  height: 120px;
+.collaboration-chatter i {
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: currentColor;
 }
-.capability-list article {
-  padding: 1.75rem 0;
-  border-top: 1px solid var(--border);
+.collaboration-chatter i:nth-child(2) {
+  transform: translateY(-2px);
 }
-.capability-list article:first-child {
-  padding-top: 0;
-  border-top: 0;
+.capability-illustration {
+  --capability-tilt: -5deg;
+  position: absolute;
+  bottom: 0.75rem;
+  left: 0.75rem;
+  width: 9rem;
+  max-width: calc(100% - 1.5rem);
+  transform: rotate(var(--capability-tilt));
+  pointer-events: none;
+  animation: capability-drift 8s ease-in-out infinite;
+  animation-play-state: paused;
 }
-.capability-list article:last-child {
-  padding-bottom: 0;
+.capabilities[data-floating] .capability-illustration {
+  animation-play-state: running;
 }
-.capability-list h3 {
-  margin: 0;
+[data-capability-bot="Harry"],
+[data-capability-bot="Momo"] {
+  top: 0.5rem;
+  bottom: auto;
+}
+[data-capability-bot="Momo"] {
+  --capability-tilt: -3deg;
+  right: 0.75rem;
+  left: auto;
+  animation-duration: 10s;
+  animation-delay: -6s;
+}
+@keyframes capability-drift {
+  0%,
+  100% {
+    transform: translate(0, 0) rotate(var(--capability-tilt));
+  }
+  50% {
+    transform: translate(2px, -5px) rotate(calc(var(--capability-tilt) + 1deg));
+  }
+}
+.capability-illustration .klex-mascot {
+  width: 100%;
+  height: auto;
+}
+.capability-illustration [data-travel] {
+  transform-box: fill-box;
+  transform-origin: 50% 100%;
+}
+[data-capability-bot="Momo"] [data-travel] {
+  transform: translateY(-4px) rotate(8deg);
+}
+.capabilities h2 {
   font-size: 1.65rem;
-  font-weight: 500;
   line-height: 1.2;
+  text-wrap: pretty;
 }
-.capability-list p {
+.capabilities p {
   color: var(--muted-foreground);
-  margin: 0.75rem 0 0;
+  margin: 1.5rem 0 0;
+}
+.capability-nouns-label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+.capability-noun {
+  position: relative;
+  display: inline-grid;
+  height: 1.2em;
+  overflow: hidden;
+  vertical-align: bottom;
+  white-space: nowrap;
+}
+.capability-noun-size {
+  grid-area: 1 / 1;
+  visibility: hidden;
+}
+.capability-noun-reel {
+  position: absolute;
+  inset: 0 0 auto;
+}
+.capability-noun-reel > :where(span) {
+  display: block;
+  height: 1.2em;
 }
 .company-stories h2 {
-  max-width: 43rem;
   margin: 0 auto 2.5rem;
   text-align: center;
 }
@@ -94,8 +206,8 @@ h1 {
   padding: 0.75rem 1rem;
   background: transparent;
   color: var(--muted-foreground);
-  border: 0;
-  border-bottom: 2px solid transparent;
+  border: 1px solid transparent;
+  border-radius: 8px;
   font: inherit;
   cursor: pointer;
 }
@@ -105,164 +217,129 @@ h1 {
 }
 .company-tabs button[aria-selected="true"] {
   color: var(--foreground);
-  border-bottom-color: var(--primary);
+  background: var(--muted);
+  border-color: var(--border);
 }
 .company-panel {
-  padding: 3rem 1.5rem;
-  text-align: center;
-  background: var(--muted);
-  margin-top: 1.5rem;
-  border-radius: 12px;
-}
-.company-panel p {
-  margin: 0.5rem 0;
-  color: var(--muted-foreground);
-}
-.company-panel .story-pending {
-  font-family: "Fraunces", Georgia, serif;
-  font-size: 2rem;
-  color: var(--foreground);
-}
-.company-panel:focus-visible {
-  outline: 3px solid var(--ring);
-  outline-offset: 4px;
-}
-.section-description {
-  color: var(--muted-foreground);
-  margin: 1.5rem 0 3rem;
-}
-.bot-story {
   display: grid;
-  grid-template-columns: 0.9fr 1.1fr;
-  align-items: center;
-  gap: 4rem;
-  padding: 3.5rem 0;
-  border-top: 1px solid var(--border);
+  grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr);
+  align-items: start;
+  gap: 2.5rem;
+  margin-top: 2.5rem;
 }
-.bot-story:last-child {
-  padding-bottom: 0;
-}
-.bot-identity {
-  display: flex;
-  gap: 1rem;
-  align-items: center;
-}
-.bot-identity h3 {
-  font-size: 1.65rem;
-  font-weight: 500;
-  margin: 0;
-}
-.bot-identity span {
-  font-size: 0.875rem;
-  color: var(--muted-foreground);
-}
-.bot-story h4 {
-  margin: 1.5rem 0 0.75rem;
-  font-size: 1.25rem;
-  font-weight: 550;
-  line-height: 1.4;
-}
-.bot-story-copy > p {
-  color: var(--muted-foreground);
-  margin: 0;
-}
-.story-example {
-  background: #fff;
-  color: #24292f;
-  border: 1px solid #d1d9e0;
+.company-media {
+  background: var(--muted);
   border-radius: 12px;
   overflow: hidden;
-  font-size: 0.875rem;
-  color-scheme: light;
 }
-.story-app-bar {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-  padding: 1rem;
-  background: #f6f8fa;
-  border-bottom: 1px solid #d1d9e0;
+.company-media img {
+  display: block;
+  width: 100%;
+  height: auto;
+  object-fit: contain;
 }
-.story-app-bar strong {
-  font-weight: 600;
-  overflow-wrap: anywhere;
+.company-copy {
+  min-width: 0;
 }
-.story-app-bar > span {
-  margin-left: auto;
-  font-size: 0.75rem;
-  color: #59636e;
+.company-copy p {
+  margin: 0 0 1.5rem;
 }
-.story-message {
-  display: flex;
-  gap: 0.75rem;
-  padding: 1.5rem 1rem;
+.company-copy p:last-child {
+  margin-bottom: 0;
 }
-.story-message p {
-  margin: 0.5rem 0 1rem;
-}
-.story-result {
-  display: inline-block;
-  padding: 0.25rem 0.65rem;
-  background: #eff1f3;
-  border-radius: 6px;
-  font-size: 0.75rem;
-}
-.story-flow {
+.company-read-more {
+  grid-column: 1 / -1;
   margin: 0;
-  padding: 1rem;
-  border-top: 1px solid #d1d9e0;
-  color: #59636e;
-  font-size: 0.75rem;
+  text-align: center;
+}
+.company-read-more [aria-disabled="true"] {
+  text-decoration: underline;
+  text-underline-offset: 0.2em;
+}
+.company-panel:focus-visible,
+.company-tabs button:focus-visible {
+  outline: 3px solid var(--ring);
+  outline-offset: 4px;
 }
 .guides h2 {
   max-width: 44rem;
 }
-.guides details {
+.guides ul {
+  margin: 2rem 0 0;
+  padding-left: 1.5rem;
+  font-size: 1.125rem;
+  line-height: 1.7;
+}
+.guides li + li {
+  margin-top: 0.75rem;
+}
+.faq-items {
+  margin-top: 2rem;
   border-top: 1px solid var(--border);
+}
+.faq-items details {
+  border-bottom: 1px solid var(--border);
+}
+.faq-items summary {
   padding: 1.5rem 0;
-}
-.guides summary {
+  color: var(--muted-foreground);
+  font-size: 1.125rem;
+  font-weight: 600;
+  line-height: 1.5;
   cursor: pointer;
-  font-size: 1.25rem;
-  font-weight: 500;
-  padding-right: 1rem;
+  overflow-wrap: anywhere;
 }
-.guides summary::marker {
-  color: var(--primary);
-}
-.guides summary:hover {
-  color: var(--primary);
-}
-.guides summary:focus-visible {
-  outline: 3px solid var(--ring);
-  outline-offset: 6px;
-}
-.guides details p {
-  max-width: 65ch;
-  margin-bottom: 0;
+.faq-items summary::marker {
   color: var(--muted-foreground);
 }
-.get-started .local-option {
-  margin-top: 3rem;
-  font-size: 0.875rem;
+.faq-items details[open] > summary,
+.faq-items summary:hover {
+  color: var(--foreground);
 }
-.get-started .installer {
-  margin-top: 1.5rem;
+.faq-items summary:focus-visible {
+  color: var(--foreground);
+  outline: none;
+}
+.faq-items p {
+  max-width: 70ch;
+  margin: 0;
+  padding-bottom: 1.5rem;
+  color: var(--muted-foreground);
+  overflow-wrap: anywhere;
+}
+@media (max-width: 900px) {
+  .company-panel {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 2rem;
+  }
 }
 @media (max-width: 680px) {
   .content-section {
     padding-block: 3.5rem;
   }
-  .capabilities,
-  .bot-story {
+  .capabilities {
+    padding-block: 5rem;
     grid-template-columns: 1fr;
-    gap: 2rem;
+    gap: 3.5rem;
   }
-  .section-intro > img {
-    display: none;
+  .capabilities > article,
+  .capabilities > article:is(:first-child, :nth-child(3)) {
+    display: flex;
+    flex-direction: column;
+    padding-block: 0;
   }
-  .section-intro > p {
-    margin-bottom: 0;
+  .capabilities .capability-illustration {
+    position: static;
+    flex: none;
+    margin: 0.5rem 0.75rem 1.5rem;
+  }
+  .capability-collaboration {
+    position: relative;
+    flex: none;
+    margin-block: 1.5rem 0.5rem;
+  }
+  [data-capability-bot="Momo"] {
+    align-self: flex-end;
   }
   .company-tabs {
     gap: 0;
@@ -271,12 +348,6 @@ h1 {
     flex: 1;
     padding: 0.75rem 0.4rem;
     font-size: 0.8125rem;
-  }
-  .bot-story {
-    padding-block: 2.5rem;
-  }
-  .story-app-bar {
-    gap: 0.5rem;
   }
   .site-nav {
     gap: 0.75rem;
@@ -290,6 +361,9 @@ h1 {
   }
 }
 @media (prefers-reduced-motion: reduce) {
+  .capability-illustration {
+    animation: none;
+  }
   *,
   *::before,
   *::after {

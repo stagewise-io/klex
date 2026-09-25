@@ -34,6 +34,13 @@ returned by the API are redacted and must never contain resolved environment
 secrets. Model selection uses separate `providerId` and opaque `modelId` fields;
 clients must not split model IDs on colons.
 
+Provider creation tests the connection before saving. Rejected credentials or a
+failed connection leave the configuration unchanged; clients should keep the
+form open and display the returned error. For providers without model discovery
+or a default test model, supply `settings.testModelId` or a known model so the
+connection test can make a small inference request. Environment references are
+expanded only for the test and remain references in the saved configuration.
+
 ## MCP OAuth authorization
 
 Version 0.2 adds the consolidated MCP authorization contract. Authorization is

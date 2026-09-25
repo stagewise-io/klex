@@ -847,10 +847,74 @@ describe('config v2', () => {
     await config.deleteProviderInstance('openai-main');
     expect(config.getMcpServers()).toEqual({});
     expect(config.get().providers).toEqual({});
+    expect(config.get().modelSelection).toEqual(emptyModelSelection);
 
     unsubscribe();
     await config.mutate((current) => ({ ...current, officialName: 'Ignored' }));
     expect(notifications).toHaveLength(7);
+    await config.close();
+  });
+
+  it('removes a provider and all its selections in one persisted update', async () => {
+    const dataDirectory = await directory(true);
+    const config = createConfig({ logging, dataDirectory, env: {} });
+    await config.start();
+    const provider = {
+      type: 'openai',
+      settings: { apiKey: 'test-key' },
+      knownModels: { shared: { displayName: 'Shared model' } },
+    } as const;
+    await config.writeProviderInstance('remove', provider);
+    await config.writeProviderInstance('keep', provider);
+    const remaining = [
+      {
+        providerId: 'keep',
+        modelId: 'shared',
+        providerOptions: { openai: { reasoningEffort: 'high' } },
+      },
+      { providerId: 'keep', modelId: 'fallback' },
+    ];
+    const entries = [
+      { providerId: 'remove', modelId: 'shared' },
+      ...remaining,
+      { providerId: 'remove', modelId: 'another' },
+    ];
+    await config.writeModelSelection({
+      chat: entries,
+      compaction: entries,
+      memory: entries,
+      consult: entries,
+      imageVision: entries,
+      audioListening: entries,
+      voice: { sts: entries, tts: entries, stt: entries },
+    });
+    const notifications: unknown[] = [];
+    config.subscribe((value) => {
+      notifications.push(value);
+    });
+
+    await config.deleteProviderInstance('remove');
+
+    const expected = {
+      providers: { keep: provider },
+      modelSelection: {
+        chat: remaining,
+        compaction: remaining,
+        memory: remaining,
+        consult: remaining,
+        imageVision: remaining,
+        audioListening: remaining,
+        voice: { sts: remaining, tts: remaining, stt: remaining },
+      },
+    };
+    expect(config.get()).toMatchObject(expected);
+    expect(config.get().providers.remove).toBeUndefined();
+    expect(notifications).toEqual([config.get()]);
+    const persisted = JSON.parse(
+      await readFile(join(dataDirectory, CONFIG_FILE_NAME), 'utf8'),
+    );
+    expect(persisted).toMatchObject(expected);
+    expect(persisted.providers.remove).toBeUndefined();
     await config.close();
   });
 

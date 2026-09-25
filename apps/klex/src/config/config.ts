@@ -135,6 +135,9 @@ export interface Config {
   get(): Readonly<KlexConfig>;
   /** Returns an ephemeral deep clone with environment placeholders expanded. */
   getRuntime(): Readonly<KlexConfig>;
+  resolveProviderSettings(
+    settings: ProviderConfig['settings'],
+  ): ProviderConfig['settings'];
   replace(input: unknown): Promise<Readonly<KlexConfig>>;
   mutate(fn: (config: KlexConfig) => KlexConfig): Promise<Readonly<KlexConfig>>;
   subscribe(listener: ConfigListener): () => void;
@@ -233,6 +236,12 @@ class ConfigModule implements Config {
 
   getRuntime(): Readonly<KlexConfig> {
     return interpolateEnvironment(this.requireConfig(), this.deps.env);
+  }
+
+  resolveProviderSettings(
+    settings: ProviderConfig['settings'],
+  ): ProviderConfig['settings'] {
+    return interpolateEnvironment(settings, this.deps.env);
   }
 
   replace(input: unknown): Promise<Readonly<KlexConfig>> {
@@ -446,7 +455,28 @@ class ConfigModule implements Config {
     return this.mutate((current) => {
       const providers = { ...current.providers };
       delete providers[id];
-      return { ...current, providers };
+      const keepOtherProviders = (entries: ModelSelectionEntry[]) =>
+        entries.filter((entry) => entry.providerId !== id);
+      const selection = current.modelSelection;
+      return {
+        ...current,
+        providers,
+        modelSelection: {
+          ...selection,
+          chat: keepOtherProviders(selection.chat),
+          compaction: keepOtherProviders(selection.compaction),
+          memory: keepOtherProviders(selection.memory),
+          consult: keepOtherProviders(selection.consult),
+          imageVision: keepOtherProviders(selection.imageVision),
+          audioListening: keepOtherProviders(selection.audioListening),
+          voice: {
+            ...selection.voice,
+            sts: keepOtherProviders(selection.voice.sts),
+            tts: keepOtherProviders(selection.voice.tts),
+            stt: keepOtherProviders(selection.voice.stt),
+          },
+        },
+      };
     });
   }
 

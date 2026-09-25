@@ -595,6 +595,28 @@ class ProviderRegistryModule implements ProviderRegistry {
     );
     if (!preflight.ok) return preflight;
     const stored: ProviderInstance = { ...instance, settings: preflight.value };
+    const connection = await this.runHook((signal) =>
+      definition.testConnection(
+        {
+          ...stored,
+          settings: config.resolveEnvironment(stored.settings),
+        },
+        signal,
+      ),
+    );
+    if (!connection.ok) {
+      if (connection.message === 'Provider returned HTTP 401')
+        return failure(
+          'authentication_required',
+          'The provider rejected the credentials. Check your API key and try again.',
+        );
+      if (connection.message === 'Provider returned HTTP 403')
+        return failure(
+          'authentication_required',
+          'The provider denied access. Check your API key permissions and try again.',
+        );
+      return connection;
+    }
     try {
       await config.writeProviderInstance(stored.id, withoutId(stored));
     } catch (error) {
@@ -654,13 +676,6 @@ class ProviderRegistryModule implements ProviderRegistry {
     const config = this.requireConfig();
     const currentConfig = config.get().providers[id];
     if (!currentConfig) return failure('not_found', `Unknown provider '${id}'`);
-    if (isProviderReferenced(config.get().modelSelection, id)) {
-      return failure(
-        'referential_integrity',
-        `Provider '${id}' is referenced by model selection`,
-        'Remove this provider from every model-selection purpose first.',
-      );
-    }
     const instance: ProviderInstance = { id, ...currentConfig };
     const definition = this.definitions.get(instance.type);
     if (!definition)
@@ -1405,10 +1420,6 @@ class ProviderRegistryModule implements ProviderRegistry {
 
   private instanceInfo(instance: ProviderInstance): ProviderInstanceInfo {
     const definition = this.requireDefinition(instance.type);
-    const removeBlocked = isProviderReferenced(
-      this.requireConfig().get().modelSelection,
-      instance.id,
-    );
     return {
       id: instance.id,
       type: instance.type,
@@ -1416,15 +1427,7 @@ class ProviderRegistryModule implements ProviderRegistry {
       metadata: providerMetadata(definition),
       operations: {
         update: { available: true },
-        remove: removeBlocked
-          ? {
-              available: false,
-              code: 'referential_integrity',
-              message: `Provider '${instance.id}' is referenced by model selection`,
-              remediation:
-                'Remove this provider from every model-selection purpose first.',
-            }
-          : { available: true },
+        remove: { available: true },
       },
     };
   }
@@ -1578,15 +1581,6 @@ function modelSelectionEntries(
 function voiceCapabilityForPurpose(purpose: string): 'sts' | undefined {
   if (purpose === 'voice.sts') return 'sts';
   return undefined;
-}
-
-function isProviderReferenced(
-  selection: ModelSelection,
-  providerId: string,
-): boolean {
-  return modelSelectionEntries(selection).some(([, entries]) =>
-    entries.some((entry) => entry.providerId === providerId),
-  );
 }
 
 function sanitizedError(error: unknown): string {

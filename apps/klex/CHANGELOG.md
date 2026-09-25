@@ -2,6 +2,36 @@
 
 All notable Klex changes are documented here.
 
+## 0.10.0 (2026-09-25)
+
+### Features
+
+- add enrollment analytics and gate start on agent open (ff7888c)
+- add analytics start event, deployment label and debug logs (db8b61c)
+- add anonymous aggregate product analytics (84a2d9c)
+- add episodic memory retrieval (bed9edd)
+- keep resource link URIs in push notification context (0f403f3)
+- add deep-thinker extension (6d6b5a3)
+
+### Bug Fixes
+
+- start usage windows at agent start and flush reliably (678725a)
+- keep enrollment outcome tied to the request result (bd2e368)
+- run one dev process per build (1bb257a)
+- let CLI flags override env for deployment and headless (57d9cee)
+- harden memory retrieval batching, startup, and recall routing (29b3131)
+- harden telemetry and session lifecycle (712a619)
+- migrate legacy telemetry levels (8a1834d)
+
+### Other Changes
+
+- pass PostHog key and host as repository variables (c3760b5)
+- remove deprecated reset-telemetry-identity flag (2c55559)
+- unify history projection in history-view util (105f5aa)
+- stabilize slow and timing-sensitive tests (f98ae15)
+- rename deep thinker extension to consult (4943140)
+- enforce named extension-owned sessions (a1669d9)
+
 ## 0.9.1 (2026-09-22)
 
 ### Bug Fixes

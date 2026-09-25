@@ -110,7 +110,7 @@ export async function testModelConnection(
   if (!modelId) {
     return unavailable(
       'invalid_configuration',
-      'A connectivity-test model ID is required when model discovery is unavailable',
+      'Enter a test model ID to verify the connection to this provider.',
       'Configure testModelId or add at least one known model.',
     );
   }

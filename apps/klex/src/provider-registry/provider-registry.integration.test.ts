@@ -21,7 +21,13 @@ import {
   createProviderRegistry,
   type ProviderDefinition,
 } from './provider-registry';
+import { amazonBedrockProviderDefinition } from './providers/amazon-bedrock';
 import { azureOpenAiProviderDefinition } from './providers/azure-openai';
+import { chatCompletionsProviderDefinition } from './providers/chat-completions';
+import { chatGptCodexSubscriptionProviderDefinition } from './providers/chatgpt-codex-subscription';
+import { googleVertexProviderDefinition } from './providers/google-vertex';
+import { openAiProviderDefinition } from './providers/openai';
+import { openRouterProviderDefinition } from './providers/openrouter';
 import { vercelAiGatewayProviderDefinition } from './providers/vercel-ai-gateway';
 import { voicePreviewInstructions } from './providers/voice-preview-context';
 
@@ -34,6 +40,7 @@ const logging = {
   }),
 } as unknown as RootLogger;
 afterEach(async () => {
+  vi.unstubAllGlobals();
   await Promise.all(
     directories
       .splice(0)
@@ -753,6 +760,240 @@ describe('provider registry module integration', () => {
     await registry.close();
     await config.close();
   });
+  it.each([openAiProviderDefinition, openRouterProviderDefinition])(
+    'validates $type credentials before persisting and permits a corrected retry',
+    async (definition) => {
+      const dataDirectory = await createDataDirectory();
+      const config = createConfig({
+        logging,
+        dataDirectory,
+        env: { PROVIDER_KEY: 'valid-secret' },
+      });
+      await config.start();
+      const registry = createProviderRegistry({
+        logging,
+        config,
+        definitions: [definition],
+      });
+      await registry.start();
+      const fetchMock = vi.fn();
+      vi.stubGlobal('fetch', fetchMock);
+      const onChange = vi.fn();
+      config.subscribe(onChange);
+      const original = await readFile(
+        join(dataDirectory, CONFIG_FILE_NAME),
+        'utf8',
+      );
+      try {
+        for (const status of [401, 403, 503]) {
+          fetchMock.mockResolvedValueOnce(
+            new Response('secret upstream body', { status }),
+          );
+          const result = await registry.addInstance({
+            id: 'work',
+            type: definition.type,
+            settings: { apiKey: 'bad-secret' },
+          });
+          expect(result).toMatchObject({
+            ok: false,
+            code:
+              status === 503
+                ? 'connectivity_failed'
+                : 'authentication_required',
+          });
+          expect(JSON.stringify(result)).not.toMatch(
+            /bad-secret|secret upstream body/,
+          );
+          expect(config.get().providers).toEqual({});
+          expect(registry.listInstances()).toEqual([]);
+          expect(onChange).not.toHaveBeenCalled();
+          expect(
+            await readFile(join(dataDirectory, CONFIG_FILE_NAME), 'utf8'),
+          ).toBe(original);
+        }
+        fetchMock.mockResolvedValueOnce(Response.json({ data: [] }));
+        const result = await registry.addInstance({
+          id: 'work',
+          type: definition.type,
+          settings: { apiKey: '${env:PROVIDER_KEY}' },
+        });
+        expect(result.ok).toBe(true);
+        const [url, init] = fetchMock.mock.lastCall!;
+        expect(String(url)).toBe(
+          definition.type === 'openrouter'
+            ? 'https://openrouter.ai/api/v1/key'
+            : 'https://api.openai.com/v1/models',
+        );
+        expect(init.headers.Authorization).toBe('Bearer valid-secret');
+        expect(config.get().providers.work?.settings.apiKey).toBe(
+          '${env:PROVIDER_KEY}',
+        );
+        expect(onChange).toHaveBeenCalledTimes(1);
+      } finally {
+        await registry.close();
+        await config.close();
+      }
+    },
+  );
+
+  describe('connection test when adding an instance', () => {
+    async function setupRegistry(definition: ProviderDefinition) {
+      const config = createConfig({
+        logging,
+        dataDirectory: await createDataDirectory(),
+        env: {},
+      });
+      await config.start();
+      const registry = createProviderRegistry({
+        logging,
+        config,
+        definitions: [definition],
+      });
+      await registry.start();
+      const fetchMock = vi.fn();
+      vi.stubGlobal('fetch', fetchMock);
+      return {
+        config,
+        fetchMock,
+        registry,
+        close: async () => {
+          await registry.close();
+          await config.close();
+        },
+      };
+    }
+
+    it.each([
+      [
+        'managed sign-in',
+        chatGptCodexSubscriptionProviderDefinition,
+        { authMode: 'managed' },
+      ],
+      [
+        'ambient AWS credentials',
+        amazonBedrockProviderDefinition,
+        { authMode: 'default-chain' },
+      ],
+      [
+        'ambient Google credentials',
+        googleVertexProviderDefinition,
+        { authMode: 'adc', project: 'work' },
+      ],
+      [
+        'an endpoint without a key',
+        chatCompletionsProviderDefinition,
+        { baseUrl: 'http://localhost:8000/v1', testModelId: 'local' },
+      ],
+    ] as const)(
+      'saves %s without testing',
+      async (_case, definition, settings) => {
+        const testConnection = vi.fn(definition.testConnection);
+        const { config, fetchMock, registry, close } = await setupRegistry({
+          ...definition,
+          testConnection,
+        });
+        try {
+          const result = await registry.addInstance({
+            id: 'work',
+            type: definition.type,
+            settings,
+          });
+          expect(result.ok).toBe(true);
+          expect(testConnection).not.toHaveBeenCalled();
+          expect(fetchMock).not.toHaveBeenCalled();
+          expect(config.get().providers.work).toBeDefined();
+        } finally {
+          await close();
+        }
+      },
+    );
+
+    it.each([
+      [
+        'chat-completions',
+        chatCompletionsProviderDefinition,
+        { baseUrl: 'https://llm.example/v1', apiKey: 'key' },
+      ],
+      [
+        'azure-openai',
+        azureOpenAiProviderDefinition,
+        { resourceName: 'work', apiKey: 'key' },
+      ],
+    ] as const)(
+      'saves %s with a key but no test model untested',
+      async (_type, definition, settings) => {
+        const { config, fetchMock, registry, close } =
+          await setupRegistry(definition);
+        try {
+          const result = await registry.addInstance({
+            id: 'work',
+            type: definition.type,
+            settings,
+          });
+          expect(result.ok).toBe(true);
+          expect(fetchMock).not.toHaveBeenCalled();
+          expect(config.get().providers.work).toBeDefined();
+        } finally {
+          await close();
+        }
+      },
+    );
+
+    it.each([
+      ['an API key', { apiKey: 'bad-secret' }],
+      ['a secret header', { headers: { Authorization: 'Bearer bad-secret' } }],
+    ])('rejects %s the provider refuses', async (_case, credential) => {
+      const { config, fetchMock, registry, close } = await setupRegistry(
+        chatCompletionsProviderDefinition,
+      );
+      fetchMock.mockResolvedValue(new Response('denied', { status: 401 }));
+      try {
+        const result = await registry.addInstance({
+          id: 'work',
+          type: 'chat-completions',
+          settings: {
+            baseUrl: 'https://llm.example/v1',
+            testModelId: 'model',
+            ...credential,
+          },
+        });
+        expect(result).toMatchObject({
+          ok: false,
+          code: 'authentication_required',
+          message:
+            'The provider rejected the credentials. Check your API key and try again.',
+        });
+        expect(config.get().providers).toEqual({});
+      } finally {
+        await close();
+      }
+    });
+
+    it('does not save an unverified key after a network failure', async () => {
+      const { config, fetchMock, registry, close } = await setupRegistry(
+        openAiProviderDefinition,
+      );
+      fetchMock.mockRejectedValueOnce(new TypeError('fetch failed'));
+      try {
+        const add = () =>
+          registry.addInstance({
+            id: 'work',
+            type: 'openai',
+            settings: { apiKey: 'key' },
+          });
+        expect(await add()).toMatchObject({
+          ok: false,
+          code: 'connectivity_failed',
+        });
+        expect(config.get().providers).toEqual({});
+        fetchMock.mockResolvedValueOnce(Response.json({ data: [] }));
+        expect((await add()).ok).toBe(true);
+      } finally {
+        await close();
+      }
+    });
+  });
+
   it('runs the provider lifecycle across config, discovery, and runtime resolution', async () => {
     const discoverModels = vi.fn(async () => ({
       ok: true as const,
@@ -1098,23 +1339,24 @@ describe('provider registry module integration', () => {
       code: 'available',
       value: { latencyMs: 17, target: 'updated-region' },
     });
-    await expect(
-      registry.removeInstance('provider-primary'),
-    ).resolves.toMatchObject({ ok: false, code: 'referential_integrity' });
-    await registry.updateModelSelection({ chat: [] });
-    await expect(
-      registry.removeInstance('provider-primary'),
-    ).resolves.toMatchObject({ ok: false, code: 'referential_integrity' });
-    await registry.updateModelSelection({ consult: [] });
-    await expect(
-      registry.removeInstance('provider-primary'),
-    ).resolves.toMatchObject({ ok: false, code: 'referential_integrity' });
-    await registry.updateModelSelection({ instincts: [] });
+    expect(
+      registry.listInstances().find(({ id }) => id === 'provider-primary')
+        ?.operations.remove,
+    ).toEqual({ available: true });
     await expect(
       registry.removeInstance('provider-primary'),
     ).resolves.toMatchObject({ ok: true });
     expect(config.get().providers['provider-primary']).toBeUndefined();
     expect(config.get().providers['provider-secondary']).toBeDefined();
+    expect(config.get().modelSelection.chat).toEqual([]);
+    expect(config.get().modelSelection.consult).toEqual([]);
+    expect(config.get().modelSelection.instincts).toEqual([]);
+    await expect(
+      registry.listModels('provider-primary'),
+    ).resolves.toMatchObject({
+      ok: false,
+      code: 'not_found',
+    });
 
     await registry.close();
     await config.close();

@@ -133,6 +133,8 @@ class MemoryExt implements Extension {
       if (!event.fatalError) this.observeDelta();
     }
     this.stepActive = false;
+    // The step kept the session busy; a long step must not count as idle.
+    void this.recorder?.store.extendActivity();
     if (
       this.closed ||
       event.fatalError ||

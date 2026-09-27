@@ -4,6 +4,7 @@ import {
   type FittedMessage,
   type FittedRecord,
   type HistoryRole,
+  RECORD_SEPARATOR,
   renderRecordText,
 } from '@/session/chat/utils/history-view';
 
@@ -88,6 +89,37 @@ export function parseEpisodeRecordLine(
 /** Line-format text of an entry, as the history view renders it. */
 export function episodeEntryText(entry: EpisodeRecordEntry): string {
   return renderRecordText(entry.record, entry.role, entry.omittedRecords ?? 0);
+}
+
+export interface RenderEpisodeTextOptions {
+  /** Prefix each block with its UTC `HH:mm ` time. Defaults to true. */
+  timestamps?: boolean;
+}
+
+/**
+ * Renders JSONL episode content as compact history-view text: one
+ * blank-line separated block per record, in file order. With timestamps,
+ * each block's first line starts with the record's UTC `HH:mm`. Header,
+ * blank, and invalid lines are skipped, like every other reader.
+ */
+export function renderEpisodeText(
+  content: string,
+  options: RenderEpisodeTextOptions = {},
+): string {
+  const timestamps = options.timestamps ?? true;
+  const blocks: string[] = [];
+  for (const line of content.split(/\r?\n/)) {
+    const entry = parseEpisodeRecordLine(line);
+    if (!entry) continue;
+    const text = episodeEntryText(entry);
+    blocks.push(timestamps ? `${utcTime(entry.at)} ${text}` : text);
+  }
+  return blocks.join(RECORD_SEPARATOR);
+}
+
+/** `HH:mm` of an ISO 8601 UTC instant. */
+function utcTime(at: string): string {
+  return new Date(at).toISOString().slice(11, 16);
 }
 
 const count = z.number().int().positive();

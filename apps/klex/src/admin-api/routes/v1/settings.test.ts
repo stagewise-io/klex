@@ -23,9 +23,6 @@ const logger = { error: () => undefined } as unknown as ModuleLogger;
 const reference = { providerId: 'openai-main', modelId: 'org:model:v2' };
 const baseConfig: KlexConfig = {
   configVersion: 2,
-  episodeFinishIdleTriggerTimeMs: 300_000,
-  memoryWriteIntervalMs: 60_000,
-  memoryWriteStepInterval: 3,
   officialName: 'Agent',
   providers: {
     'openai-main': {
@@ -45,6 +42,15 @@ const baseConfig: KlexConfig = {
   },
   mcpServers: {},
   timezone: 'UTC',
+  extensions: {
+    memory: {
+      episodes: {
+        maxCharacters: 50_000,
+        maxDurationMs: 3_600_000,
+        idleTimeoutMs: 600_000,
+      },
+    },
+  },
 };
 
 function app(

@@ -521,7 +521,7 @@ async function main(): Promise<void> {
       createAudioInputOptimizerExt,
       createTodosExt,
       createMcpIngressExt(),
-      createMemoryExt({ timezone }),
+      createMemoryExt(),
       createConsultExt({
         childExtensionFactories: [createSoulExt, defaultTimeExt],
         maxActiveSessions: 2,

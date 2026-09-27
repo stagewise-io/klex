@@ -15,10 +15,6 @@ vi.mock(
   () => ({ default: '' }),
 );
 vi.mock(
-  '@/session/chat/extensions/memory/episodic-writer/writer-prompt.md',
-  () => ({ default: '' }),
-);
-vi.mock(
   '@/session/chat/extensions/soul/system-prompt-part/no-soul-god.md',
   () => ({ default: '' }),
 );

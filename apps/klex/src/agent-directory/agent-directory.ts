@@ -115,9 +115,6 @@ class AgentDirectoryModule implements AgentDirectory {
     const config: KlexConfig = {
       configVersion: 2,
       officialName: name,
-      episodeFinishIdleTriggerTimeMs: 300_000,
-      memoryWriteIntervalMs: 60_000,
-      memoryWriteStepInterval: 3,
       timezone: 'UTC',
       providers: {},
       modelSelection: {
@@ -130,6 +127,15 @@ class AgentDirectoryModule implements AgentDirectory {
         voice: { sts: [], tts: [], stt: [] },
       },
       mcpServers: {},
+      extensions: {
+        memory: {
+          episodes: {
+            maxCharacters: 50_000,
+            maxDurationMs: 3_600_000,
+            idleTimeoutMs: 600_000,
+          },
+        },
+      },
     };
     const configPath = join(directory, CONFIG_FILE_NAME);
     try {

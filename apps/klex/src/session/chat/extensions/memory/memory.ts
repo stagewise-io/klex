@@ -1,22 +1,18 @@
-import { randomUUID } from 'node:crypto';
+import { join } from 'node:path';
 
 import { type ToolSet, tool } from 'ai';
 
-import { CONTEXT_SUMMARY_KEY } from '@/session/chat/utils/history-view';
-
-import type { ExtendedUIMessage } from '../../message-types';
-import {
-  type Extension,
-  type ExtensionDeps,
-  type ExtensionFactory,
-  isDataPartOf,
-  type StepCompleteEvent,
+import type {
+  Extension,
+  ExtensionDeps,
+  ExtensionFactory,
+  StepCompleteEvent,
 } from '../extension-api';
-import { createEpisodicWriter, type EpisodicWriter } from './episodic-writer';
 import {
-  compressHistoryForWriter,
-  countPendingUserMessages,
-} from './history-compression';
+  createEpisodeRecorder,
+  type EpisodeRecorder,
+  EpisodeStore,
+} from './episodes';
 import {
   createMemoryRetrievalCoordinator,
   type MemoryRetrievalCoordinator,
@@ -30,100 +26,63 @@ import systemPromptPart from './system-prompt-part.md';
 const SHUTDOWN_FLUSH_TIMEOUT_MS = 25_000;
 /** Observation batches sent per step; the rest drains on later steps. */
 const MAX_OBSERVATION_BATCHES_PER_STEP = 4;
-
-type MemoryWriteReason =
-  | 'step-threshold'
-  | 'interval'
-  | 'idle'
-  | 'compaction'
-  | 'shutdown';
+const EPISODE_FLUSH_INTERVAL_MS = 30_000;
 
 class MemoryExt implements Extension {
-  private episodicMemoryWriter: EpisodicWriter | null = null;
+  private recorder: EpisodeRecorder | null = null;
   private retrievalCoordinator: MemoryRetrievalCoordinator | null = null;
   private closed = false;
-  private lastProcessedMessageId: string | null = null;
-  /** Retrieval observation cursor; independent of the writer cursor. */
+  /** Retrieval observation cursor; independent of the recorder cursor. */
   private lastObservedMessageId: string | null = null;
-  private pendingStepCount = 0;
-  private memoryWriteTimer: NodeJS.Timeout | null = null;
-  private episodeFinishTimer: NodeJS.Timeout | null = null;
+  // If step.run throws after onStepStart, this stays true until the next step;
+  // the interval pauses, while shutdown still flushes.
+  private stepActive = false;
+  private flushTimer: NodeJS.Timeout | null = null;
   private operation: Promise<void> = Promise.resolve();
 
-  constructor(
-    private readonly deps: ExtensionDeps,
-    private readonly timezone: string,
-  ) {}
+  constructor(private readonly deps: ExtensionDeps) {}
 
   async onStart(): Promise<void> {
-    if (this.episodicMemoryWriter) return;
-    try {
-      this.episodicMemoryWriter = await createEpisodicWriter(
-        this.deps,
-        this.timezone,
-      );
-    } catch (error) {
-      this.deps.logger.error(
-        { error },
-        'Failed to start memory extension — episodicMemoryWriter creation failed',
-      );
-      throw error;
-    }
-    // Kept even when startup fails: the coordinator retries in the
-    // background and answers recalls itself once it gives up.
+    if (this.recorder) return;
+    const store = new EpisodeStore({
+      episodicDir: join(this.deps.getDataDir(true), 'episodic'),
+      getLimits: () => this.deps.config.get().extensions.memory.episodes,
+      logger: this.deps.logger,
+    });
+    this.recorder = createEpisodeRecorder({
+      getHistory: () => this.deps.getHistory(),
+      store,
+      logger: this.deps.logger,
+    });
+    this.flushTimer = setInterval(() => {
+      void this.serialize(async () => {
+        if (this.closed || this.stepActive) return;
+        await this.recorder?.flush();
+      });
+    }, EPISODE_FLUSH_INTERVAL_MS);
+    this.flushTimer.unref();
     this.retrievalCoordinator = createMemoryRetrievalCoordinator(this.deps);
     await this.retrievalCoordinator.start();
-    this.deps.logger.info(
-      { episodicMemoryWriterId: this.episodicMemoryWriter.sessionId },
-      'Memory extension started with episodicMemoryWriter session',
-    );
+    this.deps.logger.info('Memory extension started');
   }
 
   async onClose(): Promise<void> {
     this.closed = true;
-    this.clearMemoryWriteTimer();
-    this.clearEpisodeFinishTimer();
+    if (this.flushTimer) clearInterval(this.flushTimer);
+    this.flushTimer = null;
     await this.retrievalCoordinator?.close();
     this.retrievalCoordinator = null;
-    const writer = this.episodicMemoryWriter;
-    if (!writer) return;
-
     const deadline = Date.now() + SHUTDOWN_FLUSH_TIMEOUT_MS;
-    const shutdown = this.serialize(async () => {
-      let finalSubmissionSucceeded = true;
-      if (this.hasUnprocessedHistory(this.deps.getHistory())) {
-        finalSubmissionSucceeded = await this.flushMemory('shutdown');
-      }
-      const writerBecameIdle = await writer.waitForIdle(
-        Math.max(0, deadline - Date.now()),
-      );
-      if (!writerBecameIdle) {
-        this.deps.logger.warn(
-          { timeoutMs: SHUTDOWN_FLUSH_TIMEOUT_MS },
-          'episodicMemoryWriter did not become idle before shutdown deadline',
-        );
-      } else if (finalSubmissionSucceeded) {
-        this.deps.logger.info(
-          'episodicMemoryWriter completed pending work before shutdown',
-        );
-      }
+    const flush = this.serialize(async () => {
+      await this.recorder?.flush();
     });
-
-    if (!(await settleBefore(shutdown, deadline))) {
+    if (!(await settleBefore(flush, deadline))) {
       this.deps.logger.warn(
         { timeoutMs: SHUTDOWN_FLUSH_TIMEOUT_MS },
-        'Memory shutdown deadline reached — closing episodicMemoryWriter with buffered work',
+        'Memory shutdown flush did not finish before deadline',
       );
     }
-
-    const closing = writer.close().catch((error: unknown) => {
-      this.deps.logger.error(
-        { error },
-        'Failed to close episodicMemoryWriter session',
-      );
-    });
-    await settleBefore(closing, deadline);
-    this.episodicMemoryWriter = null;
+    this.recorder = null;
     this.deps.logger.info('Memory extension closed');
   }
 
@@ -161,7 +120,8 @@ class MemoryExt implements Extension {
   }
 
   onStepStart(): void {
-    this.clearEpisodeFinishTimer();
+    this.stepActive = true;
+    void this.recorder?.store.observeActivity();
     this.retrievalCoordinator?.setMainTurnActive(true);
     // New incoming context reaches the retriever before main generates.
     this.observeDelta();
@@ -172,40 +132,23 @@ class MemoryExt implements Extension {
       this.retrievalCoordinator?.setMainTurnActive(event.shouldContinue);
       if (!event.fatalError) this.observeDelta();
     }
-    return this.serialize(async () => {
-      if (this.closed || event.fatalError) return;
-      const history = this.deps.getHistory();
-      if (this.hasUnprocessedHistory(history)) {
-        this.pendingStepCount++;
-        const reason = this.hasUnprocessedCompactionSummary(history)
-          ? 'compaction'
-          : this.pendingStepCount >=
-              this.deps.config.get().memoryWriteStepInterval
-            ? 'step-threshold'
-            : null;
-        if (reason) {
-          if (!(await this.flushMemory(reason))) this.ensureMemoryWriteTimer();
-        } else {
-          this.ensureMemoryWriteTimer();
-        }
-      }
-      if (!event.shouldContinue) this.setEpisodeFinishTimer();
-    });
+    this.stepActive = false;
+    if (
+      this.closed ||
+      event.fatalError ||
+      event.generationFailed ||
+      event.modelFallbackOccurred
+    ) {
+      return Promise.resolve();
+    }
+    return this.serialize(() => this.recorder?.flush() ?? Promise.resolve());
   }
 
   introspect(): Record<string, unknown> {
     return {
-      episodicMemoryWriterId: this.episodicMemoryWriter?.sessionId ?? null,
-      timezone: this.timezone,
-      lastProcessedMessageId: this.lastProcessedMessageId,
       lastObservedMessageId: this.lastObservedMessageId,
-      pendingUserMessageCount: countPendingUserMessages(
-        this.deps.getHistory(),
-        this.lastProcessedMessageId,
-      ),
-      pendingStepCount: this.pendingStepCount,
-      memoryWriteTimerActive: this.memoryWriteTimer !== null,
-      episodeFinishTimerActive: this.episodeFinishTimer !== null,
+      stepActive: this.stepActive,
+      recorder: this.recorder?.introspect() ?? null,
       retrieval: this.retrievalCoordinator?.introspect() ?? null,
     };
   }
@@ -240,112 +183,6 @@ class MemoryExt implements Extension {
     }
   }
 
-  private async flushMemory(reason: MemoryWriteReason): Promise<boolean> {
-    if (this.closed && reason !== 'shutdown') return false;
-    const history = this.deps.getHistory();
-    if (!this.hasUnprocessedHistory(history)) return true;
-
-    try {
-      const writer = this.episodicMemoryWriter;
-      if (!writer) throw new Error('episodicMemoryWriter is not initialized');
-      const { text, parts, lastProcessedMessageId } = compressHistoryForWriter(
-        history,
-        this.lastProcessedMessageId,
-      );
-      if (parts.length > 0) await writer.submit(createWriterMessage(parts));
-      this.lastProcessedMessageId = lastProcessedMessageId;
-      this.pendingStepCount = 0;
-      this.clearMemoryWriteTimer();
-      if (!this.closed && this.hasUnprocessedHistory(history)) {
-        this.ensureMemoryWriteTimer();
-      }
-      this.deps.logger.info(
-        { reason, summaryLength: text.length },
-        text.length > 0
-          ? 'Memory writing triggered — summary sent to episodicMemoryWriter'
-          : 'Memory history cursor advanced — delta contained no writer content',
-      );
-      return true;
-    } catch (error) {
-      this.deps.logger.error({ error }, 'Memory writing trigger failed');
-      return false;
-    }
-  }
-
-  private hasUnprocessedHistory(
-    history: readonly ExtendedUIMessage[],
-  ): boolean {
-    const latestMessage = history.at(-1);
-    return (
-      latestMessage !== undefined &&
-      latestMessage.id !== this.lastProcessedMessageId
-    );
-  }
-
-  private hasUnprocessedCompactionSummary(
-    history: readonly ExtendedUIMessage[],
-  ): boolean {
-    const cursorIndex =
-      this.lastProcessedMessageId === null
-        ? -1
-        : history.findIndex(
-            (message) => message.id === this.lastProcessedMessageId,
-          );
-    return history
-      .slice(cursorIndex < 0 ? 0 : cursorIndex + 1)
-      .some((message) =>
-        message.parts.some((part) => isDataPartOf(CONTEXT_SUMMARY_KEY, part)),
-      );
-  }
-
-  private ensureMemoryWriteTimer(): void {
-    if (this.memoryWriteTimer) return;
-    const timeoutMs = this.deps.config.get().memoryWriteIntervalMs;
-    this.memoryWriteTimer = setTimeout(() => {
-      this.memoryWriteTimer = null;
-      void this.serialize(async () => {
-        if (this.closed) return;
-        if (!(await this.flushMemory('interval'))) {
-          this.ensureMemoryWriteTimer();
-        }
-      });
-    }, timeoutMs);
-  }
-
-  private clearMemoryWriteTimer(): void {
-    if (!this.memoryWriteTimer) return;
-    clearTimeout(this.memoryWriteTimer);
-    this.memoryWriteTimer = null;
-  }
-
-  private setEpisodeFinishTimer(): void {
-    this.clearEpisodeFinishTimer();
-    const timeoutMs = this.deps.config.get().episodeFinishIdleTriggerTimeMs;
-    this.episodeFinishTimer = setTimeout(() => {
-      this.episodeFinishTimer = null;
-      void this.serialize(async () => {
-        if (this.closed) return;
-        await this.flushMemory('idle');
-        const writer = this.episodicMemoryWriter;
-        if (!writer) return;
-        if (!(await writer.waitForIdle(SHUTDOWN_FLUSH_TIMEOUT_MS))) {
-          this.deps.logger.warn(
-            { timeoutMs: SHUTDOWN_FLUSH_TIMEOUT_MS },
-            'episodicMemoryWriter did not become idle before episode finish',
-          );
-          return;
-        }
-        await writer.finishCurrentEpisode();
-      });
-    }, timeoutMs);
-  }
-
-  private clearEpisodeFinishTimer(): void {
-    if (!this.episodeFinishTimer) return;
-    clearTimeout(this.episodeFinishTimer);
-    this.episodeFinishTimer = null;
-  }
-
   private serialize(action: () => Promise<void>): Promise<void> {
     const result = this.operation.then(action, action);
     this.operation = result.catch(() => undefined);
@@ -353,27 +190,11 @@ class MemoryExt implements Extension {
   }
 }
 
-function createWriterMessage(
-  parts: ExtendedUIMessage['parts'],
-): ExtendedUIMessage {
-  return {
-    id: randomUUID(),
-    role: 'user',
-    parts,
-  };
-}
-
-export interface MemoryExtConfig {
-  /** IANA timezone resolved once during process startup. */
-  timezone: string;
-}
-
-/** Maintains episodic memory using the process-start timezone. */
-export function createMemoryExt(config: MemoryExtConfig): ExtensionFactory {
-  const timezone = config.timezone;
+/** Maintains episodic memory through deterministic history recording. */
+export function createMemoryExt(): ExtensionFactory {
   return {
     identifier: 'io.stagewise/memory',
     displayName: 'Memory',
-    create: (deps) => new MemoryExt(deps, timezone),
+    create: (deps) => new MemoryExt(deps),
   };
 }

@@ -118,7 +118,7 @@ god-sessions
       └── extensions
 ```
 
-Child sessions register under their parent session's `child-sessions` scope, giving full recursive visibility without a second source of lifecycle state. Session metadata includes the session kind, parent ID, and model purpose so operators can distinguish ordinary, memory-writer, and consult execution units.
+Child sessions register under their parent session's `child-sessions` scope, giving full recursive visibility without a second source of lifecycle state. Session metadata includes the session kind, parent ID, and model purpose so operators can distinguish ordinary and consult execution units.
 
 ## See also
 

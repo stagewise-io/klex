@@ -15,7 +15,7 @@ The composition root in `local-data-registry` contains every structured Klex-own
 | `cloud-enrollment` | `identity/enrollment.json` | JSON | Optional |
 | `todos-extension-todos` | `extensions/io.stagewise/todos/todos.json` | JSON | Optional |
 
-`identity/private-key.pem`, `SOUL.md`, episode Markdown under `episodic/`, locks, logs, downloaded assets, and reconstructable caches are not migration stores. Private identity keys are opaque and must never be transformed by a migration. Soul and episode files are user-readable documents, not versioned migration stores.
+`identity/private-key.pem`, `SOUL.md`, episode JSONL files under `episodic/`, locks, logs, downloaded assets, and reconstructable caches are not migration stores. Private identity keys are opaque and must never be transformed by a migration. Soul and episode files are append-only documents, not versioned migration stores; episode lines carry their own format version `v` and readers skip lines they cannot validate.
 
 ## Metadata contract
 

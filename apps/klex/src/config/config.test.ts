@@ -16,13 +16,18 @@ import {
   createConfig,
   interpolateEnvironment,
 } from './config';
-import { completeV2Config, emptyModelSelection } from './config.test-fixtures';
+import {
+  completeV2Config,
+  completeV4StoredConfig,
+  emptyModelSelection,
+} from './config.test-fixtures';
 import { CONFIG_STORE_DEFINITION } from './storage-definition';
 import {
   dropLegacyTelemetryConfig,
   getProviderSettingsJsonSchema,
   klexConfigSchema,
   migrateLegacyKlexConfig,
+  nestMemoryExtensionConfig,
   parseKlexConfig,
 } from './types';
 
@@ -147,7 +152,7 @@ describe('config v2', () => {
       { level: 'debug', debugUntil: '2099-01-01T00:00:00.000Z' },
     ]) {
       const input: Record<string, unknown> = {
-        ...completeV2Config,
+        ...completeV4StoredConfig,
         telemetry,
       };
       for (const { version, schema } of CONFIG_STORE_DEFINITION.versions) {
@@ -175,7 +180,7 @@ describe('config v2', () => {
           minimumKlexVersion: '0.8.0',
           writtenByKlexVersion: '0.9.1',
         },
-        ...completeV2Config,
+        ...completeV4StoredConfig,
         telemetry: { level: 'advanced', instanceId: randomUUID() },
       }),
     );
@@ -189,11 +194,138 @@ describe('config v2', () => {
     expect(persisted).not.toHaveProperty('telemetry');
     expect(persisted._klex).toMatchObject({
       store: 'config',
-      schemaVersion: 4,
+      schemaVersion: 5,
+    });
+    expect(persisted.extensions).toEqual({
+      memory: {
+        episodes: {
+          maxCharacters: 50_000,
+          maxDurationMs: 3_600_000,
+          idleTimeoutMs: 450_000,
+        },
+      },
     });
   });
 
-  it('rejects a schema 4 config for a schema 3 reader before mutation', async () => {
+  it('nests the memory settings of a schema 4 config file during migration', async () => {
+    const dataDirectory = await directory();
+    const configPath = join(dataDirectory, CONFIG_FILE_NAME);
+    await writeFile(
+      configPath,
+      JSON.stringify({
+        _klex: {
+          store: 'config',
+          schemaVersion: 4,
+          compatibilityVersion: 6,
+          minimumKlexVersion: '0.9.2',
+          writtenByKlexVersion: '0.9.2',
+        },
+        ...completeV4StoredConfig,
+        episodeFinishIdleTriggerTimeMs: 300_000,
+        memoryWriteIntervalMs: 12_000,
+        memoryWriteStepInterval: 7,
+      }),
+    );
+
+    await prepareConfigStore(dataDirectory);
+
+    const persisted = JSON.parse(await readFile(configPath, 'utf8')) as Record<
+      string,
+      unknown
+    >;
+    expect(persisted._klex).toMatchObject({ schemaVersion: 5 });
+    expect(persisted).not.toHaveProperty('episodeFinishIdleTriggerTimeMs');
+    expect(persisted).not.toHaveProperty('memoryWriteIntervalMs');
+    expect(persisted).not.toHaveProperty('memoryWriteStepInterval');
+    expect(persisted.extensions).toEqual({
+      memory: {
+        episodes: {
+          maxCharacters: 50_000,
+          maxDurationMs: 3_600_000,
+          idleTimeoutMs: 300_000,
+        },
+      },
+    });
+    expect(persisted.officialName).toBe(completeV2Config.officialName);
+  });
+
+  it('fills the historical memory defaults for a schema 4 config without them', () => {
+    const {
+      episodeFinishIdleTriggerTimeMs: _idle,
+      memoryWriteIntervalMs: _interval,
+      memoryWriteStepInterval: _steps,
+      ...withoutMemoryKeys
+    } = completeV4StoredConfig;
+    expect(
+      nestMemoryExtensionConfig(withoutMemoryKeys).extensions.memory.episodes,
+    ).toEqual({
+      maxCharacters: 50_000,
+      maxDurationMs: 3_600_000,
+      idleTimeoutMs: 300_000,
+    });
+  });
+
+  it('rejects the old root memory keys in schema 5 and `extensions` before schema 5', () => {
+    const current = CONFIG_STORE_DEFINITION.versions.find(
+      ({ version }) => version === 5,
+    );
+    const v4 = CONFIG_STORE_DEFINITION.versions.find(
+      ({ version }) => version === 4,
+    );
+    expect(() => current?.schema.parse(completeV4StoredConfig)).toThrow();
+    expect(() => v4?.schema.parse(completeV2Config)).toThrow();
+    expect(() => current?.schema.parse(completeV2Config)).not.toThrow();
+    expect(() => v4?.schema.parse(completeV4StoredConfig)).not.toThrow();
+  });
+
+  it('leaves an invalid schema 4 config file untouched', async () => {
+    const dataDirectory = await directory();
+    const configPath = join(dataDirectory, CONFIG_FILE_NAME);
+    await writeFile(
+      configPath,
+      JSON.stringify({
+        _klex: {
+          store: 'config',
+          schemaVersion: 4,
+          compatibilityVersion: 6,
+          minimumKlexVersion: '0.9.2',
+          writtenByKlexVersion: '0.9.2',
+        },
+        ...completeV4StoredConfig,
+        episodeFinishIdleTriggerTimeMs: 0,
+      }),
+    );
+    const before = await readFile(configPath);
+
+    await expect(prepareConfigStore(dataDirectory)).rejects.toThrow();
+
+    expect(await readFile(configPath)).toEqual(before);
+  });
+
+  it('rejects a schema 5 config for a schema 4 reader before mutation', async () => {
+    const dataDirectory = await directory(true);
+    const configPath = join(dataDirectory, CONFIG_FILE_NAME);
+    const beforeDowngrade = await readFile(configPath);
+
+    const olderDefinition = {
+      ...CONFIG_STORE_DEFINITION,
+      schemaVersion: 4,
+      versions: CONFIG_STORE_DEFINITION.versions.slice(0, 4),
+      migrations: CONFIG_STORE_DEFINITION.migrations.slice(0, 3),
+    };
+    await expect(
+      createLocalData({
+        logging,
+        dataDirectory,
+        klexVersion: '0.9.2',
+        stores: [olderDefinition],
+      }).start(),
+    ).rejects.toThrow(/newer Klex version/);
+
+    expect(await readFile(configPath)).toEqual(beforeDowngrade);
+  });
+
+  it('rejects a current config for a schema 3 reader before mutation', async () => {
     const dataDirectory = await directory(true);
     const configPath = join(dataDirectory, CONFIG_FILE_NAME);
     const beforeDowngrade = await readFile(configPath);
@@ -304,9 +436,7 @@ describe('config v2', () => {
     const parsed = klexConfigSchema.parse(completeV2Config);
 
     expect(parsed.configVersion).toBe(2);
-    expect(parsed.episodeFinishIdleTriggerTimeMs).toBe(300_000);
-    expect(parsed.memoryWriteIntervalMs).toBe(60_000);
-    expect(parsed.memoryWriteStepInterval).toBe(3);
+    expect(parsed.extensions.memory.episodes.idleTimeoutMs).toBe(600_000);
     expect(parsed.providers['openai-primary']?.type).toBe('openai');
     expect(parsed.providers['openai-secondary']?.type).toBe('openai');
     expect(parsed.providers['openai-internal']?.settings).toMatchObject({
@@ -347,7 +477,7 @@ describe('config v2', () => {
     ).toThrow('Timezone must be a valid IANA identifier');
   });
 
-  it('defaults and validates memory write thresholds', () => {
+  it('defaults and validates the episode rotation limits', () => {
     const base = {
       configVersion: 2,
       officialName: 'Agent',
@@ -355,45 +485,46 @@ describe('config v2', () => {
       modelSelection: emptyModelSelection,
       mcpServers: {},
     };
+    const withEpisodes = (episodes: Record<string, unknown>) => ({
+      ...base,
+      extensions: { memory: { episodes } },
+    });
 
-    expect(klexConfigSchema.parse(base).memoryWriteIntervalMs).toBe(60_000);
-    expect(klexConfigSchema.parse(base).memoryWriteStepInterval).toBe(3);
+    expect(klexConfigSchema.parse(base).extensions).toEqual({
+      memory: {
+        episodes: {
+          maxCharacters: 50_000,
+          maxDurationMs: 3_600_000,
+          idleTimeoutMs: 600_000,
+        },
+      },
+    });
+    expect(
+      klexConfigSchema.parse(withEpisodes({ maxCharacters: 10_000 })).extensions
+        .memory.episodes,
+    ).toEqual({
+      maxCharacters: 10_000,
+      maxDurationMs: 3_600_000,
+      idleTimeoutMs: 600_000,
+    });
+    for (const invalid of [
+      { maxCharacters: 0 },
+      { maxCharacters: 1.5 },
+      { maxDurationMs: -1 },
+      { maxDurationMs: 2_147_483_648 },
+      { idleTimeoutMs: 0 },
+      { idleTimeoutMs: 1.5 },
+      { unknown: 1 },
+    ]) {
+      expect(() => klexConfigSchema.parse(withEpisodes(invalid))).toThrow();
+    }
     expect(() =>
-      klexConfigSchema.parse({ ...base, memoryWriteIntervalMs: 0 }),
-    ).toThrow();
-    expect(() =>
-      klexConfigSchema.parse({ ...base, memoryWriteStepInterval: 1.5 }),
+      klexConfigSchema.parse({ ...base, extensions: { unknown: {} } }),
     ).toThrow();
     expect(() =>
       klexConfigSchema.parse({
         ...base,
-        memoryWriteIntervalMs: 2_147_483_648,
-      }),
-    ).toThrow();
-  });
-
-  it('defaults and validates the episode finish idle threshold', () => {
-    const base = {
-      configVersion: 2,
-      officialName: 'Agent',
-      providers: {},
-      modelSelection: emptyModelSelection,
-      mcpServers: {},
-    };
-
-    expect(klexConfigSchema.parse(base).episodeFinishIdleTriggerTimeMs).toBe(
-      300_000,
-    );
-    expect(() =>
-      klexConfigSchema.parse({ ...base, episodeFinishIdleTriggerTimeMs: 0 }),
-    ).toThrow();
-    expect(() =>
-      klexConfigSchema.parse({ ...base, episodeFinishIdleTriggerTimeMs: 1.5 }),
-    ).toThrow();
-    expect(() =>
-      klexConfigSchema.parse({
-        ...base,
-        episodeFinishIdleTriggerTimeMs: 2_147_483_648,
+        extensions: { memory: { unknown: 1 } },
       }),
     ).toThrow();
   });
@@ -440,9 +571,11 @@ describe('config v2', () => {
     });
     await config.start();
 
-    expect(config.get().episodeFinishIdleTriggerTimeMs).toBe(300_000);
-    expect(config.get().memoryWriteIntervalMs).toBe(60_000);
-    expect(config.get().memoryWriteStepInterval).toBe(3);
+    expect(config.get().extensions.memory.episodes).toEqual({
+      maxCharacters: 50_000,
+      maxDurationMs: 3_600_000,
+      idleTimeoutMs: 300_000,
+    });
     expect(config.get().providers.remote).toMatchObject({
       type: 'openai',
       settings: { apiKey: '${env:OPENAI_API_KEY}' },
@@ -467,7 +600,7 @@ describe('config v2', () => {
     );
     expect(persisted._klex).toMatchObject({
       store: 'config',
-      schemaVersion: 4,
+      schemaVersion: 5,
     });
     expect(parseKlexConfig(persisted).configVersion).toBe(2);
     await config.close();

@@ -551,7 +551,12 @@ const timezoneSchema = z
     { message: 'Timezone must be a valid IANA identifier' },
   );
 
-const klexConfigSchema = z.object({
+/**
+ * Frozen shape of stored config schemas 2–4. Historical validation and
+ * migrations (1→2, 3→4) use it so they keep producing the shape that
+ * schema 4 accepts. Do not change it; evolve `klexConfigSchema` instead.
+ */
+const klexConfigV4Schema = z.object({
   configVersion: z.literal(2).default(2),
   episodeFinishIdleTriggerTimeMs: z
     .number()
@@ -588,7 +593,66 @@ const klexConfigSchema = z.object({
   timezone: timezoneSchema.default('UTC'),
 });
 
+type KlexConfigV4 = z.infer<typeof klexConfigV4Schema>;
+
+const MAX_TIMER_MS = 2_147_483_647;
+
+/** Episode rotation limits of the memory extension. */
+const episodeRotationConfigSchema = z
+  .object({
+    maxCharacters: z.number().int().positive().default(50_000),
+    maxDurationMs: z
+      .number()
+      .int()
+      .positive()
+      .max(MAX_TIMER_MS)
+      .default(3_600_000),
+    idleTimeoutMs: z
+      .number()
+      .int()
+      .positive()
+      .max(MAX_TIMER_MS)
+      .default(600_000),
+  })
+  .strict();
+
+const memoryExtensionConfigSchema = z
+  .object({ episodes: episodeRotationConfigSchema.prefault({}) })
+  .strict();
+
+/** Extension behavior settings, keyed by extension. */
+const extensionsConfigSchema = z
+  .object({ memory: memoryExtensionConfigSchema.prefault({}) })
+  .strict();
+
+const klexConfigSchema = z.object({
+  configVersion: z.literal(2).default(2),
+  officialName: z
+    .string()
+    .trim()
+    .min(2)
+    .transform((name) => Array.from(name).slice(0, 128).join(''))
+    .default('Agent'),
+  providers: z
+    .record(providerInstanceIdSchema, providerConfigSchema)
+    .default({}),
+  modelSelection: modelSelectionSchema.default({
+    chat: [],
+    compaction: [],
+    memory: [],
+    imageVision: [],
+    audioListening: [],
+    consult: [],
+    voice: { sts: [], tts: [], stt: [] },
+  }),
+  mcpServers: z.record(z.string(), mcpServerConfigSchema).default({}),
+  timezone: timezoneSchema.default('UTC'),
+  // `.prefault` (not `.default`) so nested defaults are applied.
+  extensions: extensionsConfigSchema.prefault({}),
+});
+
 type KlexConfig = z.infer<typeof klexConfigSchema>;
+type EpisodeRotationConfig = z.infer<typeof episodeRotationConfigSchema>;
 
 const legacyModelSelectionSchema = z
   .object({
@@ -634,22 +698,48 @@ const legacyKlexConfigSchema = z
   })
   .strict();
 
-/** Stored schemas 2 and 3: the v2 config shape plus the removed `telemetry`. */
-const storedKlexConfigV2Schema = klexConfigSchema
+/** Stored schemas 2 and 3: the v4 config shape plus the removed `telemetry`. */
+const storedKlexConfigV2Schema = klexConfigV4Schema
   .extend({
     configVersion: z.literal(2),
     telemetry: removedTelemetryFieldSchema,
   })
   .strict();
 
-/** Stored schema 4: the runtime config shape; unknown keys are rejected. */
+/** Stored schema 4: root memory keys, no `extensions`. */
+const storedKlexConfigV4Schema = klexConfigV4Schema
+  .extend({ configVersion: z.literal(2) })
+  .strict();
+
+/** Stored schema 5: the runtime config shape; unknown keys are rejected. */
 const storedKlexConfigSchema = klexConfigSchema
   .extend({ configVersion: z.literal(2) })
   .strict();
 
-/** 3→4 migration: normalizes to the runtime shape, dropping `telemetry`. */
-function dropLegacyTelemetryConfig(input: unknown): KlexConfig {
-  return klexConfigSchema.parse(storedKlexConfigV2Schema.parse(input));
+/** 3→4 migration: normalizes to the v4 shape, dropping `telemetry`. */
+function dropLegacyTelemetryConfig(input: unknown): KlexConfigV4 {
+  return klexConfigV4Schema.parse(storedKlexConfigV2Schema.parse(input));
+}
+
+/**
+ * 4→5 migration: moves `episodeFinishIdleTriggerTimeMs` unchanged to
+ * `extensions.memory.episodes.idleTimeoutMs` and drops the obsolete
+ * `memoryWriteIntervalMs` / `memoryWriteStepInterval`. The other rotation
+ * limits receive their defaults.
+ */
+function nestMemoryExtensionConfig(input: unknown): KlexConfig {
+  const {
+    episodeFinishIdleTriggerTimeMs,
+    memoryWriteIntervalMs: _memoryWriteIntervalMs,
+    memoryWriteStepInterval: _memoryWriteStepInterval,
+    ...rest
+  } = storedKlexConfigV4Schema.parse(input);
+  return klexConfigSchema.parse({
+    ...rest,
+    extensions: {
+      memory: { episodes: { idleTimeoutMs: episodeFinishIdleTriggerTimeMs } },
+    },
+  });
 }
 
 type LegacyKlexConfig = z.infer<typeof legacyKlexConfigSchema>;
@@ -668,16 +758,20 @@ function parseStoredKlexConfigV2(input: unknown): Record<string, unknown> {
   return storedKlexConfigV2Schema.parse(input);
 }
 
+function parseStoredKlexConfigV4(input: unknown): Record<string, unknown> {
+  return storedKlexConfigV4Schema.parse(input);
+}
+
 function parseStoredKlexConfig(input: unknown): Record<string, unknown> {
   return storedKlexConfigSchema.parse(input);
 }
 
-function migrateLegacyKlexConfig(input: unknown): KlexConfig {
+function migrateLegacyKlexConfig(input: unknown): KlexConfigV4 {
   return migrateLegacyConfig(parseLegacyKlexConfig(input));
 }
 
-function migrateLegacyConfig(legacy: LegacyKlexConfig): KlexConfig {
-  const providers: KlexConfig['providers'] = {};
+function migrateLegacyConfig(legacy: LegacyKlexConfig): KlexConfigV4 {
+  const providers: KlexConfigV4['providers'] = {};
   const providerIds = new Map<string, Map<string | undefined, string>>();
   for (const [oldProviderId, provider] of Object.entries(legacy.providers)) {
     const ids = new Map<string | undefined, string>();
@@ -714,7 +808,7 @@ function migrateLegacyConfig(legacy: LegacyKlexConfig): KlexConfig {
       migrateLegacyModelEntry(entry, legacy.providers, providerIds),
     );
   const selection = legacy.modelSelection;
-  return klexConfigSchema.parse({
+  return klexConfigV4Schema.parse({
     configVersion: 2,
     episodeFinishIdleTriggerTimeMs: legacy.episodeFinishIdleTriggerTimeMs,
     officialName: legacy.officialName,
@@ -779,7 +873,7 @@ function migrateLegacyModelEntry(
 }
 
 function addMigratedProvider(
-  providers: KlexConfig['providers'],
+  providers: KlexConfigV4['providers'],
   providerId: string,
   provider: ProviderConfig,
 ): void {
@@ -830,6 +924,7 @@ function legacyFormatProviderType(format: ApiFormat): ProviderType {
 }
 
 export type {
+  EpisodeRotationConfig,
   HttpServerConfig,
   KlexConfig,
   McpServerConfig,
@@ -859,11 +954,13 @@ export {
   modelIdSchema,
   modelKindSchema,
   modelSelectionSchema,
+  nestMemoryExtensionConfig,
   parseKlexConfig,
   parseLegacyKlexConfig,
   parseProviderSettings,
   parseStoredKlexConfig,
   parseStoredKlexConfigV2,
+  parseStoredKlexConfigV4,
   providerConfigSchema,
   providerInstanceIdSchema,
   providerTypeSchema,

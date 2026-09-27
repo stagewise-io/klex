@@ -168,6 +168,30 @@ describe('EpisodeStore', () => {
     expect(await files()).toEqual(['1-10-00.jsonl', '2-10-41.jsonl']);
   });
 
+  it('extendActivity keeps a long step in one episode', async () => {
+    const { store, files } = await harness();
+    await store.append([output('before')], T0);
+    await store.observeActivity(T0 + MINUTE);
+    // The step runs for 15 minutes, longer than the idle timeout.
+    await store.extendActivity(T0 + 16 * MINUTE);
+    await store.append([output('step result')], T0 + 16 * MINUTE);
+    expect(await files()).toEqual(['1-10-00.jsonl']);
+  });
+
+  it('starts a new episode after a failed write', async () => {
+    const { root, store, files, content } = await harness();
+    await store.append([output('one')], T0);
+    // Make the open episode unwritable: appendFile on a directory fails.
+    const path = join(root, '2026-01-02', '1-10-00.jsonl');
+    await rm(path);
+    await mkdir(path);
+    await expect(store.append([output('two')], T0 + MINUTE)).rejects.toThrow();
+    expect(store.introspect()).toBeNull();
+    await store.append([output('two')], T0 + 2 * MINUTE);
+    expect(await files()).toEqual(['1-10-00.jsonl', '2-10-02.jsonl']);
+    expect(outputTexts(await content('2-10-02.jsonl'))).toEqual(['two']);
+  });
+
   it('re-reads limits on each append', async () => {
     const { store, files, limits } = await harness();
     await store.append([output('one')], T0);

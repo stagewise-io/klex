@@ -50,9 +50,13 @@ const MAX_CREATE_ATTEMPTS = 5;
  *
  * There are no timers: a file is created together with its first entry, so
  * empty episodes cannot exist. Episodes are never reopened, so the first
- * append after a restart starts a new one. A crash during `appendFile`
- * leaves at most one truncated trailing line, which readers skip as invalid
- * JSON.
+ * append after a restart starts a new one.
+ *
+ * Each episode's share of a batch is written with a single `appendFile`.
+ * A failed write closes the episode, so the retry starts a new file on a
+ * clean line boundary instead of extending a torn line. A crash or failed
+ * write leaves at most one truncated trailing line, which readers skip as
+ * invalid JSON.
  */
 export class EpisodeStore {
   private open: OpenEpisode | null = null;
@@ -66,16 +70,23 @@ export class EpisodeStore {
     now = Date.now(),
   ): Promise<void> {
     return this.enqueue(async () => {
+      if (records.length === 0) return;
       const limits = this.options.getLimits();
       const instant = new Date(now);
+      let pending = '';
       for (const record of records) {
         const line = `${JSON.stringify(createEpisodeRecordEntry(record, instant))}\n`;
-        if (this.shouldRotate(limits, now, line.length)) this.open = null;
+        if (this.shouldRotate(limits, now, line.length)) {
+          await this.writePending(pending);
+          pending = '';
+          this.open = null;
+        }
         const episode = this.open ?? (await this.createEpisode(instant));
-        await appendFile(episode.path, line, 'utf-8');
+        pending += line;
         episode.characters += line.length;
-        this.lastActivityAt = now;
       }
+      await this.writePending(pending);
+      this.lastActivityAt = now;
     });
   }
 
@@ -86,6 +97,16 @@ export class EpisodeStore {
   observeActivity(now = Date.now()): Promise<void> {
     return this.enqueue(async () => {
       if (this.isIdle(this.options.getLimits(), now)) this.open = null;
+      this.lastActivityAt = now;
+    });
+  }
+
+  /**
+   * Records that ongoing activity continued until `now` without applying the
+   * idle rule, e.g. when a long step completes.
+   */
+  extendActivity(now = Date.now()): Promise<void> {
+    return this.enqueue(async () => {
       this.lastActivityAt = now;
     });
   }
@@ -114,6 +135,18 @@ export class EpisodeStore {
       (open.characters > HEADER_LINE.length &&
         open.characters + entrySize > limits.maxCharacters)
     );
+  }
+
+  /** Appends lines to the open episode; a failed write closes it. */
+  private async writePending(lines: string): Promise<void> {
+    const episode = this.open;
+    if (!episode || lines.length === 0) return;
+    try {
+      await appendFile(episode.path, lines, 'utf-8');
+    } catch (error) {
+      this.open = null;
+      throw error;
+    }
   }
 
   private isIdle(limits: EpisodeRotationConfig, now: number): boolean {

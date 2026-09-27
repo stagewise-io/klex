@@ -11,9 +11,6 @@ type.
 ```json
 {
   "configVersion": 2,
-  "episodeFinishIdleTriggerTimeMs": 300000,
-  "memoryWriteIntervalMs": 60000,
-  "memoryWriteStepInterval": 3,
   "officialName": "Ada",
   "providers": {
     "openai-primary": {
@@ -102,7 +99,16 @@ type.
       "stt": []
     }
   },
-  "mcpServers": {}
+  "mcpServers": {},
+  "extensions": {
+    "memory": {
+      "episodes": {
+        "maxCharacters": 50000,
+        "maxDurationMs": 3600000,
+        "idleTimeoutMs": 600000
+      }
+    }
+  }
 }
 ```
 
@@ -111,19 +117,28 @@ arguments or environment variables (see `apps/klex/telemetry.md`). A legacy
 `telemetry` entry in an existing file is accepted, ignored, and dropped on the
 next write.
 
-`memoryWriteIntervalMs` sends pending main-session history to the memory writer
-after that many milliseconds. The timer starts with the first completed step
-after the previous successful write and does not reset during continued activity.
-It defaults to `60000` (one minute).
+`extensions` holds behavior settings owned by session extensions, keyed by
+extension; new extension settings belong under `extensions.<extension>`, not at
+the root. Model routing stays in `modelSelection` (`modelSelection.memory` is
+used only by memory retrieval).
+The whole object and every nested field are optional; omitted fields use their
+defaults. Unknown keys are rejected.
 
-`memoryWriteStepInterval` sends pending history after that many completed
-main-session steps since the previous successful write. It defaults to `3`.
-The time and step triggers are independent; whichever is reached first writes the
-pending history and resets both.
+`extensions.memory.episodes` controls when the episodic-memory recorder starts a
+new episode file. A new episode starts when any limit is reached:
 
-`episodeFinishIdleTriggerTimeMs` closes the active episodic-memory episode after
-that many milliseconds without a completed main-session turn. Before closing the
-episode it writes any pending history. It defaults to `300000` (five minutes).
+- `maxCharacters`: the next entry would push the episode file past this many
+  characters of serialized JSON Lines. Default `50000`. The crossing entry goes whole into the new
+  episode; an entry larger than the limit gets an episode of its own.
+- `maxDurationMs`: the episode has spanned this many milliseconds since its
+  first entry. Default `3600000` (one hour).
+- `idleTimeoutMs`: no main-session activity for this many milliseconds. Default
+  `600000` (ten minutes).
+
+Config schema 5 moved these settings under `extensions`. Migration from schema
+4 keeps the stored `episodeFinishIdleTriggerTimeMs` value as `idleTimeoutMs`
+(`300000` when absent) and drops `memoryWriteIntervalMs` and
+`memoryWriteStepInterval`.
 
 `openai-primary` and `openai-secondary` demonstrate independent instances of
 one provider type. `openai-internal` keeps native OpenAI behavior while routing

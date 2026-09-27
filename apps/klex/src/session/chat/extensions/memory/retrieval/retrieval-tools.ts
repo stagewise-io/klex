@@ -30,7 +30,7 @@ interface TurnBudget {
   outputCharacters: number;
   unresolvedHandles: number;
   surfaced: number;
-  /** Index synced with the episodic markdown store this turn. */
+  /** Index synced with the episode files this turn. */
   reconciled: boolean;
 }
 
@@ -219,7 +219,7 @@ class RetrievalToolsExt implements Extension {
           );
           const text = entries
             .map((entry) => `${entry.occurredAt}: ${entry.text}`)
-            .join('\n')
+            .join('\n\n')
             .slice(0, retrieval.maxContextReadCharacters);
           budget.outputCharacters += JSON.stringify({ text }).length;
           if (

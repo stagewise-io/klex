@@ -4,8 +4,8 @@ import type { SqliteStoreDefinition } from '@/local-data';
 
 import type {
   EpisodicEntryLocation,
-  EpisodicMarkdownStore,
-} from './markdown-store';
+  EpisodicEntryStore,
+} from './episode-reader';
 
 export type SearchIndexStatus = 'ready' | 'partial' | 'rebuilding';
 
@@ -122,7 +122,7 @@ export class EpisodicSearchIndex {
 
   constructor(
     private readonly databasePath: string,
-    private readonly store: EpisodicMarkdownStore,
+    private readonly store: EpisodicEntryStore,
   ) {}
 
   getStatus(): SearchIndexStatus {

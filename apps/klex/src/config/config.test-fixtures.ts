@@ -12,9 +12,6 @@ export const emptyModelSelection: ModelSelection = {
 
 export const completeV2Config: KlexConfig = {
   configVersion: 2,
-  episodeFinishIdleTriggerTimeMs: 300_000,
-  memoryWriteIntervalMs: 60_000,
-  memoryWriteStepInterval: 3,
   officialName: 'Fixture Agent',
   providers: {
     'openai-primary': {
@@ -76,4 +73,23 @@ export const completeV2Config: KlexConfig = {
     workspace: { command: 'workspace-mcp', args: ['--root', '/workspace'] },
   },
   timezone: 'UTC',
+  extensions: {
+    memory: {
+      episodes: {
+        maxCharacters: 50_000,
+        maxDurationMs: 3_600_000,
+        idleTimeoutMs: 600_000,
+      },
+    },
+  },
+};
+
+/** Stored schema 2–4 shape: root memory keys, no `extensions`. */
+export const completeV4StoredConfig: Record<string, unknown> = {
+  ...Object.fromEntries(
+    Object.entries(completeV2Config).filter(([key]) => key !== 'extensions'),
+  ),
+  episodeFinishIdleTriggerTimeMs: 450_000,
+  memoryWriteIntervalMs: 60_000,
+  memoryWriteStepInterval: 3,
 };

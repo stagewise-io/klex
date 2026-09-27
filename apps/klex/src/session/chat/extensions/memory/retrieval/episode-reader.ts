@@ -1,27 +1,37 @@
 import { mkdir, readdir, readFile, stat } from 'node:fs/promises';
 import { join, relative } from 'node:path';
 
+import {
+  episodeEntryText,
+  parseEpisodeRecordLine,
+} from '../episodes/episode-format';
+
 export interface EpisodicEntryLocation {
   relativeFile: string;
   entryOrdinal: number;
   occurredAt: string;
+  /** Line-format text of the record, as the history view renders it. */
   text: string;
 }
 
+/**
+ * Parses a JSONL episode into entries, converting each record to line
+ * format so search and context reads see the same text as before. Header,
+ * blank, and invalid lines (such as a crash-truncated tail) are skipped.
+ */
 export function parseEpisodeEntries(
   content: string,
   relativeFile: string,
 ): EpisodicEntryLocation[] {
   const entries: EpisodicEntryLocation[] = [];
-  let ordinal = 0;
-  for (const line of content.split('\n')) {
-    const match = ENTRY_PATTERN.exec(line);
-    if (!match?.[1] || !match[2]) continue;
+  for (const line of content.split(/\r?\n/)) {
+    const entry = parseEpisodeRecordLine(line);
+    if (!entry) continue;
     entries.push({
       relativeFile,
-      entryOrdinal: ordinal++,
-      occurredAt: `${relativeFile.slice(0, 10)}T${match[1]}:00Z`,
-      text: match[2].trim(),
+      entryOrdinal: entries.length,
+      occurredAt: entry.at,
+      text: episodeEntryText(entry),
     });
   }
   return entries;
@@ -33,10 +43,10 @@ export interface EpisodicFileState {
   mtimeMs: number;
 }
 
-const EPISODE_FILE_PATTERN = /^\d+-\d{2}-\d{2}\.md$/;
-const ENTRY_PATTERN = /^- (\d{2}:\d{2}): (.+)$/;
+/** Legacy `.md` episodes are intentionally not read. */
+const EPISODE_FILE_PATTERN = /^\d+-\d{2}-\d{2}\.jsonl$/;
 
-export class EpisodicMarkdownStore {
+export class EpisodicEntryStore {
   constructor(private readonly root: string) {}
 
   async ensure(): Promise<void> {

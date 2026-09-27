@@ -46,13 +46,10 @@ describe('AgentDirectory', () => {
     ).toMatchObject({
       _klex: {
         store: 'config',
-        schemaVersion: 4,
+        schemaVersion: 5,
         compatibilityVersion: 6,
       },
       configVersion: 2,
-      episodeFinishIdleTriggerTimeMs: 300_000,
-      memoryWriteIntervalMs: 60_000,
-      memoryWriteStepInterval: 3,
       officialName: 'Ada',
       providers: {},
       modelSelection: {
@@ -64,7 +61,22 @@ describe('AgentDirectory', () => {
         voice: { sts: [], tts: [], stt: [] },
       },
       mcpServers: {},
+      extensions: {
+        memory: {
+          episodes: {
+            maxCharacters: 50_000,
+            maxDurationMs: 3_600_000,
+            idleTimeoutMs: 600_000,
+          },
+        },
+      },
     });
+    const stored = JSON.parse(
+      await readFile(join(created.directory, 'config.json'), 'utf8'),
+    );
+    expect(stored).not.toHaveProperty('episodeFinishIdleTriggerTimeMs');
+    expect(stored).not.toHaveProperty('memoryWriteIntervalMs');
+    expect(stored).not.toHaveProperty('memoryWriteStepInterval');
   });
 
   it('marks agents whose directory lock is held as in use', async () => {

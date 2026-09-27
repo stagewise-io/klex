@@ -6,12 +6,14 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import { initializeSqliteStore } from '@/local-data';
 
-import { EpisodicMarkdownStore } from './markdown-store';
+import { episodeFile, input, output, recordLine } from '../episodes/test-utils';
+import { EpisodicEntryStore } from './episode-reader';
 import {
   EPISODIC_SEARCH_INDEX_STORE_DEFINITION,
   EpisodicSearchIndex,
 } from './search-index';
 
+const AT = '2026-01-01T10:00:00.000Z';
 const directories: string[] = [];
 
 async function temporaryDirectory(prefix: string): Promise<string> {
@@ -22,7 +24,7 @@ async function temporaryDirectory(prefix: string): Promise<string> {
 
 async function prepareIndex(
   root: string,
-  store: EpisodicMarkdownStore,
+  store: EpisodicEntryStore,
 ): Promise<{ database: string; index: EpisodicSearchIndex }> {
   const database = join(root, 'index.sqlite');
   await initializeSqliteStore(
@@ -46,10 +48,10 @@ describe('episodic search index', () => {
     const root = await temporaryDirectory('klex-search-');
     await mkdir(join(root, '2026-01-01'));
     await writeFile(
-      join(root, '2026-01-01', '1-10-00.md'),
-      '---\nanalyzed: false\n---\n\n- 10:00: I completed the billing migration review\n',
+      join(root, '2026-01-01', '1-10-00.jsonl'),
+      episodeFile(AT, output('I completed the billing migration review')),
     );
-    const store = new EpisodicMarkdownStore(root);
+    const store = new EpisodicEntryStore(root);
     const { index } = await prepareIndex(root, store);
     await index.start();
     const hits = await index.search('billing migration', 5);
@@ -64,10 +66,13 @@ describe('episodic search index', () => {
     const dateDir = join(root, '2026-01-01');
     await mkdir(dateDir);
     await writeFile(
-      join(dateDir, '1-10-00.md'),
-      '---\nanalyzed: false\n---\n\n- 10:00: Alice reviewed Project-X migrations, carefully.\n',
+      join(dateDir, '1-10-00.jsonl'),
+      episodeFile(
+        AT,
+        output('Alice reviewed Project-X migrations, carefully.'),
+      ),
     );
-    const store = new EpisodicMarkdownStore(root);
+    const store = new EpisodicEntryStore(root);
     const { index } = await prepareIndex(root, store);
     await index.start();
     expect(await index.search('MIGRATE', 5)).toHaveLength(1);
@@ -84,10 +89,14 @@ describe('episodic search index', () => {
     const dateDir = join(root, '2026-01-01');
     await mkdir(dateDir);
     await writeFile(
-      join(dateDir, '1-10-00.md'),
-      '---\nanalyzed: false\n---\n\n- 10:00: I finished the billing migration\n- 10:01: The migration moved billing exports\n',
+      join(dateDir, '1-10-00.jsonl'),
+      episodeFile(
+        AT,
+        output('I finished the billing migration'),
+        output('The migration moved billing exports'),
+      ),
     );
-    const store = new EpisodicMarkdownStore(root);
+    const store = new EpisodicEntryStore(root);
     const { index } = await prepareIndex(root, store);
     await index.start();
     expect(await index.search('billing migration', 5)).toHaveLength(2);
@@ -102,10 +111,15 @@ describe('episodic search index', () => {
     const dateDir = join(root, '2026-01-01');
     await mkdir(dateDir);
     await writeFile(
-      join(dateDir, '1-10-00.md'),
-      '---\nanalyzed: false\n---\n\n- 10:00: I finished the billing migration for Project-X\n- 10:01: I sent the billing invoice\n- 10:02: Mango delivery arrived\n',
+      join(dateDir, '1-10-00.jsonl'),
+      episodeFile(
+        AT,
+        output('I finished the billing migration for Project-X'),
+        output('I sent the billing invoice'),
+        output('Mango delivery arrived'),
+      ),
     );
-    const store = new EpisodicMarkdownStore(root);
+    const store = new EpisodicEntryStore(root);
     const { index } = await prepareIndex(root, store);
     await index.start();
 
@@ -134,24 +148,18 @@ describe('episodic search index', () => {
     const root = await temporaryDirectory('klex-search-reconcile-');
     const dateDir = join(root, '2026-01-01');
     await mkdir(dateDir);
-    const file = join(dateDir, '1-10-00.md');
-    await writeFile(
-      file,
-      '---\nanalyzed: false\n---\n\n- 10:00: original phrase\n',
-    );
-    const store = new EpisodicMarkdownStore(root);
+    const file = join(dateDir, '1-10-00.jsonl');
+    await writeFile(file, episodeFile(AT, output('original phrase')));
+    const store = new EpisodicEntryStore(root);
     const { database, index } = await prepareIndex(root, store);
     await index.start();
     expect(await index.search('original', 5)).toHaveLength(1);
 
-    await appendFile(file, '- 10:01: appended phrase\n');
+    await appendFile(file, recordLine(output('appended phrase'), AT));
     await index.reconcile();
     expect(await index.search('appended', 5)).toHaveLength(1);
 
-    await writeFile(
-      file,
-      '---\nanalyzed: false\n---\n\n- 10:00: manually edited phrase\n',
-    );
+    await writeFile(file, episodeFile(AT, output('manually edited phrase')));
     await index.reconcile();
     expect(await index.search('original', 5)).toHaveLength(0);
     expect(await index.search('manually', 5)).toHaveLength(1);
@@ -168,15 +176,52 @@ describe('episodic search index', () => {
     await restarted.close();
   });
 
+  it('finds terms on any line of a multi-line record', async () => {
+    const root = await temporaryDirectory('klex-search-block-');
+    const dateDir = join(root, '2026-01-01');
+    await mkdir(dateDir);
+    await writeFile(
+      join(dateDir, '1-10-00.jsonl'),
+      episodeFile(
+        AT,
+        output('chatId: C123\nquarterly invoice ready'),
+        input(
+          {
+            kind: 'context',
+            source: 'slack',
+            metadata: 'from: U42',
+            items: [],
+          },
+          { role: 'user' },
+        ),
+      ),
+    );
+    const store = new EpisodicEntryStore(root);
+    const { index } = await prepareIndex(root, store);
+    await index.start();
+    const hits = await index.search('quarterly invoice', 5);
+    expect(hits).toHaveLength(1);
+    const [entry] = await index.readHandles([hits[0]!.handle], 0, 0);
+    expect(entry?.text).toBe(
+      'your_output\n¦chatId: C123\n¦quarterly invoice ready',
+    );
+    expect(await index.search('U42', 5)).toHaveLength(1);
+    await index.close();
+  });
+
   it('keeps ambiguous temporal words as search terms', async () => {
     const root = await temporaryDirectory('klex-search-recency-');
     const dateDir = join(root, '2026-01-01');
     await mkdir(dateDir);
     await writeFile(
-      join(dateDir, '1-10-00.md'),
-      '---\nanalyzed: false\n---\n\n- 10:00: Their last name is Lee\n- 10:01: Yesterday the billing migration completed\n',
+      join(dateDir, '1-10-00.jsonl'),
+      episodeFile(
+        AT,
+        output('Their last name is Lee'),
+        output('Yesterday the billing migration completed'),
+      ),
     );
-    const store = new EpisodicMarkdownStore(root);
+    const store = new EpisodicEntryStore(root);
     const { index } = await prepareIndex(root, store);
     await index.start();
     expect(await index.search('last name', 5)).toHaveLength(1);

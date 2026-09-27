@@ -18,7 +18,7 @@ import { getExtensionIdentifier } from '@/session/chat/utils/tracing';
 import { SessionInboxUrgency } from '@/session/inbox';
 import type { ChildSessionHandle } from '@/session/types';
 
-import { EpisodicMarkdownStore } from './markdown-store';
+import { EpisodicEntryStore } from './episode-reader';
 import { isMemoryResultMessage, wrapMemoryResult } from './memory-result';
 import {
   DEFAULT_MEMORY_RETRIEVAL_CONFIG,
@@ -383,7 +383,7 @@ class MemoryRetrievalCoordinatorImpl implements MemoryRetrievalCoordinator {
     const dataDir = this.deps.getDataDir(true);
     const databasePath = join(dataDir, 'episodic-search.sqlite');
     await prepareSearchIndexStore(databasePath, dataDir, this.deps.logger);
-    const store = new EpisodicMarkdownStore(join(dataDir, 'episodic'));
+    const store = new EpisodicEntryStore(join(dataDir, 'episodic'));
     const index = new EpisodicSearchIndex(databasePath, store);
     try {
       await index.start();

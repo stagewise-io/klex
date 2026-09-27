@@ -91,7 +91,7 @@ Every terminal model call is counted once by `callId`, including success, error,
 
 ## Session traces
 
-Every chat session owns exactly one trace whose root span is named `session {name}`, where `name` is the stable, low-cardinality session role: `session main`, `session god`, and extension-owned child sessions such as `session consult`, `session memory-retrieval`, and `session episodic-memory-writer`. Per-instance identity is never part of the span name; it lives in the root span attributes `klex.session.id`, `klex.session.name`, `klex.session.kind`, and, for child sessions, `klex.session.extension` and `klex.session.parent.id`. Main and child sessions use this identical scheme.
+Every chat session owns exactly one trace whose root span is named `session {name}`, where `name` is the stable, low-cardinality session role: `session main`, `session god`, and extension-owned child sessions such as `session consult` and `session memory-retrieval`. Per-instance identity is never part of the span name; it lives in the root span attributes `klex.session.id`, `klex.session.name`, `klex.session.kind`, and, for child sessions, `klex.session.extension` and `klex.session.parent.id`. Main and child sessions use this identical scheme.
 
 A child session starts a separate trace. Its root span carries one link (`klex.link.type = parent_session`) to the span that spawned it: the active span of the parent trace (usually the extension's `execute_tool` span), or the parent session root span when nothing is active. That spawning span records a `session.child_created` event with `klex.session.child.id`, `klex.session.child.name`, and `klex.session.child.extension`.
 

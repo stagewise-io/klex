@@ -5,9 +5,11 @@ import type { JsonStoreDefinition } from '@/local-data';
 import {
   dropLegacyTelemetryConfig,
   migrateLegacyKlexConfig,
+  nestMemoryExtensionConfig,
   parseLegacyKlexConfig,
   parseStoredKlexConfig,
   parseStoredKlexConfigV2,
+  parseStoredKlexConfigV4,
 } from './types';
 
 function preservingSchema(
@@ -45,6 +47,9 @@ const legacyConfigStorageSchema = preservingSchema((value) => {
 const v2ConfigStorageSchema = preservingSchema((value) => {
   parseStoredKlexConfigV2(value);
 });
+const v4ConfigStorageSchema = preservingSchema((value) => {
+  parseStoredKlexConfigV4(value);
+});
 const currentConfigStorageSchema = preservingSchema((value) => {
   parseStoredKlexConfig(value);
 });
@@ -54,7 +59,7 @@ export const CONFIG_STORE_DEFINITION: JsonStoreDefinition = {
   id: 'config',
   relativePath: 'config.json',
   required: true,
-  schemaVersion: 4,
+  schemaVersion: 5,
   compatibilityVersion: 6,
   minimumKlexVersion: '0.9.2',
   legacySchemaVersion: 1,
@@ -63,7 +68,8 @@ export const CONFIG_STORE_DEFINITION: JsonStoreDefinition = {
     { version: 2, schema: v2ConfigStorageSchema },
     // Schema 3 renamed telemetry levels; it shares the v2 shape.
     { version: 3, schema: v2ConfigStorageSchema },
-    { version: 4, schema: currentConfigStorageSchema },
+    { version: 4, schema: v4ConfigStorageSchema },
+    { version: 5, schema: currentConfigStorageSchema },
   ],
   migrations: [
     {
@@ -88,6 +94,17 @@ export const CONFIG_STORE_DEFINITION: JsonStoreDefinition = {
       to: 4,
       name: 'drop-telemetry-config',
       up: (value) => dropLegacyTelemetryConfig(value),
+    },
+    {
+      from: 4,
+      to: 5,
+      // Extension behavior settings move under `extensions.<extension>`.
+      // The obsolete `memoryWriteIntervalMs` / `memoryWriteStepInterval` are
+      // dropped right away instead of after several release cycles: the
+      // schema bump already stops older binaries from reading this file,
+      // so keeping the keys would protect no downgrade path.
+      name: 'nest-memory-extension-config',
+      up: (value) => nestMemoryExtensionConfig(value),
     },
   ],
 };

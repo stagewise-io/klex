@@ -25,6 +25,20 @@ function createHarness(config: Partial<MemoryRetrievalConfig> = {}) {
     clearOwner: vi.fn(),
     reconcile: vi.fn(async () => undefined),
     getState: vi.fn(() => ({ status: 'ready' })),
+    readHandles: vi.fn(async () => [
+      {
+        relativeFile: '2026-01-02/1-14-03.jsonl',
+        entryOrdinal: 0,
+        occurredAt: '2026-01-02T14:03:00Z',
+        text: 'your_action sendMessage succeeded\n¦chatId: C123\n¦text: hello',
+      },
+      {
+        relativeFile: '2026-01-02/1-14-03.jsonl',
+        entryOrdinal: 1,
+        occurredAt: '2026-01-02T14:04:00Z',
+        text: 'context slack\n¦from: U42',
+      },
+    ]),
   } as unknown as EpisodicSearchIndex;
   const extension = createRetrievalToolsExt({
     index,
@@ -38,10 +52,19 @@ function createHarness(config: Partial<MemoryRetrievalConfig> = {}) {
   const schema = surfaceTool.inputSchema as z.ZodType;
   const inspect = tools.inspectMemory?.execute;
   if (!inspect) throw new Error('inspectMemory missing');
+  const readTool = tools.readMemoryContext;
+  if (!readTool?.execute) throw new Error('readMemoryContext missing');
+  const readExecute = readTool.execute;
+  const readSchema = readTool.inputSchema as z.ZodType;
   return {
     extension,
     index,
     inspect: () => inspect({}, { toolCallId: 'i', messages: [] } as never),
+    readContext: (input: Record<string, unknown>) =>
+      readExecute(
+        readSchema.parse(input) as never,
+        { toolCallId: 'r', messages: [] } as never,
+      ),
     onSurface,
     schema,
     surface: (input: Record<string, unknown>) =>
@@ -65,6 +88,19 @@ describe('retrieval index freshness', () => {
     extension.onStepStart?.();
     await inspect();
     expect(index.reconcile).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('readMemoryContext tool', () => {
+  it('returns full multi-line records separated by blank lines', async () => {
+    const { extension, readContext } = createHarness();
+    extension.onStepStart?.();
+
+    await expect(readContext({ handles: ['h1'] })).resolves.toEqual({
+      text:
+        '2026-01-02T14:03:00Z: your_action sendMessage succeeded\n¦chatId: C123\n¦text: hello' +
+        '\n\n2026-01-02T14:04:00Z: context slack\n¦from: U42',
+    });
   });
 });
 

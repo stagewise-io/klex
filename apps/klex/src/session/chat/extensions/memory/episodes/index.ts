@@ -11,6 +11,8 @@ export {
   type EpisodeRecordInput,
   episodeEntryText,
   parseEpisodeRecordLine,
+  type RenderEpisodeTextOptions,
+  renderEpisodeText,
   toEpisodeRecordInputs,
 } from './episode-format';
 export {

@@ -105,6 +105,25 @@ export interface ProjectedMessage {
   records: HistoryRecord[];
 }
 
+type ContextRecord = Extract<HistoryRecord, { kind: 'context' }>;
+
+/** A record after line limits; `omittedItems` counts dropped context items. */
+export type FittedRecord =
+  | Exclude<HistoryRecord, { kind: 'context' }>
+  | (ContextRecord & { omittedItems?: number });
+
+/**
+ * A projected message after the per-message line limits: exactly the records
+ * and items the line renderer shows. `omittedRecords` counts records dropped
+ * from the end; the renderer annotates the last kept record with it.
+ */
+export interface FittedMessage {
+  id: string;
+  role: HistoryRole;
+  records: FittedRecord[];
+  omittedRecords: number;
+}
+
 export type HistorySegment =
   | { type: 'text'; text: string }
   | {
@@ -161,9 +180,21 @@ export interface RenderedHistory {
   truncated: boolean;
 }
 
+export interface FittedHistory {
+  /** Non-empty messages in scope. The aggregate budget is not applied. */
+  messages: FittedMessage[];
+  /** Id to resume from with an `after-cursor` scope. */
+  cursor: string | null;
+}
+
 export interface HistoryView {
   render(
     history: readonly HistoryMessage[],
     scope?: HistoryScope,
   ): RenderedHistory;
+  /**
+   * Structured counterpart of `render` without the aggregate budget.
+   * Rendering each message with `renderFittedMessage` yields the same text.
+   */
+  fit(history: readonly HistoryMessage[], scope?: HistoryScope): FittedHistory;
 }

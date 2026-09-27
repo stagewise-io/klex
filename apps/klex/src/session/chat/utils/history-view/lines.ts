@@ -1,7 +1,8 @@
 import { fitPrefix, fitPrefixWithOmission } from './fit';
 import type {
   ContextItem,
-  HistoryRecord,
+  FittedMessage,
+  FittedRecord,
   HistoryRole,
   HistorySegment,
   LineRendererOptions,
@@ -53,24 +54,88 @@ export function renderLineMessage(
   message: ProjectedMessage,
   options: LineRendererOptions = {},
 ): RenderedMessage | null {
-  const candidates = message.records.map((record) =>
-    renderRecord(record, message.role, options),
-  );
+  const fitted = fitLineMessage(message, options);
+  return fitted ? renderFittedMessage(fitted) : null;
+}
+
+/**
+ * Applies the per-message line limits without rendering: drops trailing
+ * records past `messageLimit` and trailing context items past
+ * `contextLimit`, measured on the rendered line text. Null when nothing fits.
+ */
+export function fitLineMessage(
+  message: ProjectedMessage,
+  options: LineRendererOptions = {},
+): FittedMessage | null {
+  const candidates = message.records.map((record) => {
+    const fitted =
+      record.kind === 'context'
+        ? fitContext(record, options.contextLimit)
+        : record;
+    return { record: fitted, lines: renderRecord(fitted, message.role) };
+  });
   if (candidates.length === 0) return null;
-  const blocks =
+  const kept =
     options.messageLimit === undefined
       ? candidates
       : fitPrefixWithOmission(
           candidates,
-          measureBlocks,
+          (prefix) => measureBlocks(prefix.map(({ lines }) => lines)),
           options.messageLimit,
-          (block, omitted) => [...block, `[… ${omitted} more parts]`],
+          (candidate, omitted) => ({
+            ...candidate,
+            lines: [...candidate.lines, omittedPartsLine(omitted)],
+          }),
         );
-  if (blocks.length === 0) return null;
+  if (kept.length === 0) return null;
+  return {
+    id: message.id,
+    role: message.role,
+    records: kept.map(({ record }) => record),
+    omittedRecords: candidates.length - kept.length,
+  };
+}
+
+export function renderFittedMessage(message: FittedMessage): RenderedMessage {
+  const last = message.records.length - 1;
+  const blocks = message.records.map((record, index) =>
+    renderBlock(
+      record,
+      message.role,
+      index === last ? message.omittedRecords : 0,
+    ),
+  );
   return {
     text: blocks.map(blockText).join(RECORD_SEPARATOR),
     segments: blocks.flatMap(blockSegments),
   };
+}
+
+/**
+ * Line text of one record block, without media segments. A positive
+ * `omittedRecords` appends the omission marker of the message's last record.
+ */
+export function renderRecordText(
+  record: FittedRecord,
+  role: HistoryRole,
+  omittedRecords = 0,
+): string {
+  return blockText(renderBlock(record, role, omittedRecords));
+}
+
+function renderBlock(
+  record: FittedRecord,
+  role: HistoryRole,
+  omittedRecords: number,
+): Line[] {
+  const lines = renderRecord(record, role);
+  return omittedRecords > 0
+    ? [...lines, omittedPartsLine(omittedRecords)]
+    : lines;
+}
+
+function omittedPartsLine(omitted: number): string {
+  return `[… ${omitted} more parts]`;
 }
 
 function measureBlocks(blocks: readonly Line[][]): number {
@@ -99,11 +164,7 @@ function blockSegments(block: readonly Line[]): HistorySegment[] {
   return segments;
 }
 
-function renderRecord(
-  record: HistoryRecord,
-  role: HistoryRole,
-  options: LineRendererOptions,
-): Line[] {
+function renderRecord(record: FittedRecord, role: HistoryRole): Line[] {
   switch (record.kind) {
     case 'text':
       return [
@@ -130,30 +191,38 @@ function renderRecord(
       return lines;
     }
     case 'context':
-      return renderContext(record, options);
+      return renderContext(record);
   }
 }
 
-function renderContext(
-  record: Extract<HistoryRecord, { kind: 'context' }>,
-  options: LineRendererOptions,
-): Line[] {
-  const build = (items: readonly ContextItem[]): Line[] => {
-    const lines: Line[] = [`context ${word(record.source)}`];
-    if (record.metadata !== undefined) lines.push(...quote(record.metadata));
-    for (const item of items) lines.push(...renderItem(item));
-    const omitted = record.items.length - items.length;
-    if (omitted > 0) lines.push(`[… ${omitted} more items]`);
-    return lines;
+type FittedContext = Extract<FittedRecord, { kind: 'context' }>;
+
+function fitContext(
+  record: FittedContext,
+  limit: number | undefined,
+): FittedContext {
+  if (limit === undefined) return record;
+  const withItems = (items: ContextItem[]): FittedContext => {
+    const omittedItems = record.items.length - items.length;
+    return omittedItems > 0
+      ? { ...record, items, omittedItems }
+      : { ...record, items };
   };
-  const limit = options.contextLimit;
-  if (limit === undefined) return build(record.items);
   const items = fitPrefix(
     record.items,
-    (prefix) => blockText(build(prefix)).length,
+    (prefix) => blockText(renderContext(withItems([...prefix]))).length,
     limit,
   );
-  return build(items);
+  return withItems(items);
+}
+
+function renderContext(record: FittedContext): Line[] {
+  const lines: Line[] = [`context ${word(record.source)}`];
+  if (record.metadata !== undefined) lines.push(...quote(record.metadata));
+  for (const item of record.items) lines.push(...renderItem(item));
+  const omitted = record.omittedItems ?? 0;
+  if (omitted > 0) lines.push(`[… ${omitted} more items]`);
+  return lines;
 }
 
 function renderItem(item: ContextItem): Line[] {

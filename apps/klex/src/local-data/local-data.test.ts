@@ -476,6 +476,42 @@ describe('LocalData', () => {
     },
   );
 
+  it('creates missing parent directories for nested SQLite stores', async () => {
+    const directory = await temporaryDirectory();
+    const relativePath = 'extensions/io.example/nested/synthetic.sqlite';
+    const sqliteDefinition: SqliteStoreDefinition = {
+      id: 'synthetic',
+      kind: 'sqlite',
+      relativePath,
+      required: false,
+      createIfMissing: true,
+      schemaVersion: 1,
+      compatibilityVersion: 1,
+      minimumKlexVersion: '2.0.0',
+      initSql: `
+        CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS synthetic (id TEXT PRIMARY KEY);
+      `,
+      migrations: [],
+    };
+
+    const localData = createLocalData({
+      logging: logger,
+      dataDirectory: directory,
+      klexVersion: '2.1.0',
+      stores: [sqliteDefinition],
+    });
+    await localData.start();
+
+    const inspections = await localData.inspect();
+    expect(inspections[0]).toMatchObject({
+      exists: true,
+      needsInitialization: false,
+      metadata: { store: 'synthetic', schemaVersion: 1 },
+    });
+    expect((await stat(join(directory, relativePath))).isFile()).toBe(true);
+  });
+
   it.skipIf(process.platform === 'win32')(
     'rejects dangling store symlinks before SQLite initialization',
     async () => {

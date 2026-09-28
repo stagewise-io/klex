@@ -1,8 +1,14 @@
 import { defineConfig } from 'blume';
 
+const posthogKey = process.env.POSTHOG_KEY?.trim();
+const posthogHost = process.env.POSTHOG_HOST?.trim();
+
 export default defineConfig({
   title: 'Klex Docs',
   description: 'Documentation for Klex — one durable agent, many channels.',
+  ...(posthogKey && posthogHost
+    ? { analytics: { posthog: { key: posthogKey, host: posthogHost } } }
+    : {}),
   theme: {
     // @stagewise/ui primary palette (hue 265, chroma scale 1)
     // light: primary-500 (peak chroma), dark: primary-400

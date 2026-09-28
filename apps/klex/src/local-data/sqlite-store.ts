@@ -1,4 +1,5 @@
-import { stat } from 'node:fs/promises';
+import { mkdir, stat } from 'node:fs/promises';
+import { dirname } from 'node:path';
 
 import { type Client, createClient } from '@libsql/client';
 import { sqliteTable, text } from 'drizzle-orm/sqlite-core';
@@ -116,6 +117,8 @@ export async function initializeSqliteStore(
   definition: SqliteStoreDefinition,
   klexVersion: string,
 ): Promise<void> {
+  // SQLite creates the file but not its parents; nested stores start absent.
+  await mkdir(dirname(filePath), { recursive: true, mode: 0o700 });
   const client = createClient({ url: `file:${filePath}` });
   try {
     await client.executeMultiple(definition.initSql);

@@ -1,6 +1,5 @@
 import './sections.css';
 import './style.css';
-import './telemetry.css';
 
 import { botFamilyMarkup, mountBotFamily } from './bot-family';
 import { demoMarkup } from './demo';
@@ -79,14 +78,11 @@ app.innerHTML = `
         </a>
       </nav>
     </footer>
-    <div id="analytics-consent"></div>
     <p class="attribution">Connector marks belong to their respective owners. Illustrative interfaces do not imply endorsement. <a href="/attributions.html">Asset credits</a></p>
   </div>
 `;
 
-const analyticsContainer =
-  document.querySelector<HTMLElement>('#analytics-consent');
-if (analyticsContainer) initializeTelemetry(analyticsContainer);
+initializeTelemetry();
 
 const cleanupCapabilityMascots = initializeCapabilityMascots();
 import.meta.hot?.dispose(cleanupCapabilityMascots);

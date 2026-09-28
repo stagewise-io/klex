@@ -3,11 +3,13 @@
 ## Optional website analytics
 
 Copy `.env.example` to `.env.local` in this directory and set `VITE_POSTHOG_KEY`
-to the **public project token**, and `VITE_POSTHOG_HOST` to your project's HTTPS
-ingestion origin (for example `https://eu.i.posthog.com`). Never put a personal
+to the **public project token** (`phc_` followed by letters/digits), and
+`VITE_POSTHOG_HOST` explicitly to `https://eu.i.posthog.com` (an optional trailing
+slash is accepted). Only this EU ingestion host is allowed. Never put a personal
 API key or secret in a `VITE_` variable: Vite embeds these values in the public
-bundle at build time. Rebuild after changing them. Missing/blank keys, missing
-hosts, and invalid hosts disable telemetry and hide the consent controls.
+bundle at build time. Rebuild after changing them. Missing or invalid configuration
+disables telemetry without rendering anything. Token validation checks syntax,
+not whether the token belongs to an existing EU project.
 
 Before enabling production analytics, enable **Settings → Project → IP data
 capture configuration → Discard client IP data** in PostHog and disable IP-based
@@ -18,36 +20,43 @@ a reliable control. The receiving service necessarily sees a network IP while
 handling the request; this implementation does not promise network-level
 anonymity. See [PostHog's data storage controls](https://posthog.com/docs/privacy/data-storage).
 
-The accessible footer controls offer equally styled Allow analytics / No thanks
-buttons. Nothing is sent before explicit opt-in. Do Not Track (`1` or `yes`) and
-Global Privacy Control disable analytics, including a second check when consent
-is given. Choices apply only to the current document; no cookies, local storage,
-session storage, or persistent identity/preferences are written. Turning off
-analytics aborts an in-flight request but cannot recall an already received event.
+This is **non-consensual minimal measurement** for capacity planning: when
+configured, it runs automatically without opt-in or a consent/footer UI. Do Not
+Track (`1` or `yes`) and Global Privacy Control suppress the request at
+initialization. No cookies, localStorage, sessionStorage, or persistent
+identity/preferences are read or written. There is no in-page consent or
+withdrawal control. Payload minimization is not a claim of anonymity or that
+consent is unnecessary in every deployment.
 
-Only one `$pageview` per consenting document is sent directly to PostHog's
+At most one `$pageview` per document is attempted directly through PostHog's
 capture API, with a fresh random ID, a fixed `/` page label, and
 `$process_person_profile: false` / `$is_identified: false`. No SDK is loaded, so
 there is no autocapture, session recording, DOM/input capture, click tracking,
 remote configuration, or person identification. No URL queries, fragments,
 arbitrary paths, referrers, page titles, or user properties are copied into events.
-Requests omit credentials and the Referer header; failures are ignored without
-retrying. This static landing page has no client-side routes to track; anchor
+Requests omit credentials and the Referer header, and reject redirects; failures
+are ignored without retrying. Browser-generated network metadata (including the
+source IP, User-Agent, and Origin) can still reach the receiving infrastructure;
+the application payload allowlist does not control its logging or processing.
+This static landing page has no client-side routes to track; anchor
 navigation and demo interactions do not generate page views.
 
-In PostHog Product Analytics, count `$pageview` events for consenting page loads.
+In PostHog Product Analytics, count `$pageview` events for measured page loads.
 “Unique visitors” counts random document IDs, **not unique people**: reloads and
-repeat visits count separately, while nonconsenting visitors, privacy signals,
-blocked requests, and network failures are absent. This measures opted-in traffic
-volume, not the site's full audience, retention, or sessions. Standard Web
+repeat visits count separately, while privacy signals, disabled configuration,
+blocked requests, and network failures are absent. Bots may contribute events.
+This is a rough traffic-volume input for capacity planning, not a complete request
+count, unique audience, retention, concurrency, or session measurement. Standard Web
 Analytics reports requiring session IDs, referrers, or device metadata may be
 incomplete. There is no IP-derived cookieless fingerprint/server hash.
 
 Verify with `pnpm exec vitest run apps/website/src/telemetry.test.ts` plus the
 website build/typecheck and repository formatter. For a manual network check,
-build with a test project token: there should be no PostHog requests before
-consent or after declining, exactly one capture after allowing, and none with
-Do Not Track enabled. Inspect the payload and verify the project's IP discard
+build with a synthetic `phc_` token and intercept the ingestion endpoint: expect
+one automatic capture, none on interactions, a fresh ID after reload, no
+analytics UI or storage/cookie access, and no capture with Do Not Track or GPC.
+Missing/invalid configuration must send nothing. Inspect the payload and
+verify the project's IP discard and disabled enrichment
 setting before enabling production. No live project credentials are needed by
 the automated tests.
 

@@ -43,6 +43,69 @@ function makeApiError(opts: {
   });
 }
 
+it('turns provider rejection of attachment media into a sanitized tool result and retries as text', async () => {
+  const toolMessage: ModelMessage = {
+    role: 'tool',
+    content: [
+      {
+        type: 'tool-result',
+        toolCallId: 'attachment',
+        toolName: 'readAttachment',
+        output: {
+          type: 'content',
+          value: [
+            {
+              type: 'image-data',
+              data: 'secret-bytes',
+              mediaType: 'image/png',
+            },
+          ],
+        },
+      },
+    ],
+  };
+  const canonical = makeAssistantMessage([
+    {
+      type: 'dynamic-tool',
+      toolName: 'readAttachment',
+      toolCallId: 'attachment',
+      state: 'output-available',
+      input: { url: 'https://example.com/?signature=secret' },
+      output: { ok: true },
+    },
+  ]);
+  const deps = makeDeps({
+    modelMessages: [toolMessage],
+    messages: [canonical],
+  });
+  vi.mocked(runStreamedGeneration)
+    .mockReset()
+    .mockRejectedValueOnce(
+      makeApiError({ message: 'invalid image', statusCode: 400 }),
+    )
+    .mockResolvedValueOnce(
+      makeGenResult(
+        makeAssistantMessage([
+          { type: 'text', text: 'Attachment could not be read.' },
+        ]),
+        'stop',
+      ),
+    );
+  const result = await new GenerationRunner(deps).run();
+  expect(result.fatalError).toBe(false);
+  expect(runStreamedGeneration).toHaveBeenCalledTimes(2);
+  expect(toolMessage).toMatchObject({
+    content: [
+      {
+        output: { type: 'json', value: { error: { code: 'provider-error' } } },
+      },
+    ],
+  });
+  expect(canonical.parts[0]).toMatchObject({
+    output: { error: { code: 'provider-error' } },
+  });
+});
+
 function makeAssistantMessage(
   parts: ExtendedUIMessage['parts'] = [],
 ): ExtendedUIMessage {

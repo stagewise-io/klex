@@ -158,7 +158,11 @@ export class ToolDispatcher {
 
     const toolName = getToolName(part);
     this.deps.logger.debug(
-      { toolName, toolCallId: part.toolCallId, input: part.input },
+      {
+        toolName,
+        toolCallId: part.toolCallId,
+        input: toolName === 'readAttachment' ? '[redacted]' : part.input,
+      },
       'Tool execution started',
     );
 

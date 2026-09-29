@@ -105,7 +105,12 @@ function serializePart(
       toolCallId: part.toolCallId,
       toolName: getToolName(part),
       state: part.state,
-      args: 'input' in part ? serializeBoundedJson(part.input) : undefined,
+      args:
+        getToolName(part) === 'readAttachment'
+          ? '[redacted]'
+          : 'input' in part
+            ? serializeBoundedJson(part.input)
+            : undefined,
       result,
     };
   }

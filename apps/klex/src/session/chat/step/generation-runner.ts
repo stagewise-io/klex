@@ -24,6 +24,7 @@ import type {
 import type { ExtendedUIMessage } from '../message-types';
 import type { AgentTools } from '../tools';
 import type { ModelFallbackManager } from '../utils/model-fallback-manager';
+import { rejectAttachmentMedia } from '../utils/reject-attachment-media';
 import { repairPartialMessage } from '../utils/repair-partial-message';
 import { runStreamedGeneration } from '../utils/run-streamed-generation';
 import { startChildSpan } from '../utils/tracing';
@@ -204,6 +205,16 @@ export class GenerationRunner {
         stepSpan.setAttribute('step.chunkCount', chunkCount);
         latestMessage = response.message;
 
+        if (
+          response.finishReason === 'error' &&
+          !generationAbortController.signal.aborted &&
+          toolDispatcher.dispatchedCount === 0 &&
+          rejectAttachmentMedia(this.deps.modelMessages, messages)
+        ) {
+          latestMessage = null;
+          continue;
+        }
+
         stepSpan.addEvent('step.generation_finished', {
           'generation.finishReason': response.finishReason,
           'generation.usage.inputTokens': response.usage.inputTokens,
@@ -251,6 +262,14 @@ export class GenerationRunner {
           );
         }
       } catch (e) {
+        if (
+          !generationAbortController.signal.aborted &&
+          toolDispatcher.dispatchedCount === 0 &&
+          rejectAttachmentMedia(this.deps.modelMessages, messages)
+        ) {
+          latestMessage = null;
+          continue;
+        }
         stepSpan.setAttribute('step.chunkCount', chunkCount);
         stepSpan.recordException(e as Error);
         stepSpan.setAttribute('step.error', String(e));

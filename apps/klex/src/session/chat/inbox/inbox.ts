@@ -9,6 +9,7 @@ import {
   type SessionInboxEvent,
   SessionInboxUrgency,
 } from '@/session/inbox';
+import { redactAttachmentSecrets } from '@/shared-utilities/attachment-privacy';
 
 import type { ExtendedUIMessage } from '../message-types';
 import { tracer } from '../utils/tracing';
@@ -399,7 +400,9 @@ class InboxModule implements SessionInboxBuffer {
 }
 
 export function redactMediaForTelemetry(value: unknown): unknown {
-  return redactMediaValue(value, new WeakSet<object>());
+  return redactAttachmentSecrets(
+    redactMediaValue(value, new WeakSet<object>()),
+  );
 }
 
 function redactMediaValue(value: unknown, seen: WeakSet<object>): unknown {

@@ -42,6 +42,74 @@ function makeCallEndEvent(event: Record<string, unknown>): CallEndEvent {
 }
 
 describe('KlexTelemetry — model content', () => {
+  it('redacts attachment bytes, signed URLs and provider error echoes even at debug', async () => {
+    const exporter = new InMemorySpanExporter();
+    const provider = new BasicTracerProvider({
+      spanProcessors: [new SimpleSpanProcessor(exporter)],
+    });
+    const telemetry = createKlexTelemetry(provider.getTracer('test'), {
+      contentAllowed: () => true,
+    });
+    telemetry.onStart(
+      makeStartEvent({
+        callId: 'attachment-call',
+        operationId: 'ai.generateText',
+        provider: 'openai',
+        modelId: 'test',
+        messages: [
+          {
+            role: 'assistant',
+            content: [
+              {
+                type: 'tool-call',
+                toolName: 'readAttachment',
+                input: {
+                  url: 'https://example.com/?signature=PRIVATE_SIGNATURE',
+                },
+              },
+            ],
+          },
+          {
+            role: 'tool',
+            content: [
+              {
+                type: 'tool-result',
+                toolName: 'readAttachment',
+                output: {
+                  type: 'content',
+                  value: [
+                    {
+                      type: 'image-data',
+                      data: 'PRIVATE_BYTES',
+                      mediaType: 'image/png',
+                    },
+                  ],
+                },
+              },
+            ],
+          },
+        ],
+        recordInputs: true,
+      }),
+    );
+    telemetry.onError({
+      callId: 'attachment-call',
+      error: new Error('PRIVATE_BYTES PRIVATE_SIGNATURE'),
+    });
+    await provider.forceFlush();
+    const serialized = JSON.stringify(
+      exporter.getFinishedSpans().map((span) => ({
+        attributes: span.attributes,
+        events: span.events,
+        status: span.status,
+      })),
+    );
+    expect(serialized).toContain('readAttachment');
+    expect(serialized).not.toContain('PRIVATE_BYTES');
+    expect(serialized).not.toContain('PRIVATE_SIGNATURE');
+    await provider.shutdown();
+  });
+
   it('exports model inputs and outputs through the debug span pipeline', async () => {
     const exporter = new InMemorySpanExporter();
     const spanProcessor = createTelemetrySpanProcessor('debug');

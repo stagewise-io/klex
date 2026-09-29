@@ -2,7 +2,7 @@ import {
   type ReadResourceResult,
   ResourceNotFoundError,
 } from '@modelcontextprotocol/client';
-import type { ToolSet } from 'ai';
+import type { ModelMessage, ToolSet } from 'ai';
 import z from 'zod';
 
 import type { ModuleLogger } from '@stagewise/logger';
@@ -35,6 +35,7 @@ import {
   toOpenResourcesEntry,
 } from './open-resources-tracker';
 import { mcpPushNotificationToInboxEvent } from './push-notification-adapter';
+import { AttachmentReader } from './read-attachment';
 import {
   formatResourceList,
   hasUnexpandedUriTemplateExpression,
@@ -95,6 +96,7 @@ function isResourceStatePart(part: unknown): part is ResourceStatePart {
 // ---------------------------------------------------------------------------
 
 class McpIngressExtension implements Extension {
+  private readonly attachments: AttachmentReader;
   private readonly resourceWindowManager: ResourceWindowManager;
   /** Unsubscribe function for the MCP resource-updated listener. */
   private unsubscribeResourceUpdated: (() => void) | undefined;
@@ -125,6 +127,31 @@ class McpIngressExtension implements Extension {
     },
     config: McpIngressConfig,
   ) {
+    this.attachments = new AttachmentReader({
+      authorize: (url) => {
+        const connected = new Set(
+          this.deps.mcp
+            .getServerStatuses()
+            .filter((server) => server.status === 'connected')
+            .map((server) => server.name),
+        );
+        return this.deps
+          .getHistory()
+          .some(
+            (message) =>
+              message.role === 'user' &&
+              message.parts.some(
+                (part) =>
+                  part.type === 'data-context' &&
+                  connected.has(part.data.sourceEnv) &&
+                  part.data.content.some(
+                    (block) =>
+                      block.type === 'resource_link' && block.uri === url,
+                  ),
+              ),
+          );
+      },
+    });
     this.maxConcurrentWindows = config.maxConcurrentWindows;
     const windowConfig: ResourceWindowConfig = {
       ...DEFAULT_RESOURCE_WINDOW_CONFIG,
@@ -159,6 +186,7 @@ class McpIngressExtension implements Extension {
   }
 
   async onClose(): Promise<void> {
+    this.attachments.clear();
     this.unsubscribeResourceUpdated?.();
     this.unsubscribeResourceUpdated = undefined;
     this.unsubscribePushNotification?.();
@@ -186,8 +214,16 @@ class McpIngressExtension implements Extension {
 
   getSystemPromptPart = () => systemPromptPartGetter(this.maxConcurrentWindows);
 
-  getTools(_model: ResolvedModel): ToolSet {
+  contextTransformer(
+    history: ModelMessage[],
+    model: ResolvedModel,
+  ): ModelMessage[] {
+    return this.attachments.project(history, model);
+  }
+
+  getTools(model: ResolvedModel): ToolSet {
     return {
+      readAttachment: this.attachments.tool(model),
       listResources: {
         description: 'List resources and resource templates of MCP server.',
         inputSchema: z.object({

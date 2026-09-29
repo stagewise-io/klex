@@ -272,7 +272,9 @@ export class ToolExecutor implements SessionToolRuntime {
       if (toolSpan.isRecording()) {
         toolSpan.setAttribute(
           'gen_ai.tool.call.arguments',
-          boundedToolAttribute(validation.value),
+          request.name === 'readAttachment'
+            ? '[redacted]'
+            : boundedToolAttribute(validation.value),
         );
       }
 

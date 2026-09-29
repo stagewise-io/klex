@@ -83,6 +83,53 @@ function getTool(ext: ReturnType<ExtensionFactory['create']>, name: string) {
   return tool;
 }
 
+it('registers readAttachment only with MCP access and authorizes exact resource links from connected sources', async () => {
+  const deps = createMockDeps({
+    getServerStatuses: vi.fn(
+      () => [{ name: 'connector', status: 'connected' }] as never,
+    ),
+  });
+  const uri = 'https://example.com/file?signature=secret';
+  deps.getHistory = () => [
+    {
+      id: 'event',
+      role: 'user',
+      parts: [
+        {
+          type: 'data-context',
+          data: {
+            sourceEnv: 'connector',
+            metadata: {},
+            content: [{ type: 'resource_link', uri, name: 'image' }],
+          },
+        },
+      ],
+    },
+  ];
+  const extension = createMcpIngressExt().create(deps);
+  const tool = extension.getTools!({
+    modelId: 'test',
+    contextSize: 10000,
+    inputCapabilities: { image: {} },
+  }).readAttachment!;
+  const invoke = (url: string) =>
+    tool.execute!(
+      { url, mimeType: 'application/pdf' },
+      { toolCallId: 'test', messages: [], context: {} },
+    );
+  expect(await invoke(uri)).toMatchObject({
+    error: { code: 'unsupported-media' },
+  });
+  expect(await invoke('https://example.com/other')).toMatchObject({
+    error: { code: 'unauthorized' },
+  });
+  vi.mocked(deps.mcp.getServerStatuses).mockReturnValue([]);
+  expect(await invoke(uri)).toMatchObject({ error: { code: 'unauthorized' } });
+  expect(() => createMcpIngressExt().create({ ...deps, mcp: null })).toThrow(
+    'requires MCP access',
+  );
+});
+
 async function callTool(
   ext: ReturnType<ExtensionFactory['create']>,
   name: string,

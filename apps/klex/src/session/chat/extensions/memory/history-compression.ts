@@ -5,6 +5,7 @@ import {
   type FittedHistory,
   type ValueLimit,
 } from '@/session/chat/utils/history-view';
+import { redactAttachmentSecrets } from '@/shared-utilities/attachment-privacy';
 
 import type { ExtendedUIMessage } from '../../message-types';
 
@@ -62,7 +63,10 @@ export function collectEpisodicHistory(
   history: readonly ExtendedUIMessage[],
   cursor: string | null,
 ): FittedHistory {
-  return EPISODIC_HISTORY_VIEW.fit(history, { kind: 'after-cursor', cursor });
+  return EPISODIC_HISTORY_VIEW.fit(
+    redactAttachmentSecrets(history) as ExtendedUIMessage[],
+    { kind: 'after-cursor', cursor },
+  );
 }
 
 function projectTime(data: unknown): { label: string; value: string } | null {

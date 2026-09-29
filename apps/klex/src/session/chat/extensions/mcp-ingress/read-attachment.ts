@@ -72,6 +72,9 @@ export class AttachmentReader {
     { bytes: Buffer; expires: number }
   >();
   private active = false;
+  // Native decoding can outlive the tool's timeout/cancellation race. Keep
+  // its slot until it actually settles so retries cannot accumulate work.
+  private decoding = false;
   private readonly shutdown = new AbortController();
 
   constructor(
@@ -98,7 +101,7 @@ export class AttachmentReader {
         if (this.shutdown.signal.aborted) return failure('unauthorized');
         let timer: ReturnType<typeof setTimeout> | undefined;
         let onAbort: (() => void) | undefined;
-        if (this.active) return failure('too-large');
+        if (this.active || this.decoding) return failure('too-large');
         this.active = true;
         const controller = new AbortController();
         const signal = AbortSignal.any([
@@ -145,6 +148,7 @@ export class AttachmentReader {
             )
               throw new AttachmentError('unsupported-media');
             let decoded: Buffer;
+            this.decoding = true;
             try {
               decoded = await (this.deps.decode ?? decodeAttachmentImage)(
                 bytes,
@@ -152,6 +156,8 @@ export class AttachmentReader {
               );
             } catch {
               throw new AttachmentError('conversion-failed');
+            } finally {
+              this.decoding = false;
             }
             signal.throwIfAborted();
             const limit = Math.min(

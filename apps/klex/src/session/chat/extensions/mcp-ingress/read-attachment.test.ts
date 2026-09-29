@@ -257,6 +257,57 @@ describe('readAttachment', () => {
     ]);
   });
 
+  it.each([
+    ['timeout', 'resolve'],
+    ['timeout', 'reject'],
+    ['cancel', 'resolve'],
+    ['cancel', 'reject'],
+  ])(
+    'holds the decode slot after %s until late %s without publishing',
+    async (cancellation, settlement) => {
+      const bytes = await png();
+      const late = Promise.withResolvers<Buffer>();
+      const decode = vi
+        .fn()
+        .mockReturnValueOnce(late.promise)
+        .mockResolvedValue(bytes);
+      const { reader, execute, fetch } = await setup({ decode });
+      const controller = new AbortController();
+      vi.useFakeTimers();
+      const pending = reader
+        .tool(model)
+        .execute?.({ url }, { ...options, abortSignal: controller.signal });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(decode).toHaveBeenCalledOnce();
+      if (cancellation === 'timeout') await vi.advanceTimersByTimeAsync(10_001);
+      else controller.abort();
+      expect(await pending).toMatchObject({ error: { code: 'timeout' } });
+
+      for (let retry = 0; retry < 3; retry++) {
+        expect(await execute()).toMatchObject({ error: { code: 'too-large' } });
+        await vi.advanceTimersByTimeAsync(10_001);
+      }
+      expect(fetch).toHaveBeenCalledOnce();
+      expect(decode).toHaveBeenCalledOnce();
+
+      if (settlement === 'resolve') late.resolve(bytes);
+      else late.reject(new Error('late decode failure'));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(reader.project(history({ ok: true }), model)).toMatchObject([
+        {
+          content: [{ output: { value: { error: { code: 'fetch-failed' } } } }],
+        },
+      ]);
+
+      const output = await execute();
+      expect(output).toMatchObject({ ok: true });
+      expect(decode).toHaveBeenCalledTimes(2);
+      expect(reader.project(history(output), model)).toMatchObject([
+        { content: [{ output: { type: 'content' } }] },
+      ]);
+    },
+  );
+
   it.each(['png', 'jpeg', 'webp'] as const)(
     'sniffs %s without a specific MIME type',
     async (format) => {

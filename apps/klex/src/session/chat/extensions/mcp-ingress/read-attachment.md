@@ -15,7 +15,9 @@ It does not use connector tokens, delegate credentials, or special-case a channe
 
 `url` is required (maximum 8,192 characters). Optional `filename` (255 characters)
 is a hint only and is never a filesystem path. Optional `mimeType` (100 characters)
-must agree with the sniffed format; optional `size` is a nonnegative integer hint,
+must agree with the sniffed format when specific. Missing or generic
+`application/octet-stream` MIME hints and response headers defer to byte sniffing;
+optional `size` is a nonnegative integer hint,
 not a replacement for measuring the response. Unknown fields are rejected.
 
 ## Supported content
@@ -26,6 +28,8 @@ model must declare image input supporting PNG. Images are resized to at most
 2,048 × 2,048 and the selected model's declared dimension/pixel limits. Its byte
 limit also applies. A model fallback rechecks compatibility before projecting
 media through the existing AI SDK provider content abstraction.
+Realtime leases return `unsupported-provider`: their JSON tool-reply transport
+cannot deliver ephemeral attachment images, even when the model accepts images.
 
 PDFs return `unsupported-media`, including for providers whose upstream API may
 accept PDFs: Klex's current capability schema has only image/audio inputs and no
@@ -56,8 +60,9 @@ Non-200 responses and compressed transfer encodings are rejected.
 - 4 MiB maximum response, checked against both Content-Length and streamed bytes.
 - 10-second total read/decode deadline, including DNS; cancellation reaches the
   HTTPS request. A timed-out operation cannot publish a late image.
-- One in-flight read per session; a stalled operation holds the slot until it
-  settles. Image decoding allows at most 16,777,216 input pixels, one frame and
+- One active read per session; timeout or cancellation releases the slot even
+  if underlying work ignores cancellation. Late work cannot publish media or
+  release a newer read's slot. Image decoding allows at most 16,777,216 input pixels, one frame and
   a five-second Sharp processing timeout.
 - At most four decoded images, each at most 4 MiB, retained in process memory.
   Handles expire after five minutes and are cleared when the extension closes.
@@ -76,7 +81,7 @@ Failures are nonthrowing `{ "ok": false, "error": { "code": "...",
 `invalid-input`, `unauthorized`, `ssrf-rejected`, `fetch-failed`, `too-large`,
 `timeout`, `unsupported-media`, `unsupported-provider`, `conversion-failed`, and
 `provider-error`. No URL, response body, decoder exception or upstream error text
-is returned. A provider error before tool side effects replaces attachment media
+is returned. An explicit provider image-input rejection before tool side effects replaces attachment media
 with `provider-error` and retries once without it; failures unrelated to media
 continue through the existing generation error handling. No live provider calls
 are required by the focused test suite.

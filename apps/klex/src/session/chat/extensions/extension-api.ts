@@ -170,6 +170,8 @@ export interface ResolvedModel {
   contextSize: number;
   /** Native input formats accepted by the selected model. */
   inputCapabilities: ModelInputCapabilities;
+  /** False when the execution transport cannot deliver ephemeral tool images. */
+  ephemeralToolImages?: boolean;
 }
 
 // ---------------------------------------------------------------------------

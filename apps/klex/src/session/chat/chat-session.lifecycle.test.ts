@@ -18,6 +18,7 @@ import type {
   ExtensionDeps,
   ExtensionFactory,
 } from './extensions/extension-api';
+import { AttachmentReader } from './extensions/mcp-ingress/read-attachment';
 
 const logger = {
   debug: vi.fn(),
@@ -77,6 +78,53 @@ function createSession(
     basePrompt: 'You are Klex.',
   });
 }
+
+it('rejects realtime attachment reads even when the leased model accepts images', async () => {
+  const fetch = vi.fn();
+  const reader = new AttachmentReader({ authorize: () => true, fetch });
+  const session = createSession({
+    extensions: [
+      {
+        identifier: 'test/attachment',
+        create: () => ({
+          getTools: (model) => ({ readAttachment: reader.tool(model) }),
+          contextTransformer: (history, model) =>
+            reader.project(history, model),
+          onClose: async () => reader.clear(),
+        }),
+      },
+    ],
+  });
+  try {
+    await session.start();
+    const lease = await session.acquireInteractionLease({
+      mode: 'realtime',
+      externalSessionId: 'image-test',
+      namespace: 'test',
+      signal: new AbortController().signal,
+      model: {
+        modelId: 'image-model',
+        contextSize: 10000,
+        inputCapabilities: { image: {} },
+      },
+    });
+    const prepared = await lease.bootstrap();
+    await prepared.commit();
+    const result = await lease.executeTool({
+      executionId: 'image',
+      name: 'readAttachment',
+      input: { url: 'https://example.com/image' },
+    });
+    expect(result).toMatchObject({
+      output: { ok: false, error: { code: 'unsupported-provider' } },
+    });
+    expect(fetch).not.toHaveBeenCalled();
+    expect(JSON.stringify(session.getMessages())).not.toContain('"ok":true');
+    await lease.release();
+  } finally {
+    await session.close();
+  }
+});
 
 function fakeProductAnalytics() {
   const handle = { recordTurn: vi.fn(), close: vi.fn() };

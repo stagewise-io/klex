@@ -1,5 +1,5 @@
 import type { ModelMessage } from 'ai';
-import { getToolName, isToolUIPart } from 'ai';
+import { APICallError, getToolName, isToolUIPart } from 'ai';
 
 import type { ExtendedUIMessage } from '../message-types';
 
@@ -8,7 +8,18 @@ import type { ExtendedUIMessage } from '../message-types';
 export function rejectAttachmentMedia(
   modelMessages: ModelMessage[],
   history: ExtendedUIMessage[],
+  error: unknown,
 ): boolean {
+  // Only explicit provider input rejections justify destroying media context.
+  // Authentication, quota, transport and server errors use normal fallback.
+  if (
+    !APICallError.isInstance(error) ||
+    ![400, 422].includes(error.statusCode ?? 0) ||
+    !/(?:invalid|unsupported|malformed|cannot decode|could not decode|unable to decode)\s+(?:input\s+)?image|image\s+(?:input\s+)?(?:is\s+)?(?:invalid|unsupported|malformed|not supported)|does not support\s+(?:image|vision)/i.test(
+      error.message,
+    )
+  )
+    return false;
   const rejected = new Set<string>();
   const failure = {
     ok: false,
@@ -23,7 +34,8 @@ export function rejectAttachmentMedia(
       if (
         part.type !== 'tool-result' ||
         part.toolName !== 'readAttachment' ||
-        part.output.type !== 'content'
+        part.output.type !== 'content' ||
+        !part.output.value.some((item) => item.type === 'image-data')
       )
         continue;
       rejected.add(part.toolCallId);

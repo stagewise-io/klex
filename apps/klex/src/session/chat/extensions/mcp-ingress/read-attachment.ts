@@ -41,6 +41,30 @@ const failure = (code: AttachmentErrorCode) => ({
   error: { code, message: `Attachment unavailable: ${code}.` },
 });
 
+function specificMimeType(value?: string): string | undefined {
+  const type = value?.split(';')[0]?.trim().toLowerCase();
+  return !type || type === 'application/octet-stream' ? undefined : type;
+}
+
+function deliverable(bytes: Buffer, model: ResolvedModel): boolean {
+  const caps = model.inputCapabilities.image;
+  return (
+    !!caps &&
+    model.ephemeralToolImages !== false &&
+    (!caps.mediaTypes || caps.mediaTypes.includes('image/png')) &&
+    bytes.length >= 24 &&
+    sniff(bytes) === 'image/png' &&
+    bytes.length <=
+      Math.min(caps.maxBytes ?? ATTACHMENT_MAX_BYTES, ATTACHMENT_MAX_BYTES) &&
+    bytes.readUInt32BE(16) > 0 &&
+    bytes.readUInt32BE(20) > 0 &&
+    bytes.readUInt32BE(16) <= (caps.maxWidth ?? 2048) &&
+    bytes.readUInt32BE(20) <= (caps.maxHeight ?? 2048) &&
+    bytes.readUInt32BE(16) * bytes.readUInt32BE(20) <=
+      (caps.maxTotalPixels ?? 4_194_304)
+  );
+}
+
 /** Bytes never enter canonical history, tool JSON, logs or durable memory. */
 export class AttachmentReader {
   private readonly media = new Map<
@@ -73,7 +97,7 @@ export class AttachmentReader {
         if (!input.success) return failure('invalid-input');
         if (this.shutdown.signal.aborted) return failure('unauthorized');
         let timer: ReturnType<typeof setTimeout> | undefined;
-        let pending: Promise<unknown> | undefined;
+        let onAbort: (() => void) | undefined;
         if (this.active) return failure('too-large');
         this.active = true;
         const controller = new AbortController();
@@ -83,10 +107,12 @@ export class AttachmentReader {
           ...(options.abortSignal ? [options.abortSignal] : []),
         ]);
         try {
+          signal.throwIfAborted();
           const url = parseAttachmentUrl(input.data.url);
           if (!this.deps.authorize(input.data.url))
             return failure('unauthorized');
           if (
+            model.ephemeralToolImages === false ||
             !model.inputCapabilities.image ||
             (model.inputCapabilities.image.mediaTypes &&
               !model.inputCapabilities.image.mediaTypes.includes('image/png'))
@@ -97,7 +123,7 @@ export class AttachmentReader {
             input.data.size > ATTACHMENT_MAX_BYTES
           )
             return failure('too-large');
-          const declared = input.data.mimeType?.trim().toLowerCase();
+          const declared = specificMimeType(input.data.mimeType);
           if (
             declared &&
             !['image/png', 'image/jpeg', 'image/webp'].includes(declared)
@@ -107,13 +133,15 @@ export class AttachmentReader {
             const { bytes, mimeType } = await (
               this.deps.fetch ?? fetchAttachment
             )(url, signal);
+            signal.throwIfAborted();
             if (bytes.length > ATTACHMENT_MAX_BYTES)
               throw new AttachmentError('too-large');
             const detected = sniff(bytes);
             if (
               !detected ||
               (declared && detected !== declared) ||
-              (mimeType !== 'application/octet-stream' && mimeType !== detected)
+              (specificMimeType(mimeType) &&
+                specificMimeType(mimeType) !== detected)
             )
               throw new AttachmentError('unsupported-media');
             let decoded: Buffer;
@@ -131,6 +159,8 @@ export class AttachmentReader {
               model.inputCapabilities.image?.maxBytes ?? ATTACHMENT_MAX_BYTES,
             );
             if (decoded.length > limit) throw new AttachmentError('too-large');
+            if (!deliverable(decoded, model))
+              throw new AttachmentError('conversion-failed');
             for (const [key, entry] of this.media)
               if (entry.expires <= Date.now()) this.media.delete(key);
             while (this.media.size >= 4)
@@ -141,14 +171,16 @@ export class AttachmentReader {
             });
             return { ok: true, mimeType: 'image/png', size: decoded.length };
           };
-          pending = work();
           return await Promise.race([
-            pending,
+            work(),
             new Promise<never>((_resolve, reject) => {
-              timer = setTimeout(() => {
-                controller.abort();
-                reject(new AttachmentError('timeout'));
-              }, ATTACHMENT_TIMEOUT_MS);
+              onAbort = () => reject(new AttachmentError('timeout'));
+              signal.addEventListener('abort', onAbort, { once: true });
+              if (signal.aborted) onAbort();
+              timer = setTimeout(
+                () => controller.abort(),
+                ATTACHMENT_TIMEOUT_MS,
+              );
             }),
           ]);
         } catch (error) {
@@ -161,16 +193,8 @@ export class AttachmentReader {
           );
         } finally {
           if (timer) clearTimeout(timer);
-          if (signal.aborted && pending)
-            void pending.then(
-              () => {
-                this.active = false;
-              },
-              () => {
-                this.active = false;
-              },
-            );
-          else this.active = false;
+          if (onAbort) signal.removeEventListener('abort', onAbort);
+          this.active = false;
         }
       },
     };
@@ -200,16 +224,7 @@ export class AttachmentReader {
               output: { type: 'json' as const, value: failure('fetch-failed') },
             };
           }
-          const caps = model.inputCapabilities.image;
-          if (
-            !caps ||
-            (caps.mediaTypes && !caps.mediaTypes.includes('image/png')) ||
-            media.bytes.length > (caps.maxBytes ?? ATTACHMENT_MAX_BYTES) ||
-            media.bytes.readUInt32BE(16) > (caps.maxWidth ?? 2048) ||
-            media.bytes.readUInt32BE(20) > (caps.maxHeight ?? 2048) ||
-            media.bytes.readUInt32BE(16) * media.bytes.readUInt32BE(20) >
-              (caps.maxTotalPixels ?? 4_194_304)
-          ) {
+          if (!deliverable(media.bytes, model)) {
             return {
               ...part,
               output: {

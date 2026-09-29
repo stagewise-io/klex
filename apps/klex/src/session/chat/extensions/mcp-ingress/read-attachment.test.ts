@@ -38,12 +38,12 @@ async function setup(
   const fetch = vi.fn().mockResolvedValue({ bytes, mimeType: 'image/png' });
   const reader = new AttachmentReader({
     authorize: () => true,
-    fetch,
+    fetch: overrides.fetch ?? fetch,
     ...overrides,
   });
   return {
     reader,
-    fetch,
+    fetch: overrides.fetch ?? fetch,
     execute: (input: unknown = { url }, selected = model) =>
       reader.tool(selected).execute!(input, options),
   };
@@ -108,6 +108,7 @@ describe('readAttachment', () => {
     [{ url: 'http://example.com/a' }, 'ssrf-rejected'],
     [{ url, mimeType: 'application/pdf' }, 'unsupported-media'],
     [{ url, mimeType: 'video/mp4' }, 'unsupported-media'],
+    [{ url, mimeType: 'audio/mpeg' }, 'unsupported-media'],
     [{ url, size: ATTACHMENT_MAX_BYTES + 1 }, 'too-large'],
     [{ url, maxPages: 1000 }, 'invalid-input'],
   ])(
@@ -158,6 +159,7 @@ describe('readAttachment', () => {
   it('rejects sniff/header mismatch, disguised PDF and truncated images', async () => {
     for (const response of [
       { bytes: await png(), mimeType: 'text/html' },
+      { bytes: await png(), mimeType: 'image/jpeg' },
       { bytes: Buffer.from('%PDF-1.7'), mimeType: 'application/pdf' },
     ]) {
       const { execute } = await setup({
@@ -179,16 +181,109 @@ describe('readAttachment', () => {
   });
 
   it('bounds DNS/fetch stalls and does not retain a late result', async () => {
-    const { execute, reader } = await setup({
-      fetch: vi.fn().mockImplementation(() => new Promise(() => {})),
+    const bytes = await png();
+    let complete!: (value: { bytes: Buffer; mimeType: string }) => void;
+    let completeNext!: (value: { bytes: Buffer; mimeType: string }) => void;
+    const { execute, reader, fetch } = await setup({
+      fetch: vi
+        .fn()
+        .mockImplementationOnce(
+          () =>
+            new Promise((resolve) => {
+              complete = resolve;
+            }),
+        )
+        .mockImplementationOnce(
+          () =>
+            new Promise((resolve) => {
+              completeNext = resolve;
+            }),
+        ),
     });
     vi.useFakeTimers();
     const pending = execute();
     await vi.advanceTimersByTimeAsync(10_001);
     expect(await pending).toMatchObject({ error: { code: 'timeout' } });
-    expect(reader.project(history({ ok: false }), model)).toEqual(
-      history({ ok: false }),
+    const next = reader.tool(model).execute!(
+      { url },
+      { ...options, toolCallId: 'next' },
     );
+    expect(fetch).toHaveBeenCalledTimes(2);
+    complete({ bytes, mimeType: 'image/png' });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(await execute()).toMatchObject({ error: { code: 'too-large' } });
+    expect(reader.project(history({ ok: true }), model)).toMatchObject([
+      { content: [{ output: { value: { ok: false } } }] },
+    ]);
+    completeNext({ bytes, mimeType: 'image/png' });
+    expect(await next).toMatchObject({ ok: true });
+  });
+
+  it('cancels a fetch that ignores its signal and releases the slot immediately', async () => {
+    const bytes = await png();
+    const fetch = vi
+      .fn()
+      .mockImplementationOnce(() => new Promise(() => {}))
+      .mockResolvedValue({ bytes, mimeType: 'image/png' });
+    const { reader, execute } = await setup({ fetch });
+    const controller = new AbortController();
+    const pending = reader.tool(model).execute!(
+      { url },
+      { ...options, abortSignal: controller.signal },
+    );
+    controller.abort();
+    expect(await pending).toMatchObject({ error: { code: 'timeout' } });
+    expect(await execute()).toMatchObject({ ok: true });
+  });
+
+  it('cancels stalled decoding on shutdown and cannot publish its late completion', async () => {
+    const bytes = await png();
+    let complete!: (bytes: Buffer) => void;
+    const decode = vi.fn(
+      () =>
+        new Promise<Buffer>((resolve) => {
+          complete = resolve;
+        }),
+    );
+    const { reader, execute } = await setup({ decode });
+    const pending = execute();
+    await vi.waitFor(() => expect(decode).toHaveBeenCalledOnce());
+    reader.clear();
+    expect(await pending).toMatchObject({ error: { code: 'timeout' } });
+    complete(bytes);
+    await Promise.resolve();
+    expect(reader.project(history({ ok: true }), model)).toMatchObject([
+      { content: [{ output: { value: { error: { code: 'fetch-failed' } } } }] },
+    ]);
+  });
+
+  it.each(['png', 'jpeg', 'webp'] as const)(
+    'sniffs %s without a specific MIME type',
+    async (format) => {
+      const bytes = await sharp(await png())
+        .toFormat(format)
+        .toBuffer();
+      for (const mimeType of ['', 'application/octet-stream']) {
+        const { execute } = await setup({
+          fetch: vi.fn().mockResolvedValue({ bytes, mimeType }),
+        });
+        expect(await execute({ url, mimeType })).toMatchObject({ ok: true });
+      }
+    },
+  );
+
+  it('fails before reporting success when decoded media cannot be projected', async () => {
+    const { execute } = await setup({
+      decode: vi.fn().mockResolvedValue(Buffer.from('not a PNG')),
+    });
+    expect(await execute()).toMatchObject({
+      error: { code: 'conversion-failed' },
+    });
+    const realtime = await setup();
+    expect(
+      await realtime.execute({ url }, { ...model, ephemeralToolImages: false }),
+    ).toMatchObject({ error: { code: 'unsupported-provider' } });
+    expect(realtime.fetch).not.toHaveBeenCalled();
   });
 
   it('preserves text-only context exactly', async () => {

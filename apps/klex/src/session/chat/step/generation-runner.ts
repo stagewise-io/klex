@@ -209,7 +209,11 @@ export class GenerationRunner {
           response.finishReason === 'error' &&
           !generationAbortController.signal.aborted &&
           toolDispatcher.dispatchedCount === 0 &&
-          rejectAttachmentMedia(this.deps.modelMessages, messages)
+          rejectAttachmentMedia(
+            this.deps.modelMessages,
+            messages,
+            response.error,
+          )
         ) {
           latestMessage = null;
           continue;
@@ -265,7 +269,7 @@ export class GenerationRunner {
         if (
           !generationAbortController.signal.aborted &&
           toolDispatcher.dispatchedCount === 0 &&
-          rejectAttachmentMedia(this.deps.modelMessages, messages)
+          rejectAttachmentMedia(this.deps.modelMessages, messages, e)
         ) {
           latestMessage = null;
           continue;

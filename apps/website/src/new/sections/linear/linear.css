@@ -1,0 +1,55 @@
+.new-linear-story {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 100svh;
+  padding: 5rem 1.5rem;
+  border-top: 1px solid color-mix(in oklab, var(--foreground) 8%, transparent);
+}
+
+#linear-issue-story {
+  width: 100%;
+}
+
+.new-linear-window {
+  position: relative;
+  width: min(48rem, 100%);
+  margin-inline: auto;
+  padding-bottom: 4rem;
+}
+
+.new-linear-window :is(.new-stage-track, .new-stage-pop) {
+  bottom: 0;
+}
+
+.new-linear-window .linear-issue-dialog {
+  width: 100%;
+}
+
+.new-linear-jonathan {
+  left: calc(50% + var(--stage-bot-size) * 0.1);
+}
+
+.new-linear-label {
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
+  margin: 0 0 1.125rem;
+  font-size: 1rem;
+  font-weight: 400;
+}
+
+@media (max-width: 600px) {
+  .new-linear-story {
+    padding: 4rem 1rem;
+  }
+}
+
+.new-linear-popup {
+  transform-origin: center bottom;
+}
+
+.new-linear-popup[data-open="false"] {
+  visibility: hidden;
+}

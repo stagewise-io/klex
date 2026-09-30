@@ -1,0 +1,26 @@
+.new-klex-name-badge {
+  position: absolute;
+  bottom: calc(100% + 0.35rem);
+  left: 50%;
+  transform: translateX(-50%);
+  border-radius: 9999px;
+  background: color-mix(in oklab, var(--background) 95%, transparent);
+  backdrop-filter: blur(1px);
+  pointer-events: none;
+}
+
+/* With a role, the tag grows to two lines: the name above the role. */
+.new-klex-name-badge[data-role] {
+  height: auto;
+  flex-direction: column;
+  gap: 0;
+  padding-block: 0.25rem;
+  border-radius: 0.625rem;
+  line-height: 1.2;
+}
+
+.new-klex-name-role {
+  color: var(--muted-foreground);
+  font-size: 0.625rem;
+  font-weight: 400;
+}

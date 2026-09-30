@@ -1,0 +1,121 @@
+/**
+ * Bridge Layer — Maps shadcn/ui token names to stage-ui color system.
+ *
+ * This file defines the shadcn semantic tokens (--background, --primary, etc.)
+ * using the stage-ui OKLCH palette and theme tokens as source of truth.
+ *
+ * Components keep using shadcn class names (bg-background, text-primary, etc.)
+ * while the actual color values come from the stage-ui dynamic color system.
+ *
+ * IMPORTANT: Bridge tokens reference palette-level tokens (--color-base-*,
+ * --color-primary-*) NOT theme-level tokens (--color-background, --color-foreground)
+ * to avoid circular references with the @theme inline block that maps
+ * --color-* utility names back to these shadcn tokens.
+ */
+
+:root {
+  /* Surface tokens — card/popover use a subtle mix between base-50 and base-100
+     for less contrast against the background */
+  --background: var(--color-base-50);
+  --foreground: var(--color-base-900);
+  --card: var(--color-base-50);
+  --card-foreground: var(--color-base-900);
+  --popover: var(--color-base-50);
+  --popover-foreground: var(--color-base-900);
+
+  /* Primary (uses the stage-ui dynamic primary scale) */
+  --primary: var(--color-primary-solid);
+  --primary-foreground: var(--color-solid-foreground);
+
+  /* Secondary / muted / accent (surface-derived) */
+  --secondary: var(--color-base-150);
+  --secondary-foreground: var(--color-base-900);
+  --muted: var(--color-base-100);
+  --muted-foreground: var(--color-base-500);
+  --accent: var(--color-base-100);
+  --accent-foreground: var(--color-base-900);
+
+  /* Destructive (maps to stage-ui error semantic) */
+  --destructive: var(--color-error-solid);
+  --destructive-foreground: var(--color-base-50);
+
+  /* Border / input / ring — reference palette tokens directly to avoid
+     circular refs with @theme inline (--color-border → --border → --color-border) */
+  --border: var(--color-base-200);
+  --input: var(--color-base-200);
+  --ring: var(--color-primary-solid);
+
+  /* Chart colors (mapped to stage-ui primary/semantic hues) */
+  --chart-1: var(--color-primary-400);
+  --chart-2: var(--color-success-solid);
+  --chart-3: var(--color-info-solid);
+  --chart-4: var(--color-warning-solid);
+  --chart-5: var(--color-error-solid);
+
+  /* Sidebar */
+  --sidebar: var(--color-base-100);
+  --sidebar-foreground: var(--color-base-900);
+  --sidebar-primary: var(--color-primary-solid);
+  --sidebar-primary-foreground: var(--color-solid-foreground);
+  --sidebar-accent: var(--color-base-150);
+  --sidebar-accent-foreground: var(--color-base-900);
+  --sidebar-border: var(--color-base-200);
+  --sidebar-ring: var(--color-primary-solid);
+
+  /* Radius */
+  --radius: 0.875rem;
+}
+
+:root.dark {
+  /* Surface tokens — card/popover use a subtle mix between base-800 and base-700
+     for less contrast against the background */
+  --background: var(--color-base-800);
+  --foreground: var(--color-base-200);
+  --card: var(--color-base-800);
+  --card-foreground: var(--color-base-200);
+  --popover: var(--color-base-800);
+  --popover-foreground: var(--color-base-200);
+
+  /* Primary */
+  --primary: var(--color-primary-solid);
+  --primary-foreground: var(--color-solid-foreground);
+
+  /* Secondary / muted / accent */
+  --secondary: var(--color-base-600);
+  --secondary-foreground: var(--color-base-200);
+  --muted: var(--color-base-600);
+  --muted-foreground: var(--color-base-350);
+  --accent: var(--color-base-600);
+  --accent-foreground: var(--color-base-200);
+
+  /* Destructive */
+  --destructive: var(--color-error-solid);
+  --destructive-foreground: var(--color-base-50);
+
+  /* Border / input / ring — reference palette tokens directly to avoid
+     circular refs with @theme inline */
+  --border: var(--color-base-600);
+  --input: var(--color-base-600);
+  --ring: var(--color-primary-solid);
+
+  /* Chart colors */
+  --chart-1: var(--color-primary-400);
+  --chart-2: var(--color-success-solid);
+  --chart-3: var(--color-info-solid);
+  --chart-4: var(--color-warning-solid);
+  --chart-5: var(--color-error-solid);
+
+  /* Sidebar */
+  --sidebar: var(--color-base-700);
+  --sidebar-foreground: var(--color-base-200);
+  --sidebar-primary: var(--color-primary-solid);
+  --sidebar-primary-foreground: var(--color-solid-foreground);
+  --sidebar-accent: color-mix(
+    in oklab,
+    var(--color-base-700) 60%,
+    var(--color-base-600)
+  );
+  --sidebar-accent-foreground: var(--color-base-200);
+  --sidebar-border: var(--color-border);
+  --sidebar-ring: var(--color-primary-solid);
+}

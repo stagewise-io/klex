@@ -1,8 +1,15 @@
-import type { BodyShape } from './mascot';
+import type { BodyShape } from '../mascot';
+import { FAMILY_SHAPES } from '../mascot/presets';
+
+/** Jonathan's single visual identity across scenes, cards, and message avatars. */
+export const jonathanLook = {
+  color: '#b8dcf2',
+  shape: FAMILY_SHAPES.ghost,
+} as const;
 
 // Paragraph-only contours in the avatar editor's 160 × 140 point format.
 // The shared rig generates their smooth B-spline silhouettes and fits the gaze.
-// Keys identify existing layout slots; these are not the hero identity shapes.
+// Both landing pages use these silhouettes for their illustrative bots.
 export const capabilityShapes = {
   Harry: {
     id: 'capability-shelter',

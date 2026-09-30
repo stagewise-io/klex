@@ -1,0 +1,130 @@
+.new-features {
+  --bento-surface: color-mix(in oklab, var(--foreground) 4%, var(--background));
+  --bento-line: color-mix(in oklab, var(--foreground) 9%, transparent);
+  --bento-paper: color-mix(in oklab, var(--background) 94%, white);
+  --bento-blue: light-dark(#3454d1, #a5b5ff);
+  --bento-green: light-dark(#338163, #88cdb0);
+  padding: 4rem var(--page-inline);
+}
+.bento-grid {
+  display: grid;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  grid-template-areas:
+    "tools tools tools tools tools identity identity identity collaboration collaboration collaboration collaboration"
+    "permissions permissions permissions product product product product product product autonomy autonomy autonomy"
+    "memory memory memory memory memory memory memory hosting hosting hosting hosting hosting";
+  gap: 1rem;
+}
+.bento-identity {
+  grid-area: identity;
+}
+.bento-tools {
+  grid-area: tools;
+}
+.bento-permissions {
+  grid-area: permissions;
+}
+.bento-collaboration {
+  grid-area: collaboration;
+}
+.bento-product {
+  grid-area: product;
+}
+.bento-memory {
+  grid-area: memory;
+}
+.bento-autonomy {
+  grid-area: autonomy;
+}
+.bento-hosting {
+  grid-area: hosting;
+}
+.bento-cell {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--bento-line);
+  border-radius: 26px;
+  background: var(--bento-surface);
+}
+.bento-visual {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 195px;
+  padding: 18px 14px 0;
+}
+.bento-copy {
+  position: relative;
+  z-index: 1;
+  margin-top: auto;
+  padding: 16px 25px 27px;
+}
+.bento-copy h3 {
+  margin: 0;
+  font-family: "Fraunces", Georgia, serif;
+  font-size: clamp(1.15rem, 1.55vw, 1.4rem);
+  font-weight: 400;
+  letter-spacing: -0.045em;
+  line-height: 1.2;
+  text-wrap: balance;
+}
+.bento-copy > p:last-child {
+  max-width: 30rem;
+  margin: 9px 0 0;
+  color: var(--muted-foreground);
+  font-size: 12px;
+  line-height: 1.65;
+  text-wrap: pretty;
+}
+.bento-cell[data-playing="false"] * {
+  animation-play-state: paused;
+}
+@media (max-width: 1099px) {
+  .bento-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-areas: "product product" "tools identity" "collaboration permissions" "autonomy memory" "hosting hosting";
+    gap: 12px;
+  }
+  .bento-copy {
+    padding-inline: 19px;
+  }
+  .bento-copy h3 {
+    font-size: 19px;
+  }
+}
+@media (max-width: 539px) {
+  .new-features {
+    padding-block: 32px;
+  }
+  .bento-grid {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas: "product" "tools" "identity" "collaboration" "permissions" "autonomy" "memory" "hosting";
+  }
+  .bento-cell {
+    border-radius: 23px;
+  }
+  .bento-copy {
+    margin-top: 0;
+    padding: 12px 20px 22px;
+  }
+  .bento-copy h3 {
+    font-size: 21px;
+  }
+  .bento-copy > p:last-child {
+    font-size: 13px;
+  }
+  .bento-visual {
+    min-height: 0;
+    padding-top: 12px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .bento-grid .bento-cell[data-playing] * {
+    animation: none;
+    transition: none;
+  }
+}

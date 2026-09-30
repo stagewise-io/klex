@@ -245,7 +245,7 @@ const authored: Record<string, AuthoredScenario> = {
     status: 'In progress',
     participants: [person('kristine'), person('jonathan')],
     blocks: [
-      { label: 'Assignee', text: 'Jonathan · AI Engineer' },
+      { label: 'Assignee', text: 'Jonathan · Software Engineer' },
       { label: 'Priority', text: 'High · Product experience' },
       {
         label: 'Acceptance criteria',

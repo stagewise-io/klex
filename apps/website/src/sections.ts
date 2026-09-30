@@ -1,11 +1,11 @@
 import { botIdentities } from './bot-avatar';
+import { mascotMarkup, mountMascot } from './mascot';
 import {
   capabilityShapes,
   collaborationShapes,
   hostingCapabilityMascots,
   hostingCollaborationMascots,
-} from './capability-mascots';
-import { mascotMarkup, mountMascot } from './mascot';
+} from './shared/mascot-shapes';
 
 const capabilityBots = ['Harry', 'Momo'] as const;
 const capabilityIllustration = (
@@ -181,7 +181,7 @@ export const sectionsMarkup = `
     <div class="faq-items">
       <details name="faq">
         <summary>What can Klex Bots do?</summary>
-        <p>Real work. By connecting the tools that your company uses, Klex Bots perform real tasks and deliver real work just like every other coworker in your company.</p>
+        <p>By connecting the tools your company uses, Klex Bots perform tasks and deliver work in those tools.</p>
       </details>
       <details name="faq">
         <summary>How can I connect the apps my company uses?</summary>
@@ -201,7 +201,7 @@ export const sectionsMarkup = `
       </details>
       <details name="faq">
         <summary>Can I use more than one Klex Bot?</summary>
-        <p>You <strong>should</strong> use more than one Klex Bot. Every Bot should get a distinct identity and a narrow job. The Bots will collaborate and become a real team.</p>
+        <p>You <strong>should</strong> use more than one Klex Bot. Every Bot should get a distinct identity and a narrow job. The Bots will collaborate as a team.</p>
       </details>
     </div>
   </section>

@@ -78,7 +78,7 @@ app.innerHTML = `
         </a>
       </nav>
     </footer>
-    <p class="attribution">Connector marks belong to their respective owners. Illustrative interfaces do not imply endorsement. <a href="/attributions.html">Asset credits</a></p>
+    <p class="attribution">Connector marks belong to their respective owners. Illustrative interfaces do not imply endorsement.</p>
   </div>
 `;
 

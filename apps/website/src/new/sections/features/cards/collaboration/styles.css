@@ -1,0 +1,64 @@
+.bento-collaboration .bento-visual {
+  padding-inline: 8px;
+}
+.bento-collaboration-scene {
+  width: 100%;
+  padding: 3px 0 0;
+}
+.bento-slack-channel {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-bottom: 10px;
+  padding-inline: 16px;
+  font-size: 11px;
+}
+.bento-slack-channel svg {
+  width: 16px;
+  height: 16px;
+}
+.bento-slack-channel span:last-child {
+  margin-left: auto;
+  color: var(--muted-foreground);
+}
+.bento-slack-crawl {
+  min-height: 270px;
+  overflow: hidden;
+  perspective: 700px;
+  mask-image: linear-gradient(transparent, #000 8%, #000 91%, transparent);
+}
+.bento-slack-messages {
+  --slack-message-size: 13px;
+  --slack-message-leading: 19px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 9px 4px 32px;
+  transform: rotateX(24deg);
+  transform-origin: center bottom;
+}
+.bento-slack-messages .new-slack-message {
+  gap: 9px;
+  padding: 11px;
+  border: 1px solid #34373b;
+  border-radius: 9px;
+  background: #1a1d21;
+}
+.bento-slack-messages .new-slack-avatar {
+  width: 32px;
+  height: 32px;
+  margin-top: 1px;
+  border-radius: 6px;
+}
+.bento-slack-messages .new-slack-message-meta time {
+  margin-left: 0;
+  font-size: 9px;
+}
+.bento-slack-messages .new-slack-bot-label {
+  font-size: 8px;
+}
+@media (max-width: 539px) {
+  .bento-slack-crawl {
+    min-height: 240px;
+  }
+}

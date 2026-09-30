@@ -1,0 +1,12 @@
+.new-workflow-bot-name {
+  white-space: nowrap;
+}
+
+.new-workflow-title-avatar {
+  display: inline-block;
+  width: 1em;
+  height: 1em;
+  margin-right: 0.15em;
+  vertical-align: -0.12em;
+  pointer-events: none;
+}

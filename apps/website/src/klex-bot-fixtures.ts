@@ -1,6 +1,7 @@
 import { type ConnectorId, connectorRegistry } from './connector-registry';
 import type { KlexBot } from './klex-bot-card';
 import type { MascotForm } from './mascot/presets';
+import { jonathanLook } from './shared/mascot-shapes';
 
 /** Illustrative coworkers and identities, not live service connections. */
 export const botFixtures = (
@@ -8,9 +9,9 @@ export const botFixtures = (
     {
       id: 'jonathan',
       name: 'Jonathan',
-      role: 'AI Engineer',
-      color: '#3e65ff',
-      variant: 'classic',
+      role: 'Software Engineer',
+      color: jonathanLook.color,
+      variant: 'ghost',
       gesture: 'bob',
     },
     {
@@ -24,7 +25,7 @@ export const botFixtures = (
     {
       id: 'monica',
       name: 'Monica',
-      role: 'Head of HR',
+      role: 'Recruiter',
       color: '#9fbeff',
       variant: 'circle',
       gesture: 'tilt',

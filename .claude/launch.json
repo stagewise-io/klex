@@ -1,0 +1,18 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "website",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": [
+        "--filter",
+        "@klex/website",
+        "dev",
+        "--port",
+        "5178",
+        "--strictPort"
+      ],
+      "port": 5178
+    }
+  ]
+}

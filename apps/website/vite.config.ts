@@ -2,7 +2,15 @@ import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 
 import tailwindcss from '@tailwindcss/vite';
-import { defineConfig, type Plugin } from 'vite';
+import { type Connect, defineConfig, type Plugin } from 'vite';
+
+const serveOldPage: Connect.NextHandleFunction = (request, _response, next) => {
+  const url = new URL(request.url ?? '/', 'http://localhost');
+  if (url.pathname === '/old') {
+    request.url = `/old/index.html${url.search}`;
+  }
+  next();
+};
 
 const installerSources = {
   '/install.ps1': fileURLToPath(new URL('../../install.ps1', import.meta.url)),
@@ -48,6 +56,27 @@ function klexInstallerAssets(): Plugin {
 }
 
 export default defineConfig({
+  appType: 'mpa',
   server: { allowedHosts: ['.trycloudflare.com'] },
-  plugins: [klexInstallerAssets(), tailwindcss()],
+  plugins: [
+    {
+      name: 'klex-old-page-route',
+      configureServer(server) {
+        server.middlewares.use(serveOldPage);
+      },
+      configurePreviewServer(server) {
+        server.middlewares.use(serveOldPage);
+      },
+    },
+    klexInstallerAssets(),
+    tailwindcss(),
+  ],
+  build: {
+    rolldownOptions: {
+      input: {
+        main: fileURLToPath(new URL('./index.html', import.meta.url)),
+        old: fileURLToPath(new URL('./old/index.html', import.meta.url)),
+      },
+    },
+  },
 });

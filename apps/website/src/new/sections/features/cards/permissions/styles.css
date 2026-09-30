@@ -1,0 +1,91 @@
+.bento-permissions .bento-visual {
+  align-items: flex-start;
+  padding-top: 14px;
+}
+.bento-permissions-scene {
+  width: min(100%, 265px);
+  padding: 12px 8px 8px;
+  border: 1px solid var(--bento-line);
+  border-radius: 14px;
+  background: var(--bento-paper);
+}
+.bento-permission-app {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0 4px 10px;
+  font-size: 10px;
+}
+.bento-permission-app svg {
+  width: 17px;
+  height: 17px;
+}
+.bento-permission-app span:last-child {
+  color: var(--muted-foreground);
+  font-size: 9px;
+}
+.bento-permission-access {
+  --permission-label-width: 43%;
+  position: relative;
+}
+.bento-permission-access::before {
+  content: "";
+  position: absolute;
+  inset-block: 0;
+  left: var(--permission-label-width);
+  width: calc((100% - var(--permission-label-width)) / 2);
+  border-radius: 9px;
+  background: color-mix(in oklab, var(--bento-blue) 9%, transparent);
+  transform: translateX(0);
+  transition: transform 700ms cubic-bezier(0.22, 1, 0.36, 1);
+  pointer-events: none;
+}
+.bento-permissions-scene[data-bot="1"] .bento-permission-access::before {
+  transform: translateX(100%);
+}
+.bento-permission-table {
+  position: relative;
+  width: 100%;
+  table-layout: fixed;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 9px;
+}
+.bento-permission-table th,
+.bento-permission-table td {
+  padding: 8px 2px;
+  text-align: center;
+  font-weight: 400;
+}
+.bento-permission-table th:first-child {
+  width: var(--permission-label-width);
+  text-align: left;
+  padding-left: 5px;
+}
+.bento-permission-table thead th {
+  color: var(--muted-foreground);
+  font-size: 8px;
+  vertical-align: bottom;
+}
+.bento-permission-table :where(thead th) > div {
+  margin: 0 auto 4px;
+}
+.bento-permissions-scene [data-testid="klex-shadow"] {
+  display: none;
+}
+.bento-permission-table tbody th,
+.bento-permission-table td {
+  border-top: 1px solid var(--bento-line);
+}
+.bento-allowed {
+  color: var(--bento-green);
+}
+.bento-locked {
+  color: var(--muted-foreground);
+  font-size: 8px;
+}
+@media (prefers-reduced-motion: reduce) {
+  .bento-permission-access::before {
+    transition: none;
+  }
+}

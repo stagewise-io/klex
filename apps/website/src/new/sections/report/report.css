@@ -1,0 +1,84 @@
+.new-report-story {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 100svh;
+  padding: 5rem 1.5rem;
+}
+
+#new-report-story {
+  width: 100%;
+}
+
+.new-report-window {
+  position: relative;
+  width: min(48rem, 100%);
+  margin-inline: auto;
+  padding-bottom: 4rem;
+  text-align: left;
+}
+
+.new-report-window .new-report-monica {
+  bottom: 1.5rem;
+  left: calc(50% - var(--stage-bot-size) / 2);
+}
+
+.new-report-earlier {
+  flex-shrink: 0;
+  opacity: 0.6;
+}
+
+.new-report-earlier .new-slack-message + .new-slack-message {
+  margin-top: 16px;
+}
+
+.new-report-message {
+  animation: new-report-message-in 300ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.new-report-message p + p {
+  margin-top: 4px;
+}
+
+.new-report-link {
+  color: #1d9bd1;
+}
+
+.new-report-unfurl {
+  display: grid;
+  gap: 2px;
+  margin-top: 8px;
+  padding: 2px 0 2px 12px;
+  border-left: 4px solid #35373b;
+  font-size: 14px;
+}
+
+.new-report-unfurl strong {
+  color: #f8f8f8;
+  font-weight: 900;
+}
+
+.new-report-unfurl-title {
+  color: #1d9bd1;
+  font-weight: 900;
+}
+
+@keyframes new-report-message-in {
+  from {
+    opacity: 0;
+    translate: 0 8px;
+  }
+}
+
+@media (max-width: 600px) {
+  .new-report-story {
+    padding: 4rem 1rem;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .new-report-message {
+    animation: none;
+  }
+}

@@ -1,0 +1,175 @@
+.bento-identity-scene {
+  position: relative;
+  width: 100%;
+  max-width: 300px;
+  height: 252px;
+  perspective: 650px;
+}
+.bento-identity-world {
+  position: absolute;
+  top: 137px;
+  left: 50%;
+  transform: rotateX(-14deg);
+  transform-style: preserve-3d;
+}
+.bento-identity-orbit {
+  position: absolute;
+  width: 176px;
+  height: 176px;
+  left: -88px;
+  top: -88px;
+  border: 1px solid var(--bento-line);
+  border-radius: 50%;
+  transform: translateY(50px) rotateX(90deg);
+}
+.bento-account-ring {
+  transform-style: preserve-3d;
+}
+.bento-account-slot {
+  position: absolute;
+  top: -83px;
+  left: -42px;
+  width: 84px;
+  height: 128px;
+  transform: translateZ(-88px);
+  transform-style: preserve-3d;
+}
+.bento-account-slot[data-position="left"] {
+  transform: rotateY(120deg) translateZ(-88px);
+}
+.bento-account-slot[data-position="right"] {
+  transform: rotateY(240deg) translateZ(-88px);
+}
+.bento-account-float {
+  --account-accent: #7791de;
+  position: relative;
+  width: 100%;
+  height: 100%;
+  transform-style: preserve-3d;
+  animation: bento-account-float 4s ease-in-out infinite;
+}
+.bento-account-slot[data-position="left"] .bento-account-float {
+  animation-delay: -1.3s;
+}
+.bento-account-slot[data-position="right"] .bento-account-float {
+  animation-delay: -2.6s;
+}
+.bento-account-float[data-provider="slack"] {
+  --account-accent: #a67cbb;
+}
+.bento-account-float[data-provider="discord"] {
+  --account-accent: #737bed;
+}
+.bento-account-float[data-provider="github"] {
+  --account-accent: #6f8d87;
+}
+.bento-account-front,
+.bento-account-back {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  border: 1px solid
+    color-mix(in oklab, var(--account-accent) 35%, var(--bento-line));
+  border-radius: 10px;
+  background: var(--bento-paper);
+  backface-visibility: hidden;
+  box-shadow: 0 10px 20px #00000025;
+}
+.bento-account-banner {
+  height: 39px;
+  background:
+    radial-gradient(ellipse at 90% 20%, #ffffff55, transparent 65%),
+    linear-gradient(
+      135deg,
+      var(--account-accent),
+      color-mix(in oklab, var(--account-accent) 45%, #303d76)
+    );
+}
+.bento-account-avatar {
+  position: relative;
+  width: 48px;
+  height: 48px;
+  margin: -24px auto 4px;
+  border: 2px solid var(--bento-paper);
+  border-radius: 50%;
+  background: color-mix(
+    in oklab,
+    var(--account-accent) 18%,
+    var(--bento-paper)
+  );
+}
+.bento-account-profile {
+  text-align: center;
+}
+.bento-account-profile > span {
+  display: block;
+  font-size: 10px;
+  line-height: 1.5;
+  white-space: nowrap;
+}
+.bento-account-profile > span:last-child {
+  color: var(--muted-foreground);
+  font-size: 7px;
+}
+.bento-account-provider {
+  display: flex;
+  justify-content: center;
+  margin-top: 8px;
+}
+.bento-account-provider > :is(svg, img) {
+  width: 18px;
+  height: 18px;
+  color: var(--foreground);
+}
+.bento-account-back {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  background: linear-gradient(
+    155deg,
+    color-mix(in oklab, var(--account-accent) 22%, var(--bento-paper)),
+    var(--bento-paper)
+  );
+  transform: rotateY(180deg);
+}
+.bento-account-back .bento-account-provider {
+  margin: 0 0 6px;
+}
+.bento-account-back .bento-account-provider > :is(svg, img) {
+  width: 26px;
+  height: 26px;
+}
+.bento-account-back > span {
+  width: 26px;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--bento-line);
+}
+.bento-account-back > span:last-child {
+  width: 17px;
+}
+.bento-identity-bot {
+  position: absolute;
+  top: -8px;
+  left: -38px;
+  transform: rotateX(14deg);
+}
+@keyframes bento-account-float {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-6px);
+  }
+}
+@media (max-width: 539px) {
+  .bento-identity-scene {
+    height: 215px;
+  }
+  .bento-identity-world {
+    top: 115px;
+  }
+}

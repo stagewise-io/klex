@@ -1,0 +1,393 @@
+.new-hero {
+  --hero-bottom-space: 3rem;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 100%;
+  min-height: var(--new-section-height);
+  margin: auto;
+  padding: clamp(3rem, 8vh, 6rem) 1.5rem var(--hero-bottom-space);
+  text-align: center;
+}
+
+/* End the floor halfway between the next-section link and the viewport edge. */
+.new-hero::before,
+.new-hero::after {
+  content: "";
+  position: absolute;
+  z-index: 1;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  height: calc(var(--hero-bottom-space) / 2 + 6px);
+  pointer-events: none;
+  mask:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 17 8'%3E%3Cpath d='M0 6C4.25 6 4.25 2 8.5 2S12.75 6 17 6V8H0Z'/%3E%3C/svg%3E")
+    left top / 25.5px 12px repeat-x,
+    linear-gradient(#000 0 0) left bottom / 100% calc(100% - 11px) no-repeat;
+}
+
+.new-hero::before {
+  bottom: 1px;
+  background: var(--border);
+}
+
+.new-hero::after {
+  background: var(--background);
+}
+
+.new-hero .new-eyebrow,
+.new-hero h1,
+.new-description {
+  position: relative;
+  z-index: 2;
+}
+
+/* Larger than other eyebrows to hold its own above the big headline. */
+.new-hero .new-eyebrow {
+  font-size: clamp(1rem, 1.4vw, 1.25rem);
+}
+
+/* The intro fades and lifts each word in. */
+.new-eyebrow-word {
+  display: inline-block;
+}
+
+/* The headline starts lower and leaning back like the ground grid, then
+   rises and straightens up while it fades in. The last degrees of the tilt
+   are barely visible, so the rise gets a shorter duration to land with it. */
+.new-hero h1 {
+  transform-origin: 50% 100%;
+  transition:
+    opacity 650ms ease-out,
+    translate 650ms cubic-bezier(0.16, 1, 0.3, 1),
+    transform 900ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.new-hero:not(.has-copy) h1 {
+  opacity: 0;
+  translate: 0 0.8em;
+  transform: perspective(700px) rotateX(30deg);
+}
+
+.new-hero:not(.has-walk) .new-description {
+  opacity: 0;
+}
+
+/* The team adds has-walk as the bots set off; the copy follows shortly. */
+.new-hero.has-walk .new-description {
+  animation: new-reveal 450ms cubic-bezier(0.22, 1, 0.36, 1) 100ms both;
+}
+
+/* The main call to action follows the copy it belongs to. */
+.new-hero-cta {
+  position: relative;
+  z-index: 3;
+  margin-top: 1.75rem;
+  border-radius: 9999px;
+  /* The UI package's squircle corners would square off the pill. */
+  corner-shape: round;
+}
+
+.new-hero:not(.has-walk) .new-hero-cta {
+  visibility: hidden;
+}
+
+.new-hero.has-walk .new-hero-cta {
+  animation: new-reveal 450ms cubic-bezier(0.22, 1, 0.36, 1) 200ms both;
+}
+
+.new-hero h1 {
+  margin: 0;
+  font-family: "Fraunces", Georgia, serif;
+  font-size: clamp(2.75rem, 6.8vw, 5.75rem);
+  font-weight: 500;
+  font-optical-sizing: none;
+  font-variation-settings:
+    "WONK" 0,
+    "opsz" 0;
+  line-height: 1.04;
+  letter-spacing: -0.055em;
+}
+
+.new-description {
+  max-width: 36rem;
+  /* Matches the gap above the headline, measured from the descenders. */
+  margin: 2.875rem 0 0;
+  color: var(--muted-foreground);
+  font-size: clamp(1rem, 1.7vw, 1.125rem);
+  line-height: 1.45;
+  text-wrap: pretty;
+}
+
+.new-hero-stage {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+}
+
+/* Reserve scene space without pushing the team below a laptop viewport. */
+.new-hero-mount {
+  min-height: clamp(180px, 30svh, 320px);
+}
+
+.new-hero-next {
+  opacity: var(--hero-next-opacity, 1);
+  position: relative;
+  z-index: 3;
+  margin-top: auto;
+  border-color: color-mix(in oklab, var(--foreground) 20%, transparent);
+  border-radius: 9999px;
+  background-color: color-mix(in oklab, var(--background) 60%, transparent);
+  backdrop-filter: blur(12px);
+}
+
+/* Rises in like "Meet Klex Bots" when the team starts using its apps. */
+.new-hero:not(.has-apps) .new-hero-next,
+.new-hero-next[inert] {
+  visibility: hidden;
+}
+
+.new-hero.has-apps .new-hero-next {
+  animation:
+    new-fade-in 200ms ease-out both,
+    new-rise 550ms cubic-bezier(0.215, 0.61, 0.355, 1) both;
+}
+
+/* The grid is a floor of square tiles. The camera starts flat on the ground,
+   so the floor is only a line at the bottom edge, then rises to look down at
+   a steeper angle, where the tiles read as shallow diamonds. The
+   perspective fades out on the way up so the final view is isometric.
+   The floor fades out in a circle around the front edge. Seen from the
+   ground it is a thin sliver that opens up as the camera rises, and it ends
+   as a half ellipse like a stage under the team. The team sets
+   --floor-radius so the floor ends right below the headline.
+   The camera also flies forward: the floor starts further back and slides
+   toward the viewer while the camera rises. */
+.new-hero-ground {
+  --floor-flight: 130vh;
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+}
+
+/* Temporarily disable both blur overlays to compare scrolling performance. */
+.new-hero-ground .gradual-blur {
+  display: none;
+}
+
+.new-hero-ground > svg {
+  /* Compensate for the tilt's depth compression, keeping the floor's far
+     edge and side edges out of view throughout the camera entrance. */
+  top: calc(100% - 100% * var(--floor-depth-scale));
+  left: -50%;
+  width: 200%;
+  height: calc(100% * var(--floor-depth-scale) + var(--floor-flight));
+  color: color-mix(in oklab, var(--foreground) 20%, transparent);
+  mask-image: radial-gradient(
+    circle var(--floor-radius) at 50% calc(100% - var(--floor-flight)),
+    #000 40%,
+    transparent
+  );
+  /* The stage's bottom edge, where the camera starts. */
+  transform-origin: 50% calc(100% - var(--floor-flight));
+  transform: perspective(100000px) rotateX(var(--floor-tilt)) translateY(0);
+  transition:
+    transform 1.4s cubic-bezier(0.1, 0.7, 0.2, 1),
+    opacity 300ms ease-out;
+}
+
+.new-hero:not(.has-ground) .new-hero-ground > svg {
+  opacity: 0;
+  transform: perspective(450px) rotateX(89.5deg)
+    translateY(calc(var(--floor-flight) * -1));
+}
+
+.new-grid-target {
+  position: absolute;
+  inset: 48% 0 0;
+  z-index: 1;
+  width: 100%;
+  border: 0;
+  background: none;
+  cursor: crosshair;
+}
+
+.new-team {
+  position: absolute;
+  inset: 0;
+  /* All bots and name tags stay in front of the app previews. */
+  z-index: 3;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  pointer-events: none;
+}
+
+.new-bot {
+  position: absolute;
+  z-index: var(--bot-depth);
+  right: calc(var(--bot-size) * -1);
+  bottom: 0;
+  left: calc(var(--bot-size) * -1);
+  visibility: hidden;
+  pointer-events: none;
+  transition: opacity 180ms ease-out;
+}
+
+.new-bot.is-dimmed {
+  opacity: 0.65;
+}
+
+.new-bot.is-visible {
+  visibility: visible;
+}
+
+.new-bot [data-klex-figure] {
+  transform-origin: 50% 90%;
+}
+
+.new-bot-trigger {
+  position: absolute;
+  inset: -2.2rem 0 0;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  color: inherit;
+  background: none;
+  font: inherit;
+  cursor: pointer;
+  pointer-events: auto;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.new-bot:not(.is-visible) .new-bot-trigger {
+  pointer-events: none;
+}
+
+/* The tag and its expanded surface share one motion identity. */
+.new-bot-tag-anchor {
+  position: absolute;
+  bottom: calc(100% + 0.35rem);
+  left: 50%;
+  z-index: 1;
+  transform: translateX(-50%);
+  pointer-events: auto;
+}
+
+.new-bot-tag {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0;
+  padding: 0.25rem 0.5rem;
+  border: 1px solid var(--border);
+  background: color-mix(in oklab, var(--background) 95%, transparent);
+  color: var(--foreground);
+  font-size: 0.75rem;
+  line-height: 1.2;
+  white-space: nowrap;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.new-bot-tag:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 3px;
+}
+
+.new-hero-hover-card {
+  position: fixed;
+  z-index: 50;
+}
+
+@keyframes new-fade-in {
+  from {
+    opacity: 0;
+  }
+}
+
+/* Uses translate so the hover transform can still apply. */
+@keyframes new-rise {
+  from {
+    translate: 0 45%;
+  }
+}
+
+@keyframes new-reveal {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+    filter: blur(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+    filter: blur(0);
+  }
+}
+
+@media (max-width: 649px) {
+  .new-hero {
+    --hero-bottom-space: 1.5rem;
+    padding-top: clamp(1.5rem, 4svh, 3.5rem);
+  }
+  .new-hero h1 {
+    font-size: clamp(2rem, 9.9vw, 3.5rem);
+  }
+  .new-description {
+    max-width: 21rem;
+    margin-top: clamp(1.5rem, 4svh, 2.875rem);
+  }
+  .new-desktop-break {
+    display: none;
+  }
+}
+
+@media (min-width: 650px) and (max-height: 800px) {
+  .new-hero {
+    --hero-bottom-space: 1.5rem;
+    padding-top: 1.5rem;
+  }
+  .new-hero .new-eyebrow {
+    margin-bottom: 0.75rem;
+  }
+  .new-hero h1 {
+    font-size: clamp(2.75rem, 8.5svh, 4.5rem);
+  }
+  .new-description {
+    margin-top: 1.5rem;
+  }
+  .new-hero-cta {
+    margin-top: 1.25rem;
+  }
+}
+
+/* On short screens, prioritize the team and readable app previews. The
+   secondary story link remains available immediately below the hero. */
+@media (max-height: 720px) {
+  .new-hero {
+    margin-bottom: 4rem;
+  }
+  .new-hero-next {
+    position: absolute;
+    top: calc(100% + 1rem);
+    margin-top: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .new-hero.has-walk .new-description,
+  .new-hero.has-walk .new-hero-cta,
+  .new-hero.has-apps .new-hero-next {
+    animation: none;
+  }
+  .new-hero h1,
+  .new-hero-ground > svg,
+  .new-bot {
+    transition: none;
+  }
+}

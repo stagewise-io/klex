@@ -18,7 +18,9 @@
     "vite": "8.2.2"
   },
   "dependencies": {
-    "@stagewise/ui": "0.1.0",
+    "@stagewise/ui": "workspace:*",
+    "@sugar-high/react": "^2.4.0",
+    "gsap": "^3.15.0",
     "motion": "^13.4.0",
     "react": "19.2.8",
     "react-dom": "19.2.8"

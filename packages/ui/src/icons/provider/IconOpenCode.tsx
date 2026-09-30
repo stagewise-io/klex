@@ -1,0 +1,17 @@
+import type { SVGProps } from 'react';
+
+// Source: https://svgl.app/library/opencode.svg
+export function IconOpenCode(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg aria-hidden="true" viewBox="0 0 512 512" fill="none" {...props}>
+      <rect width="512" height="512" fill="#FDFCFC" />
+      <path d="M320 224V352H192V224H320Z" fill="#E6E5E6" />
+      <path
+        fillRule="evenodd"
+        clipRule="evenodd"
+        d="M384 416H128V96H384V416ZM320 160H192V352H320V160Z"
+        fill="#17181C"
+      />
+    </svg>
+  );
+}

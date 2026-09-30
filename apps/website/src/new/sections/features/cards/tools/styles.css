@@ -1,0 +1,116 @@
+.bento-tools {
+  background: linear-gradient(
+    140deg,
+    color-mix(in oklab, #839ae9 7%, var(--background)),
+    var(--bento-surface)
+  );
+}
+.bento-tools .bento-visual {
+  flex: 1;
+  align-items: flex-end;
+  padding-inline: 0;
+  padding-bottom: 24px;
+}
+.bento-tools-scene {
+  position: relative;
+  width: 100%;
+  height: 218px;
+  overflow: hidden;
+}
+.bento-tools-scene::before {
+  content: "";
+  position: absolute;
+  inset: auto -10% 0;
+  height: 420px;
+  background:
+    repeating-linear-gradient(
+      90deg,
+      transparent 0 29px,
+      var(--bento-line) 30px 31px
+    ),
+    repeating-linear-gradient(
+      0deg,
+      transparent 0 29px,
+      var(--bento-line) 30px 31px
+    );
+  transform-origin: center bottom;
+  transform: perspective(700px) rotateX(60deg);
+  mask-image:
+    radial-gradient(ellipse 60% 100% at 50% 100%, #000 55%, transparent 100%),
+    linear-gradient(#000 calc(100% - 64px), transparent);
+  mask-composite: intersect;
+}
+.bento-tool-conveyor {
+  position: absolute;
+  top: 128px;
+  left: calc(50% - 528px);
+  display: flex;
+  gap: 44px;
+}
+.bento-tool-block {
+  --block-top: #f7f6fc;
+  --block-front: #e8e7ef;
+  --block-side: #b3b2c9;
+  position: relative;
+  flex: 0 0 56px;
+  height: 56px;
+  filter: drop-shadow(0 13px 7px #0000001a);
+}
+.bento-tool-block[data-tool="linear"] {
+  --block-top: #eeeeff;
+  --block-front: #d6d7f5;
+  --block-side: #939ac6;
+  transform: translateY(-30px);
+}
+.bento-tool-block[data-tool="github"] {
+  transform: translateY(-12px);
+}
+.bento-tool-block::before,
+.bento-tool-block::after {
+  content: "";
+  position: absolute;
+}
+.bento-tool-block::before {
+  top: -14px;
+  left: 0;
+  width: 56px;
+  height: 14px;
+  transform: skewX(-45deg);
+  transform-origin: bottom left;
+  background: var(--block-top);
+}
+.bento-tool-block::after {
+  top: 0;
+  left: 56px;
+  width: 14px;
+  height: 56px;
+  transform: skewY(-45deg);
+  transform-origin: top left;
+  background: var(--block-side);
+}
+.bento-tool-block-face {
+  position: relative;
+  display: grid;
+  place-items: center;
+  height: 100%;
+  background: var(--block-front);
+  border: 1px solid #ffffff40;
+}
+.bento-tool-block-face img {
+  width: 29px;
+  height: 29px;
+}
+.bento-tools-runner {
+  position: absolute;
+  top: 66px;
+  left: calc(50% - 120px);
+}
+@media (max-width: 539px) {
+  .bento-tools .bento-visual {
+    flex: none;
+    padding-bottom: 0;
+  }
+  .bento-tools-scene {
+    height: 205px;
+  }
+}

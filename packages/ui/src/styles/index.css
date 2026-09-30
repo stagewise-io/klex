@@ -1,0 +1,82 @@
+/**
+ * @stagewise/ui — Main Style Entry Point
+ *
+ * Import this file in your app's CSS:
+ *   @import "@stagewise/ui/style.css";
+ *
+ * This provides:
+ * 1. The stage-ui OKLCH color palette (dynamic hue/chroma system)
+ * 2. Theme tokens (light/dark mode semantic colors)
+ * 3. Derived color utilities (border-derived, bg-hover-derived, etc.)
+ * 4. Animations (caret-blink, switch-knob)
+ * 5. Bundled Geist Variable font (woff2, weights 100–900, upright + italic)
+ * 6. Bridge layer: shadcn token names → stage-ui color values
+ * 7. @theme inline: Tailwind utility → shadcn token mapping
+ * 8. The tailwindcss-color-modifiers plugin (auto-loaded via @plugin)
+ * 9. tw-animate-css animation utilities (auto-loaded via @import)
+ *
+ * Consumers only need this one import — no separate plugin configuration
+ * or additional CSS imports are required.
+ */
+
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@import "./fonts.css";
+@import "./palette.css";
+@import "./theme.css";
+@import "./derived-utilities.css";
+@import "./animations.css";
+@import "./scroll-fade.css";
+@import "./bridge.css";
+@import "./tailwind-tokens.css";
+
+/* Auto-load the color-modifiers plugin so consumers don't need @config.
+   Uses a relative path so it resolves within the package for both
+   monorepo and external npm consumers. */
+@plugin "../plugin/index.ts";
+
+@custom-variant dark (&:is(.dark *));
+@custom-variant data-horizontal (&[data-orientation="horizontal"]);
+@custom-variant data-vertical (&[data-orientation="vertical"]);
+
+@utility no-scrollbar {
+  scrollbar-width: none;
+  &::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-derived-subtle outline-ring/50;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+  }
+
+  :root {
+    color-scheme: light;
+  }
+
+  :root.dark {
+    color-scheme: dark;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--color-primary-solid);
+    outline-offset: 0px;
+  }
+
+  :where(button, a, [data-checked], [data-unchecked]):focus-visible:not(
+    [data-allow-focus-transition]
+  ),
+  :where(button, a, [data-checked], [data-unchecked]):focus-visible:not(
+      [data-allow-focus-transition]
+    )
+    * {
+    transition-duration: 0ms !important;
+    animation-duration: 0ms !important;
+  }
+}

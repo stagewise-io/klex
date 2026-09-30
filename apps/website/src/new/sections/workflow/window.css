@@ -1,0 +1,32 @@
+[data-window-enter="false"] {
+  visibility: hidden;
+}
+
+[data-window-enter="true"],
+.new-build-workspace[data-open="true"][data-phase="code"] > * {
+  transform-origin: center bottom;
+  animation: new-workflow-window-pop 550ms cubic-bezier(0.22, 1, 0.36, 1)
+    backwards;
+}
+
+@keyframes new-workflow-window-pop {
+  0% {
+    opacity: 0;
+    transform: scale(0.8);
+  }
+  60% {
+    opacity: 1;
+    transform: scale(1.025);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-window-enter="true"],
+  .new-build-workspace[data-open="true"][data-phase="code"] > * {
+    animation: none;
+  }
+}

@@ -1,0 +1,101 @@
+/* Scene-local coordinates also work when the illustration is scaled to fit. */
+.new-stage-track {
+  position: absolute;
+  bottom: -1.5rem;
+  left: 0;
+  z-index: 2;
+  width: 100%;
+  height: var(--stage-bot-size);
+  pointer-events: none;
+}
+
+.new-stage-pop {
+  position: absolute;
+  bottom: -1.5rem;
+  z-index: 2;
+  width: var(--stage-bot-size);
+  transform-origin: center bottom;
+  pointer-events: none;
+}
+
+.new-stage-pop.is-left {
+  left: calc(var(--stage-bot-size) * 0.35);
+}
+
+.new-stage-pop.is-right {
+  right: calc(var(--stage-bot-size) * 0.35);
+}
+
+/* One persistent actor per Klex, in the same coordinate space as all screens. */
+.new-workflow-actors {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  pointer-events: none;
+}
+
+.new-workflow-actor {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+}
+
+.new-workflow-actor [data-klex-figure] {
+  transform-origin: center bottom;
+}
+
+.new-workflow-actor svg[role="img"] {
+  filter: drop-shadow(0 0 6px light-dark(rgb(0 0 0 / 12%), rgb(0 0 0 / 55%)))
+    drop-shadow(0 8px 16px light-dark(rgb(0 0 0 / 16%), rgb(0 0 0 / 50%)));
+}
+
+/* Activity labels stay secondary to the app content and actor movement. */
+.new-workflow-actor .klex-speech-float {
+  animation: none;
+  will-change: auto;
+}
+
+.new-workflow-actor [data-klex-speech] [data-slot="bubble-content"] {
+  padding: 0.375rem 0.625rem;
+  border-radius: 0.5rem;
+  font-size: 0.75rem;
+  line-height: 1.4;
+  white-space: nowrap;
+}
+
+.new-workflow-actor [data-klex-speech] svg {
+  display: none;
+}
+
+.new-workflow-actor[data-speech-side="left"] [data-klex-speech] {
+  right: calc(100% + 0.5rem);
+  left: auto;
+  transform-origin: bottom right;
+}
+
+.new-stage-track,
+.new-stage-pop {
+  --stage-bot-size: 128px;
+}
+
+@media (max-width: 1024px) {
+  .new-workflow-actor[data-speech-side] [data-klex-speech] {
+    --speech-shift: clamp(
+      calc(1rem - var(--workflow-speech-x)),
+      -50%,
+      calc(
+        var(--workflow-speech-width) -
+        var(--workflow-speech-x) -
+        1rem -
+        100%
+      )
+    );
+    right: auto;
+    bottom: calc(100% + 2rem);
+    left: 50%;
+    max-width: min(15rem, calc(var(--workflow-speech-width) - 2rem));
+    translate: var(--speech-shift) 0;
+    transform-origin: center bottom;
+  }
+}

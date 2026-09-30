@@ -1,0 +1,112 @@
+.bento-product {
+  align-items: center;
+  justify-content: center;
+  min-height: 350px;
+  background:
+    radial-gradient(
+      ellipse at 50% 80%,
+      color-mix(in oklab, #a9a2ff 28%, var(--background)),
+      transparent 70%
+    ),
+    color-mix(in oklab, #8b88ed 9%, var(--background));
+  text-align: center;
+}
+.bento-product-label {
+  margin-top: 32px;
+  color: var(--muted-foreground);
+  font-size: 11px;
+  letter-spacing: 0.03em;
+}
+.bento-product-title {
+  position: relative;
+  z-index: 1;
+  margin: 9px 0 0;
+  font-family: "Fraunces", Georgia, serif;
+  font-size: clamp(3.5rem, 5.2vw, 5rem);
+  font-weight: 500;
+  letter-spacing: -0.055em;
+  line-height: 1;
+}
+.bento-product-scene {
+  width: 100%;
+}
+.bento-family {
+  position: relative;
+  width: min(100%, 420px);
+  height: 174px;
+  margin: auto;
+}
+.bento-family-floor {
+  position: absolute;
+  inset: 65px -15px -10px;
+  transform: perspective(250px) rotateX(48deg);
+  border: 1px solid var(--bento-line);
+  border-radius: 50%;
+  background:
+    repeating-linear-gradient(
+      0deg,
+      transparent 0 25px,
+      var(--bento-line) 26px 27px
+    ),
+    repeating-linear-gradient(
+      90deg,
+      transparent 0 25px,
+      var(--bento-line) 26px 27px
+    );
+  mask-image: radial-gradient(ellipse, #000, transparent 72%);
+}
+.bento-family-bot {
+  position: absolute;
+  z-index: 1;
+  opacity: 0.8;
+}
+.bento-family-bot-0 {
+  left: 4%;
+  bottom: 54px;
+  transform: rotate(-8deg);
+}
+.bento-family-bot-1 {
+  left: 23%;
+  bottom: 86px;
+}
+.bento-family-bot-2 {
+  right: 23%;
+  bottom: 86px;
+  transform: rotate(7deg);
+}
+.bento-family-bot-3 {
+  right: 4%;
+  bottom: 54px;
+  transform: rotate(9deg);
+}
+.bento-family-klex {
+  position: absolute;
+  z-index: 2;
+  left: 50%;
+  bottom: 6px;
+  transform: translateX(-50%);
+}
+@media (max-width: 539px) {
+  .bento-product {
+    min-height: 250px;
+    padding: 24px 12px 12px;
+  }
+  .bento-product-label {
+    margin-top: 0;
+  }
+  .bento-product-title {
+    font-size: clamp(2.75rem, 12vw, 3.5rem);
+  }
+  .bento-family {
+    width: 340px;
+    height: 154px;
+    left: 50%;
+    margin-left: -170px;
+    transform: scale(0.85);
+  }
+}
+@media (max-width: 359px) {
+  .bento-family {
+    transform: scale(0.7);
+  }
+}

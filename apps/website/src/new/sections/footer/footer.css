@@ -1,0 +1,109 @@
+.new-footer {
+  color: var(--foreground);
+}
+
+.new-footer-main {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3rem;
+  min-height: clamp(32rem, 52vw, 46rem);
+  padding: 6rem var(--page-inline);
+  text-align: center;
+}
+
+.new-footer h2 {
+  max-width: 58rem;
+  margin: 0;
+  font-family: "Fraunces", Georgia, serif;
+  font-size: clamp(3rem, 6vw, 6rem);
+  font-weight: 400;
+  letter-spacing: -0.055em;
+  line-height: 1.05;
+  text-wrap: balance;
+}
+
+.new-footer-cta {
+  height: auto;
+  padding: 0.875rem 1.5rem;
+  border-radius: 999px;
+}
+
+.new-footer-bottom {
+  display: flex;
+  align-items: flex-start;
+  gap: clamp(3rem, 10vw, 10rem);
+  padding: 4rem var(--page-inline);
+  border-top: 1px solid var(--border);
+  color: var(--muted-foreground);
+  font-size: 0.875rem;
+}
+
+.new-footer-about {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2rem;
+  max-width: 36rem;
+  margin-right: auto;
+}
+
+.new-footer-bottom nav {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.new-footer-bottom h3 {
+  margin: 0 0 0.75rem;
+  color: var(--foreground);
+  font-size: inherit;
+  font-weight: 400;
+}
+
+.new-footer a:not(.new-footer-cta) {
+  color: inherit;
+  text-decoration: none;
+}
+
+.new-footer a:not(.new-footer-cta):hover {
+  color: var(--foreground);
+}
+
+.new-footer-credit {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0;
+}
+
+.new-footer-credit img {
+  display: block;
+  width: 6rem;
+  height: auto;
+  opacity: 0.82;
+}
+
+.new-footer-attribution {
+  margin: 0;
+  font-size: 0.8125rem;
+  line-height: 1.6;
+}
+
+@media (max-width: 600px) {
+  .new-footer-main {
+    gap: 2rem;
+  }
+
+  .new-footer-bottom {
+    flex-wrap: wrap;
+    gap: 2.5rem;
+    padding-block: 3rem 4rem;
+  }
+
+  .new-footer-about {
+    flex-basis: 100%;
+  }
+}

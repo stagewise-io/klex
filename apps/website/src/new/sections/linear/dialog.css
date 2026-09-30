@@ -1,0 +1,239 @@
+@font-face {
+  font-family: "Linear Inter";
+  src: url("/fonts/inter-latin-variable.woff2") format("woff2");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+.linear-issue-dialog {
+  display: flex;
+  flex-direction: column;
+  width: min(750px, 100%);
+  min-height: 258px;
+  padding: 12px;
+  overflow: hidden;
+  border: 0.5px solid lch(22.193 1.93 272);
+  border-radius: 21px;
+  background: lch(9.232 0.85 272);
+  box-shadow:
+    0 4px 40px #0000001a,
+    0 3px 20px #00000020,
+    0 3px 12px #00000020,
+    0 2px 8px #00000020,
+    0 1px 1px #00000020;
+  color: lch(91.201 1.65 272);
+  font-family: "Linear Inter", Inter, -apple-system, sans-serif;
+  font-size: 13px;
+  line-height: 1.5;
+  letter-spacing: normal;
+  -webkit-font-smoothing: antialiased;
+}
+
+.linear-issue-dialog svg {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.linear-issue-header,
+.linear-issue-footer,
+.linear-issue-footer-right,
+.linear-issue-properties,
+.linear-issue-pill,
+.linear-issue-team {
+  display: flex;
+  align-items: center;
+}
+
+.linear-issue-header {
+  height: 28px;
+  align-items: flex-start;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.linear-issue-team,
+.linear-issue-pill,
+.linear-issue-attachment {
+  border: 0.5px solid transparent;
+  background: lch(17.574 1.589 272);
+}
+
+.linear-issue-team {
+  height: 24px;
+  gap: 4px;
+  padding: 0 8px 0 5px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 12px;
+}
+
+.linear-issue-team > span {
+  width: 14px;
+  font-size: 12px;
+  text-align: center;
+}
+
+.linear-issue-chevron,
+.linear-issue-window-actions,
+.linear-issue-pill,
+.linear-issue-create-more {
+  color: lch(64.805 1.65 272);
+}
+
+.linear-issue-chevron {
+  font-size: 16px;
+  line-height: 24px;
+}
+
+.linear-issue-heading {
+  font-size: 14px;
+  line-height: 24px;
+}
+
+.linear-issue-window-actions {
+  display: flex;
+  align-items: center;
+  height: 28px;
+  gap: 18px;
+  margin-left: auto;
+  padding-inline: 6px;
+}
+
+.linear-issue-fields {
+  min-height: 129px;
+  padding: 17px 6px 18px;
+}
+
+.linear-issue-fields p {
+  margin: 0;
+}
+
+.linear-issue-title {
+  font-size: 18px;
+  font-weight: 600;
+  line-height: 24px;
+  overflow-wrap: anywhere;
+}
+
+.linear-issue-fields .linear-issue-description {
+  margin-top: 12px;
+  color: lch(90.826 1.425 272);
+  font-size: 15px;
+  font-weight: 450;
+  line-height: 22.5px;
+  overflow-wrap: anywhere;
+  white-space: pre-line;
+}
+
+.linear-issue-fields .is-placeholder {
+  color: lch(43.074 1.65 272);
+}
+
+.linear-issue-properties {
+  gap: 6px;
+  min-height: 24px;
+  margin-top: auto;
+  flex-wrap: wrap;
+  white-space: nowrap;
+}
+
+.linear-issue-pill {
+  height: 24px;
+  flex: none;
+  gap: 4px;
+  padding: 0 8px 0 6px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 12px;
+}
+
+.linear-issue-pill.is-active {
+  color: lch(91.201 1.65 272);
+}
+
+.linear-issue-dialog .linear-issue-status-icon {
+  width: 14px;
+  height: 14px;
+  margin-right: 2px;
+  color: #bec2c8;
+  stroke-linecap: butt;
+}
+
+.linear-issue-more {
+  justify-content: center;
+  width: 24px;
+  padding: 0;
+}
+
+.linear-issue-footer {
+  justify-content: space-between;
+  padding-top: 24px;
+}
+
+.linear-issue-attachment {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border-radius: 50%;
+  color: lch(64.805 1.65 272);
+}
+
+.linear-issue-footer-right {
+  gap: 6px;
+  font-size: 12px;
+}
+
+.linear-issue-toggle {
+  display: flex;
+  align-items: center;
+  width: 22px;
+  height: 14px;
+  padding: 2px;
+  border-radius: 999px;
+  background: #5b5c5e;
+}
+
+.linear-issue-toggle i {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: white;
+}
+
+.linear-issue-submit {
+  display: grid;
+  height: 28px;
+  margin-left: 6px;
+  padding: 0 10px;
+  border: 0.5px solid transparent;
+  place-items: center;
+  border-radius: 999px;
+  background: lch(47.918 59.303 288.421);
+  box-shadow: 0 0.5px 1px 1px #0000004d;
+  color: white;
+  font-weight: 500;
+  white-space: nowrap;
+  transition:
+    background-color 200ms,
+    scale 150ms;
+}
+
+.linear-issue-submit.is-done {
+  background: lch(47 45 150);
+  scale: 0.96;
+}
+
+@media (max-width: 600px) {
+  .linear-issue-window-actions {
+    gap: 10px;
+  }
+}

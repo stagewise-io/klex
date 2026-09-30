@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="robots" content="noindex" />
+    <title>Linear issue dialog preview</title>
+    <style>
+      * { box-sizing: border-box; }
+      body { margin: 0; min-height: 100vh; background: #111; color: #999; font: 14px Inter, system-ui, sans-serif; }
+      .board { padding: 25px max(24px, calc((100vw - 1000px) / 2)); }
+      .board h1 { margin: 0 0 28px; font-size: 16px; font-weight: 500; }
+      .board p { margin: 0; padding: 14px 0; border-top: 1px solid #292929; }
+      .board p span { margin-right: 20px; color: #666; }
+      .veil { position: fixed; inset: 0; background: #0007; }
+      #linear-issue-preview { position: relative; width: min(750px, calc(100% - 32px)); margin: -240px auto 0; }
+      @media (max-width: 600px) { #linear-issue-preview { margin-top: -220px; } }
+    </style>
+  </head>
+  <body>
+    <div class="board" aria-hidden="true">
+      <h1>All issues</h1>
+      <p><span>PRD-42</span>Define the first product designer role</p>
+      <p><span>PRD-39</span>Review candidate portfolio</p>
+      <p><span>PRD-31</span>Document the product design process</p>
+      <p><span>PRD-28</span>Prepare onboarding materials</p>
+    </div>
+    <div class="veil" aria-hidden="true"></div>
+    <div id="linear-issue-preview"></div>
+    <script type="module" src="/src/new/sections/linear/preview.tsx"></script>
+  </body>
+</html>

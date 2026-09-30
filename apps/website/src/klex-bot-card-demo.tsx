@@ -2,6 +2,7 @@ import './klex-bot-card-demo.css';
 import './style.css';
 
 import { createRoot } from 'react-dom/client';
+
 import { KlexBotRoster } from './klex-bot-roster';
 
 function BotCardDemo() {
@@ -20,7 +21,7 @@ function BotCardDemo() {
       <KlexBotRoster />
       <footer>
         Illustrative identities and workflows. Connector marks belong to their
-        respective owners. <a href="/attributions.html">Asset credits</a>.
+        respective owners.
       </footer>
     </main>
   );

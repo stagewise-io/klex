@@ -1,0 +1,100 @@
+@font-face {
+  font-family: "Lato";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("/fonts/lato-regular.ttf") format("truetype");
+}
+
+@font-face {
+  font-family: "Lato";
+  font-style: normal;
+  font-weight: 900;
+  font-display: swap;
+  src: url("/fonts/lato-black.ttf") format("truetype");
+}
+
+.new-slack-message {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 4px 0;
+  color: #d1d2d3;
+  font-family: "Lato", Arial, sans-serif;
+  font-size: var(--slack-message-size, 15px);
+  line-height: var(--slack-message-leading, 22px);
+}
+
+.new-slack-message[hidden] {
+  display: none;
+}
+
+.new-slack-message > div {
+  min-width: 0;
+}
+
+.new-slack-message p {
+  margin: 0;
+}
+
+.new-slack-avatar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  margin-top: 4px;
+  flex: none;
+  overflow: hidden;
+  border-radius: 0.5rem;
+}
+
+.new-slack-you-avatar {
+  background: #51617d;
+  color: #fff;
+}
+
+.new-slack-bot-avatar {
+  padding: 0.125rem;
+  background: color-mix(in srgb, var(--slack-avatar-color) 18%, #1a1d21);
+}
+
+.new-slack-bot-avatar .klex-mascot {
+  width: 100%;
+  height: 100%;
+}
+
+.new-slack-message-meta {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+}
+
+.new-slack-message-meta strong {
+  color: #f8f8f8;
+  font-weight: 900;
+}
+
+.new-slack-message-meta time {
+  margin-left: 0.25rem;
+  color: #ababad;
+  font-size: 0.75rem;
+}
+
+.new-slack-bot-label {
+  align-self: center;
+  padding: 0 0.25rem;
+  border-radius: 0.2rem;
+  background: #35373b;
+  color: #c5c5c7;
+  font-size: 0.625rem;
+  line-height: 1.5;
+}
+
+.new-slack-mention {
+  padding: 1px 2px;
+  border-radius: 3px;
+  background: rgb(3 102 150 / 25%);
+  color: #2ba5ce;
+}

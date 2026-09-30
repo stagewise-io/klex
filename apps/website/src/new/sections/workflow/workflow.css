@@ -1,0 +1,541 @@
+.new-workflow {
+  --workflow-window-height: 22rem;
+  /* Narrowest the windows get before the gap to the steps gives way. */
+  --workflow-window-min: calc(var(--workflow-window-height) * 16 / 10);
+  height: var(--new-section-height);
+  overflow-anchor: none;
+  border-bottom: 1px solid
+    color-mix(in oklab, var(--foreground) 8%, transparent);
+}
+
+.new-workflow-viewport {
+  --workflow-overlap: clamp(3rem, 14svh, 7rem);
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  height: 100%;
+  overflow: hidden;
+  padding: clamp(2rem, 10svh, 8rem) var(--page-inline);
+  background: var(--background);
+}
+
+/* Sits above the steps and lines up with their text, inside the marker. */
+.new-workflow-intro {
+  margin: 0 0 2.25rem;
+  padding-left: calc(3px + clamp(1rem, 1.5vw, 1.5rem));
+  font-family: "Fraunces", Georgia, serif;
+  font-size: 2.25rem;
+  font-weight: 500;
+  letter-spacing: -0.045em;
+  line-height: 1.15;
+  text-wrap: balance;
+}
+
+.new-workflow-track {
+  transform: translate3d(0, var(--workflow-offset, 0px), 0);
+  transition: transform 550ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.new-workflow-body {
+  display: flex;
+  flex: 0 1 40rem;
+  width: 100%;
+  min-height: 0;
+  margin-inline: auto;
+}
+
+/* The gap between steps and windows. It takes all spare width, and only
+   shrinks once the windows have narrowed to 16:10 (see .new-workflow-scenes). */
+.new-workflow-body::before {
+  flex: 1 1 11rem;
+  order: 1;
+  min-width: 2rem;
+  content: "";
+}
+
+.new-workflow-navigation {
+  flex: 0 0 33%;
+  min-width: 0;
+  align-content: start;
+  padding-block: 0.5rem;
+}
+
+/* Large screens keep the heading on one line; the steps column widens to fit
+   it, and the windows give way first as usual. */
+@media (min-width: 1280px) {
+  .new-workflow-intro {
+    white-space: nowrap;
+  }
+
+  .new-workflow-navigation {
+    min-width: min-content;
+  }
+}
+
+.new-workflow-step-viewport {
+  display: contents;
+}
+
+.new-workflow-steps {
+  display: flex;
+  flex-direction: column;
+  gap: clamp(1rem, 3.5vh, 2.75rem);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.new-workflow-step {
+  position: relative;
+  isolation: isolate;
+  /* Marker inset + marker width + the gap to the text. */
+  padding-left: calc(4px + clamp(1rem, 1.5vw, 1.5rem));
+  color: var(--muted-foreground);
+  transition: color 200ms;
+}
+
+.new-workflow-step::after {
+  position: absolute;
+  inset: -0.75rem -0.5rem;
+  z-index: -1;
+  border-radius: 0.75rem;
+  background: color-mix(in oklab, var(--foreground) 6%, transparent);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 150ms;
+  content: "";
+}
+
+@media (hover: hover) {
+  .new-workflow-step:not([data-active="true"]):hover::after {
+    opacity: 1;
+  }
+}
+
+/* Inset by its own width, so the marker sits inside the logo's left edge. */
+.new-workflow-step::before {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 2px;
+  width: 2px;
+  background: var(--foreground);
+  opacity: 0;
+  transition: opacity 200ms;
+  content: "";
+}
+
+.new-workflow-step[data-active="true"] {
+  color: var(--foreground);
+}
+
+.new-workflow-step[data-active="true"]::before {
+  opacity: 1;
+}
+
+.new-workflow-step h3 {
+  margin: 0;
+  font-weight: 500;
+  font-family: "Fraunces", Georgia, serif;
+  font-size: clamp(1.125rem, 1.9vw, 1.5rem);
+  letter-spacing: -0.035em;
+  line-height: 1.18;
+  text-align: left;
+}
+
+.new-workflow-step-button {
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  letter-spacing: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.new-workflow-step-button:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 4px;
+  border-radius: 0.25rem;
+}
+
+.new-workflow-mobile-steps {
+  display: none;
+}
+
+.new-workflow-step-number {
+  display: block;
+  margin-bottom: 0.5rem;
+  color: var(--muted-foreground);
+  font-family: "Geist Variable", ui-sans-serif, system-ui, sans-serif;
+  font-size: 0.6875rem;
+  letter-spacing: 0;
+}
+
+.new-workflow-step-index {
+  font-family: "Geist Mono", monospace;
+}
+
+.new-workflow-description {
+  display: grid;
+  grid-template-rows: 0fr;
+  opacity: 0;
+  mask-image: linear-gradient(#000 calc(100% - 2.5rem), transparent);
+  mask-size: 100% 100%;
+  mask-repeat: no-repeat;
+  transition:
+    grid-template-rows 350ms cubic-bezier(0.22, 1, 0.36, 1),
+    mask-size 350ms cubic-bezier(0.22, 1, 0.36, 1),
+    opacity 350ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.new-workflow-step[data-active="true"] .new-workflow-description {
+  grid-template-rows: 1fr;
+  opacity: 1;
+  mask-size: 100% calc(100% + 2.5rem);
+}
+
+.new-workflow-description > div {
+  min-height: 0;
+  overflow: hidden;
+}
+
+.new-workflow-step p {
+  margin: 0.75rem 0 0;
+  color: var(--muted-foreground);
+  font-size: clamp(0.8125rem, 1.05vw, 1rem);
+  line-height: 1.55;
+  text-wrap: pretty;
+}
+
+.new-workflow-scenes {
+  position: relative;
+  /* Shrinks long before the gap does, down to 16:10 windows. Past that point,
+     index.tsx scales the windows down instead. */
+  flex: 0 1000 42rem;
+  order: 2;
+  min-width: min(var(--workflow-window-min), 67% - 2rem);
+  /* Previous scenes can pass through the space vacated by the heading, and
+     windows can overshoot the column while they pop in. Upcoming scenes stay
+     transparent until they are active, so nothing needs clipping here. */
+  clip-path: inset(-100svh -100vw);
+}
+
+.new-workflow-scenes::after {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% - var(--workflow-overlap));
+  left: 0;
+  z-index: 6;
+  height: 100svh;
+  background: linear-gradient(
+    to top,
+    transparent,
+    var(--background) clamp(12rem, 32svh, 24rem)
+  );
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 550ms;
+  content: "";
+}
+
+.new-workflow-scenes:has(.new-workflow-slide[data-past="true"])::after {
+  opacity: 1;
+}
+
+.new-workflow-track {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+}
+
+.new-workflow-slide {
+  position: relative;
+  flex: none;
+  width: 100%;
+  height: 100%;
+  margin-bottom: calc(-1 * var(--workflow-overlap));
+  transition: opacity 300ms;
+}
+
+.new-workflow-slide[aria-hidden="true"]:not([data-past="true"]) {
+  opacity: 0;
+}
+
+.new-workflow-slide[aria-hidden="true"]
+  :is(.new-stage-track, .new-stage-pop, .new-slack-monica-mount) {
+  visibility: hidden;
+}
+
+.new-workflow-artwork {
+  position: absolute;
+  top: 50%;
+  right: 0;
+  width: 100%;
+  min-width: var(--workflow-window-min);
+  /* Scaling keeps the right edge in place, so the windows stay flush with
+     the header's right edge like the steps are with the logo. */
+  transform: translateY(-50%) scale(var(--workflow-scale, 1));
+  transform-origin: right center;
+}
+
+/* The windows fill the column, flush with the page edge like the header. */
+.new-workflow-artwork > section {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: 3rem 0 2rem;
+  border: 0;
+}
+
+.new-workflow-artwork
+  :is(
+    .new-story-content,
+    .new-slack-scene,
+    .new-linear-window,
+    #new-build-story,
+    .new-build-stage,
+    .new-test-frame,
+    .new-pr-window,
+    .new-report-window
+  ) {
+  width: 100%;
+}
+
+.new-workflow-artwork :is(.new-slack-panel, .linear-issue-dialog) {
+  min-height: 0;
+  height: var(--workflow-window-height);
+}
+
+.new-workflow-artwork .new-build-workspace {
+  grid-template-columns: minmax(0, 25fr) minmax(0, 27fr);
+}
+
+.new-workflow-artwork .new-build-workspace[data-phase="github"] {
+  grid-template-columns: minmax(0, 0fr) minmax(0, 52fr);
+}
+
+.new-workflow-artwork
+  .new-build-workspace[data-phase="github"]
+  .new-build-editor {
+  display: block;
+}
+
+@media (max-width: 1024px) {
+  .new-workflow {
+    height: auto;
+  }
+
+  .new-workflow-viewport {
+    --workflow-overlap: 0px;
+    height: auto;
+    padding: clamp(2.5rem, 6vw, 4rem) var(--page-gutter);
+  }
+
+  .new-workflow-intro {
+    margin-bottom: 1.5rem;
+    padding-left: 0;
+    font-size: 1.625rem;
+  }
+
+  .new-workflow-body::before {
+    display: none;
+  }
+
+  .new-workflow-scenes {
+    flex: none;
+    height: var(--workflow-content-height, 0px);
+    order: 1;
+    min-width: 0;
+    min-height: 0;
+  }
+
+  .new-workflow-scenes::after {
+    display: none;
+  }
+
+  .new-workflow-body {
+    flex: none;
+    flex-direction: column;
+    gap: 1rem;
+  }
+
+  .new-workflow-navigation {
+    display: contents;
+  }
+
+  .new-workflow-mobile-steps {
+    display: flex;
+    flex: none;
+    gap: 0.5rem;
+    margin-bottom: 0.5rem;
+  }
+
+  .new-workflow-mobile-steps button {
+    min-width: 2.5rem;
+    min-height: 2.5rem;
+    padding: 0.25rem;
+    border: 0;
+    border-bottom: 2px solid transparent;
+    background: none;
+    color: var(--muted-foreground);
+    font-family: "Geist Mono", monospace;
+    font-size: 0.75rem;
+    cursor: pointer;
+  }
+
+  .new-workflow-mobile-steps button[aria-current="step"] {
+    border-color: var(--primary);
+    color: var(--foreground);
+  }
+
+  .new-workflow-step-viewport {
+    width: calc(100% + 2 * var(--page-gutter));
+    margin-inline: calc(-1 * var(--page-gutter));
+  }
+
+  /* The windows line up with the header and the steps at the page gutter. */
+  .new-workflow-artwork {
+    top: 0;
+    transform: scale(var(--workflow-scale, 1));
+    transform-origin: right top;
+  }
+
+  .new-workflow-artwork > section {
+    padding: 1rem 0 2rem;
+  }
+
+  .new-workflow-step-viewport {
+    display: block;
+    flex: none;
+    height: var(--workflow-step-height, auto);
+    overflow: clip;
+    transition: height 550ms cubic-bezier(0.22, 1, 0.36, 1);
+  }
+
+  .new-workflow-steps {
+    flex: none;
+    flex-direction: row;
+    align-items: flex-start;
+    gap: 0;
+  }
+
+  .new-workflow-steps,
+  .new-workflow-track {
+    transform: translate3d(calc(var(--workflow-step, 0) * -100%), 0, 0);
+    transition: transform 550ms cubic-bezier(0.22, 1, 0.36, 1);
+  }
+
+  .new-workflow-track {
+    flex-direction: row;
+  }
+
+  .new-workflow-actors {
+    right: auto;
+    width: calc(var(--workflow-count) * 100%);
+  }
+
+  .new-workflow-slide {
+    margin-bottom: 0;
+  }
+
+  .new-workflow-slide[aria-hidden="true"] {
+    opacity: 0;
+  }
+
+  .new-workflow-step {
+    display: flex;
+    flex: 0 0 100%;
+    flex-direction: column;
+    min-width: 0;
+    box-sizing: border-box;
+    padding: 0 var(--page-gutter);
+    color: var(--foreground);
+  }
+
+  .new-workflow-step::before {
+    display: none;
+  }
+
+  .new-workflow-step .new-workflow-description {
+    flex: 1;
+    grid-template-rows: 1fr;
+    opacity: 1;
+    mask-image: none;
+    transition: none;
+  }
+
+  .new-workflow-description > div {
+    position: relative;
+    padding-bottom: 3.25rem;
+  }
+
+  .new-workflow-controls-slot {
+    position: absolute;
+    right: 0;
+    left: 0;
+  }
+
+  .new-workflow-controls [data-icon="inline-end"] {
+    rotate: -90deg;
+  }
+
+  .new-workflow-step h3 {
+    font-size: 1.125rem;
+  }
+
+  .new-workflow-step-number {
+    margin-bottom: 0.5rem;
+  }
+
+  .new-workflow-step p {
+    margin-top: 0.375rem;
+    font-size: 0.75rem;
+    line-height: 1.4;
+  }
+}
+
+@media (min-width: 1025px) and (max-height: 800px) {
+  .new-workflow-viewport {
+    padding-block: 1.5rem;
+  }
+}
+
+/* Keep the full list within shorter desktop viewports. */
+@media (min-width: 1025px) and (max-height: 850px) {
+  .new-workflow-steps {
+    gap: 0.5rem;
+  }
+
+  .new-workflow-step h3 {
+    font-size: clamp(1.125rem, 1.6vw, 1.25rem);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .new-workflow-slide,
+  .new-workflow-track,
+  .new-workflow-step,
+  .new-workflow-step::after,
+  .new-workflow-steps,
+  .new-workflow-step-viewport,
+  .new-workflow-step[data-active="true"] .new-workflow-description,
+  .new-workflow-description {
+    transition: none;
+  }
+}
+
+.new-workflow-viewport[data-jumping]
+  :is(
+    .new-workflow-track,
+    .new-workflow-slide,
+    .new-workflow-steps,
+    .new-workflow-step-viewport
+  ),
+.new-workflow-viewport[data-jumping] .new-workflow-scenes::after {
+  transition: none;
+}

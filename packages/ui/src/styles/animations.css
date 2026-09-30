@@ -1,0 +1,59 @@
+/**
+ * Shared animations and animation utilities
+ * Only includes animations actively used by components.
+ */
+
+@theme default {
+  /* Caret blink for text inputs (input-otp) */
+  --animate-caret-blink: caret-blink 1.25s ease-out infinite;
+  @keyframes caret-blink {
+    0%,
+    70%,
+    100% {
+      opacity: 1;
+    }
+    20%,
+    50% {
+      opacity: 0;
+    }
+  }
+
+  /* Switch knob morph — stretches the knob into a pill shape at the
+     midpoint of its travel, then settles back to round. Animates `width`
+     (not `scale`) so border-radius: 9999px produces semicircular ends
+     (stadium shape) instead of an ellipse.
+     `transform` counteracts the instant `translate` jump from the
+     data-checked class so the thumb stays visually pinned during phase 1.
+     Two separate keyframe names so the browser re-triggers the
+     animation when toggling between checked and unchecked. */
+  --animate-switch-knob-on: switch-knob-on 150ms ease-out backwards;
+  --animate-switch-knob-off: switch-knob-off 150ms ease-out backwards;
+  @keyframes switch-knob-on {
+    0% {
+      width: var(--knob-w);
+      transform: translateX(calc(-1 * var(--knob-travel)));
+    }
+    50% {
+      width: var(--track-w);
+      transform: translateX(calc(-1 * var(--knob-travel)));
+    }
+    100% {
+      width: var(--knob-w);
+      transform: translateX(0);
+    }
+  }
+  @keyframes switch-knob-off {
+    0% {
+      width: var(--knob-w);
+      transform: translateX(var(--knob-travel));
+    }
+    50% {
+      width: var(--track-w);
+      transform: translateX(0);
+    }
+    100% {
+      width: var(--knob-w);
+      transform: translateX(0);
+    }
+  }
+}

@@ -1,5 +1,9 @@
 # Klex marketing website
 
+Static Vite marketing website. Run `pnpm --filter @klex/website dev` from the repository root.
+
+The homepage at `/` loads `src/new/main.ts` from the root `index.html`. See [the page structure](src/new/README.md) for its sections. The previous homepage remains at `/old/`, where `old/index.html` loads `src/main.ts`.
+
 ## Optional website analytics
 
 Copy `.env.example` to `.env.local` in this directory and set `VITE_POSTHOG_KEY`
@@ -60,7 +64,7 @@ verify the project's IP discard and disabled enrichment
 setting before enabling production. No live project credentials are needed by
 the automated tests.
 
-Static Vite marketing demo. Run `pnpm --filter @klex/website dev` from the repository root.
+## Earlier prototype components
 
 The connector workflow increment replaces the earlier Harry/Sarah panel examples described below. `connector-registry.ts` defines connector metadata; `connector-scenarios.ts` keys illustrative scenarios by `botId:connectorId`, with connector-specific fallbacks. `connector-shells.tsx` provides reusable Slack, GitHub, Google Workspace/Calendar, and Linear frames with shared messages, participant avatars, status, and content blocks. Kristine’s middle connector is Linear; the other bots retain GitHub. The original necklace order and three-connector spacing remain intact.
 
@@ -74,6 +78,6 @@ The page follows the prototype order: hero/demo, positioning, three capability c
 
 Company images are mapped in `src/sections.ts` to the matching user-supplied PNGs in `public/company-stories/`: `marcel.png`, `tobi.png`, and `jeff.png`. The original 1672 × 941 images are copied without transformation. The shared panel retains its responsive, uncropped sizing with `object-fit: contain`, descriptive alt text, intrinsic dimensions, lazy loading, and asynchronous decoding.
 
-No backend or external font service is required. Asset provenance is listed in `public/attributions.html`; existing fonts, mascots, and connector logos are preserved.
+No backend or external font service is required. Asset sources are listed in `public/attributions.html`. Full license texts and copyright notices are collected in `public/third-party-notices.txt`; Vite copies both files into the website build. When adding or replacing an external asset, update its source entry and the corresponding notice. Font and icon licenses also remain alongside their existing source files.
 
 Validation: `pnpm --filter @klex/website build`, `pnpm --filter @klex/website typecheck`, `pnpm exec biome check apps/website`, `pnpm format`, `pnpm format:check`, and `git diff --check`. Structure and copy were compared with the cached Figma node export for frame `1:134`; pixel fidelity has not been verified.

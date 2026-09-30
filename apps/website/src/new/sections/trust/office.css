@@ -1,0 +1,238 @@
+.trust-office {
+  --office-paper: var(--background);
+  --office-wall: color-mix(in oklab, var(--foreground) 3%, var(--background));
+  --office-floor: color-mix(in oklab, var(--foreground) 6%, var(--background));
+  --office-line: var(--muted-foreground);
+  --office-faint: color-mix(in oklab, var(--foreground) 18%, var(--background));
+  --office-object: color-mix(
+    in oklab,
+    var(--foreground) 10%,
+    var(--background)
+  );
+  margin: clamp(5rem, 10vw, 10rem) 0 0;
+}
+
+.office-room {
+  position: relative;
+  margin: 0;
+}
+
+.office-stage {
+  position: relative;
+}
+
+.office-team-mount,
+.office-member-triggers {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.office-member-trigger {
+  position: absolute;
+  top: var(--member-y);
+  left: var(--member-x);
+  width: var(--member-width);
+  height: var(--member-height);
+  min-width: 44px;
+  min-height: 44px;
+  transform: translateX(-50%);
+  border: 0;
+  border-radius: 0.75rem;
+  background: none;
+  cursor: pointer;
+  pointer-events: auto;
+}
+
+.office-member-trigger:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 3px;
+}
+
+.office-member-profile {
+  max-height: var(--available-height);
+}
+
+.office-member-profile > * {
+  flex-shrink: 0;
+}
+
+.office-caption {
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: 0;
+  /* Percentage padding follows the SVG's width, including on mobile. */
+  padding-top: calc(var(--office-caption-y) + 0.625rem);
+  color: var(--muted-foreground);
+  font-size: clamp(0.625rem, 1.1vw, 0.8125rem);
+  line-height: 1.5;
+  text-align: center;
+  pointer-events: none;
+}
+
+.office-human-figure {
+  stroke-width: 0.014;
+  stroke: var(--office-line);
+}
+
+.office-person-body {
+  fill: var(--office-object);
+}
+
+.office-person-limb {
+  fill: none;
+  stroke-width: 0.2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.office-person-limb-fill {
+  stroke: var(--office-object);
+  stroke-width: 0.17;
+}
+
+.office-bot-figure {
+  stroke: none;
+}
+
+.office-drawing {
+  display: block;
+  width: 100%;
+  height: auto;
+  overflow: visible;
+  stroke: var(--office-line);
+  stroke-width: 1.1;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+
+.office-drawing polygon {
+  fill: var(--office-paper);
+}
+
+.office-drawing polyline {
+  fill: none;
+}
+
+.office-scene-bot [data-testid="klex-shadow"] {
+  /* The scene projects its own shadows onto the horizontal floor. */
+  visibility: hidden;
+}
+
+.office-drawing .office-bot-shadow {
+  fill: light-dark(rgb(0 0 0 / 18%), rgb(0 0 0 / 45%));
+  stroke: none;
+  filter: blur(3px);
+}
+
+.office-drawing .office-wall {
+  fill: var(--office-wall);
+  stroke: var(--office-faint);
+}
+.office-drawing .office-floor {
+  fill: var(--office-floor);
+  stroke: var(--office-faint);
+}
+.office-drawing .office-floor-line {
+  stroke: var(--office-faint);
+  stroke-width: 0.65;
+}
+.office-drawing .office-architecture {
+  stroke: var(--office-faint);
+}
+.office-drawing .office-metal,
+.office-drawing .office-monitor,
+.office-drawing .office-keyboard,
+.office-drawing .office-plant-pot {
+  fill: var(--office-object);
+}
+.office-drawing .office-chair {
+  fill: color-mix(in oklab, var(--foreground) 14%, var(--background));
+}
+.office-drawing .office-round-side {
+  fill: var(--office-object);
+  stroke: none;
+}
+.office-drawing .office-mouse-detail,
+.office-drawing .office-mouse-wheel {
+  stroke-width: 0.6;
+}
+.office-drawing .office-mouse-wheel {
+  fill: var(--office-line);
+}
+.office-drawing .office-screen {
+  fill: var(--office-floor);
+}
+.office-drawing .office-tv-screen {
+  fill: var(--office-object);
+}
+.office-drawing .office-tv-axis {
+  stroke: var(--office-line);
+  stroke-width: 0.9;
+}
+.office-drawing .office-tv-graph {
+  stroke: var(--office-line);
+  stroke-width: 2;
+}
+.office-drawing .office-glass {
+  fill: var(--office-wall);
+}
+.office-drawing .office-door-glass {
+  fill: var(--office-floor);
+}
+.office-drawing .office-window-opening {
+  fill: var(--office-paper);
+}
+.office-drawing .office-reflection {
+  stroke: var(--office-faint);
+  stroke-width: 1.4;
+}
+.office-drawing .office-window-frame {
+  fill: var(--office-object);
+  stroke-width: 1.7;
+}
+.office-drawing .office-slat-panel,
+.office-drawing .office-cork {
+  fill: var(--office-floor);
+}
+.office-drawing .office-leaf {
+  fill: var(--office-object);
+}
+.office-drawing .office-leaf-vein {
+  stroke-width: 0.65;
+}
+.office-drawing .office-slat {
+  stroke-width: 0.8;
+}
+.office-drawing .office-frame {
+  stroke-width: 2.6;
+}
+.office-drawing .office-key {
+  stroke-width: 0.55;
+}
+
+@media (max-width: 700px) {
+  .trust-office {
+    margin-inline: calc(-1 * var(--page-gutter));
+  }
+  .office-stage {
+    overflow: clip;
+  }
+  .office-drawing {
+    width: 175%;
+    max-width: none;
+    margin-inline: -37.5%;
+    stroke-width: 1.6;
+  }
+  .office-caption {
+    right: var(--page-gutter);
+    left: var(--page-gutter);
+    padding-top: calc(var(--office-caption-y) * 1.75 + 0.625rem);
+  }
+  .office-team-mount {
+    left: -37.5%;
+    right: auto;
+    width: 175%;
+  }
+}

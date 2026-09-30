@@ -1,0 +1,54 @@
+.new-workflow-controls-slot {
+  margin-top: 0.75rem;
+  min-height: 2rem;
+}
+
+.new-workflow-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.new-workflow-next {
+  position: relative;
+  display: flex;
+}
+
+.new-workflow-next .new-workflow-progress {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.new-workflow-progress [data-slot="progress-track"] {
+  height: 100%;
+}
+
+.new-workflow-progress [data-slot="progress-indicator"] {
+  transition: none;
+}
+
+.new-workflow-next[data-ready="false"] .new-workflow-next-button {
+  visibility: hidden;
+}
+
+.new-workflow-next[data-ready="true"] .new-workflow-next-button > *,
+.new-workflow-pause-button {
+  animation: new-workflow-button-content-in 180ms ease-out both;
+}
+
+@keyframes new-workflow-button-content-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .new-workflow-next[data-ready="true"] .new-workflow-next-button > *,
+  .new-workflow-pause-button {
+    animation: none;
+  }
+}

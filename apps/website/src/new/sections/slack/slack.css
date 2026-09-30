@@ -1,0 +1,247 @@
+.new-story {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 100svh;
+  padding: 5rem 1.5rem 6rem;
+  border-top: 1px solid color-mix(in oklab, var(--foreground) 8%, transparent);
+}
+
+.new-story-content {
+  width: min(74rem, 100%);
+}
+
+.new-slack-scene {
+  position: relative;
+  width: min(48rem, 100%);
+  margin-inline: auto;
+  padding-bottom: 4rem;
+}
+
+.new-slack-window {
+  text-align: left;
+}
+
+.new-slack-monica-mount,
+.new-slack-kristine-mount {
+  position: absolute;
+  left: 65%;
+  bottom: 1.5rem;
+  transform: translateX(-50%);
+  z-index: 1;
+  width: 8rem;
+  height: 8rem;
+  pointer-events: none;
+}
+
+.new-slack-kristine-mount {
+  left: 35%;
+}
+
+.new-slack-monica-figure {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  opacity: 1;
+  transform-origin: center bottom;
+}
+
+.new-slack-monica-figure[data-phase="hidden"] {
+  opacity: 0;
+}
+
+.new-slack-monica-figure svg[role="img"] {
+  filter: drop-shadow(
+    0 8px 12px light-dark(rgb(0 0 0 / 12%), rgb(0 0 0 / 35%))
+  );
+}
+
+.new-slack-label {
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
+  margin: 0 0 1.125rem;
+  font-size: 1rem;
+  font-weight: 400;
+}
+
+.new-slack-panel {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto auto;
+  height: var(--workflow-window-height, 22rem);
+  padding: 20px 20px 0;
+  border: 1px solid #34373b;
+  border-radius: 0.875rem;
+  background: #1a1d21;
+  color: #d1d2d3;
+  font-family: "Lato", Arial, sans-serif;
+  font-size: 15px;
+  line-height: 22px;
+}
+
+.new-slack-messages {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.new-slack-message {
+  flex-shrink: 0;
+}
+
+.new-slack-composer {
+  --background: #222529;
+  --foreground: #d1d2d3;
+  --muted-foreground: #ababad;
+  --input: #414449;
+  --border: #34373b;
+  --primary: #12805c;
+  --primary-foreground: #fff;
+  margin-top: 16px;
+  color: var(--foreground);
+}
+
+.new-slack-composer [data-slot="input-group"] {
+  border: 1px solid #818385;
+  border-radius: 8px;
+  background: #222529;
+  box-shadow: none;
+}
+
+.new-slack-composer .new-slack-draft-input {
+  width: 100%;
+  min-height: 38px;
+  padding: 8px 12px;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+}
+
+.new-slack-placeholder {
+  color: #ababad;
+}
+
+.new-slack-composer [data-slot="input-group-addon"] {
+  flex-wrap: nowrap;
+  gap: 0;
+  overflow: hidden;
+  font-weight: 400;
+}
+
+.new-slack-composer .new-slack-formatting {
+  height: 38px;
+  padding: 4px;
+  color: rgb(232 232 232 / 70%);
+  font-synthesis: style;
+}
+
+.new-slack-composer .new-slack-actions {
+  height: 40px;
+  padding: 0 4px 0 6px;
+  color: #b9babd;
+}
+
+.new-slack-composer [data-slot="button"] {
+  width: 28px;
+  height: 28px;
+  margin: 2px;
+  padding: 2px;
+  border-radius: 4px;
+  color: inherit;
+  font: inherit;
+  font-size: 18px;
+  box-shadow: none;
+}
+
+.new-slack-composer [data-slot="button"] svg {
+  width: 18px;
+  height: 18px;
+}
+
+.new-slack-composer [data-slot="separator"] {
+  height: 20px;
+  margin: 0 4px;
+  align-self: center;
+  background: #414449;
+}
+
+.new-slack-composer .new-slack-attach {
+  border-radius: 50%;
+  background: rgb(232 232 232 / 6%);
+}
+
+.new-slack-format-toggle {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.new-slack-composer .new-slack-send {
+  width: 32px;
+  margin: 2px 0 2px auto;
+  border-radius: 4px 0 0 4px;
+}
+
+.new-slack-composer .new-slack-send-options {
+  position: relative;
+  margin: 2px 2px 2px 0;
+  border-radius: 0 4px 4px 0;
+}
+
+.new-slack-send-options::before {
+  position: absolute;
+  left: 0;
+  height: 16px;
+  border-left: 1px solid currentColor;
+  opacity: 0.2;
+  content: "";
+}
+
+.new-slack-composer [data-ready="false"] svg {
+  opacity: 0.3;
+}
+
+.new-slack-composer [data-ready="true"] {
+  background: #007a5a;
+  color: #fff;
+}
+
+.new-slack-typing {
+  min-height: 24px;
+  margin: 0 0 0 4px;
+  color: #ababad;
+  font-size: 0.8125rem;
+  visibility: hidden;
+}
+
+.new-slack-typing span {
+  animation: new-caret 900ms ease-in-out infinite;
+}
+
+@keyframes new-caret {
+  50% {
+    opacity: 0;
+  }
+}
+
+@media (max-width: 600px) {
+  .new-story {
+    padding: 4rem 1rem 5rem;
+  }
+}
+
+@media (max-width: 420px) {
+  .new-slack-composer .new-slack-media,
+  .new-slack-composer .new-slack-format-extra {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .new-slack-typing span {
+    animation: none;
+  }
+}

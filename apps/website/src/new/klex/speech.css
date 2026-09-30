@@ -1,0 +1,21 @@
+.klex-speech-float {
+  animation: klex-speech-float 2s cubic-bezier(0.37, 0, 0.63, 1) infinite
+    alternate;
+  will-change: transform;
+}
+
+@keyframes klex-speech-float {
+  from {
+    transform: translate3d(0, 0, 0);
+  }
+  to {
+    transform: translate3d(0, -4px, 0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .klex-speech-float {
+    animation: none;
+    will-change: auto;
+  }
+}

@@ -1,0 +1,23 @@
+/**
+ * @font-face declarations for Geist Variable (bundled).
+ *
+ * The woff2 variable font files cover weights 100–900 in both upright
+ * and italic styles.  They are served from the package's src/fonts/
+ * directory so consumers get the correct typeface with zero setup.
+ */
+
+@font-face {
+  font-family: "Geist Variable";
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url("../fonts/geist-variable.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "Geist Variable";
+  font-style: italic;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url("../fonts/geist-variable-italic.woff2") format("woff2");
+}

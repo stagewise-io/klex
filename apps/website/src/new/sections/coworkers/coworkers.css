@@ -1,0 +1,370 @@
+/* Content height, not a viewport-height slide: the comparison gets room to
+   breathe above the claim and below the card. */
+.new-coworkers {
+  padding: clamp(5rem, 12vw, 10rem) var(--page-inline);
+  border-bottom: 1px solid var(--border);
+}
+
+.new-coworkers-mount {
+  container-type: inline-size;
+  width: 100%;
+  margin: auto;
+}
+
+.coworkers-card {
+  --card-spacing: clamp(1.5rem, 3vw, 3rem);
+  --coworkers-surface: color-mix(in oklab, var(--foreground) 3%, var(--card));
+  border-radius: 2rem;
+  background: var(--coworkers-surface);
+  gap: 1rem;
+}
+
+.coworkers-title {
+  margin: 0 0 clamp(2rem, 4svh, 3rem);
+  font-family: "Fraunces", Georgia, serif;
+  /* Full size until a sentence would need a third line. The longer sentence
+     fits two lines down to 12.3em ("Personal AI-Assistants don't"), so the
+     size follows the container only below 12.5em: 100cqi / 12.5 = 8cqi. */
+  font-size: clamp(1.25rem, 8cqi, 2.5rem);
+  font-weight: 500;
+  letter-spacing: -0.04em;
+  line-height: 1.3;
+  text-wrap: balance;
+}
+
+.coworkers-title > span {
+  display: block;
+}
+
+.coworkers-title > span:first-child {
+  color: var(--muted-foreground);
+}
+
+/* Like Apple's compare cards: the columns sit close together in a centered
+   block, just wide enough to keep every description on one line. */
+.coworkers-comparison {
+  max-width: 56rem;
+  margin-inline: auto;
+  table-layout: fixed;
+  text-align: center;
+}
+
+.coworkers-comparison th,
+.coworkers-comparison td {
+  height: auto;
+  padding: 0.5rem 1rem 1.5rem;
+  vertical-align: top;
+  white-space: normal;
+  text-align: center;
+}
+
+.coworkers-comparison tr:hover {
+  background: transparent;
+}
+
+.coworkers-product {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  height: 7.5rem;
+  margin-bottom: 0.5rem;
+}
+
+/* The same "AI" avatar as in the cells, scaled up to face the three bots. */
+.coworkers-assistant-symbol {
+  display: grid;
+  place-items: center;
+  width: 4rem;
+  height: 4rem;
+  border-radius: 50%;
+  background: color-mix(
+    in oklab,
+    var(--foreground) 7%,
+    var(--coworkers-surface)
+  );
+  color: color-mix(in oklab, var(--foreground) 45%, transparent);
+  font-size: 1.25rem;
+  font-weight: 500;
+  line-height: 1;
+  text-box: trim-both cap alphabetic;
+}
+
+.coworkers-column-title {
+  display: block;
+  font-family: "Fraunces", Georgia, serif;
+  font-size: clamp(1.25rem, 2vw, 1.65rem);
+  font-weight: 500;
+  letter-spacing: -0.035em;
+  line-height: 1.25;
+  text-wrap: balance;
+}
+
+/* Only Klex Bots get the brand serif; the generic category stays plain. */
+.coworkers-column-title[data-font="plain"] {
+  font-family: inherit;
+  font-size: clamp(1.125rem, 1.8vw, 1.5rem);
+  letter-spacing: -0.025em;
+}
+
+.coworkers-cta {
+  margin-top: 1.25rem;
+}
+
+.coworkers-comparison thead p {
+  margin: 0.5rem 0 0;
+  color: var(--muted-foreground);
+  font-size: 0.8rem;
+  font-weight: 400;
+  text-wrap: balance;
+}
+
+.coworkers-comparison thead th {
+  padding-bottom: 2rem;
+}
+
+/* Like a spec comparison: one rule under the column heads, then open rows. */
+.coworkers-comparison tbody tr {
+  border: 0;
+}
+
+.coworkers-comparison tbody td {
+  padding-top: 1.75rem;
+  padding-bottom: 1.75rem;
+}
+
+.coworkers-comparison .coworkers-topic-row > th {
+  padding: 1.5rem 1rem 0;
+}
+
+.coworkers-topic-title {
+  margin: 0;
+  color: var(--foreground);
+  font-family: "Fraunces", Georgia, serif;
+  font-size: clamp(1.125rem, 2vw, 1.375rem);
+  font-weight: 500;
+  letter-spacing: -0.025em;
+  line-height: 1.3;
+  text-align: center;
+  text-wrap: balance;
+}
+
+.coworkers-comparison td > p {
+  margin: 0 auto;
+  font-size: 0.9rem;
+  line-height: 1.6;
+  text-wrap: balance;
+}
+
+.coworkers-cell-title {
+  display: block;
+  margin-bottom: 0.25rem;
+  color: var(--foreground);
+  font-size: 1rem;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  text-wrap: balance;
+}
+
+.coworkers-comparison td:first-child > .coworkers-cell-title {
+  color: color-mix(in oklab, var(--foreground) 70%, transparent);
+}
+
+.coworkers-comparison td:first-child > p {
+  color: var(--muted-foreground);
+}
+
+.coworkers-art {
+  --art-line: color-mix(in oklab, var(--foreground) 12%, transparent);
+  --art-ink: color-mix(in oklab, var(--foreground) 45%, transparent);
+  --art-node: color-mix(
+    in oklab,
+    var(--foreground) 7%,
+    var(--coworkers-surface)
+  );
+  display: grid;
+  place-items: center;
+  height: 5rem;
+  margin: 0 auto 1rem;
+}
+
+.coworkers-art[data-side="team"] {
+  --art-line: color-mix(in oklab, var(--foreground) 20%, transparent);
+  --art-ink: color-mix(in oklab, var(--foreground) 85%, transparent);
+  --art-node: color-mix(
+    in oklab,
+    var(--foreground) 10%,
+    var(--coworkers-surface)
+  );
+}
+
+.coworkers-stage {
+  position: relative;
+  width: 11rem;
+  height: 4.4rem;
+}
+
+.coworkers-stage > svg {
+  position: absolute;
+  inset: 0;
+  overflow: visible;
+  stroke: var(--art-line);
+  stroke-width: 1;
+}
+
+/* Same hairline as the links: the arrow says direction, not emphasis. */
+.coworkers-arrow {
+  stroke: color-mix(in oklab, var(--foreground) 20%, transparent);
+  stroke-linejoin: round;
+}
+
+.coworkers-node {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 2rem;
+  height: 2rem;
+  border-radius: 50%;
+  background: var(--art-node);
+}
+
+.coworkers-node.coworkers-member {
+  position: absolute;
+  transform: translate(-50%, -50%);
+}
+
+/* Trim to cap height so "You" and "AI" center optically like the icons. */
+.coworkers-label {
+  line-height: 1;
+  text-box: trim-both cap alphabetic;
+  color: var(--art-ink);
+  font-size: 0.625rem;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+}
+
+.coworkers-person {
+  width: 1.375rem;
+  stroke: var(--art-ink);
+  stroke-width: 1.1;
+  stroke-linecap: round;
+}
+
+/* Learning */
+
+.coworkers-thought {
+  display: flex;
+  align-items: flex-end;
+}
+
+/* Two small dots rising from the thinker toward the bubble. */
+.coworkers-thought-tail {
+  position: relative;
+  width: 0.875rem;
+  height: 2.25rem;
+}
+
+.coworkers-thought-tail::before,
+.coworkers-thought-tail::after {
+  content: "";
+  position: absolute;
+  border-radius: 50%;
+  background: var(--art-node);
+}
+
+.coworkers-thought-tail::before {
+  left: 0.125rem;
+  bottom: 1.625rem;
+  width: 0.3125rem;
+  height: 0.3125rem;
+}
+
+.coworkers-thought-tail::after {
+  left: 0.4375rem;
+  bottom: 2rem;
+  width: 0.5rem;
+  height: 0.5rem;
+}
+
+.coworkers-thought-bubble {
+  display: flex;
+  gap: 0.125rem;
+  margin-bottom: 2rem;
+  padding: 0.25rem 0.375rem;
+  border-radius: 999px;
+  background: var(--art-node);
+}
+
+.coworkers-thought-bubble .coworkers-node {
+  width: 1.375rem;
+  height: 1.375rem;
+  background: none;
+}
+
+.coworkers-thought-bubble .coworkers-label {
+  font-size: 0.5rem;
+}
+
+.coworkers-thought-bubble .coworkers-person {
+  width: 1rem;
+}
+
+/* The assistant rides on your identity instead of having its own. */
+.coworkers-badge {
+  position: absolute;
+  right: -0.375rem;
+  bottom: -0.375rem;
+  display: grid;
+  place-items: center;
+  width: 1.125rem;
+  height: 1.125rem;
+  border-radius: 50%;
+  box-shadow: 0 0 0 2px var(--coworkers-surface);
+  background: var(--art-node);
+}
+
+.coworkers-badge .coworkers-label {
+  font-size: 0.4375rem;
+}
+
+.coworkers-nowrap {
+  white-space: nowrap;
+}
+
+@media (max-width: 700px) {
+  .new-coworkers {
+    padding-block: 4rem;
+  }
+  .coworkers-card {
+    --card-spacing: 1.25rem;
+    border-radius: 1.5rem;
+  }
+  .coworkers-comparison th,
+  .coworkers-comparison td {
+    padding-inline: 0.5rem;
+  }
+  .coworkers-cell-title {
+    font-size: 0.875rem;
+  }
+  .coworkers-product {
+    zoom: 0.65;
+  }
+  .coworkers-cta {
+    height: 2rem;
+    padding-inline: 0.75rem;
+    font-size: 0.75rem;
+  }
+  .coworkers-column-title {
+    font-size: 1.125rem;
+  }
+  .coworkers-comparison thead p {
+    font-size: 0.7rem;
+  }
+  .coworkers-comparison td > p {
+    font-size: 0.8rem;
+    line-height: 1.6;
+  }
+  .coworkers-art {
+    zoom: 0.72;
+  }
+}

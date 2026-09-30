@@ -28,7 +28,7 @@ function setAttribute(
 }
 
 function transformSetter(
-  element: HTMLElement,
+  element: HTMLElement | SVGElement,
   property: string,
   unit?: string,
 ) {
@@ -248,8 +248,8 @@ export function klexBody(
 }
 
 type GlideElements = {
-  travel: HTMLDivElement;
-  actor: HTMLDivElement;
+  travel: HTMLDivElement | SVGGElement;
+  actor: HTMLDivElement | SVGGElement;
   shadow: SVGEllipseElement;
   body: SVGPathElement;
   eyes: SVGGElement;

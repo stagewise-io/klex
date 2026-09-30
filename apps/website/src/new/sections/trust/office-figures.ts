@@ -6,9 +6,7 @@ export function officeFigure(member: OfficeMember, armsOnly = false) {
   if (member.kind === 'bot') {
     const size = member.position[1] > 1 ? 0.0074 : 0.01;
     return `<g class="office-bot-figure" transform="translate(${-80 * size} ${-138 * size}) scale(${size})">
-      <foreignObject width="160" height="160" overflow="visible">
-        <div xmlns="http://www.w3.org/1999/xhtml" data-office-bot="${member.id}" aria-hidden="true"></div>
-      </foreignObject>
+      <g data-office-bot="${member.id}" aria-hidden="true"></g>
     </g>`;
   }
 

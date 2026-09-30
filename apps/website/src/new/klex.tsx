@@ -87,8 +87,8 @@ export type KlexProps = {
   width?: CSSProperties['width'];
   /** Initial track position. Y is a pixel offset from the ground line. */
   initialPosition?: KlexPosition;
-  /** Center the animated character inside its own viewport. */
-  layout?: 'track' | 'avatar';
+  /** Track/portrait HTML layouts, or a native 160-unit SVG scene figure. */
+  layout?: 'track' | 'avatar' | 'svg';
   className?: string;
   initialExpression?: Expression;
   initialExtra?: Extra;
@@ -145,6 +145,8 @@ export function Klex({
   const reducedMotion = useReducedMotion() ?? false;
   const travelRef = useRef<HTMLDivElement>(null);
   const actorRef = useRef<HTMLDivElement>(null);
+  const svgTravelRef = useRef<SVGGElement>(null);
+  const svgActorRef = useRef<SVGGElement>(null);
   const shadowRef = useRef<SVGEllipseElement>(null);
   const bodyRef = useRef<SVGPathElement>(null);
   const eyesRef = useRef<SVGGElement>(null);
@@ -157,7 +159,7 @@ export function Klex({
     [shape],
   );
   const handAnchor = useMemo(() => waveAnchor(shape), [shape]);
-  const scale = size / 160;
+  const scale = layout === 'svg' ? 1 : size / 160;
   const avatarLayout = layout === 'avatar';
   const viewBox = avatarLayout ? '0 -10 160 160' : '0 0 160 140';
   const completeMove = useEffectEvent(() => onMoveComplete?.());
@@ -176,8 +178,8 @@ export function Klex({
   });
 
   useLayoutEffect(() => {
-    const travel = travelRef.current;
-    const actor = actorRef.current;
+    const travel = travelRef.current ?? svgTravelRef.current;
+    const actor = actorRef.current ?? svgActorRef.current;
     const shadow = shadowRef.current;
     const body = bodyRef.current;
     const eyes = eyesRef.current;
@@ -267,6 +269,82 @@ export function Klex({
     },
   }));
 
+  const drawing = (
+    <>
+      <title>{name ?? 'Klex'}</title>
+      <path
+        ref={bodyRef}
+        d={restingBody}
+        fill={color}
+        data-testid="klex-body"
+      />
+      <g
+        ref={eyesRef}
+        fill={eyeColor}
+        style={{ color: eyeColor }}
+        transform={`translate(${80 + shape.eyeX} ${shape.eyeY})`}
+        data-testid="klex-eyes"
+      >
+        <KlexEyes expression={reactionLook.expression ?? expression} />
+        <g style={{ color }}>
+          <KlexExtras
+            handAnchor={handAnchor}
+            paused={paused}
+            transient={reactionLook.extra === 'wave'}
+            extra={extrasEnabled ? (reactionLook.extra ?? extra) : 'none'}
+            headTop={
+              Math.min(...shape.outline.map((point) => point[1])) -
+              shape.eyeY -
+              10
+            }
+          />
+        </g>
+      </g>
+      <g
+        ref={laptopRef}
+        opacity="0"
+        visibility={extrasEnabled ? 'visible' : 'hidden'}
+        data-testid="klex-laptop"
+      >
+        <KlexLaptop shape={shape} />
+      </g>
+    </>
+  );
+  const shadow = (
+    <ellipse
+      ref={shadowRef}
+      cx="80"
+      cy="129"
+      rx="51"
+      ry="6"
+      fill="light-dark(rgb(0 0 0 / 24%), rgb(0 0 0 / 65%))"
+      opacity="1"
+      style={{ filter: 'blur(2px)' }}
+      data-testid="klex-shadow"
+    />
+  );
+
+  // Native SVG keeps scene transforms and painter order in the same coordinate
+  // system. WebKit mispaints transformed HTML inside SVG foreignObject elements.
+  if (layout === 'svg') {
+    return (
+      <g
+        className={className}
+        data-layout={layout}
+        data-movement={settings.mode}
+      >
+        <g transform="translate(0 32)" data-klex-figure="">
+          <g ref={svgTravelRef} data-testid="klex-travel">
+            {shadow}
+            <g ref={svgActorRef} data-testid="klex-actor">
+              {drawing}
+            </g>
+          </g>
+        </g>
+      </g>
+    );
+  }
+
   const figure = (
     <>
       <svg
@@ -274,17 +352,7 @@ export function Klex({
         aria-hidden="true"
         className="absolute inset-0 size-full! overflow-visible"
       >
-        <ellipse
-          ref={shadowRef}
-          cx="80"
-          cy="129"
-          rx="51"
-          ry="6"
-          fill="light-dark(rgb(0 0 0 / 24%), rgb(0 0 0 / 65%))"
-          opacity="1"
-          style={{ filter: 'blur(2px)' }}
-          data-testid="klex-shadow"
-        />
+        {shadow}
       </svg>
       <div
         ref={actorRef}
@@ -300,43 +368,7 @@ export function Klex({
           aria-hidden={children ? true : undefined}
           className="block size-full! overflow-visible"
         >
-          <title>{name ?? 'Klex'}</title>
-          <path
-            ref={bodyRef}
-            d={restingBody}
-            fill={color}
-            data-testid="klex-body"
-          />
-          <g
-            ref={eyesRef}
-            fill={eyeColor}
-            style={{ color: eyeColor }}
-            transform={`translate(${80 + shape.eyeX} ${shape.eyeY})`}
-            data-testid="klex-eyes"
-          >
-            <KlexEyes expression={reactionLook.expression ?? expression} />
-            <g style={{ color }}>
-              <KlexExtras
-                handAnchor={handAnchor}
-                paused={paused}
-                transient={reactionLook.extra === 'wave'}
-                extra={extrasEnabled ? (reactionLook.extra ?? extra) : 'none'}
-                headTop={
-                  Math.min(...shape.outline.map((point) => point[1])) -
-                  shape.eyeY -
-                  10
-                }
-              />
-            </g>
-          </g>
-          <g
-            ref={laptopRef}
-            opacity="0"
-            visibility={extrasEnabled ? 'visible' : 'hidden'}
-            data-testid="klex-laptop"
-          >
-            <KlexLaptop shape={shape} />
-          </g>
+          {drawing}
         </svg>
         {name ? (
           <Badge

@@ -14,7 +14,7 @@ import { type OfficeMember, officeMembers } from './office-members';
 
 type OfficeBotSlot = {
   member: Extract<OfficeMember, { kind: 'bot' }>;
-  host: HTMLElement;
+  host: SVGGElement;
 };
 
 function WorkingOfficeBot({
@@ -35,7 +35,7 @@ function WorkingOfficeBot({
       color={member.color}
       shape={member.shape}
       size={160}
-      layout="track"
+      layout="svg"
       initialPosition={{ x: 0, y: -23 }}
       movementMode={member.movementMode}
       className="office-scene-bot"
@@ -152,7 +152,7 @@ export function mountOffice() {
   if (!host || !stage) return () => {};
   const bots = officeMembers.flatMap((member) => {
     if (member.kind !== 'bot') return [];
-    const figure = stage.querySelector<HTMLElement>(
+    const figure = stage.querySelector<SVGGElement>(
       `[data-office-bot="${member.id}"]`,
     );
     return figure ? [{ member, host: figure }] : [];

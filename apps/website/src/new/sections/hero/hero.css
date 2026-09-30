@@ -219,8 +219,10 @@
 .new-team {
   position: absolute;
   inset: 0;
-  /* All bots and name tags stay in front of the app previews. */
+  /* Keep the entire foreground in one composited layer. Without this,
+     WebKit can paint animated app previews over the bots and name tags. */
   z-index: 3;
+  transform: translateZ(0);
   margin: 0;
   padding: 0;
   list-style: none;
@@ -235,11 +237,8 @@
   left: calc(var(--bot-size) * -1);
   visibility: hidden;
   pointer-events: none;
-  transition: opacity 180ms ease-out;
-}
-
-.new-bot.is-dimmed {
-  opacity: 0.65;
+  /* Scene motion places the body and tags above this ground-line layer. */
+  transform: translateZ(0);
 }
 
 .new-bot.is-visible {
@@ -274,8 +273,22 @@
   bottom: calc(100% + 0.35rem);
   left: 50%;
   z-index: 1;
-  transform: translateX(-50%);
+  transform: translate3d(-50%, 0, 0);
   pointer-events: auto;
+}
+
+/* Fade the bounded visual surfaces, not their translated HTML ancestors.
+   WebKit clips overflowing bodies and tags when those ancestors have opacity. */
+.new-bot [data-klex-figure] > svg,
+.new-bot [data-testid="klex-actor"] > svg,
+.new-bot .new-bot-tag-anchor {
+  transition: opacity 180ms ease-out;
+}
+
+.new-bot.is-dimmed [data-klex-figure] > svg,
+.new-bot.is-dimmed [data-testid="klex-actor"] > svg,
+.new-bot.is-dimmed .new-bot-tag-anchor {
+  opacity: 0.65;
 }
 
 .new-bot-tag {

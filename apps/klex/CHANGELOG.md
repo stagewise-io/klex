@@ -2,6 +2,23 @@
 
 All notable Klex changes are documented here.
 
+## 0.11.0 (2026-09-30)
+
+### Features
+
+- render JSONL episodes as compact history text (14d7f39)
+- record episodes as deterministic JSONL history (82de2c1)
+
+### Bug Fixes
+
+- create parent directories for new SQLite stores (e02d189)
+- harden episode writes and long-step idle tracking (1e62341)
+
+### Other Changes
+
+- cover retrieval over recorder-written episodes (c71932b)
+- separate history-view fitting from rendering (5bf5525)
+
 ## 0.10.0 (2026-09-25)
 
 ### Features

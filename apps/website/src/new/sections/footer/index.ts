@@ -20,7 +20,7 @@ export const footerMarkup = `
             <img src="/stagewise-wordmark.svg" alt="stagewise" width="114" height="24" />
           </a>
         </p>
-        <p class="new-footer-attribution">stagewise® and Klex® are registered trademarks of stagewise GmbH and protected in the EU by the European Union Intellectual Property Office (EUIPO).<br />Unauthorized use is prohibited.</p>
+        <p class="new-footer-attribution">Klex® and stagewise® are registered trademarks of stagewise GmbH and protected in the EU by the European Union Intellectual Property Office (EUIPO).<br />Unauthorized use is prohibited.</p>
         <p class="new-footer-attribution">Third-party product names, logos, illustrations and brands referenced on this site are property of their respective owners. Use is for identification purposes only and does not imply any affiliation or endorsement.</p>
       </div>
       <nav aria-label="Resources">

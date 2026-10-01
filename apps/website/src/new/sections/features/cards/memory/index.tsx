@@ -16,7 +16,7 @@ export function MemoryCard({ playing }: CardProps) {
     <FeatureCard
       id="memory"
       title="Learns how you work"
-      description="People, decisions, and processes. Your company’s context grows with every task."
+      description="People, decisions, skills and processes. Your bots’ memory and skills grow and improve with every task."
       Scene={MemoryScene}
       playing={playing}
     />

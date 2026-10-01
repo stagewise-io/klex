@@ -11,7 +11,7 @@ export const heroMarkup = `
       <section class="new-hero" aria-labelledby="new-hero-title">
         <p class="new-eyebrow"><span class="new-eyebrow-word">Meet</span> <span class="new-eyebrow-word">Klex Bots</span></p>
         <h1 id="new-hero-title">Your own team of<br />digital coworkers.</h1>
-        <p class="new-description">Klex Bots work with their own identities and machines in the tools your team already uses. 24/7, 365 days a year.</p>
+        <p class="new-description">Klex Bots work with their own identities and machines in the tools your team already uses.</p>
         <a class="new-hero-cta ${buttonVariants({ size: 'lg' })}" data-slot="button" href="https://cloud.klex.bot">Create a Klex Bot</a>
         <div class="new-hero-mount"></div>
         <a class="new-hero-next ${buttonVariants({ variant: 'outline', size: 'lg' })}" data-slot="button" href="#how-it-works">How Klex Bots work together <span aria-hidden="true">↓</span></a>

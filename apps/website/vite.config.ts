@@ -4,10 +4,15 @@ import { fileURLToPath } from 'node:url';
 import tailwindcss from '@tailwindcss/vite';
 import { type Connect, defineConfig, type Plugin } from 'vite';
 
-const serveOldPage: Connect.NextHandleFunction = (request, _response, next) => {
+const servePageRoutes: Connect.NextHandleFunction = (
+  request,
+  _response,
+  next,
+) => {
   const url = new URL(request.url ?? '/', 'http://localhost');
-  if (url.pathname === '/old') {
-    request.url = `/old/index.html${url.search}`;
+  const route = url.pathname.replace(/\/$/, '');
+  if (['/old', '/brand', '/press'].includes(route)) {
+    request.url = `${route}/index.html${url.search}`;
   }
   next();
 };
@@ -60,12 +65,12 @@ export default defineConfig({
   server: { allowedHosts: ['.trycloudflare.com'] },
   plugins: [
     {
-      name: 'klex-old-page-route',
+      name: 'klex-page-routes',
       configureServer(server) {
-        server.middlewares.use(serveOldPage);
+        server.middlewares.use(servePageRoutes);
       },
       configurePreviewServer(server) {
-        server.middlewares.use(serveOldPage);
+        server.middlewares.use(servePageRoutes);
       },
     },
     klexInstallerAssets(),
@@ -76,6 +81,8 @@ export default defineConfig({
       input: {
         main: fileURLToPath(new URL('./index.html', import.meta.url)),
         old: fileURLToPath(new URL('./old/index.html', import.meta.url)),
+        brand: fileURLToPath(new URL('./brand/index.html', import.meta.url)),
+        press: fileURLToPath(new URL('./press/index.html', import.meta.url)),
       },
     },
   },

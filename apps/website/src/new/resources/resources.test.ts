@@ -19,6 +19,17 @@ describe('Klex media resources', () => {
     expect(html).toContain('<meta name="robots" content="noindex" />');
   });
 
+  it('uses concise headings without trailing periods', () => {
+    expect(brandMarkup).toContain('<h2 id="name-title">Naming</h2>');
+    expect(brandMarkup).toContain(
+      '<h2 id="description-title">Short description</h2>',
+    );
+    expect(brandMarkup).toContain('<h2 id="colors-title">Our colors</h2>');
+    for (const markup of [brandMarkup, pressMarkup]) {
+      expect(markup).not.toMatch(/<h[1-6]\b[^>]*>[^<]*\.\s*<\/h[1-6]>/);
+    }
+  });
+
   it('keeps the requested brand section order', () => {
     const positions = ['name', 'description', 'logos', 'colors'].map((id) =>
       brandMarkup.indexOf(`id="${id}"`),

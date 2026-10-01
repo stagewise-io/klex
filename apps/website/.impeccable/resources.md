@@ -16,7 +16,7 @@ FORM: User-pinned section order; directly shaped reference pages, no concept see
 
 FINISH: unreviewed and undocumented is unfinished; this build ends with the finish review, the verdict, DESIGN.md, and every shipping raster carrying its provenance.
 
-Sources: existing brand vectors and UI palette; https://company.stagewise.io and https://company.stagewise.io/company for company background and founders. No new rasters.
+Sources: existing brand vectors and UI palette; https://company.stagewise.io and https://company.stagewise.io/company for company background and founders. Brand assets remain vector-only. The press kit also includes the user-provided founders photograph at `public/press/stagewise-klex-founders.jpeg`.
 
 ## Finish review
 
@@ -32,7 +32,7 @@ PRODUCT.md and DESIGN.md exist. The pages extend the incumbent neutral palette, 
 
 - TYPE: match; incumbent Fraunces headings and Geist reading text, with a quieter reference-page scale.
 - MATERIAL: match; flat reference content, vector brand assets, no fabricated texture or physical effects.
-- GROUND: match; shared semantic background in both themes; fixed base-50 and base-950 asset preview grounds.
+- GROUND: match; shared semantic background in both themes; fixed base-50 and base-900 asset preview grounds.
 - STORY: match; naming, short description, logos, colors in the requested order; press copy followed by company background and founders.
 - FIRST VIEWPORT: match; page-level heading, short introduction, and useful navigation without an additional marketing callout.
 - FORM: match; native SVG links, paired theme previews, readable definitions and color values.

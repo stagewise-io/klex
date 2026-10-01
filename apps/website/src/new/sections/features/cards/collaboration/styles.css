@@ -5,31 +5,48 @@
   width: 100%;
   padding: 3px 0 0;
 }
-.bento-slack-channel {
+.bento-chat-crawl {
+  position: relative;
+  height: 270px;
+  overflow: hidden;
+  mask-image: linear-gradient(#000 92%, transparent);
+}
+.bento-chat-panel {
+  --chat-surface: #1a1d21;
+  --chat-text: #d1d2d3;
+  --chat-muted: #ababad;
+  --chat-name: #f8f8f8;
+  position: absolute;
+  inset: 0;
+  padding: 12px 8px;
+  border-radius: 12px;
+  perspective: 700px;
+}
+.bento-chat-panel:not(:first-child) {
+  visibility: hidden;
+  opacity: 0;
+}
+.bento-chat-channel {
   display: flex;
   align-items: center;
   gap: 7px;
+  min-height: 22px;
   margin-bottom: 10px;
-  padding-inline: 16px;
+  padding-inline: 8px;
   font-size: 11px;
 }
-.bento-slack-channel svg {
+.bento-chat-channel svg,
+.bento-chat-channel img {
+  flex: none;
   width: 16px;
   height: 16px;
+  object-fit: contain;
 }
-.bento-slack-channel span:last-child {
+.bento-chat-channel span:last-child {
   margin-left: auto;
   color: var(--muted-foreground);
 }
-.bento-slack-crawl {
-  min-height: 270px;
-  overflow: hidden;
-  perspective: 700px;
-  mask-image: linear-gradient(transparent, #000 8%, #000 91%, transparent);
-}
-.bento-slack-messages {
-  --slack-message-size: 13px;
-  --slack-message-leading: 19px;
+.bento-chat-messages {
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -37,28 +54,140 @@
   transform: rotateX(24deg);
   transform-origin: center bottom;
 }
-.bento-slack-messages .new-slack-message {
+.bento-chat-message {
+  display: flex;
+  align-items: flex-start;
   gap: 9px;
   padding: 11px;
   border: 1px solid #34373b;
   border-radius: 9px;
-  background: #1a1d21;
+  background: var(--chat-surface);
+  color: var(--chat-text);
+  font-size: 13px;
+  line-height: 19px;
 }
-.bento-slack-messages .new-slack-avatar {
+.bento-chat-avatar {
+  display: grid;
+  place-items: center;
+  flex: none;
   width: 32px;
   height: 32px;
   margin-top: 1px;
+  padding: 2px;
+  overflow: hidden;
   border-radius: 6px;
 }
-.bento-slack-messages .new-slack-message-meta time {
-  margin-left: 0;
+.bento-chat-avatar .klex-mascot {
+  width: 100%;
+  height: 100%;
+}
+.bento-chat-content {
+  min-width: 0;
+}
+.bento-chat-content p {
+  margin: 0;
+}
+.bento-chat-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px;
+}
+.bento-chat-meta strong {
+  color: var(--chat-name);
+  font-weight: 700;
+}
+.bento-chat-meta time {
+  color: var(--chat-muted);
   font-size: 9px;
 }
-.bento-slack-messages .new-slack-bot-label {
+.bento-chat-badge {
+  align-self: center;
+  padding: 0 4px;
+  border-radius: 3px;
+  background: #35373b;
+  color: #c5c5c7;
   font-size: 8px;
+  line-height: 12px;
+}
+.bento-chat-mention {
+  padding: 1px 2px;
+  border-radius: 3px;
+  background: rgb(3 102 150 / 25%);
+  color: #56c1eb;
+}
+.bento-chat-panel[data-app="teams"] {
+  --chat-surface: #f5f5fa;
+  --chat-text: #292929;
+  --chat-muted: #62616a;
+  --chat-name: #292929;
+  background: var(--chat-surface);
+  color: var(--chat-text);
+  font-family: "Segoe UI", Arial, sans-serif;
+}
+.bento-chat-panel[data-app="teams"] .bento-chat-channel {
+  color: #464775;
+}
+.bento-chat-panel[data-app="teams"] .bento-chat-channel span:last-child {
+  color: var(--chat-muted);
+}
+.bento-chat-panel[data-app="teams"] .bento-chat-message {
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: none;
+}
+.bento-chat-panel[data-app="teams"] .bento-chat-avatar,
+.bento-chat-panel[data-app="discord"] .bento-chat-avatar {
+  border-radius: 50%;
+}
+.bento-chat-panel[data-app="teams"] .bento-chat-content {
+  flex: 1;
+  padding: 8px 10px;
+  border-radius: 3px 10px 10px;
+  background: #fff;
+}
+.bento-chat-panel[data-app="teams"] .bento-chat-badge {
+  background: #e8e7f2;
+  color: #464775;
+}
+.bento-chat-panel[data-app="teams"] .bento-chat-mention {
+  padding: 0;
+  background: none;
+  color: #5143a7;
+  font-weight: 600;
+}
+.bento-chat-panel[data-app="discord"] {
+  --chat-surface: #313338;
+  --chat-text: #dbdee1;
+  --chat-muted: #b5bac1;
+  --chat-name: #f2f3f5;
+  background: var(--chat-surface);
+  color: var(--chat-text);
+}
+.bento-chat-panel[data-app="discord"] .bento-chat-channel {
+  padding-bottom: 8px;
+  border-bottom: 1px solid #45474d;
+}
+.bento-chat-panel[data-app="discord"] .bento-chat-channel span:last-child {
+  color: var(--chat-muted);
+}
+.bento-chat-panel[data-app="discord"] .bento-chat-message {
+  padding: 6px 4px;
+  border: 0;
+  border-radius: 0;
+  background: none;
+}
+.bento-chat-panel[data-app="discord"] .bento-chat-badge {
+  background: #5865f2;
+  color: #fff;
+}
+.bento-chat-panel[data-app="discord"] .bento-chat-mention {
+  background: #5865f24d;
+  color: #dee0ff;
 }
 @media (max-width: 539px) {
-  .bento-slack-crawl {
-    min-height: 240px;
+  .bento-chat-crawl {
+    height: 320px;
   }
 }

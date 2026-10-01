@@ -77,7 +77,7 @@ function GuidesFaq() {
         </ul>
       </nav>
       <section className="guides-faq" id="faq" aria-labelledby="faq-title">
-        <h2 id="faq-title">FAQs</h2>
+        <h2 id="faq-title">Frequently Asked Questions</h2>
         <Accordion defaultValue={[questions[0].question]}>
           {questions.map(({ question, answer }) => (
             <AccordionItem

@@ -56,15 +56,6 @@
   height: 56px;
   filter: drop-shadow(0 13px 7px #0000001a);
 }
-.bento-tool-block[data-tool="linear"] {
-  --block-top: #eeeeff;
-  --block-front: #d6d7f5;
-  --block-side: #939ac6;
-  transform: translateY(-30px);
-}
-.bento-tool-block[data-tool="github"] {
-  transform: translateY(-12px);
-}
 .bento-tool-block::before,
 .bento-tool-block::after {
   content: "";

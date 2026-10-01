@@ -29,12 +29,12 @@ function assetPreview(
 
 export const brandMarkup = `
   <div class="resource-heading">
-    <h1>The Klex brand.</h1>
+    <h1>The Klex brand</h1>
     <p>Our name, our marks, and our colors. Everything you need to represent Klex clearly and consistently.</p>
     <nav class="resource-index" aria-label="On this page"><a href="#name">Name</a><a href="#description">Description</a><a href="#logos">Logos</a><a href="#colors">Colors</a></nav>
   </div>
   <section class="resource-section" id="name" aria-labelledby="name-title">
-    <h2 id="name-title">Start with the name.</h2>
+    <h2 id="name-title">Naming</h2>
     <div class="resource-section-body">
       <p class="resource-lead">Always <strong>Klex</strong>. A capital K, followed by lowercase lex.</p>
       <dl class="resource-definitions">
@@ -45,11 +45,11 @@ export const brandMarkup = `
     </div>
   </section>
   <section class="resource-section" id="description" aria-labelledby="description-title">
-    <h2 id="description-title">Klex, in a few words.</h2>
+    <h2 id="description-title">Short description</h2>
     <div class="resource-section-body"><p class="resource-lead">${shortDescription}</p><p>For articles, listings, and introductions. For more product and company background, visit our <a href="/press">press page</a>.</p></div>
   </section>
   <section class="resource-section resource-section-wide" id="logos" aria-labelledby="logos-title">
-    <div class="resource-section-intro"><h2 id="logos-title">Logo sets.</h2><p>Use the logo and wordmark together where space allows. The rounded square mark works for app icons; the square-corner avatar fills its box edge to edge, so the platform can apply its own crop. The unframed mark keeps the entire silhouette visible on badges and custom backgrounds. Download the original SVG or choose a resolution for a PNG generated in your browser. PNGs preserve the artwork’s aspect ratio and any transparent areas.</p></div>
+    <div class="resource-section-intro"><h2 id="logos-title">Logo sets</h2><p>Use the logo and wordmark together where space allows. The rounded square mark works for app icons; the square-corner avatar fills its box edge to edge, so the platform can apply its own crop. The unframed mark keeps the entire silhouette visible on badges and custom backgrounds. Download the original SVG or choose a resolution for a PNG generated in your browser. PNGs preserve the artwork’s aspect ratio and any transparent areas.</p></div>
     <div class="resource-assets">
       ${assetPreview('Logo + wordmark · light', 'For light backgrounds', '/klex-logo-light.svg', 'light', 'lockup')}
       ${assetPreview('Logo + wordmark · dark', 'For dark backgrounds', '/klex-logo-dark.svg', 'dark', 'lockup')}
@@ -61,7 +61,7 @@ export const brandMarkup = `
     <p class="resource-note">Keep the proportions and colors intact. Give the mark room to breathe, use a contrasting background, and don’t crop, stretch, or add effects.</p>
   </section>
   <section class="resource-section resource-section-wide" id="colors" aria-labelledby="colors-title">
-    <div class="resource-section-intro"><h2 id="colors-title">Three essential colors.</h2><p>Our core palette. OKLCH is the source value; RGB and HEX are rounded sRGB equivalents for other tools.</p></div>
+    <div class="resource-section-intro"><h2 id="colors-title">Our colors</h2><p>Our core palette. OKLCH is the source value; RGB and HEX are rounded sRGB equivalents for other tools.</p></div>
     <div class="resource-colors">
       <article class="resource-color"><div class="resource-swatch resource-swatch-paper" role="img" aria-label="Light Base (base-50) color preview"></div><h3>Light Base</h3><p>base-50</p><dl><div><dt>OKLCH</dt><dd>0.992 0.001 85</dd></div><div><dt>RGB</dt><dd>253, 252, 252</dd></div><div><dt>HEX</dt><dd>#FDFCFC</dd></div></dl></article>
       <article class="resource-color"><div class="resource-swatch resource-swatch-ink" role="img" aria-label="Dark Base (base-900) color preview"></div><h3>Dark Base</h3><p>base-900</p><dl><div><dt>OKLCH</dt><dd>0.198 0.0005 85</dd></div><div><dt>RGB</dt><dd>22, 21, 21</dd></div><div><dt>HEX</dt><dd>#161515</dd></div></dl></article>
@@ -88,7 +88,7 @@ export const pressMarkup = `
     </div>
   </section>
   <section class="resource-section" aria-labelledby="press-team-title">
-    <h2 id="press-team-title">Built by stagewise.</h2>
+    <h2 id="press-team-title">Built by stagewise</h2>
     <div class="resource-section-body">
       <p class="resource-lead">stagewise builds applied AI with a simple premise: bots should be partners that tackle work autonomously, not tools people talk to on the side.</p>
       <p>The team started in software development, working on a gap between increasingly capable models and the limited context they could access. Its early work connected agents to the live state of an application: the running interface, selected elements, and surrounding code.</p>

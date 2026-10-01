@@ -1,4 +1,10 @@
-import { type CSSProperties, useEffect, useRef, useState } from 'react';
+import {
+  type CSSProperties,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from 'react';
 import { createPortal } from 'react-dom';
 import { createRoot } from 'react-dom/client';
 
@@ -54,26 +60,56 @@ function OfficeTeam({
   const [visibility, setVisibility] = useState(0);
   const [pageVisible, setPageVisible] = useState(!document.hidden);
   const [active, setActive] = useState<number | null>(null);
+  const hoverTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const clearHoverTimer = useCallback(() => {
+    if (hoverTimer.current !== null) clearTimeout(hoverTimer.current);
+    hoverTimer.current = null;
+  }, []);
+  const enterProfile = (index: number, pointerType: string) => {
+    if (pointerType !== 'mouse') return;
+    clearHoverTimer();
+    hoverTimer.current = setTimeout(() => {
+      hoverTimer.current = null;
+      setActive(index);
+    }, 100);
+  };
+  const leaveProfile = (index: number, pointerType: string) => {
+    if (pointerType !== 'mouse') return;
+    clearHoverTimer();
+    hoverTimer.current = setTimeout(() => {
+      hoverTimer.current = null;
+      setActive((current) => (current === index ? null : current));
+    }, 180);
+  };
+
+  useEffect(() => () => clearHoverTimer(), [clearHoverTimer]);
 
   useEffect(() => {
     const observer = new IntersectionObserver(
       ([entry]) => {
         setVisibility(entry.intersectionRatio);
-        if (!entry.isIntersecting) setActive(null);
+        if (!entry.isIntersecting) {
+          clearHoverTimer();
+          setActive(null);
+        }
       },
       { threshold: [0, 0.55] },
     );
     observer.observe(stage);
     const onVisibility = () => {
       setPageVisible(!document.hidden);
-      if (document.hidden) setActive(null);
+      if (document.hidden) {
+        clearHoverTimer();
+        setActive(null);
+      }
     };
     document.addEventListener('visibilitychange', onVisibility);
     return () => {
       observer.disconnect();
       document.removeEventListener('visibilitychange', onVisibility);
     };
-  }, [stage]);
+  }, [stage, clearHoverTimer]);
 
   return (
     <>
@@ -100,17 +136,21 @@ function OfficeTeam({
               <Popover
                 key={member.id}
                 open={active === index && visibility > 0 && pageVisible}
-                onOpenChange={(open) =>
+                onOpenChange={(open) => {
+                  clearHoverTimer();
                   setActive((current) =>
                     open ? index : current === index ? null : current,
-                  )
-                }
+                  );
+                }}
               >
                 <PopoverTrigger
                   className="office-member-trigger"
-                  openOnHover
-                  delay={100}
-                  closeDelay={180}
+                  onPointerEnter={(event) =>
+                    enterProfile(index, event.pointerType)
+                  }
+                  onPointerLeave={(event) =>
+                    leaveProfile(index, event.pointerType)
+                  }
                   style={
                     {
                       '--member-x': `${((point.x + 100) / 1600) * 100}%`,
@@ -121,12 +161,17 @@ function OfficeTeam({
                   }
                   aria-label={`${member.name}, ${member.role}. Show details`}
                   onFocus={(event) => {
-                    if (event.currentTarget.matches(':focus-visible'))
+                    if (event.currentTarget.matches(':focus-visible')) {
+                      clearHoverTimer();
                       setActive(index);
+                    }
                   }}
-                  onBlur={() =>
-                    setActive((current) => (current === index ? null : current))
-                  }
+                  onBlur={() => {
+                    clearHoverTimer();
+                    setActive((current) =>
+                      current === index ? null : current,
+                    );
+                  }}
                 />
                 <ProfileCard
                   className="new-bot-profile new-member-hover-card office-member-profile w-64 max-w-[calc(100vw-1.5rem)] gap-3 overflow-x-hidden overflow-y-auto rounded-[10px] p-4 ring-0"
@@ -135,8 +180,12 @@ function OfficeTeam({
                   work={member.work}
                   apps={botProfileApps[member.id]}
                   side="top"
+                  onPointerEnter={clearHoverTimer}
+                  onPointerLeave={(event) =>
+                    leaveProfile(index, event.pointerType)
+                  }
                   initialFocus={false}
-                  finalFocus={true}
+                  finalFocus={false}
                 />
               </Popover>
             );

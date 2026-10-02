@@ -100,6 +100,89 @@ describe('readAttachment', () => {
     );
     expect(fetch).not.toHaveBeenCalled();
     expect(generateText).not.toHaveBeenCalled();
+
+    // Provisional context may follow pending results before inference.
+    expect(
+      await transform(
+        [...messages, { role: 'user', content: 'Current step context' }],
+        selected,
+      ),
+    ).toEqual([
+      ...converted,
+      { role: 'user', content: 'Current step context' },
+    ]);
+
+    const original = JSON.stringify(messages);
+    const later = (await transform(
+      [
+        ...messages,
+        { role: 'assistant', content: 'I read the attachment.' },
+        { role: 'user', content: 'An unrelated question' },
+        { role: 'assistant', content: 'An unrelated answer' },
+      ],
+      selected,
+    )) as ModelMessage[];
+    expect(later[1]).toEqual({
+      role: 'tool',
+      content: [
+        {
+          type: 'tool-result',
+          toolName: 'readAttachment',
+          toolCallId: 'call',
+          output: remoteInputUnavailable(),
+        },
+      ],
+    });
+    expect(JSON.stringify(messages)).toBe(original);
+  });
+
+  it('preserves all attachments in the pending batch but not earlier batches', async () => {
+    const { transform, execute } = fixture();
+    const messages = await convertToModelMessagesExtended(
+      await Promise.all(
+        [['old'], ['first', 'second']].map(async (ids, index) => ({
+          id: `message-${index}`,
+          role: 'assistant' as const,
+          parts: await Promise.all(
+            ids.map(async (id) => ({
+              type: 'dynamic-tool' as const,
+              toolName: 'readAttachment',
+              toolCallId: id,
+              state: 'output-available' as const,
+              input: { url: `${url}&id=${id}`, mediaType: 'image/png' },
+              output: await execute({
+                url: `${url}&id=${id}`,
+                mediaType: 'image/png',
+              }),
+            })),
+          ),
+        })),
+      ),
+      {},
+    );
+    const converted = (await transform(messages, selected)) as ModelMessage[];
+    const outputs = converted.flatMap((message) =>
+      message.role === 'tool'
+        ? message.content.flatMap((part) =>
+            part.type === 'tool-result' ? [part.output] : [],
+          )
+        : [],
+    );
+    expect(outputs[0]).toEqual(remoteInputUnavailable());
+    expect(outputs.slice(1)).toEqual(
+      ['first', 'second'].map((id) => ({
+        type: 'content',
+        value: [
+          {
+            type: 'file',
+            mediaType: 'image/png',
+            data: { type: 'url', url: new URL(`${url}&id=${id}`) },
+          },
+        ],
+      })),
+    );
+    // A retry of preparation must not consume the pending batch.
+    expect(await transform(messages, selected)).toEqual(converted);
   });
 
   it('gates replay against the new model without altering canonical history', async () => {
@@ -126,6 +209,7 @@ describe('readAttachment', () => {
     expect(JSON.stringify(converted)).not.toContain(url);
     expect(JSON.stringify(converted)).toContain(REMOTE_INPUT_UNAVAILABLE);
     expect(JSON.stringify(messages)).toBe(original);
+    expect(JSON.stringify(await transform(messages, selected))).toContain(url);
   });
 
   it('sanitizes resolver exceptions and missing media types', async () => {
@@ -174,4 +258,49 @@ describe('readAttachment', () => {
       ],
     });
   });
+
+  it.each([false, true])(
+    'sanitizes malformed and unsupported results (historical: %s)',
+    async (historical) => {
+      const { transform } = fixture();
+      const messages: ModelMessage[] = [
+        {
+          role: 'tool',
+          content: [
+            { url, error: 'provider secret' },
+            {
+              type: 'content',
+              value: [
+                {
+                  type: 'file',
+                  mediaType: 'application/unsupported',
+                  data: { type: 'url', url },
+                },
+              ],
+            },
+          ].map((value, index) => ({
+            type: 'tool-result',
+            toolName: 'readAttachment',
+            toolCallId: `${index}`,
+            output: { type: 'json', value },
+          })),
+        },
+        ...(historical
+          ? [{ role: 'assistant' as const, content: 'Already answered' }]
+          : []),
+      ];
+      const converted = (await transform(messages, selected)) as ModelMessage[];
+      expect(converted[0]).toEqual({
+        role: 'tool',
+        content: ['0', '1'].map((toolCallId) => ({
+          type: 'tool-result',
+          toolName: 'readAttachment',
+          toolCallId,
+          output: remoteInputUnavailable(),
+        })),
+      });
+      expect(JSON.stringify(converted)).not.toContain(url);
+      expect(JSON.stringify(converted)).not.toContain('provider secret');
+    },
+  );
 });

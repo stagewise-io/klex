@@ -52,11 +52,20 @@ export const createReadAttachmentExt: ExtensionFactory = {
         },
       }),
       // UI tool outputs are JSON in canonical history. Reconstitute only this
-      // tool's remote files and recheck the *current* model after model changes.
+      // tool's pending remote files and recheck the *current* model after model changes.
       // This runs before generation, so unsupported URLs cannot trigger SDK downloads.
-      contextTransformer: async (history, model): Promise<ModelMessage[]> =>
-        Promise.all(
-          history.map(async (message) => {
+      contextTransformer: async (history, model): Promise<ModelMessage[]> => {
+        // Conversion separates an assistant's calls from their tool results.
+        // A later assistant message means another generation has consumed those
+        // results. User messages cannot define this boundary: provisional step
+        // context and incoming events can follow the still-pending results.
+        // Derive eligibility afresh so retries/model fallback revalidate the
+        // same pending batch without consuming it during context preparation.
+        const lastAssistant = history.findLastIndex(
+          (message) => message.role === 'assistant',
+        );
+        return Promise.all(
+          history.map(async (message, index) => {
             if (message.role !== 'tool') return message;
             return {
               ...message,
@@ -75,18 +84,20 @@ export const createReadAttachmentExt: ExtensionFactory = {
                   const file = parsed.success
                     ? parsed.data.value[0]
                     : undefined;
-                  const result = file
-                    ? await prepare(model, {
-                        url: file.data.url,
-                        mediaType: file.mediaType,
-                      })
-                    : remoteInputUnavailable();
+                  const result =
+                    file && index > lastAssistant
+                      ? await prepare(model, {
+                          url: file.data.url,
+                          mediaType: file.mediaType,
+                        })
+                      : remoteInputUnavailable();
                   return { ...part, output: remoteInputModelOutput(result) };
                 }),
               ),
             };
           }),
-        ),
+        );
+      },
     };
   },
 };

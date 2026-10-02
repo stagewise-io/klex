@@ -6,8 +6,13 @@ import {
   remoteInputModelOutput,
   remoteInputUnavailable,
 } from '@/provider-registry/remote-input';
+import { CONTEXT_SUMMARY_KEY } from '@/session/chat/utils/history-view';
 
-import type { ExtensionFactory, ResolvedModel } from '../extension-api';
+import {
+  type ExtensionFactory,
+  isDataPartOf,
+  type ResolvedModel,
+} from '../extension-api';
 
 const remoteFileSchema = z.object({
   type: z.literal('content'),
@@ -51,21 +56,39 @@ export const createReadAttachmentExt: ExtensionFactory = {
           execute: (input) => prepare(model, input),
         },
       }),
+      historyTransformer: (history) => {
+        // Canonical history retains the summary data-part marker; conversion
+        // turns it into assistant text, indistinguishable from a generation.
+        // Only a subsequent non-summary assistant consumes the pending batch.
+        // User/provisional context and asynchronous summaries do not consume it.
+        const lastGeneration = history.findLastIndex(
+          (message) =>
+            message.role === 'assistant' &&
+            !message.parts.some((part) =>
+              isDataPartOf(CONTEXT_SUMMARY_KEY, part),
+            ),
+        );
+        return history.map((message, index) =>
+          index >= lastGeneration
+            ? message
+            : {
+                ...message,
+                parts: message.parts.map((part) =>
+                  part.type === 'dynamic-tool' &&
+                  part.toolName === 'readAttachment' &&
+                  part.state === 'output-available'
+                    ? { ...part, output: remoteInputUnavailable() }
+                    : part,
+                ),
+              },
+        );
+      },
       // UI tool outputs are JSON in canonical history. Reconstitute only this
       // tool's pending remote files and recheck the *current* model after model changes.
       // This runs before generation, so unsupported URLs cannot trigger SDK downloads.
       contextTransformer: async (history, model): Promise<ModelMessage[]> => {
-        // Conversion separates an assistant's calls from their tool results.
-        // A later assistant message means another generation has consumed those
-        // results. User messages cannot define this boundary: provisional step
-        // context and incoming events can follow the still-pending results.
-        // Derive eligibility afresh so retries/model fallback revalidate the
-        // same pending batch without consuming it during context preparation.
-        const lastAssistant = history.findLastIndex(
-          (message) => message.role === 'assistant',
-        );
         return Promise.all(
-          history.map(async (message, index) => {
+          history.map(async (message) => {
             if (message.role !== 'tool') return message;
             return {
               ...message,
@@ -84,13 +107,12 @@ export const createReadAttachmentExt: ExtensionFactory = {
                   const file = parsed.success
                     ? parsed.data.value[0]
                     : undefined;
-                  const result =
-                    file && index > lastAssistant
-                      ? await prepare(model, {
-                          url: file.data.url,
-                          mediaType: file.mediaType,
-                        })
-                      : remoteInputUnavailable();
+                  const result = file
+                    ? await prepare(model, {
+                        url: file.data.url,
+                        mediaType: file.mediaType,
+                      })
+                    : remoteInputUnavailable();
                   return { ...part, output: remoteInputModelOutput(result) };
                 }),
               ),

@@ -21,6 +21,7 @@ import {
 } from '@/config';
 
 import { mergeProviderModels } from './model-metadata';
+import { withRemoteInputMapping } from './remote-input';
 
 export type { ProviderType } from '@/config';
 export type ProviderInstanceId = string;
@@ -785,7 +786,10 @@ class ProviderRegistryModule implements ProviderRegistry {
     const instance = this.getInstance(reference.providerId);
     if (!instance.ok) throw new Error(instance.message);
     const definition = this.requireDefinition(instance.value.type);
-    return definition.createLanguageModel(instance.value, reference.modelId);
+    return withRemoteInputMapping(
+      definition.createLanguageModel(instance.value, reference.modelId),
+      instance.value.type,
+    );
   }
 
   resolveModel(reference: ModelSelectionEntry): ResolvedModelConfig {

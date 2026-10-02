@@ -41,6 +41,34 @@ export function isSharpAvailable(): boolean {
   return getSharp() !== null;
 }
 
+/** Fully decode one bounded static attachment and strip embedded metadata. */
+export async function decodeAttachmentImage(
+  buffer: Buffer,
+  caps?: ModelInputCapabilities['image'],
+): Promise<Buffer> {
+  const sharp = getSharp();
+  if (!sharp) throw new Error('Image decoder unavailable');
+  const image = sharp(buffer, {
+    limitInputPixels: 16_777_216,
+    failOn: 'warning',
+  });
+  const metadata = await image.metadata();
+  if ((metadata.pages ?? 1) !== 1) throw new Error('Animated image');
+  const pixelSide = Math.floor(
+    Math.sqrt(Math.min(caps?.maxTotalPixels ?? 4_194_304, 4_194_304)),
+  );
+  return image
+    .resize({
+      width: Math.min(2048, caps?.maxWidth ?? 2048, pixelSide),
+      height: Math.min(2048, caps?.maxHeight ?? 2048, pixelSide),
+      fit: 'inside',
+      withoutEnlargement: true,
+    })
+    .png()
+    .timeout({ seconds: 5 })
+    .toBuffer();
+}
+
 const DEFAULT_MAX_WIDTH = 2048;
 const DEFAULT_MAX_HEIGHT = 2048;
 const DEFAULT_MAX_DATA_SIZE = 4_194_304; // 4 MB

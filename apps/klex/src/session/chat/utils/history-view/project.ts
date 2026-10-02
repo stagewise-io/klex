@@ -136,7 +136,10 @@ function projectTool(
     status: toolStatus(part.state),
   };
   if (options.input) {
-    const input = serializeValue(part.input, options.input);
+    const input = serializeValue(
+      rawName === 'readAttachment' ? '[redacted]' : part.input,
+      options.input,
+    );
     if (input !== null) record.input = input;
   }
   if (part.state === 'output-available' && part.output !== undefined) {

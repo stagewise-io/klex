@@ -78,4 +78,10 @@ The MCP ingress extension installed in the default session subscribes through `m
 
 ## Interface to main
 
+The session's MCP ingress extension also provides connector-independent
+[`readAttachment`](../session/chat/extensions/mcp-ingress/read-attachment.md).
+It authorizes exact attachment resource links from connected MCP sources and
+projects bounded, ephemeral image content for compatible configured models.
+PDF conversion is explicitly unsupported by the current capability architecture.
+
 `createMcp({ logging, config, realtimeMediaCapability })` composes the module. Main resolves `realtimeMediaCapability` from the realtime provider registry before MCP starts. No external inbox wiring is required.

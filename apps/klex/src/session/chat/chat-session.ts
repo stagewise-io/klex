@@ -883,6 +883,7 @@ class ChatSessionModule implements AgentSession {
       }),
       contextSize: request.model.contextSize,
       inputCapabilities: request.model.inputCapabilities,
+      ephemeralToolImages: false,
     };
     // Capture history and the forwarded-update watermark as one synchronous
     // boundary. Events accepted after this point stay in the lease update

@@ -22,6 +22,7 @@ import type {
 } from 'ai';
 
 import type { ModelCallRecord, ModelCallSource } from '@/model-call-logger';
+import { redactAttachmentSecrets } from '@/shared-utilities/attachment-privacy';
 import { normalizeAgentName } from '@/telemetry-resource';
 
 // Extract the exact event types the Telemetry interface expects for
@@ -44,7 +45,7 @@ export type ModelCallSink = (record: ModelCallRecord) => void;
 function serializeJson(value: unknown): string | undefined {
   if (value == null) return undefined;
   try {
-    return JSON.stringify(value);
+    return JSON.stringify(redactAttachmentSecrets(value));
   } catch {
     return undefined;
   }
@@ -160,6 +161,7 @@ export function recordErrorOnSpan(span: Span, error: unknown): void {
 // ---------------------------------------------------------------------------
 
 interface CallState {
+  attachmentInput: boolean;
   /** Root operation span — `generate_content {modelId}`. */
   rootSpan: Span;
   rootContext: Context;
@@ -439,6 +441,16 @@ export class KlexTelemetry implements Telemetry {
       rootSpan,
       rootContext,
       recordOutputs: this.contentAllowed() && genEvent.recordOutputs !== false,
+      attachmentInput:
+        genEvent.messages?.some(
+          (message) =>
+            Array.isArray(message.content) &&
+            message.content.some(
+              (part) =>
+                part.type === 'tool-result' &&
+                part.toolName === 'readAttachment',
+            ),
+        ) ?? false,
       functionId: genEvent.functionId,
       operationId: genEvent.operationId,
       conversationId,
@@ -698,7 +710,9 @@ export class KlexTelemetry implements Telemetry {
     const state = this.getCallState(maybeEvent.callId);
     if (!state) return;
 
-    const actualError = maybeEvent.error ?? error;
+    const actualError = state.attachmentInput
+      ? new Error('Attachment provider request failed')
+      : (maybeEvent.error ?? error);
 
     recordErrorOnSpan(state.rootSpan, actualError);
     state.rootSpan.setAttribute('klex.outcome', 'error');

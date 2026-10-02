@@ -43,6 +43,168 @@ function makeApiError(opts: {
   });
 }
 
+it.each(['throw', 'finish-error'])(
+  'turns provider media rejection (%s) into a sanitized tool result and retries as text',
+  async (mode) => {
+    const toolMessage: ModelMessage = {
+      role: 'tool',
+      content: [
+        {
+          type: 'tool-result',
+          toolCallId: 'attachment',
+          toolName: 'readAttachment',
+          output: {
+            type: 'content',
+            value: [
+              {
+                type: 'image-data',
+                data: 'secret-bytes',
+                mediaType: 'image/png',
+              },
+            ],
+          },
+        },
+      ],
+    };
+    const canonical = makeAssistantMessage([
+      {
+        type: 'dynamic-tool',
+        toolName: 'readAttachment',
+        toolCallId: 'attachment',
+        state: 'output-available',
+        input: { url: 'https://example.com/?signature=secret' },
+        output: { ok: true },
+      },
+    ]);
+    const unrelated: ModelMessage = {
+      role: 'tool',
+      content: [
+        {
+          type: 'tool-result',
+          toolCallId: 'other',
+          toolName: 'otherTool',
+          output: {
+            type: 'content',
+            value: [
+              {
+                type: 'image-data',
+                data: 'keep-other-image',
+                mediaType: 'image/png',
+              },
+            ],
+          },
+        },
+        {
+          type: 'tool-result',
+          toolCallId: 'text',
+          toolName: 'readAttachment',
+          output: {
+            type: 'content',
+            value: [{ type: 'text', text: 'keep-text' }],
+          },
+        },
+      ],
+    };
+    const unrelatedBefore = structuredClone(unrelated);
+    const deps = makeDeps({
+      modelMessages: [toolMessage, unrelated],
+      messages: [canonical],
+    });
+    const error = makeApiError({ message: 'invalid image', statusCode: 400 });
+    const mock = vi.mocked(runStreamedGeneration).mockReset();
+    if (mode === 'throw') mock.mockRejectedValueOnce(error);
+    else
+      mock.mockResolvedValueOnce(
+        makeGenResult(makeAssistantMessage(), 'error', error),
+      );
+    mock.mockResolvedValueOnce(
+      makeGenResult(
+        makeAssistantMessage([
+          { type: 'text', text: 'Attachment could not be read.' },
+        ]),
+        'stop',
+      ),
+    );
+    const result = await new GenerationRunner(deps).run();
+    expect(result.fatalError).toBe(false);
+    expect(runStreamedGeneration).toHaveBeenCalledTimes(2);
+    expect(unrelated).toEqual(unrelatedBefore);
+    expect(toolMessage).toMatchObject({
+      content: [
+        {
+          output: {
+            type: 'json',
+            value: { error: { code: 'provider-error' } },
+          },
+        },
+      ],
+    });
+    expect(canonical.parts[0]).toMatchObject({
+      output: { error: { code: 'provider-error' } },
+    });
+  },
+);
+
+it.each([
+  ['authentication', 401],
+  ['rate limit', 429],
+  ['invalid image', 503],
+  ['invalid tool schema', 400],
+  ['context length exceeded', 400],
+  ['connection reset', undefined],
+] as const)(
+  'preserves attachment content for unrelated %s errors',
+  async (message, statusCode) => {
+    for (const mode of ['throw', 'finish-error']) {
+      const modelMessages: ModelMessage[] = [
+        {
+          role: 'tool',
+          content: [
+            {
+              type: 'tool-result',
+              toolName: 'readAttachment',
+              toolCallId: 'attachment',
+              output: {
+                type: 'content',
+                value: [
+                  {
+                    type: 'image-data',
+                    data: 'keep-image',
+                    mediaType: 'image/png',
+                  },
+                ],
+              },
+            },
+          ],
+        },
+      ];
+      const canonical = makeAssistantMessage([
+        {
+          type: 'dynamic-tool',
+          toolName: 'readAttachment',
+          toolCallId: 'attachment',
+          state: 'output-available',
+          input: {},
+          output: { ok: true },
+        },
+      ]);
+      const before = structuredClone({ modelMessages, canonical });
+      const error = makeApiError({ message, statusCode });
+      const mock = vi.mocked(runStreamedGeneration).mockReset();
+      if (mode === 'throw') mock.mockRejectedValueOnce(error);
+      else
+        mock.mockResolvedValueOnce(
+          makeGenResult(makeAssistantMessage(), 'error', error),
+        );
+      await new GenerationRunner(
+        makeDeps({ modelMessages, messages: [canonical] }),
+      ).run();
+      expect(mock).toHaveBeenCalledTimes(1);
+      expect({ modelMessages, canonical }).toEqual(before);
+    }
+  },
+);
+
 function makeAssistantMessage(
   parts: ExtendedUIMessage['parts'] = [],
 ): ExtendedUIMessage {

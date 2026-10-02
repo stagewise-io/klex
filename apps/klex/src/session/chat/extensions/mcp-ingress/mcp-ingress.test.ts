@@ -1,15 +1,18 @@
 import { randomUUID } from 'node:crypto';
 
 import { ResourceNotFoundError } from '@modelcontextprotocol/client';
+import sharp from 'sharp';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { ModuleLogger } from '@stagewise/logger';
 
 import { SessionInboxUrgency } from '@/session/chat/inbox';
 import type { ExtendedUIMessage } from '@/session/chat/message-types';
+import { convertToModelMessagesExtended } from '@/session/chat/utils/convert-to-model-messages';
 
 import type { ExtensionDeps, ExtensionFactory } from '../extension-api';
 import { createDataPart, isDataPartOf } from '../extension-api';
+import * as attachmentFetch from './attachment-fetch';
 import { createMcpIngressExt } from './mcp-ingress';
 import type {
   ContextDataContent,
@@ -82,6 +85,137 @@ function getTool(ext: ReturnType<ExtensionFactory['create']>, name: string) {
   if (!tool) throw new Error(`Tool ${name} not found`);
   return tool;
 }
+
+it('projects actual converted tool history into ephemeral media or a stable failure', async () => {
+  const url = 'https://example.com/image';
+  const deps = createMockDeps({
+    getServerStatuses: vi.fn(
+      () => [{ name: 'connector', status: 'connected' }] as never,
+    ),
+  });
+  deps.getHistory = () => [
+    {
+      id: 'source',
+      role: 'user',
+      parts: [
+        {
+          type: 'data-context',
+          data: {
+            sourceEnv: 'connector',
+            metadata: {},
+            content: [{ type: 'resource_link', uri: url, name: 'image' }],
+          },
+        },
+      ],
+    },
+  ];
+  const bytes = await sharp({
+    create: { width: 2, height: 2, channels: 3, background: 'red' },
+  })
+    .png()
+    .toBuffer();
+  const fetch = vi
+    .spyOn(attachmentFetch, 'fetchAttachment')
+    .mockResolvedValue({ bytes, mimeType: '' });
+  try {
+    const extension = createMcpIngressExt().create(deps);
+    const model = {
+      modelId: 'test',
+      contextSize: 10000,
+      inputCapabilities: { image: {} },
+    };
+    const tool = extension.getTools!(model).readAttachment!;
+    const output = await tool.execute!(
+      { url },
+      { toolCallId: 'image', messages: [], context: {} },
+    );
+    expect(output).toMatchObject({ ok: true });
+    const canonical: ExtendedUIMessage[] = [
+      {
+        id: 'result',
+        role: 'assistant',
+        parts: [
+          {
+            type: 'dynamic-tool',
+            toolName: 'readAttachment',
+            toolCallId: 'image',
+            state: 'output-available',
+            input: { url },
+            output,
+          },
+        ],
+      },
+    ];
+    const converted = await convertToModelMessagesExtended(canonical, {});
+    const projected = await extension.contextTransformer!(converted, model);
+    expect(JSON.stringify(projected)).toContain('image-data');
+    expect(JSON.stringify(canonical)).not.toContain(bytes.toString('base64'));
+    const realtime = { ...model, ephemeralToolImages: false };
+    expect(
+      JSON.stringify(await extension.contextTransformer!(converted, realtime)),
+    ).toContain('unsupported-provider');
+    expect(
+      await extension.getTools!(realtime).readAttachment!.execute!(
+        { url },
+        { toolCallId: 'live', messages: [], context: {} },
+      ),
+    ).toMatchObject({ ok: false, error: { code: 'unsupported-provider' } });
+    expect(fetch).toHaveBeenCalledTimes(1);
+    await extension.onClose?.();
+    expect(
+      JSON.stringify(await extension.contextTransformer!(converted, model)),
+    ).toContain('fetch-failed');
+  } finally {
+    fetch.mockRestore();
+  }
+});
+
+it('registers readAttachment only with MCP access and authorizes exact resource links from connected sources', async () => {
+  const deps = createMockDeps({
+    getServerStatuses: vi.fn(
+      () => [{ name: 'connector', status: 'connected' }] as never,
+    ),
+  });
+  const uri = 'https://example.com/file?signature=secret';
+  deps.getHistory = () => [
+    {
+      id: 'event',
+      role: 'user',
+      parts: [
+        {
+          type: 'data-context',
+          data: {
+            sourceEnv: 'connector',
+            metadata: {},
+            content: [{ type: 'resource_link', uri, name: 'image' }],
+          },
+        },
+      ],
+    },
+  ];
+  const extension = createMcpIngressExt().create(deps);
+  const tool = extension.getTools!({
+    modelId: 'test',
+    contextSize: 10000,
+    inputCapabilities: { image: {} },
+  }).readAttachment!;
+  const invoke = (url: string) =>
+    tool.execute!(
+      { url, mimeType: 'application/pdf' },
+      { toolCallId: 'test', messages: [], context: {} },
+    );
+  expect(await invoke(uri)).toMatchObject({
+    error: { code: 'unsupported-media' },
+  });
+  expect(await invoke('https://example.com/other')).toMatchObject({
+    error: { code: 'unauthorized' },
+  });
+  vi.mocked(deps.mcp.getServerStatuses).mockReturnValue([]);
+  expect(await invoke(uri)).toMatchObject({ error: { code: 'unauthorized' } });
+  expect(() => createMcpIngressExt().create({ ...deps, mcp: null })).toThrow(
+    'requires MCP access',
+  );
+});
 
 async function callTool(
   ext: ReturnType<ExtensionFactory['create']>,

@@ -51,6 +51,7 @@ import { createJsReplSandboxExt } from '@/session/chat/extensions/js-repl-sandbo
 import { createMcpIngressExt } from '@/session/chat/extensions/mcp-ingress';
 import { createMemoryExt } from '@/session/chat/extensions/memory';
 import { createNameLoaderExt } from '@/session/chat/extensions/name-loader';
+import { createReadAttachmentExt } from '@/session/chat/extensions/read-attachment/read-attachment';
 import {
   createSoulExt,
   createSoulExtGod,
@@ -519,6 +520,7 @@ async function main(): Promise<void> {
       defaultTimeExt,
       createImageInputOptimizerExt,
       createAudioInputOptimizerExt,
+      createReadAttachmentExt,
       createTodosExt,
       createMcpIngressExt(),
       createMemoryExt(),

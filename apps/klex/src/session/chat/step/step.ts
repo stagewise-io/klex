@@ -280,6 +280,7 @@ class StepModule implements Step {
               modelId: resolved.modelId,
             };
             resolvedModel = {
+              reference: entry,
               modelId,
               displayName: info.displayName,
               contextSize: info.contextSize,

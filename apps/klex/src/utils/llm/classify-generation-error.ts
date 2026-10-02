@@ -309,7 +309,7 @@ export function classifyGenerationError(
         isModelError: true,
         isFatal: false,
         isAbort: false,
-        reason: `network error: ${error.message}`,
+        reason: 'network error',
       };
     }
   }

@@ -162,6 +162,8 @@ export interface ProvisionalStepContext {
  * details are exposed.
  */
 export interface ResolvedModel {
+  /** Selected provider/model, for model-aware tools. Absent for realtime leases. */
+  reference?: ModelSelectionEntry;
   /** Full model ID (e.g. `"remote:gpt-4o"`). */
   modelId: ModelId;
   /** Human-readable name from `knownModels`, if declared. */

@@ -936,6 +936,7 @@ describe('Step — ResolvedModel passing', () => {
     const historyCall = extensionHandler.runHistoryTransformers.mock.calls[0];
     expect(historyCall).toBeDefined();
     expect(historyCall?.[1]).toEqual({
+      reference: { providerId: 'remote', modelId: 'gpt-4o' },
       modelId: 'gpt-4o',
       displayName: 'GPT-4o',
       contextSize: 128_000,
@@ -1043,6 +1044,7 @@ describe('Step — ResolvedModel passing', () => {
     const contextCall = extensionHandler.runContextTransformers.mock.calls[0];
     expect(contextCall).toBeDefined();
     expect(contextCall?.[1]).toEqual({
+      reference: { providerId: 'remote', modelId: 'gpt-4o' },
       modelId: 'gpt-4o',
       displayName: 'GPT-4o',
       contextSize: 128_000,

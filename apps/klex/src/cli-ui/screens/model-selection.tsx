@@ -39,6 +39,7 @@ type Purpose =
   | 'memory'
   | 'imageVision'
   | 'audioListening'
+  | 'classifier'
   | 'voice.sts'
   | 'voice.tts'
   | 'voice.stt';
@@ -61,6 +62,7 @@ const PURPOSES: { key: Purpose; label: string }[] = [
   { key: 'memory', label: 'Memory' },
   { key: 'imageVision', label: 'Image Vision' },
   { key: 'audioListening', label: 'Audio Listening' },
+  { key: 'classifier', label: 'Classifier' },
   { key: 'voice.sts', label: 'Voice — Speech-to-Speech' },
   { key: 'voice.tts', label: 'Voice — Text-to-Speech' },
   { key: 'voice.stt', label: 'Voice — Speech-to-Text' },

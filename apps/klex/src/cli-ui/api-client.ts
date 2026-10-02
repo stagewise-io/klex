@@ -161,6 +161,7 @@ export interface ModelSelection {
   imageVision: ModelSelectionEntry[];
   audioListening: ModelSelectionEntry[];
   consult: ModelSelectionEntry[];
+  classifier: ModelSelectionEntry[];
   voice: {
     sts: ModelSelectionEntry[];
     tts: ModelSelectionEntry[];

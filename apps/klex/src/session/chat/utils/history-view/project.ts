@@ -111,6 +111,15 @@ function projectPart(
     return filter.context ? projectContext(part.data, filter.context) : null;
   }
 
+  if (part.type === 'data-god-message' && filter.godMessages) {
+    return filter.context
+      ? projectContext(
+          { ...part.data, sourceEnv: 'admin:god-message', metadata: {} },
+          filter.context,
+        )
+      : null;
+  }
+
   if (part.type.startsWith('data-')) {
     const projector = filter.data?.[part.type.slice('data-'.length)];
     const projectedData = projector?.(

@@ -543,6 +543,7 @@ class ProviderRegistryModule implements ProviderRegistry {
       audioListening:
         patch.audioListening ?? current.modelSelection.audioListening,
       consult: patch.consult ?? current.modelSelection.consult,
+      classifier: patch.classifier ?? current.modelSelection.classifier,
       voice: patch.voice ?? current.modelSelection.voice,
     };
     const changed: ModelSelection = {
@@ -552,6 +553,7 @@ class ProviderRegistryModule implements ProviderRegistry {
       imageVision: patch.imageVision ?? [],
       audioListening: patch.audioListening ?? [],
       consult: patch.consult ?? [],
+      classifier: patch.classifier ?? [],
       voice: patch.voice ?? { sts: [], tts: [], stt: [] },
     };
     const warnings: ModelSelectionWarning[] = [];
@@ -1078,6 +1080,7 @@ function modelSelectionEntries(
     ['imageVision', selection.imageVision],
     ['audioListening', selection.audioListening],
     ['consult', selection.consult],
+    ['classifier', selection.classifier],
     ['voice.sts', selection.voice.sts],
     ['voice.tts', selection.voice.tts],
     ['voice.stt', selection.voice.stt],

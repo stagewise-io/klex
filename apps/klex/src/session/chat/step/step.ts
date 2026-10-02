@@ -17,10 +17,12 @@ import type { TelemetryMetrics } from '@/telemetry-metrics';
 
 import type { ExtensionHandler } from '../extension-handler';
 import type {
+  InstinctSummary,
   ResolvedModel,
   StepCompleteEvent,
   TransformationFlags,
 } from '../extensions/extension-api';
+import type { InstinctResult, InstinctRunner } from '../instinct';
 import type { ExtendedUIMessage } from '../message-types';
 import { checkAndFixHistory } from '../utils/check-and-fix-history';
 import type { ModelFallbackManager } from '../utils/model-fallback-manager';
@@ -76,7 +78,15 @@ export interface StepDependencies {
    * Base system prompt forwarded to the generation runner.
    */
   basePrompt: string;
+  /**
+   * Session-scoped instinct runner. Omitted: the step never runs
+   * instinct (tests, sessions without extensions).
+   */
+  instinctRunner?: InstinctRunner;
 }
+
+/** Abort reason that ends the turn instead of re-running the step. */
+const SESSION_SHUTDOWN_ABORT_REASON = 'session_shutdown';
 
 // Re-export so callers can import the step result type from the step module.
 export type { StepCompleteEvent } from '../extensions/extension-api';
@@ -103,6 +113,12 @@ class StepModule implements Step {
   private stepContext: Context | null = null;
 
   private generationRunner: GenerationRunner | null = null;
+
+  /**
+   * Remembers cancellation across instinct and asynchronous preparation,
+   * before a generation runner exists to receive it.
+   */
+  private readonly stepAbort = new AbortController();
 
   constructor(private readonly deps: StepDependencies) {
     deps.logger.trace(
@@ -133,10 +149,36 @@ class StepModule implements Step {
 
     try {
       return await context.with(this.stepContext, async () => {
+        let instinctSummary: InstinctSummary | undefined;
+        const complete = async (event: StepCompleteEvent) => {
+          const result: StepCompleteEvent = {
+            ...event,
+            ...(instinctSummary !== undefined && {
+              instinct: instinctSummary,
+            }),
+          };
+          await this.deps.extensionHandler.runStepCompleteHooks(result);
+          return result;
+        };
+        const abortPreparation = () =>
+          complete({
+            shouldContinue:
+              this.stepAbort.signal.reason !== SESSION_SHUTDOWN_ABORT_REASON,
+            forceNextStep: false,
+            fatalError: false,
+            fatalErrorReason: null,
+            generationFailed: false,
+            generation: null,
+            toolCalls: [],
+            modelFallbackOccurred: false,
+            instinctAborted: true,
+          });
+
         // 2.2.1: Notify extensions that a step is starting. This fires
         // before any processing — inbox drain, history repair, or the
         // step decision — so extensions can reset per-step state.
         await this.deps.extensionHandler.runStepStartHooks();
+        if (this.stepAbort.signal.aborted) return abortPreparation();
 
         // 2.2.2.1: Repair history before making any step decision.
         // This ensures that any tool calls left in an intermediate state
@@ -221,9 +263,22 @@ class StepModule implements Step {
             modelFallbackOccurred: false,
             requestRejected: false,
           };
-          await this.deps.extensionHandler.runStepCompleteHooks(skipEvent);
-          return skipEvent;
+          return complete(skipEvent);
         }
+
+        // 2.2.3.1: Instinct — shared classification and extension
+        // reactions. Runs after the decision (skipped steps never classify)
+        // and before model resolution. Persistent parts are committed here
+        // synchronously; provisional and ephemeral parts are applied below.
+        const instinct = await this.runInstinct(stepSpan);
+        instinctSummary =
+          instinct.status !== 'skipped' ? instinct.summary : undefined;
+        if (instinct.status === 'aborted' || this.stepAbort.signal.aborted)
+          return abortPreparation();
+        const instinctProvisional =
+          instinct.status === 'ready' ? instinct.provisional : [];
+        const instinctEphemeral =
+          instinct.status === 'ready' ? instinct.ephemeral : [];
 
         // 2.2.4: Fetch the model BEFORE the transformation pipeline so
         // that extension transformers receive model metadata (displayName,
@@ -257,8 +312,7 @@ class StepModule implements Step {
               modelFallbackOccurred: false,
               requestRejected: false,
             };
-            await this.deps.extensionHandler.runStepCompleteHooks(noModelEvent);
-            return noModelEvent;
+            return complete(noModelEvent);
           }
           const modelId = entry.modelId;
           selectedModelId = modelId;
@@ -292,6 +346,7 @@ class StepModule implements Step {
             modelSpan.recordException(error as Error);
             modelSpan.setAttribute('model.unusable', true);
             modelSpan.end();
+            if (this.stepAbort.signal.aborted) return abortPreparation();
             stepSpan.addEvent('step.model_resolution_failed', {
               'model.id': modelId,
               'model.fallbackIndex':
@@ -313,13 +368,11 @@ class StepModule implements Step {
               modelFallbackOccurred: true,
               requestRejected: false,
             };
-            await this.deps.extensionHandler.runStepCompleteHooks(
-              unusableModelEvent,
-            );
-            return unusableModelEvent;
+            return complete(unusableModelEvent);
           }
           modelSpan.end();
         }
+        if (this.stepAbort.signal.aborted) return abortPreparation();
         stepSpan.setAttribute('step.modelId', selectedModelId ?? 'unknown');
         stepSpan.setAttribute(
           'step.modelFallbackIndex',
@@ -340,6 +393,7 @@ class StepModule implements Step {
               resolvedModel,
             );
         } catch (error) {
+          if (this.stepAbort.signal.aborted) return abortPreparation();
           stepSpan.setAttribute('step.cancelled', true);
           stepSpan.setAttribute(
             'step.cancelReason',
@@ -364,20 +418,27 @@ class StepModule implements Step {
             modelFallbackOccurred: false,
             requestRejected: false,
           };
-          await this.deps.extensionHandler.runStepCompleteHooks(cancelEvent);
-          return cancelEvent;
+          return complete(cancelEvent);
         }
 
+        if (this.stepAbort.signal.aborted) return abortPreparation();
+
+        // Instinct's provisional parts share the step's provisional
+        // message and its retain/rollback rules.
+        const provisionalParts = [
+          ...instinctProvisional,
+          ...provisionalContext.parts,
+        ];
         const provisionalMessageId =
-          provisionalContext.parts.length > 0 ? randomUUID() : null;
+          provisionalParts.length > 0 ? randomUUID() : null;
         if (provisionalMessageId !== null) {
           this.deps.messages.push({
             id: provisionalMessageId,
             role: 'user',
-            parts: provisionalContext.parts,
+            parts: provisionalParts,
           });
           stepSpan.addEvent('step.provisional_context_appended', {
-            'step.provisionalContextPartCount': provisionalContext.parts.length,
+            'step.provisionalContextPartCount': provisionalParts.length,
           });
         }
 
@@ -400,6 +461,14 @@ class StepModule implements Step {
           // --- Stage 1: Copy ---
           transformSpan.addEvent('history_copy.start');
           const messagesCopy = structuredClone(this.deps.messages);
+          // Ephemeral instinct parts exist only in this attempt's clone.
+          if (instinctEphemeral.length > 0) {
+            messagesCopy.push({
+              id: randomUUID(),
+              role: 'user',
+              parts: structuredClone(instinctEphemeral),
+            });
+          }
           transformSpan.addEvent('history_copy.end', {
             'history_copy.messageCount': messagesCopy.length,
           });
@@ -419,6 +488,7 @@ class StepModule implements Step {
           } catch (error) {
             transformSpan.setAttribute('history_pre_process.error', true);
             transformSpan.end();
+            if (this.stepAbort.signal.aborted) return abortPreparation();
             stepSpan.setAttribute('step.cancelled', true);
             stepSpan.setAttribute(
               'step.cancelReason',
@@ -443,8 +513,11 @@ class StepModule implements Step {
               modelFallbackOccurred: false,
               requestRejected: false,
             };
-            await this.deps.extensionHandler.runStepCompleteHooks(cancelEvent);
-            return cancelEvent;
+            return complete(cancelEvent);
+          }
+          if (this.stepAbort.signal.aborted) {
+            transformSpan.end();
+            return abortPreparation();
           }
           transformSpan.setAttribute(
             'history_pre_process.messageCount',
@@ -470,6 +543,10 @@ class StepModule implements Step {
             this.deps.extensionHandler,
             preResult.history,
           );
+          if (this.stepAbort.signal.aborted) {
+            transformSpan.end();
+            return abortPreparation();
+          }
           transformSpan.addEvent('history_convert.end', {
             'history_convert.outputMessageCount': modelMessages.length,
           });
@@ -489,6 +566,7 @@ class StepModule implements Step {
           } catch (error) {
             transformSpan.setAttribute('history_post_process.error', true);
             transformSpan.end();
+            if (this.stepAbort.signal.aborted) return abortPreparation();
             stepSpan.setAttribute('step.cancelled', true);
             stepSpan.setAttribute(
               'step.cancelReason',
@@ -513,8 +591,7 @@ class StepModule implements Step {
               modelFallbackOccurred: false,
               requestRejected: false,
             };
-            await this.deps.extensionHandler.runStepCompleteHooks(cancelEvent);
-            return cancelEvent;
+            return complete(cancelEvent);
           }
           transformSpan.setAttribute(
             'history_post_process.messageCount',
@@ -537,6 +614,8 @@ class StepModule implements Step {
             'step.messageCount': modelMessages.length,
           });
 
+          if (this.stepAbort.signal.aborted) return abortPreparation();
+
           // 2.2.8: Resolve tools and system prompt parts from extensions
           // for the current model, then run generation via the
           // GenerationRunner. The runner owns the retry loop, model
@@ -545,6 +624,7 @@ class StepModule implements Step {
           const tools = this.deps.extensionHandler.getTools(resolvedModel);
           const extensionSystemPromptParts =
             this.deps.extensionHandler.getSystemPromptParts();
+          if (this.stepAbort.signal.aborted) return abortPreparation();
           const runner = createGenerationRunner({
             logger: this.deps.logger,
             sessionId: this.deps.sessionId,
@@ -562,6 +642,10 @@ class StepModule implements Step {
             telemetryMetrics: this.deps.telemetryMetrics,
             ...(providerOptions !== undefined && { providerOptions }),
           });
+          // No await between this check, publishing the runner, and run().
+          // Earlier cancellation must not start generation; later cancellation
+          // is forwarded directly by abortGeneration().
+          if (this.stepAbort.signal.aborted) return abortPreparation();
           this.generationRunner = runner;
 
           try {
@@ -577,8 +661,7 @@ class StepModule implements Step {
             // Notify extensions that a step completed. The handler catches
             // per-extension errors and runs all hooks in parallel, so this
             // won't break the turn.
-            await this.deps.extensionHandler.runStepCompleteHooks(result);
-            return result;
+            return await complete(result);
           } finally {
             this.generationRunner = null;
           }
@@ -595,6 +678,9 @@ class StepModule implements Step {
   }
 
   abortGeneration(reason?: string): void {
+    if (!this.stepAbort.signal.aborted) {
+      this.stepAbort.abort(reason ?? 'unknown');
+    }
     this.generationRunner?.abort(reason);
     this.stepSpan?.addEvent('step.generation_aborted', {
       'step.abortReason': reason ?? 'unknown',
@@ -603,6 +689,55 @@ class StepModule implements Step {
 
   abortTools(): void {
     this.generationRunner?.abortTools();
+  }
+
+  // ---------------------------------------------------------------------------
+  // Instinct
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Runs instinct and commits its persistent parts. Skipped when no runner
+   * is wired or no chat model is configured (the step would return right
+   * after without generating, so classification would be wasted).
+   */
+  private async runInstinct(stepSpan: Span): Promise<InstinctResult> {
+    const runner = this.deps.instinctRunner;
+    if (
+      runner === undefined ||
+      this.deps.fallbackManager.getChatModelEntry() === undefined
+    ) {
+      return { status: 'skipped' };
+    }
+    const result = await runner.run({
+      history: this.deps.messages,
+      signal: this.stepAbort.signal,
+    });
+    if (result.status === 'skipped') return result;
+
+    stepSpan.addEvent('step.instinct', {
+      'instinct.status': result.status,
+      'instinct.classifierStatus': result.summary.classifierStatus,
+      'instinct.durationMs': result.summary.durationMs,
+    });
+    this.deps.logger.debug(
+      { stepId: this.id, status: result.status, summary: result.summary },
+      'Step instinct finished',
+    );
+
+    // A late abort (after reactions settled, before commit) still wins:
+    // nothing is committed and the step re-runs.
+    if (result.status === 'ready' && this.stepAbort.signal.aborted) {
+      return { status: 'aborted', summary: result.summary };
+    }
+    if (result.status === 'ready') {
+      result.commit(this.deps.messages);
+      if (result.persistent.length > 0) {
+        stepSpan.addEvent('step.instinct_committed', {
+          'instinct.persistentMessageCount': result.persistent.length,
+        });
+      }
+    }
+    return result;
   }
 
   // ---------------------------------------------------------------------------

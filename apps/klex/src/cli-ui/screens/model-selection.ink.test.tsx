@@ -18,6 +18,7 @@ const emptySelection: ModelSelection = {
   memory: [],
   imageVision: [],
   audioListening: [],
+  classifier: [],
   voice: { sts: [], tts: [], stt: [] },
 };
 

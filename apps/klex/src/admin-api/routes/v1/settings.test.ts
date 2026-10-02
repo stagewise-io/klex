@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { ModuleLogger } from '@stagewise/logger';
 
 import type { Config, KlexConfig } from '@/config';
+import { defaultInstinctConfig } from '@/config/config.test-fixtures';
 import type { ProviderRegistry } from '@/provider-registry';
 
 import {
@@ -23,6 +24,7 @@ const logger = { error: () => undefined } as unknown as ModuleLogger;
 const reference = { providerId: 'openai-main', modelId: 'org:model:v2' };
 const baseConfig: KlexConfig = {
   configVersion: 2,
+  instinct: defaultInstinctConfig,
   officialName: 'Agent',
   providers: {
     'openai-main': {
@@ -38,6 +40,7 @@ const baseConfig: KlexConfig = {
     memory: [],
     imageVision: [],
     audioListening: [],
+    classifier: [],
     voice: { sts: [], tts: [], stt: [] },
   },
   mcpServers: {},

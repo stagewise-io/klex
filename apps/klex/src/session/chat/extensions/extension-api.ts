@@ -6,6 +6,7 @@ import type {
   TextPart,
   ToolSet,
 } from 'ai';
+import type z from 'zod';
 
 import type { ModuleLogger, RootLogger } from '@stagewise/logger';
 
@@ -201,6 +202,18 @@ export interface GenerateTextArgs {
   maxOutputTokens?: number;
   /** Max retries per model (default 0 — the fallback list handles retries). */
   maxRetries?: number;
+  /**
+   * Cancels the in-flight call and stops the fallback loop. The result is
+   * then a failure with reason `aborted`.
+   */
+  abortSignal?: AbortSignal;
+  /**
+   * Requests structured output validated against this schema (AI SDK
+   * `Output.object`). The parsed value is returned as `output`. A model
+   * whose output does not match counts as failed and the next model is
+   * tried.
+   */
+  outputSchema?: z.ZodType;
 }
 
 /**
@@ -213,6 +226,8 @@ export interface GenerateTextSuccess {
   modelId: string;
   /** Token usage from the successful generation, including cache details. */
   usage: LanguageModelUsage;
+  /** Validated structured output; set only when `outputSchema` was given. */
+  output?: unknown;
 }
 
 /**
@@ -227,6 +242,8 @@ export type GenerateTextFailureReason =
   | 'all-models-failed'
   /** The model returned a content-filter finish reason. */
   | 'content-filter'
+  /** The caller's `abortSignal` fired. */
+  | 'aborted'
   /** Catch-all for unexpected failures. */
   | 'other';
 
@@ -238,6 +255,13 @@ export interface GenerateTextFailure {
   failureReason: GenerateTextFailureReason;
   /** Human-readable details (per-model error messages). */
   failureDetails?: string;
+  /**
+   * Raw text of the last model whose structured output failed validation,
+   * so callers can salvage valid parts. Only set with `outputSchema`.
+   */
+  unparsedOutputText?: string;
+  /** Model that produced {@link unparsedOutputText}. */
+  unparsedOutputModelId?: string;
 }
 
 /**
@@ -328,23 +352,206 @@ export interface StepCompleteEvent {
    * request content they injected so the next step can succeed.
    */
   requestRejected: boolean;
+  /**
+   * Summary of the step's instinct phase. Absent when instinct did not
+   * run (skipped step, no participating extension, or instinct disabled).
+   */
+  instinct?: InstinctSummary;
+  /**
+   * True when cancellation interrupted instinct or subsequent preparation
+   * before generation. Such an attempt is not a successful generation.
+   */
+  instinctAborted?: boolean;
+}
+
+// ---------------------------------------------------------------------------
+// Step instinct & shared classification
+// See ../architecture.md#instinct-subsystem for the lifecycle and an example.
+// ---------------------------------------------------------------------------
+
+/**
+ * ID-set delta since this session's last committed instinct. Detects inserts
+ * anywhere in history, not edits to existing IDs. Interrupted runs preserve
+ * the baseline for retry; committed instinct parts appear in the next delta.
+ */
+export interface InstinctHistoryDelta {
+  /** Messages whose IDs were not in the previous instinct snapshot, in history order. */
+  readonly added: readonly ExtendedUIMessage[];
+  /** IDs present in the previous snapshot but gone now (compaction, rollback). */
+  readonly removedIds: readonly string[];
+  /** True on the first instinct of the session: `added` is then the full history. */
+  readonly initial: boolean;
+}
+
+/**
+ * Input for both instinct hooks. Built once per step; every extension
+ * receives its own structured clone.
+ */
+export interface InstinctInput {
+  /** Snapshot of canonical history at the start of instinct. */
+  readonly history: readonly ExtendedUIMessage[];
+  readonly delta: InstinctHistoryDelta;
+}
+
+/**
+ * Fixed-vocabulary answer descriptor; free-form model text is not accepted.
+ */
+export type InstinctClassificationKey =
+  | { readonly type: 'boolean'; readonly description: string }
+  | {
+      readonly type: 'enum';
+      readonly values: readonly [string, ...string[]];
+      readonly description: string;
+    };
+
+export type InstinctClassificationKeys = Readonly<
+  Record<string, InstinctClassificationKey>
+>;
+
+/**
+ * Valid requests share one inference using `modelSelection.classifier`.
+ * No valid requests means no call; an empty model list yields `unavailable`
+ * rather than chat fallback. Core supplies bounded conversation history.
+ */
+export interface InstinctClassificationRequest<
+  K extends InstinctClassificationKeys = InstinctClassificationKeys,
+> {
+  /**
+   * Trusted, extension-authored instructions (1–4,000 characters).
+   * Must not contain conversation data or changing state.
+   */
+  readonly prompt: string;
+  /**
+   * 1..16 keys. Key names must match `/^[A-Za-z][A-Za-z0-9_]{0,63}$/`. Core
+   * namespaces them under the extension identifier; all keys are required
+   * in the answer. Enum keys allow up to 32 unique values of 1..64 characters.
+   * Descriptions are non-empty and bounded to 500 characters.
+   */
+  readonly keys: K;
+  /**
+   * Current extension state, framed as external data and capped by
+   * `instinct.contextCharacterCap`. Used only for this call, never stored
+   * in canonical history.
+   */
+  readonly context?: string;
+}
+
+/** Maps key descriptors to answer types: boolean → boolean, enum → union of its values. */
+export type InstinctClassificationAnswers<
+  K extends InstinctClassificationKeys,
+> = {
+  -readonly [P in keyof K]: K[P] extends {
+    type: 'enum';
+    values: readonly (infer V)[];
+  }
+    ? V
+    : boolean;
+};
+
+/**
+ * The classification outcome one extension receives. `answers` holds only
+ * that extension's own validated slice. Other slices can succeed even if
+ * this one fails validation. `unavailable` means no usable configured model;
+ * `failed` includes provider errors and invalid answers. Extensions decide
+ * whether to skip preparation or use a conservative fallback on non-ok results.
+ */
+export type InstinctClassificationOutcome =
+  | {
+      readonly status: 'ok';
+      readonly answers: Readonly<Record<string, boolean | string>>;
+      readonly modelId: string;
+    }
+  | {
+      readonly status: 'unavailable' | 'failed' | 'timeout' | 'aborted';
+      readonly reason?: string;
+    };
+
+/**
+ * Transactional staging for step context. Operations are buffered per
+ * extension and applied by core in one synchronous commit after all
+ * reactions settle. Each buffer seals immediately when its own reaction
+ * settles; later writes throw even while another reaction is still running.
+ * Rejected/timed-out reactions lose their entire buffer. Step cancellation
+ * drops every buffer. This transaction covers staged context only, not an
+ * extension's own state changes or external side effects.
+ */
+export interface InstinctPreparation {
+  /**
+   * Committed to canonical history at instinct commit as one message per
+   * extension, in factory order. Survives generation failure. Only
+   * extension-owned `data-*` parts with a registered `dataPartTransformer`
+   * are allowed, so compaction, observation and writers can recognise them.
+   */
+  appendPersistent(parts: ExtendedUIMessage['parts']): void;
+  /**
+   * Merged into the step's provisional context message; kept only when
+   * generation succeeds without fallback (same rules as
+   * {@link Extension.getProvisionalStepContext}).
+   */
+  appendProvisional(parts: ExtendedUIMessage['parts']): void;
+  /** Visible to this step's inference clone only; never enters canonical history. */
+  appendEphemeral(parts: ExtendedUIMessage['parts']): void;
+}
+
+export interface InstinctContext extends InstinctInput {
+  /** `null` when this extension supplied no valid classification request this step. */
+  readonly classification: InstinctClassificationOutcome | null;
+  /** Aborts on critical inbox input, lease quiesce, session close, or the deadline. */
+  readonly signal: AbortSignal;
+  /**
+   * Shared instinct deadline in epoch milliseconds, including time already
+   * spent classifying. Work still pending at this deadline loses its buffer;
+   * preparations from reactions that already completed successfully are kept.
+   */
+  readonly deadline: number;
+  /** Stage this step's context; do not write to the history snapshot or detach writers. */
+  readonly prepare: InstinctPreparation;
+}
+
+export type InstinctReactionStatus = 'ok' | 'timeout' | 'failed' | 'aborted';
+
+export interface InstinctSummary {
+  readonly durationMs: number;
+  /** `skipped` when no extension requested classification (no model call). */
+  readonly classifierStatus:
+    | InstinctClassificationOutcome['status']
+    | 'skipped';
+  readonly reactions: readonly {
+    readonly extensionIdentifier: string;
+    readonly status: InstinctReactionStatus;
+    readonly persistentPartCount: number;
+    readonly provisionalPartCount: number;
+    readonly ephemeralPartCount: number;
+  }[];
+}
+
+/**
+ * Preserves literal key types for {@link readInstinctClassification}.
+ * Does not validate or freeze the request; core validates each returned request.
+ */
+export function defineInstinctClassification<
+  const K extends InstinctClassificationKeys,
+>(request: InstinctClassificationRequest<K>): InstinctClassificationRequest<K> {
+  return request;
+}
+
+/**
+ * Reads this extension's answers with types derived from the request.
+ * Returns `null` unless the outcome is `ok`. Pass the same key descriptors
+ * returned for this step; the request is a type witness, not a runtime lookup
+ * or validator. Core has already validated the extension's answer slice.
+ */
+export function readInstinctClassification<
+  K extends InstinctClassificationKeys,
+>(
+  ctx: Pick<InstinctContext, 'classification'>,
+  _request: InstinctClassificationRequest<K>,
+): InstinctClassificationAnswers<K> | null {
+  if (ctx.classification?.status !== 'ok') return null;
+  return ctx.classification.answers as InstinctClassificationAnswers<K>;
 }
 
 export interface Extension {
-  /**
-   * Called at the very beginning of each step — before inbox drain,
-   * history repair, or the step decision. This is a fire-and-observe
-   * lifecycle notification, not a transformer: it cannot influence
-   * what the model sees or cancel the step.
-   *
-   * All extensions' hooks are called in parallel via
-   * `Promise.allSettled`. The step waits for all hooks to settle
-   * before proceeding. Errors from individual hooks are caught and
-   * logged — one extension's hook failure does not break the step.
-   *
-   * Typical uses: resetting per-step flags, preparing caches, or
-   * recording step-start telemetry.
-   */
   /**
    * Called once when the session starts, before the first step.
    * Extensions use this to initialize owned resources (e.g. starting
@@ -395,7 +602,36 @@ export interface Extension {
    */
   getSystemPromptPart?: () => string;
 
+  /**
+   * Awaited in parallel before history repair and the step decision.
+   * Lifecycle notification only; use context hooks to affect inference.
+   * Errors are logged per extension without breaking the step.
+   */
   onStepStart?: () => void | Promise<void>;
+
+  /**
+   * Synchronously requests classification for an executable step, or returns
+   * `null` to opt out. Must be cheap: no I/O or model calls. Throws and
+   * invalid requests are treated as `null`. See {@link InstinctClassificationRequest}
+   * for prompt/state separation and limits.
+   */
+  getInstinctClassificationRequest?: (
+    input: InstinctInput,
+  ) => InstinctClassificationRequest | null;
+
+  /**
+   * Runs in parallel whether or not this extension requested classification.
+   * Main generation waits for reactions within the remaining shared
+   * `instinct.timeoutMs` budget after classification.
+   *
+   * Pass `ctx.signal` to I/O; avoid blocking the event loop. Stage context
+   * through `ctx.prepare` and await all writes before returning. See
+   * {@link InstinctPreparation} for sealing, rollback and retention rules.
+   * Core stops waiting on cancellation but cannot undo external side effects.
+   * Background results must use normal inbox delivery with their own
+   * cancellation and deduplication policy.
+   */
+  onInstinct?: (ctx: InstinctContext) => void | Promise<void>;
 
   /**
    * Produces context just in time for one imminent model-generation attempt.

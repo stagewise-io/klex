@@ -7,7 +7,7 @@ import type { RootLogger } from '@stagewise/logger';
 import {
   CONFIG_FILE_NAME,
   CONFIG_STORE_DEFINITION,
-  type KlexConfig,
+  parseKlexConfig,
 } from '@/config';
 import { isDirectoryInUse } from '@/directory-lock';
 import { readJsonStoreDocument, writeJsonStoreDocument } from '@/local-data';
@@ -112,7 +112,7 @@ class AgentDirectoryModule implements AgentDirectory {
       });
     }
 
-    const config: KlexConfig = {
+    const config = parseKlexConfig({
       configVersion: 2,
       officialName: name,
       timezone: 'UTC',
@@ -124,6 +124,7 @@ class AgentDirectoryModule implements AgentDirectory {
         memory: [],
         imageVision: [],
         audioListening: [],
+        classifier: [],
         voice: { sts: [], tts: [], stt: [] },
       },
       mcpServers: {},
@@ -136,7 +137,7 @@ class AgentDirectoryModule implements AgentDirectory {
           },
         },
       },
-    };
+    });
     const configPath = join(directory, CONFIG_FILE_NAME);
     try {
       await writeJsonStoreDocument(

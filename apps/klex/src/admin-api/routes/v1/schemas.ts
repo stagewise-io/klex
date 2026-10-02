@@ -292,6 +292,7 @@ const modelSelectionSchema = z
     imageVision: z.array(modelSelectionEntryOapiSchema).default([]),
     audioListening: z.array(modelSelectionEntryOapiSchema).default([]),
     consult: z.array(modelSelectionEntryOapiSchema).default([]),
+    classifier: z.array(modelSelectionEntryOapiSchema).default([]),
     voice: voiceModelSelectionSchema,
   })
   .openapi('ModelSelection');
@@ -304,6 +305,7 @@ const modelSelectionPatchSchema = z
     imageVision: z.array(modelSelectionEntryOapiSchema).optional(),
     audioListening: z.array(modelSelectionEntryOapiSchema).optional(),
     consult: z.array(modelSelectionEntryOapiSchema).optional(),
+    classifier: z.array(modelSelectionEntryOapiSchema).optional(),
     voice: voiceModelSelectionSchema.optional(),
   })
   .openapi('ModelSelectionPatch');

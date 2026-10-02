@@ -472,6 +472,7 @@ export const MODEL_PURPOSES = [
   'imageVision',
   'audioListening',
   'consult',
+  'classifier',
 ] as const;
 
 const modelSelectionSchema = z
@@ -482,11 +483,13 @@ const modelSelectionSchema = z
     imageVision: z.array(modelSelectionEntrySchema).default([]),
     audioListening: z.array(modelSelectionEntrySchema).default([]),
     consult: z.array(modelSelectionEntrySchema).default([]),
+    classifier: z.array(modelSelectionEntrySchema).default([]),
     voice: voiceModelSelectionSchema.default({ sts: [], tts: [], stt: [] }),
   })
   .strict();
 
 type ModelSelection = z.infer<typeof modelSelectionSchema>;
+type InstinctConfig = z.infer<typeof instinctConfigSchema>;
 type ModelPurpose = (typeof MODEL_PURPOSES)[number];
 type VoiceModelPurpose = keyof ModelSelection['voice'];
 
@@ -552,6 +555,51 @@ const timezoneSchema = z
   );
 
 /**
+ * Tunables of the step instinct phase (shared classification and
+ * extension reactions before model generation). All fields have defaults.
+ */
+const instinctConfigSchema = z
+  .object({
+    /** Kill switch. When false, steps never run instinct. */
+    enabled: z.boolean().default(true),
+    /** Shared deadline for classification plus all reactions. */
+    timeoutMs: z.number().int().positive().max(120_000).default(8_000),
+    /** Deadline of the classifier call alone (bounded by `timeoutMs`). */
+    classifierTimeoutMs: z
+      .number()
+      .int()
+      .positive()
+      .max(120_000)
+      .default(4_000),
+    /** Earlier messages shown to the classifier before the delta. */
+    recentMessageCount: z.number().int().min(0).max(50).default(5),
+    /** Maximum number of new (delta) messages shown; newest are kept. */
+    deltaMessageCap: z.number().int().positive().max(500).default(20),
+    /** Character budget for recent plus new messages together. */
+    historyCharacterCap: z
+      .number()
+      .int()
+      .positive()
+      .max(1_000_000)
+      .default(16_000),
+    /** Maximum rendered length of one message. */
+    messageCharacterCap: z
+      .number()
+      .int()
+      .positive()
+      .max(100_000)
+      .default(2_000),
+    /** Maximum length of one extension's `context`. */
+    contextCharacterCap: z
+      .number()
+      .int()
+      .positive()
+      .max(100_000)
+      .default(2_000),
+  })
+  .strict();
+
+/**
  * Frozen shape of stored config schemas 2–4. Historical validation and
  * migrations (1→2, 3→4) use it so they keep producing the shape that
  * schema 4 accepts. Do not change it; evolve `klexConfigSchema` instead.
@@ -587,6 +635,7 @@ const klexConfigV4Schema = z.object({
     imageVision: [],
     audioListening: [],
     consult: [],
+    classifier: [],
     voice: { sts: [], tts: [], stt: [] },
   }),
   mcpServers: z.record(z.string(), mcpServerConfigSchema).default({}),
@@ -625,7 +674,8 @@ const extensionsConfigSchema = z
   .object({ memory: memoryExtensionConfigSchema.prefault({}) })
   .strict();
 
-const klexConfigSchema = z.object({
+/** Frozen stored schema 5; retains the former subsystem settings key. */
+const klexConfigV5Schema = z.object({
   configVersion: z.literal(2).default(2),
   officialName: z
     .string()
@@ -643,14 +693,21 @@ const klexConfigSchema = z.object({
     imageVision: [],
     audioListening: [],
     consult: [],
+    classifier: [],
     voice: { sts: [], tts: [], stt: [] },
   }),
   mcpServers: z.record(z.string(), mcpServerConfigSchema).default({}),
   timezone: timezoneSchema.default('UTC'),
+  preflight: instinctConfigSchema.prefault({}),
   // `.prefault` (not `.default`) so nested defaults are applied.
   extensions: extensionsConfigSchema.prefault({}),
 });
 
+const klexConfigSchema = klexConfigV5Schema.omit({ preflight: true }).extend({
+  instinct: instinctConfigSchema.prefault({}),
+});
+
+type KlexConfigV5 = z.infer<typeof klexConfigV5Schema>;
 type KlexConfig = z.infer<typeof klexConfigSchema>;
 type EpisodeRotationConfig = z.infer<typeof episodeRotationConfigSchema>;
 
@@ -711,7 +768,11 @@ const storedKlexConfigV4Schema = klexConfigV4Schema
   .extend({ configVersion: z.literal(2) })
   .strict();
 
-/** Stored schema 5: the runtime config shape; unknown keys are rejected. */
+const storedKlexConfigV5Schema = klexConfigV5Schema
+  .extend({ configVersion: z.literal(2) })
+  .strict();
+
+/** Stored schema 6: instinct replaces preflight; unknown keys are rejected. */
 const storedKlexConfigSchema = klexConfigSchema
   .extend({ configVersion: z.literal(2) })
   .strict();
@@ -727,14 +788,14 @@ function dropLegacyTelemetryConfig(input: unknown): KlexConfigV4 {
  * `memoryWriteIntervalMs` / `memoryWriteStepInterval`. The other rotation
  * limits receive their defaults.
  */
-function nestMemoryExtensionConfig(input: unknown): KlexConfig {
+function nestMemoryExtensionConfig(input: unknown): KlexConfigV5 {
   const {
     episodeFinishIdleTriggerTimeMs,
     memoryWriteIntervalMs: _memoryWriteIntervalMs,
     memoryWriteStepInterval: _memoryWriteStepInterval,
     ...rest
   } = storedKlexConfigV4Schema.parse(input);
-  return klexConfigSchema.parse({
+  return klexConfigV5Schema.parse({
     ...rest,
     extensions: {
       memory: { episodes: { idleTimeoutMs: episodeFinishIdleTriggerTimeMs } },
@@ -760,6 +821,16 @@ function parseStoredKlexConfigV2(input: unknown): Record<string, unknown> {
 
 function parseStoredKlexConfigV4(input: unknown): Record<string, unknown> {
   return storedKlexConfigV4Schema.parse(input);
+}
+
+function parseStoredKlexConfigV5(input: unknown): Record<string, unknown> {
+  return storedKlexConfigV5Schema.parse(input);
+}
+
+/** 5→6 migration: preserves existing settings under the instinct name. */
+function migrateInstinctConfig(input: unknown): KlexConfig {
+  const { preflight, ...rest } = storedKlexConfigV5Schema.parse(input);
+  return klexConfigSchema.parse({ ...rest, instinct: preflight });
 }
 
 function parseStoredKlexConfig(input: unknown): Record<string, unknown> {
@@ -926,6 +997,7 @@ function legacyFormatProviderType(format: ApiFormat): ProviderType {
 export type {
   EpisodeRotationConfig,
   HttpServerConfig,
+  InstinctConfig,
   KlexConfig,
   McpServerConfig,
   McpVersionNegotiation,
@@ -949,6 +1021,7 @@ export {
   isProviderSecretSetting,
   klexConfigSchema,
   mcpServerConfigSchema,
+  migrateInstinctConfig,
   migrateLegacyKlexConfig,
   modelCapabilitiesSchema,
   modelIdSchema,
@@ -961,6 +1034,7 @@ export {
   parseStoredKlexConfig,
   parseStoredKlexConfigV2,
   parseStoredKlexConfigV4,
+  parseStoredKlexConfigV5,
   providerConfigSchema,
   providerInstanceIdSchema,
   providerTypeSchema,

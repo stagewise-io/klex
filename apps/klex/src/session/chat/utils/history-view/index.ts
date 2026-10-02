@@ -5,10 +5,15 @@ export {
   renderFittedMessage,
   renderRecordText,
 } from './lines';
-export { CONTEXT_SUMMARY_KEY, createTranscriptHistoryView } from './presets';
+export {
+  CONTEXT_SUMMARY_KEY,
+  createInstinctHistoryView,
+  createTranscriptHistoryView,
+} from './presets';
 export { historyAfterCursor } from './project';
 export type {
   ContextItem,
+  DataProjector,
   FieldLimit,
   FittedHistory,
   FittedMessage,

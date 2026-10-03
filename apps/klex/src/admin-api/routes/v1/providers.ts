@@ -275,6 +275,8 @@ export const deleteProviderRoute = createRoute({
   path: '/v1/providers/{id}',
   tags: ['Providers'],
   summary: 'Delete provider instance',
+  description:
+    'Removes the provider, its configured models, and its entries from every model-selection purpose.',
   request: { params: providerIdParamSchema },
   responses: {
     200: {

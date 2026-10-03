@@ -194,6 +194,71 @@ describe('ProviderRegistry', () => {
     }
   });
 
+  it('sends GPT Audio input through Chat Completions while keeping text models on Responses', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      Response.json({
+        id: 'audio-test',
+        created: 1,
+        model: 'gpt-audio-1.5',
+        choices: [
+          {
+            index: 0,
+            message: { role: 'assistant', content: 'A short sound.' },
+            finish_reason: 'stop',
+          },
+        ],
+        usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+      }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    const provider = builtIn('openai');
+    const instance = {
+      id: 'work',
+      type: provider.type,
+      settings: { apiKey: 'test-key' },
+    };
+    for (const modelId of ['gpt-audio-1.5', 'gpt-audio-future']) {
+      expect(
+        provider.resolveModelMetadata?.(modelId)?.capabilities?.input?.audio
+          ?.mediaTypes,
+      ).toEqual(['audio/mpeg', 'audio/wav']);
+    }
+    const model = provider.createLanguageModel(instance, 'gpt-audio-1.5');
+    await model.doGenerate({
+      prompt: [
+        {
+          role: 'user',
+          content: [
+            {
+              type: 'file',
+              mediaType: 'audio/wav',
+              data: { type: 'data', data: new Uint8Array([1, 2, 3]) },
+            },
+          ],
+        },
+      ],
+    });
+    const [url, init] = fetchMock.mock.calls[0]!;
+    expect(String(url)).toBe('https://api.openai.com/v1/chat/completions');
+    expect(JSON.parse(init.body)).toMatchObject({
+      model: 'gpt-audio-1.5',
+      messages: [
+        {
+          role: 'user',
+          content: [
+            {
+              type: 'input_audio',
+              input_audio: { format: 'wav', data: 'AQID' },
+            },
+          ],
+        },
+      ],
+    });
+    expect(provider.createLanguageModel(instance, 'gpt-6-astra').provider).toBe(
+      'openai.responses',
+    );
+  });
+
   it('discovers the documented OpenAI model-list response shape', async () => {
     // https://platform.openai.com/docs/api-reference/models/list
     const fetchMock = vi.fn().mockResolvedValue(
@@ -668,6 +733,34 @@ describe('ProviderRegistry', () => {
       headers: { Authorization: 'Bearer secret' },
     });
   });
+
+  it.each(['opencode-zen', 'opencode-go'] as const)(
+    'checks %s credentials against inference rather than the public catalog',
+    async (type) => {
+      const fetchMock = vi.fn(async (url: string | URL | Request) =>
+        String(url).endsWith('/models')
+          ? Response.json({ data: [{ id: 'public-model' }] })
+          : Response.json(
+              { error: { message: 'invalid credentials' } },
+              { status: 401 },
+            ),
+      );
+      vi.stubGlobal('fetch', fetchMock);
+      const result = await builtIn(type).testConnection(
+        { id: 'work', type, settings: { apiKey: 'invalid-key' } },
+        signal(),
+      );
+      expect(result).toMatchObject({
+        ok: false,
+        code: 'connectivity_failed',
+        message: 'Provider returned HTTP 401',
+      });
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(String(fetchMock.mock.calls[0]?.[0])).toMatch(
+        /\/chat\/completions$/,
+      );
+    },
+  );
 
   it('reports connectivity success and sanitized upstream failures', async () => {
     vi.spyOn(Date, 'now').mockReturnValueOnce(100).mockReturnValueOnce(107);

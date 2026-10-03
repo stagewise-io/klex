@@ -2,6 +2,18 @@
 
 All notable Klex changes are documented here.
 
+## 0.12.0 (2026-10-03)
+
+### Features
+
+- infer remote attachment media types (296ffe0)
+- add dynamic remote attachment input (30ef1b1)
+
+### Bug Fixes
+
+- preserve attachments across compaction (58c5be9)
+- expire remote attachment injection after one turn (11b2d70)
+
 ## 0.11.0 (2026-09-30)
 
 ### Features

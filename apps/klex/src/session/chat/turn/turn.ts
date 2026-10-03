@@ -92,8 +92,11 @@ export interface TurnResult {
   completeFailure: boolean;
   /**
    * True if the last failing step of the turn was a provider request
-   * rejection (4xx). Retrying the same request will not help, so the
-   * session must not apply backoff retries for this turn.
+   * rejection (4xx) without salvaged content. Retrying the same request
+   * will not help, so the session must not apply backoff retries for this
+   * turn. A salvaged rejection reports false: its partial work is in
+   * history and the rejected content was dropped, so a backoff retry can
+   * finish it.
    */
   requestRejected: boolean;
   /** Why the step loop ended. */
@@ -334,7 +337,10 @@ class TurnModule implements Turn {
           if (stepFailed) {
             hadAnyFailure = true;
             consecutiveFailedSteps++;
-            lastFailureWasRejection = stepResult.requestRejected;
+            // A salvaged rejection kept partial work and extensions dropped
+            // the rejected content, so a session retry can finish it.
+            lastFailureWasRejection =
+              stepResult.requestRejected && !stepResult.forceNextStep;
           } else {
             // A clean step resets both counters, so a later first
             // rejection again retries on the same model with degraded

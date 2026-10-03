@@ -839,6 +839,29 @@ describe('Turn — failure budget and step cap', () => {
     expect(result.requestRejected).toBe(true);
   });
 
+  it('does not report requestRejected when the turn ends on a salvaged rejection', async () => {
+    const fallbackManager = makeFallbackManager(1);
+    vi.mocked(createStep).mockImplementation(
+      () =>
+        makeMockStep({
+          shouldContinue: true,
+          forceNextStep: true,
+          requestRejected: true,
+        }) as never,
+    );
+
+    const turn = createTurn(
+      makeDeps({ fallbackManager: fallbackManager as never }),
+    );
+    const result = await turn.run();
+
+    expect(createStep).toHaveBeenCalledTimes(2);
+    expect(result.stopReason).toBe('failure_budget_exhausted');
+    expect(result.completeFailure).toBe(true);
+    // Partial work is in history: the session must backoff-retry it.
+    expect(result.requestRejected).toBe(false);
+  });
+
   it('stops at MAX_STEPS_PER_TURN', async () => {
     vi.mocked(createStep).mockImplementation(
       () => makeMockStep({ shouldContinue: true }) as never,

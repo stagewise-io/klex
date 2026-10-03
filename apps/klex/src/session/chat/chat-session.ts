@@ -1149,6 +1149,8 @@ class ChatSessionModule implements AgentSession {
         // Request rejected by the provider: retrying the same request will
         // not help. Skip backoff (and its termination counter) and keep the
         // session alive so the next inbox input starts a fresh turn.
+        // Immediate input that arrived during the turn is already in
+        // history, so a check-retry turn reviews it.
         if (turnResult.completeFailure && turnResult.requestRejected) {
           this.deps.logger.warn(
             {
@@ -1164,13 +1166,14 @@ class ChatSessionModule implements AgentSession {
             'turn.steps': turnResult.stepCount,
           });
           needsBackoffRetry = false;
-          needsCheckRetry = false;
+          needsCheckRetry = this.newInputDuringTurn;
           continue;
         }
 
         // Step cap reached: the turn was cut off mid-work. Re-running it
         // would repeat the same runaway loop, so neither retry nor record
-        // a success. The session stays alive for the next inbox input.
+        // a success. The session stays alive for the next inbox input, and
+        // a check-retry turn reviews immediate input from this turn.
         if (turnResult.stopReason === 'step_cap_reached') {
           this.deps.logger.warn(
             {
@@ -1186,7 +1189,7 @@ class ChatSessionModule implements AgentSession {
             'turn.steps': turnResult.stepCount,
           });
           needsBackoffRetry = false;
-          needsCheckRetry = false;
+          needsCheckRetry = this.newInputDuringTurn;
           continue;
         }
 

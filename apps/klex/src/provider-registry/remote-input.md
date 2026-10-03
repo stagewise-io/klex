@@ -1,10 +1,36 @@
 # Remote media input
 
 `readAttachment({ url, mediaType })` supplies a remote file to the next ordinary
-generation. The caller must obtain the media type from trustworthy source
-metadata. Missing types, filename guesses, invalid URLs, credentials in URLs,
-and unsupported media return `Remote media unavailable or unsupported.` No
-request is made to discover a type or inspect bytes.
+generation. An explicit `mediaType` from trustworthy source metadata takes
+precedence, even if invalid or unsupported (there is no inference fallback).
+When omitted, the tool uses only the final URL path filename extension,
+case-insensitively, excluding query and fragment. It does not percent-decode
+filenames. Bare dotfiles, trailing slashes, unknown extensions, and absent
+extensions have no inferred type. The exact allowlist is:
+
+| Extensions | MIME type |
+| --- | --- |
+| jpg, jpeg | image/jpeg |
+| png | image/png |
+| gif | image/gif |
+| webp | image/webp |
+| avif | image/avif |
+| pdf | application/pdf |
+| mp3 | audio/mpeg |
+| wav | audio/wav |
+| ogg | audio/ogg |
+| flac | audio/flac |
+| m4a | audio/mp4 |
+| aac | audio/aac |
+| mp4 | video/mp4 |
+| webm | video/webm |
+| mov | video/quicktime |
+| mpeg, mpg | video/mpeg |
+
+Inference is only a hint; all model/provider capability and URL gates below
+still apply. Missing types, invalid URLs, credentials in URLs, and unsupported
+media return `Remote media unavailable or unsupported.` No request is made to
+discover a type or inspect bytes, and arbitrary MIME guesses are never inferred.
 
 The model's AI SDK v4 `supportedUrls` declaration is the extensible remote-input
 capability contract. Its MIME patterns and URL patterns are checked together.

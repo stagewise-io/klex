@@ -48,7 +48,7 @@ export const createReadAttachmentExt: ExtensionFactory = {
       getTools: (model): ToolSet => ({
         readAttachment: {
           description:
-            'Supply remote media to the current model on the next turn. Pass the HTTP(S) URL and a media type known from trustworthy source metadata. Do not guess from the URL or filename. Missing or unsupported media types return unavailable. This tool never downloads media.',
+            'Supply remote media to the current model on the next turn. Pass the HTTP(S) URL; optionally provide a mediaType from trustworthy source metadata, which takes precedence. When omitted, the tool infers a hint from a small allowlist of common image, PDF, audio, and video filename extensions (case-insensitive, ignoring query and fragment). Unknown extensions or unsupported media/URLs return unavailable. Inferred types still require model/provider support. This tool never downloads media.',
           inputSchema: z.object({
             url: z.string(),
             mediaType: z.string().optional(),

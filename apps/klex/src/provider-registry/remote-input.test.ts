@@ -55,6 +55,155 @@ function model(type: ProviderType, modelId = 'gemini-2.5-pro') {
 afterEach(() => vi.unstubAllGlobals());
 
 describe('remote input capability contract', () => {
+  it.each([
+    ['JpG', 'image/jpeg'],
+    ['JPEG', 'image/jpeg'],
+    ['PnG', 'image/png'],
+    ['GIF', 'image/gif'],
+    ['WebP', 'image/webp'],
+    ['AVIF', 'image/avif'],
+    ['PdF', 'application/pdf'],
+    ['MP3', 'audio/mpeg'],
+    ['WaV', 'audio/wav'],
+    ['OGG', 'audio/ogg'],
+    ['FLAC', 'audio/flac'],
+    ['M4A', 'audio/mp4'],
+    ['AAC', 'audio/aac'],
+    ['Mp4', 'video/mp4'],
+    ['WEBM', 'video/webm'],
+    ['MOV', 'video/quicktime'],
+    ['MPEG', 'video/mpeg'],
+    ['MPG', 'video/mpeg'],
+  ])('infers %s as %s without I/O', async (extension, mediaType) => {
+    const fetch = vi.fn(() => {
+      throw new Error('Unexpected I/O');
+    });
+    vi.stubGlobal('fetch', fetch);
+    vi.mocked(readFile).mockClear();
+    vi.mocked(writeFile).mockClear();
+    const selected = model('google-vertex');
+    for (const suffix of [
+      '',
+      '?download=other.txt#fake.png',
+      '#fake.txt?file.png',
+    ]) {
+      const attachmentUrl = `https://media.example/folder.txt/my.file.${extension}${suffix}`;
+      expect(
+        await prepareRemoteInput(selected, capabilities, {
+          url: attachmentUrl,
+        }),
+      ).toEqual({
+        type: 'content',
+        value: [
+          {
+            type: 'file',
+            mediaType,
+            data: { type: 'url', url: attachmentUrl },
+          },
+        ],
+      });
+    }
+    expect(fetch).not.toHaveBeenCalled();
+    expect(readFile).not.toHaveBeenCalled();
+    expect(writeFile).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    'application/pdf',
+    'IMAGE/JPEG',
+    '',
+    'image/*',
+    'invalid',
+    'video/mp4',
+  ])(
+    'honors explicit type %s over the extension, including rejection',
+    async (mediaType) => {
+      const result = await prepareRemoteInput(model('openai'), capabilities, {
+        url: 'https://media.example/photo.png',
+        mediaType,
+      });
+      if (['application/pdf', 'IMAGE/JPEG'].includes(mediaType)) {
+        expect(result).toMatchObject({
+          type: 'content',
+          value: [{ mediaType: mediaType.toLowerCase() }],
+        });
+      } else {
+        expect(result).toEqual(remoteInputUnavailable());
+      }
+    },
+  );
+
+  it.each([
+    '/',
+    '/file',
+    '/file.unknown',
+    '/file.txt',
+    '/file.json',
+    '/file.svg',
+    '/folder.png/file',
+    '/folder.png/',
+    '/.png',
+    '/file.',
+    '/file.png.exe',
+    '/file%2Epng',
+    '/file.p%6Eg',
+    '/file.png;download',
+    '/file?name=image.png',
+    '/file#image.png',
+    '/file.png/..',
+  ])(
+    'does not guess a type for path %s even with wildcard provider support',
+    async (path) => {
+      expect(
+        await prepareRemoteInput(model('google-vertex'), capabilities, {
+          url: `https://media.example${path}`,
+        }),
+      ).toEqual(remoteInputUnavailable());
+    },
+  );
+
+  it('applies capability, subtype, provider, and model URL gates to inferred types', async () => {
+    const image = { url: 'https://media.example/photo.png' };
+    const video = { url: 'https://media.example/clip.mp4' };
+    expect(await prepareRemoteInput(model('openai'), {}, image)).toEqual(
+      remoteInputUnavailable(),
+    );
+    expect(
+      await prepareRemoteInput(
+        model('openai'),
+        { image: { mediaTypes: ['image/jpeg'] } },
+        image,
+      ),
+    ).toEqual(remoteInputUnavailable());
+    expect(
+      await prepareRemoteInput(model('openai'), capabilities, video),
+    ).toEqual(remoteInputUnavailable());
+    expect(
+      await prepareRemoteInput(
+        model('google-gemini', 'gemini-2.0-flash'),
+        capabilities,
+        video,
+      ),
+    ).toEqual(remoteInputUnavailable());
+    expect(
+      await prepareRemoteInput(
+        model('google-vertex'),
+        {},
+        { url: 'https://media.example/clip.mp3' },
+      ),
+    ).toEqual(remoteInputUnavailable());
+    expect(
+      await prepareRemoteInput(model('openai'), capabilities, {
+        url: 'file:///photo.png',
+      }),
+    ).toEqual(remoteInputUnavailable());
+    expect(
+      await prepareRemoteInput(model('openai'), capabilities, {
+        url: 'https://user:secret@media.example/photo.png',
+      }),
+    ).toEqual(remoteInputUnavailable());
+  });
+
   it.each(builtInProviderDefinitions.map(({ type }) => type))(
     '%s uses its declared remote URL capabilities',
     async (type) => {

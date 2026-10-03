@@ -25,6 +25,37 @@ export const remoteInputUnavailable = (): RemoteInputResult => ({
   value: REMOTE_INPUT_UNAVAILABLE,
 });
 
+const extensionMediaTypes = new Map([
+  ['jpg', 'image/jpeg'],
+  ['jpeg', 'image/jpeg'],
+  ['png', 'image/png'],
+  ['gif', 'image/gif'],
+  ['webp', 'image/webp'],
+  ['avif', 'image/avif'],
+  ['pdf', 'application/pdf'],
+  ['mp3', 'audio/mpeg'],
+  ['wav', 'audio/wav'],
+  ['ogg', 'audio/ogg'],
+  ['flac', 'audio/flac'],
+  ['m4a', 'audio/mp4'],
+  ['aac', 'audio/aac'],
+  ['mp4', 'video/mp4'],
+  ['webm', 'video/webm'],
+  ['mov', 'video/quicktime'],
+  ['mpeg', 'video/mpeg'],
+  ['mpg', 'video/mpeg'],
+]);
+
+function inferMediaType(url: URL): string | undefined {
+  // pathname excludes query/fragment. Inspect only the final filename, without
+  // percent-decoding or treating a bare dotfile as an extension.
+  const filename = url.pathname.split('/').at(-1) ?? '';
+  const dot = filename.lastIndexOf('.');
+  return dot > 0
+    ? extensionMediaTypes.get(filename.slice(dot + 1).toLowerCase())
+    : undefined;
+}
+
 /** Pure capability check: no HEAD, fetch, inference request, or byte inspection. */
 export async function prepareRemoteInput(
   model: LanguageModelV4,
@@ -33,7 +64,10 @@ export async function prepareRemoteInput(
 ): Promise<RemoteInputResult> {
   try {
     const url = new URL(input.url);
-    const mediaType = input.mediaType?.toLowerCase();
+    const mediaType =
+      input.mediaType === undefined
+        ? inferMediaType(url)
+        : input.mediaType.toLowerCase();
     if (
       !['https:', 'http:'].includes(url.protocol) ||
       !/^https?:\/\//i.test(input.url) ||

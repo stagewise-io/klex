@@ -38,6 +38,84 @@ function build(
 }
 
 describe('classifier input', () => {
+  it('fills recent history across more than twenty empty projections', () => {
+    const history = [
+      message('old', 'older renderable input'),
+      ...Array.from(
+        { length: 30 },
+        (_, i): ExtendedUIMessage => ({
+          id: `empty-${i}`,
+          role: 'user',
+          parts: [],
+        }),
+      ),
+      message('new'),
+    ];
+    const input = build(history, [history.at(-1)!], {
+      ...defaultInstinctConfig,
+      recentMessageCount: 1,
+    });
+    expect(input).toContain('older renderable input');
+  });
+
+  it('caps delta transformer work before rendering a large initial history', () => {
+    const calls: number[] = [];
+    const history: ExtendedUIMessage[] = Array.from(
+      { length: 1_000 },
+      (_, i) => ({
+        id: String(i),
+        role: 'user',
+        parts: [{ type: 'data-check', data: {} }],
+      }),
+    );
+    const input = buildInstinctClassifierInput({
+      entries: [],
+      history,
+      delta: { initial: true, added: history, removedIds: [] },
+      limits: { ...defaultInstinctConfig, deltaMessageCap: 2 },
+      dataPartTransformers: {
+        check: (_data, occurrence = 0) => {
+          calls.push(occurrence);
+          return [{ type: 'text', text: `input-${occurrence}` }];
+        },
+      },
+    });
+    expect(calls).toEqual([999, 998]);
+    expect(input).toContain('[998 earlier new messages omitted]');
+    expect(input).toContain('input-999');
+  });
+
+  it.each([1, 2, 3, 4, 5, 8, 12])(
+    'honors tiny history budget %s without a false empty marker',
+    (historyCharacterCap) => {
+      const history = [message('old'), message('new')];
+      const input = build(history, history, {
+        ...defaultInstinctConfig,
+        historyCharacterCap,
+      });
+      const block = input
+        .split('kind="new">\n')[1]!
+        .split('\n</external-input>')[0]!;
+      expect(block.length).toBeGreaterThan(0);
+      expect(block.length).toBeLessThanOrEqual(historyCharacterCap);
+      expect(block).not.toContain('no new messages');
+    },
+  );
+
+  it('bounds the omission marker when every new projection is empty', () => {
+    const history: ExtendedUIMessage[] = [
+      { id: 'empty', role: 'user', parts: [] },
+    ];
+    const input = build(history, history, {
+      ...defaultInstinctConfig,
+      historyCharacterCap: 5,
+    });
+    const block = input
+      .split('kind="new">\n')[1]!
+      .split('\n</external-input>')[0]!;
+    expect(block.length).toBeLessThanOrEqual(5);
+    expect(input).not.toContain('no new messages');
+  });
   it('frames contexts, recent history and new messages in order', () => {
     const old = message('old', 'earlier topic');
     const current = message('new', 'current topic');
@@ -162,7 +240,7 @@ describe('classifier input', () => {
     ]);
   });
 
-  it('projects recent and changed messages once in chronological order', () => {
+  it('projects recent and changed messages once with chronological occurrence indices', () => {
     const calls: number[] = [];
     const history: ExtendedUIMessage[] = ['before', 'changed', 'after'].map(
       (id) => ({
@@ -187,7 +265,7 @@ describe('classifier input', () => {
         },
       },
     });
-    expect(calls).toEqual([0, 1, 2]);
+    expect(calls).toEqual([2, 1, 0]);
     expect(input).toMatch(
       /kind="recent"[\s\S]*before:0[\s\S]*after:2[\s\S]*kind="new"[\s\S]*changed:1/,
     );

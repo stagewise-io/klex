@@ -6,6 +6,8 @@ import {
   type AdminApiClient,
   AdminApiClientError,
   entryToModelId,
+  type InstinctModelSelectionEntry,
+  type InstinctOperationTestResult,
   type KnownModel,
   type KnownModelsResponse,
   type ModelSelection,
@@ -39,19 +41,25 @@ type Purpose =
   | 'memory'
   | 'imageVision'
   | 'audioListening'
-  | 'classifier'
+  | 'instincts'
   | 'voice.sts'
   | 'voice.tts'
   | 'voice.stt';
 
+type ModelReference = ModelSelectionEntry | InstinctModelSelectionEntry;
+
 export function containsModelReference(
-  entries: readonly ModelSelectionEntry[],
-  reference: ModelSelectionEntry,
+  entries: readonly ModelReference[],
+  reference: ModelReference,
+  instincts = false,
 ): boolean {
   return entries.some(
     (entry) =>
       entry.providerId === reference.providerId &&
-      entry.modelId === reference.modelId,
+      entry.modelId === reference.modelId &&
+      (!instincts ||
+        ('api' in entry ? entry.api : 'generation') ===
+          ('api' in reference ? reference.api : 'generation')),
   );
 }
 
@@ -62,7 +70,7 @@ const PURPOSES: { key: Purpose; label: string }[] = [
   { key: 'memory', label: 'Memory' },
   { key: 'imageVision', label: 'Image Vision' },
   { key: 'audioListening', label: 'Audio Listening' },
-  { key: 'classifier', label: 'Classifier' },
+  { key: 'instincts', label: 'Instincts' },
   { key: 'voice.sts', label: 'Voice — Speech-to-Speech' },
   { key: 'voice.tts', label: 'Voice — Text-to-Speech' },
   { key: 'voice.stt', label: 'Voice — Speech-to-Text' },
@@ -85,7 +93,27 @@ export function matchesModelSearch(model: KnownModel, query: string): boolean {
   );
 }
 
+export function availableInstinctApis(
+  provider: ProviderInfo,
+  model?: KnownModel,
+): InstinctModelSelectionEntry['api'][] {
+  const kind = model?.kind;
+  if (kind && !['language', 'evaluation', 'unknown'].includes(kind)) return [];
+  const capabilities = provider.metadata.capabilities;
+  return [
+    ...(capabilities.generation && kind !== 'evaluation'
+      ? ['generation' as const]
+      : []),
+    ...(capabilities.evaluation ? ['evaluation' as const] : []),
+  ];
+}
+
+function modelReferenceLabel(entry: ModelReference): string {
+  return `${entryToModelId(entry)}${'api' in entry ? ` [${entry.api}]` : ''}`;
+}
+
 function supportsPurpose(model: KnownModel, purpose: Purpose): boolean {
+  if (purpose === 'instincts' && model.kind === 'evaluation') return true;
   if (purpose === 'imageVision')
     return model.capabilities?.input?.image !== undefined;
   if (purpose === 'audioListening')
@@ -107,7 +135,11 @@ type Mode =
   | 'choose-provider'
   | 'choose-model'
   | 'add-manual'
-  | 'delete-confirm';
+  | 'delete-confirm'
+  | 'choose-api'
+  | 'edit-timeout'
+  | 'test-confirm'
+  | 'test-running';
 
 export function ModelSelectionScreen({
   apiClient,
@@ -131,6 +163,30 @@ export function ModelSelectionScreen({
   const [detailIndex, setDetailIndex] = useState(0);
   const [loading, setLoading] = useState(true);
   const modelsRequest = useRef(0);
+  const probeRequest = useRef(0);
+  const probeController = useRef<AbortController | undefined>(undefined);
+  const [probe, setProbe] = useState<InstinctOperationTestResult | undefined>();
+  const [probeError, setProbeError] = useState<string>();
+  const [pendingTimeout, setPendingTimeout] = useState('');
+  const highlightedInstinct =
+    selectedPurpose === 'instincts'
+      ? selection?.instincts[detailIndex]
+      : undefined;
+
+  function clearProbe() {
+    probeRequest.current += 1;
+    probeController.current?.abort();
+    setProbe(undefined);
+    setProbeError(undefined);
+  }
+
+  useEffect(
+    () => () => {
+      probeRequest.current += 1;
+      probeController.current?.abort();
+    },
+    [],
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -175,7 +231,9 @@ export function ModelSelectionScreen({
 
   useEffect(() => {
     setActive(
-      mode === 'add-manual' || (mode === 'choose-model' && modelFilterFocused),
+      mode === 'add-manual' ||
+        mode === 'edit-timeout' ||
+        (mode === 'choose-model' && modelFilterFocused),
     );
   }, [mode, modelFilterFocused, setActive]);
 
@@ -187,6 +245,10 @@ export function ModelSelectionScreen({
       'choose-model': `Choose Model — ${selectedPurpose ?? ''}`,
       'add-manual': `Add Manual Model — ${selectedPurpose ?? ''}`,
       'delete-confirm': `Delete Model — ${selectedPurpose ?? ''}`,
+      'choose-api': 'Choose Instinct API',
+      'edit-timeout': 'Edit Instinct Attempt Timeout',
+      'test-confirm': 'Confirm Synthetic Operation Test',
+      'test-running': 'Testing Synthetic Operation',
     };
     let detailModelCount = 0;
     if (selectedPurpose && selection) {
@@ -203,6 +265,11 @@ export function ModelSelectionScreen({
       detailKeys.push({ key: 'shift+↓', label: 'Move down' });
     if (detailModelCount > 0)
       detailKeys.push({ key: 'd', label: 'Delete last' });
+    if (selectedPurpose === 'instincts' && detailModelCount > 0)
+      detailKeys.push(
+        { key: 'e', label: 'Attempt timeout' },
+        { key: 't', label: 'Test operation' },
+      );
     detailKeys.push({ key: 'esc', label: 'Back' });
 
     const keysByMode: Record<Mode, { key: string; label: string }[]> = {
@@ -220,6 +287,19 @@ export function ModelSelectionScreen({
         { key: 'enter', label: 'Add' },
         { key: 'esc', label: 'Models' },
       ],
+      'choose-api': [
+        { key: 'enter', label: 'Choose API' },
+        { key: 'esc', label: 'Cancel' },
+      ],
+      'edit-timeout': [
+        { key: 'enter', label: 'Save' },
+        { key: 'esc', label: 'Cancel' },
+      ],
+      'test-confirm': [
+        { key: 'y', label: 'Run paid test' },
+        { key: 'n', label: 'Cancel' },
+      ],
+      'test-running': [{ key: 'esc', label: 'Cancel' }],
       'delete-confirm': [
         { key: 'y', label: 'Confirm' },
         { key: 'n', label: 'Cancel' },
@@ -234,6 +314,7 @@ export function ModelSelectionScreen({
 
   useMenuInput({
     [MenuKeys.Back]: () => {
+      clearProbe();
       if (mode === 'list') onBack();
       else if (mode === 'detail') {
         setMode('list');
@@ -246,6 +327,7 @@ export function ModelSelectionScreen({
     },
     [MenuKeys.Add]: () => {
       if (mode === 'detail') {
+        clearProbe();
         setPendingModelId('');
         setHighlightedProviderId(undefined);
         setSelectedProvider(undefined);
@@ -258,12 +340,27 @@ export function ModelSelectionScreen({
     [MenuKeys.Delete]: () => {
       if (mode === 'detail') setMode('delete-confirm');
     },
+    e: () => {
+      if (mode === 'detail' && highlightedInstinct) {
+        clearProbe();
+        setPendingTimeout(
+          highlightedInstinct.attemptTimeoutMs?.toString() ?? '',
+        );
+        setMode('edit-timeout');
+      }
+    },
+    t: () => {
+      if (mode === 'detail' && highlightedInstinct) {
+        clearProbe();
+        setMode('test-confirm');
+      }
+    },
     '/': () => {
       if (mode === 'choose-model') setModelFilterFocused(true);
     },
   });
 
-  function getModels(purpose: Purpose): ModelSelectionEntry[] {
+  function getModels(purpose: Purpose): ModelReference[] {
     if (!selection) return [];
     if (purpose.startsWith('voice.')) {
       const voiceKey = purpose.split('.')[1] as 'sts' | 'tts' | 'stt';
@@ -274,7 +371,7 @@ export function ModelSelectionScreen({
 
   async function patchPurpose(
     purpose: Purpose,
-    references: ModelSelectionEntry[],
+    references: ModelReference[],
   ): Promise<boolean> {
     if (!selection) return false;
     let patchBody: Record<string, unknown>;
@@ -293,6 +390,7 @@ export function ModelSelectionScreen({
     }
     try {
       const updated = await apiClient.patchModelSelection(patchBody);
+      clearProbe();
       setSelection(updated);
       if (updated.warnings && updated.warnings.length > 0) {
         for (const w of updated.warnings) {
@@ -315,6 +413,7 @@ export function ModelSelectionScreen({
     const from = Math.min(detailIndex, current.length - 1);
     const to = from + offset;
     if (from < 0 || to < 0 || to >= current.length) return;
+    clearProbe();
     const reordered = [...current];
     const [moved] = reordered.splice(from, 1);
     if (!moved) return;
@@ -327,10 +426,16 @@ export function ModelSelectionScreen({
     }
   }
 
-  async function addModel(reference: ModelSelectionEntry): Promise<void> {
+  async function addModel(reference: ModelReference): Promise<void> {
     if (!selectedPurpose) return;
     const current = getModels(selectedPurpose);
-    if (containsModelReference(current, reference)) {
+    if (
+      containsModelReference(
+        current,
+        reference,
+        selectedPurpose === 'instincts',
+      )
+    ) {
       pushToast('Model already in list', 'error');
       setMode('detail');
       return;
@@ -343,14 +448,149 @@ export function ModelSelectionScreen({
     }
   }
 
+  function chooseModel(modelId: string) {
+    if (!selectedProvider || !selectedPurpose) return;
+    const reference = { providerId: selectedProvider.id, modelId };
+    if (selectedPurpose !== 'instincts') {
+      void addModel(reference);
+      return;
+    }
+    const apis = availableInstinctApis(
+      selectedProvider,
+      availableModels?.find((model) => model.modelId === modelId),
+    );
+    if (apis.length === 2) {
+      setPendingModelId(modelId);
+      setMode('choose-api');
+    } else if (apis[0])
+      void addModel({ ...reference, api: apis[0], attemptTimeoutMs: 1500 });
+    else
+      pushToast(
+        'No compatible instinct API is available for this model',
+        'error',
+      );
+  }
+
+  if (mode === 'choose-api' && selectedProvider)
+    return (
+      <MenuList
+        items={availableInstinctApis(
+          selectedProvider,
+          availableModels?.find((model) => model.modelId === pendingModelId),
+        ).map((api) => ({ label: `${api} — ${pendingModelId}`, value: api }))}
+        onSelect={(item) =>
+          void addModel({
+            providerId: selectedProvider.id,
+            modelId: pendingModelId,
+            api: item.value,
+            attemptTimeoutMs: 1500,
+          })
+        }
+      />
+    );
+
+  if (mode === 'edit-timeout' && highlightedInstinct)
+    return (
+      <Box flexDirection="column">
+        <Text>
+          Attempt timeout in ms (1–120000). Blank uses the remaining classifier
+          budget.
+        </Text>
+        <TextInput
+          value={pendingTimeout}
+          onChange={setPendingTimeout}
+          onSubmit={async () => {
+            const value = pendingTimeout.trim();
+            if (
+              value &&
+              (!/^[1-9]\d*$/.test(value) || Number(value) > 120000)
+            ) {
+              pushToast(
+                'Enter an integer from 1 to 120000, or leave blank',
+                'error',
+              );
+              return;
+            }
+            const updated = { ...highlightedInstinct };
+            if (value) updated.attemptTimeoutMs = Number(value);
+            else delete updated.attemptTimeoutMs;
+            const entries = [...getModels('instincts')];
+            entries[detailIndex] = updated;
+            if (await patchPurpose('instincts', entries)) setMode('detail');
+          }}
+        />
+      </Box>
+    );
+
+  if (mode === 'test-confirm' && highlightedInstinct)
+    return (
+      <ConfirmationPanel
+        title="Run synthetic operation test?"
+        onCancel={() => setMode('detail')}
+        onConfirm={async () => {
+          const entry = { ...highlightedInstinct };
+          const request = ++probeRequest.current;
+          const controller = new AbortController();
+          probeController.current = controller;
+          setMode('test-running');
+          try {
+            const result = await apiClient.testProviderOperation(
+              entry.providerId,
+              {
+                modelId: entry.modelId,
+                api: entry.api,
+                providerOptions: entry.providerOptions,
+                timeoutMs: entry.attemptTimeoutMs ?? 4000,
+              },
+              controller.signal,
+            );
+            if (probeRequest.current !== request) return;
+            setProbe(result);
+            setMode('detail');
+          } catch (error) {
+            if (probeRequest.current !== request) return;
+            setProbeError(
+              error instanceof Error
+                ? error.message
+                : 'Operation test failed; check provider settings and try again.',
+            );
+            setMode('detail');
+          }
+        }}
+      >
+        This makes one provider request and may incur charges. It tests fixed
+        synthetic facts, not real conversations or production accuracy. Test{' '}
+        {modelReferenceLabel(highlightedInstinct)}?
+      </ConfirmationPanel>
+    );
+
+  if (mode === 'test-running')
+    return <ActivityIndicator label="Testing synthetic facts… Esc cancels." />;
+
   if (mode === 'choose-provider' && selectedPurpose) {
+    const compatibleProviders = providers.filter((provider) =>
+      selectedPurpose === 'instincts'
+        ? provider.metadata.capabilities.generation ||
+          provider.metadata.capabilities.evaluation
+        : selectedPurpose.startsWith('voice.') ||
+          provider.metadata.capabilities.generation,
+    );
+    if (compatibleProviders.length === 0)
+      return (
+        <EmptyState>
+          No configured provider supports this purpose. Add a compatible
+          provider, then try again.
+        </EmptyState>
+      );
     const highlightedProviderIndex = Math.max(
       0,
-      providers.findIndex((provider) => provider.id === highlightedProviderId),
+      compatibleProviders.findIndex(
+        (provider) => provider.id === highlightedProviderId,
+      ),
     );
     return (
       <MenuList
-        items={providers.map((provider) => ({
+        items={compatibleProviders.map((provider) => ({
           label: `${provider.metadata.displayName} (${provider.id})`,
           value: provider.id,
         }))}
@@ -390,6 +630,11 @@ export function ModelSelectionScreen({
     }
     const matchingModels = availableModels
       .filter((model) => supportsPurpose(model, selectedPurpose))
+      .filter(
+        (model) =>
+          selectedPurpose !== 'instincts' ||
+          availableInstinctApis(selectedProvider, model).length > 0,
+      )
       .filter((model) => matchesModelSearch(model, modelSearch));
     const items: Array<{
       key: string;
@@ -447,11 +692,7 @@ export function ModelSelectionScreen({
             onHighlight={(item) => setHighlightedModelKey(item.key)}
             onSelect={(item) => {
               if (item.value.kind === 'manual') setMode('add-manual');
-              else
-                void addModel({
-                  providerId: selectedProvider.id,
-                  modelId: item.value.modelId,
-                });
+              else chooseModel(item.value.modelId);
             }}
           />
         )}
@@ -480,9 +721,7 @@ export function ModelSelectionScreen({
                   modelId,
                   displayName: modelId,
                 })
-                .then(() =>
-                  addModel({ providerId: selectedProvider.id, modelId }),
-                )
+                .then(() => chooseModel(modelId))
                 .catch((error) =>
                   pushToast(
                     error instanceof Error
@@ -519,7 +758,7 @@ export function ModelSelectionScreen({
         onCancel={() => setMode('detail')}
       >
         Delete the last model "
-        {entryToModelId(models[models.length - 1] as ModelSelectionEntry)}"?
+        {modelReferenceLabel(models[models.length - 1] as ModelReference)}"?
       </ConfirmationPanel>
     );
   }
@@ -544,12 +783,57 @@ export function ModelSelectionScreen({
               <ModelPriorityList
                 models={models}
                 selectedIndex={detailIndex}
-                onHighlight={setDetailIndex}
+                onHighlight={(index) => {
+                  if (index !== detailIndex) clearProbe();
+                  setDetailIndex(index);
+                }}
                 onMove={(offset) => void moveHighlightedModel(offset)}
               />
             </ScrollableBox>
           )}
         </Box>
+        {highlightedInstinct && (
+          <Box flexDirection="column" marginTop={1}>
+            <Text>
+              API: {highlightedInstinct.api} · Attempt:{' '}
+              {highlightedInstinct.attemptTimeoutMs === undefined
+                ? 'remaining classifier budget'
+                : `${highlightedInstinct.attemptTimeoutMs} ms`}
+            </Text>
+            <Text>
+              Factory:{' '}
+              {providers.find(
+                (provider) => provider.id === highlightedInstinct.providerId,
+              )?.metadata.capabilities[highlightedInstinct.api]
+                ? 'available (not tested)'
+                : 'unavailable'}
+            </Text>
+            {probe && (
+              <>
+                <Text>
+                  Synthetic test: contract{' '}
+                  {probe.contractValid ? 'valid' : 'invalid'} · expected answers{' '}
+                  {probe.expectedAnswersMatch ? 'match' : 'do not match'} ·{' '}
+                  {Math.round(probe.elapsedMs)} ms
+                </Text>
+                <Text>
+                  Reported tokens: input {probe.usage?.inputTokens ?? 'unknown'}
+                  , output {probe.usage?.outputTokens ?? 'unknown'}; cache read{' '}
+                  {probe.usage?.inputCacheReadTokens ?? 'unknown'}, write{' '}
+                  {probe.usage?.inputCacheWriteTokens ?? 'unknown'}
+                </Text>
+                {probe.diagnostic && <Text>{probe.diagnostic}</Text>}
+                {probe.warnings.length > 0 && (
+                  <Text>Warnings: {probe.warnings.join('; ')}</Text>
+                )}
+                <Text dimColor>
+                  Transient wiring check, not accuracy certification.
+                </Text>
+              </>
+            )}
+            {probeError && <Text>{probeError}</Text>}
+          </Box>
+        )}
       </Box>
     );
   }
@@ -560,7 +844,7 @@ export function ModelSelectionScreen({
     const models = getModels(p.key);
     const preview =
       models.length > 0
-        ? entryToModelId(models[0] as ModelSelectionEntry)
+        ? modelReferenceLabel(models[0] as ModelReference)
         : '—';
     return {
       label: `${p.label} (${models.length} model${models.length === 1 ? '' : 's'}) — ${preview}`,
@@ -586,6 +870,7 @@ export function ModelSelectionScreen({
           <MenuList
             items={items}
             onSelect={(item) => {
+              clearProbe();
               setSelectedPurpose(item.value as Purpose);
               setDetailIndex(0);
               setMode('detail');
@@ -603,7 +888,7 @@ function ModelPriorityList({
   onHighlight,
   onMove,
 }: {
-  models: ModelSelectionEntry[];
+  models: ModelReference[];
   selectedIndex: number;
   onHighlight: (index: number) => void;
   onMove: (offset: -1 | 1) => void;
@@ -625,9 +910,15 @@ function ModelPriorityList({
   return (
     <Box flexDirection="column">
       {models.map((model, index) => (
-        <Text key={`${model.providerId}:${model.modelId}`}>
+        <Text
+          key={JSON.stringify([
+            model.providerId,
+            model.modelId,
+            'api' in model ? model.api : null,
+          ])}
+        >
           {index === selectedIndex ? '❯ ' : '  '}
-          {index + 1}. {entryToModelId(model)}{' '}
+          {index + 1}. {modelReferenceLabel(model)}{' '}
           {index === 0 ? '(primary)' : `(fallback #${index})`}
         </Text>
       ))}

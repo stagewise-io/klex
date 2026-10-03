@@ -69,9 +69,10 @@ import {
 } from './inbox';
 import {
   createInstinctRunner,
+  executeInstinctClassification,
+  type InstinctClassificationCallArgs,
+  type InstinctClassificationCallResult,
   type InstinctRunner,
-  type InstinctStructuredGenerationArgs,
-  type InstinctStructuredGenerationResult,
 } from './instinct';
 import type { ExtendedUIMessage } from './message-types';
 import { createTurn, type Turn, type TurnResult } from './turn';
@@ -473,7 +474,7 @@ class ChatSessionModule implements AgentSession {
       logger: this.deps.logger,
       extensionHandler: this.extensionHandler,
       getConfig: () => this.deps.config.get().instinct,
-      generate: (args) => this.generateInstinctClassification(args),
+      execute: (args) => this.executeInstinctClassification(args),
     });
     sessionScope
       .child('instinct')
@@ -540,56 +541,39 @@ class ChatSessionModule implements AgentSession {
     }
   }
 
-  /**
-   * Instinct classifier call over the `classifier` model purpose. Reuses
-   * the extension proxy for fallback, tracing and structured output, and
-   * attributes usage to a synthetic core identifier.
-   */
-  private async generateInstinctClassification(
-    args: InstinctStructuredGenerationArgs,
-  ): Promise<InstinctStructuredGenerationResult> {
-    const modelIds = this.deps.config.getModelSelection('classifier');
-    if (modelIds.length === 0) {
-      return {
-        status: 'unavailable',
-        reason: 'no classifier model configured',
-      };
-    }
+  /** Snapshot the configured candidates once; account each settled attempt. */
+  private async executeInstinctClassification(
+    args: InstinctClassificationCallArgs,
+  ): Promise<InstinctClassificationCallResult> {
+    const entries = this.deps.config.getModelSelection('instincts');
+    const questionTypes = Array.from(
+      new Set(Object.values(args.questions).map((question) => question.type)),
+    ).filter(
+      (type): type is 'boolean' | 'choice' =>
+        type === 'boolean' || type === 'choice',
+    );
+    const candidates = this.deps.modelResolver.resolveInstinctCandidates(
+      entries,
+      questionTypes,
+    );
     const ctx = withExtensionIdentifier(
       context.active(),
       INSTINCT_CLASSIFIER_IDENTIFIER,
     );
-    const result = await context.with(ctx, () =>
-      this.generateTextForExtension({
-        modelIds,
-        system: args.system,
-        prompt: args.prompt,
-        outputSchema: args.schema,
-        abortSignal: args.abortSignal,
-        temperature: 0,
+    return context.with(ctx, () =>
+      executeInstinctClassification(args, {
+        candidates,
+        sessionId: this.sessionId,
+        functionId: `extension:${INSTINCT_CLASSIFIER_IDENTIFIER}`,
+        onAttempt: ({ usage }) => {
+          if (usage)
+            this.recordExtensionUsage(
+              INSTINCT_CLASSIFIER_IDENTIFIER,
+              extractUsage(usage),
+            );
+        },
       }),
     );
-    if (result.success) {
-      this.recordExtensionUsage(
-        INSTINCT_CLASSIFIER_IDENTIFIER,
-        extractUsage(result.usage),
-      );
-      return { status: 'ok', output: result.output, modelId: result.modelId };
-    }
-    if (
-      result.unparsedOutputText !== undefined &&
-      result.unparsedOutputModelId !== undefined
-    ) {
-      return {
-        status: 'partial',
-        text: result.unparsedOutputText,
-        modelId: result.unparsedOutputModelId,
-      };
-    }
-    return {
-      status: result.failureReason === 'no-models' ? 'unavailable' : 'failed',
-      reason: result.failureDetails ?? result.failureReason,
-    };
   }
 
   // ---------------------------------------------------------------------------

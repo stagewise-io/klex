@@ -1,19 +1,19 @@
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath, URL } from 'node:url';
 
+import { transform } from 'esbuild';
 import { defineConfig } from 'vitest/config';
 
 export default defineConfig({
   plugins: [
     {
-      // Mirrors the `'.md': 'text'` loader in build.ts so modules that
-      // import prompt files load in tests without per-file mocks.
+      // Use the same esbuild text loader as the production bundle.
       name: 'klex-markdown-text',
       async load(id) {
         const path = id.split('?')[0]!;
         if (!path.endsWith('.md')) return null;
         const text = await readFile(path, 'utf8');
-        return `export default ${JSON.stringify(text)};`;
+        return (await transform(text, { loader: 'text', format: 'esm' })).code;
       },
     },
   ],

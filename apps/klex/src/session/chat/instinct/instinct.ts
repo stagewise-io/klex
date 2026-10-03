@@ -18,8 +18,8 @@ import { tracer } from '@/session/chat/utils/tracing';
 import {
   classifyInstinct,
   createInstinctClassifierEntries,
+  type InstinctClassifier,
   type InstinctClassifierEntry,
-  type InstinctStructuredGenerator,
   validateInstinctClassificationRequest,
 } from './classifier';
 import { buildInstinctClassifierInput } from './classifier-input';
@@ -36,8 +36,8 @@ export interface InstinctRunnerDeps {
   readonly extensionHandler: ExtensionHandler;
   /** Read on every run, so config changes apply to the next step. */
   readonly getConfig: () => InstinctConfig;
-  /** Structured-output call over the `classifier` model purpose. */
-  readonly generate: InstinctStructuredGenerator;
+  /** Structured-output call over the `instincts` model purpose. */
+  readonly execute: InstinctClassifier;
 }
 
 export interface InstinctRunOptions {
@@ -256,7 +256,7 @@ class InstinctRunnerModule implements InstinctRunner {
           const outcomes = await classifyInstinct({
             entries,
             prompt,
-            generate: this.deps.generate,
+            execute: this.deps.execute,
             signal,
             deadline,
             timeoutMs: config.classifierTimeoutMs,

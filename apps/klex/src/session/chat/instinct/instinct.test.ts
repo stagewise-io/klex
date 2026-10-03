@@ -15,7 +15,7 @@ import type { ExtendedUIMessage } from '@/session/chat/message-types';
 import { testLogger } from '@/session/chat/test-helpers';
 import { tracer } from '@/session/chat/utils/tracing';
 
-import type { InstinctStructuredGenerator } from './classifier';
+import type { InstinctClassifier } from './classifier';
 import { createInstinctRunner } from './instinct';
 
 const request = {
@@ -40,7 +40,7 @@ const part: ExtendedUIMessage['parts'][number] = {
 
 function harness(
   extensions: Record<string, Extension>,
-  generate: InstinctStructuredGenerator = async () => ({
+  generate: InstinctClassifier = async () => ({
     status: 'ok',
     output: { first: { needed: true }, second: { needed: false } },
     modelId: 'classifier',
@@ -70,7 +70,7 @@ function harness(
   const runner = createInstinctRunner({
     logger: testLogger,
     extensionHandler,
-    generate,
+    execute: generate,
     getConfig: () => ({ ...defaultInstinctConfig, ...limits }),
   });
   return {
@@ -84,7 +84,7 @@ function harness(
 describe('InstinctRunner', () => {
   it('makes one shared call, isolates contexts, stages in factory order and commits once', async () => {
     const contexts: InstinctContext[] = [];
-    const generate = vi.fn<InstinctStructuredGenerator>().mockResolvedValue({
+    const generate = vi.fn<InstinctClassifier>().mockResolvedValue({
       status: 'ok',
       modelId: 'classifier',
       output: { first: { needed: true }, second: { needed: false } },
@@ -180,7 +180,7 @@ describe('InstinctRunner', () => {
   );
 
   it('continues with fallback reactions when a data projector throws', async () => {
-    const generate = vi.fn<InstinctStructuredGenerator>();
+    const generate = vi.fn<InstinctClassifier>();
     let context: InstinctContext | undefined;
     const { runner } = harness(
       {
@@ -295,7 +295,7 @@ describe('InstinctRunner', () => {
   });
 
   it('skips disabled runs and runs without participants or requests', async () => {
-    const generate = vi.fn<InstinctStructuredGenerator>();
+    const generate = vi.fn<InstinctClassifier>();
     expect(await harness({}, generate).run()).toEqual({ status: 'skipped' });
     expect(
       await harness({ first: { onInstinct: () => {} } }, generate, {
@@ -374,7 +374,7 @@ describe('InstinctRunner', () => {
   });
 
   it('ignores invalid and throwing registrations without blocking another reaction', async () => {
-    const generate = vi.fn<InstinctStructuredGenerator>();
+    const generate = vi.fn<InstinctClassifier>();
     const reaction = vi.fn();
     const { run } = harness(
       {

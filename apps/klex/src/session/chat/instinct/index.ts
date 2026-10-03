@@ -1,8 +1,13 @@
 export type {
-  InstinctStructuredGenerationArgs,
-  InstinctStructuredGenerationResult,
-  InstinctStructuredGenerator,
+  InstinctClassificationCallArgs,
+  InstinctClassificationCallResult,
+  InstinctClassifier,
 } from './classifier';
+export {
+  executeInstinctClassification,
+  type InstinctOperationTestResult,
+  testInstinctOperation,
+} from './classifier-executor';
 export {
   createInstinctRunner,
   type InstinctResult,

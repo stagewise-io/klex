@@ -159,6 +159,7 @@ describe('ProviderRegistry', () => {
       'anthropic-messages',
       'google-generative',
       'ollama',
+      'typesafe-ai',
     ]);
     for (const item of definitions) {
       expect(item.metadata.displayName).not.toBe('');
@@ -186,6 +187,8 @@ describe('ProviderRegistry', () => {
 
     for (const [type, settings] of cases) {
       const provider = builtIn(type);
+      if (!provider.createLanguageModel)
+        throw new Error('Missing language factory');
       const model = provider.createLanguageModel(
         { id: 'instance', type, settings },
         'test-model',
@@ -452,6 +455,8 @@ describe('ProviderRegistry', () => {
         signal(),
       ),
     ).resolves.toMatchObject({ ok: true });
+    if (!provider.createLanguageModel)
+      throw new Error('Missing language factory');
     expect(
       provider.createLanguageModel(
         { id: 'codex-1', type: provider.type, settings: {} },
@@ -564,7 +569,10 @@ describe('ProviderRegistry', () => {
         validSettings(provider.type),
       );
 
-      const model = provider.createLanguageModel(
+      const factory =
+        provider.createLanguageModel ?? provider.createEvaluationModel;
+      if (!factory) throw new Error('Missing inference factory');
+      const model = factory(
         {
           id: `${provider.type}-instance`,
           type: provider.type,

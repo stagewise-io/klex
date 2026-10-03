@@ -10,6 +10,7 @@ import type {
   ProviderTypeInfo,
   ResolvedProviderModel,
 } from '@/provider-registry';
+import { testInstinctOperation } from '@/session/chat/instinct';
 
 import {
   canAddProviderBodySchema,
@@ -18,6 +19,8 @@ import {
   createProviderBodySchema,
   errorResponseSchema,
   knownModelIdParamSchema,
+  operationTestBodySchema,
+  operationTestResultSchema,
   providerIdParamSchema,
   providerModelsQuerySchema,
   providerModelsResponseSchema,
@@ -352,6 +355,104 @@ export function testProvider(
     if (result.code === 'internal_error')
       return c.json(failureBody(result), 500);
     return c.json(failureBody(result), 400);
+  };
+}
+
+export const testProviderOperationRoute = createRoute({
+  method: 'post',
+  path: '/v1/providers/{id}/operation-test',
+  tags: ['Providers'],
+  summary:
+    'Explicitly test a synthetic instinct operation (may incur provider charges)',
+  request: {
+    params: providerIdParamSchema,
+    body: {
+      required: true,
+      content: { 'application/json': { schema: operationTestBodySchema } },
+    },
+  },
+  responses: {
+    200: {
+      description:
+        'Transient contract and answer sanity result; not accuracy certification',
+      content: { 'application/json': { schema: operationTestResultSchema } },
+    },
+    400: {
+      description: 'Invalid or cancelled request',
+      content: { 'application/json': { schema: errorResponseSchema } },
+    },
+    404: {
+      description: 'Provider not found',
+      content: { 'application/json': { schema: errorResponseSchema } },
+    },
+    409: {
+      description: 'Concurrent operation test limit reached',
+      content: { 'application/json': { schema: errorResponseSchema } },
+    },
+    500: {
+      description: 'Operation preparation failed',
+      content: { 'application/json': { schema: errorResponseSchema } },
+    },
+  },
+});
+
+export function testProviderOperation(
+  deps: ProviderRouteDependencies,
+): RouteHandler<typeof testProviderOperationRoute> {
+  // Per Admin API instance. Explicit probes never queue unbounded paid work.
+  let active = 0;
+  return async (c) => {
+    if (c.req.raw.signal.aborted)
+      return c.json(
+        { error: 'Operation test cancelled', code: 'cancelled' },
+        400,
+      );
+    if (active >= 2)
+      return c.json(
+        { error: 'Two operation tests are already running', code: 'conflict' },
+        409,
+      );
+    const providerId = c.req.valid('param').id;
+    if (
+      !deps.providerRegistry
+        .listInstances()
+        .some((provider) => provider.id === providerId)
+    )
+      return c.json({ error: 'Provider not found', code: 'not_found' }, 404);
+    const { modelId, api, timeoutMs, providerOptions } = c.req.valid('json');
+    const controller = new AbortController();
+    const deadlineAt = performance.now() + timeoutMs;
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    timer.unref?.();
+    active += 1;
+    try {
+      const candidate = deps.providerRegistry.resolveInstinctCandidates(
+        [
+          {
+            providerId,
+            modelId,
+            api,
+            ...(providerOptions && { providerOptions }),
+          },
+        ],
+        ['boolean', 'choice'],
+      )[0];
+      if (!candidate) throw new Error('Operation candidate missing');
+      const result = await testInstinctOperation({
+        candidate,
+        abortSignal: AbortSignal.any([controller.signal, c.req.raw.signal]),
+        deadlineAt,
+      });
+      return c.json({ ...result, warnings: [...result.warnings] }, 200);
+    } catch {
+      return c.json(
+        { error: 'Unable to prepare operation test', code: 'internal_error' },
+        500,
+      );
+    } finally {
+      clearTimeout(timer);
+      active -= 1;
+    }
   };
 }
 

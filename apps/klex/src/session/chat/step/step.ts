@@ -171,6 +171,7 @@ class StepModule implements Step {
             generation: null,
             toolCalls: [],
             modelFallbackOccurred: false,
+            requestRejected: false,
             instinctAborted: true,
           });
 

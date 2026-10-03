@@ -121,77 +121,99 @@ export function buildInstinctClassifierInput(
     return truncateWithMarker(text, limits.messageCharacterCap);
   };
   const addedIds = new Set(delta.added.map(({ id }) => id));
-  const earlier = args.history.filter(({ id }) => !addedIds.has(id));
-  const recentCandidates =
-    limits.recentMessageCount === 0
-      ? []
-      : earlier.slice(-Math.max(limits.recentMessageCount * 4, 20));
-  const selectedIds = new Set([
-    ...addedIds,
-    ...recentCandidates.map(({ id }) => id),
-  ]);
-  const rendered = new Map<string, string | null>();
-  // Project selected messages once in history order. Count skipped data
-  // parts too, so indices match a full conversion without invoking old
-  // transformers merely to recover their occurrence numbers.
-  for (const message of args.history) {
-    if (selectedIds.has(message.id)) {
-      rendered.set(message.id, render(message));
-    } else {
-      for (const part of message.parts) {
-        if (!part.type.startsWith('data-')) continue;
-        const key = part.type.slice('data-'.length);
-        if (key !== CONTEXT_SUMMARY_KEY && args.dataPartTransformers[key])
-          occurrences.set(key, (occurrences.get(key) ?? 0) + 1);
+  // Apply the delta count cap before projection. Large initial histories
+  // must not invoke transformers for every omitted message.
+  const newCandidates = new Set(
+    delta.added.slice(-limits.deltaMessageCap).map(({ id }) => id),
+  );
+  const counts = new Map<string, number>();
+  const countParts = (message: ExtendedUIMessage, direction: 1 | -1) => {
+    for (const part of message.parts) {
+      if (!part.type.startsWith('data-')) continue;
+      const key = part.type.slice('data-'.length);
+      if (key !== CONTEXT_SUMMARY_KEY && args.dataPartTransformers[key])
+        counts.set(key, (counts.get(key) ?? 0) + direction);
+    }
+  };
+  // Only count data parts in the full history; do not project or serialize
+  // them. This preserves chronological occurrence indices during a lazy
+  // newest-first scan, including messages inserted in the middle.
+  for (const message of args.history) countParts(message, 1);
+  const renderedNew: string[] = [];
+  const renderedEarlier: string[] = [];
+  const renderAt = (message: ExtendedUIMessage): string | null => {
+    occurrences.clear();
+    for (const [key, count] of counts) occurrences.set(key, count);
+    return render(message);
+  };
+  let newCharacters = 0;
+  for (let i = args.history.length - 1; i >= 0; i--) {
+    const message = args.history[i]!;
+    countParts(message, -1);
+    if (newCandidates.has(message.id)) {
+      if (newCharacters >= limits.historyCharacterCap) continue;
+      const text = renderAt(message);
+      if (text) {
+        renderedNew.push(text);
+        newCharacters += text.length + RECORD_SEPARATOR.length;
       }
+    } else if (
+      !addedIds.has(message.id) &&
+      renderedEarlier.length < limits.recentMessageCount
+    ) {
+      // Empty projections do not consume the recent message count. Keep
+      // scanning rather than imposing an arbitrary candidate window.
+      const text = renderAt(message);
+      if (text) renderedEarlier.push(text);
     }
   }
-  const renderAll = (messages: readonly ExtendedUIMessage[]): string[] =>
-    messages
-      .map(({ id }) => rendered.get(id))
-      .filter((text): text is string => typeof text === 'string');
-
-  const renderedNew = renderAll(delta.added);
+  renderedNew.reverse();
+  renderedEarlier.reverse();
   let newest = takeNewest(
     renderedNew,
     limits.deltaMessageCap,
     limits.historyCharacterCap,
   );
-  // Reserve bounded space for the omission record too. Keep most of even a
-  // tiny budget for the newest actual input, rather than only metadata.
   let omissionCap = 0;
-  if (newest.kept.length < renderedNew.length) {
+  if (newest.kept.length < delta.added.length) {
     omissionCap = Math.min(
-      omittedNewMessagesMarker(renderedNew.length).length,
+      omittedNewMessagesMarker(delta.added.length).length,
       Math.floor(limits.historyCharacterCap / 3),
     );
-    newest = takeNewest(
-      renderedNew,
-      limits.deltaMessageCap,
-      Math.max(
-        0,
+    // For tiny budgets, prefer the newest fragment over a marker and its
+    // separator. Never reserve away the last character of actual input.
+    if (omissionCap + RECORD_SEPARATOR.length >= limits.historyCharacterCap)
+      omissionCap = 0;
+    if (omissionCap > 0) {
+      newest = takeNewest(
+        renderedNew,
+        limits.deltaMessageCap,
         limits.historyCharacterCap - omissionCap - RECORD_SEPARATOR.length,
-      ),
-    );
+      );
+    }
   }
-  const omittedNewCount = renderedNew.length - newest.kept.length;
+  const omittedNewCount = delta.added.length - newest.kept.length;
   const omission =
-    omittedNewCount > 0
+    omittedNewCount > 0 && omissionCap > 0
       ? truncateWithMarker(
           omittedNewMessagesMarker(omittedNewCount),
           omissionCap,
         )
       : '';
-
-  // Render only the tail that can fit; empty messages do not count.
-  const renderedEarlier = renderAll(recentCandidates);
+  const newContent = [...(omission ? [omission] : []), ...newest.kept];
+  const newText =
+    newContent.length > 0
+      ? newContent.join(RECORD_SEPARATOR)
+      : truncateWithMarker(
+          omittedNewCount > 0
+            ? omittedNewMessagesMarker(omittedNewCount)
+            : '[no new messages]',
+          limits.historyCharacterCap,
+        );
   const recent = takeNewest(
     renderedEarlier,
     limits.recentMessageCount,
-    Math.max(
-      0,
-      newest.remaining - (newest.kept.length > 0 ? RECORD_SEPARATOR.length : 0),
-    ),
+    Math.max(0, limits.historyCharacterCap - newText.length),
   );
 
   const blocks: ExternalInputBlock[] = [];
@@ -211,14 +233,10 @@ export function buildInstinctClassifierInput(
       content: recent.kept.join(RECORD_SEPARATOR),
     });
   }
-  const newContent = [...(omission ? [omission] : []), ...newest.kept];
   blocks.push({
     source: 'conversation',
     kind: 'new',
-    content:
-      newContent.length > 0
-        ? newContent.join(RECORD_SEPARATOR)
-        : '[no new messages]',
+    content: newText,
   });
 
   return assembleExternalInput(blocks);

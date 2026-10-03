@@ -1,3 +1,7 @@
+import type {
+  Experimental_EvaluationModelV4Answer as EvaluationAnswer,
+  Experimental_EvaluationModelV4CallOptions as EvaluationCallOptions,
+} from '@ai-sdk/provider';
 import z from 'zod';
 
 import type {
@@ -15,6 +19,8 @@ export const INSTINCT_CLASSIFIER_LIMITS = {
   maxEnumValueLength: 64,
   maxDescriptionLength: 500,
   maxPromptLength: 4_000,
+  maxBatchQuestions: 128,
+  maxSerializedCharacters: 128_000,
 } as const;
 
 const KEY_NAME = /^[A-Za-z][A-Za-z0-9_]{0,63}$/;
@@ -28,11 +34,10 @@ export interface InstinctClassifierEntry {
 }
 
 /**
- * Result of the structured model call. `partial` carries raw text when the
- * SDK could not produce a fully valid object; valid slices are salvaged
- * from it.
+ * Backend-neutral result. Only generation failures may carry recoverable
+ * raw text; evaluation results must be complete before distribution.
  */
-export type InstinctStructuredGenerationResult =
+export type InstinctClassificationCallResult =
   | {
       readonly status: 'ok';
       readonly output: unknown;
@@ -43,20 +48,25 @@ export type InstinctStructuredGenerationResult =
       readonly text: string | undefined;
       readonly modelId: string;
     }
+  | {
+      readonly status: 'evaluation';
+      readonly answers: Record<string, EvaluationAnswer>;
+      readonly modelId: string;
+    }
   | { readonly status: 'unavailable'; readonly reason: string }
   | { readonly status: 'failed'; readonly reason: string };
 
-export interface InstinctStructuredGenerationArgs {
-  readonly system: string;
-  readonly prompt: string;
-  readonly schema: z.ZodType;
+export interface InstinctClassificationCallArgs
+  extends InstinctClassificationBatch {
   readonly abortSignal: AbortSignal;
+  /** Monotonic absolute deadline; preparation and all attempts share it. */
+  readonly deadlineAt: number;
 }
 
-/** Stateless structured-output call; every invocation is a fresh inference. */
-export type InstinctStructuredGenerator = (
-  args: InstinctStructuredGenerationArgs,
-) => Promise<InstinctStructuredGenerationResult>;
+/** Stateless classification call; every invocation is a fresh inference. */
+export type InstinctClassifier = (
+  args: InstinctClassificationCallArgs,
+) => Promise<InstinctClassificationCallResult>;
 
 /**
  * Returns a reason when the request is unusable, otherwise `null`.
@@ -95,14 +105,20 @@ export function validateInstinctClassificationRequest(
 
 function validateKey(key: unknown): string | null {
   if (typeof key !== 'object' || key === null) return 'not an object';
-  const { type, description, values } = key as Record<string, unknown>;
+  const { type, description, values, valueDescriptions } = key as Record<
+    string,
+    unknown
+  >;
   if (typeof description !== 'string' || description.trim().length === 0) {
     return 'description must be a non-empty string';
   }
   if (description.length > INSTINCT_CLASSIFIER_LIMITS.maxDescriptionLength) {
     return `description exceeds ${INSTINCT_CLASSIFIER_LIMITS.maxDescriptionLength} characters`;
   }
-  if (type === 'boolean') return null;
+  if (type === 'boolean')
+    return valueDescriptions === undefined
+      ? null
+      : 'valueDescriptions only apply to enum keys';
   if (type !== 'enum') return `unsupported type "${String(type)}"`;
   if (!Array.isArray(values) || values.length === 0) {
     return 'enum needs at least one value';
@@ -121,6 +137,24 @@ function validateKey(key: unknown): string | null {
     }
     if (seen.has(value)) return `duplicate enum value "${value}"`;
     seen.add(value);
+  }
+  if (valueDescriptions !== undefined) {
+    if (
+      typeof valueDescriptions !== 'object' ||
+      valueDescriptions === null ||
+      Array.isArray(valueDescriptions)
+    )
+      return 'valueDescriptions must be an object';
+    for (const [value, text] of Object.entries(valueDescriptions)) {
+      if (!seen.has(value))
+        return `description for undeclared enum value "${value}"`;
+      if (
+        typeof text !== 'string' ||
+        !text.trim() ||
+        text.length > INSTINCT_CLASSIFIER_LIMITS.maxDescriptionLength
+      )
+        return 'value descriptions must be non-empty strings of bounded length';
+    }
   }
   return null;
 }
@@ -188,7 +222,18 @@ function describeKey(name: string, key: InstinctClassificationKey): string {
     key.type === 'boolean'
       ? 'boolean'
       : `one of ${key.values.map((value) => JSON.stringify(value)).join(', ')}`;
-  return `- \`${name}\` (${type}): ${key.description}`;
+  const descriptions =
+    key.type === 'enum' && key.valueDescriptions
+      ? key.values
+          .filter((value) => Object.hasOwn(key.valueDescriptions ?? {}, value))
+          .map(
+            (value) =>
+              `  - ${JSON.stringify(value)}: ${key.valueDescriptions?.[value]}`,
+          )
+      : [];
+  return [`- \`${name}\` (${type}): ${key.description}`, ...descriptions].join(
+    '\n',
+  );
 }
 
 /**
@@ -213,10 +258,147 @@ export function renderInstinctClassifierSystemPrompt(
   );
   return [
     classifierBasePrompt.trim(),
+    'How to answer:\n\n- Answer every key of every section below. Each section belongs to one component and is keyed by its `output_key`.\n- Use only the allowed values: `true`/`false` for boolean keys, one of the listed strings for enum keys.\n- When the input gives no clear signal, pick the most conservative value the key description allows.\n- Return only the JSON object.',
     'Conversation messages use this format:',
     LINES_FORMAT_PROMPT.trim(),
     ...sections,
   ].join('\n\n');
+}
+
+/** Prepared once per classification, using the same external-input state for both APIs. */
+export interface InstinctClassificationBatch {
+  readonly entries: readonly InstinctClassifierEntry[];
+  readonly system: string;
+  readonly prompt: string;
+  readonly schema: z.ZodType;
+  readonly questions: EvaluationCallOptions['questions'];
+  readonly mapping: readonly { id: string; outputKey: string; key: string }[];
+}
+
+export function compileInstinctClassificationBatch(
+  entries: readonly InstinctClassifierEntry[],
+  prompt: string,
+): InstinctClassificationBatch {
+  const mapping: { id: string; outputKey: string; key: string }[] = [];
+  const questions = Object.fromEntries(
+    entries.flatMap((entry) =>
+      Object.entries(entry.request.keys).map(([name, key]) => {
+        const id = `q${mapping.length}`;
+        mapping.push({ id, outputKey: entry.outputKey, key: name });
+        const instructions = [
+          classifierBasePrompt.trim(),
+          'Conversation messages use this format:',
+          LINES_FORMAT_PROMPT.trim(),
+          'When the input gives no clear signal, pick the most conservative answer the key description allows.',
+          entry.request.prompt.trim(),
+          key.description,
+        ].join('\n\n');
+        return [
+          id,
+          key.type === 'boolean'
+            ? { type: 'boolean' as const, instructions }
+            : {
+                type: 'choice' as const,
+                instructions,
+                criteria: Object.fromEntries(
+                  key.values.map((value) => [
+                    value,
+                    key.valueDescriptions &&
+                    Object.hasOwn(key.valueDescriptions, value)
+                      ? (key.valueDescriptions[value] ?? null)
+                      : null,
+                  ]),
+                ),
+              },
+        ];
+      }),
+    ),
+  );
+  if (mapping.length > INSTINCT_CLASSIFIER_LIMITS.maxBatchQuestions)
+    throw new Error('instinct batch exceeds 128 questions');
+  const system = renderInstinctClassifierSystemPrompt(entries);
+  const schema = createInstinctOutputSchema(entries);
+  const generationSize = JSON.stringify({
+    system,
+    prompt,
+    schema: z.toJSONSchema(schema),
+  }).length;
+  const evaluationSize = JSON.stringify({ state: prompt, questions }).length;
+  if (
+    Math.max(generationSize, evaluationSize) >
+    INSTINCT_CLASSIFIER_LIMITS.maxSerializedCharacters
+  )
+    throw new Error('instinct batch exceeds 128000 serialized characters');
+  return { entries, system, prompt, schema, questions, mapping };
+}
+
+/** SDK evaluation is complete-or-failed: never salvage a subset or coerce an enum. */
+export function normalizeInstinctEvaluation(
+  batch: InstinctClassificationBatch,
+  answers: Record<string, EvaluationAnswer>,
+  modelId: string,
+): Map<string, InstinctClassificationOutcome> {
+  if (Object.keys(answers).length !== batch.mapping.length)
+    throw new Error('invalid evaluation answer count');
+  const output = Object.fromEntries(
+    batch.entries.map((entry) => [
+      entry.outputKey,
+      Object.fromEntries(
+        batch.mapping
+          .filter((question) => question.outputKey === entry.outputKey)
+          .map(({ id, key }) => {
+            const answer = Object.hasOwn(answers, id) ? answers[id] : undefined;
+            const descriptor = entry.request.keys[key];
+            if (!descriptor)
+              throw new Error('invalid evaluation question mapping');
+            if (descriptor.type === 'boolean') {
+              if (
+                answer?.type !== 'boolean' ||
+                !Number.isFinite(answer.probability) ||
+                answer.probability < 0 ||
+                answer.probability > 1
+              )
+                throw new Error('invalid boolean evaluation answer');
+              return [key, answer.probability > 0.5];
+            }
+            if (
+              answer?.type !== 'choice' ||
+              !descriptor.values.includes(answer.choice)
+            )
+              throw new Error('invalid choice evaluation answer');
+            return [key, answer.choice];
+          }),
+      ),
+    ]),
+  );
+  const outcomes = distributeInstinctAnswers(batch.entries, output, modelId);
+  for (const entry of batch.entries) {
+    const outcome = outcomes.get(entry.extensionIdentifier);
+    if (!outcome || outcome.status !== 'ok')
+      throw new Error('invalid evaluation answer slice');
+    const metadata = Object.fromEntries(
+      batch.mapping
+        .filter((question) => question.outputKey === entry.outputKey)
+        .flatMap<
+          [
+            string,
+            { probability: number } | { probabilities: Record<string, number> },
+          ]
+        >(({ id, key }) => {
+          const answer = answers[id];
+          if (answer?.type === 'boolean')
+            return [[key, { probability: answer.probability }]];
+          if (answer?.type === 'choice' && answer.probabilities !== undefined)
+            return [[key, { probabilities: { ...answer.probabilities } }]];
+          return [];
+        }),
+    );
+    outcomes.set(entry.extensionIdentifier, {
+      ...outcome,
+      ...(Object.keys(metadata).length && { evaluation: metadata }),
+    });
+  }
+  return outcomes;
 }
 
 /**
@@ -251,7 +433,9 @@ export function distributeInstinctAnswers(
       : {};
   for (const entry of entries) {
     const parsed = createInstinctSliceSchema(entry.request).safeParse(
-      record[entry.outputKey],
+      Object.hasOwn(record, entry.outputKey)
+        ? record[entry.outputKey]
+        : undefined,
     );
     outcomes.set(
       entry.extensionIdentifier,
@@ -278,7 +462,7 @@ interface InstinctClassifyArgs {
   readonly entries: readonly InstinctClassifierEntry[];
   /** Fully framed user prompt (external-input blocks). */
   readonly prompt: string;
-  readonly generate: InstinctStructuredGenerator;
+  readonly execute: InstinctClassifier;
   /** Step-level cancellation (critical input, lease, close). */
   readonly signal: AbortSignal;
   /** Shared instinct deadline, distinct from caller cancellation. */
@@ -300,6 +484,7 @@ export async function classifyInstinct(
   if (args.deadline?.aborted)
     return uniformOutcome(entries, { status: 'timeout' });
 
+  const deadlineAt = performance.now() + args.timeoutMs;
   const timeout = AbortSignal.timeout(args.timeoutMs);
   const abortSignal = AbortSignal.any([
     signal,
@@ -313,7 +498,8 @@ export async function classifyInstinct(
   };
 
   let onAbort: (() => void) | undefined;
-  let result: InstinctStructuredGenerationResult;
+  let result: InstinctClassificationCallResult;
+  let batch: InstinctClassificationBatch | undefined;
   try {
     const aborted = new Promise<never>((_, reject) => {
       onAbort = () => reject(abortSignal.reason);
@@ -322,14 +508,11 @@ export async function classifyInstinct(
     });
     // Promise.race observes late rejections even when the generator ignores
     // cancellation. The deadline must not depend on provider cooperation.
-    const generation = Promise.resolve().then(() =>
-      args.generate({
-        system: renderInstinctClassifierSystemPrompt(entries),
-        prompt: args.prompt,
-        schema: createInstinctOutputSchema(entries),
-        abortSignal,
-      }),
-    );
+    const generation = Promise.resolve().then(() => {
+      abortSignal.throwIfAborted();
+      batch = compileInstinctClassificationBatch(entries, args.prompt);
+      return args.execute({ ...batch, abortSignal, deadlineAt });
+    });
     result = await Promise.race([generation, aborted]);
   } catch (error) {
     return uniformOutcome(
@@ -348,6 +531,20 @@ export async function classifyInstinct(
   if (late) return uniformOutcome(entries, late);
 
   switch (result.status) {
+    case 'evaluation':
+      try {
+        if (!batch) throw new Error('missing classification batch');
+        return normalizeInstinctEvaluation(
+          batch,
+          result.answers,
+          result.modelId,
+        );
+      } catch {
+        return uniformOutcome(entries, {
+          status: 'failed',
+          reason: 'invalid evaluation answers',
+        });
+      }
     case 'ok':
       return distributeInstinctAnswers(entries, result.output, result.modelId);
     case 'partial':

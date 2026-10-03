@@ -402,6 +402,8 @@ export type InstinctClassificationKey =
       readonly type: 'enum';
       readonly values: readonly [string, ...string[]];
       readonly description: string;
+      /** Optional instructions for declared values only (1..500 characters each). */
+      readonly valueDescriptions?: Readonly<Record<string, string>>;
     };
 
 export type InstinctClassificationKeys = Readonly<
@@ -409,9 +411,13 @@ export type InstinctClassificationKeys = Readonly<
 >;
 
 /**
- * Valid requests share one inference using `modelSelection.classifier`.
+ * Valid requests share a bounded batch using `modelSelection.instincts`.
+ * Extensions describe classifications, not inference APIs. Core owns ordered
+ * generation/evaluation attempts and bounded conversation history. Evaluation
+ * normalizes P(true) > 0.5 (ties are false) and requires complete results;
+ * generation can recover individual validated slices from partial JSON.
  * No valid requests means no call; an empty model list yields `unavailable`
- * rather than chat fallback. Core supplies bounded conversation history.
+ * rather than chat fallback.
  */
 export interface InstinctClassificationRequest<
   K extends InstinctClassificationKeys = InstinctClassificationKeys,
@@ -460,6 +466,14 @@ export type InstinctClassificationOutcome =
       readonly status: 'ok';
       readonly answers: Readonly<Record<string, boolean | string>>;
       readonly modelId: string;
+      /** Genuine provider probabilities for this extension only; not calibration claims. */
+      readonly evaluation?: Readonly<
+        Record<
+          string,
+          | { readonly probability: number }
+          | { readonly probabilities: Readonly<Record<string, number>> }
+        >
+      >;
     }
   | {
       readonly status: 'unavailable' | 'failed' | 'timeout' | 'aborted';

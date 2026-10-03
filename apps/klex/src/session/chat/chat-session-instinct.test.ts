@@ -1,4 +1,5 @@
 import type {
+  Experimental_EvaluationModelV4 as EvaluationModel,
   LanguageModelV4CallOptions,
   LanguageModelV4Usage,
 } from '@ai-sdk/provider';
@@ -39,6 +40,7 @@ function harness(
     unavailable?: boolean;
     rejectReaction?: boolean;
     interrupt?: boolean;
+    evaluationFallback?: boolean;
   } = {},
 ) {
   const order: string[] = [];
@@ -51,13 +53,40 @@ function harness(
       expect(args.temperature).toBe(0);
       expect(args.responseFormat?.type).toBe('json');
       return {
-        content: [{ type: 'text', text: '{"memory":{"needed":true}}' }],
+        content: [
+          {
+            type: 'text',
+            text: options.evaluationFallback
+              ? 'invalid JSON'
+              : '{"memory":{"needed":true}}',
+          },
+        ],
         finishReason: { unified: 'stop', raw: 'stop' },
         usage,
         warnings: [],
       };
     },
   });
+  const evaluator: EvaluationModel = {
+    specificationVersion: 'v4',
+    provider: 'typesafe.evaluation',
+    modelId: 'native',
+    supportedQuestionTypes: ['boolean'],
+    doEvaluate: async (args) => {
+      order.push('evaluation');
+      expect(args.state).toContain('Remember the project');
+      return {
+        answers: Object.fromEntries(
+          Object.keys(args.questions).map((id) => [
+            id,
+            { type: 'boolean', probability: 0.9 },
+          ]),
+        ),
+        usage: { inputTokens: 7, outputTokens: 3 },
+        warnings: [],
+      };
+    },
+  };
   const chat = new MockLanguageModelV4({
     doStream: async (args) => {
       order.push('generation');
@@ -85,6 +114,24 @@ function harness(
     },
   });
   const resolver: ChatSessionDependencies['modelResolver'] = {
+    resolveInstinctCandidates: (entries) =>
+      entries.map((entry) =>
+        entry.api === 'evaluation'
+          ? {
+              status: 'ready',
+              entry,
+              providerType: 'typesafe-ai',
+              api: 'evaluation',
+              model: evaluator,
+            }
+          : {
+              status: 'ready',
+              entry,
+              providerType: 'openai',
+              api: 'generation',
+              model: entry.modelId === 'classifier' ? classifier : chat,
+            },
+      ),
     getLanguageModel: (entry) =>
       entry.modelId === 'classifier' ? classifier : chat,
     resolveModel: (entry) => ({
@@ -108,9 +155,14 @@ function harness(
     modelSelection: {
       ...completeV2Config.modelSelection,
       chat: [{ providerId: 'test', modelId: 'chat' }],
-      classifier: options.unavailable
+      instincts: options.unavailable
         ? []
-        : [{ providerId: 'test', modelId: 'classifier' }],
+        : [
+            { providerId: 'test', modelId: 'classifier', api: 'generation' },
+            ...(options.evaluationFallback
+              ? [{ providerId: 'test', modelId: 'native', api: 'evaluation' }]
+              : []),
+          ],
     },
   };
   const config = {
@@ -227,6 +279,37 @@ describe('ChatSession instinct integration', () => {
           message.parts.some((part) => isDataPartOf('instinct-test', part)),
         ),
       ).toBe(true);
+    } finally {
+      await session.close();
+    }
+  });
+
+  it('accounts failed generation and evaluation fallback, then commits preparation before the main step', async () => {
+    const { session, send, order, contexts, mainPrompts } = harness({
+      evaluationFallback: true,
+    });
+    try {
+      await session.start();
+      await send('Remember the project');
+      expect(order.filter((entry) => entry !== 'step-start')).toEqual([
+        'classifier',
+        'evaluation',
+        'reaction',
+        'generation',
+      ]);
+      expect(contexts[0]?.classification).toMatchObject({
+        status: 'ok',
+        modelId: 'native',
+        answers: { needed: true },
+        evaluation: { needed: { probability: 0.9 } },
+      });
+      expect(JSON.stringify(mainPrompts[0]?.prompt)).toContain(
+        'provisional memory',
+      );
+      expect(
+        session.getSessionInfo().usage.extensions['core:instinct-classifier']
+          ?.total,
+      ).toMatchObject({ inputTokens: 17, outputTokens: 8 });
     } finally {
       await session.close();
     }

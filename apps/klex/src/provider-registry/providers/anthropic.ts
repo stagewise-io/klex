@@ -74,6 +74,8 @@ export const anthropicProviderDefinition: ProviderDefinition = {
   },
   resolveModelMetadata: resolveAnthropicModelMetadata,
   createLanguageModel,
+  createEvaluationModel: (instance, modelId) =>
+    createProvider(instance).evaluationModel(modelId),
   discoverModels,
   testConnection: (instance, signal) =>
     testDiscoveryConnection(instance, BASE_URL, () =>
@@ -85,10 +87,14 @@ function createLanguageModel(
   instance: ProviderInstance,
   modelId: string,
 ): LanguageModelV4 {
+  return createProvider(instance).languageModel(modelId);
+}
+
+function createProvider(instance: ProviderInstance) {
   return createAnthropic({
     apiKey: setting(instance, 'apiKey') ?? '',
     headers: providerHeaders(instance, 'anthropic'),
-  }).languageModel(modelId);
+  });
 }
 
 async function discoverModels(

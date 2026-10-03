@@ -4,10 +4,12 @@ import type { InstinctClassificationRequest } from '@/session/chat/extensions/ex
 
 import {
   classifyInstinct,
+  compileInstinctClassificationBatch,
   createInstinctClassifierEntries,
   createInstinctOutputSchema,
   distributeInstinctAnswers,
-  type InstinctStructuredGenerator,
+  type InstinctClassifier,
+  normalizeInstinctEvaluation,
   renderInstinctClassifierSystemPrompt,
   validateInstinctClassificationRequest,
 } from './classifier';
@@ -35,19 +37,154 @@ const entries = createInstinctClassifierEntries([
   },
 ]);
 const run = (
-  generate: InstinctStructuredGenerator,
+  generate: InstinctClassifier,
   signal = new AbortController().signal,
   timeoutMs = 20,
 ) =>
   classifyInstinct({
     entries,
     prompt: '<external-input>data</external-input>',
-    generate,
+    execute: generate,
     signal,
     timeoutMs,
   });
 
 describe('shared classifier', () => {
+  it.each([
+    [0, false],
+    [0.5, false],
+    [1, true],
+  ] as const)(
+    'normalizes P(true)=%s with fixed strict threshold and scoped metadata',
+    (probability, expected) => {
+      const batch = compileInstinctClassificationBatch(entries, 'synthetic');
+      const result = normalizeInstinctEvaluation(
+        batch,
+        {
+          q0: { type: 'boolean', probability },
+          q1: { type: 'choice', choice: 'ongoing' },
+        },
+        'eval-model',
+      );
+      expect(result.get('memory')).toEqual({
+        status: 'ok',
+        modelId: 'eval-model',
+        answers: { needsMemory: expected },
+        evaluation: { needsMemory: { probability } },
+      });
+      expect(result.get('task/planner')).toEqual({
+        status: 'ok',
+        modelId: 'eval-model',
+        answers: { state: 'ongoing' },
+      });
+      expect(() =>
+        normalizeInstinctEvaluation(
+          batch,
+          { q0: { type: 'boolean', probability } },
+          'eval-model',
+        ),
+      ).toThrow('count');
+    },
+  );
+
+  it('maps colliding extension IDs and prototype-sensitive choices without moving state into instructions', () => {
+    const request: InstinctClassificationRequest = {
+      prompt: 'Trusted policy',
+      keys: {
+        route: {
+          type: 'enum',
+          values: ['__proto__', 'constructor'],
+          description: 'Route',
+          valueDescriptions: Object.fromEntries([
+            ['__proto__', 'Prototype route'],
+          ]),
+        },
+      },
+    };
+    const participants = createInstinctClassifierEntries([
+      { extensionIdentifier: 'a/b', request },
+      { extensionIdentifier: 'a_b', request },
+    ]);
+    const state = '<external-input>UNTRUSTED_STATE</external-input>';
+    const batch = compileInstinctClassificationBatch(participants, state);
+    expect(batch.mapping.map(({ id, outputKey }) => [id, outputKey])).toEqual([
+      ['q0', 'a_b'],
+      ['q1', 'a_b_2'],
+    ]);
+    expect(batch.questions.q0).toMatchObject({
+      type: 'choice',
+      criteria: Object.fromEntries([
+        ['__proto__', 'Prototype route'],
+        ['constructor', null],
+      ]),
+    });
+    expect(JSON.stringify(batch.questions)).not.toContain('UNTRUSTED_STATE');
+    expect(batch.system).toContain('Prototype route');
+    const probabilities = Object.fromEntries([
+      ['__proto__', 1],
+      ['constructor', 0],
+    ]);
+    const result = normalizeInstinctEvaluation(
+      batch,
+      {
+        q0: { type: 'choice', choice: '__proto__', probabilities },
+        q1: { type: 'choice', choice: 'constructor' },
+      },
+      'native',
+    );
+    expect(result.get('a/b')).toMatchObject({
+      answers: { route: '__proto__' },
+      evaluation: { route: { probabilities } },
+    });
+    expect(result.get('a_b')).toMatchObject({
+      answers: { route: 'constructor' },
+    });
+  });
+
+  it('validates value-description mappings and rejects aggregate limits without dropping questions', () => {
+    const enumKey = { type: 'enum', values: ['valid'], description: 'Route' };
+    for (const valueDescriptions of [
+      { missing: 'No' },
+      { valid: '' },
+      { valid: 'x'.repeat(501) },
+      [],
+    ]) {
+      expect(
+        validateInstinctClassificationRequest({
+          prompt: 'Policy',
+          keys: { route: { ...enumKey, valueDescriptions } },
+        }),
+      ).not.toBeNull();
+    }
+    expect(
+      validateInstinctClassificationRequest({
+        prompt: 'Policy',
+        keys: {
+          route: { ...enumKey, valueDescriptions: { valid: 'Description' } },
+        },
+      }),
+    ).toBeNull();
+    const oversized = createInstinctClassifierEntries(
+      Array.from({ length: 9 }, (_, i) => ({
+        extensionIdentifier: `ext${i}`,
+        request: {
+          prompt: 'Policy',
+          keys: Object.fromEntries(
+            Array.from({ length: 16 }, (_, j) => [
+              `flag${j}`,
+              { type: 'boolean' as const, description: 'Flag' },
+            ]),
+          ),
+        },
+      })),
+    );
+    expect(() =>
+      compileInstinctClassificationBatch(oversized, 'state'),
+    ).toThrow('128 questions');
+    expect(() =>
+      compileInstinctClassificationBatch(entries, '"'.repeat(128_000)),
+    ).toThrow('serialized characters');
+  });
   it('validates runtime requests and strict required slices', () => {
     expect(validateInstinctClassificationRequest(request)).toBeNull();
     for (const invalid of [
@@ -88,7 +225,7 @@ describe('shared classifier', () => {
   });
 
   it('distributes only each extension’s validated answers', async () => {
-    const generate = vi.fn<InstinctStructuredGenerator>().mockResolvedValue({
+    const generate = vi.fn<InstinctClassifier>().mockResolvedValue({
       status: 'ok',
       modelId: 'classifier',
       output: {
@@ -155,13 +292,11 @@ describe('shared classifier', () => {
   it('distinguishes shared deadline expiry from caller cancellation', async () => {
     const controller = new AbortController();
     const deadline = new AbortController();
-    const generate = vi.fn<InstinctStructuredGenerator>(
-      () => new Promise(() => {}),
-    );
+    const generate = vi.fn<InstinctClassifier>(() => new Promise(() => {}));
     const args = {
       entries,
       prompt: 'input',
-      generate,
+      execute: generate,
       signal: controller.signal,
       deadline: deadline.signal,
       timeoutMs: 1000,
@@ -169,6 +304,7 @@ describe('shared classifier', () => {
     const pending = classifyInstinct(args);
     deadline.abort();
     expect((await pending).get('memory')?.status).toBe('timeout');
+    expect(generate).not.toHaveBeenCalled();
     generate.mockClear();
     expect((await classifyInstinct(args)).get('memory')?.status).toBe(
       'timeout',
@@ -182,12 +318,17 @@ describe('shared classifier', () => {
 
   it('cancels immediately before or during uncooperative generation', async () => {
     const controller = new AbortController();
-    const generate = vi.fn<InstinctStructuredGenerator>(
-      () => new Promise(() => {}),
-    );
+    const generate = vi.fn<InstinctClassifier>(() => new Promise(() => {}));
     const pending = run(generate, controller.signal, 1_000);
     controller.abort();
     expect((await pending).get('memory')?.status).toBe('aborted');
+    expect(generate).not.toHaveBeenCalled();
+    const during = new AbortController();
+    const running = run(generate, during.signal, 1_000);
+    await Promise.resolve();
+    expect(generate).toHaveBeenCalledOnce();
+    during.abort();
+    expect((await running).get('memory')?.status).toBe('aborted');
     generate.mockClear();
     expect((await run(generate, controller.signal)).get('memory')?.status).toBe(
       'aborted',

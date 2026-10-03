@@ -7,7 +7,7 @@ export const emptyModelSelection: ModelSelection = {
   imageVision: [],
   audioListening: [],
   consult: [],
-  classifier: [],
+  instincts: [],
   voice: { sts: [], tts: [], stt: [] },
 };
 
@@ -97,11 +97,15 @@ export const completeV2Config: KlexConfig = {
   },
 };
 
+const { instincts: _instincts, ...historicalModelSelection } =
+  completeV2Config.modelSelection;
+
 /** Stored schema 5 retains the historical subsystem settings key. */
 export const completeV5StoredConfig = {
   ...Object.fromEntries(
     Object.entries(completeV2Config).filter(([key]) => key !== 'instinct'),
   ),
+  modelSelection: { ...historicalModelSelection, classifier: [] },
   preflight: defaultInstinctConfig,
 };
 
@@ -112,6 +116,7 @@ export const completeV4StoredConfig: Record<string, unknown> = {
       ([key]) => key !== 'extensions' && key !== 'instinct',
     ),
   ),
+  modelSelection: historicalModelSelection,
   episodeFinishIdleTriggerTimeMs: 450_000,
   memoryWriteIntervalMs: 60_000,
   memoryWriteStepInterval: 3,

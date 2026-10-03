@@ -32,7 +32,7 @@ function model(type: ProviderType, modelId = 'gemini-2.5-pro') {
   const definition = builtInProviderDefinitions.find(
     (item) => item.type === type,
   );
-  assert(definition);
+  assert(definition?.createLanguageModel);
   return withRemoteInputMapping(
     definition.createLanguageModel(
       {
@@ -211,35 +211,36 @@ describe('remote input capability contract', () => {
     ).toEqual(remoteInputUnavailable());
   });
 
-  it.each(builtInProviderDefinitions.map(({ type }) => type))(
-    '%s uses its declared remote URL capabilities',
-    async (type) => {
-      const fetch = vi.fn(() => {
-        throw new Error('Unexpected I/O');
-      });
-      vi.stubGlobal('fetch', fetch);
-      vi.mocked(readFile).mockClear();
-      const accepted = [
-        'openai',
-        'azure-openai',
-        'responses',
-        'chatgpt-codex-subscription',
-        'anthropic',
-        'anthropic-messages',
-        'google-gemini',
-        'google-generative',
-        'google-vertex',
-      ].includes(type);
-      const result = await prepareRemoteInput(model(type), capabilities, {
-        url,
-        mediaType: 'image/png',
-      });
-      expect(result.type).toBe(accepted ? 'content' : 'error-text');
-      expect(fetch).not.toHaveBeenCalled();
-      expect(readFile).not.toHaveBeenCalled();
-      expect(writeFile).not.toHaveBeenCalled();
-    },
-  );
+  it.each(
+    builtInProviderDefinitions
+      .filter((definition) => definition.createLanguageModel !== undefined)
+      .map(({ type }) => type),
+  )('%s uses its declared remote URL capabilities', async (type) => {
+    const fetch = vi.fn(() => {
+      throw new Error('Unexpected I/O');
+    });
+    vi.stubGlobal('fetch', fetch);
+    vi.mocked(readFile).mockClear();
+    const accepted = [
+      'openai',
+      'azure-openai',
+      'responses',
+      'chatgpt-codex-subscription',
+      'anthropic',
+      'anthropic-messages',
+      'google-gemini',
+      'google-generative',
+      'google-vertex',
+    ].includes(type);
+    const result = await prepareRemoteInput(model(type), capabilities, {
+      url,
+      mediaType: 'image/png',
+    });
+    expect(result.type).toBe(accepted ? 'content' : 'error-text');
+    expect(fetch).not.toHaveBeenCalled();
+    expect(readFile).not.toHaveBeenCalled();
+    expect(writeFile).not.toHaveBeenCalled();
+  });
 
   it.each(['application/pdf', 'video/mp4', 'text/plain', 'application/json'])(
     'accepts declared %s without restricting media to images',
@@ -537,7 +538,7 @@ describe.each([false, true])(
               ?.output,
           ).toEqual([
             mediaType.startsWith('image/')
-              ? { type: 'input_image', image_url: url }
+              ? { type: 'input_image', image_url: url, detail: 'auto' }
               : { type: 'input_file', file_url: url },
           ]);
         } else if (family === 'anthropic') {

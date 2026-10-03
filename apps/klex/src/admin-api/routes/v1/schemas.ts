@@ -63,6 +63,7 @@ const mcpServerErrorSchema = z
 
 const mcpServerInfoSchema = z
   .object({
+    connectionId: z.string().uuid().optional(),
     name: z.string(),
     status: mcpConnectionStatusSchema,
     toolCount: z.number().int().min(0),

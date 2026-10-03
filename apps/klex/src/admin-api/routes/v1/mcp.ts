@@ -1,10 +1,13 @@
-import { createRoute, type RouteHandler } from '@hono/zod-openapi';
+import { randomUUID } from 'node:crypto';
+
+import { createRoute, type RouteHandler, z } from '@hono/zod-openapi';
 
 import type { ModuleLogger } from '@stagewise/logger';
 
 import type { Config, McpServerConfig } from '@/config';
 import { ConfigValidationError } from '@/config';
 import type { Mcp } from '@/mcp';
+import { assertJsonValue } from '@/tool-provider';
 
 import {
   createMcpServerBodySchema,
@@ -20,6 +23,108 @@ export interface McpRouteDependencies {
   config: Config;
   mcp: Mcp;
   logger: ModuleLogger;
+}
+
+export const callMcpToolRoute = createRoute({
+  method: 'post',
+  path: '/v1/mcp-servers/{name}/tool-calls',
+  tags: ['MCP Servers'],
+  summary: 'Call a connected MCP tool',
+  description:
+    'Executes a tool through the existing MCP connection and records it in tool-call history. Uses the admin API authorization boundary; calls may modify external data. Provider credentials remain on the agent.',
+  request: {
+    params: mcpServerNameParamSchema,
+    body: {
+      required: true,
+      content: {
+        'application/json': {
+          schema: z.object({
+            toolName: z.string().min(1),
+            arguments: z.record(z.string(), z.unknown()),
+          }),
+        },
+      },
+    },
+  },
+  responses: {
+    200: {
+      description: 'MCP tool result',
+      content: {
+        'application/json': { schema: z.object({ result: z.unknown() }) },
+      },
+    },
+    404: {
+      description: 'Server or tool not found',
+      content: { 'application/json': { schema: errorResponseSchema } },
+    },
+    409: {
+      description: 'Server not connected',
+      content: { 'application/json': { schema: errorResponseSchema } },
+    },
+    502: {
+      description: 'Tool request failed',
+      content: { 'application/json': { schema: errorResponseSchema } },
+    },
+    504: {
+      description: 'Tool request cancelled or timed out',
+      content: { 'application/json': { schema: errorResponseSchema } },
+    },
+  },
+});
+
+export function callMcpTool(
+  deps: McpRouteDependencies,
+): RouteHandler<typeof callMcpToolRoute> {
+  return async (c) => {
+    const { name } = c.req.valid('param');
+    const { toolName, arguments: input } = c.req.valid('json');
+    const server = deps.mcp
+      .getServerStatuses()
+      .find((server) => server.name === name);
+    if (!server)
+      return c.json(
+        { error: 'MCP server not found', code: 'server_not_found' },
+        404,
+      );
+    if (server.status !== 'connected')
+      return c.json(
+        { error: 'MCP server not connected', code: 'server_not_connected' },
+        409,
+      );
+    const reference = { namespace: name, name: toolName };
+    const signal = AbortSignal.any([
+      c.req.raw.signal,
+      AbortSignal.timeout(30_000),
+    ]);
+    const context = { executionId: randomUUID(), signal };
+    try {
+      await deps.mcp.describe(reference, context);
+    } catch {
+      return c.json(
+        { error: 'MCP tool not found', code: 'tool_not_found' },
+        404,
+      );
+    }
+    try {
+      signal.throwIfAborted();
+      assertJsonValue(input);
+      const result: unknown = await deps.mcp.invoke(reference, input, context);
+      return c.json({ result }, 200);
+    } catch {
+      if (signal.aborted)
+        return c.json(
+          {
+            error: 'MCP tool request cancelled or timed out',
+            code: 'tool_call_aborted',
+          },
+          504,
+        );
+      return c.json(
+        { error: 'MCP tool request failed', code: 'tool_call_failed' },
+        502,
+      );
+    }
+  };
 }
 
 // --- GET /v1/mcp-servers ---

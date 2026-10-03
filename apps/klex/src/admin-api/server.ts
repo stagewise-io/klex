@@ -35,6 +35,8 @@ import {
   registerIntrospectionPathRoute,
 } from './routes/v1/introspection';
 import {
+  callMcpTool,
+  callMcpToolRoute,
   createMcpServer,
   createMcpServerRoute,
   deleteMcpServer,
@@ -141,6 +143,7 @@ export function createAdminApp(deps: AdminAppDependencies) {
       getIntrospectionRoot({ introspector: deps.introspector }),
     )
     .openapi(getMcpServersRoute, getMcpServers(deps))
+    .openapi(callMcpToolRoute, callMcpTool(deps))
     .openapi(getMcpServerRoute, getMcpServer(deps))
     .openapi(createMcpServerRoute, createMcpServer(deps))
     .openapi(updateMcpServerRoute, updateMcpServer(deps))

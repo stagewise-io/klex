@@ -128,7 +128,11 @@ describe('readAttachment — provider rejection degrade', () => {
       type: 'error-text',
       value: REMOTE_INPUT_REJECTED,
     });
-    expect(JSON.stringify(toolOutput(second))).not.toContain('secret=private');
+    // The assistant's own tool-call input still names the URL; no tool
+    // result may carry it to the provider anymore.
+    expect(
+      JSON.stringify(second.filter((m) => m.role === 'tool')),
+    ).not.toContain('secret=private');
     expect(await extension.introspect?.()).toEqual({
       injectedCount: 0,
       rejectedCount: 1,

@@ -317,17 +317,19 @@ describe('GenerationRunner — error finish reason with model fallback', () => {
     expect(result.generationFailed).toBe(false);
   });
 
-  it('salvages partial content on 400 API error without fallback (not fatal)', async () => {
+  it('salvages partial content on 400 API error and reports the rejection without fallback (not fatal)', async () => {
     const fallbackManager = makeFallbackManager();
     const fallbackSpy = vi.spyOn(fallbackManager, 'fallbackToNextModel');
 
+    const genMsg = makeAssistantMessage([{ type: 'text', text: 'partial' }]);
     vi.mocked(runStreamedGeneration).mockResolvedValue(
       makeGenResult(
-        makeAssistantMessage([{ type: 'text', text: 'partial' }]),
+        genMsg,
         'error',
         makeApiError({ message: 'Bad Request', statusCode: 400 }),
       ),
     );
+    vi.mocked(repairPartialMessage).mockReturnValue(true);
 
     const messages: ExtendedUIMessage[] = [];
     const runner = new GenerationRunner(
@@ -337,10 +339,11 @@ describe('GenerationRunner — error finish reason with model fallback', () => {
 
     expect(fallbackSpy).not.toHaveBeenCalled();
     expect(result.fatalError).toBe(false);
-    expect(result.requestRejected).toBe(false);
+    expect(result.requestRejected).toBe(true);
     expect(result.modelFallbackOccurred).toBe(false);
     expect(result.forceNextStep).toBe(true);
     expect(result.generation).toBeNull();
+    expect(messages).toContain(genMsg);
   });
 
   it('returns requestRejected on 404 API error with no content, without fallback', async () => {

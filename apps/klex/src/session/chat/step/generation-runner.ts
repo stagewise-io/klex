@@ -146,6 +146,7 @@ export class GenerationRunner {
     let generationFailed = false;
     let modelFallbackOccurred = false;
     let requestRejected = false;
+    let salvagedRejection = false;
 
     const model = this.deps.model;
     let lastUsage: LanguageModelUsage | null = null;
@@ -293,6 +294,10 @@ export class GenerationRunner {
       if (outcome === 'salvage') {
         forceNextStep = true;
         modelFallbackOccurred = lastClassification?.isModelError === true;
+        // A rejection after partial content still means the request was
+        // rejected: report it so extensions drop the content that caused
+        // it and the turn counts it against the failure budget.
+        salvagedRejection = lastClassification?.isRequestRejected === true;
         break;
       }
       if (outcome === 'aborted') {
@@ -402,7 +407,7 @@ export class GenerationRunner {
           : null,
       toolCalls,
       modelFallbackOccurred,
-      requestRejected: false,
+      requestRejected: salvagedRejection,
     };
   }
 
@@ -442,6 +447,8 @@ export class GenerationRunner {
 
     // Provider rejected this request with no content — no model fallback;
     // the turn decides how to proceed (degrade content, then fall back).
+    // With partial content the rejection is salvaged below and still
+    // reported as `requestRejected` on the step result.
     if (classification?.isRequestRejected && !hasContent) {
       return 'request_rejected';
     }

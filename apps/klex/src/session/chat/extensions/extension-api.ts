@@ -322,9 +322,10 @@ export interface StepCompleteEvent {
    */
   modelFallbackOccurred: boolean;
   /**
-   * True when the provider rejected the request (4xx, non-auth,
-   * non-rate-limit). No model fallback was performed. Extensions may
-   * drop request content they injected so the next step can succeed.
+   * True when the provider rejected the request (4xx other than 401,
+   * 403, 408, and 429), including rejections after partial content was
+   * salvaged. No model fallback was performed. Extensions may drop
+   * request content they injected so the next step can succeed.
    */
   requestRejected: boolean;
 }

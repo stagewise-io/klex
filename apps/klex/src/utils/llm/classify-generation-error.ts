@@ -38,10 +38,10 @@ function isAbortError(error: unknown): boolean {
 export interface GenerationErrorClassification {
   isModelError: boolean;
   /**
-   * True when the error is non-recoverable — the request itself is
-   * invalid (e.g. 400 bad request, invalid prompt). The session should
-   * be terminated rather than retried, because no model or delay will
-   * fix a malformed request.
+   * True when the error is non-recoverable — the prompt was rejected
+   * locally as invalid (e.g. `InvalidPromptError`). The session should
+   * be terminated rather than retried. Provider HTTP 4xx responses
+   * (including 400) are never fatal; they set `isRequestRejected`.
    */
   isFatal: boolean;
   /**

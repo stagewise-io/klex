@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { ModuleLogger } from '@stagewise/logger';
 
 import type { Config, KlexConfig } from '@/config';
+import { defaultInstinctConfig } from '@/config/config.test-fixtures';
 import type { ProviderRegistry } from '@/provider-registry';
 
 import {
@@ -23,6 +24,7 @@ const logger = { error: () => undefined } as unknown as ModuleLogger;
 const reference = { providerId: 'openai-main', modelId: 'org:model:v2' };
 const baseConfig: KlexConfig = {
   configVersion: 2,
+  instinct: defaultInstinctConfig,
   officialName: 'Agent',
   providers: {
     'openai-main': {
@@ -38,6 +40,7 @@ const baseConfig: KlexConfig = {
     memory: [],
     imageVision: [],
     audioListening: [],
+    instincts: [],
     voice: { sts: [], tts: [], stt: [] },
   },
   mcpServers: {},
@@ -104,33 +107,38 @@ describe('settings routes', () => {
     expect(await response.json()).toMatchObject({ chat: [reference] });
   });
 
-  it('updates references whose native model ID contains colons', async () => {
-    let current = baseConfig;
-    const config = { get: () => current } as unknown as Config;
-    const next = {
-      providerId: 'openai-main',
-      modelId: 'namespace:model:latest',
-    };
-    const response = await app(config, {
-      updateModelSelection: vi.fn(async (patch) => {
-        current = {
-          ...current,
-          modelSelection: { ...current.modelSelection, ...patch },
-        };
-        return {
-          ok: true as const,
-          code: 'available' as const,
-          value: { selection: current.modelSelection, warnings: [] },
-        };
-      }),
-    }).request('/v1/settings/model-selection', {
-      method: 'PATCH',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ chat: [next] }),
-    });
-    expect(response.status).toBe(200);
-    expect(current.modelSelection.chat).toEqual([next]);
-  });
+  it.each(['chat', 'instincts'] as const)(
+    'updates %s references whose native model ID contains colons',
+    async (purpose) => {
+      let current = baseConfig;
+      const config = { get: () => current } as unknown as Config;
+      const next = {
+        providerId: 'openai-main',
+        modelId: 'namespace:model:latest',
+      };
+      const response = await app(config, {
+        updateModelSelection: vi.fn(async (patch) => {
+          current = {
+            ...current,
+            modelSelection: { ...current.modelSelection, ...patch },
+          };
+          return {
+            ok: true as const,
+            code: 'available' as const,
+            value: { selection: current.modelSelection, warnings: [] },
+          };
+        }),
+      }).request('/v1/settings/model-selection', {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ [purpose]: [next] }),
+      });
+      expect(response.status).toBe(200);
+      expect(current.modelSelection[purpose]).toEqual([
+        purpose === 'instincts' ? { ...next, api: 'generation' } : next,
+      ]);
+    },
+  );
 
   it('rejects unknown provider instance IDs', async () => {
     const config = { get: () => baseConfig } as unknown as Config;

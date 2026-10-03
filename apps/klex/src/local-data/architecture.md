@@ -54,6 +54,14 @@ Agent discovery may inspect metadata without mutation. Incompatible or corrupt a
 
 Migrations are deterministic, forward-only, and validated after every step. Do not add down migrations. Do not remove old SQLite columns or JSON fields until compatibility policy permits. Add optional fields before requiring them.
 
+## Instinct API and model-call availability migrations
+
+Config schema 7→8 raises compatibility to 10 and materializes `api: 'generation'` on historical instinct selections. Order and provider options are preserved, and no attempt timeout is added: omission retains the existing remaining-budget behavior. The current instinct entries can explicitly choose generation/evaluation and an optional bounded attempt timeout. Other model purposes retain their original contract; the public `configVersion: 2` is unchanged.
+
+Model-call SQLite schema 2→3 raises compatibility to 2 and adds nullable `api`, `token_usage_reported`, and `cache_usage_reported` columns. Historical rows keep unknown (`null`) API/availability rather than claiming measured usage. New availability flags distinguish fully reported totals/cache metrics from absent or incomplete pairs; individually reported numbers are retained. Existing numeric columns remain additive storage, and aggregate usage reports incompleteness counts so sums with missing metrics are recognized as reported lower bounds, not complete consumption or cost estimates. Synthetic operation tests use explicit `operation-test` source attribution and no chat session identity. No verification store is introduced.
+
+Both migrations use the same registered checkpoint/preflight/recovery path below and reject incompatible older writers before mutation.
+
 ## Recovery state machine
 
 Before the first mutation, Klex creates an owner-only checkpoint, atomically publishes its manifest, and writes a journal. SQLite stores are checkpointed after truncating WAL while the directory lock is held. Each migration is applied in registry order and validated. Success removes the journal; failure restores every targeted store as one unit, verifies hashes, marks the checkpoint failed, and aborts startup. An active journal on the next startup triggers restoration before preflight retries.

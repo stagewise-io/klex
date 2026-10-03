@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type {
   AdminApiClient,
+  InstinctOperationTestResult,
   ModelSelection,
   ProviderInfo,
 } from '../api-client';
@@ -18,6 +19,7 @@ const emptySelection: ModelSelection = {
   memory: [],
   imageVision: [],
   audioListening: [],
+  instincts: [],
   voice: { sts: [], tts: [], stt: [] },
 };
 
@@ -33,6 +35,8 @@ function provider(id: string): ProviderInfo {
         modelDiscovery: true,
         connectivityTest: true,
         customModels: true,
+        generation: true,
+        evaluation: true,
       },
     },
     operations: {
@@ -104,22 +108,51 @@ async function typeText(
 }
 
 describe('ModelSelectionScreen', () => {
-  it('lists and patches the consult model purpose', async () => {
-    const initial: ModelSelection = { ...emptySelection };
-    const patchModelSelection = vi.fn().mockResolvedValue(initial);
+  it('adds a second API, preserves ordered options, edits its budget, and tests only after confirmation', async () => {
+    let selection: ModelSelection = {
+      ...emptySelection,
+      instincts: [
+        {
+          providerId: 'openai-primary',
+          modelId: 'vendor:model:latest',
+          api: 'generation',
+          attemptTimeoutMs: 900,
+          providerOptions: { openai: { mode: 'original' } },
+        },
+      ],
+    };
+    const patchModelSelection = vi.fn(
+      async (patch: { instincts: ModelSelection['instincts'] }) => {
+        selection = { ...selection, ...patch };
+        return selection;
+      },
+    );
+    const result: InstinctOperationTestResult = {
+      providerId: 'openai-primary',
+      modelId: 'vendor:model:latest',
+      api: 'evaluation',
+      contractValid: true,
+      expectedAnswersMatch: false,
+      elapsedMs: 23,
+      usage: null,
+      warnings: ['unsupported'],
+    };
+    const testProviderOperation = vi.fn().mockResolvedValue(result);
     const view = renderScreen(
       makeClient({
-        getModelSelection: vi.fn().mockResolvedValue(initial),
+        getModelSelection: vi.fn().mockResolvedValue(selection),
         patchModelSelection,
+        testProviderOperation,
       }),
     );
-
-    await vi.waitFor(() => expect(view.lastFrame()).toContain('Consult'));
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    view.stdin.write('\u001B[B');
+    await vi.waitFor(() => expect(view.lastFrame()).toContain('Instincts'));
+    for (let index = 0; index < 6; index++) {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      view.stdin.write('\u001B[B');
+    }
     await new Promise((resolve) => setTimeout(resolve, 0));
     view.stdin.write('\r');
-    await vi.waitFor(() => expect(view.lastFrame()).toContain('No models'));
+    await vi.waitFor(() => expect(view.lastFrame()).toContain('[generation]'));
     view.stdin.write('a');
     await vi.waitFor(() =>
       expect(view.lastFrame()).toContain('openai-primary'),
@@ -127,16 +160,144 @@ describe('ModelSelectionScreen', () => {
     view.stdin.write('\r');
     await vi.waitFor(() => expect(view.lastFrame()).toContain('Latest'));
     view.stdin.write('\r');
-
+    await vi.waitFor(() => expect(view.lastFrame()).toContain('evaluation —'));
+    view.stdin.write('\u001B[B');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    view.stdin.write('\r');
+    await vi.waitFor(() => expect(selection.instincts).toHaveLength(2));
+    expect(selection.instincts[1]).toMatchObject({
+      api: 'evaluation',
+      attemptTimeoutMs: 1500,
+    });
     await vi.waitFor(() =>
-      expect(patchModelSelection).toHaveBeenCalledWith({
-        consult: [
-          { providerId: 'openai-primary', modelId: 'vendor:model:latest' },
-        ],
-      }),
+      expect(view.lastFrame()).toContain('API: evaluation'),
     );
+    view.stdin.write('\u001B[1;2A');
+    await vi.waitFor(() =>
+      expect(selection.instincts[0]?.api).toBe('evaluation'),
+    );
+    expect(selection.instincts[1]).toMatchObject({
+      api: 'generation',
+      attemptTimeoutMs: 900,
+      providerOptions: { openai: { mode: 'original' } },
+    });
+    await vi.waitFor(() =>
+      expect(view.lastFrame()).toContain('API: evaluation'),
+    );
+    view.stdin.write('e');
+    await vi.waitFor(() =>
+      expect(view.lastFrame()).toContain('Attempt timeout in ms'),
+    );
+    for (let index = 0; index < 4; index++) {
+      view.stdin.write('\u007F');
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+    await typeText(view, '2500');
+    view.stdin.write('\r');
+    await vi.waitFor(() => expect(view.lastFrame()).toContain('2500 ms'));
+    expect(testProviderOperation).not.toHaveBeenCalled();
+    view.stdin.write('t');
+    await vi.waitFor(() =>
+      expect(view.lastFrame()).toContain('may incur charges'),
+    );
+    expect(testProviderOperation).not.toHaveBeenCalled();
+    view.stdin.write('y');
+    await vi.waitFor(() =>
+      expect(view.lastFrame()).toContain('expected answers do not match'),
+    );
+    expect(view.lastFrame()).toContain('input unknown');
+    expect(view.lastFrame()).toContain('not accuracy certification');
+    expect(testProviderOperation).toHaveBeenCalledWith(
+      'openai-primary',
+      {
+        modelId: 'vendor:model:latest',
+        api: 'evaluation',
+        providerOptions: undefined,
+        timeoutMs: 2500,
+      },
+      expect.any(AbortSignal),
+    );
+    let finish!: (value: InstinctOperationTestResult) => void;
+    testProviderOperation.mockImplementationOnce(
+      () =>
+        new Promise<InstinctOperationTestResult>((resolve) => {
+          finish = resolve;
+        }),
+    );
+    view.stdin.write('t');
+    await vi.waitFor(() =>
+      expect(view.lastFrame()).toContain('may incur charges'),
+    );
+    view.stdin.write('y');
+    await vi.waitFor(() => expect(view.lastFrame()).toContain('Esc cancels'));
+    const signal = testProviderOperation.mock.calls[1]?.[2] as AbortSignal;
+    view.stdin.write('\u001B');
+    await vi.waitFor(() =>
+      expect(view.lastFrame()).toContain('API: evaluation'),
+    );
+    expect(signal.aborted).toBe(true);
+    finish({ ...result, diagnostic: 'late result must be ignored' });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(view.lastFrame()).not.toContain('late result');
+    expect(view.lastFrame()).not.toContain('Synthetic test:');
+    expect(testProviderOperation).toHaveBeenCalledTimes(2);
     view.unmount();
   });
+
+  it.each([
+    { purpose: 'consult', label: 'Consult', index: 1 },
+    { purpose: 'instincts', label: 'Instincts', index: 6 },
+  ])(
+    'lists and patches the $purpose model purpose',
+    async ({ purpose, label, index }) => {
+      const initial: ModelSelection = { ...emptySelection };
+      const patchModelSelection = vi.fn().mockResolvedValue(initial);
+      const view = renderScreen(
+        makeClient({
+          getModelSelection: vi.fn().mockResolvedValue(initial),
+          patchModelSelection,
+        }),
+      );
+
+      await vi.waitFor(() => expect(view.lastFrame()).toContain(label));
+      for (let i = 0; i < index; i++) {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        view.stdin.write('\u001B[B');
+      }
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      view.stdin.write('\r');
+      await vi.waitFor(() => expect(view.lastFrame()).toContain('No models'));
+      view.stdin.write('a');
+      await vi.waitFor(() =>
+        expect(view.lastFrame()).toContain('openai-primary'),
+      );
+      view.stdin.write('\r');
+      await vi.waitFor(() => expect(view.lastFrame()).toContain('Latest'));
+      view.stdin.write('\r');
+      if (purpose === 'instincts') {
+        await vi.waitFor(() =>
+          expect(view.lastFrame()).toContain('generation —'),
+        );
+        view.stdin.write('\r');
+      }
+
+      await vi.waitFor(() =>
+        expect(patchModelSelection).toHaveBeenCalledWith({
+          [purpose]: [
+            {
+              providerId: 'openai-primary',
+              modelId: 'vendor:model:latest',
+              ...(purpose === 'instincts' && {
+                api: 'generation',
+                attemptTimeoutMs: 1500,
+              }),
+            },
+          ],
+        }),
+      );
+      view.unmount();
+    },
+  );
 
   it('reorders model priority with Shift+Arrow keys', async () => {
     const initial: ModelSelection = {

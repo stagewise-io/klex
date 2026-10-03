@@ -46,8 +46,8 @@ describe('AgentDirectory', () => {
     ).toMatchObject({
       _klex: {
         store: 'config',
-        schemaVersion: 5,
-        compatibilityVersion: 6,
+        schemaVersion: 8,
+        compatibilityVersion: 10,
       },
       configVersion: 2,
       officialName: 'Ada',
@@ -58,6 +58,7 @@ describe('AgentDirectory', () => {
         memory: [],
         imageVision: [],
         audioListening: [],
+        instincts: [],
         voice: { sts: [], tts: [], stt: [] },
       },
       mcpServers: {},
@@ -74,6 +75,8 @@ describe('AgentDirectory', () => {
     const stored = JSON.parse(
       await readFile(join(created.directory, 'config.json'), 'utf8'),
     );
+    expect(stored.instinct).toMatchObject({ enabled: true, timeoutMs: 8_000 });
+    expect(stored).not.toHaveProperty('preflight');
     expect(stored).not.toHaveProperty('episodeFinishIdleTriggerTimeMs');
     expect(stored).not.toHaveProperty('memoryWriteIntervalMs');
     expect(stored).not.toHaveProperty('memoryWriteStepInterval');

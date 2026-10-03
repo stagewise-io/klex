@@ -261,6 +261,8 @@ export const openAiProviderDefinition: ProviderDefinition = {
     documentationUrl: 'https://platform.openai.com/docs',
   },
   createLanguageModel,
+  createEvaluationModel: (instance, modelId) =>
+    createProvider(instance).evaluationModel(modelId),
   resolveModelMetadata: resolveOpenAiModelMetadata,
   discoverModels: (instance, signal) =>
     discoverOpenAiCompatibleModels(instance, BASE_URL, signal, false),
@@ -274,9 +276,13 @@ function createLanguageModel(
   instance: ProviderInstance,
   modelId: string,
 ): LanguageModelV4 {
+  return createProvider(instance).languageModel(modelId);
+}
+
+function createProvider(instance: ProviderInstance) {
   return createOpenAI({
     baseURL: setting(instance, 'baseUrl') ?? BASE_URL,
     apiKey: requiredSetting(instance, 'apiKey'),
     headers: customHeaders(instance),
-  }).languageModel(modelId);
+  });
 }

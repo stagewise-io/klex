@@ -1,12 +1,16 @@
 import { createHash, randomBytes } from 'node:crypto';
 
-import type { LanguageModelV4 } from '@ai-sdk/provider';
+import type {
+  Experimental_EvaluationModelV4 as EvaluationModelV4,
+  LanguageModelV4,
+} from '@ai-sdk/provider';
 
 import type { ModuleLogger, RootLogger } from '@stagewise/logger';
 
 import {
   type Config,
   getProviderSettingsJsonSchema,
+  type InstinctModelSelectionEntry,
   isProviderSecretSetting,
   type ModelCapabilities,
   type ModelDefinition,
@@ -62,6 +66,8 @@ export interface ProviderCapabilities {
   modelDiscovery: boolean;
   connectivityTest: boolean;
   customModels: boolean;
+  generation: boolean;
+  evaluation: boolean;
 }
 
 export interface ProviderMetadata {
@@ -117,10 +123,14 @@ export interface ProviderDefinition {
     settings: ProviderSettings,
     signal: AbortSignal,
   ): Promise<ProviderOperationResult>;
-  createLanguageModel(
+  createLanguageModel?(
     instance: ProviderInstance,
     modelId: string,
   ): LanguageModelV4;
+  createEvaluationModel?(
+    instance: ProviderInstance,
+    modelId: string,
+  ): EvaluationModelV4;
   discoverModels?(
     instance: ProviderInstance,
     signal: AbortSignal,
@@ -176,7 +186,32 @@ export type SerializedProviderSettings = Record<
   unknown | { configured: boolean }
 >;
 
+export type InstinctModelCandidate =
+  | {
+      readonly status: 'unavailable';
+      readonly entry: InstinctModelSelectionEntry;
+      readonly reason: string;
+    }
+  | {
+      readonly status: 'ready';
+      readonly entry: InstinctModelSelectionEntry;
+      readonly providerType: ProviderType;
+      readonly api: 'generation';
+      readonly model: LanguageModelV4;
+    }
+  | {
+      readonly status: 'ready';
+      readonly entry: InstinctModelSelectionEntry;
+      readonly providerType: ProviderType;
+      readonly api: 'evaluation';
+      readonly model: EvaluationModelV4;
+    };
+
 export interface ProviderModelResolver {
+  resolveInstinctCandidates(
+    entries: readonly InstinctModelSelectionEntry[],
+    questionTypes: readonly ('boolean' | 'choice')[],
+  ): readonly InstinctModelCandidate[];
   getLanguageModel(reference: ModelSelectionEntry): LanguageModelV4;
   resolveModel(reference: ModelSelectionEntry): ResolvedModelConfig;
   resolveModelInfo(reference: ModelSelectionEntry): ModelInfo;
@@ -543,6 +578,7 @@ class ProviderRegistryModule implements ProviderRegistry {
       audioListening:
         patch.audioListening ?? current.modelSelection.audioListening,
       consult: patch.consult ?? current.modelSelection.consult,
+      instincts: patch.instincts ?? current.modelSelection.instincts,
       voice: patch.voice ?? current.modelSelection.voice,
     };
     const changed: ModelSelection = {
@@ -552,6 +588,7 @@ class ProviderRegistryModule implements ProviderRegistry {
       imageVision: patch.imageVision ?? [],
       audioListening: patch.audioListening ?? [],
       consult: patch.consult ?? [],
+      instincts: patch.instincts ?? [],
       voice: patch.voice ?? { sts: [], tts: [], stt: [] },
     };
     const warnings: ModelSelectionWarning[] = [];
@@ -560,7 +597,19 @@ class ProviderRegistryModule implements ProviderRegistry {
         modelSelectionEntries(current.modelSelection).find(
           ([currentPurpose]) => currentPurpose === purpose,
         )?.[1] ?? [];
+      const identities = new Set<string>();
       for (const entry of entries) {
+        const api =
+          purpose === 'instincts'
+            ? ((entry as InstinctModelSelectionEntry).api ?? 'generation')
+            : 'generation';
+        const identity = JSON.stringify([entry.providerId, entry.modelId, api]);
+        if (identities.has(identity))
+          return failure(
+            'invalid_configuration',
+            `Duplicate model selection for '${purpose}'`,
+          );
+        identities.add(identity);
         const provider = current.providers[entry.providerId];
         if (!provider) {
           return failure(
@@ -594,6 +643,16 @@ class ProviderRegistryModule implements ProviderRegistry {
             modelId: entry.modelId,
             message: `Capabilities for model '${entry.modelId}' could not be determined from provider discovery or the static catalog. Add it to knownModels to confirm its capabilities.`,
           });
+        }
+        if (
+          purpose === 'instincts' && api === 'evaluation'
+            ? !definition.createEvaluationModel
+            : !definition.createLanguageModel
+        ) {
+          return failure(
+            'invalid_configuration',
+            `Provider '${provider.type}' does not support ${api}`,
+          );
         }
         const effective = this.resolveModel(entry);
         const voiceCapability = voiceCapabilityForPurpose(purpose);
@@ -633,7 +692,12 @@ class ProviderRegistryModule implements ProviderRegistry {
         } else if (
           effective.kind &&
           effective.kind !== 'language' &&
-          effective.kind !== 'unknown'
+          effective.kind !== 'unknown' &&
+          !(
+            purpose === 'instincts' &&
+            api === 'evaluation' &&
+            effective.kind === 'evaluation'
+          )
         ) {
           return failure(
             'invalid_configuration',
@@ -786,10 +850,98 @@ class ProviderRegistryModule implements ProviderRegistry {
     const instance = this.getInstance(reference.providerId);
     if (!instance.ok) throw new Error(instance.message);
     const definition = this.requireDefinition(instance.value.type);
+    if (!definition.createLanguageModel)
+      throw new Error(
+        `Provider '${instance.value.type}' does not support generation`,
+      );
     return withRemoteInputMapping(
       definition.createLanguageModel(instance.value, reference.modelId),
       instance.value.type,
     );
+  }
+
+  resolveInstinctCandidates(
+    entries: readonly InstinctModelSelectionEntry[],
+    questionTypes: readonly ('boolean' | 'choice')[],
+  ): readonly InstinctModelCandidate[] {
+    this.assertStarted();
+    const snapshot = this.requireConfig().getRuntime();
+    return entries.map((reference): InstinctModelCandidate => {
+      const entry = structuredClone(reference);
+      try {
+        const provider = snapshot.providers[entry.providerId];
+        if (!provider) throw new Error('Configured provider does not exist');
+        const instance: ProviderInstance = {
+          id: entry.providerId,
+          ...provider,
+        };
+        const definition = this.requireDefinition(provider.type);
+        const cached = this.modelCache.get(entry.providerId);
+        const discovered =
+          cached?.signature === this.settingsSignature(instance.settings)
+            ? cached.models.find(({ modelId }) => modelId === entry.modelId)
+            : undefined;
+        const kind = mergeProviderModels(
+          {
+            modelId: entry.modelId,
+            ...definition.resolveModelMetadata?.(entry.modelId),
+          },
+          discovered,
+          provider.knownModels?.[entry.modelId]
+            ? { modelId: entry.modelId, ...provider.knownModels[entry.modelId] }
+            : undefined,
+        )?.kind;
+        if (
+          kind &&
+          kind !== 'unknown' &&
+          kind !== 'language' &&
+          !(entry.api === 'evaluation' && kind === 'evaluation')
+        )
+          throw new Error('Model kind does not support the selected API');
+        if (entry.api === 'evaluation') {
+          if (!definition.createEvaluationModel)
+            throw new Error('Provider does not support evaluation');
+          const model = definition.createEvaluationModel(
+            instance,
+            entry.modelId,
+          );
+          if (
+            questionTypes.some(
+              (type) => !model.supportedQuestionTypes.includes(type),
+            )
+          )
+            throw new Error(
+              'Evaluation model does not support the required question types',
+            );
+          return {
+            status: 'ready',
+            entry,
+            providerType: provider.type,
+            api: 'evaluation',
+            model,
+          };
+        }
+        if (!definition.createLanguageModel)
+          throw new Error('Provider does not support generation');
+        return {
+          status: 'ready',
+          entry,
+          providerType: provider.type,
+          api: 'generation',
+          model: withRemoteInputMapping(
+            definition.createLanguageModel(instance, entry.modelId),
+            provider.type,
+          ),
+        };
+      } catch {
+        // Factory failures can contain credentials. Keep diagnostics bounded and non-secret.
+        return {
+          status: 'unavailable',
+          entry,
+          reason: 'Model/API configuration is unavailable or incompatible',
+        };
+      }
+    });
   }
 
   resolveModel(reference: ModelSelectionEntry): ResolvedModelConfig {
@@ -1078,6 +1230,7 @@ function modelSelectionEntries(
     ['imageVision', selection.imageVision],
     ['audioListening', selection.audioListening],
     ['consult', selection.consult],
+    ['instincts', selection.instincts],
     ['voice.sts', selection.voice.sts],
     ['voice.tts', selection.voice.tts],
     ['voice.stt', selection.voice.stt],
@@ -1116,6 +1269,8 @@ function providerMetadata(definition: ProviderDefinition): ProviderMetadata {
       modelDiscovery: definition.discoverModels !== undefined,
       connectivityTest: true,
       customModels: true,
+      generation: definition.createLanguageModel !== undefined,
+      evaluation: definition.createEvaluationModel !== undefined,
     },
   };
 }
@@ -1131,6 +1286,8 @@ function validateDefinitions(
     if (result.has(definition.type)) {
       throw new Error(`Duplicate provider type '${definition.type}'`);
     }
+    if (!definition.createLanguageModel && !definition.createEvaluationModel)
+      throw new Error(`Provider '${definition.type}' has no inference factory`);
     validateMetadata(definition);
     result.set(definition.type, Object.freeze(definition));
   }

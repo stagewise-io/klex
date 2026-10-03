@@ -278,6 +278,13 @@ const modelSelectionEntryOapiSchema = z
   .strict()
   .openapi('ModelSelectionEntry');
 
+const instinctModelSelectionEntryOapiSchema = modelSelectionEntryOapiSchema
+  .extend({
+    api: z.enum(['generation', 'evaluation']).default('generation'),
+    attemptTimeoutMs: z.number().int().positive().max(120_000).optional(),
+  })
+  .openapi('InstinctModelSelectionEntry');
+
 const voiceModelSelectionSchema = z.object({
   sts: z.array(modelSelectionEntryOapiSchema),
   tts: z.array(modelSelectionEntryOapiSchema),
@@ -292,6 +299,7 @@ const modelSelectionSchema = z
     imageVision: z.array(modelSelectionEntryOapiSchema).default([]),
     audioListening: z.array(modelSelectionEntryOapiSchema).default([]),
     consult: z.array(modelSelectionEntryOapiSchema).default([]),
+    instincts: z.array(instinctModelSelectionEntryOapiSchema).default([]),
     voice: voiceModelSelectionSchema,
   })
   .openapi('ModelSelection');
@@ -304,6 +312,7 @@ const modelSelectionPatchSchema = z
     imageVision: z.array(modelSelectionEntryOapiSchema).optional(),
     audioListening: z.array(modelSelectionEntryOapiSchema).optional(),
     consult: z.array(modelSelectionEntryOapiSchema).optional(),
+    instincts: z.array(instinctModelSelectionEntryOapiSchema).optional(),
     voice: voiceModelSelectionSchema.optional(),
   })
   .openapi('ModelSelectionPatch');
@@ -336,6 +345,8 @@ const providerMetadataSchema = z.object({
     modelDiscovery: z.boolean(),
     connectivityTest: z.boolean(),
     customModels: z.boolean(),
+    generation: z.boolean(),
+    evaluation: z.boolean(),
   }),
 });
 
@@ -396,10 +407,61 @@ const connectivityResultSchema = z.object({
   target: z.string().optional(),
 });
 
+const operationTestBodySchema = z
+  .object({
+    modelId: z.string().min(1).max(512),
+    api: z.enum(['generation', 'evaluation']),
+    timeoutMs: z.number().int().positive().max(120_000),
+    providerOptions: providerOptionsSchema
+      .refine((options) => {
+        if (JSON.stringify(options).length > 16_000) return false;
+        const pending: unknown[] = [options];
+        while (pending.length) {
+          const value = pending.pop();
+          if (value === null || typeof value !== 'object') continue;
+          for (const [key, child] of Object.entries(value)) {
+            if (
+              /(?:^|[._-])(?:api[_-]?key|authorization|cookie|credentials?|password|secret|access[_-]?token|headers?)(?:$|[._-])/i.test(
+                key.replace(/([a-z0-9])([A-Z])/g, '$1_$2'),
+              )
+            )
+              return false;
+            pending.push(child);
+          }
+        }
+        return true;
+      }, 'Provider options must be bounded and contain no credential fields.')
+      .optional(),
+  })
+  .strict()
+  .openapi('OperationTestRequest');
+
+const operationTestResultSchema = z
+  .object({
+    providerId: z.string(),
+    modelId: z.string(),
+    api: z.enum(['generation', 'evaluation']),
+    contractValid: z.boolean(),
+    expectedAnswersMatch: z.boolean(),
+    elapsedMs: z.number().nonnegative(),
+    usage: z
+      .object({
+        inputTokens: z.number().nonnegative().nullable(),
+        outputTokens: z.number().nonnegative().nullable(),
+        inputCacheReadTokens: z.number().nonnegative().nullable(),
+        inputCacheWriteTokens: z.number().nonnegative().nullable(),
+      })
+      .nullable(),
+    warnings: z.array(z.string()),
+    diagnostic: z.string().optional(),
+  })
+  .openapi('OperationTestResult');
+
 // --- Known Models ---
 
 const modelKindSchema = z.enum([
   'language',
+  'evaluation',
   'speech-to-speech',
   'text-to-speech',
   'speech-to-text',
@@ -781,7 +843,36 @@ const usageDataPointSchema = z
       .number()
       .int()
       .describe('Number of model calls in this bucket/split'),
-    inputTokens: z.number().int().describe('Total input (prompt) tokens'),
+    api: z
+      .enum(['generation', 'evaluation'])
+      .nullable()
+      .describe('API identity; null for historical rows or aggregations'),
+    tokenUsageReported: z
+      .boolean()
+      .nullable()
+      .describe(
+        'Both token totals were reported; null for historical rows or aggregations',
+      ),
+    cacheUsageReported: z
+      .boolean()
+      .nullable()
+      .describe(
+        'Both cache totals were reported; null for historical rows or aggregations',
+      ),
+    tokenUsageUnreportedCount: z
+      .number()
+      .int()
+      .nonnegative()
+      .describe('Calls without fully reported token totals'),
+    cacheUsageUnreportedCount: z
+      .number()
+      .int()
+      .nonnegative()
+      .describe('Calls without fully reported cache totals'),
+    inputTokens: z
+      .number()
+      .int()
+      .describe('Reported input-token lower bound when usage is incomplete'),
     outputTokens: z.number().int().describe('Total output (completion) tokens'),
     inputCacheWriteTokens: z
       .number()
@@ -835,7 +926,7 @@ const usageDataPointSchema = z
       .nullable()
       .describe('Model ID. Null for aggregated granularities.'),
     source: z
-      .enum(['chat', 'extension'])
+      .enum(['chat', 'extension', 'operation-test'])
       .nullable()
       .describe(
         'Call source: chat-session generation or extension-initiated. Null for aggregated granularities.',
@@ -950,6 +1041,8 @@ export {
   modelSelectionWarningSchema,
   oauthCallbackAcceptedSchema,
   oauthCallbackBodySchema,
+  operationTestBodySchema,
+  operationTestResultSchema,
   providerIdParamSchema,
   providerModelsQuerySchema,
   providerModelsResponseSchema,

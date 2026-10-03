@@ -7,7 +7,19 @@ export const emptyModelSelection: ModelSelection = {
   imageVision: [],
   audioListening: [],
   consult: [],
+  instincts: [],
   voice: { sts: [], tts: [], stt: [] },
+};
+
+export const defaultInstinctConfig: KlexConfig['instinct'] = {
+  enabled: true,
+  timeoutMs: 8_000,
+  classifierTimeoutMs: 4_000,
+  recentMessageCount: 5,
+  deltaMessageCap: 20,
+  historyCharacterCap: 16_000,
+  messageCharacterCap: 2_000,
+  contextCharacterCap: 2_000,
 };
 
 export const completeV2Config: KlexConfig = {
@@ -73,6 +85,7 @@ export const completeV2Config: KlexConfig = {
     workspace: { command: 'workspace-mcp', args: ['--root', '/workspace'] },
   },
   timezone: 'UTC',
+  instinct: defaultInstinctConfig,
   extensions: {
     memory: {
       episodes: {
@@ -84,11 +97,26 @@ export const completeV2Config: KlexConfig = {
   },
 };
 
+const { instincts: _instincts, ...historicalModelSelection } =
+  completeV2Config.modelSelection;
+
+/** Stored schema 5 retains the historical subsystem settings key. */
+export const completeV5StoredConfig = {
+  ...Object.fromEntries(
+    Object.entries(completeV2Config).filter(([key]) => key !== 'instinct'),
+  ),
+  modelSelection: { ...historicalModelSelection, classifier: [] },
+  preflight: defaultInstinctConfig,
+};
+
 /** Stored schema 2–4 shape: root memory keys, no `extensions`. */
 export const completeV4StoredConfig: Record<string, unknown> = {
   ...Object.fromEntries(
-    Object.entries(completeV2Config).filter(([key]) => key !== 'extensions'),
+    Object.entries(completeV2Config).filter(
+      ([key]) => key !== 'extensions' && key !== 'instinct',
+    ),
   ),
+  modelSelection: historicalModelSelection,
   episodeFinishIdleTriggerTimeMs: 450_000,
   memoryWriteIntervalMs: 60_000,
   memoryWriteStepInterval: 3,

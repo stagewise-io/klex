@@ -71,6 +71,8 @@ export interface HistoryFilterOptions {
         media: 'inline' | 'placeholder';
       };
   summary: false | { key: string; limit: FieldLimit };
+  /** Project admin god messages as labelled context, never as instructions. */
+  godMessages?: boolean;
   /** Projectors for `data-{key}` parts; other data parts are dropped. */
   data?: Readonly<Record<string, DataProjector>>;
 }

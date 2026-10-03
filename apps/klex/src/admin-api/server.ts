@@ -74,6 +74,8 @@ import {
   getProviderTypes,
   getProviderTypesRoute,
   testProvider,
+  testProviderOperation,
+  testProviderOperationRoute,
   testProviderRoute,
   updateKnownModel,
   updateKnownModelRoute,
@@ -161,6 +163,7 @@ export function createAdminApp(deps: AdminAppDependencies) {
     .openapi(updateProviderRoute, updateProvider(deps))
     .openapi(deleteProviderRoute, deleteProvider(deps))
     .openapi(testProviderRoute, testProvider(deps))
+    .openapi(testProviderOperationRoute, testProviderOperation(deps))
     .openapi(getProviderModelsRoute, getProviderModels(deps))
     .openapi(createKnownModelRoute, createKnownModel(deps))
     .openapi(updateKnownModelRoute, updateKnownModel(deps))

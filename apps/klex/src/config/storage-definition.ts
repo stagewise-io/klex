@@ -4,12 +4,18 @@ import type { JsonStoreDefinition } from '@/local-data';
 
 import {
   dropLegacyTelemetryConfig,
+  migrateInstinctApis,
+  migrateInstinctConfig,
+  migrateInstinctModelSelection,
   migrateLegacyKlexConfig,
   nestMemoryExtensionConfig,
   parseLegacyKlexConfig,
   parseStoredKlexConfig,
   parseStoredKlexConfigV2,
   parseStoredKlexConfigV4,
+  parseStoredKlexConfigV5,
+  parseStoredKlexConfigV6,
+  parseStoredKlexConfigV7,
 } from './types';
 
 function preservingSchema(
@@ -50,6 +56,15 @@ const v2ConfigStorageSchema = preservingSchema((value) => {
 const v4ConfigStorageSchema = preservingSchema((value) => {
   parseStoredKlexConfigV4(value);
 });
+const v5ConfigStorageSchema = preservingSchema((value) => {
+  parseStoredKlexConfigV5(value);
+});
+const v6ConfigStorageSchema = preservingSchema((value) => {
+  parseStoredKlexConfigV6(value);
+});
+const v7ConfigStorageSchema = preservingSchema((value) => {
+  parseStoredKlexConfigV7(value);
+});
 const currentConfigStorageSchema = preservingSchema((value) => {
   parseStoredKlexConfig(value);
 });
@@ -59,9 +74,10 @@ export const CONFIG_STORE_DEFINITION: JsonStoreDefinition = {
   id: 'config',
   relativePath: 'config.json',
   required: true,
-  schemaVersion: 5,
-  compatibilityVersion: 6,
-  minimumKlexVersion: '0.9.2',
+  schemaVersion: 8,
+  // 10: Instinct entries explicitly select generation or evaluation.
+  compatibilityVersion: 10,
+  minimumKlexVersion: '0.13.0',
   legacySchemaVersion: 1,
   versions: [
     { version: 1, schema: legacyConfigStorageSchema },
@@ -69,7 +85,10 @@ export const CONFIG_STORE_DEFINITION: JsonStoreDefinition = {
     // Schema 3 renamed telemetry levels; it shares the v2 shape.
     { version: 3, schema: v2ConfigStorageSchema },
     { version: 4, schema: v4ConfigStorageSchema },
-    { version: 5, schema: currentConfigStorageSchema },
+    { version: 5, schema: v5ConfigStorageSchema },
+    { version: 6, schema: v6ConfigStorageSchema },
+    { version: 7, schema: v7ConfigStorageSchema },
+    { version: 8, schema: currentConfigStorageSchema },
   ],
   migrations: [
     {
@@ -105,6 +124,24 @@ export const CONFIG_STORE_DEFINITION: JsonStoreDefinition = {
       // so keeping the keys would protect no downgrade path.
       name: 'nest-memory-extension-config',
       up: (value) => nestMemoryExtensionConfig(value),
+    },
+    {
+      from: 5,
+      to: 6,
+      name: 'rename-preflight-to-instinct',
+      up: (value) => migrateInstinctConfig(value),
+    },
+    {
+      from: 6,
+      to: 7,
+      name: 'rename-classifier-models-to-instincts',
+      up: (value) => migrateInstinctModelSelection(value),
+    },
+    {
+      from: 7,
+      to: 8,
+      name: 'select-instinct-inference-api',
+      up: migrateInstinctApis,
     },
   ],
 };

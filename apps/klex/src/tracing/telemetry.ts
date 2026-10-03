@@ -8,17 +8,19 @@ import {
   type Tracer,
   trace,
 } from '@opentelemetry/api';
-import type {
-  GenerateTextAbortEvent,
-  GenerateTextEndEvent,
-  GenerateTextStartEvent,
-  GenerateTextStepEndEvent,
-  GenerateTextStepStartEvent,
-  InferTelemetryEvent,
-  Instructions,
-  LanguageModelCallEndEvent,
-  LanguageModelCallStartEvent,
-  Telemetry,
+import {
+  type GenerateTextAbortEvent,
+  type GenerateTextEndEvent,
+  type GenerateTextStartEvent,
+  type GenerateTextStepEndEvent,
+  type GenerateTextStepStartEvent,
+  type InferTelemetryEvent,
+  type Instructions,
+  type LanguageModelCallEndEvent,
+  type LanguageModelCallStartEvent,
+  type LanguageModelUsage,
+  NoObjectGeneratedError,
+  type Telemetry,
 } from 'ai';
 
 import type { ModelCallRecord, ModelCallSource } from '@/model-call-logger';
@@ -29,6 +31,18 @@ import { normalizeAgentName } from '@/telemetry-resource';
 // that the `ai` package does not export directly.
 type TelemetryStartEvent = Parameters<NonNullable<Telemetry['onStart']>>[0];
 type TelemetryEndEvent = Parameters<NonNullable<Telemetry['onEnd']>>[0];
+type EvaluateStartEvent = Parameters<
+  NonNullable<Telemetry['experimental_onEvaluateStart']>
+>[0];
+type EvaluateEndEvent = Parameters<
+  NonNullable<Telemetry['experimental_onEvaluateEnd']>
+>[0];
+type EvaluationCallEndEvent = Parameters<
+  NonNullable<Telemetry['experimental_onEvaluationModelCallEnd']>
+>[0];
+type ReportedUsage = Partial<
+  Pick<LanguageModelUsage, 'inputTokens' | 'outputTokens' | 'inputTokenDetails'>
+>;
 
 /** Sink function that receives a `ModelCallRecord` at the end of every model call. */
 export type ModelCallSink = (record: ModelCallRecord) => void;
@@ -182,6 +196,7 @@ interface CallState {
   /** Total response time in ms, set in onLanguageModelCallEnd. */
   totalDurationMs: number | undefined;
   terminalRecorded: boolean;
+  usage?: ReportedUsage;
 }
 
 // ---------------------------------------------------------------------------
@@ -251,10 +266,10 @@ export class KlexTelemetry implements Telemetry {
     finishReason: string,
     isError: boolean,
     errorType: string | null,
-    inputTokens: number,
-    outputTokens: number,
-    cacheWriteTokens: number,
-    cacheReadTokens: number,
+    inputTokens: number | undefined,
+    outputTokens: number | undefined,
+    cacheWriteTokens: number | undefined,
+    cacheReadTokens: number | undefined,
   ): void {
     if (state.terminalRecorded) return;
     state.terminalRecorded = true;
@@ -270,20 +285,29 @@ export class KlexTelemetry implements Telemetry {
       extensionId = functionId.slice('extension:'.length);
     }
 
+    inputTokens ??= state.usage?.inputTokens;
+    outputTokens ??= state.usage?.outputTokens;
+    cacheWriteTokens ??= state.usage?.inputTokenDetails?.cacheWriteTokens;
+    cacheReadTokens ??= state.usage?.inputTokenDetails?.cacheReadTokens;
+    if (functionId === 'operation-test') source = 'operation-test';
     const now = Date.now();
     const record: ModelCallRecord = {
       id: callId,
-      sessionId: state.conversationId ?? null,
+      sessionId:
+        source === 'operation-test' ? null : (state.conversationId ?? null),
+      api: state.operationId === 'ai.evaluate' ? 'evaluation' : 'generation',
+      tokenUsageReported: inputTokens != null && outputTokens != null,
+      cacheUsageReported: cacheWriteTokens != null && cacheReadTokens != null,
       providerType: state.providerType ?? 'unknown',
       providerId: state.providerId ?? 'unknown',
       endpointId: null,
       modelId: state.modelId ?? 'unknown',
       source,
       extensionId,
-      inputTokens,
-      outputTokens,
-      inputCacheWriteTokens: cacheWriteTokens,
-      inputCacheReadTokens: cacheReadTokens,
+      inputTokens: inputTokens ?? 0,
+      outputTokens: outputTokens ?? 0,
+      inputCacheWriteTokens: cacheWriteTokens ?? 0,
+      inputCacheReadTokens: cacheReadTokens ?? 0,
       ttftMs: state.ttftMs ?? null,
       // Use the AI SDK's responseTimeMs when available; fall back to
       // wall-clock duration for abort/error paths (no performance data).
@@ -314,8 +338,17 @@ export class KlexTelemetry implements Telemetry {
     }
 
     // Narrow to the text-generation-specific event shape.
-    const genEvent = event as InferTelemetryEvent<GenerateTextStartEvent>;
+    this.startCall(event as InferTelemetryEvent<GenerateTextStartEvent>);
+  }
 
+  experimental_onEvaluateStart(event: EvaluateStartEvent): void {
+    this.startCall(event);
+  }
+
+  private startCall(
+    genEvent: InferTelemetryEvent<GenerateTextStartEvent> | EvaluateStartEvent,
+  ): void {
+    const isEvaluation = genEvent.operationId === 'ai.evaluate';
     const providerName = mapProviderName(genEvent.provider);
 
     // Extract conversation metadata from runtimeContext.
@@ -348,16 +381,20 @@ export class KlexTelemetry implements Telemetry {
         : genEvent.modelId;
     const requestModel = modelId;
 
-    const spanName = 'generate_content';
+    const spanName = isEvaluation ? 'evaluate' : 'generate_content';
 
     const attributes: Attributes = {
-      'gen_ai.operation.name': 'generate_content',
+      'gen_ai.operation.name': spanName,
+      'klex.model.api': isEvaluation ? 'evaluation' : 'generation',
       'gen_ai.provider.name': providerName,
       'gen_ai.request.model': requestModel,
       'gen_ai.request.stream': genEvent.operationId === 'ai.streamText',
-      'klex.call.source': genEvent.functionId?.startsWith('extension:')
-        ? 'extension'
-        : 'chat',
+      'klex.call.source':
+        genEvent.functionId === 'operation-test'
+          ? 'operation-test'
+          : genEvent.functionId?.startsWith('extension:')
+            ? 'extension'
+            : 'chat',
     };
     // Agent identity (OTel GenAI): the configured agent name and, once
     // enrolled, the stable cloud client id. Spans are exported only at
@@ -383,32 +420,42 @@ export class KlexTelemetry implements Telemetry {
       attributes['klex.conversation.compacted'] = compacted;
     }
 
-    // Optional request parameters from LanguageModelCallOptions.
-    if (genEvent.maxOutputTokens != null) {
-      attributes['gen_ai.request.max_tokens'] = genEvent.maxOutputTokens;
-    }
-    if (genEvent.temperature != null) {
-      attributes['gen_ai.request.temperature'] = genEvent.temperature;
-    }
-    if (genEvent.topP != null) {
-      attributes['gen_ai.request.top_p'] = genEvent.topP;
-    }
-    if (genEvent.topK != null) {
-      attributes['gen_ai.request.top_k'] = genEvent.topK;
-    }
-    if (genEvent.presencePenalty != null) {
-      attributes['gen_ai.request.presence_penalty'] = genEvent.presencePenalty;
-    }
-    if (genEvent.frequencyPenalty != null) {
-      attributes['gen_ai.request.frequency_penalty'] =
-        genEvent.frequencyPenalty;
+    // Only generation exposes standard sampling controls.
+    if ('messages' in genEvent) {
+      if (genEvent.maxOutputTokens != null) {
+        attributes['gen_ai.request.max_tokens'] = genEvent.maxOutputTokens;
+      }
+      if (genEvent.temperature != null) {
+        attributes['gen_ai.request.temperature'] = genEvent.temperature;
+      }
+      if (genEvent.topP != null) {
+        attributes['gen_ai.request.top_p'] = genEvent.topP;
+      }
+      if (genEvent.topK != null) {
+        attributes['gen_ai.request.top_k'] = genEvent.topK;
+      }
+      if (genEvent.presencePenalty != null) {
+        attributes['gen_ai.request.presence_penalty'] =
+          genEvent.presencePenalty;
+      }
+      if (genEvent.frequencyPenalty != null) {
+        attributes['gen_ai.request.frequency_penalty'] =
+          genEvent.frequencyPenalty;
+      }
     }
 
     // Opt-in content attributes (gen_ai semantic conventions).
     // Only recorded when telemetry.recordInputs is not false.
     const recordInputs =
       this.contentAllowed() && genEvent.recordInputs !== false;
-    if (recordInputs) {
+    if (recordInputs && 'state' in genEvent) {
+      attributes['klex.evaluation.input.content'] = serializeJson(
+        genEvent.state,
+      );
+      attributes['klex.evaluation.questions.content'] = serializeJson(
+        genEvent.questions,
+      );
+    } else if (recordInputs && 'messages' in genEvent) {
       const systemInstructions = instructionsToString(genEvent.instructions);
       if (systemInstructions != null) {
         attributes['gen_ai.system_instructions'] = systemInstructions;
@@ -492,12 +539,13 @@ export class KlexTelemetry implements Telemetry {
     if (!state?.rootSpan) return;
 
     const span = state.rootSpan;
+    state.usage = event.usage;
 
     span.setAttributes({
       'gen_ai.response.id': event.responseId,
       // Use the full klex modelId if available; fall back to the
       // AI SDK's internal response model name.
-      'gen_ai.response.model': state.modelId ?? event.modelId,
+      'gen_ai.response.model': event.modelId ?? state.modelId,
     });
 
     // Performance attributes — only available at model-call end.
@@ -517,6 +565,67 @@ export class KlexTelemetry implements Telemetry {
       }
       span.setAttributes(perfAttrs);
     }
+  }
+
+  experimental_onEvaluationModelCallEnd(event: EvaluationCallEndEvent): void {
+    const state = this.getCallState(event.callId);
+    if (!state) return;
+    state.usage = event.usage;
+    if (event.response?.id)
+      state.rootSpan.setAttribute('gen_ai.response.id', event.response.id);
+    if (event.response?.modelId)
+      state.rootSpan.setAttribute(
+        'gen_ai.response.model',
+        event.response.modelId,
+      );
+    state.rootSpan.setAttribute(
+      'klex.evaluation.warning_count',
+      event.warnings.length,
+    );
+    state.rootSpan.setAttribute(
+      'klex.evaluation.warning_types',
+      event.warnings.map((warning) => warning.type),
+    );
+  }
+
+  experimental_onEvaluateEnd(event: EvaluateEndEvent): void {
+    const state = this.getCallState(event.callId);
+    if (!state) return;
+    state.usage = event.usage;
+    if (event.response.modelId)
+      state.rootSpan.setAttribute(
+        'gen_ai.response.model',
+        event.response.modelId,
+      );
+    if (event.usage.inputTokens != null)
+      state.rootSpan.setAttribute(
+        'gen_ai.usage.input_tokens',
+        event.usage.inputTokens,
+      );
+    if (event.usage.outputTokens != null)
+      state.rootSpan.setAttribute(
+        'gen_ai.usage.output_tokens',
+        event.usage.outputTokens,
+      );
+    state.rootSpan.setAttribute('klex.outcome', 'success');
+    if (state.recordOutputs && this.contentAllowed()) {
+      const answers = serializeJson(event.answers);
+      if (answers != null)
+        state.rootSpan.setAttribute('klex.evaluation.answers.content', answers);
+    }
+    this.forwardModelCallRecord(
+      event.callId,
+      state,
+      'stop',
+      false,
+      null,
+      event.usage.inputTokens,
+      event.usage.outputTokens,
+      undefined,
+      undefined,
+    );
+    state.rootSpan.end();
+    this.cleanupCallState(event.callId);
   }
 
   // --- Operation end --------------------------------------------------------
@@ -612,10 +721,10 @@ export class KlexTelemetry implements Telemetry {
         textEndEvent.finishReason,
         textEndEvent.finishReason === 'error',
         textEndEvent.finishReason === 'error' ? 'generation_error' : null,
-        textEndEvent.usage.inputTokens ?? 0,
-        textEndEvent.usage.outputTokens ?? 0,
-        textEndEvent.usage.inputTokenDetails?.cacheWriteTokens ?? 0,
-        textEndEvent.usage.inputTokenDetails?.cacheReadTokens ?? 0,
+        textEndEvent.usage.inputTokens,
+        textEndEvent.usage.outputTokens,
+        textEndEvent.usage.inputTokenDetails?.cacheWriteTokens,
+        textEndEvent.usage.inputTokenDetails?.cacheReadTokens,
       );
     }
 
@@ -679,10 +788,10 @@ export class KlexTelemetry implements Telemetry {
       'aborted',
       true,
       'aborted',
-      0,
-      0,
-      0,
-      0,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
     );
 
     state.rootSpan.end();
@@ -700,24 +809,38 @@ export class KlexTelemetry implements Telemetry {
 
     const actualError = maybeEvent.error ?? error;
 
-    recordErrorOnSpan(state.rootSpan, actualError);
-    state.rootSpan.setAttribute('klex.outcome', 'error');
+    if (NoObjectGeneratedError.isInstance(actualError))
+      state.usage = actualError.usage;
+    // Native provider diagnostics can contain raw request/response data.
+    if (state.operationId === 'ai.evaluate') {
+      const safeError = new Error('Evaluation failed');
+      if (
+        actualError instanceof Error &&
+        /^[A-Za-z][A-Za-z0-9_]{0,63}$/.test(actualError.name)
+      )
+        safeError.name = actualError.name;
+      recordErrorOnSpan(state.rootSpan, safeError);
+    } else recordErrorOnSpan(state.rootSpan, actualError);
+    const aborted =
+      actualError instanceof Error && actualError.name === 'AbortError';
+    state.rootSpan.setAttribute('klex.outcome', aborted ? 'aborted' : 'error');
 
-    // Forward model call record to the sink (if registered).
-    // Best-effort: if onEnd already forwarded a record for this callId,
-    // the PRIMARY KEY constraint in SQLite silently rejects the duplicate.
+    // Terminal hooks remove state, so a later error cannot emit a duplicate.
     const errorType =
-      actualError instanceof Error ? actualError.name : String(actualError);
+      actualError instanceof Error &&
+      /^[A-Za-z][A-Za-z0-9_]{0,63}$/.test(actualError.name)
+        ? actualError.name
+        : 'Error';
     this.forwardModelCallRecord(
       maybeEvent.callId,
       state,
-      'error',
+      aborted ? 'aborted' : 'error',
       true,
       errorType,
-      0,
-      0,
-      0,
-      0,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
     );
 
     state.rootSpan.end();

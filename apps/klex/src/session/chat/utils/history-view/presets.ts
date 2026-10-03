@@ -1,5 +1,10 @@
 import { createHistoryView } from './history-view';
-import type { HistoryBudget, HistoryFilterOptions, HistoryView } from './types';
+import type {
+  DataProjector,
+  HistoryBudget,
+  HistoryFilterOptions,
+  HistoryView,
+} from './types';
 
 /** Data-part key of context-compaction summaries. */
 export const CONTEXT_SUMMARY_KEY = 'context-summary';
@@ -45,5 +50,26 @@ export function createTranscriptHistoryView(
   return createHistoryView({
     filter: TRANSCRIPT_HISTORY_FILTER,
     budget,
+  });
+}
+
+/**
+ * Line-format transcript for the instinct classifier. Uses the transcript
+ * filter plus projectors for extension data parts (so the classifier sees
+ * extension content the way the main agent does) and a per-message
+ * character cap. Has no aggregate budget: the classifier selects messages
+ * itself, so render one message at a time.
+ */
+export function createInstinctHistoryView(options: {
+  messageLimit: number;
+  data: Readonly<Record<string, DataProjector>>;
+}): HistoryView {
+  return createHistoryView({
+    filter: {
+      ...TRANSCRIPT_HISTORY_FILTER,
+      godMessages: true,
+      data: options.data,
+    },
+    lines: { messageLimit: options.messageLimit },
   });
 }

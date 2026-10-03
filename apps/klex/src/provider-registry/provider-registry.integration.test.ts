@@ -12,7 +12,7 @@ import {
   CONFIG_STORE_DEFINITION,
   createConfig,
 } from '@/config';
-import { emptyModelSelection } from '@/config/config.test-fixtures';
+import { completeV4StoredConfig } from '@/config/config.test-fixtures';
 import { createLocalData } from '@/local-data';
 import { KLEX_VERSION } from '@/release';
 
@@ -46,7 +46,7 @@ async function createDataDirectory(): Promise<string> {
       configVersion: 2,
       officialName: 'Integration Agent',
       providers: {},
-      modelSelection: emptyModelSelection,
+      modelSelection: completeV4StoredConfig.modelSelection,
       mcpServers: {},
     }),
   );
@@ -60,6 +60,78 @@ async function createDataDirectory(): Promise<string> {
 }
 
 describe('provider registry module integration', () => {
+  it('resolves an evaluation-only provider from one settings snapshot and rejects language use', async () => {
+    const config = createConfig({
+      logging,
+      dataDirectory: await createDataDirectory(),
+    });
+    await config.start();
+    const factory = vi.fn((instance, modelId) => ({
+      specificationVersion: 'v4' as const,
+      provider: 'typesafe',
+      modelId,
+      supportedQuestionTypes: ['boolean' as const],
+      doEvaluate: async () => ({
+        answers: {},
+        warnings: [],
+        response: { headers: { snapshot: instance.settings.apiKey } },
+      }),
+    }));
+    const registry = createProviderRegistry({
+      logging,
+      config,
+      definitions: [
+        {
+          type: 'typesafe-ai',
+          usageGuidance:
+            'Native evaluation-only test provider; no language API or automatic network operations.',
+          metadata: { displayName: 'Native', description: 'Evaluation test' },
+          createEvaluationModel: factory,
+          resolveModelMetadata: () => ({ kind: 'evaluation' }),
+          testConnection: async () => ({
+            ok: true,
+            code: 'available',
+            value: { latencyMs: 0 },
+          }),
+        },
+      ],
+    });
+    await registry.start();
+    await registry.addInstance({
+      id: 'native',
+      type: 'typesafe-ai',
+      settings: { apiKey: 'before' },
+    });
+    const entry = {
+      providerId: 'native',
+      modelId: 'test',
+      api: 'evaluation' as const,
+    };
+    expect(
+      (await registry.updateModelSelection({ instincts: [entry] })).ok,
+    ).toBe(true);
+    expect(
+      (await registry.updateModelSelection({ instincts: [entry, entry] })).ok,
+    ).toBe(false);
+    expect((await registry.updateModelSelection({ chat: [entry] })).ok).toBe(
+      false,
+    );
+    expect(
+      registry.resolveInstinctCandidates([entry], ['choice'])[0]?.status,
+    ).toBe('unavailable');
+    const candidate = registry.resolveInstinctCandidates(
+      [entry],
+      ['boolean'],
+    )[0];
+    await registry.updateInstance('native', { settings: { apiKey: 'after' } });
+    expect(candidate?.status).toBe('ready');
+    expect(factory.mock.calls.at(-1)?.[0].settings.apiKey).toBe('before');
+    expect(() => registry.getLanguageModel(entry)).toThrow(
+      'does not support generation',
+    );
+    await registry.close();
+    await config.close();
+  });
   it('runs the provider lifecycle across config, discovery, and runtime resolution', async () => {
     const discoverModels = vi.fn(async () => ({
       ok: true as const,
@@ -367,6 +439,14 @@ describe('provider registry module integration', () => {
     expect(config.get().modelSelection.consult).toEqual([selection]);
     await expect(
       registry.updateModelSelection({
+        instincts: [{ ...selection, api: 'generation' }],
+      }),
+    ).resolves.toMatchObject({ ok: true, value: { warnings: [] } });
+    expect(config.getModelSelection('instincts')).toEqual([
+      { ...selection, api: 'generation' },
+    ]);
+    await expect(
+      registry.updateModelSelection({
         voice: { sts: [selection], tts: [], stt: [] },
       }),
     ).resolves.toMatchObject({
@@ -404,6 +484,10 @@ describe('provider registry module integration', () => {
       registry.removeInstance('provider-primary'),
     ).resolves.toMatchObject({ ok: false, code: 'referential_integrity' });
     await registry.updateModelSelection({ consult: [] });
+    await expect(
+      registry.removeInstance('provider-primary'),
+    ).resolves.toMatchObject({ ok: false, code: 'referential_integrity' });
+    await registry.updateModelSelection({ instincts: [] });
     await expect(
       registry.removeInstance('provider-primary'),
     ).resolves.toMatchObject({ ok: true });

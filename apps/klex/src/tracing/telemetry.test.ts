@@ -1,9 +1,11 @@
+import type { Experimental_EvaluationModelV4 as EvaluationModel } from '@ai-sdk/provider';
 import { trace } from '@opentelemetry/api';
 import {
   BasicTracerProvider,
   InMemorySpanExporter,
   SimpleSpanProcessor,
 } from '@opentelemetry/sdk-trace-base';
+import { experimental_evaluate as evaluate } from 'ai';
 import { describe, expect, it } from 'vitest';
 
 import type { ModelCallRecord } from '@/model-call-logger';
@@ -40,6 +42,129 @@ function makeAbortEvent(event: Record<string, unknown>): AbortEvent {
 function makeCallEndEvent(event: Record<string, unknown>): CallEndEvent {
   return event as unknown as CallEndEvent;
 }
+
+describe('KlexTelemetry — evaluation', () => {
+  it.each([{ inputTokens: 0, outputTokens: 0 }, undefined, { inputTokens: 7 }])(
+    'records genuine usage availability through the installed SDK (%j)',
+    async (usage) => {
+      const exporter = new InMemorySpanExporter();
+      const provider = new BasicTracerProvider({
+        spanProcessors: [new SimpleSpanProcessor(exporter)],
+      });
+      const telemetry = createKlexTelemetry(provider.getTracer('test'));
+      const records: ModelCallRecord[] = [];
+      telemetry.setModelCallSink((record) => records.push(record));
+      const model: EvaluationModel = {
+        specificationVersion: 'v4',
+        provider: 'typesafe.evaluation',
+        modelId: 'requested',
+        supportedQuestionTypes: ['boolean'],
+        doEvaluate: async () => ({
+          answers: { fact: { type: 'boolean', probability: 1 } },
+          usage,
+          warnings: [{ type: 'other', message: 'private warning' }],
+          response: { modelId: 'returned', id: 'response' },
+        }),
+      };
+      try {
+        await evaluate({
+          model,
+          state: 'private state',
+          questions: {
+            fact: { type: 'boolean', instructions: 'private question' },
+          },
+          maxRetries: 0,
+          telemetry: {
+            integrations: [telemetry],
+            functionId: 'operation-test',
+            recordInputs: true,
+            recordOutputs: true,
+          },
+        });
+        await provider.forceFlush();
+        expect(records).toHaveLength(1);
+        expect(records[0]).toMatchObject({
+          api: 'evaluation',
+          source: 'operation-test',
+          sessionId: null,
+          modelId: 'requested',
+          inputTokens: usage?.inputTokens ?? 0,
+          outputTokens: usage?.outputTokens ?? 0,
+          tokenUsageReported:
+            usage?.inputTokens !== undefined &&
+            usage?.outputTokens !== undefined,
+          cacheUsageReported: false,
+        });
+        const span = exporter.getFinishedSpans()[0];
+        expect(span?.attributes['gen_ai.response.model']).toBe('returned');
+        expect(span?.attributes['gen_ai.usage.input_tokens']).toBe(
+          usage?.inputTokens,
+        );
+        expect(span?.attributes['gen_ai.usage.output_tokens']).toBe(
+          usage?.outputTokens,
+        );
+        expect(span?.attributes['klex.evaluation.warning_count']).toBe(1);
+        expect(JSON.stringify(span?.attributes)).not.toContain('private');
+      } finally {
+        await provider.shutdown();
+      }
+    },
+  );
+
+  it.each(['Error', 'AbortError'])(
+    'sanitizes %s diagnostics, closes state, and rejects late duplicate events',
+    async (errorName) => {
+      const exporter = new InMemorySpanExporter();
+      const provider = new BasicTracerProvider({
+        spanProcessors: [new SimpleSpanProcessor(exporter)],
+      });
+      const telemetry = createKlexTelemetry(provider.getTracer('test'));
+      const records: ModelCallRecord[] = [];
+      telemetry.setModelCallSink((record) => records.push(record));
+      const model: EvaluationModel = {
+        specificationVersion: 'v4',
+        provider: 'typesafe.evaluation',
+        modelId: 'native',
+        supportedQuestionTypes: ['boolean'],
+        doEvaluate: async () => {
+          const error = new Error('private request and credential');
+          error.name = errorName;
+          throw error;
+        },
+      };
+      try {
+        await expect(
+          evaluate({
+            model,
+            state: 'private state',
+            questions: { fact: { type: 'boolean', instructions: 'fact' } },
+            maxRetries: 0,
+            telemetry: { integrations: [telemetry] },
+          }),
+        ).rejects.toThrow();
+        const callId = records[0]?.id;
+        telemetry.onError({ callId, error: new Error('late private failure') });
+        await provider.forceFlush();
+        expect(records).toHaveLength(1);
+        expect(records[0]).toMatchObject({
+          api: 'evaluation',
+          isError: true,
+          tokenUsageReported: false,
+          cacheUsageReported: false,
+        });
+        expect(exporter.getFinishedSpans()).toHaveLength(1);
+        expect(exporter.getFinishedSpans()[0]?.attributes['klex.outcome']).toBe(
+          errorName === 'AbortError' ? 'aborted' : 'error',
+        );
+        expect(
+          JSON.stringify(exporter.getFinishedSpans()[0]?.events),
+        ).not.toContain('private');
+      } finally {
+        await provider.shutdown();
+      }
+    },
+  );
+});
 
 describe('KlexTelemetry — model content', () => {
   it('exports model inputs and outputs through the debug span pipeline', async () => {

@@ -1,3 +1,4 @@
+import type { Experimental_EvaluationModelV4 as EvaluationModel } from '@ai-sdk/provider';
 import type { OpenAPIHono } from '@hono/zod-openapi';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -24,6 +25,8 @@ import {
   getProviderTypesRoute,
   type ProviderRouteDependencies,
   testProvider,
+  testProviderOperation,
+  testProviderOperationRoute,
   testProviderRoute,
   updateKnownModel,
   updateKnownModelRoute,
@@ -39,6 +42,8 @@ const metadata = {
     modelDiscovery: true,
     connectivityTest: true,
     customModels: true,
+    generation: true,
+    evaluation: false,
   },
 };
 const instance = {
@@ -65,6 +70,7 @@ function makeApp(registry: Partial<ProviderRegistry>): OpenAPIHono {
     app.openapi(updateProviderRoute, updateProvider(deps));
     app.openapi(deleteProviderRoute, deleteProvider(deps));
     app.openapi(testProviderRoute, testProvider(deps));
+    app.openapi(testProviderOperationRoute, testProviderOperation(deps));
     app.openapi(getProviderModelsRoute, getProviderModels(deps));
     app.openapi(createKnownModelRoute, createKnownModel(deps));
     app.openapi(updateKnownModelRoute, updateKnownModel(deps));
@@ -73,6 +79,182 @@ function makeApp(registry: Partial<ProviderRegistry>): OpenAPIHono {
 }
 
 describe('provider registry routes', () => {
+  it.each([true, false])(
+    'runs only an explicit synthetic operation and separates valid from expected answers (%s)',
+    async (correct) => {
+      const doEvaluate: EvaluationModel['doEvaluate'] = vi.fn<
+        EvaluationModel['doEvaluate']
+      >(async () => ({
+        answers: {
+          q0: { type: 'boolean', probability: correct ? 1 : 0 },
+          q1: { type: 'boolean', probability: correct ? 0 : 1 },
+          q2: { type: 'choice', choice: 'square' },
+        },
+        usage: { inputTokens: 7 },
+        warnings: [
+          { type: 'other', message: 'private credential provider diagnostic' },
+        ],
+      }));
+      const resolveInstinctCandidates: ProviderRegistry['resolveInstinctCandidates'] =
+        vi.fn<ProviderRegistry['resolveInstinctCandidates']>((entries) =>
+          entries.map((entry) => ({
+            status: 'ready',
+            entry,
+            providerType: 'typesafe-ai',
+            api: 'evaluation',
+            model: {
+              specificationVersion: 'v4',
+              provider: 'typesafe.evaluation',
+              modelId: 'jev-latest',
+              supportedQuestionTypes: ['boolean', 'choice'],
+              doEvaluate,
+            },
+          })),
+        );
+      const app = makeApp({
+        listInstances: () => [instance],
+        resolveInstinctCandidates,
+      });
+      await app.request('/v1/providers');
+      expect(doEvaluate).not.toHaveBeenCalled();
+      expect(resolveInstinctCandidates).not.toHaveBeenCalled();
+      const response = await app.request(
+        '/v1/providers/test-main/operation-test',
+        {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            modelId: 'jev-latest',
+            api: 'evaluation',
+            timeoutMs: 1000,
+            providerOptions: { typesafe: { mode: 'fast' } },
+          }),
+        },
+      );
+      expect(response.status).toBe(200);
+      expect(await response.json()).toMatchObject({
+        providerId: 'test-main',
+        modelId: 'jev-latest',
+        api: 'evaluation',
+        contractValid: true,
+        expectedAnswersMatch: correct,
+        usage: {
+          inputTokens: 7,
+          outputTokens: null,
+          inputCacheReadTokens: null,
+          inputCacheWriteTokens: null,
+        },
+        warnings: ['other'],
+      });
+      expect(doEvaluate).toHaveBeenCalledTimes(1);
+      expect(resolveInstinctCandidates).toHaveBeenCalledWith(
+        [
+          {
+            providerId: 'test-main',
+            modelId: 'jev-latest',
+            api: 'evaluation',
+            providerOptions: { typesafe: { mode: 'fast' } },
+          },
+        ],
+        ['boolean', 'choice'],
+      );
+    },
+  );
+
+  it('rejects arbitrary prompts and credential-bearing options before inference', async () => {
+    const resolveInstinctCandidates = vi.fn();
+    const app = makeApp({
+      listInstances: () => [instance],
+      resolveInstinctCandidates,
+    });
+    for (const extra of [
+      { prompt: 'arbitrary' },
+      { providerOptions: { openai: { apiKey: 'secret' } } },
+      { api: undefined },
+      { timeoutMs: 120001 },
+    ]) {
+      const response = await app.request(
+        '/v1/providers/test-main/operation-test',
+        {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            modelId: 'model',
+            api: 'generation',
+            timeoutMs: 1000,
+            ...extra,
+          }),
+        },
+      );
+      expect(response.status).toBe(400);
+    }
+    expect(resolveInstinctCandidates).not.toHaveBeenCalled();
+  });
+
+  it('bounds concurrent probes and cancels uncooperative inference without exposing diagnostics', async () => {
+    const controller = new AbortController();
+    const doEvaluate: EvaluationModel['doEvaluate'] = vi.fn(
+      () => new Promise<never>(() => {}),
+    );
+    const resolveInstinctCandidates: ProviderRegistry['resolveInstinctCandidates'] =
+      (entries) =>
+        entries.map((entry) => ({
+          status: 'ready',
+          entry,
+          providerType: 'typesafe-ai',
+          api: 'evaluation',
+          model: {
+            specificationVersion: 'v4',
+            provider: 'typesafe.evaluation',
+            modelId: 'native',
+            supportedQuestionTypes: ['boolean', 'choice'],
+            doEvaluate,
+          },
+        }));
+    const app = makeApp({
+      listInstances: () => [instance],
+      resolveInstinctCandidates,
+    });
+    const options = {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        modelId: 'native',
+        api: 'evaluation',
+        timeoutMs: 1000,
+      }),
+      signal: controller.signal,
+    };
+    const first = app.request(
+      '/v1/providers/test-main/operation-test',
+      options,
+    );
+    const second = app.request(
+      '/v1/providers/test-main/operation-test',
+      options,
+    );
+    await vi.waitFor(() => expect(doEvaluate).toHaveBeenCalledTimes(2));
+    expect(
+      (await app.request('/v1/providers/test-main/operation-test', options))
+        .status,
+    ).toBe(409);
+    controller.abort(new Error('private caller diagnostic'));
+    for (const response of await Promise.all([first, second])) {
+      expect(response.status).toBe(200);
+      expect(await response.json()).toMatchObject({
+        contractValid: false,
+        expectedAnswersMatch: false,
+        usage: null,
+        diagnostic: 'The operation was cancelled or timed out.',
+      });
+    }
+    expect(
+      (await app.request('/v1/providers/test-main/operation-test', options))
+        .status,
+    ).toBe(400);
+    expect(doEvaluate).toHaveBeenCalledTimes(2);
+  });
+
   it('exposes provider metadata and redacted instance settings', async () => {
     const app = makeApp({
       listProviderTypes: () => [

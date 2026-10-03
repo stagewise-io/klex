@@ -56,7 +56,33 @@ const extensionMediaTypes = new Map([
   ['mov', 'video/quicktime'],
   ['mpeg', 'video/mpeg'],
   ['mpg', 'video/mpeg'],
+  ['m4v', 'video/mp4'],
+  ['avi', 'video/avi'],
+  ['flv', 'video/x-flv'],
+  ['wmv', 'video/wmv'],
+  ['3gp', 'video/3gpp'],
+  ['bmp', 'image/bmp'],
 ]);
+
+/**
+ * Common non-canonical names for types that providers declare under another
+ * name. Tried only when the original type matches no provider rule.
+ */
+const mediaTypeAliases = new Map([
+  ['video/x-msvideo', 'video/avi'],
+  ['video/msvideo', 'video/avi'],
+  ['video/x-ms-wmv', 'video/wmv'],
+  ['audio/x-wav', 'audio/wav'],
+  ['audio/wave', 'audio/wav'],
+  ['audio/mp3', 'audio/mpeg'],
+  ['image/jpg', 'image/jpeg'],
+  ['image/pjpeg', 'image/jpeg'],
+]);
+
+function candidateMediaTypes(mediaType: string): string[] {
+  const alias = mediaTypeAliases.get(mediaType);
+  return alias && alias !== mediaType ? [mediaType, alias] : [mediaType];
+}
 
 function inferMediaType(url: URL): string | undefined {
   // pathname excludes query/fragment. Inspect only the final filename, without
@@ -68,7 +94,15 @@ function inferMediaType(url: URL): string | undefined {
     : undefined;
 }
 
-/** Pure capability check: no HEAD, fetch, inference request, or byte inspection. */
+/**
+ * Pure capability check: no HEAD, fetch, inference request, or byte inspection.
+ *
+ * The provider adapter's `supportedUrls` is the source of truth for accepted
+ * media types, and must stay a hard gate: URLs it doesn't match would be
+ * downloaded inside Klex by the AI SDK. Klex only infers a type from the file
+ * extension when none is given, and falls back to a canonical alias when the
+ * original type matches no provider rule. The first matching type is sent.
+ */
 export async function prepareRemoteInput(
   model: LanguageModelV4,
   capabilities: ModelInputCapabilities,
@@ -94,34 +128,40 @@ export async function prepareRemoteInput(
     ) {
       return remoteInputUnavailable();
     }
-    const family = mediaType.split('/')[0];
-    if (family === 'image' || family === 'audio') {
-      const capability = capabilities[family];
-      if (
-        !capability ||
-        (capability.mediaTypes && !capability.mediaTypes.includes(mediaType))
-      ) {
-        return remoteInputUnavailable();
-      }
-    }
     const supportedUrls = await model.supportedUrls;
-    const supported = Object.entries(supportedUrls).some(
-      ([type, patterns]) =>
-        (type === '*' ||
-          type === '*/*' ||
-          type === mediaType ||
-          type === `${family}/*`) &&
-        patterns.some((pattern) =>
-          new RegExp(pattern.source, pattern.flags).test(
-            url.href.toLowerCase(),
+    const accepted = candidateMediaTypes(mediaType).find((candidate) => {
+      const family = candidate.split('/')[0];
+      if (family === 'image' || family === 'audio') {
+        const capability = capabilities[family];
+        if (
+          !capability ||
+          (capability.mediaTypes && !capability.mediaTypes.includes(candidate))
+        ) {
+          return false;
+        }
+      }
+      return Object.entries(supportedUrls).some(
+        ([type, patterns]) =>
+          (type === '*' ||
+            type === '*/*' ||
+            type === candidate ||
+            type === `${family}/*`) &&
+          patterns.some((pattern) =>
+            new RegExp(pattern.source, pattern.flags).test(
+              url.href.toLowerCase(),
+            ),
           ),
-        ),
-    );
-    if (!supported) return remoteInputUnavailable();
+      );
+    });
+    if (!accepted) return remoteInputUnavailable();
     return {
       type: 'content',
       value: [
-        { type: 'file', mediaType, data: { type: 'url', url: url.href } },
+        {
+          type: 'file',
+          mediaType: accepted,
+          data: { type: 'url', url: url.href },
+        },
       ],
     };
   } catch {

@@ -1,5 +1,6 @@
 import { readFile, writeFile } from 'node:fs/promises';
 
+import type { LanguageModelV4 } from '@ai-sdk/provider';
 import { generateText, type ModelMessage, streamText } from 'ai';
 import { afterEach, assert, describe, expect, it, vi } from 'vitest';
 
@@ -74,6 +75,12 @@ describe('remote input capability contract', () => {
     ['MOV', 'video/quicktime'],
     ['MPEG', 'video/mpeg'],
     ['MPG', 'video/mpeg'],
+    ['M4V', 'video/mp4'],
+    ['AvI', 'video/avi'],
+    ['FLV', 'video/x-flv'],
+    ['WMV', 'video/wmv'],
+    ['3GP', 'video/3gpp'],
+    ['BMP', 'image/bmp'],
   ])('infers %s as %s without I/O', async (extension, mediaType) => {
     const fetch = vi.fn(() => {
       throw new Error('Unexpected I/O');
@@ -317,6 +324,117 @@ describe('remote input capability contract', () => {
       ).toEqual(remoteInputUnavailable());
     },
   );
+});
+
+describe('remote media type aliases and provider-declared types', () => {
+  const https = /^https:\/\/.*$/;
+  const stub = (types: string[]) =>
+    ({
+      specificationVersion: 'v4',
+      provider: 'stub',
+      modelId: 'stub',
+      supportedUrls: Object.fromEntries(types.map((type) => [type, [https]])),
+      doGenerate: vi.fn(),
+      doStream: vi.fn(),
+    }) as unknown as LanguageModelV4;
+  const mediaTypeOf = async (
+    selected: LanguageModelV4,
+    input: { url: string; mediaType?: string },
+    caps: Parameters<typeof prepareRemoteInput>[1] = capabilities,
+  ) => {
+    const result = await prepareRemoteInput(selected, caps, input);
+    return result.type === 'content' ? result.value[0].mediaType : undefined;
+  };
+
+  it('accepts an inferred .avi on Gemini as video/avi', async () => {
+    expect(
+      await mediaTypeOf(model('google-gemini'), {
+        url: 'https://media.example/clip.avi',
+      }),
+    ).toBe('video/avi');
+  });
+
+  it.each([
+    ['video/x-msvideo', 'video/avi'],
+    ['VIDEO/MSVIDEO', 'video/avi'],
+    ['video/x-ms-wmv', 'video/wmv'],
+    ['image/jpg', 'image/jpeg'],
+  ])('sends declared %s to Gemini as %s', async (declared, sent) => {
+    expect(
+      await mediaTypeOf(model('google-gemini'), { url, mediaType: declared }),
+    ).toBe(sent);
+  });
+
+  it('prefers an exact provider match over the alias', async () => {
+    expect(
+      await mediaTypeOf(stub(['video/x-msvideo', 'video/avi']), {
+        url,
+        mediaType: 'video/x-msvideo',
+      }),
+    ).toBe('video/x-msvideo');
+  });
+
+  it('rejects an alias the provider declares under neither name', async () => {
+    expect(
+      await prepareRemoteInput(stub(['video/mp4']), capabilities, {
+        url,
+        mediaType: 'video/x-msvideo',
+      }),
+    ).toEqual(remoteInputUnavailable());
+  });
+
+  it('still rejects unknown extensions without a mediaType', async () => {
+    expect(
+      await prepareRemoteInput(stub(['*']), capabilities, {
+        url: 'https://media.example/clip.mkv',
+      }),
+    ).toEqual(remoteInputUnavailable());
+  });
+
+  it('accepts a declared type outside the Klex table when the provider declares it', async () => {
+    expect(
+      await mediaTypeOf(stub(['video/x-matroska']), {
+        url: 'https://media.example/clip.mkv',
+        mediaType: 'video/x-matroska',
+      }),
+    ).toBe('video/x-matroska');
+  });
+
+  it('applies audio capability subtypes to the aliased type', async () => {
+    const selected = stub(['audio/wav']);
+    const input = { url, mediaType: 'audio/x-wav' };
+    expect(
+      await mediaTypeOf(selected, input, {
+        audio: { mediaTypes: ['audio/wav'] },
+      }),
+    ).toBe('audio/wav');
+    expect(
+      await prepareRemoteInput(
+        selected,
+        { audio: { mediaTypes: ['audio/mpeg'] } },
+        input,
+      ),
+    ).toEqual(remoteInputUnavailable());
+  });
+
+  it('keeps the URL unchanged and still requires a supportedUrls match', async () => {
+    expect(
+      await prepareRemoteInput(stub(['video/avi']), capabilities, {
+        url,
+        mediaType: 'video/x-msvideo',
+      }),
+    ).toEqual({
+      type: 'content',
+      value: [
+        { type: 'file', mediaType: 'video/avi', data: { type: 'url', url } },
+      ],
+    });
+    expect(
+      await prepareRemoteInput(stub(['video/avi']), capabilities, {
+        url: 'http://media.example/clip.avi',
+      }),
+    ).toEqual(remoteInputUnavailable());
+  });
 });
 
 describe.each([false, true])(

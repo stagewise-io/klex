@@ -213,9 +213,14 @@ describe('readAttachment', () => {
     expect(await transform(messages, selected)).toEqual(converted);
   });
 
-  it('gates replay against the new model without altering canonical history', async () => {
+  it('gates inferred attachment replay against the new model without altering canonical history', async () => {
     const { transform, execute } = fixture();
-    const output = await execute({ url, mediaType: 'image/png' });
+    const inferredUrl = 'https://media.example/photo.PNG?secret=private';
+    const output = await execute({ url: inferredUrl });
+    expect(output).toMatchObject({
+      type: 'content',
+      value: [{ mediaType: 'image/png' }],
+    });
     const messages = [
       {
         role: 'tool',
@@ -234,10 +239,12 @@ describe('readAttachment', () => {
       ...selected,
       inputCapabilities: {},
     })) as ModelMessage[];
-    expect(JSON.stringify(converted)).not.toContain(url);
+    expect(JSON.stringify(converted)).not.toContain(inferredUrl);
     expect(JSON.stringify(converted)).toContain(REMOTE_INPUT_UNAVAILABLE);
     expect(JSON.stringify(messages)).toBe(original);
-    expect(JSON.stringify(await transform(messages, selected))).toContain(url);
+    expect(JSON.stringify(await transform(messages, selected))).toContain(
+      inferredUrl,
+    );
   });
 
   it.each([1, 2])(

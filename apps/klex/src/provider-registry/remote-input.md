@@ -2,11 +2,13 @@
 
 `readAttachment({ url, mediaType })` supplies a remote file to the next ordinary
 generation. An explicit `mediaType` from trustworthy source metadata takes
-precedence, even if invalid or unsupported (there is no inference fallback).
-When omitted, the tool uses only the final URL path filename extension,
-case-insensitively, excluding query and fragment. It does not percent-decode
-filenames. Bare dotfiles, trailing slashes, unknown extensions, and absent
-extensions have no inferred type. The exact allowlist is:
+precedence, even if invalid or unsupported (there is no extension fallback).
+Any well-formed declared type is accepted when the provider declares it; Klex
+keeps no media allowlist of its own. When omitted, the tool uses only the final
+URL path filename extension, case-insensitively, excluding query and fragment.
+It does not percent-decode filenames. Bare dotfiles, trailing slashes, unknown
+extensions, and absent extensions have no inferred type. The inference table
+covers the media types the installed adapters declare for HTTPS URLs:
 
 | Extensions | MIME type |
 | --- | --- |
@@ -26,6 +28,28 @@ extensions have no inferred type. The exact allowlist is:
 | webm | video/webm |
 | mov | video/quicktime |
 | mpeg, mpg | video/mpeg |
+| m4v | video/mp4 |
+| avi | video/avi |
+| flv | video/x-flv |
+| wmv | video/wmv |
+| 3gp | video/3gpp |
+| bmp | image/bmp |
+
+Models and sources often use non-canonical names. If the declared or inferred
+type matches no provider rule, Klex retries once with its canonical alias and
+sends whichever type matched (an exact match always wins):
+
+| Alias | Canonical |
+| --- | --- |
+| video/x-msvideo, video/msvideo | video/avi |
+| video/x-ms-wmv | video/wmv |
+| audio/x-wav, audio/wave | audio/wav |
+| audio/mp3 | audio/mpeg |
+| image/jpg, image/pjpeg | image/jpeg |
+
+Both tables are hand-maintained and can fall behind when an SDK adds types.
+The cost of drift is an `unavailable` tool result, not a failed turn, and
+explicitly declared types are never blocked by them.
 
 Inference is only a hint; all model/provider capability and URL gates below
 still apply. Missing types, invalid URLs, credentials in URLs, and unsupported
@@ -34,6 +58,9 @@ discover a type or inspect bytes, and arbitrary MIME guesses are never inferred.
 
 The model's AI SDK v4 `supportedUrls` declaration is the extensible remote-input
 capability contract. Its MIME patterns and URL patterns are checked together.
+It is also a security boundary and must not be bypassed: the AI SDK downloads
+any URL that `supportedUrls` does not match inside Klex before calling the
+provider, and Klex never fetches remote media itself.
 Existing Klex image/audio capabilities additionally gate those families and
 their declared subtypes. Other MIME types use the SDK declaration, which can be
 model-specific (for example Gemini 2.0 versus later Gemini models). The existing

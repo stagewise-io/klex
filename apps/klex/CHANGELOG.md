@@ -2,6 +2,17 @@
 
 All notable Klex changes are documented here.
 
+## 0.13.0 (2026-10-03)
+
+### Features
+
+- accept more remote media types (271b3c6)
+
+### Bug Fixes
+
+- classify stream errors hidden by empty output (6cb9fc6)
+- resume salvaged rejections and review mid-turn input (ebdfd52)
+
 ## 0.12.0 (2026-10-03)
 
 ### Features

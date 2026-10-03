@@ -19,6 +19,21 @@ import type { ModelFallbackManager } from '../utils/model-fallback-manager';
 import { tracer } from '../utils/tracing';
 import { extractUsage } from '../utils/usage';
 
+/**
+ * Hard upper bound on steps per turn. Exists purely to guarantee that a
+ * turn terminates, even for pathological tool loops or step results that
+ * keep requesting continuation. Generous enough for long tool chains.
+ */
+export const MAX_STEPS_PER_TURN = 200;
+
+/** Why a turn's step loop ended. Exposed for observability. */
+export type TurnStopReason =
+  | 'completed'
+  | 'failure_budget_exhausted'
+  | 'step_cap_reached'
+  | 'yielded'
+  | 'fatal';
+
 export interface TurnDependencies {
   logger: ModuleLogger;
   sessionId: string;
@@ -73,6 +88,14 @@ export interface TurnResult {
    * in which case the session is terminated).
    */
   completeFailure: boolean;
+  /**
+   * True if the last failing step of the turn was a provider request
+   * rejection (4xx). Retrying the same request will not help, so the
+   * session must not apply backoff retries for this turn.
+   */
+  requestRejected: boolean;
+  /** Why the step loop ended. */
+  stopReason: TurnStopReason;
   /** Total number of steps executed in this turn. */
   stepCount: number;
   /** Token usage from the last successful generation in this turn, if any. */
@@ -123,6 +146,8 @@ class TurnModule implements Turn {
     let hadAnyFailure = false;
     let lastUsage: Usage | null = null;
     let totalStepCount = 0;
+    let lastFailureWasRejection = false;
+    let stopReason: TurnStopReason = 'completed';
 
     try {
       await context.with(turnContext, async () => {
@@ -148,8 +173,17 @@ class TurnModule implements Turn {
           generation: null,
           toolCalls: [],
           modelFallbackOccurred: false,
+          requestRejected: false,
         };
         let stepCount = 0;
+
+        // Consecutive failed-step budget: one full rotation through all
+        // configured models plus one retry with degraded content (after a
+        // request rejection, extensions drop injected content).
+        const failureBudget =
+          Math.max(1, this.deps.fallbackManager.getChatModelCount()) + 1;
+        let consecutiveFailedSteps = 0;
+        let rejectedSteps = 0;
 
         // Capture the fallback index at the start of the turn for
         // turn-level wrap-around detection. Model fallback now spans
@@ -166,6 +200,18 @@ class TurnModule implements Turn {
         let needsCheck = this.deps.forceCheck ?? false;
 
         while (stepResult.shouldContinue) {
+          if (stepCount >= MAX_STEPS_PER_TURN) {
+            stopReason = 'step_cap_reached';
+            turnSpan.addEvent('turn.step_cap_reached', {
+              'turn.steps': stepCount,
+              'turn.maxSteps': MAX_STEPS_PER_TURN,
+            });
+            this.deps.logger.error(
+              { turnId: this.id, stepCount },
+              'Turn stopped: step cap reached',
+            );
+            break;
+          }
           // Check injection (before continue injection — a check-retry
           // turn needs the prompt before the first step). The check
           // message tells the model to review new input and decide
@@ -250,6 +296,7 @@ class TurnModule implements Turn {
             lastUsage = extractUsage(stepResult.generation.usage);
           }
           if (this.deps.shouldYieldGenerationLane?.()) {
+            stopReason = 'yielded';
             turnSpan.addEvent('turn.generation_lane_yielded');
             break;
           }
@@ -258,6 +305,7 @@ class TurnModule implements Turn {
           if (stepResult.fatalError) {
             fatalError = true;
             fatalErrorReason = stepResult.fatalErrorReason;
+            stopReason = 'fatal';
             this.deps.logger.error(
               { turnId: this.id, stepCount, reason: fatalErrorReason },
               'Turn aborted due to fatal step error',
@@ -269,12 +317,58 @@ class TurnModule implements Turn {
           if (
             stepResult.shouldContinue &&
             !stepResult.forceNextStep &&
-            !stepResult.modelFallbackOccurred
+            !stepResult.modelFallbackOccurred &&
+            !stepResult.generationFailed &&
+            !stepResult.requestRejected
           ) {
             hadAnySuccess = true;
           }
-          if (stepResult.generationFailed || stepResult.modelFallbackOccurred) {
+          const stepFailed =
+            stepResult.generationFailed ||
+            stepResult.modelFallbackOccurred ||
+            stepResult.requestRejected;
+          if (stepFailed) {
             hadAnyFailure = true;
+            consecutiveFailedSteps++;
+            lastFailureWasRejection = stepResult.requestRejected;
+          } else {
+            consecutiveFailedSteps = 0;
+          }
+
+          if (stepFailed && consecutiveFailedSteps >= failureBudget) {
+            stopReason = 'failure_budget_exhausted';
+            turnSpan.addEvent('turn.failure_budget_exhausted', {
+              'turn.steps': stepCount,
+              'turn.consecutiveFailedSteps': consecutiveFailedSteps,
+              'turn.failureBudget': failureBudget,
+              'turn.rejectedSteps':
+                rejectedSteps + (stepResult.requestRejected ? 1 : 0),
+            });
+            this.deps.logger.error(
+              {
+                turnId: this.id,
+                stepCount,
+                consecutiveFailedSteps,
+                failureBudget,
+                requestRejected: stepResult.requestRejected,
+              },
+              'Turn stopped: consecutive step failure budget exhausted',
+            );
+            break;
+          }
+
+          // Request rejected: the first rejection is retried on the same
+          // model (extensions degrade injected content in onStepComplete).
+          // Further rejections fall back so a bad model ID still reaches
+          // the configured backup models.
+          if (stepResult.requestRejected) {
+            rejectedSteps++;
+            if (rejectedSteps >= 2) {
+              this.deps.fallbackManager.fallbackToNextModel();
+              turnSpan.addEvent('turn.request_rejected_fallback', {
+                'turn.rejectedSteps': rejectedSteps,
+              });
+            }
           }
 
           // If the step salvaged content, inject "Continue." before the next step.
@@ -284,6 +378,7 @@ class TurnModule implements Turn {
         }
 
         turnSpan.setAttribute('turn.stepCount', stepCount);
+        turnSpan.setAttribute('turn.stopReason', stopReason);
         turnSpan.addEvent('turn.complete', {
           'turn.id': this.id,
           'turn.steps': stepCount,
@@ -302,6 +397,8 @@ class TurnModule implements Turn {
       fatalError,
       fatalErrorReason,
       completeFailure: hadAnyFailure && !hadAnySuccess,
+      requestRejected: lastFailureWasRejection,
+      stopReason,
       stepCount: totalStepCount,
       usage: lastUsage,
     };

@@ -85,6 +85,11 @@ export class ModelFallbackManager {
     return this.fallbackIndex;
   }
 
+  /** Returns the number of configured chat models (primary + fallbacks). */
+  getChatModelCount(): number {
+    return this.deps.getChatModels().length;
+  }
+
   /**
    * Advances to the next model in the list and starts/refreshes the fallback
    * cooldown.

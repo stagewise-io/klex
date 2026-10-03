@@ -317,7 +317,7 @@ describe('GenerationRunner — error finish reason with model fallback', () => {
     expect(result.generationFailed).toBe(false);
   });
 
-  it('does NOT trigger fallback on 400 API error (fatal)', async () => {
+  it('salvages partial content on 400 API error without fallback (not fatal)', async () => {
     const fallbackManager = makeFallbackManager();
     const fallbackSpy = vi.spyOn(fallbackManager, 'fallbackToNextModel');
 
@@ -336,9 +336,46 @@ describe('GenerationRunner — error finish reason with model fallback', () => {
     const result = await runner.run();
 
     expect(fallbackSpy).not.toHaveBeenCalled();
-    expect(result.fatalError).toBe(true);
-    expect(result.forceNextStep).toBe(false);
+    expect(result.fatalError).toBe(false);
+    expect(result.requestRejected).toBe(false);
+    expect(result.modelFallbackOccurred).toBe(false);
+    expect(result.forceNextStep).toBe(true);
     expect(result.generation).toBeNull();
+  });
+
+  it('returns requestRejected on 404 API error with no content, without fallback', async () => {
+    const fallbackManager = makeFallbackManager(['model-a', 'model-b']);
+    const fallbackSpy = vi.spyOn(fallbackManager, 'fallbackToNextModel');
+
+    vi.mocked(runStreamedGeneration).mockResolvedValue(
+      makeGenResult(
+        makeAssistantMessage(),
+        'error',
+        makeApiError({
+          message: 'Requested entity was not found.',
+          statusCode: 404,
+        }),
+      ),
+    );
+
+    const messages: ExtendedUIMessage[] = [];
+    const runner = new GenerationRunner(
+      makeDeps({ messages, fallbackManager }),
+    );
+    const result = await runner.run();
+
+    expect(runStreamedGeneration).toHaveBeenCalledTimes(1);
+    expect(fallbackSpy).not.toHaveBeenCalled();
+    expect(result).toMatchObject({
+      shouldContinue: true,
+      forceNextStep: false,
+      fatalError: false,
+      generationFailed: true,
+      modelFallbackOccurred: false,
+      requestRejected: true,
+      toolCalls: [],
+      generation: null,
+    });
     expect(messages).toHaveLength(0);
   });
 
@@ -428,7 +465,7 @@ describe('GenerationRunner — generation exception handling', () => {
     expect(result.modelFallbackOccurred).toBe(true);
   });
 
-  it('catches thrown 400 API error as fatal without triggering fallback', async () => {
+  it('catches thrown 400 API error as request rejection without triggering fallback', async () => {
     const fallbackManager = makeFallbackManager();
     const fallbackSpy = vi.spyOn(fallbackManager, 'fallbackToNextModel');
     vi.mocked(runStreamedGeneration).mockRejectedValue(
@@ -438,8 +475,12 @@ describe('GenerationRunner — generation exception handling', () => {
     const runner = new GenerationRunner(makeDeps({ fallbackManager }));
     const result = await runner.run();
 
+    expect(runStreamedGeneration).toHaveBeenCalledTimes(1);
     expect(fallbackSpy).not.toHaveBeenCalled();
-    expect(result.fatalError).toBe(true);
+    expect(result.fatalError).toBe(false);
+    expect(result.requestRejected).toBe(true);
+    expect(result.generationFailed).toBe(true);
+    expect(result.modelFallbackOccurred).toBe(false);
   });
 
   it('does not push partial message when salvage fails on exception', async () => {

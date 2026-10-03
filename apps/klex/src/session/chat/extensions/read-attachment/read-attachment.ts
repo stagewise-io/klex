@@ -4,6 +4,7 @@ import z from 'zod';
 import {
   prepareRemoteInput,
   remoteInputModelOutput,
+  remoteInputRejected,
   remoteInputUnavailable,
 } from '@/provider-registry/remote-input';
 import { CONTEXT_SUMMARY_KEY } from '@/session/chat/utils/history-view';
@@ -29,6 +30,14 @@ export const createReadAttachmentExt: ExtensionFactory = {
   identifier: 'io.klex/read-attachment',
   displayName: 'read-attachment',
   create: (deps) => {
+    // Degrade state for provider-rejected media, keyed by toolCallId.
+    // `injected` holds files sent with the most recent generation attempt;
+    // when that step reports `requestRejected`, they move to `rejected` and
+    // are replaced by an error-text output from then on. In-memory only: after
+    // a restart there is at most one more rejected attempt before the file is
+    // degraded again. Persisted history is never rewritten.
+    const injected = new Set<string>();
+    const rejected = new Set<string>();
     const prepare = async (
       model: ResolvedModel,
       input: { url: string; mediaType?: string },
@@ -87,6 +96,7 @@ export const createReadAttachmentExt: ExtensionFactory = {
       // tool's pending remote files and recheck the *current* model after model changes.
       // This runs before generation, so unsupported URLs cannot trigger SDK downloads.
       contextTransformer: async (history, model): Promise<ModelMessage[]> => {
+        injected.clear();
         return Promise.all(
           history.map(async (message) => {
             if (message.role !== 'tool') return message;
@@ -99,6 +109,12 @@ export const createReadAttachmentExt: ExtensionFactory = {
                     part.toolName !== 'readAttachment'
                   )
                     return part;
+                  if (rejected.has(part.toolCallId)) {
+                    return {
+                      ...part,
+                      output: remoteInputModelOutput(remoteInputRejected()),
+                    };
+                  }
                   const parsed = remoteFileSchema.safeParse(
                     part.output.type === 'json'
                       ? part.output.value
@@ -113,6 +129,7 @@ export const createReadAttachmentExt: ExtensionFactory = {
                         mediaType: file.mediaType,
                       })
                     : remoteInputUnavailable();
+                  if (result.type === 'content') injected.add(part.toolCallId);
                   return { ...part, output: remoteInputModelOutput(result) };
                 }),
               ),
@@ -120,6 +137,16 @@ export const createReadAttachmentExt: ExtensionFactory = {
           }),
         );
       },
+      onStepComplete: (event) => {
+        if (event.requestRejected) {
+          for (const id of injected) rejected.add(id);
+        }
+        injected.clear();
+      },
+      introspect: () => ({
+        injectedCount: injected.size,
+        rejectedCount: rejected.size,
+      }),
     };
   },
 };

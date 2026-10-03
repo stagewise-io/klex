@@ -3,6 +3,7 @@ import type { ModelMessage, Tool } from 'ai';
 import { afterEach, assert, describe, expect, it, vi } from 'vitest';
 
 import {
+  REMOTE_INPUT_REJECTED,
   REMOTE_INPUT_UNAVAILABLE,
   remoteInputUnavailable,
 } from '@/provider-registry/remote-input';
@@ -14,6 +15,7 @@ import {
   createDataPart,
   type ExtensionDeps,
   type ResolvedModel,
+  type StepCompleteEvent,
 } from '../extension-api';
 import { createReadAttachmentExt } from './read-attachment';
 
@@ -58,8 +60,105 @@ function fixture() {
   };
   const execute = (input: { url: string; mediaType?: string }) =>
     run(input, { toolCallId: 'call', messages: [], context: undefined });
-  return { transform, convert, execute, modelResolver, generateText };
+  return {
+    extension,
+    transform,
+    convert,
+    execute,
+    modelResolver,
+    generateText,
+  };
 }
+
+const stepEvent = (requestRejected: boolean): StepCompleteEvent => ({
+  shouldContinue: true,
+  forceNextStep: false,
+  fatalError: false,
+  fatalErrorReason: null,
+  generationFailed: requestRejected,
+  generation: null,
+  toolCalls: [],
+  modelFallbackOccurred: false,
+  requestRejected,
+});
+
+const pendingHistory = (output: unknown): ExtendedUIMessage[] =>
+  JSON.parse(
+    JSON.stringify([
+      {
+        id: 'message',
+        role: 'assistant',
+        parts: [
+          {
+            type: 'dynamic-tool',
+            toolName: 'readAttachment',
+            toolCallId: 'call',
+            state: 'output-available',
+            input: { url, mediaType: 'application/pdf' },
+            output,
+          },
+        ],
+      },
+    ]),
+  );
+
+const toolOutput = (messages: ModelMessage[]) => {
+  const tool = messages.find((m) => m.role === 'tool');
+  assert(tool && Array.isArray(tool.content));
+  const part = tool.content[0];
+  if (part?.type !== 'tool-result') {
+    throw new Error('expected a tool-result part');
+  }
+  return part.output;
+};
+
+describe('readAttachment — provider rejection degrade', () => {
+  it('replaces media with error-text after the step carrying it is rejected', async () => {
+    const { extension, transform, convert, execute } = fixture();
+    const output = await execute({ url, mediaType: 'application/pdf' });
+    const messages = await convert(pendingHistory(output));
+
+    const first = (await transform(messages, selected)) as ModelMessage[];
+    expect(toolOutput(first).type).toBe('content');
+
+    await extension.onStepComplete?.(stepEvent(true));
+
+    const second = (await transform(messages, selected)) as ModelMessage[];
+    expect(toolOutput(second)).toEqual({
+      type: 'error-text',
+      value: REMOTE_INPUT_REJECTED,
+    });
+    expect(JSON.stringify(toolOutput(second))).not.toContain('secret=private');
+    expect(await extension.introspect?.()).toEqual({
+      injectedCount: 0,
+      rejectedCount: 1,
+    });
+  });
+
+  it('keeps media when the step completes without rejection', async () => {
+    const { extension, transform, convert, execute } = fixture();
+    const output = await execute({ url, mediaType: 'application/pdf' });
+    const messages = await convert(pendingHistory(output));
+
+    await transform(messages, selected);
+    await extension.onStepComplete?.(stepEvent(false));
+
+    const next = (await transform(messages, selected)) as ModelMessage[];
+    expect(toolOutput(next).type).toBe('content');
+  });
+
+  it('does not degrade media that was not part of the rejected attempt', async () => {
+    const { extension, transform, convert, execute } = fixture();
+    const output = await execute({ url, mediaType: 'application/pdf' });
+    const messages = await convert(pendingHistory(output));
+
+    // Rejection reported before the file was ever injected.
+    await extension.onStepComplete?.(stepEvent(true));
+
+    const next = (await transform(messages, selected)) as ModelMessage[];
+    expect(toolOutput(next).type).toBe('content');
+  });
+});
 
 afterEach(() => vi.unstubAllGlobals());
 

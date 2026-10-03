@@ -10,9 +10,15 @@ import type { ModelInputCapabilities, ProviderType } from '@/config';
 export const REMOTE_INPUT_UNAVAILABLE =
   'Remote media unavailable or unsupported.';
 
+export const REMOTE_INPUT_REJECTED =
+  'Remote media could not be fetched by the model provider.';
+
 /** JSON-safe tool output. URLs are private content, never diagnostic text. */
 export type RemoteInputResult =
-  | { type: 'error-text'; value: typeof REMOTE_INPUT_UNAVAILABLE }
+  | {
+      type: 'error-text';
+      value: typeof REMOTE_INPUT_UNAVAILABLE | typeof REMOTE_INPUT_REJECTED;
+    }
   | {
       type: 'content';
       value: [
@@ -23,6 +29,12 @@ export type RemoteInputResult =
 export const remoteInputUnavailable = (): RemoteInputResult => ({
   type: 'error-text',
   value: REMOTE_INPUT_UNAVAILABLE,
+});
+
+/** The provider rejected a request carrying this media; it is no longer sent. */
+export const remoteInputRejected = (): RemoteInputResult => ({
+  type: 'error-text',
+  value: REMOTE_INPUT_REJECTED,
 });
 
 const extensionMediaTypes = new Map([

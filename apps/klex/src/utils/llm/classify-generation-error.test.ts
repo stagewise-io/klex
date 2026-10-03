@@ -1,6 +1,7 @@
 import {
   APICallError,
   EmptyResponseBodyError,
+  InvalidPromptError,
   InvalidResponseDataError,
   JSONParseError,
   LoadAPIKeyError,
@@ -89,15 +90,43 @@ describe('classifyGenerationError', () => {
       expect(result.reason).toContain('429');
     });
 
-    it('classifies 400 as non-model error', () => {
+    it.each([400, 404, 409, 413, 415, 422])(
+      'classifies %i as a non-fatal request rejection',
+      (statusCode) => {
+        const error = makeApiError({
+          message: 'Requested entity was not found.',
+          statusCode,
+          isRetryable: false,
+        });
+        const result = classifyGenerationError(error);
+        expect(result.isRequestRejected).toBe(true);
+        expect(result.isFatal).toBe(false);
+        expect(result.isModelError).toBe(false);
+        expect(result.isAbort).toBe(false);
+        expect(result.reason).toBe(`request rejected (${statusCode})`);
+      },
+    );
+
+    it('classifies 408 as model error (transient timeout)', () => {
       const error = makeApiError({
-        message: 'Bad Request',
-        statusCode: 400,
+        message: 'Request Timeout',
+        statusCode: 408,
       });
       const result = classifyGenerationError(error);
-      expect(result.isModelError).toBe(false);
-      expect(result.reason).toContain('400');
+      expect(result.isModelError).toBe(true);
+      expect(result.isRequestRejected).toBe(false);
+      expect(result.reason).toContain('408');
     });
+
+    it.each([401, 403, 429, 500, 503])(
+      'does not classify %i as a request rejection',
+      (statusCode) => {
+        const error = makeApiError({ message: 'x', statusCode });
+        const result = classifyGenerationError(error);
+        expect(result.isRequestRejected).toBe(false);
+        expect(result.isModelError).toBe(true);
+      },
+    );
 
     it('classifies 401 as model error (auth failure triggers fallback)', () => {
       const error = makeApiError({
@@ -148,6 +177,34 @@ describe('classifyGenerationError', () => {
       const result = classifyGenerationError(error);
       expect(result.isModelError).toBe(true);
       expect(result.reason).toContain('no output generated');
+    });
+
+    it('propagates a wrapped 404 as a request rejection', () => {
+      const error = new NoOutputGeneratedError({
+        message: 'No output generated.',
+        cause: makeApiError({
+          message: 'Requested entity was not found.',
+          statusCode: 404,
+          isRetryable: false,
+        }),
+      });
+      const result = classifyGenerationError(error);
+      expect(result.isRequestRejected).toBe(true);
+      expect(result.isFatal).toBe(false);
+      expect(result.isModelError).toBe(false);
+      expect(result.reason).toContain('request rejected (404)');
+    });
+  });
+
+  describe('InvalidPromptError', () => {
+    it('stays fatal', () => {
+      const error = new InvalidPromptError({
+        prompt: 'x',
+        message: 'invalid',
+      });
+      const result = classifyGenerationError(error);
+      expect(result.isFatal).toBe(true);
+      expect(result.isRequestRejected).toBe(false);
     });
   });
 

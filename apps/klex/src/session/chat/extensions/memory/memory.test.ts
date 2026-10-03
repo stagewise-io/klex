@@ -39,6 +39,7 @@ const success = {
   fatalError: false,
   generationFailed: false,
   modelFallbackOccurred: false,
+  requestRejected: false,
 } as StepCompleteEvent;
 const directories: string[] = [];
 

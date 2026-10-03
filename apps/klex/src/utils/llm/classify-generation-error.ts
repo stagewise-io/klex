@@ -51,6 +51,13 @@ export interface GenerationErrorClassification {
    * — they must NOT trigger model fallback.
    */
   isAbort: boolean;
+  /**
+   * True when the provider rejected this specific request (4xx other than
+   * 401/403/408/429). Retrying the identical request will not help;
+   * changing request content (e.g. dropping remote media) or the model
+   * might. Never combined with `isFatal` or `isModelError`.
+   */
+  isRequestRejected: boolean;
   reason: string;
 }
 
@@ -86,6 +93,7 @@ const SIMPLE_CLASSIFIERS: Array<{
       isModelError: true,
       isFatal: false,
       isAbort: false,
+      isRequestRejected: false,
       reason: 'empty response body',
     },
   },
@@ -95,6 +103,7 @@ const SIMPLE_CLASSIFIERS: Array<{
       isModelError: true,
       isFatal: false,
       isAbort: false,
+      isRequestRejected: false,
       reason: 'no content generated',
     },
   },
@@ -104,6 +113,7 @@ const SIMPLE_CLASSIFIERS: Array<{
       isModelError: true,
       isFatal: false,
       isAbort: false,
+      isRequestRejected: false,
       reason: 'failed to load API key',
     },
   },
@@ -113,6 +123,7 @@ const SIMPLE_CLASSIFIERS: Array<{
       isModelError: true,
       isFatal: false,
       isAbort: false,
+      isRequestRejected: false,
       reason: 'no such model',
     },
   },
@@ -122,6 +133,7 @@ const SIMPLE_CLASSIFIERS: Array<{
       isModelError: true,
       isFatal: false,
       isAbort: false,
+      isRequestRejected: false,
       reason: 'JSON parse error',
     },
   },
@@ -131,6 +143,7 @@ const SIMPLE_CLASSIFIERS: Array<{
       isModelError: true,
       isFatal: false,
       isAbort: false,
+      isRequestRejected: false,
       reason: 'invalid response data',
     },
   },
@@ -140,6 +153,7 @@ const SIMPLE_CLASSIFIERS: Array<{
       isModelError: false,
       isFatal: true,
       isAbort: false,
+      isRequestRejected: false,
       reason: 'invalid prompt error',
     },
   },
@@ -149,6 +163,7 @@ const SIMPLE_CLASSIFIERS: Array<{
       isModelError: true,
       isFatal: false,
       isAbort: false,
+      isRequestRejected: false,
       reason: 'unsupported functionality',
     },
   },
@@ -159,14 +174,20 @@ const SIMPLE_CLASSIFIERS: Array<{
  * payload) to determine whether it is model/provider-related and should
  * trigger a model fallback.
  *
- * Model errors: 5xx, 429, 401/403 (auth), retryable API errors, empty
- * response, no-output-generated, no-content-generated, load-api-key,
+ * Model errors: 5xx, 429, 408, 401/403 (auth), retryable API errors,
+ * empty response, no-output-generated, no-content-generated, load-api-key,
  * no-such-model, JSON parse, invalid response data, unsupported
  * functionality, network errors (timeout, connection refused/reset,
  * fetch failures).
  *
- * Non-model errors: 4xx (except 401/403/429), non-retryable API errors,
- * invalid prompt, content filter responses, unknown errors.
+ * Request rejections: other 4xx (including 400). The provider refused
+ * this specific request — e.g. a remote file it could not fetch. These
+ * are neither fatal nor model errors.
+ *
+ * Fatal: invalid prompt (raised locally before any request).
+ *
+ * Other non-model errors: non-retryable API errors without status,
+ * content filter responses, unknown errors.
  */
 export function classifyGenerationError(
   error: unknown,
@@ -178,6 +199,7 @@ export function classifyGenerationError(
       isModelError: true,
       isFatal: false,
       isAbort: false,
+      isRequestRejected: false,
       reason: 'model reported error without details',
     };
   }
@@ -188,6 +210,7 @@ export function classifyGenerationError(
       isModelError: true,
       isFatal: false,
       isAbort: false,
+      isRequestRejected: false,
       reason: `model error: ${error}`,
     };
   }
@@ -203,6 +226,7 @@ export function classifyGenerationError(
       isModelError: false,
       isFatal: false,
       isAbort: true,
+      isRequestRejected: false,
       reason: 'generation aborted',
     };
   }
@@ -215,7 +239,19 @@ export function classifyGenerationError(
           isModelError: true,
           isFatal: false,
           isAbort: false,
+          isRequestRejected: false,
           reason: `server error (${error.statusCode})`,
+        };
+      }
+      // 408 is a request timeout — transient, so retry like a network
+      // error with fallback.
+      if (error.statusCode === 408) {
+        return {
+          isModelError: true,
+          isFatal: false,
+          isAbort: false,
+          isRequestRejected: false,
+          reason: `request timeout (${error.statusCode})`,
         };
       }
       // 401/403 are authentication/authorization errors — the provider
@@ -226,27 +262,22 @@ export function classifyGenerationError(
           isModelError: true,
           isFatal: false,
           isAbort: false,
+          isRequestRejected: false,
           reason: `authentication error (${error.statusCode})`,
         };
       }
-      // 400 and other 4xx (except auth) are bad-request errors. The
-      // request itself is malformed — retrying with a different model or
-      // after a delay will not help. Mark as fatal so the session is
-      // terminated.
-      if (error.statusCode === 400) {
-        return {
-          isModelError: false,
-          isFatal: true,
-          isAbort: false,
-          reason: `bad request (${error.statusCode})`,
-        };
-      }
-      if (error.statusCode >= 400) {
+      // 400 and other 4xx (except auth/timeout/rate limit): the provider
+      // rejected this specific request, e.g. because a remote file it
+      // had to fetch was unusable. Retrying the identical request will
+      // not help, but the session must stay alive — the turn degrades
+      // request content once and then stops.
+      if (error.statusCode >= 400 && error.statusCode < 500) {
         return {
           isModelError: false,
           isFatal: false,
           isAbort: false,
-          reason: `client error (${error.statusCode})`,
+          isRequestRejected: true,
+          reason: `request rejected (${error.statusCode})`,
         };
       }
     }
@@ -255,6 +286,7 @@ export function classifyGenerationError(
         isModelError: true,
         isFatal: false,
         isAbort: false,
+        isRequestRejected: false,
         reason: 'retryable API error',
       };
     }
@@ -262,6 +294,7 @@ export function classifyGenerationError(
       isModelError: false,
       isFatal: false,
       isAbort: false,
+      isRequestRejected: false,
       reason: 'non-retryable API error',
     };
   }
@@ -284,6 +317,7 @@ export function classifyGenerationError(
       isModelError: true,
       isFatal: false,
       isAbort: false,
+      isRequestRejected: false,
       reason: 'no output generated',
     };
   }
@@ -309,6 +343,7 @@ export function classifyGenerationError(
         isModelError: true,
         isFatal: false,
         isAbort: false,
+        isRequestRejected: false,
         reason: 'network error',
       };
     }
@@ -318,6 +353,7 @@ export function classifyGenerationError(
     isModelError: false,
     isFatal: false,
     isAbort: false,
+    isRequestRejected: false,
     reason: 'unknown error',
   };
 }

@@ -76,6 +76,7 @@ type GenerationOutcome =
   | 'salvage'
   | 'aborted'
   | 'fallback_new_step'
+  | 'request_rejected'
   | 'generation_failed';
 
 /**
@@ -88,6 +89,7 @@ type CoarseOutcome =
   | 'salvage'
   | 'aborted'
   | 'model_error'
+  | 'request_rejected'
   | 'generation_failed';
 
 /**
@@ -103,6 +105,11 @@ type CoarseOutcome =
  * of retrying in-loop. The turn creates a new step that re-runs the
  * transformation pipeline with the new model, since transformations are
  * bound to specific model capabilities.
+ *
+ * When the provider rejects the request itself (4xx request rejection)
+ * with no content, the runner does NOT advance the fallback manager. It
+ * returns `requestRejected: true` so extensions can degrade the content
+ * they injected and the turn decides whether to retry or fall back.
  */
 export class GenerationRunner {
   private generationAbortController: AbortController | null = null;
@@ -138,6 +145,7 @@ export class GenerationRunner {
     let fatalErrorReason: string | null = null;
     let generationFailed = false;
     let modelFallbackOccurred = false;
+    let requestRejected = false;
 
     const model = this.deps.model;
     let lastUsage: LanguageModelUsage | null = null;
@@ -300,10 +308,30 @@ export class GenerationRunner {
         generationFailed = true;
         break;
       }
+      if (outcome === 'request_rejected') {
+        requestRejected = true;
+        break;
+      }
       // fallback_new_step — break out so the turn creates a new step
       // that re-fetches the model and re-runs the transformation pipeline.
       modelFallbackOccurred = true;
       break;
+    }
+
+    // Request rejected with no content: no tools were dispatched, so skip
+    // the tool sweep and report the rejection to the turn.
+    if (requestRejected) {
+      return {
+        shouldContinue: true,
+        forceNextStep: false,
+        fatalError: false,
+        fatalErrorReason: null,
+        generationFailed: true,
+        generation: null,
+        toolCalls: [],
+        modelFallbackOccurred: false,
+        requestRejected: true,
+      };
     }
 
     // If the retry loop exited due to hitting the attempt cap (not via
@@ -325,6 +353,7 @@ export class GenerationRunner {
         generation: null,
         toolCalls: [],
         modelFallbackOccurred: false,
+        requestRejected: false,
       };
     }
 
@@ -373,6 +402,7 @@ export class GenerationRunner {
           : null,
       toolCalls,
       modelFallbackOccurred,
+      requestRejected: false,
     };
   }
 
@@ -409,6 +439,12 @@ export class GenerationRunner {
 
     // Fatal — terminate immediately, no salvage.
     if (classification?.isFatal) return 'fatal';
+
+    // Provider rejected this request with no content — no model fallback;
+    // the turn decides how to proceed (degrade content, then fall back).
+    if (classification?.isRequestRejected && !hasContent) {
+      return 'request_rejected';
+    }
 
     // Content produced (even partial) — salvage, force next step.
     if (hasContent) return 'salvage';
@@ -498,6 +534,19 @@ export class GenerationRunner {
           'No content received, falling back to next model in a new step',
         );
         return 'fallback_new_step';
+      }
+
+      case 'request_rejected': {
+        stepSpan.setAttribute('step.requestRejected', true);
+        stepSpan.addEvent('step.request_rejected', {
+          'error.classification': classification?.reason,
+          'generation.attempt': attempt,
+        });
+        this.deps.logger.warn(
+          { attempt, reason: classification?.reason },
+          'Provider rejected the request — not triggering model fallback',
+        );
+        return 'request_rejected';
       }
 
       case 'generation_failed': {

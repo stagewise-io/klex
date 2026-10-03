@@ -63,6 +63,7 @@ const SUCCESS_RESULT: StepCompleteEvent = {
   generation: null,
   toolCalls: [],
   modelFallbackOccurred: false,
+  requestRejected: false,
 };
 
 // --- mocks ---
@@ -139,6 +140,7 @@ describe('Step — decision: skip', () => {
       generation: null,
       toolCalls: [],
       modelFallbackOccurred: false,
+      requestRejected: false,
     });
     expect(createGenerationRunner).not.toHaveBeenCalled();
   });
@@ -162,6 +164,7 @@ describe('Step — decision: skip', () => {
       generation: null,
       toolCalls: [],
       modelFallbackOccurred: false,
+      requestRejected: false,
     });
     expect(createGenerationRunner).not.toHaveBeenCalled();
   });
@@ -616,6 +619,7 @@ describe('Step — provisional step context', () => {
           run: vi.fn(async () => ({
             ...SUCCESS_RESULT,
             modelFallbackOccurred: true,
+            requestRejected: false,
           })),
           abort: vi.fn(),
           abortTools: vi.fn(),
@@ -857,6 +861,7 @@ describe('Step — model selection', () => {
       generation: null,
       toolCalls: [],
       modelFallbackOccurred: true,
+      requestRejected: false,
     });
     expect(extensionHandler.runStepCompleteHooks).toHaveBeenCalledWith(result);
     expect(createGenerationRunner).not.toHaveBeenCalled();
@@ -1189,6 +1194,7 @@ describe('Step — GenerationRunner result passthrough', () => {
       },
       toolCalls: [],
       modelFallbackOccurred: false,
+      requestRejected: false,
     };
     vi.mocked(createGenerationRunner).mockReturnValue({
       run: vi.fn(async () => genResult),
@@ -1212,6 +1218,7 @@ describe('Step — GenerationRunner result passthrough', () => {
       generation: null,
       toolCalls: [],
       modelFallbackOccurred: false,
+      requestRejected: false,
     };
     vi.mocked(createGenerationRunner).mockReturnValue({
       run: vi.fn(async () => genResult),

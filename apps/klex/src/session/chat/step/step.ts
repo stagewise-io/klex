@@ -219,6 +219,7 @@ class StepModule implements Step {
             generation: null,
             toolCalls: [],
             modelFallbackOccurred: false,
+            requestRejected: false,
           };
           await this.deps.extensionHandler.runStepCompleteHooks(skipEvent);
           return skipEvent;
@@ -254,6 +255,7 @@ class StepModule implements Step {
               generation: null,
               toolCalls: [],
               modelFallbackOccurred: false,
+              requestRejected: false,
             };
             await this.deps.extensionHandler.runStepCompleteHooks(noModelEvent);
             return noModelEvent;
@@ -309,6 +311,7 @@ class StepModule implements Step {
               generation: null,
               toolCalls: [],
               modelFallbackOccurred: true,
+              requestRejected: false,
             };
             await this.deps.extensionHandler.runStepCompleteHooks(
               unusableModelEvent,
@@ -359,6 +362,7 @@ class StepModule implements Step {
             generation: null,
             toolCalls: [],
             modelFallbackOccurred: false,
+            requestRejected: false,
           };
           await this.deps.extensionHandler.runStepCompleteHooks(cancelEvent);
           return cancelEvent;
@@ -437,6 +441,7 @@ class StepModule implements Step {
               generation: null,
               toolCalls: [],
               modelFallbackOccurred: false,
+              requestRejected: false,
             };
             await this.deps.extensionHandler.runStepCompleteHooks(cancelEvent);
             return cancelEvent;
@@ -506,6 +511,7 @@ class StepModule implements Step {
               generation: null,
               toolCalls: [],
               modelFallbackOccurred: false,
+              requestRejected: false,
             };
             await this.deps.extensionHandler.runStepCompleteHooks(cancelEvent);
             return cancelEvent;
@@ -563,7 +569,11 @@ class StepModule implements Step {
             retainProvisionalContext =
               !result.generationFailed &&
               !result.modelFallbackOccurred &&
+              !result.requestRejected &&
               !result.fatalError;
+            if (result.requestRejected) {
+              stepSpan.setAttribute('step.requestRejected', true);
+            }
             // Notify extensions that a step completed. The handler catches
             // per-extension errors and runs all hooks in parallel, so this
             // won't break the turn.

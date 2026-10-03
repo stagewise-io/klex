@@ -404,9 +404,10 @@ describe.each([false, true])(
               }).text,
             ).catch((error: unknown) => streamError ?? error)
           : await generateText(options).catch((error: unknown) => error);
-        expect(classifyGenerationError(failure).reason).toBe(
-          'bad request (400)',
-        );
+        const classified = classifyGenerationError(failure);
+        expect(classified.reason).toBe('request rejected (400)');
+        expect(classified.isRequestRejected).toBe(true);
+        expect(classified.isFatal).toBe(false);
         expect(requests).toHaveLength(1);
         const request = requests[0];
         assert(request);

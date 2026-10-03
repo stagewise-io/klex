@@ -65,9 +65,12 @@ Google's SDK only accepts inline bytes in function responses; the provider
 wrapper moves remote tool files to adjacent native user content while retaining
 the paired tool result. Other supported adapters map tool files directly.
 
-Only the later generation contacts the provider. Provider rejections and
-transport errors follow normal generation classification; diagnostic reasons
-omit URLs and provider messages. Raw URLs remain in private tool content, debug
+Only the later generation contacts the provider. When the provider rejects a
+request that carried remote media (any 4xx except 401, 403, 408 and 429), the
+`readAttachment` extension replaces that tool result in later model context
+with `REMOTE_INPUT_REJECTED`, so the next attempt runs without the file and the
+model can tell the user it could not be read. Transport errors follow normal
+generation classification. Diagnostic reasons omit URLs and provider messages. Raw URLs remain in private tool content, debug
 logs, compressed history/episode JSONL, and configured telemetry content recording
 under the accepted policy. There is no separate inference call, download,
 decoding, cache, attachment store, or media fallback.

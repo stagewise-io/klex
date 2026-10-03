@@ -1146,6 +1146,28 @@ class ChatSessionModule implements AgentSession {
           return;
         }
 
+        // Request rejected by the provider: retrying the same request will
+        // not help. Skip backoff (and its termination counter) and keep the
+        // session alive so the next inbox input starts a fresh turn.
+        if (turnResult.completeFailure && turnResult.requestRejected) {
+          this.deps.logger.warn(
+            {
+              'event.name': 'operation.failed',
+              'klex.session.id': this.sessionId,
+              'klex.operation.name': 'session_turn',
+              'klex.failure.reason': 'request_rejected',
+              'klex.turn.stop_reason': turnResult.stopReason,
+            },
+            'Session turn rejected by provider; not retrying',
+          );
+          this.sessionSpan.addEvent('session.turn_rejected', {
+            'turn.steps': turnResult.stepCount,
+          });
+          needsBackoffRetry = false;
+          needsCheckRetry = false;
+          continue;
+        }
+
         // Track success/failure for backoff.
         if (turnResult.completeFailure) {
           this.setRuntimeState('retrying');

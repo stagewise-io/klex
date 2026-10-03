@@ -908,6 +908,7 @@ describe('ExtensionHandler — runStepCompleteHooks', () => {
     },
     toolCalls: [],
     modelFallbackOccurred: false,
+    requestRejected: false,
   };
 
   it('resolves with void when no extensions define the hook', async () => {

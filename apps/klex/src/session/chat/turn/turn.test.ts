@@ -11,7 +11,7 @@ import {
   makeInbox,
   makeModelResolver,
 } from '../test-helpers';
-import { createTurn, type TurnDependencies } from './turn';
+import { createTurn, MAX_STEPS_PER_TURN, type TurnDependencies } from './turn';
 
 // --- mocks (hoisted by vitest) ---
 
@@ -54,6 +54,7 @@ const NOOP_RESULT: StepCompleteEvent = {
   generation: null,
   toolCalls: [],
   modelFallbackOccurred: false,
+  requestRejected: false,
 };
 
 function makeMockStep(overrides: Partial<StepCompleteEvent> = {}, delay = 0) {
@@ -399,6 +400,7 @@ describe('Turn — modelFallbackOccurred handling', () => {
     const step1 = makeMockStep({
       shouldContinue: true,
       modelFallbackOccurred: true,
+      requestRejected: false,
     });
     const step2 = makeMockStep({ shouldContinue: false });
     vi.mocked(createStep).mockReturnValueOnce(step1).mockReturnValueOnce(step2);
@@ -418,6 +420,7 @@ describe('Turn — modelFallbackOccurred handling', () => {
     const step1 = makeMockStep({
       shouldContinue: true,
       modelFallbackOccurred: true,
+      requestRejected: false,
     });
     const step2 = makeMockStep({ shouldContinue: false });
     vi.mocked(createStep).mockReturnValueOnce(step1).mockReturnValueOnce(step2);
@@ -432,6 +435,7 @@ describe('Turn — modelFallbackOccurred handling', () => {
     const step1 = makeMockStep({
       shouldContinue: true,
       modelFallbackOccurred: true,
+      requestRejected: false,
     });
     const step2 = makeMockStep({ shouldContinue: false });
     vi.mocked(createStep).mockReturnValueOnce(step1).mockReturnValueOnce(step2);
@@ -461,6 +465,7 @@ describe('Turn — modelFallbackOccurred handling', () => {
     const fallbackManager = {
       getChatModelEntry: vi.fn(() => 'test:model' as never),
       getFallbackIndex: vi.fn(() => index),
+      getChatModelCount: vi.fn(() => 2),
       fallbackToNextModel: vi.fn(() => {
         index = (index + 1) % 2;
       }),
@@ -487,6 +492,7 @@ describe('Turn — modelFallbackOccurred handling', () => {
     const step1 = makeMockStep({
       shouldContinue: true,
       modelFallbackOccurred: true,
+      requestRejected: false,
     });
     const step2 = makeMockStep({
       shouldContinue: true,
@@ -521,6 +527,7 @@ describe('Turn — modelFallbackOccurred handling', () => {
     const step1 = makeMockStep({
       shouldContinue: true,
       modelFallbackOccurred: true,
+      requestRejected: false,
     });
     const step2 = makeMockStep({
       shouldContinue: false,
@@ -695,5 +702,111 @@ describe('Turn — forceCheck (check-retry)', () => {
       (m) => m.role === 'user' && m.parts.some((p) => p.type === 'data-check'),
     );
     expect(checkMsg).toBeUndefined();
+  });
+});
+
+describe('Turn — failure budget and step cap', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  const REJECTED: Partial<StepCompleteEvent> = {
+    shouldContinue: true,
+    generationFailed: true,
+    requestRejected: true,
+  };
+  const MODEL_ERROR: Partial<StepCompleteEvent> = {
+    shouldContinue: true,
+    modelFallbackOccurred: true,
+  };
+
+  it('ends an always-rejected turn after the budget with 1 model (2 steps)', async () => {
+    const fallbackManager = makeFallbackManager(1);
+    vi.mocked(createStep).mockImplementation(
+      () => makeMockStep(REJECTED) as never,
+    );
+
+    const turn = createTurn(
+      makeDeps({ fallbackManager: fallbackManager as never }),
+    );
+    const result = await turn.run();
+
+    expect(createStep).toHaveBeenCalledTimes(2);
+    expect(result.stepCount).toBe(2);
+    expect(result.completeFailure).toBe(true);
+    expect(result.requestRejected).toBe(true);
+    expect(result.fatalError).toBe(false);
+    expect(result.stopReason).toBe('failure_budget_exhausted');
+    // First rejection retries on the same model; the budget ends the turn
+    // on the second rejection before any fallback is needed.
+    expect(fallbackManager.fallbackToNextModel).not.toHaveBeenCalled();
+  });
+
+  it('falls back on repeated rejections with 3 models and ends after 4 steps', async () => {
+    const fallbackManager = makeFallbackManager(3);
+    vi.mocked(createStep).mockImplementation(
+      () => makeMockStep(REJECTED) as never,
+    );
+
+    const turn = createTurn(
+      makeDeps({ fallbackManager: fallbackManager as never }),
+    );
+    const result = await turn.run();
+
+    expect(createStep).toHaveBeenCalledTimes(4);
+    expect(result.requestRejected).toBe(true);
+    expect(result.stopReason).toBe('failure_budget_exhausted');
+    // Rejections 2 and 3 trigger fallback; rejection 4 hits the budget.
+    expect(fallbackManager.fallbackToNextModel).toHaveBeenCalledTimes(2);
+  });
+
+  it('ends an always-model-error turn after a full rotation without requestRejected', async () => {
+    const fallbackManager = makeFallbackManager(2);
+    vi.mocked(createStep).mockImplementation(
+      () => makeMockStep(MODEL_ERROR) as never,
+    );
+
+    const turn = createTurn(
+      makeDeps({ fallbackManager: fallbackManager as never }),
+    );
+    const result = await turn.run();
+
+    expect(createStep).toHaveBeenCalledTimes(3);
+    expect(result.completeFailure).toBe(true);
+    expect(result.requestRejected).toBe(false);
+    expect(result.stopReason).toBe('failure_budget_exhausted');
+  });
+
+  it('resets the failure budget after a successful step', async () => {
+    const steps = [
+      makeMockStep(REJECTED),
+      makeMockStep({ shouldContinue: true }),
+      makeMockStep(REJECTED),
+      makeMockStep({ shouldContinue: false }),
+    ];
+    for (const step of steps) {
+      vi.mocked(createStep).mockReturnValueOnce(step as never);
+    }
+
+    const turn = createTurn(makeDeps());
+    const result = await turn.run();
+
+    expect(createStep).toHaveBeenCalledTimes(4);
+    expect(result.completeFailure).toBe(false);
+    expect(result.stopReason).toBe('completed');
+  });
+
+  it('stops at MAX_STEPS_PER_TURN', async () => {
+    vi.mocked(createStep).mockImplementation(
+      () => makeMockStep({ shouldContinue: true }) as never,
+    );
+
+    const turn = createTurn(makeDeps());
+    const result = await turn.run();
+
+    expect(createStep).toHaveBeenCalledTimes(MAX_STEPS_PER_TURN);
+    expect(result.stepCount).toBe(MAX_STEPS_PER_TURN);
+    expect(result.stopReason).toBe('step_cap_reached');
+    expect(result.completeFailure).toBe(false);
   });
 });

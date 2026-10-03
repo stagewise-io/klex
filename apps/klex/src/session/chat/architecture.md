@@ -14,7 +14,7 @@ SessionHost
 
 Owns message history, inbox, extension handler, fallback manager, backoff manager, and the run loop. Lives for the application lifetime (or until a fatal error self-terminates it). Exposes `status: 'active' | 'terminated'` so the session host can detect dead sessions and replace them.
 
-**Loop:** processes one turn per iteration. Goes idle only when the inbox deferred buffer is empty, no pending immediate input, no backoff retry, and no check-retry needed. If a turn fails completely (all models exhausted) and no new input arrives, applies exponential backoff. Fatal errors terminate immediately.
+**Loop:** processes one turn per iteration. Goes idle only when the inbox deferred buffer is empty, no pending immediate input, no backoff retry, and no check-retry needed. If a turn fails completely (all models exhausted) and no new input arrives, applies exponential backoff. A turn that fails because the provider rejected the request skips backoff and its termination counter; the session stays alive and the next inbox input starts a fresh turn. Fatal errors terminate immediately.
 
 ## Inbox
 
@@ -50,6 +50,8 @@ Both chat steps and leased interactions use the same context assembly: provision
 
 Drains deferrable inbox, then runs steps sequentially until no more generation is needed. Unifies "Continue." injection (backoff retry or salvage) and `data-check` injection (check-retry after new input) into a single code path.
 
+Every turn terminates. A hard cap of `MAX_STEPS_PER_TURN` (200) steps covers long tool loops. Consecutive failed steps (generation failure, model fallback, or request rejection) are limited to one full model rotation plus one retry: `max(1, chatModelCount) + 1`. A successful step resets the counter. On the first request rejection the next step runs on the same model, so extensions can drop the content they injected. From the second rejection on, the turn falls back to the next model before the next step, so a bad model ID still reaches the backup models. `TurnResult.stopReason` (`completed`, `failure_budget_exhausted`, `step_cap_reached`, `yielded`, `fatal`) and `TurnResult.requestRejected` report why the turn ended.
+
 ## Step
 
 Coordinator: history repair → decision (can a step run?) → model fetch → history transformation (clone → extension pre-process → model-aware conversion → extension post-process) → delegate to GenerationRunner.
@@ -64,7 +66,7 @@ Model-message conversion projects media for the selected model: if the model dec
 
 ## GenerationRunner
 
-Owns the retry loop, model fallback, error classification, message salvage, stream progress tracking, and the ToolDispatcher. On failure, `decideOutcome` (pure) maps classification + content state to a coarse outcome, then `applyOutcome` performs side effects and refines it.
+Owns the retry loop, model fallback, error classification, message salvage, stream progress tracking, and the ToolDispatcher. On failure, `decideOutcome` (pure) maps classification + content state to a coarse outcome, then `applyOutcome` performs side effects and refines it. A request rejection without content ends the step with `requestRejected: true` and no model fallback; the turn decides how to continue.
 
 ## ToolDispatcher
 
@@ -72,7 +74,7 @@ At-most-once tool execution via a `dispatchedToolCallIds` set. Owns tool lookup,
 
 ## Extensions
 
-Extensions can transform UI history and model context, register custom data-part transformers, expose tools, and contribute system prompts. `getProvisionalStepContext` prepares dynamic context after model resolution, immediately before inference. Providers receive isolated history snapshots and run sequentially in factory order; they do not mutate canonical history directly.
+Extensions can transform UI history and model context, register custom data-part transformers, expose tools, and contribute system prompts. `onStepComplete` receives `requestRejected`; extensions that injected request content (for example `readAttachment` remote media) use it to replace that content with an error text in later model context. This degrade state is in memory and does not change persisted history. After a restart, at most one more rejected attempt happens before the content is degraded again. `getProvisionalStepContext` prepares dynamic context after model resolution, immediately before inference. Providers receive isolated history snapshots and run sequentially in factory order; they do not mutate canonical history directly.
 
 ## Episodic memory
 
@@ -119,8 +121,9 @@ Consumers own their presets. The line-format transcript preset (`createTranscrip
 
 ## Error handling
 
-- **Model errors** (5xx, 429, timeouts, no output) → fallback to next model, retry
-- **Fatal errors** (400, invalid prompt) → terminate session
+- **Model errors** (5xx, 408, 429, 401/403, timeouts, no output) → fallback to next model, retry
+- **Request rejections** (other 4xx, including 400 and 404) → no fallback within the step; extensions degrade injected content, the turn retries within its failure budget, then ends without session backoff
+- **Fatal errors** (invalid prompt, raised locally before any request) → terminate session
 - **Salvage** — partial content with repairable issues → push to history, force next step
 - **Backoff** — all models exhausted, no new input → exponential backoff; new inbox input interrupts
 - **Loop guard** — top-level try/catch/finally resets `loopActive` and triggers clean termination on unhandled errors

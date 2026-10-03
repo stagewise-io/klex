@@ -1168,6 +1168,28 @@ class ChatSessionModule implements AgentSession {
           continue;
         }
 
+        // Step cap reached: the turn was cut off mid-work. Re-running it
+        // would repeat the same runaway loop, so neither retry nor record
+        // a success. The session stays alive for the next inbox input.
+        if (turnResult.stopReason === 'step_cap_reached') {
+          this.deps.logger.warn(
+            {
+              'event.name': 'operation.failed',
+              'klex.session.id': this.sessionId,
+              'klex.operation.name': 'session_turn',
+              'klex.failure.reason': 'step_cap_reached',
+              'klex.turn.stop_reason': turnResult.stopReason,
+            },
+            'Session turn hit the step cap; not retrying',
+          );
+          this.sessionSpan.addEvent('session.turn_step_cap_reached', {
+            'turn.steps': turnResult.stepCount,
+          });
+          needsBackoffRetry = false;
+          needsCheckRetry = false;
+          continue;
+        }
+
         // Track success/failure for backoff.
         if (turnResult.completeFailure) {
           this.setRuntimeState('retrying');

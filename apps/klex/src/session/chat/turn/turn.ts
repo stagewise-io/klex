@@ -83,9 +83,11 @@ export interface TurnResult {
   /** Human-readable reason for the fatal error, if fatalError is true. */
   fatalErrorReason: string | null;
   /**
-   * True if no step in the turn had a successful generation. The loop
-   * should apply backoff before retrying (unless fatalError is also true,
-   * in which case the session is terminated).
+   * True if the turn did not finish: either no step had a successful
+   * generation, or the turn ended on a failed step (e.g. the failure
+   * budget ran out after earlier steps succeeded). The loop should apply
+   * backoff before retrying (unless fatalError is also true, in which
+   * case the session is terminated).
    */
   completeFailure: boolean;
   /**
@@ -147,6 +149,7 @@ class TurnModule implements Turn {
     let lastUsage: Usage | null = null;
     let totalStepCount = 0;
     let lastFailureWasRejection = false;
+    let lastStepFailed = false;
     let stopReason: TurnStopReason = 'completed';
 
     try {
@@ -327,12 +330,17 @@ class TurnModule implements Turn {
             stepResult.generationFailed ||
             stepResult.modelFallbackOccurred ||
             stepResult.requestRejected;
+          lastStepFailed = stepFailed;
           if (stepFailed) {
             hadAnyFailure = true;
             consecutiveFailedSteps++;
             lastFailureWasRejection = stepResult.requestRejected;
           } else {
+            // A clean step resets both counters, so a later first
+            // rejection again retries on the same model with degraded
+            // content before falling back.
             consecutiveFailedSteps = 0;
+            rejectedSteps = 0;
           }
 
           if (stepFailed && consecutiveFailedSteps >= failureBudget) {
@@ -396,7 +404,7 @@ class TurnModule implements Turn {
     return {
       fatalError,
       fatalErrorReason,
-      completeFailure: hadAnyFailure && !hadAnySuccess,
+      completeFailure: hadAnyFailure && (!hadAnySuccess || lastStepFailed),
       requestRejected: lastFailureWasRejection,
       stopReason,
       stepCount: totalStepCount,

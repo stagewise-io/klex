@@ -1,15 +1,22 @@
+import { APICallError } from '@ai-sdk/provider';
 import {
   type LanguageModel,
+  NoOutputGeneratedError,
   readUIMessageStream,
   streamText,
   toUIMessageStream,
 } from 'ai';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { classifyGenerationError } from '@/utils/llm';
+
 import type { ExtendedUIMessage } from '../message-types';
 import { testLogger as logger } from '../test-helpers';
 import type { AgentTools } from '../tools';
-import { runStreamedGeneration } from './run-streamed-generation';
+import {
+  attachStreamError,
+  runStreamedGeneration,
+} from './run-streamed-generation';
 
 // --- mocks (hoisted by vitest) ---
 
@@ -418,5 +425,76 @@ describe('runStreamedGeneration — error handling', () => {
         basePrompt: 'mock system prompt',
       }),
     ).rejects.toThrow('Stream processing failed');
+  });
+});
+
+describe('runStreamedGeneration — stream errors', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  const notFound = () =>
+    new APICallError({
+      message: 'Requested entity was not found.',
+      url: 'https://generativelanguage.googleapis.com',
+      requestBodyValues: {},
+      statusCode: 404,
+      isRetryable: false,
+    });
+
+  it('attaches the onError provider error to a cause-less NoOutputGeneratedError', async () => {
+    const providerError = notFound();
+    const mockStream = Symbol('mock-stream');
+    vi.mocked(streamText).mockImplementation(((opts: {
+      onError?: (e: { error: unknown }) => void;
+    }) => {
+      opts.onError?.({ error: providerError });
+      const noOutput = Promise.reject(new NoOutputGeneratedError());
+      noOutput.catch(() => {});
+      return {
+        stream: mockStream,
+        finishReason: noOutput,
+        rawFinishReason: noOutput,
+        usage: noOutput,
+      };
+    }) as never);
+    vi.mocked(toUIMessageStream).mockReturnValue(mockStream as never);
+    vi.mocked(readUIMessageStream).mockImplementation((({
+      message,
+    }: {
+      message: ExtendedUIMessage;
+    }) => fromArray([message])) as never);
+
+    const error = await runStreamedGeneration({
+      model,
+      modelMessages: [],
+      tools,
+      onUpdate: vi.fn(),
+      abortSignal,
+      logger,
+      modelContext,
+      sessionId: 'test-session',
+      compacted: false,
+      basePrompt: 'mock system prompt',
+    }).catch((e: unknown) => e);
+
+    expect(NoOutputGeneratedError.isInstance(error)).toBe(true);
+    expect((error as Error).cause).toBe(providerError);
+    expect(classifyGenerationError(error).isRequestRejected).toBe(true);
+  });
+
+  it('leaves errors without a captured stream error unchanged', () => {
+    const thrown = new NoOutputGeneratedError();
+    expect(attachStreamError(thrown, undefined)).toBe(thrown);
+  });
+
+  it('does not replace an existing cause', () => {
+    const thrown = new NoOutputGeneratedError({ cause: new Error('original') });
+    expect(attachStreamError(thrown, notFound())).toBe(thrown);
+  });
+
+  it('leaves non-NoOutputGeneratedError errors unchanged', () => {
+    const thrown = new Error('boom');
+    expect(attachStreamError(thrown, notFound())).toBe(thrown);
   });
 });

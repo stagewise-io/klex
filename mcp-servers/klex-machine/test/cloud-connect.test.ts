@@ -1,4 +1,11 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import {
+  chmod,
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  writeFile,
+} from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -251,6 +258,29 @@ describe('connectMachine', () => {
     ).rejects.toThrow('does not match enrollment metadata');
     expect(fetch).not.toHaveBeenCalled();
   });
+
+  it.skipIf(process.platform === 'win32' || process.getuid?.() === 0)(
+    'fails closed when machine state cannot be accessed',
+    async () => {
+      const directory = await temporaryDirectory();
+      await enrollOnce(directory);
+      const fetch = vi.fn(async () => enrollmentResponse());
+      await chmod(directory, 0o000);
+      try {
+        await expect(
+          connectMachine({
+            cloudBaseUrl: CLOUD,
+            code: 'new-code',
+            dataDir: directory,
+            fetch,
+          }),
+        ).rejects.toMatchObject({ code: 'EACCES' });
+      } finally {
+        await chmod(directory, 0o700);
+      }
+      expect(fetch).not.toHaveBeenCalled();
+    },
+  );
 
   it('rejects an invalid stored code hash as corrupt metadata', async () => {
     const directory = await temporaryDirectory();

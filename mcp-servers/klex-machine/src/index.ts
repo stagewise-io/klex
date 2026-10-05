@@ -4,6 +4,8 @@ import {
   packageVersion,
   parseCli,
 } from './cli.js';
+import { createMachineLogger } from './logger.js';
+import { createNotificationStore } from './notifications/index.js';
 
 async function main(): Promise<void> {
   const result = await parseCli(process.argv.slice(2));
@@ -44,7 +46,7 @@ async function main(): Promise<void> {
   }
   if (result.action === 'serve' && result.mode === 'local') {
     const { startMachineServer } = await import('./server.js');
-    await startMachineServer(result.config);
+    await startMachineServer(result.config, { dataDir: result.dataDir });
     return;
   }
 
@@ -66,6 +68,11 @@ async function main(): Promise<void> {
     enrollment.oauthProtectedResourceUrl,
     enrollment.mcpResourceUrl,
   );
+  const store = createNotificationStore({
+    dataDir: result.dataDir,
+    logger: createMachineLogger(result.config.logLevel),
+  });
+  await store.ready();
   const router = createPrincipalMcpRouter(
     createMachineAuthenticator({
       issuer: protectedResource.issuer,
@@ -74,14 +81,34 @@ async function main(): Promise<void> {
       protectedResourceMetadataUrl: enrollment.oauthProtectedResourceUrl,
     }),
     result.config.cwd,
+    store,
   );
-  const runtime = await startCloudMachineRuntime(result.dataDir, router);
+  const runtime = await startCloudMachineRuntime(result.dataDir, router).catch(
+    async (error: unknown) => {
+      await router.close();
+      await store.close();
+      throw error;
+    },
+  );
+  let closing: Promise<void> | undefined;
+  const close = () =>
+    (closing ??= (async () => {
+      try {
+        await runtime.close();
+      } finally {
+        try {
+          await router.close();
+        } finally {
+          await store.close();
+        }
+      }
+    })());
   if (result.action !== 'managed-bootstrap') {
     process.stdout.write(`${machineLiveMessage(enrollment.machineId)}\n`);
   }
   for (const signal of ['SIGINT', 'SIGTERM'] as const) {
     process.once(signal, () => {
-      void runtime.close().then(
+      void close().then(
         () => {
           process.exitCode = 0;
         },

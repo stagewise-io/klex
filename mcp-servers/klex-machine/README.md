@@ -35,7 +35,7 @@ Configuration precedence is CLI flag, environment variable, then default:
 | `--port` | `KLEX_MACHINE_PORT` | `3123` |
 | `--log-level` | `KLEX_MACHINE_LOG_LEVEL` | `info` |
 | `--mode` | `KLEX_MACHINE_MODE` | `enrolled` |
-| `--data-dir` | `KLEX_MACHINE_DATA_DIR` | `~/.klex-machine` |
+| `--data-dir` | `KLEX_MACHINE_DATA_DIR` | `~/.klex-machine`, identity and notification state |
 | `--cloud-base-url` | `KLEX_MACHINE_CLOUD_BASE_URL` | `https://cloud.klex.bot` |
 | `--enrollment-code-file` | `KLEX_MACHINE_ENROLLMENT_CODE_FILE` | none |
 
@@ -55,6 +55,28 @@ Use `--enrollment-code-file -` to read the code from standard input. In managed 
 The template must provide Node.js 24 or newer, a writable owner-only data directory that survives E2B pause/resume, a writable working directory, outbound HTTPS to the paired Cloud deployment, and normal `SIGTERM` delivery. The process should run as an unprivileged user and be supervised with restart-on-failure. It must not expose the local unauthenticated HTTP listener publicly.
 
 Relative filesystem paths and new shell sessions start from the configured working directory. Absolute paths remain unrestricted.
+
+## Watchers and notifications
+
+Clients that declare `io.stagewise/push-notifications` in per-request client capabilities can use `createWatcher`, `listWatchers`, and `cancelWatcher`. These tools and the `createShellSession.notifyOnExit` field are not advertised to other clients. The standard push extension remains discoverable by everyone.
+
+`createWatcher` runs a one-shot shell command in the background. Supply `command`, `title`, and `timeoutMs`, plus optional `cwd` and `env`. The command should block until a condition holds and exit 0. Poll locally with a sleep between checks, or use native filesystem event tools available on the machine. Do not repeatedly poll the machine through MCP tool calls.
+
+- Exit 0 produces `watcher.completed` with outcome `condition_met`.
+- A nonzero exit or signal produces `watcher.completed` with outcome `failed`.
+- Reaching the wall-clock deadline kills the process group and produces `watcher.completed` with outcome `timed_out`.
+- `cancelWatcher` kills the process without notifying. `listWatchers` includes running watchers and completed watchers whose events have not been acknowledged.
+- `createShellSession({ notifyOnExit: true })` produces `shell.exited` on natural exit. Explicit `closeShellSession` calls do not notify.
+
+Notifications carry a readable summary and structured data, including the last 4 KiB of output. Delivery is at least once. Subscribe before draining pending events, persist before acknowledging, and deduplicate by `eventId`. Cloud queues are scoped to the authenticated principal. Local mode uses one shared `local` consumer.
+
+The machine records running items and pending events in `<data-dir>/notifications/state.json`, with an owner-only directory, atomic writes, and a single-writer `lock` file. Restarts never rerun commands. Previously running watchers and tracked shells become `watcher.lost` and `shell.lost` notifications on startup. Pause/resume keeps the process state and checks deadlines against wall-clock time. Notification recovery requires the same data directory to survive the restart.
+
+Graceful shutdown terminates watcher process groups. Abrupt daemon death, including `SIGKILL`, can leave detached watcher processes running. Startup reports their records as lost but does not terminate those orphan processes. Until parent-death cleanup is implemented, the supervisor must terminate the entire workload on restart to enforce this lifecycle requirement.
+
+Limits are 32 running watchers per principal, a 1-second to 7-day lifetime, a 16 KiB command, and a 200-character title. Starting a watcher or tracked shell fails when the principal already has 256 pending events. Existing completions are retained even if they take the queue beyond that threshold. Unacknowledged events expire after 7 days, with a warning per discarded event.
+
+A second local server sharing a live instance's data directory runs with a memory-only queue and logs a warning. Its notifications cannot survive restart. Give concurrent servers separate data directories when durable recovery is required.
 
 ## Development
 

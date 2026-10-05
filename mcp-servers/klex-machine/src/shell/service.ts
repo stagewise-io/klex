@@ -40,6 +40,7 @@ interface ShellSession {
   startCursor: number;
   endCursor: number;
   events: EventEmitter;
+  closing: boolean;
 }
 
 export class ShellService {
@@ -48,6 +49,9 @@ export class ShellService {
   constructor(
     private readonly paths: MachinePathResolver,
     private readonly maxSessions = MAX_SHELL_SESSIONS,
+    private readonly options: {
+      onExit?: (info: ShellSessionInfo, output: string) => void;
+    } = {},
   ) {
     if (!Number.isInteger(maxSessions) || maxSessions < 1) {
       throw new Error('maxSessions must be a positive integer');
@@ -103,6 +107,7 @@ export class ShellService {
       startCursor: 0,
       endCursor: 0,
       events: new EventEmitter(),
+      closing: false,
     };
     terminal.onData((data) => {
       session.output += data;
@@ -119,6 +124,8 @@ export class ShellService {
       session.info.exitCode = exitCode;
       session.info.signal = signal;
       session.events.emit('change');
+      if (!session.closing)
+        this.options.onExit?.({ ...session.info }, session.output);
     });
     this.sessions.set(info.id, session);
     return { ...info };
@@ -181,6 +188,7 @@ export class ShellService {
 
   close(id: string): void {
     const session = this.get(id);
+    session.closing = true;
     if (session.info.running) session.pty.kill();
     this.sessions.delete(id);
   }

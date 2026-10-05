@@ -89,6 +89,7 @@ class FileNotificationStore implements NotificationStore {
   readonly #records = new Map<string, NotificationRecord>();
   readonly #listeners = new Map<string, Set<NotificationListener>>();
   #writes: Promise<void> = Promise.resolve();
+  #operations: Promise<void> = Promise.resolve();
   #lockPath: string | undefined;
   #ready: Promise<void> | undefined;
   #closed = false;
@@ -111,7 +112,10 @@ class FileNotificationStore implements NotificationStore {
   }
 
   async track(item: TrackedItem): Promise<void> {
-    this.#assertOpen();
+    return this.#enqueue(() => this.#track(item));
+  }
+
+  async #track(item: TrackedItem): Promise<void> {
     this.#dropExpired();
     if (this.#records.has(item.id))
       throw new Error(`Duplicate notification record: ${item.id}`);
@@ -131,6 +135,10 @@ class FileNotificationStore implements NotificationStore {
   }
 
   async complete(id: string, event: PushNotification): Promise<void> {
+    return this.#enqueue(() => this.#complete(id, event));
+  }
+
+  async #complete(id: string, event: PushNotification): Promise<void> {
     const record = this.#records.get(id);
     if (record?.state !== 'running') return;
     const pending: NotificationRecord = {
@@ -164,6 +172,10 @@ class FileNotificationStore implements NotificationStore {
   }
 
   async forget(id: string): Promise<void> {
+    return this.#enqueue(() => this.#forget(id));
+  }
+
+  async #forget(id: string): Promise<void> {
     const record = this.#records.get(id);
     if (!record) return;
     this.#records.delete(id);
@@ -186,6 +198,13 @@ class FileNotificationStore implements NotificationStore {
   }
 
   async acknowledge(
+    principalId: string,
+    eventIds: readonly string[],
+  ): Promise<void> {
+    return this.#enqueue(() => this.#acknowledge(principalId, eventIds));
+  }
+
+  async #acknowledge(
     principalId: string,
     eventIds: readonly string[],
   ): Promise<void> {
@@ -236,6 +255,7 @@ class FileNotificationStore implements NotificationStore {
     if (this.#closed) return;
     this.#closed = true;
     await this.#ready?.catch(() => {});
+    await this.#operations;
     await this.#writes;
     this.#listeners.clear();
     if (this.#lockPath) {
@@ -271,34 +291,64 @@ class FileNotificationStore implements NotificationStore {
   async #acquireLock(): Promise<boolean> {
     const directory = this.#directory as string;
     const lockPath = join(directory, 'lock');
-    for (let attempt = 0; attempt < 2; attempt += 1) {
-      try {
-        const handle = await open(lockPath, 'wx', 0o600);
-        await handle.writeFile(`${process.pid}\n`, 'utf8');
-        await handle.close();
-        this.#lockPath = lockPath;
-        return true;
-      } catch (error) {
-        if (!isErrorCode(error, 'EEXIST')) throw error;
-      }
-      const holder = Number.parseInt(
-        await readFile(lockPath, 'utf8').catch(() => ''),
-        10,
-      );
-      if (Number.isInteger(holder) && holder > 0 && processAlive(holder)) {
-        this.#logger.warn(
-          { lockPath, pid: holder },
-          'Notification state is locked by another klex-machine process; notifications are memory-only',
-        );
-        return false;
-      }
-      await rm(lockPath, { force: true });
+    try {
+      await this.#writeLock(lockPath);
+      return true;
+    } catch (error) {
+      if (!isErrorCode(error, 'EEXIST')) throw error;
     }
-    this.#logger.warn(
-      { lockPath },
-      'Could not acquire notification state lock; notifications are memory-only',
-    );
-    return false;
+    const lock = await readFile(lockPath, 'utf8').catch(() => '');
+    const holder = /^[1-9]\d*\n$/.test(lock) ? Number(lock.trim()) : Number.NaN;
+    // An empty/invalid file may belong to a process publishing its PID.
+    if (!Number.isSafeInteger(holder) || holder <= 0 || processAlive(holder)) {
+      this.#logger.warn(
+        { lockPath, pid: holder },
+        'Notification state is locked or its owner is unknown; notifications are memory-only',
+      );
+      return false;
+    }
+    const recoveryPath = join(directory, 'lock-recovery');
+    try {
+      await mkdir(recoveryPath, { mode: 0o700 });
+    } catch (error) {
+      if (!isErrorCode(error, 'EEXIST')) throw error;
+      this.#logger.warn(
+        { recoveryPath },
+        'Notification lock recovery is locked; notifications are memory-only',
+      );
+      return false;
+    }
+    try {
+      // Only one reclaimer may unlink a stale lock. Recheck under the guard:
+      // another startup may already have replaced the file we observed.
+      const current = await readFile(lockPath, 'utf8').catch(() => '');
+      if (current === lock && !processAlive(holder)) {
+        await rm(lockPath, { force: true });
+        try {
+          await this.#writeLock(lockPath);
+          return true;
+        } catch (error) {
+          if (!isErrorCode(error, 'EEXIST')) throw error;
+        }
+      }
+      this.#logger.warn(
+        { lockPath },
+        'Could not acquire notification state lock; notifications are memory-only',
+      );
+      return false;
+    } finally {
+      await rm(recoveryPath, { recursive: true, force: true });
+    }
+  }
+
+  async #writeLock(lockPath: string): Promise<void> {
+    const handle = await open(lockPath, 'wx', 0o600);
+    try {
+      await handle.writeFile(`${process.pid}\n`, 'utf8');
+    } finally {
+      await handle.close();
+    }
+    this.#lockPath = lockPath;
   }
 
   async #load(): Promise<void> {
@@ -406,7 +456,20 @@ class FileNotificationStore implements NotificationStore {
         'Dropped unacknowledged notification older than 7 days',
       );
     }
-    if (changed && this.#ready) void this.#persistLogged();
+    if (changed && this.#ready && !this.#closed)
+      void this.#enqueue(() => this.#persistLogged());
+  }
+
+  #enqueue(operation: () => Promise<void>): Promise<void> {
+    this.#assertOpen();
+    // Serialize the mutation, snapshot, and rollback together. A later write
+    // must never capture tentative state from an operation that can still fail.
+    const result = this.#operations.then(async () => {
+      await this.ready();
+      await operation();
+    });
+    this.#operations = result.catch(() => {});
+    return result;
   }
 
   #assertOpen(): void {

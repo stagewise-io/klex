@@ -448,7 +448,7 @@ class MachineMcpModule implements MachineMcp {
   async close(): Promise<void> {
     this.#unsubscribe();
     this.#subscriptions.close();
-    this.#watchers.closeAll();
+    await this.#watchers.closeAll();
     this.#shellTracking.clear();
     this.#shell.closeAll();
     await this.#handler.close();

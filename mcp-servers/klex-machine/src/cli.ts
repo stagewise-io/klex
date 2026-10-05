@@ -107,11 +107,20 @@ export async function parseCli(
         serve: false,
       };
     }
+    // Enrolled mode has no local listener or logger; only cwd applies.
+    const localOnly = (['host', 'port', 'log-level'] as const).filter(
+      (name) => parsed.values[name] !== undefined,
+    );
+    if (localOnly.length) {
+      throw new Error(
+        `${localOnly.map((name) => `--${name}`).join(', ')} only apply to --mode local`,
+      );
+    }
     return {
       action: 'enroll',
       cloudBaseUrl,
       code: value,
-      config: await resolveRuntimeConfig(raw, processCwd),
+      config: await resolveRuntimeConfig({ cwd: raw.cwd }, processCwd),
       dataDir,
       serve: true,
     };
@@ -184,9 +193,9 @@ Usage:
 
 Options:
   --cwd <path>        Default working directory
-  --host <address>    Listener address (default: 127.0.0.1)
-  --port <number>     Listener port (default: 3123)
-  --log-level <level> trace, debug, info, warn, error, or fatal
+  --host <address>    Local mode listener address (default: 127.0.0.1)
+  --port <number>     Local mode listener port (default: 3123)
+  --log-level <level> Local mode: trace, debug, info, warn, error, or fatal
   --mode <mode>       local, enrolled, or managed (default: enrolled)
   --data-dir <path>   Identity directory (default: ~/.klex-machine)
   --cloud-base-url <url> Cloud API URL used for enrollment

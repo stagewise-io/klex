@@ -121,31 +121,24 @@ describe('CLI configuration', () => {
     ).resolves.toMatchObject({ action: 'enroll', serve: true });
   });
 
-  it('passes serve options through cloud enroll', async () => {
+  it('passes --cwd through cloud enroll', async () => {
+    await expect(
+      parseCli(['cloud', 'enroll', 'code', '--cwd', directory], {}, '/'),
+    ).resolves.toMatchObject({ action: 'enroll', config: { cwd: directory } });
+  });
+
+  it('rejects local-only listener options with cloud enroll', async () => {
     await expect(
       parseCli(
-        [
-          'cloud',
-          'enroll',
-          'code',
-          '--cwd',
-          directory,
-          '--port',
-          '4000',
-          '--log-level',
-          'debug',
-        ],
+        ['cloud', 'enroll', 'code', '--port', '4000', '--log-level', 'debug'],
         {},
-        '/',
+        directory,
       ),
-    ).resolves.toMatchObject({
-      action: 'enroll',
-      config: { cwd: directory, port: 4000, logLevel: 'debug' },
-    });
+    ).rejects.toThrow('--port, --log-level only apply to --mode local');
   });
 
   it('ignores invalid serve settings with --no-serve', async () => {
-    const env = { KLEX_MACHINE_PORT: 'not-a-port' };
+    const env = { KLEX_MACHINE_CWD: '/does/not/exist' };
     await expect(
       parseCli(['cloud', 'enroll', 'code', '--no-serve'], env, directory),
     ).resolves.toEqual({
@@ -157,7 +150,14 @@ describe('CLI configuration', () => {
     });
     await expect(
       parseCli(['cloud', 'enroll', 'code'], env, directory),
-    ).rejects.toThrow();
+    ).rejects.toThrow('Working directory does not exist');
+    await expect(
+      parseCli(
+        ['cloud', 'enroll', 'code'],
+        { KLEX_MACHINE_PORT: 'not-a-port' },
+        directory,
+      ),
+    ).resolves.toMatchObject({ action: 'enroll', serve: true });
   });
 
   it('rejects --mode with cloud enroll', async () => {

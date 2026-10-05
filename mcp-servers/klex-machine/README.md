@@ -20,7 +20,7 @@ klex-machine serve --mode local --cwd /path/to/project --port 3123
 
 Run `pnpm setup` once and restart your shell before your first global pnpm install.
 
-`cloud enroll` enrolls the machine and then keeps serving in the same process. Keep it running; the machine is offline while the process is stopped. It does not install a background service, so it does not survive a terminal close or reboot. Pass `--no-serve` to enroll and exit, then start it later with `klex-machine`.
+`cloud enroll` enrolls the machine and then keeps serving in the same process. Keep it running; the machine is offline while the process is stopped. It does not install a background service, so it does not survive a terminal close or reboot. Pass `--no-serve` to enroll and exit, then start it later with `klex-machine`. Enrolled mode connects outbound to Cloud and has no local listener, so `--host`, `--port`, and `--log-level` only apply to local mode.
 
 Running the same `cloud enroll` command again restarts the machine without contacting the enrollment endpoint. A new code re-enrolls this computer with its existing identity key. If Cloud reports that the machine is already enrolled, delete the old machine in Cloud first, then run the command with a new code. To start over with a fresh identity, delete `~/.klex-machine`.
 

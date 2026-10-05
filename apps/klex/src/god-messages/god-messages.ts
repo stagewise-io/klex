@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 
 import type { ModuleLogger, RootLogger } from '@stagewise/logger';
 
+import type { AdmissionGate } from '@/admission';
 import type { IntrospectionScope } from '@/introspection';
 import type { ExtensionFactory } from '@/session/chat/extensions/extension-api';
 import type { ExtendedUIMessage } from '@/session/chat/message-types';
@@ -49,6 +50,7 @@ export interface GodMessages {
 }
 
 export interface GodMessagesDependencies {
+  admission?: AdmissionGate;
   logging: RootLogger;
   sessionFactory: SessionFactory;
   /** Extensions to load in god sessions (typically the trust extension + memory). */
@@ -80,6 +82,7 @@ class GodMessagesModule implements GodMessages {
 
   constructor(
     private readonly deps: {
+      admission?: AdmissionGate;
       logger: ModuleLogger;
       sessionFactory: SessionFactory;
       extensionFactories: ExtensionFactory[];
@@ -106,6 +109,14 @@ class GodMessagesModule implements GodMessages {
   }
 
   async sendGodMessage(
+    content: ContextDataUIPart['content'],
+  ): Promise<{ sessionId: string }> {
+    return this.deps.admission
+      ? this.deps.admission.run(() => this.sendAdmittedMessage(content))
+      : this.sendAdmittedMessage(content);
+  }
+
+  private async sendAdmittedMessage(
     content: ContextDataUIPart['content'],
   ): Promise<{ sessionId: string }> {
     if (!this.started) {
@@ -184,6 +195,12 @@ class GodMessagesModule implements GodMessages {
   }
 
   async resetSession(): Promise<{ sessionId: string }> {
+    return this.deps.admission
+      ? this.deps.admission.run(() => this.resetAdmittedSession())
+      : this.resetAdmittedSession();
+  }
+
+  private async resetAdmittedSession(): Promise<{ sessionId: string }> {
     if (!this.started) {
       throw new GodMessagesError(
         'not-running',
@@ -383,6 +400,7 @@ class GodMessagesModule implements GodMessages {
 
 export function createGodMessages(deps: GodMessagesDependencies): GodMessages {
   return new GodMessagesModule({
+    admission: deps.admission,
     logger: deps.logging.child({
       name: 'god-messages',
       bindings: { module: 'god-messages' },

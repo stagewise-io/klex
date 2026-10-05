@@ -105,6 +105,10 @@ export interface SessionInboxBuffer extends ChatSessionInbox {
 }
 
 export interface InboxDependencies {
+  dispatch?: <Result>(
+    operation: () => Result,
+    deferredResult: Result,
+  ) => Result;
   /**
    * Called for Critical and Default urgency events. The session appends
    * the event to the message history immediately. For Critical urgency,
@@ -165,6 +169,14 @@ class InboxModule implements SessionInboxBuffer {
   constructor(private readonly deps: InboxDependencies) {}
 
   send(event: SessionInboxEvent): void {
+    if (this.deps.dispatch) {
+      this.deps.dispatch(() => this.sendUnlocked(event), undefined);
+      return;
+    }
+    this.sendUnlocked(event);
+  }
+
+  private sendUnlocked(event: SessionInboxEvent): void {
     if (this.closed) throw new SessionInboxClosedError();
 
     const accepted = this.accept(event);
@@ -222,6 +234,19 @@ class InboxModule implements SessionInboxBuffer {
   }
 
   sendMessage(
+    message: ExtendedUIMessage,
+    urgency: SessionInboxUrgency,
+  ): boolean {
+    if (this.deps.dispatch) {
+      return this.deps.dispatch(
+        () => this.sendMessageUnlocked(message, urgency),
+        false,
+      );
+    }
+    return this.sendMessageUnlocked(message, urgency);
+  }
+
+  private sendMessageUnlocked(
     message: ExtendedUIMessage,
     urgency: SessionInboxUrgency,
   ): boolean {

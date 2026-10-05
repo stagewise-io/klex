@@ -29,6 +29,7 @@ const MAX_OBSERVATION_BATCHES_PER_STEP = 4;
 const EPISODE_FLUSH_INTERVAL_MS = 30_000;
 
 class MemoryExt implements Extension {
+  private unregisterAdmission: (() => void) | undefined;
   private recorder: EpisodeRecorder | null = null;
   private retrievalCoordinator: MemoryRetrievalCoordinator | null = null;
   private closed = false;
@@ -54,11 +55,38 @@ class MemoryExt implements Extension {
       store,
       logger: this.deps.logger,
     });
+    this.unregisterAdmission = this.deps.admission?.register(() => {
+      const state = this.recorder?.introspect();
+      if (state?.lastError) return ['Memory persistence is uncertain'];
+      const history = this.deps.getHistory();
+      const latest = history.at(-1);
+      // A successful shutdown flush is not a pre-teardown persistence proof.
+      // Keep maintenance closed until the live recorder catches up.
+      if (
+        latest &&
+        (state?.cursor?.id !== latest.id ||
+          state.cursor.index !== history.length - 1)
+      ) {
+        return ['Memory history awaits persistence'];
+      }
+      return [];
+    });
     this.flushTimer = setInterval(() => {
-      void this.serialize(async () => {
-        if (this.closed || this.stepActive) return;
-        await this.recorder?.flush();
-      });
+      const flush = () =>
+        this.serialize(async () => {
+          if (this.closed || this.stepActive) return;
+          await this.recorder?.flush();
+        });
+      const run = () => {
+        const operation = this.deps.admission
+          ? this.deps.admission.run(flush)
+          : flush();
+        void operation.catch((error) =>
+          this.deps.logger.error({ error }, 'Memory flush failed'),
+        );
+      };
+      if (this.deps.admission) this.deps.admission.background(this, run);
+      else run();
     }, EPISODE_FLUSH_INTERVAL_MS);
     this.flushTimer.unref();
     this.retrievalCoordinator = createMemoryRetrievalCoordinator(this.deps);
@@ -67,6 +95,8 @@ class MemoryExt implements Extension {
   }
 
   async onClose(): Promise<void> {
+    this.unregisterAdmission?.();
+    this.unregisterAdmission = undefined;
     this.closed = true;
     if (this.flushTimer) clearInterval(this.flushTimer);
     this.flushTimer = null;
@@ -134,7 +164,13 @@ class MemoryExt implements Extension {
     }
     this.stepActive = false;
     // The step kept the session busy; a long step must not count as idle.
-    void this.recorder?.store.extendActivity();
+    const extend = () => this.recorder?.store.extendActivity();
+    const activity = this.deps.admission
+      ? this.deps.admission.run(extend)
+      : extend();
+    void activity?.catch((error) =>
+      this.deps.logger.error({ error }, 'Memory activity update failed'),
+    );
     if (
       this.closed ||
       event.fatalError ||

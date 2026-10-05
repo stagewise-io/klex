@@ -5,6 +5,8 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import z from 'zod';
 
+import { AdmissionGate } from '@/admission';
+
 import type { ExtendedUIMessage } from '../../message-types';
 import type {
   Extension,
@@ -56,7 +58,7 @@ function message(id: string, text: string): ExtendedUIMessage {
   return { id, role: 'assistant', parts: [{ type: 'text', text }] };
 }
 
-async function harness() {
+async function harness(admission?: AdmissionGate) {
   const dataDir = await mkdtemp(join(tmpdir(), 'klex-memory-ext-'));
   directories.push(dataDir);
   const history: ExtendedUIMessage[] = [];
@@ -72,6 +74,7 @@ async function harness() {
     idleTimeoutMs: 600_000,
   };
   const deps = {
+    admission,
     getDataDir: () => dataDir,
     getHistory: () => history,
     config: { get: () => ({ extensions: { memory: { episodes } } }) },
@@ -100,6 +103,27 @@ async function harness() {
 }
 
 describe('memory extension lifecycle', () => {
+  it('blocks maintenance until accepted history is persisted before teardown', async () => {
+    const admission = new AdmissionGate();
+    const { extension, history, recorded } = await harness(admission);
+    await extension.onStart?.();
+    history.push(message('pending', 'must survive maintenance'));
+    expect(await recorded()).toEqual([]);
+    expect((await admission.prepare()).outcome).toBe('aborted');
+    expect(admission.status().blockers).toContain(
+      'Memory history awaits persistence',
+    );
+    expect(coordinator.close).not.toHaveBeenCalled();
+    await extension.onStepComplete?.(success);
+    expect(await recorded()).toEqual(['must survive maintenance']);
+    const result = await admission.prepare();
+    expect(result.outcome).toBe('quiescent');
+    if (result.outcome === 'quiescent')
+      admission.abort('test complete', result.lease);
+    await extension.onClose?.();
+    admission.close();
+  });
+
   it('records the history after each successful step', async () => {
     const { extension, history, recorded } = await harness();
     await extension.onStart?.();

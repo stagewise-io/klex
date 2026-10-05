@@ -2,6 +2,11 @@ import { OpenAPIHono } from '@hono/zod-openapi';
 
 import type { ModuleLogger } from '@stagewise/logger';
 
+import {
+  type AdmissionGate,
+  AdmissionRejectedError,
+  type WorkLease,
+} from '@/admission';
 import type { CloudConnectivity } from '@/cloud-connectivity';
 import type { Config } from '@/config';
 import type { GodMessages } from '@/god-messages';
@@ -104,6 +109,7 @@ import {
 import { getUsage, getUsageRoute } from './routes/v1/usage';
 
 export interface AdminAppDependencies {
+  admission?: AdmissionGate;
   config: Config;
   mcp: Mcp;
   introspector: Introspector;
@@ -127,7 +133,29 @@ export function createAdminApp(deps: AdminAppDependencies) {
       { method: c.req.method, path: c.req.path },
       'Admin API request',
     );
-    await next();
+    if (
+      !deps.admission ||
+      (c.req.method === 'GET' &&
+        (c.req.path === '/v1/health' ||
+          c.req.path === '/v1/introspect' ||
+          c.req.path.startsWith('/v1/introspect/')))
+    ) {
+      await next();
+      return;
+    }
+    let lease: WorkLease;
+    try {
+      lease = deps.admission.admitRoot();
+    } catch (error) {
+      if (!(error instanceof AdmissionRejectedError)) throw error;
+      c.header('Retry-After', '1');
+      return c.json({ error: 'maintenance', retryable: true }, 503);
+    }
+    try {
+      await lease.run(next);
+    } finally {
+      lease.release();
+    }
   });
 
   app.onError(

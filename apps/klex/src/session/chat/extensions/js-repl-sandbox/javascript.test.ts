@@ -1,6 +1,8 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { ModuleLogger, RootLogger } from '@stagewise/logger';
+
+import { AdmissionGate } from '@/admission';
 
 import { InMemoryToolProvider } from './in-memory-tool-provider.fixture';
 import { createJavaScriptTool, type JavaScriptTool } from './javascript';
@@ -25,6 +27,30 @@ describe('JavaScriptTool', () => {
 
   afterEach(async () => {
     await javaScriptTool.close();
+  });
+
+  it('preserves admitted task ownership across Worker provider requests during drain', async () => {
+    const admission = new AdmissionGate();
+    const originalInvoke = provider.invoke.bind(provider);
+    vi.spyOn(provider, 'invoke').mockImplementation(
+      (reference, input, context) =>
+        admission.run(() => originalInvoke(reference, input, context)),
+    );
+    const work = admission.admitRoot();
+    const preparing = admission.prepare();
+    await expect(
+      work.run(() =>
+        javaScriptTool.execute({
+          code: `return await mcp['git.hub']['echo-value']({ value: 42 })`,
+        }),
+      ),
+    ).resolves.toEqual({ value: 42 });
+    work.release();
+    const result = await preparing;
+    expect(result.outcome).toBe('quiescent');
+    if (result.outcome === 'quiescent')
+      admission.abort('cancelled', result.lease);
+    admission.close();
   });
 
   it('exposes only runInSandbox and delegates execution', async () => {

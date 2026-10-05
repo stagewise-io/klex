@@ -6,7 +6,7 @@ The MCP module is the environment boundary between the agent core and external M
 
 - **Connection lifecycle** — connects, reconciles, retries, and disconnects configured MCP servers.
 - **Tool registry** — builds and publishes a live tool registry from connected servers.
-- **Push Notification worker** — subscribes, drains server-managed pending queues, deduplicates, and acknowledges.
+- **Push Notification worker** — subscribes, retrieves pending notifications, deduplicates, and publishes without acknowledging volatile acceptance.
 - **Push Notification inbox** — process-local `eventId` deduplication scoped by MCP namespace.
 
 The module exposes `onPushNotification()` to the MCP ingress extension installed in the default session. MCP access and MCP ingress are separate capabilities: providing an `Mcp` instance does not implicitly subscribe a session to push notifications.
@@ -18,12 +18,12 @@ The MCP module exposes an independent `io.stagewise/realtime-media` control-plan
 ## Push Notification flow
 
 ```
-MCP server durable pending queue
+MCP server pending queue (durability must be verified separately)
   -> establish live subscription
   -> retrieve oldest pending notifications in bounded pages
   -> deduplication inbox (by namespace + eventId)
   -> publish to listeners (default session)
-  -> acknowledge accepted event IDs
+  -> leave event IDs unacknowledged until durable acceptance is implemented
   -> continue live delivery
 ```
 
@@ -31,10 +31,14 @@ MCP server durable pending queue
 - **Pending retrieval** is the startup and reconnection recovery path.
 - **Subscribe before drain** closes the connection-boundary race.
 - **At-least-once delivery** — duplicates are normal; the inbox suppresses by `eventId`.
-- **Persist before acknowledgement** — the current inbox is in-memory, so it is suitable for development but not the final durable acceptance store.
-- **Server-owned progress** — Klex stores no cursor. Acknowledged events disappear from the server's pending view.
+- **Persist before acknowledgement** — the current inbox is in-memory and never authorizes an ACK. Live, recovered, and duplicate deliveries all remain pending upstream.
+- **Server-owned progress** — Klex stores no cursor. Advancing the queue requires ACK, which is currently blocked. Recovery retrieves one bounded page and reports incomplete recovery when more events remain; live delivery continues.
 
-If retrieval returns `hasMore: true` with an empty page, the worker fails the attempt instead of spinning. Acknowledgements retry with exponential backoff. A subscription failure restarts the complete subscribe-then-drain sequence.
+If retrieval returns `hasMore: true` with an empty page, the worker fails the attempt instead of spinning. A subscription failure repeats subscribe-then-retrieve. This is not durable client acceptance, and no protocol capability proves durable upstream retention.
+
+## Maintenance boundary
+
+MCP registers a safety participant with the application admission gate. Unknown configured capabilities or any push binding seen by the live runtime block quiescence. Telegram's current pending store is volatile and cleared on cleanup, so Telegram-enabled maintenance must abort without ACK or MCP disconnect. It remains blocked until durable inbox/ACK/replay work is verified; no spool is added here. See `../admission/architecture.md` for rollback, ownership, and pre-teardown certification.
 
 ## Connection lifecycle
 

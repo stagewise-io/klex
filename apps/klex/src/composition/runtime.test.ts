@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { RootLogger } from '@stagewise/logger';
 
+import { AdmissionGate, AdmissionRejectedError } from '@/admission';
+
 import {
   type RuntimeResource,
   type RuntimeStartupModules,
@@ -57,6 +59,35 @@ function emptyRecord(): Recorded {
 }
 
 describe('runtime composition', () => {
+  it('does not tear down or replace a live runtime on drain timeout', async () => {
+    const recorded = emptyRecord();
+    const admission = new AdmissionGate({ graceMs: 10 });
+    const work = admission.admit();
+    const runtime = await startRuntime({
+      logging: createLoggingMock(),
+      admission,
+      modules: createModules({ recorded }),
+    });
+    const preparing = runtime.prepareMaintenance();
+    expect(() => runtime.close()).toThrow(AdmissionRejectedError);
+    expect((await preparing).outcome).toBe('aborted');
+    expect(recorded.closes).toEqual([]);
+    expect(admission.status()).toMatchObject({ state: 'open', activeWork: 1 });
+    work.release();
+    const result = await runtime.prepareMaintenance();
+    if (result.outcome !== 'quiescent') throw new Error('Expected quiescence');
+    expect(recorded.closes).toEqual([]);
+    expect(runtime.abortMaintenance(result.lease)).toBe(true);
+    expect(recorded.closes).toEqual([]);
+    expect(() => runtime.closeForMaintenance(result.lease)).toThrow(
+      AdmissionRejectedError,
+    );
+    const next = await runtime.prepareMaintenance();
+    if (next.outcome !== 'quiescent') throw new Error('Expected quiescence');
+    await runtime.closeForMaintenance(next.lease);
+    expect(recorded.closes).toHaveLength(9);
+    expect(runtime.abortMaintenance(next.lease)).toBe(false);
+  });
   it('starts the session host before realtime and MCP', () => {
     const order = runtimeStartupOrder(
       createModules({ recorded: emptyRecord() }),

@@ -48,6 +48,7 @@ interface CoordinatorDeps
     | 'config'
     | 'createChildSession'
     | 'getDataDir'
+    | 'admission'
     | 'getHistory'
     | 'inbox'
     | 'logger'
@@ -98,6 +99,7 @@ class MemoryRetrievalCoordinatorImpl implements MemoryRetrievalCoordinator {
   private readonly config: MemoryRetrievalConfig;
   /** Recalls waiting for an available child. */
   private readonly buffered: RecallInput[] = [];
+  private readonly unregisterAdmission: (() => void) | undefined;
   private child: ChildSessionHandle | null = null;
   private index: EpisodicSearchIndex | null = null;
   private recoveryTimer: NodeJS.Timeout | null = null;
@@ -129,6 +131,11 @@ class MemoryRetrievalCoordinatorImpl implements MemoryRetrievalCoordinator {
       ...DEFAULT_MEMORY_RETRIEVAL_CONFIG,
       ...config,
     };
+    this.unregisterAdmission = deps.admission?.register(() =>
+      this.buffered.length > 0
+        ? ['Accepted memory recalls await recovery']
+        : [],
+    );
   }
 
   async start(): Promise<void> {
@@ -186,6 +193,7 @@ class MemoryRetrievalCoordinatorImpl implements MemoryRetrievalCoordinator {
   async close(): Promise<void> {
     if (this.closed) return;
     this.closed = true;
+    this.unregisterAdmission?.();
     if (this.recoveryTimer) clearTimeout(this.recoveryTimer);
     this.recoveryTimer = null;
     this.buffered.length = 0;
@@ -345,7 +353,11 @@ class MemoryRetrievalCoordinatorImpl implements MemoryRetrievalCoordinator {
 
   /** Single-flight: prepares the index if needed, then the child. */
   private recover(): Promise<void> {
-    this.recovering ??= this.tryRecover().finally(() => {
+    this.recovering ??= (
+      this.deps.admission
+        ? this.deps.admission.run(() => this.tryRecover())
+        : this.tryRecover()
+    ).finally(() => {
       this.recovering = null;
     });
     return this.recovering;
@@ -435,7 +447,17 @@ class MemoryRetrievalCoordinatorImpl implements MemoryRetrievalCoordinator {
     if (this.closed || this.recoveryTimer) return;
     this.recoveryTimer = setTimeout(() => {
       this.recoveryTimer = null;
-      void this.recover();
+      const run = () => {
+        if (this.closed) return;
+        const operation = this.deps.admission
+          ? this.deps.admission.run(() => this.recover())
+          : this.recover();
+        void operation.catch((error) =>
+          this.deps.logger.error({ error }, 'Memory recovery failed'),
+        );
+      };
+      if (this.deps.admission) this.deps.admission.background(this, run);
+      else run();
     }, this.recoveryDelayMs);
     this.recoveryDelayMs = Math.min(this.recoveryDelayMs * 2, 30_000);
   }

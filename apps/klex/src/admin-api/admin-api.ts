@@ -2,6 +2,7 @@ import { type ServerType, serve } from '@hono/node-server';
 
 import type { ModuleLogger, RootLogger } from '@stagewise/logger';
 
+import type { AdmissionGate } from '@/admission';
 import type { CloudConnectivity } from '@/cloud-connectivity';
 import type { Config } from '@/config';
 import type { GodMessages } from '@/god-messages';
@@ -14,6 +15,7 @@ import type { SessionHistory } from '@/session-history';
 import { createAdminApp } from './server';
 
 export interface AdminApiDependencies {
+  admission?: AdmissionGate;
   logging: RootLogger;
   config: Config;
   mcp: Mcp;
@@ -40,6 +42,7 @@ class AdminApiModule implements AdminApi {
 
   constructor(
     private readonly deps: {
+      admission?: AdmissionGate;
       logger: ModuleLogger;
       config: Config;
       mcp: Mcp;
@@ -59,6 +62,7 @@ class AdminApiModule implements AdminApi {
     this.started = true;
 
     this.app = createAdminApp({
+      admission: this.deps.admission,
       config: this.deps.config,
       mcp: this.deps.mcp,
       introspector: this.deps.introspector,
@@ -117,6 +121,7 @@ class AdminApiModule implements AdminApi {
 
 export function createAdminApi(deps: AdminApiDependencies): AdminApi {
   return new AdminApiModule({
+    admission: deps.admission,
     logger: deps.logging.child({
       name: 'admin-api',
       bindings: { module: 'admin-api' },

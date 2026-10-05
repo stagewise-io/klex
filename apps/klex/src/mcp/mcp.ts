@@ -18,6 +18,11 @@ import type {
   RealtimeMediaNotification,
 } from '@stagewise/mcp-extension-realtime-media';
 
+import {
+  type AdmissionGate,
+  AdmissionRejectedError,
+  type WorkLease,
+} from '@/admission';
 import type { CloudConnectivity } from '@/cloud-connectivity';
 import type { Config, McpServerConfig } from '@/config';
 import {
@@ -290,6 +295,7 @@ export type RequestAuthorizationResult =
   | { outcome: 'timeout' };
 
 export interface McpDependencies {
+  admission?: AdmissionGate;
   logging: RootLogger;
   config: Config;
   realtimeMediaCapability?: RealtimeMediaExtensionCapability;
@@ -349,6 +355,9 @@ interface McpServerRuntime {
 }
 
 class McpModule implements Mcp {
+  private unregisterAdmission: (() => void) | undefined;
+  private pushSafetyUnproven = false;
+  private operationSafetyUnproven = false;
   private readonly servers = new Map<string, McpServerRuntime>();
   private readonly eventWorkers = new Map<string, PushNotificationWorker>();
   private readonly eventListeners = new Set<McpPushNotificationListener>();
@@ -379,6 +388,7 @@ class McpModule implements Mcp {
 
   constructor(
     private readonly deps: {
+      admission?: AdmissionGate;
       logger: ModuleLogger;
       config: Config;
       pushNotificationInbox: PushNotificationInbox;
@@ -393,6 +403,29 @@ class McpModule implements Mcp {
   async start(): Promise<void> {
     if (this.started) return;
     this.started = true;
+    this.unregisterAdmission = this.deps.admission?.register(() => {
+      if (this.operationSafetyUnproven)
+        return ['MCP operation completion is uncertain'];
+      if (this.pushSafetyUnproven)
+        return ['MCP push persistence, ACK and replay are not durable'];
+      const configured = Object.entries(this.deps.config.getMcpServers());
+      if (
+        configured.some(
+          ([namespace]) => !this.servers.get(namespace)?.connection,
+        )
+      ) {
+        return ['MCP capability and pending-queue safety unverified'];
+      }
+      if (
+        configured.some(
+          ([namespace]) =>
+            this.servers.get(namespace)?.connection?.supportsPushNotifications,
+        )
+      ) {
+        return ['MCP push persistence, ACK and replay are not durable'];
+      }
+      return [];
+    });
     this.unsubscribe = this.deps.config.subscribe(() => {
       this.scheduleReconcile(this.deps.config.getMcpServers());
     });
@@ -545,6 +578,8 @@ class McpModule implements Mcp {
   async close(): Promise<void> {
     if (!this.started) return;
     this.started = false;
+    this.unregisterAdmission?.();
+    this.unregisterAdmission = undefined;
     this.unsubscribe?.();
     this.unsubscribe = undefined;
     await this.deps.closeOAuth();
@@ -611,6 +646,18 @@ class McpModule implements Mcp {
     input: JsonObject,
     context: ToolRequestContext,
   ): Promise<JsonValue> {
+    return this.deps.admission
+      ? this.deps.admission.run(() =>
+          this.invokeAdmitted(reference, input, context),
+        )
+      : this.invokeAdmitted(reference, input, context);
+  }
+
+  private async invokeAdmitted(
+    reference: ToolReference,
+    input: JsonObject,
+    context: ToolRequestContext,
+  ): Promise<JsonValue> {
     const { connection, tool } = this.getTool(reference);
     const record: McpToolCallRecord = {
       id: randomUUID(),
@@ -633,6 +680,7 @@ class McpModule implements Mcp {
       return normalized;
     } catch (error) {
       record.isError = true;
+      this.operationSafetyUnproven = true;
       record.result = {
         error: error instanceof Error ? error.message : String(error),
       };
@@ -655,7 +703,9 @@ class McpModule implements Mcp {
     servers: Readonly<Record<string, McpServerConfig>>,
   ): void {
     if (!this.started) return;
-    this.reconcile(structuredClone(servers));
+    const reconcile = () => this.reconcile(structuredClone(servers));
+    if (this.deps.admission) this.deps.admission.background(this, reconcile);
+    else reconcile();
   }
 
   private reconcile(servers: Readonly<Record<string, McpServerConfig>>): void {
@@ -699,6 +749,12 @@ class McpModule implements Mcp {
   }
 
   private activateRuntime(runtime: McpServerRuntime): void {
+    if (this.deps.admission && this.deps.admission.status().state !== 'open') {
+      this.deps.admission.background(runtime, () =>
+        this.activateRuntime(runtime),
+      );
+      return;
+    }
     if (
       !this.isCurrentRuntime(runtime) ||
       runtime.connection ||
@@ -893,6 +949,7 @@ class McpModule implements Mcp {
   }
 
   private startEventWorker(connection: McpConnection): void {
+    this.pushSafetyUnproven = true;
     this.stopEventWorker(connection.namespace);
     const worker: PushNotificationWorker = {
       connection,
@@ -954,7 +1011,13 @@ class McpModule implements Mcp {
         page.events,
         page.events.map((event) => event.eventId),
       );
-      if (!page.hasMore) return;
+      if (page.hasMore) {
+        this.deps.logger.error(
+          { namespace: worker.connection.namespace },
+          'Pending push recovery is incomplete: durable acceptance is required before advancing the queue',
+        );
+      }
+      return;
     }
   }
 
@@ -995,41 +1058,36 @@ class McpModule implements Mcp {
     eventIds: string[],
   ): Promise<void> {
     if (!this.isCurrentWorker(worker)) return;
-    const accepted = await this.deps.pushNotificationInbox.commit(
-      worker.connection.namespace,
-      events,
-    );
-    for (const event of accepted)
-      await this.publishPushNotification(worker, event);
-    if (eventIds.length > 0) {
-      await this.acknowledgeEvents(worker, eventIds);
+    let lease: WorkLease | undefined;
+    try {
+      lease = this.deps.admission?.admitRoot();
+    } catch (error) {
+      if (!(error instanceof AdmissionRejectedError)) throw error;
+      this.deps.admission?.background({}, () => {
+        void this.commitEvents(worker, events, eventIds).catch(
+          (ingressError: unknown) => {
+            this.deps.logger.error(
+              { error: ingressError },
+              'Deferred push ingestion failed',
+            );
+          },
+        );
+      });
+      return;
     }
-  }
-
-  private async acknowledgeEvents(
-    worker: PushNotificationWorker,
-    eventIds: string[],
-  ): Promise<void> {
-    let attempt = 0;
-    while (this.isCurrentWorker(worker)) {
-      try {
-        await worker.connection.pushNotifications.acknowledgeEvents(
-          { eventIds },
-          { request: { signal: worker.controller.signal } },
-        );
-        return;
-      } catch (error) {
-        if (!this.isCurrentWorker(worker)) return;
-        attempt += 1;
-        this.deps.logger.warn(
-          { error, eventIds, namespace: worker.connection.namespace },
-          'Push Notification acknowledgement failed',
-        );
-        await abortableDelay(
-          Math.min(RETRY_INITIAL_MS * 2 ** (attempt - 1), RETRY_MAX_MS),
-          worker.controller.signal,
-        ).catch(() => undefined);
-      }
+    const publish = async () => {
+      const accepted = await this.deps.pushNotificationInbox.commit(
+        worker.connection.namespace,
+        events,
+      );
+      for (const event of accepted)
+        await this.publishPushNotification(worker, event);
+    };
+    try {
+      if (lease) await lease.run(publish);
+      else await publish();
+    } finally {
+      lease?.release();
     }
   }
 
@@ -1056,6 +1114,21 @@ class McpModule implements Mcp {
   }
 
   private async publishResourceUpdated(
+    connection: McpConnection,
+    uri: string,
+  ): Promise<void> {
+    if (this.deps.admission && this.deps.admission.status().state !== 'open') {
+      this.deps.admission.background({}, () => {
+        void this.publishResourceUpdated(connection, uri);
+      });
+      return;
+    }
+    const publish = () => this.publishResourceUpdateAdmitted(connection, uri);
+    if (this.deps.admission) await this.deps.admission.run(publish);
+    else await publish();
+  }
+
+  private async publishResourceUpdateAdmitted(
     connection: McpConnection,
     uri: string,
   ): Promise<void> {
@@ -1369,48 +1442,53 @@ class McpModule implements Mcp {
     return subscriptions;
   }
 
-  private queueResourceSubscriptionTransition(
+  private async queueResourceSubscriptionTransition(
     namespace: string,
     uri: string,
     entry: ResourceSubscriptionEntry,
     signal: AbortSignal,
   ): Promise<void> {
+    const lease = this.started ? this.deps.admission?.admit() : undefined;
     const operation = entry.operation
       .catch(() => undefined)
-      .then(async () => {
-        const subscriptions = this.resourceSubscriptions.get(namespace);
-        if (subscriptions?.get(uri) !== entry) return;
+      .then(() => {
+        const transition = async () => {
+          const subscriptions = this.resourceSubscriptions.get(namespace);
+          if (subscriptions?.get(uri) !== entry) return;
 
-        if (entry.count === 0) {
-          const subscribedConnection = entry.subscribedConnection;
-          entry.subscribedConnection = undefined;
-          if (subscribedConnection) {
-            await subscribedConnection.unsubscribeResource(uri, signal);
-          }
-          if (entry.count === 0 && subscriptions.get(uri) === entry) {
-            subscriptions.delete(uri);
-            if (subscriptions.size === 0) {
-              this.resourceSubscriptions.delete(namespace);
+          if (entry.count === 0) {
+            const subscribedConnection = entry.subscribedConnection;
+            entry.subscribedConnection = undefined;
+            if (subscribedConnection) {
+              await subscribedConnection.unsubscribeResource(uri, signal);
             }
+            if (entry.count === 0 && subscriptions.get(uri) === entry) {
+              subscriptions.delete(uri);
+              if (subscriptions.size === 0) {
+                this.resourceSubscriptions.delete(namespace);
+              }
+            }
+            return;
           }
-          return;
-        }
 
-        const connection = this.requireConnection(namespace);
-        if (!connection.supportsResourceSubscription) {
-          throw new Error(
-            `MCP server '${namespace}' does not support resource subscriptions`,
-          );
-        }
-        if (entry.subscribedConnection === connection) return;
-        await connection.subscribeResource(uri, signal);
-        entry.subscribedConnection = connection;
-        entry.retryAttempt = 0;
-        if (entry.retryTimer) {
-          clearTimeout(entry.retryTimer);
-          entry.retryTimer = undefined;
-        }
-      });
+          const connection = this.requireConnection(namespace);
+          if (!connection.supportsResourceSubscription) {
+            throw new Error(
+              `MCP server '${namespace}' does not support resource subscriptions`,
+            );
+          }
+          if (entry.subscribedConnection === connection) return;
+          await connection.subscribeResource(uri, signal);
+          entry.subscribedConnection = connection;
+          entry.retryAttempt = 0;
+          if (entry.retryTimer) {
+            clearTimeout(entry.retryTimer);
+            entry.retryTimer = undefined;
+          }
+        };
+        return lease ? lease.run(transition) : transition();
+      })
+      .finally(() => lease?.release());
     entry.operation = operation;
     return operation;
   }
@@ -1469,9 +1547,12 @@ class McpModule implements Mcp {
         entry.retryAttempt++;
         entry.retryTimer = setTimeout(() => {
           entry.retryTimer = undefined;
-          if (this.isCurrentConnection(runtime, connection)) {
+          const retry = () => {
+            if (!this.isCurrentConnection(runtime, connection)) return;
             this.resubscribeResource(runtime, connection, uri, entry);
-          }
+          };
+          if (this.deps.admission) this.deps.admission.background(entry, retry);
+          else retry();
         }, delay);
         this.deps.logger.warn(
           { delay, error, namespace: runtime.namespace, uri },
@@ -1492,6 +1573,20 @@ class McpModule implements Mcp {
     runtime: McpServerRuntime,
     connection: McpConnection,
   ): Promise<void> {
+    const refresh = () =>
+      this.refreshResourceCountAdmitted(runtime, connection);
+    try {
+      if (this.deps.admission) await this.deps.admission.run(refresh);
+      else await refresh();
+    } catch {
+      return;
+    }
+  }
+
+  private async refreshResourceCountAdmitted(
+    runtime: McpServerRuntime,
+    connection: McpConnection,
+  ): Promise<void> {
     try {
       const budget: ResourceCatalogBudget = { entries: 0, bytes: 0 };
       const resourceResult = await this.listAllResources(connection, budget);
@@ -1509,6 +1604,18 @@ class McpModule implements Mcp {
   }
 
   async listResources(
+    namespace: string,
+    cursor?: string,
+  ): Promise<{
+    resources: Resource[];
+    resourceTemplates: ResourceTemplateType[];
+    nextCursor?: string;
+  }> {
+    const list = () => this.listResourcesAdmitted(namespace, cursor);
+    return this.deps.admission ? this.deps.admission.run(list) : list();
+  }
+
+  private async listResourcesAdmitted(
     namespace: string,
     cursor?: string,
   ): Promise<{
@@ -1635,8 +1742,12 @@ class McpModule implements Mcp {
     namespace: string,
     uri: string,
   ): Promise<ReadResourceResult> {
-    const connection = this.requireConnection(namespace);
-    return connection.readResource(uri, AbortSignal.timeout(30_000));
+    const read = () =>
+      this.requireConnection(namespace).readResource(
+        uri,
+        AbortSignal.timeout(30_000),
+      );
+    return this.deps.admission ? this.deps.admission.run(read) : read();
   }
 
   private addToolCallRecord(record: McpToolCallRecord): void {
@@ -1721,6 +1832,7 @@ export function createMcp(deps: McpDependencies): Mcp {
           oauth: { sessionFactory, store },
         });
   return new McpModule({
+    admission: deps.admission,
     logger: deps.logging.child({
       name: 'mcp',
       bindings: { module: 'mcp' },

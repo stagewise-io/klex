@@ -5,6 +5,11 @@ import type {
   RealtimeMediaSessionOfferedNotificationParams,
 } from '@stagewise/mcp-extension-realtime-media';
 
+import {
+  type AdmissionGate,
+  AdmissionRejectedError,
+  type WorkLease,
+} from '@/admission';
 import type {
   Mcp,
   McpRealtimeMediaAvailability,
@@ -40,6 +45,7 @@ export interface RealtimeSessionCoordinator {
 }
 
 export interface RealtimeSessionCoordinatorDependencies {
+  admission?: AdmissionGate;
   logging: RootLogger;
   mcp: Mcp;
   mediaTransportConnector: MediaTransportConnector<LiveKitRoomTransportDescriptor>;
@@ -61,6 +67,8 @@ export interface RealtimeSessionCoordinatorDependencies {
 const TEARDOWN_PHASE_TIMEOUT_MS = 5_000;
 
 interface ActiveRealtimeSession {
+  work?: WorkLease;
+  uncertain: boolean;
   key: string;
   namespace: string;
   sessionId: string;
@@ -84,6 +92,8 @@ interface ActiveRealtimeSession {
 }
 
 class RealtimeSessionCoordinatorModule implements RealtimeSessionCoordinator {
+  private uncertainCleanup = false;
+  private unregisterAdmission: (() => void) | undefined;
   private readonly sessions = new Map<string, ActiveRealtimeSession>();
   private started = false;
   private notificationUnsubscribe: (() => void) | undefined;
@@ -92,6 +102,7 @@ class RealtimeSessionCoordinatorModule implements RealtimeSessionCoordinator {
 
   constructor(
     private readonly deps: {
+      admission?: AdmissionGate;
       logger: ModuleLogger;
       mcp: Mcp;
       mediaTransportConnector: MediaTransportConnector<LiveKitRoomTransportDescriptor>;
@@ -108,6 +119,11 @@ class RealtimeSessionCoordinatorModule implements RealtimeSessionCoordinator {
   async start(): Promise<void> {
     if (this.started) return;
     this.started = true;
+    this.unregisterAdmission = this.deps.admission?.register(() =>
+      this.uncertainCleanup
+        ? ['Realtime cleanup or remote acceptance is uncertain']
+        : [],
+    );
     try {
       this.unregisterActivityProvider = registerActivityStateProviders({
         getRealtimeSessionCount: () => this.sessions.size,
@@ -121,6 +137,8 @@ class RealtimeSessionCoordinatorModule implements RealtimeSessionCoordinator {
       this.deps.logger.info('Realtime session coordinator started');
     } catch (error) {
       this.started = false;
+      this.unregisterAdmission?.();
+      this.unregisterAdmission = undefined;
       try {
         this.detachLifecycleResources();
       } catch {
@@ -132,6 +150,8 @@ class RealtimeSessionCoordinatorModule implements RealtimeSessionCoordinator {
 
   async close(): Promise<void> {
     this.started = false;
+    this.unregisterAdmission?.();
+    this.unregisterAdmission = undefined;
     let cleanupError: unknown;
     try {
       this.detachLifecycleResources();
@@ -197,7 +217,24 @@ class RealtimeSessionCoordinatorModule implements RealtimeSessionCoordinator {
   ): void {
     const key = sessionKey(namespace, offer.sessionId);
     if (this.sessions.has(key)) return;
+    let work: WorkLease | undefined;
+    try {
+      work = this.deps.admission?.admitRoot();
+    } catch (error) {
+      if (!(error instanceof AdmissionRejectedError)) throw error;
+      void this.deps.mcp
+        .rejectRealtimeMediaSession(namespace, offer.sessionId)
+        .catch((rejectError: unknown) => {
+          this.deps.logger.warn(
+            { error: rejectError, namespace },
+            'Maintenance offer rejection failed',
+          );
+        });
+      return;
+    }
     const session: ActiveRealtimeSession = {
+      work,
+      uncertain: false,
       key,
       namespace,
       sessionId: offer.sessionId,
@@ -210,19 +247,22 @@ class RealtimeSessionCoordinatorModule implements RealtimeSessionCoordinator {
     };
     this.sessions.set(key, session);
     setRealtimeSessionCount(this.sessions.size);
-    session.setup = this.activateSession(session, offer).catch(
-      (error: unknown) => {
-        if (!session.controller.signal.aborted) {
-          this.deps.logger.warn(
-            { error, namespace, sessionId: offer.sessionId },
-            'Realtime session setup failed',
-          );
-        }
-        void this.finishSession(session, {
-          notifyRemote: session.accepted,
-        });
-      },
-    );
+    session.setup = (
+      work
+        ? work.run(() => this.activateSession(session, offer))
+        : this.activateSession(session, offer)
+    ).catch((error: unknown) => {
+      session.uncertain = true;
+      if (!session.controller.signal.aborted) {
+        this.deps.logger.warn(
+          { error, namespace, sessionId: offer.sessionId },
+          'Realtime session setup failed',
+        );
+      }
+      void this.finishSession(session, {
+        notifyRemote: session.accepted,
+      });
+    });
   }
 
   private async activateSession(
@@ -515,6 +555,7 @@ class RealtimeSessionCoordinatorModule implements RealtimeSessionCoordinator {
     await lease
       .release('realtime-session-ended', finalEvent)
       .catch((error: unknown) => {
+        session.uncertain = true;
         this.deps.logger.warn(
           {
             error,
@@ -611,6 +652,7 @@ class RealtimeSessionCoordinatorModule implements RealtimeSessionCoordinator {
     error: unknown,
     message: string,
   ): void {
+    session.uncertain = true;
     this.deps.logger.warn(
       {
         error,
@@ -655,15 +697,25 @@ class RealtimeSessionCoordinatorModule implements RealtimeSessionCoordinator {
         session.controller.abort('realtime-session-ended');
       }
       const endpointsClosed = await waitForSettlement(
-        [session.processor?.close(), session.transport?.close()],
+        [
+          session.processor?.close().catch((error: unknown) => {
+            session.uncertain = true;
+            throw error;
+          }),
+          session.transport?.close().catch((error: unknown) => {
+            session.uncertain = true;
+            throw error;
+          }),
+        ],
         TEARDOWN_PHASE_TIMEOUT_MS,
       );
       if (!endpointsClosed) {
         this.logTeardownTimeout(session, lease, 'endpoint-close');
         session.controller.abort('realtime-session-ended');
       }
+      let modelEventsDrained = true;
       if (endpointsClosed && session.modelEventTask) {
-        const modelEventsDrained = await waitForSettlement(
+        modelEventsDrained = await waitForSettlement(
           [session.modelEventTask],
           TEARDOWN_PHASE_TIMEOUT_MS,
         );
@@ -687,6 +739,7 @@ class RealtimeSessionCoordinatorModule implements RealtimeSessionCoordinator {
         await this.deps.mcp
           .endRealtimeMediaSession(session.namespace, session.sessionId)
           .catch((error: unknown) => {
+            session.uncertain = true;
             this.deps.logger.warn(
               {
                 error,
@@ -699,6 +752,15 @@ class RealtimeSessionCoordinatorModule implements RealtimeSessionCoordinator {
       }
       if (this.sessions.get(session.key) === session)
         this.sessions.delete(session.key);
+      if (session.uncertain) this.uncertainCleanup = true;
+      if (
+        setupSettled &&
+        endpointsClosed &&
+        tasksSettled &&
+        modelEventsDrained &&
+        !session.uncertain
+      )
+        session.work?.release();
       setRealtimeSessionCount(this.sessions.size);
       this.deps.logger.info(
         {
@@ -719,6 +781,7 @@ class RealtimeSessionCoordinatorModule implements RealtimeSessionCoordinator {
     lease: InteractionLease | undefined,
     phase: string,
   ): void {
+    session.uncertain = true;
     this.deps.logger.warn(
       {
         namespace: session.namespace,
@@ -737,6 +800,7 @@ export function createRealtimeSessionCoordinator(
   deps: RealtimeSessionCoordinatorDependencies,
 ): RealtimeSessionCoordinator {
   return new RealtimeSessionCoordinatorModule({
+    admission: deps.admission,
     logger: deps.logging.child({
       name: 'realtime-session',
       bindings: { module: 'realtime-session' },

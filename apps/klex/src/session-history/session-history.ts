@@ -9,6 +9,11 @@ import {
 
 import type { ModuleLogger, RootLogger } from '@stagewise/logger';
 
+import {
+  type AdmissionGate,
+  AdmissionRejectedError,
+  type WorkLease,
+} from '@/admission';
 import type { Config, KlexConfig } from '@/config';
 import { assertCurrentSqliteStore } from '@/local-data';
 import type { ExtendedUIMessage } from '@/session/chat/message-types';
@@ -33,6 +38,7 @@ export interface SessionHistoryDependencies {
   logging: RootLogger;
   dataDirectory: string;
   config: Pick<Config, 'get'>;
+  admission?: AdmissionGate;
   /** Clock override for tests. */
   now?: () => Date;
 }
@@ -99,6 +105,7 @@ class RecorderState implements SessionHistoryRecorder {
   trimmed = 0;
   inserted = false;
   ended = false;
+  completed = false;
   pending: (() => readonly ExtendedUIMessage[]) | null = null;
   lastGetter: (() => readonly ExtendedUIMessage[]) | null = null;
   scheduled = false;
@@ -118,13 +125,13 @@ class RecorderState implements SessionHistoryRecorder {
     this.lastGetter = getMessages;
     if (this.scheduled) return;
     this.scheduled = true;
-    void this.store.enqueue(() => this.store.runSync(this));
+    void this.store.enqueue(() => this.store.runSync(this), this);
   }
 
   end(reason: string): Promise<void> {
-    if (this.ended) return Promise.resolve();
+    if (this.completed) return Promise.resolve();
     this.ended = true;
-    return this.store.enqueue(() => this.store.runEnd(this, reason));
+    return this.store.enqueue(() => this.store.runEnd(this, reason), this);
   }
 }
 
@@ -137,15 +144,41 @@ class SessionHistoryModule implements SessionHistory {
   private lastEnforcementAt = 0;
   private enforcementTimer: ReturnType<typeof setTimeout> | null = null;
   private readonly liveRecorders = new Map<string, RecorderState>();
+  private pendingTasks = 0;
+  private readonly failures = new Set<object>();
+  private readonly enforcementKey = {};
+  private unregisterAdmission: (() => void) | undefined;
 
   constructor(
     private readonly deps: {
       logger: ModuleLogger;
       dataDirectory: string;
       config: Pick<Config, 'get'>;
+      admission?: AdmissionGate;
       now: () => Date;
     },
-  ) {}
+  ) {
+    this.unregisterAdmission = deps.admission?.register(() => {
+      if (this.pendingTasks) return ['Session history persistence is pending'];
+      if (this.failures.size) return ['Session history persistence failed'];
+      for (const recorder of this.liveRecorders.values()) {
+        if (recorder.pending || recorder.ended)
+          return ['Session history awaits persistence'];
+        const messages = recorder.lastGetter?.();
+        if (!messages) continue;
+        if (messages.length !== recorder.persistedLength)
+          return ['Session history cursor awaits persistence'];
+        for (let seq = recorder.trimmed; seq < messages.length; seq++) {
+          const hash = createHash('sha1')
+            .update(JSON.stringify(messages[seq]))
+            .digest('base64');
+          if (hash !== recorder.persistedHashes[seq])
+            return ['Session history content awaits persistence'];
+        }
+      }
+      return [];
+    });
+  }
 
   async start(): Promise<void> {
     if (this.started) return;
@@ -182,7 +215,7 @@ class SessionHistoryModule implements SessionHistory {
     this.client = client;
     this.closed = false;
     this.started = true;
-    await this.enqueue(() => this.runEnforcement());
+    await this.enforceSizeCap();
 
     this.deps.logger.info({ dbPath }, 'SessionHistory started');
   }
@@ -205,6 +238,8 @@ class SessionHistoryModule implements SessionHistory {
     this.client = null;
     this.closed = true;
     this.liveRecorders.clear();
+    this.unregisterAdmission?.();
+    this.unregisterAdmission = undefined;
     this.deps.logger.info('SessionHistory stopped');
   }
 
@@ -213,7 +248,7 @@ class SessionHistoryModule implements SessionHistory {
   }
 
   enforceSizeCap(): Promise<void> {
-    return this.enqueue(() => this.runEnforcement());
+    return this.enqueue(() => this.runEnforcement(), this.enforcementKey);
   }
 
   openRecorder(meta: SessionHistoryRecorderMetadata): SessionHistoryRecorder {
@@ -223,14 +258,46 @@ class SessionHistoryModule implements SessionHistory {
   }
 
   /** Serialize `task` behind all queued writes. Never rejects. */
-  enqueue(task: () => Promise<void>): Promise<void> {
+  enqueue(task: () => Promise<void>, key: object = {}): Promise<void> {
     if (this.closed) {
       this.deps.logger.warn('Session history write dropped after close');
       return Promise.resolve();
     }
-    const run = this.queue.then(task).catch((error: unknown) => {
-      this.deps.logger.error({ error }, 'Session history write task failed');
+    this.pendingTasks++;
+    const gate = this.deps.admission;
+    let lease: WorkLease | undefined;
+    // Closed-gate writes belong to the existing awaited teardown: sessions
+    // end before this store drains/closes. Timers never enter this path.
+    const ready = new Promise<void>((resolve) => {
+      const reserve = () => {
+        lease = gate?.admit();
+        resolve();
+      };
+      if (!gate || gate.status().state === 'closed') resolve();
+      else {
+        try {
+          reserve();
+        } catch (error) {
+          if (!(error instanceof AdmissionRejectedError)) throw error;
+          gate.background({}, reserve);
+        }
+      }
     });
+    const run = this.queue
+      .then(async () => {
+        await ready;
+        if (lease) await lease.run(task);
+        else await task();
+        this.failures.delete(key);
+      })
+      .catch((error: unknown) => {
+        this.failures.add(key);
+        this.deps.logger.error({ error }, 'Session history write task failed');
+      })
+      .finally(() => {
+        this.pendingTasks--;
+        lease?.release();
+      });
     this.queue = run;
     return run;
   }
@@ -248,17 +315,23 @@ class SessionHistoryModule implements SessionHistory {
     // Always run a final sync to capture changes after the last schedule.
     const getMessages = recorder.lastGetter;
     recorder.pending = null;
-    this.liveRecorders.delete(recorder.instanceId);
     if (getMessages) {
-      await this.syncRecorder(recorder, getMessages);
-      // A failed sync leaves its getter pending. Later schedules are ignored
-      // after `end()`, so retry once before the end marker is written.
-      const retry = recorder.pending;
-      recorder.pending = null;
-      if (retry) await this.syncRecorder(recorder, retry);
+      try {
+        await this.syncRecorder(recorder, getMessages);
+      } catch {
+        // Preserve the existing final-sync retry. A second failure stays
+        // visible and a later end() may retry without losing the recorder.
+        recorder.pending = null;
+        await this.syncRecorder(recorder, getMessages);
+      }
     }
     const client = this.client;
-    if (!client || !recorder.inserted) return;
+    if (!client) throw new Error('SessionHistory is not started');
+    if (!recorder.inserted) {
+      recorder.completed = true;
+      this.liveRecorders.delete(recorder.instanceId);
+      return;
+    }
     try {
       await client.execute({
         sql: `UPDATE sessions SET ended_at = ?, end_reason = ? WHERE instance_id = ?`,
@@ -269,18 +342,20 @@ class SessionHistoryModule implements SessionHistory {
         { error, instanceId: recorder.instanceId },
         'Failed to mark session history as ended',
       );
-      return;
+      throw error;
     }
     await this.runEnforcement();
+    recorder.completed = true;
+    this.liveRecorders.delete(recorder.instanceId);
   }
 
-  /** Returns `true` when a write was committed. Never throws. */
+  /** Returns `true` when a write was committed; retains failed content. */
   private async syncRecorder(
     recorder: RecorderState,
     getMessages: () => readonly ExtendedUIMessage[],
   ): Promise<boolean> {
     const client = this.client;
-    if (!client) return false;
+    if (!client) throw new Error('SessionHistory is not started');
     try {
       const snapshot = [...getMessages()];
       return await this.writeSnapshot(client, recorder, snapshot);
@@ -291,7 +366,7 @@ class SessionHistoryModule implements SessionHistory {
         { error, instanceId: recorder.instanceId },
         'Session history sync failed',
       );
-      return false;
+      throw error;
     }
   }
 
@@ -392,11 +467,12 @@ class SessionHistoryModule implements SessionHistory {
   }
 
   private maybeScheduleEnforcement(): void {
+    if (this.deps.admission?.status().state === 'closed') return;
     const now = this.deps.now().getTime();
     const wait = this.lastEnforcementAt + ENFORCEMENT_THROTTLE_MS - now;
     if (wait <= 0) {
       this.lastEnforcementAt = now;
-      void this.enqueue(() => this.runEnforcement());
+      void this.enforceSizeCap();
       return;
     }
     // Throttled: defer instead of skipping, so a write that crosses the cap
@@ -404,13 +480,14 @@ class SessionHistoryModule implements SessionHistory {
     if (this.enforcementTimer) return;
     this.enforcementTimer = setTimeout(() => {
       this.enforcementTimer = null;
-      if (!this.started) return;
-      void this.enqueue(() => this.runEnforcement());
+      if (!this.started || this.deps.admission?.status().state === 'closed')
+        return;
+      void this.enforceSizeCap();
     }, wait);
     this.enforcementTimer.unref();
   }
 
-  /** Must run on the write queue. Never throws. */
+  /** Must run on the owned write queue. */
   private async runEnforcement(): Promise<void> {
     const client = this.client;
     if (!client) return;
@@ -422,6 +499,7 @@ class SessionHistoryModule implements SessionHistory {
         { error },
         'Session history size enforcement failed',
       );
+      throw error;
     }
   }
 
@@ -723,6 +801,7 @@ export function createSessionHistory(
     }),
     dataDirectory: deps.dataDirectory,
     config: deps.config,
+    admission: deps.admission,
     now: deps.now ?? (() => new Date()),
   });
 }

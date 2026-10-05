@@ -1,5 +1,16 @@
 # Session Architecture
 
+## Admission and maintenance
+
+All production sessions share the application admission gate, including god,
+child, and grandchild sessions. Inbox acceptance holds work ownership through
+loop completion; generation leases, child startup, extension generation, and
+consult tasks participate in drain. Maintenance does not cancel an active turn
+or call. On grace expiry it reopens the same live runtime. Background reminders
+and unrelated retries defer, and uncertain persistence blocks certification.
+See `../admission/architecture.md` for the exact pre-teardown contract and the
+Telegram durability blocker.
+
 ## Overview
 
 Klex has one durable agent with many concurrent model execution units called **sessions**. Sessions are private — the user never manages them directly. Each session owns its own message history, inbox, extension handler, and run loop.

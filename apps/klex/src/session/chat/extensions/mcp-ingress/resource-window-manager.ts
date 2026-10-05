@@ -1,5 +1,6 @@
 import type { ModuleLogger } from '@stagewise/logger';
 
+import type { AdmissionGate } from '@/admission';
 import { SessionInboxUrgency } from '@/session/chat/inbox';
 
 import {
@@ -73,6 +74,7 @@ export type ResourceWindowUpdateOutcome =
   | { kind: 'retry'; retryAfterMs?: number };
 
 export interface ResourceWindowManagerDeps {
+  admission?: AdmissionGate;
   config: ResourceWindowConfig;
   logger: ModuleLogger;
   onUnsubscribe: (namespace: string, uri: string) => void;
@@ -100,12 +102,19 @@ function resourceKey(namespace: string, uri: string): string {
 }
 
 export class ResourceWindowManager {
+  private readonly unregisterAdmission: (() => void) | undefined;
   private readonly windows = new Map<string, ResourceWindowEntry>();
   private nextHandleNumber = 1;
   private eventsInWindow = 0;
   private windowStart = Date.now();
 
-  constructor(private readonly deps: ResourceWindowManagerDeps) {}
+  constructor(private readonly deps: ResourceWindowManagerDeps) {
+    this.unregisterAdmission = deps.admission?.register(() =>
+      [...this.windows.values()].some((entry) => entry.pendingUpdate)
+        ? ['Resource update pending without durable acceptance']
+        : [],
+    );
+  }
 
   openWindow(
     namespace: string,
@@ -187,6 +196,11 @@ export class ResourceWindowManager {
     }
   }
 
+  close(): void {
+    this.stopAll();
+    this.unregisterAdmission?.();
+  }
+
   getWindow(handle: string): ResourceWindow | undefined {
     const entry = this.windows.get(handle);
     return entry ? this.toPublicWindow(entry) : undefined;
@@ -227,9 +241,22 @@ export class ResourceWindowManager {
       entry.debounceTimer = setTimeout(() => {
         entry.debounceTimer = undefined;
         if (!entry.pendingUpdate) return;
-        void this.fireUpdate(entry);
+        this.requestUpdate(entry);
       }, this.getDebounceMs(entry.mimeType));
     }
+  }
+
+  private requestUpdate(entry: ResourceWindowEntry): void {
+    const run = () => {
+      const operation = this.deps.admission
+        ? this.deps.admission.run(() => this.fireUpdate(entry))
+        : this.fireUpdate(entry);
+      void operation.catch((error) =>
+        this.deps.logger.error({ error }, 'Resource update failed'),
+      );
+    };
+    if (this.deps.admission) this.deps.admission.background(entry, run);
+    else run();
   }
 
   private async fireUpdate(entry: ResourceWindowEntry): Promise<void> {
@@ -248,7 +275,7 @@ export class ResourceWindowManager {
         );
         entry.rateLimitTimer = setTimeout(() => {
           entry.rateLimitTimer = undefined;
-          void this.fireUpdate(entry);
+          this.requestUpdate(entry);
         }, delay);
       }
       this.deps.logger.debug(
@@ -284,7 +311,7 @@ export class ResourceWindowManager {
         entry.retryCount++;
         entry.retryTimer = setTimeout(() => {
           entry.retryTimer = undefined;
-          void this.fireUpdate(entry);
+          this.requestUpdate(entry);
         }, retryAfterMs);
         return;
       }
@@ -310,7 +337,7 @@ export class ResourceWindowManager {
         entry.pendingUpdate &&
         !entry.retryTimer
       ) {
-        void this.fireUpdate(entry);
+        this.requestUpdate(entry);
       }
     }
   }

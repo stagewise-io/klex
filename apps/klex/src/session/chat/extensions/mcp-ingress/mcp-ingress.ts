@@ -7,6 +7,7 @@ import z from 'zod';
 
 import type { ModuleLogger } from '@stagewise/logger';
 
+import type { AdmissionGate } from '@/admission';
 import type { Mcp, McpPushNotification } from '@/mcp';
 import type { ChatSessionInbox } from '@/session/chat/inbox';
 import { SessionInboxUrgency } from '@/session/chat/inbox';
@@ -118,6 +119,7 @@ class McpIngressExtension implements Extension {
 
   constructor(
     private readonly deps: {
+      admission?: AdmissionGate;
       mcp: Mcp;
       logger: ModuleLogger;
       inbox: ChatSessionInbox;
@@ -131,6 +133,7 @@ class McpIngressExtension implements Extension {
       maxConcurrentWindows: config.maxConcurrentWindows,
     };
     this.resourceWindowManager = new ResourceWindowManager({
+      admission: deps.admission,
       config: windowConfig,
       logger: deps.logger,
       onUnsubscribe: (namespace, uri) => {
@@ -163,7 +166,7 @@ class McpIngressExtension implements Extension {
     this.unsubscribeResourceUpdated = undefined;
     this.unsubscribePushNotification?.();
     this.unsubscribePushNotification = undefined;
-    this.resourceWindowManager.stopAll();
+    this.resourceWindowManager.close();
     // Drain pending acquisitions: any that complete will add to
     // activeSubscriptionLeases and need to be released below.
     await Promise.allSettled([...this.pendingSubscriptionLeases.values()]);
@@ -1085,6 +1088,7 @@ export function createMcpIngressExt(
       }
       return new McpIngressExtension(
         {
+          admission: deps.admission,
           mcp: deps.mcp,
           logger: deps.logger,
           inbox: deps.inbox,

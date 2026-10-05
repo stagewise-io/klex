@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { randomUUID } from 'node:crypto';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -296,7 +297,7 @@ class JavaScriptToolModule implements JavaScriptTool {
         invalidate(
           new Error(`JavaScript sandbox Worker exited with code ${code}`),
         );
-      const onMessage = (value: unknown) => {
+      const onMessage = AsyncLocalStorage.bind((value: unknown) => {
         let message: WorkerMessage;
         try {
           message = parseWorkerMessage(value);
@@ -369,7 +370,7 @@ class JavaScriptToolModule implements JavaScriptTool {
           .finally(() => {
             concurrent -= 1;
           });
-      };
+      });
 
       abort.signal.addEventListener('abort', onAbort, { once: true });
       worker.on('message', onMessage);

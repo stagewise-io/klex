@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { ModuleLogger } from '@stagewise/logger';
 
+import { AdmissionGate } from '@/admission';
 import { DEFAULT_SESSION_ID } from '@/session/types';
 
 import { SessionInboxUrgency } from '../../inbox';
@@ -174,6 +175,34 @@ function introspect(
 // ---------------------------------------------------------------------------
 
 describe('Todos extension', () => {
+  it('does not consume a due reminder during maintenance and delivers it after rollback', async () => {
+    const admission = new AdmissionGate({ graceMs: 2_000 });
+    const { deps, sendMessage } = createMockDeps();
+    deps.admission = admission;
+    const extension = createTodosExt.create(deps);
+    const reminderTime = '2025-03-15T10:00:01Z';
+    const created = await callTool(extension, 'createTodo', {
+      description: 'Keep this reminder',
+      reminderTime,
+    });
+    const work = admission.admitRoot();
+    const maintenance = admission.prepare();
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(sendMessage).not.toHaveBeenCalled();
+    expect(introspect(extension).todos).toContainEqual(
+      expect.objectContaining({ id: created.id, reminderTime }),
+    );
+    expect(admission.status().deferredWork).toBe(1);
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect((await maintenance).outcome).toBe('aborted');
+    await vi.waitFor(() => expect(sendMessage).toHaveBeenCalledOnce());
+    expect(introspect(extension).todos).toContainEqual(
+      expect.objectContaining({ id: created.id, reminderTime: null }),
+    );
+    work.release();
+    await extension.onClose?.();
+    admission.close();
+  });
   beforeEach(() => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2025-03-15T10:00:00Z'));

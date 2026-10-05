@@ -544,12 +544,20 @@ class TodosExtension implements Extension {
   }
 
   private runReminder(id: string, reminderTime: string): void {
-    void this.fireReminder(id, reminderTime).catch((error) => {
-      this.deps.logger.error(
-        { error, todoId: id, reminderTime },
-        'Todo reminder failed',
-      );
-    });
+    const run = () => {
+      if (this.closed) return;
+      const operation = this.deps.admission
+        ? this.deps.admission.run(() => this.fireReminder(id, reminderTime))
+        : this.fireReminder(id, reminderTime);
+      void operation.catch((error) => {
+        this.deps.logger.error(
+          { error, todoId: id, reminderTime },
+          'Todo reminder failed',
+        );
+      });
+    };
+    if (this.deps.admission) this.deps.admission.background({}, run);
+    else run();
   }
 
   private async fireReminder(id: string, reminderTime: string): Promise<void> {

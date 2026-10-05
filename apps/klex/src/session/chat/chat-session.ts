@@ -13,6 +13,11 @@ import { generateText, type ToolSet } from 'ai';
 
 import type { ModuleLogger, RootLogger } from '@stagewise/logger';
 
+import {
+  type AdmissionGate,
+  AdmissionRejectedError,
+  type WorkLease,
+} from '@/admission';
 import type { Config, ModelPurpose } from '@/config';
 import type { IntrospectionScope } from '@/introspection';
 import type { Mcp } from '@/mcp';
@@ -89,6 +94,7 @@ const MAX_CONSECUTIVE_FAILURES = 5;
 const LOOP_SETTLE_TIMEOUT_MS = 5_000;
 
 export interface ChatSessionDependencies {
+  admission?: AdmissionGate;
   logging: RootLogger;
   modelResolver: ProviderModelResolver;
   config: Config;
@@ -275,9 +281,11 @@ class ChatSessionModule implements AgentSession {
 
   /** Introspection scope for child sessions spawned by extensions in this session. */
   private childSessionsScope: IntrospectionScope | null = null;
+  private readonly inputWork = new Set<WorkLease>();
 
   constructor(
     private readonly deps: {
+      admission?: AdmissionGate;
       logger: ModuleLogger;
       logging: RootLogger;
       modelResolver: ProviderModelResolver;
@@ -418,6 +426,8 @@ class ChatSessionModule implements AgentSession {
     );
 
     this.sessionInbox = createInbox({
+      dispatch: (operation, deferredResult) =>
+        this.dispatchInput(operation, deferredResult),
       onImmediateEvent: this.onImmediateEvent,
       onDeferredEvent: this.onDeferredEvent,
       onImmediateMessage: this.onImmediateMessage,
@@ -448,6 +458,7 @@ class ChatSessionModule implements AgentSession {
     // with this session asynchronously. getDataDir is injected per-extension
     // by the ExtensionHandler, not here.
     const extensionDeps: BaseExtensionDeps = {
+      admission: this.deps.admission,
       getHistory: () => [...this.messages],
       insertMessageAfter: (afterMessageId, message) => {
         // Reject inserts once the session is terminated so an
@@ -463,7 +474,10 @@ class ChatSessionModule implements AgentSession {
       inbox: this.sessionInbox,
       config: this.deps.config,
       modelResolver: this.deps.modelResolver,
-      generateText: (args) => this.generateTextForExtension(args),
+      generateText: (args) =>
+        this.deps.admission
+          ? this.deps.admission.run(() => this.generateTextForExtension(args))
+          : this.generateTextForExtension(args),
       logger: this.deps.logger,
       logging: this.deps.logging,
       mcp: this.deps.mcp,
@@ -540,6 +554,12 @@ class ChatSessionModule implements AgentSession {
   }
 
   private async startUnlocked(): Promise<void> {
+    return this.deps.admission
+      ? this.deps.admission.run(() => this.startAdmitted())
+      : this.startAdmitted();
+  }
+
+  private async startAdmitted(): Promise<void> {
     try {
       await this.extensionHandler.start();
       if (this._status === 'terminated') {
@@ -886,10 +906,42 @@ class ChatSessionModule implements AgentSession {
   // (e.g. a realtime call) must never generate concurrently.
   // ---------------------------------------------------------------------------
 
-  public acquireInteractionLease(
+  public async acquireInteractionLease(
     request: InteractionLeaseRequest,
   ): Promise<InteractionLease> {
-    return this.leaseManager.acquire(request);
+    const work = this.deps.admission?.admit();
+    if (!work) return this.leaseManager.acquire(request);
+    let lease: InteractionLease;
+    try {
+      lease = await work.run(() => this.leaseManager.acquire(request));
+    } catch (error) {
+      work.release();
+      throw error;
+    }
+    let releasing: Promise<void> | undefined;
+    return {
+      id: lease.id,
+      sessionId: lease.sessionId,
+      mode: lease.mode,
+      closed: lease.closed,
+      updates: lease.updates,
+      bootstrap: () => work.run(() => lease.bootstrap()),
+      acknowledgeUpdate: (sequence) =>
+        work.run(() => lease.acknowledgeUpdate(sequence)),
+      executeTool: (toolRequest) =>
+        work.run(() => lease.executeTool(toolRequest)),
+      commit: (event) => work.run(() => lease.commit(event)),
+      release: (reason, finalEvent) =>
+        (releasing ??= work.run(async () => {
+          try {
+            await lease.release(reason, finalEvent);
+            work.release();
+          } catch (error) {
+            releasing = undefined;
+            throw error;
+          }
+        })),
+    };
   }
 
   private async quiesceGenerationLane(reason: string): Promise<void> {
@@ -1078,6 +1130,13 @@ class ChatSessionModule implements AgentSession {
    *    resumes processing immediately.
    */
   private async runLoop(): Promise<void> {
+    const lease = this.inputWork.values().next().value;
+    return lease
+      ? lease.run(() => this.runLoopUnlocked())
+      : this.runLoopUnlocked();
+  }
+
+  private async runLoopUnlocked(): Promise<void> {
     if (this.loopActive) return;
     if (this.laneSuspended) {
       // A leased interaction mode owns the generation lane. Input stays
@@ -1141,6 +1200,12 @@ class ChatSessionModule implements AgentSession {
 
         // Reset the input flags before each turn so we only detect
         // input that arrives during this specific turn.
+        if (this.deps.admission) {
+          await this.deps.admission.checkpoint();
+          if (this.status === 'terminated') continue;
+          this.flushPendingImmediate();
+          if (this.laneSuspended) continue;
+        }
         this.newInputDuringTurn = false;
         this.hasPendingInput = false;
 
@@ -1402,7 +1467,44 @@ class ChatSessionModule implements AgentSession {
     } finally {
       this.loopActive = false;
       this.releaseQuiesceWaiters();
+      this.releaseInputWork();
     }
+  }
+
+  private dispatchInput<Result>(
+    operation: () => Result,
+    deferredResult: Result,
+  ): Result {
+    const gate = this.deps.admission;
+    if (!gate) return operation();
+    let lease: WorkLease;
+    try {
+      lease = gate.admit();
+    } catch (error) {
+      if (!(error instanceof AdmissionRejectedError)) throw error;
+      gate.background({}, () => this.dispatchInput(operation, deferredResult));
+      return deferredResult;
+    }
+    this.inputWork.add(lease);
+    try {
+      return lease.run(operation);
+    } finally {
+      this.releaseInputWork();
+    }
+  }
+
+  private releaseInputWork(): void {
+    if (
+      this.loopActive ||
+      this.laneSuspended ||
+      this.hasPendingInput ||
+      !this.sessionInbox.isEmpty() ||
+      this.pendingImmediate.length > 0
+    )
+      return;
+    const leases = [...this.inputWork];
+    this.inputWork.clear();
+    for (const lease of leases) lease.release();
   }
 
   /**
@@ -1640,6 +1742,12 @@ class ChatSessionModule implements AgentSession {
         }
       }
     })().catch((error: unknown) => {
+      if (
+        this.deps.admission &&
+        this.deps.admission.status().state !== 'closed'
+      ) {
+        this.deps.admission.register(() => ['Session cleanup is uncertain']);
+      }
       // A failed cleanup must remain retryable. Owners such as consult
       // retain failed child handles and may invoke close() again.
       this.closePromise = null;
@@ -1715,6 +1823,14 @@ class ChatSessionModule implements AgentSession {
   public async createChildSession(
     options: ChildSessionOptions,
   ): Promise<ChildSessionHandle> {
+    return this.deps.admission
+      ? this.deps.admission.run(() => this.createChildSessionUnlocked(options))
+      : this.createChildSessionUnlocked(options);
+  }
+
+  private async createChildSessionUnlocked(
+    options: ChildSessionOptions,
+  ): Promise<ChildSessionHandle> {
     if (this._status === 'terminated') {
       throw new Error('Cannot create a child from a terminated chat session');
     }
@@ -1778,6 +1894,12 @@ class ChatSessionModule implements AgentSession {
       return child;
     } catch (error) {
       await child.close().catch((closeError: unknown) => {
+        if (
+          this.deps.admission &&
+          this.deps.admission.status().state !== 'closed'
+        ) {
+          this.deps.admission.register(() => ['Child cleanup is uncertain']);
+        }
         this.deps.logger.error(
           { error: closeError, childSessionId },
           'Failed child session cleanup after startup error',
@@ -1800,6 +1922,7 @@ export function createChatSession(
   deps: ChatSessionDependencies,
 ): ChatSessionHandle {
   return new ChatSessionModule({
+    admission: deps.admission,
     logger: deps.logging.child({
       name: 'chat-session',
       bindings: { module: 'chat-session' },

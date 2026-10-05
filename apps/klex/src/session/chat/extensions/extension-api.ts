@@ -9,6 +9,7 @@ import type {
 
 import type { ModuleLogger, RootLogger } from '@stagewise/logger';
 
+import type { AdmissionGate } from '@/admission';
 import type {
   Config,
   ModelId,
@@ -479,6 +480,7 @@ export interface Extension {
 }
 
 export interface ExtensionDeps {
+  admission?: AdmissionGate;
   /**
    * @returns A copy of the current history inside the session.
    */

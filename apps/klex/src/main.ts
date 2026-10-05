@@ -4,6 +4,7 @@ import { resolve } from 'node:path';
 import { attachOtelTransport, createLogger } from '@stagewise/logger';
 
 import { type AdminApi, createAdminApi } from '@/admin-api';
+import { AdmissionGate } from '@/admission';
 import { createAgentDirectory, defaultAgentRoot } from '@/agent-directory';
 import { createAgentPicker } from '@/agent-picker';
 import { type CliOptions, parseCliArgs } from '@/cli';
@@ -437,7 +438,9 @@ async function main(): Promise<void> {
       ownedConnector: createProductionMediaTransportConnector(),
     };
     const realtimeMediaCapability = PRODUCTION_REALTIME_MEDIA_CAPABILITY;
+    const admission = new AdmissionGate();
     const mcp = createMcp({
+      admission,
       logging: logger,
       config,
       realtimeMediaCapability,
@@ -446,6 +449,7 @@ async function main(): Promise<void> {
     });
     runtimeMcp = mcp;
     const introspector = createIntrospector({ logging: logger });
+    introspector.child('admission').introspect(() => admission.status());
 
     const modelCallLogger = createModelCallLogger({
       logging: logger,
@@ -453,6 +457,7 @@ async function main(): Promise<void> {
     });
 
     const sessionHistory = createSessionHistory({
+      admission,
       logging: logger,
       dataDirectory: cli.dataDirectory,
       config,
@@ -501,6 +506,7 @@ async function main(): Promise<void> {
       (baseExtensions: ExtensionFactory[]): SessionFactory =>
       (params) =>
         createChatSession({
+          admission,
           ...sharedSessionDeps,
           mcp: params.mcp,
           sessionContext: params.sessionContext,
@@ -551,6 +557,7 @@ async function main(): Promise<void> {
     // God session: no MCP, trust-mode god-messages, soul-god variant.
     // js-repl-sandbox excluded — it requires MCP access.
     const godMessages = createGodMessages({
+      admission,
       logging: logger,
       introspection: introspector,
       sessionFactory: makeSessionFactory([
@@ -571,6 +578,7 @@ async function main(): Promise<void> {
       ],
     });
     const adminApi = createAdminApi({
+      admission,
       logging: logger,
       config,
       mcp,
@@ -594,6 +602,7 @@ async function main(): Promise<void> {
       tracing,
     });
     const realtime = createRealtime({
+      admission,
       logging: logger,
       mcp,
       resolveProvider: realtimeComposition.resolveProvider,
@@ -602,6 +611,7 @@ async function main(): Promise<void> {
     });
     cloudConnectivity.setTunnelRequestHandler(adminApi.handle.bind(adminApi));
     runtime = await startRuntime({
+      admission,
       logging: logger,
       adopted: preRuntime,
       modules: {

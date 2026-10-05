@@ -4,10 +4,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { createClient } from '@libsql/client';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createLogger } from '@stagewise/logger';
 
+import { AdmissionGate, AdmissionRejectedError } from '@/admission';
 import { type KlexConfig, klexConfigSchema } from '@/config';
 import { createLocalData } from '@/local-data';
 import { KLEX_VERSION } from '@/release';
@@ -51,7 +52,13 @@ function meta(
   };
 }
 
-async function setup(options: { maxBytes?: number; directory?: string } = {}) {
+async function setup(
+  options: {
+    maxBytes?: number;
+    directory?: string;
+    admission?: AdmissionGate;
+  } = {},
+) {
   const directory =
     options.directory ??
     (await mkdtemp(join(tmpdir(), 'klex-session-history-')));
@@ -67,6 +74,7 @@ async function setup(options: { maxBytes?: number; directory?: string } = {}) {
     config = { ...config, sessionHistory: { maxBytes: options.maxBytes } };
   }
   const history = createSessionHistory({
+    admission: options.admission,
     logging: logger,
     dataDirectory: directory,
     config: { get: () => config },
@@ -88,12 +96,181 @@ async function storedIds(history: SessionHistory, instanceId: string) {
 }
 
 afterEach(async () => {
+  vi.useRealTimers();
   await Promise.all(modules.splice(0).map((module) => module.close()));
   await Promise.all(
     directories
       .splice(0)
       .map((directory) => rm(directory, { recursive: true, force: true })),
   );
+});
+
+describe('session history admission', () => {
+  it('keeps failed enforcement visible until enforcement itself succeeds', async () => {
+    const gate = new AdmissionGate();
+    const { history, directory, setMaxBytes } = await setup({
+      admission: gate,
+    });
+    const recorder = history.openRecorder(meta());
+    recorder.scheduleSync(() => [message('a')]);
+    await history.flush();
+    setMaxBytes(1);
+    const db = createClient({
+      url: `file:${join(directory, SESSION_HISTORY_RELATIVE_PATH)}`,
+    });
+    try {
+      await db.execute(
+        "CREATE TRIGGER fail_eviction BEFORE DELETE ON messages BEGIN SELECT RAISE(ABORT, 'injected eviction failure'); END",
+      );
+      await history.enforceSizeCap();
+      expect((await gate.prepare()).outcome).toBe('aborted');
+      recorder.scheduleSync(() => [message('a')]);
+      await history.flush();
+      expect(gate.status().blockers).toContain(
+        'Session history persistence failed',
+      );
+      await db.execute('DROP TRIGGER fail_eviction');
+      await history.enforceSizeCap();
+      expect((await gate.prepare()).outcome).toBe('quiescent');
+      gate.abort('test complete');
+    } finally {
+      db.close();
+    }
+  });
+
+  it('awaits final transcript and end marker in certified teardown', async () => {
+    const gate = new AdmissionGate();
+    const { history } = await setup({ admission: gate });
+    const recorder = history.openRecorder(meta());
+    recorder.scheduleSync(() => [message('a')]);
+    await history.flush();
+    const result = await gate.prepare();
+    if (result.outcome !== 'quiescent') throw new Error('Expected certificate');
+    gate.consume(result.lease);
+    await recorder.end('closed');
+    expect(await storedIds(history, recorder.instanceId)).toEqual(['a']);
+    expect(await history.getSession(recorder.instanceId)).toMatchObject({
+      live: false,
+      endReason: 'closed',
+    });
+    await history.close();
+  });
+
+  it('owns queued and running persistence and blocks certification until committed', async () => {
+    const gate = new AdmissionGate();
+    const { history } = await setup({ admission: gate });
+    const recorder = history.openRecorder(meta());
+    recorder.scheduleSync(() => {
+      expect(gate.status().activeWork).toBeGreaterThan(0);
+      return [message('accepted')];
+    });
+    expect(gate.status().activeWork).toBe(1);
+    expect((await gate.prepare()).outcome).toBe('aborted');
+    await history.flush();
+    expect(await storedIds(history, recorder.instanceId)).toEqual(['accepted']);
+    // Use a pure getter for the participant's content check.
+    recorder.scheduleSync(() => [message('accepted')]);
+    await history.flush();
+    expect((await gate.prepare()).outcome).toBe('quiescent');
+    gate.abort('test complete');
+  });
+
+  it('retains failed DB writes and dirty older content until a successful retry', async () => {
+    const gate = new AdmissionGate();
+    const { history, directory } = await setup({ admission: gate });
+    const db = createClient({
+      url: `file:${join(directory, SESSION_HISTORY_RELATIVE_PATH)}`,
+    });
+    try {
+      await db.execute(
+        "CREATE TRIGGER fail_history BEFORE INSERT ON messages BEGIN SELECT RAISE(ABORT, 'injected write failure'); END",
+      );
+      const recorder = history.openRecorder(meta());
+      const original = message('a');
+      const messages = [original];
+      recorder.scheduleSync(() => messages);
+      await history.flush();
+      expect(gate.status().blockers).toContain(
+        'Session history persistence failed',
+      );
+      expect((await gate.prepare()).outcome).toBe('aborted');
+      await db.execute('DROP TRIGGER fail_history');
+      recorder.scheduleSync(() => messages);
+      await history.flush();
+      expect(gate.status().blockers).toEqual([]);
+      original.parts = [{ type: 'text', text: 'repaired' }];
+      expect((await gate.prepare()).outcome).toBe('aborted');
+      recorder.scheduleSync(() => messages);
+      await history.flush();
+      expect((await gate.prepare()).outcome).toBe('quiescent');
+      gate.abort('test complete');
+    } finally {
+      db.close();
+    }
+  });
+
+  it('retains a failed end marker and recovers through end retry', async () => {
+    const gate = new AdmissionGate();
+    const { history, directory } = await setup({ admission: gate });
+    const recorder = history.openRecorder(meta());
+    recorder.scheduleSync(() => [message('a')]);
+    await history.flush();
+    const db = createClient({
+      url: `file:${join(directory, SESSION_HISTORY_RELATIVE_PATH)}`,
+    });
+    try {
+      await db.execute(
+        "CREATE TRIGGER fail_end BEFORE UPDATE OF ended_at ON sessions BEGIN SELECT RAISE(ABORT, 'injected end failure'); END",
+      );
+      await recorder.end('closed');
+      expect((await gate.prepare()).outcome).toBe('aborted');
+      await db.execute('DROP TRIGGER fail_end');
+      await recorder.end('closed');
+      expect(await history.getSession(recorder.instanceId)).toMatchObject({
+        live: false,
+      });
+      expect((await gate.prepare()).outcome).toBe('quiescent');
+      gate.abort('test complete');
+    } finally {
+      db.close();
+    }
+  });
+
+  it('defers the enforcement timer during drain and resumes on rollback', async () => {
+    vi.useFakeTimers();
+    const gate = new AdmissionGate();
+    const { history, setMaxBytes } = await setup({ admission: gate });
+    const recorder = history.openRecorder(meta());
+    recorder.scheduleSync(() => [message('a')]);
+    await history.flush();
+    setMaxBytes(1);
+    await vi.advanceTimersByTimeAsync(29_999);
+    const work = gate.admitRoot();
+    const preparing = gate.prepare();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(gate.status()).toMatchObject({ state: 'draining', deferredWork: 1 });
+    expect(await storedIds(history, recorder.instanceId)).toEqual(['a']);
+    gate.abort('rollback');
+    work.release();
+    expect((await preparing).outcome).toBe('aborted');
+    await history.flush();
+    expect(await storedIds(history, recorder.instanceId)).toEqual([]);
+  });
+
+  it('revokes a certificate before deferred persistence starts', async () => {
+    const gate = new AdmissionGate();
+    const { history } = await setup({ admission: gate });
+    const recorder = history.openRecorder(meta());
+    const result = await gate.prepare();
+    if (result.outcome !== 'quiescent') throw new Error('Expected certificate');
+    recorder.scheduleSync(() => {
+      expect(gate.status().state).toBe('open');
+      return [message('late')];
+    });
+    expect(() => gate.consume(result.lease)).toThrow(AdmissionRejectedError);
+    await history.flush();
+    expect(await storedIds(history, recorder.instanceId)).toEqual(['late']);
+  });
 });
 
 describe('resolveSessionHistoryMaxBytes', () => {

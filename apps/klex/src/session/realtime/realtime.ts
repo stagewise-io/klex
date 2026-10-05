@@ -4,6 +4,7 @@ import type {
   RealtimeMediaExtensionCapability,
 } from '@stagewise/mcp-extension-realtime-media';
 
+import type { AdmissionGate } from '@/admission';
 import type { ResolvedRealtimeProvider } from '@/config';
 import type { Mcp } from '@/mcp';
 import type { MediaTransportConnector } from '@/media-transport';
@@ -32,6 +33,7 @@ export interface Realtime {
 }
 
 export interface RealtimeDependencies {
+  admission?: AdmissionGate;
   logging: RootLogger;
   mcp: Mcp;
   /** Resolved for each new call; active calls retain their existing factory/session. */
@@ -74,6 +76,7 @@ class RealtimeModule implements Realtime {
       const coordinator =
         this.deps.createCoordinator?.(connector, processorFactory) ??
         createRealtimeSessionCoordinator({
+          admission: this.deps.admission,
           logging: this.deps.logging,
           mcp: this.deps.mcp,
           mediaTransportConnector: connector,

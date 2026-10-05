@@ -328,7 +328,12 @@ class ContextCompactionExt implements Extension {
         },
         'Context size threshold exceeded — triggering compaction',
       );
-      void this.runCompaction();
+      const operation = this.deps.admission
+        ? this.deps.admission.run(() => this.runCompaction())
+        : this.runCompaction();
+      void operation.catch((error) =>
+        this.deps.logger.error({ error }, 'Compaction admission failed'),
+      );
     }
   }
 

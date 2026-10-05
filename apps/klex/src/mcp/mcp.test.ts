@@ -9,6 +9,7 @@ import type {
   PushNotificationNotification,
 } from '@stagewise/mcp-extension-push-notifications';
 
+import { AdmissionGate } from '@/admission';
 import type { CloudConnectivity } from '@/cloud-connectivity';
 import type {
   Config,
@@ -133,6 +134,7 @@ function setup(
   connect: McpConnectionFactory,
   realtimeMediaEnabled = true,
   cloudConnectivity?: Partial<CloudConnectivity>,
+  admission?: AdmissionGate,
 ) {
   const realtimeMediaCapability = realtimeMediaEnabled
     ? { transports: ['livekit-room'], media: ['audio'] as ['audio'] }
@@ -141,6 +143,7 @@ function setup(
   return {
     config,
     mcp: createMcp({
+      admission,
       logging,
       config: config.config,
       realtimeMediaCapability,
@@ -206,7 +209,7 @@ describe('MCP Push Notification subscriptions', () => {
 });
 
 describe('MCP Push Notification worker', () => {
-  it('subscribes before draining and acknowledges after publication', async () => {
+  it('subscribes before draining but does not ACK volatile acceptance', async () => {
     const order: string[] = [];
     const closed = deferred<void>();
     const server = pushNotificationConnection({
@@ -231,12 +234,12 @@ describe('MCP Push Notification worker', () => {
     });
 
     await mcp.start();
-    await vi.waitFor(() => expect(order).toContain('ack'));
-    expect(order).toEqual(['listen', 'get', 'publish', 'ack']);
+    await vi.waitFor(() => expect(order).toContain('publish'));
+    expect(order).toEqual(['listen', 'get', 'publish']);
     await mcp.close();
   });
 
-  it('retries acknowledgement without republishing the event', async () => {
+  it('does not start ACK retries without a durable receipt', async () => {
     vi.useFakeTimers();
     const closed = deferred<void>();
     const acknowledgeEvents = vi
@@ -259,9 +262,9 @@ describe('MCP Push Notification worker', () => {
     mcp.onPushNotification(listener);
 
     await mcp.start();
-    await vi.waitFor(() => expect(acknowledgeEvents).toHaveBeenCalledOnce());
+    await vi.waitFor(() => expect(listener).toHaveBeenCalledOnce());
     await vi.advanceTimersByTimeAsync(1_000);
-    await vi.waitFor(() => expect(acknowledgeEvents).toHaveBeenCalledTimes(2));
+    expect(acknowledgeEvents).not.toHaveBeenCalled();
     expect(listener).toHaveBeenCalledOnce();
     await mcp.close();
   });
@@ -297,9 +300,71 @@ describe('MCP Push Notification worker', () => {
     } as PushNotificationNotification);
     pendingPage.resolve({ events: [pushNotification], hasMore: false });
 
-    await vi.waitFor(() => expect(acknowledgeEvents).toHaveBeenCalledTimes(2));
+    await vi.waitFor(() => expect(listener).toHaveBeenCalledOnce());
+    expect(acknowledgeEvents).not.toHaveBeenCalled();
     expect(listener).toHaveBeenCalledTimes(1);
     await mcp.close();
+  });
+
+  it('keeps Telegram events pending and aborts maintenance without disconnecting', async () => {
+    const admission = new AdmissionGate();
+    const pending = [
+      {
+        ...pushNotification,
+        eventId: 'telegram:bot:update:1',
+        sourceId: 'telegram:bot',
+      },
+    ];
+    const acknowledgeEvents = vi.fn(async () => {
+      pending.splice(0);
+    });
+    const server = pushNotificationConnection({
+      listen: vi.fn(async () => ({
+        closed: new Promise<void>(() => undefined),
+      })),
+      getEvents: vi.fn(async () => ({ events: pending, hasMore: false })),
+      acknowledgeEvents,
+    });
+    const { mcp } = setup(
+      { chat: { url: 'https://telegram.example/mcp' } },
+      async () => server,
+      true,
+      undefined,
+      admission,
+    );
+    const listener = vi.fn();
+    mcp.onPushNotification(listener);
+    await mcp.start();
+    await vi.waitFor(() => expect(listener).toHaveBeenCalledOnce());
+    const result = await admission.prepare();
+    expect(result.outcome).toBe('aborted');
+    expect(admission.status().state).toBe('open');
+    expect(acknowledgeEvents).not.toHaveBeenCalled();
+    expect(server.close).not.toHaveBeenCalled();
+    expect(pending).toHaveLength(1);
+    expect(admission.status().blockers).toContain(
+      'MCP push persistence, ACK and replay are not durable',
+    );
+    admission.close();
+    await mcp.close();
+  });
+
+  it('refuses maintenance when configured MCP capability safety is unknown', async () => {
+    const admission = new AdmissionGate();
+    const connecting = deferred<McpConnection>();
+    const { mcp } = setup(
+      { telegram: { url: 'https://telegram.example/mcp' } },
+      () => connecting.promise,
+      true,
+      undefined,
+      admission,
+    );
+    await mcp.start();
+    expect((await admission.prepare()).outcome).toBe('aborted');
+    expect(admission.status().state).toBe('open');
+    admission.close();
+    await mcp.close();
+    connecting.resolve(connection('telegram'));
   });
 });
 

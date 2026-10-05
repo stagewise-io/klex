@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { RootLogger } from '@stagewise/logger';
 
+import { AdmissionGate, AdmissionRejectedError } from '@/admission';
 import type { Config } from '@/config';
 import type { IntrospectionScope } from '@/introspection';
 import type { Mcp } from '@/mcp';
@@ -55,6 +56,7 @@ function createScope(path: string[] = []): IntrospectionScope {
 
 function createSession(
   options: {
+    admission?: AdmissionGate;
     extensions?: ExtensionFactory[];
     mcp?: Mcp | null;
     productAnalytics?: ProductAnalyticsRecorder;
@@ -63,6 +65,7 @@ function createSession(
   } = {},
 ): ChatSessionHandle {
   return createChatSession({
+    admission: options.admission,
     logging,
     config,
     modelResolver,
@@ -118,6 +121,43 @@ function createFakeChild(
 }
 
 describe('ChatSession lifecycle', () => {
+  it('fences root child creation at cutoff and tracks admitted child startup through completion', async () => {
+    const admission = new AdmissionGate();
+    const startup = Promise.withResolvers<void>();
+    const child = createFakeChild(() => startup.promise);
+    const factory = vi.fn(() => child);
+    const session = createSession({ admission, sessionFactory: factory });
+    await session.start();
+    const parent = admission.admitRoot();
+    const preparing = admission.prepare();
+    const options = {
+      name: 'consult',
+      extensionIdentifier: 'consult',
+      extensions: [],
+      basePrompt: '',
+    };
+    await expect(session.createChildSession(options)).rejects.toThrow(
+      AdmissionRejectedError,
+    );
+    expect(factory).not.toHaveBeenCalled();
+    const creating = parent.run(() => session.createChildSession(options));
+    parent.release();
+    expect(child.start).toHaveBeenCalledOnce();
+    expect(admission.status()).toMatchObject({
+      state: 'draining',
+      activeWork: 1,
+    });
+    expect(child.close).not.toHaveBeenCalled();
+    startup.resolve();
+    await creating;
+    const result = await preparing;
+    expect(result.outcome).toBe('quiescent');
+    if (result.outcome === 'quiescent')
+      admission.abort('cancelled', result.lease);
+    await child.close();
+    await session.close();
+    admission.close();
+  });
   it('reports idle immediately when no loop is active', async () => {
     const session = createSession();
 

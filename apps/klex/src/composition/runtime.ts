@@ -1,5 +1,12 @@
 import type { RootLogger } from '@stagewise/logger';
 
+import type {
+  AdmissionGate,
+  MaintenanceLease,
+  MaintenanceResult,
+} from '@/admission';
+import { AdmissionRejectedError } from '@/admission';
+
 /** Shutdown contract shared by runtime modules and adopted resources. */
 export interface ClosableResource {
   close(): Promise<void>;
@@ -64,6 +71,11 @@ export function runtimeStartupOrder(
 }
 
 export interface RuntimeHandle {
+  prepareMaintenance(options?: {
+    graceMs?: number;
+  }): Promise<MaintenanceResult>;
+  abortMaintenance(lease: MaintenanceLease): boolean;
+  closeForMaintenance(lease: MaintenanceLease): Promise<void>;
   /**
    * Closes runtime modules in explicit dependency order, then adopted resources
    * in reverse adoption order. Realtime and MCP stop before the session host so no
@@ -74,6 +86,7 @@ export interface RuntimeHandle {
 
 export interface StartRuntimeOptions {
   logging: RootLogger;
+  admission?: AdmissionGate;
   /**
    * Resources started before the runtime, in start order. The runtime closes
    * them after its own modules but never on a startup failure — the caller
@@ -115,8 +128,29 @@ export async function startRuntime(
     ...(options.adopted ?? []).toReversed(),
   ];
   let closing: Promise<void> | undefined;
+  const close = () => {
+    const state = options.admission?.status().state;
+    if (state === 'draining' || state === 'quiescent')
+      throw new AdmissionRejectedError();
+    options.admission?.close();
+    closing ??= closeInOrder(shutdownResources, logger);
+    return closing;
+  };
   return {
-    close: () => (closing ??= closeInOrder(shutdownResources, logger)),
+    close,
+    prepareMaintenance: (prepareOptions) => {
+      if (!options.admission)
+        throw new Error('Admission gate is not configured');
+      return options.admission.prepare(prepareOptions);
+    },
+    abortMaintenance: (lease) =>
+      options.admission?.abort('Maintenance cancelled', lease) ?? false,
+    closeForMaintenance: (lease) => {
+      if (!options.admission)
+        throw new Error('Admission gate is not configured');
+      options.admission.consume(lease);
+      return close();
+    },
   };
 }
 

@@ -6,6 +6,7 @@ import type {
   RealtimeMediaNotification,
 } from '@stagewise/mcp-extension-realtime-media';
 
+import { AdmissionGate } from '@/admission';
 import type {
   Mcp,
   McpRealtimeMediaAvailabilityListener,
@@ -170,6 +171,7 @@ function ended(sessionId = 'session-1'): RealtimeMediaNotification {
 }
 
 function setup(options?: {
+  admission?: AdmissionGate;
   mcp?: ReturnType<typeof createMcpHarness>;
   host?: DeterministicConversationHost;
   now?: () => number;
@@ -179,6 +181,7 @@ function setup(options?: {
   const processorFactory = createDeterministicEchoProcessorFactory();
   const host = options?.host ?? createDeterministicConversationHost();
   const coordinator = createRealtimeSessionCoordinator({
+    admission: options?.admission,
     logging,
     mcp: mcpHarness.mcp,
     mediaTransportConnector: connector,
@@ -191,6 +194,78 @@ function setup(options?: {
 }
 
 describe('realtime session coordinator', () => {
+  it('rejects post-cutoff offers before acquisition or remote acceptance', async () => {
+    const admission = new AdmissionGate();
+    const { coordinator, mcpHarness, host } = setup({ admission });
+    await coordinator.start();
+    const result = await admission.prepare();
+    if (result.outcome !== 'quiescent') throw new Error('Expected quiescence');
+    await mcpHarness.notify(offered());
+    expect(mcpHarness.rejectRealtimeMediaSession).toHaveBeenCalledWith(
+      'voice',
+      'session-1',
+    );
+    expect(mcpHarness.acceptRealtimeMediaSession).not.toHaveBeenCalled();
+    expect(host.requests).toHaveLength(0);
+    admission.abort('cancelled', result.lease);
+    await coordinator.close();
+    admission.close();
+  });
+
+  it('aborts maintenance on grace expiry and lets the same active audio stream continue', async () => {
+    const admission = new AdmissionGate({ graceMs: 30 });
+    const { coordinator, mcpHarness, connector, processorFactory, host } =
+      setup({ admission });
+    await coordinator.start();
+    await mcpHarness.notify(offered());
+    const transport = await connector.nextTransport();
+    const processor = await processorFactory.nextProcessor();
+    const lease = await host.nextLease();
+    const draining = admission.prepare();
+    await transport.inject(frame(1));
+    await expect(transport.receiveSent()).resolves.toEqual(frame(1));
+    expect((await draining).outcome).toBe('aborted');
+    expect(admission.status().state).toBe('open');
+    expect(coordinator.getActiveSessionCount()).toBe(1);
+    expect(transport.closeCount).toBe(0);
+    expect(processor.closeCount).toBe(0);
+    expect(lease.releaseCount).toBe(0);
+    expect(mcpHarness.endRealtimeMediaSession).not.toHaveBeenCalled();
+    await transport.inject(frame(2));
+    await expect(transport.receiveSent()).resolves.toEqual(frame(2));
+    await mcpHarness.notify(ended());
+    await vi.waitFor(() => expect(coordinator.getActiveSessionCount()).toBe(0));
+    expect(admission.status().activeWork).toBe(0);
+    const ready = await admission.prepare();
+    expect(ready.outcome).toBe('quiescent');
+    await coordinator.close();
+    admission.close();
+  });
+
+  it('tracks a pre-cutoff offer while its acceptance is in flight', async () => {
+    const admission = new AdmissionGate({ graceMs: 20 });
+    const accepting = deferred<RealtimeMediaClientAcceptResult>();
+    const mcpHarness = createMcpHarness({ accept: () => accepting.promise });
+    const { coordinator, connector, processorFactory } = setup({
+      admission,
+      mcp: mcpHarness,
+    });
+    await coordinator.start();
+    await mcpHarness.notify(offered());
+    await vi.waitFor(() =>
+      expect(mcpHarness.acceptRealtimeMediaSession).toHaveBeenCalledOnce(),
+    );
+    expect((await admission.prepare()).outcome).toBe('aborted');
+    expect(coordinator.getActiveSessionCount()).toBe(1);
+    expect(mcpHarness.endRealtimeMediaSession).not.toHaveBeenCalled();
+    accepting.resolve({ transport: { kind: 'livekit-room', descriptor } });
+    await connector.nextTransport();
+    await processorFactory.nextProcessor();
+    await mcpHarness.notify(ended());
+    await vi.waitFor(() => expect(coordinator.getActiveSessionCount()).toBe(0));
+    await coordinator.close();
+    admission.close();
+  });
   afterEach(() => {
     vi.restoreAllMocks();
     setTelemetryActivityEnabled(false);

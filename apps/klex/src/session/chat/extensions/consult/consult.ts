@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import type { ToolSet } from 'ai';
 import z from 'zod';
 
+import type { WorkLease } from '@/admission';
 import {
   createTranscriptHistoryView,
   LINES_FORMAT_PROMPT,
@@ -106,6 +107,7 @@ function sessionChanges(
 }
 
 type ConsultEntry = {
+  work?: WorkLease;
   child: ChildSessionHandle;
   generationId: string;
   reportCount: number;
@@ -304,6 +306,7 @@ class ConsultExtension implements Extension {
     if (this.deps.config.getModelSelection('consult').length === 0) {
       return { reason: 'no-model', status: 'failed' };
     }
+    const work = this.deps.admission?.admit();
     const handle = this.allocateHandle();
     const generationId = randomUUID();
 
@@ -326,6 +329,7 @@ class ConsultExtension implements Extension {
         },
       });
     } catch (error) {
+      work?.release();
       this.releaseHandle(handle);
       this.deps.logger.error({ error, handle }, 'Consult child start failed');
       return { reason: 'child-start-failed', status: 'failed' };
@@ -334,6 +338,7 @@ class ConsultExtension implements Extension {
       const closed = await this.closeChildBestEffort(handle, child);
       if (!closed) {
         this.entries.set(handle, {
+          work,
           child,
           generationId,
           reportCount: 0,
@@ -341,10 +346,12 @@ class ConsultExtension implements Extension {
           status: 'finished',
         });
       }
+      if (closed) work?.release();
       return { reason: 'extension-closed', status: 'failed' };
     }
 
     const entry: ConsultEntry = {
+      work,
       child,
       generationId,
       reportCount: 0,
@@ -526,8 +533,10 @@ class ConsultExtension implements Extension {
   }
 
   private deleteEntry(handle: string): boolean {
+    const work = this.entries.get(handle)?.work;
     const deleted = this.entries.delete(handle);
     if (deleted) this.releaseHandle(handle);
+    if (deleted) work?.release();
     return deleted;
   }
 

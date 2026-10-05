@@ -54,6 +54,12 @@ export interface JsonStoreDefinition extends StoreDefinitionBase {
 export interface SqliteStoreDefinition extends StoreDefinitionBase {
   kind: 'sqlite';
   createIfMissing: boolean;
+  /**
+   * PRAGMA statements executed one by one before `initSql` when the database
+   * is created. Used for settings that only take effect on an empty database,
+   * such as `auto_vacuum`. Never re-run on existing stores.
+   */
+  initPragmas?: readonly string[];
   initSql: string;
   migrations: readonly SqliteMigration[];
   validate?: (client: Client) => Promise<void>;

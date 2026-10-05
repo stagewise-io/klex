@@ -49,6 +49,7 @@ import type {
   Usage,
   UsagePair,
 } from '@/session/types';
+import type { SessionHistory, SessionHistoryRecorder } from '@/session-history';
 import type { TelemetryMetrics } from '@/telemetry-metrics';
 
 import {
@@ -119,6 +120,11 @@ export interface ChatSessionDependencies {
    * to the parent trace.
    */
   parentSpanContext?: SpanContext;
+  /**
+   * Write-only transcript persistence. The store is never read back into
+   * the session; `messages` stays the runtime source of truth.
+   */
+  sessionHistory?: SessionHistory;
 }
 
 function runtimeStateValue(state: SessionRuntimeState): number {
@@ -189,6 +195,17 @@ class ChatSessionModule implements AgentSession {
   private pendingImmediate: ExtendedUIMessage[] = [];
 
   readonly sessionId: string;
+
+  /**
+   * Unique per instance. The default session reuses `sessionId` across
+   * replacements, so transcript persistence keys on this id instead.
+   */
+  readonly instanceId: string = randomUUID();
+
+  private readonly transcriptRecorder: SessionHistoryRecorder | undefined;
+
+  /** Recorded as the transcript end reason on close. */
+  private endReason = 'closed';
 
   private readonly sessionSpan: Span;
 
@@ -271,9 +288,23 @@ class ChatSessionModule implements AgentSession {
       telemetryMetrics?: TelemetryMetrics;
       productAnalytics?: ProductAnalyticsRecorder;
       parentSpanContext?: SpanContext;
+      sessionHistory?: SessionHistory;
     },
   ) {
     this.sessionId = deps.sessionContext.sessionId;
+    this.transcriptRecorder = deps.sessionHistory?.openRecorder({
+      instanceId: this.instanceId,
+      sessionId: this.sessionId,
+      kind: deps.sessionContext.kind,
+      name: deps.sessionContext.name,
+      ...(deps.sessionContext.parentInstanceId
+        ? { parentInstanceId: deps.sessionContext.parentInstanceId }
+        : {}),
+      ...(deps.sessionContext.extensionIdentifier
+        ? { extensionIdentifier: deps.sessionContext.extensionIdentifier }
+        : {}),
+      createdAt: new Date().toISOString(),
+    });
     // Create an independent root span named `session {name}` that lives for
     // the entire session lifetime. Main, god, and extension-owned child
     // sessions share this naming and attribute scheme; each gets its own
@@ -419,6 +450,7 @@ class ChatSessionModule implements AgentSession {
         const index = this.messages.findIndex((m) => m.id === afterMessageId);
         if (index === -1) return false;
         this.messages.splice(index + 1, 0, message);
+        this.scheduleTranscriptSync();
         return true;
       },
       inbox: this.sessionInbox,
@@ -763,6 +795,7 @@ class ChatSessionModule implements AgentSession {
       this.pendingImmediate.push(message);
     } else {
       this.messages.push(message);
+      this.scheduleTranscriptSync();
     }
 
     // While a lease owns the generation lane, the event is recorded in
@@ -791,7 +824,10 @@ class ChatSessionModule implements AgentSession {
     const message = this.inboxEventMessage(event);
     const historyIndex = this.messages.length;
     this.messages.push(message);
-    if (this.leaseManager.forward(event, false)) return true;
+    if (this.leaseManager.forward(event, false)) {
+      this.scheduleTranscriptSync();
+      return true;
+    }
     this.messages.splice(historyIndex, 1);
     return false;
   };
@@ -806,6 +842,7 @@ class ChatSessionModule implements AgentSession {
       this.pendingImmediate.push(message);
     } else {
       this.messages.push(message);
+      this.scheduleTranscriptSync();
     }
 
     // Critical urgency: abort the current generation immediately.
@@ -828,7 +865,14 @@ class ChatSessionModule implements AgentSession {
       this.messages.push(...this.pendingImmediate);
       this.pendingImmediate = [];
     }
+    // Also the post-step commit point, so sync even without pending input.
+    this.scheduleTranscriptSync();
   };
+
+  /** Coalesced, non-throwing transcript persistence. */
+  private scheduleTranscriptSync(): void {
+    this.transcriptRecorder?.scheduleSync(() => this.messages);
+  }
 
   // ---------------------------------------------------------------------------
   // Generation-lane leasing — the chat loop and a leased interaction mode
@@ -958,6 +1002,7 @@ class ChatSessionModule implements AgentSession {
   private async commitLeaseEvent(event: RealtimeCommitEvent): Promise<void> {
     if (this._status === 'terminated') return;
     this.messages.push(toCanonicalMessage(event));
+    this.scheduleTranscriptSync();
   }
 
   private onNewInput = (urgency: SessionInboxUrgency): void => {
@@ -1501,6 +1546,15 @@ class ChatSessionModule implements AgentSession {
       try {
         await this.extensionHandler.close();
       } finally {
+        // Final sync and end marker. Persistence must never block cleanup.
+        await this.transcriptRecorder
+          ?.end(this.endReason)
+          .catch((error: unknown) => {
+            this.deps.logger.error(
+              { sessionId: this.sessionId, error },
+              'Session transcript end failed',
+            );
+          });
         // Cleanup must finish even when an extension (for example, the
         // episodic writer) rejects during shutdown. Otherwise the terminated
         // session remains registered and blocks its replacement.
@@ -1570,6 +1624,7 @@ class ChatSessionModule implements AgentSession {
    * unrecoverable, not during owner-initiated graceful shutdown.
    */
   private async terminate(reason: string): Promise<void> {
+    this.endReason = `terminated: ${reason}`;
     this.leaseManager.revoke('default-session-terminated');
 
     this.sessionInbox.close();
@@ -1640,6 +1695,7 @@ class ChatSessionModule implements AgentSession {
       name: options.name,
       sessionId: childSessionId,
       parentId: this.sessionId,
+      parentInstanceId: this.instanceId,
       extensionIdentifier: options.extensionIdentifier,
     };
 
@@ -1728,5 +1784,6 @@ export function createChatSession(
     modelPurpose: deps.modelPurpose,
     basePrompt: deps.basePrompt,
     parentSpanContext: deps.parentSpanContext,
+    sessionHistory: deps.sessionHistory,
   });
 }

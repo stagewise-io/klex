@@ -41,6 +41,7 @@ function createModules(options: {
   });
   return {
     modelCallLogger: make('model-call-logger'),
+    sessionHistory: make('session-history'),
     adminApi: make('admin-api'),
     cloudConnectivity: make('cloud-connectivity'),
     sessionHost: make('session-host'),
@@ -63,6 +64,7 @@ describe('runtime composition', () => {
 
     expect(order).toEqual([
       'model-call-logger',
+      'session-history',
       'admin-api',
       'cloud-connectivity',
       'session-host',
@@ -112,8 +114,13 @@ describe('runtime composition', () => {
       'cloud-connectivity',
       'admin-api',
       'model-call-logger',
+      'session-history',
       'local-data',
     ]);
+    // Sessions flush their final transcript before the store closes.
+    expect(recorded.closes.indexOf('session-host')).toBeLessThan(
+      recorded.closes.indexOf('session-history'),
+    );
     // Event ingress and realtime sessions stop before the default session.
     expect(recorded.closes.indexOf('mcp')).toBeLessThan(
       recorded.closes.indexOf('session-host'),
@@ -133,7 +140,7 @@ describe('runtime composition', () => {
     await Promise.all([runtime.close(), runtime.close()]);
     await runtime.close();
 
-    expect(recorded.closes).toHaveLength(8);
+    expect(recorded.closes).toHaveLength(9);
   });
 
   it('unwinds started modules and rethrows when one fails to start', async () => {
@@ -150,6 +157,7 @@ describe('runtime composition', () => {
 
     expect(recorded.starts).toEqual([
       'model-call-logger',
+      'session-history',
       'admin-api',
       'cloud-connectivity',
       'session-host',
@@ -161,6 +169,7 @@ describe('runtime composition', () => {
       'session-host',
       'cloud-connectivity',
       'admin-api',
+      'session-history',
       'model-call-logger',
     ]);
     // Rollback of pre-runtime resources stays with their owner.
@@ -193,6 +202,7 @@ describe('runtime composition', () => {
       'cloud-connectivity',
       'admin-api',
       'model-call-logger',
+      'session-history',
     ]);
   });
 });

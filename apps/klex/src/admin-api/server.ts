@@ -9,6 +9,7 @@ import type { Introspector } from '@/introspection';
 import type { Mcp } from '@/mcp';
 import type { ModelCallLogger } from '@/model-call-logger';
 import type { ProviderRegistry } from '@/provider-registry';
+import type { SessionHistory } from '@/session-history';
 
 import { createErrorHandler, notFoundHandler, validationHook } from './errors';
 import {
@@ -81,6 +82,14 @@ import {
   updateProviderRoute,
 } from './routes/v1/providers';
 import {
+  getSessionHistory,
+  getSessionHistoryMessages,
+  getSessionHistoryMessagesRoute,
+  getSessionHistoryRoute,
+  listSessionHistory,
+  listSessionHistoryRoute,
+} from './routes/v1/sessions';
+import {
   getAgentIdentity,
   getAgentIdentityRoute,
   getModelSelection,
@@ -102,6 +111,7 @@ export interface AdminAppDependencies {
   providerRegistry: ProviderRegistry;
   cloudConnectivity: CloudConnectivity;
   godMessages: GodMessages;
+  sessionHistory: SessionHistory;
   logger: ModuleLogger;
   localPort: number | undefined;
   timezone: string;
@@ -153,6 +163,9 @@ export function createAdminApp(deps: AdminAppDependencies) {
     .openapi(getGodSessionRoute, getGodSession(deps))
     .openapi(getGodMessagesRoute, getGodMessages(deps))
     .openapi(resetGodSessionRoute, resetGodSession(deps))
+    .openapi(listSessionHistoryRoute, listSessionHistory(deps))
+    .openapi(getSessionHistoryRoute, getSessionHistory(deps))
+    .openapi(getSessionHistoryMessagesRoute, getSessionHistoryMessages(deps))
     .openapi(getUsageRoute, getUsage(deps))
     .openapi(getProviderTypesRoute, getProviderTypes(deps))
     .openapi(canAddProviderRoute, canAddProvider(deps))

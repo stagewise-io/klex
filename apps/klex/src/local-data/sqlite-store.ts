@@ -121,6 +121,11 @@ export async function initializeSqliteStore(
   await mkdir(dirname(filePath), { recursive: true, mode: 0o700 });
   const client = createClient({ url: `file:${filePath}` });
   try {
+    // `executeMultiple` does not reliably apply PRAGMAs, and some (such as
+    // `auto_vacuum`) only take effect before the first table exists.
+    for (const pragma of definition.initPragmas ?? []) {
+      await client.execute(pragma);
+    }
     await client.executeMultiple(definition.initSql);
     await writeSqliteMetadata(client, definition, klexVersion);
     await definition.validate?.(client);

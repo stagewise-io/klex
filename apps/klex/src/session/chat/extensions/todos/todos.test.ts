@@ -538,6 +538,31 @@ describe('Todos extension', () => {
     ]);
   });
 
+  it('delivers a due reminder while a step is active', async () => {
+    const { deps, sendMessage } = createMockDeps();
+    const ext = createTodosExt.create(deps);
+    const created = await callTool(ext, 'createTodo', {
+      description: 'Check Codex PR',
+      reminderTime: '2025-03-15T10:00:01Z',
+    });
+
+    await ext.onStepStart?.();
+    await vi.advanceTimersByTimeAsync(1_000);
+    await vi.waitFor(() => expect(sendMessage).toHaveBeenCalledTimes(1));
+
+    expect(sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        parts: [
+          expect.objectContaining({
+            type: 'data-todos',
+            data: expect.objectContaining({ reminderTodoId: created.id }),
+          }),
+        ],
+      }),
+      SessionInboxUrgency.Default,
+    );
+  });
+
   // -------------------------------------------------------------------------
   // clearTodo
   // -------------------------------------------------------------------------

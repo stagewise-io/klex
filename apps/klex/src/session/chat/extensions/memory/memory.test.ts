@@ -13,7 +13,7 @@ import type {
   ExtensionDeps,
   StepCompleteEvent,
 } from '../extension-api';
-import { EpisodeStore } from './episodes';
+import { type EpisodeRecorder, EpisodeStore } from './episodes';
 import { outputTexts } from './episodes/test-utils';
 import { createMemoryExt } from './memory';
 
@@ -102,10 +102,131 @@ async function harness(admission?: AdmissionGate) {
       | undefined;
     return state?.recorder?.cursor ?? null;
   };
-  return { extension, history, recorded, cursor };
+  return { extension, history, recorded, cursor, logger };
 }
 
 describe('memory extension lifecycle', () => {
+  it('skips periodic ticks after cutoff even within an admitted context', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+    const admission = new AdmissionGate({ graceMs: 1_000 });
+    const { extension, history, cursor, logger } = await harness(admission);
+    await extension.onStart?.();
+    history.push(message('persisted', 'already recorded'));
+    await extension.onStepComplete?.(success);
+    expect(cursor()).toEqual({ id: 'persisted', index: 0 });
+    const flush = vi.spyOn(
+      (extension as Extension & { recorder: EpisodeRecorder }).recorder,
+      'flush',
+    );
+    const owner = admission.admitRoot();
+    const preparing = admission.prepare();
+    await owner.run(() => vi.advanceTimersByTimeAsync(30_000));
+    expect(admission.status()).toMatchObject({
+      state: 'draining',
+      activeWork: 1,
+      deferredWork: 0,
+      blockers: [],
+    });
+    owner.release();
+    expect((await preparing).outcome).toBe('quiescent');
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(admission.status()).toMatchObject({
+      state: 'quiescent',
+      deferredWork: 0,
+      blockers: [],
+    });
+    admission.close();
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(flush).not.toHaveBeenCalled();
+    expect(logger.error).not.toHaveBeenCalled();
+    await extension.onClose?.();
+  });
+
+  it.each(['success', 'failure', 'timeout'] as const)(
+    'owns a periodic flush admitted before cutoff until it settles: %s',
+    async (outcome) => {
+      vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+      const admission = new AdmissionGate({
+        graceMs: outcome === 'timeout' ? 20 : 1_000,
+      });
+      const { extension, history, recorded, logger } = await harness(admission);
+      await extension.onStart?.();
+      history.push(message('periodic', 'periodic memory'));
+      const barrier = Promise.withResolvers<void>();
+      void (
+        extension as Extension & {
+          serialize(action: () => Promise<void>): Promise<void>;
+        }
+      ).serialize(() => barrier.promise);
+      if (outcome === 'failure')
+        vi.spyOn(EpisodeStore.prototype, 'append').mockRejectedValueOnce(
+          new Error('periodic write failure'),
+        );
+      vi.advanceTimersByTime(30_000);
+      expect(admission.status().activeWork).toBe(1);
+      const preparing = admission.prepare();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(admission.status().activeWork).toBe(1);
+      expect(admission.status()).toMatchObject({
+        state: 'draining',
+        deferredWork: 0,
+        blockers: [],
+      });
+      if (outcome === 'timeout') {
+        expect(await preparing).toEqual({
+          outcome: 'aborted',
+          reason: 'Drain grace expired',
+        });
+        expect(admission.status().activeWork).toBe(1);
+      }
+      barrier.resolve();
+      expect((await preparing).outcome).toBe(
+        outcome === 'success' ? 'quiescent' : 'aborted',
+      );
+      await vi.waitFor(() => expect(admission.status().activeWork).toBe(0));
+      if (outcome === 'failure') {
+        expect(admission.status().blockers).toContain(
+          'Memory persistence is uncertain',
+        );
+        expect((await admission.prepare()).outcome).toBe('aborted');
+        expect(logger.error).toHaveBeenCalled();
+        expect(await recorded()).toEqual([]);
+      } else {
+        expect(logger.error).not.toHaveBeenCalled();
+        expect(await recorded()).toEqual(['periodic memory']);
+      }
+      admission.abort('test complete');
+      await extension.onClose?.();
+      admission.close();
+    },
+  );
+
+  it.each(['dirty', 'uncertain'] as const)(
+    'keeps %s unowned history fail-closed',
+    async (state) => {
+      const admission = new AdmissionGate();
+      const { extension, history } = await harness(admission);
+      await extension.onStart?.();
+      extension.onStepStart?.();
+      history.push(message('pending', 'unowned history'));
+      const inspection =
+        state === 'uncertain'
+          ? vi.spyOn(history, 'at').mockImplementation(() => {
+              throw new Error('history unavailable');
+            })
+          : undefined;
+      expect((await admission.prepare()).outcome).toBe('aborted');
+      expect(admission.status().blockers).toContain(
+        state === 'dirty'
+          ? 'Memory history awaits persistence'
+          : 'Participant safety is uncertain',
+      );
+      inspection?.mockRestore();
+      await extension.onClose?.();
+      admission.close();
+    },
+  );
+
   it.each(['success', 'failure', 'timeout'] as const)(
     'drains an owned flush during grace: %s',
     async (outcome) => {

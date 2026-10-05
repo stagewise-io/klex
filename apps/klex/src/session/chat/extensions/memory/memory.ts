@@ -2,7 +2,7 @@ import { join } from 'node:path';
 
 import { type ToolSet, tool } from 'ai';
 
-import type { WorkLease } from '@/admission';
+import { AdmissionRejectedError, type WorkLease } from '@/admission';
 
 import type {
   Extension,
@@ -97,20 +97,19 @@ class MemoryExt implements Extension {
       },
     );
     this.flushTimer = setInterval(() => {
-      if (
-        this.ownedFlushes > 0 &&
-        this.deps.admission?.status().state === 'draining'
-      )
-        return;
-      const run = () => {
-        if (this.closed || this.stepActive) return;
-        const operation = this.flushOwned();
-        void operation.catch((error) =>
+      if (this.closed || this.stepActive) return;
+      let work: WorkLease | undefined;
+      try {
+        work = this.deps.admission?.admitRoot();
+      } catch (error) {
+        if (error instanceof AdmissionRejectedError) return;
+        throw error;
+      }
+      void this.flushOwned(work)
+        .catch((error) =>
           this.deps.logger.error({ error }, 'Memory flush failed'),
-        );
-      };
-      if (this.deps.admission) this.deps.admission.background(this, run);
-      else run();
+        )
+        .finally(() => work?.release());
     }, EPISODE_FLUSH_INTERVAL_MS);
     this.flushTimer.unref();
     this.retrievalCoordinator = createMemoryRetrievalCoordinator(this.deps);

@@ -43,20 +43,55 @@ const BASE64_BLOCK_TYPES = new Set([
   'file-data',
 ]);
 
-const DATA_URL_PATTERN = /^data:([^;,]*)(?:;[^,]*)?;base64,/i;
+/**
+ * A string that is itself a `data:` URL, in any encoding. The header may
+ * not contain whitespace, so prose starting with "data: " is not matched.
+ */
+const WHOLE_DATA_URL = /^data:[^\s,]*,/i;
+
+/**
+ * A `data:` URL inside free-form text. The payload ends at whitespace, a
+ * quote, or a closing bracket; the lookbehind skips words like `metadata:`.
+ */
+const EMBEDDED_DATA_URL = /(?<![\w-])(data:[^\s,"'<>]*,)([^\s"'<>)\]]+)/gi;
 
 /** Guards against pathological nesting in persisted tool payloads. */
 const MAX_DEPTH = 64;
+
+const MAX_DEPTH_PLACEHOLDER = '[redacted, maximum depth exceeded]';
 
 function redacted(length: number): string {
   return `[redacted, ${length} bytes]`;
 }
 
 function redactString(value: string): string {
-  const match = DATA_URL_PATTERN.exec(value);
-  if (!match) return value;
-  const payloadLength = value.length - match[0].length;
-  return `${match[0]}${redacted(payloadLength)}`;
+  const whole = WHOLE_DATA_URL.exec(value);
+  if (whole) {
+    return `${whole[0]}${redacted(value.length - whole[0].length)}`;
+  }
+  if (!/data:/i.test(value)) return value;
+  return value.replace(
+    EMBEDDED_DATA_URL,
+    (_match, header: string, payload: string) =>
+      `${header}${redacted(payload.length)}`,
+  );
+}
+
+/**
+ * Defines an own enumerable property. Plain assignment of a stored own
+ * `__proto__` key would invoke the prototype setter and drop the field.
+ */
+function setOwn(
+  target: Record<string, unknown>,
+  key: string,
+  value: unknown,
+): void {
+  Object.defineProperty(target, key, {
+    value,
+    enumerable: true,
+    writable: true,
+    configurable: true,
+  });
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -65,12 +100,14 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 /**
  * Returns a copy of `value` with inline binary payloads replaced by a
- * `[redacted, N bytes]` placeholder: `data:` URLs, the `data` field of
- * image/audio/media blocks, and MCP embedded resource `blob`s.
+ * `[redacted, N bytes]` placeholder: `data:` URL payloads, the `data` field
+ * of image/audio/media blocks, and MCP embedded resource `blob`s. Subtrees
+ * beyond `MAX_DEPTH` are replaced entirely, never passed through.
  */
 function redactBinary(value: unknown, depth = 0): unknown {
   if (typeof value === 'string') return redactString(value);
-  if (depth >= MAX_DEPTH) return value;
+  if (typeof value !== 'object' || value === null) return value;
+  if (depth >= MAX_DEPTH) return MAX_DEPTH_PLACEHOLDER;
   if (Array.isArray(value)) {
     return value.map((item) => redactBinary(item, depth + 1));
   }
@@ -84,9 +121,9 @@ function redactBinary(value: unknown, depth = 0): unknown {
       typeof entry === 'string' &&
       ((key === 'data' && isBase64Block) || key === 'blob')
     ) {
-      result[key] = redacted(entry.length);
+      setOwn(result, key, redacted(entry.length));
     } else {
-      result[key] = redactBinary(entry, depth + 1);
+      setOwn(result, key, redactBinary(entry, depth + 1));
     }
   }
   return result;
@@ -101,10 +138,10 @@ function serializePart(
     if (key === 'type') continue;
     if (PROVIDER_METADATA_KEYS.has(key)) {
       // Opaque provider values are passed through untouched when requested.
-      if (options.includeProviderMetadata) result[key] = value;
+      if (options.includeProviderMetadata) setOwn(result, key, value);
       continue;
     }
-    result[key] = redactBinary(value);
+    setOwn(result, key, redactBinary(value));
   }
   return result;
 }

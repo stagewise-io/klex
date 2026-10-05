@@ -531,13 +531,16 @@ describe('LocalData', () => {
       `,
       migrations: [],
     });
-    const readAutoVacuum = async (directory: string): Promise<unknown> => {
+    const readPragma = async (
+      directory: string,
+      pragma: 'auto_vacuum' | 'user_version',
+    ): Promise<unknown> => {
       const client = createClient({
         url: `file:${join(directory, 'synthetic.sqlite')}`,
       });
       try {
-        const result = await client.execute('PRAGMA auto_vacuum');
-        return result.rows[0]?.auto_vacuum;
+        const result = await client.execute(`PRAGMA ${pragma}`);
+        return result.rows[0]?.[pragma];
       } finally {
         client.close();
       }
@@ -552,12 +555,14 @@ describe('LocalData', () => {
 
     const fresh = await temporaryDirectory();
     await start(fresh, ['PRAGMA auto_vacuum = INCREMENTAL']);
-    expect(Number(await readAutoVacuum(fresh))).toBe(2);
+    expect(Number(await readPragma(fresh, 'auto_vacuum'))).toBe(2);
 
+    // `auto_vacuum` cannot change once tables exist, so it cannot prove the
+    // pragmas were skipped. `user_version` would change if they ran.
     const existing = await temporaryDirectory();
     await start(existing);
-    await start(existing, ['PRAGMA auto_vacuum = INCREMENTAL']);
-    expect(Number(await readAutoVacuum(existing))).toBe(0);
+    await start(existing, ['PRAGMA user_version = 7']);
+    expect(Number(await readPragma(existing, 'user_version'))).toBe(0);
   });
 
   it.skipIf(process.platform === 'win32')(

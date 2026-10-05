@@ -123,15 +123,15 @@ Consumers own their presets. The line-format transcript preset (`createTranscrip
 
 Each `ChatSession` instance gets a random `instanceId` when it is constructed. The `id` is not unique enough: the default session reuses `sessionId = "default"` each time the host replaces it. When composed with `session-history`, the session opens a `SessionHistoryRecorder` with its kind, name, `parentInstanceId` (for child sessions), and extension identifier.
 
-Persistence is write-only from the session's point of view. The session never reads its transcript back, and the in-memory `messages` array stays the source of truth for model input. `scheduleTranscriptSync()` hands the recorder a getter and does not wait for the write. The recorder merges calls that arrive in quick succession, diffs the current array against the stored rows, and writes only what changed. Sync errors are logged and retried on the next sync. They never reach the run loop.
+Persistence is write-only from the session's point of view. The session never reads its transcript back, and the in-memory `messages` array stays the source of truth for model input. `scheduleTranscriptSync()` hands the recorder a getter and does not wait for the write. The recorder merges calls that arrive in quick succession, compares each message's content hash with the stored row, and writes only messages that changed. It compares content, not object identity, because history repair mutates older messages in place. Sync errors are logged and retried on the next sync. They never reach the run loop.
 
 Sync points are the moments when history is consistent:
 
 - After each step commits its response (`flushPendingImmediate`). This runs even when no pending input exists.
-- When inbox input is appended directly while the session is idle (immediate and deferred events).
+- When immediate inbox input is appended while the session is idle. Deferrable events are buffered in the inbox until the next turn drains them, so they are persisted at that turn's post-step flush, not on arrival. The exception is a deferred event that is forwarded to an active lease: it is appended and synced at once.
 - After history inserts from extensions, such as compaction summaries.
 - After a realtime lease commit.
-- On termination. The recorder does a final sync and records `endReason`. A store failure here is caught so that session cleanup still runs.
+- On termination. `close()` waits up to 5 seconds for an aborted turn to commit its last step (skipped when the loop itself terminates the session). Then the recorder does a final sync, retries it once if it failed, and records `endReason`. A store failure here is caught so that session cleanup still runs.
 
 On startup, any instance that has no end marker is marked as ended with reason `unclean_shutdown`. The size cap and eviction rules belong to `session-history`, not to the session.
 

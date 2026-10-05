@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+
 import {
   type Client,
   createClient,
@@ -83,8 +85,14 @@ export function resolveSessionHistoryMaxBytes(
 
 /** Per-instance write state. Only mutated on the store write queue. */
 class RecorderState implements SessionHistoryRecorder {
-  /** Message objects as of the last committed write, by `seq`. */
-  persisted: readonly ExtendedUIMessage[] = [];
+  /**
+   * Content hashes as of the last committed write, by `seq`. Content, not
+   * object identity, decides what is rewritten: history repair mutates
+   * older messages in place.
+   */
+  persistedHashes: string[] = [];
+  /** Message count as of the last committed write. */
+  persistedLength = 0;
   /** `persisted_at` values as of the last committed write, by `seq`. */
   persistedAt: string[] = [];
   /** Leading `seq` values removed by size-cap enforcement. */
@@ -127,6 +135,7 @@ class SessionHistoryModule implements SessionHistory {
   private closed = false;
   private queue: Promise<void> = Promise.resolve();
   private lastEnforcementAt = 0;
+  private enforcementTimer: ReturnType<typeof setTimeout> | null = null;
   private readonly liveRecorders = new Map<string, RecorderState>();
 
   constructor(
@@ -181,6 +190,10 @@ class SessionHistoryModule implements SessionHistory {
   async close(): Promise<void> {
     if (!this.started) return;
     this.started = false;
+    if (this.enforcementTimer) {
+      clearTimeout(this.enforcementTimer);
+      this.enforcementTimer = null;
+    }
     // Tasks may enqueue more work (a concurrent `end()`, enforcement after a
     // committed sync); drain until the queue stops growing.
     let current: Promise<void>;
@@ -236,7 +249,14 @@ class SessionHistoryModule implements SessionHistory {
     const getMessages = recorder.lastGetter;
     recorder.pending = null;
     this.liveRecorders.delete(recorder.instanceId);
-    if (getMessages) await this.syncRecorder(recorder, getMessages);
+    if (getMessages) {
+      await this.syncRecorder(recorder, getMessages);
+      // A failed sync leaves its getter pending. Later schedules are ignored
+      // after `end()`, so retry once before the end marker is written.
+      const retry = recorder.pending;
+      recorder.pending = null;
+      if (retry) await this.syncRecorder(recorder, retry);
+    }
     const client = this.client;
     if (!client || !recorder.inserted) return;
     try {
@@ -282,17 +302,10 @@ class SessionHistoryModule implements SessionHistory {
   ): Promise<boolean> {
     if (snapshot.length === 0 && !recorder.inserted) return false;
 
-    const previous = recorder.persisted;
-    const shared = Math.min(previous.length, snapshot.length);
-    let first = 0;
-    while (first < shared && previous[first] === snapshot[first]) first++;
-    // Always rewrite the last message to capture in-place mutations.
-    if (snapshot.length > 0) first = Math.min(first, snapshot.length - 1);
-    const start = Math.max(first, recorder.trimmed);
-
     const now = this.nowIso();
     const { meta } = recorder;
     const statements: InStatement[] = [];
+    let changed = !recorder.inserted;
     if (!recorder.inserted) {
       statements.push({
         sql: `INSERT INTO sessions (
@@ -312,26 +325,33 @@ class SessionHistoryModule implements SessionHistory {
         ],
       });
     }
-    statements.push({
-      sql: 'DELETE FROM messages WHERE instance_id = ? AND seq >= ?',
-      args: [meta.instanceId, start],
-    });
 
-    const persistedAt = recorder.persistedAt.slice(0, start);
-    for (let seq = start; seq < snapshot.length; seq++) {
+    // Messages below `trimmed` were evicted by the size cap; never restore them.
+    const hashes: string[] = [];
+    const persistedAt: string[] = [];
+    for (let seq = recorder.trimmed; seq < snapshot.length; seq++) {
       const message = snapshot[seq];
       if (!message) continue;
       const content = JSON.stringify(message);
+      const hash = createHash('sha1').update(content).digest('base64');
+      hashes[seq] = hash;
       const previousAt = recorder.persistedAt[seq];
-      const at =
-        previous[seq] === message && previousAt !== undefined
-          ? previousAt
-          : now;
-      persistedAt[seq] = at;
+      if (recorder.persistedHashes[seq] === hash && previousAt !== undefined) {
+        persistedAt[seq] = previousAt;
+        continue;
+      }
+      persistedAt[seq] = now;
+      changed = true;
       statements.push({
         sql: `INSERT INTO messages (
                 instance_id, seq, message_id, role, content, byte_size, persisted_at
-              ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+              ) VALUES (?, ?, ?, ?, ?, ?, ?)
+              ON CONFLICT (instance_id, seq) DO UPDATE SET
+                message_id = excluded.message_id,
+                role = excluded.role,
+                content = excluded.content,
+                byte_size = excluded.byte_size,
+                persisted_at = excluded.persisted_at`,
         args: [
           meta.instanceId,
           seq,
@@ -339,10 +359,19 @@ class SessionHistoryModule implements SessionHistory {
           message.role,
           content,
           Buffer.byteLength(content, 'utf8'),
-          at,
+          now,
         ],
       });
     }
+    if (recorder.persistedLength > snapshot.length) {
+      changed = true;
+      statements.push({
+        sql: 'DELETE FROM messages WHERE instance_id = ? AND seq >= ?',
+        args: [meta.instanceId, snapshot.length],
+      });
+    }
+    if (!changed) return false;
+
     statements.push({
       sql: `UPDATE sessions SET
               message_count = ?,
@@ -355,7 +384,8 @@ class SessionHistoryModule implements SessionHistory {
     });
 
     await client.batch(statements, 'write');
-    recorder.persisted = snapshot;
+    recorder.persistedHashes = hashes;
+    recorder.persistedLength = snapshot.length;
     recorder.persistedAt = persistedAt;
     recorder.inserted = true;
     return true;
@@ -363,9 +393,21 @@ class SessionHistoryModule implements SessionHistory {
 
   private maybeScheduleEnforcement(): void {
     const now = this.deps.now().getTime();
-    if (now - this.lastEnforcementAt < ENFORCEMENT_THROTTLE_MS) return;
-    this.lastEnforcementAt = now;
-    void this.enqueue(() => this.runEnforcement());
+    const wait = this.lastEnforcementAt + ENFORCEMENT_THROTTLE_MS - now;
+    if (wait <= 0) {
+      this.lastEnforcementAt = now;
+      void this.enqueue(() => this.runEnforcement());
+      return;
+    }
+    // Throttled: defer instead of skipping, so a write that crosses the cap
+    // is enforced even when the session goes idle afterwards.
+    if (this.enforcementTimer) return;
+    this.enforcementTimer = setTimeout(() => {
+      this.enforcementTimer = null;
+      if (!this.started) return;
+      void this.enqueue(() => this.runEnforcement());
+    }, wait);
+    this.enforcementTimer.unref();
   }
 
   /** Must run on the write queue. Never throws. */
@@ -426,7 +468,9 @@ class SessionHistoryModule implements SessionHistory {
       await client.batch(statements, 'write');
     }
 
-    // 2. Oldest messages of live sessions, keeping each session's newest one.
+    // 2. Oldest messages of live sessions. This can include a session's
+    // newest message: one message larger than the cap must not pin the store
+    // above it.
     if (total > target) {
       const live = await client.execute(
         `SELECT instance_id FROM sessions WHERE ended_at IS NULL
@@ -439,10 +483,9 @@ class SessionHistoryModule implements SessionHistory {
           const result = await client.execute({
             sql: `SELECT seq, byte_size FROM messages
                   WHERE instance_id = ?
-                    AND seq < (SELECT MAX(seq) FROM messages WHERE instance_id = ?)
                   ORDER BY seq ASC
                   LIMIT ?`,
-            args: [instanceId, instanceId, EVICTION_BATCH_SIZE],
+            args: [instanceId, EVICTION_BATCH_SIZE],
           });
           if (result.rows.length === 0) break;
           let lastSeq = -1;

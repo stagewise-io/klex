@@ -85,6 +85,9 @@ import {
  */
 const MAX_CONSECUTIVE_FAILURES = 5;
 
+/** Upper bound for an aborted loop to settle before the transcript ends. */
+const LOOP_SETTLE_TIMEOUT_MS = 5_000;
+
 export interface ChatSessionDependencies {
   logging: RootLogger;
   modelResolver: ProviderModelResolver;
@@ -156,6 +159,10 @@ class ChatSessionModule implements AgentSession {
   private backoffManager: BackoffManager;
 
   private loopActive = false;
+  /** The running loop, so close() can let an aborted turn settle. */
+  private loopRun: Promise<void> | null = null;
+  /** Set by terminate(), which runs inside the loop it would wait for. */
+  private selfTerminating = false;
 
   private currentTurn: Turn | null = null;
 
@@ -913,7 +920,7 @@ class ChatSessionModule implements AgentSession {
     this.sessionSpan.addEvent('session.generation_lane_resumed', {});
     if (this._status === 'terminated') return;
     if (this.hasPendingInput || !this.sessionInbox.isEmpty()) {
-      void this.runLoop();
+      this.startLoop();
     }
   }
 
@@ -1029,9 +1036,33 @@ class ChatSessionModule implements AgentSession {
     if (!this.loopActive) {
       this.hasPendingInput = true;
       if (this.laneSuspended) return;
-      void this.runLoop();
+      this.startLoop();
     }
   };
+
+  private startLoop(): void {
+    if (this.loopActive) return;
+    const run = this.runLoop();
+    this.loopRun = run;
+    const clear = (): void => {
+      if (this.loopRun === run) this.loopRun = null;
+    };
+    void run.then(clear, clear);
+  }
+
+  /** Waits, bounded, for an aborted loop to commit its last step. */
+  private async waitForLoopToSettle(): Promise<void> {
+    const run = this.loopRun;
+    if (!run || this.selfTerminating) return;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    await Promise.race([
+      run.catch(() => undefined),
+      new Promise<void>((resolve) => {
+        timer = setTimeout(resolve, LOOP_SETTLE_TIMEOUT_MS);
+      }),
+    ]);
+    clearTimeout(timer);
+  }
 
   /**
    * The main turn loop. Creates a Turn module per iteration so that the
@@ -1547,6 +1578,9 @@ class ChatSessionModule implements AgentSession {
         await this.extensionHandler.close();
       } finally {
         // Final sync and end marker. Persistence must never block cleanup.
+        // An aborted step can still commit; let it land before the recorder
+        // ends, because later schedules are ignored.
+        if (this.transcriptRecorder) await this.waitForLoopToSettle();
         await this.transcriptRecorder
           ?.end(this.endReason)
           .catch((error: unknown) => {
@@ -1625,6 +1659,7 @@ class ChatSessionModule implements AgentSession {
    */
   private async terminate(reason: string): Promise<void> {
     this.endReason = `terminated: ${reason}`;
+    this.selfTerminating = true;
     this.leaseManager.revoke('default-session-terminated');
 
     this.sessionInbox.close();

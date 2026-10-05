@@ -76,7 +76,7 @@ Graceful shutdown terminates watcher process groups. Abrupt daemon death, includ
 
 Limits are 32 running watchers per principal, a 1-second to 7-day lifetime, a 16 KiB command, and a 200-character title. Starting a watcher or tracked shell fails when the principal already has 256 pending events. Existing completions are retained even if they take the queue beyond that threshold. Unacknowledged events expire after 7 days, with a warning per discarded event.
 
-A second local server sharing a live instance's data directory runs with a memory-only queue and logs a warning. Its notifications cannot survive restart. Give concurrent servers separate data directories when durable recovery is required.
+A second local server sharing a live instance's data directory runs with a memory-only queue and logs a warning. Its notifications cannot survive restart. Give concurrent servers separate data directories when durable recovery is required. Empty or malformed PID locks are not reclaimed because their ownership is uncertain. Stale PID-lock reclamation is serialized by an exclusive `notifications/lock-recovery` directory. If a crash leaves an ambiguous lock or recovery directory, stop all servers using that data directory before manually removing the lock artifacts; until then, affected startups use memory-only notifications.
 
 ## Development
 

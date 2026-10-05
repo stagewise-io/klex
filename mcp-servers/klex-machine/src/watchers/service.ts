@@ -29,7 +29,8 @@ interface RunningWatcher {
   info: WatcherInfo;
   child?: ChildProcess;
   output: string;
-  timer?: ReturnType<typeof setInterval>;
+  timer?: ReturnType<typeof setTimeout>;
+  startup?: Promise<void>;
   done: boolean;
 }
 
@@ -79,54 +80,70 @@ export class WatcherService {
     const watcher: RunningWatcher = { info, output: '', done: false };
     // Reserve before awaiting persistence so concurrent creates respect the bound.
     this.#running.set(info.id, watcher);
-    try {
-      await this.hooks.onStart(info);
-    } catch (error) {
-      this.#running.delete(info.id);
-      throw error;
-    }
-    if (this.#closed || watcher.done) return { ...info };
-    try {
-      const child = spawn(options.command, {
-        shell: true,
-        cwd: info.cwd,
-        env: { ...process.env, ...options.env },
-        stdio: ['ignore', 'pipe', 'pipe'],
-        detached: process.platform !== 'win32',
-      });
-      watcher.child = child;
-      info.pid = child.pid ?? null;
-      for (const stream of [child.stdout, child.stderr]) {
-        const decoder = new StringDecoder('utf8');
-        stream?.on('data', (chunk: Buffer) =>
-          this.#append(watcher, decoder.write(chunk)),
-        );
-        stream?.on('end', () => this.#append(watcher, decoder.end()));
+    watcher.startup = (async () => {
+      try {
+        await this.hooks.onStart(info);
+      } catch (error) {
+        this.#running.delete(info.id);
+        throw error;
       }
-      child.once('error', (error) => {
-        this.#append(watcher, error.message);
-        void this.#finish(watcher, 'failed', null, null);
-      });
-      child.once('close', (code, signal) => {
-        void this.#finish(
+      if (this.#closed || watcher.done) {
+        await this.hooks.onCancel(info.id);
+        throw new Error('Watcher creation interrupted before starting');
+      }
+      if (this.now() >= Date.parse(info.deadlineAt)) {
+        await this.#finish(watcher, 'timed_out', null, null);
+        return;
+      }
+      try {
+        const child = spawn(options.command, {
+          shell: true,
+          cwd: info.cwd,
+          env: { ...process.env, ...options.env },
+          stdio: ['ignore', 'pipe', 'pipe'],
+          detached: process.platform !== 'win32',
+        });
+        watcher.child = child;
+        info.pid = child.pid ?? null;
+        for (const stream of [child.stdout, child.stderr]) {
+          const decoder = new StringDecoder('utf8');
+          stream?.on('data', (chunk: Buffer) =>
+            this.#append(watcher, decoder.write(chunk)),
+          );
+          stream?.on('end', () => this.#append(watcher, decoder.end()));
+        }
+        child.once('error', (error) => {
+          this.#append(watcher, error.message);
+          void this.#finish(watcher, 'failed', null, null);
+        });
+        child.once('close', (code, signal) => {
+          void this.#finish(
+            watcher,
+            code === 0 && !signal ? 'condition_met' : 'failed',
+            code,
+            signal,
+          );
+        });
+        const checkDeadline = () => {
+          if (watcher.done) return;
+          const remaining = Date.parse(info.deadlineAt) - this.now();
+          if (remaining <= 0) {
+            void this.#finish(watcher, 'timed_out', null, null);
+            return;
+          }
+          watcher.timer = setTimeout(checkDeadline, Math.min(remaining, 5000));
+          watcher.timer.unref();
+        };
+        checkDeadline();
+      } catch (error) {
+        this.#append(
           watcher,
-          code === 0 && !signal ? 'condition_met' : 'failed',
-          code,
-          signal,
+          error instanceof Error ? error.message : String(error),
         );
-      });
-      watcher.timer = setInterval(() => {
-        if (this.now() < Date.parse(info.deadlineAt)) return;
-        void this.#finish(watcher, 'timed_out', null, null);
-      }, 5000);
-      watcher.timer.unref();
-    } catch (error) {
-      this.#append(
-        watcher,
-        error instanceof Error ? error.message : String(error),
-      );
-      await this.#finish(watcher, 'failed', null, null);
-    }
+        await this.#finish(watcher, 'failed', null, null);
+      }
+    })();
+    await watcher.startup;
     return { ...info };
   }
 
@@ -141,9 +158,14 @@ export class WatcherService {
     await this.hooks.onCancel(id);
   }
 
-  closeAll(): void {
+  async closeAll(): Promise<void> {
     this.#closed = true;
+    const startups = [...this.#running.values()].map(
+      (watcher) => watcher.startup,
+    );
     for (const watcher of this.#running.values()) this.#stop(watcher);
+    // Interrupted creates must remove their reservations before store shutdown.
+    await Promise.allSettled(startups);
   }
 
   #append(watcher: RunningWatcher, text: string): void {
@@ -152,7 +174,7 @@ export class WatcherService {
 
   #stop(watcher: RunningWatcher): void {
     watcher.done = true;
-    clearInterval(watcher.timer);
+    clearTimeout(watcher.timer);
     this.#running.delete(watcher.info.id);
     this.#kill(watcher);
   }
@@ -164,8 +186,10 @@ export class WatcherService {
     signal: string | null,
   ): Promise<void> {
     if (watcher.done) return;
+    if (this.now() >= Date.parse(watcher.info.deadlineAt))
+      outcome = 'timed_out';
     watcher.done = true;
-    clearInterval(watcher.timer);
+    clearTimeout(watcher.timer);
     this.#running.delete(watcher.info.id);
     // Also clean up descendants left behind by a completed shell command.
     this.#kill(watcher);

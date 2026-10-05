@@ -2,6 +2,18 @@
 
 All notable Klex changes are documented here.
 
+## 0.13.3 (2026-10-05)
+
+### Bug Fixes
+
+- redact long-header data URLs with a linear scanner (38528db)
+- bound data URL header to keep redaction linear (d78b446)
+- preserve selected agent on update restart (1ae5fa5)
+
+### Other Changes
+
+- release 0.13.2 (40d5d8a)
+
 ## 0.13.2 (2026-10-05)
 
 ### Bug Fixes

@@ -33,15 +33,13 @@ async function defaultReadStdin(): Promise<string> {
   return Buffer.concat(chunks).toString('utf8');
 }
 
-async function validateEnrollmentIdentity(
+export async function validateEnrollmentIdentity(
   dataDir: string,
   enrollment: MachineEnrollment,
 ): Promise<void> {
   const identity = await loadMachineIdentity(join(dataDir, IDENTITY_FILE));
   if (identity.privateKeyKid !== enrollment.keyId) {
-    throw new Error(
-      'Managed machine identity does not match enrollment metadata',
-    );
+    throw new Error('Machine identity does not match enrollment metadata');
   }
 }
 

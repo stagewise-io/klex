@@ -14,7 +14,14 @@ export type MachineMode = 'local' | 'enrolled' | 'managed';
 export type CliResult =
   | { action: 'help' }
   | { action: 'version' }
-  | { action: 'enroll'; cloudBaseUrl: string; code: string; dataDir: string }
+  | {
+      action: 'enroll';
+      cloudBaseUrl: string;
+      code: string;
+      config: RuntimeConfig;
+      dataDir: string;
+      serve: boolean;
+    }
   | {
       action: 'managed-bootstrap';
       cloudBaseUrl: string;
@@ -37,6 +44,7 @@ export async function parseCli(
   const parsed = parseArgs({
     args: argv,
     allowPositionals: true,
+    allowNegative: true,
     strict: true,
     options: {
       cwd: { type: 'string' },
@@ -47,6 +55,7 @@ export async function parseCli(
       'data-dir': { type: 'string' },
       'cloud-base-url': { type: 'string' },
       'enrollment-code-file': { type: 'string' },
+      serve: { type: 'boolean' },
       help: { type: 'boolean', short: 'h' },
       version: { type: 'boolean', short: 'v' },
     },
@@ -77,12 +86,20 @@ export async function parseCli(
     value &&
     !extra.length
   ) {
+    if (parsed.values.mode !== undefined) {
+      throw new Error('--mode cannot be used with cloud enroll');
+    }
     return {
       action: 'enroll',
       cloudBaseUrl,
       code: value,
+      config: await resolveRuntimeConfig(raw, processCwd),
       dataDir,
+      serve: parsed.values.serve ?? true,
     };
+  }
+  if (parsed.values.serve !== undefined) {
+    throw new Error('--serve and --no-serve are only valid with cloud enroll');
   }
   if (
     command === 'cloud' &&
@@ -144,7 +161,7 @@ export function helpText(): string {
 
 Usage:
   klex-machine serve [options]
-  klex-machine cloud enroll <code> [options]
+  klex-machine cloud enroll <code> [--no-serve] [options]
   klex-machine cloud bootstrap --enrollment-code-file <path|-> [options]
 
 Options:
@@ -156,8 +173,12 @@ Options:
   --data-dir <path>   Identity directory (default: ~/.klex-machine)
   --cloud-base-url <url> Cloud API URL used for enrollment
   --enrollment-code-file <path|-> Read and remove a one-time code file, or read stdin with -
+  --no-serve          Enroll only; do not start serving
   -h, --help          Show help
   -v, --version       Show version
+
+cloud enroll serves after enrolling; keep the process running to stay
+connected. Re-running it with the same code restarts without re-enrolling.
 
 Environment:
   KLEX_MACHINE_CWD

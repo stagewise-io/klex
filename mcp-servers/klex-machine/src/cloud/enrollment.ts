@@ -8,6 +8,7 @@ import {
 } from './identity.js';
 import {
   ENROLLMENT_FILE,
+  hashEnrollmentCode,
   IDENTITY_FILE,
   type MachineEnrollment,
   saveMachineEnrollment,
@@ -18,6 +19,32 @@ export interface EnrollMachineOptions {
   code: string;
   dataDir: string;
   fetch?: typeof globalThis.fetch;
+}
+
+export class EnrollmentRejectedError extends Error {
+  readonly status: number;
+
+  constructor(status: number, message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = 'EnrollmentRejectedError';
+    this.status = status;
+  }
+}
+
+function rejectionError(status: number): Error {
+  if (status === 401) {
+    return new EnrollmentRejectedError(
+      401,
+      'Enrollment code is invalid, expired, or already used. Generate a new code in Cloud.',
+    );
+  }
+  if (status === 409) {
+    return new EnrollmentRejectedError(
+      409,
+      'This machine is already enrolled in Cloud. Delete it there, then run the command with a new code.',
+    );
+  }
+  return new Error(`Machine enrollment failed with HTTP ${status}`);
 }
 
 function requiredString(record: Record<string, unknown>, key: string): string {
@@ -83,15 +110,16 @@ export async function enrollMachine(
       }),
     },
   );
-  if (!response.ok) {
-    throw new Error(`Machine enrollment failed with HTTP ${response.status}`);
-  }
+  if (!response.ok) throw rejectionError(response.status);
 
-  const enrollment = parseResponse(
-    await response.json(),
-    cloudBaseUrl,
-    identity.privateKeyKid,
-  );
+  const enrollment: MachineEnrollment = {
+    ...parseResponse(
+      await response.json(),
+      cloudBaseUrl,
+      identity.privateKeyKid,
+    ),
+    enrollmentCodeSha256: hashEnrollmentCode(code),
+  };
   await saveMachineEnrollment(options.dataDir, enrollment);
   return enrollment;
 }

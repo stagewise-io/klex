@@ -99,7 +99,7 @@ describe('machine enrollment', () => {
         dataDir: directory,
         fetch: async () => new Response(null, { status: 401 }),
       }),
-    ).rejects.toThrow('HTTP 401');
+    ).rejects.toThrow('invalid, expired, or already used');
     await expect(
       access(join(directory, IDENTITY_FILE)),
     ).resolves.toBeUndefined();

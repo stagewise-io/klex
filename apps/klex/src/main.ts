@@ -712,7 +712,10 @@ async function main(): Promise<void> {
           shutdown.requestRestart({
             arguments: process.argv.slice(2),
             cwd: process.cwd(),
-            environment: process.env,
+            environment: {
+              ...process.env,
+              KLEX_DATA_DIR: resolve(dataDirectory),
+            },
             launcher: updatedInstallation.currentExecutable,
           }),
       });

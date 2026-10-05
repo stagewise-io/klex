@@ -20,7 +20,14 @@ export type CliResult =
       code: string;
       config: RuntimeConfig;
       dataDir: string;
-      serve: boolean;
+      serve: true;
+    }
+  | {
+      action: 'enroll';
+      cloudBaseUrl: string;
+      code: string;
+      dataDir: string;
+      serve: false;
     }
   | {
       action: 'managed-bootstrap';
@@ -89,13 +96,24 @@ export async function parseCli(
     if (parsed.values.mode !== undefined) {
       throw new Error('--mode cannot be used with cloud enroll');
     }
+    // Enroll-only runs never serve, so inherited serve settings must not
+    // block enrollment.
+    if (parsed.values.serve === false) {
+      return {
+        action: 'enroll',
+        cloudBaseUrl,
+        code: value,
+        dataDir,
+        serve: false,
+      };
+    }
     return {
       action: 'enroll',
       cloudBaseUrl,
       code: value,
       config: await resolveRuntimeConfig(raw, processCwd),
       dataDir,
-      serve: parsed.values.serve ?? true,
+      serve: true,
     };
   }
   if (parsed.values.serve !== undefined) {

@@ -144,6 +144,22 @@ describe('CLI configuration', () => {
     });
   });
 
+  it('ignores invalid serve settings with --no-serve', async () => {
+    const env = { KLEX_MACHINE_PORT: 'not-a-port' };
+    await expect(
+      parseCli(['cloud', 'enroll', 'code', '--no-serve'], env, directory),
+    ).resolves.toEqual({
+      action: 'enroll',
+      cloudBaseUrl: 'https://cloud.klex.bot',
+      code: 'code',
+      dataDir: expect.any(String),
+      serve: false,
+    });
+    await expect(
+      parseCli(['cloud', 'enroll', 'code'], env, directory),
+    ).rejects.toThrow();
+  });
+
   it('rejects --mode with cloud enroll', async () => {
     await expect(
       parseCli(['cloud', 'enroll', 'code', '--mode', 'local'], {}, directory),

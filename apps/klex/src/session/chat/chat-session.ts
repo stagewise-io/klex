@@ -426,8 +426,8 @@ class ChatSessionModule implements AgentSession {
     );
 
     this.sessionInbox = createInbox({
-      dispatch: (operation, deferredResult) =>
-        this.dispatchInput(operation, deferredResult),
+      dispatch: (operation, deferredResult, onClosed) =>
+        this.dispatchInput(operation, deferredResult, onClosed),
       onImmediateEvent: this.onImmediateEvent,
       onDeferredEvent: this.onDeferredEvent,
       onImmediateMessage: this.onImmediateMessage,
@@ -1474,6 +1474,7 @@ class ChatSessionModule implements AgentSession {
   private dispatchInput<Result>(
     operation: () => Result,
     deferredResult: Result,
+    onClosed?: () => void,
   ): Result {
     const gate = this.deps.admission;
     if (!gate) return operation();
@@ -1482,7 +1483,12 @@ class ChatSessionModule implements AgentSession {
       lease = gate.admit();
     } catch (error) {
       if (!(error instanceof AdmissionRejectedError)) throw error;
-      gate.background({}, () => this.dispatchInput(operation, deferredResult));
+      if (!gate.ownsCurrentWork()) throw error;
+      gate.background(
+        {},
+        () => this.dispatchInput(operation, deferredResult, onClosed),
+        onClosed,
+      );
       return deferredResult;
     }
     this.inputWork.add(lease);

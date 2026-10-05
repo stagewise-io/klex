@@ -2,6 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { ModuleLogger } from '@stagewise/logger';
 
+import { AdmissionGate } from '@/admission';
+
 import type { ResourceSnapshot } from './resource-handlers';
 import {
   DEFAULT_RESOURCE_WINDOW_CONFIG,
@@ -67,6 +69,41 @@ function createManager(
 }
 
 describe('ResourceWindowManager: lifecycle', () => {
+  it('retains callback failure as uncertainty after its owned work settles', async () => {
+    vi.useFakeTimers();
+    const admission = new AdmissionGate();
+    const update = Promise.withResolvers<ResourceWindowUpdateOutcome>();
+    const manager = new ResourceWindowManager({
+      admission,
+      logger: mockLogger,
+      config: { ...DEFAULT_RESOURCE_WINDOW_CONFIG, textDebounceMs: 1 },
+      onUnsubscribe: () => undefined,
+      onUpdateFired: () => update.promise,
+    });
+    try {
+      manager.openWindow(
+        'server',
+        'file:///a',
+        makeSnapshot('file:///a', 'a'),
+        { live: true },
+      );
+      manager.onResourceUpdate('server', 'file:///a');
+      await vi.advanceTimersByTimeAsync(1);
+      const preparing = admission.prepare();
+      expect(admission.status().state).toBe('draining');
+      update.reject(new Error('partial delivery'));
+      expect((await preparing).outcome).toBe('aborted');
+      expect(admission.status().blockers).toContain(
+        'Resource update completion is uncertain',
+      );
+      manager.close();
+      expect((await admission.prepare()).outcome).toBe('aborted');
+    } finally {
+      manager.close();
+      admission.close();
+      vi.useRealTimers();
+    }
+  });
   it('allocates stable monotonically increasing handles without reuse', () => {
     const { manager } = createManager();
     const first = manager.openWindow(

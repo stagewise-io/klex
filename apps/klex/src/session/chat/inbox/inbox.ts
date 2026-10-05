@@ -18,6 +18,18 @@ export type { SessionInbox, SessionInboxEvent };
 // consumers can import everything from one place.
 export { SessionInboxClosedError, SessionInboxUrgency };
 
+/** Accepted owned delivery paused at cutoff; not rejection or durable storage. */
+export interface DeferredMessageDelivery {
+  status: 'deferred';
+  delivered: Promise<boolean>;
+}
+
+export async function awaitMessageDelivery(
+  result: boolean | DeferredMessageDelivery,
+): Promise<boolean> {
+  return typeof result === 'object' ? result.delivered : result !== false;
+}
+
 /**
  * Extends the context-event {@link SessionInbox} with the ability to send
  * native messages directly into the session history. This is the interface
@@ -31,6 +43,8 @@ export interface ChatSessionInbox extends SessionInbox {
    * (e.g. custom data parts that are not context events). The message is
    * appended to the session history as-is — immediately for
    * Critical/Default urgency, or at the next turn start for Deferrable.
+   * Owned delivery paused by maintenance returns a deferred completion;
+   * false means delivery failed. New root input at cutoff is rejected.
    *
    * @throws {SessionInboxClosedError} if the inbox has been closed.
    *
@@ -40,7 +54,7 @@ export interface ChatSessionInbox extends SessionInbox {
   sendMessage: (
     message: ExtendedUIMessage,
     urgency: SessionInboxUrgency,
-  ) => boolean;
+  ) => boolean | DeferredMessageDelivery;
 }
 
 /** Upper bound of process-local event IDs retained for deduplication. */
@@ -108,6 +122,7 @@ export interface InboxDependencies {
   dispatch?: <Result>(
     operation: () => Result,
     deferredResult: Result,
+    onClosed?: () => void,
   ) => Result;
   /**
    * Called for Critical and Default urgency events. The session appends
@@ -236,11 +251,22 @@ class InboxModule implements SessionInboxBuffer {
   sendMessage(
     message: ExtendedUIMessage,
     urgency: SessionInboxUrgency,
-  ): boolean {
+  ): boolean | DeferredMessageDelivery {
     if (this.deps.dispatch) {
-      return this.deps.dispatch(
-        () => this.sendMessageUnlocked(message, urgency),
-        false,
+      const completion = Promise.withResolvers<boolean>();
+      return this.deps.dispatch<boolean | DeferredMessageDelivery>(
+        () => {
+          try {
+            const delivered = this.sendMessageUnlocked(message, urgency);
+            completion.resolve(delivered);
+            return delivered;
+          } catch (error) {
+            completion.resolve(false);
+            throw error;
+          }
+        },
+        { status: 'deferred', delivered: completion.promise },
+        () => completion.resolve(false),
       );
     }
     return this.sendMessageUnlocked(message, urgency);

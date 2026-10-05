@@ -5,6 +5,50 @@ import { AdmissionGate, AdmissionRejectedError } from './admission';
 afterEach(() => vi.useRealTimers());
 
 describe('admission and pre-teardown quiescence', () => {
+  it('continues ordinary shutdown when one deferred cancellation throws', async () => {
+    const gate = new AdmissionGate();
+    const work = gate.admitRoot();
+    const preparing = gate.prepare();
+    const replay = vi.fn();
+    const settled = vi.fn();
+    gate.background({}, replay, () => {
+      throw new Error('cancellation failed');
+    });
+    gate.background({}, replay, settled);
+    expect(() => gate.close()).not.toThrow();
+    expect(await preparing).toEqual({
+      outcome: 'aborted',
+      reason: 'Runtime closed',
+    });
+    expect(settled).toHaveBeenCalledOnce();
+    expect(replay).not.toHaveBeenCalled();
+    expect(gate.status()).toMatchObject({
+      state: 'closed',
+      deferredWork: 0,
+      reason: 'Deferred work cancellation failed',
+    });
+    work.release();
+  });
+  it('ordinary shutdown settles deferred ownership without replaying work', async () => {
+    const gate = new AdmissionGate({ maxDescendants: 0 });
+    const work = gate.admitRoot();
+    const preparing = gate.prepare();
+    const replay = vi.fn();
+    const cancelled = vi.fn();
+    gate.background({}, replay, cancelled);
+    const checkpoint = work.run(() => gate.checkpoint());
+    const stopped = expect(checkpoint).rejects.toThrow(AdmissionRejectedError);
+    gate.close();
+    await stopped;
+    expect(await preparing).toEqual({
+      outcome: 'aborted',
+      reason: 'Runtime closed',
+    });
+    expect(cancelled).toHaveBeenCalledOnce();
+    expect(replay).not.toHaveBeenCalled();
+    expect(gate.status().deferredWork).toBe(0);
+    work.release();
+  });
   it('rejects an expired lease even before its timer callback runs', async () => {
     vi.useFakeTimers();
     const gate = new AdmissionGate({ graceMs: 10 });

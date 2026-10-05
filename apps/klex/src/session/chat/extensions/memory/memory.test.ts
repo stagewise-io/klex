@@ -13,6 +13,7 @@ import type {
   ExtensionDeps,
   StepCompleteEvent,
 } from '../extension-api';
+import { EpisodeStore } from './episodes';
 import { outputTexts } from './episodes/test-utils';
 import { createMemoryExt } from './memory';
 
@@ -47,6 +48,8 @@ const directories: string[] = [];
 
 afterEach(async () => {
   vi.useRealTimers();
+  vi.restoreAllMocks();
+  vi.clearAllMocks();
   await Promise.all(
     directories
       .splice(0)
@@ -103,6 +106,61 @@ async function harness(admission?: AdmissionGate) {
 }
 
 describe('memory extension lifecycle', () => {
+  it.each(['success', 'failure', 'timeout'] as const)(
+    'drains an owned flush during grace: %s',
+    async (outcome) => {
+      const admission = new AdmissionGate({
+        graceMs: outcome === 'timeout' ? 20 : 1_000,
+      });
+      const { extension, history, recorded } = await harness(admission);
+      await extension.onStart?.();
+      const barrier = Promise.withResolvers<void>();
+      void (
+        extension as Extension & {
+          serialize(action: () => Promise<void>): Promise<void>;
+        }
+      ).serialize(() => barrier.promise);
+      if (outcome === 'failure')
+        vi.spyOn(EpisodeStore.prototype, 'append').mockRejectedValueOnce(
+          new Error('injected write failure'),
+        );
+      const parent = admission.admitRoot();
+      const preparing = admission.prepare();
+      history.push(message('owned', 'accepted memory'));
+      const flush = parent.run(() => extension.onStepComplete?.(success));
+      parent.release();
+      expect(admission.status()).toMatchObject({
+        state: 'draining',
+        blockers: [],
+      });
+      if (outcome === 'timeout') {
+        expect(await preparing).toEqual({
+          outcome: 'aborted',
+          reason: 'Drain grace expired',
+        });
+        expect(admission.status().state).toBe('open');
+      }
+      barrier.resolve();
+      await flush;
+      if (outcome === 'failure') {
+        expect((await preparing).outcome).toBe('aborted');
+        expect(admission.status().blockers).toContain(
+          'Memory persistence is uncertain',
+        );
+        expect(await recorded()).toEqual([]);
+        await extension.onStepComplete?.(success);
+        expect((await admission.prepare()).outcome).toBe('quiescent');
+      } else {
+        expect(await recorded()).toEqual(['accepted memory']);
+        if (outcome === 'success')
+          expect((await preparing).outcome).toBe('quiescent');
+        else expect((await admission.prepare()).outcome).toBe('quiescent');
+      }
+      admission.abort('test complete');
+      await extension.onClose?.();
+      admission.close();
+    },
+  );
   it('blocks maintenance until accepted history is persisted before teardown', async () => {
     const admission = new AdmissionGate();
     const { extension, history, recorded } = await harness(admission);

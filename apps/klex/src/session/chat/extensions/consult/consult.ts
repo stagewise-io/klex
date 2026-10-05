@@ -4,6 +4,7 @@ import type { ToolSet } from 'ai';
 import z from 'zod';
 
 import type { WorkLease } from '@/admission';
+import { awaitMessageDelivery } from '@/session/chat/inbox';
 import {
   createTranscriptHistoryView,
   LINES_FORMAT_PROMPT,
@@ -108,6 +109,7 @@ function sessionChanges(
 
 type ConsultEntry = {
   work?: WorkLease;
+  deliveryPending?: boolean;
   child: ChildSessionHandle;
   generationId: string;
   reportCount: number;
@@ -162,11 +164,17 @@ class ConsultExtension implements Extension {
   private readonly allocatedHandles = new Set<string>();
   private closed = false;
   private readonly startOperations = new Set<Promise<unknown>>();
+  private deliveryFailed = false;
+  private readonly unregisterAdmission: (() => void) | undefined;
 
   constructor(
     private readonly deps: ExtensionDeps,
     private readonly config: ConsultExtConfig,
-  ) {}
+  ) {
+    this.unregisterAdmission = deps.admission?.register(() =>
+      this.deliveryFailed ? ['Consult delivery is uncertain'] : [],
+    );
+  }
 
   getTools(): ToolSet {
     return {
@@ -307,12 +315,33 @@ class ConsultExtension implements Extension {
       return { reason: 'no-model', status: 'failed' };
     }
     const work = this.deps.admission?.admit();
+    const start = () => this.startOwnedOperation(task, work);
+    return work ? work.run(start) : start();
+  }
+
+  private async startOwnedOperation(
+    task: string,
+    work: WorkLease | undefined,
+  ): Promise<
+    | { handle: string; status: 'running' }
+    | {
+        reason:
+          | 'child-start-failed'
+          | 'extension-closed'
+          | 'task-delivery-failed';
+        status: 'failed';
+      }
+  > {
     const handle = this.allocateHandle();
     const generationId = randomUUID();
 
-    const reporter = createReporterFactory((content, final) =>
-      this.receiveReport(handle, generationId, content, final),
-    );
+    const reporter = createReporterFactory((content, final) => {
+      const receive = () =>
+        this.receiveReport(handle, generationId, content, final);
+      return work && this.entries.get(handle)?.generationId === generationId
+        ? work.run(receive)
+        : receive();
+    });
     let child: ConsultEntry['child'];
     try {
       child = await this.deps.createChildSession({
@@ -372,21 +401,24 @@ class ConsultExtension implements Extension {
         recentMessageLimit:
           this.config.maxContextMessages ?? CONSULT_DEFAULT_CONTEXT_MESSAGES,
       }).render(history).text;
-      const delivered = child.inbox.sendMessage(
-        {
-          id: randomUUID(),
-          role: 'user',
-          parts: [
-            { type: 'text', text: contextPrompt(serializedContext) },
-            { type: 'text', text: task },
-          ],
-        },
-        SessionInboxUrgency.Default,
+      const delivered = await awaitMessageDelivery(
+        child.inbox.sendMessage(
+          {
+            id: randomUUID(),
+            role: 'user',
+            parts: [
+              { type: 'text', text: contextPrompt(serializedContext) },
+              { type: 'text', text: task },
+            ],
+          },
+          SessionInboxUrgency.Default,
+        ),
       );
       if (delivered === false) throw new Error('Child task was not delivered');
       return { handle, status: 'running' };
     } catch (error) {
       entry.status = 'finished';
+      this.deliveryFailed = true;
       this.deps.logger.error(
         { error, handle, childSessionId: child.sessionId },
         'Consult task delivery failed',
@@ -402,14 +434,17 @@ class ConsultExtension implements Extension {
       return { status: 'not-found' as const };
     }
     try {
-      entry.child.inbox.sendMessage(
-        {
-          id: randomUUID(),
-          role: 'user',
-          parts: [{ type: 'text', text: updatePrompt(content) }],
-        },
-        SessionInboxUrgency.Deferrable,
+      const delivered = await awaitMessageDelivery(
+        entry.child.inbox.sendMessage(
+          {
+            id: randomUUID(),
+            role: 'user',
+            parts: [{ type: 'text', text: updatePrompt(content) }],
+          },
+          SessionInboxUrgency.Deferrable,
+        ),
       );
+      if (!delivered) throw new Error('Child update was not delivered');
       return { status: 'running' as const };
     } catch (error) {
       entry.status = 'finished';
@@ -417,6 +452,7 @@ class ConsultExtension implements Extension {
         { error, handle, childSessionId: entry.child.sessionId },
         'Consult context delivery failed',
       );
+      this.deliveryFailed = true;
       await this.finishClosingEntry(handle, entry);
       return { status: 'not-found' as const };
     }
@@ -463,10 +499,12 @@ class ConsultExtension implements Extension {
     }
 
     entry.status = 'finished';
+    entry.deliveryPending = true;
     try {
-      const delivered = this.emitReport(handle, content, terminal);
+      const delivered = await this.emitReport(handle, content, terminal);
       return delivered;
     } finally {
+      entry.deliveryPending = false;
       await this.finishClosingEntry(handle, entry);
     }
   }
@@ -485,37 +523,56 @@ class ConsultExtension implements Extension {
     ) {
       return;
     }
-    this.deleteEntry(handle);
-    if (this.closed || entry.status !== 'running') return;
+    if (entry.deliveryPending) return;
+    if (this.closed || entry.status !== 'running') {
+      this.deleteEntry(handle);
+      return;
+    }
     this.deps.logger.error(
       { handle, childSessionId, reason },
       'Consult child terminated before a final report',
     );
-    this.tryEmitReport(
-      handle,
-      'Consult stopped before producing a final verdict.',
-      false,
-      childSessionId,
+    entry.status = 'finished';
+    const notify = () =>
+      this.tryEmitReport(
+        handle,
+        'Consult stopped before producing a final verdict.',
+        false,
+        childSessionId,
+      );
+    void (entry.work ? entry.work.run(notify) : notify()).finally(() =>
+      this.deleteEntry(handle),
     );
   }
 
-  private emitReport(handle: string, content: string, final = false): boolean {
-    return (
-      this.deps.inbox.sendMessage(
-        {
-          id: randomUUID(),
-          role: 'user',
-          parts: [
-            createDataPart(CONSULT_REPORT_KEY, {
-              handle,
-              content,
-              ...(final ? { final: true } : {}),
-            }),
-          ],
-        } as unknown as ExtendedUIMessage,
-        SessionInboxUrgency.Default,
-      ) !== false
-    );
+  private async emitReport(
+    handle: string,
+    content: string,
+    final = false,
+  ): Promise<boolean> {
+    try {
+      const delivered = await awaitMessageDelivery(
+        this.deps.inbox.sendMessage(
+          {
+            id: randomUUID(),
+            role: 'user',
+            parts: [
+              createDataPart(CONSULT_REPORT_KEY, {
+                handle,
+                content,
+                ...(final ? { final: true } : {}),
+              }),
+            ],
+          } as unknown as ExtendedUIMessage,
+          SessionInboxUrgency.Default,
+        ),
+      );
+      if (!delivered) this.deliveryFailed = true;
+      return delivered;
+    } catch (error) {
+      this.deliveryFailed = true;
+      throw error;
+    }
   }
 
   private allocateHandle(): string {
@@ -585,14 +642,14 @@ class ConsultExtension implements Extension {
     sessions: this.sessionContextData().sessions,
   });
 
-  private tryEmitReport(
+  private async tryEmitReport(
     handle: string,
     content: string,
     final = false,
     childSessionId?: string,
-  ): void {
+  ): Promise<void> {
     try {
-      this.emitReport(handle, content, final);
+      await this.emitReport(handle, content, final);
     } catch (error) {
       this.deps.logger.error(
         { error, handle, childSessionId },
@@ -611,6 +668,7 @@ class ConsultExtension implements Extension {
         await this.finishClosingEntry(handle, entry);
       }),
     );
+    if (!this.deliveryFailed) this.unregisterAdmission?.();
   }
 
   private async finishClosingEntry(

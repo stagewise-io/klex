@@ -125,16 +125,20 @@ describe('ChatSession mid-turn input', () => {
       },
       SessionInboxUrgency.Deferrable,
     );
+    const acceptedDelivery = admission.admitRoot();
     const preparing = admission.prepare();
     finish.resolve();
     await vi.waitFor(() => expect(admission.status().deferredWork).toBe(1), {
       interval: 10,
     });
     expect(
-      session.inbox.sendMessage(resumed, SessionInboxUrgency.Default),
-    ).toBe(false);
+      acceptedDelivery.run(() =>
+        session.inbox.sendMessage(resumed, SessionInboxUrgency.Default),
+      ),
+    ).toMatchObject({ status: 'deferred' });
     await vi.advanceTimersByTimeAsync(1_000);
     expect((await preparing).outcome).toBe('aborted');
+    acceptedDelivery.release();
     await expect(session.waitForIdle(1_000)).resolves.toBe(true);
     expect(createTurn).toHaveBeenCalledTimes(2);
     expect(admission.status().activeWork).toBe(0);
@@ -184,9 +188,9 @@ describe('ChatSession mid-turn input', () => {
     session.inbox.sendMessage(first, SessionInboxUrgency.Default);
     await running.promise;
     const preparing = admission.prepare();
-    expect(session.inbox.sendMessage(next, SessionInboxUrgency.Default)).toBe(
-      false,
-    );
+    expect(() =>
+      session.inbox.sendMessage(next, SessionInboxUrgency.Default),
+    ).toThrow('Runtime is preparing maintenance');
     expect(session.getMessages()).not.toContainEqual(next);
     expect((await preparing).outcome).toBe('aborted');
     expect(session.status).toBe('active');
@@ -194,7 +198,7 @@ describe('ChatSession mid-turn input', () => {
     finish.resolve();
     await expect(session.waitForIdle(1_000)).resolves.toBe(true);
     await vi.waitFor(() => expect(admission.status().activeWork).toBe(0));
-    expect(session.getMessages()).toContainEqual(next);
+    expect(session.getMessages()).not.toContainEqual(next);
     const prepared = await admission.prepare();
     expect(prepared.outcome).toBe('quiescent');
     if (prepared.outcome === 'quiescent')

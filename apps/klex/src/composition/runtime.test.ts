@@ -59,6 +59,49 @@ function emptyRecord(): Recorded {
 }
 
 describe('runtime composition', () => {
+  it.each(['draining', 'quiescent'] as const)(
+    'ordinary shutdown cancels %s maintenance and closes telemetry and the directory lock',
+    async (state) => {
+      const recorded = emptyRecord();
+      const admission = new AdmissionGate();
+      const work = state === 'draining' ? admission.admitRoot() : undefined;
+      const runtime = await startRuntime({
+        logging: createLoggingMock(),
+        admission,
+        modules: createModules({ recorded }),
+        adopted: [
+          {
+            close: async () => {
+              recorded.closes.push('directory-lock');
+            },
+          },
+        ],
+      });
+      const preparing = runtime.prepareMaintenance();
+      const certificate = state === 'quiescent' ? await preparing : undefined;
+      expect(admission.status().state).toBe(state);
+      await runtime.close();
+      expect(admission.status().state).toBe('closed');
+      if (state === 'draining')
+        expect(await preparing).toEqual({
+          outcome: 'aborted',
+          reason: 'Runtime closed',
+        });
+      expect(recorded.closes).toContain('telemetry-manager');
+      expect(recorded.closes.at(-1)).toBe('directory-lock');
+      if (certificate?.outcome === 'quiescent') {
+        expect(() => runtime.closeForMaintenance(certificate.lease)).toThrow(
+          AdmissionRejectedError,
+        );
+        expect(runtime.abortMaintenance(certificate.lease)).toBe(false);
+      }
+      work?.release();
+      await runtime.close();
+      expect(
+        recorded.closes.filter((name) => name === 'directory-lock'),
+      ).toHaveLength(1);
+    },
+  );
   it('does not tear down or replace a live runtime on drain timeout', async () => {
     const recorded = emptyRecord();
     const admission = new AdmissionGate({ graceMs: 10 });
@@ -69,7 +112,6 @@ describe('runtime composition', () => {
       modules: createModules({ recorded }),
     });
     const preparing = runtime.prepareMaintenance();
-    expect(() => runtime.close()).toThrow(AdmissionRejectedError);
     expect((await preparing).outcome).toBe('aborted');
     expect(recorded.closes).toEqual([]);
     expect(admission.status()).toMatchObject({ state: 'open', activeWork: 1 });

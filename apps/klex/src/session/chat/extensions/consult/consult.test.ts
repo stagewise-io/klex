@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import type { ToolSet } from 'ai';
 import { describe, expect, it, vi } from 'vitest';
 
+import { AdmissionGate, AdmissionRejectedError } from '@/admission';
 import type {
   ChildSessionHandle,
   ChildSessionOptions,
@@ -10,7 +11,7 @@ import type {
 } from '@/session/types';
 import { makeDeps } from '@/shared-utilities/test-utils';
 
-import { SessionInboxUrgency } from '../../inbox';
+import { createInbox, SessionInboxUrgency } from '../../inbox';
 import type { ExtendedUIMessage } from '../../message-types';
 import type { Extension, ExtensionFactory } from '../extension-api';
 import { createConsultExt } from './consult';
@@ -51,6 +52,120 @@ function toolExecute<T>(tool: unknown): (input: T) => Promise<unknown> {
 }
 
 describe('consult extension', () => {
+  it('fails closed when accepted child task delivery is rejected', async () => {
+    const admission = new AdmissionGate();
+    const spawned = child();
+    vi.mocked(spawned.inbox.sendMessage).mockReturnValue(false);
+    const extension = createConsultExt(DEEP_THINK_CONFIG).create(
+      makeDeps({
+        admission,
+        config: {
+          getModelSelection: () => [
+            { providerId: 'provider', modelId: 'model' },
+          ],
+        } as never,
+        createChildSession: async () => spawned,
+      }),
+    );
+    expect(
+      await toolExecute<{ task: string }>(getTools(extension).startConsult)({
+        task: 'accepted',
+      }),
+    ).toEqual({ status: 'failed', reason: 'task-delivery-failed' });
+    expect((await admission.prepare()).outcome).toBe('aborted');
+    expect(admission.status().blockers).toContain(
+      'Consult delivery is uncertain',
+    );
+    await extension.onClose?.();
+    admission.close();
+  });
+  it.each(['startup', 'report'] as const)(
+    'retains child and message ownership across deferred %s and replays exactly once after abort',
+    async (phase) => {
+      const gate = new AdmissionGate({ maxDescendants: 0 });
+      const messages: ExtendedUIMessage[] = [];
+      const inbox = createInbox({
+        dispatch: (operation, deferredResult, onClosed) => {
+          try {
+            const work = gate.admit();
+            try {
+              return work.run(operation);
+            } finally {
+              work.release();
+            }
+          } catch (error) {
+            if (!(error instanceof AdmissionRejectedError)) throw error;
+            expect(gate.ownsCurrentWork()).toBe(true);
+            gate.background(
+              {},
+              () => {
+                operation();
+              },
+              onClosed,
+            );
+            return deferredResult;
+          }
+        },
+        onImmediateEvent: () => false,
+        onImmediateMessage: (message) => {
+          messages.push(message);
+        },
+        onNewInput: () => undefined,
+      });
+      const spawned = child();
+      if (phase === 'startup') spawned.inbox = inbox;
+      const ready = Promise.withResolvers<void>();
+      const finishStartup = Promise.withResolvers<void>();
+      let reporter: Extension | undefined;
+      const extension = createConsultExt(DEEP_THINK_CONFIG).create(
+        makeDeps({
+          admission: gate,
+          inbox:
+            phase === 'report'
+              ? inbox
+              : ({ sendMessage: vi.fn(() => true) } as never),
+          config: {
+            getModelSelection: () => [
+              { providerId: 'provider', modelId: 'model' },
+            ],
+          } as never,
+          createChildSession: async (options) => {
+            reporter = options.extensions.at(-1)!.create(makeDeps());
+            ready.resolve();
+            if (phase === 'startup') await finishStartup.promise;
+            return spawned;
+          },
+        }),
+      );
+      const starting = toolExecute<{ task: string }>(
+        getTools(extension).startConsult,
+      )({ task: 'accepted task' });
+      await ready.promise;
+      if (phase === 'report') await starting;
+      const preparing = gate.prepare();
+      finishStartup.resolve();
+      const delivery =
+        phase === 'startup'
+          ? starting
+          : toolExecute<{ content: string; final: boolean }>(
+              getTools(requireExtension(reporter)).report,
+            )({ content: 'accepted result', final: true });
+      await vi.waitFor(() => expect(gate.status().deferredWork).toBe(1));
+      expect(gate.status().activeWork).toBeGreaterThan(0);
+      expect(spawned.close).not.toHaveBeenCalled();
+      expect(messages).toHaveLength(0);
+      gate.abort('test rollback');
+      expect((await preparing).outcome).toBe('aborted');
+      await delivery;
+      expect(messages).toHaveLength(1);
+      if (phase === 'report') expect(spawned.close).toHaveBeenCalledOnce();
+      else expect(spawned.close).not.toHaveBeenCalled();
+      await extension.onClose?.();
+      expect(gate.status().activeWork).toBe(0);
+      expect(messages).toHaveLength(1);
+      gate.close();
+    },
+  );
   it('frames consult as advisory with bounded context authority', () => {
     const prompt = readFileSync(
       new URL('./consult-system-prompt.md', import.meta.url),
@@ -279,7 +394,7 @@ describe('consult extension', () => {
       reporterTools.report,
     )({ content: 'done', final: true });
 
-    expect(firstChild.close).toHaveBeenCalledOnce();
+    await vi.waitFor(() => expect(firstChild.close).toHaveBeenCalledOnce());
     await expect(
       toolExecute<{ handle: string; content: string }>(tools.updateConsult)({
         handle: 'dt1',

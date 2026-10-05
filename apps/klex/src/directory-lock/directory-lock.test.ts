@@ -1,8 +1,25 @@
-import { chmod, mkdtemp, readFile, rm, stat, unlink } from 'node:fs/promises';
+import {
+  chmod,
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  stat,
+  unlink,
+  writeFile,
+} from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
+import {
+  afterAll,
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from 'vitest';
 
 import { createLogger } from '@stagewise/logger';
 
@@ -54,6 +71,53 @@ describe('DirectoryLock', () => {
 
     await lock1.release();
   });
+
+  it.each([
+    'invalid JSON',
+    '{}',
+    '{"pid":0}',
+    '{"pid":-1}',
+    '{"pid":"123"}',
+    '{"pid":1.5}',
+  ])(
+    'retains an uncertain lock and refuses acquisition: %s',
+    async (content) => {
+      await writeFile(join(dir, '.klex.lock'), content);
+      const lock = createDirectoryLock({ logging, dataDirectory: dir });
+      await expect(lock.acquire()).rejects.toThrow(/ownership is uncertain/);
+      expect(await readFile(join(dir, '.klex.lock'), 'utf8')).toBe(content);
+    },
+  );
+
+  it('fails closed when the lock cannot be read as a file', async () => {
+    await mkdir(join(dir, '.klex.lock'));
+    const lock = createDirectoryLock({ logging, dataDirectory: dir });
+    await expect(lock.acquire()).rejects.toThrow(/cannot read lock/);
+    expect((await stat(join(dir, '.klex.lock'))).isDirectory()).toBe(true);
+  });
+
+  it.each(['EIO', 'EPERM'])(
+    'does not reclaim ownership when PID probing returns %s',
+    async (code) => {
+      const content = JSON.stringify({
+        pid: 123,
+        startedAt: '1970-01-01T00:00:00.000Z',
+      });
+      await writeFile(join(dir, '.klex.lock'), content);
+      const probe = vi.spyOn(process, 'kill').mockImplementation(() => {
+        throw Object.assign(new Error('probe unavailable'), { code });
+      });
+      try {
+        const lock = createDirectoryLock({ logging, dataDirectory: dir });
+        await expect(lock.acquire()).rejects.toThrow(
+          code === 'EPERM' ? /already in use/ : /ownership is uncertain/,
+        );
+        expect(await readFile(join(dir, '.klex.lock'), 'utf8')).toBe(content);
+      } finally {
+        probe.mockRestore();
+      }
+    },
+  );
 
   it('release allows re-acquire', async () => {
     const lock = createDirectoryLock({ logging, dataDirectory: dir });

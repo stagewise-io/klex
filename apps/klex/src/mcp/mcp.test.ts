@@ -1165,6 +1165,94 @@ describe('MCP Resource Subscriptions', () => {
     await mcp.close();
   });
 
+  it('retains remote cleanup ownership through drain, failure, and retry', async () => {
+    const admission = new AdmissionGate();
+    const conn = resourceSubscriptionConnection('server');
+    const pending = deferred<void>();
+    vi.mocked(conn.unsubscribeResource).mockReturnValueOnce(pending.promise);
+    const { mcp } = setup(
+      { server: { url: 'https://example.com/mcp' } },
+      async () => conn,
+      true,
+      undefined,
+      admission,
+    );
+    await mcp.start();
+    await waitForNamespace(mcp, 'server');
+    await mcp.subscribeResource(
+      'server',
+      'file:///owned',
+      AbortSignal.timeout(5_000),
+    );
+    const release = mcp.unsubscribeResource(
+      'server',
+      'file:///owned',
+      AbortSignal.timeout(5_000),
+    );
+    const failed = expect(release).rejects.toThrow('remote cleanup failed');
+    await vi.waitFor(() =>
+      expect(conn.unsubscribeResource).toHaveBeenCalledOnce(),
+    );
+    const preparing = admission.prepare();
+    expect(admission.status()).toMatchObject({
+      state: 'draining',
+      activeWork: 1,
+    });
+    pending.reject(new Error('remote cleanup failed'));
+    await failed;
+    expect((await preparing).outcome).toBe('aborted');
+    expect(admission.status().blockers).toContain(
+      'MCP resource cleanup is uncertain',
+    );
+    await mcp.unsubscribeResource(
+      'server',
+      'file:///owned',
+      AbortSignal.timeout(5_000),
+    );
+    expect(conn.unsubscribeResource).toHaveBeenCalledTimes(2);
+    expect((await admission.prepare()).outcome).toBe('quiescent');
+    admission.abort('test complete');
+    await mcp.close();
+    admission.close();
+  });
+
+  it('rejects unsubscribe at cutoff before losing its reference count', async () => {
+    const admission = new AdmissionGate();
+    const conn = resourceSubscriptionConnection('server');
+    const { mcp } = setup(
+      { server: { url: 'https://example.com/mcp' } },
+      async () => conn,
+      true,
+      undefined,
+      admission,
+    );
+    await mcp.start();
+    await waitForNamespace(mcp, 'server');
+    await mcp.subscribeResource(
+      'server',
+      'file:///cutoff',
+      AbortSignal.timeout(5_000),
+    );
+    expect((await admission.prepare()).outcome).toBe('quiescent');
+    await expect(
+      mcp.unsubscribeResource(
+        'server',
+        'file:///cutoff',
+        AbortSignal.timeout(5_000),
+      ),
+    ).rejects.toThrow('Runtime is preparing maintenance');
+    expect(conn.unsubscribeResource).not.toHaveBeenCalled();
+    admission.abort('retry');
+    await mcp.unsubscribeResource(
+      'server',
+      'file:///cutoff',
+      AbortSignal.timeout(5_000),
+    );
+    expect(conn.unsubscribeResource).toHaveBeenCalledOnce();
+    await mcp.close();
+    admission.close();
+  });
+
   it('unsubscribeResource delegates to the connection', async () => {
     const conn = resourceSubscriptionConnection('server');
     const { mcp } = setup(

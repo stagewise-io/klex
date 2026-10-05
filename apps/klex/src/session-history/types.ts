@@ -23,7 +23,8 @@ export interface SessionHistoryRecorder {
   readonly instanceId: string;
   /**
    * Schedule a transcript sync. Calls are coalesced; the getter is invoked
-   * when the sync runs, so it must return the current message array.
+   * when the sync runs and by admission safety checks, so it must be pure
+   * and return the current message array.
    */
   scheduleSync(getMessages: () => readonly ExtendedUIMessage[]): void;
   /** Run a final sync and mark the instance as ended. Never rejects. */

@@ -40,6 +40,8 @@ class MemoryExt implements Extension {
   private stepActive = false;
   private flushTimer: NodeJS.Timeout | null = null;
   private operation: Promise<void> = Promise.resolve();
+  private ownedFlushes = 0;
+  private flushFailed = false;
 
   constructor(private readonly deps: ExtensionDeps) {}
 
@@ -57,12 +59,14 @@ class MemoryExt implements Extension {
     });
     this.unregisterAdmission = this.deps.admission?.register(() => {
       const state = this.recorder?.introspect();
-      if (state?.lastError) return ['Memory persistence is uncertain'];
+      if (state?.lastError || this.flushFailed)
+        return ['Memory persistence is uncertain'];
       const history = this.deps.getHistory();
       const latest = history.at(-1);
       // A successful shutdown flush is not a pre-teardown persistence proof.
       // Keep maintenance closed until the live recorder catches up.
       if (
+        this.ownedFlushes === 0 &&
         latest &&
         (state?.cursor?.id !== latest.id ||
           state.cursor.index !== history.length - 1)
@@ -72,15 +76,9 @@ class MemoryExt implements Extension {
       return [];
     });
     this.flushTimer = setInterval(() => {
-      const flush = () =>
-        this.serialize(async () => {
-          if (this.closed || this.stepActive) return;
-          await this.recorder?.flush();
-        });
       const run = () => {
-        const operation = this.deps.admission
-          ? this.deps.admission.run(flush)
-          : flush();
+        if (this.closed || this.stepActive) return;
+        const operation = this.flushOwned();
         void operation.catch((error) =>
           this.deps.logger.error({ error }, 'Memory flush failed'),
         );
@@ -179,7 +177,7 @@ class MemoryExt implements Extension {
     ) {
       return Promise.resolve();
     }
-    return this.serialize(() => this.recorder?.flush() ?? Promise.resolve());
+    return this.flushOwned();
   }
 
   introspect(): Record<string, unknown> {
@@ -225,6 +223,26 @@ class MemoryExt implements Extension {
     const result = this.operation.then(action, action);
     this.operation = result.catch(() => undefined);
     return result;
+  }
+
+  private async flushOwned(): Promise<void> {
+    const work = this.deps.admission?.admit();
+    this.ownedFlushes++;
+    const flush = () =>
+      this.serialize(async () => {
+        await this.recorder?.flush();
+        this.flushFailed = Boolean(this.recorder?.introspect().lastError);
+      });
+    try {
+      if (work) await work.run(flush);
+      else await flush();
+    } catch (error) {
+      this.flushFailed = true;
+      throw error;
+    } finally {
+      this.ownedFlushes--;
+      work?.release();
+    }
   }
 }
 

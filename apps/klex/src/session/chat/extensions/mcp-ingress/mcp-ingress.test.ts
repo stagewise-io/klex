@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { ModuleLogger } from '@stagewise/logger';
 
+import { AdmissionGate } from '@/admission';
 import { SessionInboxUrgency } from '@/session/chat/inbox';
 import type { ExtendedUIMessage } from '@/session/chat/message-types';
 
@@ -1224,6 +1225,55 @@ describe('MCP Ingress extension', () => {
       'file:///data.txt',
       expect.any(AbortSignal),
     );
+  });
+
+  it('keeps a failed unsubscribe unsafe through cutoff and retries it after rollback', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const admission = new AdmissionGate();
+    const cleanup = Promise.withResolvers<void>();
+    const deps = createMockDeps({
+      readResource: vi.fn().mockResolvedValue({
+        contents: [
+          { uri: 'file:///owned', mimeType: 'text/plain', text: 'owned' },
+        ],
+      }),
+      supportsResourceSubscription: vi.fn(() => true),
+      subscribeResource: vi.fn().mockResolvedValue(undefined),
+      unsubscribeResource: vi
+        .fn()
+        .mockReturnValueOnce(cleanup.promise)
+        .mockResolvedValue(undefined),
+      listResources: vi
+        .fn()
+        .mockResolvedValue({ resources: [], resourceTemplates: [] }),
+    });
+    deps.admission = admission;
+    const ext = createMcpIngressExt().create(deps);
+    try {
+      await callTool(ext, 'openResource', {
+        serverName: 'server',
+        uri: 'file:///owned',
+      });
+      await callTool(ext, 'closeResource', { handle: 'r1' });
+      const preparing = admission.prepare();
+      expect(admission.status()).toMatchObject({
+        state: 'draining',
+        activeWork: 1,
+      });
+      cleanup.reject(new Error('remote release uncertain'));
+      expect((await preparing).outcome).toBe('aborted');
+      expect(admission.status().blockers).toContain(
+        'Resource unsubscribe is uncertain',
+      );
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(deps.mcp.unsubscribeResource).toHaveBeenCalledTimes(2);
+      expect((await admission.prepare()).outcome).toBe('quiescent');
+      admission.abort('test complete');
+    } finally {
+      admission.close();
+      await ext.onClose?.();
+      vi.useRealTimers();
+    }
   });
 
   it('closeResource reports an unknown handle without side effects', async () => {

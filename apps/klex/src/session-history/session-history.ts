@@ -145,6 +145,7 @@ class SessionHistoryModule implements SessionHistory {
   private enforcementTimer: ReturnType<typeof setTimeout> | null = null;
   private readonly liveRecorders = new Map<string, RecorderState>();
   private pendingTasks = 0;
+  private readonly ownedTasks = new Map<object, number>();
   private readonly failures = new Set<object>();
   private readonly enforcementKey = {};
   private unregisterAdmission: (() => void) | undefined;
@@ -159,20 +160,26 @@ class SessionHistoryModule implements SessionHistory {
     },
   ) {
     this.unregisterAdmission = deps.admission?.register(() => {
-      if (this.pendingTasks) return ['Session history persistence is pending'];
       if (this.failures.size) return ['Session history persistence failed'];
+      const owned = [...this.ownedTasks.values()].reduce(
+        (sum, count) => sum + count,
+        0,
+      );
+      if (this.pendingTasks > owned)
+        return ['Session history persistence is unowned'];
       for (const recorder of this.liveRecorders.values()) {
-        if (recorder.pending || recorder.ended)
+        const writing = this.ownedTasks.has(recorder);
+        if (!writing && (recorder.pending || recorder.ended))
           return ['Session history awaits persistence'];
         const messages = recorder.lastGetter?.();
         if (!messages) continue;
-        if (messages.length !== recorder.persistedLength)
+        if (!writing && messages.length !== recorder.persistedLength)
           return ['Session history cursor awaits persistence'];
         for (let seq = recorder.trimmed; seq < messages.length; seq++) {
           const hash = createHash('sha1')
             .update(JSON.stringify(messages[seq]))
             .digest('base64');
-          if (hash !== recorder.persistedHashes[seq])
+          if (!writing && hash !== recorder.persistedHashes[seq])
             return ['Session history content awaits persistence'];
         }
       }
@@ -270,7 +277,9 @@ class SessionHistoryModule implements SessionHistory {
     // end before this store drains/closes. Timers never enter this path.
     const ready = new Promise<void>((resolve) => {
       const reserve = () => {
-        lease = gate?.admit();
+        if (gate && gate.status().state !== 'closed') lease = gate.admit();
+        if (lease)
+          this.ownedTasks.set(key, (this.ownedTasks.get(key) ?? 0) + 1);
         resolve();
       };
       if (!gate || gate.status().state === 'closed') resolve();
@@ -279,7 +288,9 @@ class SessionHistoryModule implements SessionHistory {
           reserve();
         } catch (error) {
           if (!(error instanceof AdmissionRejectedError)) throw error;
-          gate.background({}, reserve);
+          // Ordinary shutdown still owns this queued write. Settle without a
+          // work lease so history.close() can drain it before closing SQLite.
+          gate.background({}, reserve, resolve);
         }
       }
     });
@@ -296,6 +307,11 @@ class SessionHistoryModule implements SessionHistory {
       })
       .finally(() => {
         this.pendingTasks--;
+        if (lease) {
+          const remaining = (this.ownedTasks.get(key) ?? 1) - 1;
+          if (remaining) this.ownedTasks.set(key, remaining);
+          else this.ownedTasks.delete(key);
+        }
         lease?.release();
       });
     this.queue = run;

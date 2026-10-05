@@ -129,6 +129,13 @@ export function createAdminApp(deps: AdminAppDependencies) {
   });
 
   app.use('*', async (c, next) => {
+    // This app also serves unauthenticated loopback HTTP. Maintenance is
+    // exclusively dispatched by the separate trusted Cloud tunnel handler.
+    if (
+      c.req.path === '/v1/maintenance' ||
+      c.req.path.startsWith('/v1/maintenance/')
+    )
+      return c.notFound();
     deps.logger.debug(
       { method: c.req.method, path: c.req.path },
       'Admin API request',

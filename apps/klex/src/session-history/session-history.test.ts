@@ -9,6 +9,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createLogger } from '@stagewise/logger';
 
 import { AdmissionGate, AdmissionRejectedError } from '@/admission';
+import { startRuntime } from '@/composition/runtime';
 import { type KlexConfig, klexConfigSchema } from '@/config';
 import { createLocalData } from '@/local-data';
 import { KLEX_VERSION } from '@/release';
@@ -95,6 +96,18 @@ async function storedIds(history: SessionHistory, instanceId: string) {
   return page?.messages.map((entry) => entry.message.id);
 }
 
+// Deterministic pre-write barrier on the production queue; no SQL is committed
+// by this task. This deliberately uses the internal queue only in tests.
+function holdQueue(history: SessionHistory): () => void {
+  const barrier = Promise.withResolvers<void>();
+  void (
+    history as SessionHistory & {
+      enqueue(task: () => Promise<void>): Promise<void>;
+    }
+  ).enqueue(() => barrier.promise);
+  return () => barrier.resolve();
+}
+
 afterEach(async () => {
   vi.useRealTimers();
   await Promise.all(modules.splice(0).map((module) => module.close()));
@@ -106,6 +119,94 @@ afterEach(async () => {
 });
 
 describe('session history admission', () => {
+  it('drains a deferred history write during ordinary shutdown before releasing the lock and tracing', async () => {
+    const gate = new AdmissionGate();
+    const { history, directory } = await setup({ admission: gate });
+    const recorder = history.openRecorder(meta());
+    const messages = [
+      message('queued-before-shutdown', 'must commit before close'),
+    ];
+    const closed: string[] = [];
+    const idle = { start: async () => {}, close: async () => {} };
+    const runtime = await startRuntime({
+      logging: logger,
+      admission: gate,
+      adopted: [
+        {
+          close: async () => {
+            closed.push('tracing');
+          },
+        },
+        {
+          close: async () => {
+            closed.push('lock');
+          },
+        },
+      ],
+      modules: {
+        modelCallLogger: idle,
+        sessionHistory: {
+          start: () => history.start(),
+          close: async () => {
+            await history.close();
+            closed.push('history');
+          },
+        },
+        adminApi: idle,
+        cloudConnectivity: idle,
+        sessionHost: { start: idle.start, close: () => recorder.end('closed') },
+        mcp: idle,
+        telemetryManager: {
+          start: idle.start,
+          close: async () => {
+            closed.push('telemetry');
+          },
+        },
+        godMessages: idle,
+      },
+    });
+    const work = gate.admitRoot();
+    const preparing = runtime.prepareMaintenance();
+    recorder.scheduleSync(() => messages);
+    const pendingSync = history.flush();
+    expect(gate.status()).toMatchObject({ state: 'draining', deferredWork: 1 });
+    // No await or timer advance between deferral and runtime.close(): this is
+    // the race where shutdown wins before the gate's safety poll can abort.
+    const admit = vi.spyOn(gate, 'admit');
+    try {
+      const shutdown = runtime.close();
+      await Promise.all([pendingSync, shutdown]);
+      expect(await preparing).toEqual({
+        outcome: 'aborted',
+        reason: 'Runtime closed',
+      });
+      expect(admit).not.toHaveBeenCalled();
+      expect(closed).toEqual(['telemetry', 'history', 'lock', 'tracing']);
+      const db = createClient({
+        url: `file:${join(directory, SESSION_HISTORY_RELATIVE_PATH)}`,
+      });
+      try {
+        const persisted = await db.execute({
+          sql: 'SELECT content FROM messages WHERE instance_id = ? ORDER BY seq',
+          args: [recorder.instanceId],
+        });
+        expect(
+          persisted.rows.map((row) => JSON.parse(String(row.content))),
+        ).toEqual(messages);
+        const ended = await db.execute({
+          sql: 'SELECT end_reason FROM sessions WHERE instance_id = ?',
+          args: [recorder.instanceId],
+        });
+        expect(ended.rows[0]?.end_reason).toBe('closed');
+      } finally {
+        db.close();
+      }
+    } finally {
+      admit.mockRestore();
+      work.release();
+      gate.close();
+    }
+  });
   it('keeps failed enforcement visible until enforcement itself succeeds', async () => {
     const gate = new AdmissionGate();
     const { history, directory, setMaxBytes } = await setup({
@@ -160,20 +261,85 @@ describe('session history admission', () => {
     const gate = new AdmissionGate();
     const { history } = await setup({ admission: gate });
     const recorder = history.openRecorder(meta());
-    recorder.scheduleSync(() => {
-      expect(gate.status().activeWork).toBeGreaterThan(0);
-      return [message('accepted')];
-    });
+    recorder.scheduleSync(() => [message('accepted')]);
     expect(gate.status().activeWork).toBe(1);
-    expect((await gate.prepare()).outcome).toBe('aborted');
+    const preparing = gate.prepare();
+    expect(gate.status().state).toBe('draining');
+    expect((await preparing).outcome).toBe('quiescent');
     await history.flush();
     expect(await storedIds(history, recorder.instanceId)).toEqual(['accepted']);
-    // Use a pure getter for the participant's content check.
-    recorder.scheduleSync(() => [message('accepted')]);
+    gate.abort('test complete');
+  });
+
+  it('times out owned queued persistence and resumes the same recorder', async () => {
+    const gate = new AdmissionGate({ graceMs: 20 });
+    const { history } = await setup({ admission: gate });
+    const barrier = holdQueue(history);
+    const recorder = history.openRecorder(meta());
+    recorder.scheduleSync(() => [message('queued')]);
+    try {
+      const preparing = gate.prepare();
+      expect(gate.status()).toMatchObject({ state: 'draining', blockers: [] });
+      expect(await preparing).toEqual({
+        outcome: 'aborted',
+        reason: 'Drain grace expired',
+      });
+      expect(gate.status().state).toBe('open');
+    } finally {
+      barrier();
+    }
     await history.flush();
+    expect(await storedIds(history, recorder.instanceId)).toEqual(['queued']);
     expect((await gate.prepare()).outcome).toBe('quiescent');
     gate.abort('test complete');
   });
+
+  it('checks unrelated idle recorders while another recorder has healthy owned writes', async () => {
+    const gate = new AdmissionGate();
+    const { history } = await setup({ admission: gate });
+    const writing = history.openRecorder(meta());
+    const idle = history.openRecorder(meta());
+    const content = [message('committed')];
+    idle.scheduleSync(() => content);
+    await history.flush();
+    const release = holdQueue(history);
+    writing.scheduleSync(() => [message('healthy')]);
+    content[0]!.parts = [{ type: 'text', text: 'dirty' }];
+    try {
+      expect((await gate.prepare()).outcome).toBe('aborted');
+      expect(gate.status().blockers).toContain(
+        'Session history content awaits persistence',
+      );
+    } finally {
+      release();
+    }
+    await history.flush();
+  });
+
+  it.each(['getter', 'hash'] as const)(
+    'fails closed on %s uncertainty even in owned writes',
+    async (kind) => {
+      const gate = new AdmissionGate();
+      const { history } = await setup({ admission: gate });
+      const release = holdQueue(history);
+      const recorder = history.openRecorder(meta());
+      const circular = message('circular');
+      Object.assign(circular, { circular });
+      recorder.scheduleSync(() => {
+        if (kind === 'getter') throw new Error('getter unavailable');
+        return [circular];
+      });
+      try {
+        expect((await gate.prepare()).outcome).toBe('aborted');
+        expect(gate.status().blockers).toContain(
+          'Participant safety is uncertain',
+        );
+      } finally {
+        release();
+      }
+      await history.flush();
+    },
+  );
 
   it('retains failed DB writes and dirty older content until a successful retry', async () => {
     const gate = new AdmissionGate();
@@ -189,13 +355,26 @@ describe('session history admission', () => {
       const original = message('a');
       const messages = [original];
       recorder.scheduleSync(() => messages);
+      const failingDrain = gate.prepare();
+      expect(gate.status().state).toBe('draining');
       await history.flush();
+      expect((await failingDrain).outcome).toBe('aborted');
       expect(gate.status().blockers).toContain(
         'Session history persistence failed',
       );
       expect((await gate.prepare()).outcome).toBe('aborted');
       await db.execute('DROP TRIGGER fail_history');
+      const release = holdQueue(history);
       recorder.scheduleSync(() => messages);
+      // A healthy retry must not hide a retained failure before it commits.
+      try {
+        expect((await gate.prepare()).outcome).toBe('aborted');
+        expect(gate.status().blockers).toContain(
+          'Session history persistence failed',
+        );
+      } finally {
+        release();
+      }
       await history.flush();
       expect(gate.status().blockers).toEqual([]);
       original.parts = [{ type: 'text', text: 'repaired' }];
@@ -263,10 +442,8 @@ describe('session history admission', () => {
     const recorder = history.openRecorder(meta());
     const result = await gate.prepare();
     if (result.outcome !== 'quiescent') throw new Error('Expected certificate');
-    recorder.scheduleSync(() => {
-      expect(gate.status().state).toBe('open');
-      return [message('late')];
-    });
+    recorder.scheduleSync(() => [message('late')]);
+    expect(gate.status().state).toBe('open');
     expect(() => gate.consume(result.lease)).toThrow(AdmissionRejectedError);
     await history.flush();
     expect(await storedIds(history, recorder.instanceId)).toEqual(['late']);

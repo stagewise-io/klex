@@ -104,15 +104,18 @@ function resourceKey(namespace: string, uri: string): string {
 export class ResourceWindowManager {
   private readonly unregisterAdmission: (() => void) | undefined;
   private readonly windows = new Map<string, ResourceWindowEntry>();
+  private updateFailed = false;
   private nextHandleNumber = 1;
   private eventsInWindow = 0;
   private windowStart = Date.now();
 
   constructor(private readonly deps: ResourceWindowManagerDeps) {
     this.unregisterAdmission = deps.admission?.register(() =>
-      [...this.windows.values()].some((entry) => entry.pendingUpdate)
-        ? ['Resource update pending without durable acceptance']
-        : [],
+      this.updateFailed
+        ? ['Resource update completion is uncertain']
+        : [...this.windows.values()].some((entry) => entry.pendingUpdate)
+          ? ['Resource update pending without durable acceptance']
+          : [],
     );
   }
 
@@ -198,7 +201,7 @@ export class ResourceWindowManager {
 
   close(): void {
     this.stopAll();
-    this.unregisterAdmission?.();
+    if (!this.updateFailed) this.unregisterAdmission?.();
   }
 
   getWindow(handle: string): ResourceWindow | undefined {
@@ -321,6 +324,9 @@ export class ResourceWindowManager {
       entry.mimeType = normalizeMimeType(outcome.snapshot.mimeType);
       entry.lastUpdateAt = Date.now();
     } catch (error: unknown) {
+      // A failed callback may have partially delivered content. Removing the
+      // window or a later refresh cannot certify that ambiguous delivery.
+      this.updateFailed = true;
       this.deps.logger.error(
         {
           error,

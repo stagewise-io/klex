@@ -86,23 +86,20 @@ class DirectoryLockModule implements DirectoryLock {
     try {
       content = await readFile(this.deps.lockPath, 'utf8');
     } catch {
-      // Can't read — try to remove and let retry handle it
-      await this.safeRemoveLock();
-      return;
+      throw new Error(
+        'Directory lock ownership is uncertain: cannot read lock',
+      );
     }
 
     let pid: number | undefined;
     try {
       pid = (JSON.parse(content) as { pid?: number }).pid;
     } catch {
-      // Unparseable — stale lock
-      await this.safeRemoveLock();
-      return;
+      throw new Error('Directory lock ownership is uncertain: invalid lock');
     }
 
-    if (pid === undefined) {
-      await this.safeRemoveLock();
-      return;
+    if (typeof pid !== 'number' || !Number.isSafeInteger(pid) || pid <= 0) {
+      throw new Error('Directory lock ownership is uncertain: invalid PID');
     }
 
     if (isProcessAlive(pid)) {
@@ -131,9 +128,10 @@ function isProcessAlive(pid: number): boolean {
   } catch (error) {
     if (isNodeError(error)) {
       // ESRCH = no such process, EPERM = process exists but different user
-      return error.code === 'EPERM';
+      if (error.code === 'ESRCH') return false;
+      if (error.code === 'EPERM') return true;
     }
-    return false;
+    throw new Error('Directory lock ownership is uncertain: PID probe failed');
   }
 }
 

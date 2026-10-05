@@ -42,6 +42,7 @@ export class AdmissionGate {
   private readonly work = new Set<WorkRecord>();
   private readonly participants = new Set<() => readonly string[]>();
   private readonly deferred = new Map<object, () => void>();
+  private readonly cancellations = new Map<object, () => void>();
   private state: AdmissionStatus['state'] = 'open';
   private epoch = 0;
   private deadline: number | null = null;
@@ -108,6 +109,11 @@ export class AdmissionGate {
     return this.context.exit(() => this.admit());
   }
 
+  ownsCurrentWork(): boolean {
+    const work = this.context.getStore();
+    return work !== undefined && this.work.has(work);
+  }
+
   async run<Result>(
     operation: () => Result | Promise<Result>,
   ): Promise<Result> {
@@ -132,13 +138,18 @@ export class AdmissionGate {
       return;
     }
     if (this.state === 'closed') throw new AdmissionRejectedError();
-    await new Promise<void>((resolve) => this.background({}, resolve));
+    await new Promise<void>((resolve) => this.background({}, resolve, resolve));
+    if (this.status().state === 'closed') throw new AdmissionRejectedError();
   }
 
-  background(key: object, operation: () => void): void {
-    if (this.state === 'closed') return;
+  background(key: object, operation: () => void, onClosed?: () => void): void {
+    if (this.state === 'closed') {
+      onClosed?.();
+      return;
+    }
     if (this.state !== 'open') {
       this.deferred.set(key, operation);
+      if (onClosed) this.cancellations.set(key, onClosed);
       if (this.state === 'quiescent') this.abort('Deferred work arrived');
       else if (this.deferred.size >= 1_024)
         this.abort('Deferred work limit reached');
@@ -228,6 +239,7 @@ export class AdmissionGate {
       this.deferred.delete(key);
       try {
         this.context.exit(operation);
+        this.cancellations.delete(key);
       } catch {
         this.deferred.set(key, operation);
         this.reason = 'Deferred work could not resume';
@@ -260,6 +272,18 @@ export class AdmissionGate {
     this.maintenance = undefined;
     this.complete?.({ outcome: 'aborted', reason: 'Runtime closed' });
     this.complete = undefined;
+    const cancellations = [...this.cancellations.values()];
+    this.cancellations.clear();
+    this.deferred.clear();
+    for (const cancel of cancellations) {
+      try {
+        cancel();
+      } catch {
+        // One failed notification must not prevent other owners from settling
+        // their queues or prevent ordinary runtime teardown from continuing.
+        this.reason = 'Deferred work cancellation failed';
+      }
+    }
   }
 
   private check(): void {

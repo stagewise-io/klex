@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
 
+import { createLogger } from '@stagewise/logger';
+
 import { AdmissionGate } from '@/admission';
+import { createIntrospector } from '@/introspection';
 
 import { type AdminAppDependencies, createAdminApp } from './server';
 
@@ -10,10 +13,9 @@ function setup(admission: AdmissionGate) {
     admission,
     godMessages: { sendGodMessage },
     logger: { debug: vi.fn(), error: vi.fn() },
-    introspector: {
-      readGreedy: () => ({ admission: admission.status() }),
-      read: () => admission.status(),
-    },
+    introspector: createIntrospector({
+      logging: createLogger({ name: 'test', type: 'hidden' }),
+    }),
     providerRegistry: { listProviderTypes: () => [], listInstances: () => [] },
   } as unknown as AdminAppDependencies);
   return { app, sendGodMessage };

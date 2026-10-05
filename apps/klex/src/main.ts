@@ -4,6 +4,7 @@ import { resolve } from 'node:path';
 import { attachOtelTransport, createLogger } from '@stagewise/logger';
 
 import { type AdminApi, createAdminApi } from '@/admin-api';
+import { createTrustedTunnelHandler } from '@/admin-api/maintenance';
 import { AdmissionGate } from '@/admission';
 import { createAgentDirectory, defaultAgentRoot } from '@/agent-directory';
 import { createAgentPicker } from '@/agent-picker';
@@ -449,7 +450,6 @@ async function main(): Promise<void> {
     });
     runtimeMcp = mcp;
     const introspector = createIntrospector({ logging: logger });
-    introspector.child('admission').introspect(() => admission.status());
 
     const modelCallLogger = createModelCallLogger({
       logging: logger,
@@ -609,7 +609,13 @@ async function main(): Promise<void> {
       ownedConnector: realtimeComposition.ownedConnector,
       conversationHost: sessionHost,
     });
-    cloudConnectivity.setTunnelRequestHandler(adminApi.handle.bind(adminApi));
+    cloudConnectivity.setTunnelRequestHandler(
+      createTrustedTunnelHandler({
+        admission,
+        logger,
+        handle: adminApi.handle.bind(adminApi),
+      }),
+    );
     runtime = await startRuntime({
       admission,
       logging: logger,

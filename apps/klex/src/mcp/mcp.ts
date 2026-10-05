@@ -332,6 +332,7 @@ interface ResourceCatalogBudget {
 }
 
 interface ResourceSubscriptionEntry {
+  cleanupFailed?: boolean;
   count: number;
   operation: Promise<void>;
   subscribedConnection: McpConnection | undefined;
@@ -404,6 +405,12 @@ class McpModule implements Mcp {
     if (this.started) return;
     this.started = true;
     this.unregisterAdmission = this.deps.admission?.register(() => {
+      if (
+        [...this.resourceSubscriptions.values()].some((entries) =>
+          [...entries.values()].some((entry) => entry.cleanupFailed),
+        )
+      )
+        return ['MCP resource cleanup is uncertain'];
       if (this.operationSafetyUnproven)
         return ['MCP operation completion is uncertain'];
       if (this.pushSafetyUnproven)
@@ -534,13 +541,16 @@ class McpModule implements Mcp {
     signal: AbortSignal,
   ): Promise<void> {
     const entry = this.resourceSubscriptions.get(namespace)?.get(uri);
-    if (!entry || entry.count === 0) return;
-    entry.count--;
+    if (!entry) return;
+    // Reserve before changing refcounts: cutoff must not lose a release.
+    const lease = this.started ? this.deps.admission?.admit() : undefined;
+    if (entry.count > 0) entry.count--;
     await this.queueResourceSubscriptionTransition(
       namespace,
       uri,
       entry,
       signal,
+      lease,
     );
   }
 
@@ -1447,8 +1457,11 @@ class McpModule implements Mcp {
     uri: string,
     entry: ResourceSubscriptionEntry,
     signal: AbortSignal,
+    reservedLease?: WorkLease,
   ): Promise<void> {
-    const lease = this.started ? this.deps.admission?.admit() : undefined;
+    const lease =
+      reservedLease ??
+      (this.started ? this.deps.admission?.admit() : undefined);
     const operation = entry.operation
       .catch(() => undefined)
       .then(() => {
@@ -1458,10 +1471,18 @@ class McpModule implements Mcp {
 
           if (entry.count === 0) {
             const subscribedConnection = entry.subscribedConnection;
-            entry.subscribedConnection = undefined;
             if (subscribedConnection) {
-              await subscribedConnection.unsubscribeResource(uri, signal);
+              try {
+                await subscribedConnection.unsubscribeResource(uri, signal);
+              } catch (error) {
+                // A concurrent acquisition may already have raised count.
+                // It cannot erase uncertainty about this remote release.
+                entry.cleanupFailed = true;
+                throw error;
+              }
             }
+            entry.subscribedConnection = undefined;
+            entry.cleanupFailed = false;
             if (entry.count === 0 && subscriptions.get(uri) === entry) {
               subscriptions.delete(uri);
               if (subscriptions.size === 0) {
@@ -1487,6 +1508,10 @@ class McpModule implements Mcp {
           }
         };
         return lease ? lease.run(transition) : transition();
+      })
+      .catch((error: unknown) => {
+        if (entry.count === 0) entry.cleanupFailed = true;
+        throw error;
       })
       .finally(() => lease?.release());
     entry.operation = operation;

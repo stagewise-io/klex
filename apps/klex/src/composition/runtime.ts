@@ -5,7 +5,6 @@ import type {
   MaintenanceLease,
   MaintenanceResult,
 } from '@/admission';
-import { AdmissionRejectedError } from '@/admission';
 
 /** Shutdown contract shared by runtime modules and adopted resources. */
 export interface ClosableResource {
@@ -129,9 +128,8 @@ export async function startRuntime(
   ];
   let closing: Promise<void> | undefined;
   const close = () => {
-    const state = options.admission?.status().state;
-    if (state === 'draining' || state === 'quiescent')
-      throw new AdmissionRejectedError();
+    // Ordinary shutdown cancels preparation without replaying deferred input
+    // into a closing runtime. This is not a certified update handoff.
     options.admission?.close();
     closing ??= closeInOrder(shutdownResources, logger);
     return closing;

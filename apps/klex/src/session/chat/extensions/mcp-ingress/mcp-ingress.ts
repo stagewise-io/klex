@@ -7,7 +7,11 @@ import z from 'zod';
 
 import type { ModuleLogger } from '@stagewise/logger';
 
-import type { AdmissionGate } from '@/admission';
+import {
+  type AdmissionGate,
+  AdmissionRejectedError,
+  type WorkLease,
+} from '@/admission';
 import type { Mcp, McpPushNotification } from '@/mcp';
 import type { ChatSessionInbox } from '@/session/chat/inbox';
 import { SessionInboxUrgency } from '@/session/chat/inbox';
@@ -111,6 +115,13 @@ class McpIngressExtension implements Extension {
   private readonly activeSubscriptionLeases = new Set<string>();
   private readonly pendingSubscriptionLeases = new Map<string, Promise<void>>();
   private readonly pendingSubscriptionReleases = new Set<Promise<void>>();
+  private readonly releasingSubscriptions = new Set<string>();
+  private readonly failedSubscriptionReleases = new Set<string>();
+  private readonly releaseRetryTimers = new Set<
+    ReturnType<typeof setTimeout>
+  >();
+  private readonly unregisterReleaseSafety: (() => void) | undefined;
+  private closing = false;
   private readonly initializingResources = new Map<
     string,
     { count: number; updatePending: boolean }
@@ -127,6 +138,11 @@ class McpIngressExtension implements Extension {
     },
     config: McpIngressConfig,
   ) {
+    this.unregisterReleaseSafety = deps.admission?.register(() =>
+      this.failedSubscriptionReleases.size
+        ? ['Resource unsubscribe is uncertain']
+        : [],
+    );
     this.maxConcurrentWindows = config.maxConcurrentWindows;
     const windowConfig: ResourceWindowConfig = {
       ...DEFAULT_RESOURCE_WINDOW_CONFIG,
@@ -162,6 +178,9 @@ class McpIngressExtension implements Extension {
   }
 
   async onClose(): Promise<void> {
+    this.closing = true;
+    for (const timer of this.releaseRetryTimers) clearTimeout(timer);
+    this.releaseRetryTimers.clear();
     this.unsubscribeResourceUpdated?.();
     this.unsubscribeResourceUpdated = undefined;
     this.unsubscribePushNotification?.();
@@ -177,6 +196,8 @@ class McpIngressExtension implements Extension {
       this.trackSubscriptionRelease(key.slice(0, sep), key.slice(sep + 1));
     }
     await Promise.all([...this.pendingSubscriptionReleases]);
+    if (this.failedSubscriptionReleases.size === 0)
+      this.unregisterReleaseSafety?.();
     for (const serverName of this.resourceListLoads.keys()) {
       this.resourceListGenerations.set(
         serverName,
@@ -887,11 +908,27 @@ class McpIngressExtension implements Extension {
   }
 
   private trackSubscriptionRelease(namespace: string, uri: string): void {
-    const release = this.releaseSubscriptionLease(namespace, uri).finally(
-      () => {
-        this.pendingSubscriptionReleases.delete(release);
-      },
-    );
+    const key = watchKey(namespace, uri);
+    if (this.releasingSubscriptions.has(key)) return;
+    let work: WorkLease | undefined;
+    try {
+      if (this.deps.admission?.status().state !== 'closed')
+        work = this.deps.admission?.admit();
+    } catch (error) {
+      if (!(error instanceof AdmissionRejectedError)) throw error;
+      this.failedSubscriptionReleases.add(key);
+      this.deps.admission?.background({}, () =>
+        this.trackSubscriptionRelease(namespace, uri),
+      );
+      return;
+    }
+    this.releasingSubscriptions.add(key);
+    const run = () => this.releaseSubscriptionLease(namespace, uri);
+    const release = (work ? work.run(run) : run()).finally(() => {
+      this.pendingSubscriptionReleases.delete(release);
+      this.releasingSubscriptions.delete(key);
+      work?.release();
+    });
     this.pendingSubscriptionReleases.add(release);
   }
 
@@ -900,18 +937,31 @@ class McpIngressExtension implements Extension {
     uri: string,
   ): Promise<void> {
     const key = watchKey(namespace, uri);
-    if (!this.activeSubscriptionLeases.delete(key)) return;
+    if (!this.activeSubscriptionLeases.has(key)) return;
     try {
       await this.deps.mcp.unsubscribeResource(
         namespace,
         uri,
         AbortSignal.timeout(10_000),
       );
+      this.activeSubscriptionLeases.delete(key);
+      this.failedSubscriptionReleases.delete(key);
     } catch (error: unknown) {
+      this.failedSubscriptionReleases.add(key);
       this.deps.logger.warn(
         { error, namespace, uri },
         'Failed to unsubscribe from resource',
       );
+      if (!this.closing) {
+        const timer = setTimeout(() => {
+          this.releaseRetryTimers.delete(timer);
+          const retry = () => this.trackSubscriptionRelease(namespace, uri);
+          if (this.deps.admission) this.deps.admission.background({}, retry);
+          else retry();
+        }, 1_000);
+        timer.unref();
+        this.releaseRetryTimers.add(timer);
+      }
     }
   }
 

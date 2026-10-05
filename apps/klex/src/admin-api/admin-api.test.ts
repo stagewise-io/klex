@@ -9,6 +9,7 @@ import type { Introspector } from '@/introspection';
 import type { Mcp } from '@/mcp';
 import type { ModelCallLogger } from '@/model-call-logger';
 import type { ProviderRegistry } from '@/provider-registry';
+import type { SessionHistory } from '@/session-history';
 
 import { type AdminApi, createAdminApi } from './admin-api';
 
@@ -55,6 +56,7 @@ const godMessages = {
   sendGodMessage: async () => ({ sessionId: 'test' }),
   close: async () => undefined,
 } as unknown as GodMessages;
+const sessionHistory = {} as unknown as SessionHistory;
 
 describe('AdminApi', () => {
   describe('dangerous local port enabled', () => {
@@ -70,6 +72,7 @@ describe('AdminApi', () => {
         providerRegistry,
         cloudConnectivity,
         godMessages,
+        sessionHistory,
         localPort: 19999,
         timezone: 'UTC',
       });
@@ -102,6 +105,7 @@ describe('AdminApi', () => {
         providerRegistry,
         cloudConnectivity,
         godMessages,
+        sessionHistory,
         localPort: undefined,
         timezone: 'UTC',
       });

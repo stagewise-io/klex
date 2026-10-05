@@ -119,6 +119,22 @@ Consult receives the latest durable context-compaction summary plus the configur
 
 Consumers own their presets. The line-format transcript preset (`createTranscriptHistoryView`, `CONTEXT_SUMMARY_KEY`) serves context compaction without a limit and consult with a character and message budget. The episodic recorder preset lives in `memory/history-compression.ts`.
 
+## Transcript persistence
+
+Each `ChatSession` instance gets a random `instanceId` when it is constructed. The `id` is not unique enough: the default session reuses `sessionId = "default"` each time the host replaces it. When composed with `session-history`, the session opens a `SessionHistoryRecorder` with its kind, name, `parentInstanceId` (for child sessions), and extension identifier.
+
+Persistence is write-only from the session's point of view. The session never reads its transcript back, and the in-memory `messages` array stays the source of truth for model input. `scheduleTranscriptSync()` hands the recorder a getter and does not wait for the write. The recorder merges calls that arrive in quick succession, diffs the current array against the stored rows, and writes only what changed. Sync errors are logged and retried on the next sync. They never reach the run loop.
+
+Sync points are the moments when history is consistent:
+
+- After each step commits its response (`flushPendingImmediate`). This runs even when no pending input exists.
+- When inbox input is appended directly while the session is idle (immediate and deferred events).
+- After history inserts from extensions, such as compaction summaries.
+- After a realtime lease commit.
+- On termination. The recorder does a final sync and records `endReason`. A store failure here is caught so that session cleanup still runs.
+
+On startup, any instance that has no end marker is marked as ended with reason `unclean_shutdown`. The size cap and eviction rules belong to `session-history`, not to the session.
+
 ## Error handling
 
 - **Model errors** (5xx, 408, 429, 401/403, timeouts, no output) → fallback to next model, retry

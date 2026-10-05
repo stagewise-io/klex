@@ -66,4 +66,39 @@ The Admin API contract includes the dedicated God Messages session:
 - `GET /v1/god-messages/messages` returns cursor-paginated session history.
 - `POST /v1/god-messages/reset` replaces a resettable session.
 
+## Session history
+
+The agent persists the transcript of every chat session instance (default,
+god, and child) to local storage. These routes expose it read-only:
+
+- `GET /v1/sessions` lists instances, newest first. Filter with `kind`
+  (`default`, `god`, `child`), `live`, and `parentInstanceId`; page with
+  `limit` and the opaque `cursor` returned as `nextCursor`. To find the
+  current main session, call `GET /v1/sessions?kind=default&live=true&limit=1`.
+  A session is persisted only after its first message, so this list can be
+  empty right after a restart.
+- `GET /v1/sessions/{instanceId}` returns one instance's metadata, including
+  `live`, `endReason`, `messageCount`, and `trimmedMessageCount`.
+- `GET /v1/sessions/{instanceId}/messages` returns messages in chronological
+  order. Without a cursor it returns the newest `limit` messages. Pass the
+  numeric `nextCursor` as `cursor` to load the previous, older page.
+
+Messages use the stored AI SDK `UIMessage` shape: `tool-${name}` parts carry
+full `input`, `output`, and `errorText`, and `data-${name}` parts carry their
+`data`. Unlike God Messages history, nothing is truncated. Provider metadata
+(`providerMetadata`, `callProviderMetadata`, `resultProviderMetadata`, such
+as encrypted reasoning) is omitted unless `includeProviderMetadata=true`.
+
+Each `ChatSession` gets its own `instanceId`. The default session reuses
+`sessionId = "default"` across replacements, so query by `instanceId`. The
+local store has a size cap. When the cap is reached, the oldest ended sessions
+are deleted first. After that, the oldest messages of live sessions are
+trimmed, and `trimmedMessageCount` reports how many were removed. Inline
+binary data is redacted everywhere, including inside tool outputs: `data:`
+URLs, the `data` field of image, audio, and media blocks, and embedded
+resource `blob`s.
+
+Unknown instances return `404` with code `session_not_found`. Malformed list
+cursors return `400` with code `invalid_cursor`.
+
 Install `hono` and `@hono/zod-openapi` as peer dependencies.

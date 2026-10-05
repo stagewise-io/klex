@@ -13,6 +13,7 @@ export interface RuntimeResource extends ClosableResource {
 /** Modules the runtime starts, in dependency-injected form. */
 export interface RuntimeStartupModules {
   modelCallLogger: RuntimeResource;
+  sessionHistory: RuntimeResource;
   adminApi: RuntimeResource;
   cloudConnectivity: RuntimeResource;
   sessionHost: RuntimeResource;
@@ -48,6 +49,8 @@ export function runtimeStartupOrder(
 ): readonly RuntimeStartupStep[] {
   return [
     { name: 'model-call-logger', resource: modules.modelCallLogger },
+    // Sessions and the admin API read/write it; start before both.
+    { name: 'session-history', resource: modules.sessionHistory },
     { name: 'admin-api', resource: modules.adminApi },
     { name: 'cloud-connectivity', resource: modules.cloudConnectivity },
     { name: 'session-host', resource: modules.sessionHost },
@@ -130,6 +133,8 @@ function runtimeShutdownOrder(
     'cloud-connectivity',
     'admin-api',
     'model-call-logger',
+    // Last: closing sessions flush their final transcript sync into it.
+    'session-history',
   ].flatMap((name) => {
     const resource = byName.get(name);
     return resource ? [resource] : [];

@@ -717,6 +717,102 @@ const godMessageResetResponseSchema = z
   })
   .openapi('GodMessageResetResponse');
 
+// --- Session history ---
+
+const sessionKindSchema = z
+  .enum(['default', 'god', 'child'])
+  .openapi('SessionKind');
+
+const sessionHistoryRecordSchema = z
+  .object({
+    instanceId: z.string(),
+    sessionId: z.string(),
+    kind: sessionKindSchema,
+    name: z.string(),
+    parentInstanceId: z.string().nullable(),
+    extensionIdentifier: z.string().nullable(),
+    createdAt: z.string(),
+    updatedAt: z.string(),
+    endedAt: z.string().nullable(),
+    endReason: z.string().nullable(),
+    live: z.boolean(),
+    messageCount: z.number().int().min(0),
+    trimmedMessageCount: z.number().int().min(0),
+    byteSize: z.number().int().min(0),
+  })
+  .openapi('SessionHistoryRecord');
+
+const sessionHistoryListQuerySchema = z
+  .object({
+    kind: sessionKindSchema.optional(),
+    parentInstanceId: z.string().min(1).optional(),
+    live: z
+      .enum(['true', 'false'])
+      .transform((value) => value === 'true')
+      .optional(),
+    limit: z.coerce.number().int().min(1).max(100).default(20),
+    cursor: z.string().min(1).optional(),
+  })
+  .openapi('SessionHistoryListQuery');
+
+const sessionHistoryListResponseSchema = z
+  .object({
+    sessions: z.array(sessionHistoryRecordSchema),
+    nextCursor: z.string().nullable(),
+    hasMore: z.boolean(),
+  })
+  .openapi('SessionHistoryListResponse');
+
+const sessionInstanceIdParamSchema = z.object({
+  instanceId: z
+    .string()
+    .min(1)
+    .openapi({ param: { name: 'instanceId', in: 'path' } }),
+});
+
+const sessionHistoryMessagesQuerySchema = z
+  .object({
+    limit: z.coerce.number().int().min(1).max(200).default(50),
+    cursor: z.coerce.number().int().min(0).optional(),
+    includeProviderMetadata: z
+      .enum(['true', 'false'])
+      .transform((value) => value === 'true')
+      .optional()
+      .openapi({
+        description:
+          'Include opaque provider metadata (e.g. encrypted reasoning) on parts. Defaults to false.',
+      }),
+  })
+  .openapi('SessionHistoryMessagesQuery');
+
+const sessionHistoryMessagePartSchema = z
+  .object({ type: z.string() })
+  .catchall(z.unknown())
+  .openapi('SessionHistoryMessagePart', {
+    description:
+      'AI SDK UIMessage part, e.g. `text`, `reasoning`, `tool-${name}`, `data-${name}`, `file`, `step-start`.',
+  });
+
+const sessionHistoryMessageSchema = z
+  .object({
+    id: z.string(),
+    role: z.enum(['system', 'user', 'assistant']),
+    metadata: z.unknown().optional(),
+    parts: z.array(sessionHistoryMessagePartSchema),
+    seq: z.number().int().min(0),
+    persistedAt: z.string(),
+  })
+  .openapi('SessionHistoryMessage');
+
+const sessionHistoryMessagesResponseSchema = z
+  .object({
+    messages: z.array(sessionHistoryMessageSchema),
+    nextCursor: z.number().int().nullable(),
+    hasMore: z.boolean(),
+    trimmedMessageCount: z.number().int().min(0),
+  })
+  .openapi('SessionHistoryMessagesResponse');
+
 // --- Usage ---
 
 const usageSplitBySchema = z
@@ -960,6 +1056,14 @@ export {
   providerTypesResponseSchema,
   serializedMessagePartSchema,
   serializedMessageSchema,
+  sessionHistoryListQuerySchema,
+  sessionHistoryListResponseSchema,
+  sessionHistoryMessageSchema,
+  sessionHistoryMessagesQuerySchema,
+  sessionHistoryMessagesResponseSchema,
+  sessionHistoryRecordSchema,
+  sessionInstanceIdParamSchema,
+  sessionKindSchema,
   timezoneSettingsSchema,
   toolCallHistoryResponseSchema,
   updateKnownModelBodySchema,

@@ -69,6 +69,7 @@ import {
 } from '@/session/realtime';
 import { createSessionHost } from '@/session/session-host';
 import type { SessionFactory } from '@/session/types';
+import { createSessionHistory } from '@/session-history';
 import {
   createShutdownCoordinator,
   DEFAULT_SHUTDOWN_TIMEOUT_MS,
@@ -451,6 +452,12 @@ async function main(): Promise<void> {
       dataDirectory: cli.dataDirectory,
     });
 
+    const sessionHistory = createSessionHistory({
+      logging: logger,
+      dataDirectory: cli.dataDirectory,
+      config,
+    });
+
     tracing.setModelCallSink((record) => {
       modelCallLogger.recordCall(record);
       telemetryMetrics?.recordModelCall({
@@ -478,6 +485,7 @@ async function main(): Promise<void> {
       dataDirectory,
       telemetryMetrics,
       productAnalytics,
+      sessionHistory,
     };
 
     /**
@@ -571,6 +579,7 @@ async function main(): Promise<void> {
       providerRegistry,
       cloudConnectivity,
       godMessages,
+      sessionHistory,
       localPort: cli.dangerousLocalAdminApiPort,
       timezone,
     });
@@ -597,6 +606,7 @@ async function main(): Promise<void> {
       adopted: preRuntime,
       modules: {
         modelCallLogger,
+        sessionHistory,
         adminApi,
         cloudConnectivity,
         sessionHost,

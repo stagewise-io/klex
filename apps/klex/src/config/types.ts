@@ -620,6 +620,22 @@ const memoryExtensionConfigSchema = z
   .object({ episodes: episodeRotationConfigSchema.prefault({}) })
   .strict();
 
+/**
+ * Minimum accepted session-history size cap (16 MiB). Smaller caps would
+ * evict the live transcript almost immediately.
+ */
+export const MIN_SESSION_HISTORY_MAX_BYTES = 16 * 1024 * 1024;
+
+/**
+ * Optional session-history overrides. Intentionally has no default so the
+ * key is never written to `config.json` unless a user sets it.
+ */
+const sessionHistoryConfigSchema = z
+  .object({
+    maxBytes: z.number().int().min(MIN_SESSION_HISTORY_MAX_BYTES).optional(),
+  })
+  .strict();
+
 /** Extension behavior settings, keyed by extension. */
 const extensionsConfigSchema = z
   .object({ memory: memoryExtensionConfigSchema.prefault({}) })
@@ -649,9 +665,11 @@ const klexConfigSchema = z.object({
   timezone: timezoneSchema.default('UTC'),
   // `.prefault` (not `.default`) so nested defaults are applied.
   extensions: extensionsConfigSchema.prefault({}),
+  sessionHistory: sessionHistoryConfigSchema.optional(),
 });
 
 type KlexConfig = z.infer<typeof klexConfigSchema>;
+type SessionHistoryConfig = z.infer<typeof sessionHistoryConfigSchema>;
 type EpisodeRotationConfig = z.infer<typeof episodeRotationConfigSchema>;
 
 const legacyModelSelectionSchema = z
@@ -940,6 +958,7 @@ export type {
   ModelVoiceCapabilities,
   ProviderConfig,
   ProviderType,
+  SessionHistoryConfig,
   StdioServerConfig,
   VoiceModelPurpose,
 };

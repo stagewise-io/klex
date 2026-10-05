@@ -169,6 +169,35 @@ async function jsonRpc(
 }
 
 describe('event store', () => {
+  it('reads every page without acknowledging or removing pending events', () => {
+    const store = createEventStore();
+    const acknowledge = vi.spyOn(store, 'acknowledge');
+    for (let index = 0; index < 205; index++)
+      store.append({ ...textMessage, updateId: String(index) });
+    const first = store.page();
+    const second = store.page({ cursor: first.nextCursor });
+    const third = store.page({ cursor: second.nextCursor });
+    expect([
+      first.events.length,
+      second.events.length,
+      third.events.length,
+    ]).toEqual([100, 100, 5]);
+    expect(
+      new Set(
+        [...first.events, ...second.events, ...third.events].map(
+          (event) => event.eventId,
+        ),
+      ).size,
+    ).toBe(205);
+    expect(third.hasMore).toBe(false);
+    expect(third.nextCursor).toBeUndefined();
+    expect(store.page().events).toEqual(first.events);
+    expect(acknowledge).not.toHaveBeenCalled();
+    expect(() => store.page({ cursor: 'unknown' })).toThrow(
+      'Invalid event page cursor',
+    );
+    store.close();
+  });
   it('deduplicates text events, pages oldest first, and deep-clones results', () => {
     const store = createEventStore();
     const first = store.append(textMessage);

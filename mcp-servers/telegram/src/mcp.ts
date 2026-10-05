@@ -58,7 +58,7 @@ class TelegramMcpModule implements TelegramMcp {
           },
         );
         registerPushNotificationsServer(server.server, {
-          getEvents: ({ limit }) => eventStore.page({ limit }),
+          getEvents: ({ limit, cursor }) => eventStore.page({ limit, cursor }),
           acknowledgeEvents: ({ eventIds }) => eventStore.acknowledge(eventIds),
         });
         return server;

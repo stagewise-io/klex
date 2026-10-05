@@ -64,6 +64,26 @@ const notification = {
 };
 
 describe('Push notification envelope', () => {
+  it('preserves additive read-only continuation cursors', () => {
+    const request = {
+      ...getRequest,
+      params: { limit: 100, cursor: 'after-first-page' },
+    };
+    const result = {
+      ...getResult,
+      hasMore: true,
+      nextCursor: 'after-second-page',
+    };
+    expect(GetEventsRequestSchema.parse(request)).toEqual(request);
+    expect(GetEventsResultSchema.parse(result)).toEqual(result);
+    expect(
+      GetEventsRequestSchema.safeParse({ ...request, params: { cursor: 123 } })
+        .success,
+    ).toBe(false);
+    expect(
+      GetEventsResultSchema.safeParse({ ...result, nextCursor: 123 }).success,
+    ).toBe(false);
+  });
   it('accepts the specification fixture', () => {
     expect(PushNotificationSchema.parse(event)).toEqual(event);
   });

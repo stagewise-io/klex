@@ -141,6 +141,9 @@
               "type": "integer",
               "exclusiveMinimum": 0,
               "maximum": 9007199254740991
+            },
+            "cursor": {
+              "type": "string"
             }
           },
           "additionalProperties": false
@@ -185,6 +188,9 @@
                   "type": "integer",
                   "exclusiveMinimum": 0,
                   "maximum": 9007199254740991
+                },
+                "cursor": {
+                  "type": "string"
                 }
               },
               "additionalProperties": false
@@ -584,6 +590,9 @@
             },
             "hasMore": {
               "type": "boolean"
+            },
+            "nextCursor": {
+              "type": "string"
             }
           },
           "required": ["events", "hasMore"],

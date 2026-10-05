@@ -2,6 +2,8 @@ import { join } from 'node:path';
 
 import { type ToolSet, tool } from 'ai';
 
+import type { WorkLease } from '@/admission';
+
 import type {
   Extension,
   ExtensionDeps,
@@ -57,25 +59,49 @@ class MemoryExt implements Extension {
       store,
       logger: this.deps.logger,
     });
-    this.unregisterAdmission = this.deps.admission?.register(() => {
-      const state = this.recorder?.introspect();
-      if (state?.lastError || this.flushFailed)
-        return ['Memory persistence is uncertain'];
-      const history = this.deps.getHistory();
-      const latest = history.at(-1);
-      // A successful shutdown flush is not a pre-teardown persistence proof.
-      // Keep maintenance closed until the live recorder catches up.
-      if (
-        this.ownedFlushes === 0 &&
-        latest &&
-        (state?.cursor?.id !== latest.id ||
-          state.cursor.index !== history.length - 1)
-      ) {
-        return ['Memory history awaits persistence'];
-      }
-      return [];
-    });
+    this.unregisterAdmission = this.deps.admission?.register(
+      () => {
+        const state = this.recorder?.introspect();
+        if (state?.lastError || this.flushFailed)
+          return ['Memory persistence is uncertain'];
+        const history = this.deps.getHistory();
+        const latest = history.at(-1);
+        // A successful shutdown flush is not a pre-teardown persistence proof.
+        // Keep maintenance closed until the live recorder catches up.
+        if (
+          this.ownedFlushes === 0 &&
+          latest &&
+          (state?.cursor?.id !== latest.id ||
+            state.cursor.index !== history.length - 1)
+        ) {
+          return ['Memory history awaits persistence'];
+        }
+        return [];
+      },
+      (lease) => {
+        const state = this.recorder?.introspect();
+        const history = this.deps.getHistory();
+        const latest = history.at(-1);
+        if (
+          this.closed ||
+          this.stepActive ||
+          this.ownedFlushes > 0 ||
+          this.flushFailed ||
+          state?.lastError ||
+          !latest ||
+          (state?.cursor?.id === latest.id &&
+            state.cursor.index === history.length - 1)
+        )
+          return;
+        return this.flushOwned(lease);
+      },
+    );
     this.flushTimer = setInterval(() => {
+      if (
+        this.ownedFlushes > 0 &&
+        this.deps.admission?.status().state === 'draining'
+      )
+        return;
       const run = () => {
         if (this.closed || this.stepActive) return;
         const operation = this.flushOwned();
@@ -225,8 +251,8 @@ class MemoryExt implements Extension {
     return result;
   }
 
-  private async flushOwned(): Promise<void> {
-    const work = this.deps.admission?.admit();
+  private async flushOwned(reservedLease?: WorkLease): Promise<void> {
+    const work = reservedLease ?? this.deps.admission?.admit();
     this.ownedFlushes++;
     const flush = () =>
       this.serialize(async () => {
@@ -241,7 +267,7 @@ class MemoryExt implements Extension {
       throw error;
     } finally {
       this.ownedFlushes--;
-      work?.release();
+      if (!reservedLease) work?.release();
     }
   }
 }

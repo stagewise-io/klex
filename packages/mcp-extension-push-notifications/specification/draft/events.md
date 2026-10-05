@@ -106,7 +106,20 @@ A successful response contains complete pending events and a snapshot indication
 
 `limit` MUST be a positive integer. Servers MAY enforce a lower maximum. A server SHOULD return pending events in deterministic oldest-first order, but strict processing order is not required and one unacknowledged event need not block all later events. `hasMore` describes the page snapshot; concurrent arrivals may make it stale immediately.
 
-There is no cursor or page token. A client advances by accepting and acknowledging a returned page before retrieving again. If an acknowledgement response is lost, retrieval can return the same page again.
+Servers MAY support read-only pagination with an optional opaque `cursor` request
+field and `nextCursor` response field. When `hasMore` is true, a supporting server
+returns a nonempty `nextCursor` for the next page in deterministic server order.
+The cursor MUST be scoped to the authenticated consumer and integration binding;
+it MUST NOT change pending events or imply acceptance. Invalid or expired cursors
+MUST be rejected without revealing another consumer's events. Cursors are
+recovery hints, not durable receipts; clients need not persist them and restart recovery from
+the first page after a failed pass and continue deduplicating by `eventId`.
+
+A read-only client MUST NOT mark recovery complete when `hasMore` is true but a
+continuation cursor is missing, invalid, or repeated. Clients MUST bound recovery
+loops. Older servers can omit cursors; clients with durable acceptance may still
+advance by acknowledging each accepted page. If an acknowledgement response is
+lost, retrieval can return the same page again.
 
 ## Acknowledging events
 

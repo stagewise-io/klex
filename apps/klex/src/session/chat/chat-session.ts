@@ -426,8 +426,8 @@ class ChatSessionModule implements AgentSession {
     );
 
     this.sessionInbox = createInbox({
-      dispatch: (operation, deferredResult, onClosed) =>
-        this.dispatchInput(operation, deferredResult, onClosed),
+      dispatch: (operation, deferredResult, onClosed, signal) =>
+        this.dispatchInput(operation, deferredResult, onClosed, signal),
       onImmediateEvent: this.onImmediateEvent,
       onDeferredEvent: this.onDeferredEvent,
       onImmediateMessage: this.onImmediateMessage,
@@ -1475,7 +1475,12 @@ class ChatSessionModule implements AgentSession {
     operation: () => Result,
     deferredResult: Result,
     onClosed?: () => void,
+    signal?: AbortSignal,
   ): Result {
+    if (signal?.aborted) {
+      onClosed?.();
+      return deferredResult;
+    }
     const gate = this.deps.admission;
     if (!gate) return operation();
     let lease: WorkLease;
@@ -1484,10 +1489,25 @@ class ChatSessionModule implements AgentSession {
     } catch (error) {
       if (!(error instanceof AdmissionRejectedError)) throw error;
       if (!gate.ownsCurrentWork()) throw error;
+      const key = {};
+      const cancel = () => gate.cancelBackground(key);
+      const settled = () => signal?.removeEventListener('abort', cancel);
+      signal?.addEventListener('abort', cancel, { once: true });
       gate.background(
-        {},
-        () => this.dispatchInput(operation, deferredResult, onClosed),
-        onClosed,
+        key,
+        () => {
+          settled();
+          return this.dispatchInput(
+            operation,
+            deferredResult,
+            onClosed,
+            signal,
+          );
+        },
+        () => {
+          settled();
+          onClosed?.();
+        },
       );
       return deferredResult;
     }

@@ -31,15 +31,20 @@ instance-owned quiescence lease. Preparation never closes runtime modules.
   cannot admit new descendants.
 - Accepted consult delivery paused at a descendant bound returns a distinct
   deferred completion, not rejection. The child and report remain owned until
-  delivery replays once after rollback. Delivery failure blocks certification.
+  delivery replays once after rollback. Closing the owning inbox terminally
+  cancels its deferred callbacks and settles delivery as unsuccessful; dead
+  inboxes are never replay targets. Other delivery failure blocks certification.
 - Resource unsubscribe retains its remote connection reference and work ownership
-  until successful cleanup; failure is retained across cutoff/retry. Owned memory
-  flushes may finish during grace, while retained failures and unowned dirty history
+  until successful cleanup; failure is retained across cutoff/retry. An uncertain
+  unsubscribe invalidates local subscription proof, so reopen must subscribe again
+  without erasing the cleanup blocker. Preparation reserves process-local work for
+  healthy dirty idle memory flushes before cutoff. These and already owned flushes
+  may finish during grace, while retained failures and unowned dirty history
   fail closed. Their successful shutdown flush is not a pre-teardown proof.
 - During drain, existing tasks share a budget of 64 new continuations/descendants
   and maximum admission depth two. Existing steps run to their ordinary limits.
   Exhausted turn/retry continuations pause rather than terminate their task.
-- Unrelated reminder delivery, memory flush/recovery, MCP reconciliation,
+- Unrelated reminder delivery, memory recovery, MCP reconciliation,
   reconnect, and resource retries defer until reopening. Reminders pause before
   consuming their persisted due time. Deferred callbacks prevent certification;
   they are not a durable ingress queue. At 1,024 deferred callbacks preparation
@@ -127,9 +132,10 @@ push binding does not manufacture a durability proof.
 
 **Telegram-enabled maintenance remains blocked until durable inbox/ACK/replay work
 is implemented and verified.** No Telegram spool or server lifecycle change is
-included here. Because advancing the current pending-queue protocol requires ACK,
-recovery reads one bounded page without ACK and explicitly logs incomplete recovery
-if `hasMore` is true; it cannot safely advance further. Live delivery continues,
+included here. Recovery follows read-only continuation cursors without ACK in a
+bounded pass. Missing, invalid, or repeated cursors leave recovery incomplete,
+including legacy servers returning `hasMore` without a cursor. Live delivery waits
+for recovery to complete,
 and upstream events remain unacknowledged. This preserves the maintenance safety
 boundary but is not a claim that today's volatile upstream survives server crashes,
 ordinary shutdown, or idle cleanup.

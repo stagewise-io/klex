@@ -76,6 +76,7 @@ export interface GetEventsParams {
 
   /** Requested maximum page size. Must be a positive integer. */
   limit?: number;
+  cursor?: string;
 }
 
 /** Retrieves a bounded page of events pending for the authenticated consumer. */
@@ -91,6 +92,7 @@ export type GetEventsResult = Result & {
 
   /** Whether additional pending events were available when this page was read. */
   hasMore: boolean;
+  nextCursor?: string;
 };
 
 /** Parameters for acknowledging durable acceptance of events. */

@@ -68,6 +68,63 @@ describe('ChatSession mid-turn input', () => {
     createTurn.mockReset();
   });
 
+  it('cancels deferred input when its inbox closes and permits the next drain', async () => {
+    const admission = new AdmissionGate({ graceMs: 1_000, maxDescendants: 0 });
+    const session = createChatSession({
+      admission,
+      logging: { child: () => logger } as unknown as RootLogger,
+      config: {
+        get: () => ({ modelSelection: { chat: ['test:model'] } }),
+      } as unknown as Config,
+      modelResolver: { resolveModelInfo: () => undefined } as never,
+      dataDirectory: '/tmp/klex-chat-session-closed-inbox-test',
+      mcp: null,
+      extensionFactories: [],
+      introspectionScope: createScope(),
+      sessionContext: { kind: 'default', name: 'main', sessionId: 'default' },
+      basePrompt: 'You are Klex.',
+    });
+    await session.start();
+    const owner = admission.admitRoot();
+    const preparing = admission.prepare();
+    const delivery = owner.run(() =>
+      session.inbox.sendMessage(
+        {
+          id: 'cancelled',
+          role: 'user',
+          parts: [{ type: 'text', text: 'never deliver' }],
+        },
+        SessionInboxUrgency.Default,
+      ),
+    );
+    owner.run(() =>
+      session.inbox.send({
+        eventId: 'cancelled-event',
+        sourceEnv: 'test',
+        urgency: SessionInboxUrgency.Default,
+        context: {
+          sourceEnv: 'test',
+          metadata: {},
+          content: [{ type: 'text', text: 'never deliver event' }],
+        },
+      }),
+    );
+    expect(admission.status().deferredWork).toBe(2);
+    expect(delivery).toMatchObject({ status: 'deferred' });
+    session.inbox.close();
+    if (typeof delivery !== 'boolean')
+      expect(await delivery.delivered).toBe(false);
+    expect(admission.status().deferredWork).toBe(0);
+    admission.abort('replay cancelled input');
+    expect((await preparing).outcome).toBe('aborted');
+    owner.release();
+    expect(createTurn).not.toHaveBeenCalled();
+    expect((await admission.prepare()).outcome).toBe('quiescent');
+    admission.abort('test complete');
+    await session.close();
+    admission.close();
+  });
+
   it('includes input resumed at a paused continuation boundary in the next turn', async () => {
     vi.useFakeTimers();
     const admission = new AdmissionGate({ graceMs: 1_000, maxDescendants: 0 });

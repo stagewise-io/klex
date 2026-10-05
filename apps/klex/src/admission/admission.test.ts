@@ -5,6 +5,44 @@ import { AdmissionGate, AdmissionRejectedError } from './admission';
 afterEach(() => vi.useRealTimers());
 
 describe('admission and pre-teardown quiescence', () => {
+  it('does not replay callbacks cancelled by another replayed operation', async () => {
+    const gate = new AdmissionGate();
+    const owner = gate.admitRoot();
+    const preparing = gate.prepare();
+    const key = {};
+    const replay = vi.fn();
+    const cancelled = vi.fn();
+    gate.background({}, () => gate.cancelBackground(key));
+    gate.background(key, replay, cancelled);
+    gate.abort('owner closed');
+    expect((await preparing).outcome).toBe('aborted');
+    expect(cancelled).toHaveBeenCalledOnce();
+    expect(replay).not.toHaveBeenCalled();
+    owner.release();
+    expect((await gate.prepare()).outcome).toBe('quiescent');
+    gate.close();
+  });
+
+  it('retains drain ownership and ignores a late failure from an older preparation', async () => {
+    const gate = new AdmissionGate({ maxDescendants: 0 });
+    const pending = Promise.withResolvers<void>();
+    const unregister = gate.register(
+      () => [],
+      () => pending.promise,
+    );
+    const first = gate.prepare();
+    expect(() => gate.admitRoot()).toThrow(AdmissionRejectedError);
+    expect(gate.status().activeWork).toBe(1);
+    gate.abort('retry');
+    expect((await first).outcome).toBe('aborted');
+    unregister();
+    const second = gate.prepare();
+    pending.reject(new Error('late drain failure'));
+    expect((await second).outcome).toBe('quiescent');
+    expect(gate.status().state).toBe('quiescent');
+    gate.close();
+  });
+
   it('continues ordinary shutdown when one deferred cancellation throws', async () => {
     const gate = new AdmissionGate();
     const work = gate.admitRoot();

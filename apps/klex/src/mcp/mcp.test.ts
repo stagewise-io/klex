@@ -209,6 +209,120 @@ describe('MCP Push Notification subscriptions', () => {
 });
 
 describe('MCP Push Notification worker', () => {
+  it('recovers more than 100 pending events across read-only pages in one pass', async () => {
+    const pending = Array.from({ length: 205 }, (_, index) => ({
+      ...pushNotification,
+      eventId: `telegram:bot:update:${index}`,
+    }));
+    const closed = deferred<void>();
+    const acknowledgeEvents = vi.fn(async () => undefined);
+    const getEvents = vi.fn(async ({ cursor }: { cursor?: string }) => {
+      const start = cursor === undefined ? 0 : Number(cursor);
+      const end = start + 100;
+      return {
+        events: pending.slice(start, end),
+        hasMore: end < pending.length,
+        ...(end < pending.length ? { nextCursor: String(end) } : {}),
+      };
+    });
+    const listen = vi.fn(async () => ({ closed: closed.promise }));
+    const server = pushNotificationConnection({
+      listen,
+      getEvents,
+      acknowledgeEvents,
+    });
+    const { mcp } = setup(
+      { chat: { url: 'https://chat.example/mcp' } },
+      async () => server,
+    );
+    const listener = vi.fn();
+    mcp.onPushNotification(listener);
+    await mcp.start();
+    await vi.waitFor(() => expect(listener).toHaveBeenCalledTimes(205));
+    expect(getEvents.mock.calls.map(([params]) => params)).toEqual([
+      { limit: 100 },
+      { limit: 100, cursor: '100' },
+      { limit: 100, cursor: '200' },
+    ]);
+    expect(listen).toHaveBeenCalledOnce();
+    expect(pending).toHaveLength(205);
+    expect(acknowledgeEvents).not.toHaveBeenCalled();
+    await mcp.close();
+  });
+
+  it.each(['legacy', 'empty', 'repeated', 'unbounded'] as const)(
+    'does not complete recovery for %s continuation cursors',
+    async (mode) => {
+      const admission = new AdmissionGate();
+      const closed = deferred<void>();
+      const acknowledgeEvents = vi.fn(async () => undefined);
+      let pages = 0;
+      const getEvents = vi.fn(async () => {
+        pages++;
+        return {
+          events: [pushNotification],
+          hasMore: true,
+          ...(mode === 'legacy'
+            ? {}
+            : {
+                nextCursor:
+                  mode === 'empty'
+                    ? ''
+                    : mode === 'repeated'
+                      ? 'same'
+                      : String(pages),
+              }),
+        };
+      });
+      let options: ConnectMcpServerOptions | undefined;
+      const server = pushNotificationConnection({
+        listen: vi.fn(async () => ({ closed: closed.promise })),
+        getEvents,
+        acknowledgeEvents,
+      });
+      const { mcp } = setup(
+        { chat: { url: 'https://chat.example/mcp' } },
+        async (next) => {
+          options = next;
+          return server;
+        },
+        true,
+        undefined,
+        admission,
+      );
+      const listener = vi.fn();
+      mcp.onPushNotification(listener);
+      await mcp.start();
+      const expectedPages =
+        mode === 'unbounded' ? 1_024 : mode === 'repeated' ? 2 : 1;
+      await vi.waitFor(() =>
+        expect(getEvents).toHaveBeenCalledTimes(expectedPages),
+      );
+      await options?.onPushNotification(server, {
+        jsonrpc: '2.0',
+        method: 'io.stagewise/push-notifications/event',
+        params: {
+          event: {
+            ...pushNotification,
+            eventId: 'live-after-incomplete-recovery',
+          },
+        },
+      });
+      expect(listener).toHaveBeenCalledOnce();
+      expect(
+        (
+          mcp as unknown as {
+            eventWorkers: Map<string, { recovered: boolean }>;
+          }
+        ).eventWorkers.get('chat')?.recovered,
+      ).toBe(false);
+      expect((await admission.prepare()).outcome).toBe('aborted');
+      expect(acknowledgeEvents).not.toHaveBeenCalled();
+      await mcp.close();
+      admission.close();
+    },
+  );
+
   it('subscribes before draining but does not ACK volatile acceptance', async () => {
     const order: string[] = [];
     const closed = deferred<void>();
@@ -1144,6 +1258,83 @@ describe('MCP cloud authorization requests', () => {
 });
 
 describe('MCP Resource Subscriptions', () => {
+  it.each(['same', 'replacement'] as const)(
+    're-subscribes on the %s connection after an uncertain remote unsubscribe',
+    async (mode) => {
+      const admission = new AdmissionGate();
+      const conn = resourceSubscriptionConnection('server');
+      let remoteSubscribed = false;
+      vi.mocked(conn.subscribeResource).mockImplementation(async () => {
+        remoteSubscribed = true;
+      });
+      vi.mocked(conn.unsubscribeResource).mockImplementationOnce(async () => {
+        remoteSubscribed = false;
+        throw new Error('unsubscribe response lost');
+      });
+      const reopened =
+        mode === 'same' ? conn : resourceSubscriptionConnection('server');
+      vi.mocked(reopened.subscribeResource).mockImplementation(async () => {
+        remoteSubscribed = true;
+      });
+      const connect = vi.fn(async () =>
+        connect.mock.calls.length === 1 ? conn : reopened,
+      );
+      const { mcp, config } = setup(
+        { server: { url: 'https://example.com/mcp' } },
+        connect,
+        true,
+        undefined,
+        admission,
+      );
+      await mcp.start();
+      await waitForNamespace(mcp, 'server');
+      await mcp.subscribeResource(
+        'server',
+        'file:///owned',
+        AbortSignal.timeout(5_000),
+      );
+      await expect(
+        mcp.unsubscribeResource(
+          'server',
+          'file:///owned',
+          AbortSignal.timeout(5_000),
+        ),
+      ).rejects.toThrow('unsubscribe response lost');
+      expect(remoteSubscribed).toBe(false);
+      if (mode === 'replacement') {
+        await config.publish({
+          server: { url: 'https://example.com/mcp-replaced' },
+        });
+        await vi.waitFor(() => expect(connect).toHaveBeenCalledTimes(2));
+        await waitForNamespace(mcp, 'server');
+      }
+      await mcp.subscribeResource(
+        'server',
+        'file:///owned',
+        AbortSignal.timeout(5_000),
+      );
+      expect(reopened.subscribeResource).toHaveBeenCalledTimes(
+        mode === 'same' ? 2 : 1,
+      );
+      expect(remoteSubscribed).toBe(true);
+      expect(admission.status().blockers).toContain(
+        'MCP resource cleanup is uncertain',
+      );
+      expect((await admission.prepare()).outcome).toBe('aborted');
+      await mcp.unsubscribeResource(
+        'server',
+        'file:///owned',
+        AbortSignal.timeout(5_000),
+      );
+      expect(conn.unsubscribeResource).toHaveBeenCalledTimes(2);
+      if (mode === 'replacement')
+        expect(reopened.unsubscribeResource).toHaveBeenCalledOnce();
+      expect((await admission.prepare()).outcome).toBe('quiescent');
+      admission.abort('test complete');
+      await mcp.close();
+      admission.close();
+    },
+  );
   it('subscribeResource delegates to the connection', async () => {
     const conn = resourceSubscriptionConnection('server');
     const { mcp } = setup(

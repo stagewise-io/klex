@@ -41,6 +41,10 @@ export class AdmissionGate {
   private readonly context = new AsyncLocalStorage<WorkRecord>();
   private readonly work = new Set<WorkRecord>();
   private readonly participants = new Set<() => readonly string[]>();
+  private readonly drainers = new Map<
+    () => readonly string[],
+    (lease: WorkLease) => void | Promise<void>
+  >();
   private readonly deferred = new Map<object, () => void>();
   private readonly cancellations = new Map<object, () => void>();
   private state: AdmissionStatus['state'] = 'open';
@@ -158,12 +162,28 @@ export class AdmissionGate {
     this.context.exit(operation);
   }
 
-  register(participant: () => readonly string[]): () => void {
+  cancelBackground(key: object): void {
+    this.deferred.delete(key);
+    const cancel = this.cancellations.get(key);
+    this.cancellations.delete(key);
+    try {
+      cancel?.();
+    } finally {
+      this.check();
+    }
+  }
+
+  register(
+    participant: () => readonly string[],
+    drain?: (lease: WorkLease) => void | Promise<void>,
+  ): () => void {
     if (this.state === 'closed') throw new AdmissionRejectedError();
     this.participants.add(participant);
+    if (drain) this.drainers.set(participant, drain);
     if (this.state === 'quiescent') this.abort('Participant changed');
     return () => {
       this.participants.delete(participant);
+      this.drainers.delete(participant);
       this.check();
     };
   }
@@ -194,6 +214,10 @@ export class AdmissionGate {
     if (!Number.isFinite(graceMs) || graceMs < 0) {
       throw new RangeError('Drain grace must be a finite nonnegative duration');
     }
+    const drainers = [...this.drainers.values()].map((drain) => ({
+      drain,
+      lease: this.admitRoot(),
+    }));
     this.state = 'draining';
     for (const record of this.work)
       record.descendants.remaining = this.options.maxDescendants ?? 64;
@@ -212,6 +236,16 @@ export class AdmissionGate {
     this.poll = setInterval(() => {
       if (this.maintenance === lease) this.check();
     }, 10);
+    for (const { drain, lease: workLease } of drainers) {
+      try {
+        void Promise.resolve(workLease.run(() => drain(workLease)))
+          .catch(() => this.abort('Participant safety is uncertain', lease))
+          .finally(() => workLease.release());
+      } catch {
+        this.abort('Participant safety is uncertain', lease);
+        workLease.release();
+      }
+    }
     if (this.status().blockers.length > 0) {
       this.abort('Participant safety is uncertain');
     } else {
@@ -236,6 +270,7 @@ export class AdmissionGate {
     this.complete = undefined;
     complete?.({ outcome: 'aborted', reason });
     for (const [key, operation] of [...this.deferred]) {
+      if (this.deferred.get(key) !== operation) continue;
       this.deferred.delete(key);
       try {
         this.context.exit(operation);

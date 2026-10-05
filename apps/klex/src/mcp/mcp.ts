@@ -333,6 +333,7 @@ interface ResourceCatalogBudget {
 
 interface ResourceSubscriptionEntry {
   cleanupFailed?: boolean;
+  cleanupConnection?: McpConnection;
   count: number;
   operation: Promise<void>;
   subscribedConnection: McpConnection | undefined;
@@ -1006,9 +1007,13 @@ class McpModule implements Mcp {
   }
 
   private async recoverEvents(worker: PushNotificationWorker): Promise<void> {
-    while (this.isCurrentWorker(worker)) {
+    let cursor: string | undefined;
+    const cursors = new Set<string>();
+    for (let pageCount = 0; this.isCurrentWorker(worker); pageCount++) {
+      if (pageCount >= 1_024)
+        throw new Error('Push Notifications page limit exceeded');
       const page = await worker.connection.pushNotifications.getEvents(
-        { limit: EVENT_PAGE_SIZE },
+        { limit: EVENT_PAGE_SIZE, ...(cursor === undefined ? {} : { cursor }) },
         { request: { signal: worker.controller.signal } },
       );
       if (page.events.length === 0 && page.hasMore) {
@@ -1022,10 +1027,18 @@ class McpModule implements Mcp {
         page.events.map((event) => event.eventId),
       );
       if (page.hasMore) {
-        this.deps.logger.error(
-          { namespace: worker.connection.namespace },
-          'Pending push recovery is incomplete: durable acceptance is required before advancing the queue',
-        );
+        if (
+          typeof page.nextCursor !== 'string' ||
+          page.nextCursor.length === 0 ||
+          cursors.has(page.nextCursor)
+        ) {
+          throw new Error(
+            'Push Notifications recovery requires a valid continuation cursor',
+          );
+        }
+        cursor = page.nextCursor;
+        cursors.add(cursor);
+        continue;
       }
       return;
     }
@@ -1470,8 +1483,15 @@ class McpModule implements Mcp {
           if (subscriptions?.get(uri) !== entry) return;
 
           if (entry.count === 0) {
-            const subscribedConnection = entry.subscribedConnection;
-            if (subscribedConnection) {
+            const connections = new Set([
+              entry.cleanupConnection,
+              entry.subscribedConnection,
+            ]);
+            for (const subscribedConnection of connections) {
+              if (!subscribedConnection) continue;
+              entry.cleanupConnection = subscribedConnection;
+              if (entry.subscribedConnection === subscribedConnection)
+                entry.subscribedConnection = undefined;
               try {
                 await subscribedConnection.unsubscribeResource(uri, signal);
               } catch (error) {
@@ -1480,8 +1500,10 @@ class McpModule implements Mcp {
                 entry.cleanupFailed = true;
                 throw error;
               }
+              entry.cleanupConnection = undefined;
             }
             entry.subscribedConnection = undefined;
+            entry.cleanupConnection = undefined;
             entry.cleanupFailed = false;
             if (entry.count === 0 && subscriptions.get(uri) === entry) {
               subscriptions.delete(uri);

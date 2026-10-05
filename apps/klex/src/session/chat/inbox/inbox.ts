@@ -123,6 +123,7 @@ export interface InboxDependencies {
     operation: () => Result,
     deferredResult: Result,
     onClosed?: () => void,
+    signal?: AbortSignal,
   ) => Result;
   /**
    * Called for Critical and Default urgency events. The session appends
@@ -173,6 +174,7 @@ class InboxModule implements SessionInboxBuffer {
   private deferredMessages: DeferredMessageEntry[] = [];
 
   private closed = false;
+  private readonly controller = new AbortController();
 
   /**
    * Process-local identity of accepted events, kept bounded in FIFO order.
@@ -184,8 +186,14 @@ class InboxModule implements SessionInboxBuffer {
   constructor(private readonly deps: InboxDependencies) {}
 
   send(event: SessionInboxEvent): void {
+    if (this.closed) throw new SessionInboxClosedError();
     if (this.deps.dispatch) {
-      this.deps.dispatch(() => this.sendUnlocked(event), undefined);
+      this.deps.dispatch(
+        () => this.sendUnlocked(event),
+        undefined,
+        undefined,
+        this.controller.signal,
+      );
       return;
     }
     this.sendUnlocked(event);
@@ -252,6 +260,7 @@ class InboxModule implements SessionInboxBuffer {
     message: ExtendedUIMessage,
     urgency: SessionInboxUrgency,
   ): boolean | DeferredMessageDelivery {
+    if (this.closed) throw new SessionInboxClosedError();
     if (this.deps.dispatch) {
       const completion = Promise.withResolvers<boolean>();
       return this.deps.dispatch<boolean | DeferredMessageDelivery>(
@@ -267,6 +276,7 @@ class InboxModule implements SessionInboxBuffer {
         },
         { status: 'deferred', delivered: completion.promise },
         () => completion.resolve(false),
+        this.controller.signal,
       );
     }
     return this.sendMessageUnlocked(message, urgency);
@@ -293,6 +303,7 @@ class InboxModule implements SessionInboxBuffer {
 
   close(): void {
     this.closed = true;
+    this.controller.abort();
   }
 
   private notifyImmediateEvent(event: SessionInboxEvent): {

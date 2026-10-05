@@ -25,7 +25,7 @@ export interface EventStoreOptions {
 
 export interface EventStore {
   append(message: InboundTelegramMessage): AppendResult;
-  page(options?: { limit?: number }): GetEventsResult;
+  page(options?: { limit?: number; cursor?: string }): GetEventsResult;
   acknowledge(eventIds: string[]): void;
   close(): void;
 }
@@ -80,17 +80,28 @@ class EventStoreModule implements EventStore {
     return { notification: { event: this.#copy(event) }, isNew: true };
   }
 
-  page(options: { limit?: number } = {}): GetEventsResult {
+  page(options: { limit?: number; cursor?: string } = {}): GetEventsResult {
     const requestedLimit = options.limit ?? DEFAULT_PAGE_SIZE;
     if (!Number.isInteger(requestedLimit) || requestedLimit < 1) {
       throw new RangeError('Event page limit must be a positive integer');
     }
     const limit = Math.min(requestedLimit, MAX_PAGE_SIZE);
+    const cursorIndex =
+      options.cursor === undefined
+        ? -1
+        : this.#pending.findIndex(
+            ({ event }) => event.eventId === options.cursor,
+          );
+    if (options.cursor !== undefined && cursorIndex === -1) {
+      throw new RangeError('Invalid event page cursor');
+    }
+    const start = cursorIndex + 1;
+    const pending = this.#pending.slice(start, start + limit);
+    const hasMore = this.#pending.length > start + limit;
     return {
-      events: this.#pending
-        .slice(0, limit)
-        .map(({ event }) => this.#copy(event)),
-      hasMore: this.#pending.length > limit,
+      events: pending.map(({ event }) => this.#copy(event)),
+      hasMore,
+      ...(hasMore ? { nextCursor: pending.at(-1)?.event.eventId } : {}),
     };
   }
 

@@ -161,26 +161,69 @@ describe('memory extension lifecycle', () => {
       admission.close();
     },
   );
-  it('blocks maintenance until accepted history is persisted before teardown', async () => {
-    const admission = new AdmissionGate();
-    const { extension, history, recorded } = await harness(admission);
-    await extension.onStart?.();
-    history.push(message('pending', 'must survive maintenance'));
-    expect(await recorded()).toEqual([]);
-    expect((await admission.prepare()).outcome).toBe('aborted');
-    expect(admission.status().blockers).toContain(
-      'Memory history awaits persistence',
-    );
-    expect(coordinator.close).not.toHaveBeenCalled();
-    await extension.onStepComplete?.(success);
-    expect(await recorded()).toEqual(['must survive maintenance']);
-    const result = await admission.prepare();
-    expect(result.outcome).toBe('quiescent');
-    if (result.outcome === 'quiescent')
-      admission.abort('test complete', result.lease);
-    await extension.onClose?.();
-    admission.close();
-  });
+  it.each(['success', 'failure', 'timeout'] as const)(
+    'flushes dirty idle history within drain grace: %s',
+    async (outcome) => {
+      if (outcome === 'success')
+        vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+      const admission = new AdmissionGate({
+        graceMs: outcome === 'timeout' ? 20 : 1_000,
+      });
+      const { extension, history, recorded } = await harness(admission);
+      await extension.onStart?.();
+      history.push(message('pending', 'must survive maintenance'));
+      expect(await recorded()).toEqual([]);
+      const barrier = Promise.withResolvers<void>();
+      void (
+        extension as Extension & {
+          serialize(action: () => Promise<void>): Promise<void>;
+        }
+      ).serialize(() => barrier.promise);
+      if (outcome === 'failure')
+        vi.spyOn(EpisodeStore.prototype, 'append').mockRejectedValueOnce(
+          new Error('injected write failure'),
+        );
+      const preparing = admission.prepare();
+      expect(admission.status()).toMatchObject({
+        state: 'draining',
+        activeWork: 1,
+        blockers: [],
+      });
+      if (outcome === 'success') {
+        await vi.advanceTimersByTimeAsync(30_000);
+        expect(admission.status().deferredWork).toBe(0);
+      }
+      expect(coordinator.close).not.toHaveBeenCalled();
+      if (outcome === 'timeout') {
+        expect(await preparing).toEqual({
+          outcome: 'aborted',
+          reason: 'Drain grace expired',
+        });
+        expect(admission.status().activeWork).toBe(1);
+      }
+      barrier.resolve();
+      expect((await preparing).outcome).toBe(
+        outcome === 'success' ? 'quiescent' : 'aborted',
+      );
+      await vi.waitFor(() => expect(admission.status().activeWork).toBe(0));
+      if (outcome === 'failure') {
+        expect(admission.status().blockers).toContain(
+          'Memory persistence is uncertain',
+        );
+        expect((await admission.prepare()).outcome).toBe('aborted');
+        expect(await recorded()).toEqual([]);
+      }
+      admission.abort('retry');
+      await extension.onStepComplete?.(success);
+      expect(await recorded()).toEqual(['must survive maintenance']);
+      const result = await admission.prepare();
+      expect(result.outcome).toBe('quiescent');
+      if (result.outcome === 'quiescent')
+        admission.abort('test complete', result.lease);
+      await extension.onClose?.();
+      admission.close();
+    },
+  );
 
   it('records the history after each successful step', async () => {
     const { extension, history, recorded } = await harness();

@@ -20,11 +20,16 @@ export interface ConnectMachineResult {
   reused: boolean;
 }
 
+// Only ENOENT means missing. Other errors (e.g. EACCES) must fail closed so an
+// unreadable data dir never spends a one-time code on a fresh enrollment.
 async function exists(path: string): Promise<boolean> {
-  return access(path).then(
-    () => true,
-    () => false,
-  );
+  try {
+    await access(path);
+    return true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false;
+    throw error;
+  }
 }
 
 async function loadExistingEnrollment(

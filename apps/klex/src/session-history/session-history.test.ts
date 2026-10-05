@@ -112,6 +112,28 @@ describe('resolveSessionHistoryMaxBytes', () => {
 });
 
 describe('session history sync', () => {
+  it('persists in-place mutations of older messages', async () => {
+    const { history } = await setup();
+    const recorder = history.openRecorder(meta());
+    const repaired = message('a', 'pending', 'assistant');
+    const messages = [repaired, message('b')];
+    recorder.scheduleSync(() => messages);
+    await history.flush();
+
+    // History repair mutates an older message after newer input arrived.
+    repaired.parts = [{ type: 'text', text: 'repaired' }];
+    messages.push(message('c'));
+    recorder.scheduleSync(() => messages);
+    await history.flush();
+
+    const page = await history.getMessages(recorder.instanceId, { limit: 10 });
+    expect(page?.messages.map((entry) => entry.message.parts)).toEqual([
+      [{ type: 'text', text: 'repaired' }],
+      [{ type: 'text', text: 'b' }],
+      [{ type: 'text', text: 'c' }],
+    ]);
+  });
+
   it('lazily inserts the session and appends messages', async () => {
     const { history } = await setup();
     const recorder = history.openRecorder(meta({ name: 'Main' }));
@@ -369,14 +391,16 @@ describe('session history size cap', () => {
     expect(await storedIds(history, live.instanceId)).toEqual(['l1', 'l2']);
   });
 
-  it('keeps the newest live message and never rewrites trimmed rows', async () => {
+  it('trims live messages oldest first and never rewrites trimmed rows', async () => {
     const { history, setMaxBytes } = await setup();
     const recorder = history.openRecorder(meta());
     const messages = [bulky('a'), bulky('b'), bulky('c')];
     recorder.scheduleSync(() => messages);
     await history.flush();
 
-    setMaxBytes(1);
+    const bytes = (await history.getSession(recorder.instanceId))?.byteSize;
+    // Room for one message after eviction to 90% of the cap.
+    setMaxBytes(Math.ceil(((bytes ?? 0) / 3 + 10) / 0.9));
     await history.enforceSizeCap();
     expect(await storedIds(history, recorder.instanceId)).toEqual(['c']);
     const session = await history.getSession(recorder.instanceId);
@@ -394,6 +418,30 @@ describe('session history size cap', () => {
       [3, 'c'],
     ]);
     expect(page?.trimmedMessageCount).toBe(2);
+  });
+
+  it('trims the newest live message when it alone exceeds the cap', async () => {
+    const { history, setMaxBytes } = await setup();
+    const recorder = history.openRecorder(meta());
+    const messages = [bulky('a'), bulky('b')];
+    recorder.scheduleSync(() => messages);
+    await history.flush();
+
+    setMaxBytes(1);
+    await history.enforceSizeCap();
+    expect(await storedIds(history, recorder.instanceId)).toEqual([]);
+    expect(await history.getSession(recorder.instanceId)).toMatchObject({
+      trimmedMessageCount: 2,
+      messageCount: 2,
+      byteSize: 0,
+    });
+
+    // New messages are recorded again once there is room.
+    setMaxBytes(DEFAULT_SESSION_HISTORY_MAX_BYTES);
+    messages.push(message('c'));
+    recorder.scheduleSync(() => messages);
+    await history.flush();
+    expect(await storedIds(history, recorder.instanceId)).toEqual(['c']);
   });
 
   it('reclaims pages with incremental vacuum', async () => {

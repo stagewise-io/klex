@@ -94,9 +94,10 @@ Each `ChatSession` gets its own `instanceId`. The default session reuses
 local store has a size cap. When the cap is reached, the oldest ended sessions
 are deleted first. After that, the oldest messages of live sessions are
 trimmed, and `trimmedMessageCount` reports how many were removed. Inline
-binary data is redacted everywhere, including inside tool outputs: `data:`
-URLs, the `data` field of image, audio, and media blocks, and embedded
-resource `blob`s.
+data is redacted everywhere, including inside tool outputs: the payload of
+every `data:` URL in any encoding, also inside longer strings, the `data`
+field of image, audio, and media blocks, and embedded resource `blob`s.
+Objects nested deeper than 64 levels are replaced by a placeholder.
 
 Unknown instances return `404` with code `session_not_found`. Malformed list
 cursors return `400` with code `invalid_cursor`.

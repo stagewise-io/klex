@@ -97,6 +97,12 @@ export const getSessionHistoryRoute = createRoute({
       },
       description: 'Unknown session instance',
     },
+    500: {
+      content: {
+        'application/json': { schema: errorResponseSchema },
+      },
+      description: 'Internal server error',
+    },
   },
 });
 
@@ -117,7 +123,7 @@ export const getSessionHistoryMessagesRoute = createRoute({
   tags: ['Sessions'],
   summary: 'Get the persisted transcript of a session instance',
   description:
-    'Returns a chronological page of persisted messages in AI SDK `UIMessage` shape (`tool-${name}` parts with full `input`/`output`, `data-${name}` parts with their `data`). Without a cursor, returns the newest `limit` messages. Pass `nextCursor` as `cursor` to load the previous (older) page. Inline binary data (`data:` URLs, image/audio/media block `data`, resource `blob`) is redacted everywhere, including tool outputs. Provider metadata (`providerMetadata`, `callProviderMetadata`, `resultProviderMetadata`) is omitted unless `includeProviderMetadata=true`. Messages removed by the size cap are counted in `trimmedMessageCount`.',
+    'Returns a chronological page of persisted messages in AI SDK `UIMessage` shape (`tool-${name}` parts with full `input`/`output`, `data-${name}` parts with their `data`). Without a cursor, returns the newest `limit` messages. Pass `nextCursor` as `cursor` to load the previous (older) page. Inline data is redacted everywhere, including tool outputs: the payload of every `data:` URL (any encoding, also inside longer strings), image/audio/media block `data`, and resource `blob`. Provider metadata (`providerMetadata`, `callProviderMetadata`, `resultProviderMetadata`) is omitted unless `includeProviderMetadata=true`. Messages removed by the size cap are counted in `trimmedMessageCount`.',
   request: {
     params: sessionInstanceIdParamSchema,
     query: sessionHistoryMessagesQuerySchema,
@@ -140,6 +146,12 @@ export const getSessionHistoryMessagesRoute = createRoute({
         'application/json': { schema: errorResponseSchema },
       },
       description: 'Unknown session instance',
+    },
+    500: {
+      content: {
+        'application/json': { schema: errorResponseSchema },
+      },
+      description: 'Internal server error',
     },
   },
 });

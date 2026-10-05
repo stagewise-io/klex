@@ -104,7 +104,7 @@ The `GodMessages` module creates its session via `sessionFactory` with `mcp: nul
 
 ### Session history
 
-`session-history` owns `sessions.sqlite`, a registered local-data store. The factory passes it to every chat session. Default, god, and child sessions each record their transcript under their own `instanceId`. Child rows point to their parent through `parentInstanceId`. The store starts before the admin API and the session host, so the first session can record and the read-only `/v1/sessions` routes can serve it. Introspection shows only live state. The history store also keeps ended instances, such as replaced default sessions, reset god sessions, and closed children, until the size cap evicts them. See [Chat Session Architecture](./chat/architecture.md#transcript-persistence).
+`session-history` owns `sessions.sqlite`, a registered local-data store. The factory passes it to every chat session. Default, god, and child sessions each record their transcript under their own `instanceId`, starting with their first message. An instance that closes before any message is never persisted. Child rows point to their parent through `parentInstanceId`. The store starts before the admin API and the session host, so the first session can record and the read-only `/v1/sessions` routes can serve it. Introspection shows only live state. The history store also keeps persisted ended instances, such as replaced default sessions, reset god sessions, and closed children, until the size cap evicts them. See [Chat Session Architecture](./chat/architecture.md#transcript-persistence).
 
 ## Introspection tree
 

@@ -201,7 +201,7 @@ Options:
   --port <number>     Local mode listener port (default: 3123)
   --log-level <level> Local mode: trace, debug, info, warn, error, or fatal
   --mode <mode>       local, enrolled, or managed (default: enrolled)
-  --data-dir <path>   Identity directory (default: ~/.klex-machine)
+  --data-dir <path>   Identity and notification state directory (default: ~/.klex-machine)
   --cloud-base-url <url> Cloud API URL used for enrollment
   --enrollment-code-file <path|-> Read and remove a one-time code file, or read stdin with -
   --no-serve          Enroll only; do not start serving

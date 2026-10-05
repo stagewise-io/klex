@@ -4,7 +4,9 @@ import { describe, expect, it, vi } from 'vitest';
 import { createMachineAuthenticator } from '../src/cloud/auth.js';
 import { createPrincipalMcpRouter } from '../src/cloud/principal-router.js';
 import { loadProtectedResourceConfiguration } from '../src/cloud/protected-resource.js';
+import { silentMachineLogger } from '../src/logger.js';
 import type { MachineMcp } from '../src/mcp.js';
+import { createNotificationStore } from '../src/notifications/index.js';
 
 async function token(
   privateKey: CryptoKey,
@@ -113,6 +115,7 @@ describe('machine authentication', () => {
         challenge: () => 'Bearer resource_metadata="https://cloud/resource"',
       },
       '/tmp',
+      createNotificationStore({ logger: silentMachineLogger }),
       () => {
         const instance: MachineMcp = {
           fetch: async () => new Response(String(instances.length)),

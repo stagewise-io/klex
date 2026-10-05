@@ -1,12 +1,39 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
+
 import { createMcpHandler, McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod/v4';
+
+import {
+  createPushNotificationsHttpSubscriptionManager,
+  hasPerRequestPushNotificationsCapability,
+  type PushNotificationsHttpSubscriptionManager,
+  registerPushNotificationsServer,
+} from '@stagewise/mcp-extension-push-notifications';
 
 import {
   FilesystemService,
   MachinePathResolver,
   SearchService,
 } from './filesystem/index.js';
+import { type MachineLogger, silentMachineLogger } from './logger.js';
+import {
+  createNotificationStore,
+  type NotificationStore,
+  shellExitedEvent,
+  watcherCompletedEvent,
+} from './notifications/index.js';
 import { ShellService } from './shell/index.js';
+import { WatcherService } from './watchers/index.js';
+
+const requestCapabilities = new AsyncLocalStorage<{
+  pushNotifications: boolean;
+}>();
+
+export interface MachineMcpOptions {
+  principalId?: string;
+  notifications?: NotificationStore;
+  logger?: MachineLogger;
+}
 
 export interface MachineMcp {
   fetch(request: Request): Promise<Response>;
@@ -17,21 +44,149 @@ class MachineMcpModule implements MachineMcp {
   readonly #handler: ReturnType<typeof createMcpHandler>;
   readonly #shell: ShellService;
 
-  constructor(defaultCwd: string) {
+  readonly #subscriptions: PushNotificationsHttpSubscriptionManager;
+  readonly #watchers: WatcherService;
+  readonly #store: NotificationStore;
+  readonly #ownsStore: boolean;
+  readonly #unsubscribe: () => void;
+  readonly #shellTracking = new Map<string, Promise<void>>();
+
+  constructor(defaultCwd: string, options: MachineMcpOptions) {
     const paths = new MachinePathResolver(defaultCwd);
     const filesystem = new FilesystemService(paths);
     const search = new SearchService(paths);
-    this.#shell = new ShellService(paths);
+    const principalId = options.principalId ?? 'local';
+    const logger = options.logger ?? silentMachineLogger;
+    const store = options.notifications ?? createNotificationStore({ logger });
+    this.#store = store;
+    this.#ownsStore = !options.notifications;
+    this.#shell = new ShellService(paths, undefined, {
+      onExit: (info, output) => {
+        const tracking = this.#shellTracking.get(info.id);
+        if (!tracking) return;
+        this.#shellTracking.delete(info.id);
+        void tracking
+          .then(() =>
+            store.complete(
+              `shell:${info.id}`,
+              shellExitedEvent(
+                {
+                  sessionId: info.id,
+                  shell: info.shell,
+                  cwd: info.cwd,
+                  createdAt: info.createdAt,
+                },
+                {
+                  exitCode: info.exitCode ?? null,
+                  signal: info.signal ?? null,
+                  exitedAt: new Date().toISOString(),
+                  output,
+                },
+              ),
+            ),
+          )
+          .catch((error: unknown) =>
+            logger.error({ error }, 'Shell exit notification failed'),
+          );
+      },
+    });
+    this.#watchers = new WatcherService(paths, {
+      onStart: (info) =>
+        store.track({
+          id: `watcher:${info.id}`,
+          principalId,
+          kind: 'watcher',
+          info,
+        }),
+      onFinish: (info, completion) =>
+        store.complete(
+          `watcher:${info.id}`,
+          watcherCompletedEvent(info, completion),
+        ),
+      onCancel: (id) => store.forget(`watcher:${id}`),
+      onError: (error) =>
+        logger.error({ error }, 'Watcher notification failed'),
+    });
     this.#handler = createMcpHandler(
       () => {
+        const pushNotifications =
+          requestCapabilities.getStore()?.pushNotifications === true;
         const server = new McpServer(
           { name: 'klex-machine', version: '0.1.0' },
           {
             capabilities: {},
-            instructions: `UNRESTRICTED MACHINE ACCESS. Filesystem and shell operations run with the permissions of the server OS user. Relative paths resolve from ${defaultCwd}. Operating system: ${process.platform}.`,
+            instructions: `UNRESTRICTED MACHINE ACCESS. Filesystem and shell operations run with the permissions of the server OS user. Relative paths resolve from ${defaultCwd}. Operating system: ${process.platform}.${pushNotifications ? ' Watcher outcomes and requested shell-exit notifications arrive as push notifications.' : ''}`,
           },
         );
 
+        registerPushNotificationsServer(server.server, {
+          getEvents: ({ limit }) => store.pending(principalId, limit),
+          acknowledgeEvents: ({ eventIds }) =>
+            store.acknowledge(principalId, eventIds),
+        });
+        if (pushNotifications) {
+          server.registerTool(
+            'createWatcher',
+            {
+              description:
+                'Start a one-shot background watcher. Run a shell command that blocks until a condition holds and exits 0 (e.g. a polling loop with sleep). When it exits, fails, or reaches timeoutMs, the machine sends one push notification with the outcome and last output. Use instead of repeatedly polling with tool calls.',
+              inputSchema: z.object({
+                command: z.string().min(1).max(16384),
+                title: z.string().min(1).max(200),
+                timeoutMs: z.number().int().min(1000).max(604800000),
+                cwd: z.string().min(1).optional(),
+                env: z.record(z.string(), z.string()).optional(),
+              }),
+            },
+            (input) => result(() => this.#watchers.create(input)),
+          );
+          server.registerTool(
+            'listWatchers',
+            {
+              description:
+                'List running and finished but unacknowledged watchers.',
+              inputSchema: z.object({}),
+            },
+            () =>
+              result(() => [
+                ...this.#watchers.list(),
+                ...store.records(principalId).flatMap((record) =>
+                  record.kind === 'watcher' && record.state === 'pending'
+                    ? [
+                        {
+                          ...record.info,
+                          id: record.info.watcherId,
+                          status:
+                            record.event.type === 'watcher.lost'
+                              ? 'lost'
+                              : 'completed',
+                          outcome: record.event.data?.outcome,
+                        },
+                      ]
+                    : [],
+                ),
+              ]),
+          );
+          server.registerTool(
+            'cancelWatcher',
+            {
+              description: 'Cancel a watcher without sending a notification.',
+              inputSchema: z.object({ id: z.string().uuid() }),
+            },
+            ({ id }) =>
+              result(async () => {
+                if (this.#watchers.list().some((info) => info.id === id))
+                  await this.#watchers.cancel(id);
+                else if (
+                  store
+                    .records(principalId)
+                    .some((record) => record.id === `watcher:${id}`)
+                )
+                  await store.forget(`watcher:${id}`);
+                else throw new Error(`Unknown watcher: ${id}`);
+              }),
+          );
+        }
         server.registerTool(
           'read',
           {
@@ -159,9 +314,37 @@ class MachineMcpModule implements MachineMcp {
               cols: z.number().int().positive().optional(),
               rows: z.number().int().positive().optional(),
               env: z.record(z.string(), z.string()).optional(),
+              ...(pushNotifications
+                ? { notifyOnExit: z.boolean().optional() }
+                : {}),
             }),
           },
-          (input) => result(() => this.#shell.create(input)),
+          (input) =>
+            result(async () => {
+              const info = this.#shell.create(input);
+              if (pushNotifications && input.notifyOnExit) {
+                const tracking = store.track({
+                  id: `shell:${info.id}`,
+                  principalId,
+                  kind: 'shell',
+                  info: {
+                    sessionId: info.id,
+                    shell: info.shell,
+                    cwd: info.cwd,
+                    createdAt: info.createdAt,
+                  },
+                });
+                this.#shellTracking.set(info.id, tracking);
+                try {
+                  await tracking;
+                } catch (error) {
+                  this.#shellTracking.delete(info.id);
+                  this.#shell.close(info.id);
+                  throw error;
+                }
+              }
+              return info;
+            }),
         );
         server.registerTool(
           'writeShellSession',
@@ -205,7 +388,12 @@ class MachineMcpModule implements MachineMcp {
             description: 'Terminate and remove a persistent PTY session.',
             inputSchema: z.object({ id: z.string().uuid() }),
           },
-          ({ id }) => result(() => this.#shell.close(id)),
+          ({ id }) =>
+            result(async () => {
+              this.#shell.close(id);
+              this.#shellTracking.delete(id);
+              await store.forget(`shell:${id}`);
+            }),
         );
         server.registerTool(
           'listShellSessions',
@@ -219,20 +407,64 @@ class MachineMcpModule implements MachineMcp {
       },
       { legacy: 'stateless' },
     );
+    this.#subscriptions = createPushNotificationsHttpSubscriptionManager(
+      (request) => this.#handler.fetch(request),
+      { resolveConsumerKey: () => principalId },
+    );
+    this.#unsubscribe = store.onEvent(principalId, (event) =>
+      this.#subscriptions.publish(principalId, { event }),
+    );
   }
 
-  fetch(request: Request): Promise<Response> {
-    return this.#handler.fetch(request);
+  async fetch(request: Request): Promise<Response> {
+    let pushNotifications = false;
+    if (
+      request.method === 'POST' &&
+      request.headers.get('content-type')?.includes('application/json')
+    ) {
+      const body: unknown = await request
+        .clone()
+        .json()
+        .catch(() => undefined);
+      if (
+        isRecord(body) &&
+        isRecord(body.params) &&
+        isRecord(body.params._meta)
+      ) {
+        const capability =
+          body.params._meta['io.modelcontextprotocol/clientCapabilities'];
+        if (isRecord(capability) && isRecord(capability.extensions)) {
+          pushNotifications = hasPerRequestPushNotificationsCapability(
+            body.params._meta,
+          );
+        }
+      }
+    }
+    return requestCapabilities.run({ pushNotifications }, () =>
+      this.#subscriptions.fetch(request),
+    );
   }
 
   async close(): Promise<void> {
+    this.#unsubscribe();
+    this.#subscriptions.close();
+    this.#watchers.closeAll();
+    this.#shellTracking.clear();
     this.#shell.closeAll();
     await this.#handler.close();
+    if (this.#ownsStore) await this.#store.close();
   }
 }
 
-export function createMachineMcp(defaultCwd: string): MachineMcp {
-  return new MachineMcpModule(defaultCwd);
+export function createMachineMcp(
+  defaultCwd: string,
+  options: MachineMcpOptions = {},
+): MachineMcp {
+  return new MachineMcpModule(defaultCwd, options);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 async function result(operation: () => unknown | Promise<unknown>) {

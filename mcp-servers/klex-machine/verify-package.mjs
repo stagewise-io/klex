@@ -113,6 +113,8 @@ try {
       consumer,
       '--port',
       '0',
+      '--data-dir',
+      join(temporaryRoot, 'data'),
     ],
     { cwd: consumer, stdio: ['ignore', 'pipe', 'pipe'] },
   );
@@ -163,6 +165,53 @@ try {
     throw new Error('Packed shell smoke command produced no output');
   }
   await callTool(port, 'closeShellSession', { id: session.id });
+
+  const tools = await rpc(port, 'tools/list', {});
+  if (tools.tools.some((tool) => tool.name === 'createWatcher')) {
+    throw new Error('Watcher tools leaked to an unsupported client');
+  }
+  const capability = {
+    'io.modelcontextprotocol/clientCapabilities': {
+      extensions: { 'io.stagewise/push-notifications': {} },
+    },
+  };
+  const watcher = parseToolText(
+    await rpc(port, 'tools/call', {
+      name: 'createWatcher',
+      arguments: {
+        command: 'exit 0',
+        title: 'package watcher',
+        timeoutMs: 10000,
+      },
+      _meta: capability,
+    }),
+  );
+  let event;
+  for (let attempt = 0; attempt < 20; attempt++) {
+    const pending = await rpc(port, 'io.stagewise/push-notifications/get', {
+      _meta: capability,
+    });
+    event = pending.events.find(
+      (candidate) => candidate.eventId === `watcher:${watcher.id}:completed`,
+    );
+    if (event) break;
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 250));
+  }
+  if (
+    event?.type !== 'watcher.completed' ||
+    event.data?.outcome !== 'condition_met'
+  ) {
+    throw new Error('Packed watcher did not produce a completion notification');
+  }
+  await rpc(port, 'io.stagewise/push-notifications/ack', {
+    eventIds: [event.eventId],
+    _meta: capability,
+  });
+  const drained = await rpc(port, 'io.stagewise/push-notifications/get', {
+    _meta: capability,
+  });
+  if (drained.events.length !== 0)
+    throw new Error('Packed notification acknowledgement failed');
 
   process.stdout.write('Packed klex-machine verification passed\n');
 } finally {
@@ -328,6 +377,10 @@ async function waitForHealth(port, serverProcess, errorOutput) {
 }
 
 async function callTool(port, name, arguments_) {
+  return rpc(port, 'tools/call', { name, arguments: arguments_ });
+}
+
+async function rpc(port, method, params) {
   const response = await fetch(`http://127.0.0.1:${port}/mcp`, {
     method: 'POST',
     signal: AbortSignal.timeout(5_000),
@@ -338,8 +391,8 @@ async function callTool(port, name, arguments_) {
     body: JSON.stringify({
       jsonrpc: '2.0',
       id: 1,
-      method: 'tools/call',
-      params: { name, arguments: arguments_ },
+      method,
+      params,
     }),
   });
   const body = await response.text();

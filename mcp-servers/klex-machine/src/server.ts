@@ -2,7 +2,14 @@ import { serve } from '@hono/node-server';
 import { createMcpHonoApp } from '@modelcontextprotocol/hono';
 
 import type { RuntimeConfig } from './config.js';
+import { createMachineLogger, type MachineLogger } from './logger.js';
 import { createMachineMcp, type MachineMcp } from './mcp.js';
+import {
+  createNotificationStore,
+  type NotificationStore,
+} from './notifications/index.js';
+
+export type { MachineLogger } from './logger.js';
 
 export interface MachineServer {
   host: string;
@@ -11,45 +18,12 @@ export interface MachineServer {
   close(): Promise<void>;
 }
 
-const LEVEL_PRIORITY = {
-  trace: 10,
-  debug: 20,
-  info: 30,
-  warn: 40,
-  error: 50,
-  fatal: 60,
-} as const;
-
-function createMachineLogger(
-  minLevel: RuntimeConfig['logLevel'],
-): MachineLogger {
-  const write = (
-    level: 'info' | 'warn' | 'error',
-    data: unknown,
-    message: string,
-  ) => {
-    if (LEVEL_PRIORITY[level] < LEVEL_PRIORITY[minLevel]) return;
-    process.stderr.write(
-      `${new Date().toISOString()} ${level.toUpperCase()} ${message} ${JSON.stringify(data)}\n`,
-    );
-  };
-  return {
-    info: (data, message) => write('info', data, message),
-    warn: (data, message) => write('warn', data, message),
-    error: (data, message) => write('error', data, message),
-  };
-}
-
-export interface MachineLogger {
-  info(data: unknown, message: string): void;
-  warn(data: unknown, message: string): void;
-  error(data: unknown, message: string): void;
-}
-
 export interface MachineServerOptions {
   mcp?: MachineMcp;
   logger?: MachineLogger;
   registerSignals?: boolean;
+  /** Directory for persisted notification state. Memory-only when omitted. */
+  dataDir?: string;
 }
 
 export function createMachineApp(mcp: MachineMcp, host = '127.0.0.1') {
@@ -66,7 +40,15 @@ export async function startMachineServer(
   options: MachineServerOptions = {},
 ): Promise<MachineServer> {
   const logger = options.logger ?? createMachineLogger(config.logLevel);
-  const mcp = options.mcp ?? createMachineMcp(config.cwd);
+  let store: NotificationStore | undefined;
+  let mcp: MachineMcp;
+  if (options.mcp) {
+    mcp = options.mcp;
+  } else {
+    store = createNotificationStore({ dataDir: options.dataDir, logger });
+    await store.ready();
+    mcp = createMachineMcp(config.cwd, { notifications: store, logger });
+  }
   const app = createMachineApp(mcp, config.host);
 
   const listener = await new Promise<ReturnType<typeof serve>>(
@@ -83,6 +65,7 @@ export async function startMachineServer(
     },
   ).catch(async (error) => {
     await mcp.close();
+    await store?.close();
     throw error;
   });
   listener.on('error', (error) => {
@@ -110,10 +93,13 @@ export async function startMachineServer(
       for (const [signal, handler] of signalHandlers) {
         process.off(signal, handler);
       }
-      await new Promise<void>((resolve, reject) => {
+      // Stop accepting requests first, but close SSE streams before waiting for
+      // the listener. Active subscription responses would otherwise block close.
+      const listenerClosed = new Promise<void>((resolve, reject) => {
         listener.close((error) => (error ? reject(error) : resolve()));
       });
-      await mcp.close();
+      await Promise.all([listenerClosed, mcp.close()]);
+      await store?.close();
     })();
     return closing;
   };

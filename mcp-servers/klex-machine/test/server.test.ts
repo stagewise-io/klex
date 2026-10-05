@@ -2,6 +2,8 @@ import { createServer } from 'node:http';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { withPushNotificationsClientCapability } from '@stagewise/mcp-extension-push-notifications';
+
 import type { RuntimeConfig } from '../src/config.js';
 import type { MachineMcp } from '../src/mcp.js';
 import {
@@ -78,6 +80,39 @@ describe('machine HTTP server', () => {
     await Promise.all([server.close(), server.close()]);
     running.splice(running.indexOf(server), 1);
     expect(mcp.close).toHaveBeenCalledOnce();
+  });
+
+  it('closes the listener while a push subscription is active', async () => {
+    const server = await startMachineServer(config(), {
+      logger,
+      registerSignals: false,
+    });
+    running.push(server);
+    const response = await fetch(`http://${server.host}:${server.port}/mcp`, {
+      method: 'POST',
+      headers: {
+        Accept: 'application/json, text/event-stream',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'subscriptions/listen',
+        params: {
+          notifications: { 'io.stagewise/push-notifications': {} },
+          _meta: withPushNotificationsClientCapability({}),
+        },
+      }),
+    });
+    expect(response.status).toBe(200);
+    const reader = response.body?.getReader();
+    await reader?.read();
+    try {
+      await server.close();
+      running.splice(running.indexOf(server), 1);
+    } finally {
+      await reader?.cancel();
+    }
   });
 
   it('closes MCP state when listener startup fails', async () => {

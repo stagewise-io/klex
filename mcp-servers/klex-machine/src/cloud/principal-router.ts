@@ -1,4 +1,5 @@
 import { createMachineMcp, type MachineMcp } from '../mcp.js';
+import type { NotificationStore } from '../notifications/index.js';
 import type { MachineAuthenticator } from './auth.js';
 
 export interface PrincipalMcpRouter {
@@ -9,7 +10,13 @@ export interface PrincipalMcpRouter {
 export function createPrincipalMcpRouter(
   authenticator: MachineAuthenticator,
   defaultCwd: string,
-  createMcp: (cwd: string) => MachineMcp = createMachineMcp,
+  notifications: NotificationStore,
+  createMcp: (
+    cwd: string,
+    principalId: string,
+    store: NotificationStore,
+  ) => MachineMcp = (cwd, principalId, store) =>
+    createMachineMcp(cwd, { principalId, notifications: store }),
 ): PrincipalMcpRouter {
   const principals = new Map<string, MachineMcp>();
   let closed = false;
@@ -28,7 +35,7 @@ export function createPrincipalMcpRouter(
       if (closed) return new Response('Service unavailable', { status: 503 });
       let mcp = principals.get(principalId);
       if (!mcp) {
-        mcp = createMcp(defaultCwd);
+        mcp = createMcp(defaultCwd, principalId, notifications);
         principals.set(principalId, mcp);
       }
       return mcp.fetch(request);

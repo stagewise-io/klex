@@ -25,7 +25,7 @@
     "node": ">=24"
   },
   "scripts": {
-    "build": "pnpm --filter @klex/mcp-proxy-sdk build && node build.mjs",
+    "build": "pnpm --filter @klex/mcp-proxy-sdk --filter @stagewise/mcp-extension-push-notifications... build && node build.mjs",
     "dev": "tsx watch src/index.ts serve --mode local",
     "start": "node dist/index.js",
     "typecheck": "tsc --noEmit -p tsconfig.test.json",
@@ -55,6 +55,8 @@
   },
   "devDependencies": {
     "@klex/mcp-proxy-sdk": "workspace:*",
+    "@modelcontextprotocol/client": "2.0.0-beta.4",
+    "@stagewise/mcp-extension-push-notifications": "workspace:*",
     "@stagewise/typescript-config": "workspace:*",
     "@types/node": "26.1.1",
     "esbuild": "0.28.1",

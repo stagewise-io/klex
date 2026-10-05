@@ -2,6 +2,16 @@
 
 All notable Klex changes are documented here.
 
+## 0.13.1 (2026-10-05)
+
+### Bug Fixes
+
+- keep agent awake across async work (4280e72)
+
+### Other Changes
+
+- cover mid-turn input at session level (a85b50b)
+
 ## 0.13.0 (2026-10-03)
 
 ### Features

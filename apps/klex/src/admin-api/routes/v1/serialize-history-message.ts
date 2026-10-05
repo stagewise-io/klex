@@ -46,18 +46,22 @@ const BASE64_BLOCK_TYPES = new Set([
 /**
  * A string that is itself a `data:` URL, in any encoding. The header may
  * not contain whitespace, so prose starting with "data: " is not matched.
- * Headers (media type and parameters) are capped at 256 characters.
+ * Anchored at the start, so a single linear attempt.
  */
-const WHOLE_DATA_URL = /^data:[^\s,]{0,256},/i;
+const WHOLE_DATA_URL = /^data:[^\s,]*,/i;
 
-/**
- * A `data:` URL inside free-form text. The payload ends at whitespace, a
- * quote, or a closing bracket; the lookbehind skips words like `metadata:`.
- * The bounded header keeps each failed candidate O(1), so text with many
- * `data:` prefixes and no comma is scanned in linear time.
- */
-const EMBEDDED_DATA_URL =
-  /(?<![\w-])(data:[^\s,"'<>]{0,256},)([^\s"'<>)\]]+)/gi;
+/** Literal search for `data:` candidates inside free-form text. */
+const DATA_PREFIX = /data:/gi;
+const DATA_PREFIX_LENGTH = 'data:'.length;
+
+/** Preceding character that marks a word like `metadata:`, not a URL. */
+const WORD_CHAR = /[\w-]/;
+
+/** Characters that end an embedded header (in addition to the comma). */
+const HEADER_END = /[\s"'<>]/;
+
+/** Characters that end an embedded payload. */
+const PAYLOAD_END = /[\s"'<>)\]]/;
 
 /** Guards against pathological nesting in persisted tool payloads. */
 const MAX_DEPTH = 64;
@@ -68,17 +72,55 @@ function redacted(length: number): string {
   return `[redacted, ${length} bytes]`;
 }
 
+/**
+ * Redacts `data:` URLs embedded in free-form text. Headers have no length
+ * limit. A candidate whose header ends without a comma advances the scan to
+ * that header end: every later candidate inside the span would stop at the
+ * same character and fail too, so the whole pass stays linear.
+ */
+function redactEmbedded(value: string): string {
+  const length = value.length;
+  let output = '';
+  let copied = 0;
+  DATA_PREFIX.lastIndex = 0;
+  for (
+    let match = DATA_PREFIX.exec(value);
+    match !== null;
+    match = DATA_PREFIX.exec(value)
+  ) {
+    const start = match.index;
+    if (start > 0 && WORD_CHAR.test(value.charAt(start - 1))) continue;
+
+    let comma = start + DATA_PREFIX_LENGTH;
+    while (
+      comma < length &&
+      value.charAt(comma) !== ',' &&
+      !HEADER_END.test(value.charAt(comma))
+    ) {
+      comma++;
+    }
+    if (value.charAt(comma) !== ',') {
+      DATA_PREFIX.lastIndex = comma;
+      continue;
+    }
+
+    let end = comma + 1;
+    while (end < length && !PAYLOAD_END.test(value.charAt(end))) end++;
+    DATA_PREFIX.lastIndex = end;
+    if (end === comma + 1) continue;
+
+    output += `${value.slice(copied, comma + 1)}${redacted(end - comma - 1)}`;
+    copied = end;
+  }
+  return copied === 0 ? value : `${output}${value.slice(copied)}`;
+}
+
 function redactString(value: string): string {
   const whole = WHOLE_DATA_URL.exec(value);
   if (whole) {
     return `${whole[0]}${redacted(value.length - whole[0].length)}`;
   }
-  if (!/data:/i.test(value)) return value;
-  return value.replace(
-    EMBEDDED_DATA_URL,
-    (_match, header: string, payload: string) =>
-      `${header}${redacted(payload.length)}`,
-  );
+  return redactEmbedded(value);
 }
 
 /**

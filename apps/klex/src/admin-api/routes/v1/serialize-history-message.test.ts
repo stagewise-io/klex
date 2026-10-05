@@ -52,12 +52,27 @@ describe('serializeHistoryMessage', () => {
     );
   });
 
+  it('redacts data URLs whose header exceeds 256 characters', () => {
+    const header = `data:text/plain;name=${'n'.repeat(1_000)};base64,`;
+    expect(serializedOutput(`${header}AAAA`)).toBe(
+      `${header}[redacted, 4 bytes]`,
+    );
+    expect(serializedOutput(`see ${header}AAAAAAAA end`)).toBe(
+      `see ${header}[redacted, 8 bytes] end`,
+    );
+  });
+
   it('scans repeated data: prefixes without a comma in linear time', () => {
-    // Quadratic matching took ~800 ms for 60 KB; 200 KB would take seconds.
-    const input = 'data:'.repeat(40_000);
-    const started = performance.now();
-    expect(serializedOutput(input)).toBe(input);
-    expect(performance.now() - started).toBeLessThan(1_000);
+    // Quadratic matching took ~7.5 s for 200 KB.
+    for (const input of [
+      'data:'.repeat(40_000),
+      `x ${'data:'.repeat(40_000)}`,
+      `x ${'data:a '.repeat(30_000)}`,
+    ]) {
+      const started = performance.now();
+      expect(serializedOutput(input)).toBe(input);
+      expect(performance.now() - started).toBeLessThan(1_000);
+    }
   });
 
   it('leaves prose that starts with "data:" untouched', () => {

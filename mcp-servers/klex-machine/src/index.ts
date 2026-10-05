@@ -1,4 +1,9 @@
-import { helpText, packageVersion, parseCli } from './cli.js';
+import {
+  helpText,
+  machineLiveMessage,
+  packageVersion,
+  parseCli,
+} from './cli.js';
 
 async function main(): Promise<void> {
   const result = await parseCli(process.argv.slice(2));
@@ -27,9 +32,7 @@ async function main(): Promise<void> {
       process.stdout.write('Start it with: klex-machine\n');
       return;
     }
-    process.stdout.write(
-      `Starting machine ${enrollment.machineId}. Keep this process running.\n`,
-    );
+    process.stdout.write('Connecting to Klex Cloud...\n');
   }
   if (result.action === 'managed-bootstrap') {
     const { bootstrapManagedMachine } = await import('./cloud/managed.js');
@@ -73,6 +76,9 @@ async function main(): Promise<void> {
     result.config.cwd,
   );
   const runtime = await startCloudMachineRuntime(result.dataDir, router);
+  if (result.action !== 'managed-bootstrap') {
+    process.stdout.write(`${machineLiveMessage(enrollment.machineId)}\n`);
+  }
   for (const signal of ['SIGINT', 'SIGTERM'] as const) {
     process.once(signal, () => {
       void runtime.close().then(

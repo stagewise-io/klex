@@ -85,7 +85,9 @@ describe('CLI configuration', () => {
       action: 'enroll',
       cloudBaseUrl: 'https://cloud.example',
       code: 'single-use-code',
+      config: expect.objectContaining({ cwd: directory }),
       dataDir: directory,
+      serve: true,
     });
     await expect(
       parseCli(['serve', '--mode', 'enrolled'], {}, directory),
@@ -108,6 +110,50 @@ describe('CLI configuration', () => {
       cloudBaseUrl: 'https://cloud.example',
       enrollmentCodeFile: '-',
     });
+  });
+
+  it('serves after enrollment unless --no-serve is passed', async () => {
+    await expect(
+      parseCli(['cloud', 'enroll', 'code', '--no-serve'], {}, directory),
+    ).resolves.toMatchObject({ action: 'enroll', serve: false });
+    await expect(
+      parseCli(['cloud', 'enroll', 'code', '--serve'], {}, directory),
+    ).resolves.toMatchObject({ action: 'enroll', serve: true });
+  });
+
+  it('passes serve options through cloud enroll', async () => {
+    await expect(
+      parseCli(
+        [
+          'cloud',
+          'enroll',
+          'code',
+          '--cwd',
+          directory,
+          '--port',
+          '4000',
+          '--log-level',
+          'debug',
+        ],
+        {},
+        '/',
+      ),
+    ).resolves.toMatchObject({
+      action: 'enroll',
+      config: { cwd: directory, port: 4000, logLevel: 'debug' },
+    });
+  });
+
+  it('rejects --mode with cloud enroll', async () => {
+    await expect(
+      parseCli(['cloud', 'enroll', 'code', '--mode', 'local'], {}, directory),
+    ).rejects.toThrow('--mode cannot be used with cloud enroll');
+  });
+
+  it('rejects --no-serve outside cloud enroll', async () => {
+    await expect(
+      parseCli(['serve', '--no-serve'], {}, directory),
+    ).rejects.toThrow('only valid with cloud enroll');
   });
 
   it.each([
@@ -165,6 +211,7 @@ describe('CLI configuration', () => {
     expect(helpText()).toContain('klex-machine cloud enroll');
     expect(helpText()).toContain('klex-machine cloud bootstrap');
     expect(helpText()).toContain('--cloud-base-url <url>');
+    expect(helpText()).toContain('--no-serve');
     expect(packageVersion()).toBe('0.1.0');
   });
 

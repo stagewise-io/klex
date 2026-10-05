@@ -8,14 +8,21 @@ This server has the same filesystem, process, and network permissions as its ope
 
 ## Install and run
 
+Requires Node.js 24 or newer.
+
 ```sh
-npm install --global @klex/machine
+pnpm add -g @klex/machine   # or: npm install -g @klex/machine
 klex-machine cloud enroll <code>
-klex-machine
 
 # Explicit unauthenticated local mode:
 klex-machine serve --mode local --cwd /path/to/project --port 3123
 ```
+
+Run `pnpm setup` once and restart your shell before your first global pnpm install.
+
+`cloud enroll` enrolls the machine and then keeps serving in the same process. Keep it running; the machine is offline while the process is stopped. It does not install a background service, so it does not survive a terminal close or reboot. Pass `--no-serve` to enroll and exit, then start it later with `klex-machine`.
+
+Running the same `cloud enroll` command again restarts the machine without contacting the enrollment endpoint. A new code re-enrolls this computer with its existing identity key. If Cloud reports that the machine is already enrolled, delete the old machine in Cloud first, then run the command with a new code. To start over with a fresh identity, delete `~/.klex-machine`.
 
 With no command, the machine starts in enrolled mode using the identity in `~/.klex-machine`. Local mode serves the MCP endpoint at `http://127.0.0.1:3123/mcp` and the health endpoint at `http://127.0.0.1:3123/health`.
 
@@ -43,7 +50,7 @@ klex-machine cloud bootstrap \
   --data-dir /var/lib/klex-machine
 ```
 
-Use `--enrollment-code-file -` to read the code from standard input. Never put an enrollment code in a command argument or environment variable. Bootstrap removes a file input after reading it, enrolls atomically, validates that enrollment metadata matches the private key, and starts enrolled mode in the same process. On restart it reuses matching identity and enrollment state without contacting the enrollment endpoint. Missing private keys, missing or corrupt metadata, or a key-ID mismatch fail closed.
+Use `--enrollment-code-file -` to read the code from standard input. In managed sandboxes, never put an enrollment code in a command argument or environment variable. Bootstrap removes a file input after reading it, enrolls atomically, validates that enrollment metadata matches the private key, and starts enrolled mode in the same process. On restart it reuses matching identity and enrollment state without contacting the enrollment endpoint. Missing private keys, missing or corrupt metadata, or a key-ID mismatch fail closed.
 
 The template must provide Node.js 24 or newer, a writable owner-only data directory that survives E2B pause/resume, a writable working directory, outbound HTTPS to the paired Cloud deployment, and normal `SIGTERM` delivery. The process should run as an unprivileged user and be supervised with restart-on-failure. It must not expose the local unauthenticated HTTP listener publicly.
 

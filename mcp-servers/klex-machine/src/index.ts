@@ -12,14 +12,24 @@ async function main(): Promise<void> {
   }
 
   if (result.action === 'enroll') {
-    const { enrollMachine } = await import('./cloud/enrollment.js');
-    const enrollment = await enrollMachine({
+    const { connectMachine } = await import('./cloud/connect.js');
+    const { enrollment, reused } = await connectMachine({
       cloudBaseUrl: result.cloudBaseUrl,
       code: result.code,
       dataDir: result.dataDir,
     });
-    process.stdout.write(`Enrolled machine ${enrollment.machineId}\n`);
-    return;
+    process.stdout.write(
+      reused
+        ? `Already enrolled as machine ${enrollment.machineId}; enrollment code not used again.\n`
+        : `Enrolled machine ${enrollment.machineId}\n`,
+    );
+    if (!result.serve) {
+      process.stdout.write('Start it with: klex-machine\n');
+      return;
+    }
+    process.stdout.write(
+      `Starting machine ${enrollment.machineId}. Keep this process running.\n`,
+    );
   }
   if (result.action === 'managed-bootstrap') {
     const { bootstrapManagedMachine } = await import('./cloud/managed.js');

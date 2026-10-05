@@ -2,6 +2,12 @@
 
 All notable Klex changes are documented here.
 
+## 0.13.2 (2026-10-05)
+
+### Bug Fixes
+
+- preserve selected agent on update restart (1ae5fa5)
+
 ## 0.13.1 (2026-10-05)
 
 ### Bug Fixes

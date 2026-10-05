@@ -52,6 +52,14 @@ describe('serializeHistoryMessage', () => {
     );
   });
 
+  it('scans repeated data: prefixes without a comma in linear time', () => {
+    // Quadratic matching took ~800 ms for 60 KB; 200 KB would take seconds.
+    const input = 'data:'.repeat(40_000);
+    const started = performance.now();
+    expect(serializedOutput(input)).toBe(input);
+    expect(performance.now() - started).toBeLessThan(1_000);
+  });
+
   it('leaves prose that starts with "data:" untouched', () => {
     expect(serializedOutput('data: 3 rows, 2 columns')).toBe(
       'data: 3 rows, 2 columns',

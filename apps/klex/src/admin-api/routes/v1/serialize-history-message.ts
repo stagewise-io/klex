@@ -46,14 +46,18 @@ const BASE64_BLOCK_TYPES = new Set([
 /**
  * A string that is itself a `data:` URL, in any encoding. The header may
  * not contain whitespace, so prose starting with "data: " is not matched.
+ * Headers (media type and parameters) are capped at 256 characters.
  */
-const WHOLE_DATA_URL = /^data:[^\s,]*,/i;
+const WHOLE_DATA_URL = /^data:[^\s,]{0,256},/i;
 
 /**
  * A `data:` URL inside free-form text. The payload ends at whitespace, a
  * quote, or a closing bracket; the lookbehind skips words like `metadata:`.
+ * The bounded header keeps each failed candidate O(1), so text with many
+ * `data:` prefixes and no comma is scanned in linear time.
  */
-const EMBEDDED_DATA_URL = /(?<![\w-])(data:[^\s,"'<>]*,)([^\s"'<>)\]]+)/gi;
+const EMBEDDED_DATA_URL =
+  /(?<![\w-])(data:[^\s,"'<>]{0,256},)([^\s"'<>)\]]+)/gi;
 
 /** Guards against pathological nesting in persisted tool payloads. */
 const MAX_DEPTH = 64;

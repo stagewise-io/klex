@@ -183,6 +183,10 @@ export function packageVersion(): string {
   return packageJson.version;
 }
 
+export function machineLiveMessage(machineId: string): string {
+  return `Machine ${machineId} is live. You can now assign it to Klex Bots.\nKeep this process running; press Ctrl+C to stop.`;
+}
+
 export function helpText(): string {
   return `klex-machine ${packageVersion()}
 

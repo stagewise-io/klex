@@ -4,7 +4,12 @@ import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { helpText, packageVersion, parseCli } from '../src/cli.js';
+import {
+  helpText,
+  machineLiveMessage,
+  packageVersion,
+  parseCli,
+} from '../src/cli.js';
 
 let directory: string;
 
@@ -14,6 +19,14 @@ beforeEach(async () => {
 
 afterEach(async () => {
   await rm(directory, { force: true, recursive: true });
+});
+
+describe('machine live message', () => {
+  it('confirms the machine is live and usable by Klex Bots', () => {
+    expect(machineLiveMessage('machine-1')).toBe(
+      'Machine machine-1 is live. You can now assign it to Klex Bots.\nKeep this process running; press Ctrl+C to stop.',
+    );
+  });
 });
 
 describe('CLI configuration', () => {

@@ -2,6 +2,13 @@
 
 All notable Klex changes are documented here.
 
+## 0.13.3 (2026-10-05)
+
+### Bug Fixes
+
+- redact long-header data URLs with a linear scanner (38528db)
+- bound data URL header to keep redaction linear (d78b446)
+
 ## 0.13.2 (2026-10-05)
 
 ### Bug Fixes

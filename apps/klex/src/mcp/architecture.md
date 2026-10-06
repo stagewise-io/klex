@@ -23,18 +23,30 @@ MCP server durable pending queue
   -> retrieve oldest pending notifications in bounded pages
   -> deduplication inbox (by namespace + eventId)
   -> publish to listeners (default session)
-  -> acknowledge accepted event IDs
+  -> record as delivered but unacknowledged
   -> continue live delivery
+
+session host, once the agent is quiescent
+  -> acknowledgeDeliveredEvents()
 ```
 
 - **Live notifications** are the low-latency path.
 - **Pending retrieval** is the startup and reconnection recovery path.
 - **Subscribe before drain** closes the connection-boundary race.
 - **At-least-once delivery** — duplicates are normal; the inbox suppresses by `eventId`.
-- **Persist before acknowledgement** — the current inbox is in-memory, so it is suitable for development but not the final durable acceptance store.
+- **Handle before acknowledgement** — accepted events are not ACKed on receipt. MCP records them per namespace, and the session host calls `acknowledgeDeliveredEvents()` once the agent is quiescent (no running turn, child session, or held event). Delivering an event synchronously makes the default session non-idle, so a quiescent agent has finished every turn caused by the snapshotted events. A crash before that point leaves the events on the server, which redelivers them after restart.
 - **Server-owned progress** — Klex stores no cursor. Acknowledged events disappear from the server's pending view.
 
-If retrieval returns `hasMore: true` with an empty page, the worker fails the attempt instead of spinning. Acknowledgements retry with exponential backoff. A subscription failure restarts the complete subscribe-then-drain sequence.
+Duplicates:
+
+- An event still in flight (delivered, not ACKed) is skipped: not republished, not ACKed. The next flush ACKs it. In-flight IDs survive reconnects of the same namespace.
+- An event the inbox already accepted and that is not in flight was ACKed before, and the ACK was lost. It is ACKed again immediately.
+
+Paging: pages return the oldest unacknowledged events, so with deferred ACKs a page can contain only in-flight events. Recovery then stops (`recoveryBlocked`) instead of fetching the same page forever, and resumes after the next flush ACKs that namespace. Live notifications keep flowing meanwhile.
+
+If retrieval returns `hasMore: true` with an empty page, the worker fails the attempt instead of spinning. Acknowledgements retry with exponential backoff. A subscription failure restarts the complete subscribe-then-drain sequence. A flush for a namespace without a live worker keeps its IDs for a later flush; IDs of a namespace removed from config no longer count as unacknowledged.
+
+**Drain pause** — before an update restart, `pausePushDelivery()` stops accepting events for the rest of the process. Recovery, live notifications, deduplication, and ACKs become no-ops, so the server keeps new events for the next process and a steady message stream cannot keep the agent busy.
 
 ## Connection lifecycle
 

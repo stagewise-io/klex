@@ -1180,7 +1180,16 @@ class McpModule implements Mcp {
     }
     const acceptedIds = new Set(accepted.map((event) => event.eventId));
     let handledCount = 0;
-    for (const event of accepted) {
+    let pausedCount = 0;
+    for (const [index, event] of accepted.entries()) {
+      if (this.pushDeliveryPaused) {
+        // Paused while an earlier listener was awaited: leave the rest on
+        // the server for the next process instead of starting new work.
+        const remaining = accepted.slice(index).map((rest) => rest.eventId);
+        this.deps.pushNotificationInbox.release(namespace, remaining);
+        pausedCount = remaining.length;
+        break;
+      }
       if (await this.publishPushNotification(worker, event)) {
         this.markDelivered(namespace, [event.eventId]);
         handledCount += 1;
@@ -1205,7 +1214,7 @@ class McpModule implements Mcp {
     }
     return {
       progressed: handledCount > 0 || reacknowledge.length > 0,
-      unhandled: handledCount < accepted.length,
+      unhandled: handledCount + pausedCount < accepted.length,
     };
   }
 

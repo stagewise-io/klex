@@ -1535,13 +1535,6 @@ class ChatSessionModule implements AgentSession {
   }
 
   public isQuiescent(): boolean {
-    if (this._status === 'terminated') {
-      // Terminated is not finished: extension cleanup, transcript
-      // persistence and the replacement hook still run asynchronously.
-      return (
-        this.closeSettled && (!this.selfTerminating || this.terminationSettled)
-      );
-    }
     for (const child of this.childSessions) {
       if (
         child.getSessionInfo().status === 'terminated' &&
@@ -1550,11 +1543,21 @@ class ChatSessionModule implements AgentSession {
         this.childSessions.delete(child);
       }
     }
-    return (
-      this.runtimeState === 'idle' &&
+    // Children (including ones still starting or rolling back) keep this
+    // session busy whether or not it has terminated itself.
+    const childrenSettled =
       this.pendingChildStarts === 0 &&
-      [...this.childSessions].every((child) => child.isQuiescent())
-    );
+      [...this.childSessions].every((child) => child.isQuiescent());
+    if (this._status === 'terminated') {
+      // Terminated is not finished: extension cleanup, transcript
+      // persistence and the replacement hook still run asynchronously.
+      return (
+        childrenSettled &&
+        this.closeSettled &&
+        (!this.selfTerminating || this.terminationSettled)
+      );
+    }
+    return this.runtimeState === 'idle' && childrenSettled;
   }
 
   public waitForIdle(timeoutMs: number): Promise<boolean> {
@@ -1802,13 +1805,22 @@ class ChatSessionModule implements AgentSession {
         : {}),
     });
 
+    // Counts until the child is either registered or fully rolled back, so
+    // a startup-failure close() is never invisible to quiescence.
     this.pendingChildStarts += 1;
     try {
-      try {
-        await child.start();
-      } finally {
-        this.pendingChildStarts -= 1;
-      }
+      return await this.startChild(child, childSessionId);
+    } finally {
+      this.pendingChildStarts -= 1;
+    }
+  }
+
+  private async startChild(
+    child: ChatSessionHandle,
+    childSessionId: string,
+  ): Promise<ChatSessionHandle> {
+    try {
+      await child.start();
       if (this.closePromise) {
         throw new Error(
           'Parent chat session terminated while child session was starting',

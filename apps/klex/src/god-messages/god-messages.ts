@@ -135,14 +135,7 @@ class GodMessagesModule implements GodMessages {
       );
     }
     const session = await this.ensureSession();
-    if (!this.started || this.resetting || this.session !== session) {
-      throw new GodMessagesError(
-        this.resetting ? 'reset-in-progress' : 'not-running',
-        this.resetting
-          ? 'God session is being reset'
-          : 'God messages module is not running',
-      );
-    }
+    this.assertDeliverable(session);
 
     const message: ExtendedUIMessage = {
       id: randomUUID(),
@@ -161,16 +154,32 @@ class GodMessagesModule implements GodMessages {
     // session. Replace it here rather than dropping a directive in that gap.
     if (this.session === session) this.session = null;
     const replacement = await this.ensureSession();
-    if (!this.started || this.resetting || this.session !== replacement) {
-      throw new GodMessagesError(
-        this.resetting ? 'reset-in-progress' : 'not-running',
-        this.resetting
-          ? 'God session is being reset'
-          : 'God messages module is not running',
-      );
-    }
+    this.assertDeliverable(replacement);
     replacement.inbox.sendMessage(message, SessionInboxUrgency.Default);
     return { sessionId: replacement.sessionId };
+  }
+
+  /**
+   * Re-checks admission after awaiting a session. Shutdown, reset, or a
+   * drain may have begun during the wait; delivering then would start work
+   * the drain no longer gates.
+   */
+  private assertDeliverable(session: ChatSessionHandle): void {
+    if (this.started && this.session === session) {
+      if (this.draining) {
+        throw new GodMessagesError(
+          'draining',
+          'God messages are paused while the agent restarts for an update',
+        );
+      }
+      if (!this.resetting) return;
+    }
+    throw new GodMessagesError(
+      this.resetting ? 'reset-in-progress' : 'not-running',
+      this.resetting
+        ? 'God session is being reset'
+        : 'God messages module is not running',
+    );
   }
 
   async close(): Promise<void> {

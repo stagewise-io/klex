@@ -296,6 +296,20 @@ describe('GodMessagesModule — drain', () => {
     expect(sessions[0]?.sentMessages).toHaveLength(0);
   });
 
+  it('rejects a message whose session wait overlaps the start of a drain', async () => {
+    const { godMessages, sessions } = setup();
+    await godMessages.start();
+
+    // Passes the entry check, then awaits ensureSession().
+    const sending = godMessages.sendGodMessage([
+      { type: 'text', text: 'raced the drain' },
+    ]);
+    godMessages.beginDrain();
+
+    await expect(sending).rejects.toMatchObject({ code: 'draining' });
+    expect(sessions[0]?.sentMessages).toHaveLength(0);
+  });
+
   it('reports quiescence from the god session runtime state', async () => {
     const { godMessages, sessions } = setup();
     expect(godMessages.isQuiescent()).toBe(true);

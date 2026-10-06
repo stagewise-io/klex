@@ -622,4 +622,48 @@ describe('ChatSession lifecycle', () => {
     await expect(creating).resolves.toBeInstanceOf(Error);
     expect(parent.isQuiescent()).toBe(true);
   });
+
+  it('stays non-quiescent while a failed-start child has unsettled cleanup', async () => {
+    let extensionDeps: ExtensionDeps | undefined;
+    const extension: ExtensionFactory = {
+      identifier: 'test/parent',
+      create: (deps) => {
+        extensionDeps = deps;
+        return {};
+      },
+    };
+    let childSettled = false;
+    const child = createFakeChild(async () => {
+      throw new Error('start failed');
+    });
+    child.close = vi.fn(async () => {
+      throw new Error('rollback failed');
+    });
+    child.getSessionInfo = vi.fn(() => ({
+      ...createSession().getSessionInfo(),
+      status: 'terminated' as const,
+    }));
+    child.isQuiescent = vi.fn(() => childSettled);
+    const parent = createSession({
+      extensions: [extension],
+      sessionFactory: () => child,
+    });
+    await parent.start();
+
+    await expect(
+      requireExtensionDeps(extensionDeps).createChildSession({
+        name: 'failing-child',
+        extensionIdentifier: 'test-extension',
+        extensions: [],
+        basePrompt: 'You are a child.',
+      }),
+    ).rejects.toThrow('start failed');
+
+    // The rollback close rejected before the child settled its cleanup.
+    expect(parent.isQuiescent()).toBe(false);
+
+    childSettled = true;
+    expect(parent.isQuiescent()).toBe(true);
+    await parent.close();
+  });
 });

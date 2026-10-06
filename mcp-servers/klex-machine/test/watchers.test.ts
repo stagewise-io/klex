@@ -97,6 +97,42 @@ describe('watchers', () => {
       });
     },
   );
+  it.each([0, 3])(
+    'reports exit %i when an orphan keeps output pipes open',
+    async (code) => {
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+      let now = Date.now();
+      const child = new ChildProcess();
+      const stdout = new PassThrough();
+      const stderr = new PassThrough();
+      child.stdout = stdout;
+      child.stderr = stderr;
+      vi.mocked(spawn).mockReturnValueOnce(child);
+      const { service, completions } = setup(32, () => now);
+      await service.create(input('unused'));
+      stdout.emit('data', Buffer.from('before exit'));
+      child.emit('exit', code, null);
+      const exitedAt = new Date(now).toISOString();
+      now += 1999;
+      await vi.advanceTimersByTimeAsync(1999);
+      expect(completions).toEqual([]);
+      now += 1;
+      await vi.advanceTimersByTimeAsync(1);
+      expect(completions).toEqual([
+        expect.objectContaining({
+          outcome: code === 0 ? 'condition_met' : 'failed',
+          exitCode: code,
+          finishedAt: exitedAt,
+          output: 'before exit',
+        }),
+      ]);
+      expect(stdout.destroyed && stderr.destroyed).toBe(true);
+      expect(service.list()).toEqual([]);
+      child.emit('close', code, null);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(completions).toHaveLength(1);
+    },
+  );
   it('cancels without notifying and enforces the running bound', async () => {
     const { service, completions, onCancel } = setup(1);
     const watcher = await service.create(input(longCommand));

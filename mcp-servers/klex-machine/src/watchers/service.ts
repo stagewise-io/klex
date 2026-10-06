@@ -11,6 +11,8 @@ import type {
 export const MAX_WATCHERS = 32;
 export const MAX_WATCHER_LIFETIME_MS = 604_800_000;
 const BUFFER_CHARACTERS = 64 * 1024;
+// Output still buffered after the command exits gets this long to drain.
+export const WATCHER_OUTPUT_DRAIN_MS = 2000;
 
 export interface WatcherInfo extends WatcherRecordInfo {
   id: string;
@@ -44,6 +46,7 @@ export class WatcherService {
     private readonly hooks: WatcherHooks,
     private readonly maxWatchers = MAX_WATCHERS,
     private readonly now = Date.now,
+    private readonly drainMs = WATCHER_OUTPUT_DRAIN_MS,
   ) {}
 
   async create(options: {
@@ -118,20 +121,30 @@ export class WatcherService {
           this.#append(watcher, error.message);
           void this.#finish(watcher, 'failed', null, null);
         });
-        child.once('exit', () => {
-          watcher.exitedAt = new Date(this.now()).toISOString();
-          clearTimeout(watcher.timer);
-          // Descendants may keep stdout/stderr open after the command exits.
-          // Stop them now, then let close drain output without reclassifying exit.
-          this.#kill(watcher);
-        });
-        child.once('close', (code, signal) => {
-          void this.#finish(
+        const complete = (code: number | null, signal: string | null) =>
+          this.#finish(
             watcher,
             code === 0 && !signal ? 'condition_met' : 'failed',
             code,
             signal,
           );
+        child.once('exit', (code, signal) => {
+          watcher.exitedAt = new Date(this.now()).toISOString();
+          clearTimeout(watcher.timer);
+          // Descendants may keep stdout/stderr open after the command exits.
+          // Stop them now, then let close drain output without reclassifying exit.
+          this.#kill(watcher);
+          // A descendant outside the process tree can hold the pipes forever,
+          // so the exit result must not depend on `close` arriving.
+          watcher.timer = setTimeout(() => {
+            child.stdout?.destroy();
+            child.stderr?.destroy();
+            void complete(code, signal);
+          }, this.drainMs);
+          watcher.timer.unref();
+        });
+        child.once('close', (code, signal) => {
+          void complete(code, signal);
         });
         const checkDeadline = () => {
           if (watcher.done || watcher.exitedAt) return;

@@ -3,14 +3,23 @@
   "compilerOptions": {
     "composite": false,
     "noEmit": true,
-    "rootDir": ".",
+    "rootDir": "../..",
     "lib": ["esnext"],
     "types": ["node", "vitest/globals"],
     "declaration": false,
     "declarationMap": false,
     "sourceMap": false,
     "paths": {
-      "@stagewise/logger": ["../../packages/logger/src/index.ts"]
+      "@klex/mcp-proxy-sdk/daemon/node": [
+        "../../packages/mcp-proxy-sdk/src/daemon/node/index.ts"
+      ],
+      "@stagewise/logger": ["../../packages/logger/src/index.ts"],
+      "@stagewise/mcp-extension-client": [
+        "../../packages/mcp-extension-client/src/index.ts"
+      ],
+      "@stagewise/mcp-extension-push-notifications": [
+        "../../packages/mcp-extension-push-notifications/src/index.ts"
+      ]
     }
   },
   "include": ["src", "test"],

@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { RootLogger } from '@stagewise/logger';
 
@@ -13,7 +13,7 @@ import type {
   SessionStatus,
 } from '@/session/types';
 
-import { createSessionHost } from './session-host';
+import { createSessionHost, SessionHostDrainingError } from './session-host';
 
 const logging = {
   child: () => ({
@@ -45,6 +45,8 @@ function createScope(path: string[] = []): IntrospectionScope {
 interface FakeSession extends ChatSessionHandle {
   status: SessionStatus;
   hooks?: SessionHooks;
+  quiescent: boolean;
+  runtimeState: SessionInfo['runtimeState'];
 }
 
 function createFakeSession(options: {
@@ -55,6 +57,8 @@ function createFakeSession(options: {
     sessionId: 'default',
     status: 'active',
     hooks: options.hooks,
+    quiescent: true,
+    runtimeState: 'idle',
     inbox: {
       send: vi.fn(),
       sendMessage: vi.fn(),
@@ -74,7 +78,8 @@ function createFakeSession(options: {
         parentId: null,
         modelPurpose: 'chat',
         status: session.status,
-        runtimeState: session.status === 'active' ? 'idle' : 'terminated',
+        runtimeState:
+          session.status === 'active' ? session.runtimeState : 'terminated',
         model: { id: null, isFallback: false, fallbackIndex: 0 },
         usage: {
           chat: {
@@ -103,6 +108,7 @@ function createFakeSession(options: {
     ),
     createChildSession: vi.fn(),
     waitForIdle: vi.fn(async () => true),
+    isQuiescent: vi.fn(() => session.quiescent),
   };
   return session;
 }
@@ -113,10 +119,20 @@ function getSession(sessions: FakeSession[], index: number): FakeSession {
   return session;
 }
 
-function createHost(sessionFactory: SessionFactory) {
+function createFakeMcp() {
+  return {
+    hasUnacknowledgedEvents: vi.fn(() => false),
+    acknowledgeDeliveredEvents: vi.fn(async () => undefined),
+  };
+}
+
+function createHost(
+  sessionFactory: SessionFactory,
+  mcp: ReturnType<typeof createFakeMcp> = createFakeMcp(),
+) {
   return createSessionHost({
     logging,
-    mcp: {} as Mcp,
+    mcp: mcp as unknown as Mcp,
     introspection: createScope(),
     sessionFactory,
     basePrompt: 'test base prompt',
@@ -247,5 +263,93 @@ describe('SessionHost', () => {
       pendingEvent,
     ]);
     await host.close();
+  });
+
+  describe('quiescence and drain', () => {
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it('is quiescent only while started and the default session is quiescent', async () => {
+      const session = createFakeSession({});
+      const host = createHost(() => session);
+
+      expect(host.isQuiescent()).toBe(false);
+      await host.start();
+      expect(host.isQuiescent()).toBe(true);
+
+      session.quiescent = false;
+      expect(host.isQuiescent()).toBe(false);
+
+      session.quiescent = true;
+      await host.close();
+      expect(host.isQuiescent()).toBe(false);
+    });
+
+    it('reports a leased default session', async () => {
+      const session = createFakeSession({});
+      const host = createHost(() => session);
+      await host.start();
+
+      expect(host.isInteractionLeased()).toBe(false);
+      session.runtimeState = 'leased';
+      expect(host.isInteractionLeased()).toBe(true);
+      await host.close();
+    });
+
+    it('rejects new interaction leases while draining', async () => {
+      const session = createFakeSession({});
+      const host = createHost(() => session);
+      await host.start();
+
+      host.beginDrain();
+
+      await expect(
+        host.acquireInteractionLease({} as never),
+      ).rejects.toBeInstanceOf(SessionHostDrainingError);
+      expect(session.acquireInteractionLease).not.toHaveBeenCalled();
+      await host.close();
+    });
+
+    it('flushes delivered events only when quiescent', async () => {
+      vi.useFakeTimers();
+      const session = createFakeSession({});
+      const mcp = createFakeMcp();
+      mcp.hasUnacknowledgedEvents.mockReturnValue(true);
+      const host = createHost(() => session, mcp);
+      await host.start();
+
+      session.quiescent = false;
+      await vi.advanceTimersByTimeAsync(3_000);
+      expect(mcp.acknowledgeDeliveredEvents).not.toHaveBeenCalled();
+
+      session.quiescent = true;
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(mcp.acknowledgeDeliveredEvents).toHaveBeenCalledOnce();
+      await host.close();
+    });
+
+    it('does not flush when nothing is unacknowledged', async () => {
+      vi.useFakeTimers();
+      const mcp = createFakeMcp();
+      const host = createHost(() => createFakeSession({}), mcp);
+      await host.start();
+
+      await vi.advanceTimersByTimeAsync(3_000);
+      expect(mcp.acknowledgeDeliveredEvents).not.toHaveBeenCalled();
+      await host.close();
+    });
+
+    it('stops the flush poller on close', async () => {
+      vi.useFakeTimers();
+      const mcp = createFakeMcp();
+      mcp.hasUnacknowledgedEvents.mockReturnValue(true);
+      const host = createHost(() => createFakeSession({}), mcp);
+      await host.start();
+      await host.close();
+
+      await vi.advanceTimersByTimeAsync(3_000);
+      expect(mcp.acknowledgeDeliveredEvents).not.toHaveBeenCalled();
+    });
   });
 });

@@ -38,6 +38,11 @@ export interface CliOptions {
   deployment: Deployment;
   cloudEnrollToken: string | undefined;
   headless: boolean;
+  /**
+   * Install updates automatically and restart once the agent is idle or the
+   * drain deadline passed. Independent of `headless`.
+   */
+  autoUpdate: boolean;
   dangerousLocalAdminApiPort: number | undefined;
   allowDangerousUnsecureCloud: boolean;
   verbose: boolean;
@@ -79,6 +84,7 @@ export function parseCliArgs(argv: string[]): CliOptions {
       'data-dir': { type: 'string', short: 'd' },
       help: { type: 'boolean', short: 'h' },
       headless: { type: 'boolean', short: 'H' },
+      'auto-update': { type: 'boolean' },
       'cloud-base-url': { type: 'string' },
       'telemetry-endpoint': { type: 'string' },
       'telemetry-debug': { type: 'boolean' },
@@ -164,6 +170,10 @@ export function parseCliArgs(argv: string[]): CliOptions {
   // CLI wins over env. --no-headless sets values.headless to false.
   const headless = values.headless ?? process.env.KLEX_HEADLESS === '1';
 
+  // CLI wins over env. --no-auto-update sets values['auto-update'] to false.
+  const autoUpdate =
+    values['auto-update'] ?? process.env.KLEX_AUTO_UPDATE === '1';
+
   const dangerousLocalAdminApiPort = portOrUndefined(
     values['dangerous-local-admin-api-port'] ??
       process.env.KLEX_DANGEROUS_LOCAL_ADMIN_API_PORT,
@@ -189,6 +199,7 @@ export function parseCliArgs(argv: string[]): CliOptions {
     deployment,
     cloudEnrollToken,
     headless,
+    autoUpdate,
     dangerousLocalAdminApiPort,
     allowDangerousUnsecureCloud,
     verbose,
@@ -208,6 +219,8 @@ Options:
   -d, --data-dir <path>        Directory for agent data (overrides KLEX_DATA_DIR; interactive mode otherwise discovers agents under KLEX_HOME)
   -H, --headless               Run without the interactive CLI UI (overrides KLEX_HEADLESS)
   --no-headless                Run with the interactive CLI UI (overrides KLEX_HEADLESS)
+  --auto-update                Install updates automatically and restart once the agent is idle (overrides KLEX_AUTO_UPDATE)
+  --no-auto-update             Disable automatic updates (overrides KLEX_AUTO_UPDATE)
   -h, --help                   Show this help message
   --version                    Print the version and exit
   --cloud-base-url <url>       Klex Cloud API base URL (overrides KLEX_CLOUD_BASE_URL, default: https://cloud.klex.bot)
@@ -226,6 +239,7 @@ Options:
 
 Environment:
   KLEX_HOME                    Root directory for all Klex data (default: ~/.klex)
+  KLEX_AUTO_UPDATE             Install updates automatically when set to 1
   KLEX_TELEMETRY_ENDPOINT      Enable telemetry and export to this OTLP base URL
   KLEX_TELEMETRY_HEADERS       JSON object of extra OTLP request headers
   KLEX_TELEMETRY_DEBUG         Enable debug telemetry (chat content and PII) when set to 1; requires an endpoint

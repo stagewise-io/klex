@@ -112,6 +112,7 @@ function createFakeChild(
     getSessionInfo: vi.fn(),
     createChildSession: vi.fn(),
     waitForIdle: vi.fn(async () => true),
+    isQuiescent: vi.fn(() => true),
     status: 'active',
   };
   return child;
@@ -460,6 +461,44 @@ describe('ChatSession lifecycle', () => {
       }),
     ).rejects.toBe(startupError);
     expect(child.close).toHaveBeenCalledOnce();
+    await parent.close();
+  });
+
+  it('stays non-quiescent while a started child is busy', async () => {
+    let extensionDeps: ExtensionDeps | undefined;
+    const extension: ExtensionFactory = {
+      identifier: 'test/parent',
+      create: (deps) => {
+        extensionDeps = deps;
+        return {};
+      },
+    };
+    let childQuiescent = false;
+    let childStatus: 'active' | 'terminated' = 'active';
+    const child = createFakeChild(async () => undefined);
+    child.isQuiescent = vi.fn(() => childQuiescent);
+    child.getSessionInfo = vi.fn(() => ({ status: childStatus }) as never);
+    const parent = createSession({
+      extensions: [extension],
+      sessionFactory: () => child,
+    });
+    await parent.start();
+    expect(parent.isQuiescent()).toBe(true);
+
+    await requireExtensionDeps(extensionDeps).createChildSession({
+      name: 'consult-like',
+      extensionIdentifier: 'test-extension',
+      extensions: [],
+      basePrompt: 'You are a child.',
+    });
+
+    expect(parent.isQuiescent()).toBe(false);
+    childQuiescent = true;
+    expect(parent.isQuiescent()).toBe(true);
+
+    childQuiescent = false;
+    childStatus = 'terminated';
+    expect(parent.isQuiescent()).toBe(true);
     await parent.close();
   });
 });

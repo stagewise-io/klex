@@ -35,15 +35,49 @@ class SessionHostUnavailableError extends Error {
   }
 }
 
+/** Thrown when a lease is requested while the host drains for a restart. */
+export class SessionHostDrainingError extends Error {
+  constructor() {
+    super(
+      'Session host is draining for a restart — cannot acquire an interaction lease',
+    );
+    this.name = 'SessionHostDrainingError';
+  }
+}
+
+/** Interval at which delivered push notifications are acknowledged once the agent is quiescent. */
+const ACK_FLUSH_INTERVAL_MS = 1_000;
+
 export interface SessionHost extends RuntimeResource {
   acquireInteractionLease(
     request: InteractionLeaseRequest,
   ): Promise<InteractionLease>;
+
+  /**
+   * True when the host is running, holds no undelivered events, and the
+   * default session and all of its live child sessions are idle. Every
+   * push notification delivered before a quiescent check has therefore
+   * been handled by a finished turn.
+   */
+  isQuiescent(): boolean;
+
+  /** True while a realtime call owns the default session's generation lane. */
+  isInteractionLeased(): boolean;
+
+  /**
+   * Enters drain mode before a restart. New interaction leases are
+   * rejected with {@link SessionHostDrainingError}; existing leases and
+   * running turns continue. Irreversible: a restart always follows.
+   */
+  beginDrain(): void;
 }
 
 class SessionHostModule implements SessionHost {
   private _session: AgentSession | null = null;
   private started = false;
+  private draining = false;
+  private ackFlushTimer: ReturnType<typeof setInterval> | null = null;
+  private ackFlushInFlight: Promise<void> | null = null;
   private sessionsScope: IntrospectionScope | null = null;
 
   /** Events retained until an active replacement accepts them. */
@@ -88,6 +122,7 @@ class SessionHostModule implements SessionHost {
     try {
       this._session = await this.withSessionLock(() => this.createSession());
       this.started = true;
+      this.startAckFlushPoller();
       this.deps.logger.info('Session host started');
     } catch (error) {
       this.deps.introspection.removeChild('sessions');
@@ -106,6 +141,7 @@ class SessionHostModule implements SessionHost {
 
   private async closeUnlocked(): Promise<void> {
     if (!this.started) return;
+    this.stopAckFlushPoller();
     // Cleared first so a concurrent lease acquisition is rejected instead of
     // handshaking with a session that is about to close.
     this.started = false;
@@ -137,6 +173,7 @@ class SessionHostModule implements SessionHost {
     request: InteractionLeaseRequest,
   ): Promise<InteractionLease> {
     if (!this.started) throw new SessionHostUnavailableError();
+    if (this.draining) throw new SessionHostDrainingError();
 
     // Resolving the session is serialized against replacement, so the
     // handshake below never starts against a session the host has already
@@ -158,9 +195,60 @@ class SessionHostModule implements SessionHost {
     return lease;
   }
 
+  isQuiescent(): boolean {
+    return (
+      this.started &&
+      this.pendingEvents.length === 0 &&
+      (this._session?.isQuiescent() ?? true)
+    );
+  }
+
+  isInteractionLeased(): boolean {
+    return this._session?.getSessionInfo().runtimeState === 'leased';
+  }
+
+  beginDrain(): void {
+    if (this.draining) return;
+    this.draining = true;
+    this.deps.logger.info(
+      'Session host draining: new interaction leases are rejected',
+    );
+  }
+
   // ---------------------------------------------------------------------------
   // Internal helpers
   // ---------------------------------------------------------------------------
+
+  /**
+   * Acknowledges delivered push notifications once the agent is quiescent.
+   * The quiescence check and MCP's snapshot of delivered IDs run in the
+   * same synchronous tick, so no event delivered after the check can be
+   * acknowledged before it was handled.
+   */
+  private startAckFlushPoller(): void {
+    this.ackFlushTimer = setInterval(() => {
+      if (this.ackFlushInFlight) return;
+      if (!this.deps.mcp.hasUnacknowledgedEvents()) return;
+      if (!this.isQuiescent()) return;
+      this.ackFlushInFlight = this.deps.mcp
+        .acknowledgeDeliveredEvents()
+        .catch((error: unknown) => {
+          this.deps.logger.warn(
+            { error },
+            'Acknowledging delivered push notifications failed; retrying on next flush',
+          );
+        })
+        .finally(() => {
+          this.ackFlushInFlight = null;
+        });
+    }, ACK_FLUSH_INTERVAL_MS);
+    this.ackFlushTimer.unref?.();
+  }
+
+  private stopAckFlushPoller(): void {
+    if (this.ackFlushTimer) clearInterval(this.ackFlushTimer);
+    this.ackFlushTimer = null;
+  }
 
   /**
    * Runs `fn` after all previously queued session mutations settled,

@@ -6,6 +6,7 @@ import { attachOtelTransport, createLogger } from '@stagewise/logger';
 import { type AdminApi, createAdminApi } from '@/admin-api';
 import { createAgentDirectory, defaultAgentRoot } from '@/agent-directory';
 import { createAgentPicker } from '@/agent-picker';
+import { type AutoUpdate, createAutoUpdate } from '@/auto-update';
 import { type CliOptions, parseCliArgs } from '@/cli';
 import { createCliUi } from '@/cli-ui';
 import {
@@ -67,7 +68,7 @@ import {
   createRealtime,
   PRODUCTION_REALTIME_MEDIA_CAPABILITY,
 } from '@/session/realtime';
-import { createSessionHost } from '@/session/session-host';
+import { createSessionHost, type SessionHost } from '@/session/session-host';
 import type { SessionFactory } from '@/session/types';
 import { createSessionHistory } from '@/session-history';
 import {
@@ -97,6 +98,8 @@ import { createTracing, mapProviderName } from '@/tracing';
 
 /** Minimum seconds between time updates before executable generations. */
 const TIME_UPDATE_PERIOD_SECONDS = 300;
+/** Manual TUI updates keep UpdateManager's 4 h default. */
+const AUTO_UPDATE_CHECK_INTERVAL_MS = 2 * 60 * 60 * 1000;
 
 const cli: CliOptions = parseCliArgs(process.argv.slice(2));
 const logStore = createLogStore(500);
@@ -159,6 +162,7 @@ async function main(): Promise<void> {
 
   let runtimeCloud: CloudConnectivity | undefined;
   let runtimeMcp: ReturnType<typeof createMcp> | undefined;
+  let runtimeSessionHost: SessionHost | undefined;
   // Aggregate-only product analytics. On by default, independent of the
   // opt-in OTel telemetry. Started before the agent picker so its enrollment
   // flow is observable; `klex_agent_started` is sent only once an agent
@@ -547,6 +551,7 @@ async function main(): Promise<void> {
       sessionFactory: defaultSessionFactory,
       basePrompt: systemPrompt,
     });
+    runtimeSessionHost = sessionHost;
 
     // God session: no MCP, trust-mode god-messages, soul-god variant.
     // js-repl-sandbox excluded — it requires MCP access.
@@ -634,6 +639,7 @@ async function main(): Promise<void> {
   const runningAdminApi = adminApiForUi;
   let cliUi: { start(): void; close(): void } | undefined;
   let updateManager: UpdateManager | undefined;
+  let autoUpdate: AutoUpdate | undefined;
 
   const flushTelemetry = async (): Promise<void> => {
     const telemetryFlushes = await Promise.allSettled([
@@ -659,6 +665,7 @@ async function main(): Promise<void> {
         logger.warn({ error }, 'Klex Cloud disconnect failed');
       });
       const updateState = updateManager?.getState();
+      autoUpdate?.close();
       updateManager?.stop();
       if (updateState?.status !== 'restarting') {
         await updateManager?.cancelInstall();
@@ -702,8 +709,9 @@ async function main(): Promise<void> {
   // Without a handler Node terminates immediately and skips cloud notification.
   process.on('SIGHUP', shutdown.requestExit);
 
-  // Interactive CLI UI — default mode. Headless mode skips the UI.
-  if (!cli.headless) {
+  // Self-update: offered in the interactive UI, or installed automatically
+  // with --auto-update (TUI and headless).
+  if (!cli.headless || cli.autoUpdate) {
     const installation = await discoverManagedInstallation({
       executablePath: process.execPath,
       platform: process.platform,
@@ -718,19 +726,45 @@ async function main(): Promise<void> {
     if (installation) {
       updateManager = new UpdateManager({
         installation,
-        onRestartRequested: (updatedInstallation) =>
-          shutdown.requestRestart({
-            arguments: process.argv.slice(2),
-            cwd: process.cwd(),
-            environment: {
-              ...process.env,
-              KLEX_DATA_DIR: resolve(dataDirectory),
-            },
-            launcher: updatedInstallation.currentExecutable,
-          }),
+        ...(cli.autoUpdate
+          ? { checkIntervalMs: AUTO_UPDATE_CHECK_INTERVAL_MS }
+          : {}),
+        onRestartRequested: (updatedInstallation) => {
+          const restart = () =>
+            shutdown.requestRestart({
+              arguments: process.argv.slice(2),
+              cwd: process.cwd(),
+              environment: {
+                ...process.env,
+                KLEX_DATA_DIR: resolve(dataDirectory),
+              },
+              launcher: updatedInstallation.currentExecutable,
+            });
+          // With --auto-update every restart (manual ones included) waits
+          // for the agent to finish its work first. Without it, restart
+          // stays synchronous as before.
+          return autoUpdate
+            ? autoUpdate.drainForRestart().then(restart)
+            : restart();
+        },
       });
+      if (cli.autoUpdate && runtimeSessionHost && runtimeMcp) {
+        autoUpdate = createAutoUpdate({
+          logging: logger,
+          updateManager,
+          sessionHost: runtimeSessionHost,
+          mcp: runtimeMcp,
+        });
+      }
+    } else if (cli.autoUpdate) {
+      logger.warn(
+        'Auto-update was requested but this is not a managed installation; continuing without updates',
+      );
     }
+  }
 
+  // Interactive CLI UI — default mode. Headless mode skips the UI.
+  if (!cli.headless) {
     // The ESM SEA entry bundles the interactive UI together with the
     // application. This keeps the executable self-contained; only native
     // addons and runtime binaries remain external filesystem assets.
@@ -747,8 +781,9 @@ async function main(): Promise<void> {
     });
     cliUi = ui;
     ui.start();
-    updateManager?.start();
   }
+  updateManager?.start();
+  autoUpdate?.start();
 }
 
 function resolveShutdownTimeoutMs(value: string | undefined): number {

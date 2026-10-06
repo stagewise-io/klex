@@ -91,6 +91,7 @@ async function openModelPicker(
   });
   view.stdin.write('\r');
   await vi.waitFor(() => expect(view.lastFrame()).toContain('Latest'));
+  await new Promise((resolve) => setTimeout(resolve, 0));
 }
 
 async function typeText(
@@ -120,12 +121,16 @@ describe('ModelSelectionScreen', () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
     view.stdin.write('\r');
     await vi.waitFor(() => expect(view.lastFrame()).toContain('No models'));
+    await new Promise((resolve) => setTimeout(resolve, 0));
     view.stdin.write('a');
     await vi.waitFor(() =>
       expect(view.lastFrame()).toContain('openai-primary'),
     );
+    await new Promise((resolve) => setTimeout(resolve, 0));
     view.stdin.write('\r');
     await vi.waitFor(() => expect(view.lastFrame()).toContain('Latest'));
+    // Ink registers the picker's input handler in an effect after the frame.
+    await new Promise((resolve) => setTimeout(resolve, 0));
     view.stdin.write('\r');
 
     await vi.waitFor(() =>

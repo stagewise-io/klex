@@ -256,7 +256,7 @@ Environment:
   KLEX_DRAIN_TIMEOUT_MS        Headless only: on SIGTERM, wait up to this many milliseconds for current
                                work to finish before shutting down (default: 300000, 0 disables).
                                Set the orchestrator's grace period above this plus
-                               KLEX_SHUTDOWN_TIMEOUT_MS. A second SIGTERM exits at once
+                               KLEX_SHUTDOWN_TIMEOUT_MS. A second SIGTERM or SIGINT exits at once
 `,
   );
 }

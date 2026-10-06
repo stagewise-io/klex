@@ -173,7 +173,10 @@ class EpisodeFeedModule implements EpisodeFeedHub {
     const ref = parseEpisodeId(id);
     if (!ref) return [];
     const all = await this.listAllCompleted();
-    const bounded = Math.max(0, Math.min(5, Math.floor(count)));
+    const bounded = Number.isFinite(count)
+      ? Math.max(0, Math.min(5, Math.floor(count)))
+      : 0;
+    if (bounded === 0) return [];
     return [
       ...all
         .filter((item) => compareEpisodeRefs(item, ref) < 0)
@@ -245,7 +248,7 @@ class EpisodeFeedModule implements EpisodeFeedHub {
       matches,
       nextOffset: index < all.length && needle ? index : null,
       scannedBytes,
-      truncated: truncated || scannedBytes >= maxBytes,
+      truncated: truncated || (Boolean(needle) && index < all.length),
     };
   }
 

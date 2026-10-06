@@ -169,7 +169,7 @@ export class EpisodeStore {
     try {
       await appendFile(episode.path, lines, 'utf-8');
     } catch (error) {
-      this.open = null;
+      this.completeOpenEpisode();
       throw error;
     }
   }

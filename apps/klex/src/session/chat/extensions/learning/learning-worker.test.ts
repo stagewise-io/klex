@@ -144,6 +144,7 @@ async function harness(feed: EpisodeFeed) {
   const generateText = vi.fn(async (_args: GenerateTextArgs) =>
     ok('{"operations": []}'),
   );
+  let now = Date.parse('2026-10-02T00:00:00.000Z');
   const worker = createLearningWorker({
     episodes: feed,
     store,
@@ -151,14 +152,26 @@ async function harness(feed: EpisodeFeed) {
     generateText,
     getModels: () => [{ providerId: 'test', modelId: 'model' }],
     logger,
-    now: () => Date.parse('2026-10-02T00:00:00.000Z'),
+    now: () => now,
   });
-  return { worker, store, state, generateText, dataDir };
+  return {
+    worker,
+    store,
+    state,
+    generateText,
+    dataDir,
+    logger,
+    advanceClock: (milliseconds: number) => {
+      now += milliseconds;
+    },
+  };
 }
 
 describe('learning worker', () => {
   it('consolidates at weight twenty during a burst and never by elapsed time', async () => {
-    const { worker, state, generateText } = await harness(fakeFeed(11));
+    const { worker, state, generateText, advanceClock } = await harness(
+      fakeFeed(11),
+    );
     let extraction = 0;
     generateText.mockImplementation(async ({ system }) =>
       ok(
@@ -174,6 +187,7 @@ describe('learning worker', () => {
       pendingChangeWeight: 2,
       lastConsolidationEpisode: 10,
     });
+    advanceClock(365 * 24 * 60 * 60_000);
     expect(await worker.runOnce()).toBe('idle');
     expect(generateText).toHaveBeenCalledTimes(12);
     await worker.close();
@@ -200,6 +214,95 @@ describe('learning worker', () => {
     expect(state.get().pendingChangeWeight).toBe(2);
     expect(state.get().processedEpisodeCount).toBe(2);
     expect(state.get().skills.lesson?.updatedEpisode).toBe(0);
+  });
+
+  it('preserves new evidence on unchanged skills without refreshing their age or weight', async () => {
+    const { worker, state, store, generateText } = await harness(fakeFeed(2));
+    const skill = {
+      name: 'lesson',
+      description: 'Use when lesson applies.',
+      body: 'Do lesson.',
+    };
+    await store.write(skill);
+    await state.update((draft) => {
+      draft.processedEpisodeCount = 10;
+      draft.skills.lesson = {
+        createdAt: '2026-10-01T00:00:00.000Z',
+        updatedAt: '2026-10-01T00:00:00.000Z',
+        lastReadAt: null,
+        readCount: 0,
+        sourceEpisodes: [],
+        createdEpisode: 0,
+        updatedEpisode: 3,
+        lastReadEpisode: null,
+      };
+    });
+    const write = vi.spyOn(store, 'write');
+    generateText.mockImplementationOnce(async ({ tools, abortSignal }) => {
+      await tools?.readEpisode?.execute?.(
+        { id: episodeId(1), offset: 0, limit: 100 },
+        {
+          toolCallId: 'evidence',
+          messages: [],
+          context: undefined,
+          abortSignal,
+        },
+      );
+      return ok(
+        JSON.stringify({
+          operations: [
+            { op: 'update', ...skill, evidenceEpisodes: [episodeId(1)] },
+          ],
+        }),
+      );
+    });
+    await worker.runOnce();
+    expect(state.get().skills.lesson).toMatchObject({
+      sourceEpisodes: [episodeId(0), episodeId(1)],
+      updatedEpisode: 3,
+      updatedAt: '2026-10-01T00:00:00.000Z',
+    });
+    expect(state.get().pendingChangeWeight).toBe(0);
+    expect(write).not.toHaveBeenCalled();
+  });
+
+  it('retries failed deferred investigation without consuming a revisit or requiring new progress', async () => {
+    const { worker, state, generateText } = await harness(fakeFeed(2));
+    generateText
+      .mockResolvedValueOnce(ok('{"operations": [], "deferred": true}'))
+      .mockResolvedValueOnce(ok('{"operations": []}'))
+      .mockResolvedValueOnce(failed('provider unavailable'))
+      .mockRejectedValueOnce(new Error('provider exception'))
+      .mockResolvedValueOnce(ok(createReply('recovered')));
+    expect(await worker.runOnce()).toBe('retry-later');
+    expect(state.get()).toMatchObject({
+      processedEpisodeCount: 2,
+      deferred: [{ id: episodeId(0), attempts: 0, after: episodeId(0) }],
+      episodeFailures: { [episodeId(0)]: 1 },
+    });
+    expect(await worker.runOnce()).toBe('retry-later');
+    expect(state.get().deferred[0]?.attempts).toBe(0);
+    expect(await worker.runOnce()).toBe('idle');
+    expect(state.get()).toMatchObject({
+      processedEpisodeCount: 2,
+      deferred: [],
+      episodeFailures: {},
+    });
+    expect(state.get().skills.recovered).toBeDefined();
+  });
+
+  it('retains the partial marker when the primary page fills the character budget', async () => {
+    const feed = fakeFeed(1, () => 'x'.repeat(60_000));
+    const read = feed.readPage.bind(feed);
+    feed.readPage = async (id, options) => {
+      const page = await read(id, options);
+      return page ? { ...page, truncated: true } : null;
+    };
+    const { worker, generateText } = await harness(feed);
+    await worker.runOnce();
+    expect(generateText.mock.calls[0]?.[0].prompt).toContain(
+      '[Partial episode: scan budget exhausted; uninspected content is not evidence.]',
+    );
   });
 
   it('retains weight from earlier persisted operations when a later write fails', async () => {
@@ -544,6 +647,54 @@ describe('learning worker', () => {
     expect(state.get().episodeFailures).toEqual({});
   });
 
+  it('counts read exceptions per episode and reaches later episodes after the retry ceiling', async () => {
+    const feed = fakeFeed(2);
+    const read = feed.readPage.bind(feed);
+    feed.readPage = async (id, options) => {
+      if (id === episodeId(0)) throw new Error('unreadable episode');
+      return read(id, options);
+    };
+    const { worker, state, generateText, logger } = await harness(feed);
+    for (let attempt = 1; attempt < MAX_FAILURES_PER_EPISODE; attempt++) {
+      expect(await worker.runOnce()).toBe('retry-later');
+      expect(state.get().episodeFailures[episodeId(0)]).toBe(attempt);
+      expect(state.get().cursor).toBeNull();
+    }
+    expect(await worker.runOnce()).toBe('processed');
+    expect(state.get()).toMatchObject({
+      cursor: episodeId(1),
+      processedEpisodeCount: 2,
+      episodeFailures: {},
+    });
+    expect(generateText).toHaveBeenCalledTimes(1);
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        episode: episodeId(0),
+        failures: MAX_FAILURES_PER_EPISODE,
+      }),
+      'Skipping episode after repeated learning failures',
+    );
+  });
+
+  it('records a truncated empty scan as a failure rather than silently skipping it', async () => {
+    const feed = fakeFeed(1, () => '');
+    const read = feed.readPage.bind(feed);
+    feed.readPage = async (id, options) => {
+      const page = await read(id, options);
+      return page
+        ? { ...page, startedAt: null, endedAt: null, truncated: true }
+        : null;
+    };
+    const { worker, state, generateText } = await harness(feed);
+    expect(await worker.runOnce()).toBe('retry-later');
+    expect(state.get()).toMatchObject({
+      cursor: null,
+      processedEpisodeCount: 0,
+      episodeFailures: { [episodeId(0)]: 1 },
+    });
+    expect(generateText).not.toHaveBeenCalled();
+  });
+
   it('treats an unparseable reply as a failure', async () => {
     const { worker, state, generateText } = await harness(fakeFeed(1));
     generateText.mockResolvedValueOnce(ok('not json'));
@@ -614,6 +765,30 @@ describe('learning worker', () => {
     expect(store.get('skill-0')).toBeNull();
   });
 
+  it('preserves historical recency of migrated skills when enforcing the cap', async () => {
+    const { worker, store, state, generateText } = await harness(fakeFeed(0));
+    generateText.mockResolvedValue(failed('provider down'));
+    for (let index = 0; index <= MAX_SKILLS; index++) {
+      const name = `skill-${index}`;
+      await store.write({ name, description: 'Use when x.', body: 'Body.' });
+      await state.update((draft) => {
+        draft.skills[name] = {
+          createdAt: '2026-10-01T00:00:00.000Z',
+          updatedAt: '2026-10-01T00:00:00.000Z',
+          lastReadAt: index === 0 ? '2026-10-02T00:00:00.000Z' : null,
+          readCount: index === 0 ? 1 : 100,
+          createdEpisode: 0,
+          updatedEpisode: 0,
+          lastReadEpisode: null,
+          sourceEpisodes: [],
+        };
+      });
+    }
+    await worker.runOnce();
+    expect(store.list()).toHaveLength(MAX_SKILLS);
+    expect(store.get('skill-0')).not.toBeNull();
+  });
+
   it('does not overlap runs', async () => {
     const { worker, generateText } = await harness(fakeFeed(1));
     let release: (value: GenerateTextResult) => void = () => {};
@@ -651,6 +826,40 @@ describe('learning worker', () => {
     expect(state.get().cursor).toBeNull();
     expect(state.get().episodeFailures).toEqual({});
     expect(generateText.mock.calls[0]?.[0].abortSignal?.aborted).toBe(true);
+  });
+
+  it('automatically drains successive unreadable episodes with a fresh retry budget after progress', async () => {
+    const feed = fakeFeed(2);
+    feed.readPage = async () => {
+      throw new Error('unreadable');
+    };
+    const { worker, state } = await harness(feed);
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      worker.start();
+      await vi.waitFor(() =>
+        expect(state.get().episodeFailures[episodeId(0)]).toBe(1),
+      );
+      await vi.advanceTimersByTimeAsync(30_000);
+      await vi.waitFor(() =>
+        expect(state.get().episodeFailures[episodeId(0)]).toBe(2),
+      );
+      await vi.advanceTimersByTimeAsync(120_000);
+      await vi.waitFor(() =>
+        expect(state.get().episodeFailures[episodeId(1)]).toBe(1),
+      );
+      expect(state.get().cursor).toBe(episodeId(0));
+      await vi.advanceTimersByTimeAsync(30_000);
+      await vi.waitFor(() =>
+        expect(state.get().episodeFailures[episodeId(1)]).toBe(2),
+      );
+      await vi.advanceTimersByTimeAsync(120_000);
+      await vi.waitFor(() => expect(state.get().cursor).toBe(episodeId(1)));
+      expect(state.get().processedEpisodeCount).toBe(2);
+    } finally {
+      await worker.close();
+      vi.useRealTimers();
+    }
   });
 
   it('starts catch-up immediately without a learning timer', async () => {

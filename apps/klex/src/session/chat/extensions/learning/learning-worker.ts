@@ -161,12 +161,15 @@ class LearningWorkerModule implements LearningWorker {
   private async drain(): Promise<void> {
     while (!this.closed && this.dirty) {
       this.dirty = false;
+      const processedBefore = this.options.state.get().processedEpisodeCount;
       const result = await this.runOnce();
       if (this.closed) return;
       if (result === 'processed') {
         this.recoveryFailures = 0;
         this.dirty = true;
       } else if (result === 'retry-later' || result === 'failed') {
+        if (this.options.state.get().processedEpisodeCount > processedBefore)
+          this.recoveryFailures = 0;
         const delay = FAILURE_RETRY_DELAYS_MS[this.recoveryFailures++];
         if (delay !== undefined && !this.dirty) {
           this.timer = setTimeout(() => {
@@ -174,6 +177,11 @@ class LearningWorkerModule implements LearningWorker {
             this.wake();
           }, delay);
           this.timer.unref?.();
+        } else if (delay === undefined && !this.dirty) {
+          this.options.logger.warn(
+            { failures: this.recoveryFailures },
+            'Learning recovery retries exhausted; waiting for episode activity or restart',
+          );
         }
       } else this.recoveryFailures = 0;
       await new Promise<void>((resolve) => setImmediate(resolve));
@@ -208,24 +216,38 @@ class LearningWorkerModule implements LearningWorker {
       const [ref] = await episodes.listCompleted(state.get().cursor, 1);
       if (!ref) break;
       result = 'processed';
-      const page = await episodes.readPage(ref.id, {
-        offset: 0,
-        limit: MAX_EPISODE_CHARACTERS,
-        maxBytes: 2_000_000,
-        tail: true,
-      });
-      characters += Math.max(MIN_EPISODE_CHARACTERS, page?.text.length ?? 0);
-      const outcome = await this.processEpisode(ref.id, false, page);
+      let outcome: EpisodeOutcome;
+      try {
+        const page = await episodes.readPage(ref.id, {
+          offset: 0,
+          limit: MAX_EPISODE_CHARACTERS,
+          maxBytes: 2_000_000,
+          tail: true,
+        });
+        characters += Math.max(MIN_EPISODE_CHARACTERS, page?.text.length ?? 0);
+        outcome = await this.processEpisode(ref.id, false, page);
+      } catch (error) {
+        if (this.closed) break;
+        characters += MIN_EPISODE_CHARACTERS;
+        outcome = await this.recordFailure(
+          ref.id,
+          error instanceof Error ? error.message : String(error),
+        );
+      }
       if (this.closed) break;
       if (outcome === 'stop') {
         result = 'retry-later';
         break;
       }
-      await this.revisitDeferred();
+      if (!(await this.revisitDeferred())) {
+        result = 'retry-later';
+        break;
+      }
       if (!this.closed) await this.maybeConsolidate();
       if (!this.closed) await this.enforceCap();
     }
     if (!this.closed && result === 'idle') {
+      if (!(await this.revisitDeferred())) return 'retry-later';
       await this.maybeConsolidate();
       await this.enforceCap();
     }
@@ -260,6 +282,24 @@ class LearningWorkerModule implements LearningWorker {
     revisit = false,
     supplied?: Awaited<ReturnType<EpisodeFeed['readPage']>>,
   ): Promise<EpisodeOutcome> {
+    try {
+      return await this.processEpisodeSteps(id, revisit, supplied);
+    } catch (error) {
+      if (this.closed) return 'stop';
+      return this.recordFailure(
+        id,
+        error instanceof Error ? error.message : String(error),
+      );
+    } finally {
+      this.abort = undefined;
+    }
+  }
+
+  private async processEpisodeSteps(
+    id: string,
+    revisit: boolean,
+    supplied?: Awaited<ReturnType<EpisodeFeed['readPage']>>,
+  ): Promise<EpisodeOutcome> {
     const { episodes, store, logger } = this.options;
     const page =
       supplied === undefined
@@ -274,17 +314,29 @@ class LearningWorkerModule implements LearningWorker {
       page?.startedAt && page.endedAt
         ? { ...page, startedAt: page.startedAt, endedAt: page.endedAt }
         : null;
+    if (
+      page?.truncated &&
+      (!episode || episode.text.length < MIN_EPISODE_CHARACTERS)
+    )
+      return this.recordFailure(
+        id,
+        'Episode scan budget exhausted without enough complete evidence',
+      );
     if (!episode || episode.text.length < MIN_EPISODE_CHARACTERS) {
       logger.debug({ episode: id }, 'Skipping short or empty episode');
       if (!revisit) await this.advance(id);
       return 'unchanged';
     }
 
+    const partialMarker =
+      '[Partial episode: scan budget exhausted; uninspected content is not evidence.]\n';
     const { system, prompt } = buildExtractionPrompt({
       skills: store.list(),
       episode: {
         ...episode,
-        text: `${episode.truncated ? '[Partial episode: scan budget exhausted; uninspected content is not evidence.]\n' : ''}${episode.text}`,
+        text: episode.truncated
+          ? `${partialMarker}${episode.text.slice(-(MAX_EPISODE_CHARACTERS - partialMarker.length))}`
+          : episode.text,
       },
     });
     const controller = new AbortController();
@@ -380,10 +432,10 @@ class LearningWorkerModule implements LearningWorker {
     return 'unchanged';
   }
 
-  private async revisitDeferred(): Promise<void> {
+  private async revisitDeferred(): Promise<boolean> {
     const { state, episodes, logger } = this.options;
     const cursor = state.get().cursor;
-    if (!cursor) return;
+    if (!cursor) return true;
     for (const item of state.get().deferred) {
       if (this.closed || episodes.compareIds(cursor, item.after) <= 0) continue;
       if (item.attempts >= 3) {
@@ -398,7 +450,10 @@ class LearningWorkerModule implements LearningWorker {
         });
         continue;
       }
+      const outcome = await this.processEpisode(item.id, true);
+      if (outcome === 'stop') return false;
       await state.update((draft) => {
+        delete draft.episodeFailures[item.id];
         const entry = draft.deferred.find(
           (candidate) => candidate.id === item.id,
         );
@@ -407,7 +462,6 @@ class LearningWorkerModule implements LearningWorker {
           entry.after = cursor;
         }
       });
-      const outcome = await this.processEpisode(item.id, true);
       if (outcome === 'changed' || outcome === 'unchanged')
         await state.update((draft) => {
           draft.deferred = draft.deferred.filter(
@@ -415,6 +469,7 @@ class LearningWorkerModule implements LearningWorker {
           );
         });
     }
+    return true;
   }
 
   private async advance(id: string): Promise<void> {
@@ -477,22 +532,32 @@ class LearningWorkerModule implements LearningWorker {
           !skill ||
           skill.description !== next.description ||
           skill.body !== next.body;
+        const previous = state.get().skills[operation.name];
+        const newEvidence = operation.evidenceEpisodes?.some(
+          (id) => !previous?.sourceEpisodes.includes(id),
+        );
         if (
           !material &&
+          !newEvidence &&
           (operation.op !== 'update' || !operation.mergedFrom?.length)
         )
           continue;
-        const previous = state.get().skills[operation.name];
-        await state.update((draft) =>
+        await state.update((draft) => {
           recordOperation(draft, operation, {
             at,
             sourceEpisode,
             before,
             compareIds,
-          }),
-        );
+          });
+          const recorded = draft.skills[operation.name];
+          // Citations alone are not a substantive refresh of the skill.
+          if (!material && previous && recorded) {
+            recorded.updatedAt = previous.updatedAt;
+            recorded.updatedEpisode = previous.updatedEpisode;
+          }
+        });
         try {
-          await store.write(toSkill(operation));
+          if (material) await store.write(next);
         } catch (error) {
           // Keep reads recorded while the write was in flight.
           await state.update((draft) => {
@@ -646,11 +711,25 @@ class LearningWorkerModule implements LearningWorker {
         entry.createdEpisode ?? 0,
       );
     };
+    // Migrated zero-position skills retain historical ordering without aging by time.
+    const historicalUse = (name: string): number => {
+      const entry = usage[name];
+      return entry
+        ? Math.max(
+            Date.parse(entry.lastReadAt ?? entry.createdAt),
+            Date.parse(entry.updatedAt),
+            Date.parse(entry.createdAt),
+          )
+        : 0;
+    };
     const victims = skills
       .map((skill) => skill.name)
       .sort(
         (left, right) =>
           lastUse(left) - lastUse(right) ||
+          (lastUse(left) === 0 && lastUse(right) === 0
+            ? historicalUse(left) - historicalUse(right)
+            : 0) ||
           (usage[left]?.readCount ?? 0) - (usage[right]?.readCount ?? 0) ||
           (left < right ? -1 : left > right ? 1 : 0),
       )

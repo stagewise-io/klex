@@ -551,11 +551,10 @@ describe('Todos extension', () => {
     vi.advanceTimersByTime(1_000);
     await ext.onClose?.();
 
-    await vi.waitFor(() =>
-      expect(introspect(ext).todos).toEqual([
-        expect.objectContaining({ reminderTime: '2025-03-15T10:00:01Z' }),
-      ]),
-    );
+    // onClose awaits the restore, so it is persisted once close resolves.
+    expect(introspect(ext).todos).toEqual([
+      expect.objectContaining({ reminderTime: '2025-03-15T10:00:01Z' }),
+    ]);
     expect(sendMessage).not.toHaveBeenCalled();
   });
 

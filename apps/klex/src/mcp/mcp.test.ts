@@ -569,6 +569,33 @@ describe('MCP Push Notification worker', () => {
     await mcp.close();
   });
 
+  it('stops publishing the rest of a page once delivery is paused mid-page', async () => {
+    const first = numberedEvent(1);
+    const second = numberedEvent(2);
+    const { server, pending } = pendingQueueServer([first, second]);
+    const { mcp } = setup(
+      { chat: { url: 'https://chat.example/mcp' } },
+      async () => server,
+    );
+    // The drain begins while the first listener call is still running.
+    const listener = vi.fn(() => mcp.pausePushDelivery());
+    mcp.onPushNotification(listener);
+
+    await mcp.start();
+    await vi.waitFor(() => expect(listener).toHaveBeenCalledOnce());
+    await mcp.acknowledgeDeliveredEvents();
+
+    expect(listener).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event: expect.objectContaining({ eventId: first.eventId }),
+      }),
+    );
+    expect(listener).toHaveBeenCalledOnce();
+    // Only the handled event is ACKed; the second stays for the next process.
+    expect(pending.map((event) => event.eventId)).toEqual([second.eventId]);
+    await mcp.close();
+  });
+
   it('neither publishes nor acknowledges while delivery is paused', async () => {
     let connectOptions: ConnectMcpServerOptions | undefined;
     const { server, getEvents, acknowledgeEvents } = pendingQueueServer([

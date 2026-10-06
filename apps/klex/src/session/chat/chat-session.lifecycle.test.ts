@@ -568,4 +568,58 @@ describe('ChatSession lifecycle', () => {
     expect(parent.isQuiescent()).toBe(true);
     await parent.close();
   });
+
+  it('stays non-quiescent after closing while a child is still starting', async () => {
+    let extensionDeps: ExtensionDeps | undefined;
+    const extension: ExtensionFactory = {
+      identifier: 'test/parent',
+      create: (deps) => {
+        extensionDeps = deps;
+        return {};
+      },
+    };
+    let finishStart!: () => void;
+    let finishChildClose!: () => void;
+    const child = createFakeChild(
+      () =>
+        new Promise<void>((resolve) => {
+          finishStart = resolve;
+        }),
+    );
+    child.close = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          finishChildClose = resolve;
+        }),
+    );
+    const parent = createSession({
+      extensions: [extension],
+      sessionFactory: () => child,
+    });
+    await parent.start();
+
+    const creating = requireExtensionDeps(extensionDeps)
+      .createChildSession({
+        name: 'starting-child',
+        extensionIdentifier: 'test-extension',
+        extensions: [],
+        basePrompt: 'You are a child.',
+      })
+      .catch((error: unknown) => error);
+    await vi.waitFor(() => expect(child.start).toHaveBeenCalledOnce());
+
+    await parent.close();
+    // Own cleanup is done, but the child is still starting.
+    expect(parent.isQuiescent()).toBe(false);
+
+    // Startup finishes after the parent closed: the child is rolled back,
+    // and that close must also hold quiescence.
+    finishStart();
+    await vi.waitFor(() => expect(child.close).toHaveBeenCalledOnce());
+    expect(parent.isQuiescent()).toBe(false);
+
+    finishChildClose();
+    await expect(creating).resolves.toBeInstanceOf(Error);
+    expect(parent.isQuiescent()).toBe(true);
+  });
 });

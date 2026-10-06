@@ -496,10 +496,38 @@ describe('ChatSession lifecycle', () => {
     childQuiescent = true;
     expect(parent.isQuiescent()).toBe(true);
 
+    // Terminated but still cleaning up: the child keeps the parent busy.
     childQuiescent = false;
     childStatus = 'terminated';
+    expect(parent.isQuiescent()).toBe(false);
+    childQuiescent = true;
     expect(parent.isQuiescent()).toBe(true);
     await parent.close();
+  });
+
+  it('stays non-quiescent while its own close cleanup is running', async () => {
+    let finishClose!: () => void;
+    const extension: ExtensionFactory = {
+      identifier: 'test/slow-close',
+      create: () => ({
+        onClose: () =>
+          new Promise<void>((resolve) => {
+            finishClose = resolve;
+          }),
+      }),
+    };
+    const session = createSession({ extensions: [extension] });
+    await session.start();
+    expect(session.isQuiescent()).toBe(true);
+
+    const closing = session.close();
+    await vi.waitFor(() => expect(finishClose).toBeTypeOf('function'));
+    expect(session.getSessionInfo().status).toBe('terminated');
+    expect(session.isQuiescent()).toBe(false);
+
+    finishClose();
+    await closing;
+    expect(session.isQuiescent()).toBe(true);
   });
 
   it('stays non-quiescent while a child session is still starting', async () => {

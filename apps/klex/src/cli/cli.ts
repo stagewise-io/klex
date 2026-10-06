@@ -253,6 +253,10 @@ Environment:
   KLEX_DEPLOYMENT              Deployment label reported in analytics: self_hosted (default) or cloud;
                                set by hosting launchers, other values are reported as other
   KLEX_SHUTDOWN_TIMEOUT_MS      Maximum graceful shutdown time in milliseconds (default: 15000)
+  KLEX_DRAIN_TIMEOUT_MS        Headless only: on SIGTERM, wait up to this many milliseconds for current
+                               work to finish before shutting down (default: 300000, 0 disables).
+                               Set the orchestrator's grace period above this plus
+                               KLEX_SHUTDOWN_TIMEOUT_MS. A second SIGTERM exits at once
 `,
   );
 }

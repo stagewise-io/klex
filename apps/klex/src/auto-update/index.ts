@@ -3,5 +3,4 @@ export {
   type AutoUpdate,
   type AutoUpdateDependencies,
   createAutoUpdate,
-  type DrainOutcome,
 } from './auto-update';

@@ -1,3 +1,6 @@
+import { ChildProcess, spawn } from 'node:child_process';
+import { PassThrough } from 'node:stream';
+
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { MachinePathResolver } from '../src/filesystem/index.js';
@@ -8,10 +11,21 @@ import {
 } from '../src/notifications/index.js';
 import { WatcherService } from '../src/watchers/index.js';
 
+vi.mock('node:child_process', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:child_process')>();
+  return { ...actual, spawn: vi.fn(actual.spawn) };
+});
+
 const services: WatcherService[] = [];
 afterEach(async () => {
   for (const service of services.splice(0)) await service.closeAll();
   vi.useRealTimers();
+  vi.restoreAllMocks();
+  const actual =
+    await vi.importActual<typeof import('node:child_process')>(
+      'node:child_process',
+    );
+  vi.mocked(spawn).mockReset().mockImplementation(actual.spawn);
 });
 function setup(
   max = 32,
@@ -55,6 +69,34 @@ describe('watchers', () => {
       exitCode: code,
     });
   });
+  it.each([0, 3])(
+    'preserves exit %i while output close is delayed past the deadline',
+    async (code) => {
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+      let now = Date.now();
+      const child = new ChildProcess();
+      child.stdout = new PassThrough();
+      child.stderr = new PassThrough();
+      vi.mocked(spawn).mockReturnValueOnce(child);
+      const { service, completions } = setup(32, () => now);
+      await service.create({ ...input('unused'), timeoutMs: 1000 });
+      now += 900;
+      child.emit('exit', code, null);
+      const exitedAt = new Date(now).toISOString();
+      now += 1000;
+      await vi.advanceTimersByTimeAsync(1900);
+      expect(completions).toEqual([]);
+      child.stdout.emit('data', Buffer.from('last output'));
+      child.emit('close', code, null);
+      await expect.poll(() => completions.length).toBe(1);
+      expect(completions[0]).toMatchObject({
+        outcome: code === 0 ? 'condition_met' : 'failed',
+        exitCode: code,
+        finishedAt: exitedAt,
+        output: 'last output',
+      });
+    },
+  );
   it('cancels without notifying and enforces the running bound', async () => {
     const { service, completions, onCancel } = setup(1);
     const watcher = await service.create(input(longCommand));
@@ -162,6 +204,25 @@ describe('watchers', () => {
       truncated: true,
     });
     expect(stripAnsi('\u001b[31mred\u001b[0m')).toBe('red');
+  });
+  it.each([
+    '\u001bP',
+    '\u001b_',
+    '\u001b^',
+    '\u001bX',
+    '\u001b]',
+    '\u0090',
+    '\u0098',
+    '\u009d',
+    '\u009e',
+    '\u009f',
+  ])('strips complete terminal string controls introduced by %j', (prefix) => {
+    for (const suffix of ['\u0007', '\u001b\\', '\u009c']) {
+      expect(
+        stripAnsi(`before${prefix}hidden\n\u001b[31mpayload${suffix}after`),
+      ).toBe('beforeafter');
+    }
+    expect(stripAnsi(`before${prefix}unterminated`)).toBe('before');
   });
   it('rejects watcher lifetimes beyond seven days', async () => {
     const { service } = setup();

@@ -85,8 +85,11 @@ async function main(): Promise<void> {
   );
   const runtime = await startCloudMachineRuntime(result.dataDir, router).catch(
     async (error: unknown) => {
-      await router.close();
-      await store.close();
+      try {
+        await router.close();
+      } finally {
+        await store.close();
+      }
       throw error;
     },
   );

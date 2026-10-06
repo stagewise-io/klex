@@ -2,7 +2,7 @@ import { mkdtemp, realpath, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { MachinePathResolver } from '../src/filesystem/paths.js';
 import { ShellService } from '../src/shell/service.js';
@@ -16,7 +16,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
-  service.closeAll();
+  await service.closeAll();
   await rm(directory, {
     force: true,
     maxRetries: 5,
@@ -80,7 +80,7 @@ describe('ShellService', () => {
   });
 
   it('reclaims exited sessions and rejects running-session exhaustion', async () => {
-    service.closeAll();
+    await service.closeAll();
     service = new ShellService(new MachinePathResolver(directory), 2);
     const exited = service.create(testShell());
     service.write(exited.id, command('exit 0', 'exit 0'));
@@ -107,6 +107,50 @@ describe('ShellService', () => {
     expect(() => service.create(testShell())).toThrow('limit reached');
   });
 
+  it('does not spawn a PTY before durable registration succeeds', async () => {
+    const create = vi.spyOn(service, 'create');
+    const failure = new Error('snapshot write failed');
+    await expect(
+      service.createTracked(
+        testShell(),
+        async () => {
+          throw failure;
+        },
+        async () => undefined,
+      ),
+    ).rejects.toBe(failure);
+    expect(create).not.toHaveBeenCalled();
+    expect(service.list()).toEqual([]);
+  });
+  it('forgets registration when shutdown interrupts a shell start', async () => {
+    const create = vi.spyOn(service, 'create');
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const cancel = vi.fn(async () => undefined);
+    const pending = service.createTracked(testShell(), () => gate, cancel);
+    const rejected = expect(pending).rejects.toThrow(
+      'interrupted before starting',
+    );
+    const closing = service.closeAll();
+    release();
+    await Promise.all([closing, rejected]);
+    expect(create).not.toHaveBeenCalled();
+    expect(cancel).toHaveBeenCalledOnce();
+    expect(service.list()).toEqual([]);
+  });
+  it('forgets registration when PTY creation fails', async () => {
+    const cancel = vi.fn(async () => undefined);
+    await expect(
+      service.createTracked(
+        { ...testShell(), cols: 0 },
+        async () => undefined,
+        cancel,
+      ),
+    ).rejects.toThrow('cols');
+    expect(cancel).toHaveBeenCalledOnce();
+  });
   it('validates cursors, resize, and unknown sessions', async () => {
     const session = service.create(testShell());
     await expect(service.read({ id: session.id, cursor: 1 })).rejects.toThrow(

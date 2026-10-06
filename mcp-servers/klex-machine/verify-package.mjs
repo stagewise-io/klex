@@ -343,13 +343,14 @@ async function waitForListeningPort(serverProcess, output) {
         `Packed server exited early (${serverProcess.exitCode}): ${output()}`,
       );
     }
-    const marker = ' klex-machine MCP server listening ';
     for (const line of output().split('\n')) {
-      const markerIndex = line.indexOf(marker);
-      if (markerIndex < 0) continue;
       try {
-        const record = JSON.parse(line.slice(markerIndex + marker.length));
-        if (Number.isInteger(record.port) && record.port > 0)
+        const record = JSON.parse(line);
+        if (
+          record.message === 'klex-machine MCP server listening' &&
+          Number.isInteger(record.port) &&
+          record.port > 0
+        )
           return record.port;
       } catch {}
     }

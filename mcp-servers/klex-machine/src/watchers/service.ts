@@ -32,6 +32,8 @@ interface RunningWatcher {
   timer?: ReturnType<typeof setTimeout>;
   startup?: Promise<void>;
   done: boolean;
+  exitedAt?: string;
+  killed?: boolean;
 }
 
 export class WatcherService {
@@ -116,6 +118,13 @@ export class WatcherService {
           this.#append(watcher, error.message);
           void this.#finish(watcher, 'failed', null, null);
         });
+        child.once('exit', () => {
+          watcher.exitedAt = new Date(this.now()).toISOString();
+          clearTimeout(watcher.timer);
+          // Descendants may keep stdout/stderr open after the command exits.
+          // Stop them now, then let close drain output without reclassifying exit.
+          this.#kill(watcher);
+        });
         child.once('close', (code, signal) => {
           void this.#finish(
             watcher,
@@ -125,7 +134,7 @@ export class WatcherService {
           );
         });
         const checkDeadline = () => {
-          if (watcher.done) return;
+          if (watcher.done || watcher.exitedAt) return;
           const remaining = Date.parse(info.deadlineAt) - this.now();
           if (remaining <= 0) {
             void this.#finish(watcher, 'timed_out', null, null);
@@ -186,8 +195,6 @@ export class WatcherService {
     signal: string | null,
   ): Promise<void> {
     if (watcher.done) return;
-    if (this.now() >= Date.parse(watcher.info.deadlineAt))
-      outcome = 'timed_out';
     watcher.done = true;
     clearTimeout(watcher.timer);
     this.#running.delete(watcher.info.id);
@@ -198,7 +205,7 @@ export class WatcherService {
         outcome,
         exitCode,
         signal,
-        finishedAt: new Date(this.now()).toISOString(),
+        finishedAt: watcher.exitedAt ?? new Date(this.now()).toISOString(),
         output: watcher.output,
       });
     } catch (error) {
@@ -208,7 +215,8 @@ export class WatcherService {
 
   #kill(watcher: RunningWatcher): void {
     const pid = watcher.child?.pid;
-    if (!pid) return;
+    if (!pid || watcher.killed) return;
+    watcher.killed = true;
     if (process.platform === 'win32') {
       const killer = spawn('taskkill', ['/pid', String(pid), '/T', '/F'], {
         stdio: 'ignore',

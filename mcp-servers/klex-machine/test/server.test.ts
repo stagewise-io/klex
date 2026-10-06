@@ -1,11 +1,15 @@
+import { mkdtemp, rm } from 'node:fs/promises';
 import { createServer } from 'node:http';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { withPushNotificationsClientCapability } from '@stagewise/mcp-extension-push-notifications';
 
 import type { RuntimeConfig } from '../src/config.js';
-import type { MachineMcp } from '../src/mcp.js';
+import * as machineMcp from '../src/mcp.js';
+import { createNotificationStore } from '../src/notifications/index.js';
 import {
   createMachineApp,
   type MachineServer,
@@ -23,7 +27,9 @@ function config(overrides: Partial<RuntimeConfig> = {}): RuntimeConfig {
   };
 }
 
-function fakeMcp(): MachineMcp & { close: ReturnType<typeof vi.fn> } {
+function fakeMcp(): machineMcp.MachineMcp & {
+  close: ReturnType<typeof vi.fn>;
+} {
   return {
     fetch: vi.fn(async () => new Response('mcp-response')),
     close: vi.fn(async () => undefined),
@@ -31,6 +37,9 @@ function fakeMcp(): MachineMcp & { close: ReturnType<typeof vi.fn> } {
 }
 
 const logger = {
+  trace: vi.fn(),
+  debug: vi.fn(),
+  fatal: vi.fn(),
   info: vi.fn(),
   warn: vi.fn(),
   error: vi.fn(),
@@ -38,7 +47,11 @@ const logger = {
 const running: MachineServer[] = [];
 
 afterEach(async () => {
-  await Promise.all(running.splice(0).map((server) => server.close()));
+  try {
+    await Promise.all(running.splice(0).map((server) => server.close()));
+  } finally {
+    vi.restoreAllMocks();
+  }
 });
 
 describe('machine HTTP server', () => {
@@ -105,16 +118,72 @@ describe('machine HTTP server', () => {
       }),
     });
     expect(response.status).toBe(200);
+    expect(response.headers.get('content-type')).toContain('text/event-stream');
     const reader = response.body?.getReader();
-    await reader?.read();
+    if (!reader) throw new Error('Missing subscription stream');
     try {
+      const first = await reader.read();
+      expect(first.done).toBe(false);
+      expect(new TextDecoder().decode(first.value)).toContain(
+        'notifications/subscriptions/acknowledged',
+      );
       await server.close();
       running.splice(running.indexOf(server), 1);
     } finally {
-      await reader?.cancel();
+      await reader.cancel();
     }
   });
 
+  it.each([false, true])(
+    'releases the notification lock even when MCP cleanup fails, startup=%s',
+    async (startup) => {
+      const dataDir = await mkdtemp(join(tmpdir(), 'machine shutdown '));
+      const occupied = createServer();
+      const mcp = fakeMcp();
+      const failure = new Error('MCP cleanup failed');
+      mcp.close.mockRejectedValueOnce(failure);
+      vi.spyOn(machineMcp, 'createMachineMcp').mockReturnValueOnce(mcp);
+      try {
+        let port = 0;
+        if (startup) {
+          await new Promise<void>((resolve) =>
+            occupied.listen(0, '127.0.0.1', resolve),
+          );
+          const address = occupied.address();
+          if (!address || typeof address === 'string')
+            throw new Error('Missing address');
+          port = address.port;
+          await expect(
+            startMachineServer(config({ port }), {
+              dataDir,
+              logger,
+              registerSignals: false,
+            }),
+          ).rejects.toThrow();
+        } else {
+          const server = await startMachineServer(config(), {
+            dataDir,
+            logger,
+            registerSignals: false,
+          });
+          await expect(server.close()).rejects.toBe(failure);
+        }
+        const reopened = createNotificationStore({ dataDir, logger });
+        try {
+          await reopened.ready();
+          expect(reopened.persistent).toBe(true);
+        } finally {
+          await reopened.close();
+        }
+      } finally {
+        if (occupied.listening)
+          await new Promise<void>((resolve, reject) =>
+            occupied.close((error) => (error ? reject(error) : resolve())),
+          );
+        await rm(dataDir, { recursive: true, force: true });
+      }
+    },
+  );
   it('closes MCP state when listener startup fails', async () => {
     const occupied = createServer();
     await new Promise<void>((resolve) =>

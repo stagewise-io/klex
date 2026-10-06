@@ -1,3 +1,6 @@
+import { type ILogObj, Logger } from 'tslog';
+import { err, serialize } from 'tslog/serializers';
+
 export type MachineLogLevel =
   | 'trace'
   | 'debug'
@@ -6,41 +9,55 @@ export type MachineLogLevel =
   | 'error'
   | 'fatal';
 
-export interface MachineLogger {
-  info(data: unknown, message: string): void;
-  warn(data: unknown, message: string): void;
-  error(data: unknown, message: string): void;
-}
+export type MachineLogger = Pick<
+  Logger<ILogObj>,
+  'trace' | 'debug' | 'info' | 'warn' | 'error' | 'fatal'
+>;
 
 const LEVEL_PRIORITY = {
-  trace: 10,
-  debug: 20,
-  info: 30,
-  warn: 40,
-  error: 50,
-  fatal: 60,
+  trace: 1,
+  debug: 2,
+  info: 3,
+  warn: 4,
+  error: 5,
+  fatal: 6,
 } as const satisfies Record<MachineLogLevel, number>;
 
-export function createMachineLogger(minLevel: MachineLogLevel): MachineLogger {
-  const write = (
-    level: 'info' | 'warn' | 'error',
-    data: unknown,
-    message: string,
-  ) => {
-    if (LEVEL_PRIORITY[level] < LEVEL_PRIORITY[minLevel]) return;
-    process.stderr.write(
-      `${new Date().toISOString()} ${level.toUpperCase()} ${message} ${JSON.stringify(data)}\n`,
-    );
-  };
-  return {
-    info: (data, message) => write('info', data, message),
-    warn: (data, message) => write('warn', data, message),
-    error: (data, message) => write('error', data, message),
-  };
+export function createMachineLogger(
+  minLevel: MachineLogLevel,
+): Logger<ILogObj> {
+  const logger = new Logger<ILogObj>({
+    name: 'klex-machine',
+    minLevel: LEVEL_PRIORITY[minLevel],
+    type: 'hidden',
+    middleware: [serialize({ error: err })],
+    mask: {
+      keys: [
+        'password',
+        'apiKey',
+        'authorization',
+        'token',
+        'secret',
+        'prompt',
+      ],
+      caseInsensitive: true,
+    },
+  });
+  logger.attachTransport({
+    name: 'stderr',
+    format: process.stderr.isTTY ? 'pretty' : 'json',
+    write: (_record, line) => {
+      process.stderr.write(`${line}\n`);
+    },
+  });
+  return logger;
 }
 
 export const silentMachineLogger: MachineLogger = {
-  info: () => {},
-  warn: () => {},
-  error: () => {},
+  trace: () => undefined,
+  debug: () => undefined,
+  info: () => undefined,
+  warn: () => undefined,
+  error: () => undefined,
+  fatal: () => undefined,
 };

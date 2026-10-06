@@ -4,6 +4,7 @@ import {
   readFile,
   rm,
   stat,
+  symlink,
   writeFile,
 } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -82,11 +83,25 @@ describe('skill store', () => {
     expect(logger.warn).toHaveBeenCalled();
   });
 
-  it('serializes concurrent writes', async () => {
-    const store = createSkillStore(await root(), logger);
+  it('serializes concurrent writes to the same skill', async () => {
+    const dir = await root();
+    const store = createSkillStore(dir, logger);
     await Promise.all(
-      ['a', 'b', 'c'].map((name) => store.write({ ...skill, name })),
+      ['one', 'two', 'three'].map((body) => store.write({ ...skill, body })),
     );
-    expect(store.list().map((entry) => entry.name)).toEqual(['a', 'b', 'c']);
+    expect(store.get(skill.name)?.body).toBe('three');
+    const reloaded = createSkillStore(dir, logger);
+    await reloaded.start();
+    expect(reloaded.get(skill.name)?.body).toBe('three');
+  });
+
+  it('refuses to write through a symlinked skill folder', async () => {
+    const dir = await root();
+    const outside = await root();
+    await mkdir(dir, { recursive: true });
+    await symlink(outside, join(dir, skill.name));
+    const store = createSkillStore(dir, logger);
+    await expect(store.write(skill)).rejects.toThrow(/not a plain directory/);
+    await expect(stat(join(outside, 'SKILL.md'))).rejects.toThrow();
   });
 });

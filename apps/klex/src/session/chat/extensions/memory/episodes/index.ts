@@ -1,5 +1,6 @@
 export {
   type CompletedEpisode,
+  compareEpisodeIds,
   compareEpisodeRefs,
   createEpisodeFeed,
   type EpisodeFeed,

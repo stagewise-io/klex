@@ -22,6 +22,7 @@ function createEpisodeFeed(): EpisodeFeed {
     listCompleted: async () => [],
     listLatestCompleted: async () => [],
     read: async () => null,
+    compareIds: (left, right) => left.localeCompare(right),
   };
 }
 

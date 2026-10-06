@@ -28,6 +28,8 @@ export interface EpisodeFeed {
   /** Newest `count` finished episodes, oldest first. */
   listLatestCompleted(count: number): Promise<EpisodeRef[]>;
   read(id: string): Promise<CompletedEpisode | null>;
+  /** Orders episode ids oldest first; ids are opaque, so use this to sort. */
+  compareIds(left: string, right: string): number;
 }
 
 export interface EpisodeFeedSource {
@@ -64,6 +66,14 @@ export function compareEpisodeRefs(
   return left.index - right.index;
 }
 
+/** Orders episode ids like `compareEpisodeRefs`; unparseable ids sort first. */
+export function compareEpisodeIds(left: string, right: string): number {
+  const leftRef = parseEpisodeId(left);
+  const rightRef = parseEpisodeId(right);
+  if (!leftRef || !rightRef) return (leftRef ? 1 : 0) - (rightRef ? 1 : 0);
+  return compareEpisodeRefs(leftRef, rightRef);
+}
+
 /**
  * Exposes finished episodes of the memory extension. An episode is finished
  * when it is not the source's open episode. Episodes are never reopened, so
@@ -94,6 +104,10 @@ class EpisodeFeedModule implements EpisodeFeedHub {
       ? completed.filter((ref) => compareEpisodeRefs(ref, cursor) > 0)
       : completed;
     return later.slice(0, Math.max(0, limit));
+  }
+
+  compareIds(left: string, right: string): number {
+    return compareEpisodeIds(left, right);
   }
 
   async listLatestCompleted(count: number): Promise<EpisodeRef[]> {

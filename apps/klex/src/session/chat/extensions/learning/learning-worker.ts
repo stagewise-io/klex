@@ -181,12 +181,15 @@ class LearningWorkerModule implements LearningWorker {
   /**
    * Without a cursor, pins the backfill window by persisting the cursor
    * just before the newest `INITIAL_BACKFILL_EPISODES`. Later runs then
-   * continue from there instead of re-picking the newest episodes.
+   * continue from there instead of re-picking the newest episodes. A
+   * recorded failure without a cursor means learning already started from
+   * the beginning; re-pinning then could jump past the failed episode.
    */
   private async backfillCursor(): Promise<string | null> {
     const { episodes, state } = this.options;
-    const cursor = state.get().cursor;
+    const { cursor, episodeFailures } = state.get();
     if (cursor !== null) return cursor;
+    if (Object.keys(episodeFailures).length > 0) return null;
     const latest = await episodes.listLatestCompleted(
       INITIAL_BACKFILL_EPISODES + 1,
     );
@@ -281,12 +284,15 @@ class LearningWorkerModule implements LearningWorker {
    * Applies validated operations; returns how many were applied. State is
    * written before files: a crash in between leaves provenance for a file
    * that the retried operation then writes, never a file without provenance.
+   * A failed write restores the previous state entry before rethrowing.
    */
   private async apply(
     operations: readonly SkillOperation[],
     sourceEpisode: string | null,
   ): Promise<number> {
-    const { store, state, logger } = this.options;
+    const { store, state, logger, episodes } = this.options;
+    const compareIds = (left: string, right: string) =>
+      episodes.compareIds(left, right);
     const { accepted, rejected } = validateOperations(
       operations,
       store.list().map((skill) => skill.name),
@@ -305,13 +311,32 @@ class LearningWorkerModule implements LearningWorker {
       if (operation.op === 'delete') {
         await store.delete(operation.name);
         await state.update((draft) =>
-          recordOperation(draft, operation, at, sourceEpisode, before),
+          recordOperation(draft, operation, {
+            at,
+            sourceEpisode,
+            before,
+            compareIds,
+          }),
         );
       } else {
+        const previous = state.get().skills[operation.name];
         await state.update((draft) =>
-          recordOperation(draft, operation, at, sourceEpisode, before),
+          recordOperation(draft, operation, {
+            at,
+            sourceEpisode,
+            before,
+            compareIds,
+          }),
         );
-        await store.write(toSkill(operation));
+        try {
+          await store.write(toSkill(operation));
+        } catch (error) {
+          await state.update((draft) => {
+            if (previous) draft.skills[operation.name] = previous;
+            else delete draft.skills[operation.name];
+          });
+          throw error;
+        }
       }
       logger.info(
         { op: operation.op, skill: operation.name, episode: sourceEpisode },
@@ -399,12 +424,18 @@ class LearningWorkerModule implements LearningWorker {
   }
 }
 
+interface RecordContext {
+  at: string;
+  sourceEpisode: string | null;
+  /** Skill state before the batch; merged skills may already be deleted. */
+  before: Readonly<Record<string, SkillState>>;
+  compareIds: (left: string, right: string) => number;
+}
+
 function recordOperation(
   draft: LearningStateData,
   operation: SkillOperation,
-  at: string,
-  sourceEpisode: string | null,
-  before: Readonly<Record<string, SkillState>>,
+  { at, sourceEpisode, before, compareIds }: RecordContext,
 ): void {
   if (operation.op === 'delete') {
     delete draft.skills[operation.name];
@@ -423,7 +454,10 @@ function recordOperation(
     ...merged,
     ...(sourceEpisode ? [sourceEpisode] : []),
   ];
-  const nextSources = [...new Set(candidates)].slice(-MAX_SOURCE_EPISODES);
+  // Episode order, so the cap drops the oldest sources across merged skills.
+  const nextSources = [...new Set(candidates)]
+    .sort(compareIds)
+    .slice(-MAX_SOURCE_EPISODES);
   draft.skills[operation.name] = {
     ...existing,
     createdAt: existing?.createdAt ?? at,

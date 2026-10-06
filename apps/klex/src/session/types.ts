@@ -195,6 +195,14 @@ export interface AgentSession extends ConversationHost {
    * Used by the owner to aggregate session info in the introspection tree.
    */
   getSessionInfo(): SessionInfo;
+
+  /**
+   * Synchronous check that the session does no work: runtime state `idle`
+   * and every live child session recursively quiescent. A terminated session
+   * is quiescent. Used to acknowledge handled Push Notifications and to drain
+   * before an update restart.
+   */
+  isQuiescent(): boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -277,6 +285,8 @@ export interface ChildSessionHandle {
   close(): Promise<void>;
   /** Waits until the child reaches its idle boundary or the timeout expires. */
   waitForIdle(timeoutMs: number): Promise<boolean>;
+  /** See {@link AgentSession.isQuiescent}. */
+  isQuiescent(): boolean;
   /** Creates and fully starts an isolated grandchild session. */
   createChildSession(options: ChildSessionOptions): Promise<ChildSessionHandle>;
 }

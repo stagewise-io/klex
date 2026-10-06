@@ -25,6 +25,7 @@ describe('parseCliArgs', () => {
     delete process.env.KLEX_NO_ANALYTICS;
     delete process.env.DO_NOT_TRACK;
     delete process.env.KLEX_DEPLOYMENT;
+    delete process.env.KLEX_AUTO_UPDATE;
   });
 
   afterEach(() => {
@@ -43,6 +44,7 @@ describe('parseCliArgs', () => {
       'KLEX_NO_ANALYTICS',
       'DO_NOT_TRACK',
       'KLEX_DEPLOYMENT',
+      'KLEX_AUTO_UPDATE',
     ]) {
       if (key in originalEnv) {
         // biome-ignore lint/suspicious/noExplicitAny: restore env
@@ -51,6 +53,32 @@ describe('parseCliArgs', () => {
         delete process.env[key as keyof typeof process.env];
       }
     }
+  });
+
+  describe('auto-update', () => {
+    it('is disabled by default', () => {
+      expect(parseCliArgs([]).autoUpdate).toBe(false);
+    });
+
+    it('is enabled by --auto-update', () => {
+      expect(parseCliArgs(['--auto-update']).autoUpdate).toBe(true);
+    });
+
+    it('is enabled by KLEX_AUTO_UPDATE=1', () => {
+      process.env.KLEX_AUTO_UPDATE = '1';
+      expect(parseCliArgs([]).autoUpdate).toBe(true);
+    });
+
+    it('lets --no-auto-update override KLEX_AUTO_UPDATE', () => {
+      process.env.KLEX_AUTO_UPDATE = '1';
+      expect(parseCliArgs(['--no-auto-update']).autoUpdate).toBe(false);
+    });
+
+    it('is independent of headless mode', () => {
+      const options = parseCliArgs(['--headless', '--auto-update']);
+      expect(options.headless).toBe(true);
+      expect(options.autoUpdate).toBe(true);
+    });
   });
 
   describe('analytics', () => {

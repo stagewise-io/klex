@@ -554,6 +554,7 @@ class TodosExtension implements Extension {
 
   private async fireReminder(id: string, reminderTime: string): Promise<void> {
     this.clearReminder(id, reminderTime);
+    if (this.closed) return;
     let due = false;
     const todos = await this.store.update((current) => {
       const todo = current.find((candidate) => candidate.id === id);
@@ -561,9 +562,20 @@ class TodosExtension implements Extension {
       todo.reminderTime = null;
       due = true;
     });
+    if (!due) return;
+    if (this.closed) {
+      // Closed between persisting and delivering (e.g. restart teardown):
+      // restore the reminder so the next startup fires it instead of
+      // losing it.
+      await this.store.update((current) => {
+        const todo = current.find((candidate) => candidate.id === id);
+        if (todo && todo.reminderTime === null)
+          todo.reminderTime = reminderTime;
+      });
+      return;
+    }
     // Deliver even mid-step: Default urgency appends to history and
     // forces a check-retry turn, so the reminder is never lost.
-    if (this.closed || !due) return;
     this.deps.inbox.sendMessage(
       {
         id: randomUUID(),

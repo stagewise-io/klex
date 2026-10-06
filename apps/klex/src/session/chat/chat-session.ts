@@ -221,6 +221,8 @@ class ChatSessionModule implements AgentSession {
   // --- Observability tracking ---
 
   private runtimeState: SessionRuntimeState = 'idle';
+  /** Started child sessions, tracked for {@link isQuiescent}. */
+  private readonly childSessions = new Set<ChildSessionHandle>();
   private readonly idleWaiters = new Set<{
     resolve: (idle: boolean) => void;
     timer: NodeJS.Timeout;
@@ -1526,6 +1528,19 @@ class ChatSessionModule implements AgentSession {
     return [...this.messages];
   }
 
+  public isQuiescent(): boolean {
+    if (this._status === 'terminated') return true;
+    for (const child of this.childSessions) {
+      if (child.getSessionInfo().status === 'terminated') {
+        this.childSessions.delete(child);
+      }
+    }
+    return (
+      this.runtimeState === 'idle' &&
+      [...this.childSessions].every((child) => child.isQuiescent())
+    );
+  }
+
   public waitForIdle(timeoutMs: number): Promise<boolean> {
     if (this._status === 'terminated') return Promise.resolve(false);
     if (this.runtimeState === 'idle') return Promise.resolve(true);
@@ -1775,6 +1790,7 @@ class ChatSessionModule implements AgentSession {
           'Parent chat session terminated while child session was starting',
         );
       }
+      this.childSessions.add(child);
       return child;
     } catch (error) {
       await child.close().catch((closeError: unknown) => {

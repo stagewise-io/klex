@@ -538,6 +538,27 @@ describe('Todos extension', () => {
     ]);
   });
 
+  it('restores a reminder when the extension closes during delivery', async () => {
+    const { deps, sendMessage } = createMockDeps();
+    const ext = createTodosExt.create(deps);
+    await callTool(ext, 'createTodo', {
+      description: 'Check deploy',
+      reminderTime: '2025-03-15T10:00:01Z',
+    });
+
+    // Fire the timer synchronously, then close while the store update that
+    // clears the reminder is still in flight.
+    vi.advanceTimersByTime(1_000);
+    await ext.onClose?.();
+
+    await vi.waitFor(() =>
+      expect(introspect(ext).todos).toEqual([
+        expect.objectContaining({ reminderTime: '2025-03-15T10:00:01Z' }),
+      ]),
+    );
+    expect(sendMessage).not.toHaveBeenCalled();
+  });
+
   // -------------------------------------------------------------------------
   // clearTodo
   // -------------------------------------------------------------------------

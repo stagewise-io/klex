@@ -17,6 +17,7 @@ import type {
   InteractionUpdateEnvelope,
   PreparedInferenceContextHandle,
 } from '@/session/interaction';
+import { SessionHostDrainingError } from '@/session/session-host';
 import * as telemetryMetrics from '@/telemetry-metrics';
 import {
   getRealtimeSessionCount,
@@ -451,6 +452,26 @@ describe('realtime session coordinator', () => {
     expect(mcpHarness.endRealtimeMediaSession).not.toHaveBeenCalled();
     expect(transport.closeCount).toBe(1);
     expect(processor.closeCount).toBe(1);
+    await coordinator.close();
+  });
+
+  it('rejects the offer once without retrying while the host drains', async () => {
+    const host = createDeterministicConversationHost();
+    host.rejectAcquisitions(new SessionHostDrainingError());
+    const { coordinator, mcpHarness } = setup({ host });
+    await coordinator.start();
+    await mcpHarness.notify(offered());
+
+    await vi.waitFor(() =>
+      expect(mcpHarness.rejectRealtimeMediaSession).toHaveBeenCalledWith(
+        'voice',
+        'session-1',
+      ),
+    );
+    await vi.waitFor(() => expect(coordinator.getActiveSessionCount()).toBe(0));
+    expect(mcpHarness.acceptRealtimeMediaSession).not.toHaveBeenCalled();
+    expect(mcpHarness.rejectRealtimeMediaSession).toHaveBeenCalledOnce();
+    expect(host.requests).toHaveLength(1);
     await coordinator.close();
   });
 

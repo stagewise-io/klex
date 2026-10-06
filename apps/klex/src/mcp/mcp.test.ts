@@ -414,6 +414,71 @@ describe('MCP Push Notification worker', () => {
     await mcp.close();
   });
 
+  it('leaves an event without listeners unacknowledged and redelivers it', async () => {
+    let connectOptions: ConnectMcpServerOptions | undefined;
+    const { server, pending, getEvents, acknowledgeEvents } =
+      pendingQueueServer([pushNotification]);
+    const { mcp } = setup(
+      { chat: { url: 'https://chat.example/mcp' } },
+      async (options) => {
+        connectOptions = options;
+        return server;
+      },
+    );
+
+    // No listener: the default session is being replaced.
+    await mcp.start();
+    await vi.waitFor(() => expect(getEvents).toHaveBeenCalledOnce());
+    expect(mcp.hasUnacknowledgedEvents()).toBe(false);
+    await mcp.acknowledgeDeliveredEvents();
+    expect(acknowledgeEvents).not.toHaveBeenCalled();
+    expect(pending).toHaveLength(1);
+
+    // A listener exists again. The next live event's flush re-runs
+    // recovery, which redelivers the held event.
+    const listener = vi.fn();
+    mcp.onPushNotification(listener);
+    const live = numberedEvent(2);
+    pending.push(live);
+    await connectOptions?.onPushNotification(server, liveNotification(live));
+    await vi.waitFor(() => expect(listener).toHaveBeenCalledOnce());
+
+    await mcp.acknowledgeDeliveredEvents();
+    expect(listener).toHaveBeenCalledTimes(2);
+    expect(listener).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        event: expect.objectContaining({
+          eventId: pushNotification.eventId,
+        }),
+      }),
+    );
+    await mcp.acknowledgeDeliveredEvents();
+    expect(pending).toHaveLength(0);
+    await mcp.close();
+  });
+
+  it('leaves an event unacknowledged when its listener fails', async () => {
+    const { server, pending, getEvents, acknowledgeEvents } =
+      pendingQueueServer([pushNotification]);
+    const { mcp } = setup(
+      { chat: { url: 'https://chat.example/mcp' } },
+      async () => server,
+    );
+    const listener = vi.fn(() => {
+      throw new Error('inbox closed');
+    });
+    mcp.onPushNotification(listener);
+
+    await mcp.start();
+    await vi.waitFor(() => expect(listener).toHaveBeenCalledOnce());
+    await vi.waitFor(() => expect(getEvents).toHaveBeenCalledOnce());
+    expect(mcp.hasUnacknowledgedEvents()).toBe(false);
+    await mcp.acknowledgeDeliveredEvents();
+    expect(acknowledgeEvents).not.toHaveBeenCalled();
+    expect(pending).toHaveLength(1);
+    await mcp.close();
+  });
+
   it('neither publishes nor acknowledges while delivery is paused', async () => {
     let connectOptions: ConnectMcpServerOptions | undefined;
     const { server, getEvents, acknowledgeEvents } = pendingQueueServer([

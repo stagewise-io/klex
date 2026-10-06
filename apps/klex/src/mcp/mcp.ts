@@ -1027,6 +1027,7 @@ class McpModule implements Mcp {
   }
 
   private async recoverEvents(worker: PushNotificationWorker): Promise<void> {
+    let unhandled = false;
     while (this.isCurrentWorker(worker) && !this.pushDeliveryPaused) {
       const page = await worker.connection.pushNotifications.getEvents(
         { limit: EVENT_PAGE_SIZE },
@@ -1037,15 +1038,17 @@ class McpModule implements Mcp {
           'Push Notifications returned an empty non-terminal page',
         );
       }
-      const { progressed } = await this.commitEvents(worker, page.events);
+      const result = await this.commitEvents(worker, page.events);
+      unhandled ||= result.unhandled;
       if (!page.hasMore) {
-        worker.recoveryBlocked = false;
+        // Unhandled events stay on the server; the next flush recovers them.
+        worker.recoveryBlocked = unhandled;
         return;
       }
       // Pages hold the oldest unacknowledged events. When all of them are
       // still in flight, the next page would be identical, so wait for the
       // acknowledgement flush instead of looping.
-      if (!progressed) {
+      if (!result.progressed) {
         worker.recoveryBlocked = true;
         return;
       }
@@ -1089,26 +1092,40 @@ class McpModule implements Mcp {
   private async commitEvents(
     worker: PushNotificationWorker,
     events: readonly PushNotification[],
-  ): Promise<{ progressed: boolean }> {
+  ): Promise<{ progressed: boolean; unhandled: boolean }> {
     if (!this.isCurrentWorker(worker) || this.pushDeliveryPaused) {
-      return { progressed: false };
+      return { progressed: false, unhandled: false };
     }
     const namespace = worker.connection.namespace;
     const inFlight = this.deliveredUnacked.get(namespace);
     const fresh = events.filter((event) => !inFlight?.has(event.eventId));
-    if (fresh.length === 0) return { progressed: false };
+    if (fresh.length === 0) return { progressed: false, unhandled: false };
 
     const accepted = await this.deps.pushNotificationInbox.commit(
       namespace,
       fresh,
     );
-    if (!this.isCurrentWorker(worker)) return { progressed: false };
+    if (!this.isCurrentWorker(worker)) {
+      return { progressed: false, unhandled: false };
+    }
     const acceptedIds = new Set(accepted.map((event) => event.eventId));
+    let handledCount = 0;
     for (const event of accepted) {
-      await this.publishPushNotification(worker, event);
-      // Recorded even when a listener failed: the failure is logged, and an
-      // event that can never be acknowledged would block recovery forever.
-      this.markDelivered(namespace, [event.eventId]);
+      if (await this.publishPushNotification(worker, event)) {
+        this.markDelivered(namespace, [event.eventId]);
+        handledCount += 1;
+        continue;
+      }
+      // No listener took the event (e.g. the default session is being
+      // replaced, or its inbox is closed). It stays unacknowledged on the
+      // server; forget it locally so recovery after the next flush or
+      // reconnect delivers it again.
+      this.deps.pushNotificationInbox.release(namespace, [event.eventId]);
+      worker.recoveryBlocked = true;
+      this.deps.logger.warn(
+        { namespace, eventId: event.eventId },
+        'Push Notification not handled; left unacknowledged for redelivery',
+      );
     }
     const reacknowledge = fresh
       .filter((event) => !acceptedIds.has(event.eventId))
@@ -1116,7 +1133,10 @@ class McpModule implements Mcp {
     if (reacknowledge.length > 0) {
       await this.acknowledgeEvents(worker, reacknowledge);
     }
-    return { progressed: accepted.length > 0 || reacknowledge.length > 0 };
+    return {
+      progressed: handledCount > 0 || reacknowledge.length > 0,
+      unhandled: handledCount < accepted.length,
+    };
   }
 
   private async acknowledgeEvents(
@@ -1146,26 +1166,36 @@ class McpModule implements Mcp {
     }
   }
 
+  /**
+   * Publishes an event to all listeners.
+   *
+   * @returns `true` only when at least one listener exists and none failed.
+   */
   private async publishPushNotification(
     worker: PushNotificationWorker,
     event: PushNotification,
-  ): Promise<void> {
-    if (!this.isCurrentWorker(worker)) return;
-    await Promise.allSettled(
-      [...this.eventListeners].map(async (listener) => {
+  ): Promise<boolean> {
+    if (!this.isCurrentWorker(worker)) return false;
+    const listeners = [...this.eventListeners];
+    if (listeners.length === 0) return false;
+    const results = await Promise.all(
+      listeners.map(async (listener) => {
         try {
           await listener({
             namespace: worker.connection.namespace,
             event: structuredClone(event),
           });
+          return true;
         } catch (error) {
           this.deps.logger.error(
             { error, namespace: worker.connection.namespace },
             'MCP Push Notification listener failed',
           );
+          return false;
         }
       }),
     );
+    return results.every(Boolean);
   }
 
   private async publishResourceUpdated(

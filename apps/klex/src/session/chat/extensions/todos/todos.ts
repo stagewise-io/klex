@@ -186,6 +186,8 @@ function collectTodoParts(
 class TodosExtension implements Extension {
   private closed = false;
   private readonly reminderTimers = new Map<string, ReminderTimer>();
+  /** Detached reminder deliveries; awaited on close so restores persist. */
+  private readonly pendingReminders = new Set<Promise<void>>();
 
   constructor(
     private readonly deps: ExtensionDeps,
@@ -216,6 +218,7 @@ class TodosExtension implements Extension {
   async onClose(): Promise<void> {
     this.closed = true;
     this.clearReminderTimers();
+    await Promise.allSettled([...this.pendingReminders]);
     this.deps.logger.info(
       { pendingTodos: this.store.getTodos().length },
       'Todos extension closed',
@@ -544,12 +547,17 @@ class TodosExtension implements Extension {
   }
 
   private runReminder(id: string, reminderTime: string): void {
-    void this.fireReminder(id, reminderTime).catch((error) => {
-      this.deps.logger.error(
-        { error, todoId: id, reminderTime },
-        'Todo reminder failed',
-      );
-    });
+    const pending = this.fireReminder(id, reminderTime)
+      .catch((error) => {
+        this.deps.logger.error(
+          { error, todoId: id, reminderTime },
+          'Todo reminder failed',
+        );
+      })
+      .finally(() => {
+        this.pendingReminders.delete(pending);
+      });
+    this.pendingReminders.add(pending);
   }
 
   private async fireReminder(id: string, reminderTime: string): Promise<void> {

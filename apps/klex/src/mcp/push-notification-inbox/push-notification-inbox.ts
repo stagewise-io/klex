@@ -5,6 +5,8 @@ export interface PushNotificationInbox {
     namespace: string,
     events: readonly PushNotification[],
   ): Promise<PushNotification[]>;
+  /** Forgets committed events so a later redelivery is accepted again. */
+  release(namespace: string, eventIds: readonly string[]): void;
 }
 
 class InMemoryPushNotificationInboxModule implements PushNotificationInbox {
@@ -27,6 +29,12 @@ class InMemoryPushNotificationInboxModule implements PushNotificationInbox {
       accepted.push(structuredClone(event));
     }
     return accepted.map((event) => structuredClone(event));
+  }
+
+  release(namespace: string, eventIds: readonly string[]): void {
+    const known = this.eventIds.get(namespace);
+    if (!known) return;
+    for (const id of eventIds) known.delete(id);
   }
 }
 

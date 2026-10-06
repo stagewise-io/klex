@@ -329,11 +329,13 @@ interface PushNotificationWorker {
   queue: Promise<void>;
   recovered: boolean;
   /**
-   * Recovery stopped at a page whose events were all still in flight. The
-   * server only advances past them once they are acknowledged, so recovery
-   * resumes after the next acknowledgement flush.
+   * Recovery left events pending: a page whose events were all still in
+   * flight, or events no listener handled. Recovery resumes after the next
+   * acknowledgement flush or listener registration.
    */
   recoveryBlocked: boolean;
+  /** A listener registered while the initial recovery was still running. */
+  listenerAddedDuringRecovery: boolean;
 }
 
 interface RealtimeMediaWorker {
@@ -436,6 +438,12 @@ class McpModule implements Mcp {
 
   onPushNotification(listener: McpPushNotificationListener): () => void {
     this.eventListeners.add(listener);
+    // Events left pending during a listener gap have no delivered id to
+    // flush, so a new listener is what re-drives their recovery.
+    for (const worker of this.eventWorkers.values()) {
+      if (!worker.recovered) worker.listenerAddedDuringRecovery = true;
+      else if (worker.recoveryBlocked) this.scheduleRecovery(worker);
+    }
     let subscribed = true;
     return () => {
       if (!subscribed) return;
@@ -481,6 +489,27 @@ class McpModule implements Mcp {
       flushes.push(flush);
     }
     await Promise.all(flushes);
+  }
+
+  /** Re-runs recovery on the worker queue, serialized with ingestion. */
+  private scheduleRecovery(worker: PushNotificationWorker): void {
+    // Before the initial recovery, the worker loop recovers on its own.
+    if (!worker.recovered) return;
+    worker.queue = worker.queue.then(async () => {
+      if (
+        !this.isCurrentWorker(worker) ||
+        !worker.recoveryBlocked ||
+        this.pushDeliveryPaused
+      ) {
+        return;
+      }
+      await this.recoverEvents(worker).catch((error: unknown) => {
+        this.deps.logger.warn(
+          { error, namespace: worker.connection.namespace },
+          'Push Notification recovery after listener registration failed',
+        );
+      });
+    });
   }
 
   pausePushDelivery(): void {
@@ -988,6 +1017,7 @@ class McpModule implements Mcp {
       queue: Promise.resolve(),
       recovered: false,
       recoveryBlocked: false,
+      listenerAddedDuringRecovery: false,
     };
     this.eventWorkers.set(connection.namespace, worker);
     void this.runEventWorker(worker);
@@ -998,12 +1028,18 @@ class McpModule implements Mcp {
     while (this.isCurrentWorker(worker)) {
       try {
         worker.recovered = false;
+        worker.listenerAddedDuringRecovery = false;
         const subscription = await worker.connection.pushNotifications.listen(
           undefined,
           { request: { signal: worker.controller.signal } },
         );
         await this.recoverEvents(worker);
         worker.recovered = true;
+        // A listener registered mid-recovery may have missed skipped events.
+        if (worker.listenerAddedDuringRecovery) {
+          worker.listenerAddedDuringRecovery = false;
+          this.scheduleRecovery(worker);
+        }
         this.drainNotifications(worker);
         attempt = 0;
         await subscription.closed;

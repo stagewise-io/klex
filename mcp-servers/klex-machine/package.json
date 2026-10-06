@@ -25,11 +25,12 @@
     "node": ">=24"
   },
   "scripts": {
-    "build": "pnpm --filter @klex/mcp-proxy-sdk build && node build.mjs",
-    "dev": "tsx watch src/index.ts serve --mode local",
+    "build": "pnpm run generate:deps && pnpm --filter @klex/mcp-proxy-sdk build && node build.mjs",
+    "dev": "pnpm run generate:deps && tsx watch --tsconfig tsconfig.test.json src/index.ts serve --mode local",
+    "generate:deps": "pnpm --filter @stagewise/mcp-extension-push-notifications generate:schemas",
     "start": "node dist/index.js",
-    "typecheck": "tsc --noEmit -p tsconfig.test.json",
-    "test": "vitest run",
+    "typecheck": "pnpm run generate:deps && tsc --noEmit -p tsconfig.test.json",
+    "test": "pnpm run generate:deps && vitest run",
     "verify": "node verify-package.mjs",
     "prepack": "pnpm build"
   },

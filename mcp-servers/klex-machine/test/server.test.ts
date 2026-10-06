@@ -159,7 +159,7 @@ describe('machine HTTP server', () => {
               logger,
               registerSignals: false,
             }),
-          ).rejects.toThrow();
+          ).rejects.toBe(failure);
         } else {
           const server = await startMachineServer(config(), {
             dataDir,
@@ -168,6 +168,7 @@ describe('machine HTTP server', () => {
           });
           await expect(server.close()).rejects.toBe(failure);
         }
+        expect(mcp.close).toHaveBeenCalledOnce();
         const reopened = createNotificationStore({ dataDir, logger });
         try {
           await reopened.ready();

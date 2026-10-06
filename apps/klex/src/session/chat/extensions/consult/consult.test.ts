@@ -13,6 +13,7 @@ import { makeDeps } from '@/shared-utilities/test-utils';
 import { SessionInboxUrgency } from '../../inbox';
 import type { ExtendedUIMessage } from '../../message-types';
 import type { Extension, ExtensionFactory } from '../extension-api';
+import { mcpPushNotificationToInboxEvent } from '../mcp-ingress/push-notification-adapter';
 import { createConsultExt } from './consult';
 import { reportPrompt } from './serializer';
 
@@ -51,6 +52,71 @@ function toolExecute<T>(tool: unknown): (input: T) => Promise<unknown> {
 }
 
 describe('consult extension', () => {
+  describe.each(['slack', 'chat'])('%s sender context', (namespace) => {
+    it.each(['Julian', undefined])(
+      'delivers the From line without sender metadata for name %j',
+      async (senderName) => {
+        const spawned = child();
+        const { context } = mcpPushNotificationToInboxEvent({
+          namespace,
+          event: {
+            eventId: 'e1',
+            sourceId: 'channel-1',
+            type: 'chat.message.received',
+            createdAt: '2026-10-06T10:00:00.000Z',
+            data: {
+              senderId: 'U012345',
+              senderHeader: { type: 'stagewise.sender-header', version: 1 },
+              ...(senderName === undefined ? {} : { senderName }),
+            },
+            content: [
+              {
+                type: 'text',
+                text: `${senderName ? 'From: Julian\n\n' : ''}From: this is user text\nhello`,
+              },
+            ],
+          },
+        });
+        const history: ExtendedUIMessage[] = [
+          {
+            id: 'message-1',
+            role: 'user',
+            parts: [{ type: 'data-context', data: context }],
+          },
+        ];
+        const tools = getTools(
+          createConsultExt(DEEP_THINK_CONFIG).create(
+            makeDeps({
+              createChildSession: vi.fn(async () => spawned),
+              getHistory: vi.fn(() => history),
+              config: {
+                getModelSelection: vi.fn(() => [
+                  { providerId: 'p', modelId: 'm' },
+                ]),
+              } as never,
+            }),
+          ),
+        );
+
+        await toolExecute<{ task: string }>(tools.startConsult)({
+          task: 'review',
+        });
+
+        const message = vi.mocked(spawned.inbox.sendMessage).mock.calls[0]?.[0];
+        const part = message?.parts[0];
+        expect(part?.type).toBe('text');
+        if (part?.type !== 'text') throw new Error('Expected consult context');
+        expect(part.text).toContain(
+          `¦From: ${senderName ?? 'Unknown sender'}\n¦\n¦From: this is user text\n¦hello`,
+        );
+        expect(part.text.match(/From:/g)).toHaveLength(2);
+        expect(part.text).not.toContain('U012345');
+        expect(part.text).not.toContain('senderName');
+        expect(part.text).not.toContain('senderId');
+      },
+    );
+  });
+
   it('frames consult as advisory with bounded context authority', () => {
     const prompt = readFileSync(
       new URL('./consult-system-prompt.md', import.meta.url),

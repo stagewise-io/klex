@@ -1,8 +1,18 @@
+import {
+  hasTrustedSenderHeader,
+  MAX_SENDER_NAME_CODE_POINTS,
+  SENDER_HEADER_SEPARATOR,
+} from '../sender-header';
 import { createHistoryView } from './history-view';
 import type { HistoryBudget, HistoryFilterOptions, HistoryView } from './types';
 
 /** Data-part key of context-compaction summaries. */
 export const CONTEXT_SUMMARY_KEY = 'context-summary';
+
+const MAX_SENDER_LINE_LENGTH =
+  'From: '.length +
+  MAX_SENDER_NAME_CODE_POINTS * 2 +
+  SENDER_HEADER_SEPARATOR.length;
 
 /**
  * Transcript filter shared by compaction and consult: all text, tool
@@ -23,7 +33,39 @@ const TRANSCRIPT_HISTORY_FILTER: HistoryFilterOptions = {
   },
   context: {
     metadata: false,
-    text: { max: 200, truncate: 'end-overflow' },
+    text: (data, itemIndex) => {
+      const limit = { max: 200, truncate: 'end-overflow' } as const;
+      if (
+        itemIndex !== 0 ||
+        (data.sourceEnv !== 'slack' && data.sourceEnv !== 'chat') ||
+        data.metadata?.type !== 'chat.message.received' ||
+        typeof data.metadata.senderName !== 'string'
+      )
+        return limit;
+
+      const senderLine = `From: ${data.metadata.senderName}`;
+      const firstBlock = data.content[0];
+      if (
+        firstBlock?.type !== 'text' ||
+        !hasTrustedSenderHeader(
+          firstBlock.text,
+          data.metadata.senderName,
+          data.metadata.senderHeader,
+        )
+      )
+        return limit;
+
+      return {
+        ...limit,
+        max: Math.max(
+          limit.max,
+          Math.min(
+            MAX_SENDER_LINE_LENGTH,
+            senderLine.length + SENDER_HEADER_SEPARATOR.length,
+          ),
+        ),
+      };
+    },
     keepEmptyText: true,
     resources: 'placeholder',
     media: 'placeholder',

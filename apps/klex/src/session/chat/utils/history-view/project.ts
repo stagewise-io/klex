@@ -6,6 +6,7 @@ import type { ContextDataUIPart } from '@/session/inbox';
 import { serializeValue, truncateText } from './truncate';
 import type {
   ContextItem,
+  FieldLimit,
   HistoryFilterOptions,
   HistoryMessage,
   HistoryRecord,
@@ -175,8 +176,12 @@ function projectContext(
     const metadata = serializeValue(data.metadata, options.metadata);
     if (metadata !== null && metadata !== '{}') record.metadata = metadata;
   }
-  for (const item of data.content) {
-    const projected = projectContextItem(item, options);
+  for (const [itemIndex, item] of data.content.entries()) {
+    const text =
+      typeof options.text === 'function'
+        ? options.text(data, itemIndex)
+        : options.text;
+    const projected = projectContextItem(item, { ...options, text });
     if (projected) record.items.push(projected);
   }
   // Only empty text items were present: nothing to show.
@@ -186,7 +191,7 @@ function projectContext(
 
 function projectContextItem(
   item: ContextDataUIPart['content'][number],
-  options: ContextOptions,
+  options: Omit<ContextOptions, 'text'> & { text: FieldLimit },
 ): ContextItem | null {
   switch (item.type) {
     case 'text':

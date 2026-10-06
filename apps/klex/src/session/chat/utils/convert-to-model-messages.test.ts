@@ -2,6 +2,7 @@ import { convertToModelMessages } from 'ai';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { DataPartTransformers } from '../extensions/extension-api';
+import { mcpPushNotificationToInboxEvent } from '../extensions/mcp-ingress/push-notification-adapter';
 import type { ExtendedUIMessage } from '../message-types';
 import { convertToModelMessagesExtended } from './convert-to-model-messages';
 
@@ -39,6 +40,55 @@ function makeMessage(
     parts,
   } as ExtendedUIMessage;
 }
+
+describe.each(['slack', 'chat'])(
+  '%s sender content conversion',
+  (namespace) => {
+    it.each(['Julian', undefined])(
+      'keeps the From line when metadata is filtered for name %j',
+      async (senderName) => {
+        const { context } = mcpPushNotificationToInboxEvent({
+          namespace,
+          event: {
+            eventId: 'e1',
+            sourceId: 'channel-1',
+            type: 'chat.message.received',
+            createdAt: '2026-10-06T10:00:00.000Z',
+            data: {
+              senderId: 'U012345',
+              ...(senderName === undefined ? {} : { senderName }),
+            },
+            content: [{ type: 'text', text: 'hello' }],
+          },
+        });
+
+        await convertToModelMessagesExtended(
+          [
+            makeMessage([
+              { type: 'data-context', data: { ...context, metadata: {} } },
+            ]),
+          ],
+          {},
+        );
+
+        const parts = vi
+          .mocked(convertToModelMessages)
+          .mock.calls.at(-1)?.[0][0]?.parts;
+        expect(parts).toEqual([
+          {
+            type: 'text',
+            text: `<context source-env="${namespace}"><metadata>{}</metadata><content>`,
+          },
+          {
+            type: 'text',
+            text: `<text>From: ${senderName ?? 'Unknown sender'}\n\nhello</text>`,
+          },
+          { type: 'text', text: '</content></context>' },
+        ]);
+      },
+    );
+  },
+);
 
 function makeContextPart(
   sourceEnv: string,

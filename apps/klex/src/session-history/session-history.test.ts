@@ -11,7 +11,9 @@ import { createLogger } from '@stagewise/logger';
 import { type KlexConfig, klexConfigSchema } from '@/config';
 import { createLocalData } from '@/local-data';
 import { KLEX_VERSION } from '@/release';
+import { mcpPushNotificationToInboxEvent } from '@/session/chat/extensions/mcp-ingress/push-notification-adapter';
 import type { ExtendedUIMessage } from '@/session/chat/message-types';
+import { createTranscriptHistoryView } from '@/session/chat/utils/history-view';
 
 import {
   SESSION_HISTORY_RELATIVE_PATH,
@@ -112,6 +114,48 @@ describe('resolveSessionHistoryMaxBytes', () => {
 });
 
 describe('session history sync', () => {
+  it.each(['slack', 'chat'])(
+    'persists %s sender metadata separately from visible content',
+    async (namespace) => {
+      const { history } = await setup();
+      const recorder = history.openRecorder(meta());
+      const { context } = mcpPushNotificationToInboxEvent({
+        namespace,
+        event: {
+          eventId: 'e1',
+          sourceId: 'channel-1',
+          type: 'chat.message.received',
+          createdAt: '2026-10-06T10:00:00.000Z',
+          data: {
+            senderId: 'U012345',
+            senderName: 'Julian',
+            senderHeader: { type: 'stagewise.sender-header', version: 1 },
+          },
+          content: [{ type: 'text', text: 'From: Julian\n\nhello' }],
+        },
+      });
+      const messages: ExtendedUIMessage[] = [
+        {
+          id: 'message-1',
+          role: 'user',
+          parts: [{ type: 'data-context', data: context }],
+        },
+      ];
+      recorder.scheduleSync(() => messages);
+      await history.flush();
+
+      const page = await history.getMessages(recorder.instanceId, {
+        limit: 10,
+      });
+      const stored = page?.messages.map((entry) => entry.message) ?? [];
+      expect(stored).toEqual(messages);
+      const text = createTranscriptHistoryView().render(stored).text;
+      expect(text).toContain('¦From: Julian\n¦\n¦hello');
+      expect(text.match(/From:/g)).toHaveLength(1);
+      expect(text).not.toContain('U012345');
+    },
+  );
+
   it('persists in-place mutations of older messages', async () => {
     const { history } = await setup();
     const recorder = history.openRecorder(meta());

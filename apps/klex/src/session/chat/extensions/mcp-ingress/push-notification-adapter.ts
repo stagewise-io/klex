@@ -1,5 +1,11 @@
 import type { McpPushNotification } from '@/mcp';
 import {
+  hasTrustedSenderHeader,
+  normalizeSenderName,
+  SENDER_HEADER_MARKER,
+  SENDER_HEADER_SEPARATOR,
+} from '@/session/chat/utils/sender-header';
+import {
   type ContextDataUIPart,
   type SessionInboxEvent,
   SessionInboxUrgency,
@@ -13,7 +19,8 @@ import {
  * - `metadata`  ← event source ID, type, timestamp, `resourceLink` URI (when
  *                 set), and structured event data
  * - `content`   ← ordered MCP content blocks (text, image, audio,
- *                 resource_link, resource), mapped 1:1
+ *                 resource_link, resource), with a sender line for Slack and
+ *                 Cloud Chat message notifications
  *
  * The `eventId` is composed as `{namespace}:{event.eventId}` so downstream
  * deduplication and leased-interaction replay reference the same ID as the
@@ -74,6 +81,30 @@ export function mcpPushNotificationToInboxEvent(
     createdAt: event.createdAt,
     ...(event.resourceLink ? { resourceLink: event.resourceLink.uri } : {}),
   };
+
+  if (
+    (namespace === 'slack' || namespace === 'chat') &&
+    event.type === 'chat.message.received'
+  ) {
+    const senderName = normalizeSenderName(event.data?.senderName);
+    metadata.senderName = senderName;
+    metadata.senderHeader = { ...SENDER_HEADER_MARKER };
+    const senderLine = `From: ${senderName}`;
+    const firstBlock = content[0];
+    if (firstBlock?.type === 'text') {
+      if (
+        !hasTrustedSenderHeader(
+          firstBlock.text,
+          senderName,
+          event.data?.senderHeader,
+        )
+      ) {
+        firstBlock.text = `${senderLine}${SENDER_HEADER_SEPARATOR}${firstBlock.text}`;
+      }
+    } else {
+      content.unshift({ type: 'text', text: senderLine });
+    }
+  }
 
   return {
     eventId: `${namespace}:${event.eventId}`,

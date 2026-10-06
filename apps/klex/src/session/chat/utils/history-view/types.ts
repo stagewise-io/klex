@@ -1,4 +1,5 @@
 import type { ExtendedUIMessage } from '@/session/chat/message-types';
+import type { ContextDataUIPart } from '@/session/inbox';
 
 export type HistoryMessage = ExtendedUIMessage;
 export type HistoryRole = ExtendedUIMessage['role'];
@@ -60,7 +61,9 @@ export interface HistoryFilterOptions {
     | {
         source?: FieldLimit;
         metadata: false | ValueLimit;
-        text: FieldLimit;
+        text:
+          | FieldLimit
+          | ((data: ContextDataUIPart, itemIndex: number) => FieldLimit);
         keepEmptyText?: boolean;
         /**
          * Resource-link and embedded-resource items: `placeholder` keeps the

@@ -27,7 +27,7 @@
   "scripts": {
     "build": "pnpm run generate:deps && pnpm --filter @klex/mcp-proxy-sdk build && node build.mjs",
     "dev": "pnpm run generate:deps && tsx watch --tsconfig tsconfig.test.json src/index.ts serve --mode local",
-    "generate:deps": "pnpm --filter @stagewise/mcp-extension-push-notifications generate:schemas",
+    "generate:deps": "node ensure-deps.mjs",
     "start": "node dist/index.js",
     "typecheck": "pnpm run generate:deps && tsc --noEmit -p tsconfig.test.json",
     "test": "pnpm run generate:deps && vitest run",

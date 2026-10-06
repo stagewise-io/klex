@@ -17,6 +17,11 @@ import { type RuntimeHandle, startRuntime } from '@/composition/runtime';
 import { createConfig } from '@/config';
 import { ensureDataDirectory } from '@/data-directory';
 import { createDirectoryLock, type DirectoryLock } from '@/directory-lock';
+import {
+  createDrain,
+  DEFAULT_TERMINATION_DRAIN_TIMEOUT_MS,
+  type Drain,
+} from '@/drain';
 import { createGodMessages, type GodMessages } from '@/god-messages';
 import { createIntrospector } from '@/introspection';
 import { createLocalData, type LocalData } from '@/local-data';
@@ -642,6 +647,15 @@ async function main(): Promise<void> {
   let cliUi: { start(): void; close(): void } | undefined;
   let updateManager: UpdateManager | undefined;
   let autoUpdate: AutoUpdate | undefined;
+  const drain: Drain | undefined =
+    runtimeSessionHost && runtimeGodMessages && runtimeMcp
+      ? createDrain({
+          logging: logger,
+          sessionHost: runtimeSessionHost,
+          godMessages: runtimeGodMessages,
+          mcp: runtimeMcp,
+        })
+      : undefined;
 
   const flushTelemetry = async (): Promise<void> => {
     const telemetryFlushes = await Promise.allSettled([
@@ -706,7 +720,25 @@ async function main(): Promise<void> {
   });
 
   process.on('SIGINT', shutdown.requestExit);
-  process.on('SIGTERM', shutdown.requestExit);
+  // Headless (hosted agents, Kubernetes rollouts): SIGTERM lets the current
+  // work finish within a wall-clock budget, because the orchestrator sends
+  // SIGKILL at its own deadline. A second SIGTERM or a SIGINT exits at once.
+  const terminationDrainTimeoutMs = resolveTerminationDrainTimeoutMs(
+    process.env.KLEX_DRAIN_TIMEOUT_MS,
+  );
+  process.on('SIGTERM', () => {
+    if (!cli.headless || !drain || terminationDrainTimeoutMs === 0) {
+      shutdown.requestExit();
+      return;
+    }
+    shutdown.requestGracefulExit(() =>
+      drain.drain({
+        reason: 'termination',
+        timeoutMs: terminationDrainTimeoutMs,
+        pauseWhileLeased: false,
+      }),
+    );
+  });
   // Closing the terminal (or the console window on Windows) sends SIGHUP.
   // Without a handler Node terminates immediately and skips cloud notification.
   process.on('SIGHUP', shutdown.requestExit);
@@ -750,18 +782,11 @@ async function main(): Promise<void> {
             : restart();
         },
       });
-      if (
-        cli.autoUpdate &&
-        runtimeSessionHost &&
-        runtimeGodMessages &&
-        runtimeMcp
-      ) {
+      if (cli.autoUpdate && drain) {
         autoUpdate = createAutoUpdate({
           logging: logger,
           updateManager,
-          sessionHost: runtimeSessionHost,
-          godMessages: runtimeGodMessages,
-          mcp: runtimeMcp,
+          drain,
         });
       }
     } else if (cli.autoUpdate) {
@@ -805,6 +830,20 @@ function resolveShutdownTimeoutMs(value: string | undefined): number {
     'Ignoring invalid KLEX_SHUTDOWN_TIMEOUT_MS',
   );
   return DEFAULT_SHUTDOWN_TIMEOUT_MS;
+}
+
+function resolveTerminationDrainTimeoutMs(value: string | undefined): number {
+  if (!value) return DEFAULT_TERMINATION_DRAIN_TIMEOUT_MS;
+  const parsed = Number(value);
+  // 0 disables the drain; the upper bound keeps a typo from parking a pod.
+  if (Number.isFinite(parsed) && parsed >= 0 && parsed <= 3_600_000) {
+    return Math.floor(parsed);
+  }
+  logger.warn(
+    { value, fallback: DEFAULT_TERMINATION_DRAIN_TIMEOUT_MS },
+    'Ignoring invalid KLEX_DRAIN_TIMEOUT_MS',
+  );
+  return DEFAULT_TERMINATION_DRAIN_TIMEOUT_MS;
 }
 
 async function closeReverse(

@@ -118,6 +118,110 @@ describe('shutdown coordinator', () => {
     expect(exit).toHaveBeenCalledWith(1);
   });
 
+  it('exits gracefully once the wait settles', async () => {
+    let finishWait: (() => void) | undefined;
+    const exit = vi.fn();
+    const cleanup = vi.fn(async () => undefined);
+    const coordinator = createShutdownCoordinator({
+      cleanup,
+      closeUi: vi.fn(),
+      exit,
+      onRestartError: vi.fn(),
+    });
+    coordinator.requestGracefulExit(
+      () =>
+        new Promise<void>((resolve) => {
+          finishWait = resolve;
+        }),
+    );
+    await tick();
+    expect(cleanup).not.toHaveBeenCalled();
+    expect(coordinator.isShuttingDown()).toBe(false);
+    finishWait?.();
+    await tick();
+    expect(cleanup).toHaveBeenCalledOnce();
+    expect(exit).toHaveBeenCalledWith(0);
+  });
+
+  it('exits when the graceful wait rejects', async () => {
+    const exit = vi.fn();
+    const coordinator = createShutdownCoordinator({
+      cleanup: async () => undefined,
+      closeUi: vi.fn(),
+      exit,
+      onRestartError: vi.fn(),
+    });
+    coordinator.requestGracefulExit(async () => {
+      throw new Error('drain failed');
+    });
+    await tick();
+    expect(exit).toHaveBeenCalledWith(0);
+  });
+
+  it('skips the graceful wait on a second request', async () => {
+    const exit = vi.fn();
+    const cleanup = vi.fn(async () => undefined);
+    const coordinator = createShutdownCoordinator({
+      cleanup,
+      closeUi: vi.fn(),
+      exit,
+      onRestartError: vi.fn(),
+    });
+    const wait = () => new Promise<void>(() => {});
+    coordinator.requestGracefulExit(wait);
+    await tick();
+    expect(cleanup).not.toHaveBeenCalled();
+    coordinator.requestGracefulExit(wait);
+    await tick();
+    expect(cleanup).toHaveBeenCalledOnce();
+    expect(exit).toHaveBeenCalledWith(0);
+  });
+
+  it('skips the graceful wait on an exit request', async () => {
+    const exit = vi.fn();
+    const coordinator = createShutdownCoordinator({
+      cleanup: async () => undefined,
+      closeUi: vi.fn(),
+      exit,
+      onRestartError: vi.fn(),
+    });
+    coordinator.requestGracefulExit(() => new Promise<void>(() => {}));
+    coordinator.requestExit();
+    await tick();
+    expect(exit).toHaveBeenCalledWith(0);
+  });
+
+  it('ignores a restart request while a graceful exit is pending', async () => {
+    let finishWait: (() => void) | undefined;
+    const exit = vi.fn();
+    const restartProcess = vi.fn(async () => 0);
+    const coordinator = createShutdownCoordinator({
+      cleanup: async () => undefined,
+      closeUi: vi.fn(),
+      exit,
+      onRestartError: vi.fn(),
+      restartProcess,
+    });
+    coordinator.requestGracefulExit(
+      () =>
+        new Promise<void>((resolve) => {
+          finishWait = resolve;
+        }),
+    );
+    coordinator.requestRestart({
+      arguments: [],
+      cwd: process.cwd(),
+      environment: process.env,
+      launcher: process.execPath,
+    });
+    await tick();
+    expect(exit).not.toHaveBeenCalled();
+    finishWait?.();
+    await tick();
+    expect(restartProcess).not.toHaveBeenCalled();
+    expect(exit).toHaveBeenCalledWith(0);
+  });
+
   it('reports replacement failure and exits unsuccessfully', async () => {
     const exit = vi.fn();
     const onRestartError = vi.fn();

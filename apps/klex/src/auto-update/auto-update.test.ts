@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { RootLogger } from '@stagewise/logger';
 
+import type { DrainOutcome } from '@/drain';
 import type { UpdateState } from '@/self-update';
 
 import { createAutoUpdate } from './auto-update';
@@ -26,35 +27,18 @@ function createHarness(initialState: UpdateState = { status: 'idle' }) {
     }),
     install: vi.fn(() => Promise.resolve()),
   };
-  const host = { quiescent: false, leased: false, godQuiescent: true };
-  const sessionHost = {
-    isQuiescent: vi.fn(() => host.quiescent),
-    isInteractionLeased: vi.fn(() => host.leased),
-    beginDrain: vi.fn(),
-  };
-  const godMessages = {
-    isQuiescent: vi.fn(() => host.godQuiescent),
-    beginDrain: vi.fn(),
-  };
-  const mcp = {
-    pausePushDelivery: vi.fn(),
-    acknowledgeDeliveredEvents: vi.fn(() => Promise.resolve()),
+  const drain = {
+    drain: vi.fn(() => Promise.resolve<DrainOutcome>('drained')),
   };
   const autoUpdate = createAutoUpdate({
     logging,
     updateManager,
-    sessionHost,
-    godMessages,
-    mcp,
+    drain,
     drainTimeoutMs: 10_000,
-    pollIntervalMs: 1_000,
   });
   return {
     autoUpdate,
-    godMessages,
-    host,
-    mcp,
-    sessionHost,
+    drain,
     updateManager,
     emit(next: UpdateState) {
       state = next;
@@ -100,93 +84,24 @@ describe('AutoUpdate', () => {
     expect(harness.updateManager.install).not.toHaveBeenCalled();
   });
 
-  it('drains immediately when quiescent and flushes acknowledgements', async () => {
+  it('drains with the update budget and pauses during realtime calls', async () => {
     const harness = createHarness();
-    harness.host.quiescent = true;
 
     await expect(harness.autoUpdate.drainForRestart()).resolves.toBe('drained');
-    expect(harness.sessionHost.beginDrain).toHaveBeenCalledTimes(1);
-    expect(harness.godMessages.beginDrain).toHaveBeenCalledTimes(1);
-    expect(harness.mcp.pausePushDelivery).toHaveBeenCalledTimes(1);
-    expect(harness.mcp.acknowledgeDeliveredEvents).toHaveBeenCalledTimes(1);
-  });
-
-  it('waits for the god session as well as the default session', async () => {
-    const harness = createHarness();
-    harness.host.quiescent = true;
-    harness.host.godQuiescent = false;
-    const drain = harness.autoUpdate.drainForRestart();
-
-    await vi.advanceTimersByTimeAsync(3_000);
-    expect(harness.mcp.acknowledgeDeliveredEvents).not.toHaveBeenCalled();
-
-    harness.host.godQuiescent = true;
-    await vi.advanceTimersByTimeAsync(1_000);
-    await expect(drain).resolves.toBe('drained');
-  });
-
-  it('waits while busy and drains once quiescent', async () => {
-    const harness = createHarness();
-    const drain = harness.autoUpdate.drainForRestart();
-
-    await vi.advanceTimersByTimeAsync(3_000);
-    expect(harness.mcp.acknowledgeDeliveredEvents).not.toHaveBeenCalled();
-
-    harness.host.quiescent = true;
-    await vi.advanceTimersByTimeAsync(1_000);
-    await expect(drain).resolves.toBe('drained');
-    expect(harness.mcp.acknowledgeDeliveredEvents).toHaveBeenCalledTimes(1);
-  });
-
-  it('times out after the busy budget without acknowledging', async () => {
-    const harness = createHarness();
-    const drain = harness.autoUpdate.drainForRestart();
-
-    await vi.advanceTimersByTimeAsync(10_000);
-    await expect(drain).resolves.toBe('timed-out');
-    expect(harness.mcp.acknowledgeDeliveredEvents).not.toHaveBeenCalled();
-  });
-
-  it('does not count leased time toward the deadline', async () => {
-    const harness = createHarness();
-    harness.host.leased = true;
-    let outcome: string | undefined;
-    void harness.autoUpdate.drainForRestart().then((value) => {
-      outcome = value;
+    expect(harness.drain.drain).toHaveBeenCalledWith({
+      reason: 'update',
+      timeoutMs: 10_000,
+      pauseWhileLeased: true,
     });
-
-    await vi.advanceTimersByTimeAsync(60_000);
-    expect(outcome).toBeUndefined();
-
-    harness.host.leased = false;
-    await vi.advanceTimersByTimeAsync(9_000);
-    expect(outcome).toBeUndefined();
-    await vi.advanceTimersByTimeAsync(1_000);
-    expect(outcome).toBe('timed-out');
   });
 
   it('shares one drain across repeated calls', async () => {
     const harness = createHarness();
-    harness.host.quiescent = true;
 
     const first = harness.autoUpdate.drainForRestart();
     const second = harness.autoUpdate.drainForRestart();
     expect(second).toBe(first);
     await first;
-    expect(harness.sessionHost.beginDrain).toHaveBeenCalledTimes(1);
-    expect(harness.mcp.pausePushDelivery).toHaveBeenCalledTimes(1);
-  });
-
-  it('proceeds when the acknowledgement flush hangs', async () => {
-    const harness = createHarness();
-    harness.host.quiescent = true;
-    harness.mcp.acknowledgeDeliveredEvents.mockReturnValue(
-      new Promise<void>(() => undefined),
-    );
-
-    const drain = harness.autoUpdate.drainForRestart();
-    await vi.advanceTimersByTimeAsync(5_000);
-    await expect(drain).resolves.toBe('drained');
-    expect(logger.warn).toHaveBeenCalled();
+    expect(harness.drain.drain).toHaveBeenCalledTimes(1);
   });
 });

@@ -9,6 +9,7 @@ import type { Introspector } from '@/introspection';
 import type { Mcp } from '@/mcp';
 import type { ModelCallLogger } from '@/model-call-logger';
 import type { ProviderRegistry } from '@/provider-registry';
+import type { SkillCatalog } from '@/session/chat/extensions/learning';
 import type { SessionHistory } from '@/session-history';
 
 import { createAdminApp } from './server';
@@ -23,6 +24,7 @@ export interface AdminApiDependencies {
   cloudConnectivity: CloudConnectivity;
   godMessages: GodMessages;
   sessionHistory: SessionHistory;
+  skillCatalog: SkillCatalog;
   localPort: number | undefined;
   timezone: string;
 }
@@ -49,6 +51,7 @@ class AdminApiModule implements AdminApi {
       cloudConnectivity: CloudConnectivity;
       godMessages: GodMessages;
       sessionHistory: SessionHistory;
+      skillCatalog: SkillCatalog;
       localPort: number | undefined;
       timezone: string;
     },
@@ -67,6 +70,7 @@ class AdminApiModule implements AdminApi {
       cloudConnectivity: this.deps.cloudConnectivity,
       godMessages: this.deps.godMessages,
       sessionHistory: this.deps.sessionHistory,
+      skillCatalog: this.deps.skillCatalog,
       logger: this.deps.logger,
       localPort: this.deps.localPort,
       timezone: this.deps.timezone,
@@ -129,6 +133,7 @@ export function createAdminApi(deps: AdminApiDependencies): AdminApi {
     cloudConnectivity: deps.cloudConnectivity,
     godMessages: deps.godMessages,
     sessionHistory: deps.sessionHistory,
+    skillCatalog: deps.skillCatalog,
     localPort: deps.localPort,
     timezone: deps.timezone,
   });

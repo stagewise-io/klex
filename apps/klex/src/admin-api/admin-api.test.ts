@@ -9,6 +9,7 @@ import type { Introspector } from '@/introspection';
 import type { Mcp } from '@/mcp';
 import type { ModelCallLogger } from '@/model-call-logger';
 import type { ProviderRegistry } from '@/provider-registry';
+import type { SkillCatalog } from '@/session/chat/extensions/learning';
 import type { SessionHistory } from '@/session-history';
 
 import { type AdminApi, createAdminApi } from './admin-api';
@@ -57,6 +58,12 @@ const godMessages = {
   close: async () => undefined,
 } as unknown as GodMessages;
 const sessionHistory = {} as unknown as SessionHistory;
+const skillCatalog: SkillCatalog = {
+  isAvailable: () => false,
+  list: () => [],
+  get: () => null,
+  getUsage: () => null,
+};
 
 describe('AdminApi', () => {
   describe('dangerous local port enabled', () => {
@@ -73,6 +80,7 @@ describe('AdminApi', () => {
         cloudConnectivity,
         godMessages,
         sessionHistory,
+        skillCatalog,
         localPort: 19999,
         timezone: 'UTC',
       });
@@ -106,6 +114,7 @@ describe('AdminApi', () => {
         cloudConnectivity,
         godMessages,
         sessionHistory,
+        skillCatalog,
         localPort: undefined,
         timezone: 'UTC',
       });

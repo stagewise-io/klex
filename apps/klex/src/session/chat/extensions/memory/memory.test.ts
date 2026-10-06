@@ -11,6 +11,7 @@ import type {
   ExtensionDeps,
   StepCompleteEvent,
 } from '../extension-api';
+import { createEpisodeFeed } from './episodes';
 import { outputTexts } from './episodes/test-utils';
 import { createMemoryExt } from './memory';
 
@@ -56,7 +57,7 @@ function message(id: string, text: string): ExtendedUIMessage {
   return { id, role: 'assistant', parts: [{ type: 'text', text }] };
 }
 
-async function harness() {
+async function harness(options: Parameters<typeof createMemoryExt>[0] = {}) {
   const dataDir = await mkdtemp(join(tmpdir(), 'klex-memory-ext-'));
   directories.push(dataDir);
   const history: ExtendedUIMessage[] = [];
@@ -77,7 +78,7 @@ async function harness() {
     config: { get: () => ({ extensions: { memory: { episodes } } }) },
     logger,
   } as unknown as ExtensionDeps;
-  const extension = createMemoryExt().create(deps) as Extension;
+  const extension = createMemoryExt(options).create(deps) as Extension;
   const recorded = async (): Promise<string[]> => {
     const root = join(dataDir, 'episodic');
     const texts: string[] = [];
@@ -100,6 +101,20 @@ async function harness() {
 }
 
 describe('memory extension lifecycle', () => {
+  it('attaches the episode feed on start and detaches on close', async () => {
+    const episodeFeed = createEpisodeFeed();
+    const { extension, history } = await harness({ episodeFeed });
+    expect(episodeFeed.isAvailable()).toBe(false);
+    await extension.onStart?.();
+    expect(episodeFeed.isAvailable()).toBe(true);
+    extension.onStepStart?.();
+    history.push(message('a1', 'open'));
+    await extension.onStepComplete?.(success);
+    expect(await episodeFeed.listCompleted(null, 10)).toEqual([]);
+    await extension.onClose?.();
+    expect(episodeFeed.isAvailable()).toBe(false);
+  });
+
   it('records the history after each successful step', async () => {
     const { extension, history, recorded } = await harness();
     await extension.onStart?.();

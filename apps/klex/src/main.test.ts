@@ -122,10 +122,15 @@ vi.mock('@/session/chat/extensions/image-input-optimizer', () => ({
 vi.mock('@/session/chat/extensions/js-repl-sandbox', () => ({
   createJsReplSandboxExt: vi.fn(),
 }));
+vi.mock('@/session/chat/extensions/learning', () => ({
+  createLearningExt: vi.fn(),
+  createSkillCatalog: vi.fn(),
+}));
 vi.mock('@/session/chat/extensions/mcp-ingress', () => ({
   createMcpIngressExt: vi.fn(),
 }));
 vi.mock('@/session/chat/extensions/memory', () => ({
+  createEpisodeFeed: vi.fn(),
   createMemoryExt: vi.fn(),
 }));
 vi.mock('@/session/chat/extensions/name-loader', () => ({

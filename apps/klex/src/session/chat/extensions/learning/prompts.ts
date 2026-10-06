@@ -9,7 +9,7 @@ import {
   MAX_NAME_LENGTH,
   MAX_PROMPT_LIST_CHARACTERS,
   MAX_SKILLS,
-  STALE_AFTER_MS,
+  STALE_AFTER_EPISODES,
 } from './learning-config';
 import type { LearnedSkill } from './skill-store';
 import systemPromptPart from './system-prompt-part.md';
@@ -19,6 +19,10 @@ export interface PromptSkillUsage {
   updatedAt: string;
   lastReadAt: string | null;
   readCount: number;
+  createdEpisode?: number;
+  updatedEpisode?: number;
+  lastReadEpisode?: number | null;
+  sourceEpisodes?: string[];
 }
 
 export interface PromptEpisode {
@@ -97,8 +101,12 @@ export function isStale(
   now: number,
 ): boolean {
   if (!usage) return false;
-  const last = Date.parse(usage.lastReadAt ?? usage.createdAt);
-  return Number.isFinite(last) && now - last >= STALE_AFTER_MS;
+  const last = Math.max(
+    usage.createdEpisode ?? 0,
+    usage.updatedEpisode ?? 0,
+    usage.lastReadEpisode ?? 0,
+  );
+  return now - last >= STALE_AFTER_EPISODES;
 }
 
 export function buildConsolidationPrompt(input: {
@@ -113,7 +121,7 @@ export function buildConsolidationPrompt(input: {
     const lastRead = usage.lastReadAt ?? 'never';
     return (
       ` readCount="${usage.readCount}" lastReadAt="${attribute(lastRead)}"` +
-      ` createdAt="${attribute(usage.createdAt)}"${stale}`
+      ` createdAt="${attribute(usage.createdAt)}" sourceEpisodes="${attribute((usage.sourceEpisodes ?? []).join(','))}"${stale}`
     );
   });
   return {

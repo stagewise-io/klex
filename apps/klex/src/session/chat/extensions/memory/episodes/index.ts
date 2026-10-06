@@ -6,7 +6,9 @@ export {
   type EpisodeFeed,
   type EpisodeFeedHub,
   type EpisodeFeedSource,
+  type EpisodePage,
   type EpisodeRef,
+  type EpisodeSearchResult,
   parseEpisodeId,
 } from './episode-feed';
 export {

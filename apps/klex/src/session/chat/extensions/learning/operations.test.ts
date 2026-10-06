@@ -11,6 +11,35 @@ const create = {
 };
 
 describe('parseOperations', () => {
+  it('accepts exposed citations and drops forged citations individually', () => {
+    const evidence = new Set(['primary', 'support']);
+    const valid = { ...create, evidenceEpisodes: ['support'] };
+    const forged = {
+      ...create,
+      name: 'forged',
+      evidenceEpisodes: ['not-read'],
+    };
+    expect(
+      parseOperations(JSON.stringify({ operations: [valid, forged] }), {
+        allowDelete: false,
+        evidence,
+      }),
+    ).toEqual({ ok: true, operations: [valid], dropped: 1 });
+  });
+
+  it('allows conservative deferral but never a deferred partial proposal', () => {
+    expect(
+      parseOperations('{"operations": [], "deferred": true}', {
+        allowDelete: false,
+      }),
+    ).toEqual({ ok: true, operations: [], deferred: true, dropped: 0 });
+    expect(
+      parseOperations(
+        JSON.stringify({ operations: [create], deferred: true }),
+        { allowDelete: false },
+      ).ok,
+    ).toBe(false);
+  });
   it('parses unfenced and fenced JSON', () => {
     const text = JSON.stringify({ operations: [create] });
     const plain = parseOperations(text, { allowDelete: false });

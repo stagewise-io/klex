@@ -1,8 +1,8 @@
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createEpisodeFeed } from './episode-feed';
 import type { EpisodeStoreState } from './episode-files';
@@ -49,6 +49,127 @@ function attached(dir: string, openId: string | null = null) {
 }
 
 describe('episode feed', () => {
+  it('pages rendered text exactly and bounds reads and searches', async () => {
+    const id = '2026-10-06/1-12-00.jsonl';
+    const { feed } = attached(
+      await episodicDir({ [id]: file('hello '.repeat(8_000)) }),
+    );
+    const full = await feed.read(id);
+    const first = await feed.readPage(id, {
+      offset: 0,
+      limit: 12_000,
+      maxBytes: 100_000,
+    });
+    const second = await feed.readPage(id, {
+      offset: first?.nextOffset ?? 0,
+      limit: 12_000,
+      maxBytes: 100_000,
+    });
+    expect(first?.text).toBe(full?.text.slice(0, 12_000));
+    expect(second?.text).toBe(full?.text.slice(12_000, 24_000));
+    const tiny = await feed.readPage(id, {
+      offset: 0,
+      limit: 100,
+      maxBytes: 20,
+    });
+    expect(tiny).toMatchObject({
+      text: '',
+      scannedBytes: 20,
+      truncated: true,
+      nextOffset: null,
+    });
+    const search = await feed.search('HELLO', {
+      offset: 0,
+      maxBytes: 100_000,
+      limit: 1,
+    });
+    expect(search.matches[0]?.id).toBe(id);
+    expect(search.scannedBytes).toBeLessThanOrEqual(100_000);
+  });
+
+  it('refuses symlinked files and date directories and never returns active pages', async () => {
+    const id = '2026-10-06/1-12-00.jsonl';
+    const outside = await episodicDir({ [id]: file('secret') });
+    const dir = await episodicDir({});
+    await mkdir(join(dir, '2026-10-06'));
+    await symlink(join(outside, id), join(dir, id));
+    const { feed } = attached(dir);
+    expect(
+      await feed.readPage(id, { offset: 0, limit: 100, maxBytes: 1_000 }),
+    ).toBeNull();
+    await rm(join(dir, '2026-10-06'), { recursive: true });
+    await symlink(join(outside, '2026-10-06'), join(dir, '2026-10-06'));
+    expect(
+      await feed.readPage(id, { offset: 0, limit: 100, maxBytes: 1_000 }),
+    ).toBeNull();
+    const active = attached(outside, id).feed;
+    expect(
+      await active.readPage(id, { offset: 0, limit: 100, maxBytes: 1_000 }),
+    ).toBeNull();
+    expect(
+      await active.readPage('../secret', {
+        offset: 0,
+        limit: 100,
+        maxBytes: 1_000,
+      }),
+    ).toBeNull();
+  });
+
+  it('lists numeric neighbours and skips incomplete oversized JSONL records', async () => {
+    const id = '2026-10-06/10-12-00.jsonl';
+    const { feed } = attached(
+      await episodicDir({
+        '2026-10-06/9-12-00.jsonl': file('before'),
+        [id]: file('x'.repeat(3_000_000)),
+        '2026-10-06/11-12-00.jsonl': file('after'),
+      }),
+    );
+    expect((await feed.listNeighbors(id, 1)).map((ref) => ref.index)).toEqual([
+      9, 11,
+    ]);
+    const page = await feed.readPage(id, {
+      offset: 0,
+      limit: 100,
+      maxBytes: 1_000,
+    });
+    expect(page).toMatchObject({
+      text: '',
+      scannedBytes: 1_000,
+      truncated: true,
+    });
+  });
+  it('notifies subscriptions on attachment, coalesces hints, and detaches safely', async () => {
+    const feed = createEpisodeFeed();
+    const listener = vi.fn();
+    const unsubscribe = feed.subscribe(listener);
+    const detach = feed.attach({
+      episodicDir: await episodicDir({}),
+      getOpenEpisode: async () => null,
+    });
+    feed.notifyChanged();
+    feed.notifyChanged();
+    await Promise.resolve();
+    expect(listener).toHaveBeenCalledTimes(1);
+    detach();
+    await Promise.resolve();
+    expect(listener).toHaveBeenCalledTimes(2);
+    unsubscribe();
+    feed.notifyChanged();
+    await Promise.resolve();
+    expect(listener).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not let a failing subscriber suppress another subscriber', async () => {
+    const feed = createEpisodeFeed();
+    feed.subscribe(() => {
+      throw new Error('subscriber');
+    });
+    const listener = vi.fn();
+    feed.subscribe(listener);
+    feed.notifyChanged();
+    await Promise.resolve();
+    expect(listener).toHaveBeenCalledOnce();
+  });
   it('orders by date and numeric index and reads strictly after the cursor', async () => {
     const dir = await episodicDir({
       '2026-10-05/10-23-00.jsonl': file('d1-10'),

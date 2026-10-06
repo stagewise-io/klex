@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   MAX_EPISODE_CHARACTERS,
   MAX_PROMPT_LIST_CHARACTERS,
-  STALE_AFTER_MS,
+  STALE_AFTER_EPISODES,
 } from './learning-config';
 import {
   buildConsolidationPrompt,
@@ -76,10 +76,13 @@ describe('learning prompts', () => {
   });
 
   it('flags stale skills for consolidation', () => {
-    const now = Date.parse('2026-01-01T00:00:00Z') + STALE_AFTER_MS;
+    const now = STALE_AFTER_EPISODES;
     const { prompt } = buildConsolidationPrompt({
       skills: [skill('old'), skill('fresh')],
-      usage: { old: usage(null), fresh: usage(new Date(now).toISOString()) },
+      usage: {
+        old: { ...usage(null), createdEpisode: 0 },
+        fresh: { ...usage('2026-01-01T00:00:00Z'), lastReadEpisode: now },
+      },
       now,
     });
     expect(prompt).toMatch(/<skill name="old" readCount="0"[^>]*stale="true">/);

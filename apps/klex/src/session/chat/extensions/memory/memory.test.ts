@@ -101,6 +101,52 @@ async function harness(options: Parameters<typeof createMemoryExt>[0] = {}) {
 }
 
 describe('memory extension lifecycle', () => {
+  it('closes an idle episode and emits exactly one completion hint without another turn', async () => {
+    vi.useFakeTimers({ toFake: ['Date', 'setInterval', 'clearInterval'] });
+    const feed = createEpisodeFeed();
+    const hint = vi.fn();
+    feed.subscribe(hint);
+    const { extension, history } = await harness({ episodeFeed: feed });
+    await extension.onStart?.();
+    extension.onStepStart?.();
+    history.push(message('idle', 'finished conversation'));
+    await extension.onStepComplete?.(success);
+    await Promise.resolve();
+    hint.mockClear();
+    vi.advanceTimersByTime(600_000);
+    await vi.waitFor(async () =>
+      expect(await feed.listCompleted(null, 10)).toHaveLength(1),
+    );
+    expect(hint).toHaveBeenCalledTimes(1);
+    vi.advanceTimersByTime(60_000);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(hint).toHaveBeenCalledTimes(1);
+    await extension.onClose?.();
+  });
+
+  it('never idle-completes an episode while a long main step is active', async () => {
+    vi.useFakeTimers({ toFake: ['Date', 'setInterval', 'clearInterval'] });
+    const feed = createEpisodeFeed();
+    const { extension, history } = await harness({ episodeFeed: feed });
+    await extension.onStart?.();
+    extension.onStepStart?.();
+    history.push(message('first', 'initial'));
+    await extension.onStepComplete?.(success);
+    extension.onStepStart?.();
+    vi.advanceTimersByTime(660_000);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(await feed.listCompleted(null, 10)).toEqual([]);
+    await extension.onStepComplete?.({ ...success, generationFailed: true });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    vi.advanceTimersByTime(30_000);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(await feed.listCompleted(null, 10)).toEqual([]);
+    vi.advanceTimersByTime(570_000);
+    await vi.waitFor(async () =>
+      expect(await feed.listCompleted(null, 10)).toHaveLength(1),
+    );
+    await extension.onClose?.();
+  });
   it('attaches the episode feed on start and detaches on close', async () => {
     const episodeFeed = createEpisodeFeed();
     const { extension, history } = await harness({ episodeFeed });

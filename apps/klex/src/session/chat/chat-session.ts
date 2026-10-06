@@ -223,6 +223,8 @@ class ChatSessionModule implements AgentSession {
   private runtimeState: SessionRuntimeState = 'idle';
   /** Started child sessions, tracked for {@link isQuiescent}. */
   private readonly childSessions = new Set<ChildSessionHandle>();
+  /** Child sessions still in `start()`; they count as busy. */
+  private pendingChildStarts = 0;
   private readonly idleWaiters = new Set<{
     resolve: (idle: boolean) => void;
     timer: NodeJS.Timeout;
@@ -1537,6 +1539,7 @@ class ChatSessionModule implements AgentSession {
     }
     return (
       this.runtimeState === 'idle' &&
+      this.pendingChildStarts === 0 &&
       [...this.childSessions].every((child) => child.isQuiescent())
     );
   }
@@ -1783,8 +1786,13 @@ class ChatSessionModule implements AgentSession {
         : {}),
     });
 
+    this.pendingChildStarts += 1;
     try {
-      await child.start();
+      try {
+        await child.start();
+      } finally {
+        this.pendingChildStarts -= 1;
+      }
       if (this.closePromise) {
         throw new Error(
           'Parent chat session terminated while child session was starting',

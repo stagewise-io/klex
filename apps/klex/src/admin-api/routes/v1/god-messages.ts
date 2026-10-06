@@ -58,7 +58,8 @@ export const createGodMessageRoute = createRoute({
       content: {
         'application/json': { schema: errorResponseSchema },
       },
-      description: 'God messages module is not running',
+      description:
+        'God messages module is not running, or is draining before an update restart',
     },
     500: {
       content: {
@@ -87,6 +88,9 @@ export function createGodMessage(
         }
         if (error.code === 'not-running') {
           return c.json({ error: error.message, code: 'not_running' }, 503);
+        }
+        if (error.code === 'draining') {
+          return c.json({ error: error.message, code: 'draining' }, 503);
         }
       }
       throw error;

@@ -501,4 +501,43 @@ describe('ChatSession lifecycle', () => {
     expect(parent.isQuiescent()).toBe(true);
     await parent.close();
   });
+
+  it('stays non-quiescent while a child session is still starting', async () => {
+    let extensionDeps: ExtensionDeps | undefined;
+    const extension: ExtensionFactory = {
+      identifier: 'test/parent',
+      create: (deps) => {
+        extensionDeps = deps;
+        return {};
+      },
+    };
+    let finishStart!: () => void;
+    const child = createFakeChild(
+      () =>
+        new Promise<void>((resolve) => {
+          finishStart = resolve;
+        }),
+    );
+    child.isQuiescent = vi.fn(() => true);
+    child.getSessionInfo = vi.fn(() => ({ status: 'active' }) as never);
+    const parent = createSession({
+      extensions: [extension],
+      sessionFactory: () => child,
+    });
+    await parent.start();
+
+    const creating = requireExtensionDeps(extensionDeps).createChildSession({
+      name: 'starting-child',
+      extensionIdentifier: 'test-extension',
+      extensions: [],
+      basePrompt: 'You are a child.',
+    });
+    await vi.waitFor(() => expect(child.start).toHaveBeenCalledOnce());
+    expect(parent.isQuiescent()).toBe(false);
+
+    finishStart();
+    await creating;
+    expect(parent.isQuiescent()).toBe(true);
+    await parent.close();
+  });
 });

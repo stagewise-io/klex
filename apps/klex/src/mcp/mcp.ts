@@ -1144,6 +1144,15 @@ class McpModule implements Mcp {
     if (!this.isCurrentWorker(worker)) {
       return { progressed: false, unhandled: false };
     }
+    if (this.pushDeliveryPaused) {
+      // Paused during the commit: leave the events on the server for the
+      // next process instead of starting work the drain must wait for.
+      this.deps.pushNotificationInbox.release(
+        namespace,
+        accepted.map((event) => event.eventId),
+      );
+      return { progressed: false, unhandled: false };
+    }
     const acceptedIds = new Set(accepted.map((event) => event.eventId));
     let handledCount = 0;
     for (const event of accepted) {

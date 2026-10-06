@@ -7,6 +7,7 @@ import {
   type LanguageModel,
   type LanguageModelUsage,
   type ModelMessage,
+  NoOutputGeneratedError,
   readUIMessageStream,
   streamText,
   toUIMessageStream,
@@ -88,6 +89,12 @@ export async function runStreamedGeneration(
     parts: [],
   };
 
+  // The AI SDK reports provider failures that occur inside the stream
+  // (e.g. a 404 for an unreachable file URI) only through `onError`; the
+  // error it throws afterwards is a cause-less NoOutputGeneratedError.
+  // Capture the original so the classifier sees the real APICallError.
+  let streamError: unknown;
+
   const result = streamText({
     model: params.model,
     tools: toolsWithoutExecute(params.tools),
@@ -119,6 +126,9 @@ export async function runStreamedGeneration(
       'conversation.modelId': params.modelContext.modelId,
     },
     abortSignal: params.abortSignal,
+    onError: ({ error }) => {
+      streamError ??= error;
+    },
     maxRetries: 0,
     messages: params.modelMessages,
     ...(params.providerOptions !== undefined && {
@@ -136,14 +146,21 @@ export async function runStreamedGeneration(
     message: message,
   });
 
-  for await (const uiMessage of uiMsgUpdateStream) {
-    message = uiMessage;
-    params.onUpdate?.(uiMessage);
-  }
+  let finishReason: FinishReason;
+  let rawFinishReason: unknown;
+  let usage: LanguageModelUsage;
+  try {
+    for await (const uiMessage of uiMsgUpdateStream) {
+      message = uiMessage;
+      params.onUpdate?.(uiMessage);
+    }
 
-  const finishReason = await result.finishReason;
-  const rawFinishReason = await result.rawFinishReason;
-  const usage = await result.usage;
+    finishReason = await result.finishReason;
+    rawFinishReason = await result.rawFinishReason;
+    usage = await result.usage;
+  } catch (e) {
+    throw attachStreamError(e, streamError);
+  }
 
   if (message.parts.length === 0) {
     throw new EmptyResponseBodyError({
@@ -170,4 +187,25 @@ export async function runStreamedGeneration(
     'Generation finished',
   );
   return response;
+}
+
+/**
+ * Re-wraps a cause-less NoOutputGeneratedError with the error captured
+ * from the stream, so classification can recurse into the provider error.
+ */
+export function attachStreamError(
+  thrown: unknown,
+  streamError: unknown,
+): unknown {
+  if (
+    streamError instanceof Error &&
+    NoOutputGeneratedError.isInstance(thrown) &&
+    thrown.cause == null
+  ) {
+    return new NoOutputGeneratedError({
+      message: thrown.message,
+      cause: streamError,
+    });
+  }
+  return thrown;
 }

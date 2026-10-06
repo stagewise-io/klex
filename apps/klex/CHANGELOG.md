@@ -2,6 +2,69 @@
 
 All notable Klex changes are documented here.
 
+## 0.13.3 (2026-10-05)
+
+### Bug Fixes
+
+- redact long-header data URLs with a linear scanner (38528db)
+- bound data URL header to keep redaction linear (d78b446)
+
+## 0.13.2 (2026-10-05)
+
+### Bug Fixes
+
+- preserve selected agent on update restart (1ae5fa5)
+
+## 0.13.1 (2026-10-05)
+
+### Bug Fixes
+
+- keep agent awake across async work (4280e72)
+
+### Other Changes
+
+- cover mid-turn input at session level (a85b50b)
+
+## 0.13.0 (2026-10-03)
+
+### Features
+
+- accept more remote media types (271b3c6)
+
+### Bug Fixes
+
+- classify stream errors hidden by empty output (6cb9fc6)
+- resume salvaged rejections and review mid-turn input (ebdfd52)
+
+## 0.12.0 (2026-10-03)
+
+### Features
+
+- infer remote attachment media types (296ffe0)
+- add dynamic remote attachment input (30ef1b1)
+
+### Bug Fixes
+
+- preserve attachments across compaction (58c5be9)
+- expire remote attachment injection after one turn (11b2d70)
+
+## 0.11.0 (2026-09-30)
+
+### Features
+
+- render JSONL episodes as compact history text (14d7f39)
+- record episodes as deterministic JSONL history (82de2c1)
+
+### Bug Fixes
+
+- create parent directories for new SQLite stores (e02d189)
+- harden episode writes and long-step idle tracking (1e62341)
+
+### Other Changes
+
+- cover retrieval over recorder-written episodes (c71932b)
+- separate history-view fitting from rendering (5bf5525)
+
 ## 0.10.0 (2026-09-25)
 
 ### Features

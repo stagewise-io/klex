@@ -42,15 +42,14 @@ export type WorkState = 'working' | 'done' | 'stopped';
 /**
  * The bots take turns: each opens an app window behind it and does a bit
  * of work in it, then the next bot in line starts. The first turn starts as
- * soon as the team arrives. An open profile hides all previews and stops the
- * current demo; moving a bot stops its demo.
+ * soon as the team arrives. Profiles do not interrupt the rotation;
+ * moving a bot stops its demo.
  */
 export function HeroWork({
   team,
   order,
   ready,
   busy,
-  blocked,
   active,
   onWork,
 }: {
@@ -61,8 +60,6 @@ export function HeroWork({
   ready: boolean;
   /** Moving bots skip their turn and stop working. */
   busy: readonly string[];
-  /** An open profile hides previews and suspends the automatic rotation. */
-  blocked: boolean;
   /** False pauses work while the hero is offscreen. */
   active: boolean;
   onWork: (bot: string, state: WorkState) => void;
@@ -83,7 +80,7 @@ export function HeroWork({
   };
 
   useEffect(() => {
-    if (!active || blocked || job || !ready || order.length === 0) return;
+    if (!active || job || !ready || order.length === 0) return;
     let bot = order[turn.current];
     for (let skipped = 0; busy.includes(bot); skipped++) {
       if (skipped === order.length) return;
@@ -107,16 +104,16 @@ export function HeroWork({
       count.current === 0 ? 300 : 500,
     );
     return () => window.clearTimeout(timer);
-  }, [active, job, ready, busy, blocked, onWork, order]);
+  }, [active, job, ready, busy, onWork, order]);
 
-  // Stop work when a profile opens, a bot moves, or the hero leaves view.
+  // Stop work when a bot moves or the hero leaves view.
   useEffect(() => {
-    if (job && !closing && (!active || blocked || busy.includes(job.bot)))
+    if (job && !closing && (!active || busy.includes(job.bot)))
       end(job, 'stopped');
   });
 
   return (
-    <div className="new-work-layer" hidden={blocked}>
+    <div className="new-work-layer">
       <AnimatePresence onExitComplete={() => setJob(null)}>
         {job && !closing && (
           <Work

@@ -24,24 +24,24 @@ export function ToolsCard({ playing }: CardProps) {
   );
 }
 
-// Extra blocks at either end keep the repeating conveyor filled as it moves.
-const toolBlocks = [
-  { id: 'before-linear', tool: 'linear' },
-  { id: 'before-github', tool: 'github' },
-  { id: 'before-slack', tool: 'slack' },
-  { id: 'previous-linear', tool: 'linear' },
-  { id: 'previous-github', tool: 'github' },
-  { id: 'slack', tool: 'slack' },
-  { id: 'linear', tool: 'linear' },
-  { id: 'github', tool: 'github' },
-  { id: 'next-slack', tool: 'slack' },
-  { id: 'next-linear', tool: 'linear' },
-  { id: 'next-github', tool: 'github' },
-  { id: 'after-slack', tool: 'slack' },
-  { id: 'after-linear', tool: 'linear' },
-  { id: 'after-github', tool: 'github' },
+const tools = [
+  { tool: 'slack', height: 0 },
+  { tool: 'linear', height: -30 },
+  { tool: 'github', height: -12 },
+  { tool: 'teams', height: -24 },
+  { tool: 'jira', height: -8 },
+  { tool: 'notion', height: -30 },
+  { tool: 'whatsapp', height: 0 },
+  { tool: 'gmail', height: -12 },
 ];
-const toolPlatformHeights = [0, -30, -12];
+const toolStep = 100;
+const toolCycle = tools.length * toolStep;
+// Five extra blocks at either end keep the conveyor filled around its loop seam.
+// The first Slack block remains aligned with the bot at the scene's center.
+const toolBlocks = Array.from({ length: tools.length + 10 }, (_, index) => ({
+  id: `tool-${index}`,
+  ...tools[(index - 5 + tools.length) % tools.length],
+}));
 const toolBotSettings = {
   ...(MOVEMENT_STYLES.find((style) => style.id === 'fly')?.settings ??
     DEFAULT_GLIDE),
@@ -68,16 +68,16 @@ function ToolsScene({ active }: SceneProps) {
       // Share the rig's elapsed-time cap so dropped frames cannot desync the feet.
       // Never carry the bot past the next platform while it catches up.
       state.distance = Math.min(
-        state.distance + Math.min(deltaMs / 1000, 0.05) * (100 / 1.8),
-        state.origin + 100,
+        state.distance + Math.min(deltaMs / 1000, 0.05) * (toolStep / 1.8),
+        state.origin + toolStep,
       );
-      belt.style.transform = `translateX(${-state.distance % 300}px)`;
+      belt.style.transform = `translateX(${-state.distance % toolCycle}px)`;
       frame.style.transform = `translateX(${state.origin - state.distance}px)`;
       if (!state.moving && state.distance - state.origin >= 40) {
         state.moving = true;
         bot.current?.moveTo({
           x: 50,
-          y: toolPlatformHeights[(state.platform + 1) % 3],
+          y: tools[(state.platform + 1) % tools.length].height,
         });
       }
     };
@@ -91,12 +91,12 @@ function ToolsScene({ active }: SceneProps) {
   const land = () => {
     const state = travel.current;
     if (!state.moving) return;
-    state.platform = (state.platform + 1) % 3;
-    state.origin += 100;
+    state.platform = (state.platform + 1) % tools.length;
+    state.origin += toolStep;
     state.moving = false;
     // Rebase on arrival. Waiting for the final settling animation lets the
     // conveyor carry the bot away between flights.
-    bot.current?.snapTo({ x: 0, y: toolPlatformHeights[state.platform] });
+    bot.current?.snapTo({ x: 0, y: tools[state.platform].height });
     carrier.current?.style.setProperty(
       'transform',
       `translateX(${state.origin - state.distance}px)`,
@@ -106,8 +106,13 @@ function ToolsScene({ active }: SceneProps) {
   return (
     <div className="bento-tools-scene">
       <div ref={conveyor} className="bento-tool-conveyor">
-        {toolBlocks.map(({ id, tool }) => (
-          <div key={id} className="bento-tool-block" data-tool={tool}>
+        {toolBlocks.map(({ id, tool, height }) => (
+          <div
+            key={id}
+            className="bento-tool-block"
+            data-tool={tool}
+            style={{ transform: `translateY(${height}px)` }}
+          >
             <div className="bento-tool-block-face">
               <img src={`/connectors/${tool}.svg`} alt="" />
             </div>

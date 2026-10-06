@@ -71,10 +71,11 @@ export function makeModelResolver() {
   };
 }
 
-export function makeFallbackManager() {
+export function makeFallbackManager(chatModelCount = 1) {
   return {
     getChatModelEntry: vi.fn(() => 'test:model' as never),
     getFallbackIndex: vi.fn(() => 0),
+    getChatModelCount: vi.fn(() => chatModelCount),
     fallbackToNextModel: vi.fn(),
     recordSuccessfulGeneration: vi.fn(),
   };

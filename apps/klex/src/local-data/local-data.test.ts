@@ -512,6 +512,59 @@ describe('LocalData', () => {
     expect((await stat(join(directory, relativePath))).isFile()).toBe(true);
   });
 
+  it('applies init pragmas before table creation on fresh SQLite stores only', async () => {
+    const sqliteDefinition = (
+      initPragmas?: readonly string[],
+    ): SqliteStoreDefinition => ({
+      id: 'synthetic',
+      kind: 'sqlite',
+      relativePath: 'synthetic.sqlite',
+      required: false,
+      createIfMissing: true,
+      schemaVersion: 1,
+      compatibilityVersion: 1,
+      minimumKlexVersion: '2.0.0',
+      ...(initPragmas ? { initPragmas } : {}),
+      initSql: `
+        CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS synthetic (id TEXT PRIMARY KEY);
+      `,
+      migrations: [],
+    });
+    const readPragma = async (
+      directory: string,
+      pragma: 'auto_vacuum' | 'user_version',
+    ): Promise<unknown> => {
+      const client = createClient({
+        url: `file:${join(directory, 'synthetic.sqlite')}`,
+      });
+      try {
+        const result = await client.execute(`PRAGMA ${pragma}`);
+        return result.rows[0]?.[pragma];
+      } finally {
+        client.close();
+      }
+    };
+    const start = (directory: string, initPragmas?: readonly string[]) =>
+      createLocalData({
+        logging: logger,
+        dataDirectory: directory,
+        klexVersion: '2.1.0',
+        stores: [sqliteDefinition(initPragmas)],
+      }).start();
+
+    const fresh = await temporaryDirectory();
+    await start(fresh, ['PRAGMA auto_vacuum = INCREMENTAL']);
+    expect(Number(await readPragma(fresh, 'auto_vacuum'))).toBe(2);
+
+    // `auto_vacuum` cannot change once tables exist, so it cannot prove the
+    // pragmas were skipped. `user_version` would change if they ran.
+    const existing = await temporaryDirectory();
+    await start(existing);
+    await start(existing, ['PRAGMA user_version = 7']);
+    expect(Number(await readPragma(existing, 'user_version'))).toBe(0);
+  });
+
   it.skipIf(process.platform === 'win32')(
     'rejects dangling store symlinks before SQLite initialization',
     async () => {

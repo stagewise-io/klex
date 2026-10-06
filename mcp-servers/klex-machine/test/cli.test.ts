@@ -4,7 +4,12 @@ import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { helpText, packageVersion, parseCli } from '../src/cli.js';
+import {
+  helpText,
+  machineLiveMessage,
+  packageVersion,
+  parseCli,
+} from '../src/cli.js';
 
 let directory: string;
 
@@ -14,6 +19,14 @@ beforeEach(async () => {
 
 afterEach(async () => {
   await rm(directory, { force: true, recursive: true });
+});
+
+describe('machine live message', () => {
+  it('confirms the machine is live and usable by Klex Bots', () => {
+    expect(machineLiveMessage('machine-1')).toBe(
+      'Machine machine-1 is live. You can now assign it to Klex Bots.\nKeep this process running; press Ctrl+C to stop.',
+    );
+  });
 });
 
 describe('CLI configuration', () => {
@@ -85,7 +98,9 @@ describe('CLI configuration', () => {
       action: 'enroll',
       cloudBaseUrl: 'https://cloud.example',
       code: 'single-use-code',
+      config: expect.objectContaining({ cwd: directory }),
       dataDir: directory,
+      serve: true,
     });
     await expect(
       parseCli(['serve', '--mode', 'enrolled'], {}, directory),
@@ -108,6 +123,66 @@ describe('CLI configuration', () => {
       cloudBaseUrl: 'https://cloud.example',
       enrollmentCodeFile: '-',
     });
+  });
+
+  it('serves after enrollment unless --no-serve is passed', async () => {
+    await expect(
+      parseCli(['cloud', 'enroll', 'code', '--no-serve'], {}, directory),
+    ).resolves.toMatchObject({ action: 'enroll', serve: false });
+    await expect(
+      parseCli(['cloud', 'enroll', 'code', '--serve'], {}, directory),
+    ).resolves.toMatchObject({ action: 'enroll', serve: true });
+  });
+
+  it('passes --cwd through cloud enroll', async () => {
+    await expect(
+      parseCli(['cloud', 'enroll', 'code', '--cwd', directory], {}, '/'),
+    ).resolves.toMatchObject({ action: 'enroll', config: { cwd: directory } });
+  });
+
+  it('rejects local-only listener options with cloud enroll', async () => {
+    await expect(
+      parseCli(
+        ['cloud', 'enroll', 'code', '--port', '4000', '--log-level', 'debug'],
+        {},
+        directory,
+      ),
+    ).rejects.toThrow('--port, --log-level only apply to --mode local');
+  });
+
+  it('ignores invalid serve settings with --no-serve', async () => {
+    const env = { KLEX_MACHINE_CWD: '/does/not/exist' };
+    await expect(
+      parseCli(['cloud', 'enroll', 'code', '--no-serve'], env, directory),
+    ).resolves.toEqual({
+      action: 'enroll',
+      cloudBaseUrl: 'https://cloud.klex.bot',
+      code: 'code',
+      dataDir: expect.any(String),
+      serve: false,
+    });
+    await expect(
+      parseCli(['cloud', 'enroll', 'code'], env, directory),
+    ).rejects.toThrow('Working directory does not exist');
+    await expect(
+      parseCli(
+        ['cloud', 'enroll', 'code'],
+        { KLEX_MACHINE_PORT: 'not-a-port' },
+        directory,
+      ),
+    ).resolves.toMatchObject({ action: 'enroll', serve: true });
+  });
+
+  it('rejects --mode with cloud enroll', async () => {
+    await expect(
+      parseCli(['cloud', 'enroll', 'code', '--mode', 'local'], {}, directory),
+    ).rejects.toThrow('--mode cannot be used with cloud enroll');
+  });
+
+  it('rejects --no-serve outside cloud enroll', async () => {
+    await expect(
+      parseCli(['serve', '--no-serve'], {}, directory),
+    ).rejects.toThrow('only valid with cloud enroll');
   });
 
   it.each([
@@ -165,6 +240,7 @@ describe('CLI configuration', () => {
     expect(helpText()).toContain('klex-machine cloud enroll');
     expect(helpText()).toContain('klex-machine cloud bootstrap');
     expect(helpText()).toContain('--cloud-base-url <url>');
+    expect(helpText()).toContain('--no-serve');
     expect(packageVersion()).toBe('0.1.0');
   });
 

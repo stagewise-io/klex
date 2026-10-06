@@ -529,6 +529,52 @@ describe('config v2', () => {
     ).toThrow();
   });
 
+  it('accepts an optional session-history size override without defaulting it', () => {
+    const base = {
+      configVersion: 2,
+      officialName: 'Agent',
+      providers: {},
+      modelSelection: emptyModelSelection,
+      mcpServers: {},
+    };
+
+    const parsed = klexConfigSchema.parse(base);
+    expect(parsed.sessionHistory).toBeUndefined();
+    expect('sessionHistory' in JSON.parse(JSON.stringify(parsed))).toBe(false);
+    expect(
+      klexConfigSchema.parse({ ...base, sessionHistory: {} }),
+    ).toMatchObject({ sessionHistory: {} });
+    expect(
+      klexConfigSchema.parse({
+        ...base,
+        sessionHistory: { maxBytes: 64 * 1024 * 1024 },
+      }).sessionHistory,
+    ).toEqual({ maxBytes: 64 * 1024 * 1024 });
+    for (const invalid of [
+      { maxBytes: 1024 },
+      { maxBytes: 64 * 1024 * 1024 + 0.5 },
+      { maxBytes: '64MB' },
+      { unknown: 1 },
+    ]) {
+      expect(() =>
+        klexConfigSchema.parse({ ...base, sessionHistory: invalid }),
+      ).toThrow();
+    }
+  });
+
+  it('does not write a session-history key into a stored config', async () => {
+    const dataDirectory = await directory(true);
+    await prepareConfigStore(dataDirectory);
+    const config = createConfig({ logging, dataDirectory, env: {} });
+    await config.start();
+    expect(config.get().sessionHistory).toBeUndefined();
+    const persisted = JSON.parse(
+      await readFile(join(dataDirectory, CONFIG_FILE_NAME), 'utf8'),
+    ) as Record<string, unknown>;
+    expect('sessionHistory' in persisted).toBe(false);
+    await config.close();
+  });
+
   it('migrates preset and single-endpoint v1 providers once and preserves native model colons', async () => {
     const dataDirectory = await directory();
     await writeFile(

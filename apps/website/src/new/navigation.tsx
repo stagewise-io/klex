@@ -7,7 +7,6 @@ import {
   NavigationMenuLink,
   NavigationMenuList,
 } from '@stagewise/ui/src/components/ui/navigation-menu.tsx';
-import { Separator } from '@stagewise/ui/src/components/ui/separator.tsx';
 import {
   Sidebar,
   SidebarContent,
@@ -106,13 +105,9 @@ export function NewNav() {
           </NavigationMenuItem>
         </NavigationMenuList>
       </NavigationMenu>
-      <Separator
-        orientation="vertical"
-        className="new-nav-divider"
-        aria-hidden="true"
-      />
       <Button
-        className="rounded-full"
+        className="new-header-cta rounded-full"
+        size="lg"
         nativeButton={false}
         role="link"
         render={<a href="https://cloud.klex.bot" />}

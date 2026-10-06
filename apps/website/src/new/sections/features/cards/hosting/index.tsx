@@ -6,7 +6,7 @@ export function HostingCard({ playing }: CardProps) {
   return (
     <FeatureCard
       id="hosting"
-      title="Make yourself at home"
+      title="Hosted where you choose"
       description="Run Klex on your own infrastructure and keep your Klex Bot’s data with you."
       Scene={HostingScene}
       playing={playing}

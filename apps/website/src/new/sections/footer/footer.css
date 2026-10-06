@@ -24,12 +24,6 @@
   text-wrap: balance;
 }
 
-.new-footer-cta {
-  height: auto;
-  padding: 0.875rem 1.5rem;
-  border-radius: 999px;
-}
-
 .new-footer-bottom {
   display: flex;
   align-items: flex-start;

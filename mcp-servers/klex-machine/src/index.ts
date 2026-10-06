@@ -1,4 +1,9 @@
-import { helpText, packageVersion, parseCli } from './cli.js';
+import {
+  helpText,
+  machineLiveMessage,
+  packageVersion,
+  parseCli,
+} from './cli.js';
 
 async function main(): Promise<void> {
   const result = await parseCli(process.argv.slice(2));
@@ -12,14 +17,22 @@ async function main(): Promise<void> {
   }
 
   if (result.action === 'enroll') {
-    const { enrollMachine } = await import('./cloud/enrollment.js');
-    const enrollment = await enrollMachine({
+    const { connectMachine } = await import('./cloud/connect.js');
+    const { enrollment, reused } = await connectMachine({
       cloudBaseUrl: result.cloudBaseUrl,
       code: result.code,
       dataDir: result.dataDir,
     });
-    process.stdout.write(`Enrolled machine ${enrollment.machineId}\n`);
-    return;
+    process.stdout.write(
+      reused
+        ? `Already enrolled as machine ${enrollment.machineId}; enrollment code not used again.\n`
+        : `Enrolled machine ${enrollment.machineId}\n`,
+    );
+    if (!result.serve) {
+      process.stdout.write('Start it with: klex-machine\n');
+      return;
+    }
+    process.stdout.write('Connecting to Klex Cloud...\n');
   }
   if (result.action === 'managed-bootstrap') {
     const { bootstrapManagedMachine } = await import('./cloud/managed.js');
@@ -63,6 +76,9 @@ async function main(): Promise<void> {
     result.config.cwd,
   );
   const runtime = await startCloudMachineRuntime(result.dataDir, router);
+  if (result.action !== 'managed-bootstrap') {
+    process.stdout.write(`${machineLiveMessage(enrollment.machineId)}\n`);
+  }
   for (const signal of ['SIGINT', 'SIGTERM'] as const) {
     process.once(signal, () => {
       void runtime.close().then(

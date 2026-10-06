@@ -12,7 +12,7 @@ features/
     product/        # Center Klex Bots card
     autonomy/       # Working while you're away
     memory/         # Learns how you work
-    hosting/        # Make yourself at home
+    hosting/        # Hosted where you choose
   shared/
     feature-card.tsx # Common frame, headings, and viewport visibility
     scene-bot.tsx    # Shared Klex rig wrapper and emote playback

@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import {
   chmod,
   mkdir,
@@ -25,6 +26,13 @@ export interface MachineEnrollment {
   proxyConnectionUrl: string;
   mcpResourceUrl: string;
   oauthProtectedResourceUrl: string;
+  enrollmentCodeSha256?: string;
+}
+
+const SHA256_HEX = /^[0-9a-f]{64}$/;
+
+export function hashEnrollmentCode(code: string): string {
+  return createHash('sha256').update(code.trim(), 'utf8').digest('hex');
 }
 
 function nonEmpty(value: unknown, name: string): string {
@@ -42,6 +50,15 @@ export function parseMachineEnrollment(value: unknown): MachineEnrollment {
   if (record.version !== 1) {
     throw new UnsupportedMachineEnrollmentVersionError(
       `Unsupported machine enrollment version: ${String(record.version)}`,
+    );
+  }
+  const codeHash = record.enrollmentCodeSha256;
+  if (
+    codeHash !== undefined &&
+    (typeof codeHash !== 'string' || !SHA256_HEX.test(codeHash))
+  ) {
+    throw new Error(
+      'Machine enrollment metadata has invalid enrollmentCodeSha256',
     );
   }
   return {
@@ -65,6 +82,7 @@ export function parseMachineEnrollment(value: unknown): MachineEnrollment {
       record.oauthProtectedResourceUrl,
       'oauthProtectedResourceUrl',
     ),
+    ...(codeHash === undefined ? {} : { enrollmentCodeSha256: codeHash }),
   };
 }
 

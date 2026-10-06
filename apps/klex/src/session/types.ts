@@ -232,6 +232,11 @@ export interface SessionContext {
   sessionId: string;
   /** Parent session ID (child sessions only). */
   parentId?: string;
+  /**
+   * Parent `ChatSession` instance ID (child sessions only). Links child
+   * transcripts to the exact parent instance in `sessions.sqlite`.
+   */
+  parentInstanceId?: string;
   /** Extension identifier that owns a child session. */
   extensionIdentifier?: string;
 }

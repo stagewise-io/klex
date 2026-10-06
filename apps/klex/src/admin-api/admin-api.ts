@@ -9,6 +9,7 @@ import type { Introspector } from '@/introspection';
 import type { Mcp } from '@/mcp';
 import type { ModelCallLogger } from '@/model-call-logger';
 import type { ProviderRegistry } from '@/provider-registry';
+import type { SessionHistory } from '@/session-history';
 
 import { createAdminApp } from './server';
 
@@ -21,6 +22,7 @@ export interface AdminApiDependencies {
   providerRegistry: ProviderRegistry;
   cloudConnectivity: CloudConnectivity;
   godMessages: GodMessages;
+  sessionHistory: SessionHistory;
   localPort: number | undefined;
   timezone: string;
 }
@@ -46,6 +48,7 @@ class AdminApiModule implements AdminApi {
       providerRegistry: ProviderRegistry;
       cloudConnectivity: CloudConnectivity;
       godMessages: GodMessages;
+      sessionHistory: SessionHistory;
       localPort: number | undefined;
       timezone: string;
     },
@@ -63,6 +66,7 @@ class AdminApiModule implements AdminApi {
       providerRegistry: this.deps.providerRegistry,
       cloudConnectivity: this.deps.cloudConnectivity,
       godMessages: this.deps.godMessages,
+      sessionHistory: this.deps.sessionHistory,
       logger: this.deps.logger,
       localPort: this.deps.localPort,
       timezone: this.deps.timezone,
@@ -124,6 +128,7 @@ export function createAdminApi(deps: AdminApiDependencies): AdminApi {
     providerRegistry: deps.providerRegistry,
     cloudConnectivity: deps.cloudConnectivity,
     godMessages: deps.godMessages,
+    sessionHistory: deps.sessionHistory,
     localPort: deps.localPort,
     timezone: deps.timezone,
   });

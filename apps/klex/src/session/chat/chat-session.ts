@@ -49,6 +49,7 @@ import type {
   Usage,
   UsagePair,
 } from '@/session/types';
+import type { SessionHistory, SessionHistoryRecorder } from '@/session-history';
 import type { TelemetryMetrics } from '@/telemetry-metrics';
 
 import {
@@ -83,6 +84,9 @@ import {
  * Prevents infinite retry loops when all models are unavailable.
  */
 const MAX_CONSECUTIVE_FAILURES = 5;
+
+/** Upper bound for an aborted loop to settle before the transcript ends. */
+const LOOP_SETTLE_TIMEOUT_MS = 5_000;
 
 export interface ChatSessionDependencies {
   logging: RootLogger;
@@ -119,6 +123,11 @@ export interface ChatSessionDependencies {
    * to the parent trace.
    */
   parentSpanContext?: SpanContext;
+  /**
+   * Write-only transcript persistence. The store is never read back into
+   * the session; `messages` stays the runtime source of truth.
+   */
+  sessionHistory?: SessionHistory;
 }
 
 function runtimeStateValue(state: SessionRuntimeState): number {
@@ -150,6 +159,10 @@ class ChatSessionModule implements AgentSession {
   private backoffManager: BackoffManager;
 
   private loopActive = false;
+  /** The running loop, so close() can let an aborted turn settle. */
+  private loopRun: Promise<void> | null = null;
+  /** Set by terminate(), which runs inside the loop it would wait for. */
+  private selfTerminating = false;
 
   private currentTurn: Turn | null = null;
 
@@ -189,6 +202,17 @@ class ChatSessionModule implements AgentSession {
   private pendingImmediate: ExtendedUIMessage[] = [];
 
   readonly sessionId: string;
+
+  /**
+   * Unique per instance. The default session reuses `sessionId` across
+   * replacements, so transcript persistence keys on this id instead.
+   */
+  readonly instanceId: string = randomUUID();
+
+  private readonly transcriptRecorder: SessionHistoryRecorder | undefined;
+
+  /** Recorded as the transcript end reason on close. */
+  private endReason = 'closed';
 
   private readonly sessionSpan: Span;
 
@@ -271,9 +295,23 @@ class ChatSessionModule implements AgentSession {
       telemetryMetrics?: TelemetryMetrics;
       productAnalytics?: ProductAnalyticsRecorder;
       parentSpanContext?: SpanContext;
+      sessionHistory?: SessionHistory;
     },
   ) {
     this.sessionId = deps.sessionContext.sessionId;
+    this.transcriptRecorder = deps.sessionHistory?.openRecorder({
+      instanceId: this.instanceId,
+      sessionId: this.sessionId,
+      kind: deps.sessionContext.kind,
+      name: deps.sessionContext.name,
+      ...(deps.sessionContext.parentInstanceId
+        ? { parentInstanceId: deps.sessionContext.parentInstanceId }
+        : {}),
+      ...(deps.sessionContext.extensionIdentifier
+        ? { extensionIdentifier: deps.sessionContext.extensionIdentifier }
+        : {}),
+      createdAt: new Date().toISOString(),
+    });
     // Create an independent root span named `session {name}` that lives for
     // the entire session lifetime. Main, god, and extension-owned child
     // sessions share this naming and attribute scheme; each gets its own
@@ -419,6 +457,7 @@ class ChatSessionModule implements AgentSession {
         const index = this.messages.findIndex((m) => m.id === afterMessageId);
         if (index === -1) return false;
         this.messages.splice(index + 1, 0, message);
+        this.scheduleTranscriptSync();
         return true;
       },
       inbox: this.sessionInbox,
@@ -763,6 +802,7 @@ class ChatSessionModule implements AgentSession {
       this.pendingImmediate.push(message);
     } else {
       this.messages.push(message);
+      this.scheduleTranscriptSync();
     }
 
     // While a lease owns the generation lane, the event is recorded in
@@ -791,7 +831,10 @@ class ChatSessionModule implements AgentSession {
     const message = this.inboxEventMessage(event);
     const historyIndex = this.messages.length;
     this.messages.push(message);
-    if (this.leaseManager.forward(event, false)) return true;
+    if (this.leaseManager.forward(event, false)) {
+      this.scheduleTranscriptSync();
+      return true;
+    }
     this.messages.splice(historyIndex, 1);
     return false;
   };
@@ -806,6 +849,7 @@ class ChatSessionModule implements AgentSession {
       this.pendingImmediate.push(message);
     } else {
       this.messages.push(message);
+      this.scheduleTranscriptSync();
     }
 
     // Critical urgency: abort the current generation immediately.
@@ -828,7 +872,14 @@ class ChatSessionModule implements AgentSession {
       this.messages.push(...this.pendingImmediate);
       this.pendingImmediate = [];
     }
+    // Also the post-step commit point, so sync even without pending input.
+    this.scheduleTranscriptSync();
   };
+
+  /** Coalesced, non-throwing transcript persistence. */
+  private scheduleTranscriptSync(): void {
+    this.transcriptRecorder?.scheduleSync(() => this.messages);
+  }
 
   // ---------------------------------------------------------------------------
   // Generation-lane leasing — the chat loop and a leased interaction mode
@@ -869,7 +920,7 @@ class ChatSessionModule implements AgentSession {
     this.sessionSpan.addEvent('session.generation_lane_resumed', {});
     if (this._status === 'terminated') return;
     if (this.hasPendingInput || !this.sessionInbox.isEmpty()) {
-      void this.runLoop();
+      this.startLoop();
     }
   }
 
@@ -958,6 +1009,7 @@ class ChatSessionModule implements AgentSession {
   private async commitLeaseEvent(event: RealtimeCommitEvent): Promise<void> {
     if (this._status === 'terminated') return;
     this.messages.push(toCanonicalMessage(event));
+    this.scheduleTranscriptSync();
   }
 
   private onNewInput = (urgency: SessionInboxUrgency): void => {
@@ -984,9 +1036,33 @@ class ChatSessionModule implements AgentSession {
     if (!this.loopActive) {
       this.hasPendingInput = true;
       if (this.laneSuspended) return;
-      void this.runLoop();
+      this.startLoop();
     }
   };
+
+  private startLoop(): void {
+    if (this.loopActive) return;
+    const run = this.runLoop();
+    this.loopRun = run;
+    const clear = (): void => {
+      if (this.loopRun === run) this.loopRun = null;
+    };
+    void run.then(clear, clear);
+  }
+
+  /** Waits, bounded, for an aborted loop to commit its last step. */
+  private async waitForLoopToSettle(): Promise<void> {
+    const run = this.loopRun;
+    if (!run || this.selfTerminating) return;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    await Promise.race([
+      run.catch(() => undefined),
+      new Promise<void>((resolve) => {
+        timer = setTimeout(resolve, LOOP_SETTLE_TIMEOUT_MS);
+      }),
+    ]);
+    clearTimeout(timer);
+  }
 
   /**
    * The main turn loop. Creates a Turn module per iteration so that the
@@ -1144,6 +1220,53 @@ class ChatSessionModule implements AgentSession {
           this.sessionSpan.setAttribute('klex.session.terminated', true);
           await this.terminate(turnResult.fatalErrorReason ?? 'unknown');
           return;
+        }
+
+        // Request rejected by the provider: retrying the same request will
+        // not help. Skip backoff (and its termination counter) and keep the
+        // session alive so the next inbox input starts a fresh turn.
+        // Immediate input that arrived during the turn is already in
+        // history, so a check-retry turn reviews it.
+        if (turnResult.completeFailure && turnResult.requestRejected) {
+          this.deps.logger.warn(
+            {
+              'event.name': 'operation.failed',
+              'klex.session.id': this.sessionId,
+              'klex.operation.name': 'session_turn',
+              'klex.failure.reason': 'request_rejected',
+              'klex.turn.stop_reason': turnResult.stopReason,
+            },
+            'Session turn rejected by provider; not retrying',
+          );
+          this.sessionSpan.addEvent('session.turn_rejected', {
+            'turn.steps': turnResult.stepCount,
+          });
+          needsBackoffRetry = false;
+          needsCheckRetry = this.newInputDuringTurn;
+          continue;
+        }
+
+        // Step cap reached: the turn was cut off mid-work. Re-running it
+        // would repeat the same runaway loop, so neither retry nor record
+        // a success. The session stays alive for the next inbox input, and
+        // a check-retry turn reviews immediate input from this turn.
+        if (turnResult.stopReason === 'step_cap_reached') {
+          this.deps.logger.warn(
+            {
+              'event.name': 'operation.failed',
+              'klex.session.id': this.sessionId,
+              'klex.operation.name': 'session_turn',
+              'klex.failure.reason': 'step_cap_reached',
+              'klex.turn.stop_reason': turnResult.stopReason,
+            },
+            'Session turn hit the step cap; not retrying',
+          );
+          this.sessionSpan.addEvent('session.turn_step_cap_reached', {
+            'turn.steps': turnResult.stepCount,
+          });
+          needsBackoffRetry = false;
+          needsCheckRetry = this.newInputDuringTurn;
+          continue;
         }
 
         // Track success/failure for backoff.
@@ -1454,6 +1577,18 @@ class ChatSessionModule implements AgentSession {
       try {
         await this.extensionHandler.close();
       } finally {
+        // Final sync and end marker. Persistence must never block cleanup.
+        // An aborted step can still commit; let it land before the recorder
+        // ends, because later schedules are ignored.
+        if (this.transcriptRecorder) await this.waitForLoopToSettle();
+        await this.transcriptRecorder
+          ?.end(this.endReason)
+          .catch((error: unknown) => {
+            this.deps.logger.error(
+              { sessionId: this.sessionId, error },
+              'Session transcript end failed',
+            );
+          });
         // Cleanup must finish even when an extension (for example, the
         // episodic writer) rejects during shutdown. Otherwise the terminated
         // session remains registered and blocks its replacement.
@@ -1523,6 +1658,8 @@ class ChatSessionModule implements AgentSession {
    * unrecoverable, not during owner-initiated graceful shutdown.
    */
   private async terminate(reason: string): Promise<void> {
+    this.endReason = `terminated: ${reason}`;
+    this.selfTerminating = true;
     this.leaseManager.revoke('default-session-terminated');
 
     this.sessionInbox.close();
@@ -1593,6 +1730,7 @@ class ChatSessionModule implements AgentSession {
       name: options.name,
       sessionId: childSessionId,
       parentId: this.sessionId,
+      parentInstanceId: this.instanceId,
       extensionIdentifier: options.extensionIdentifier,
     };
 
@@ -1681,5 +1819,6 @@ export function createChatSession(
     modelPurpose: deps.modelPurpose,
     basePrompt: deps.basePrompt,
     parentSpanContext: deps.parentSpanContext,
+    sessionHistory: deps.sessionHistory,
   });
 }

@@ -147,11 +147,21 @@ function HeroBot({
   // Stand at the previews' lower edge while keeping every body above the fold.
   const compact = window.innerHeight <= 720;
   const bottomClearance = mobile ? (compact ? 32 : 100) : compact ? 24 : 80;
-  const arcTop = Math.min(
-    mobile ? 150 : 130,
-    Math.max(bottomClearance, height - copyBottom - (mobile ? 300 : 340)),
+  // Tall desktops use the spare space above the team instead of pinning it
+  // near the floor. Keep the existing mobile cap and reserve the full demo
+  // window height below the copy so previews stay large and readable.
+  const availableLift = Math.max(
+    bottomClearance,
+    height - copyBottom - (mobile ? 300 : 340),
   );
-  const arcDip = mobile ? 0 : 12;
+  const arcTop = mobile ? Math.min(150, availableLift) : availableLift;
+  // Lower the middle pair into a shallow arc. Keep the bottom link clear
+  // on short desktops and retain the compact phone layout.
+  const arcDip = mobile
+    ? compact
+      ? 0
+      : 18
+    : Math.min(44, Math.max(12, arcTop - 68));
   // Compensate for Jonathan's hover so his body shares the team's baseline.
   const flightLift = bot.mode === 'fly' ? size * 0.45 : 0;
   const spotY =
@@ -469,7 +479,7 @@ function HeroTeam({ entrance }: { entrance: Promise<void> }) {
   const [moving, setMoving] = useState<string[]>([]);
   // Bots the visitor sent somewhere keep that place when the stage resizes.
   const [placed, setPlaced] = useState<string[]>([]);
-  // Moving bots pause their demos; an open profile hides all app previews.
+  // Moving bots pause their demos; profiles leave the rotation running.
   const busy = useMemo(() => [...new Set(moving)], [moving]);
   const [inView, setInView] = useState(true);
   const reducedMotion = useReducedMotion() ?? false;
@@ -712,7 +722,6 @@ function HeroTeam({ entrance }: { entrance: Promise<void> }) {
           order={botIds}
           ready={ready}
           busy={busy}
-          blocked={focusedId !== null}
           active={inView}
           onWork={onWork}
         />

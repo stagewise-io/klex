@@ -184,7 +184,6 @@ function collectTodoParts(
 // ---------------------------------------------------------------------------
 
 class TodosExtension implements Extension {
-  private active = false;
   private closed = false;
   private readonly reminderTimers = new Map<string, ReminderTimer>();
 
@@ -221,14 +220,6 @@ class TodosExtension implements Extension {
       { pendingTodos: this.store.getTodos().length },
       'Todos extension closed',
     );
-  }
-
-  onStepStart(): void {
-    this.active = true;
-  }
-
-  onStepComplete(): void {
-    this.active = false;
   }
 
   getTools(): ToolSet {
@@ -570,7 +561,9 @@ class TodosExtension implements Extension {
       todo.reminderTime = null;
       due = true;
     });
-    if (this.active || this.closed || !due) return;
+    // Deliver even mid-step: Default urgency appends to history and
+    // forces a check-retry turn, so the reminder is never lost.
+    if (this.closed || !due) return;
     this.deps.inbox.sendMessage(
       {
         id: randomUUID(),

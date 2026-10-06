@@ -14,7 +14,21 @@ export type MachineMode = 'local' | 'enrolled' | 'managed';
 export type CliResult =
   | { action: 'help' }
   | { action: 'version' }
-  | { action: 'enroll'; cloudBaseUrl: string; code: string; dataDir: string }
+  | {
+      action: 'enroll';
+      cloudBaseUrl: string;
+      code: string;
+      config: RuntimeConfig;
+      dataDir: string;
+      serve: true;
+    }
+  | {
+      action: 'enroll';
+      cloudBaseUrl: string;
+      code: string;
+      dataDir: string;
+      serve: false;
+    }
   | {
       action: 'managed-bootstrap';
       cloudBaseUrl: string;
@@ -37,6 +51,7 @@ export async function parseCli(
   const parsed = parseArgs({
     args: argv,
     allowPositionals: true,
+    allowNegative: true,
     strict: true,
     options: {
       cwd: { type: 'string' },
@@ -47,6 +62,7 @@ export async function parseCli(
       'data-dir': { type: 'string' },
       'cloud-base-url': { type: 'string' },
       'enrollment-code-file': { type: 'string' },
+      serve: { type: 'boolean' },
       help: { type: 'boolean', short: 'h' },
       version: { type: 'boolean', short: 'v' },
     },
@@ -77,12 +93,40 @@ export async function parseCli(
     value &&
     !extra.length
   ) {
+    if (parsed.values.mode !== undefined) {
+      throw new Error('--mode cannot be used with cloud enroll');
+    }
+    // Enroll-only runs never serve, so inherited serve settings must not
+    // block enrollment.
+    if (parsed.values.serve === false) {
+      return {
+        action: 'enroll',
+        cloudBaseUrl,
+        code: value,
+        dataDir,
+        serve: false,
+      };
+    }
+    // Enrolled mode has no local listener or logger; only cwd applies.
+    const localOnly = (['host', 'port', 'log-level'] as const).filter(
+      (name) => parsed.values[name] !== undefined,
+    );
+    if (localOnly.length) {
+      throw new Error(
+        `${localOnly.map((name) => `--${name}`).join(', ')} only apply to --mode local`,
+      );
+    }
     return {
       action: 'enroll',
       cloudBaseUrl,
       code: value,
+      config: await resolveRuntimeConfig({ cwd: raw.cwd }, processCwd),
       dataDir,
+      serve: true,
     };
+  }
+  if (parsed.values.serve !== undefined) {
+    throw new Error('--serve and --no-serve are only valid with cloud enroll');
   }
   if (
     command === 'cloud' &&
@@ -139,25 +183,33 @@ export function packageVersion(): string {
   return packageJson.version;
 }
 
+export function machineLiveMessage(machineId: string): string {
+  return `Machine ${machineId} is live. You can now assign it to Klex Bots.\nKeep this process running; press Ctrl+C to stop.`;
+}
+
 export function helpText(): string {
   return `klex-machine ${packageVersion()}
 
 Usage:
   klex-machine serve [options]
-  klex-machine cloud enroll <code> [options]
+  klex-machine cloud enroll <code> [--no-serve] [options]
   klex-machine cloud bootstrap --enrollment-code-file <path|-> [options]
 
 Options:
   --cwd <path>        Default working directory
-  --host <address>    Listener address (default: 127.0.0.1)
-  --port <number>     Listener port (default: 3123)
-  --log-level <level> trace, debug, info, warn, error, or fatal
+  --host <address>    Local mode listener address (default: 127.0.0.1)
+  --port <number>     Local mode listener port (default: 3123)
+  --log-level <level> Local mode: trace, debug, info, warn, error, or fatal
   --mode <mode>       local, enrolled, or managed (default: enrolled)
   --data-dir <path>   Identity directory (default: ~/.klex-machine)
   --cloud-base-url <url> Cloud API URL used for enrollment
   --enrollment-code-file <path|-> Read and remove a one-time code file, or read stdin with -
+  --no-serve          Enroll only; do not start serving
   -h, --help          Show help
   -v, --version       Show version
+
+cloud enroll serves after enrolling; keep the process running to stay
+connected. Re-running it with the same code restarts without re-enrolling.
 
 Environment:
   KLEX_MACHINE_CWD

@@ -15,7 +15,7 @@ export function PermissionsCard({ playing }: CardProps) {
     <FeatureCard
       id="permissions"
       title="Set permissions for each Klex Bot"
-      description="Manage each Klex Bot’s access directly in Slack, Discord, and your other apps, using their built-in permissions."
+      description="Granularly manage each bot's permissions right inside the apps, just like for your human team."
       Scene={PermissionsScene}
       playing={playing}
     />

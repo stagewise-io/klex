@@ -8,6 +8,7 @@ import { MCP_OAUTH_STORE_DEFINITION } from '@/mcp';
 import { MODEL_CALL_STORE_DEFINITION } from '@/model-call-logger';
 import { EPISODIC_SEARCH_INDEX_STORE_DEFINITION } from '@/session/chat/extensions/memory';
 import { TODOS_STORE_DEFINITION } from '@/session/chat/extensions/todos';
+import { SESSION_HISTORY_STORE_DEFINITION } from '@/session-history';
 
 export const KLEX_LOCAL_DATA_STORES = [
   CONFIG_STORE_DEFINITION,
@@ -17,4 +18,5 @@ export const KLEX_LOCAL_DATA_STORES = [
   CLOUD_ENROLLMENT_STORE_DEFINITION,
   TODOS_STORE_DEFINITION,
   EPISODIC_SEARCH_INDEX_STORE_DEFINITION,
+  SESSION_HISTORY_STORE_DEFINITION,
 ] as const satisfies readonly LocalDataStoreDefinition[];

@@ -162,6 +162,8 @@ export interface ProvisionalStepContext {
  * details are exposed.
  */
 export interface ResolvedModel {
+  /** Selected provider/model, for model-aware tools. Absent for realtime leases. */
+  reference?: ModelSelectionEntry;
   /** Full model ID (e.g. `"remote:gpt-4o"`). */
   modelId: ModelId;
   /** Human-readable name from `knownModels`, if declared. */
@@ -294,8 +296,8 @@ export interface StepCompleteEvent {
   forceNextStep: boolean;
   /**
    * True if the step failed with a fatal (non-recoverable) error, e.g.
-   * a 400 bad request or an invalid prompt. The session should be
-   * terminated rather than retried.
+   * an invalid prompt or a failed transformer extension. The session
+   * should be terminated rather than retried.
    */
   fatalError: boolean;
   /** Human-readable reason for the fatal error, if fatalError is true. */
@@ -319,6 +321,13 @@ export interface StepCompleteEvent {
    * since transformations are bound to specific model capabilities.
    */
   modelFallbackOccurred: boolean;
+  /**
+   * True when the provider rejected the request (4xx other than 401,
+   * 403, 408, and 429), including rejections after partial content was
+   * salvaged. No model fallback was performed. Extensions may drop
+   * request content they injected so the next step can succeed.
+   */
+  requestRejected: boolean;
 }
 
 export interface Extension {

@@ -16,17 +16,19 @@ export const footerMarkup = `
         </a>
         <p class="new-footer-credit">
           <span>Built with love by</span>
-          <a href="https://stagewise.io/" target="_blank" rel="noreferrer">
+          <a href="https://company.stagewise.io" target="_blank" rel="noreferrer">
             <img src="/stagewise-wordmark.svg" alt="stagewise" width="114" height="24" />
           </a>
         </p>
-        <p class="new-footer-attribution">stagewise® and Klex® are registered trademarks of stagewise GmbH and protected in the EU by the European Union Intellectual Property Office (EUIPO).<br />Unauthorized use is prohibited.</p>
+        <p class="new-footer-attribution">Klex® and stagewise® are registered trademarks of stagewise GmbH and protected in the EU by the European Union Intellectual Property Office (EUIPO).<br />Unauthorized use is prohibited.</p>
         <p class="new-footer-attribution">Third-party product names, logos, illustrations and brands referenced on this site are property of their respective owners. Use is for identification purposes only and does not imply any affiliation or endorsement.</p>
       </div>
       <nav aria-label="Resources">
         <h3>Resources</h3>
         <a href="https://docs.klex.bot">Docs</a>
         <a href="https://github.com/stagewise-io/klex">GitHub</a>
+        <a href="https://company.stagewise.io/careers">Careers</a>
+        <a href="/press">Press</a>
       </nav>
       <nav aria-label="Company">
         <h3>Company</h3>

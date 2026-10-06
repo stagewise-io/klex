@@ -73,6 +73,13 @@
   width: 100%;
 }
 
+.trust-hosting-white-bot [data-testid="klex-body"] {
+  fill: light-dark(
+    color-mix(in oklab, var(--foreground) 28%, #fdfdfc),
+    #fdfdfc
+  );
+}
+
 .trust-wire {
   fill: none;
   stroke: color-mix(in oklab, var(--foreground) 24%, var(--background));

@@ -73,6 +73,7 @@ function makeResult(usage: LanguageModelUsage | null): StepCompleteEvent {
           },
     toolCalls: [],
     modelFallbackOccurred: false,
+    requestRejected: false,
   };
 }
 

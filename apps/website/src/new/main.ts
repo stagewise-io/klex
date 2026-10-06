@@ -1,6 +1,7 @@
 import './base.css';
 import './navigation.css';
 
+import { mountLogoMenus } from './logo-menu';
 import { mountNavigation } from './navigation';
 import { buildMarkup, mountBuild } from './sections/build';
 import { coworkersMarkup, mountCoworkers } from './sections/coworkers';
@@ -51,6 +52,7 @@ theme.addEventListener(
 );
 
 const disposers = [
+  mountLogoMenus(app),
   mountNavigation(),
   mountHero(),
   mountSlack(),

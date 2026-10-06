@@ -188,6 +188,9 @@ function HostingScene() {
               bots.current[index] = handle;
             }}
             {...bot.look}
+            className={
+              bot.id === 'jeff' ? 'trust-hosting-white-bot' : undefined
+            }
             size={bot.size}
             movementMode={bot.id === 'jonathan' ? 'fly' : 'hop'}
             width="100%"
@@ -205,10 +208,10 @@ function HostingScene() {
 }
 
 const wires = [
-  { app: 'slack', x: 34, y: 54, path: 'M128 88 C92 88 105 54 34 54' },
+  { app: 'teams', x: 34, y: 54, path: 'M128 88 C92 88 105 54 34 54' },
   { app: 'github', x: 326, y: 54, path: 'M232 88 C268 88 255 54 326 54' },
   { app: 'linear', x: 34, y: 185, path: 'M128 150 C82 150 100 185 34 185' },
-  { app: 'gmail', x: 326, y: 185, path: 'M232 150 C278 150 260 185 326 185' },
+  { app: 'outlook', x: 326, y: 185, path: 'M232 150 C278 150 260 185 326 185' },
 ];
 
 const defaultKlexLook = {

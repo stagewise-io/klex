@@ -63,6 +63,7 @@ const SUCCESS_RESULT: StepCompleteEvent = {
   generation: null,
   toolCalls: [],
   modelFallbackOccurred: false,
+  requestRejected: false,
 };
 
 // --- mocks ---
@@ -139,6 +140,7 @@ describe('Step — decision: skip', () => {
       generation: null,
       toolCalls: [],
       modelFallbackOccurred: false,
+      requestRejected: false,
     });
     expect(createGenerationRunner).not.toHaveBeenCalled();
   });
@@ -162,6 +164,7 @@ describe('Step — decision: skip', () => {
       generation: null,
       toolCalls: [],
       modelFallbackOccurred: false,
+      requestRejected: false,
     });
     expect(createGenerationRunner).not.toHaveBeenCalled();
   });
@@ -616,6 +619,7 @@ describe('Step — provisional step context', () => {
           run: vi.fn(async () => ({
             ...SUCCESS_RESULT,
             modelFallbackOccurred: true,
+            requestRejected: false,
           })),
           abort: vi.fn(),
           abortTools: vi.fn(),
@@ -857,6 +861,7 @@ describe('Step — model selection', () => {
       generation: null,
       toolCalls: [],
       modelFallbackOccurred: true,
+      requestRejected: false,
     });
     expect(extensionHandler.runStepCompleteHooks).toHaveBeenCalledWith(result);
     expect(createGenerationRunner).not.toHaveBeenCalled();
@@ -936,6 +941,7 @@ describe('Step — ResolvedModel passing', () => {
     const historyCall = extensionHandler.runHistoryTransformers.mock.calls[0];
     expect(historyCall).toBeDefined();
     expect(historyCall?.[1]).toEqual({
+      reference: { providerId: 'remote', modelId: 'gpt-4o' },
       modelId: 'gpt-4o',
       displayName: 'GPT-4o',
       contextSize: 128_000,
@@ -1043,6 +1049,7 @@ describe('Step — ResolvedModel passing', () => {
     const contextCall = extensionHandler.runContextTransformers.mock.calls[0];
     expect(contextCall).toBeDefined();
     expect(contextCall?.[1]).toEqual({
+      reference: { providerId: 'remote', modelId: 'gpt-4o' },
       modelId: 'gpt-4o',
       displayName: 'GPT-4o',
       contextSize: 128_000,
@@ -1187,6 +1194,7 @@ describe('Step — GenerationRunner result passthrough', () => {
       },
       toolCalls: [],
       modelFallbackOccurred: false,
+      requestRejected: false,
     };
     vi.mocked(createGenerationRunner).mockReturnValue({
       run: vi.fn(async () => genResult),
@@ -1210,6 +1218,7 @@ describe('Step — GenerationRunner result passthrough', () => {
       generation: null,
       toolCalls: [],
       modelFallbackOccurred: false,
+      requestRejected: false,
     };
     vi.mocked(createGenerationRunner).mockReturnValue({
       run: vi.fn(async () => genResult),

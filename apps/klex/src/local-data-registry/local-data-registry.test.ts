@@ -61,6 +61,7 @@ describe('Klex local-data registry', () => {
       'cloud-enrollment',
       'todos-extension-todos',
       'episodic-search-index',
+      'sessions',
     ]);
   });
 

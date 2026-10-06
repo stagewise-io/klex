@@ -331,9 +331,19 @@ class LearningWorkerModule implements LearningWorker {
         try {
           await store.write(toSkill(operation));
         } catch (error) {
+          // Keep reads recorded while the write was in flight.
           await state.update((draft) => {
-            if (previous) draft.skills[operation.name] = previous;
-            else delete draft.skills[operation.name];
+            const current = draft.skills[operation.name];
+            if (previous) {
+              draft.skills[operation.name] = {
+                ...previous,
+                lastReadAt: current?.lastReadAt ?? previous.lastReadAt,
+                readCount: Math.max(
+                  current?.readCount ?? 0,
+                  previous.readCount,
+                ),
+              };
+            } else delete draft.skills[operation.name];
           });
           throw error;
         }

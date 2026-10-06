@@ -290,6 +290,65 @@ describe('learning worker', () => {
     expect(state.get().episodeFailures[episodeId(0)]).toBe(1);
   });
 
+  it('keeps reads recorded while a failed skill write was in flight', async () => {
+    const { worker, store, state, generateText, dataDir } = await harness(
+      fakeFeed(1),
+    );
+    await store.write({
+      name: 'ask-first',
+      description: 'Use when ask-first.',
+      body: 'Old.',
+    });
+    const before = {
+      createdAt: '2026-10-01T00:00:00.000Z',
+      updatedAt: '2026-10-01T00:00:00.000Z',
+      lastReadAt: null,
+      readCount: 0,
+      sourceEpisodes: [],
+    };
+    await state.update((draft) => {
+      draft.skills['ask-first'] = before;
+    });
+    const folder = join(dataDir, 'skills', 'ask-first');
+    await rm(folder, { recursive: true });
+    await symlink(dataDir, folder);
+    const readAt = '2026-10-01T12:00:00.000Z';
+    const write = store.write.bind(store);
+    vi.spyOn(store, 'write').mockImplementation(async (skill) => {
+      // A concurrent readSkill lands between the state update and the write.
+      await state.update((draft) => {
+        const entry = draft.skills['ask-first'];
+        if (entry) {
+          entry.readCount += 1;
+          entry.lastReadAt = readAt;
+        }
+      });
+      return write(skill);
+    });
+    generateText.mockResolvedValueOnce(
+      ok(
+        JSON.stringify({
+          operations: [
+            {
+              op: 'update',
+              name: 'ask-first',
+              description: 'Use when ask-first.',
+              body: 'New.',
+              reason: 'lesson',
+            },
+          ],
+        }),
+      ),
+    );
+
+    expect(await worker.runOnce()).toBe('retry-later');
+    expect(state.get().skills['ask-first']).toEqual({
+      ...before,
+      lastReadAt: readAt,
+      readCount: 1,
+    });
+  });
+
   it('skips short episodes without a model call', async () => {
     const { worker, state, generateText } = await harness(
       fakeFeed(2, () => 'short'),

@@ -102,15 +102,32 @@ describe('learning prompts', () => {
       skill(`s-${index + 10}`, long),
     );
     const capped = renderSkillList(many, {});
+    // A tenth of the cap is reserved for the names-only overflow row.
     const kept = Math.floor(
-      MAX_PROMPT_LIST_CHARACTERS / (`- s-10: ${long}`.length + 1),
+      (MAX_PROMPT_LIST_CHARACTERS * 0.9) / (`- s-10: ${long}`.length + 1),
     );
-    expect(
-      capped.split('\n').filter((line) => line.startsWith('- s-')).length,
-    ).toBe(kept);
+    const rows = capped.split('\n\n')[1]?.split('\n') ?? [];
+    expect(rows.filter((line) => line.startsWith('- s-')).length).toBe(kept);
     const omitted = many.slice(kept).map((entry) => entry.name);
-    expect(capped.split('\n').at(-1)).toBe(
+    expect(rows.at(-1)).toBe(
       `- More skills (read one to see when it applies): ${omitted.join(', ')}`,
     );
+    expect(rows.join('\n').length).toBeLessThanOrEqual(
+      MAX_PROMPT_LIST_CHARACTERS,
+    );
+  });
+
+  it('keeps the overflow row within the cap', () => {
+    const long = 'd'.repeat(290);
+    const many = Array.from({ length: 2000 }, (_, index) =>
+      skill(`s-${index + 1000}`, long),
+    );
+    const rows = renderSkillList(many, {}).split('\n\n')[1]?.split('\n') ?? [];
+    expect(rows.join('\n').length).toBeLessThanOrEqual(
+      MAX_PROMPT_LIST_CHARACTERS,
+    );
+    const overflowRow = rows.at(-1) ?? '';
+    expect(overflowRow.startsWith('- More skills')).toBe(true);
+    expect(overflowRow.endsWith(',')).toBe(false);
   });
 });

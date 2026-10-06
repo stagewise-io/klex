@@ -92,11 +92,11 @@ class SkillStoreModule implements SkillStore {
       }
       const path = join(directory, SKILL_FILE);
       const temporary = `${path}.${randomUUID()}.tmp`;
-      await writeFile(temporary, serializeSkill(normalized), {
-        encoding: 'utf-8',
-        flag: 'wx',
-      });
       try {
+        await writeFile(temporary, serializeSkill(normalized), {
+          encoding: 'utf-8',
+          flag: 'wx',
+        });
         await rename(temporary, path);
       } catch (error) {
         await rm(temporary, { force: true });

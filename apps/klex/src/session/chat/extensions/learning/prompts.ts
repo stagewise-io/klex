@@ -130,8 +130,9 @@ function recency(usage: PromptSkillUsage | undefined): number {
 
 /**
  * The main-session skill list: intro, then `- name: description`, most
- * recently used first, capped at `MAX_PROMPT_LIST_CHARACTERS`. Skills past
- * the cap are still listed by name so the agent can read them.
+ * recently used first, capped at `MAX_PROMPT_LIST_CHARACTERS`. When not all
+ * descriptions fit, a tenth of the cap is reserved for a names-only row, so
+ * skills past the cap stay discoverable without exceeding it.
  */
 export function renderSkillList(
   skills: readonly LearnedSkill[],
@@ -143,25 +144,46 @@ export function renderSkillList(
       recency(usage[right.name]) - recency(usage[left.name]) ||
       left.name.localeCompare(right.name),
   );
+  let { lines, overflow, length } = describe(
+    ordered,
+    MAX_PROMPT_LIST_CHARACTERS,
+  );
+  if (overflow.length > 0) {
+    ({ lines, overflow, length } = describe(
+      ordered,
+      MAX_PROMPT_LIST_CHARACTERS - OVERFLOW_RESERVE_CHARACTERS,
+    ));
+    let row = '- More skills (read one to see when it applies): ';
+    let named = 0;
+    for (const name of overflow) {
+      const next = named === 0 ? `${row}${name}` : `${row}, ${name}`;
+      if (length + next.length + 1 > MAX_PROMPT_LIST_CHARACTERS) break;
+      row = next;
+      named += 1;
+    }
+    if (named > 0) lines.push(row);
+  }
+  return `${systemPromptPart.trimEnd()}\n\n${lines.join('\n')}`;
+}
+
+const OVERFLOW_RESERVE_CHARACTERS = Math.floor(MAX_PROMPT_LIST_CHARACTERS / 10);
+
+/** Description lines in order until `budget`; the rest are overflow names. */
+function describe(
+  ordered: readonly LearnedSkill[],
+  budget: number,
+): { lines: string[]; overflow: string[]; length: number } {
   const lines: string[] = [];
   const overflow: string[] = [];
   let length = 0;
   for (const skill of ordered) {
     const line = `- ${skill.name}: ${skill.description.replace(/\s+/g, ' ')}`;
-    if (
-      overflow.length === 0 &&
-      length + line.length + 1 <= MAX_PROMPT_LIST_CHARACTERS
-    ) {
+    if (overflow.length === 0 && length + line.length + 1 <= budget) {
       lines.push(line);
       length += line.length + 1;
     } else {
       overflow.push(skill.name);
     }
   }
-  if (overflow.length > 0) {
-    lines.push(
-      `- More skills (read one to see when it applies): ${overflow.join(', ')}`,
-    );
-  }
-  return `${systemPromptPart.trimEnd()}\n\n${lines.join('\n')}`;
+  return { lines, overflow, length };
 }

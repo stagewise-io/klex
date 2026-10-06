@@ -639,15 +639,16 @@ describe('ChatSession lifecycle', () => {
     child.close = vi.fn(async () => {
       throw new Error('rollback failed');
     });
-    child.getSessionInfo = vi.fn(() => ({
-      ...createSession().getSessionInfo(),
-      status: 'terminated' as const,
-    }));
     child.isQuiescent = vi.fn(() => childSettled);
     const parent = createSession({
       extensions: [extension],
       sessionFactory: () => child,
     });
+    // Reuse the parent's real info shape; no extra session (and span) needed.
+    child.getSessionInfo = vi.fn(() => ({
+      ...parent.getSessionInfo(),
+      status: 'terminated' as const,
+    }));
     await parent.start();
 
     await expect(

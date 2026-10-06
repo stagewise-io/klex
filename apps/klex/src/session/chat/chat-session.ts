@@ -1830,6 +1830,9 @@ class ChatSessionModule implements AgentSession {
       return child;
     } catch (error) {
       await child.close().catch((closeError: unknown) => {
+        // Keep tracking a child whose rollback failed: its own quiescence
+        // (pruned once settled) must still gate this session's drain.
+        this.childSessions.add(child);
         this.deps.logger.error(
           { error: closeError, childSessionId },
           'Failed child session cleanup after startup error',

@@ -49,6 +49,9 @@ export async function readEpisodePage(
     );
     const limit = Math.max(1, Math.min(60_000, Math.floor(options.limit)));
     const offset = Math.max(0, Math.floor(options.offset));
+    // Tail investigations inspect EOF, not the end of a bounded prefix.
+    const startByte = options.tail ? Math.max(0, stat.size - maxBytes) : 0;
+    let skipPartialHead = startByte > 0;
     const decoder = new StringDecoder('utf8');
     const buffer = Buffer.alloc(Math.min(16_384, Math.max(1, maxBytes)));
     let pending = '';
@@ -81,7 +84,7 @@ export async function readEpisodePage(
         buffer,
         0,
         Math.min(buffer.length, maxBytes - scannedBytes),
-        scannedBytes,
+        startByte + scannedBytes,
       );
       if (bytesRead === 0) break;
       scannedBytes += bytesRead;
@@ -89,12 +92,15 @@ export async function readEpisodePage(
       while (!enough) {
         const newline = pending.indexOf('\n');
         if (newline < 0) break;
-        consume(pending.slice(0, newline));
+        if (skipPartialHead) skipPartialHead = false;
+        else consume(pending.slice(0, newline));
         pending = pending.slice(newline + 1);
       }
     }
-    const truncated = scannedBytes < stat.size;
-    if (!truncated && !enough) consume(`${pending}${decoder.end()}`);
+    const reachedEnd = startByte + scannedBytes >= stat.size;
+    const truncated = startByte > 0 || !reachedEnd;
+    if (reachedEnd && !enough && !skipPartialHead)
+      consume(`${pending}${decoder.end()}`);
     const hasMore = enough || truncated;
     return {
       id,

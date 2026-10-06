@@ -86,14 +86,15 @@ describe('EpisodeStore', () => {
     expect(await store.readOpenEpisode()).toBeNull();
   });
 
-  it('does not notify a successful completion for a failed append', async () => {
+  it('notifies when a failed append closes the formerly open episode', async () => {
     const { root, store, onCompleted } = await harness();
     await store.append([output('one')], T0);
     const path = join(root, '2026-01-02', '1-10-00.jsonl');
     await rm(path);
     await mkdir(path);
     await expect(store.append([output('two')], T0 + MINUTE)).rejects.toThrow();
-    expect(onCompleted).not.toHaveBeenCalled();
+    expect(onCompleted).toHaveBeenCalledOnce();
+    expect(await store.readOpenEpisode()).toBeNull();
   });
   it('creates no file before the first append', async () => {
     const { store, files, root } = await harness();

@@ -119,6 +119,40 @@ describe('episode investigation', () => {
       await execute('readEpisode', { id: 'seventh', offset: 0, limit: 100 }),
     ).toEqual({ status: 'budget-exhausted' });
   });
+  it('does not charge the primary episode as an additional search result', async () => {
+    const { execute, search, readPage, investigation } = fixture();
+    search.mockResolvedValueOnce({
+      matches: [{ id: 'primary', snippet: 'fix', offset: 0 }],
+      scannedBytes: 10,
+      nextOffset: null,
+      truncated: false,
+    });
+    readPage.mockImplementation(async (id) => ({
+      id,
+      text: 'evidence',
+      offset: 0,
+      nextOffset: null,
+      scannedBytes: 10,
+      truncated: false,
+      startedAt: 'a',
+      endedAt: 'b',
+    }));
+    await execute('searchEpisodes', { query: 'fix', offset: 0 });
+    for (let index = 0; index < 6; index++)
+      expect(
+        await execute('readEpisode', {
+          id: `extra-${index}`,
+          offset: 0,
+          limit: 100,
+        }),
+      ).toMatchObject({ status: 'ok' });
+    expect(readPage).toHaveBeenCalledTimes(6);
+    expect(investigation.evidence.size).toBe(7);
+    expect(
+      await execute('readEpisode', { id: 'seventh', offset: 0, limit: 100 }),
+    ).toEqual({ status: 'budget-exhausted' });
+  });
+
   it('does not expose evidence after cancellation or invoke more I/O', async () => {
     const { controller, execute, readPage, investigation } = fixture();
     readPage.mockImplementationOnce(async () => {

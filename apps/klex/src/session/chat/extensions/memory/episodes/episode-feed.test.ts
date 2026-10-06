@@ -87,6 +87,63 @@ describe('episode feed', () => {
     expect(search.scannedBytes).toBeLessThanOrEqual(100_000);
   });
 
+  it('reads actual EOF within the tail scan budget and drops a partial leading record', async () => {
+    const id = '2026-10-06/1-12-00.jsonl';
+    const { feed } = attached(
+      await episodicDir({
+        [id]: `${file('old '.repeat(1_000))}${file('latest verified outcome '.repeat(20))}`,
+      }),
+    );
+    const page = await feed.readPage(id, {
+      offset: 0,
+      limit: 1_000,
+      maxBytes: 1_000,
+      tail: true,
+    });
+    expect(page?.text).toContain('latest verified outcome');
+    expect(page?.text).not.toContain('old ');
+    expect(page).toMatchObject({
+      scannedBytes: 1_000,
+      truncated: true,
+      nextOffset: null,
+    });
+  });
+
+  it('reports unvisited episodes as a partial search even when the byte budget remains', async () => {
+    const { feed } = attached(
+      await episodicDir({
+        '2026-10-06/1-12-00.jsonl': file('older outcome'),
+        '2026-10-06/2-12-00.jsonl': file('newer outcome'),
+      }),
+    );
+    const first = await feed.search('outcome', {
+      offset: 0,
+      maxBytes: 10_000,
+      limit: 1,
+    });
+    expect(first).toMatchObject({ truncated: true, nextOffset: 1 });
+    expect(first.scannedBytes).toBeLessThan(10_000);
+    const last = await feed.search('outcome', {
+      offset: 1,
+      maxBytes: 10_000,
+      limit: 1,
+    });
+    expect(last).toMatchObject({ truncated: false, nextOffset: null });
+  });
+
+  it('returns no neighbors for zero, negative or non-finite counts', async () => {
+    const id = '2026-10-06/2-12-00.jsonl';
+    const { feed } = attached(
+      await episodicDir({
+        '2026-10-06/1-12-00.jsonl': file('before'),
+        [id]: file('current'),
+        '2026-10-06/3-12-00.jsonl': file('after'),
+      }),
+    );
+    for (const count of [0, -1, Number.NaN, Number.POSITIVE_INFINITY])
+      expect(await feed.listNeighbors(id, count)).toEqual([]);
+  });
+
   it('refuses symlinked files and date directories and never returns active pages', async () => {
     const id = '2026-10-06/1-12-00.jsonl';
     const outside = await episodicDir({ [id]: file('secret') });

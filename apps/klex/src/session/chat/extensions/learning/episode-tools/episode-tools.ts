@@ -102,8 +102,8 @@ class EpisodeInvestigationModule implements EpisodeInvestigation {
               );
             if (this.signal.aborted) return { status: 'cancelled' };
             for (const match of result.matches) {
+              if (!this.evidence.has(match.id)) this.reservedIds.add(match.id);
               this.evidence.add(match.id);
-              this.reservedIds.add(match.id);
             }
             return { status: 'ok', ...result };
           } finally {

@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createEpisodeFeed } from './episode-feed';
 import type { EpisodeStoreState } from './episode-files';
-import { episodeFile, HEADER_LINE, output } from './test-utils';
+import { episodeFile, HEADER_LINE, output, recordLine } from './test-utils';
 
 const directories: string[] = [];
 
@@ -104,6 +104,61 @@ describe('episode feed', () => {
     expect(page?.text).not.toContain('old ');
     expect(page).toMatchObject({
       scannedBytes: 1_000,
+      truncated: true,
+      nextOffset: null,
+    });
+  });
+
+  it.each([true, false])(
+    'preserves a complete record at the exact tail boundary, trailing newline: %s',
+    async (trailingNewline) => {
+      const id = '2026-10-06/1-12-00.jsonl';
+      const serialized = recordLine(
+        output('latest verified outcome 🧠 '.repeat(20)),
+        at,
+      );
+      const tail = trailingNewline ? serialized : serialized.slice(0, -1);
+      const maxBytes = Buffer.byteLength(tail);
+      const { feed } = attached(
+        await episodicDir({ [id]: `${file('older evidence')}${tail}` }),
+      );
+      const page = await feed.readPage(id, {
+        offset: 0,
+        limit: 1_000,
+        maxBytes,
+        tail: true,
+      });
+      expect(page?.text).toContain('latest verified outcome 🧠');
+      expect(page?.text).not.toContain('older evidence');
+      expect(page).toMatchObject({
+        startedAt: at,
+        endedAt: at,
+        scannedBytes: maxBytes,
+        truncated: true,
+        nextOffset: null,
+      });
+    },
+  );
+
+  it('preserves a complete record exactly filling the two-megabyte tail budget', async () => {
+    const id = '2026-10-06/1-12-00.jsonl';
+    const text = 'verified resolution';
+    const maxBytes = 2_000_000;
+    const padding = maxBytes - Buffer.byteLength(recordLine(output(text), at));
+    const tail = recordLine(output(`${'x'.repeat(padding)}${text}`), at);
+    expect(Buffer.byteLength(tail)).toBe(maxBytes);
+    const { feed } = attached(
+      await episodicDir({ [id]: `${file('older evidence')}${tail}` }),
+    );
+    const page = await feed.readPage(id, {
+      offset: 0,
+      limit: 1_000,
+      maxBytes,
+      tail: true,
+    });
+    expect(page?.text.endsWith(text)).toBe(true);
+    expect(page).toMatchObject({
+      scannedBytes: maxBytes,
       truncated: true,
       nextOffset: null,
     });

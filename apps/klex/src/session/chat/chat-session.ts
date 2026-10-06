@@ -225,6 +225,10 @@ class ChatSessionModule implements AgentSession {
   private readonly childSessions = new Set<ChildSessionHandle>();
   /** Child sessions still in `start()`; they count as busy. */
   private pendingChildStarts = 0;
+  /** True once close() cleanup (extensions, transcript) has completed. */
+  private closeSettled = false;
+  /** True once a self-termination has finished its onTerminated hook. */
+  private terminationSettled = false;
   private readonly idleWaiters = new Set<{
     resolve: (idle: boolean) => void;
     timer: NodeJS.Timeout;
@@ -1531,9 +1535,18 @@ class ChatSessionModule implements AgentSession {
   }
 
   public isQuiescent(): boolean {
-    if (this._status === 'terminated') return true;
+    if (this._status === 'terminated') {
+      // Terminated is not finished: extension cleanup, transcript
+      // persistence and the replacement hook still run asynchronously.
+      return (
+        this.closeSettled && (!this.selfTerminating || this.terminationSettled)
+      );
+    }
     for (const child of this.childSessions) {
-      if (child.getSessionInfo().status === 'terminated') {
+      if (
+        child.getSessionInfo().status === 'terminated' &&
+        child.isQuiescent()
+      ) {
         this.childSessions.delete(child);
       }
     }
@@ -1634,6 +1647,7 @@ class ChatSessionModule implements AgentSession {
           this.deps.telemetryMetrics?.unregisterSession(this.sessionId);
           this.analyticsSession?.close();
           this.deps.introspectionScope.removeChild(this.sessionId);
+          this.closeSettled = true;
 
           this.deps.logger.info(
             {
@@ -1718,6 +1732,8 @@ class ChatSessionModule implements AgentSession {
         { sessionId: this.sessionId, error },
         'Session host replacement failed after self-termination',
       );
+    } finally {
+      this.terminationSettled = true;
     }
   }
 

@@ -482,6 +482,7 @@ class McpModule implements Mcp {
               { error, namespace },
               'Push Notification recovery after acknowledgement failed',
             );
+            this.retryRecoveryLater(worker, 1);
           });
         }
       });
@@ -491,8 +492,12 @@ class McpModule implements Mcp {
     await Promise.all(flushes);
   }
 
-  /** Re-runs recovery on the worker queue, serialized with ingestion. */
-  private scheduleRecovery(worker: PushNotificationWorker): void {
+  /**
+   * Re-runs recovery on the worker queue, serialized with ingestion. A
+   * failed run retries with backoff: events left pending during a listener
+   * gap have no delivered id, so no ACK flush would re-drive them.
+   */
+  private scheduleRecovery(worker: PushNotificationWorker, attempt = 0): void {
     // Before the initial recovery, the worker loop recovers on its own.
     if (!worker.recovered) return;
     worker.queue = worker.queue.then(async () => {
@@ -505,11 +510,31 @@ class McpModule implements Mcp {
       }
       await this.recoverEvents(worker).catch((error: unknown) => {
         this.deps.logger.warn(
-          { error, namespace: worker.connection.namespace },
-          'Push Notification recovery after listener registration failed',
+          { error, namespace: worker.connection.namespace, attempt },
+          'Push Notification recovery failed; retrying',
         );
+        this.retryRecoveryLater(worker, attempt + 1);
       });
     });
+  }
+
+  /** Schedules a recovery retry off the queue so ingestion is not blocked. */
+  private retryRecoveryLater(
+    worker: PushNotificationWorker,
+    attempt: number,
+  ): void {
+    // The failed page may have stopped mid-way; keep recovery armed.
+    worker.recoveryBlocked = true;
+    void abortableDelay(
+      Math.min(RETRY_INITIAL_MS * 2 ** (attempt - 1), RETRY_MAX_MS),
+      worker.controller.signal,
+    )
+      .then(() => {
+        if (this.isCurrentWorker(worker)) {
+          this.scheduleRecovery(worker, attempt);
+        }
+      })
+      .catch(() => undefined);
   }
 
   pausePushDelivery(): void {

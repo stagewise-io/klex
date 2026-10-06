@@ -450,6 +450,36 @@ describe('MCP Push Notification worker', () => {
     await mcp.close();
   });
 
+  it('retries listener-triggered recovery after a transient failure', async () => {
+    const { server, pending, getEvents } = pendingQueueServer([
+      pushNotification,
+    ]);
+    const { mcp } = setup(
+      { chat: { url: 'https://chat.example/mcp' } },
+      async () => server,
+    );
+
+    // Listener gap: the event stays pending with no delivered id to flush.
+    await mcp.start();
+    await vi.waitFor(() => expect(getEvents).toHaveBeenCalledOnce());
+    expect(pending).toHaveLength(1);
+
+    getEvents.mockRejectedValueOnce(new Error('transient'));
+    const listener = vi.fn();
+    mcp.onPushNotification(listener);
+    await vi.waitFor(() => expect(getEvents).toHaveBeenCalledTimes(2));
+    expect(listener).not.toHaveBeenCalled();
+
+    // The retry runs after the first backoff step without another trigger.
+    await vi.waitFor(() => expect(listener).toHaveBeenCalledOnce(), {
+      timeout: 3_000,
+    });
+    expect(getEvents).toHaveBeenCalledTimes(3);
+    await mcp.acknowledgeDeliveredEvents();
+    expect(pending).toHaveLength(0);
+    await mcp.close();
+  });
+
   it('redelivers to a listener that registers while initial recovery is running', async () => {
     const first = numberedEvent(1);
     const skipped = numberedEvent(2);

@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -66,6 +66,8 @@ function fakeFeed(
         .slice(0, limit)
         .map(ref),
     listLatestCompleted: async (latest) => ids.slice(-latest).map(ref),
+    // Ids are zero-padded here, so string order is episode order.
+    compareIds: (left, right) => (left < right ? -1 : left > right ? 1 : 0),
     read: async (id): Promise<CompletedEpisode | null> => {
       reads.push(id);
       const index = ids.indexOf(id);
@@ -125,7 +127,7 @@ async function harness(feed: EpisodeFeed) {
     logger,
     now: () => Date.parse('2026-10-02T00:00:00.000Z'),
   });
-  return { worker, store, state, generateText };
+  return { worker, store, state, generateText, dataDir };
 }
 
 describe('learning worker', () => {
@@ -192,7 +194,8 @@ describe('learning worker', () => {
     await state.update((draft) => {
       draft.cursor = episodeId(0);
       draft.changedRunsSinceConsolidation = CONSOLIDATE_AFTER_CHANGED_RUNS;
-      draft.skills['keep-me'] = usage([episodeId(0)]);
+      // The survivor's source is newer, so plain concatenation is out of order.
+      draft.skills['keep-me'] = usage([episodeId(2)]);
       draft.skills['drop-me'] = usage([episodeId(1)]);
     });
     generateText.mockResolvedValueOnce(
@@ -214,9 +217,77 @@ describe('learning worker', () => {
 
     await worker.runOnce();
     expect(state.get().skills['keep-me']?.sourceEpisodes).toEqual([
-      episodeId(0),
       episodeId(1),
+      episodeId(2),
     ]);
+  });
+
+  it('retries a failed first episode after the backfill window grows', async () => {
+    const full = fakeFeed(INITIAL_BACKFILL_EPISODES + 5);
+    let visible = INITIAL_BACKFILL_EPISODES;
+    const shown = async (after: string | null) =>
+      (await full.listCompleted(after, Number.POSITIVE_INFINITY)).filter(
+        (ref) => ref.index < visible,
+      );
+    const feed: EpisodeFeed = {
+      ...full,
+      listCompleted: async (after, limit) =>
+        (await shown(after)).slice(0, limit),
+      listLatestCompleted: async (count) => (await shown(null)).slice(-count),
+    };
+    const { worker, state, generateText } = await harness(feed);
+    generateText.mockResolvedValueOnce(failed('provider down'));
+
+    expect(await worker.runOnce()).toBe('retry-later');
+    expect(state.get().cursor).toBeNull();
+
+    visible = INITIAL_BACKFILL_EPISODES + 5;
+    expect(await worker.runOnce()).toBe('processed');
+    expect(full.reads.slice(0, 2)).toEqual([episodeId(0), episodeId(0)]);
+  });
+
+  it('restores skill state when the skill file write fails', async () => {
+    const { worker, store, state, generateText, dataDir } = await harness(
+      fakeFeed(1),
+    );
+    await store.write({
+      name: 'ask-first',
+      description: 'Use when ask-first.',
+      body: 'Old.',
+    });
+    const before = {
+      createdAt: '2026-10-01T00:00:00.000Z',
+      updatedAt: '2026-10-01T00:00:00.000Z',
+      lastReadAt: null,
+      readCount: 0,
+      sourceEpisodes: [],
+    };
+    await state.update((draft) => {
+      draft.skills['ask-first'] = before;
+    });
+    // A symlinked folder makes the store reject the write.
+    const folder = join(dataDir, 'skills', 'ask-first');
+    await rm(folder, { recursive: true });
+    await symlink(dataDir, folder);
+    generateText.mockResolvedValueOnce(
+      ok(
+        JSON.stringify({
+          operations: [
+            {
+              op: 'update',
+              name: 'ask-first',
+              description: 'Use when ask-first.',
+              body: 'New.',
+              reason: 'lesson',
+            },
+          ],
+        }),
+      ),
+    );
+
+    expect(await worker.runOnce()).toBe('retry-later');
+    expect(state.get().skills['ask-first']).toEqual(before);
+    expect(state.get().episodeFailures[episodeId(0)]).toBe(1);
   });
 
   it('skips short episodes without a model call', async () => {

@@ -29,13 +29,14 @@ export function validateSkill(skill: LearnedSkill): string | null {
 }
 
 /**
- * Serializes an Agent Skills `SKILL.md`. The description is a JSON string,
- * which is valid YAML double-quoted syntax, so no YAML library is needed.
+ * Serializes an Agent Skills `SKILL.md`. Name and description are JSON
+ * strings, which is valid YAML double-quoted syntax, so no YAML library is
+ * needed and names like `true` or `123` stay strings.
  */
 export function serializeSkill(skill: LearnedSkill): string {
   return [
     '---',
-    `name: ${skill.name}`,
+    `name: ${JSON.stringify(skill.name)}`,
     `description: ${JSON.stringify(skill.description.trim())}`,
     '---',
     '',

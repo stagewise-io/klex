@@ -1,4 +1,6 @@
+import { randomUUID } from 'node:crypto';
 import {
+  lstat,
   mkdir,
   readdir,
   readFile,
@@ -77,11 +79,29 @@ class SkillStoreModule implements SkillStore {
     if (problem) throw new Error(`Invalid skill: ${problem}`);
     const directory = this.skillDirectory(normalized.name);
     await this.serialize(async () => {
-      await mkdir(directory, { recursive: true });
+      await mkdir(this.root, { recursive: true });
+      // Non-recursive, so an existing (even dangling) symlink is not followed.
+      await mkdir(directory).catch((error: NodeJS.ErrnoException) => {
+        if (error.code !== 'EEXIST') throw error;
+      });
+      // A symlinked skill folder would redirect the write outside the root.
+      if (!(await lstat(directory)).isDirectory()) {
+        throw new Error(
+          `Skill folder is not a plain directory: "${normalized.name}"`,
+        );
+      }
       const path = join(directory, SKILL_FILE);
-      const temporary = `${path}.tmp`;
-      await writeFile(temporary, serializeSkill(normalized), 'utf-8');
-      await rename(temporary, path);
+      const temporary = `${path}.${randomUUID()}.tmp`;
+      await writeFile(temporary, serializeSkill(normalized), {
+        encoding: 'utf-8',
+        flag: 'wx',
+      });
+      try {
+        await rename(temporary, path);
+      } catch (error) {
+        await rm(temporary, { force: true });
+        throw error;
+      }
       this.skills.set(normalized.name, normalized);
     });
   }

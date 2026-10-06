@@ -225,7 +225,7 @@ describe('learning fixtures', () => {
       'utf8',
     );
     expect(content).toBe(
-      '---\nname: ask-before-core-contract-changes\n' +
+      '---\nname: "ask-before-core-contract-changes"\n' +
         'description: "Use before changing a core contract."\n---\n\nAsk first.\n',
     );
   });

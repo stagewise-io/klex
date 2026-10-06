@@ -15,9 +15,9 @@ describe('SKILL.md format', () => {
       body: '# Steps\n\n1. Ask.\n2. Wait for approval.\n\n---\nnot frontmatter',
     };
     const content = serializeSkill(skill);
-    expect(content.startsWith('---\nname: ask-before-contract-changes\n')).toBe(
-      true,
-    );
+    expect(
+      content.startsWith('---\nname: "ask-before-contract-changes"\n'),
+    ).toBe(true);
     expect(parseSkill(content)).toEqual(skill);
   });
 

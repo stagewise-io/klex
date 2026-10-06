@@ -97,16 +97,20 @@ describe('learning prompts', () => {
     expect(list).toBe('## Learned skills\n\n- b: When x.\n- a: When x.');
 
     const long = 'd'.repeat(290);
+    // Equal-length names, so every entry has the same size.
     const many = Array.from({ length: 40 }, (_, index) =>
-      skill(`s-${index}`, long),
+      skill(`s-${index + 10}`, long),
     );
     const capped = renderSkillList(many, {});
     const kept = Math.floor(
       MAX_PROMPT_LIST_CHARACTERS / (`- s-10: ${long}`.length + 1),
     );
-    expect(capped).toMatch(/- … \d+ more \(use readSkill by name\)$/);
     expect(
       capped.split('\n').filter((line) => line.startsWith('- s-')).length,
-    ).toBeLessThanOrEqual(kept + 1);
+    ).toBe(kept);
+    const omitted = many.slice(kept).map((entry) => entry.name);
+    expect(capped.split('\n').at(-1)).toBe(
+      `- More skills (read one to see when it applies): ${omitted.join(', ')}`,
+    );
   });
 });

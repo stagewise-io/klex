@@ -130,7 +130,8 @@ function recency(usage: PromptSkillUsage | undefined): number {
 
 /**
  * The main-session skill list: intro, then `- name: description`, most
- * recently used first, capped at `MAX_PROMPT_LIST_CHARACTERS`.
+ * recently used first, capped at `MAX_PROMPT_LIST_CHARACTERS`. Skills past
+ * the cap are still listed by name so the agent can read them.
  */
 export function renderSkillList(
   skills: readonly LearnedSkill[],
@@ -143,15 +144,24 @@ export function renderSkillList(
       left.name.localeCompare(right.name),
   );
   const lines: string[] = [];
+  const overflow: string[] = [];
   let length = 0;
-  for (const [index, skill] of ordered.entries()) {
+  for (const skill of ordered) {
     const line = `- ${skill.name}: ${skill.description.replace(/\s+/g, ' ')}`;
-    if (length + line.length + 1 > MAX_PROMPT_LIST_CHARACTERS) {
-      lines.push(`- … ${ordered.length - index} more (use readSkill by name)`);
-      break;
+    if (
+      overflow.length === 0 &&
+      length + line.length + 1 <= MAX_PROMPT_LIST_CHARACTERS
+    ) {
+      lines.push(line);
+      length += line.length + 1;
+    } else {
+      overflow.push(skill.name);
     }
-    lines.push(line);
-    length += line.length + 1;
+  }
+  if (overflow.length > 0) {
+    lines.push(
+      `- More skills (read one to see when it applies): ${overflow.join(', ')}`,
+    );
   }
   return `${systemPromptPart.trimEnd()}\n\n${lines.join('\n')}`;
 }

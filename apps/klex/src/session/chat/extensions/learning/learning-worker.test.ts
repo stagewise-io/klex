@@ -162,6 +162,63 @@ describe('learning worker', () => {
     expect(current.changedRunsSinceConsolidation).toBe(1);
   });
 
+  it('pins the backfill window when the first episode fails', async () => {
+    const total = INITIAL_BACKFILL_EPISODES + 5;
+    const { worker, state, generateText } = await harness(fakeFeed(total));
+    generateText.mockResolvedValueOnce(failed('provider down'));
+
+    expect(await worker.runOnce()).toBe('retry-later');
+    expect(state.get().cursor).toBe(
+      episodeId(total - INITIAL_BACKFILL_EPISODES - 1),
+    );
+  });
+
+  it('carries provenance of merged skills over to the survivor', async () => {
+    const { worker, store, state, generateText } = await harness(fakeFeed(0));
+    for (const name of ['keep-me', 'drop-me']) {
+      await store.write({
+        name,
+        description: `Use when ${name}.`,
+        body: 'Body.',
+      });
+    }
+    const usage = (sourceEpisodes: string[]) => ({
+      createdAt: '2026-10-01T00:00:00.000Z',
+      updatedAt: '2026-10-01T00:00:00.000Z',
+      lastReadAt: null,
+      readCount: 0,
+      sourceEpisodes,
+    });
+    await state.update((draft) => {
+      draft.cursor = episodeId(0);
+      draft.changedRunsSinceConsolidation = CONSOLIDATE_AFTER_CHANGED_RUNS;
+      draft.skills['keep-me'] = usage([episodeId(0)]);
+      draft.skills['drop-me'] = usage([episodeId(1)]);
+    });
+    generateText.mockResolvedValueOnce(
+      ok(
+        JSON.stringify({
+          operations: [
+            { op: 'delete', name: 'drop-me', reason: 'merged' },
+            {
+              op: 'update',
+              name: 'keep-me',
+              description: 'Use when keep-me.',
+              body: 'Merged.',
+              mergedFrom: ['drop-me'],
+            },
+          ],
+        }),
+      ),
+    );
+
+    await worker.runOnce();
+    expect(state.get().skills['keep-me']?.sourceEpisodes).toEqual([
+      episodeId(0),
+      episodeId(1),
+    ]);
+  });
+
   it('skips short episodes without a model call', async () => {
     const { worker, state, generateText } = await harness(
       fakeFeed(2, () => 'short'),

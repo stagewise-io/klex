@@ -6,7 +6,8 @@ its usage. Clean up the set so it stays small, clear, and consistent.
 ## Goals
 
 - Merge duplicates and overlapping skills into one. A merge is an `update`
-  of the surviving skill plus a `delete` of the others.
+  of the surviving skill that lists the others in `mergedFrom`, plus a
+  `delete` of each of them.
 - Rewrite skills whose description or body is unclear.
 - Resolve contradictions. Keep the newer lesson unless the older one has
   clearly more evidence (more reads, broader body).
@@ -31,7 +32,7 @@ Reply with one JSON object and nothing else:
 {
   "operations": [
     { "op": "create", "name": "...", "description": "...", "body": "...", "reason": "..." },
-    { "op": "update", "name": "...", "description": "...", "body": "...", "reason": "..." },
+    { "op": "update", "name": "...", "description": "...", "body": "...", "mergedFrom": ["..."], "reason": "..." },
     { "op": "delete", "name": "...", "reason": "..." }
   ]
 }

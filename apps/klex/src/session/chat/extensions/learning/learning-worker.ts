@@ -20,7 +20,11 @@ import {
   RUN_INTERVAL_MS,
   STARTUP_DELAY_MS,
 } from './learning-config';
-import type { LearningState, LearningStateData } from './learning-state';
+import type {
+  LearningState,
+  LearningStateData,
+  SkillState,
+} from './learning-state';
 import {
   parseOperations,
   type SkillOperation,
@@ -66,7 +70,7 @@ export interface LearningWorker {
   introspect(): LearningWorkerIntrospection;
 }
 
-type EpisodeOutcome = 'advanced' | 'stop';
+type EpisodeOutcome = 'changed' | 'unchanged' | 'stop';
 
 /**
  * Agent-wide background loop: reads finished episodes in order, turns
@@ -149,24 +153,49 @@ class LearningWorkerModule implements LearningWorker {
   private async runSteps(): Promise<LearningRunResult> {
     const { episodes, state } = this.options;
     if (!episodes.isAvailable()) return 'unavailable';
-    const cursor = state.get().cursor;
-    const refs = (
-      cursor === null
-        ? await episodes.listLatestCompleted(INITIAL_BACKFILL_EPISODES)
-        : await episodes.listCompleted(cursor, MAX_EPISODES_PER_RUN)
-    ).slice(0, MAX_EPISODES_PER_RUN);
+    const cursor = await this.backfillCursor();
+    const refs = await episodes.listCompleted(cursor, MAX_EPISODES_PER_RUN);
 
     let result: LearningRunResult = refs.length === 0 ? 'idle' : 'processed';
+    let changed = false;
     for (const ref of refs) {
       if (this.closed) break;
-      if ((await this.processEpisode(ref.id)) === 'stop') {
+      const outcome = await this.processEpisode(ref.id);
+      if (outcome === 'changed') changed = true;
+      if (outcome === 'stop') {
         result = 'retry-later';
         break;
       }
     }
+    // Counts runs, not episodes: consolidation is due after N changed runs.
+    if (changed) {
+      await state.update((draft) => {
+        draft.changedRunsSinceConsolidation += 1;
+      });
+    }
     if (!this.closed) await this.maybeConsolidate();
     if (!this.closed) await this.enforceCap();
     return result;
+  }
+
+  /**
+   * Without a cursor, pins the backfill window by persisting the cursor
+   * just before the newest `INITIAL_BACKFILL_EPISODES`. Later runs then
+   * continue from there instead of re-picking the newest episodes.
+   */
+  private async backfillCursor(): Promise<string | null> {
+    const { episodes, state } = this.options;
+    const cursor = state.get().cursor;
+    if (cursor !== null) return cursor;
+    const latest = await episodes.listLatestCompleted(
+      INITIAL_BACKFILL_EPISODES + 1,
+    );
+    if (latest.length <= INITIAL_BACKFILL_EPISODES) return null;
+    const start = latest[0]?.id ?? null;
+    await state.update((draft) => {
+      draft.cursor = start;
+    });
+    return start;
   }
 
   private async processEpisode(id: string): Promise<EpisodeOutcome> {
@@ -174,8 +203,8 @@ class LearningWorkerModule implements LearningWorker {
     const episode = await episodes.read(id);
     if (!episode || episode.text.length < MIN_EPISODE_CHARACTERS) {
       logger.debug({ episode: id }, 'Skipping short or empty episode');
-      await this.advance(id, false);
-      return 'advanced';
+      await this.advance(id);
+      return 'unchanged';
     }
 
     const { system, prompt } = buildExtractionPrompt({
@@ -200,13 +229,21 @@ class LearningWorkerModule implements LearningWorker {
       return this.recordFailure(id, reason);
     }
 
-    const applied = await this.apply(parsed.operations, id);
-    await this.advance(id, applied > 0);
+    let applied: number;
+    try {
+      applied = await this.apply(parsed.operations, id);
+    } catch (error) {
+      return this.recordFailure(
+        id,
+        error instanceof Error ? error.message : String(error),
+      );
+    }
+    await this.advance(id);
     logger.info(
       { episode: id, applied, dropped: parsed.dropped },
       'Learned from episode',
     );
-    return 'advanced';
+    return applied > 0 ? 'changed' : 'unchanged';
   }
 
   private async recordFailure(
@@ -229,19 +266,22 @@ class LearningWorkerModule implements LearningWorker {
       { episode: id, failures, reason },
       'Skipping episode after repeated learning failures',
     );
-    await this.advance(id, false);
-    return 'advanced';
+    await this.advance(id);
+    return 'unchanged';
   }
 
-  private async advance(id: string, changed: boolean): Promise<void> {
+  private async advance(id: string): Promise<void> {
     await this.options.state.update((draft) => {
       draft.cursor = id;
       delete draft.episodeFailures[id];
-      if (changed) draft.changedRunsSinceConsolidation += 1;
     });
   }
 
-  /** Applies validated operations; returns how many were applied. */
+  /**
+   * Applies validated operations; returns how many were applied. State is
+   * written before files: a crash in between leaves provenance for a file
+   * that the retried operation then writes, never a file without provenance.
+   */
   private async apply(
     operations: readonly SkillOperation[],
     sourceEpisode: string | null,
@@ -257,14 +297,22 @@ class LearningWorkerModule implements LearningWorker {
         'Rejected skill operation',
       );
     }
+    // Merged skills may be deleted before the survivor's update runs.
+    const before = state.get().skills;
     let applied = 0;
     for (const operation of accepted) {
-      if (operation.op === 'delete') await store.delete(operation.name);
-      else await store.write(toSkill(operation));
       const at = new Date(this.now()).toISOString();
-      await state.update((draft) =>
-        recordOperation(draft, operation, at, sourceEpisode),
-      );
+      if (operation.op === 'delete') {
+        await store.delete(operation.name);
+        await state.update((draft) =>
+          recordOperation(draft, operation, at, sourceEpisode, before),
+        );
+      } else {
+        await state.update((draft) =>
+          recordOperation(draft, operation, at, sourceEpisode, before),
+        );
+        await store.write(toSkill(operation));
+      }
       logger.info(
         { op: operation.op, skill: operation.name, episode: sourceEpisode },
         'Applied skill operation',
@@ -356,6 +404,7 @@ function recordOperation(
   operation: SkillOperation,
   at: string,
   sourceEpisode: string | null,
+  before: Readonly<Record<string, SkillState>>,
 ): void {
   if (operation.op === 'delete') {
     delete draft.skills[operation.name];
@@ -363,11 +412,18 @@ function recordOperation(
   }
   const existing =
     operation.op === 'update' ? draft.skills[operation.name] : undefined;
-  const sources = existing?.sourceEpisodes ?? [];
-  const nextSources =
-    sourceEpisode && !sources.includes(sourceEpisode)
-      ? [...sources, sourceEpisode].slice(-MAX_SOURCE_EPISODES)
-      : sources;
+  const merged =
+    operation.op === 'update'
+      ? (operation.mergedFrom ?? []).flatMap(
+          (name) => before[name]?.sourceEpisodes ?? [],
+        )
+      : [];
+  const candidates = [
+    ...(existing?.sourceEpisodes ?? []),
+    ...merged,
+    ...(sourceEpisode ? [sourceEpisode] : []),
+  ];
+  const nextSources = [...new Set(candidates)].slice(-MAX_SOURCE_EPISODES);
   draft.skills[operation.name] = {
     ...existing,
     createdAt: existing?.createdAt ?? at,

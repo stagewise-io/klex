@@ -88,7 +88,7 @@ async function harness() {
   }
 
   const episodes = createEpisodeFeed();
-  episodes.attach({ episodicDir, getOpenEpisode: () => null });
+  episodes.attach({ episodicDir, getOpenEpisode: async () => null });
 
   const logger = {
     debug: vi.fn(),

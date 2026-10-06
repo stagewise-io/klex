@@ -11,7 +11,12 @@ const writeOperationFields = {
 
 const operationSchema = z.discriminatedUnion('op', [
   z.object({ op: z.literal('create'), ...writeOperationFields }),
-  z.object({ op: z.literal('update'), ...writeOperationFields }),
+  z.object({
+    op: z.literal('update'),
+    ...writeOperationFields,
+    /** Skills folded into this one; their provenance carries over. */
+    mergedFrom: z.array(z.string()).optional(),
+  }),
   z.object({
     op: z.literal('delete'),
     name: z.string(),

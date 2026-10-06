@@ -43,7 +43,7 @@ function attached(dir: string, openId: string | null = null) {
     : null;
   const detach = feed.attach({
     episodicDir: dir,
-    getOpenEpisode: () => open,
+    getOpenEpisode: async () => open,
   });
   return { feed, detach };
 }
@@ -80,6 +80,7 @@ describe('episode feed', () => {
     expect((await feed.listCompleted(null, 10)).map((ref) => ref.id)).toEqual([
       '2026-10-06/1-00-10.jsonl',
     ]);
+    expect(await feed.read('2026-10-06/2-00-20.jsonl')).toBeNull();
   });
 
   it('reads an episode and skips a truncated tail', async () => {
@@ -113,7 +114,7 @@ describe('episode feed', () => {
     const { feed, detach } = attached(dir);
     expect(feed.isAvailable()).toBe(true);
     expect(() =>
-      feed.attach({ episodicDir: dir, getOpenEpisode: () => null }),
+      feed.attach({ episodicDir: dir, getOpenEpisode: async () => null }),
     ).toThrow();
     detach();
     expect(feed.isAvailable()).toBe(false);

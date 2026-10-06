@@ -38,16 +38,75 @@ const learningStatePayloadSchema = z
   })
   .passthrough();
 
+const activity = z.number().int().nonnegative();
+const deferredSchema = z
+  .object({ id: z.string(), after: z.string(), attempts: activity })
+  .passthrough();
+const activitySkillSchema = skillStateSchema.extend({
+  createdEpisode: activity,
+  updatedEpisode: activity,
+  lastReadEpisode: activity.nullable(),
+});
+const activityStateSchema = learningStatePayloadSchema.extend({
+  processedEpisodeCount: activity,
+  pendingChangeWeight: activity,
+  lastConsolidationEpisode: activity,
+  lastConsolidationSkillCount: activity,
+  consolidationFailures: activity,
+  nextConsolidationEpisode: activity.nullable(),
+  deferred: z.array(deferredSchema).max(20),
+  skills: z.record(z.string(), activitySkillSchema),
+});
+
+function activityDefaults() {
+  return {
+    processedEpisodeCount: 0,
+    pendingChangeWeight: 0,
+    lastConsolidationEpisode: 0,
+    lastConsolidationSkillCount: 0,
+    consolidationFailures: 0,
+    nextConsolidationEpisode: null,
+    deferred: [],
+  };
+}
+
 export const LEARNING_STATE_STORE_DEFINITION: JsonStoreDefinition = {
   kind: 'json',
   id: 'learning-extension-state',
   relativePath: 'extensions/io.stagewise/learning/state.json',
   required: false,
-  schemaVersion: 1,
+  schemaVersion: 2,
   compatibilityVersion: 1,
   minimumKlexVersion: '0.14.0',
-  versions: [{ version: 1, schema: learningStatePayloadSchema }],
-  migrations: [],
+  versions: [
+    { version: 1, schema: learningStatePayloadSchema },
+    { version: 2, schema: activityStateSchema },
+  ],
+  migrations: [
+    {
+      from: 1,
+      to: 2,
+      name: 'episode-activity',
+      up: (value) => {
+        const old = learningStatePayloadSchema.parse(value);
+        return {
+          ...old,
+          ...activityDefaults(),
+          skills: Object.fromEntries(
+            Object.entries(old.skills).map(([name, skill]) => [
+              name,
+              {
+                ...skill,
+                createdEpisode: 0,
+                updatedEpisode: 0,
+                lastReadEpisode: null,
+              },
+            ]),
+          ),
+        };
+      },
+    },
+  ],
 };
 
 export interface SkillState {
@@ -56,6 +115,9 @@ export interface SkillState {
   lastReadAt: string | null;
   readCount: number;
   sourceEpisodes: string[];
+  createdEpisode?: number;
+  updatedEpisode?: number;
+  lastReadEpisode?: number | null;
   [key: string]: unknown;
 }
 
@@ -67,6 +129,18 @@ export interface LearningStateData {
   changedRunsSinceConsolidation: number;
   lastConsolidationAt: string | null;
   skills: Record<string, SkillState>;
+  processedEpisodeCount: number;
+  pendingChangeWeight: number;
+  lastConsolidationEpisode: number;
+  lastConsolidationSkillCount: number;
+  consolidationFailures: number;
+  nextConsolidationEpisode: number | null;
+  deferred: {
+    id: string;
+    after: string;
+    attempts: number;
+    [key: string]: unknown;
+  }[];
 }
 
 export interface LearningState {
@@ -80,6 +154,7 @@ export interface LearningState {
 
 function emptyState(): LearningStateData {
   return {
+    ...activityDefaults(),
     cursor: null,
     episodeFailures: {},
     changedRunsSinceConsolidation: 0,
@@ -118,6 +193,11 @@ class LearningStateModule implements LearningState {
     const operation = this.updateWork.then(async () => {
       const next = this.get();
       mutate(next);
+      for (const entry of Object.values(next.skills)) {
+        entry.createdEpisode ??= next.processedEpisodeCount;
+        entry.updatedEpisode ??= next.processedEpisodeCount;
+        entry.lastReadEpisode ??= null;
+      }
       this.metadata = await writeJsonStoreDocument(
         join(this.dataDirectory, STATE_FILE),
         LEARNING_STATE_STORE_DEFINITION,
@@ -146,6 +226,13 @@ class LearningStateModule implements LearningState {
       changedRunsSinceConsolidation,
       lastConsolidationAt,
       skills,
+      processedEpisodeCount,
+      pendingChangeWeight,
+      lastConsolidationEpisode,
+      lastConsolidationSkillCount,
+      consolidationFailures,
+      nextConsolidationEpisode,
+      deferred,
       ...unknownFields
     } = document.payload as LearningStateData & Record<string, unknown>;
     this.state = {
@@ -154,6 +241,13 @@ class LearningStateModule implements LearningState {
       changedRunsSinceConsolidation,
       lastConsolidationAt,
       skills,
+      processedEpisodeCount,
+      pendingChangeWeight,
+      lastConsolidationEpisode,
+      lastConsolidationSkillCount,
+      consolidationFailures,
+      nextConsolidationEpisode,
+      deferred,
     };
     this.unknownFields = unknownFields;
     this.metadata = document.metadata;

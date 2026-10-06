@@ -7,6 +7,7 @@ const writeOperationFields = {
   description: z.string(),
   body: z.string(),
   reason: z.string().optional().default(''),
+  evidenceEpisodes: z.array(z.string().max(200)).max(6).optional(),
 };
 
 const operationSchema = z.discriminatedUnion('op', [
@@ -24,7 +25,12 @@ const operationSchema = z.discriminatedUnion('op', [
   }),
 ]);
 
-const responseSchema = z.object({ operations: z.array(z.unknown()) });
+const responseSchema = z
+  .object({
+    operations: z.array(z.unknown()),
+    deferred: z.boolean().optional(),
+  })
+  .refine((value) => !value.deferred || value.operations.length === 0);
 
 export type SkillOperation = z.infer<typeof operationSchema>;
 export type WriteOperation = Extract<
@@ -33,7 +39,12 @@ export type WriteOperation = Extract<
 >;
 
 export type ParseOperationsResult =
-  | { ok: true; operations: SkillOperation[]; dropped: number }
+  | {
+      ok: true;
+      operations: SkillOperation[];
+      dropped: number;
+      deferred?: boolean;
+    }
   | { ok: false; error: string };
 
 const FENCE = /^```(?:json)?\s*\n([\s\S]*?)\n?```\s*$/i;
@@ -45,7 +56,7 @@ const FENCE = /^```(?:json)?\s*\n([\s\S]*?)\n?```\s*$/i;
  */
 export function parseOperations(
   text: string,
-  options: { allowDelete: boolean },
+  options: { allowDelete: boolean; evidence?: ReadonlySet<string> },
 ): ParseOperationsResult {
   const trimmed = text.trim();
   const json = FENCE.exec(trimmed)?.[1] ?? trimmed;
@@ -64,14 +75,25 @@ export function parseOperations(
     const operation = operationSchema.safeParse(candidate);
     if (
       !operation.success ||
-      (operation.data.op === 'delete' && !options.allowDelete)
+      (operation.data.op === 'delete' && !options.allowDelete) ||
+      (operation.success &&
+        operation.data.op !== 'delete' &&
+        options.evidence !== undefined &&
+        (operation.data.evidenceEpisodes ?? []).some(
+          (id) => !options.evidence?.has(id),
+        ))
     ) {
       dropped += 1;
       continue;
     }
     operations.push(operation.data);
   }
-  return { ok: true, operations, dropped };
+  return {
+    ok: true,
+    operations,
+    dropped,
+    ...(response.data.deferred ? { deferred: true } : {}),
+  };
 }
 
 export interface RejectedOperation {

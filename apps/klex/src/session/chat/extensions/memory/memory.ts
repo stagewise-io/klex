@@ -60,6 +60,9 @@ class MemoryExt implements Extension {
       episodicDir,
       getLimits,
       logger: this.deps.logger,
+      onCompleted: () => {
+        if (this.detachEpisodeFeed) this.options.episodeFeed?.notifyChanged();
+      },
     });
     if (this.options.episodeFeed) {
       try {
@@ -96,6 +99,7 @@ class MemoryExt implements Extension {
       void this.serialize(async () => {
         if (this.closed || this.stepActive) return;
         await this.recorder?.flush();
+        if (!this.stepActive) await this.recorder?.store.closeIdle();
       });
     }, EPISODE_FLUSH_INTERVAL_MS);
     this.flushTimer.unref();

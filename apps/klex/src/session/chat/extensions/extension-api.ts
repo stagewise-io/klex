@@ -201,6 +201,10 @@ export interface GenerateTextArgs {
   maxOutputTokens?: number;
   /** Max retries per model (default 0 — the fallback list handles retries). */
   maxRetries?: number;
+  /** Opt-in multi-step generation. Last step disables tools to reserve an answer. */
+  maxSteps?: number;
+  /** Cancels generation and prevents further fallback model attempts. */
+  abortSignal?: AbortSignal;
 }
 
 /**
@@ -228,7 +232,8 @@ export type GenerateTextFailureReason =
   /** The model returned a content-filter finish reason. */
   | 'content-filter'
   /** Catch-all for unexpected failures. */
-  | 'other';
+  | 'other'
+  | 'cancelled';
 
 /**
  * Failed generation result — all models in the fallback list failed.

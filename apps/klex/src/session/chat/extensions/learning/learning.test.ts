@@ -19,6 +19,15 @@ vi.mock('./system-prompt-part.md', () => ({ default: '## Learned skills\n' }));
 function createEpisodeFeed(): EpisodeFeed {
   return {
     isAvailable: () => false,
+    subscribe: () => () => undefined,
+    listNeighbors: async () => [],
+    readPage: async () => null,
+    search: async () => ({
+      matches: [],
+      nextOffset: null,
+      scannedBytes: 0,
+      truncated: false,
+    }),
     listCompleted: async () => [],
     listLatestCompleted: async () => [],
     read: async () => null,

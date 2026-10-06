@@ -138,6 +138,7 @@ class LearningExtension implements Extension {
         draft.skills[name] = entry;
         entry.lastReadAt = at;
         entry.readCount += 1;
+        entry.lastReadEpisode = draft.processedEpisodeCount;
       })
       .catch((error: unknown) =>
         this.deps.logger.debug(

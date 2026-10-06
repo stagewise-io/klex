@@ -40,10 +40,12 @@ async function harness(overrides: Partial<EpisodeRotationConfig> = {}) {
     ...overrides,
   };
   const logger = { warn: vi.fn() } as unknown as ModuleLogger;
+  const onCompleted = vi.fn();
   const store = new EpisodeStore({
     episodicDir: root,
     getLimits: () => limits,
     logger,
+    onCompleted,
   });
   const files = async (date = '2026-01-02'): Promise<string[]> => {
     try {
@@ -54,7 +56,7 @@ async function harness(overrides: Partial<EpisodeRotationConfig> = {}) {
   };
   const content = (file: string, date = '2026-01-02') =>
     readFile(join(root, date, file), 'utf-8');
-  return { root, limits, store, files, content };
+  return { root, limits, store, files, content, onCompleted };
 }
 
 function byIndex(left: string, right: string): number {
@@ -66,6 +68,33 @@ function iso(time: number): string {
 }
 
 describe('EpisodeStore', () => {
+  it('notifies for every successful rotation and closes idle episodes only once', async () => {
+    const { store, onCompleted, content } = await harness({
+      maxCharacters: 200,
+    });
+    await store.append(
+      [output('a'.repeat(300)), output('b'.repeat(300)), output('c')],
+      T0,
+    );
+    expect(onCompleted).toHaveBeenCalledTimes(2);
+    expect(await content('1-10-00.jsonl')).toContain('a'.repeat(300));
+    await store.closeIdle(T0 + 9 * MINUTE);
+    expect(onCompleted).toHaveBeenCalledTimes(2);
+    await store.closeIdle(T0 + 10 * MINUTE);
+    await store.closeIdle(T0 + 11 * MINUTE);
+    expect(onCompleted).toHaveBeenCalledTimes(3);
+    expect(await store.readOpenEpisode()).toBeNull();
+  });
+
+  it('does not notify a successful completion for a failed append', async () => {
+    const { root, store, onCompleted } = await harness();
+    await store.append([output('one')], T0);
+    const path = join(root, '2026-01-02', '1-10-00.jsonl');
+    await rm(path);
+    await mkdir(path);
+    await expect(store.append([output('two')], T0 + MINUTE)).rejects.toThrow();
+    expect(onCompleted).not.toHaveBeenCalled();
+  });
   it('creates no file before the first append', async () => {
     const { store, files, root } = await harness();
     await store.observeActivity(T0);

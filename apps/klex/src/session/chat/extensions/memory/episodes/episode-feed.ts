@@ -3,6 +3,15 @@ import { join, relative, sep } from 'node:path';
 
 import type { EpisodeStoreState } from './episode-files';
 import { parseEpisodeRecordLine, renderEpisodeText } from './episode-format';
+import { type EpisodePage, readEpisodePage } from './episode-reader';
+
+export type { EpisodePage } from './episode-reader';
+export interface EpisodeSearchResult {
+  matches: { id: string; snippet: string; offset: number }[];
+  nextOffset: number | null;
+  scannedBytes: number;
+  truncated: boolean;
+}
 
 /** A finished episode, addressed by its path relative to `episodic/`. */
 export interface EpisodeRef {
@@ -23,11 +32,27 @@ export interface CompletedEpisode extends EpisodeRef {
 /** Read-only view of finished episodes for other extensions. */
 export interface EpisodeFeed {
   isAvailable(): boolean;
+  /** Hints that availability or completed episodes changed; scan after subscribing. */
+  subscribe(listener: () => void): () => void;
   /** Finished episodes strictly after `after` (null = from the start), oldest first. */
   listCompleted(after: string | null, limit: number): Promise<EpisodeRef[]>;
   /** Newest `count` finished episodes, oldest first. */
   listLatestCompleted(count: number): Promise<EpisodeRef[]>;
   read(id: string): Promise<CompletedEpisode | null>;
+  listNeighbors(id: string, count: number): Promise<EpisodeRef[]>;
+  readPage(
+    id: string,
+    options: {
+      offset: number;
+      limit: number;
+      maxBytes: number;
+      tail?: boolean;
+    },
+  ): Promise<EpisodePage | null>;
+  search(
+    query: string,
+    options: { offset: number; maxBytes: number; limit: number },
+  ): Promise<EpisodeSearchResult>;
   /** Orders episode ids oldest first; ids are opaque, so use this to sort. */
   compareIds(left: string, right: string): number;
 }
@@ -44,6 +69,8 @@ export interface EpisodeFeedSource {
 export interface EpisodeFeedHub extends EpisodeFeed {
   /** Attaches the live episode store. Returns a detach function. */
   attach(source: EpisodeFeedSource): () => void;
+  /** Producer hint after an episode has stopped receiving records. */
+  notifyChanged(): void;
 }
 
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
@@ -81,12 +108,39 @@ export function compareEpisodeIds(left: string, right: string): number {
  */
 class EpisodeFeedModule implements EpisodeFeedHub {
   private source: EpisodeFeedSource | null = null;
+  private readonly listeners = new Set<() => void>();
+  private notificationPending = false;
+
+  subscribe(listener: () => void): () => void {
+    this.listeners.add(listener);
+    return () => this.listeners.delete(listener);
+  }
+
+  notifyChanged(): void {
+    if (this.notificationPending) return;
+    this.notificationPending = true;
+    queueMicrotask(() => {
+      this.notificationPending = false;
+      for (const listener of this.listeners) {
+        // A subscriber cannot prevent other subscribers from being notified.
+        try {
+          listener();
+        } catch {
+          /* Notifications are hints only. */
+        }
+      }
+    });
+  }
 
   attach(source: EpisodeFeedSource): () => void {
     if (this.source) throw new Error('Episode feed is already attached');
     this.source = source;
+    this.notifyChanged();
     return () => {
-      if (this.source === source) this.source = null;
+      if (this.source === source) {
+        this.source = null;
+        this.notifyChanged();
+      }
     };
   }
 
@@ -113,6 +167,86 @@ class EpisodeFeedModule implements EpisodeFeedHub {
   async listLatestCompleted(count: number): Promise<EpisodeRef[]> {
     if (count <= 0) return [];
     return (await this.listAllCompleted()).slice(-count);
+  }
+
+  async listNeighbors(id: string, count: number): Promise<EpisodeRef[]> {
+    const ref = parseEpisodeId(id);
+    if (!ref) return [];
+    const all = await this.listAllCompleted();
+    const bounded = Math.max(0, Math.min(5, Math.floor(count)));
+    return [
+      ...all
+        .filter((item) => compareEpisodeRefs(item, ref) < 0)
+        .slice(-bounded),
+      ...all
+        .filter((item) => compareEpisodeRefs(item, ref) > 0)
+        .slice(0, bounded),
+    ];
+  }
+
+  async readPage(
+    id: string,
+    options: {
+      offset: number;
+      limit: number;
+      maxBytes: number;
+      tail?: boolean;
+    },
+  ): Promise<EpisodePage | null> {
+    const source = this.source;
+    if (!source || !parseEpisodeId(id) || id === (await openId(source)))
+      return null;
+    const page = await readEpisodePage(source.episodicDir, id, options);
+    if (source !== this.source || id === (await openId(source))) return null;
+    return page;
+  }
+
+  async search(
+    query: string,
+    options: { offset: number; maxBytes: number; limit: number },
+  ): Promise<EpisodeSearchResult> {
+    const all = (await this.listLatestCompleted(200)).reverse();
+    const matches: EpisodeSearchResult['matches'] = [];
+    const needle = query.slice(0, 200).toLowerCase();
+    let scannedBytes = 0;
+    let truncated = false;
+    let index = Math.max(0, Math.floor(options.offset));
+    const maxBytes = Math.max(0, Math.min(2_000_000, options.maxBytes));
+    const limit = Math.max(1, Math.min(6, options.limit));
+    for (
+      ;
+      needle &&
+      index < all.length &&
+      scannedBytes < maxBytes &&
+      matches.length < limit;
+      index++
+    ) {
+      const ref = all[index];
+      if (!ref) break;
+      const page = await this.readPage(ref.id, {
+        offset: 0,
+        limit: 60_000,
+        maxBytes: maxBytes - scannedBytes,
+      });
+      if (!page) continue;
+      scannedBytes += page.scannedBytes;
+      truncated ||= page.truncated || page.nextOffset !== null;
+      const position = page.text.toLowerCase().indexOf(needle);
+      if (position >= 0) {
+        const start = Math.max(0, position - 160);
+        matches.push({
+          id: ref.id,
+          snippet: page.text.slice(start, position + needle.length + 160),
+          offset: start,
+        });
+      }
+    }
+    return {
+      matches,
+      nextOffset: index < all.length && needle ? index : null,
+      scannedBytes,
+      truncated: truncated || scannedBytes >= maxBytes,
+    };
   }
 
   async read(id: string): Promise<CompletedEpisode | null> {

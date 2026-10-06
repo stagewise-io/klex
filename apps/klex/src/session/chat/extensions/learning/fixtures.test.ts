@@ -169,16 +169,10 @@ describe('learning fixtures', () => {
         expect(prompt).toContain(`<episode id="${noLessonId}"`);
         expect(prompt).toContain('team lunch');
         return reply();
-      })
-      // Two changed runs and no prior consolidation: a consolidation pass is due.
-      .mockImplementationOnce(async ({ system, prompt }) => {
-        expect(system).toContain('## Goals');
-        expect(prompt).toContain('readCount="0"');
-        return reply();
       });
 
     expect(await worker.runOnce()).toBe('processed');
-    expect(generateText).toHaveBeenCalledTimes(4);
+    expect(generateText).toHaveBeenCalledTimes(3);
 
     expect(
       store
@@ -195,7 +189,9 @@ describe('learning fixtures', () => {
       fixId,
     ]);
     expect(current.changedRunsSinceConsolidation).toBe(0);
-    expect(current.lastConsolidationAt).not.toBeNull();
+    expect(current.lastConsolidationAt).toBeNull();
+    expect(current.pendingChangeWeight).toBe(4);
+    expect(current.processedEpisodeCount).toBe(3);
   });
 
   it('writes learned skills as Agent Skills files', async () => {

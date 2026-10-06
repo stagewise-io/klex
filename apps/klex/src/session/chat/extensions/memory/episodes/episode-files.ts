@@ -24,6 +24,8 @@ export interface EpisodeStoreOptions {
   /** Read once per `append`, so config changes apply to the next record. */
   getLimits: () => EpisodeRotationConfig;
   logger: ModuleLogger;
+  /** Called after the completed file's pending records have been written. */
+  onCompleted?: () => void;
 }
 
 export interface EpisodeStoreState {
@@ -79,7 +81,7 @@ export class EpisodeStore {
         if (this.shouldRotate(limits, now, line.length)) {
           await this.writePending(pending);
           pending = '';
-          this.open = null;
+          this.completeOpenEpisode();
         }
         const episode = this.open ?? (await this.createEpisode(instant));
         pending += line;
@@ -96,7 +98,8 @@ export class EpisodeStore {
    */
   observeActivity(now = Date.now()): Promise<void> {
     return this.enqueue(async () => {
-      if (this.isIdle(this.options.getLimits(), now)) this.open = null;
+      if (this.isIdle(this.options.getLimits(), now))
+        this.completeOpenEpisode();
       this.lastActivityAt = now;
     });
   }
@@ -117,6 +120,20 @@ export class EpisodeStore {
    */
   readOpenEpisode(): Promise<EpisodeStoreState | null> {
     return this.enqueue(async () => this.introspect());
+  }
+
+  /** Permanently closes an idle episode without creating an empty replacement. */
+  closeIdle(now = Date.now()): Promise<void> {
+    return this.enqueue(async () => {
+      if (this.isIdle(this.options.getLimits(), now))
+        this.completeOpenEpisode();
+    });
+  }
+
+  private completeOpenEpisode(): void {
+    if (!this.open) return;
+    this.open = null;
+    this.options.onCompleted?.();
   }
 
   introspect(): EpisodeStoreState | null {

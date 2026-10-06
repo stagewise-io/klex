@@ -71,6 +71,7 @@ import {
 import type { ExtendedUIMessage } from './message-types';
 import { createTurn, type Turn, type TurnResult } from './turn';
 import { BackoffManager } from './utils/backoff-manager';
+import { extensionGenerationOptions } from './utils/extension-generation-options';
 import { ModelFallbackManager } from './utils/model-fallback-manager';
 import {
   getExtensionIdentifier,
@@ -629,6 +630,11 @@ class ChatSessionModule implements AgentSession {
           let contentFilterCount = 0;
 
           for (const entry of modelIds) {
+            if (args.abortSignal?.aborted)
+              return {
+                success: false as const,
+                failureReason: 'cancelled' as const,
+              };
             const modelId = entry.modelId;
             try {
               const model =
@@ -647,6 +653,7 @@ class ChatSessionModule implements AgentSession {
                       temperature: args.temperature,
                       maxOutputTokens: args.maxOutputTokens,
                       maxRetries: args.maxRetries ?? 0,
+                      ...extensionGenerationOptions(args),
                       telemetry: {
                         isEnabled: true,
                         functionId,
@@ -675,6 +682,7 @@ class ChatSessionModule implements AgentSession {
                       temperature: args.temperature,
                       maxOutputTokens: args.maxOutputTokens,
                       maxRetries: args.maxRetries ?? 0,
+                      ...extensionGenerationOptions(args),
                       telemetry: {
                         isEnabled: true,
                         functionId,
@@ -696,6 +704,12 @@ class ChatSessionModule implements AgentSession {
                       ...(providerOptions !== undefined && { providerOptions }),
                     },
               );
+
+              if (args.abortSignal?.aborted)
+                return {
+                  success: false as const,
+                  failureReason: 'cancelled' as const,
+                };
 
               // Per-extension usage tracking is handled by the
               // onExtensionUsage callback in the extension handler wrapper.
@@ -748,6 +762,11 @@ class ChatSessionModule implements AgentSession {
                 usage: result.usage,
               };
             } catch (error) {
+              if (args.abortSignal?.aborted)
+                return {
+                  success: false as const,
+                  failureReason: 'cancelled' as const,
+                };
               const msg =
                 error instanceof Error ? error.message : String(error);
               failures.push(`${modelId}: ${msg}`);

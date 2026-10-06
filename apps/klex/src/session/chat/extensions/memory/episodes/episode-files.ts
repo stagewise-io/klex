@@ -111,6 +111,14 @@ export class EpisodeStore {
     });
   }
 
+  /**
+   * The open episode, read in queue order: an episode file being created
+   * or rotated is already open by the time this resolves.
+   */
+  readOpenEpisode(): Promise<EpisodeStoreState | null> {
+    return this.enqueue(async () => this.introspect());
+  }
+
   introspect(): EpisodeStoreState | null {
     if (!this.open) return null;
     return {

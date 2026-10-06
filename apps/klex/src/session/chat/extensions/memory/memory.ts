@@ -65,7 +65,20 @@ class MemoryExt implements Extension {
       try {
         this.detachEpisodeFeed = this.options.episodeFeed.attach({
           episodicDir,
-          getOpenEpisode: () => store.introspect(),
+          getOpenEpisode: async () => {
+            // Idle without a running step: the next step or append rotates
+            // it, so it never receives records again and counts as finished.
+            // A step running at either end may still extend the snapshot.
+            const stepWasActive = this.stepActive;
+            const open = await store.readOpenEpisode();
+            const finished =
+              open !== null &&
+              !stepWasActive &&
+              !this.stepActive &&
+              open.lastActivityAt !== null &&
+              Date.now() - open.lastActivityAt >= getLimits().idleTimeoutMs;
+            return finished ? null : open;
+          },
         });
       } catch (error) {
         this.deps.logger.warn(

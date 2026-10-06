@@ -3,7 +3,7 @@ import { createRoute, type RouteHandler } from '@hono/zod-openapi';
 import type {
   CatalogSkill,
   SkillCatalog,
-} from '@/session/chat/extensions/learning';
+} from '@/session/chat/extensions/learning/skill-store';
 
 import {
   errorResponseSchema,

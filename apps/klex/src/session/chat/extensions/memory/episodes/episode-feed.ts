@@ -32,7 +32,11 @@ export interface EpisodeFeed {
 
 export interface EpisodeFeedSource {
   episodicDir: string;
-  getOpenEpisode: () => EpisodeStoreState | null;
+  /**
+   * The episode that may still receive records, or null. Must resolve after
+   * any episode file creation that started before the call.
+   */
+  getOpenEpisode: () => Promise<EpisodeStoreState | null>;
 }
 
 export interface EpisodeFeedHub extends EpisodeFeed {
@@ -62,12 +66,8 @@ export function compareEpisodeRefs(
 
 /**
  * Exposes finished episodes of the memory extension. An episode is finished
- * when it is not the store's open episode. Episodes are never reopened, so
+ * when it is not the source's open episode. Episodes are never reopened, so
  * after a restart every existing file is finished.
- *
- * An idle open episode is deliberately still unfinished: a long step can
- * extend activity without the idle check and append to it again. It
- * finishes with the next rotation.
  */
 class EpisodeFeedModule implements EpisodeFeedHub {
   private source: EpisodeFeedSource | null = null;
@@ -105,6 +105,7 @@ class EpisodeFeedModule implements EpisodeFeedHub {
     const source = this.source;
     const ref = parseEpisodeId(id);
     if (!source || !ref) return null;
+    if (ref.id === (await openId(source))) return null;
     let content: string;
     try {
       content = await readFile(join(source.episodicDir, id), 'utf-8');
@@ -138,10 +139,14 @@ class EpisodeFeedModule implements EpisodeFeedHub {
     // List before reading the open episode: a file created meanwhile is
     // either missing from the list or is the open episode.
     const refs = await listEpisodeRefs(source.episodicDir);
-    const open = source.getOpenEpisode();
-    const openId = open ? openEpisodeId(source.episodicDir, open.path) : null;
-    return refs.filter((ref) => ref.id !== openId).sort(compareEpisodeRefs);
+    const open = await openId(source);
+    return refs.filter((ref) => ref.id !== open).sort(compareEpisodeRefs);
   }
+}
+
+async function openId(source: EpisodeFeedSource): Promise<string | null> {
+  const open = await source.getOpenEpisode();
+  return open ? openEpisodeId(source.episodicDir, open.path) : null;
 }
 
 async function listEpisodeRefs(episodicDir: string): Promise<EpisodeRef[]> {

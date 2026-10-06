@@ -4,7 +4,7 @@ import type {
   CatalogSkill,
   SkillCatalog,
   SkillUsage,
-} from '@/session/chat/extensions/learning';
+} from '@/session/chat/extensions/learning/skill-store';
 
 import { getSkill, getSkillRoute, listSkills, listSkillsRoute } from './skills';
 import { setupTestApp } from './test-utils';

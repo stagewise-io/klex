@@ -297,7 +297,14 @@ class FileNotificationStore implements NotificationStore {
     } catch (error) {
       if (!isErrorCode(error, 'EEXIST')) throw error;
     }
-    const lock = await readFile(lockPath, 'utf8').catch(() => '');
+    let lock: string;
+    try {
+      lock = await readFile(lockPath, 'utf8');
+    } catch (error) {
+      if (!isErrorCode(error, 'ENOENT')) throw error;
+      // The previous owner released its lock between open and read.
+      return this.#retryLock(lockPath);
+    }
     const holder = /^[1-9]\d*\n$/.test(lock) ? Number(lock.trim()) : Number.NaN;
     // An empty/invalid file may belong to a process publishing its PID.
     if (!Number.isSafeInteger(holder) || holder <= 0 || processAlive(holder)) {
@@ -321,7 +328,13 @@ class FileNotificationStore implements NotificationStore {
     try {
       // Only one reclaimer may unlink a stale lock. Recheck under the guard:
       // another startup may already have replaced the file we observed.
-      const current = await readFile(lockPath, 'utf8').catch(() => '');
+      let current: string;
+      try {
+        current = await readFile(lockPath, 'utf8');
+      } catch (error) {
+        if (!isErrorCode(error, 'ENOENT')) throw error;
+        return await this.#retryLock(lockPath);
+      }
       if (current === lock && !processAlive(holder)) {
         await rm(lockPath, { force: true });
         try {
@@ -341,12 +354,33 @@ class FileNotificationStore implements NotificationStore {
     }
   }
 
+  async #retryLock(lockPath: string): Promise<boolean> {
+    try {
+      await this.#writeLock(lockPath);
+      return true;
+    } catch (error) {
+      if (!isErrorCode(error, 'EEXIST')) throw error;
+      this.#logger.warn(
+        { lockPath },
+        'Notification lock changed owners; notifications are memory-only',
+      );
+      return false;
+    }
+  }
+
   async #writeLock(lockPath: string): Promise<void> {
     const handle = await open(lockPath, 'wx', 0o600);
     try {
-      await handle.writeFile(`${process.pid}\n`, 'utf8');
-    } finally {
-      await handle.close();
+      try {
+        await handle.writeFile(`${process.pid}\n`, 'utf8');
+      } finally {
+        await handle.close();
+      }
+    } catch (error) {
+      // We created this file exclusively. Failed PID publication must not leave
+      // an ownerless lock that prevents every subsequent durable startup.
+      await rm(lockPath, { force: true });
+      throw error;
     }
     this.#lockPath = lockPath;
   }

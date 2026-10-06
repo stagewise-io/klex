@@ -40,7 +40,7 @@ export interface ShellExit {
 
 const ANSI_PATTERN =
   // biome-ignore lint/suspicious/noControlCharactersInRegex: matching terminal escape sequences is the purpose.
-  /\u001b\[[0-?]*[ -/]*[@-~]|\u001b\][^\u0007\u001b]*(?:\u0007|\u001b\\)|\u001b[@-Z\\-_]/g;
+  /(?:\u001b[\]PX^_]|[\u0090\u0098\u009d-\u009f])[\s\S]*?(?:\u0007|\u001b\\|\u009c|$)|(?:\u001b\[|\u009b)[0-?]*[ -/]*[@-~]|\u001b[@-Z\\-_]|\u009c/g;
 
 export function stripAnsi(text: string): string {
   return text.replace(ANSI_PATTERN, '');

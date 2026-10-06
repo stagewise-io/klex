@@ -64,8 +64,11 @@ export async function startMachineServer(
       server.once('error', onStartupError);
     },
   ).catch(async (error) => {
-    await mcp.close();
-    await store?.close();
+    try {
+      await mcp.close();
+    } finally {
+      await store?.close();
+    }
     throw error;
   });
   listener.on('error', (error) => {
@@ -98,8 +101,17 @@ export async function startMachineServer(
       const listenerClosed = new Promise<void>((resolve, reject) => {
         listener.close((error) => (error ? reject(error) : resolve()));
       });
-      await Promise.all([listenerClosed, mcp.close()]);
-      await store?.close();
+      try {
+        // Wait for every cleanup to settle before releasing the writer lock.
+        const results = await Promise.allSettled([
+          listenerClosed,
+          Promise.resolve().then(() => mcp.close()),
+        ]);
+        const failed = results.find((result) => result.status === 'rejected');
+        if (failed?.status === 'rejected') throw failed.reason;
+      } finally {
+        await store?.close();
+      }
     })();
     return closing;
   };

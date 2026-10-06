@@ -36,9 +36,20 @@ vi.mock('node:fs/promises', async (importOriginal) => {
 const stores: NotificationStore[] = [];
 const dirs: string[] = [];
 afterEach(async () => {
-  for (const store of stores.splice(0)) await store.close();
-  for (const dir of dirs.splice(0))
-    await rm(dir, { recursive: true, force: true });
+  try {
+    for (const store of stores.splice(0)) await store.close();
+    for (const dir of dirs.splice(0))
+      await rm(dir, { recursive: true, force: true });
+  } finally {
+    vi.restoreAllMocks();
+    const actual =
+      await vi.importActual<typeof import('node:fs/promises')>(
+        'node:fs/promises',
+      );
+    vi.mocked(open).mockReset().mockImplementation(actual.open);
+    vi.mocked(readFile).mockReset().mockImplementation(actual.readFile);
+    vi.mocked(rename).mockReset().mockImplementation(actual.rename);
+  }
 });
 async function setup(
   options: Parameters<typeof createNotificationStore>[0] = {
@@ -237,6 +248,49 @@ describe('notification store', () => {
       expect(await readFile(lockPath, 'utf8')).toBe(lock);
     },
   );
+  it.each(['', 'partial', `${process.pid}\n`])(
+    'removes its exclusive lock after failed PID publication (%j)',
+    async (partial) => {
+      const dataDir = await directory();
+      const actual =
+        await vi.importActual<typeof import('node:fs/promises')>(
+          'node:fs/promises',
+        );
+      vi.mocked(open).mockImplementationOnce(async (...args) => {
+        const handle = await actual.open(...args);
+        const write = handle.writeFile.bind(handle);
+        vi.spyOn(handle, 'writeFile').mockImplementationOnce(async () => {
+          await write(partial);
+          throw new Error('PID publication failed');
+        });
+        return handle;
+      });
+      await expect(
+        setup({ dataDir, logger: silentMachineLogger }),
+      ).rejects.toThrow('PID publication failed');
+      await expect(
+        readFile(join(dataDir, 'notifications/lock')),
+      ).rejects.toMatchObject({ code: 'ENOENT' });
+      expect(
+        (await setup({ dataDir, logger: silentMachineLogger })).persistent,
+      ).toBe(true);
+    },
+  );
+  it('retries acquisition when the owner releases between open and read', async () => {
+    const dataDir = await directory();
+    const owner = await setup({ dataDir, logger: silentMachineLogger });
+    const actual =
+      await vi.importActual<typeof import('node:fs/promises')>(
+        'node:fs/promises',
+      );
+    vi.mocked(readFile).mockImplementationOnce(async (...args) => {
+      await owner.close();
+      return actual.readFile(...args);
+    });
+    expect(
+      (await setup({ dataDir, logger: silentMachineLogger })).persistent,
+    ).toBe(true);
+  });
   it('reclaims a complete lock owned by a dead process', async () => {
     const dataDir = await directory();
     const first = await setup({ dataDir, logger: silentMachineLogger });

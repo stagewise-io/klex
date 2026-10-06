@@ -45,6 +45,8 @@ interface ShellSession {
 
 export class ShellService {
   private readonly sessions = new Map<string, ShellSession>();
+  private readonly startups = new Set<Promise<ShellSessionInfo>>();
+  private closed = false;
 
   constructor(
     private readonly paths: MachinePathResolver,
@@ -58,6 +60,42 @@ export class ShellService {
     }
   }
 
+  async createTracked(
+    options: Parameters<ShellService['create']>[0],
+    onStart: (
+      info: Pick<ShellSessionInfo, 'id' | 'shell' | 'cwd' | 'createdAt'>,
+    ) => Promise<void>,
+    onCancel: (id: string) => Promise<void>,
+  ): Promise<ShellSessionInfo> {
+    if (this.closed) throw new Error('Shell service is closed');
+    const reservation = {
+      id: randomUUID(),
+      shell: options?.shell ?? defaultShell(),
+      cwd: this.paths.resolve(options?.cwd ?? '.'),
+      createdAt: new Date().toISOString(),
+    };
+    const startup = (async () => {
+      await onStart(reservation);
+      try {
+        if (this.closed)
+          throw new Error('Shell creation interrupted before starting');
+        return this.create(
+          { ...options, shell: reservation.shell, cwd: reservation.cwd },
+          reservation,
+        );
+      } catch (error) {
+        await onCancel(reservation.id);
+        throw error;
+      }
+    })();
+    this.startups.add(startup);
+    try {
+      return await startup;
+    } finally {
+      this.startups.delete(startup);
+    }
+  }
+
   create(
     options: {
       cwd?: string;
@@ -67,7 +105,9 @@ export class ShellService {
       rows?: number;
       env?: Record<string, string>;
     } = {},
+    reservation?: Pick<ShellSessionInfo, 'id' | 'createdAt'>,
   ): ShellSessionInfo {
+    if (this.closed) throw new Error('Shell service is closed');
     const exited =
       this.sessions.size >= this.maxSessions
         ? [...this.sessions.values()].find((session) => !session.info.running)
@@ -93,12 +133,12 @@ export class ShellService {
     });
     if (exited) this.close(exited.info.id);
     const info: ShellSessionInfo = {
-      id: randomUUID(),
+      id: reservation?.id ?? randomUUID(),
       shell,
       cwd,
       pid: terminal.pid,
       running: true,
-      createdAt: new Date().toISOString(),
+      createdAt: reservation?.createdAt ?? new Date().toISOString(),
     };
     const session: ShellSession = {
       info,
@@ -199,8 +239,13 @@ export class ShellService {
       .sort((left, right) => left.createdAt.localeCompare(right.createdAt));
   }
 
-  closeAll(): void {
-    for (const id of [...this.sessions.keys()]) this.close(id);
+  async closeAll(): Promise<void> {
+    this.closed = true;
+    try {
+      for (const id of [...this.sessions.keys()]) this.close(id);
+    } finally {
+      await Promise.allSettled(this.startups);
+    }
   }
 
   private get(id: string): ShellSession {

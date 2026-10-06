@@ -49,7 +49,7 @@ class MachineMcpModule implements MachineMcp {
   readonly #store: NotificationStore;
   readonly #ownsStore: boolean;
   readonly #unsubscribe: () => void;
-  readonly #shellTracking = new Map<string, Promise<void>>();
+  readonly #shellTracking = new Set<string>();
 
   constructor(defaultCwd: string, options: MachineMcpOptions) {
     const paths = new MachinePathResolver(defaultCwd);
@@ -62,27 +62,23 @@ class MachineMcpModule implements MachineMcp {
     this.#ownsStore = !options.notifications;
     this.#shell = new ShellService(paths, undefined, {
       onExit: (info, output) => {
-        const tracking = this.#shellTracking.get(info.id);
-        if (!tracking) return;
-        this.#shellTracking.delete(info.id);
-        void tracking
-          .then(() =>
-            store.complete(
-              `shell:${info.id}`,
-              shellExitedEvent(
-                {
-                  sessionId: info.id,
-                  shell: info.shell,
-                  cwd: info.cwd,
-                  createdAt: info.createdAt,
-                },
-                {
-                  exitCode: info.exitCode ?? null,
-                  signal: info.signal ?? null,
-                  exitedAt: new Date().toISOString(),
-                  output,
-                },
-              ),
+        if (!this.#shellTracking.delete(info.id)) return;
+        void store
+          .complete(
+            `shell:${info.id}`,
+            shellExitedEvent(
+              {
+                sessionId: info.id,
+                shell: info.shell,
+                cwd: info.cwd,
+                createdAt: info.createdAt,
+              },
+              {
+                exitCode: info.exitCode ?? null,
+                signal: info.signal ?? null,
+                exitedAt: new Date().toISOString(),
+                output,
+              },
             ),
           )
           .catch((error: unknown) =>
@@ -321,29 +317,29 @@ class MachineMcpModule implements MachineMcp {
           },
           (input) =>
             result(async () => {
-              const info = this.#shell.create(input);
-              if (pushNotifications && input.notifyOnExit) {
-                const tracking = store.track({
-                  id: `shell:${info.id}`,
-                  principalId,
-                  kind: 'shell',
-                  info: {
-                    sessionId: info.id,
-                    shell: info.shell,
-                    cwd: info.cwd,
-                    createdAt: info.createdAt,
-                  },
-                });
-                this.#shellTracking.set(info.id, tracking);
-                try {
-                  await tracking;
-                } catch (error) {
-                  this.#shellTracking.delete(info.id);
-                  this.#shell.close(info.id);
-                  throw error;
-                }
-              }
-              return info;
+              if (!pushNotifications || !input.notifyOnExit)
+                return this.#shell.create(input);
+              return this.#shell.createTracked(
+                input,
+                async (info) => {
+                  await store.track({
+                    id: `shell:${info.id}`,
+                    principalId,
+                    kind: 'shell',
+                    info: {
+                      sessionId: info.id,
+                      shell: info.shell,
+                      cwd: info.cwd,
+                      createdAt: info.createdAt,
+                    },
+                  });
+                  this.#shellTracking.add(info.id);
+                },
+                async (id) => {
+                  this.#shellTracking.delete(id);
+                  await store.forget(`shell:${id}`);
+                },
+              );
             }),
         );
         server.registerTool(
@@ -448,11 +444,18 @@ class MachineMcpModule implements MachineMcp {
   async close(): Promise<void> {
     this.#unsubscribe();
     this.#subscriptions.close();
-    await this.#watchers.closeAll();
-    this.#shellTracking.clear();
-    this.#shell.closeAll();
-    await this.#handler.close();
-    if (this.#ownsStore) await this.#store.close();
+    try {
+      const results = await Promise.allSettled([
+        this.#watchers.closeAll(),
+        this.#shell.closeAll(),
+      ]);
+      this.#shellTracking.clear();
+      await this.#handler.close();
+      const failed = results.find((result) => result.status === 'rejected');
+      if (failed?.status === 'rejected') throw failed.reason;
+    } finally {
+      if (this.#ownsStore) await this.#store.close();
+    }
   }
 }
 

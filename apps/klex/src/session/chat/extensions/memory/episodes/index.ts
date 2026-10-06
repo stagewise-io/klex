@@ -1,4 +1,14 @@
 export {
+  type CompletedEpisode,
+  compareEpisodeRefs,
+  createEpisodeFeed,
+  type EpisodeFeed,
+  type EpisodeFeedHub,
+  type EpisodeFeedSource,
+  type EpisodeRef,
+  parseEpisodeId,
+} from './episode-feed';
+export {
   EpisodeStore,
   type EpisodeStoreOptions,
   type EpisodeStoreState,

@@ -55,8 +55,15 @@ import {
 } from '@/session/chat/extensions/god-messages';
 import { createImageInputOptimizerExt } from '@/session/chat/extensions/image-input-optimizer';
 import { createJsReplSandboxExt } from '@/session/chat/extensions/js-repl-sandbox';
+import {
+  createLearningExt,
+  createSkillCatalog,
+} from '@/session/chat/extensions/learning';
 import { createMcpIngressExt } from '@/session/chat/extensions/mcp-ingress';
-import { createMemoryExt } from '@/session/chat/extensions/memory';
+import {
+  createEpisodeFeed,
+  createMemoryExt,
+} from '@/session/chat/extensions/memory';
 import { createNameLoaderExt } from '@/session/chat/extensions/name-loader';
 import { createReadAttachmentExt } from '@/session/chat/extensions/read-attachment/read-attachment';
 import {
@@ -540,6 +547,10 @@ async function main(): Promise<void> {
       timezone,
     });
 
+    // Agent-wide hubs: memory publishes episodes, learning publishes skills.
+    const episodeFeed = createEpisodeFeed();
+    const skillCatalog = createSkillCatalog();
+
     // Default session: full extension set + MCP access.
     const defaultSessionFactory = makeSessionFactory([
       createNameLoaderExt,
@@ -553,7 +564,8 @@ async function main(): Promise<void> {
       createReadAttachmentExt,
       createTodosExt,
       createMcpIngressExt(),
-      createMemoryExt(),
+      createMemoryExt({ episodeFeed }),
+      createLearningExt({ episodes: episodeFeed, skillCatalog }),
       createConsultExt({
         childExtensionFactories: [createSoulExt, defaultTimeExt],
         maxActiveSessions: 2,
@@ -604,6 +616,7 @@ async function main(): Promise<void> {
       cloudConnectivity,
       godMessages,
       sessionHistory,
+      skillCatalog,
       localPort: cli.dangerousLocalAdminApiPort,
       timezone,
     });

@@ -46,6 +46,15 @@ vi.mock(
   '@/session/chat/extensions/context-compaction/compaction-prompt.md',
   () => ({ default: '' }),
 );
+vi.mock('@/session/chat/extensions/learning/system-prompt-part.md', () => ({
+  default: '',
+}));
+vi.mock('@/session/chat/extensions/learning/extraction-prompt.md', () => ({
+  default: '',
+}));
+vi.mock('@/session/chat/extensions/learning/consolidation-prompt.md', () => ({
+  default: '',
+}));
 
 import { validateLocalDataRegistry } from '@/local-data';
 
@@ -61,6 +70,7 @@ describe('Klex local-data registry', () => {
       'cloud-enrollment',
       'todos-extension-todos',
       'episodic-search-index',
+      'learning-extension-state',
       'sessions',
     ]);
   });

@@ -717,6 +717,65 @@ const godMessageResetResponseSchema = z
   })
   .openapi('GodMessageResetResponse');
 
+// --- Skills ---
+
+const skillSummarySchema = z
+  .object({
+    name: z.string().describe('Skill name, unique across the agent'),
+    description: z
+      .string()
+      .describe('One-line description of when the skill applies'),
+    origin: z
+      .literal('learned')
+      .describe('Where the skill comes from. Only learned skills exist today'),
+    createdAt: z
+      .string()
+      .datetime()
+      .optional()
+      .describe('When the skill was first written'),
+    updatedAt: z
+      .string()
+      .datetime()
+      .optional()
+      .describe('When the skill was last rewritten'),
+    lastReadAt: z
+      .string()
+      .datetime()
+      .nullable()
+      .optional()
+      .describe('When the agent last read the skill; null if never'),
+    readCount: z
+      .number()
+      .int()
+      .min(0)
+      .optional()
+      .describe('How often the agent has read the skill'),
+  })
+  .openapi('SkillSummary');
+
+const skillListResponseSchema = z
+  .object({
+    skills: z.array(skillSummarySchema),
+  })
+  .openapi('SkillListResponse');
+
+const skillDetailSchema = skillSummarySchema
+  .extend({
+    body: z.string().describe('Markdown body of the SKILL.md'),
+    sourceEpisodes: z
+      .array(z.string())
+      .optional()
+      .describe('Memory episode IDs the skill was learned from'),
+  })
+  .openapi('SkillDetail');
+
+const skillNameParamsSchema = z.object({
+  name: z.string().min(1).openapi({
+    description: 'Skill name',
+    example: 'ask-before-contract-changes',
+  }),
+});
+
 // --- Session history ---
 
 const sessionKindSchema = z
@@ -1064,6 +1123,10 @@ export {
   sessionHistoryRecordSchema,
   sessionInstanceIdParamSchema,
   sessionKindSchema,
+  skillDetailSchema,
+  skillListResponseSchema,
+  skillNameParamsSchema,
+  skillSummarySchema,
   timezoneSettingsSchema,
   toolCallHistoryResponseSchema,
   updateKnownModelBodySchema,

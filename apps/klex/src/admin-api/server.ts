@@ -9,6 +9,7 @@ import type { Introspector } from '@/introspection';
 import type { Mcp } from '@/mcp';
 import type { ModelCallLogger } from '@/model-call-logger';
 import type { ProviderRegistry } from '@/provider-registry';
+import type { SkillCatalog } from '@/session/chat/extensions/learning';
 import type { SessionHistory } from '@/session-history';
 
 import { createErrorHandler, notFoundHandler, validationHook } from './errors';
@@ -101,6 +102,12 @@ import {
   patchModelSelection,
   patchModelSelectionRoute,
 } from './routes/v1/settings';
+import {
+  getSkill,
+  getSkillRoute,
+  listSkills,
+  listSkillsRoute,
+} from './routes/v1/skills';
 import { getUsage, getUsageRoute } from './routes/v1/usage';
 
 export interface AdminAppDependencies {
@@ -112,6 +119,7 @@ export interface AdminAppDependencies {
   cloudConnectivity: CloudConnectivity;
   godMessages: GodMessages;
   sessionHistory: SessionHistory;
+  skillCatalog: SkillCatalog;
   logger: ModuleLogger;
   localPort: number | undefined;
   timezone: string;
@@ -167,6 +175,8 @@ export function createAdminApp(deps: AdminAppDependencies) {
     .openapi(getSessionHistoryRoute, getSessionHistory(deps))
     .openapi(getSessionHistoryMessagesRoute, getSessionHistoryMessages(deps))
     .openapi(getUsageRoute, getUsage(deps))
+    .openapi(listSkillsRoute, listSkills(deps))
+    .openapi(getSkillRoute, getSkill(deps))
     .openapi(getProviderTypesRoute, getProviderTypes(deps))
     .openapi(canAddProviderRoute, canAddProvider(deps))
     .openapi(getProvidersRoute, getProviders(deps))

@@ -196,10 +196,16 @@ class SessionHostModule implements SessionHost {
   }
 
   isQuiescent(): boolean {
+    // A missing or terminated default session may have been interrupted
+    // mid-turn; its delivered events must not be ACKed until a live
+    // replacement exists.
+    const session = this._session;
     return (
       this.started &&
       this.pendingEvents.length === 0 &&
-      (this._session?.isQuiescent() ?? true)
+      session !== null &&
+      session.status !== 'terminated' &&
+      session.isQuiescent()
     );
   }
 

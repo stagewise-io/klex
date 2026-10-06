@@ -219,7 +219,7 @@ Options:
   -d, --data-dir <path>        Directory for agent data (overrides KLEX_DATA_DIR; interactive mode otherwise discovers agents under KLEX_HOME)
   -H, --headless               Run without the interactive CLI UI (overrides KLEX_HEADLESS)
   --no-headless                Run with the interactive CLI UI (overrides KLEX_HEADLESS)
-  --auto-update                Install updates automatically and restart once the agent is idle (overrides KLEX_AUTO_UPDATE)
+  --auto-update                Install updates automatically and restart once the agent is idle, or after a 10-minute drain timeout (overrides KLEX_AUTO_UPDATE)
   --no-auto-update             Disable automatic updates (overrides KLEX_AUTO_UPDATE)
   -h, --help                   Show this help message
   --version                    Print the version and exit

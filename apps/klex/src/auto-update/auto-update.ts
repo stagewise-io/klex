@@ -1,5 +1,6 @@
 import type { ModuleLogger, RootLogger } from '@stagewise/logger';
 
+import type { GodMessages } from '@/god-messages';
 import type { Mcp } from '@/mcp';
 import type { UpdateManager, UpdateState } from '@/self-update';
 import type { SessionHost } from '@/session/session-host';
@@ -18,6 +19,8 @@ export interface AutoUpdateDependencies {
     SessionHost,
     'isQuiescent' | 'isInteractionLeased' | 'beginDrain'
   >;
+  /** Separate god session; drained alongside the default session tree. */
+  godMessages: Pick<GodMessages, 'isQuiescent' | 'beginDrain'>;
   mcp: Pick<Mcp, 'pausePushDelivery' | 'acknowledgeDeliveredEvents'>;
   /** Busy time budget. Time spent in a realtime call does not count. */
   drainTimeoutMs?: number;
@@ -82,6 +85,7 @@ class AutoUpdateModule implements AutoUpdate {
     const pollIntervalMs = this.deps.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
     const startedAt = Date.now();
     this.deps.sessionHost.beginDrain();
+    this.deps.godMessages.beginDrain();
     this.deps.mcp.pausePushDelivery();
     this.deps.logger.info(
       { event: 'auto_update.drain_started', timeoutMs },
@@ -92,7 +96,10 @@ class AutoUpdateModule implements AutoUpdate {
     let leasedMs = 0;
     let outcome: DrainOutcome;
     for (;;) {
-      if (this.deps.sessionHost.isQuiescent()) {
+      if (
+        this.deps.sessionHost.isQuiescent() &&
+        this.deps.godMessages.isQuiescent()
+      ) {
         // Quiescence and the ACK snapshot happen in the same tick.
         await this.flushAcknowledgements();
         outcome = 'drained';

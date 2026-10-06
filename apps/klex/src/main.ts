@@ -17,7 +17,7 @@ import { type RuntimeHandle, startRuntime } from '@/composition/runtime';
 import { createConfig } from '@/config';
 import { ensureDataDirectory } from '@/data-directory';
 import { createDirectoryLock, type DirectoryLock } from '@/directory-lock';
-import { createGodMessages } from '@/god-messages';
+import { createGodMessages, type GodMessages } from '@/god-messages';
 import { createIntrospector } from '@/introspection';
 import { createLocalData, type LocalData } from '@/local-data';
 import { KLEX_LOCAL_DATA_STORES } from '@/local-data-registry';
@@ -163,6 +163,7 @@ async function main(): Promise<void> {
   let runtimeCloud: CloudConnectivity | undefined;
   let runtimeMcp: ReturnType<typeof createMcp> | undefined;
   let runtimeSessionHost: SessionHost | undefined;
+  let runtimeGodMessages: GodMessages | undefined;
   // Aggregate-only product analytics. On by default, independent of the
   // opt-in OTel telemetry. Started before the agent picker so its enrollment
   // flow is observable; `klex_agent_started` is sent only once an agent
@@ -575,6 +576,7 @@ async function main(): Promise<void> {
         createTodosExt,
       ],
     });
+    runtimeGodMessages = godMessages;
     const adminApi = createAdminApi({
       logging: logger,
       config,
@@ -748,11 +750,17 @@ async function main(): Promise<void> {
             : restart();
         },
       });
-      if (cli.autoUpdate && runtimeSessionHost && runtimeMcp) {
+      if (
+        cli.autoUpdate &&
+        runtimeSessionHost &&
+        runtimeGodMessages &&
+        runtimeMcp
+      ) {
         autoUpdate = createAutoUpdate({
           logging: logger,
           updateManager,
           sessionHost: runtimeSessionHost,
+          godMessages: runtimeGodMessages,
           mcp: runtimeMcp,
         });
       }

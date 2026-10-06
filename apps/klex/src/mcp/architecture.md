@@ -46,7 +46,7 @@ Paging: pages return the oldest unacknowledged events, so with deferred ACKs a p
 
 If retrieval returns `hasMore: true` with an empty page, the worker fails the attempt instead of spinning. Acknowledgements retry with exponential backoff. A subscription failure restarts the complete subscribe-then-drain sequence. A flush for a namespace without a live worker keeps its IDs for a later flush; IDs of a namespace removed from config no longer count as unacknowledged.
 
-**Drain pause** — before an update restart, `pausePushDelivery()` stops accepting events for the rest of the process. Recovery, live notifications, deduplication, and ACKs become no-ops, so the server keeps new events for the next process and a steady message stream cannot keep the agent busy.
+**Drain pause** — before an update restart, `pausePushDelivery()` stops accepting new events for the rest of the process. Recovery and live delivery become no-ops, and events whose inbox commit was still in flight are released instead of published, so the server keeps them for the next process and a steady message stream cannot keep the agent busy. Events delivered before the pause are still ACKed once the agent is quiescent.
 
 ## Connection lifecycle
 

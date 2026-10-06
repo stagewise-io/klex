@@ -286,6 +286,19 @@ describe('SessionHost', () => {
       expect(host.isQuiescent()).toBe(false);
     });
 
+    it('is not quiescent while the default session is terminated', async () => {
+      const session = createFakeSession({});
+      const host = createHost(() => session);
+      await host.start();
+      expect(host.isQuiescent()).toBe(true);
+
+      // Interrupted mid-turn; no replacement yet. Delivered events must not
+      // be ACKed in this window.
+      session.status = 'terminated';
+      expect(host.isQuiescent()).toBe(false);
+      await host.close();
+    });
+
     it('reports a leased default session', async () => {
       const session = createFakeSession({});
       const host = createHost(() => session);

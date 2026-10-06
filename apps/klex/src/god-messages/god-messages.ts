@@ -23,6 +23,7 @@ export type { GodMessageDataUIPart } from '@/session/chat/message-types';
 export type { ContextDataUIPart } from '@/session/inbox';
 
 export type GodMessagesErrorCode =
+  | 'draining'
   | 'not-running'
   | 'reset-in-progress'
   | 'session-busy';
@@ -46,6 +47,10 @@ export interface GodMessages {
   getSessionInfo(): SessionInfo | null;
   getMessages(): readonly ExtendedUIMessage[];
   resetSession(): Promise<{ sessionId: string }>;
+  /** True when the god session (and its children) has no work in flight. */
+  isQuiescent(): boolean;
+  /** Rejects new god messages for the rest of the process (update drain). */
+  beginDrain(): void;
 }
 
 export interface GodMessagesDependencies {
@@ -77,6 +82,9 @@ class GodMessagesModule implements GodMessages {
    * a no-op so the reset logic owns fresh-session creation).
    */
   private resetting = false;
+
+  /** Set by {@link beginDrain}; rejects new directives until restart. */
+  private draining = false;
 
   constructor(
     private readonly deps: {
@@ -112,6 +120,12 @@ class GodMessagesModule implements GodMessages {
       throw new GodMessagesError(
         'not-running',
         'God messages module is not running',
+      );
+    }
+    if (this.draining) {
+      throw new GodMessagesError(
+        'draining',
+        'God messages are paused while the agent restarts for an update',
       );
     }
     if (this.resetting) {
@@ -177,6 +191,17 @@ class GodMessagesModule implements GodMessages {
 
   getSessionInfo(): SessionInfo | null {
     return this.session?.getSessionInfo() ?? null;
+  }
+
+  isQuiescent(): boolean {
+    if (this.creatingSession || this.resetting) return false;
+    return this.session?.isQuiescent() ?? true;
+  }
+
+  beginDrain(): void {
+    if (this.draining) return;
+    this.draining = true;
+    this.deps.logger.info('God messages draining: new directives are rejected');
   }
 
   getMessages(): readonly ExtendedUIMessage[] {

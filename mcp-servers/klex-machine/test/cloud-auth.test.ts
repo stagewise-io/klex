@@ -7,6 +7,7 @@ import { loadProtectedResourceConfiguration } from '../src/cloud/protected-resou
 import { silentMachineLogger } from '../src/logger.js';
 import type { MachineMcp } from '../src/mcp.js';
 import { createNotificationStore } from '../src/notifications/index.js';
+import { WorkloadTracker } from '../src/workloads/index.js';
 
 async function token(
   privateKey: CryptoKey,
@@ -118,6 +119,7 @@ describe('machine authentication', () => {
       createNotificationStore({ logger: silentMachineLogger }),
       () => {
         const instance: MachineMcp = {
+          workloads: new WorkloadTracker(),
           fetch: async () => new Response(String(instances.length)),
           close,
         };

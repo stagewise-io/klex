@@ -19,7 +19,12 @@ import type {
 } from '@stagewise/mcp-extension-realtime-media';
 
 import type { CloudConnectivity } from '@/cloud-connectivity';
-import type { Config, McpServerConfig } from '@/config';
+import {
+  type Config,
+  getMcpServerLifecycle,
+  type McpLifecycle,
+  type McpServerConfig,
+} from '@/config';
 import {
   createInMemoryPushNotificationInbox,
   type PushNotificationInbox,
@@ -37,6 +42,7 @@ import type {
 } from '@/tool-provider';
 
 import {
+  type CloudAuthProvider,
   connectMcpServer,
   McpAuthorizationRequiredError,
   type McpConnection,
@@ -52,11 +58,19 @@ import {
   type PendingAuthorization,
 } from './oauth/pending-authorizations';
 import { LocalBrowserOAuthPresenter } from './oauth/presenter';
+import { createDiscoveryAuthenticatedFetch } from './oauth/protected-resource';
 import { McpOAuthStore } from './oauth/store';
+import {
+  fetchMcpCatalog,
+  MCP_CATALOG_TIMEOUT_MS,
+  McpCatalogError,
+  type McpCatalogSnapshot,
+} from './on-demand';
 import {
   buildMcpRegistry,
   canonicalConfigSignature,
   type McpRegistry,
+  type McpToolSource,
   normalizeCallToolResult,
 } from './registry';
 
@@ -68,6 +82,15 @@ const EVENT_PAGE_SIZE = 100;
  * authorization step and publish a pending entry.
  */
 const AUTHORIZATION_MATERIALIZE_TIMEOUT_MS = 15_000;
+/** Covers a server resume plus initialization; the proxy bounds its wake below this. */
+const ON_DEMAND_CONNECT_TIMEOUT_MS = 90_000;
+/**
+ * Quiet period after which an on-demand connection is closed again. Well
+ * below the server's own idle window, so an MCP session never outlives a pause.
+ */
+const ON_DEMAND_IDLE_CLOSE_MS = 5 * 60_000;
+/** Re-reads the no-wake catalog to notice replacement or unassignment. */
+const STANDBY_REFRESH_MS = 5 * 60_000;
 
 export interface McpPushNotification {
   namespace: string;
@@ -114,6 +137,8 @@ export type McpRealtimeMediaAvailabilityListener = (
  * - `authorization_required` — OAuth consent is required but could not be completed.
  * - `authorizing` — an interactive OAuth authorization is in progress.
  * - `error` — the connection failed and is awaiting retry.
+ * - `standby` — an on-demand server lists its tools from the no-wake catalog
+ *   and connects only when they are used.
  * - `disconnected` — the server is not configured or was removed.
  */
 export type McpConnectionStatus =
@@ -122,6 +147,7 @@ export type McpConnectionStatus =
   | 'authorization_required'
   | 'authorizing'
   | 'error'
+  | 'standby'
   | 'disconnected';
 
 /** A single MCP server with its config and connection status. */
@@ -130,7 +156,7 @@ export interface McpServerInfo {
   name: string;
   /** Current connection status. */
   status: McpConnectionStatus;
-  /** Number of tools exposed by this server (0 if not connected). */
+  /** Number of tools exposed by this server, live or retained in standby. */
   toolCount: number;
   /** Combined count of resources and resource templates (0 if not connected or not yet fetched). */
   resourceCount: number;
@@ -314,6 +340,8 @@ export interface McpDependencies {
   realtimeMediaCapability?: RealtimeMediaExtensionCapability;
   dataDirectory: string;
   connect?: McpConnectionFactory;
+  /** Fetch for no-wake catalog reads. Defaults to the global fetch. */
+  fetch?: typeof fetch;
   cloudConnectivity?: CloudConnectivity;
   /**
    * Injection seam for tests that replace `connect`: a supplied registry lets a
@@ -373,6 +401,15 @@ interface McpServerRuntime {
   nextRetryAt?: string;
   /** Cached combined count of resources + resource templates, refreshed after connect. */
   resourceCount: number;
+  /** Descriptors retained from the no-wake catalog of an on-demand server. */
+  catalog?: McpCatalogSnapshot;
+  catalogFetch?: typeof fetch;
+  catalogAttempt?: AbortController;
+  standbyTimer?: ReturnType<typeof setTimeout>;
+  /** Single activation shared by concurrent work against a standby server. */
+  demand?: Promise<McpConnection>;
+  idleTimer?: ReturnType<typeof setTimeout>;
+  activeCalls: number;
 }
 
 class McpModule implements Mcp {
@@ -414,6 +451,7 @@ class McpModule implements Mcp {
       pushNotificationInbox: PushNotificationInbox;
       realtimeMediaCapability: RealtimeMediaExtensionCapability | undefined;
       connect: McpConnectionFactory;
+      fetch: typeof fetch;
       cloudConnectivity: CloudConnectivity | undefined;
       pendingAuthorizations: McpPendingAuthorizationRegistry;
       closeOAuth: () => Promise<void>;
@@ -752,7 +790,7 @@ class McpModule implements Mcp {
     input: JsonObject,
     context: ToolRequestContext,
   ): Promise<JsonValue> {
-    const { connection, tool } = this.getTool(reference);
+    const { tool } = this.getTool(reference);
     const record: McpToolCallRecord = {
       id: randomUUID(),
       namespace: reference.namespace,
@@ -766,7 +804,22 @@ class McpModule implements Mcp {
     };
     this.addToolCallRecord(record);
     try {
-      const result = await connection.invoke(tool, input, context.signal);
+      const result = await this.runWork(
+        reference.namespace,
+        context.signal,
+        (connection) => {
+          // Retained descriptors may predate the live server: dispatch against
+          // what it offers now.
+          const live = connection.tools.find(
+            (candidate) => candidate.name === tool.name,
+          );
+          if (!live)
+            throw new Error(
+              `MCP tool is no longer available: ${reference.namespace}.${reference.name}`,
+            );
+          return connection.invoke(live, input, context.signal);
+        },
+      );
       const normalized = normalizeCallToolResult(result);
       record.result = normalized;
       record.isError = Boolean(result.isError);
@@ -789,7 +842,53 @@ class McpModule implements Mcp {
       throw new Error(
         `Unknown MCP tool: ${reference.namespace}.${reference.name}`,
       );
-    return { connection: namespace.connection, ...tool };
+    return tool;
+  }
+
+  /**
+   * Runs work on the server's live connection, activating a standby on-demand
+   * server first. Work counts as activity for the idle close.
+   */
+  private async runWork<T>(
+    namespace: string,
+    signal: AbortSignal,
+    work: (connection: McpConnection) => Promise<T>,
+  ): Promise<T> {
+    const runtime = this.servers.get(namespace);
+    if (!runtime) throw new Error(`MCP server is unavailable: ${namespace}`);
+    const connection =
+      runtime.connection ?? (await this.activateOnDemand(runtime, signal));
+    runtime.activeCalls++;
+    try {
+      return await work(connection);
+    } finally {
+      runtime.activeCalls--;
+      if (runtime.idleTimer && runtime.connection === connection)
+        this.armIdleClose(runtime);
+    }
+  }
+
+  private activateOnDemand(
+    runtime: McpServerRuntime,
+    signal: AbortSignal,
+  ): Promise<McpConnection> {
+    if (!runtime.catalog || !this.onDemandLifecycle(runtime))
+      throw new Error(`MCP server is unavailable: ${runtime.namespace}`);
+    if (!runtime.demand) {
+      // Demand supersedes passive background work; only it may activate.
+      this.clearRetry(runtime);
+      this.clearStandbyRefresh(runtime);
+      runtime.attempt?.controller.abort();
+      runtime.attempt = undefined;
+      runtime.catalogAttempt?.abort();
+      runtime.catalogAttempt = undefined;
+      const demand = this.connectRuntime(runtime, true).finally(() => {
+        if (runtime.demand === demand) runtime.demand = undefined;
+      });
+      demand.catch(() => undefined);
+      runtime.demand = demand;
+    }
+    return raceAbort(runtime.demand, signal);
   }
 
   private scheduleReconcile(
@@ -828,6 +927,7 @@ class McpModule implements Mcp {
         status: 'connecting',
         retryAttempt: 0,
         resourceCount: 0,
+        activeCalls: 0,
       };
       this.servers.set(namespace, runtime);
       this.activateRuntime(runtime);
@@ -846,41 +946,49 @@ class McpModule implements Mcp {
       runtime.attempt
     )
       return;
+    if (this.onDemandLifecycle(runtime)) {
+      this.refreshCatalog(runtime);
+      return;
+    }
     runtime.status = 'connecting';
-    this.connectRuntime(runtime);
+    void this.connectRuntime(runtime).catch(() => undefined);
   }
 
-  private connectRuntime(runtime: McpServerRuntime): void {
+  /**
+   * Opens a connection. `demand` marks one opened for real work on an
+   * on-demand server; every other attempt is passive and must not activate it.
+   */
+  private connectRuntime(
+    runtime: McpServerRuntime,
+    demand = false,
+  ): Promise<McpConnection> {
     if (
       !this.isCurrentRuntime(runtime) ||
       runtime.connection ||
       runtime.attempt
     )
-      return;
+      return Promise.reject(
+        new Error(`MCP server is unavailable: ${runtime.namespace}`),
+      );
     const attempt: McpConnectionAttempt = {
       controller: new AbortController(),
     };
     runtime.attempt = attempt;
     runtime.status = 'connecting';
-    const cloudConnectivity = this.deps.cloudConnectivity;
-    void this.deps
+    const cloudAuth = this.cloudAuth();
+    return this.deps
       .connect({
         namespace: runtime.namespace,
         config: runtime.config,
-        signal: attempt.controller.signal,
+        signal: demand
+          ? AbortSignal.any([
+              attempt.controller.signal,
+              AbortSignal.timeout(ON_DEMAND_CONNECT_TIMEOUT_MS),
+            ])
+          : attempt.controller.signal,
         realtimeMediaCapability: this.deps.realtimeMediaCapability,
-        ...(cloudConnectivity
-          ? {
-              cloudAuth: {
-                getAccessToken: (resource: string, scopes: string[]) =>
-                  cloudConnectivity.getAccessToken(resource, scopes),
-                invalidate: (resource: string) =>
-                  cloudConnectivity.invalidateAccessToken(resource),
-                isTrustedAuthorizationServer: (issuer: string) =>
-                  cloudConnectivity.isTrustedAuthorizationServer(issuer),
-              },
-            }
-          : {}),
+        ...(cloudAuth ? { cloudAuth } : {}),
+        ...(demand ? { demand: true } : {}),
         onToolsChanged: (changed) => {
           if (!this.isCurrentConnection(runtime, changed)) return;
           this.publishRegistry();
@@ -904,6 +1012,15 @@ class McpModule implements Mcp {
         },
         onDisconnect: (disconnected) => {
           if (!this.isCurrentConnection(runtime, disconnected)) return;
+          if (this.onDemandLifecycle(runtime)) {
+            // Expected when the server enters standby; nothing reconnects.
+            this.deps.logger.info(
+              { namespace: runtime.namespace },
+              'MCP on-demand server closed the connection',
+            );
+            this.returnToStandby(runtime);
+            return;
+          }
           runtime.connection = undefined;
           runtime.status = 'error';
           runtime.lastError = {
@@ -924,13 +1041,17 @@ class McpModule implements Mcp {
       .then((connection) => {
         if (!this.isCurrentAttempt(runtime, attempt)) {
           this.closeConnection(connection, runtime.namespace);
-          return;
+          throw new Error(
+            `MCP connection attempt was superseded: ${runtime.namespace}`,
+          );
         }
         runtime.attempt = undefined;
         runtime.connection = connection;
         runtime.status = 'connected';
         runtime.lastError = undefined;
         this.clearRetry(runtime);
+        this.clearStandbyRefresh(runtime);
+        if (demand) this.armIdleClose(runtime);
         this.publishRegistry();
         if (connection.supportsPushNotifications)
           this.startEventWorker(connection);
@@ -942,15 +1063,17 @@ class McpModule implements Mcp {
             toolCount: connection.tools.length,
             supportsPushNotifications: connection.supportsPushNotifications,
             supportsRealtimeMedia: connection.supportsRealtimeMedia,
+            demand,
           },
           'MCP server connected',
         );
         this.resubscribeResources(runtime, connection);
         // Fetch resource count in the background — don't block connection.
         void this.refreshResourceCount(runtime, connection);
+        return connection;
       })
       .catch((error: unknown) => {
-        if (!this.isCurrentAttempt(runtime, attempt)) return;
+        if (!this.isCurrentAttempt(runtime, attempt)) throw error;
         runtime.attempt = undefined;
         const authorizationRequired =
           error instanceof McpAuthorizationRequiredError;
@@ -960,14 +1083,32 @@ class McpModule implements Mcp {
         if (authorizationRequired) {
           runtime.lastError = undefined;
           runtime.nextRetryAt = undefined;
+          if (runtime.catalog) {
+            // Descriptors the agent cannot use must not stay listed.
+            runtime.catalog = undefined;
+            runtime.resourceCount = 0;
+            this.clearStandbyRefresh(runtime);
+            this.publishRegistry();
+          }
           this.deps.logger.info(
             { namespace: runtime.namespace },
             'MCP server requires authorization',
           );
-          return;
+          throw error;
         }
         const diagnostic = safeDiagnosticError(error);
         runtime.lastError = { ...diagnostic, at: new Date().toISOString() };
+        if (runtime.catalog && this.onDemandLifecycle(runtime)) {
+          // Retained descriptors stay usable. The caller sees the failure;
+          // nothing retries an activation in the background.
+          runtime.status = 'standby';
+          this.deps.logger.warn(
+            { error: diagnostic, namespace: runtime.namespace, demand },
+            'MCP on-demand connection failed',
+          );
+          this.scheduleStandbyRefresh(runtime);
+          throw error;
+        }
         const isRetry = runtime.retryAttempt > 0;
         if (isRetry) {
           this.deps.logger.debug(
@@ -988,7 +1129,225 @@ class McpModule implements Mcp {
           );
         }
         this.scheduleReconnect(runtime);
+        throw error;
       });
+  }
+
+  /**
+   * The on-demand descriptor in effect. The catalog accepts the server's own
+   * credentials or a Cloud token; a server that would need interactive OAuth
+   * keeps the always-on lifecycle.
+   */
+  private onDemandLifecycle(
+    runtime: McpServerRuntime,
+  ): McpLifecycle | undefined {
+    const lifecycle = getMcpServerLifecycle(runtime.config);
+    if (!lifecycle || 'command' in runtime.config) return undefined;
+    if (
+      shouldUseAutomaticOAuth(runtime.config) &&
+      !shouldUseCloudAuthorization(this.deps.cloudConnectivity)
+    )
+      return undefined;
+    return lifecycle;
+  }
+
+  private cloudAuth(): CloudAuthProvider | undefined {
+    const cloudConnectivity = this.deps.cloudConnectivity;
+    if (!cloudConnectivity) return undefined;
+    return {
+      getAccessToken: (resource: string, scopes: string[]) =>
+        cloudConnectivity.getAccessToken(resource, scopes),
+      invalidate: (resource: string) =>
+        cloudConnectivity.invalidateAccessToken(resource),
+      isTrustedAuthorizationServer: (issuer: string) =>
+        cloudConnectivity.isTrustedAuthorizationServer(issuer),
+    };
+  }
+
+  /** Authenticates catalog reads exactly like the server itself. */
+  private catalogFetch(
+    runtime: McpServerRuntime,
+    lifecycle: McpLifecycle,
+  ): typeof fetch {
+    if (runtime.catalogFetch) return runtime.catalogFetch;
+    const config = runtime.config;
+    if ('command' in config)
+      throw new Error('A stdio MCP server has no catalog');
+    const baseFetch = this.deps.fetch;
+    const cloudAuth = this.cloudAuth();
+    const catalogFetch: typeof fetch =
+      cloudAuth && shouldUseAutomaticOAuth(config)
+        ? createDiscoveryAuthenticatedFetch(cloudAuth, config.url, baseFetch, {
+            additionalRequestUrls: [lifecycle.catalogUrl],
+          })
+        : (input, init) => {
+            const headers = new Headers(init?.headers);
+            for (const [name, value] of Object.entries(config.headers ?? {}))
+              headers.set(name, value);
+            return baseFetch(input, { ...init, headers });
+          };
+    runtime.catalogFetch = catalogFetch;
+    return catalogFetch;
+  }
+
+  /**
+   * Reads the no-wake catalog. Ready descriptors put the server in standby;
+   * without them it falls back to a passive connection, which a standby
+   * server refuses without activating.
+   */
+  private refreshCatalog(runtime: McpServerRuntime): void {
+    const lifecycle = this.onDemandLifecycle(runtime);
+    if (
+      !lifecycle ||
+      !this.isCurrentRuntime(runtime) ||
+      runtime.connection ||
+      runtime.attempt ||
+      runtime.catalogAttempt
+    )
+      return;
+    this.clearStandbyRefresh(runtime);
+    const controller = new AbortController();
+    runtime.catalogAttempt = controller;
+    if (!runtime.catalog) runtime.status = 'connecting';
+    void fetchMcpCatalog({
+      catalogUrl: lifecycle.catalogUrl,
+      fetch: this.catalogFetch(runtime, lifecycle),
+      signal: AbortSignal.any([
+        controller.signal,
+        AbortSignal.timeout(MCP_CATALOG_TIMEOUT_MS),
+      ]),
+    }).then(
+      (result) => {
+        if (!this.isCurrentCatalogAttempt(runtime, controller)) return;
+        runtime.catalogAttempt = undefined;
+        if (runtime.connection || runtime.attempt) return;
+        if (result.status === 'unavailable') {
+          runtime.catalog = undefined;
+          runtime.resourceCount = 0;
+          this.publishRegistry();
+          this.deps.logger.info(
+            {
+              namespace: runtime.namespace,
+              catalogStatus: result.catalogStatus,
+            },
+            'MCP catalog has no usable descriptors; connecting directly',
+          );
+          runtime.status = 'connecting';
+          void this.connectRuntime(runtime).catch(() => undefined);
+          return;
+        }
+        const previous = runtime.catalog;
+        const { snapshot } = result;
+        runtime.catalog = snapshot;
+        runtime.status = 'standby';
+        runtime.lastError = undefined;
+        runtime.resourceCount =
+          snapshot.resources.length + snapshot.resourceTemplates.length;
+        this.clearRetry(runtime);
+        this.publishRegistry();
+        this.scheduleStandbyRefresh(runtime);
+        if (previous?.generation !== snapshot.generation)
+          this.deps.logger.info(
+            {
+              namespace: runtime.namespace,
+              generation: snapshot.generation,
+              toolCount: snapshot.tools.length,
+            },
+            'MCP server in standby',
+          );
+      },
+      (error: unknown) => {
+        if (!this.isCurrentCatalogAttempt(runtime, controller)) return;
+        runtime.catalogAttempt = undefined;
+        if (runtime.connection || runtime.attempt) return;
+        // Unassignment, deletion, rejected credentials, and contract breaks
+        // revoke descriptors. Transient failures keep them listed.
+        if (error instanceof McpCatalogError && error.revokesDescriptors) {
+          runtime.catalog = undefined;
+          runtime.resourceCount = 0;
+        }
+        runtime.status = runtime.catalog ? 'standby' : 'error';
+        const diagnostic = safeDiagnosticError(error);
+        runtime.lastError = { ...diagnostic, at: new Date().toISOString() };
+        this.publishRegistry();
+        this.deps.logger[runtime.retryAttempt > 0 ? 'debug' : 'warn'](
+          {
+            error: diagnostic,
+            namespace: runtime.namespace,
+            retryAttempt: runtime.retryAttempt,
+          },
+          'MCP catalog read failed',
+        );
+        this.scheduleReconnect(runtime);
+      },
+    );
+  }
+
+  private isCurrentCatalogAttempt(
+    runtime: McpServerRuntime,
+    controller: AbortController,
+  ): boolean {
+    return (
+      this.isCurrentRuntime(runtime) && runtime.catalogAttempt === controller
+    );
+  }
+
+  /** Drops the live connection of an on-demand server and lists it from its catalog. */
+  private returnToStandby(runtime: McpServerRuntime): void {
+    runtime.connection = undefined;
+    this.clearIdleClose(runtime);
+    this.stopEventWorker(runtime.namespace);
+    this.stopRealtimeWorker(runtime.namespace);
+    runtime.status = runtime.catalog ? 'standby' : 'connecting';
+    runtime.resourceCount = runtime.catalog
+      ? runtime.catalog.resources.length +
+        runtime.catalog.resourceTemplates.length
+      : 0;
+    this.publishRegistry();
+    this.refreshCatalog(runtime);
+  }
+
+  private armIdleClose(runtime: McpServerRuntime): void {
+    this.clearIdleClose(runtime);
+    const timer = setTimeout(() => {
+      if (runtime.idleTimer !== timer) return;
+      runtime.idleTimer = undefined;
+      const connection = runtime.connection;
+      if (!connection || !this.isCurrentRuntime(runtime)) return;
+      if (runtime.activeCalls > 0) {
+        this.armIdleClose(runtime);
+        return;
+      }
+      this.returnToStandby(runtime);
+      this.closeConnection(connection, runtime.namespace);
+      this.deps.logger.info(
+        { namespace: runtime.namespace },
+        'MCP on-demand connection idle; returned to standby',
+      );
+    }, ON_DEMAND_IDLE_CLOSE_MS);
+    timer.unref?.();
+    runtime.idleTimer = timer;
+  }
+
+  private clearIdleClose(runtime: McpServerRuntime): void {
+    if (runtime.idleTimer) clearTimeout(runtime.idleTimer);
+    runtime.idleTimer = undefined;
+  }
+
+  private scheduleStandbyRefresh(runtime: McpServerRuntime): void {
+    this.clearStandbyRefresh(runtime);
+    const timer = setTimeout(() => {
+      if (runtime.standbyTimer !== timer) return;
+      runtime.standbyTimer = undefined;
+      this.refreshCatalog(runtime);
+    }, STANDBY_REFRESH_MS);
+    timer.unref?.();
+    runtime.standbyTimer = timer;
+  }
+
+  private clearStandbyRefresh(runtime: McpServerRuntime): void {
+    if (runtime.standbyTimer) clearTimeout(runtime.standbyTimer);
+    runtime.standbyTimer = undefined;
   }
 
   private invalidateRuntime(
@@ -998,7 +1357,12 @@ class McpModule implements Mcp {
       this.servers.delete(runtime.namespace);
     runtime.attempt?.controller.abort();
     runtime.attempt = undefined;
+    runtime.catalogAttempt?.abort();
+    runtime.catalogAttempt = undefined;
+    runtime.catalog = undefined;
     this.clearRetry(runtime);
+    this.clearStandbyRefresh(runtime);
+    this.clearIdleClose(runtime);
     this.stopEventWorker(runtime.namespace);
     this.stopRealtimeWorker(runtime.namespace);
     const connection = runtime.connection;
@@ -1461,12 +1825,20 @@ class McpModule implements Mcp {
   }
 
   private publishRegistry(): void {
-    const connections = new Map<string, McpConnection>();
+    const sources = new Map<string, McpToolSource>();
     for (const runtime of this.servers.values()) {
       if (runtime.connection)
-        connections.set(runtime.namespace, runtime.connection);
+        sources.set(runtime.namespace, {
+          tools: runtime.connection.tools,
+          connection: runtime.connection,
+        });
+      else if (runtime.catalog)
+        sources.set(runtime.namespace, {
+          tools: runtime.catalog.tools,
+          connection: undefined,
+        });
     }
-    this.registry = buildMcpRegistry(connections);
+    this.registry = buildMcpRegistry(sources);
   }
 
   getServerStatuses(): McpServerInfo[] {
@@ -1485,7 +1857,8 @@ class McpModule implements Mcp {
       statuses.push({
         name,
         status: runtime?.status ?? 'disconnected',
-        toolCount: connection?.tools.length ?? 0,
+        toolCount:
+          connection?.tools.length ?? runtime?.catalog?.tools.length ?? 0,
         resourceCount: runtime?.resourceCount ?? 0,
         supportsPushNotifications:
           connection?.supportsPushNotifications ?? false,
@@ -1552,7 +1925,7 @@ class McpModule implements Mcp {
     this.clearRetry(runtime);
     runtime.attempt?.controller.abort();
     runtime.attempt = undefined;
-    this.connectRuntime(runtime);
+    void this.connectRuntime(runtime).catch(() => undefined);
 
     const authorization = await this.deps.pendingAuthorizations.waitForServer(
       serverName,
@@ -1738,6 +2111,16 @@ class McpModule implements Mcp {
     resourceTemplates: ResourceTemplateType[];
     nextCursor?: string;
   }> {
+    const runtime = this.servers.get(namespace);
+    if (runtime && !runtime.connection && runtime.catalog) {
+      // Listing is discovery: a standby server answers from its catalog.
+      if (cursor !== undefined)
+        throw new Error('MCP resource cursor is not valid in standby');
+      return {
+        resources: [...runtime.catalog.resources],
+        resourceTemplates: [...runtime.catalog.resourceTemplates],
+      };
+    }
     const connection = this.requireConnection(namespace);
     const budget: ResourceCatalogBudget = { entries: 0, bytes: 0 };
     const resourceResult =
@@ -1749,7 +2132,6 @@ class McpModule implements Mcp {
       budget,
     );
     // Update cached count for this server.
-    const runtime = this.servers.get(namespace);
     if (runtime) {
       runtime.resourceCount =
         resourceResult.resources.length + resourceTemplates.length;
@@ -1857,8 +2239,10 @@ class McpModule implements Mcp {
     namespace: string,
     uri: string,
   ): Promise<ReadResourceResult> {
-    const connection = this.requireConnection(namespace);
-    return connection.readResource(uri, AbortSignal.timeout(30_000));
+    // Reading is work: it activates a standby server. Activation bounds itself.
+    return this.runWork(namespace, new AbortController().signal, (connection) =>
+      connection.readResource(uri, AbortSignal.timeout(30_000)),
+    );
   }
 
   private addToolCallRecord(record: McpToolCallRecord): void {
@@ -1951,6 +2335,7 @@ export function createMcp(deps: McpDependencies): Mcp {
     pushNotificationInbox: createInMemoryPushNotificationInbox(),
     realtimeMediaCapability: deps.realtimeMediaCapability,
     connect,
+    fetch: deps.fetch ?? ((input, init) => fetch(input, init)),
     cloudConnectivity: deps.cloudConnectivity,
     pendingAuthorizations,
     closeOAuth: async () => {
@@ -1979,6 +2364,25 @@ function safeDiagnosticError(error: unknown): {
         '$1[REDACTED]',
       ),
   };
+}
+
+/** Stops waiting on abort without cancelling the shared operation. */
+function raceAbort<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
+  if (signal.aborted) return Promise.reject(signal.reason);
+  return new Promise((resolve, reject) => {
+    const onAbort = () => reject(signal.reason);
+    signal.addEventListener('abort', onAbort, { once: true });
+    promise.then(
+      (value) => {
+        signal.removeEventListener('abort', onAbort);
+        resolve(value);
+      },
+      (error: unknown) => {
+        signal.removeEventListener('abort', onAbort);
+        reject(error);
+      },
+    );
+  });
 }
 
 function abortableDelay(

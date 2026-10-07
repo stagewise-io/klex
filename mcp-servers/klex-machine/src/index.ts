@@ -56,12 +56,16 @@ async function main(): Promise<void> {
     { loadProtectedResourceConfiguration },
     { startCloudMachineRuntime },
     { loadMachineEnrollment },
+    { describeMachineCatalog },
+    { createMachineMcp },
   ] = await Promise.all([
     import('./cloud/auth.js'),
     import('./cloud/principal-router.js'),
     import('./cloud/protected-resource.js'),
     import('./cloud/runtime.js'),
     import('./cloud/state.js'),
+    import('./cloud/catalog.js'),
+    import('./mcp.js'),
   ]);
   const enrollment = await loadMachineEnrollment(result.dataDir);
   const protectedResource = await loadProtectedResourceConfiguration(
@@ -83,16 +87,38 @@ async function main(): Promise<void> {
     result.config.cwd,
     store,
   );
-  const runtime = await startCloudMachineRuntime(result.dataDir, router).catch(
-    async (error: unknown) => {
+  const runtime = await startCloudMachineRuntime(result.dataDir, router, {
+    // A private instance answers `tools/list`, so no principal state is created.
+    describeCatalog: async ({ workloadReporting }) => {
+      const mcp = createMachineMcp(result.config.cwd);
       try {
-        await router.close();
+        return await describeMachineCatalog(mcp, {
+          daemonVersion: packageVersion(),
+          workloadReporting,
+        });
       } finally {
-        await store.close();
+        await mcp.close();
       }
-      throw error;
     },
-  );
+    onCatalogError: (error) => {
+      const message = error instanceof Error ? error.message : String(error);
+      process.stderr.write(
+        `klex-machine: catalog publish failed: ${message}\n`,
+      );
+    },
+    attachLeaseReporter: (reporter) => router.attachLeaseReporter(reporter),
+    onLeaseError: (error) => {
+      const message = error instanceof Error ? error.message : String(error);
+      process.stderr.write(`klex-machine: workload lease: ${message}\n`);
+    },
+  }).catch(async (error: unknown) => {
+    try {
+      await router.close();
+    } finally {
+      await store.close();
+    }
+    throw error;
+  });
   let closing: Promise<void> | undefined;
   const close = () =>
     (closing ??= (async () => {

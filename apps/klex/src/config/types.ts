@@ -511,14 +511,65 @@ const stdioServerConfigSchema = z
 
 type StdioServerConfig = z.infer<typeof stdioServerConfigSchema>;
 
-const httpServerConfigSchema = z
+const httpServerConfigBaseShape = {
+  type: z.enum(['http', 'streamable-http']).optional(),
+  url: z.url(),
+  headers: z.record(z.string(), z.string()).optional(),
+  versionNegotiation: mcpVersionNegotiationSchema.optional(),
+};
+
+/**
+ * Frozen HTTP server shape of stored config schemas 1–5. Historical
+ * validators use it so they keep rejecting the on-demand lifecycle
+ * descriptor. Do not change it; evolve `httpServerConfigSchema` instead.
+ */
+const httpServerConfigV5Schema = z.object(httpServerConfigBaseShape).strict();
+
+/** Frozen MCP server union of stored config schemas 1–5. */
+const mcpServerConfigV5Schema = z.union([
+  stdioServerConfigSchema,
+  httpServerConfigV5Schema,
+]);
+
+/**
+ * Generic on-demand lifecycle. The server may be in standby; the agent keeps
+ * its tools discoverable from the no-wake catalog and connects only for real
+ * work. Absent means always-on.
+ */
+const mcpLifecycleSchema = z
   .object({
-    type: z.enum(['http', 'streamable-http']).optional(),
-    url: z.url(),
-    headers: z.record(z.string(), z.string()).optional(),
-    versionNegotiation: mcpVersionNegotiationSchema.optional(),
+    mode: z.literal('on-demand'),
+    /** No-wake lifecycle/catalog endpoint, same origin as the server URL. */
+    catalogUrl: z.url({ protocol: /^https?$/ }),
   })
   .strict();
+
+type McpLifecycle = z.infer<typeof mcpLifecycleSchema>;
+
+/**
+ * The catalog request carries the server's credentials, so it must not leave
+ * the server's origin.
+ */
+function hasSameOriginCatalog(server: {
+  url: string;
+  lifecycle?: McpLifecycle | undefined;
+}): boolean {
+  if (!server.lifecycle) return true;
+  return (
+    new URL(server.lifecycle.catalogUrl).origin === new URL(server.url).origin
+  );
+}
+
+const httpServerConfigSchema = z
+  .object({
+    ...httpServerConfigBaseShape,
+    lifecycle: mcpLifecycleSchema.optional(),
+  })
+  .strict()
+  .refine(hasSameOriginCatalog, {
+    message: 'Lifecycle catalogUrl must share the server URL origin',
+    path: ['lifecycle', 'catalogUrl'],
+  });
 
 type HttpServerConfig = z.infer<typeof httpServerConfigSchema>;
 
@@ -528,6 +579,13 @@ const mcpServerConfigSchema = z.union([
 ]);
 
 type McpServerConfig = z.infer<typeof mcpServerConfigSchema>;
+
+/** Returns the on-demand descriptor, or `undefined` for always-on servers. */
+function getMcpServerLifecycle(
+  server: McpServerConfig,
+): McpLifecycle | undefined {
+  return 'url' in server ? server.lifecycle : undefined;
+}
 
 /**
  * Stored schemas 1–3 may carry a `telemetry` object from before telemetry
@@ -589,7 +647,7 @@ const klexConfigV4Schema = z.object({
     consult: [],
     voice: { sts: [], tts: [], stt: [] },
   }),
-  mcpServers: z.record(z.string(), mcpServerConfigSchema).default({}),
+  mcpServers: z.record(z.string(), mcpServerConfigV5Schema).default({}),
   timezone: timezoneSchema.default('UTC'),
 });
 
@@ -641,7 +699,7 @@ const extensionsConfigSchema = z
   .object({ memory: memoryExtensionConfigSchema.prefault({}) })
   .strict();
 
-const klexConfigSchema = z.object({
+const klexConfigShape = {
   configVersion: z.literal(2).default(2),
   officialName: z
     .string()
@@ -666,7 +724,9 @@ const klexConfigSchema = z.object({
   // `.prefault` (not `.default`) so nested defaults are applied.
   extensions: extensionsConfigSchema.prefault({}),
   sessionHistory: sessionHistoryConfigSchema.optional(),
-});
+};
+
+const klexConfigSchema = z.object(klexConfigShape);
 
 type KlexConfig = z.infer<typeof klexConfigSchema>;
 type SessionHistoryConfig = z.infer<typeof sessionHistoryConfigSchema>;
@@ -711,7 +771,7 @@ const legacyKlexConfigSchema = z
       .record(providerInstanceIdSchema, legacyProviderConfigSchema)
       .default({}),
     modelSelection: legacyModelSelectionSchema,
-    mcpServers: z.record(z.string(), mcpServerConfigSchema).default({}),
+    mcpServers: z.record(z.string(), mcpServerConfigV5Schema).default({}),
     telemetry: removedTelemetryFieldSchema,
   })
   .strict();
@@ -729,7 +789,19 @@ const storedKlexConfigV4Schema = klexConfigV4Schema
   .extend({ configVersion: z.literal(2) })
   .strict();
 
-/** Stored schema 5: the runtime config shape; unknown keys are rejected. */
+/**
+ * Stored schema 5: the runtime shape before on-demand MCP lifecycles. Frozen;
+ * it rejects the `lifecycle` descriptor.
+ */
+const storedKlexConfigV5Schema = z
+  .object({
+    ...klexConfigShape,
+    configVersion: z.literal(2),
+    mcpServers: z.record(z.string(), mcpServerConfigV5Schema).default({}),
+  })
+  .strict();
+
+/** Stored schema 6: the runtime config shape; unknown keys are rejected. */
 const storedKlexConfigSchema = klexConfigSchema
   .extend({ configVersion: z.literal(2) })
   .strict();
@@ -780,8 +852,20 @@ function parseStoredKlexConfigV4(input: unknown): Record<string, unknown> {
   return storedKlexConfigV4Schema.parse(input);
 }
 
+function parseStoredKlexConfigV5(input: unknown): Record<string, unknown> {
+  return storedKlexConfigV5Schema.parse(input);
+}
+
 function parseStoredKlexConfig(input: unknown): Record<string, unknown> {
   return storedKlexConfigSchema.parse(input);
+}
+
+/**
+ * 5→6 migration: representation is unchanged. Schema 5 servers are valid
+ * always-on schema 6 servers; the step only revalidates.
+ */
+function admitOnDemandMcpConfig(input: unknown): Record<string, unknown> {
+  return storedKlexConfigSchema.parse(storedKlexConfigV5Schema.parse(input));
 }
 
 function migrateLegacyKlexConfig(input: unknown): KlexConfigV4 {
@@ -945,6 +1029,7 @@ export type {
   EpisodeRotationConfig,
   HttpServerConfig,
   KlexConfig,
+  McpLifecycle,
   McpServerConfig,
   McpVersionNegotiation,
   ModelCapabilities,
@@ -963,10 +1048,13 @@ export type {
   VoiceModelPurpose,
 };
 export {
+  admitOnDemandMcpConfig,
   dropLegacyTelemetryConfig,
+  getMcpServerLifecycle,
   getProviderSettingsJsonSchema,
   isProviderSecretSetting,
   klexConfigSchema,
+  mcpLifecycleSchema,
   mcpServerConfigSchema,
   migrateLegacyKlexConfig,
   modelCapabilitiesSchema,
@@ -980,6 +1068,7 @@ export {
   parseStoredKlexConfig,
   parseStoredKlexConfigV2,
   parseStoredKlexConfigV4,
+  parseStoredKlexConfigV5,
   providerConfigSchema,
   providerInstanceIdSchema,
   providerTypeSchema,

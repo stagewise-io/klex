@@ -40,6 +40,7 @@ import {
 } from './oauth/protected-resource';
 import { McpOAuthProvider } from './oauth/provider';
 import type { McpOAuthStore } from './oauth/store';
+import { withMachineDemand } from './on-demand';
 
 export class McpAuthorizationRequiredError extends Error {
   public constructor(cause: unknown) {
@@ -89,6 +90,11 @@ export interface ConnectMcpServerOptions {
   signal: AbortSignal;
   realtimeMediaCapability?: RealtimeMediaExtensionCapability;
   cloudAuth?: CloudAuthProvider;
+  /**
+   * Opened for a real invocation of an on-demand server: the initialization
+   * asks the server to activate. Discovery and reconnects must leave it unset.
+   */
+  demand?: boolean;
   onToolsChanged(connection: McpConnection): void;
   onPushNotification(
     connection: McpConnection,
@@ -267,10 +273,12 @@ export async function connectMcpServer(
     },
   );
   const oauth = await createOAuthTransportOptions(options);
+  const transportOptions = { demand: options.demand === true };
   let transport = createTransport(
     options.config,
     oauth?.provider,
     options.cloudAuth,
+    transportOptions,
   );
   client.onclose = () => {
     if (connection && !expectedClose) options.onDisconnect(connection);
@@ -303,6 +311,7 @@ export async function connectMcpServer(
         options.config,
         oauth.provider,
         options.cloudAuth,
+        transportOptions,
       );
       options.onAuthorizationStatus?.('connecting');
       await client.connect(transport, { signal: options.signal });
@@ -421,6 +430,7 @@ export function createTransport(
   config: McpServerConfig,
   authProvider?: OAuthClientProvider,
   cloudAuth?: CloudAuthProvider,
+  options: { demand?: boolean } = {},
 ): Transport {
   if ('command' in config) {
     return new StdioClientTransport({
@@ -429,19 +439,30 @@ export function createTransport(
       ...(config.env ? { env: config.env } : {}),
     });
   }
+  const authenticatedFetch =
+    cloudAuth && shouldUseAutomaticOAuth(config)
+      ? createDiscoveryAuthenticatedFetch(cloudAuth, config.url)
+      : undefined;
+  // The demand marker wraps outermost: it must see the transport's own
+  // request before an authentication layer rebuilds it.
+  const transportFetch = options.demand
+    ? withMachineDemand(
+        authenticatedFetch ?? ((input, init) => fetch(input, init)),
+      )
+    : authenticatedFetch;
   return new StreamableHTTPClientTransport(new URL(config.url), {
     ...(authProvider ? { authProvider } : {}),
     ...(config.headers
       ? { requestInit: { headers: new Headers(config.headers) } }
       : {}),
-    ...(cloudAuth && shouldUseAutomaticOAuth(config)
-      ? { fetch: createDiscoveryAuthenticatedFetch(cloudAuth, config.url) }
-      : {}),
+    ...(transportFetch ? { fetch: transportFetch } : {}),
     reconnectionOptions: {
       initialReconnectionDelay: 1_000,
       maxReconnectionDelay: 30_000,
       reconnectionDelayGrowFactor: 2,
-      maxRetries: 5,
+      // A demand connection ends with its machine's standby; reopening the
+      // stream would only meet a paused machine.
+      maxRetries: options.demand ? 0 : 5,
     },
   });
 }

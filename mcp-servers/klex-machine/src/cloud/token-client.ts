@@ -12,6 +12,8 @@ export interface MachineTokenClientOptions {
   keyId: string;
   tokenEndpoint: string;
   resource: string;
+  /** OAuth scope to request. Defaults to `machine:connect`. */
+  scope?: string;
   fetch?: typeof globalThis.fetch;
 }
 
@@ -51,7 +53,7 @@ export function createMachineTokenClient(
     );
     const parameters = new URLSearchParams({
       grant_type: 'client_credentials',
-      scope: 'machine:connect',
+      scope: options.scope ?? 'machine:connect',
       resource: options.resource,
     });
     const response = await oauth.clientCredentialsGrantRequest(

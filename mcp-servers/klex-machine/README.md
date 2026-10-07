@@ -78,6 +78,20 @@ Limits are 32 running watchers per principal, a 1-second to 7-day lifetime, a 16
 
 A second local server sharing a live instance's data directory runs with a memory-only queue and logs a warning. Its notifications cannot survive restart. Give concurrent servers separate data directories when durable recovery is required. Empty or malformed PID locks are not reclaimed because their ownership is uncertain. Stale PID-lock reclamation is serialized by an exclusive `notifications/lock-recovery` directory. If a crash leaves an ambiguous lock or recovery directory, stop all servers using that data directory before manually removing the lock artifacts; until then, affected startups use memory-only notifications.
 
+## Commands and keep-awake protection
+
+Managed machines can pause while idle. A running process alone does not keep a machine awake. Only tracked workloads do.
+
+- `runCommand` runs a non-interactive command with tracked completion. It returns after `waitMs` (default 10 s, maximum 30 s) with output so far. `readCommand` continues from a monotonic cursor and reports status and exit state.
+  - `foreground` (default) is for finite work. It keeps the machine awake until the command exits, even after the tool call has returned. Leftover processes in its group are stopped on exit.
+  - `detached` is for dev servers and watchers. It never keeps the machine awake.
+- `cancelCommand` stops a command's process group with `SIGTERM`, then `SIGKILL` after 5 seconds. `listCommands` lists tracked commands.
+- `protectShellSession` keeps the machine awake for interactive PTY work for a bounded 1 second to 4 hours. Repeat the call to extend. Protection ends early on `unprotectShellSession`, PTY exit or close. PTY output, liveness and keystrokes never extend protection on their own.
+
+In enrolled mode, the daemon publishes its tool catalog and reports one busy lease per protected workload to `{cloud}/api/machines/{id}/lifecycle/report` with its `machine:lifecycle-report` token. It acquires each lease once, renews every 30 seconds (`LEASE_RENEW_INTERVAL_MS`) against Cloud's 90 second TTL, and releases it once. If Cloud rejects a lease or lets it expire, the reporter surfaces the loss and protects the workload again. It never assumes protection silently.
+
+The managed E2B team caps one running stretch at seven days. At the cap the provider pauses the machine even when work is protected. Cloud recovers a protected cap pause once, but interrupted commands may need to be restarted.
+
 ## Development
 
 From the Klex monorepo:

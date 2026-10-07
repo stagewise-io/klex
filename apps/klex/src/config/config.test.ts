@@ -78,8 +78,8 @@ afterEach(async () => {
 
 describe('config v2', () => {
   it('advances compatibility metadata for consult model selection', async () => {
-    expect(CONFIG_STORE_DEFINITION.compatibilityVersion).toBe(6);
-    expect(CONFIG_STORE_DEFINITION.minimumKlexVersion).toBe('0.9.2');
+    expect(CONFIG_STORE_DEFINITION.compatibilityVersion).toBe(7);
+    expect(CONFIG_STORE_DEFINITION.minimumKlexVersion).toBe('0.14.0');
 
     const dataDirectory = await directory();
     await writeFile(
@@ -103,8 +103,8 @@ describe('config v2', () => {
       _klex: { compatibilityVersion: number; minimumKlexVersion: string };
     };
     expect(persisted._klex).toMatchObject({
-      compatibilityVersion: 6,
-      minimumKlexVersion: '0.9.2',
+      compatibilityVersion: 7,
+      minimumKlexVersion: '0.14.0',
     });
   });
 
@@ -194,7 +194,7 @@ describe('config v2', () => {
     expect(persisted).not.toHaveProperty('telemetry');
     expect(persisted._klex).toMatchObject({
       store: 'config',
-      schemaVersion: 5,
+      schemaVersion: 6,
     });
     expect(persisted.extensions).toEqual({
       memory: {
@@ -233,7 +233,7 @@ describe('config v2', () => {
       string,
       unknown
     >;
-    expect(persisted._klex).toMatchObject({ schemaVersion: 5 });
+    expect(persisted._klex).toMatchObject({ schemaVersion: 6 });
     expect(persisted).not.toHaveProperty('episodeFinishIdleTriggerTimeMs');
     expect(persisted).not.toHaveProperty('memoryWriteIntervalMs');
     expect(persisted).not.toHaveProperty('memoryWriteStepInterval');
@@ -349,8 +349,8 @@ describe('config v2', () => {
   });
 
   it('advances compatibility metadata for consult model selection', async () => {
-    expect(CONFIG_STORE_DEFINITION.compatibilityVersion).toBe(6);
-    expect(CONFIG_STORE_DEFINITION.minimumKlexVersion).toBe('0.9.2');
+    expect(CONFIG_STORE_DEFINITION.compatibilityVersion).toBe(7);
+    expect(CONFIG_STORE_DEFINITION.minimumKlexVersion).toBe('0.14.0');
 
     const dataDirectory = await directory();
     await writeFile(
@@ -374,8 +374,8 @@ describe('config v2', () => {
       _klex: { compatibilityVersion: number; minimumKlexVersion: string };
     };
     expect(persisted._klex).toMatchObject({
-      compatibilityVersion: 6,
-      minimumKlexVersion: '0.9.2',
+      compatibilityVersion: 7,
+      minimumKlexVersion: '0.14.0',
     });
   });
 
@@ -646,7 +646,7 @@ describe('config v2', () => {
     );
     expect(persisted._klex).toMatchObject({
       store: 'config',
-      schemaVersion: 5,
+      schemaVersion: 6,
     });
     expect(parseKlexConfig(persisted).configVersion).toBe(2);
     await config.close();

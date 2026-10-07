@@ -136,11 +136,25 @@ async function discoverTrustedResource(
   return { resource, scopes };
 }
 
+export interface DiscoveryAuthenticatedFetchOptions {
+  /**
+   * Exact URLs, besides the resource itself, that accept the resource's token.
+   * An on-demand server's no-wake catalog is authorized for its MCP resource.
+   */
+  additionalRequestUrls?: readonly string[];
+}
+
 export function createDiscoveryAuthenticatedFetch(
   cloudAuth: DiscoveryCloudAuthProvider,
   configuredResource: string,
   fetchImpl: typeof fetch = globalThis.fetch,
+  options: DiscoveryAuthenticatedFetchOptions = {},
 ): typeof fetch {
+  const additionalRequestUrls = options.additionalRequestUrls ?? [];
+  for (const url of additionalRequestUrls) {
+    if (new URL(url).origin !== new URL(configuredResource).origin)
+      throw new Error('Additional token URLs must share the resource origin');
+  }
   let trustedResource: TrustedProtectedResource | null = null;
   let discovery: Promise<TrustedProtectedResource | null> | null = null;
 
@@ -163,7 +177,12 @@ export function createDiscoveryAuthenticatedFetch(
       protectedResource: TrustedProtectedResource,
       refresh: boolean,
     ): Promise<Response> => {
-      if (!isSameResourceRequest(request.url, protectedResource.resource)) {
+      if (
+        !isSameResourceRequest(request.url, protectedResource.resource) &&
+        !additionalRequestUrls.some((url) =>
+          isSameResourceRequest(request.url, url),
+        )
+      ) {
         throw new Error(
           'Refusing to send a Cloud token to a different resource',
         );

@@ -116,7 +116,17 @@ describe('machine push notifications', () => {
       'cancelWatcher',
       ...unsupported.map((tool) => tool.name),
     ]);
-    expect(unsupported).toHaveLength(15);
+    expect(unsupported).toHaveLength(21);
+    expect(unsupported.map((tool) => tool.name)).toEqual(
+      expect.arrayContaining([
+        'runCommand',
+        'readCommand',
+        'cancelCommand',
+        'listCommands',
+        'protectShellSession',
+        'unprotectShellSession',
+      ]),
+    );
     expect(
       supported.find((tool) => tool.name === 'createShellSession')?.inputSchema
         .properties,

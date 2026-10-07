@@ -3,6 +3,7 @@ import { z } from 'zod';
 import type { JsonStoreDefinition } from '@/local-data';
 
 import {
+  admitOnDemandMcpConfig,
   dropLegacyTelemetryConfig,
   migrateLegacyKlexConfig,
   nestMemoryExtensionConfig,
@@ -10,6 +11,7 @@ import {
   parseStoredKlexConfig,
   parseStoredKlexConfigV2,
   parseStoredKlexConfigV4,
+  parseStoredKlexConfigV5,
 } from './types';
 
 function preservingSchema(
@@ -50,6 +52,9 @@ const v2ConfigStorageSchema = preservingSchema((value) => {
 const v4ConfigStorageSchema = preservingSchema((value) => {
   parseStoredKlexConfigV4(value);
 });
+const v5ConfigStorageSchema = preservingSchema((value) => {
+  parseStoredKlexConfigV5(value);
+});
 const currentConfigStorageSchema = preservingSchema((value) => {
   parseStoredKlexConfig(value);
 });
@@ -59,9 +64,10 @@ export const CONFIG_STORE_DEFINITION: JsonStoreDefinition = {
   id: 'config',
   relativePath: 'config.json',
   required: true,
-  schemaVersion: 5,
-  compatibilityVersion: 6,
-  minimumKlexVersion: '0.9.2',
+  schemaVersion: 6,
+  // 7: on-demand MCP lifecycles. Older binaries would reject or drop them.
+  compatibilityVersion: 7,
+  minimumKlexVersion: '0.14.0',
   legacySchemaVersion: 1,
   versions: [
     { version: 1, schema: legacyConfigStorageSchema },
@@ -69,7 +75,8 @@ export const CONFIG_STORE_DEFINITION: JsonStoreDefinition = {
     // Schema 3 renamed telemetry levels; it shares the v2 shape.
     { version: 3, schema: v2ConfigStorageSchema },
     { version: 4, schema: v4ConfigStorageSchema },
-    { version: 5, schema: currentConfigStorageSchema },
+    { version: 5, schema: v5ConfigStorageSchema },
+    { version: 6, schema: currentConfigStorageSchema },
   ],
   migrations: [
     {
@@ -105,6 +112,15 @@ export const CONFIG_STORE_DEFINITION: JsonStoreDefinition = {
       // so keeping the keys would protect no downgrade path.
       name: 'nest-memory-extension-config',
       up: (value) => nestMemoryExtensionConfig(value),
+    },
+    {
+      from: 5,
+      to: 6,
+      // Admits the optional on-demand `lifecycle` descriptor on HTTP MCP
+      // servers. Existing servers stay always-on and are not rewritten; Cloud
+      // installs the descriptor for compatible agents.
+      name: 'admit-on-demand-mcp-lifecycle',
+      up: (value) => admitOnDemandMcpConfig(value),
     },
   ],
 };

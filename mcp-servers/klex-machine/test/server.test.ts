@@ -15,6 +15,7 @@ import {
   type MachineServer,
   startMachineServer,
 } from '../src/server.js';
+import { WorkloadTracker } from '../src/workloads/index.js';
 
 function config(overrides: Partial<RuntimeConfig> = {}): RuntimeConfig {
   return {
@@ -31,6 +32,7 @@ function fakeMcp(): machineMcp.MachineMcp & {
   close: ReturnType<typeof vi.fn>;
 } {
   return {
+    workloads: new WorkloadTracker(),
     fetch: vi.fn(async () => new Response('mcp-response')),
     close: vi.fn(async () => undefined),
   };

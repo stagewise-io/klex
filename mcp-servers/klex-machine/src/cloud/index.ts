@@ -1,4 +1,6 @@
 export * from './auth.js';
+export * from './catalog.js';
+export * from './catalog-publisher.js';
 export * from './enrollment.js';
 export * from './identity.js';
 export * from './principal-router.js';

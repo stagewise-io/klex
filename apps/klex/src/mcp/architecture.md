@@ -66,6 +66,31 @@ Key invariants:
 - Only the current connection owns the namespace's event worker.
 - Late connections from superseded attempts close immediately.
 
+## On-demand servers
+
+A server configured with `lifecycle: { mode: 'on-demand', catalogUrl }` can be in standby. `catalogUrl` must be HTTP(S) and share the server URL's origin. The OAuth provider sends the server's token only to that origin. Klex lists the server's tools without holding a connection and connects only when they are used.
+
+```
+config -> read no-wake catalog (on-demand.ts, 15 s)
+  ready   -> standby: register descriptors without a connection
+  missing -> passive connection (no demand header) for discovery
+tool call / resource read on a standby server
+  -> one shared activation (concurrent callers join it)
+  -> connect with x-klex-machine-demand: invocation on initialize only
+  -> run the operation once on the live connection
+quiet 5 min -> close the connection -> standby
+```
+
+- `registry.ts` keeps tool descriptors separate from live connections. A standby server keeps its descriptors in the registry and in `toolCount`.
+- Standby re-reads the catalog every 5 minutes to detect replacement or unassignment. `unauthorized`, `forbidden`, `not_found` and `malformed` catalog results discard retained descriptors. `unavailable` keeps them and retries later.
+- A changed generation or a changed tool schema invalidates the descriptors. The call fails instead of running against a different schema.
+- The demand header is set only on the MCP `initialize` POST, so discovery and later traffic never count as activity.
+- The demand connect timeout is 90 seconds, above the proxy's 65 second wake bound. The idle close is 5 minutes, below the 15 minute idle window of the server, so a session never outlives a pause.
+- The end of a demand connection caused by the machine's standby is expected. It does not schedule a reconnect.
+- Wake, capacity and authorization failures become tool errors with their upstream code. They never instruct the model to manage the machine.
+
+`McpConnectionStatus` includes `standby`. The admin API reports it, and Cloud shows it as a functional state, not as an error.
+
 ## OAuth authorization
 
 OAuth-protected HTTP MCP servers are authorized through one of two `OAuthAuthorizationSession` implementations. `connection.ts` calls `sessionFactory.start()` once per connection attempt and awaits `session.authorize()`.

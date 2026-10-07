@@ -3,7 +3,7 @@ import { createRoute, type RouteHandler } from '@hono/zod-openapi';
 import type { ModuleLogger } from '@stagewise/logger';
 
 import type { Config, McpServerConfig } from '@/config';
-import { ConfigValidationError } from '@/config';
+import { ConfigValidationError, mcpServerConfigSchema } from '@/config';
 import type { Mcp } from '@/mcp';
 
 import {
@@ -15,6 +15,17 @@ import {
   toolCallHistoryResponseSchema,
   updateMcpServerBodySchema,
 } from './schemas';
+
+/**
+ * Validates a merged server before the config write, so cross-field rules
+ * (such as the same-origin lifecycle catalog) surface as `400` instead of
+ * being mistaken for a name conflict or a missing server.
+ */
+function invalidServerConfig(server: McpServerConfig): string | undefined {
+  const result = mcpServerConfigSchema.safeParse(server);
+  if (result.success) return undefined;
+  return result.error.issues[0]?.message ?? 'Invalid MCP server configuration';
+}
 
 export interface McpRouteDependencies {
   config: Config;
@@ -158,6 +169,10 @@ export function createMcpServer(
   return async (c) => {
     const { name, ...serverConfig } = c.req.valid('json');
     const server: McpServerConfig = serverConfig;
+    const invalid = invalidServerConfig(server);
+    if (invalid) {
+      return c.json({ error: invalid, code: 'invalid_config' }, 400);
+    }
 
     try {
       await deps.config.addMcpServer(name, server);
@@ -250,8 +265,13 @@ export function updateMcpServer(
               400,
             );
           }
-          const { headerUpdates: _headerUpdates, ...replacement } = update;
+          const {
+            headerUpdates: _headerUpdates,
+            lifecycle,
+            ...replacement
+          } = update;
           server = { ...replacement, url: update.url };
+          if (lifecycle) server.lifecycle = lifecycle;
         } else {
           const headers = { ...(current.headers ?? {}) };
           const headerUpdates = Object.entries(update.headerUpdates ?? {});
@@ -270,10 +290,26 @@ export function updateMcpServer(
             if (existingKey) delete headers[existingKey];
             headers[key] = value;
           }
-          const { headerUpdates: _headerUpdates, ...httpUpdate } = update;
-          server = { ...current, ...httpUpdate, headers };
-          if (Object.keys(headers).length === 0) delete server.headers;
+          const {
+            headerUpdates: _headerUpdates,
+            lifecycle,
+            ...httpUpdate
+          } = update;
+          const merged: McpServerConfig = {
+            ...current,
+            ...httpUpdate,
+            headers,
+          };
+          if (Object.keys(headers).length === 0) delete merged.headers;
+          if (lifecycle === null) delete merged.lifecycle;
+          else if (lifecycle) merged.lifecycle = lifecycle;
+          server = merged;
         }
+      }
+
+      const invalid = invalidServerConfig(server);
+      if (invalid) {
+        return c.json({ error: invalid, code: 'invalid_config' }, 400);
       }
 
       await deps.config.updateMcpServer(name, server);

@@ -35,6 +35,7 @@ const mcpConnectionStatusSchema = z
   .enum([
     'connected',
     'connecting',
+    'standby',
     'authorization_required',
     'authorizing',
     'error',
@@ -94,6 +95,16 @@ const mcpVersionNegotiationSchema = z.union([
   z.object({ pin: z.string().min(1) }).strict(),
 ]);
 
+// On-demand servers may be in standby. The agent lists their tools from the
+// no-wake `catalogUrl` (same origin as `url`) and connects only for real work.
+const mcpLifecycleSchema = z
+  .object({
+    mode: z.literal('on-demand'),
+    catalogUrl: z.url({ protocol: /^https?$/ }),
+  })
+  .strict()
+  .openapi('McpServerLifecycle');
+
 const createMcpServerBodySchema = z
   .union([
     z
@@ -113,6 +124,7 @@ const createMcpServerBodySchema = z
         url: z.url(),
         headers: z.record(z.string(), z.string()).optional(),
         versionNegotiation: mcpVersionNegotiationSchema.optional(),
+        lifecycle: mcpLifecycleSchema.optional(),
       })
       .strict(),
   ])
@@ -137,6 +149,8 @@ const updateMcpServerBodySchema = z
           .record(z.string(), z.union([z.string(), z.null()]))
           .optional(),
         versionNegotiation: mcpVersionNegotiationSchema.optional(),
+        /** Omitted keeps the stored lifecycle; `null` makes it always-on. */
+        lifecycle: z.union([mcpLifecycleSchema, z.null()]).optional(),
       })
       .strict(),
   ])

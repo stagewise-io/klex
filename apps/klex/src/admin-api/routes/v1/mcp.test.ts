@@ -552,6 +552,115 @@ describe('PATCH /v1/mcp-servers/:name — update MCP server', () => {
     });
   });
 
+  describe('on-demand lifecycle', () => {
+    const url = 'https://cloud.example/machines/m1/mcp';
+    const lifecycle = {
+      mode: 'on-demand',
+      catalogUrl: 'https://cloud.example/api/machines/m1/lifecycle',
+    };
+    const stored = (server: Record<string, unknown>) =>
+      ({ mcpServers: { machine: server } }) as unknown as Readonly<KlexConfig>;
+
+    async function send(
+      app: ReturnType<typeof createApp>,
+      method: 'POST' | 'PATCH',
+      body: Record<string, unknown>,
+    ) {
+      return app.request(
+        method === 'POST' ? '/v1/mcp-servers' : '/v1/mcp-servers/machine',
+        {
+          method,
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(body),
+        },
+      );
+    }
+
+    it('creates an on-demand HTTP server', async () => {
+      const addMcpServerFn = vi.fn(async () => klexConfigStub);
+      const app = createApp(makeDeps({ addMcpServer: addMcpServerFn }));
+      const response = await send(app, 'POST', {
+        name: 'machine',
+        url,
+        lifecycle,
+      });
+      expect(response.status).toBe(201);
+      expect(addMcpServerFn).toHaveBeenCalledWith('machine', {
+        url,
+        lifecycle,
+      });
+    });
+
+    it('rejects a cross-origin catalog with 400 before writing', async () => {
+      const addMcpServerFn = vi.fn(async () => klexConfigStub);
+      const app = createApp(makeDeps({ addMcpServer: addMcpServerFn }));
+      const response = await send(app, 'POST', {
+        name: 'machine',
+        url,
+        lifecycle: { ...lifecycle, catalogUrl: 'https://evil.example/c' },
+      });
+      expect(response.status).toBe(400);
+      expect(addMcpServerFn).not.toHaveBeenCalled();
+    });
+
+    it('rejects a lifecycle on a stdio server', async () => {
+      const app = createApp(makeDeps());
+      const response = await send(app, 'POST', {
+        name: 'machine',
+        command: 'node',
+        lifecycle,
+      });
+      expect(response.status).toBe(400);
+    });
+
+    it('keeps the stored lifecycle when the update omits it', async () => {
+      const updateMcpServerFn = vi.fn(async () => klexConfigStub);
+      const app = createApp(
+        makeDeps({
+          get: () => stored({ url, lifecycle }),
+          updateMcpServer: updateMcpServerFn,
+        }),
+      );
+      const response = await send(app, 'PATCH', {
+        headerUpdates: { Authorization: 'Bearer new' },
+      });
+      expect(response.status).toBe(200);
+      expect(updateMcpServerFn).toHaveBeenCalledWith('machine', {
+        url,
+        lifecycle,
+        headers: { Authorization: 'Bearer new' },
+      });
+    });
+
+    it('makes a server always-on when the update clears it', async () => {
+      const updateMcpServerFn = vi.fn(async () => klexConfigStub);
+      const app = createApp(
+        makeDeps({
+          get: () => stored({ url, lifecycle }),
+          updateMcpServer: updateMcpServerFn,
+        }),
+      );
+      const response = await send(app, 'PATCH', { lifecycle: null });
+      expect(response.status).toBe(200);
+      expect(updateMcpServerFn).toHaveBeenCalledWith('machine', { url });
+    });
+
+    it('rejects a URL move that leaves the catalog on another origin', async () => {
+      const updateMcpServerFn = vi.fn(async () => klexConfigStub);
+      const app = createApp(
+        makeDeps({
+          get: () => stored({ url, lifecycle }),
+          updateMcpServer: updateMcpServerFn,
+        }),
+      );
+      const response = await send(app, 'PATCH', {
+        url: 'https://other.example/mcp',
+      });
+      expect(response.status).toBe(400);
+      expect(updateMcpServerFn).not.toHaveBeenCalled();
+    });
+  });
+
   it('applies removals before sets for case-only header renames', async () => {
     const updateMcpServerFn = vi.fn(async () => klexConfigStub);
     const app = createApp(

@@ -7,6 +7,7 @@ import { dirname, resolve } from 'node:path';
 import { type IPty, spawn } from 'node-pty';
 
 import type { MachinePathResolver } from '../filesystem/paths.js';
+import type { WorkloadHandle, WorkloadTracker } from '../workloads/index.js';
 
 const MAX_BUFFER_CHARACTERS = 1024 * 1024;
 const MAX_READ_CHARACTERS = 256 * 1024;
@@ -41,6 +42,12 @@ interface ShellSession {
   endCursor: number;
   events: EventEmitter;
   closing: boolean;
+  protection?: WorkloadHandle;
+}
+
+export interface ShellProtection {
+  id: string;
+  expiresAt: string;
 }
 
 export class ShellService {
@@ -51,6 +58,7 @@ export class ShellService {
   constructor(
     private readonly paths: MachinePathResolver,
     private readonly maxSessions = MAX_SHELL_SESSIONS,
+    private readonly workloads?: WorkloadTracker,
     private readonly options: {
       onExit?: (info: ShellSessionInfo, output: string) => void;
     } = {},
@@ -163,6 +171,7 @@ export class ShellService {
       session.info.running = false;
       session.info.exitCode = exitCode;
       session.info.signal = signal;
+      this.#unprotect(session);
       session.events.emit('change');
       if (!session.closing)
         this.options.onExit?.({ ...session.info }, session.output);
@@ -226,9 +235,37 @@ export class ShellService {
     };
   }
 
+  /**
+   * Keeps the machine awake for raw interactive work for a bounded time.
+   *
+   * PTY completion cannot be inferred, so callers state the duration. A new
+   * request replaces the session's previous protection; exit or close ends it.
+   */
+  protect(id: string, durationMs: number): ShellProtection {
+    const session = this.get(id);
+    if (!this.workloads) throw new Error('Workload protection is unavailable');
+    if (!session.info.running) {
+      throw new Error(`Shell session has exited: ${id}`);
+    }
+    const protection = this.workloads.acquire({
+      kind: 'shell-protection',
+      subjectId: id,
+      durationMs,
+    });
+    this.#unprotect(session);
+    session.protection = protection;
+    // Always set: the protection was acquired with a duration.
+    return { id, expiresAt: protection.expiresAt ?? '' };
+  }
+
+  unprotect(id: string): void {
+    this.#unprotect(this.get(id));
+  }
+
   close(id: string): void {
     const session = this.get(id);
     session.closing = true;
+    this.#unprotect(session);
     if (session.info.running) session.pty.kill();
     this.sessions.delete(id);
   }
@@ -246,6 +283,11 @@ export class ShellService {
     } finally {
       await Promise.allSettled(this.startups);
     }
+  }
+
+  #unprotect(session: ShellSession): void {
+    session.protection?.release();
+    session.protection = undefined;
   }
 
   private get(id: string): ShellSession {

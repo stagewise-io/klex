@@ -20,21 +20,29 @@ export interface RegisteredMcpTool {
 }
 
 export interface RegisteredMcpNamespace {
-  readonly connection: McpConnection;
+  /** Absent while an on-demand server is in standby. */
+  readonly connection: McpConnection | undefined;
   readonly tools: ReadonlyMap<string, RegisteredMcpTool>;
 }
 
 export type McpRegistry = ReadonlyMap<string, RegisteredMcpNamespace>;
 
+/** Tools of one namespace: live, or retained from a no-wake catalog. */
+export interface McpToolSource {
+  readonly tools: readonly McpToolDefinition[];
+  readonly connection: McpConnection | undefined;
+}
+
 export function buildMcpRegistry(
-  connections: ReadonlyMap<string, McpConnection>,
+  sources: ReadonlyMap<string, McpToolSource>,
 ): McpRegistry {
   const registry = new Map<string, RegisteredMcpNamespace>();
-  for (const namespace of [...connections.keys()].sort()) {
-    const connection = connections.get(namespace);
-    if (!connection) continue;
+  for (const namespace of [...sources.keys()].sort()) {
+    const source = sources.get(namespace);
+    if (!source) continue;
+    const { connection } = source;
     const tools = new Map<string, RegisteredMcpTool>();
-    for (const tool of [...connection.tools].sort((a, b) =>
+    for (const tool of [...source.tools].sort((a, b) =>
       a.name.localeCompare(b.name),
     )) {
       if (tools.has(tool.name))

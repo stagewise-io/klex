@@ -22,8 +22,9 @@ import {
   shellExitedEvent,
   watcherCompletedEvent,
 } from './notifications/index.js';
-import { ShellService } from './shell/index.js';
+import { CommandService, ShellService } from './shell/index.js';
 import { WatcherService } from './watchers/index.js';
+import { WorkloadTracker } from './workloads/index.js';
 
 const requestCapabilities = new AsyncLocalStorage<{
   pushNotifications: boolean;
@@ -36,13 +37,17 @@ export interface MachineMcpOptions {
 }
 
 export interface MachineMcp {
+  /** Work that must keep the machine awake; feeds workload lease reporting. */
+  readonly workloads: WorkloadTracker;
   fetch(request: Request): Promise<Response>;
   close(): Promise<void>;
 }
 
 class MachineMcpModule implements MachineMcp {
+  readonly workloads: WorkloadTracker;
   readonly #handler: ReturnType<typeof createMcpHandler>;
   readonly #shell: ShellService;
+  readonly #commands: CommandService;
 
   readonly #subscriptions: PushNotificationsHttpSubscriptionManager;
   readonly #watchers: WatcherService;
@@ -55,12 +60,14 @@ class MachineMcpModule implements MachineMcp {
     const paths = new MachinePathResolver(defaultCwd);
     const filesystem = new FilesystemService(paths);
     const search = new SearchService(paths);
+    this.workloads = new WorkloadTracker();
+    this.#commands = new CommandService(paths, this.workloads);
     const principalId = options.principalId ?? 'local';
     const logger = options.logger ?? silentMachineLogger;
     const store = options.notifications ?? createNotificationStore({ logger });
     this.#store = store;
     this.#ownsStore = !options.notifications;
-    this.#shell = new ShellService(paths, undefined, {
+    this.#shell = new ShellService(paths, undefined, this.workloads, {
       onExit: (info, output) => {
         if (!this.#shellTracking.delete(info.id)) return;
         void store
@@ -103,6 +110,7 @@ class MachineMcpModule implements MachineMcp {
       onError: (error) =>
         logger.error({ error }, 'Watcher notification failed'),
     });
+
     this.#handler = createMcpHandler(
       () => {
         const pushNotifications =
@@ -399,6 +407,74 @@ class MachineMcpModule implements MachineMcp {
           },
           () => result(() => this.#shell.list()),
         );
+        server.registerTool(
+          'protectShellSession',
+          {
+            description:
+              'Keep the machine awake for raw interactive PTY work for a bounded duration (1 s to 4 h). Repeat to extend; ends early on unprotect, exit or close. Prefer runCommand for finite commands.',
+            inputSchema: z.object({
+              id: z.string().uuid(),
+              durationMs: z.number().int().min(1_000).max(14_400_000),
+            }),
+          },
+          ({ id, durationMs }) =>
+            result(() => this.#shell.protect(id, durationMs)),
+        );
+        server.registerTool(
+          'unprotectShellSession',
+          {
+            description: 'End the bounded keep-awake protection of a PTY.',
+            inputSchema: z.object({ id: z.string().uuid() }),
+          },
+          ({ id }) => result(() => this.#shell.unprotect(id)),
+        );
+        server.registerTool(
+          'runCommand',
+          {
+            description:
+              'Run a non-interactive shell command with tracked completion. foreground (default): finite work that keeps the machine awake until exit, even after this call returns; leftover processes are stopped on exit. detached: long-running servers or watchers that do not keep the machine awake. Returns after waitMs (default 10000) with output so far; continue with readCommand.',
+            inputSchema: z.object({
+              command: z.string().min(1),
+              cwd: z.string().min(1).optional(),
+              env: z.record(z.string(), z.string()).optional(),
+              mode: z.enum(['foreground', 'detached']).optional(),
+              shell: z.string().min(1).optional(),
+              timeoutMs: z.number().int().positive().optional(),
+              waitMs: z.number().int().min(0).max(30_000).optional(),
+            }),
+          },
+          (input) => result(() => this.#commands.run(input)),
+        );
+        server.registerTool(
+          'readCommand',
+          {
+            description:
+              'Read command output by monotonic cursor, with status and exit state.',
+            inputSchema: z.object({
+              id: z.string().uuid(),
+              cursor: z.number().int().min(0).optional(),
+              waitMs: z.number().int().min(0).max(30_000).optional(),
+            }),
+          },
+          (input) => result(() => this.#commands.read(input)),
+        );
+        server.registerTool(
+          'cancelCommand',
+          {
+            description:
+              'Stop a running command and its process group (SIGTERM, then SIGKILL after 5 s).',
+            inputSchema: z.object({ id: z.string().uuid() }),
+          },
+          ({ id }) => result(() => this.#commands.cancel(id)),
+        );
+        server.registerTool(
+          'listCommands',
+          {
+            description: 'List tracked commands and their states.',
+            inputSchema: z.object({}),
+          },
+          () => result(() => this.#commands.list()),
+        );
         return server;
       },
       { legacy: 'stateless' },
@@ -442,6 +518,7 @@ class MachineMcpModule implements MachineMcp {
   }
 
   async close(): Promise<void> {
+    this.#commands.closeAll();
     this.#unsubscribe();
     this.#subscriptions.close();
     try {
@@ -454,6 +531,7 @@ class MachineMcpModule implements MachineMcp {
       const failed = results.find((result) => result.status === 'rejected');
       if (failed?.status === 'rejected') throw failed.reason;
     } finally {
+      this.workloads.close();
       if (this.#ownsStore) await this.#store.close();
     }
   }

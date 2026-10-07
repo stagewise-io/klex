@@ -66,3 +66,5 @@ Klex retains the newest successful checkpoints and the newest failed checkpoint.
 A downgrade is safe only while all persisted schema and compatibility versions remain within the older binary's declared support. Otherwise startup fails before mutation. Diagnostics identify the store, path, persisted and supported versions, last writer, and minimum Klex version required.
 
 Cloud API and agent-contract compatibility are separate from local format compatibility.
+
+Example: the optional MCP server `lifecycle` field (on-demand servers) raised config `compatibilityVersion` to 7 and `minimumKlexVersion` to `0.14.0` without changing `schemaVersion` 6. An older binary would reject or silently drop the field, so it must refuse to write that config.

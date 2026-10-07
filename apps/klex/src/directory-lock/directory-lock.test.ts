@@ -6,7 +6,7 @@ import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { createLogger } from '@stagewise/logger';
 
-import { createDirectoryLock } from './directory-lock';
+import { createDirectoryLock, isDirectoryInUse } from './directory-lock';
 
 const logging = createLogger({ name: 'klex', type: 'hidden' });
 
@@ -82,6 +82,37 @@ describe('DirectoryLock', () => {
     const parsed = JSON.parse(content);
     expect(parsed.pid).toBe(process.pid);
     await lock.release();
+  });
+
+  it('stale lock carrying our own PID is replaced', async () => {
+    // Containers restart a SIGKILLed run with the same PID on the same volume,
+    // so the leftover lock names a process that is alive: this one.
+    const { writeFile } = await import('node:fs/promises');
+    await writeFile(
+      join(dir, '.klex.lock'),
+      JSON.stringify({ pid: process.pid, startedAt: '2026-01-01T00:00:00Z' }),
+      'utf8',
+    );
+    await expect(isDirectoryInUse(dir)).resolves.toBe(false);
+
+    const lock = createDirectoryLock({ logging, dataDirectory: dir });
+    await lock.acquire();
+    const parsed = JSON.parse(await readFile(join(dir, '.klex.lock'), 'utf8'));
+    expect(parsed.pid).toBe(process.pid);
+    expect(parsed.startedAt).not.toBe('2026-01-01T00:00:00Z');
+    await expect(isDirectoryInUse(dir)).resolves.toBe(true);
+    await lock.release();
+    await expect(isDirectoryInUse(dir)).resolves.toBe(false);
+  });
+
+  it('released lock can be reacquired by another instance in this process', async () => {
+    const lock1 = createDirectoryLock({ logging, dataDirectory: dir });
+    await lock1.acquire();
+    const lock2 = createDirectoryLock({ logging, dataDirectory: dir });
+    await expect(lock2.acquire()).rejects.toThrow(/already in use/);
+    await lock1.release();
+    await lock2.acquire();
+    await lock2.release();
   });
 
   it.runIf(process.platform !== 'win32')(

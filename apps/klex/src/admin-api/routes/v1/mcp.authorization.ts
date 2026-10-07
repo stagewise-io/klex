@@ -1,4 +1,4 @@
-import { createRoute, type RouteHandler } from '@hono/zod-openapi';
+import { createRoute, type RouteHandler, z } from '@hono/zod-openapi';
 
 import type { ModuleLogger } from '@stagewise/logger';
 
@@ -25,9 +25,28 @@ export const startAuthorizationRoute = createRoute({
   tags: ['MCP Servers'],
   summary: 'Start or reuse a cloud-relayed MCP OAuth authorization',
   description:
-    'Drives a connection attempt for the named MCP server until it produces an authorization URL, then returns that URL together with the OAuth "state" to the caller. Idempotent: a server with a live pending authorization gets the existing one back instead of a restarted flow. The returned "state" and authorization URL appear in no other response — poll GET /v1/mcp-servers/{name} for the authorization lifetime. Requires an enrolled agent with a connected Klex Cloud tunnel.',
+    'Drives a connection attempt for the named MCP server until it produces an authorization URL, then returns that URL together with the OAuth "state" to the caller. Without a client body, a live pending authorization is reused. Supplying a client replaces its credentials and restarts authorization. The returned "state" and authorization URL appear in no other response. Poll GET /v1/mcp-servers/{name} for the authorization lifetime. Requires an enrolled agent with a connected Klex Cloud tunnel.',
   request: {
     params: mcpServerNameParamSchema,
+    body: {
+      required: false,
+      content: {
+        'application/json': {
+          schema: z
+            .object({
+              client: z
+                .object({
+                  clientId: z.string().trim().min(1).max(512),
+                  clientSecret: z.string().trim().min(1).max(2048).optional(),
+                  scope: z.string().trim().min(1).max(512).optional(),
+                })
+                .strict()
+                .optional(),
+            })
+            .strict(),
+        },
+      },
+    },
   },
   responses: {
     200: {
@@ -61,7 +80,21 @@ export function startAuthorization(
 ): RouteHandler<typeof startAuthorizationRoute> {
   return async (c) => {
     const { name } = c.req.valid('param');
-    const result = await deps.mcp.requestAuthorization(name);
+    let result: Awaited<ReturnType<Mcp['requestAuthorization']>>;
+    try {
+      result = await deps.mcp.requestAuthorization(
+        name,
+        c.req.valid('json')?.client,
+      );
+    } catch {
+      return c.json(
+        {
+          error: 'Could not configure the OAuth client',
+          code: 'oauth_client_setup_failed',
+        },
+        503,
+      );
+    }
 
     // Never log `state` or the authorization URL: both are bearer capabilities.
     deps.logger.info(

@@ -44,7 +44,10 @@ import {
   shouldUseAutomaticOAuth,
 } from './connection';
 import type { OAuthAuthorizationSessionFactory } from './oauth/callback';
-import { createCloudOAuthAuthorizationSessionFactory } from './oauth/cloud-callback';
+import {
+  cloudCallbackUrl,
+  createCloudOAuthAuthorizationSessionFactory,
+} from './oauth/cloud-callback';
 import { LocalOAuthAuthorizationCoordinator } from './oauth/coordinator';
 import { LocalOAuthCallbackReceiver } from './oauth/local-callback';
 import {
@@ -52,6 +55,10 @@ import {
   type PendingAuthorization,
 } from './oauth/pending-authorizations';
 import { LocalBrowserOAuthPresenter } from './oauth/presenter';
+import {
+  type RegisteredOAuthClient,
+  saveRegisteredOAuthClient,
+} from './oauth/register-client';
 import { McpOAuthStore } from './oauth/store';
 import {
   buildMcpRegistry,
@@ -261,10 +268,13 @@ export interface Mcp extends ToolProvider {
 
   /**
    * Produces an authorization request for a configured MCP server, re-driving a
-   * connection attempt when no request is pending. Idempotent while a request
-   * for the same server is live.
+   * connection attempt when no request is pending. An explicit client replaces
+   * credentials and restarts authorization; otherwise a live request is reused.
    */
-  requestAuthorization(serverName: string): Promise<RequestAuthorizationResult>;
+  requestAuthorization(
+    serverName: string,
+    client?: RegisteredOAuthClient,
+  ): Promise<RequestAuthorizationResult>;
   /** Delivers OAuth callback parameters for a pending authorization. */
   completeAuthorization(
     state: string,
@@ -397,6 +407,10 @@ class McpModule implements Mcp {
   private readonly realtimeAvailableNamespaces = new Set<string>();
   private registry: McpRegistry = new Map();
   private started = false;
+  private readonly authorizationRequests = new Map<
+    string,
+    Promise<RequestAuthorizationResult>
+  >();
   private unsubscribe: (() => void) | undefined;
   /** Recorded tool call history (newest first). */
   private readonly toolCallHistory: McpToolCallRecord[] = [];
@@ -417,6 +431,11 @@ class McpModule implements Mcp {
       cloudConnectivity: CloudConnectivity | undefined;
       pendingAuthorizations: McpPendingAuthorizationRegistry;
       closeOAuth: () => Promise<void>;
+      configureOAuthClient: (
+        serverName: string,
+        serverUrl: string,
+        client: RegisteredOAuthClient,
+      ) => Promise<void>;
     },
   ) {}
 
@@ -1520,8 +1539,27 @@ class McpModule implements Mcp {
     return [...this.toolCallHistory];
   }
 
-  async requestAuthorization(
+  requestAuthorization(
     serverName: string,
+    client?: RegisteredOAuthClient,
+  ): Promise<RequestAuthorizationResult> {
+    const pending = this.authorizationRequests.get(serverName);
+    if (pending) {
+      if (!client) return pending;
+      return pending
+        .catch(() => undefined)
+        .then(() => this.requestAuthorization(serverName, client));
+    }
+    const request = this.startAuthorization(serverName, client).finally(() =>
+      this.authorizationRequests.delete(serverName),
+    );
+    this.authorizationRequests.set(serverName, request);
+    return request;
+  }
+
+  private async startAuthorization(
+    serverName: string,
+    client?: RegisteredOAuthClient,
   ): Promise<RequestAuthorizationResult> {
     const config = this.deps.config.getMcpServers()[serverName];
     if (!config) return { outcome: 'not_found' };
@@ -1529,11 +1567,12 @@ class McpModule implements Mcp {
     if (!shouldUseAutomaticOAuth(config)) {
       return { outcome: 'manual_credentials' };
     }
-    // Repeat clicks in the cloud UI must not restart the flow: an in-flight
-    // request already carries the authorization URL the user needs. Checked
-    // before cloud availability so a tunnel blip cannot hide a live request.
+    // Resume an existing flow unless the caller explicitly replaces its client.
+    // A corrected secret or scope can still have the same client ID.
     const existing = this.deps.pendingAuthorizations.findByServer(serverName);
-    if (existing) return { outcome: 'pending', authorization: existing };
+    if (existing && !client)
+      return { outcome: 'pending', authorization: existing };
+    if (existing) this.deps.pendingAuthorizations.cancel(existing.id);
 
     if (!isCloudAuthorizationAvailable(this.deps.cloudConnectivity)) {
       return { outcome: 'unavailable' };
@@ -1547,11 +1586,28 @@ class McpModule implements Mcp {
       // here means the module is not running — not a slow connection attempt.
       if (!runtime) return { outcome: 'not_running' };
     }
-    if (runtime.connection) return { outcome: 'already_connected' };
+    if (runtime.connection && !client) return { outcome: 'already_connected' };
+
+    const connection = runtime.connection;
+    if (connection) {
+      runtime.connection = undefined;
+      runtime.status = 'authorization_required';
+      this.stopEventWorker(serverName);
+      this.stopRealtimeWorker(serverName);
+      this.publishRegistry();
+      await connection.close();
+      if (!this.isCurrentRuntime(runtime)) return { outcome: 'not_found' };
+    }
 
     this.clearRetry(runtime);
     runtime.attempt?.controller.abort();
     runtime.attempt = undefined;
+    if (client) {
+      runtime.status = 'authorization_required';
+      this.publishRegistry();
+      await this.deps.configureOAuthClient(serverName, config.url, client);
+      if (!this.isCurrentRuntime(runtime)) return { outcome: 'not_found' };
+    }
     this.connectRuntime(runtime);
 
     const authorization = await this.deps.pendingAuthorizations.waitForServer(
@@ -1953,6 +2009,17 @@ export function createMcp(deps: McpDependencies): Mcp {
     connect,
     cloudConnectivity: deps.cloudConnectivity,
     pendingAuthorizations,
+    configureOAuthClient: (serverName, serverUrl, client) => {
+      const cloud = deps.cloudConnectivity;
+      if (!cloud) throw new Error('Cloud authorization unavailable');
+      return saveRegisteredOAuthClient(
+        store,
+        serverName,
+        serverUrl,
+        cloudCallbackUrl(cloud.getCloudBaseUrl()),
+        client,
+      );
+    },
     closeOAuth: async () => {
       pendingAuthorizations.closeAll();
       await coordinator.close();

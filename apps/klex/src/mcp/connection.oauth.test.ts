@@ -7,11 +7,12 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { connectMcpServer } from './connection';
 import { LocalOAuthAuthorizationCoordinator } from './oauth/coordinator';
 import { LocalOAuthCallbackReceiver } from './oauth/local-callback';
+import { McpOAuthProvider } from './oauth/provider';
 import { McpOAuthStore } from './oauth/store';
 
 const temporaryDirectories: string[] = [];
@@ -50,12 +51,18 @@ afterEach(async () => {
 });
 
 describe('connectMcpServer OAuth lifecycle', () => {
-  it('reauthorizes against a local server and reconnects with a fresh transport', async () => {
+  it('completes OAuth and prevents late refresh writes after closing the connection', async () => {
     let origin = '';
     const requests: string[] = [];
     let unauthorizedRequests = 0;
     let authorizedRequests = 0;
     let tokenExchanges = 0;
+    let expired = false;
+    let releaseRefresh = () => {};
+    const refreshGate = new Promise<void>((resolve) => {
+      releaseRefresh = resolve;
+    });
+    const saveTokens = vi.spyOn(McpOAuthProvider.prototype, 'saveTokens');
     const authorizationStatuses: string[] = [];
     const server = createServer(async (request, response) => {
       const requestUrl = new URL(request.url ?? '/', origin);
@@ -90,15 +97,20 @@ describe('connectMcpServer OAuth lifecycle', () => {
       }
       if (requestUrl.pathname === '/token') {
         tokenExchanges += 1;
+        if (tokenExchanges > 1) await refreshGate;
         sendJson(response, 200, {
           access_token: 'local-test-token',
+          refresh_token: 'local-test-refresh',
           expires_in: 3600,
           token_type: 'Bearer',
         });
         return;
       }
       if (requestUrl.pathname === '/mcp') {
-        if (request.headers.authorization !== 'Bearer local-test-token') {
+        if (
+          expired ||
+          request.headers.authorization !== 'Bearer local-test-token'
+        ) {
           unauthorizedRequests += 1;
           response.writeHead(401, {
             'WWW-Authenticate': `Bearer resource_metadata="${origin}/.well-known/oauth-protected-resource/mcp"`,
@@ -114,9 +126,19 @@ describe('connectMcpServer OAuth lifecycle', () => {
               id: message.id,
               jsonrpc: '2.0',
               result: {
-                capabilities: {},
+                capabilities: { tools: {} },
                 protocolVersion: '2025-11-25',
                 serverInfo: { name: 'oauth-fixture', version: '1.0.0' },
+              },
+            });
+            return;
+          }
+          if (message.method === 'tools/list') {
+            sendJson(response, 200, {
+              id: message.id,
+              jsonrpc: '2.0',
+              result: {
+                tools: [{ name: 'echo', inputSchema: { type: 'object' } }],
               },
             });
             return;
@@ -190,8 +212,31 @@ describe('connectMcpServer OAuth lifecycle', () => {
       expect(authorizedRequests).toBeGreaterThan(0);
       expect(tokenExchanges).toBe(1);
       expect(requests).toContain('POST /token');
+
+      const tool = connection.tools[0];
+      if (!tool) throw new Error('Missing fixture tool');
+      expired = true;
+      const call = connection
+        .invoke(tool, {}, new AbortController().signal)
+        .catch((error) => error);
+      await vi.waitFor(() => expect(tokenExchanges).toBe(2));
       await connection.close();
+      const key = `oauth-fixture\0${origin}/mcp`;
+      await store.invalidate(key, 'all');
+      await store.saveTokens(
+        key,
+        { access_token: 'replacement-token', token_type: 'Bearer' },
+        origin,
+      );
+      releaseRefresh();
+      await call;
+      await vi.waitFor(() => expect(saveTokens).toHaveBeenCalledTimes(2));
+      expect(await store.tokens(key, origin)).toMatchObject({
+        access_token: 'replacement-token',
+      });
     } finally {
+      releaseRefresh();
+      saveTokens.mockRestore();
       await coordinator.close();
       await new Promise<void>((resolve, reject) => {
         server.close((error) => (error ? reject(error) : resolve()));

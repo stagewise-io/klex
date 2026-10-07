@@ -5,7 +5,8 @@
 # Usage: smoke-image.sh <image-ref> <expected-version>
 #
 # Checks: version, native dependencies, user and PID 1, headless startup,
-# graceful SIGTERM drain, restart on the same volume.
+# graceful SIGTERM drain, restart on the same volume after a clean stop and
+# after SIGKILL.
 #
 # Not checked: two containers on one volume. The directory lock compares PIDs,
 # which are local to a PID namespace, so it cannot see another container. The
@@ -23,6 +24,9 @@ run_id="klex-smoke-$$-$(date +%s)"
 volume=$run_id
 first="$run_id-first"
 restarted="$run_id-restarted"
+crashed="$run_id-crashed"
+recovered="$run_id-recovered"
+lock_file=/data/agent/.klex.lock
 ready_timeout_s=60
 stop_timeout_s=60
 # The compact log format carries the level only as the logger-name colour:
@@ -31,7 +35,7 @@ stop_timeout_s=60
 error_marker=$(printf '\033[1m\033[31m')
 
 cleanup() {
-  docker rm -f "$first" "$restarted" >/dev/null 2>&1 || true
+  docker rm -f "$first" "$restarted" "$crashed" "$recovered" >/dev/null 2>&1 || true
   docker volume rm -f "$volume" >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
@@ -143,5 +147,22 @@ wait_for_log "$restarted" 'Klex Bot ready' "$ready_timeout_s" ||
   fail "restart did not become ready within ${ready_timeout_s}s" "$restarted"
 stop_gracefully "$restarted"
 ok "restart on the same volume is ready and stops cleanly"
+
+# 7. Restart after a crash. SIGKILL leaves the lock file behind, and the new
+# container's klex usually gets the same low PID as the old one.
+klex_run -d --name "$crashed" "$image" >/dev/null
+wait_for_log "$crashed" 'Klex Bot ready' "$ready_timeout_s" ||
+  fail "$crashed did not become ready within ${ready_timeout_s}s" "$crashed"
+docker kill -s KILL "$crashed" >/dev/null
+docker wait "$crashed" >/dev/null
+docker run --rm -v "$volume:/data" --entrypoint test "$image" -e "$lock_file" ||
+  fail "SIGKILL did not leave $lock_file behind; the crash path is not exercised"
+klex_run -d --name "$recovered" "$image" >/dev/null
+wait_for_log "$recovered" 'Klex Bot ready' "$ready_timeout_s" ||
+  fail "restart after SIGKILL did not become ready within ${ready_timeout_s}s" "$recovered"
+docker logs "$recovered" 2>&1 | grep -qF 'Removing stale working directory lock' ||
+  fail "$recovered did not report the stale lock" "$recovered"
+stop_gracefully "$recovered"
+ok "restart after SIGKILL replaces the stale lock and stops cleanly"
 
 echo "All container smoke checks passed for $image"

@@ -34,7 +34,9 @@ RUN apt-get update \
  && apt-get install --yes --no-install-recommends ca-certificates libatomic1 tini \
  && rm -rf /var/lib/apt/lists/*
 
-# /data is owned by klex so a freshly provisioned volume inherits the owner.
+# /data is owned by klex. Only Docker named volumes copy this owner into a new
+# volume. Kubernetes volumes and bind mounts do not, so the pod must set
+# securityContext.fsGroup: 10001 (see README.md).
 # There is deliberately no VOLUME instruction: on a read-only root filesystem a
 # missing mount must fail loudly instead of writing into an anonymous volume.
 RUN groupadd --gid 10001 klex \

@@ -1,4 +1,4 @@
-import { mkdirSync, rmSync } from 'node:fs';
+import { mkdirSync, realpathSync, rmSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { parseArgs } from 'node:util';
@@ -45,4 +45,10 @@ function main(): void {
 }
 
 const entryPoint = process.argv[1];
-if (entryPoint && import.meta.url === pathToFileURL(entryPoint).href) main();
+// Resolve symlinks: import.meta.url is the real path, argv[1] may not be.
+if (
+  entryPoint &&
+  import.meta.url === pathToFileURL(realpathSync(entryPoint)).href
+) {
+  main();
+}

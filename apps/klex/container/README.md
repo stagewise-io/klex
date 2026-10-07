@@ -31,6 +31,8 @@ The image runs with a read-only root filesystem. Klex writes in three places out
 - `$HOME/.cache/klex/native`, where it extracts the LiveKit addon at runtime. This is why `HOME` points into the volume.
 - `os.tmpdir()`, used by the JavaScript sandbox, so `/tmp` must be writable.
 
+The volume must be writable by uid 10001. Docker named volumes copy the owner of the image's `/data` into a new volume, so they work as is. Kubernetes volumes and bind mounts don't get that copy. On Kubernetes, set `securityContext.fsGroup: 10001` on the pod, ideally with `fsGroupChangePolicy: OnRootMismatch` so large volumes aren't re-chowned on every start.
+
 The image has no `VOLUME` instruction. Without a mount on `/data`, startup fails on the read-only root filesystem instead of writing into an anonymous volume that disappears with the container.
 
 Leave `KLEX_AUTO_UPDATE` off. A container updates by switching to a new image.
@@ -99,7 +101,7 @@ sh apps/klex/container/smoke-image.sh klex:local "$version"
 
 On Linux, run `test:exe` and `container:stage` directly.
 
-`smoke-image.sh` checks the version, native dependencies under a read-only root as uid 10001, tini as PID 1, headless startup on a fresh volume, a SIGTERM drain with exit 0, and a restart on the same volume. It doesn't check the cross-container case from the previous section, because the lock can't detect it.
+`smoke-image.sh` checks the version, native dependencies under a read-only root as uid 10001, tini as PID 1, headless startup on a fresh volume, a SIGTERM drain with exit 0, a restart after a clean stop, and a restart after SIGKILL that leaves its lock file behind. It doesn't check the cross-container case from the previous section, because the lock can't detect it.
 
 ## Running
 

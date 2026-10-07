@@ -637,17 +637,24 @@ jobs:
         with:
           persist-credentials: false
           ref: ${{ needs.prepare.outputs.commit }}
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          name: klex-release-${{ inputs.version }}
-          path: release-output
-      - name: Verify and stage the release tarball
+      # Download from the published release, not this run's artifact. A
+      # stable re-run reuses the existing release, and its rebuilt artifact
+      # is not byte-identical to the tarball users install.
+      - name: Download, verify, and stage the published tarball
         shell: bash
         env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
           STAGE_NAME: klex-${{ inputs.version }}-${{ matrix.target }}
+          TAG: ${{ inputs.tag }}
         run: |
           set -euo pipefail
+          mkdir release-output
           cd release-output
+          gh release download "$TAG" \
+            --pattern "${STAGE_NAME}.tar.gz" \
+            --pattern checksums.txt \
+            --repo "$REPO"
           grep -E "  ${STAGE_NAME}\.tar\.gz\$" checksums.txt | sha256sum -c -
           mkdir extracted
           tar -xzf "${STAGE_NAME}.tar.gz" -C extracted
@@ -819,8 +826,23 @@ jobs:
           VERSION: ${{ inputs.version }}
         run: &move-channel-tag |
           set -euo pipefail
-          previous="$(docker buildx imagetools inspect "$KLEX_IMAGE:$CHANNEL_TAG" --format '{{json .Image}}' 2>/dev/null |
-            jq -r 'if has("config") then . else (to_entries[0].value) end | .config.Labels["org.opencontainers.image.version"] // empty' || true)"
+          # Only a missing tag means "no previous version". Any other registry
+          # or parse error must fail: treating it as missing would skip the
+          # monotonic guard and let an older release move the tag back.
+          previous=''
+          inspect_error="$(mktemp)"
+          if image_json="$(docker buildx imagetools inspect "$KLEX_IMAGE:$CHANNEL_TAG" --format '{{json .Image}}' 2>"$inspect_error")"; then
+            previous="$(jq -r 'if has("config") then . else (to_entries[0].value) end | .config.Labels["org.opencontainers.image.version"] // empty' <<<"$image_json")"
+            [[ -n "$previous" ]] || {
+              echo "$KLEX_IMAGE:$CHANNEL_TAG has no org.opencontainers.image.version label" >&2
+              exit 1
+            }
+          elif grep -qE ": not found$" "$inspect_error"; then
+            echo "$KLEX_IMAGE:$CHANNEL_TAG does not exist yet"
+          else
+            cat "$inspect_error" >&2
+            exit 1
+          fi
           if [[ -n "$previous" && "$previous" != "$VERSION" ]]; then
             newest="$(printf '%s\n%s\n' "$previous" "$VERSION" | sort -V | tail -n1)"
             if [[ "$newest" != "$VERSION" ]]; then

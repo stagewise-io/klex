@@ -53,6 +53,7 @@ concurrency:
   group: klex-release-${{ inputs.tag }}
 
 env:
+  KLEX_IMAGE: ghcr.io/stagewise-io/klex
   PNPM_VERSION: 11.22.0
 
 jobs:
@@ -605,3 +606,258 @@ jobs:
           gh release edit channel-nightly \
             --repo "$REPO" \
             --title "Klex nightly (rolling pointer -> $VERSION)"
+
+  # Container image, assembled from the published Linux tarballs rather than
+  # rebuilt, so it carries the exact glibc-audited, --verify-native-proven
+  # payload users install. Each architecture builds and smoke-tests on a native
+  # runner (no QEMU), pushes by digest, and image-manifest merges the digests.
+  #
+  # :<version> is immutable. A re-run finds it already published and skips the
+  # build: a rebuild would produce a different digest under the same tag.
+  image-build:
+    name: Build image ${{ matrix.platform }}
+    needs: [prepare, aggregate, publish]
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - runner: ubuntu-24.04-arm
+            target: linux-arm64-gnu
+            platform: linux/arm64
+          - runner: ubuntu-22.04
+            target: linux-x64-gnu
+            platform: linux/amd64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+          ref: ${{ needs.prepare.outputs.commit }}
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: klex-release-${{ inputs.version }}
+          path: release-output
+      - name: Verify and stage the release tarball
+        shell: bash
+        env:
+          STAGE_NAME: klex-${{ inputs.version }}-${{ matrix.target }}
+        run: |
+          set -euo pipefail
+          cd release-output
+          grep -E "  ${STAGE_NAME}\.tar\.gz\$" checksums.txt | sha256sum -c -
+          mkdir extracted
+          tar -xzf "${STAGE_NAME}.tar.gz" -C extracted
+          context="$GITHUB_WORKSPACE/apps/klex/container/context"
+          mkdir -p "$context"
+          mv "extracted/$STAGE_NAME" "$context/klex"
+      # Log in before the existence check: GHCR creates packages as private,
+      # so an anonymous inspect would miss an existing tag and re-push it.
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: existing
+        name: Check for an already published image
+        shell: bash
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          if docker buildx imagetools inspect "$KLEX_IMAGE:$VERSION" >/dev/null 2>&1; then
+            echo "$KLEX_IMAGE:$VERSION already exists; skipping the build"
+            echo 'exists=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'exists=false' >> "$GITHUB_OUTPUT"
+          fi
+      - if: steps.existing.outputs.exists == 'false'
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - name: Build image
+        if: steps.existing.outputs.exists == 'false'
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          build-args: |
+            KLEX_VERSION=${{ inputs.version }}
+            KLEX_REVISION=${{ needs.prepare.outputs.commit }}
+          context: apps/klex/container/context
+          file: apps/klex/container/Dockerfile
+          load: true
+          platforms: ${{ matrix.platform }}
+          provenance: false
+          sbom: false
+          tags: klex:release
+      - name: Smoke-test image
+        if: steps.existing.outputs.exists == 'false'
+        run: sh apps/klex/container/smoke-image.sh klex:release "${{ inputs.version }}"
+      # Same inputs as the build above, so the builder cache turns this into
+      # an export of the image that was just smoke-tested.
+      - id: push
+        name: Push image by digest
+        if: steps.existing.outputs.exists == 'false'
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          build-args: |
+            KLEX_VERSION=${{ inputs.version }}
+            KLEX_REVISION=${{ needs.prepare.outputs.commit }}
+          context: apps/klex/container/context
+          file: apps/klex/container/Dockerfile
+          outputs: type=image,name=${{ env.KLEX_IMAGE }},push-by-digest=true,name-canonical=true,push=true
+          platforms: ${{ matrix.platform }}
+          provenance: false
+          sbom: false
+      - name: Record image digest
+        if: steps.existing.outputs.exists == 'false'
+        shell: bash
+        env:
+          DIGEST: ${{ steps.push.outputs.digest }}
+        run: |
+          set -euo pipefail
+          [[ "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]] || {
+            echo "Unexpected image digest: $DIGEST" >&2
+            exit 1
+          }
+          mkdir -p image-digest
+          printf '%s\n' "$DIGEST" > "image-digest/${{ matrix.target }}"
+      - if: steps.existing.outputs.exists == 'false'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          if-no-files-found: error
+          name: klex-image-digest-${{ matrix.target }}
+          path: image-digest/${{ matrix.target }}
+          retention-days: 1
+
+  image-manifest:
+    needs: [prepare, image-build]
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: existing
+        name: Check for an already published image
+        shell: bash
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          if docker buildx imagetools inspect "$KLEX_IMAGE:$VERSION" >/dev/null 2>&1; then
+            echo "$KLEX_IMAGE:$VERSION already exists; reusing it"
+            echo 'exists=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'exists=false' >> "$GITHUB_OUTPUT"
+          fi
+      - if: steps.existing.outputs.exists == 'false'
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          merge-multiple: true
+          path: image-digest
+          pattern: klex-image-digest-*
+      - name: Create the immutable version tag
+        if: steps.existing.outputs.exists == 'false'
+        shell: bash
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          mapfile -t files < <(find image-digest -maxdepth 1 -type f -print | sort)
+          if [[ "${#files[@]}" -ne 2 ]]; then
+            printf 'Expected 2 image digests, found %s\n' "${#files[@]}" >&2
+            exit 1
+          fi
+          sources=()
+          for file in "${files[@]}"; do
+            sources+=("$KLEX_IMAGE@$(cat "$file")")
+          done
+          docker buildx imagetools create -t "$KLEX_IMAGE:$VERSION" "${sources[@]}"
+      - name: Verify the published platforms
+        shell: bash
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          platforms="$(docker buildx imagetools inspect "$KLEX_IMAGE:$VERSION" --raw |
+            jq -r '.manifests[].platform | "\(.os)/\(.architecture)"' | sort | paste -sd ' ')"
+          test "$platforms" = 'linux/amd64 linux/arm64' || {
+            echo "Expected linux/amd64 linux/arm64 in $KLEX_IMAGE:$VERSION, got: $platforms" >&2
+            exit 1
+          }
+
+  # Rolling channel tags. Each has its own concurrency group and the same
+  # monotonic guard as the GitHub Release pointers: a slower run must not move
+  # a tag back. The current version comes from the OCI version label.
+  image-nightly-pointer:
+    needs: image-manifest
+    if: inputs.channel != 'stable'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      packages: write
+    concurrency:
+      group: klex-image-nightly-pointer
+      cancel-in-progress: false
+    steps:
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Move the nightly tag
+        shell: bash
+        env:
+          CHANNEL_TAG: nightly
+          VERSION: ${{ inputs.version }}
+        run: &move-channel-tag |
+          set -euo pipefail
+          previous="$(docker buildx imagetools inspect "$KLEX_IMAGE:$CHANNEL_TAG" --format '{{json .Image}}' 2>/dev/null |
+            jq -r 'if has("config") then . else (to_entries[0].value) end | .config.Labels["org.opencontainers.image.version"] // empty' || true)"
+          if [[ -n "$previous" && "$previous" != "$VERSION" ]]; then
+            newest="$(printf '%s\n%s\n' "$previous" "$VERSION" | sort -V | tail -n1)"
+            if [[ "$newest" != "$VERSION" ]]; then
+              echo "$KLEX_IMAGE:$CHANNEL_TAG is at $previous, newer than $VERSION; leaving it untouched"
+              exit 0
+            fi
+          fi
+          docker buildx imagetools create -t "$KLEX_IMAGE:$CHANNEL_TAG" "$KLEX_IMAGE:$VERSION"
+          expected="$(docker buildx imagetools inspect "$KLEX_IMAGE:$VERSION" --format '{{json .Manifest}}' | jq -r .digest)"
+          actual="$(docker buildx imagetools inspect "$KLEX_IMAGE:$CHANNEL_TAG" --format '{{json .Manifest}}' | jq -r .digest)"
+          test "$expected" = "$actual" || {
+            echo "$KLEX_IMAGE:$CHANNEL_TAG is $actual, expected $expected" >&2
+            exit 1
+          }
+
+  # :stable moves only after the published release installs and verifies on
+  # every platform, mirroring publish-stable-pointer.
+  image-stable-pointer:
+    needs: [image-manifest, verify-stable-install]
+    if: inputs.channel == 'stable'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      packages: write
+    concurrency:
+      group: klex-image-stable-pointer
+      cancel-in-progress: false
+    steps:
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Move the stable tag
+        shell: bash
+        env:
+          CHANNEL_TAG: stable
+          VERSION: ${{ inputs.version }}
+        run: *move-channel-tag

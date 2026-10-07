@@ -30,6 +30,68 @@ describe('machine live message', () => {
 });
 
 describe('CLI configuration', () => {
+  it.each(['1', 'true', 'TRUE', '0', 'false', 'FALSE'])(
+    'parses host omission env %s',
+    async (value) => {
+      const result = await parseCli(
+        [],
+        { KLEX_MACHINE_OMIT_HOST_DETAILS: value },
+        directory,
+      );
+      expect(result).toMatchObject({
+        omitHostDetails: /^(1|true)$/i.test(value),
+      });
+    },
+  );
+
+  it('supports explicit flag precedence, negative flags and non-reporting modes', async () => {
+    expect(
+      await parseCli(
+        ['--no-omit-host-details'],
+        { KLEX_MACHINE_OMIT_HOST_DETAILS: 'true' },
+        directory,
+      ),
+    ).toMatchObject({ omitHostDetails: false });
+    expect(
+      await parseCli(
+        ['serve', '--mode', 'local', '--omit-host-details'],
+        {},
+        directory,
+      ),
+    ).toMatchObject({ mode: 'local', omitHostDetails: true });
+    expect(
+      await parseCli(
+        ['cloud', 'enroll', 'code', '--omit-host-details', '--no-serve'],
+        {},
+        directory,
+      ),
+    ).toMatchObject({ serve: false });
+    expect(
+      await parseCli(
+        ['cloud', 'enroll', 'code', '--omit-host-details'],
+        {},
+        directory,
+      ),
+    ).toMatchObject({ serve: true, omitHostDetails: true });
+    expect(
+      await parseCli(
+        [
+          'cloud',
+          'bootstrap',
+          '--enrollment-code-file',
+          '-',
+          '--omit-host-details',
+        ],
+        {},
+        directory,
+      ),
+    ).toMatchObject({ action: 'managed-bootstrap', omitHostDetails: true });
+    await expect(
+      parseCli([], { KLEX_MACHINE_OMIT_HOST_DETAILS: 'yes' }, directory),
+    ).rejects.toThrow('Invalid KLEX_MACHINE_OMIT_HOST_DETAILS');
+    expect(helpText()).toContain('KLEX_MACHINE_OMIT_HOST_DETAILS');
+  });
+
   it('uses defaults and resolves the process cwd', async () => {
     const result = await parseCli([], {}, directory);
     expect(result).toEqual({
@@ -43,6 +105,7 @@ describe('CLI configuration', () => {
       },
       dataDir: expect.any(String),
       mode: 'enrolled',
+      omitHostDetails: false,
     });
   });
 
@@ -101,6 +164,7 @@ describe('CLI configuration', () => {
       config: expect.objectContaining({ cwd: directory }),
       dataDir: directory,
       serve: true,
+      omitHostDetails: false,
     });
     await expect(
       parseCli(['serve', '--mode', 'enrolled'], {}, directory),

@@ -21,6 +21,7 @@ export type CliResult =
       config: RuntimeConfig;
       dataDir: string;
       serve: true;
+      omitHostDetails: boolean;
     }
   | {
       action: 'enroll';
@@ -35,12 +36,14 @@ export type CliResult =
       config: RuntimeConfig;
       dataDir: string;
       enrollmentCodeFile: string;
+      omitHostDetails: boolean;
     }
   | {
       action: 'serve';
       config: RuntimeConfig;
       dataDir: string;
       mode: MachineMode;
+      omitHostDetails: boolean;
     };
 
 export async function parseCli(
@@ -63,6 +66,7 @@ export async function parseCli(
       'cloud-base-url': { type: 'string' },
       'enrollment-code-file': { type: 'string' },
       serve: { type: 'boolean' },
+      'omit-host-details': { type: 'boolean' },
       help: { type: 'boolean', short: 'h' },
       version: { type: 'boolean', short: 'v' },
     },
@@ -71,6 +75,9 @@ export async function parseCli(
   if (parsed.values.help) return { action: 'help' };
   if (parsed.values.version) return { action: 'version' };
 
+  const omitHostDetails =
+    parsed.values['omit-host-details'] ??
+    omitHostDetailsFromEnv(env.KLEX_MACHINE_OMIT_HOST_DETAILS);
   const dataDir = resolve(
     parsed.values['data-dir'] ??
       env.KLEX_MACHINE_DATA_DIR ??
@@ -123,6 +130,7 @@ export async function parseCli(
       config: await resolveRuntimeConfig({ cwd: raw.cwd }, processCwd),
       dataDir,
       serve: true,
+      omitHostDetails,
     };
   }
   if (parsed.values.serve !== undefined) {
@@ -148,6 +156,7 @@ export async function parseCli(
       config: await resolveRuntimeConfig(raw, processCwd),
       dataDir,
       enrollmentCodeFile,
+      omitHostDetails,
     };
   }
   if (
@@ -170,7 +179,17 @@ export async function parseCli(
     config: await resolveRuntimeConfig(raw, processCwd),
     dataDir,
     mode,
+    omitHostDetails,
   };
+}
+
+function omitHostDetailsFromEnv(value: string | undefined): boolean {
+  if (value === undefined) return false;
+  if (/^(1|true)$/i.test(value)) return true;
+  if (/^(0|false)$/i.test(value)) return false;
+  throw new Error(
+    'Invalid KLEX_MACHINE_OMIT_HOST_DETAILS. Expected 1/true or 0/false.',
+  );
 }
 
 export function packageVersion(): string {
@@ -205,6 +224,9 @@ Options:
   --cloud-base-url <url> Cloud API URL used for enrollment
   --enrollment-code-file <path|-> Read and remove a one-time code file, or read stdin with -
   --no-serve          Enroll only; do not start serving
+  --omit-host-details Omit hostname, workspace path and disk size from Cloud facts.
+                      Otherwise these are visible to organization members through the API.
+                      Removes stored host details on the next accepted report.
   -h, --help          Show help
   -v, --version       Show version
 
@@ -219,5 +241,6 @@ Environment:
   KLEX_MACHINE_MODE
   KLEX_MACHINE_DATA_DIR
   KLEX_MACHINE_CLOUD_BASE_URL
-  KLEX_MACHINE_ENROLLMENT_CODE_FILE`;
+  KLEX_MACHINE_ENROLLMENT_CODE_FILE
+  KLEX_MACHINE_OMIT_HOST_DETAILS (1/true or 0/false; default: false)`;
 }

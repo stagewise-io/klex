@@ -38,6 +38,26 @@ Configuration precedence is CLI flag, environment variable, then default:
 | `--data-dir` | `KLEX_MACHINE_DATA_DIR` | `~/.klex-machine`, identity and notification state |
 | `--cloud-base-url` | `KLEX_MACHINE_CLOUD_BASE_URL` | `https://cloud.klex.bot` |
 | `--enrollment-code-file` | `KLEX_MACHINE_ENROLLMENT_CODE_FILE` | none |
+| `--omit-host-details` | `KLEX_MACHINE_OMIT_HOST_DETAILS` | `false` |
+
+## Machine facts reported to Cloud
+
+Enrolled and managed modes report static facts on every authenticated Cloud connection attempt, including reconnect. Local mode and enrollment with `--no-serve` do not report. Collection uses Node OS and filesystem APIs, has a one-second async probe budget, and never invokes MCP tools or a shell.
+
+Reports include daemon version, OS platform/architecture, kernel release and OS name, CPU model, logical processors available to the process, and runtime-visible total RAM. Hostname, configured workspace path and total size of the filesystem containing that workspace are included by default. RAM is not verified provider entitlement; disk size is not free space or the sum of attached disks. Unavailable optional probes are omitted. Linux distribution names come from `PRETTY_NAME` in os-release, parsed as data.
+
+These are untrusted display-only values exposed through Cloud's existing organization-scoped machine API. No UI changes are included. Facts do not change authorization, quotas, health, idle timers or wake decisions. Cloud retains last-known facts during disconnect or idle.
+
+To omit hostname, workspace path and disk size, use:
+
+```sh
+klex-machine --omit-host-details
+KLEX_MACHINE_OMIT_HOST_DETAILS=1 klex-machine
+```
+
+The environment setting accepts `1`/`true` or `0`/`false`, case-insensitive. CLI flags take precedence; `--no-omit-host-details` overrides an enabled environment setting. Omission skips hostname and disk probes. A valid report replaces the entire stored document, so previously retained host details disappear only after Cloud accepts an omitted-host report. A disconnected machine or a dropped report does not immediately clear them.
+
+The WebSocket upgrade header `x-klex-machine-facts` carries UTF-8 JSON as unpadded base64url, capped at 4096 bytes. The v1 contract has `v`, `machineVersion`, `os`, `cpu`, `memory` and optional `host`; strings are bounded and numeric values are positive safe integers. Collection and storage are best effort. Old Cloud deployments ignore the extra header; old daemons leave retained Cloud facts untouched. Ship Cloud's additive migration and proxy/API support before releasing this daemon and updating managed images. No SDK release is required.
 
 ## Managed sandbox bootstrap
 

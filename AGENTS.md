@@ -102,6 +102,7 @@ Every structured store under an agent data directory participates in the forward
 
 ## Technical docs
 
+- `apps/klex/container/README.md`
 - `apps/klex/src/drain/architecture.md`
 - `apps/klex/src/local-data/architecture.md`
 - `apps/klex/src/mcp/architecture.md`

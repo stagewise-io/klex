@@ -23,6 +23,7 @@ import {
   type Drain,
 } from '@/drain';
 import { createGodMessages, type GodMessages } from '@/god-messages';
+import { createHealthServer, type HealthServer } from '@/health-server';
 import { createIntrospector } from '@/introspection';
 import { createLocalData, type LocalData } from '@/local-data';
 import { KLEX_LOCAL_DATA_STORES } from '@/local-data-registry';
@@ -128,6 +129,7 @@ const telemetryWarning = describeTelemetryWarning(
 
 /** Set once created so a fatal startup error still flushes analytics. */
 let startupProductAnalytics: ProductAnalytics | undefined;
+let healthServer: HealthServer | undefined;
 
 async function main(): Promise<void> {
   if (telemetryWarning) {
@@ -163,6 +165,15 @@ async function main(): Promise<void> {
     throw new Error(
       'Headless mode requires --data-dir or KLEX_DATA_DIR to identify an agent directory',
     );
+  }
+
+  if (cli.healthPort !== undefined) {
+    healthServer = createHealthServer({
+      logging: logger,
+      port: cli.healthPort,
+      host: cli.healthHost,
+    });
+    await healthServer.start();
   }
 
   let runtimeCloud: CloudConnectivity | undefined;
@@ -654,6 +665,7 @@ async function main(): Promise<void> {
           sessionHost: runtimeSessionHost,
           godMessages: runtimeGodMessages,
           mcp: runtimeMcp,
+          onBegin: () => healthServer?.markNotReady(),
         })
       : undefined;
 
@@ -670,7 +682,10 @@ async function main(): Promise<void> {
   };
 
   const shutdown = createShutdownCoordinator({
-    beforeCleanup: flushTelemetry,
+    beforeCleanup: async () => {
+      healthServer?.markNotReady();
+      await flushTelemetry();
+    },
     closeUi: () => cliUi?.close(),
     cleanup: async () => {
       // Tell Klex Cloud first: the agent stops accepting tunneled work now,
@@ -689,6 +704,7 @@ async function main(): Promise<void> {
       // Ordered teardown: event ingress and realtime sessions stop before the
       // default session and its extensions close.
       await runningRuntime?.close();
+      await healthServer?.close();
       // Flush telemetry after producers stop, while providers are still alive.
       // This avoids relying solely on provider shutdown hooks under the outer
       // shutdown deadline.
@@ -719,7 +735,11 @@ async function main(): Promise<void> {
     },
   });
 
-  process.on('SIGINT', shutdown.requestExit);
+  const requestExit = () => {
+    healthServer?.markNotReady();
+    shutdown.requestExit();
+  };
+  process.on('SIGINT', requestExit);
   // Headless (hosted agents, Kubernetes rollouts): SIGTERM lets the current
   // work finish within a wall-clock budget, because the orchestrator sends
   // SIGKILL at its own deadline. A second SIGTERM or a SIGINT exits at once.
@@ -727,6 +747,7 @@ async function main(): Promise<void> {
     process.env.KLEX_DRAIN_TIMEOUT_MS,
   );
   process.on('SIGTERM', () => {
+    healthServer?.markNotReady();
     if (!cli.headless || !drain || terminationDrainTimeoutMs === 0) {
       shutdown.requestExit();
       return;
@@ -741,7 +762,7 @@ async function main(): Promise<void> {
   });
   // Closing the terminal (or the console window on Windows) sends SIGHUP.
   // Without a handler Node terminates immediately and skips cloud notification.
-  process.on('SIGHUP', shutdown.requestExit);
+  process.on('SIGHUP', requestExit);
 
   // Self-update: offered in the interactive UI, or installed automatically
   // with --auto-update (TUI and headless).
@@ -803,7 +824,7 @@ async function main(): Promise<void> {
     // addons and runtime binaries remain external filesystem assets.
     const ui = createCliUi({
       logging: logger,
-      onQuit: shutdown.requestExit,
+      onQuit: requestExit,
       adminApi: runningAdminApi,
       dataDirectory: cli.dataDirectory,
       logStore,
@@ -819,6 +840,7 @@ async function main(): Promise<void> {
   autoUpdate?.start();
   // Readiness signal for orchestrators and the container smoke test: every
   // runtime module has started and SIGTERM now drains instead of exiting.
+  healthServer?.markReady();
   logger.info(
     {
       'event.name': 'klex.ready',
@@ -872,6 +894,7 @@ main().catch(async (error: unknown) => {
   logger.settings.type = 'pretty';
   logger.fatal({ error }, 'Klex Bot startup failed');
   // Idempotent: a no-op when the pre-runtime rollback already closed it.
+  await healthServer?.close();
   await startupProductAnalytics?.close();
   await logger[Symbol.asyncDispose]();
   process.exitCode = 1;

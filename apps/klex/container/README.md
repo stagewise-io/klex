@@ -49,6 +49,36 @@ tini runs as PID 1 and reaps the processes Klex spawns: stdio MCP servers, ffmpe
 
 Set the orchestrator's grace period above `KLEX_DRAIN_TIMEOUT_MS + KLEX_SHUTDOWN_TIMEOUT_MS` plus a margin. With the defaults (300 s + 15 s), use about 330 s, e.g. `terminationGracePeriodSeconds: 330`. A shorter grace period is safe but wasteful: work still running at SIGKILL is lost and its events get delivered again.
 
+## HTTP probes
+
+Set `KLEX_HEALTH_PORT=8080` or `--health-port 8080` to enable the dedicated probe listener. It is disabled by default. `KLEX_HEALTH_HOST` defaults to `0.0.0.0` so kubelet can reach the pod IP. The listener exposes only `GET /livez` and `GET /readyz`; all other requests return 404. It exposes no Admin API or agent data.
+
+- `/livez` returns 200 whenever the event loop can answer, including startup and drain.
+- `/readyz` returns 503 during startup, 200 after the runtime is ready, and 503 as soon as termination, an update drain, or shutdown begins. It does not check cloud connectivity or model-provider configuration.
+- A bind failure aborts startup. The listener starts before directory locking and local-data migrations, and closes after runtime teardown.
+
+```yaml
+env:
+  - name: KLEX_HEALTH_PORT
+    value: "8080"
+ports:
+  - name: health
+    containerPort: 8080
+startupProbe:
+  httpGet: { path: /livez, port: health }
+  periodSeconds: 5
+  failureThreshold: 60
+livenessProbe:
+  httpGet: { path: /livez, port: health }
+  periodSeconds: 20
+  failureThreshold: 3
+readinessProbe:
+  httpGet: { path: /readyz, port: health }
+  periodSeconds: 5
+```
+
+The startup probe proves the listener can respond, not that migrations finished. Readiness gates traffic separately. Restrict ingress to the probe port using the pod's network policy.
+
 ## One container per volume
 
 Run at most one container per data volume. Two Klex processes on one data directory corrupt its SQLite stores.
@@ -101,7 +131,7 @@ sh apps/klex/container/smoke-image.sh klex:local "$version"
 
 On Linux, run `test:exe` and `container:stage` directly.
 
-`smoke-image.sh` checks the version, native dependencies under a read-only root as uid 10001, tini as PID 1, headless startup on a fresh volume, a SIGTERM drain with exit 0, a restart after a clean stop, and a restart after SIGKILL that leaves its lock file behind. It doesn't check the cross-container case from the previous section, because the lock can't detect it.
+`smoke-image.sh` checks the version, native dependencies under a read-only root as uid 10001, tini as PID 1, headless startup on a fresh volume, a SIGTERM drain with exit 0, a restart after a clean stop, and a restart after SIGKILL that leaves its lock file behind. `smoke-health.mjs` also holds startup at a directory-lock FIFO and holds a real model turn at a local response gate. Both states must answer `/livez` with 200 and `/readyz` with 503; releasing the turn must let SIGTERM exit 0. The fixture uses a local fake model and a pinned Node client container sharing the agent's network namespace. It publishes no Admin API port and needs no model credentials. Node must be available on the test host. It doesn't check the cross-container case from the previous section, because the lock can't detect it.
 
 ## Running
 

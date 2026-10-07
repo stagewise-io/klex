@@ -39,14 +39,16 @@ function createHarness() {
     pausePushDelivery: vi.fn(),
     acknowledgeDeliveredEvents: vi.fn(() => Promise.resolve()),
   };
+  const onBegin = vi.fn();
   const drain = createDrain({
     logging,
     sessionHost,
     godMessages,
     mcp,
     pollIntervalMs: 1_000,
+    onBegin,
   });
-  return { drain, godMessages, host, mcp, sessionHost };
+  return { drain, godMessages, host, mcp, sessionHost, onBegin };
 }
 
 describe('Drain', () => {
@@ -68,6 +70,17 @@ describe('Drain', () => {
     expect(harness.godMessages.beginDrain).toHaveBeenCalledTimes(1);
     expect(harness.mcp.pausePushDelivery).toHaveBeenCalledTimes(1);
     expect(harness.mcp.acknowledgeDeliveredEvents).toHaveBeenCalledTimes(1);
+  });
+
+  it('notifies readiness synchronously, once, for concurrent drains', async () => {
+    const harness = createHarness();
+    const first = harness.drain.drain(UPDATE);
+    expect(harness.onBegin).toHaveBeenCalledTimes(1);
+    const second = harness.drain.drain(TERMINATION);
+    expect(harness.onBegin).toHaveBeenCalledTimes(1);
+    harness.host.quiescent = true;
+    await vi.advanceTimersByTimeAsync(1_000);
+    await Promise.all([first, second]);
   });
 
   it('waits for the god session as well as the default session', async () => {

@@ -33,6 +33,8 @@ export interface DrainDependencies {
   godMessages: Pick<GodMessages, 'isQuiescent' | 'beginDrain'>;
   mcp: Pick<Mcp, 'pausePushDelivery' | 'acknowledgeDeliveredEvents'>;
   pollIntervalMs?: number;
+  /** Called synchronously when the first drain begins. */
+  onBegin?: () => void;
 }
 
 export interface Drain {
@@ -115,6 +117,7 @@ class DrainModule implements Drain {
   private begin(): void {
     if (this.begun) return;
     this.begun = true;
+    this.deps.onBegin?.();
     this.deps.sessionHost.beginDrain();
     this.deps.godMessages.beginDrain();
     this.deps.mcp.pausePushDelivery();

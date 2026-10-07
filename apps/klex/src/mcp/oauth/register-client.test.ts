@@ -153,12 +153,12 @@ test('an aborted connection cannot save tokens over replacement credentials', as
     onAuthorizationRedirect: vi.fn(),
   });
   controller.abort();
-  expect(() =>
+  await expect(
     provider.saveTokens({ access_token: 'late', token_type: 'Bearer' }),
-  ).toThrow();
-  expect(() =>
+  ).rejects.toThrow();
+  await expect(
     provider.saveClientInformation({ client_id: 'stale' }),
-  ).toThrow();
+  ).rejects.toThrow();
   await expect(provider.invalidateCredentials('all')).rejects.toThrow();
   expect(store.saveTokens).not.toHaveBeenCalled();
   expect(store.saveClientInformation).not.toHaveBeenCalled();

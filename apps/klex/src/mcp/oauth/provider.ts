@@ -33,7 +33,7 @@ export class McpOAuthProvider implements OAuthClientProvider {
   private readonly onAuthorizationRedirect: AuthorizationRedirectHandler;
   private readonly serverName: string;
   private readonly store: McpOAuthStore;
-  private readonly signal?: AbortSignal;
+  private readonly signal: AbortSignal | undefined;
 
   public readonly redirectUrl: URL;
 
@@ -63,6 +63,7 @@ export class McpOAuthProvider implements OAuthClientProvider {
   public async clientInformation(
     context?: OAuthClientInformationContext,
   ): Promise<McpOAuthClientInformation | undefined> {
+    this.signal?.throwIfAborted();
     return this.store.clientInformation(
       this.serverName,
       this.redirectUrl.toString(),
@@ -71,6 +72,7 @@ export class McpOAuthProvider implements OAuthClientProvider {
   }
 
   public async codeVerifier(): Promise<string> {
+    this.signal?.throwIfAborted();
     const verifier = await this.store.codeVerifier(this.serverName);
     if (!verifier) {
       throw new Error(
@@ -81,6 +83,7 @@ export class McpOAuthProvider implements OAuthClientProvider {
   }
 
   public discoveryState(): Promise<OAuthDiscoveryState | undefined> {
+    this.signal?.throwIfAborted();
     return this.store.discoveryState(this.serverName);
   }
 
@@ -93,8 +96,7 @@ export class McpOAuthProvider implements OAuthClientProvider {
       // A customer-owned app cannot be repaired by dynamically registering another.
       if (client?.klex_registered) return;
     }
-    this.signal?.throwIfAborted();
-    await this.store.invalidate(this.serverName, scope);
+    await this.store.invalidate(this.serverName, scope, this.signal);
   }
 
   public async redirectToAuthorization(authorizationUrl: URL): Promise<void> {
@@ -112,37 +114,51 @@ export class McpOAuthProvider implements OAuthClientProvider {
     await this.onAuthorizationRedirect(authorizationUrl);
   }
 
-  public saveClientInformation(
+  public async saveClientInformation(
     clientInformation: StoredOAuthClientInformation,
     context?: OAuthClientInformationContext,
   ): Promise<void> {
     this.signal?.throwIfAborted();
-    return this.store.saveClientInformation(
+    await this.store.saveClientInformation(
       this.serverName,
       this.redirectUrl.toString(),
       clientInformation,
       context?.issuer,
+      this.signal,
     );
   }
 
-  public saveCodeVerifier(codeVerifier: string): Promise<void> {
+  public async saveCodeVerifier(codeVerifier: string): Promise<void> {
     this.signal?.throwIfAborted();
-    return this.store.saveCodeVerifier(this.serverName, codeVerifier);
+    await this.store.saveCodeVerifier(
+      this.serverName,
+      codeVerifier,
+      this.signal,
+    );
   }
 
-  public saveDiscoveryState(
+  public async saveDiscoveryState(
     discoveryState: OAuthDiscoveryState,
   ): Promise<void> {
     this.signal?.throwIfAborted();
-    return this.store.saveDiscoveryState(this.serverName, discoveryState);
+    await this.store.saveDiscoveryState(
+      this.serverName,
+      discoveryState,
+      this.signal,
+    );
   }
 
-  public saveTokens(
+  public async saveTokens(
     tokens: StoredOAuthTokens,
     context?: OAuthClientInformationContext,
   ): Promise<void> {
     this.signal?.throwIfAborted();
-    return this.store.saveTokens(this.serverName, tokens, context?.issuer);
+    await this.store.saveTokens(
+      this.serverName,
+      tokens,
+      context?.issuer,
+      this.signal,
+    );
   }
 
   public state(): string {
@@ -152,6 +168,7 @@ export class McpOAuthProvider implements OAuthClientProvider {
   public tokens(
     context?: OAuthClientInformationContext,
   ): Promise<StoredOAuthTokens | undefined> {
+    this.signal?.throwIfAborted();
     return this.store.tokens(this.serverName, context?.issuer);
   }
 

@@ -1,5 +1,5 @@
 import { mkdtemp, rm } from 'node:fs/promises';
-import { hostname, tmpdir } from 'node:os';
+import { hostname, platform, tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import {
@@ -11,6 +11,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { connectMachine } from '../src/cloud/connect.js';
 import { MACHINE_FACTS_HEADER } from '../src/cloud/facts/index.js';
 import { startCloudMachineRuntime } from '../src/cloud/runtime.js';
+import { silentMachineLogger } from '../src/logger.js';
 
 vi.mock('@klex/mcp-proxy-sdk/daemon/node', () => ({
   createProxyDaemon: vi.fn(() => ({
@@ -23,7 +24,11 @@ vi.mock('@klex/mcp-proxy-sdk/daemon/node', () => ({
 
 vi.mock('node:os', async (importOriginal) => {
   const original = await importOriginal<typeof import('node:os')>();
-  return { ...original, hostname: vi.fn(original.hostname) };
+  return {
+    ...original,
+    hostname: vi.fn(original.hostname),
+    platform: vi.fn(original.platform),
+  };
 });
 
 const directories: string[] = [];
@@ -109,6 +114,34 @@ describe('Cloud facts transport', () => {
       await runtime.close();
     },
   );
+  it.each(['collection failure', 'oversized header'])(
+    'keeps authorization and warns on %s',
+    async (failure) => {
+      const dataDir = await setup();
+      const warn = vi.fn();
+      if (failure === 'collection failure') {
+        vi.mocked(platform).mockImplementationOnce(() => {
+          throw new Error('private probe failure');
+        });
+      }
+      const runtime = await startCloudMachineRuntime(dataDir, handler, {
+        cwd: failure === 'oversized header' ? '語'.repeat(1024) : dataDir,
+        version: '0.1.0',
+        omitHostDetails: false,
+        logger: { ...silentMachineLogger, warn },
+      });
+      expect((await connection()).headers).toEqual({
+        authorization: 'Bearer fixture-token',
+      });
+      expect(warn).toHaveBeenCalledExactlyOnceWith(
+        failure === 'collection failure'
+          ? 'Machine facts collection failed'
+          : 'Machine facts exceed header size limit',
+      );
+      await runtime.close();
+    },
+  );
+
   it('keeps legacy runtime callers header-free', async () => {
     const runtime = await startCloudMachineRuntime(await setup(), handler);
     expect((await connection()).headers).not.toHaveProperty(

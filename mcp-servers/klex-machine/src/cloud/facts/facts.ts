@@ -108,6 +108,11 @@ export interface MachineFactsCollector {
 }
 
 class MachineFactsCollectorModule implements MachineFactsCollector {
+  // A timeout does not cancel filesystem work. Keep each probe single-flight
+  // across collections until its underlying operation has actually settled.
+  private namePending = false;
+  private diskPending = false;
+
   constructor(
     private readonly options: MachineFactsOptions,
     private readonly probes: MachineFactsProbes,
@@ -146,6 +151,8 @@ class MachineFactsCollectorModule implements MachineFactsCollector {
     });
     const signal = controller.signal;
     const name = async () => {
+      if (this.namePending) return;
+      this.namePending = true;
       try {
         if (facts.os.platform !== 'linux') {
           facts.os.name =
@@ -170,10 +177,13 @@ class MachineFactsCollectorModule implements MachineFactsCollector {
         }
       } catch {
         /* Optional probe. */
+      } finally {
+        this.namePending = false;
       }
     };
     const disk = async () => {
-      if (!facts.host) return;
+      if (!facts.host || this.diskPending) return;
+      this.diskPending = true;
       try {
         const value = await p.volumeBytes(this.options.cwd);
         if (
@@ -185,6 +195,8 @@ class MachineFactsCollectorModule implements MachineFactsCollector {
         }
       } catch {
         /* statfs is not supported on every filesystem/platform. */
+      } finally {
+        this.diskPending = false;
       }
     };
     try {

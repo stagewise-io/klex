@@ -182,6 +182,56 @@ describe('machine facts', () => {
     expect(vi.getTimerCount()).toBe(0);
   });
 
+  it.each(['resolve', 'reject'])(
+    'bounds unfinished filesystem probes across reconnects until they %s',
+    async (settlement) => {
+      vi.useFakeTimers();
+      const disk = Promise.withResolvers<bigint>();
+      const name = Promise.withResolvers<string>();
+      const volumeBytes = vi
+        .fn()
+        .mockReturnValueOnce(disk.promise)
+        .mockResolvedValue(84n);
+      const readOsRelease = vi
+        .fn()
+        .mockReturnValueOnce(name.promise)
+        .mockResolvedValue('PRETTY_NAME="Fresh OS"');
+      const hostname = vi.fn().mockReturnValue('first');
+      const collector = createMachineFactsCollector(
+        options,
+        probes({ volumeBytes, readOsRelease, hostname }),
+      );
+      const pending = collector.collect();
+      await vi.advanceTimersByTimeAsync(1000);
+      const first = await pending;
+      for (let attempt = 0; attempt < 5; attempt++) {
+        hostname.mockReturnValue(`reconnect-${attempt}`);
+        const next = await collector.collect();
+        expect(next.host?.hostname).toBe(`reconnect-${attempt}`);
+        expect(next.host?.workspaceVolumeTotalBytes).toBeUndefined();
+        expect(next.os.name).toBeUndefined();
+      }
+      expect(volumeBytes).toHaveBeenCalledTimes(1);
+      expect(readOsRelease).toHaveBeenCalledTimes(1);
+      if (settlement === 'resolve') {
+        disk.resolve(42n);
+        name.resolve('PRETTY_NAME="Stale OS"');
+      } else {
+        disk.reject(new Error('stalled disk'));
+        name.reject(new Error('stalled os-release'));
+      }
+      await vi.advanceTimersByTimeAsync(0);
+      expect(first.host?.workspaceVolumeTotalBytes).toBeUndefined();
+      expect(first.os.name).toBeUndefined();
+      const fresh = await collector.collect();
+      expect(fresh.host?.workspaceVolumeTotalBytes).toBe(84);
+      expect(fresh.os.name).toBe('Fresh OS');
+      expect(volumeBytes).toHaveBeenCalledTimes(2);
+      expect(readOsRelease).toHaveBeenCalledTimes(2);
+      expect(vi.getTimerCount()).toBe(0);
+    },
+  );
+
   it('refreshes probes for each collection and bounds encoded bytes', async () => {
     const hostname = vi
       .fn()

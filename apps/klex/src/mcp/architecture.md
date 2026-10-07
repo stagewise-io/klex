@@ -84,6 +84,10 @@ The cloud channel is **pull-based** — Klex Cloud reaches the agent's admin API
 
 Pending authorizations are in-memory: each is a live, blocked connection attempt. A restart drops them, and the cloud simply starts a new authorization.
 
+Removing a server through the admin API calls `mcp.removeServer()`. It removes the configuration, cancels pending authorization, closes the connection, and deletes that namespace's OAuth state, including credentials for previous URLs and legacy entries. Closed providers cannot write late token responses back into the store. A replacement with the same namespace waits for cleanup to finish. Normal reconnects and shutdown preserve credentials.
+
+After local deletion, Klex discovers each saved token issuer's revocation endpoint and attempts RFC 7009 revocation of refresh and access tokens. Discovery and revocation share a five-second timeout. Missing endpoints, unsupported client authentication, and provider failures do not block local removal. Remote revocation is best effort; provider grants may still need to be removed in the provider's settings. Local storage errors fail the request and allow cleanup to be retried by namespace. The credential file's schema and compatibility versions are unchanged.
+
 ## Interface to session
 
 The MCP ingress extension installed in the default session subscribes through `mcp.onPushNotification(listener)` and receives `McpPushNotification` objects. It routes resource-linked notifications and converts events into session-inbox events. A session with MCP access does not subscribe automatically; its extension composition determines whether it handles ingress.

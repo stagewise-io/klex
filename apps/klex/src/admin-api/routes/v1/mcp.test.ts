@@ -84,6 +84,7 @@ function makeDeps(
       ...config,
     } as unknown as Config,
     mcp: {
+      removeServer: vi.fn(async () => undefined),
       getServerStatuses: () => [],
       getToolCallHistory: () => [],
       ...mcp,
@@ -685,12 +686,12 @@ describe('PATCH /v1/mcp-servers/:name — update MCP server', () => {
 
 describe('DELETE /v1/mcp-servers/:name — remove MCP server', () => {
   it('removes a server and returns updated statuses', async () => {
-    const removeMcpServerFn = vi.fn(async () => klexConfigStub);
+    const removeMcpServerFn = vi.fn(async () => undefined);
     const statuses: McpServerInfo[] = [];
     const app = createApp(
       makeDeps(
-        { removeMcpServer: removeMcpServerFn },
-        { getServerStatuses: () => statuses },
+        {},
+        { removeServer: removeMcpServerFn, getServerStatuses: () => statuses },
       ),
     );
     const response = await app.request('/v1/mcp-servers/old-server', {
@@ -704,11 +705,14 @@ describe('DELETE /v1/mcp-servers/:name — remove MCP server', () => {
 
   it('maps ConfigValidationError to 404', async () => {
     const app = createApp(
-      makeDeps({
-        removeMcpServer: vi.fn(async () => {
-          throw new ConfigValidationError("MCP server 'missing' not found");
-        }),
-      }),
+      makeDeps(
+        {},
+        {
+          removeServer: vi.fn(async () => {
+            throw new ConfigValidationError("MCP server 'missing' not found");
+          }),
+        },
+      ),
     );
     const response = await app.request('/v1/mcp-servers/missing', {
       method: 'DELETE',
@@ -720,11 +724,14 @@ describe('DELETE /v1/mcp-servers/:name — remove MCP server', () => {
 
   it('maps unexpected errors to 500', async () => {
     const app = createApp(
-      makeDeps({
-        removeMcpServer: vi.fn(async () => {
-          throw new Error('disk full');
-        }),
-      }),
+      makeDeps(
+        {},
+        {
+          removeServer: vi.fn(async () => {
+            throw new Error('disk full');
+          }),
+        },
+      ),
     );
     const response = await app.request('/v1/mcp-servers/old-server', {
       method: 'DELETE',

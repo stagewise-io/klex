@@ -15,7 +15,6 @@ function probes(
     platform: () => 'linux',
     arch: () => 'arm64',
     release: () => '6.1',
-    version: () => 'Windows 11',
     cpuModel: () => ' CPU ',
     availableParallelism: () => 4,
     totalmem: () => 8 * 1024 ** 3,
@@ -62,16 +61,34 @@ describe('machine facts', () => {
     ).toEqual(facts);
   });
 
-  it.each(['darwin', 'win32'])(
-    'uses OS description on %s without reading Linux files',
-    async (platform) => {
+  it.each([
+    ['darwin', 'macOS'],
+    ['win32', 'Windows'],
+    ['freebsd', undefined],
+  ])(
+    'uses the platform name on %s without reading Linux files',
+    async (platform, name) => {
       const readOsRelease = vi.fn();
       const facts = await createMachineFactsCollector(
         options,
         probes({ platform: () => platform, readOsRelease }),
       ).collect();
-      expect(facts.os.name).toBe('Windows 11');
+      expect(facts.os.name).toBe(name);
+      expect(facts.os.release).toBe('6.1');
       expect(readOsRelease).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([' /work/project ', '/work/project\t'])(
+    'preserves workspace path whitespace in %j',
+    async (cwd) => {
+      const volumeBytes = vi.fn(async () => 42n);
+      const facts = await createMachineFactsCollector(
+        { ...options, cwd },
+        probes({ volumeBytes }),
+      ).collect();
+      expect(facts.host?.workspacePath).toBe(cwd);
+      expect(volumeBytes).toHaveBeenCalledExactlyOnceWith(cwd);
     },
   );
 

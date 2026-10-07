@@ -28,7 +28,6 @@ export interface MachineFactsProbes {
   platform(): string;
   arch(): string;
   release(): string;
-  version(): string;
   cpuModel(): string | undefined;
   availableParallelism(): number;
   totalmem(): number;
@@ -60,7 +59,6 @@ const defaultProbes: MachineFactsProbes = {
   platform: os.platform,
   arch: os.arch,
   release: os.release,
-  version: os.version,
   cpuModel: () => os.cpus().find((cpu) => cpu.model.trim())?.model,
   availableParallelism: os.availableParallelism,
   totalmem: os.totalmem,
@@ -131,7 +129,7 @@ class MachineFactsCollectorModule implements MachineFactsCollector {
     );
     facts.memory.totalBytes = probe(() => positiveInteger(p.totalmem()));
     if (!this.options.omitHostDetails) {
-      const path = this.options.cwd.trim();
+      const path = this.options.cwd;
       facts.host = {
         hostname: probe(() => text(p.hostname())),
         workspacePath:
@@ -150,7 +148,12 @@ class MachineFactsCollectorModule implements MachineFactsCollector {
     const name = async () => {
       try {
         if (facts.os.platform !== 'linux') {
-          facts.os.name = text(p.version());
+          facts.os.name =
+            facts.os.platform === 'darwin'
+              ? 'macOS'
+              : facts.os.platform === 'win32'
+                ? 'Windows'
+                : undefined;
           return;
         }
         for (const path of ['/etc/os-release', '/usr/lib/os-release']) {

@@ -218,7 +218,12 @@ export async function buildReleaseArtifact(
   return { archivePath, metadata, metadataPath };
 }
 
-function stageDistribution(
+/**
+ * Copies the files that make up a klex distribution into `stageDirectory`.
+ * Shared by release archives and the container build context, so both ship
+ * exactly the same layout.
+ */
+export function stageDistribution(
   packageDirectory: string,
   stageDirectory: string,
   platform: NodeJS.Platform,

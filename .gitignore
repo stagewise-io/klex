@@ -20,3 +20,5 @@ apps/klex/credentials/
 apps/klex/extensions/
 apps/klex/identity/
 apps/klex/*.sqlite*
+# Container build context staged from dist/ or a release archive
+apps/klex/container/context/

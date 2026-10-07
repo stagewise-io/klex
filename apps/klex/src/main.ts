@@ -817,6 +817,16 @@ async function main(): Promise<void> {
   }
   updateManager?.start();
   autoUpdate?.start();
+  // Readiness signal for orchestrators and the container smoke test: every
+  // runtime module has started and SIGTERM now drains instead of exiting.
+  logger.info(
+    {
+      'event.name': 'klex.ready',
+      'service.version': KLEX_VERSION,
+      headless: cli.headless,
+    },
+    'Klex Bot ready',
+  );
 }
 
 function resolveShutdownTimeoutMs(value: string | undefined): number {

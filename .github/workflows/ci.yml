@@ -102,7 +102,7 @@ jobs:
       # by the documented one-liners, so a broken main is a broken installer for
       # every new user. No Node toolchain is needed here.
       - name: Shellcheck install.sh and its harness
-        run: shellcheck --shell=sh install.sh scripts/install-e2e.sh
+        run: shellcheck --shell=sh install.sh scripts/install-e2e.sh apps/klex/container/smoke-image.sh
       - name: Parse install.ps1
         shell: pwsh
         # Parse-only. It catches syntax errors before they reach a user, but it
@@ -167,3 +167,38 @@ jobs:
       # --verify-native native addon load probe. No secrets required, so this
       # also runs for pull requests from forks.
       - run: pnpm -F @stagewise/klex test:exe
+
+  container:
+    name: Container Image (${{ matrix.runner }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        runner:
+          - ubuntu-latest
+          - ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
+        with:
+          version: ${{ env.PNPM_VERSION }}
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      # On ubuntu-24.04-arm this is the only PR gate for arm64 Linux native
+      # dependencies; the executable job covers x64 and macOS.
+      - run: pnpm -F @stagewise/klex test:exe
+      - run: pnpm -F @stagewise/klex container:stage
+      # Built locally and never pushed: no registry login, no secrets, so
+      # pull requests from forks run this too.
+      - name: Build image
+        run: |
+          docker build -t klex:ci \
+            --build-arg KLEX_VERSION="$(node -p "require('./apps/klex/package.json').version")" \
+            --build-arg KLEX_REVISION="$GITHUB_SHA" \
+            -f apps/klex/container/Dockerfile apps/klex/container/context
+      - name: Smoke-test image
+        run: sh apps/klex/container/smoke-image.sh klex:ci "$(node -p "require('./apps/klex/package.json').version")"

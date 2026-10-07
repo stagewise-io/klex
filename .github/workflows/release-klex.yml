@@ -84,6 +84,7 @@ jobs:
     if: needs.detect.outputs.should_release == 'true'
     permissions:
       contents: write
+      packages: write
     uses: ./.github/workflows/_release-klex.yml
     with:
       channel: stable

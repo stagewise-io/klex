@@ -62,6 +62,8 @@ klex_run() {
     --tmpfs /tmp \
     -e KLEX_NO_CLOUD=1 \
     -e KLEX_NO_ANALYTICS=1 \
+    -e KLEX_HEALTH_PORT=8080 \
+    -p 127.0.0.1::8080 \
     -v "$volume:/data" \
     "$@"
 }
@@ -88,6 +90,18 @@ wait_for_log() {
     elapsed=$((elapsed + 1))
   done
   return 1
+}
+
+# Probe via a random loopback-only published port. curl runs on the host.
+check_probes() {
+  binding=$(docker port "$1" 8080/tcp)
+  base="http://$binding"
+  [ "$(curl -sS --max-time 2 -o /dev/null -w '%{http_code}' "$base/livez")" = 200 ] ||
+    fail "$1 liveness probe failed" "$1"
+  [ "$(curl -sS --max-time 2 -o /dev/null -w '%{http_code}' "$base/readyz")" = 200 ] ||
+    fail "$1 readiness probe failed" "$1"
+  [ "$(curl -sS --max-time 2 -o /dev/null -w '%{http_code}' "$base/v1/health")" = 404 ] ||
+    fail "$1 probe listener exposed an unexpected route" "$1"
 }
 
 # stop_gracefully <container>: SIGTERM, expect drain and exit code 0.
@@ -137,6 +151,9 @@ pid1=$(docker exec "$first" cat /proc/1/comm)
 [ "$pid1" = "tini" ] || fail "PID 1 is '$pid1', expected tini"
 ok "headless runtime ready, PID 1 is tini"
 
+check_probes "$first"
+ok "HTTP liveness and readiness respond; Admin API is not exposed"
+
 # 5. Graceful stop
 stop_gracefully "$first"
 ok "SIGTERM drained and exited 0"
@@ -145,6 +162,7 @@ ok "SIGTERM drained and exited 0"
 klex_run -d --name "$restarted" "$image" >/dev/null
 wait_for_log "$restarted" 'Klex Bot ready' "$ready_timeout_s" ||
   fail "restart did not become ready within ${ready_timeout_s}s" "$restarted"
+check_probes "$restarted"
 stop_gracefully "$restarted"
 ok "restart on the same volume is ready and stops cleanly"
 
@@ -162,7 +180,11 @@ wait_for_log "$recovered" 'Klex Bot ready' "$ready_timeout_s" ||
   fail "restart after SIGKILL did not become ready within ${ready_timeout_s}s" "$recovered"
 docker logs "$recovered" 2>&1 | grep -qF 'Removing stale working directory lock' ||
   fail "$recovered did not report the stale lock" "$recovered"
+check_probes "$recovered"
 stop_gracefully "$recovered"
 ok "restart after SIGKILL replaces the stale lock and stops cleanly"
+
+# 8. Deterministic startup and busy-drain readiness on the same executable.
+node "$(dirname "$0")/smoke-health.mjs" "$image"
 
 echo "All container smoke checks passed for $image"

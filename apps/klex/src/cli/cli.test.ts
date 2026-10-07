@@ -11,6 +11,8 @@ describe('parseCliArgs', () => {
   const originalEnv = { ...process.env };
 
   beforeEach(() => {
+    delete process.env.KLEX_HEALTH_PORT;
+    delete process.env.KLEX_HEALTH_HOST;
     delete process.env.KLEX_HOME;
     delete process.env.KLEX_DATA_DIR;
     delete process.env.KLEX_NO_CLOUD;
@@ -30,6 +32,8 @@ describe('parseCliArgs', () => {
 
   afterEach(() => {
     for (const key of [
+      'KLEX_HEALTH_PORT',
+      'KLEX_HEALTH_HOST',
       'KLEX_HOME',
       'KLEX_DATA_DIR',
       'KLEX_NO_CLOUD',
@@ -53,6 +57,31 @@ describe('parseCliArgs', () => {
         delete process.env[key as keyof typeof process.env];
       }
     }
+  });
+
+  describe('health listener', () => {
+    it('is disabled by default', () => {
+      expect(parseCliArgs([]).healthPort).toBeUndefined();
+      expect(parseCliArgs([]).healthHost).toBe('0.0.0.0');
+    });
+    it('resolves env and lets the CLI port override it', () => {
+      process.env.KLEX_HEALTH_PORT = '8080';
+      process.env.KLEX_HEALTH_HOST = '127.0.0.1';
+      expect(parseCliArgs([]).healthPort).toBe(8080);
+      expect(parseCliArgs(['--health-port', '8081']).healthPort).toBe(8081);
+      expect(parseCliArgs([]).healthHost).toBe('127.0.0.1');
+    });
+    it('treats blank env values as unset', () => {
+      process.env.KLEX_HEALTH_PORT = ' ';
+      process.env.KLEX_HEALTH_HOST = ' ';
+      expect(parseCliArgs([]).healthPort).toBeUndefined();
+      expect(parseCliArgs([]).healthHost).toBe('0.0.0.0');
+    });
+    it.each(['0', '-1', '65536', '1.5', 'abc'])('rejects port %s', (port) => {
+      expect(() => parseCliArgs([`--health-port=${port}`])).toThrow(
+        'Invalid health port',
+      );
+    });
   });
 
   describe('auto-update', () => {

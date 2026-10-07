@@ -68,9 +68,10 @@ async function main(): Promise<void> {
     enrollment.oauthProtectedResourceUrl,
     enrollment.mcpResourceUrl,
   );
+  const logger = createMachineLogger(result.config.logLevel);
   const store = createNotificationStore({
     dataDir: result.dataDir,
-    logger: createMachineLogger(result.config.logLevel),
+    logger,
   });
   await store.ready();
   const router = createPrincipalMcpRouter(
@@ -83,16 +84,19 @@ async function main(): Promise<void> {
     result.config.cwd,
     store,
   );
-  const runtime = await startCloudMachineRuntime(result.dataDir, router).catch(
-    async (error: unknown) => {
-      try {
-        await router.close();
-      } finally {
-        await store.close();
-      }
-      throw error;
-    },
-  );
+  const runtime = await startCloudMachineRuntime(result.dataDir, router, {
+    cwd: result.config.cwd,
+    omitHostDetails: result.omitHostDetails,
+    version: packageVersion(),
+    logger,
+  }).catch(async (error: unknown) => {
+    try {
+      await router.close();
+    } finally {
+      await store.close();
+    }
+    throw error;
+  });
   let closing: Promise<void> | undefined;
   const close = () =>
     (closing ??= (async () => {

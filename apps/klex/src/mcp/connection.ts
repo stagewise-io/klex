@@ -300,7 +300,10 @@ export async function connectMcpServer(
     options.cloudAuth,
   );
   client.onclose = () => {
-    if (connection && !expectedClose) options.onDisconnect(connection);
+    if (connection) {
+      oauth?.abort();
+      if (!expectedClose) options.onDisconnect(connection);
+    }
   };
 
   const onAbort = () => void client.close();
@@ -363,11 +366,13 @@ export async function connectMcpServer(
     const originalClose = connection.close.bind(connection);
     connection.close = async () => {
       expectedClose = true;
+      oauth?.abort();
       await originalClose();
     };
     return connection;
   } catch (error) {
     expectedClose = true;
+    oauth?.abort();
     await client.close().catch(() => undefined);
     const connectionError =
       error instanceof UnauthorizedError
@@ -413,6 +418,7 @@ async function createOAuthTransportOptions(
       callback?: Promise<URLSearchParams>;
       provider: OAuthClientProvider;
       session: OAuthAuthorizationSession;
+      abort: () => void;
     }
   | undefined
 > {
@@ -429,6 +435,8 @@ async function createOAuthTransportOptions(
     serverUrl: options.config.url,
   });
   let callback: Promise<URLSearchParams> | undefined;
+  const controller = new AbortController();
+  const signal = AbortSignal.any([options.signal, controller.signal]);
   const provider = new McpOAuthProvider({
     clientName: options.oauth.clientName,
     onAuthorizationRedirect: (authorizationUrl) => {
@@ -437,13 +445,14 @@ async function createOAuthTransportOptions(
         throw new Error('OAuth authorization URL did not include state');
       callback = session.authorize({
         authorizationUrl,
-        signal: options.signal,
+        signal,
         state,
       });
     },
     redirectUrl: session.redirectUrl,
     serverName: `${options.namespace}\u0000${options.config.url}`,
     store: options.oauth.store,
+    signal,
   });
   return {
     get callback() {
@@ -451,6 +460,7 @@ async function createOAuthTransportOptions(
     },
     provider,
     session,
+    abort: () => controller.abort(),
   };
 }
 

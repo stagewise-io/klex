@@ -1,5 +1,5 @@
 import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { hostname, tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import {
@@ -20,6 +20,11 @@ vi.mock('@klex/mcp-proxy-sdk/daemon/node', () => ({
     activeExchangeCount: 0,
   })),
 }));
+
+vi.mock('node:os', async (importOriginal) => {
+  const original = await importOriginal<typeof import('node:os')>();
+  return { ...original, hostname: vi.fn(original.hostname) };
+});
 
 const directories: string[] = [];
 afterEach(async () => {
@@ -73,27 +78,37 @@ function connection() {
 }
 
 describe('Cloud facts transport', () => {
-  it('collects on each connection with authorization and respects omission', async () => {
-    const dataDir = await setup();
-    const runtime = await startCloudMachineRuntime(dataDir, handler, {
-      cwd: dataDir,
-      version: '0.1.0',
-      omitHostDetails: true,
-    });
-    for (let attempt = 0; attempt < 2; attempt++) {
-      const details = await connection();
-      expect(details.headers?.authorization).toBe('Bearer fixture-token');
-      const header = details.headers?.[MACHINE_FACTS_HEADER];
-      expect(header).toBeDefined();
-      const facts = JSON.parse(
-        Buffer.from(header ?? '', 'base64url').toString('utf8'),
-      );
-      expect(facts.machineVersion).toBe('0.1.0');
-      expect(facts).not.toHaveProperty('host');
-    }
-    expect(fetch).toHaveBeenCalledTimes(2);
-    await runtime.close();
-  });
+  it.each([false, true])(
+    'recollects facts on each connection with omitHostDetails=%s',
+    async (omitHostDetails) => {
+      const dataDir = await setup();
+      const runtime = await startCloudMachineRuntime(dataDir, handler, {
+        cwd: dataDir,
+        version: '0.1.0',
+        omitHostDetails,
+      });
+      for (let attempt = 0; attempt < 2; attempt++) {
+        vi.mocked(hostname).mockReturnValue(`connection-${attempt}`);
+        const details = await connection();
+        expect(details.headers?.authorization).toBe('Bearer fixture-token');
+        const header = details.headers?.[MACHINE_FACTS_HEADER];
+        expect(header).toBeDefined();
+        const facts = JSON.parse(
+          Buffer.from(header ?? '', 'base64url').toString('utf8'),
+        );
+        expect(facts.machineVersion).toBe('0.1.0');
+        if (omitHostDetails) {
+          expect(facts).not.toHaveProperty('host');
+        } else {
+          expect(facts.host.hostname).toBe(`connection-${attempt}`);
+          expect(facts.host.workspacePath).toBe(dataDir);
+        }
+      }
+      expect(hostname).toHaveBeenCalledTimes(omitHostDetails ? 0 : 2);
+      expect(fetch).toHaveBeenCalledTimes(2);
+      await runtime.close();
+    },
+  );
   it('keeps legacy runtime callers header-free', async () => {
     const runtime = await startCloudMachineRuntime(await setup(), handler);
     expect((await connection()).headers).not.toHaveProperty(

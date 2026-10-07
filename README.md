@@ -108,6 +108,20 @@ copying only the executable out of it will not work.
 
 Release operators should see [apps/klex/RELEASING.md](apps/klex/RELEASING.md).
 
+### Container image
+
+Each release also ships a headless image for `linux/arm64` and `linux/amd64`:
+
+```bash
+docker run -d --read-only --tmpfs /tmp -v klex-data:/data \
+  --stop-timeout 330 ghcr.io/stagewise-io/klex:stable
+```
+
+The volume needs `/data/agent/config.json` before the first start, and only one
+container may use a volume at a time. See
+[apps/klex/container/README.md](apps/klex/container/README.md) for the full
+contract.
+
 
 ## Klex is computer-agnostic
 

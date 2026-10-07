@@ -19,7 +19,11 @@ import type {
 } from '@stagewise/mcp-extension-realtime-media';
 
 import type { CloudConnectivity } from '@/cloud-connectivity';
-import type { Config, McpServerConfig } from '@/config';
+import {
+  type Config,
+  ConfigValidationError,
+  type McpServerConfig,
+} from '@/config';
 import {
   createInMemoryPushNotificationInbox,
   type PushNotificationInbox,
@@ -62,6 +66,7 @@ import {
   type RegisteredOAuthClient,
   saveRegisteredOAuthClient,
 } from './oauth/register-client';
+import { revokeOAuthCredentials } from './oauth/revocation';
 import { McpOAuthStore } from './oauth/store';
 import {
   buildMcpRegistry,
@@ -213,6 +218,8 @@ export interface McpToolCallRecord {
 
 export interface Mcp extends ToolProvider {
   start(): Promise<void>;
+  /** Removes configuration, cancels authorization, and forgets/revokes OAuth credentials. */
+  removeServer(namespace: string): Promise<void>;
   onPushNotification(listener: McpPushNotificationListener): () => void;
   /**
    * Whether Push Notifications were delivered to listeners but not yet
@@ -392,6 +399,7 @@ interface McpServerRuntime {
 
 class McpModule implements Mcp {
   private readonly servers = new Map<string, McpServerRuntime>();
+  private readonly removals = new Map<string, Promise<void>>();
   private readonly eventWorkers = new Map<string, PushNotificationWorker>();
   /** Serializes deduplication and delivery across worker replacement. */
   private readonly eventCommitQueues = new Map<string, Promise<void>>();
@@ -437,6 +445,7 @@ class McpModule implements Mcp {
       connect: McpConnectionFactory;
       cloudConnectivity: CloudConnectivity | undefined;
       pendingAuthorizations: McpPendingAuthorizationRegistry;
+      removeOAuth: (namespace: string) => Promise<number>;
       closeOAuth: () => Promise<void>;
       configureOAuthClient: (
         serverName: string,
@@ -460,6 +469,42 @@ class McpModule implements Mcp {
       { configuredServerCount },
       'MCP started; environment reconciliation continues in background',
     );
+  }
+
+  removeServer(namespace: string): Promise<void> {
+    const pending = this.removals.get(namespace);
+    if (pending) return pending;
+    const removal = Promise.resolve()
+      .then(async () => {
+        let notFound: ConfigValidationError | undefined;
+        try {
+          await this.deps.config.removeMcpServer(namespace);
+        } catch (error) {
+          if (
+            !(error instanceof ConfigValidationError) ||
+            error.code !== 'not_found'
+          )
+            throw error;
+          notFound = error;
+        }
+        this.cancelAuthorization(namespace);
+        const runtime = this.servers.get(namespace);
+        if (runtime) {
+          const connection = this.invalidateRuntime(runtime);
+          if (connection) this.closeConnection(connection, namespace);
+        }
+        this.publishRegistry();
+        const removed = await this.deps.removeOAuth(namespace);
+        // A failed credential write can be retried after configuration removal.
+        if (notFound && removed === 0) throw notFound;
+      })
+      .finally(() => {
+        this.removals.delete(namespace);
+        // A replacement with the same name must wait until old credentials are gone.
+        this.scheduleReconcile(this.deps.config.getMcpServers());
+      });
+    this.removals.set(namespace, removal);
+    return removal;
   }
 
   onPushNotification(listener: McpPushNotificationListener): () => void {
@@ -713,6 +758,7 @@ class McpModule implements Mcp {
     this.unsubscribe?.();
     this.unsubscribe = undefined;
     await this.deps.closeOAuth();
+    await Promise.allSettled(this.removals.values());
     const connections = [...this.servers.values()].flatMap((runtime) => {
       const connection = this.invalidateRuntime(runtime);
       return connection ? [connection] : [];
@@ -837,6 +883,7 @@ class McpModule implements Mcp {
     );
 
     for (const runtime of [...this.servers.values()]) {
+      if (this.removals.has(runtime.namespace)) continue;
       const next = servers[runtime.namespace];
       if (next && runtime.signature === signature(next)) continue;
       const reason = next ? 'configuration-changed' : 'configuration-removed';
@@ -850,7 +897,7 @@ class McpModule implements Mcp {
     this.publishRegistry();
 
     for (const [namespace, config] of Object.entries(servers)) {
-      if (this.servers.has(namespace)) continue;
+      if (this.servers.has(namespace) || this.removals.has(namespace)) continue;
       const runtime: McpServerRuntime = {
         namespace,
         config,
@@ -1599,6 +1646,7 @@ class McpModule implements Mcp {
     serverName: string,
     client?: RegisteredOAuthClient,
   ): Promise<RequestAuthorizationResult> {
+    if (this.removals.has(serverName)) return { outcome: 'unavailable' };
     const config = this.deps.config.getMcpServers()[serverName];
     if (!config) return { outcome: 'not_found' };
     if ('command' in config) return { outcome: 'unsupported_transport' };
@@ -2001,6 +2049,10 @@ export function isCloudAuthorizationAvailable(
 }
 
 export function createMcp(deps: McpDependencies): Mcp {
+  const logger = deps.logging.child({
+    name: 'mcp',
+    bindings: { module: 'mcp' },
+  });
   const localPresenter = new LocalBrowserOAuthPresenter();
   const coordinator = new LocalOAuthAuthorizationCoordinator((url) =>
     localPresenter.present(url),
@@ -2049,16 +2101,18 @@ export function createMcp(deps: McpDependencies): Mcp {
           },
         });
   return new McpModule({
-    logger: deps.logging.child({
-      name: 'mcp',
-      bindings: { module: 'mcp' },
-    }),
+    logger,
     config: deps.config,
     pushNotificationInbox: createInMemoryPushNotificationInbox(),
     realtimeMediaCapability: deps.realtimeMediaCapability,
     connect,
     cloudConnectivity: deps.cloudConnectivity,
     pendingAuthorizations,
+    removeOAuth: async (namespace) => {
+      const credentials = await store.removeServer(namespace);
+      await revokeOAuthCredentials(credentials, namespace, logger);
+      return credentials.length;
+    },
     configureOAuthClient: (serverName, serverUrl, client) => {
       const cloud = deps.cloudConnectivity;
       if (!cloud) throw new Error('Cloud authorization unavailable');

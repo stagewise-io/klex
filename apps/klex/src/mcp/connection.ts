@@ -293,7 +293,11 @@ export async function connectMcpServer(
         await options.onResourceUpdated(connection, notification.params.uri);
     },
   );
-  const oauth = await createOAuthTransportOptions(options);
+  const oauthLifetime = new AbortController();
+  const oauth = await createOAuthTransportOptions({
+    ...options,
+    signal: AbortSignal.any([options.signal, oauthLifetime.signal]),
+  });
   let transport = createTransport(
     options.config,
     oauth?.provider,
@@ -301,7 +305,7 @@ export async function connectMcpServer(
   );
   client.onclose = () => {
     if (connection) {
-      oauth?.abort();
+      oauthLifetime.abort();
       if (!expectedClose) options.onDisconnect(connection);
     }
   };
@@ -366,13 +370,13 @@ export async function connectMcpServer(
     const originalClose = connection.close.bind(connection);
     connection.close = async () => {
       expectedClose = true;
-      oauth?.abort();
+      oauthLifetime.abort();
       await originalClose();
     };
     return connection;
   } catch (error) {
     expectedClose = true;
-    oauth?.abort();
+    oauthLifetime.abort();
     await client.close().catch(() => undefined);
     const connectionError =
       error instanceof UnauthorizedError
@@ -418,7 +422,6 @@ async function createOAuthTransportOptions(
       callback?: Promise<URLSearchParams>;
       provider: OAuthClientProvider;
       session: OAuthAuthorizationSession;
-      abort: () => void;
     }
   | undefined
 > {
@@ -435,8 +438,6 @@ async function createOAuthTransportOptions(
     serverUrl: options.config.url,
   });
   let callback: Promise<URLSearchParams> | undefined;
-  const controller = new AbortController();
-  const signal = AbortSignal.any([options.signal, controller.signal]);
   const provider = new McpOAuthProvider({
     clientName: options.oauth.clientName,
     onAuthorizationRedirect: (authorizationUrl) => {
@@ -445,14 +446,14 @@ async function createOAuthTransportOptions(
         throw new Error('OAuth authorization URL did not include state');
       callback = session.authorize({
         authorizationUrl,
-        signal,
+        signal: options.signal,
         state,
       });
     },
     redirectUrl: session.redirectUrl,
     serverName: `${options.namespace}\u0000${options.config.url}`,
     store: options.oauth.store,
-    signal,
+    signal: options.signal,
   });
   return {
     get callback() {
@@ -460,7 +461,6 @@ async function createOAuthTransportOptions(
     },
     provider,
     session,
-    abort: () => controller.abort(),
   };
 }
 

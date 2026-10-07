@@ -1,11 +1,12 @@
 import {
-  discoverAuthorizationServerMetadata,
+  buildDiscoveryUrls,
   type StoredOAuthClientInformation,
 } from '@modelcontextprotocol/client';
 import {
   ClientSecretBasic,
   ClientSecretPost,
   None,
+  processDiscoveryResponse,
   processRevocationResponse,
   revocationRequest,
 } from 'oauth4webapi';
@@ -45,25 +46,14 @@ export async function revokeOAuthCredentials(
             warn();
             return;
           }
-          const metadata = await discoverAuthorizationServerMetadata(issuer, {
-            fetchFn: (input, init) =>
-              fetch(input, { ...init, signal, redirect: 'error' }),
-          });
-          if (
-            !metadata ||
-            !('revocation_endpoint' in metadata) ||
-            typeof metadata.revocation_endpoint !== 'string'
-          )
-            return;
+          const metadata = await discoverRevocationMetadata(issuer, signal);
+          if (!metadata?.revocation_endpoint) return;
           const method =
             ('token_endpoint_auth_method' in client
               ? client.token_endpoint_auth_method
               : undefined) ??
             (client.client_secret ? 'client_secret_basic' : 'none');
-          const supported =
-            'revocation_endpoint_auth_methods_supported' in metadata
-              ? metadata.revocation_endpoint_auth_methods_supported
-              : undefined;
+          const supported = metadata.revocation_endpoint_auth_methods_supported;
           if (Array.isArray(supported) && !supported.includes(method)) {
             warn();
             return;
@@ -76,10 +66,7 @@ export async function revokeOAuthCredentials(
             if (!token) continue;
             try {
               const response = await revocationRequest(
-                {
-                  issuer: metadata.issuer,
-                  revocation_endpoint: metadata.revocation_endpoint,
-                },
+                metadata,
                 { client_id: client.client_id },
                 authenticate,
                 token,
@@ -100,6 +87,25 @@ export async function revokeOAuthCredentials(
       }),
     ),
   );
+}
+
+// The SDK's OIDC metadata parser drops revocation fields.
+async function discoverRevocationMetadata(issuer: string, signal: AbortSignal) {
+  for (const { url } of buildDiscoveryUrls(issuer)) {
+    const response = await fetch(url, {
+      headers: { Accept: 'application/json' },
+      signal,
+      redirect: 'error',
+    });
+    if (
+      (response.status >= 400 && response.status < 500) ||
+      response.status === 502
+    ) {
+      await response.body?.cancel();
+      continue;
+    }
+    return processDiscoveryResponse(new URL(issuer), response);
+  }
 }
 
 function clientAuthentication(

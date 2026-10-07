@@ -96,6 +96,45 @@ describe('MCP OAuth revocation', () => {
     },
   );
 
+  it.each([
+    '/.well-known/openid-configuration/tenant',
+    '/tenant/.well-known/openid-configuration',
+  ])('uses revocation metadata from OIDC discovery at %s', async (path) => {
+    const tenantIssuer = `${issuer}/tenant`;
+    const fetch = vi.fn(async (url: string | URL, init: RequestInit) => {
+      if (init.method === 'POST') return new Response(null, { status: 200 });
+      if (String(url) !== `${issuer}${path}`)
+        return new Response(null, { status: 404 });
+      return Response.json(
+        metadata({
+          issuer: tenantIssuer,
+          jwks_uri: `${issuer}/jwks`,
+          subject_types_supported: ['public'],
+          id_token_signing_alg_values_supported: ['RS256'],
+        }),
+      );
+    });
+    vi.stubGlobal('fetch', fetch);
+    await revokeOAuthCredentials(
+      [credentials('none', tenantIssuer)],
+      'clay',
+      logger,
+    );
+    const revocations = fetch.mock.calls.filter(
+      ([_url, init]) => init.method === 'POST',
+    );
+    expect(revocations.map(([url]) => String(url))).toEqual([
+      `${issuer}/revoke`,
+      `${issuer}/revoke`,
+    ]);
+    expect(
+      revocations.map(([_url, init]) =>
+        new URLSearchParams(init.body as string).get('token'),
+      ),
+    ).toEqual(['refresh', 'access']);
+    expect(warn).not.toHaveBeenCalled();
+  });
+
   it('uses saved discovery for legacy tokens without an issuer', async () => {
     const fetch = vi.fn(async (_url, init: RequestInit) =>
       init.method === 'POST'

@@ -75,7 +75,10 @@ function fakeDeps(dataDir: string, sessionId: string): ExtensionDeps {
     getDataDir: () => dataDir,
     logger,
     logging: { child: () => logger },
-    config: { getModelSelection: () => ['test/model'] },
+    config: {
+      get: () => ({ officialName: 'Atlas' }),
+      getModelSelection: () => ['test/model'],
+    },
     generateText: vi.fn(),
   } as unknown as ExtensionDeps;
 }
@@ -100,6 +103,7 @@ describe('learning extension', () => {
     const dataDir = await seededDataDir(['ask-first']);
     const skillCatalog = createSkillCatalog();
     const factory = createLearningExt({
+      getSoul: () => null,
       episodes: createEpisodeFeed(),
       skillCatalog,
     });
@@ -132,6 +136,7 @@ describe('learning extension', () => {
     const dataDir = await seededDataDir(['ask-first', 'cite-sources']);
     const skillCatalog = createSkillCatalog();
     const extension = createLearningExt({
+      getSoul: () => null,
       episodes: createEpisodeFeed(),
       skillCatalog,
     }).create(fakeDeps(dataDir, DEFAULT_SESSION_ID));
@@ -156,6 +161,7 @@ describe('learning extension', () => {
   it('renders an empty list when nothing was learned', async () => {
     const dataDir = await seededDataDir([]);
     const extension = createLearningExt({
+      getSoul: () => null,
       episodes: createEpisodeFeed(),
       skillCatalog: createSkillCatalog(),
     }).create(fakeDeps(dataDir, DEFAULT_SESSION_ID));

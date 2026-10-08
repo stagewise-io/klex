@@ -1,11 +1,23 @@
 import { z } from 'zod';
 
+import {
+  MAX_BODY_LENGTH,
+  MAX_DESCRIPTION_LENGTH,
+  MAX_NAME_LENGTH,
+  MAX_SKILLS,
+  SKILL_NAME_PATTERN,
+} from './learning-config';
 import { type LearnedSkill, validateSkill } from './skill-store';
 
+const skillNameSchema = z
+  .string()
+  .max(MAX_NAME_LENGTH)
+  .regex(SKILL_NAME_PATTERN);
+
 const writeOperationFields = {
-  name: z.string(),
-  description: z.string(),
-  body: z.string(),
+  name: skillNameSchema,
+  description: z.string().trim().min(1).max(MAX_DESCRIPTION_LENGTH),
+  body: z.string().trim().min(1).max(MAX_BODY_LENGTH),
   reason: z.string().optional().default(''),
   evidenceEpisodes: z.array(z.string().max(200)).max(6).optional(),
 };
@@ -16,85 +28,27 @@ const operationSchema = z.discriminatedUnion('op', [
     op: z.literal('update'),
     ...writeOperationFields,
     /** Skills folded into this one; their provenance carries over. */
-    mergedFrom: z.array(z.string()).optional(),
+    mergedFrom: z.array(skillNameSchema).max(MAX_SKILLS).optional(),
   }),
   z.object({
     op: z.literal('delete'),
-    name: z.string(),
-    reason: z.string().optional().default(''),
+    name: skillNameSchema,
+    reason: z.string().trim().min(1),
   }),
 ]);
 
-const responseSchema = z
-  .object({
-    operations: z.array(z.unknown()),
-    deferred: z.boolean().optional(),
-  })
-  .refine((value) => !value.deferred || value.operations.length === 0);
+export const learningSubmissionSchema = z.object({
+  operations: z.array(operationSchema).max(MAX_SKILLS * 2),
+  deferred: z.boolean().optional(),
+});
+
+export type LearningSubmission = z.infer<typeof learningSubmissionSchema>;
 
 export type SkillOperation = z.infer<typeof operationSchema>;
 export type WriteOperation = Extract<
   SkillOperation,
   { op: 'create' | 'update' }
 >;
-
-export type ParseOperationsResult =
-  | {
-      ok: true;
-      operations: SkillOperation[];
-      dropped: number;
-      deferred?: boolean;
-    }
-  | { ok: false; error: string };
-
-const FENCE = /^```(?:json)?\s*\n([\s\S]*?)\n?```\s*$/i;
-
-/**
- * Parses the model reply. The whole reply fails only when it is not a JSON
- * object with an `operations` array; malformed single operations are
- * dropped and counted.
- */
-export function parseOperations(
-  text: string,
-  options: { allowDelete: boolean; evidence?: ReadonlySet<string> },
-): ParseOperationsResult {
-  const trimmed = text.trim();
-  const json = FENCE.exec(trimmed)?.[1] ?? trimmed;
-  let value: unknown;
-  try {
-    value = JSON.parse(json);
-  } catch {
-    return { ok: false, error: 'reply is not valid JSON' };
-  }
-  const response = responseSchema.safeParse(value);
-  if (!response.success)
-    return { ok: false, error: 'reply has no operations array' };
-  const operations: SkillOperation[] = [];
-  let dropped = 0;
-  for (const candidate of response.data.operations) {
-    const operation = operationSchema.safeParse(candidate);
-    if (
-      !operation.success ||
-      (operation.data.op === 'delete' && !options.allowDelete) ||
-      (operation.success &&
-        operation.data.op !== 'delete' &&
-        options.evidence !== undefined &&
-        (operation.data.evidenceEpisodes ?? []).some(
-          (id) => !options.evidence?.has(id),
-        ))
-    ) {
-      dropped += 1;
-      continue;
-    }
-    operations.push(operation.data);
-  }
-  return {
-    ok: true,
-    operations,
-    dropped,
-    ...(response.data.deferred ? { deferred: true } : {}),
-  };
-}
 
 export interface RejectedOperation {
   operation: SkillOperation;

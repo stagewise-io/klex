@@ -13,6 +13,7 @@ import type { GenerateTextArgs, GenerateTextResult } from '../extension-api';
 import { createLearningState } from './learning-state';
 import { createLearningWorker } from './learning-worker';
 import { createSkillStore } from './skill-store';
+import { executeFixtureSubmission } from './test-generation';
 
 // The real prompt text, so the test sees the sections the model sees.
 vi.mock('./extraction-prompt.md', async () => {
@@ -107,8 +108,10 @@ async function harness() {
     episodes,
     store,
     state,
-    generateText,
+    generateText: async (args) =>
+      executeFixtureSubmission(args, await generateText(args)),
     getModels: () => [{ providerId: 'test', modelId: 'model' }],
+    getAgent: () => ({ name: 'Atlas', soul: 'Product manager.' }),
     logger,
     now: () => Date.parse('2026-10-02T00:00:00.000Z'),
   });
@@ -133,9 +136,9 @@ describe('learning fixtures', () => {
 
     generateText
       .mockImplementationOnce(async ({ system, prompt }) => {
-        expect(system).toContain('## What counts as a lesson');
-        expect(system).toContain('## What is not a lesson');
-        expect(system).toContain('## Output format');
+        expect(system).toContain('### How to determine learning');
+        expect(system).toContain('AI Agent *Atlas*');
+        expect(system).toContain('<soul>Product manager.</soul>');
         expect(system).not.toMatch(/\{\{[A-Z_]+\}\}/);
         expect(prompt).toContain('<skills>\n(none)\n</skills>');
         expect(prompt).toContain(`<episode id="${feedbackId}"`);

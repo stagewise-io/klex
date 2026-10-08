@@ -26,6 +26,8 @@ export const LEARNING_EXTENSION_ID = 'io.stagewise/learning';
 export interface LearningExtOptions {
   episodes: EpisodeFeed;
   skillCatalog: SkillCatalogHub;
+  /** Reads the current observed agent's soul; storage remains owned by soul. */
+  getSoul: () => string | null;
 }
 
 interface SharedLearningData {
@@ -56,6 +58,10 @@ class LearningExtension implements Extension {
         store: this.data.store,
         state: this.data.state,
         generateText: this.deps.generateText,
+        getAgent: () => ({
+          name: this.deps.config.get().officialName,
+          soul: this.options.getSoul(),
+        }),
         getModels: () => {
           const memory = this.deps.config.getModelSelection('memory');
           return memory.length > 0

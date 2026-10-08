@@ -734,6 +734,11 @@ class ChatSessionModule implements AgentSession {
                 continue;
               }
 
+              if (result.finishReason === 'error')
+                throw new Error(
+                  'Extension generation ended with a model error',
+                );
+
               span.setAttribute('gen.outcome', 'success');
               span.setAttribute('gen.modelId', modelId);
               span.setAttribute('gen.finishReason', result.finishReason);
@@ -758,6 +763,12 @@ class ChatSessionModule implements AgentSession {
               return {
                 success: true as const,
                 text: result.text,
+                toolResults: result.steps.flatMap((step) =>
+                  step.toolResults.map(({ toolName, output }) => ({
+                    toolName,
+                    output,
+                  })),
+                ),
                 modelId,
                 usage: result.usage,
               };

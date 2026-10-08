@@ -29,18 +29,15 @@ import type {
   LearningStateData,
   SkillState,
 } from './learning-state';
-import {
-  parseOperations,
-  type SkillOperation,
-  toSkill,
-  validateOperations,
-} from './operations';
+import { type SkillOperation, toSkill, validateOperations } from './operations';
 import {
   buildConsolidationPrompt,
   buildExtractionPrompt,
   isStale,
+  type PromptAgent,
 } from './prompts';
 import type { SkillStore } from './skill-store';
+import { createLearningSubmissionTools } from './submission-tools';
 
 export interface LearningWorkerOptions {
   episodes: EpisodeFeed;
@@ -48,6 +45,7 @@ export interface LearningWorkerOptions {
   state: LearningState;
   generateText: (args: GenerateTextArgs) => Promise<GenerateTextResult>;
   getModels: () => GenerateTextArgs['modelIds'];
+  getAgent: () => PromptAgent;
   logger: ModuleLogger;
   now?: () => number;
 }
@@ -331,6 +329,7 @@ class LearningWorkerModule implements LearningWorker {
     const partialMarker =
       '[Partial episode: scan budget exhausted; uninspected content is not evidence.]\n';
     const { system, prompt } = buildExtractionPrompt({
+      agent: this.options.getAgent(),
       skills: store.list(),
       episode: {
         ...episode,
@@ -346,22 +345,26 @@ class LearningWorkerModule implements LearningWorker {
       controller.signal,
       id,
     );
+    const submission = createLearningSubmissionTools({
+      evidence: investigation.evidence,
+      existingNames: store.list().map((skill) => skill.name),
+      allowDefer: true,
+      signal: controller.signal,
+    });
     const generated = await this.options.generateText({
       modelIds: this.options.getModels(),
-      system,
+      system: `${system}\n\n${submission.instructions}`,
       prompt,
       maxOutputTokens: EXTRACTION_MAX_OUTPUT_TOKENS,
-      tools: investigation.tools,
+      tools: { ...investigation.tools, ...submission.tools },
+      completionTool: submission.completionTool,
       maxSteps: INVESTIGATION_MAX_STEPS,
       abortSignal: controller.signal,
     });
     this.abort = undefined;
     if (this.closed || controller.signal.aborted) return 'stop';
     const parsed = generated.success
-      ? parseOperations(generated.text, {
-          allowDelete: false,
-          evidence: investigation.evidence,
-        })
+      ? submission.read(generated.toolResults ?? [])
       : null;
     if (!parsed?.ok) {
       const reason = !generated.success
@@ -372,7 +375,7 @@ class LearningWorkerModule implements LearningWorker {
       return this.recordFailure(id, reason);
     }
 
-    if (parsed.deferred) {
+    if (parsed.submission.deferred) {
       await this.options.state.update((draft) => {
         const existing = draft.deferred.find((item) => item.id === id);
         const after = revisit ? (draft.cursor ?? id) : id;
@@ -393,7 +396,7 @@ class LearningWorkerModule implements LearningWorker {
     }
     let applied: number;
     try {
-      applied = await this.apply(parsed.operations, id);
+      applied = await this.apply(parsed.submission.operations, id);
     } catch (error) {
       return this.recordFailure(
         id,
@@ -401,10 +404,7 @@ class LearningWorkerModule implements LearningWorker {
       );
     }
     if (!revisit) await this.advance(id);
-    logger.info(
-      { episode: id, applied, dropped: parsed.dropped },
-      'Learned from episode',
-    );
+    logger.info({ episode: id, applied }, 'Learned from episode');
     return applied > 0 ? 'changed' : 'unchanged';
   }
 
@@ -623,6 +623,7 @@ class LearningWorkerModule implements LearningWorker {
     if (!due) return;
 
     const { system, prompt } = buildConsolidationPrompt({
+      agent: this.options.getAgent(),
       skills,
       usage: current.skills,
       now: current.processedEpisodeCount,
@@ -634,29 +635,35 @@ class LearningWorkerModule implements LearningWorker {
       controller.signal,
       null,
     );
+    const submission = createLearningSubmissionTools({
+      evidence: investigation.evidence,
+      existingNames: skills.map((skill) => skill.name),
+      allowDefer: false,
+      signal: controller.signal,
+    });
     const generated = await this.options.generateText({
       modelIds: this.options.getModels(),
-      system,
+      system: `${system}\n\n${submission.instructions}`,
       prompt,
       maxOutputTokens: CONSOLIDATION_MAX_OUTPUT_TOKENS,
-      tools: investigation.tools,
+      tools: { ...investigation.tools, ...submission.tools },
+      completionTool: submission.completionTool,
       maxSteps: INVESTIGATION_MAX_STEPS,
       abortSignal: controller.signal,
     });
     this.abort = undefined;
     if (this.closed || controller.signal.aborted) return;
     const parsed = generated.success
-      ? parseOperations(generated.text, {
-          allowDelete: true,
-          evidence: investigation.evidence,
-        })
+      ? submission.read(generated.toolResults ?? [])
       : null;
     if (!parsed?.ok) {
       await this.recordConsolidationFailure();
       logger.warn(
         {
           reason: generated.success
-            ? 'unparseable reply'
+            ? parsed && !parsed.ok
+              ? parsed.error
+              : 'missing submission'
             : generated.failureReason,
         },
         'Skill consolidation failed',
@@ -665,7 +672,7 @@ class LearningWorkerModule implements LearningWorker {
     }
     let applied: number;
     try {
-      applied = await this.apply(parsed.operations, null);
+      applied = await this.apply(parsed.submission.operations, null);
     } catch (error) {
       await this.recordConsolidationFailure();
       logger.warn({ error }, 'Skill consolidation write failed');

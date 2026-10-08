@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { resolve } from 'node:path';
+import { join, resolve } from 'node:path';
 
 import { attachOtelTransport, createLogger } from '@stagewise/logger';
 
@@ -69,6 +69,7 @@ import { createReadAttachmentExt } from '@/session/chat/extensions/read-attachme
 import {
   createSoulExt,
   createSoulExtGod,
+  readSoul,
 } from '@/session/chat/extensions/soul';
 import {
   createTimeExt,
@@ -565,7 +566,12 @@ async function main(): Promise<void> {
       createTodosExt,
       createMcpIngressExt(),
       createMemoryExt({ episodeFeed }),
-      createLearningExt({ episodes: episodeFeed, skillCatalog }),
+      createLearningExt({
+        episodes: episodeFeed,
+        skillCatalog,
+        getSoul: () =>
+          readSoul(join(dataDirectory, 'extensions', createSoulExt.identifier)),
+      }),
       createConsultExt({
         childExtensionFactories: [createSoulExt, defaultTimeExt],
         maxActiveSessions: 2,

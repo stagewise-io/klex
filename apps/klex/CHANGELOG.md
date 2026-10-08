@@ -2,6 +2,35 @@
 
 All notable Klex changes are documented here.
 
+## 0.14.0 (2026-10-08)
+
+### Features
+
+- add isolated HTTP health probes (c773ed7)
+- add container image and smoke test (bb36e0f)
+- drain current work on SIGTERM in headless mode (6af295a)
+- add --auto-update with graceful drain (8c18121)
+
+### Bug Fixes
+
+- close cancelled probes and handle listener errors (beac03b)
+- address container image review findings (f1938bd)
+- replace stale directory lock that carries our own PID (ac9715e)
+- document SIGINT drain bypass and deflake model picker test (ecf5c38)
+- keep tracking children whose rollback close failed (7fdfd7b)
+- close drain races in child start, god messages, MCP pages (5c37b63)
+- keep closing sessions busy and retry recovery (bdad5b1)
+- close remaining auto-update drain gaps (0becee8)
+- redeliver pending push events to newly registered listeners (6543fb1)
+- address review findings for push ack and todos close (0e31803)
+- ack push notifications only after handling (3ed861c)
+
+### Other Changes
+
+- document the container contract (5f6ca55)
+- publish multi-arch klex image to GHCR (c0e7827)
+- avoid leaking a session in failed-rollback mock (8f7a505)
+
 ## 0.13.3 (2026-10-05)
 
 ### Bug Fixes

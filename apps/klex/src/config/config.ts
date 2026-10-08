@@ -249,8 +249,12 @@ class ConfigModule implements Config {
   ): Promise<Readonly<KlexConfig>> {
     const update = this.updateQueue.then(() => {
       const current = this.requireConfig();
-      const next = fn(current);
-      return next === current ? current : this.replaceNow(next);
+      // Mutations must not alter committed state before validation and persistence.
+      const draft = structuredClone(current);
+      const next = fn(draft);
+      return next === draft && JSON.stringify(next) === JSON.stringify(current)
+        ? current
+        : this.replaceNow(next);
     });
     this.updateQueue = update.then(
       () => undefined,

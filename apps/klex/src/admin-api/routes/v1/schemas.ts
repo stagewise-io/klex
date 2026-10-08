@@ -120,11 +120,13 @@ const createMcpServerBodySchema = z
 
 const reconcileMcpServerBodySchema = z
   .object({
-    name: z.string().trim().min(1).max(128),
+    name: z.string().min(1).max(128),
     url: z
       .url()
       .refine(
-        (value) => ['http:', 'https:'].includes(new URL(value).protocol),
+        (value) =>
+          URL.canParse(value) &&
+          ['http:', 'https:'].includes(new URL(value).protocol),
         'HTTP URL required',
       ),
   })

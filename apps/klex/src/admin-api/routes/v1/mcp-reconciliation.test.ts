@@ -37,6 +37,7 @@ const logging = createLogger({ console: false });
 const handles: { config: Config; dataDirectory: string }[] = [];
 
 afterEach(async () => {
+  vi.restoreAllMocks();
   for (const { config, dataDirectory } of handles.splice(0)) {
     await config.close();
     await rm(dataDirectory, { recursive: true, force: true });
@@ -183,6 +184,7 @@ describe('resource-verified MCP reconciliation', () => {
 
   it('does not publish or replace in-memory config when persistence fails', async () => {
     const { post, config, path, published } = await setup();
+    const logged = vi.spyOn(logging, 'error');
     await rm(path);
     await mkdir(path);
     const response = await post('reconcile', reconcile);
@@ -193,10 +195,17 @@ describe('resource-verified MCP reconciliation', () => {
     });
     expect(config.get().mcpServers).toEqual({});
     expect(published).not.toHaveBeenCalled();
+    expect(logged).toHaveBeenCalledWith(
+      { error: expect.any(Error) },
+      'MCP resource reconciliation failed',
+    );
   });
 
   it.each([
     { ...reconcile, url: 'file:///tmp/mcp' },
+    { ...reconcile, url: 'not a URL' },
+    { ...reconcile, url: 'https://' },
+    { ...reconcile, url: '' },
     { ...reconcile, name: '' },
     { ...reconcile, headers: { Authorization: 'Bearer rejected' } },
   ])('validates strict input before mutation', async (body) => {
@@ -211,6 +220,108 @@ describe('resource-verified MCP reconciliation', () => {
       200,
     );
     expect(Object.keys(config.get().mcpServers)).toEqual(['constructor']);
+  });
+});
+
+describe('config mutation isolation', () => {
+  it('validates and persists an in-place mutation before publishing it', async () => {
+    const { config, path, published } = await setup();
+    const before = config.get();
+    await config.mutate((current) => {
+      current.mcpServers[name] = credentials;
+      return current;
+    });
+    expect(before.mcpServers).toEqual({});
+    expect(config.get().mcpServers).toEqual({ [name]: credentials });
+    expect(JSON.parse(await readFile(path, 'utf8')).mcpServers).toEqual({
+      [name]: credentials,
+    });
+    expect(published).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(['validation', 'callback', 'persistence'] as const)(
+    'keeps committed config unchanged after an in-place %s failure and recovers the queue',
+    async (failure) => {
+      const { config, path, published } = await setup();
+      const before = config.get();
+      const stored = await readFile(path, 'utf8');
+      if (failure === 'persistence') {
+        await rm(path);
+        await mkdir(path);
+      }
+      await expect(
+        config.mutate((current) => {
+          current.mcpServers[name] =
+            failure === 'validation' ? { url: '' } : credentials;
+          if (failure === 'callback') throw new Error('Callback failed');
+          return current;
+        }),
+      ).rejects.toThrow();
+      expect(config.get()).toBe(before);
+      expect(config.get().mcpServers).toEqual({});
+      expect(published).not.toHaveBeenCalled();
+      if (failure === 'persistence') {
+        await rm(path, { recursive: true });
+        await writeFile(path, stored);
+      } else {
+        expect(await readFile(path, 'utf8')).toBe(stored);
+      }
+      await config.addMcpServer(name, credentials);
+      expect(config.get().mcpServers).toEqual({ [name]: credentials });
+      expect(published).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it('skips unchanged mutations and documents both validation responses', async () => {
+    const { config, app, path, published } = await setup();
+    const before = config.get();
+    const stored = await readFile(path, 'utf8');
+    expect(await config.mutate((current) => current)).toBe(before);
+    expect(await readFile(path, 'utf8')).toBe(stored);
+    expect(published).not.toHaveBeenCalled();
+    const document = app.getOpenAPI31Document({
+      openapi: '3.1.0',
+      info: { title: 'Test', version: '1' },
+    });
+    for (const route of ['reconcile', 'remove-matching']) {
+      expect(
+        document.paths?.[`/v1/mcp-servers/${route}`]?.post?.responses?.['400'],
+      ).toMatchObject({
+        content: {
+          'application/json': { schema: { $ref: expect.any(String) } },
+        },
+      });
+    }
+  });
+});
+
+describe('exact connector names', () => {
+  it('reconciles only the requested whitespace-padded name', async () => {
+    const padded = ` ${name} `;
+    const { post, config } = await setup({ [name]: credentials });
+    expect(
+      await (await post('reconcile', { name: padded, url })).json(),
+    ).toEqual({ code: 'mcp_resource_reconciled', status: 'created' });
+    expect(config.get().mcpServers).toEqual({
+      [name]: credentials,
+      [padded]: { url },
+    });
+    expect(
+      await (await post('reconcile', { name: padded, url })).json(),
+    ).toEqual({ code: 'mcp_resource_reconciled', status: 'already_present' });
+  });
+
+  it('removes only the requested whitespace-padded name', async () => {
+    const padded = ` ${name} `;
+    const { post, config, published } = await setup({
+      [name]: credentials,
+      [padded]: credentials,
+    });
+    expect(
+      (await post('remove-matching', { names: [padded], url })).status,
+    ).toBe(200);
+    expect(config.get().mcpServers).toEqual({ [name]: credentials });
+    expect(published).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -262,6 +373,7 @@ describe('guarded MCP removal', () => {
     const { post, config, path, published } = await setup({
       [name]: credentials,
     });
+    const logged = vi.spyOn(logging, 'error');
     await rm(path);
     await mkdir(path);
     expect((await post('remove-matching', { names: [name], url })).status).toBe(
@@ -269,5 +381,26 @@ describe('guarded MCP removal', () => {
     );
     expect(config.get().mcpServers).toEqual({ [name]: credentials });
     expect(published).not.toHaveBeenCalled();
+    expect(logged).toHaveBeenCalledWith(
+      { error: expect.any(Error) },
+      'MCP resource removal failed',
+    );
   });
+
+  it.each(['not a URL', 'https://', '', 'file:///tmp/mcp'])(
+    'returns 400 for invalid removal URL %s without mutation',
+    async (invalidUrl) => {
+      const { post, config, path, published } = await setup({
+        [name]: credentials,
+      });
+      const before = await readFile(path, 'utf8');
+      expect(
+        (await post('remove-matching', { names: [name], url: invalidUrl }))
+          .status,
+      ).toBe(400);
+      expect(config.get().mcpServers).toEqual({ [name]: credentials });
+      expect(await readFile(path, 'utf8')).toBe(before);
+      expect(published).not.toHaveBeenCalled();
+    },
+  );
 });

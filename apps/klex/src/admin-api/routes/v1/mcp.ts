@@ -202,6 +202,10 @@ export const reconcileMcpServerRoute = createRoute({
       },
       description: 'Resource verified and configuration reconciled',
     },
+    400: {
+      content: { 'application/json': { schema: errorResponseSchema } },
+      description: 'Invalid request body',
+    },
     409: {
       content: { 'application/json': { schema: errorResponseSchema } },
       description: 'Resource or configuration conflict',
@@ -229,7 +233,7 @@ export function reconcileMcpServer(
           { error: error.message, code: 'mcp_resource_conflict' },
           409,
         );
-      deps.logger.error('MCP resource reconciliation failed');
+      deps.logger.error({ error }, 'MCP resource reconciliation failed');
       return c.json(
         { error: 'Failed to reconcile connector', code: 'internal_error' },
         500,
@@ -258,6 +262,10 @@ export const removeMatchingMcpServersRoute = createRoute({
       },
       description: 'Matching connectors removed or already absent',
     },
+    400: {
+      content: { 'application/json': { schema: errorResponseSchema } },
+      description: 'Invalid request body',
+    },
     409: {
       content: { 'application/json': { schema: errorResponseSchema } },
       description: 'Resource conflict; nothing removed',
@@ -285,7 +293,7 @@ export function removeMatchingMcpServers(
           { error: error.message, code: 'mcp_resource_conflict' },
           409,
         );
-      deps.logger.error('MCP resource removal failed');
+      deps.logger.error({ error }, 'MCP resource removal failed');
       return c.json(
         { error: 'Failed to remove connector', code: 'internal_error' },
         500,

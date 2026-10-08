@@ -1,1 +1,1 @@
-export { createSoulExt, createSoulExtGod } from './soul';
+export { createSoulExt, createSoulExtGod, readSoul } from './soul';

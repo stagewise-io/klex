@@ -32,6 +32,11 @@ export interface PromptEpisode {
   text: string;
 }
 
+export interface PromptAgent {
+  name: string;
+  soul: string | null;
+}
+
 export interface BuiltPrompt {
   system: string;
   prompt: string;
@@ -44,15 +49,23 @@ const PLACEHOLDERS: Record<string, number> = {
   MAX_SKILLS,
 };
 
-/** Fills `{{NAME}}` placeholders with the limits from `learning-config.ts`. */
-export function fillPlaceholders(template: string): string {
+/** Expands {{UPPER_SNAKE_CASE}} placeholders once; inserted content is never re-templated. */
+export function fillPlaceholders(
+  template: string,
+  agent?: PromptAgent,
+): string {
+  const values: Record<string, string | number> = { ...PLACEHOLDERS };
+  if (agent) {
+    values.NAME = defuse(agent.name);
+    values.SOUL = defuse(agent.soul?.trim() ? agent.soul : 'No soul defined.');
+  }
   return template.replace(/\{\{([A-Z_]+)\}\}/g, (match, key: string) =>
-    key in PLACEHOLDERS ? String(PLACEHOLDERS[key]) : match,
+    Object.hasOwn(values, key) ? String(values[key]) : match,
   );
 }
 
 /** Opening or closing prompt tags, tolerant of whitespace and attributes. */
-const PROMPT_TAG = /<(\s*\/?\s*(?:skills|skill|episode)\b)/giu;
+const PROMPT_TAG = /<(\s*\/?\s*(?:skills|skill|episode|soul)\b)/giu;
 
 /** Defuses prompt tags so embedded content cannot close or forge a block. */
 export function defuse(text: string): string {
@@ -83,12 +96,13 @@ function renderSkills(
 }
 
 export function buildExtractionPrompt(input: {
+  agent: PromptAgent;
   skills: readonly LearnedSkill[];
   episode: PromptEpisode;
 }): BuiltPrompt {
   const { episode } = input;
   return {
-    system: `${fillPlaceholders(extractionPrompt).trimEnd()}\n\n${LINES_FORMAT_PROMPT}`,
+    system: `${fillPlaceholders(extractionPrompt, input.agent).trimEnd()}\n\n${LINES_FORMAT_PROMPT}`,
     prompt:
       `${renderSkills(input.skills)}\n\n` +
       `<episode id="${attribute(episode.id)}" started="${attribute(episode.startedAt)}" ended="${attribute(episode.endedAt)}">\n` +
@@ -110,6 +124,7 @@ export function isStale(
 }
 
 export function buildConsolidationPrompt(input: {
+  agent: PromptAgent;
   skills: readonly LearnedSkill[];
   usage: Readonly<Record<string, PromptSkillUsage>>;
   now: number;
@@ -125,7 +140,7 @@ export function buildConsolidationPrompt(input: {
     );
   });
   return {
-    system: fillPlaceholders(consolidationPrompt).trimEnd(),
+    system: fillPlaceholders(consolidationPrompt, input.agent).trimEnd(),
     prompt: skills,
   };
 }

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { parseOperations, validateOperations } from './operations';
+import { learningSubmissionSchema, validateOperations } from './operations';
 
 const create = {
   op: 'create',
@@ -10,71 +10,44 @@ const create = {
   reason: 'feedback',
 };
 
-describe('parseOperations', () => {
-  it('accepts exposed citations and drops forged citations individually', () => {
-    const evidence = new Set(['primary', 'support']);
-    const valid = { ...create, evidenceEpisodes: ['support'] };
-    const forged = {
-      ...create,
-      name: 'forged',
-      evidenceEpisodes: ['not-read'],
-    };
-    expect(
-      parseOperations(JSON.stringify({ operations: [valid, forged] }), {
-        allowDelete: false,
-        evidence,
-      }),
-    ).toEqual({ ok: true, operations: [valid], dropped: 1 });
-  });
-
-  it('allows conservative deferral but never a deferred partial proposal', () => {
-    expect(
-      parseOperations('{"operations": [], "deferred": true}', {
-        allowDelete: false,
-      }),
-    ).toEqual({ ok: true, operations: [], deferred: true, dropped: 0 });
-    expect(
-      parseOperations(
-        JSON.stringify({ operations: [create], deferred: true }),
-        { allowDelete: false },
-      ).ok,
-    ).toBe(false);
-  });
-  it('parses unfenced and fenced JSON', () => {
-    const text = JSON.stringify({ operations: [create] });
-    const plain = parseOperations(text, { allowDelete: false });
-    const fenced = parseOperations(`\`\`\`json\n${text}\n\`\`\``, {
-      allowDelete: false,
-    });
-    expect(plain).toEqual(fenced);
-    expect(plain.ok && plain.operations).toEqual([create]);
-  });
-
-  it('accepts empty operations', () => {
-    expect(
-      parseOperations('{"operations": []}', { allowDelete: false }),
-    ).toEqual({ ok: true, operations: [], dropped: 0 });
-  });
-
-  it('fails on invalid JSON or a missing array', () => {
-    expect(parseOperations('nope', { allowDelete: true }).ok).toBe(false);
-    expect(parseOperations('{"ops": []}', { allowDelete: true }).ok).toBe(
-      false,
-    );
-  });
-
-  it('drops malformed operations and deletes in extraction mode', () => {
-    const text = JSON.stringify({
+describe('learning submission schema', () => {
+  it('defines typed create, update, and delete operations', () => {
+    const batch = {
       operations: [
         create,
-        { op: 'rename', name: 'x' },
-        { op: 'delete', name: 'old', reason: 'stale' },
+        {
+          ...create,
+          op: 'update',
+          mergedFrom: ['old'],
+          evidenceEpisodes: ['support'],
+        },
+        { op: 'delete', name: 'old', reason: 'superseded' },
       ],
+    };
+    expect(learningSubmissionSchema.parse(batch)).toEqual(batch);
+  });
+
+  it('accepts explicit empty batches and deferral', () => {
+    expect(learningSubmissionSchema.parse({ operations: [] })).toEqual({
+      operations: [],
     });
-    const extraction = parseOperations(text, { allowDelete: false });
-    expect(extraction).toEqual({ ok: true, operations: [create], dropped: 2 });
-    const consolidation = parseOperations(text, { allowDelete: true });
-    expect(consolidation.ok && consolidation.operations).toHaveLength(2);
+    expect(
+      learningSubmissionSchema.parse({ operations: [], deferred: true }),
+    ).toEqual({ operations: [], deferred: true });
+  });
+
+  it.each([
+    'plain text',
+    '{"operations": []}',
+    { ops: [] },
+    { operations: [create, { op: 'rename', name: 'x' }] },
+    { operations: [{ ...create, name: '../escape' }] },
+    { operations: [{ ...create, body: 'x'.repeat(4_001) }] },
+    { operations: [{ ...create, description: 'x'.repeat(301) }] },
+    { operations: [{ ...create, evidenceEpisodes: Array(7).fill('a') }] },
+    { operations: Array(61).fill(create) },
+  ])('rejects the entire invalid batch %j', (batch) => {
+    expect(learningSubmissionSchema.safeParse(batch).success).toBe(false);
   });
 });
 

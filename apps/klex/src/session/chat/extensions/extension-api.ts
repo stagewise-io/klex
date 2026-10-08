@@ -201,8 +201,13 @@ export interface GenerateTextArgs {
   maxOutputTokens?: number;
   /** Max retries per model (default 0 — the fallback list handles retries). */
   maxRetries?: number;
-  /** Opt-in multi-step generation. Last step disables tools to reserve an answer. */
+  /** Opt-in multi-step generation. Reserves the last step for an answer or completion tool. */
   maxSteps?: number;
+  /** Require tool use and reserve the final step for this tool. Stop after an accepted result. */
+  completionTool?: {
+    name: string;
+    isComplete: (output: unknown) => boolean;
+  };
   /** Cancels generation and prevents further fallback model attempts. */
   abortSignal?: AbortSignal;
 }
@@ -210,9 +215,16 @@ export interface GenerateTextArgs {
 /**
  * Successful generation result.
  */
+export interface GeneratedToolResult {
+  toolName: string;
+  output: unknown;
+}
+
 export interface GenerateTextSuccess {
   /** The generated text. */
   text: string;
+  /** Executed tool results from the successful model attempt only, in step order. */
+  toolResults?: readonly GeneratedToolResult[];
   /** The model ID that produced the output. */
   modelId: string;
   /** Token usage from the successful generation, including cache details. */

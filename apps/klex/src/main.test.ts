@@ -1,4 +1,4 @@
-import { resolve } from 'node:path';
+import { join, resolve } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -38,6 +38,9 @@ const mocks = vi.hoisted(() => {
     },
     logger,
     selectedDirectory: 'agents/selected agent',
+    createLearningExt:
+      vi.fn<(options: { getSoul: () => string | null }) => void>(),
+    readSoul: vi.fn((_directory: string) => 'Current soul'),
     createAgentPicker: vi.fn(),
     createCliUi: vi.fn(),
     ensureDataDirectory: vi.fn(),
@@ -123,7 +126,7 @@ vi.mock('@/session/chat/extensions/js-repl-sandbox', () => ({
   createJsReplSandboxExt: vi.fn(),
 }));
 vi.mock('@/session/chat/extensions/learning', () => ({
-  createLearningExt: vi.fn(),
+  createLearningExt: mocks.createLearningExt,
   createSkillCatalog: vi.fn(),
 }));
 vi.mock('@/session/chat/extensions/mcp-ingress', () => ({
@@ -140,8 +143,9 @@ vi.mock('@/session/chat/extensions/read-attachment/read-attachment', () => ({
   createReadAttachmentExt: vi.fn(),
 }));
 vi.mock('@/session/chat/extensions/soul', () => ({
-  createSoulExt: vi.fn(),
+  createSoulExt: { identifier: 'io.stagewise/soul', create: vi.fn() },
   createSoulExtGod: vi.fn(),
+  readSoul: mocks.readSoul,
 }));
 vi.mock('@/session/chat/extensions/time', () => ({
   createTimeExt: vi.fn(),
@@ -262,6 +266,17 @@ describe('managed-update agent continuity', () => {
       }
     },
   );
+
+  it('wires a lazy soul reader for the selected agent into learning', async () => {
+    await launch();
+    const options = mocks.createLearningExt.mock.calls[0]?.[0];
+    expect(options).toBeDefined();
+    expect(mocks.readSoul).not.toHaveBeenCalled();
+    expect(options?.getSoul()).toBe('Current soul');
+    expect(mocks.readSoul).toHaveBeenCalledWith(
+      join(mocks.selectedDirectory, 'extensions', 'io.stagewise/soul'),
+    );
+  });
 
   it('carries the picker selection only in the restart environment', async () => {
     await launch(['--verbose']);

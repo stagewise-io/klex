@@ -22,9 +22,14 @@ import {
 import { createLearningState } from './learning-state';
 import { createLearningWorker } from './learning-worker';
 import { createSkillStore } from './skill-store';
+import { executeFixtureSubmission } from './test-generation';
 
-vi.mock('./extraction-prompt.md', () => ({ default: 'Extract.' }));
-vi.mock('./consolidation-prompt.md', () => ({ default: 'Consolidate.' }));
+vi.mock('./extraction-prompt.md', () => ({
+  default: 'Extract. {{NAME}}\n<soul>{{SOUL}}</soul>',
+}));
+vi.mock('./consolidation-prompt.md', () => ({
+  default: 'Consolidate. {{NAME}}\n<soul>{{SOUL}}</soul>',
+}));
 vi.mock('./system-prompt-part.md', () => ({ default: '## Learned skills\n' }));
 
 const directories: string[] = [];
@@ -107,8 +112,23 @@ function fakeFeed(
   };
 }
 
-function ok(text: string): GenerateTextResult {
-  return { success: true, text } as GenerateTextResult;
+function ok(text: string): Extract<GenerateTextResult, { success: true }> {
+  return {
+    success: true,
+    text,
+    modelId: 'model',
+    usage: {
+      inputTokens: 1,
+      outputTokens: 1,
+      totalTokens: 2,
+      inputTokenDetails: {
+        noCacheTokens: 1,
+        cacheReadTokens: 0,
+        cacheWriteTokens: 0,
+      },
+      outputTokenDetails: { textTokens: 1, reasoningTokens: 0 },
+    },
+  };
 }
 
 function failed(failureReason: string): GenerateTextResult {
@@ -141,16 +161,19 @@ async function harness(feed: EpisodeFeed) {
   const store = createSkillStore(join(dataDir, 'skills'), logger);
   const state = createLearningState(dataDir);
   await Promise.all([store.start(), state.start()]);
-  const generateText = vi.fn(async (_args: GenerateTextArgs) =>
-    ok('{"operations": []}'),
-  );
+  const generateText = vi.fn<
+    (args: GenerateTextArgs) => Promise<GenerateTextResult>
+  >(async () => ok('{"operations": []}'));
+  const getAgent = vi.fn(() => ({ name: 'Atlas', soul: 'Initial soul' }));
   let now = Date.parse('2026-10-02T00:00:00.000Z');
   const worker = createLearningWorker({
     episodes: feed,
     store,
     state,
-    generateText,
+    generateText: async (args) =>
+      executeFixtureSubmission(args, await generateText(args)),
     getModels: () => [{ providerId: 'test', modelId: 'model' }],
+    getAgent,
     logger,
     now: () => now,
   });
@@ -159,6 +182,7 @@ async function harness(feed: EpisodeFeed) {
     store,
     state,
     generateText,
+    getAgent,
     dataDir,
     logger,
     advanceClock: (milliseconds: number) => {
@@ -168,6 +192,121 @@ async function harness(feed: EpisodeFeed) {
 }
 
 describe('learning worker', () => {
+  it('commits a tool submission regardless of response text', async () => {
+    const { worker, store, generateText } = await harness(fakeFeed(1));
+    generateText.mockImplementationOnce(async (args) => {
+      expect(args.completionTool?.name).toBe('submitLearnings');
+      const result = await executeFixtureSubmission(
+        args,
+        ok(createReply('lesson')),
+      );
+      if (!result.success) throw new Error('Expected fixture success');
+      return { ...result, text: 'This is prose, not JSON.' };
+    });
+    expect(await worker.runOnce()).toBe('processed');
+    expect(store.get('lesson')).not.toBeNull();
+  });
+
+  it('never treats JSON response text as a submission', async () => {
+    const { worker, state, store, generateText } = await harness(fakeFeed(1));
+    generateText.mockResolvedValueOnce({
+      ...ok(createReply('lesson')),
+      toolResults: [],
+    });
+    expect(await worker.runOnce()).toBe('retry-later');
+    expect(state.get().cursor).toBeNull();
+    expect(store.list()).toEqual([]);
+  });
+
+  it('does not commit a staged submission when generation subsequently fails', async () => {
+    const { worker, state, store, generateText } = await harness(fakeFeed(1));
+    generateText.mockImplementationOnce(async (args) => {
+      const submitted = await executeFixtureSubmission(
+        args,
+        ok(createReply('lesson')),
+      );
+      expect(
+        submitted.success && submitted.toolResults?.[0]?.output,
+      ).toMatchObject({ status: 'accepted' });
+      expect(store.list()).toEqual([]);
+      expect(state.get().skills).toEqual({});
+      return failed('all-models-failed');
+    });
+    expect(await worker.runOnce()).toBe('retry-later');
+    expect(store.list()).toEqual([]);
+    expect(state.get().cursor).toBeNull();
+  });
+
+  it('allows correction of a rejected batch before committing a valid submission', async () => {
+    const { worker, store, generateText } = await harness(fakeFeed(1));
+    generateText.mockImplementationOnce(async (args) => {
+      const rejected = await executeFixtureSubmission(
+        args,
+        ok(
+          JSON.stringify({
+            operations: [{ op: 'delete', name: 'missing', reason: 'obsolete' }],
+          }),
+        ),
+      );
+      const accepted = await executeFixtureSubmission(
+        args,
+        ok(createReply('lesson')),
+      );
+      if (!rejected.success || !accepted.success)
+        throw new Error('Expected fixture success');
+      expect(rejected.toolResults?.[0]?.output).toMatchObject({
+        status: 'rejected',
+      });
+      return {
+        ...accepted,
+        toolResults: [
+          ...(rejected.toolResults ?? []),
+          ...(accepted.toolResults ?? []),
+        ],
+      };
+    });
+    expect(await worker.runOnce()).toBe('processed');
+    expect(store.list().map((skill) => skill.name)).toEqual(['lesson']);
+  });
+
+  it('reads current name and soul for each extraction rather than caching identity', async () => {
+    const { worker, generateText, getAgent } = await harness(fakeFeed(2));
+    generateText.mockImplementationOnce(async ({ system }) => {
+      expect(system).toContain('Extract. Atlas');
+      expect(system).toContain('<soul>Initial soul</soul>');
+      getAgent.mockReturnValue({ name: 'Kristine', soul: 'Updated soul' });
+      return ok('{"operations": []}');
+    });
+    generateText.mockImplementationOnce(async ({ system }) => {
+      expect(system).toContain('Extract. Kristine');
+      expect(system).toContain('<soul>Updated soul</soul>');
+      return ok('{"operations": []}');
+    });
+    expect(await worker.runOnce()).toBe('processed');
+    expect(generateText).toHaveBeenCalledTimes(2);
+    expect(getAgent).toHaveBeenCalledTimes(2);
+    await worker.close();
+  });
+
+  it('reads current name and soul when consolidating after extraction', async () => {
+    const { worker, generateText, getAgent } = await harness(fakeFeed(10));
+    let extraction = 0;
+    generateText.mockImplementation(async ({ system }) => {
+      if (system?.startsWith('Extract.')) {
+        getAgent.mockReturnValue({ name: 'Kristine', soul: 'Updated soul' });
+        return ok(createReply(`lesson-${extraction++}`));
+      }
+      expect(system).toContain('Consolidate. Kristine');
+      expect(system).toContain('<soul>Updated soul</soul>');
+      expect(system).not.toMatch(/\{\{(?:NAME|SOUL)\}\}/);
+      return ok('{"operations": []}');
+    });
+    expect(await worker.runOnce()).toBe('processed');
+    expect(generateText).toHaveBeenCalledTimes(11);
+    expect(getAgent).toHaveBeenCalledTimes(11);
+    await worker.close();
+  });
+
   it('consolidates at weight twenty during a burst and never by elapsed time', async () => {
     const { worker, state, generateText, advanceClock } = await harness(
       fakeFeed(11),
@@ -385,12 +524,18 @@ describe('learning worker', () => {
     const ready = new Promise<void>((resolve) => {
       started = resolve;
     });
-    generateText.mockImplementation(async ({ abortSignal }) => {
+    generateText.mockImplementation(async (args) => {
+      const staged = await executeFixtureSubmission(
+        args,
+        ok(createReply('late-proposal')),
+      );
       started();
       await new Promise<void>((resolve) =>
-        abortSignal?.addEventListener('abort', () => resolve(), { once: true }),
+        args.abortSignal?.addEventListener('abort', () => resolve(), {
+          once: true,
+        }),
       );
-      return ok(createReply('late-proposal'));
+      return staged;
     });
     const run = worker.runOnce();
     await ready;
@@ -695,7 +840,7 @@ describe('learning worker', () => {
     expect(generateText).not.toHaveBeenCalled();
   });
 
-  it('treats an unparseable reply as a failure', async () => {
+  it('treats a missing submission as a failure', async () => {
     const { worker, state, generateText } = await harness(fakeFeed(1));
     generateText.mockResolvedValueOnce(ok('not json'));
     expect(await worker.runOnce()).toBe('retry-later');

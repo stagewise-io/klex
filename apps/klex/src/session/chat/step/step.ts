@@ -589,6 +589,22 @@ class StepModule implements Step {
           }
         }
       });
+    } catch (error) {
+      // Unexpected failures still settle lifecycle state (for example memory's
+      // active-step guard). Preserve the original rejection for the turn.
+      await this.deps.extensionHandler.runStepCompleteHooks({
+        shouldContinue: false,
+        forceNextStep: false,
+        fatalError: true,
+        fatalErrorReason:
+          error instanceof Error ? error.message : 'Unexpected step failure',
+        generationFailed: false,
+        generation: null,
+        toolCalls: [],
+        modelFallbackOccurred: false,
+        requestRejected: false,
+      });
+      throw error;
     } finally {
       this.stepSpan?.end();
     }

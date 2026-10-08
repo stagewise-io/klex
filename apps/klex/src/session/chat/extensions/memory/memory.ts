@@ -41,8 +41,7 @@ class MemoryExt implements Extension {
   private closed = false;
   /** Retrieval observation cursor; independent of the recorder cursor. */
   private lastObservedMessageId: string | null = null;
-  // If step.run throws after onStepStart, this stays true until the next step;
-  // the interval pauses, while shutdown still flushes.
+  // onStepComplete settles this guard on both normal and throwing steps.
   private stepActive = false;
   private flushTimer: NodeJS.Timeout | null = null;
   private operation: Promise<void> = Promise.resolve();

@@ -36,6 +36,12 @@ export const listSkillsRoute = createRoute({
       },
       description: 'Skill summaries, sorted by name',
     },
+    500: {
+      content: {
+        'application/json': { schema: errorResponseSchema },
+      },
+      description: 'Internal server error',
+    },
     503: {
       content: {
         'application/json': { schema: errorResponseSchema },
@@ -79,6 +85,12 @@ export const getSkillRoute = createRoute({
         'application/json': { schema: errorResponseSchema },
       },
       description: 'Skill not found',
+    },
+    500: {
+      content: {
+        'application/json': { schema: errorResponseSchema },
+      },
+      description: 'Internal server error',
     },
     503: {
       content: {

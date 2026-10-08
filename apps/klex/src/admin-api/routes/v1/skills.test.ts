@@ -47,6 +47,24 @@ function createApp(skillCatalog: SkillCatalog) {
 }
 
 describe('skills routes', () => {
+  it('declares and returns shared 500 errors for catalog failures', async () => {
+    const catalog = createCatalog();
+    catalog.list = () => {
+      throw new Error('catalog failed');
+    };
+    catalog.get = () => {
+      throw new Error('catalog failed');
+    };
+    expect(listSkillsRoute.responses[500]).toBeDefined();
+    expect(getSkillRoute.responses[500]).toBeDefined();
+    const app = createApp(catalog);
+    for (const path of ['/v1/skills', `/v1/skills/${tracked.name}`]) {
+      const response = await app.request(path);
+      expect(response.status).toBe(500);
+      expect(await response.json()).toHaveProperty('error');
+    }
+  });
+
   it('lists skill summaries sorted by name without bodies', async () => {
     const res = await createApp(createCatalog()).request('/v1/skills');
 

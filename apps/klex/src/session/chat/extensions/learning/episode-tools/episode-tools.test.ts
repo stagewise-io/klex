@@ -32,7 +32,9 @@ function fixture() {
     subscribe: () => () => undefined,
     listCompleted: async () => [],
     listLatestCompleted: async () => [],
-    listNeighbors: async () => [],
+    listNeighbors: async () => [
+      { id: '2026-10-06/2-12-00.jsonl', date: '2026-10-06', index: 2 },
+    ],
     compareIds: (a, b) => a.localeCompare(b),
     read: async () => null,
     readPage,
@@ -66,7 +68,11 @@ describe('episode investigation', () => {
     ]);
     expect(
       await execute('listEpisodeNeighbors', { id: 'primary', count: 5 }),
-    ).toEqual({ episodes: [] });
+    ).toEqual({
+      episodes: [
+        { id: '2026-10-06/2-12-00.jsonl', date: '2026-10-06', index: 2 },
+      ],
+    });
     expect([...investigation.evidence]).toEqual(['primary']);
   });
   it('reserves budgets before parallel reads and limits distinct evidence', async () => {
@@ -94,6 +100,73 @@ describe('episode investigation', () => {
       readPage.mock.calls.reduce((n, [, options]) => n + options.maxBytes, 0),
     ).toBeLessThanOrEqual(2_000_000);
   });
+  it.each(['missing', 'empty', 'throwing'])(
+    'releases evidence slots after %s reads',
+    async (kind) => {
+      const { execute, readPage, investigation } = fixture();
+      if (kind === 'missing') readPage.mockResolvedValueOnce(null);
+      else if (kind === 'throwing')
+        readPage.mockRejectedValueOnce(new Error('read failed'));
+      else
+        readPage.mockImplementationOnce(async (id) => ({
+          id,
+          text: '',
+          offset: 0,
+          nextOffset: null,
+          scannedBytes: 10,
+          truncated: false,
+          startedAt: null,
+          endedAt: null,
+        }));
+      await Promise.resolve(
+        execute('readEpisode', { id: 'bad', offset: 0, limit: 100 }),
+      ).catch(() => undefined);
+      for (let index = 0; index < 6; index++) {
+        expect(
+          await execute('readEpisode', {
+            id: `valid-${index}`,
+            offset: 0,
+            limit: 100,
+          }),
+        ).toMatchObject({ status: 'ok' });
+      }
+      expect(investigation.evidence.has('bad')).toBe(false);
+      expect(investigation.evidence.size).toBe(7);
+    },
+  );
+
+  it('keeps a same-ID reservation until all concurrent reads settle', async () => {
+    const { execute, readPage } = fixture();
+    let resolvePending: (value: null) => void = () => {};
+    const pending = new Promise<null>((resolve) => {
+      resolvePending = resolve;
+    });
+    readPage.mockResolvedValueOnce(null).mockReturnValueOnce(pending);
+    const first = execute('readEpisode', {
+      id: 'shared',
+      offset: 0,
+      limit: 100,
+    });
+    const second = execute('readEpisode', {
+      id: 'shared',
+      offset: 100,
+      limit: 100,
+    });
+    await first;
+    for (let index = 0; index < 5; index++)
+      await execute('readEpisode', {
+        id: `valid-${index}`,
+        offset: 0,
+        limit: 100,
+      });
+    expect(
+      await execute('readEpisode', { id: 'seventh', offset: 0, limit: 100 }),
+    ).toEqual({ status: 'budget-exhausted' });
+    resolvePending(null);
+    await second;
+    expect(readPage).toHaveBeenCalledTimes(7);
+  });
+
   it('shares the call budget across same-episode pages and reuse', async () => {
     const { execute, readPage, investigation } = fixture();
     for (let i = 0; i < 8; i++)

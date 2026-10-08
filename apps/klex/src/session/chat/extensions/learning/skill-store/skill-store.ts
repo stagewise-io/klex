@@ -1,9 +1,11 @@
 import { randomUUID } from 'node:crypto';
+import { constants } from 'node:fs';
 import {
+  chmod,
   lstat,
   mkdir,
+  open,
   readdir,
-  readFile,
   rename,
   rm,
   writeFile,
@@ -91,12 +93,24 @@ class SkillStoreModule implements SkillStore {
         );
       }
       const path = join(directory, SKILL_FILE);
+      const existing = await lstat(path).catch(
+        (error: NodeJS.ErrnoException) => {
+          if (error.code !== 'ENOENT') throw error;
+          return null;
+        },
+      );
+      if (existing && !existing.isFile() && !existing.isSymbolicLink()) {
+        throw new Error(`Skill destination is not a regular file: "${path}"`);
+      }
       const temporary = `${path}.${randomUUID()}.tmp`;
       try {
         await writeFile(temporary, serializeSkill(normalized), {
           encoding: 'utf-8',
           flag: 'wx',
+          ...(existing?.isFile() ? { mode: existing.mode & 0o777 } : {}),
         });
+        // chmod restores bits masked by the process umask.
+        if (existing?.isFile()) await chmod(temporary, existing.mode & 0o777);
         await rename(temporary, path);
       } catch (error) {
         await rm(temporary, { force: true });
@@ -133,7 +147,20 @@ class SkillStoreModule implements SkillStore {
       const path = join(this.root, entry.name, SKILL_FILE);
       let content: string;
       try {
-        content = await readFile(path, 'utf-8');
+        if (!(await lstat(path)).isFile()) {
+          throw new Error('SKILL.md is not a regular file');
+        }
+        const handle = await open(
+          path,
+          constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
+        );
+        try {
+          if (!(await handle.stat()).isFile())
+            throw new Error('SKILL.md is not a regular file');
+          content = await handle.readFile('utf-8');
+        } finally {
+          await handle.close();
+        }
       } catch (error) {
         this.logger.warn(
           { skill: entry.name, error },

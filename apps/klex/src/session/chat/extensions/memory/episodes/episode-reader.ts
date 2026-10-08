@@ -1,7 +1,6 @@
 import { constants } from 'node:fs';
 import { lstat, open, realpath } from 'node:fs/promises';
 import { join, relative, sep } from 'node:path';
-import { StringDecoder } from 'node:string_decoder';
 
 import { parseEpisodeRecordLine, renderEpisodeText } from './episode-format';
 
@@ -17,12 +16,18 @@ export interface EpisodePage {
   truncated: boolean;
 }
 
-/** Reads valid JSONL records with bounded I/O and retained rendered text. */
-export async function readEpisodePage(
-  root: string,
-  id: string,
-  options: { offset: number; limit: number; maxBytes: number; tail?: boolean },
-): Promise<EpisodePage | null> {
+/** Retains bytes already consumed when a candidate fails partway through a scan. */
+export class EpisodePageReadError extends Error {
+  constructor(
+    cause: unknown,
+    readonly scannedBytes: number,
+  ) {
+    super('Episode page read failed', { cause });
+  }
+}
+
+/** Opens only regular episode files inside the root, without following symlinks. */
+export async function openEpisodeFile(root: string, id: string) {
   const path = join(root, id);
   let handle: Awaited<ReturnType<typeof open>>;
   try {
@@ -34,15 +39,36 @@ export async function readEpisodePage(
     for (const component of [root, join(root, id.split('/')[0] ?? ''), path]) {
       if ((await lstat(component)).isSymbolicLink()) return null;
     }
-    handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+    handle = await open(
+      path,
+      constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
+    );
   } catch (error) {
     const code = (error as NodeJS.ErrnoException).code;
     if (['ENOENT', 'ENOTDIR', 'ELOOP'].includes(code ?? '')) return null;
     throw error;
   }
   try {
+    if ((await handle.stat()).isFile()) return handle;
+  } catch (error) {
+    await handle.close();
+    throw error;
+  }
+  await handle.close();
+  return null;
+}
+
+/** Reads valid JSONL records with bounded I/O and retained rendered text. */
+export async function readEpisodePage(
+  root: string,
+  id: string,
+  options: { offset: number; limit: number; maxBytes: number; tail?: boolean },
+): Promise<EpisodePage | null> {
+  const handle = await openEpisodeFile(root, id);
+  if (!handle) return null;
+  let scannedBytes = 0;
+  try {
     const stat = await handle.stat();
-    if (!stat.isFile()) return null;
     const maxBytes = Math.max(
       0,
       Math.min(2_000_000, Math.floor(options.maxBytes)),
@@ -51,17 +77,24 @@ export async function readEpisodePage(
     const offset = Math.max(0, Math.floor(options.offset));
     // Tail investigations inspect EOF, not the end of a bounded prefix.
     const startByte = options.tail ? Math.max(0, stat.size - maxBytes) : 0;
-    const decoder = new StringDecoder('utf8');
+    // Decode complete records independently so a malformed record cannot
+    // alter evidence or prevent later valid records from being read.
+    const decoder = new TextDecoder('utf-8', { fatal: true });
     const buffer = Buffer.alloc(Math.min(16_384, Math.max(1, maxBytes)));
-    let pending = '';
+    let pending: Buffer[] = [];
     let text = '';
     let renderedLength = 0;
     let startedAt: string | null = null;
     let endedAt: string | null = null;
-    let scannedBytes = 0;
     let records = 0;
     let enough = false;
-    const consume = (line: string) => {
+    const consume = (parts: Buffer[]) => {
+      let line: string;
+      try {
+        line = decoder.decode(Buffer.concat(parts));
+      } catch {
+        return;
+      }
       const entry = parseEpisodeRecordLine(line);
       if (!entry) return;
       startedAt ??= entry.at;
@@ -87,19 +120,25 @@ export async function readEpisodePage(
       );
       if (bytesRead === 0) break;
       scannedBytes += bytesRead;
-      pending += decoder.write(buffer.subarray(0, bytesRead));
-      while (!enough) {
-        const newline = pending.indexOf('\n');
-        if (newline < 0) break;
+      let start = 0;
+      while (!enough && start < bytesRead) {
+        const newline = buffer.indexOf(10, start);
+        if (newline < 0 || newline >= bytesRead) break;
         // Validation rejects a cut JSON fragment but preserves a complete
         // first record when the tail window starts exactly at its boundary.
-        consume(pending.slice(0, newline));
-        pending = pending.slice(newline + 1);
+        pending.push(buffer.subarray(start, newline));
+        consume(pending);
+        pending = [];
+        start = newline + 1;
+      }
+      if (!enough && start < bytesRead) {
+        // The reusable read buffer must not overwrite a partial record.
+        pending.push(Buffer.from(buffer.subarray(start, bytesRead)));
       }
     }
     const reachedEnd = startByte + scannedBytes >= stat.size;
     const truncated = startByte > 0 || !reachedEnd;
-    if (reachedEnd && !enough) consume(`${pending}${decoder.end()}`);
+    if (reachedEnd && !enough) consume(pending);
     const hasMore = enough || truncated;
     return {
       id,
@@ -114,6 +153,8 @@ export async function readEpisodePage(
       scannedBytes,
       truncated,
     };
+  } catch (error) {
+    throw new EpisodePageReadError(error, scannedBytes);
   } finally {
     await handle.close();
   }

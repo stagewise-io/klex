@@ -20,7 +20,8 @@ export function validateSkill(skill: LearnedSkill): string | null {
   if (!isValidSkillName(skill.name)) return `invalid name "${skill.name}"`;
   const description = skill.description.trim();
   if (!description) return 'empty description';
-  if (description.includes('\n')) return 'multi-line description';
+  if (/[\n\r\u0085\u2028\u2029]/u.test(description))
+    return 'multi-line description';
   if (description.length > MAX_DESCRIPTION_LENGTH)
     return 'description too long';
   if (!skill.body.trim()) return 'empty body';

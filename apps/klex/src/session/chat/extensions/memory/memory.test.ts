@@ -124,6 +124,24 @@ describe('memory extension lifecycle', () => {
     await extension.onClose?.();
   });
 
+  it('idle-completes without another turn after a throwing step settles as fatal', async () => {
+    vi.useFakeTimers({ toFake: ['Date', 'setInterval', 'clearInterval'] });
+    const feed = createEpisodeFeed();
+    const { extension, history } = await harness({ episodeFeed: feed });
+    await extension.onStart?.();
+    extension.onStepStart?.();
+    history.push(message('first', 'recorded before failure'));
+    await extension.onStepComplete?.(success);
+    extension.onStepStart?.();
+    await extension.onStepComplete?.({ ...success, fatalError: true });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    vi.advanceTimersByTime(600_000);
+    await vi.waitFor(async () =>
+      expect(await feed.listCompleted(null, 10)).toHaveLength(1),
+    );
+    await extension.onClose?.();
+  });
+
   it('never idle-completes an episode while a long main step is active', async () => {
     vi.useFakeTimers({ toFake: ['Date', 'setInterval', 'clearInterval'] });
     const feed = createEpisodeFeed();

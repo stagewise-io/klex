@@ -16,6 +16,7 @@ class EpisodeInvestigationModule implements EpisodeInvestigation {
   private bytes = 2_000_000;
   private reservedSlots = 0;
   private readonly reservedIds = new Set<string>();
+  private readonly pendingReads = new Map<string, number>();
 
   constructor(
     episodes: EpisodeFeed,
@@ -50,24 +51,34 @@ class EpisodeInvestigationModule implements EpisodeInvestigation {
             !this.evidence.has(id) && !this.reservedIds.has(id);
           if (additional && this.reservedIds.size + this.reservedSlots >= 6)
             return this.exhausted();
-          if (additional) this.reservedIds.add(id);
           const chars = Math.min(limit, this.characters);
           const bytes = Math.min(250_000, this.bytes);
           if (chars <= 0 || bytes <= 0) return this.exhausted();
+          if (additional) this.reservedIds.add(id);
+          this.pendingReads.set(id, (this.pendingReads.get(id) ?? 0) + 1);
           this.characters -= chars;
           this.bytes -= bytes;
-          const page = await episodes.readPage(id, {
-            offset,
-            limit: chars,
-            maxBytes: bytes,
-          });
-          this.bytes += bytes - (page?.scannedBytes ?? 0);
-          this.characters += chars - (page?.text.length ?? 0);
-          if (this.signal.aborted) return { status: 'cancelled' };
-          if (page?.text) this.evidence.add(id);
-          return page
-            ? { status: 'ok', ...page }
-            : { status: 'unavailable', id };
+          try {
+            const page = await episodes.readPage(id, {
+              offset,
+              limit: chars,
+              maxBytes: bytes,
+            });
+            this.bytes += bytes - (page?.scannedBytes ?? 0);
+            this.characters += chars - (page?.text.length ?? 0);
+            if (this.signal.aborted) return { status: 'cancelled' };
+            if (page?.text) this.evidence.add(id);
+            return page
+              ? { status: 'ok', ...page }
+              : { status: 'unavailable', id };
+          } finally {
+            const pending = (this.pendingReads.get(id) ?? 1) - 1;
+            if (pending > 0) this.pendingReads.set(id, pending);
+            else {
+              this.pendingReads.delete(id);
+              if (!this.evidence.has(id)) this.reservedIds.delete(id);
+            }
+          }
         },
       },
       searchEpisodes: {

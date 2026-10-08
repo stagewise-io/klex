@@ -118,6 +118,41 @@ const createMcpServerBodySchema = z
   ])
   .openapi('CreateMcpServerBody');
 
+const reconcileMcpServerBodySchema = z
+  .object({
+    name: z.string().trim().min(1).max(128),
+    url: z
+      .url()
+      .refine(
+        (value) => ['http:', 'https:'].includes(new URL(value).protocol),
+        'HTTP URL required',
+      ),
+  })
+  .strict()
+  .openapi('ReconcileMcpServerBody');
+
+const reconcileMcpServerResponseSchema = z
+  .object({
+    code: z.literal('mcp_resource_reconciled'),
+    status: z.enum(['created', 'already_present']),
+  })
+  .openapi('ReconcileMcpServerResponse');
+
+const removeMatchingMcpServersBodySchema = z
+  .object({
+    names: z.array(reconcileMcpServerBodySchema.shape.name).min(1).max(17),
+    url: reconcileMcpServerBodySchema.shape.url,
+  })
+  .strict()
+  .openapi('RemoveMatchingMcpServersBody');
+
+const removeMatchingMcpServersResponseSchema = z
+  .object({
+    code: z.literal('mcp_resource_removed'),
+    status: z.enum(['removed', 'already_absent']),
+  })
+  .openapi('RemoveMatchingMcpServersResponse');
+
 const updateMcpServerBodySchema = z
   .union([
     z
@@ -1054,6 +1089,10 @@ export {
   providersResponseSchema,
   providerTypeParamSchema,
   providerTypesResponseSchema,
+  reconcileMcpServerBodySchema,
+  reconcileMcpServerResponseSchema,
+  removeMatchingMcpServersBodySchema,
+  removeMatchingMcpServersResponseSchema,
   serializedMessagePartSchema,
   serializedMessageSchema,
   sessionHistoryListQuerySchema,

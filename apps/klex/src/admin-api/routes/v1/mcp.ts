@@ -3,7 +3,12 @@ import { createRoute, type RouteHandler } from '@hono/zod-openapi';
 import type { ModuleLogger } from '@stagewise/logger';
 
 import type { Config, McpServerConfig } from '@/config';
-import { ConfigValidationError } from '@/config';
+import {
+  ConfigValidationError,
+  McpResourceConflict,
+  reconcileHttpMcpServer,
+  removeMatchingHttpMcpServers,
+} from '@/config';
 import type { Mcp } from '@/mcp';
 
 import {
@@ -12,6 +17,10 @@ import {
   mcpServerNameParamSchema,
   mcpServerResponseSchema,
   mcpServersResponseSchema,
+  reconcileMcpServerBodySchema,
+  reconcileMcpServerResponseSchema,
+  removeMatchingMcpServersBodySchema,
+  removeMatchingMcpServersResponseSchema,
   toolCallHistoryResponseSchema,
   updateMcpServerBodySchema,
 } from './schemas';
@@ -169,6 +178,116 @@ export function createMcpServer(
       deps.logger.error({ error }, 'MCP server create failed');
       return c.json(
         { error: 'Failed to create MCP server', code: 'internal_error' },
+        500,
+      );
+    }
+  };
+}
+
+export const reconcileMcpServerRoute = createRoute({
+  method: 'post',
+  path: '/v1/mcp-servers/reconcile',
+  tags: ['MCP Servers'],
+  summary: 'Ensure an HTTP connector belongs to the expected resource',
+  request: {
+    body: {
+      content: { 'application/json': { schema: reconcileMcpServerBodySchema } },
+      required: true,
+    },
+  },
+  responses: {
+    200: {
+      content: {
+        'application/json': { schema: reconcileMcpServerResponseSchema },
+      },
+      description: 'Resource verified and configuration reconciled',
+    },
+    409: {
+      content: { 'application/json': { schema: errorResponseSchema } },
+      description: 'Resource or configuration conflict',
+    },
+    500: {
+      content: { 'application/json': { schema: errorResponseSchema } },
+      description: 'Persistence failed',
+    },
+  },
+});
+
+export function reconcileMcpServer(
+  deps: Pick<McpRouteDependencies, 'config' | 'logger'>,
+): RouteHandler<typeof reconcileMcpServerRoute> {
+  return async (c) => {
+    try {
+      const status = await reconcileHttpMcpServer(
+        deps.config,
+        c.req.valid('json'),
+      );
+      return c.json({ code: 'mcp_resource_reconciled' as const, status }, 200);
+    } catch (error) {
+      if (error instanceof McpResourceConflict)
+        return c.json(
+          { error: error.message, code: 'mcp_resource_conflict' },
+          409,
+        );
+      deps.logger.error('MCP resource reconciliation failed');
+      return c.json(
+        { error: 'Failed to reconcile connector', code: 'internal_error' },
+        500,
+      );
+    }
+  };
+}
+
+export const removeMatchingMcpServersRoute = createRoute({
+  method: 'post',
+  path: '/v1/mcp-servers/remove-matching',
+  tags: ['MCP Servers'],
+  summary: 'Remove explicitly named HTTP connectors matching a resource',
+  request: {
+    body: {
+      content: {
+        'application/json': { schema: removeMatchingMcpServersBodySchema },
+      },
+      required: true,
+    },
+  },
+  responses: {
+    200: {
+      content: {
+        'application/json': { schema: removeMatchingMcpServersResponseSchema },
+      },
+      description: 'Matching connectors removed or already absent',
+    },
+    409: {
+      content: { 'application/json': { schema: errorResponseSchema } },
+      description: 'Resource conflict; nothing removed',
+    },
+    500: {
+      content: { 'application/json': { schema: errorResponseSchema } },
+      description: 'Persistence failed',
+    },
+  },
+});
+
+export function removeMatchingMcpServers(
+  deps: Pick<McpRouteDependencies, 'config' | 'logger'>,
+): RouteHandler<typeof removeMatchingMcpServersRoute> {
+  return async (c) => {
+    try {
+      const status = await removeMatchingHttpMcpServers(
+        deps.config,
+        c.req.valid('json'),
+      );
+      return c.json({ code: 'mcp_resource_removed' as const, status }, 200);
+    } catch (error) {
+      if (error instanceof McpResourceConflict)
+        return c.json(
+          { error: error.message, code: 'mcp_resource_conflict' },
+          409,
+        );
+      deps.logger.error('MCP resource removal failed');
+      return c.json(
+        { error: 'Failed to remove connector', code: 'internal_error' },
         500,
       );
     }

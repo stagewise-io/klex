@@ -169,6 +169,50 @@ async function waitForNamespace(
   });
 }
 
+describe('readable namespace migration', () => {
+  it('refreshes tool discovery and invocation and disconnects the legacy client', async () => {
+    const legacy = 'machine-12345678-1234-1234-1234-123456789abc';
+    const canonical = 'machine-julians-macbook-12345678';
+    const old = connection(legacy);
+    const next = connection(canonical);
+    vi.mocked(next.invoke).mockResolvedValue({
+      content: [{ type: 'text', text: 'named machine' }],
+    });
+    const { config, mcp } = setup(
+      { [legacy]: { url: 'https://example.com/mcp' } },
+      async ({ namespace }) => (namespace === legacy ? old : next),
+    );
+    await mcp.start();
+    try {
+      await waitForNamespace(mcp, legacy);
+      await config.publish({ [canonical]: { url: 'https://example.com/mcp' } });
+      await waitForNamespace(mcp, canonical);
+      await vi.waitFor(() => expect(old.close).toHaveBeenCalledOnce());
+      expect(await namespaceNames(mcp)).toEqual([canonical]);
+      expect(await mcp.search('macbook', { limit: 10 }, toolContext)).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            reference: { namespace: canonical, name: 'echo' },
+          }),
+        ]),
+      );
+      expect(
+        await mcp.invoke(
+          { namespace: canonical, name: 'echo' },
+          {},
+          toolContext,
+        ),
+      ).toEqual({ content: [{ type: 'text', text: 'named machine' }] });
+      await expect(
+        mcp.invoke({ namespace: legacy, name: 'echo' }, {}, toolContext),
+      ).rejects.toThrow();
+      expect(old.invoke).not.toHaveBeenCalled();
+    } finally {
+      await mcp.close();
+    }
+  });
+});
+
 describe('MCP Realtime Media configuration', () => {
   it('disables capability registration and lifecycle operations', async () => {
     const options = deferred<ConnectMcpServerOptions>();

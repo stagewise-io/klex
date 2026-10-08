@@ -247,9 +247,11 @@ class ConfigModule implements Config {
   mutate(
     fn: (config: KlexConfig) => KlexConfig,
   ): Promise<Readonly<KlexConfig>> {
-    const update = this.updateQueue.then(() =>
-      this.replaceNow(fn(this.requireConfig())),
-    );
+    const update = this.updateQueue.then(() => {
+      const current = this.requireConfig();
+      const next = fn(current);
+      return next === current ? current : this.replaceNow(next);
+    });
     this.updateQueue = update.then(
       () => undefined,
       () => undefined,

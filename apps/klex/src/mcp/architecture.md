@@ -11,6 +11,19 @@ The MCP module is the environment boundary between the agent core and external M
 
 The module exposes `onPushNotification()` to the MCP ingress extension installed in the default session. MCP access and MCP ingress are separate capabilities: providing an `Mcp` instance does not implicitly subscribe a session to push notifications.
 
+## Resource-verified connector setup
+
+The admin API exposes generic HTTP connector operations for Cloud-managed assignments:
+
+- `POST /v1/mcp-servers/reconcile` accepts `{ name, url }` and returns `mcp_resource_reconciled` with `created` or `already_present`.
+- `POST /v1/mcp-servers/remove-matching` accepts `{ names, url }` and returns `mcp_resource_removed` with `removed` or `already_absent`.
+
+Both run inside serialized config mutations. Existing HTTP URLs must match by `new URL(value).href` equality. A stdio connector or another URL at a requested name produces `409 mcp_resource_conflict`. Removal validates every requested existing connector before changing any of them. Missing names are harmless. Setup preserves an existing matching connector's headers, transport and other settings.
+
+Returning the unchanged config object skips persistence and subscriber notification. Lost-response retries therefore do not reconnect an unchanged server. A failed persistence operation never publishes a new config. The operations do not change the config schema or local-data version.
+
+Cloud owns readable machine naming and persists the chosen namespace. Klex treats it as an ordinary namespace in discovery, search, invocation and config. Klex does not infer ownership from the display name, migrate old names, collapse duplicates or rename connectors. Resource URLs remain authoritative, and Cloud must deploy compatible Klex support before relying on the operations.
+
 ## Realtime Media boundary
 
 The MCP module exposes an independent `io.stagewise/realtime-media` control-plane facade: capability negotiation, an ephemeral notification stream, namespace-addressed accept/reject/end calls, and process-local availability events. Realtime notifications never enter the durable Push Notification inbox. Media transport, LiveKit connections, and realtime model sessions remain outside this module. Realtime capability registration is startup-gated; changing the mode requires a process restart.

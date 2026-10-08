@@ -78,6 +78,29 @@ describe('JavaScriptTool', () => {
     ]);
   });
 
+  it('uses readable bracket names and refreshes the snapshot after legacy removal', async () => {
+    await javaScriptTool.execute({
+      code: `globalThis.legacyMachine = mcp['machine-12345678-1234-1234-1234-123456789abc'].echo`,
+    });
+    provider.remove({
+      namespace: 'machine-12345678-1234-1234-1234-123456789abc',
+      name: 'echo',
+    });
+    await expect(
+      javaScriptTool.execute({
+        code: `return { legacy: typeof mcp['machine-12345678-1234-1234-1234-123456789abc'], result: await mcp['machine-julians-macbook-12345678'].echo({ value: 'named machine' }) }`,
+      }),
+    ).resolves.toEqual({
+      legacy: 'undefined',
+      result: { value: 'named machine' },
+    });
+    await expect(
+      javaScriptTool.execute({
+        code: `return await globalThis.legacyMachine({})`,
+      }),
+    ).rejects.toThrow(/unavailable/);
+  });
+
   it('refreshes namespaces and rejects retained stale wrappers', async () => {
     await javaScriptTool.execute({
       code: `globalThis.stale = mcp['stale.namespace']['temporary-tool']`,

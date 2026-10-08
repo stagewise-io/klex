@@ -46,6 +46,10 @@ import {
   getMcpServersRoute,
   getMcpToolCallHistory,
   getMcpToolCallHistoryRoute,
+  reconcileMcpServer,
+  reconcileMcpServerRoute,
+  removeMatchingMcpServers,
+  removeMatchingMcpServersRoute,
   updateMcpServer,
   updateMcpServerRoute,
 } from './routes/v1/mcp';
@@ -153,6 +157,8 @@ export function createAdminApp(deps: AdminAppDependencies) {
     .openapi(getMcpServersRoute, getMcpServers(deps))
     .openapi(getMcpServerRoute, getMcpServer(deps))
     .openapi(createMcpServerRoute, createMcpServer(deps))
+    .openapi(reconcileMcpServerRoute, reconcileMcpServer(deps))
+    .openapi(removeMatchingMcpServersRoute, removeMatchingMcpServers(deps))
     .openapi(updateMcpServerRoute, updateMcpServer(deps))
     .openapi(deleteMcpServerRoute, deleteMcpServer(deps))
     .openapi(getMcpToolCallHistoryRoute, getMcpToolCallHistory(deps))

@@ -11,6 +11,16 @@ import type {
 } from '@/tool-provider';
 
 const TOOLS = [
+  {
+    namespace: 'machine-julians-macbook-12345678',
+    name: 'echo',
+    description: 'Readable machine',
+  },
+  {
+    namespace: 'machine-12345678-1234-1234-1234-123456789abc',
+    name: 'echo',
+    description: 'Legacy machine',
+  },
   { namespace: 'git.hub', name: 'echo-value', description: 'Echoes its input' },
   {
     namespace: 'git.hub',

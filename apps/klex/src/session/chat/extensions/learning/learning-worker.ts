@@ -242,12 +242,10 @@ class LearningWorkerModule implements LearningWorker {
         break;
       }
       if (!this.closed) await this.maybeConsolidate();
-      if (!this.closed) await this.enforceCap();
     }
     if (!this.closed && result === 'idle') {
       if (!(await this.revisitDeferred())) return 'retry-later';
       await this.maybeConsolidate();
-      await this.enforceCap();
     }
     return result;
   }
@@ -311,8 +309,9 @@ class LearningWorkerModule implements LearningWorker {
         : supplied;
     // Shutdown may have begun while the episode reader was awaiting I/O.
     if (this.closed) return 'stop';
+    if (!page) return this.recordFailure(id, 'Episode page unavailable');
     const episode =
-      page?.startedAt && page.endedAt
+      page.startedAt && page.endedAt
         ? { ...page, startedAt: page.startedAt, endedAt: page.endedAt }
         : null;
     if (
@@ -330,7 +329,7 @@ class LearningWorkerModule implements LearningWorker {
     }
 
     const partialMarker =
-      '[Partial episode: scan budget exhausted; uninspected content is not evidence.]\n';
+      '[Partial episode: scan or character budget exhausted; omitted content is not evidence.]\n';
     const { system, prompt } = buildExtractionPrompt({
       agent: this.options.getAgent(),
       skills: store.list(),
@@ -490,10 +489,10 @@ class LearningWorkerModule implements LearningWorker {
   }
 
   /**
-   * Applies validated operations; returns how many were applied. State is
-   * written before files: a crash in between leaves provenance for a file
-   * that the retried operation then writes, never a file without provenance.
-   * A failed write restores the previous state entry before rethrowing.
+   * Applies validated operations; returns how many were applied. Creates and
+   * updates persist provenance before publishing a file. Deletions persist
+   * removal before deleting the file. Failed file operations restore prior
+   * bookkeeping while retaining main-session reads recorded in flight.
    */
   private async apply(
     operations: readonly SkillOperation[],
@@ -518,15 +517,7 @@ class LearningWorkerModule implements LearningWorker {
     for (const operation of accepted) {
       const at = new Date(this.now()).toISOString();
       if (operation.op === 'delete') {
-        await store.delete(operation.name);
-        await state.update((draft) =>
-          recordOperation(draft, operation, {
-            at,
-            sourceEpisode,
-            before,
-            compareIds,
-          }),
-        );
+        await this.deleteSkill(operation.name);
       } else {
         const next = toSkill(operation);
         const skill = store
@@ -536,7 +527,10 @@ class LearningWorkerModule implements LearningWorker {
           !skill ||
           skill.description !== next.description ||
           skill.body !== next.body;
-        const previous = state.get().skills[operation.name];
+        const skills = state.get().skills;
+        const previous = Object.hasOwn(skills, operation.name)
+          ? skills[operation.name]
+          : undefined;
         const newEvidence = operation.evidenceEpisodes?.some(
           (id) => !previous?.sourceEpisodes.includes(id),
         );
@@ -602,6 +596,20 @@ class LearningWorkerModule implements LearningWorker {
   }
 
   private async maybeConsolidate(): Promise<void> {
+    try {
+      await this.consolidate();
+    } catch (error) {
+      if (!this.closed) {
+        await this.recordConsolidationFailure();
+        this.options.logger.warn({ error }, 'Skill consolidation failed');
+      }
+    } finally {
+      this.abort = undefined;
+      if (!this.closed) await this.enforceCap();
+    }
+  }
+
+  private async consolidate(): Promise<void> {
     const { store, state, logger } = this.options;
     const skills = store.list();
     if (skills.length < 2) return;
@@ -622,7 +630,12 @@ class LearningWorkerModule implements LearningWorker {
       (current.processedEpisodeCount - current.lastConsolidationEpisode >=
         STALE_CONSOLIDATION_SPACING &&
         skills.some((skill) =>
-          isStale(current.skills[skill.name], current.processedEpisodeCount),
+          isStale(
+            Object.hasOwn(current.skills, skill.name)
+              ? current.skills[skill.name]
+              : undefined,
+            current.processedEpisodeCount,
+          ),
         ));
     if (!due) return;
 
@@ -708,6 +721,44 @@ class LearningWorkerModule implements LearningWorker {
     });
   }
 
+  /** Persist removal before touching the file; restore bookkeeping on failure. */
+  private async deleteSkill(name: string): Promise<void> {
+    const { store, state } = this.options;
+    let previous: SkillState | undefined;
+    await state.update((draft) => {
+      previous = Object.hasOwn(draft.skills, name)
+        ? draft.skills[name]
+        : undefined;
+      delete draft.skills[name];
+    });
+    try {
+      await store.delete(name);
+    } catch (error) {
+      if (previous) {
+        const saved = previous;
+        await state.update((draft) => {
+          // readSkill can recreate usage while the cached file is still visible.
+          const current = Object.hasOwn(draft.skills, name)
+            ? draft.skills[name]
+            : undefined;
+          draft.skills[name] = {
+            ...saved,
+            lastReadAt: current?.lastReadAt ?? saved.lastReadAt,
+            lastReadEpisode:
+              current?.lastReadEpisode == null && saved.lastReadEpisode == null
+                ? null
+                : Math.max(
+                    current?.lastReadEpisode ?? 0,
+                    saved.lastReadEpisode ?? 0,
+                  ),
+            readCount: saved.readCount + (current?.readCount ?? 0),
+          };
+        });
+      }
+      throw error;
+    }
+  }
+
   /** Drops least-recently-used skills above `MAX_SKILLS`. */
   private async enforceCap(): Promise<void> {
     const { store, state, logger } = this.options;
@@ -715,7 +766,7 @@ class LearningWorkerModule implements LearningWorker {
     if (skills.length <= MAX_SKILLS) return;
     const usage = state.get().skills;
     const lastUse = (name: string): number => {
-      const entry = usage[name];
+      const entry = Object.hasOwn(usage, name) ? usage[name] : undefined;
       if (!entry) return Number.NEGATIVE_INFINITY;
       return Math.max(
         entry.lastReadEpisode ?? 0,
@@ -725,7 +776,7 @@ class LearningWorkerModule implements LearningWorker {
     };
     // Migrated zero-position skills retain historical ordering without aging by time.
     const historicalUse = (name: string): number => {
-      const entry = usage[name];
+      const entry = Object.hasOwn(usage, name) ? usage[name] : undefined;
       return entry
         ? Math.max(
             Date.parse(entry.lastReadAt ?? entry.createdAt),
@@ -742,15 +793,15 @@ class LearningWorkerModule implements LearningWorker {
           (lastUse(left) === 0 && lastUse(right) === 0
             ? historicalUse(left) - historicalUse(right)
             : 0) ||
-          (usage[left]?.readCount ?? 0) - (usage[right]?.readCount ?? 0) ||
+          (Object.hasOwn(usage, left) ? (usage[left]?.readCount ?? 0) : 0) -
+            (Object.hasOwn(usage, right)
+              ? (usage[right]?.readCount ?? 0)
+              : 0) ||
           (left < right ? -1 : left > right ? 1 : 0),
       )
       .slice(0, skills.length - MAX_SKILLS);
     for (const name of victims) {
-      await store.delete(name);
-      await state.update((draft) => {
-        delete draft.skills[name];
-      });
+      await this.deleteSkill(name);
       logger.info({ skill: name }, 'Evicted least-recently-used skill');
     }
   }
@@ -774,11 +825,15 @@ function recordOperation(
     return;
   }
   const existing =
-    operation.op === 'update' ? draft.skills[operation.name] : undefined;
+    operation.op === 'update' && Object.hasOwn(draft.skills, operation.name)
+      ? draft.skills[operation.name]
+      : undefined;
   const merged =
     operation.op === 'update'
-      ? (operation.mergedFrom ?? []).flatMap(
-          (name) => before[name]?.sourceEpisodes ?? [],
+      ? (operation.mergedFrom ?? []).flatMap((name) =>
+          Object.hasOwn(before, name)
+            ? (before[name]?.sourceEpisodes ?? [])
+            : [],
         )
       : [];
   const candidates = [

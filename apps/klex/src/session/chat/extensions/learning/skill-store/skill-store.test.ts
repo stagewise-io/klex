@@ -7,6 +7,7 @@ import {
   open,
   readdir,
   readFile,
+  rename,
   rm,
   stat,
   symlink,
@@ -23,7 +24,7 @@ import { createSkillStore } from './skill-store';
 
 vi.mock('node:fs/promises', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:fs/promises')>();
-  return { ...actual, open: vi.fn(actual.open) };
+  return { ...actual, open: vi.fn(actual.open), rename: vi.fn(actual.rename) };
 });
 
 const directories: string[] = [];
@@ -65,6 +66,21 @@ describe('skill store', () => {
     await store.delete(skill.name);
     expect(store.list()).toEqual([]);
     await expect(stat(join(dir, skill.name))).rejects.toThrow();
+  });
+
+  it('keeps the previous file and cache when atomic replacement fails', async () => {
+    const dir = await root();
+    const store = createSkillStore(dir, logger);
+    await store.write(skill);
+    const path = join(dir, skill.name, 'SKILL.md');
+    const before = await readFile(path, 'utf-8');
+    vi.mocked(rename).mockRejectedValueOnce(new Error('replacement blocked'));
+    await expect(store.write({ ...skill, body: 'updated' })).rejects.toThrow(
+      'replacement blocked',
+    );
+    expect(store.get(skill.name)).toEqual(skill);
+    expect(await readFile(path, 'utf-8')).toBe(before);
+    expect(await readdir(join(dir, skill.name))).toEqual(['SKILL.md']);
   });
 
   it('preserves existing file permissions during atomic updates', async () => {

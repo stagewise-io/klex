@@ -274,6 +274,45 @@ describe('episode feed', () => {
     expect(search.scannedBytes).toBeLessThanOrEqual(100_000);
   });
 
+  it.each([true, false])(
+    'marks character-clipped tails partial even when all bytes fit, trailing newline: %s',
+    async (trailingNewline) => {
+      const id = '2026-10-06/1-12-00.jsonl';
+      const serialized = file(
+        `earlier evidence ${'x'.repeat(400)}latest evidence`,
+      );
+      const content = trailingNewline ? serialized : serialized.trimEnd();
+      const { feed } = attached(await episodicDir({ [id]: content }));
+      const full = await feed.read(id);
+      assert(full);
+      const limit = 100;
+      const clipped = await feed.readPage(id, {
+        offset: 0,
+        limit,
+        maxBytes: 10_000,
+        tail: true,
+      });
+      expect(clipped).toMatchObject({
+        text: full.text.slice(-limit),
+        truncated: true,
+        nextOffset: null,
+      });
+      expect(clipped?.scannedBytes).toBe(Buffer.byteLength(content));
+      const complete = await feed.readPage(id, {
+        offset: 0,
+        limit: full.text.length,
+        maxBytes: 10_000,
+        tail: true,
+      });
+      expect(complete).toMatchObject({
+        text: full.text,
+        truncated: false,
+        offset: 0,
+        nextOffset: null,
+      });
+    },
+  );
+
   it('reads actual EOF within the tail scan budget and drops a partial leading record', async () => {
     const id = '2026-10-06/1-12-00.jsonl';
     const { feed } = attached(

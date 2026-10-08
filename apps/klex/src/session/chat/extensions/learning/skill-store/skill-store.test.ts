@@ -1,6 +1,10 @@
+import { execFileSync } from 'node:child_process';
 import {
+  chmod,
+  lstat,
   mkdir,
   mkdtemp,
+  readdir,
   readFile,
   rm,
   stat,
@@ -54,6 +58,51 @@ describe('skill store', () => {
     await store.delete(skill.name);
     expect(store.list()).toEqual([]);
     await expect(stat(join(dir, skill.name))).rejects.toThrow();
+  });
+
+  it('preserves existing file permissions during atomic updates', async () => {
+    const dir = await root();
+    const store = createSkillStore(dir, logger);
+    await store.write(skill);
+    const path = join(dir, skill.name, 'SKILL.md');
+    await chmod(path, 0o600);
+    await store.write({ ...skill, body: 'updated' });
+    expect((await stat(path)).mode & 0o777).toBe(0o600);
+    expect(await readdir(join(dir, skill.name))).toEqual(['SKILL.md']);
+  });
+
+  it.skipIf(process.platform === 'win32')(
+    'skips FIFOs on startup and refuses to replace them',
+    async () => {
+      const dir = await root();
+      const path = join(dir, skill.name, 'SKILL.md');
+      await mkdir(join(dir, skill.name), { recursive: true });
+      execFileSync('mkfifo', [path]);
+      const store = createSkillStore(dir, logger);
+      await store.start();
+      expect(store.list()).toEqual([]);
+      await expect(store.write(skill)).rejects.toThrow(/not a regular file/);
+      expect((await lstat(path)).isFIFO()).toBe(true);
+      expect(await readdir(join(dir, skill.name))).toEqual(['SKILL.md']);
+      expect(store.list()).toEqual([]);
+    },
+  );
+
+  it('skips symlinked skill files but replaces the link without touching its target', async () => {
+    const dir = await root();
+    const outside = await root();
+    await mkdir(outside, { recursive: true });
+    const target = join(outside, 'SKILL.md');
+    await writeFile(target, 'external');
+    await mkdir(join(dir, skill.name), { recursive: true });
+    const path = join(dir, skill.name, 'SKILL.md');
+    await symlink(target, path);
+    const store = createSkillStore(dir, logger);
+    await store.start();
+    expect(store.list()).toEqual([]);
+    await store.write(skill);
+    expect((await lstat(path)).isFile()).toBe(true);
+    expect(await readFile(target, 'utf-8')).toBe('external');
   });
 
   it('rejects invalid names and over-length content', async () => {

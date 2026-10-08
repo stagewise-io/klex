@@ -38,6 +38,19 @@ describe('SKILL.md format', () => {
     expect(parseSkill('---\nname: x\ndescription: "broken\n---\nb')).toBeNull();
   });
 
+  it.each(['\n', '\r', '\u0085', '\u2028', '\u2029'])(
+    'rejects description line separator %j',
+    (separator) => {
+      expect(
+        validateSkill({
+          name: 'a',
+          description: `before${separator}after`,
+          body: 'b',
+        }),
+      ).toBe('multi-line description');
+    },
+  );
+
   it('validates names and lengths', () => {
     expect(isValidSkillName('a-b-1')).toBe(true);
     for (const name of ['A', 'a--b', '-a', 'a/b', '..', '', 'a'.repeat(65)]) {

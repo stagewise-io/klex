@@ -170,13 +170,27 @@ describe('Inbox — send', () => {
     expect(errorLogger).toHaveBeenCalledOnce();
   });
 
-  it('does not buffer immediate events even if onImmediateEvent throws', () => {
-    onImmediateEvent.mockImplementation(() => {
-      throw new Error('callback explosion');
-    });
-    expect(() => inbox.send(critical('lost'))).not.toThrow();
-    expect(inbox.getEvents()).toEqual([]);
-  });
+  it.each([SessionInboxUrgency.Critical, SessionInboxUrgency.Default])(
+    'buffers and deduplicates failed immediate events with urgency %s',
+    (urgency) => {
+      onImmediateEvent.mockImplementation(() => {
+        throw new Error('callback explosion');
+      });
+      const event = {
+        ...makeEvent('env', urgency, 'survivor'),
+        eventId: 'failed-immediate',
+      };
+      expect(() => inbox.send(event)).not.toThrow();
+      inbox.send(event);
+      expect(onImmediateEvent).toHaveBeenCalledOnce();
+      expect(onNewInput).toHaveBeenCalledOnce();
+      expect(onNewInput).toHaveBeenCalledWith(urgency);
+      expect(inbox.isEmpty()).toBe(false);
+      expect(inbox.getEvents()).toEqual([event]);
+      inbox.send(event);
+      expect(inbox.isEmpty()).toBe(true);
+    },
+  );
 });
 
 describe('Inbox — getEvents', () => {

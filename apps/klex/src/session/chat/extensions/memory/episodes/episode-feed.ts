@@ -1,9 +1,14 @@
-import { readdir, readFile } from 'node:fs/promises';
+import { readdir } from 'node:fs/promises';
 import { join, relative, sep } from 'node:path';
 
 import type { EpisodeStoreState } from './episode-files';
 import { parseEpisodeRecordLine, renderEpisodeText } from './episode-format';
-import { type EpisodePage, readEpisodePage } from './episode-reader';
+import {
+  type EpisodePage,
+  EpisodePageReadError,
+  openEpisodeFile,
+  readEpisodePage,
+} from './episode-reader';
 
 export type { EpisodePage } from './episode-reader';
 export interface EpisodeSearchResult {
@@ -110,6 +115,7 @@ class EpisodeFeedModule implements EpisodeFeedHub {
   private source: EpisodeFeedSource | null = null;
   private readonly listeners = new Set<() => void>();
   private notificationPending = false;
+  private orderedRefs: Promise<EpisodeRef[]> | null = null;
 
   subscribe(listener: () => void): () => void {
     this.listeners.add(listener);
@@ -117,6 +123,7 @@ class EpisodeFeedModule implements EpisodeFeedHub {
   }
 
   notifyChanged(): void {
+    this.orderedRefs = null;
     if (this.notificationPending) return;
     this.notificationPending = true;
     queueMicrotask(() => {
@@ -153,11 +160,34 @@ class EpisodeFeedModule implements EpisodeFeedHub {
     limit: number,
   ): Promise<EpisodeRef[]> {
     const cursor = after === null ? null : parseEpisodeId(after);
-    const completed = await this.listAllCompleted();
-    const later = cursor
-      ? completed.filter((ref) => compareEpisodeRefs(ref, cursor) > 0)
-      : completed;
-    return later.slice(0, Math.max(0, limit));
+    const source = this.source;
+    if (!source || limit <= 0) return [];
+    const refs = await this.getOrderedRefs(source);
+    const open = await openId(source);
+    if (source !== this.source) return [];
+    // Binary-search the stable index rather than filtering the archive at
+    // every cursor step. Completion hints invalidate the cached snapshot.
+    let start = 0;
+    let end = refs.length;
+    if (cursor) {
+      while (start < end) {
+        const middle = Math.floor((start + end) / 2);
+        const ref = refs[middle];
+        if (!ref) break;
+        if (compareEpisodeRefs(ref, cursor) <= 0) start = middle + 1;
+        else end = middle;
+      }
+    }
+    const completed: EpisodeRef[] = [];
+    for (
+      let index = start;
+      index < refs.length && completed.length < limit;
+      index++
+    ) {
+      const ref = refs[index];
+      if (ref && ref.id !== open) completed.push(ref);
+    }
+    return completed;
   }
 
   compareIds(left: string, right: string): number {
@@ -165,8 +195,14 @@ class EpisodeFeedModule implements EpisodeFeedHub {
   }
 
   async listLatestCompleted(count: number): Promise<EpisodeRef[]> {
-    if (count <= 0) return [];
-    return (await this.listAllCompleted()).slice(-count);
+    const source = this.source;
+    if (!source || count <= 0) return [];
+    // Visit newest date directories first and stop once enough candidates
+    // exist; searches never enumerate every episode in the archive.
+    const refs = await listNewestEpisodeRefs(source.episodicDir, count + 1);
+    const open = await openId(source);
+    if (source !== this.source) return [];
+    return refs.filter((ref) => ref.id !== open).slice(-count);
   }
 
   async listNeighbors(id: string, count: number): Promise<EpisodeRef[]> {
@@ -226,11 +262,20 @@ class EpisodeFeedModule implements EpisodeFeedHub {
     ) {
       const ref = all[index];
       if (!ref) break;
-      const page = await this.readPage(ref.id, {
-        offset: 0,
-        limit: 60_000,
-        maxBytes: maxBytes - scannedBytes,
-      });
+      let page: EpisodePage | null;
+      try {
+        page = await this.readPage(ref.id, {
+          offset: 0,
+          limit: 60_000,
+          maxBytes: maxBytes - scannedBytes,
+        });
+      } catch (error) {
+        // A damaged or inaccessible candidate must not hide other matches.
+        if (error instanceof EpisodePageReadError)
+          scannedBytes += error.scannedBytes;
+        truncated = true;
+        continue;
+      }
       if (!page) continue;
       scannedBytes += page.scannedBytes;
       truncated ||= page.truncated || page.nextOffset !== null;
@@ -257,13 +302,22 @@ class EpisodeFeedModule implements EpisodeFeedHub {
     const ref = parseEpisodeId(id);
     if (!source || !ref) return null;
     if (ref.id === (await openId(source))) return null;
+    const handle = await openEpisodeFile(source.episodicDir, id);
+    if (!handle) return null;
+    let bytes: Buffer;
+    try {
+      bytes = await handle.readFile();
+    } finally {
+      await handle.close();
+    }
     let content: string;
     try {
-      content = await readFile(join(source.episodicDir, id), 'utf-8');
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
-      throw error;
+      content = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+    } catch {
+      return null;
     }
+    if (source !== this.source || ref.id === (await openId(source)))
+      return null;
     let startedAt: string | null = null;
     let endedAt: string | null = null;
     let recordCount = 0;
@@ -289,9 +343,23 @@ class EpisodeFeedModule implements EpisodeFeedHub {
     if (!source) return [];
     // List before reading the open episode: a file created meanwhile is
     // either missing from the list or is the open episode.
-    const refs = await listEpisodeRefs(source.episodicDir);
+    const refs = await this.getOrderedRefs(source);
     const open = await openId(source);
-    return refs.filter((ref) => ref.id !== open).sort(compareEpisodeRefs);
+    if (source !== this.source) return [];
+    return refs.filter((ref) => ref.id !== open);
+  }
+
+  private getOrderedRefs(source: EpisodeFeedSource): Promise<EpisodeRef[]> {
+    if (!this.orderedRefs) {
+      const snapshot = listEpisodeRefs(source.episodicDir).then((refs) =>
+        refs.sort(compareEpisodeRefs),
+      );
+      this.orderedRefs = snapshot;
+      void snapshot.catch(() => {
+        if (this.orderedRefs === snapshot) this.orderedRefs = null;
+      });
+    }
+    return this.orderedRefs;
   }
 }
 
@@ -312,6 +380,28 @@ async function listEpisodeRefs(episodicDir: string): Promise<EpisodeRef[]> {
     }
   }
   return refs;
+}
+
+async function listNewestEpisodeRefs(
+  episodicDir: string,
+  count: number,
+): Promise<EpisodeRef[]> {
+  const dates = (await readdirOrEmpty(episodicDir))
+    .filter((entry) => entry.isDirectory() && DATE_PATTERN.test(entry.name))
+    .sort((left, right) => right.name.localeCompare(left.name));
+  const refs: EpisodeRef[] = [];
+  for (const date of dates) {
+    const daily = (await readdirOrEmpty(join(episodicDir, date.name)))
+      .filter((entry) => entry.isFile() && FILE_PATTERN.test(entry.name))
+      .flatMap((entry) => {
+        const ref = parseEpisodeId(`${date.name}/${entry.name}`);
+        return ref ? [ref] : [];
+      })
+      .sort((left, right) => compareEpisodeRefs(right, left));
+    refs.push(...daily.slice(0, count - refs.length));
+    if (refs.length >= count) break;
+  }
+  return refs.reverse();
 }
 
 async function readdirOrEmpty(directory: string) {

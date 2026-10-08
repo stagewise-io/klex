@@ -1,16 +1,30 @@
-import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
+import {
+  mkdir,
+  mkdtemp,
+  readdir,
+  rm,
+  symlink,
+  writeFile,
+} from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, assert, describe, expect, it, vi } from 'vitest';
 
 import { createEpisodeFeed } from './episode-feed';
 import type { EpisodeStoreState } from './episode-files';
+import { EpisodePageReadError } from './episode-reader';
 import { episodeFile, HEADER_LINE, output, recordLine } from './test-utils';
+
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs/promises')>();
+  return { ...actual, readdir: vi.fn(actual.readdir) };
+});
 
 const directories: string[] = [];
 
 afterEach(async () => {
+  vi.clearAllMocks();
   await Promise.all(
     directories
       .splice(0)
@@ -49,6 +63,130 @@ function attached(dir: string, openId: string | null = null) {
 }
 
 describe('episode feed', () => {
+  it('reuses the ordered cursor index and invalidates it on completion hints', async () => {
+    const dir = await episodicDir({
+      '2026-10-05/1-12-00.jsonl': file('first'),
+      '2026-10-06/1-12-00.jsonl': file('second'),
+      '2026-10-06/2-12-00.jsonl': file('third'),
+    });
+    const { feed } = attached(dir);
+    vi.mocked(readdir).mockClear();
+    const first = await feed.listCompleted(null, 1);
+    const scans = vi.mocked(readdir).mock.calls.length;
+    assert(first[0]);
+    const second = await feed.listCompleted(first[0].id, 1);
+    assert(second[0]);
+    expect((await feed.listCompleted(second[0].id, 1))[0]?.index).toBe(2);
+    expect(vi.mocked(readdir).mock.calls).toHaveLength(scans);
+    await writeFile(join(dir, '2026-10-06/3-12-00.jsonl'), file('new'));
+    feed.notifyChanged();
+    expect(
+      (await feed.listCompleted('2026-10-06/2-12-00.jsonl', 1))[0]?.index,
+    ).toBe(3);
+    expect(vi.mocked(readdir).mock.calls.length).toBeGreaterThan(scans);
+  });
+
+  it('searches newest candidates without enumerating older date directories', async () => {
+    const files: Record<string, string> = {
+      '2026-10-05/1-12-00.jsonl': file('older'),
+    };
+    for (let index = 1; index <= 202; index++)
+      files[`2026-10-06/${index}-12-00.jsonl`] = file('no match');
+    const dir = await episodicDir(files);
+    const { feed } = attached(dir, '2026-10-06/202-12-00.jsonl');
+    vi.mocked(readdir).mockClear();
+    await feed.search('absent', { offset: 0, maxBytes: 100_000, limit: 1 });
+    expect(vi.mocked(readdir).mock.calls.map(([path]) => path)).toEqual([
+      dir,
+      join(dir, '2026-10-06'),
+    ]);
+    expect(await feed.listLatestCompleted(200)).toHaveLength(200);
+  });
+
+  it('continues literal search after a failed candidate read and reports partial coverage', async () => {
+    const { feed } = attached(
+      await episodicDir({
+        '2026-10-06/1-12-00.jsonl': file('verified match'),
+        '2026-10-06/2-12-00.jsonl': file('unreadable'),
+      }),
+    );
+    const read = vi.spyOn(feed, 'readPage');
+    read.mockRejectedValueOnce(new Error('EACCES'));
+    const result = await feed.search('verified', {
+      offset: 0,
+      maxBytes: 10_000,
+      limit: 1,
+    });
+    expect(result.matches.map((match) => match.id)).toEqual([
+      '2026-10-06/1-12-00.jsonl',
+    ]);
+    expect(result.truncated).toBe(true);
+    expect(result.nextOffset).toBeNull();
+  });
+
+  it('charges bytes scanned before candidate failure against the search budget', async () => {
+    const { feed } = attached(
+      await episodicDir({
+        '2026-10-06/1-12-00.jsonl': file('verified match'),
+        '2026-10-06/2-12-00.jsonl': file('unreadable'),
+      }),
+    );
+    const read = vi.spyOn(feed, 'readPage');
+    read.mockRejectedValueOnce(new EpisodePageReadError(new Error('EIO'), 100));
+    const result = await feed.search('verified', {
+      offset: 0,
+      maxBytes: 100,
+      limit: 1,
+    });
+    expect(result).toMatchObject({
+      matches: [],
+      scannedBytes: 100,
+      truncated: true,
+      nextOffset: 1,
+    });
+    expect(read).toHaveBeenCalledTimes(1);
+    const next = await feed.search('verified', {
+      offset: 1,
+      maxBytes: 10_000,
+      limit: 1,
+    });
+    expect(next.matches.map((match) => match.id)).toEqual([
+      '2026-10-06/1-12-00.jsonl',
+    ]);
+  });
+
+  it.each([true, false])(
+    'rejects malformed UTF-8 records, trailing newline: %s',
+    async (trailingNewline) => {
+      const id = '2026-10-06/1-12-00.jsonl';
+      const dir = await episodicDir({ [id]: '' });
+      const [prefix, suffix] = recordLine(output('BROKEN'), at).split('BROKEN');
+      assert(prefix !== undefined && suffix !== undefined);
+      const bad = Buffer.concat([
+        Buffer.from(prefix),
+        Buffer.from([0xc3, 0x28]),
+        Buffer.from(suffix),
+      ]);
+      const valid = recordLine(output('verified 🧠'), at);
+      const content = Buffer.concat([
+        bad,
+        Buffer.from(trailingNewline ? valid : valid.slice(0, -1)),
+      ]);
+      await writeFile(join(dir, id), content);
+      const { feed } = attached(dir);
+      const page = await feed.readPage(id, {
+        offset: 0,
+        limit: 1_000,
+        maxBytes: 10_000,
+      });
+      expect(page?.text).toContain('verified 🧠');
+      expect(page?.text).not.toContain('\uFFFD');
+      expect(page?.text).not.toContain('( ');
+      expect(page?.scannedBytes).toBe(content.length);
+      expect(await feed.read(id)).toBeNull();
+    },
+  );
+
   it('pages rendered text exactly and bounds reads and searches', async () => {
     const id = '2026-10-06/1-12-00.jsonl';
     const { feed } = attached(
@@ -206,11 +344,13 @@ describe('episode feed', () => {
     await mkdir(join(dir, '2026-10-06'));
     await symlink(join(outside, id), join(dir, id));
     const { feed } = attached(dir);
+    expect(await feed.read(id)).toBeNull();
     expect(
       await feed.readPage(id, { offset: 0, limit: 100, maxBytes: 1_000 }),
     ).toBeNull();
     await rm(join(dir, '2026-10-06'), { recursive: true });
     await symlink(join(outside, '2026-10-06'), join(dir, '2026-10-06'));
+    expect(await feed.read(id)).toBeNull();
     expect(
       await feed.readPage(id, { offset: 0, limit: 100, maxBytes: 1_000 }),
     ).toBeNull();

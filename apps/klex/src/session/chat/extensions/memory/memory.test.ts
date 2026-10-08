@@ -114,9 +114,12 @@ describe('memory extension lifecycle', () => {
     await Promise.resolve();
     hint.mockClear();
     vi.advanceTimersByTime(600_000);
-    await vi.waitFor(async () =>
-      expect(await feed.listCompleted(null, 10)).toHaveLength(1),
+    await vi.waitFor(() =>
+      expect(extension.introspect?.()).toMatchObject({
+        recorder: { episode: null },
+      }),
     );
+    expect(await feed.listCompleted(null, 10)).toHaveLength(1);
     expect(hint).toHaveBeenCalledTimes(1);
     vi.advanceTimersByTime(60_000);
     await new Promise((resolve) => setTimeout(resolve, 20));
@@ -136,9 +139,12 @@ describe('memory extension lifecycle', () => {
     await extension.onStepComplete?.({ ...success, fatalError: true });
     await new Promise((resolve) => setTimeout(resolve, 20));
     vi.advanceTimersByTime(600_000);
-    await vi.waitFor(async () =>
-      expect(await feed.listCompleted(null, 10)).toHaveLength(1),
+    await vi.waitFor(() =>
+      expect(extension.introspect?.()).toMatchObject({
+        recorder: { episode: null },
+      }),
     );
+    expect(await feed.listCompleted(null, 10)).toHaveLength(1);
     await extension.onClose?.();
   });
 
@@ -160,9 +166,12 @@ describe('memory extension lifecycle', () => {
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(await feed.listCompleted(null, 10)).toEqual([]);
     vi.advanceTimersByTime(570_000);
-    await vi.waitFor(async () =>
-      expect(await feed.listCompleted(null, 10)).toHaveLength(1),
+    await vi.waitFor(() =>
+      expect(extension.introspect?.()).toMatchObject({
+        recorder: { episode: null },
+      }),
     );
+    expect(await feed.listCompleted(null, 10)).toHaveLength(1);
     await extension.onClose?.();
   });
   it('attaches the episode feed on start and detaches on close', async () => {

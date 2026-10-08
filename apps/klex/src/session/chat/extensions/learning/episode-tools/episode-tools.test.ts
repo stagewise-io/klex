@@ -1,9 +1,16 @@
 import type { Tool } from 'ai';
 import { describe, expect, it, vi } from 'vitest';
 
-import type { EpisodeFeed } from '@/session/chat/extensions/memory';
+import {
+  type EpisodeFeed,
+  EpisodePageReadError,
+} from '@/session/chat/extensions/memory/episodes';
 
 import { createEpisodeInvestigation } from './episode-tools';
+
+vi.mock('@/session/chat/extensions/time/system-prompt.md', () => ({
+  default: '',
+}));
 
 function fixture() {
   const controller = new AbortController();
@@ -134,6 +141,73 @@ describe('episode investigation', () => {
       expect(investigation.evidence.size).toBe(7);
     },
   );
+
+  it.each([0, 100_000])(
+    'refunds unused read budgets after failure with %i scanned bytes',
+    async (scannedBytes) => {
+      const { execute, readPage, investigation } = fixture();
+      readPage.mockRejectedValueOnce(
+        new EpisodePageReadError(new Error('EIO'), scannedBytes),
+      );
+      await expect(
+        execute('readEpisode', { id: 'bad', offset: 0, limit: 12_000 }),
+      ).rejects.toThrow();
+      for (let index = 0; index < 5; index++) {
+        expect(
+          await execute('readEpisode', {
+            id: `valid-${index}`,
+            offset: 0,
+            limit: 12_000,
+          }),
+        ).toMatchObject({ status: 'ok' });
+      }
+      expect(
+        readPage.mock.calls.slice(1).map(([, options]) => options.limit),
+      ).toEqual([12_000, 12_000, 12_000, 12_000, 12_000]);
+      expect(investigation.evidence.has('bad')).toBe(false);
+    },
+  );
+
+  it.each(['readEpisode', 'searchEpisodes'])(
+    'charges only scanned bytes after a failed %s call',
+    async (tool) => {
+      const { execute, readPage, search } = fixture();
+      const error = new EpisodePageReadError(new Error('EIO'), 100_000);
+      if (tool === 'readEpisode') readPage.mockRejectedValueOnce(error);
+      else search.mockRejectedValueOnce(error);
+      await expect(
+        execute(
+          tool,
+          tool === 'readEpisode'
+            ? { id: 'bad', offset: 0, limit: 12_000 }
+            : { query: 'bad', offset: 0 },
+        ),
+      ).rejects.toThrow();
+      expect(
+        await execute('searchEpisodes', { query: 'valid', offset: 0 }),
+      ).toMatchObject({ status: 'ok' });
+      expect(search.mock.lastCall?.[1]).toMatchObject({ maxBytes: 1_900_000 });
+    },
+  );
+
+  it('refunds search character reservations after failure', async () => {
+    const { execute, readPage, search } = fixture();
+    search.mockRejectedValueOnce(new Error('listing failed'));
+    await expect(
+      execute('searchEpisodes', { query: 'bad', offset: 0 }),
+    ).rejects.toThrow();
+    for (let index = 0; index < 5; index++)
+      expect(
+        await execute('readEpisode', {
+          id: `valid-${index}`,
+          offset: 0,
+          limit: 12_000,
+        }),
+      ).toMatchObject({ status: 'ok' });
+    expect(readPage.mock.calls.map(([, options]) => options.limit)).toEqual([
+      12_000, 12_000, 12_000, 12_000, 12_000,
+    ]);
+  });
 
   it('keeps a same-ID reservation until all concurrent reads settle', async () => {
     const { execute, readPage } = fixture();

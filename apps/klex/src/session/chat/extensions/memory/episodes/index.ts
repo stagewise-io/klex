@@ -28,6 +28,7 @@ export {
   renderEpisodeText,
   toEpisodeRecordInputs,
 } from './episode-format';
+export { EpisodePageReadError } from './episode-reader';
 export {
   createEpisodeRecorder,
   EpisodeRecorder,

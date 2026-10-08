@@ -262,31 +262,48 @@ class EpisodeFeedModule implements EpisodeFeedHub {
     ) {
       const ref = all[index];
       if (!ref) break;
-      let page: EpisodePage | null;
-      try {
-        page = await this.readPage(ref.id, {
-          offset: 0,
-          limit: 60_000,
-          maxBytes: maxBytes - scannedBytes,
-        });
-      } catch (error) {
-        // A damaged or inaccessible candidate must not hide other matches.
-        if (error instanceof EpisodePageReadError)
-          scannedBytes += error.scannedBytes;
-        truncated = true;
-        continue;
-      }
-      if (!page) continue;
-      scannedBytes += page.scannedBytes;
-      truncated ||= page.truncated || page.nextOffset !== null;
-      const position = page.text.toLowerCase().indexOf(needle);
-      if (position >= 0) {
-        const start = Math.max(0, position - 160);
-        matches.push({
-          id: ref.id,
-          snippet: page.text.slice(start, position + needle.length + 160),
-          offset: start,
-        });
+      let offset = 0;
+      while (scannedBytes < maxBytes) {
+        let page: EpisodePage | null;
+        try {
+          page = await this.readPage(ref.id, {
+            offset,
+            limit: 60_000,
+            maxBytes: maxBytes - scannedBytes,
+          });
+        } catch (error) {
+          // A damaged or inaccessible candidate must not hide other matches.
+          if (error instanceof EpisodePageReadError)
+            scannedBytes += error.scannedBytes;
+          truncated = true;
+          break;
+        }
+        if (!page) {
+          truncated = true;
+          break;
+        }
+        scannedBytes += page.scannedBytes;
+        const position = page.text.toLowerCase().indexOf(needle);
+        if (position >= 0) {
+          const start = Math.max(0, position - 160);
+          matches.push({
+            id: ref.id,
+            snippet: page.text.slice(start, position + needle.length + 160),
+            offset: page.offset + start,
+          });
+          truncated ||= page.truncated || page.nextOffset !== null;
+          break;
+        }
+        if (page.nextOffset === null) {
+          truncated ||= page.truncated;
+          break;
+        }
+        if (scannedBytes >= maxBytes || page.nextOffset <= offset) {
+          truncated = true;
+          break;
+        }
+        // Keep enough overlap to find literal matches across page boundaries.
+        offset = Math.max(offset + 1, page.nextOffset - (needle.length - 1));
       }
     }
     return {

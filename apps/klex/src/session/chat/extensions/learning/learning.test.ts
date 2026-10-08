@@ -11,6 +11,10 @@ import type { Extension, ExtensionDeps } from '../extension-api';
 import { createLearningExt } from './learning';
 import { createSkillCatalog, serializeSkill } from './skill-store';
 
+vi.mock('@/session/chat/extensions/time/system-prompt.md', () => ({
+  default: '',
+}));
+
 vi.mock('./extraction-prompt.md', () => ({ default: 'Extract.' }));
 vi.mock('./consolidation-prompt.md', () => ({ default: 'Consolidate.' }));
 vi.mock('./system-prompt-part.md', () => ({ default: '## Learned skills\n' }));

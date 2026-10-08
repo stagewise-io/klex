@@ -6,6 +6,7 @@ import type { Config } from '@/config';
 import type { IntrospectionScope } from '@/introspection';
 import type { Mcp } from '@/mcp';
 import type { ProductAnalyticsRecorder } from '@/product-analytics';
+import { SessionInboxUrgency } from '@/session/inbox';
 import type {
   ChatSessionHandle,
   ChildSessionHandle,
@@ -18,6 +19,9 @@ import type {
   ExtensionDeps,
   ExtensionFactory,
 } from './extensions/extension-api';
+import type { SessionInboxBuffer } from './inbox';
+import type { ExtendedUIMessage } from './message-types';
+import type { Turn } from './turn';
 
 const logger = {
   debug: vi.fn(),
@@ -233,6 +237,68 @@ describe('ChatSession lifecycle', () => {
       'Cannot start a terminated chat session',
     );
   });
+
+  it.each([false, true])(
+    'interrupts critical events even when immediate dispatch fails: %s',
+    async (failedDispatch) => {
+      const session = createSession();
+      const abortGeneration = vi.fn();
+      const internals = session as unknown as {
+        currentTurn: Pick<Turn, 'abortGeneration' | 'abortTools'>;
+        laneSuspended: boolean;
+        inboxEventMessage: (event: unknown) => ExtendedUIMessage;
+        inbox: Pick<SessionInboxBuffer, 'getEvents'>;
+      };
+      internals.currentTurn = { abortGeneration, abortTools: vi.fn() };
+      internals.laneSuspended = true;
+      if (failedDispatch)
+        vi.spyOn(internals, 'inboxEventMessage').mockImplementationOnce(() => {
+          throw new Error('dispatch failed');
+        });
+      const event = {
+        eventId: 'critical-event',
+        sourceEnv: 'test',
+        urgency: SessionInboxUrgency.Critical,
+        context: { sourceEnv: 'test', metadata: {}, content: [] },
+      };
+      session.inbox.send(event);
+      expect(abortGeneration).toHaveBeenCalledExactlyOnceWith(
+        'inbox_interrupt',
+      );
+      if (failedDispatch) expect(internals.inbox.getEvents()).toEqual([event]);
+      session.inbox.send(event);
+      expect(abortGeneration).toHaveBeenCalledOnce();
+      await session.close();
+    },
+  );
+
+  it.each([SessionInboxUrgency.Critical, SessionInboxUrgency.Default])(
+    'interrupts native messages only for critical urgency: %s',
+    async (urgency) => {
+      const session = createSession();
+      const abortGeneration = vi.fn();
+      const internals = session as unknown as {
+        currentTurn: Pick<Turn, 'abortGeneration' | 'abortTools'>;
+        laneSuspended: boolean;
+      };
+      internals.currentTurn = { abortGeneration, abortTools: vi.fn() };
+      internals.laneSuspended = true;
+      session.inbox.sendMessage(
+        {
+          id: 'native',
+          role: 'user',
+          parts: [{ type: 'text', text: 'input' }],
+        },
+        urgency,
+      );
+      if (urgency === SessionInboxUrgency.Critical)
+        expect(abortGeneration).toHaveBeenCalledExactlyOnceWith(
+          'inbox_interrupt',
+        );
+      else expect(abortGeneration).not.toHaveBeenCalled();
+      await session.close();
+    },
+  );
 
   it('aborts generation and tools synchronously while cleanup is pending', async () => {
     const cleanup = Promise.withResolvers<void>();

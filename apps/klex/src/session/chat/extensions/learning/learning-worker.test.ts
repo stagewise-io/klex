@@ -24,6 +24,10 @@ import { createLearningWorker } from './learning-worker';
 import { createSkillStore } from './skill-store';
 import { executeFixtureSubmission } from './test-generation';
 
+vi.mock('@/session/chat/extensions/time/system-prompt.md', () => ({
+  default: '',
+}));
+
 vi.mock('./extraction-prompt.md', () => ({
   default: 'Extract. {{NAME}}\n<soul>{{SOUL}}</soul>',
 }));

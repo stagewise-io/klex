@@ -1,6 +1,6 @@
 import { createServer } from 'node:http';
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createLogger } from '@stagewise/logger';
 
@@ -8,10 +8,17 @@ import { createDrain } from '@/drain';
 
 import { createHealthServer, type HealthServer } from './health-server';
 
+vi.mock('node:http', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:http')>();
+  return { ...actual, createServer: vi.fn(actual.createServer) };
+});
+
 const logging = createLogger({ name: 'health-test', console: false });
 const servers: HealthServer[] = [];
 afterEach(async () => {
   await Promise.all(servers.splice(0).map((server) => server.close()));
+  vi.restoreAllMocks();
+  vi.clearAllMocks();
 });
 
 async function fixture() {
@@ -101,6 +108,37 @@ describe('health server', () => {
     await server.close();
     await Promise.all([server.start(), server.start()]);
     await Promise.all([server.close(), server.close()]);
+    await expect(fetch(`${url}/livez`)).rejects.toThrow();
+  });
+
+  it('logs repeated post-bind errors without throwing or dropping probes', async () => {
+    const child = logging.child({ name: 'error-test' });
+    const logError = vi.spyOn(child, 'error');
+    vi.spyOn(logging, 'child').mockReturnValue(child);
+    const { server, url } = await fixture();
+    await server.start();
+    server.markReady();
+    const listener = vi.mocked(createServer).mock.results.at(-1)?.value;
+    if (!listener) throw new Error('Missing health listener');
+    const firstError = new Error('First post-bind error');
+    const secondError = new Error('Second post-bind error');
+    expect(listener.listenerCount('error')).toBe(1);
+    expect(() => listener.emit('error', firstError)).not.toThrow();
+    expect(() => listener.emit('error', secondError)).not.toThrow();
+    expect(logError).toHaveBeenCalledTimes(2);
+    expect(logError).toHaveBeenNthCalledWith(
+      1,
+      { error: firstError },
+      'Health listener error',
+    );
+    expect(logError).toHaveBeenNthCalledWith(
+      2,
+      { error: secondError },
+      'Health listener error',
+    );
+    expect((await fetch(`${url}/livez`)).status).toBe(200);
+    expect((await fetch(`${url}/readyz`)).status).toBe(200);
+    await server.close();
     await expect(fetch(`${url}/livez`)).rejects.toThrow();
   });
 

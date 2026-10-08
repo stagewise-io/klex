@@ -49,6 +49,9 @@ class HealthServerModule implements HealthServer {
       }
     });
     this.server = server;
+    server.on('error', (error: Error) => {
+      this.deps.logger.error({ error }, 'Health listener error');
+    });
     try {
       await new Promise<void>((resolve, reject) => {
         server.once('error', reject);

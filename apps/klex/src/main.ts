@@ -294,6 +294,7 @@ async function main(): Promise<void> {
     }).choose();
     finishPickerEnrollment('aborted');
     if (selectedDirectory === undefined) {
+      await healthServer?.close();
       await interactiveCloud?.close().catch(() => undefined);
       await interactiveLocalData?.close().catch(() => undefined);
       await interactiveLock?.release().catch(() => undefined);

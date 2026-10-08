@@ -130,7 +130,9 @@ export function buildConsolidationPrompt(input: {
   now: number;
 }): BuiltPrompt {
   const skills = renderSkills(input.skills, (skill) => {
-    const usage = input.usage[skill.name];
+    const usage = Object.hasOwn(input.usage, skill.name)
+      ? input.usage[skill.name]
+      : undefined;
     if (!usage) return '';
     const stale = isStale(usage, input.now) ? ' stale="true"' : '';
     const lastRead = usage.lastReadAt ?? 'never';
@@ -164,8 +166,12 @@ export function renderSkillList(
   if (skills.length === 0) return '';
   const ordered = [...skills].sort(
     (left, right) =>
-      recency(usage[right.name]) - recency(usage[left.name]) ||
-      left.name.localeCompare(right.name),
+      recency(
+        Object.hasOwn(usage, right.name) ? usage[right.name] : undefined,
+      ) -
+        recency(
+          Object.hasOwn(usage, left.name) ? usage[left.name] : undefined,
+        ) || left.name.localeCompare(right.name),
   );
   let { lines, overflow, length } = describe(
     ordered,

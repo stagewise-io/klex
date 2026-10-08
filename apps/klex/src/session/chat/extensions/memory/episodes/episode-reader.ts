@@ -12,7 +12,7 @@ export interface EpisodePage {
   offset: number;
   nextOffset: number | null;
   scannedBytes: number;
-  /** Some file content could not be inspected within the scan budget. */
+  /** File content was omitted by the scan or tail character budget. */
   truncated: boolean;
 }
 
@@ -137,8 +137,11 @@ export async function readEpisodePage(
       }
     }
     const reachedEnd = startByte + scannedBytes >= stat.size;
-    const truncated = startByte > 0 || !reachedEnd;
     if (reachedEnd && !enough) consume(pending);
+    const truncated =
+      startByte > 0 ||
+      !reachedEnd ||
+      (options.tail === true && renderedLength > text.length);
     const hasMore = enough || truncated;
     return {
       id,

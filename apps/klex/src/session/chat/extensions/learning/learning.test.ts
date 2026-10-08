@@ -162,6 +162,34 @@ describe('learning extension', () => {
     await extension.onClose?.();
   });
 
+  it('tracks reads of a restored constructor skill without inherited bookkeeping', async () => {
+    const dataDir = await seededDataDir(['constructor']);
+    const skillCatalog = createSkillCatalog();
+    const extension = createLearningExt({
+      getSoul: () => null,
+      episodes: createEpisodeFeed(),
+      skillCatalog,
+    }).create(fakeDeps(dataDir, DEFAULT_SESSION_ID));
+    await extension.onStart?.();
+    try {
+      expect(skillCatalog.getUsage('constructor')).toBeNull();
+      expect(String(extension.getSystemPromptPart?.())).toContain(
+        'constructor',
+      );
+      expect(await readSkill(extension, 'constructor')).toContain(
+        'Do constructor.',
+      );
+      await vi.waitFor(() =>
+        expect(skillCatalog.getUsage('constructor')).toMatchObject({
+          readCount: 1,
+          sourceEpisodes: [],
+        }),
+      );
+    } finally {
+      await extension.onClose?.();
+    }
+  });
+
   it('renders an empty list when nothing was learned', async () => {
     const dataDir = await seededDataDir([]);
     const extension = createLearningExt({

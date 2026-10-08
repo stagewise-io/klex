@@ -196,6 +196,55 @@ async function harness(feed: EpisodeFeed) {
 }
 
 describe('learning worker', () => {
+  it('creates an evidence-cited constructor skill without treating inherited properties as usage', async () => {
+    const { worker, store, state, generateText, dataDir } = await harness(
+      fakeFeed(1),
+    );
+    const skill = {
+      name: 'constructor',
+      description: 'Use when configuring a constructor.',
+      body: 'Use explicit dependencies.',
+    };
+    generateText.mockResolvedValueOnce(
+      ok(
+        JSON.stringify({
+          operations: [
+            { op: 'create', ...skill, evidenceEpisodes: [episodeId(0)] },
+          ],
+        }),
+      ),
+    );
+    expect(await worker.runOnce()).toBe('processed');
+    expect(store.get('constructor')).toEqual(skill);
+    expect(Object.hasOwn(state.get().skills, 'constructor')).toBe(true);
+    expect(state.get().skills.constructor).toMatchObject({
+      sourceEpisodes: [episodeId(0)],
+      readCount: 0,
+    });
+    const reloaded = createLearningState(dataDir);
+    await reloaded.start();
+    expect(Object.hasOwn(reloaded.get().skills, 'constructor')).toBe(true);
+    expect(reloaded.get().skills.constructor).toMatchObject({
+      sourceEpisodes: [episodeId(0)],
+    });
+  });
+
+  it('consolidates a restored constructor skill with no bookkeeping', async () => {
+    const { worker, store, state, generateText } = await harness(fakeFeed(0));
+    for (const name of ['constructor', 'other'])
+      await store.write({
+        name,
+        description: 'Use when appropriate.',
+        body: 'Body.',
+      });
+    await state.update((draft) => {
+      draft.pendingChangeWeight = CONSOLIDATE_CHANGE_WEIGHT;
+    });
+    expect(await worker.runOnce()).toBe('idle');
+    expect(generateText).toHaveBeenCalledTimes(1);
+    expect(generateText.mock.calls[0]?.[0].prompt).not.toContain('undefined');
+  });
+
   it('commits a tool submission regardless of response text', async () => {
     const { worker, store, generateText } = await harness(fakeFeed(1));
     generateText.mockImplementationOnce(async (args) => {
@@ -444,7 +493,7 @@ describe('learning worker', () => {
     const { worker, generateText } = await harness(feed);
     await worker.runOnce();
     expect(generateText.mock.calls[0]?.[0].prompt).toContain(
-      '[Partial episode: scan budget exhausted; uninspected content is not evidence.]',
+      '[Partial episode: scan or character budget exhausted; omitted content is not evidence.]',
     );
   });
 
@@ -697,6 +746,116 @@ describe('learning worker', () => {
     expect(full.reads.slice(0, 2)).toEqual([episodeId(0), episodeId(0)]);
   });
 
+  it('persists deletion bookkeeping before removing the skill file', async () => {
+    const { worker, store, state, generateText, dataDir } = await harness(
+      fakeFeed(1),
+    );
+    generateText.mockResolvedValueOnce(ok(createReply('lesson')));
+    await worker.runOnce();
+    await state.update((draft) => {
+      draft.pendingChangeWeight = CONSOLIDATE_CHANGE_WEIGHT;
+    });
+    // A second skill allows consolidation while the feed is idle.
+    await store.write({
+      name: 'other',
+      description: 'Use when other.',
+      body: 'Other.',
+    });
+    const originalDelete = store.delete.bind(store);
+    vi.spyOn(store, 'delete').mockImplementation(async (name) => {
+      const persisted = createLearningState(dataDir);
+      await persisted.start();
+      expect(Object.hasOwn(persisted.get().skills, name)).toBe(false);
+      expect(store.get(name)).not.toBeNull();
+      await originalDelete(name);
+    });
+    generateText.mockResolvedValueOnce(
+      ok(
+        '{"operations": [{"op": "delete", "name": "lesson", "reason": "obsolete"}]}',
+      ),
+    );
+    expect(await worker.runOnce()).toBe('idle');
+    expect(store.get('lesson')).toBeNull();
+  });
+
+  it('does not delete the file when persisting removal fails', async () => {
+    const { worker, store, state, generateText } = await harness(fakeFeed(1));
+    generateText.mockResolvedValueOnce(ok(createReply('lesson')));
+    await worker.runOnce();
+    await store.write({
+      name: 'other',
+      description: 'Use when other.',
+      body: 'Other.',
+    });
+    await state.update((draft) => {
+      draft.pendingChangeWeight = CONSOLIDATE_CHANGE_WEIGHT;
+    });
+    const before = state.get().skills.lesson;
+    vi.spyOn(state, 'update').mockRejectedValueOnce(
+      new Error('state write failed'),
+    );
+    const remove = vi.spyOn(store, 'delete');
+    generateText.mockResolvedValueOnce(
+      ok(
+        '{"operations": [{"op": "delete", "name": "lesson", "reason": "obsolete"}]}',
+      ),
+    );
+    await worker.runOnce();
+    expect(remove).not.toHaveBeenCalled();
+    expect(store.get('lesson')).not.toBeNull();
+    expect(state.get().skills.lesson).toEqual(before);
+  });
+
+  it('restores deletion bookkeeping and concurrent reads when file removal fails', async () => {
+    const { worker, store, state, generateText, dataDir } = await harness(
+      fakeFeed(1),
+    );
+    generateText.mockResolvedValueOnce(ok(createReply('lesson')));
+    await worker.runOnce();
+    await store.write({
+      name: 'other',
+      description: 'Use when other.',
+      body: 'Other.',
+    });
+    await state.update((draft) => {
+      draft.pendingChangeWeight = CONSOLIDATE_CHANGE_WEIGHT;
+      const entry = draft.skills.lesson;
+      if (entry) entry.readCount = 5;
+    });
+    const before = state.get().skills.lesson;
+    const readAt = '2026-10-03T00:00:00.000Z';
+    vi.spyOn(store, 'delete').mockImplementationOnce(async () => {
+      expect(Object.hasOwn(state.get().skills, 'lesson')).toBe(false);
+      await state.update((draft) => {
+        draft.skills.lesson = {
+          createdAt: readAt,
+          updatedAt: readAt,
+          lastReadAt: readAt,
+          readCount: 1,
+          sourceEpisodes: [],
+          lastReadEpisode: draft.processedEpisodeCount,
+        };
+      });
+      throw new Error('delete failed');
+    });
+    generateText.mockResolvedValueOnce(
+      ok(
+        '{"operations": [{"op": "delete", "name": "lesson", "reason": "obsolete"}]}',
+      ),
+    );
+    await worker.runOnce();
+    expect(store.get('lesson')).not.toBeNull();
+    expect(state.get().skills.lesson).toMatchObject({
+      ...before,
+      readCount: 6,
+      lastReadAt: readAt,
+      lastReadEpisode: 1,
+    });
+    const persisted = createLearningState(dataDir);
+    await persisted.start();
+    expect(persisted.get().skills.lesson).toEqual(state.get().skills.lesson);
+  });
+
   it('restores skill state when the skill file write fails', async () => {
     const { worker, store, state, generateText, dataDir } = await harness(
       fakeFeed(1),
@@ -797,6 +956,73 @@ describe('learning worker', () => {
       ...before,
       lastReadAt: readAt,
       readCount: 1,
+    });
+  });
+
+  it('retries an unavailable episode without advancing before a later successful read', async () => {
+    const feed = fakeFeed(1);
+    vi.spyOn(feed, 'readPage').mockResolvedValueOnce(null);
+    const { worker, state, generateText } = await harness(feed);
+    expect(await worker.runOnce()).toBe('retry-later');
+    expect(state.get()).toMatchObject({
+      cursor: null,
+      processedEpisodeCount: 0,
+      episodeFailures: { [episodeId(0)]: 1 },
+    });
+    expect(generateText).not.toHaveBeenCalled();
+    expect(await worker.runOnce()).toBe('processed');
+    expect(state.get()).toMatchObject({
+      cursor: episodeId(0),
+      processedEpisodeCount: 1,
+      episodeFailures: {},
+    });
+    expect(generateText).toHaveBeenCalledTimes(1);
+  });
+
+  it('applies the retry ceiling to permanently unavailable episodes', async () => {
+    const feed = fakeFeed(2);
+    const read = feed.readPage.bind(feed);
+    feed.readPage = async (id, options) =>
+      id === episodeId(0) ? null : read(id, options);
+    const { worker, state, generateText } = await harness(feed);
+    for (let attempt = 1; attempt < MAX_FAILURES_PER_EPISODE; attempt++) {
+      expect(await worker.runOnce()).toBe('retry-later');
+      expect(state.get().cursor).toBeNull();
+    }
+    expect(await worker.runOnce()).toBe('processed');
+    expect(state.get()).toMatchObject({
+      cursor: episodeId(1),
+      processedEpisodeCount: 2,
+      episodeFailures: {},
+    });
+    expect(generateText).toHaveBeenCalledTimes(1);
+  });
+
+  it('preserves a deferred revisit when its page is temporarily unavailable', async () => {
+    const feed = fakeFeed(2);
+    const read = feed.readPage.bind(feed);
+    let unavailable = false;
+    feed.readPage = async (id, options) =>
+      unavailable && id === episodeId(0) ? null : read(id, options);
+    const { worker, state, generateText } = await harness(feed);
+    generateText
+      .mockResolvedValueOnce(ok('{"operations": [], "deferred": true}'))
+      .mockImplementationOnce(async () => {
+        unavailable = true;
+        return ok('{"operations": []}');
+      });
+    expect(await worker.runOnce()).toBe('retry-later');
+    expect(state.get()).toMatchObject({
+      processedEpisodeCount: 2,
+      deferred: [{ id: episodeId(0), after: episodeId(0), attempts: 0 }],
+      episodeFailures: { [episodeId(0)]: 1 },
+    });
+    unavailable = false;
+    expect(await worker.runOnce()).toBe('idle');
+    expect(state.get()).toMatchObject({
+      deferred: [],
+      episodeFailures: {},
+      processedEpisodeCount: 2,
     });
   });
 
@@ -913,6 +1139,33 @@ describe('learning worker', () => {
     expect(state.get().pendingChangeWeight).toBe(0);
     expect(state.get().lastConsolidationAt).toBe('2026-10-02T00:00:00.000Z');
   });
+
+  it.each([0, 1])(
+    'enforces the cap and records backoff when consolidation throws, primary episodes: %i',
+    async (count) => {
+      const { worker, store, state, generateText } = await harness(
+        fakeFeed(count),
+      );
+      for (let index = 0; index <= MAX_SKILLS; index++)
+        await store.write({
+          name: `skill-${index}`,
+          description: 'Use when x.',
+          body: 'Body.',
+        });
+      generateText.mockImplementation(async ({ system }) => {
+        if (system?.startsWith('Consolidate.'))
+          throw new Error('provider exception');
+        return ok('{"operations": []}');
+      });
+      expect(await worker.runOnce()).toBe(count ? 'processed' : 'idle');
+      expect(store.list()).toHaveLength(MAX_SKILLS);
+      expect(state.get()).toMatchObject({
+        consolidationFailures: 1,
+        nextConsolidationEpisode: count + 1,
+      });
+      expect(worker.introspect().running).toBe(false);
+    },
+  );
 
   it('evicts least-recently-used skills above the cap', async () => {
     const { worker, store, state, generateText } = await harness(fakeFeed(0));

@@ -134,7 +134,9 @@ class LearningExtension implements Extension {
     void this.data.state
       .update((draft) => {
         // Skills without state (restored folders, lost state) start tracking now.
-        const entry = draft.skills[name] ?? {
+        const entry = (Object.hasOwn(draft.skills, name)
+          ? draft.skills[name]
+          : undefined) ?? {
           createdAt: at,
           updatedAt: at,
           lastReadAt: null,
@@ -156,7 +158,8 @@ class LearningExtension implements Extension {
   }
 
   private getUsage(name: string): SkillUsage | null {
-    const entry = this.data.state.get().skills[name];
+    const skills = this.data.state.get().skills;
+    const entry = Object.hasOwn(skills, name) ? skills[name] : undefined;
     if (!entry) return null;
     return {
       createdAt: entry.createdAt,

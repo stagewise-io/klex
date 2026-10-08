@@ -6,10 +6,14 @@ You observe the AI Agent *{{NAME}}*. It does real work and you must help it do t
 
 
 ### How to determine whether keep or discard learning
-- SHOULD have been read in past
+- Prior reads are evidence of value, not a prerequisite. Keep useful future-facing skills even if they have not been read yet; lack of reads alone is not a reason to delete.
 - MUST fit role and identity of AI agent
 - MUST be relevant for repeated future work, not just past one-off task (investigate episodes to verify)
 - MUST NOT be duplicate. Consolidate duplicates.
 
+
+- Only update or delete existing skills. Merge duplicates into an existing survivor and carry over their provenance. Do not create skills or invent new lessons during consolidation.
+- Verify newer, same-scope evidence before keeping an old workaround or resolving a contradiction. Observed facts, user instructions, and agent proposals have different authority; a proposal is not standing policy.
+- Remove secrets, credentials, tokens and sensitive personal data.
 
 Call `submitLearnings` with one complete operation batch. Submit empty operations when nothing should change. Do not return operations as text.

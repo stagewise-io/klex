@@ -636,6 +636,30 @@ class ChatSessionModule implements AgentSession {
                 failureReason: 'cancelled' as const,
               };
             const modelId = entry.modelId;
+            // Tool closures can spend budgets or mutate state. Never replay
+            // the original prompt against them after any execution starts.
+            let toolsExecuted = false;
+            const tools: ToolSet | undefined =
+              args.tools &&
+              Object.fromEntries(
+                Object.entries(args.tools).map(([name, definition]) => {
+                  const execute = definition.execute;
+                  return [
+                    name,
+                    execute
+                      ? {
+                          ...definition,
+                          execute: (
+                            ...parameters: Parameters<typeof execute>
+                          ) => {
+                            toolsExecuted = true;
+                            return execute(...parameters);
+                          },
+                        }
+                      : definition,
+                  ];
+                }),
+              );
             try {
               const model =
                 await this.deps.modelResolver.getLanguageModel(entry);
@@ -649,7 +673,7 @@ class ChatSessionModule implements AgentSession {
                       model,
                       system: args.system,
                       messages: args.messages,
-                      tools: args.tools,
+                      tools,
                       temperature: args.temperature,
                       maxOutputTokens: args.maxOutputTokens,
                       maxRetries: args.maxRetries ?? 0,
@@ -678,7 +702,7 @@ class ChatSessionModule implements AgentSession {
                       model,
                       system: args.system,
                       prompt: args.prompt ?? '',
-                      tools: args.tools,
+                      tools,
                       temperature: args.temperature,
                       maxOutputTokens: args.maxOutputTokens,
                       maxRetries: args.maxRetries ?? 0,
@@ -724,13 +748,14 @@ class ChatSessionModule implements AgentSession {
                 failures.push(msg);
                 contentFilterCount++;
                 this.deps.logger.warn(
-                  { modelId, finishReason: result.finishReason },
-                  'Extension generateText returned content-filter — trying next model',
+                  { modelId, finishReason: result.finishReason, toolsExecuted },
+                  'Extension generateText returned content-filter',
                 );
                 span.addEvent('gen.model_content_filter', {
                   'gen.modelId': modelId,
                   'gen.finishReason': result.finishReason,
                 });
+                if (toolsExecuted) break;
                 continue;
               }
 
@@ -782,18 +807,19 @@ class ChatSessionModule implements AgentSession {
                 error instanceof Error ? error.message : String(error);
               failures.push(`${modelId}: ${msg}`);
               this.deps.logger.warn(
-                { error, modelId },
-                'Extension generateText model failed — trying next',
+                { error, modelId, toolsExecuted },
+                'Extension generateText model failed',
               );
               span.addEvent('gen.model_failed', {
                 'gen.modelId': modelId,
                 'gen.error': msg,
               });
+              if (toolsExecuted) break;
             }
           }
 
           const allContentFilter =
-            contentFilterCount > 0 && contentFilterCount === modelIds.length;
+            contentFilterCount > 0 && contentFilterCount === failures.length;
 
           span.setAttribute(
             'gen.outcome',

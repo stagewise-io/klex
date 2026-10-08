@@ -2777,6 +2777,7 @@ describe('MCP Ingress extension', () => {
     const call = (deps.inbox.send as ReturnType<typeof vi.fn>).mock.calls
       .at(0)
       ?.at(0) as {
+      eventId: string;
       urgency: string;
       context: {
         sourceEnv: string;
@@ -2784,7 +2785,8 @@ describe('MCP Ingress extension', () => {
         content: { type: string; text?: string }[];
       };
     };
-    expect(call.urgency).toBe(SessionInboxUrgency.Deferrable);
+    expect(call.eventId).toBe('github:evt-2');
+    expect(call.urgency).toBe(SessionInboxUrgency.Default);
     expect(call.context.sourceEnv).toBe('mcp-resource-watcher');
     expect(call.context.metadata.kind).toBe('push-notification-notice');
     expect(call.context.metadata.handle).toBe('r1');
@@ -2796,6 +2798,53 @@ describe('MCP Ingress extension', () => {
     if (!notice) throw new Error('Expected one notice content block');
     expect(notice.type).toBe('text');
     expect(notice.text).toContain('r1');
+  });
+
+  it('propagates notice delivery failures so MCP can redeliver', async () => {
+    let notify:
+      | Parameters<NonNullable<ExtensionDeps['mcp']>['onPushNotification']>[0]
+      | undefined;
+    const deps = createMockDeps({
+      readResource: vi.fn().mockResolvedValue({
+        contents: [
+          { uri: 'file:///data.txt', mimeType: 'text/plain', text: 'hello' },
+        ],
+      }),
+      supportsResourceSubscription: vi.fn(() => false),
+      onPushNotification: vi.fn((callback) => {
+        notify = callback;
+        return () => {};
+      }),
+    });
+    const ext = createMcpIngressExt().create(deps);
+    await ext.onStart?.();
+    await callTool(ext, 'openResource', {
+      serverName: 'github',
+      uri: 'file:///data.txt',
+    });
+    vi.mocked(deps.inbox.send).mockImplementationOnce(() => {
+      throw new Error('Inbox closed');
+    });
+    const notification = {
+      namespace: 'github',
+      event: {
+        eventId: 'retry-notice',
+        sourceId: 'ci',
+        type: 'build.completed',
+        createdAt: '2026-01-01T00:00:00Z',
+        content: [{ type: 'text' as const, text: 'Build finished' }],
+        resourceLink: { uri: 'file:///data.txt' },
+      },
+    };
+    expect(() => notify?.(notification)).toThrow('Inbox closed');
+    notify?.(notification);
+    expect(deps.inbox.send).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        eventId: 'github:retry-notice',
+        urgency: SessionInboxUrgency.Default,
+      }),
+    );
+    await ext.onClose?.();
   });
 
   it('push notification with resourceLink to an unopened resource passes through', async () => {

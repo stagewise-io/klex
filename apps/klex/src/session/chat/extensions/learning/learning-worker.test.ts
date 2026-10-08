@@ -549,6 +549,34 @@ describe('learning worker', () => {
       cursor: null,
     });
   });
+  it('does not start generation after shutdown during an episode read', async () => {
+    const feed = fakeFeed(1);
+    const readPage = feed.readPage;
+    let release!: () => void;
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let reading = false;
+    feed.readPage = async (...args) => {
+      reading = true;
+      await blocked;
+      return readPage(...args);
+    };
+    const { worker, state, store, generateText } = await harness(feed);
+    const run = worker.runOnce();
+    await vi.waitFor(() => expect(reading).toBe(true));
+    const closing = worker.close();
+    release();
+    await Promise.all([run, closing]);
+    expect(generateText).not.toHaveBeenCalled();
+    expect(store.list()).toEqual([]);
+    expect(state.get()).toMatchObject({
+      cursor: null,
+      processedEpisodeCount: 0,
+      episodeFailures: {},
+    });
+  });
+
   it('does nothing while memory is unavailable', async () => {
     const { worker, generateText } = await harness(
       fakeFeed(3, undefined, false),

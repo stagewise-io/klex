@@ -626,6 +626,58 @@ describe('MCP Push Notification worker', () => {
     await mcp.close();
   });
 
+  it.each([true, false])(
+    'serializes replacement recovery behind an outgoing listener, handled=%s',
+    async (handled) => {
+      const first = pendingQueueServer([numberedEvent(1), numberedEvent(2)]);
+      const second = pendingQueueServer([numberedEvent(1), numberedEvent(2)]);
+      const servers = [first.server, second.server];
+      const { mcp, config } = setup(
+        { chat: { url: 'https://chat.example/mcp' } },
+        async () => servers.shift() ?? second.server,
+      );
+      const release = deferred<void>();
+      let calls = 0;
+      const listener = vi.fn(
+        async (_notification: { event: PushNotification }) => {
+          if (calls++ === 0) {
+            await release.promise;
+            if (!handled) throw new Error('Outgoing inbox closed');
+          }
+        },
+      );
+      mcp.onPushNotification(listener);
+      try {
+        await mcp.start();
+        await vi.waitFor(() => expect(listener).toHaveBeenCalledOnce());
+        await config.publish({ chat: { url: 'https://chat.example/v2/mcp' } });
+        await vi.waitFor(() => expect(second.getEvents).toHaveBeenCalled());
+        // The old reservation is not proof that either event was handled.
+        await mcp.acknowledgeDeliveredEvents();
+        expect(second.acknowledgeEvents).not.toHaveBeenCalled();
+        expect(second.pending).toHaveLength(2);
+        expect(listener).toHaveBeenCalledOnce();
+        release.resolve();
+        await vi.waitFor(() =>
+          expect(listener).toHaveBeenCalledTimes(handled ? 2 : 3),
+        );
+        await mcp.acknowledgeDeliveredEvents();
+        expect(second.pending).toEqual([]);
+        expect(first.acknowledgeEvents).not.toHaveBeenCalled();
+        expect(
+          listener.mock.calls.map(
+            ([notification]) => notification.event.eventId,
+          ),
+        ).toEqual(
+          handled ? ['event-1', 'event-2'] : ['event-1', 'event-1', 'event-2'],
+        );
+      } finally {
+        release.resolve();
+        await mcp.close();
+      }
+    },
+  );
+
   it('keeps in-flight events across a reconnect and acknowledges them later', async () => {
     const first = pendingQueueServer([pushNotification]);
     const second = pendingQueueServer([pushNotification]);

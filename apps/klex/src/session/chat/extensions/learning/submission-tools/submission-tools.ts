@@ -33,6 +33,7 @@ export interface LearningSubmissionToolsOptions {
   evidence: ReadonlySet<string>;
   existingNames: readonly string[];
   allowDefer: boolean;
+  allowCreate: boolean;
   signal: AbortSignal;
 }
 
@@ -53,6 +54,9 @@ class LearningSubmissionToolsModule implements LearningSubmissionTools {
       options.allowDefer
         ? 'If evidence remains insufficient and later episodes may resolve it, submit operations: [] with deferred: true. A deferral must not contain operations.'
         : 'Consolidation cannot defer. Preserve existing skills when evidence is insufficient and submit operations: [] if nothing can safely change.',
+      options.allowCreate
+        ? 'Create or update skills supported by evidence. Delete only skills verified as superseded; do not discard unrelated skills.'
+        : 'Only update or delete existing skills. Consolidation cannot create skills or invent new lessons; merge into an existing survivor.',
       'Only cite episode IDs actually exposed in this investigation. A submission stages a batch without writing skills. The worker commits it only after generation succeeds. Investigation is bounded; the final step permits only submitLearnings. An accepted submission ends generation.',
     ].join('\n\n');
     this.tools = {
@@ -107,6 +111,8 @@ class LearningSubmissionToolsModule implements LearningSubmissionTools {
     )
       return 'Deferral is allowed only for extraction with an empty operation batch';
     for (const operation of submission.operations) {
+      if (operation.op === 'create' && !this.options.allowCreate)
+        return 'Consolidation cannot create skills; update an existing survivor instead';
       if (operation.op === 'delete') continue;
       if (
         operation.evidenceEpisodes?.some((id) => !this.options.evidence.has(id))

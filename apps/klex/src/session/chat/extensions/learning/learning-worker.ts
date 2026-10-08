@@ -212,7 +212,7 @@ class LearningWorkerModule implements LearningWorker {
     let characters = 0;
     while (!this.closed && characters < PRIMARY_PASS_CHARACTERS) {
       const [ref] = await episodes.listCompleted(state.get().cursor, 1);
-      if (!ref) break;
+      if (!ref || this.closed) break;
       result = 'processed';
       let outcome: EpisodeOutcome;
       try {
@@ -268,6 +268,7 @@ class LearningWorkerModule implements LearningWorker {
       INITIAL_BACKFILL_EPISODES + 1,
     );
     if (latest.length <= INITIAL_BACKFILL_EPISODES) return null;
+    if (this.closed) return null;
     const start = latest[0]?.id ?? null;
     await state.update((draft) => {
       draft.cursor = start;
@@ -308,6 +309,8 @@ class LearningWorkerModule implements LearningWorker {
             tail: true,
           })
         : supplied;
+    // Shutdown may have begun while the episode reader was awaiting I/O.
+    if (this.closed) return 'stop';
     const episode =
       page?.startedAt && page.endedAt
         ? { ...page, startedAt: page.startedAt, endedAt: page.endedAt }
@@ -349,6 +352,7 @@ class LearningWorkerModule implements LearningWorker {
       evidence: investigation.evidence,
       existingNames: store.list().map((skill) => skill.name),
       allowDefer: true,
+      allowCreate: true,
       signal: controller.signal,
     });
     const generated = await this.options.generateText({
@@ -639,6 +643,7 @@ class LearningWorkerModule implements LearningWorker {
       evidence: investigation.evidence,
       existingNames: skills.map((skill) => skill.name),
       allowDefer: false,
+      allowCreate: false,
       signal: controller.signal,
     });
     const generated = await this.options.generateText({

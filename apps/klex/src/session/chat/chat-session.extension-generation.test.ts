@@ -118,6 +118,10 @@ async function harness(models: MockLanguageModelV4[]) {
     prompt: 'Submit a value.',
     maxSteps: 3,
     tools: {
+      investigate: tool({
+        inputSchema: z.object({}),
+        execute: async () => ({ evidence: 'Observed.' }),
+      }),
       submit: tool({
         inputSchema: z.object({ value: z.string() }),
         execute: submit,
@@ -191,6 +195,9 @@ describe('extension generation SDK contract', () => {
       expect(model.doGenerateCalls[0]?.toolChoice).toEqual({
         type: 'required',
       });
+      expect(model.doGenerateCalls[0]?.tools?.map((item) => item.name)).toEqual(
+        ['investigate', 'submit'],
+      );
       expect(model.doGenerateCalls[2]?.toolChoice).toEqual({
         type: 'tool',
         toolName: 'submit',
@@ -204,7 +211,7 @@ describe('extension generation SDK contract', () => {
   });
 
   it.each(['content-filter', 'error'] as const)(
-    'discards staged output from a %s attempt before fallback',
+    'discards staged output and stops fallback after tool execution on %s',
     async (finish) => {
       const losing = new MockLanguageModelV4({
         doGenerate: [call('losing', finish)],
@@ -218,16 +225,90 @@ describe('extension generation SDK contract', () => {
       ]);
       try {
         const result = await generate(args);
-        expect(submit).toHaveBeenCalledTimes(2);
+        expect(submit).toHaveBeenCalledOnce();
+        expect(result).toMatchObject({
+          success: false,
+          failureReason:
+            finish === 'content-filter'
+              ? 'content-filter'
+              : 'all-models-failed',
+        });
+        expect(result).not.toHaveProperty('toolResults');
+        expect(winning.doGenerateCalls).toHaveLength(0);
+      } finally {
+        await session.close();
+      }
+    },
+  );
+
+  it.each(['content-filter', 'error', 'throw'] as const)(
+    'permits fallback on %s before any tool executes',
+    async (finish) => {
+      const losing = new MockLanguageModelV4({
+        doGenerate: async () => {
+          if (finish === 'throw') throw new Error('Provider unavailable');
+          return { ...call('unused', finish), content: [] };
+        },
+      });
+      const winning = new MockLanguageModelV4({
+        doGenerate: [call('winning')],
+      });
+      const { generate, session, args, submit } = await harness([
+        losing,
+        winning,
+      ]);
+      try {
+        const result = await generate(args);
         expect(result.success && result.toolResults).toEqual([
           {
             toolName: 'submit',
             output: { status: 'accepted', value: 'winning' },
           },
         ]);
+        expect(submit).toHaveBeenCalledOnce();
+        expect(winning.doGenerateCalls).toHaveLength(1);
       } finally {
         await session.close();
       }
     },
   );
+
+  it('stops fallback when a later provider step throws after investigation', async () => {
+    let steps = 0;
+    const losing = new MockLanguageModelV4({
+      doGenerate: async () => {
+        if (steps++ > 0)
+          throw new Error('Provider unavailable after investigation');
+        const response = call('investigated');
+        return {
+          ...response,
+          content: [
+            {
+              type: 'tool-call' as const,
+              toolCallId: 'investigated',
+              toolName: 'investigate',
+              input: '{}',
+            },
+          ],
+        };
+      },
+    });
+    const winning = new MockLanguageModelV4({ doGenerate: [call('winning')] });
+    const { generate, session, args, submit } = await harness([
+      losing,
+      winning,
+    ]);
+    try {
+      const result = await generate(args);
+      expect(result).toMatchObject({
+        success: false,
+        failureReason: 'all-models-failed',
+      });
+      expect(losing.doGenerateCalls).toHaveLength(2);
+      expect(submit).not.toHaveBeenCalled();
+      expect(winning.doGenerateCalls).toHaveLength(0);
+    } finally {
+      await session.close();
+    }
+  });
 });

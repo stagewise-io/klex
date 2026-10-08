@@ -4,6 +4,7 @@ import {
   lstat,
   mkdir,
   mkdtemp,
+  open,
   readdir,
   readFile,
   rm,
@@ -20,6 +21,11 @@ import type { ModuleLogger } from '@stagewise/logger';
 
 import { createSkillStore } from './skill-store';
 
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs/promises')>();
+  return { ...actual, open: vi.fn(actual.open) };
+});
+
 const directories: string[] = [];
 const logger = {
   warn: vi.fn(),
@@ -28,6 +34,7 @@ const logger = {
 } as unknown as ModuleLogger;
 
 afterEach(async () => {
+  vi.clearAllMocks();
   await Promise.all(
     directories
       .splice(0)
@@ -105,6 +112,42 @@ describe('skill store', () => {
     expect(await readFile(target, 'utf-8')).toBe('external');
   });
 
+  it('rejects a file swapped for an external symlink when no-follow is unavailable', async () => {
+    const dir = await root();
+    await createSkillStore(dir, logger).write(skill);
+    const path = join(dir, skill.name, 'SKILL.md');
+    const outside = await root();
+    await mkdir(outside, { recursive: true });
+    const target = join(outside, 'SKILL.md');
+    await writeFile(target, await readFile(path));
+    const actual =
+      await vi.importActual<typeof import('node:fs/promises')>(
+        'node:fs/promises',
+      );
+    const read = vi.fn();
+    vi.mocked(open).mockImplementationOnce(async () => {
+      await rm(path);
+      await symlink(target, path);
+      // Simulate Windows: open follows the replacement link without O_NOFOLLOW.
+      const handle = await actual.open(path, 'r');
+      vi.spyOn(handle, 'readFile').mockImplementation(read);
+      return handle;
+    });
+    const store = createSkillStore(dir, logger);
+    await store.start();
+    expect(store.list()).toEqual([]);
+    expect(read).not.toHaveBeenCalled();
+    expect(logger.warn).toHaveBeenCalledWith(
+      {
+        skill: skill.name,
+        error: expect.objectContaining({
+          message: 'SKILL.md changed while opening',
+        }),
+      },
+      'Skipping learned skill without readable SKILL.md',
+    );
+  });
+
   it('rejects invalid names and over-length content', async () => {
     const store = createSkillStore(await root(), logger);
     await expect(store.write({ ...skill, name: '..' })).rejects.toThrow();
@@ -129,7 +172,10 @@ describe('skill store', () => {
     expect(await readFile(join(dir, 'corrupt', 'SKILL.md'), 'utf-8')).toBe(
       'garbage',
     );
-    expect(logger.warn).toHaveBeenCalled();
+    expect(logger.warn).toHaveBeenCalledWith(
+      { skill: 'corrupt' },
+      'Skipping malformed learned skill',
+    );
   });
 
   it('serializes concurrent writes to the same skill', async () => {

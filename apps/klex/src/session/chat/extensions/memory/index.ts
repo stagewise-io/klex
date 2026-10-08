@@ -4,6 +4,7 @@ export {
   type EpisodeFeed,
   type EpisodeFeedHub,
   type EpisodePage,
+  EpisodePageReadError,
   type EpisodeRef,
   type EpisodeSearchResult,
 } from './episodes';

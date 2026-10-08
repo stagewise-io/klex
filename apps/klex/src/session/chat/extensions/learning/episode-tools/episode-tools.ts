@@ -1,7 +1,10 @@
 import type { ToolSet } from 'ai';
 import { z } from 'zod';
 
-import type { EpisodeFeed } from '@/session/chat/extensions/memory';
+import {
+  type EpisodeFeed,
+  EpisodePageReadError,
+} from '@/session/chat/extensions/memory/episodes';
 
 export interface EpisodeInvestigation {
   tools: ToolSet;
@@ -58,20 +61,28 @@ class EpisodeInvestigationModule implements EpisodeInvestigation {
           this.pendingReads.set(id, (this.pendingReads.get(id) ?? 0) + 1);
           this.characters -= chars;
           this.bytes -= bytes;
+          let scannedBytes = 0;
+          let usedCharacters = 0;
           try {
             const page = await episodes.readPage(id, {
               offset,
               limit: chars,
               maxBytes: bytes,
             });
-            this.bytes += bytes - (page?.scannedBytes ?? 0);
-            this.characters += chars - (page?.text.length ?? 0);
+            scannedBytes = page?.scannedBytes ?? 0;
+            usedCharacters = page?.text.length ?? 0;
             if (this.signal.aborted) return { status: 'cancelled' };
             if (page?.text) this.evidence.add(id);
             return page
               ? { status: 'ok', ...page }
               : { status: 'unavailable', id };
+          } catch (error) {
+            if (error instanceof EpisodePageReadError)
+              scannedBytes = error.scannedBytes;
+            throw error;
           } finally {
+            this.bytes += bytes - Math.max(0, Math.min(bytes, scannedBytes));
+            this.characters += chars - usedCharacters;
             const pending = (this.pendingReads.get(id) ?? 1) - 1;
             if (pending > 0) this.pendingReads.set(id, pending);
             else {
@@ -98,26 +109,32 @@ class EpisodeInvestigationModule implements EpisodeInvestigation {
           this.reservedSlots += limit;
           this.characters -= chars;
           this.bytes = 0;
+          let scannedBytes = 0;
+          let usedCharacters = 0;
           try {
             const result = await episodes.search(query, {
               offset,
               maxBytes: bytes,
               limit,
             });
-            this.bytes += bytes - result.scannedBytes;
-            this.characters +=
-              chars -
-              result.matches.reduce(
-                (sum, match) => sum + match.snippet.length,
-                0,
-              );
+            scannedBytes = result.scannedBytes;
+            usedCharacters = result.matches.reduce(
+              (sum, match) => sum + match.snippet.length,
+              0,
+            );
             if (this.signal.aborted) return { status: 'cancelled' };
             for (const match of result.matches) {
               if (!this.evidence.has(match.id)) this.reservedIds.add(match.id);
               this.evidence.add(match.id);
             }
             return { status: 'ok', ...result };
+          } catch (error) {
+            if (error instanceof EpisodePageReadError)
+              scannedBytes = error.scannedBytes;
+            throw error;
           } finally {
+            this.bytes += bytes - Math.max(0, Math.min(bytes, scannedBytes));
+            this.characters += chars - usedCharacters;
             this.reservedSlots -= limit;
           }
         },

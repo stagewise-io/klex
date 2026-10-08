@@ -61,7 +61,10 @@ describe('skills routes', () => {
     for (const path of ['/v1/skills', `/v1/skills/${tracked.name}`]) {
       const response = await app.request(path);
       expect(response.status).toBe(500);
-      expect(await response.json()).toHaveProperty('error');
+      expect(await response.json()).toMatchObject({
+        error: expect.any(String),
+        code: 'internal_error',
+      });
     }
   });
 

@@ -124,6 +124,55 @@ describe('episode feed', () => {
     expect(result.nextOffset).toBeNull();
   });
 
+  it('reports unavailable search candidates as partial coverage', async () => {
+    const { feed } = attached(
+      await episodicDir({ '2026-10-06/1-12-00.jsonl': file('gone') }),
+    );
+    vi.spyOn(feed, 'readPage').mockResolvedValueOnce(null);
+    expect(
+      await feed.search('absent', { offset: 0, maxBytes: 100_000, limit: 1 }),
+    ).toMatchObject({ matches: [], truncated: true, nextOffset: null });
+  });
+
+  it.each([59_997, 80_000])(
+    'finds a literal match at rendered offset %i beyond or across the first page',
+    async (offset) => {
+      const id = '2026-10-06/1-12-00.jsonl';
+      const query = 'verified-late-match';
+      const { feed } = attached(
+        await episodicDir({ [id]: file('x'.repeat(offset) + query) }),
+      );
+      const full = await feed.read(id);
+      const result = await feed.search(query, {
+        offset: 0,
+        maxBytes: 500_000,
+        limit: 1,
+      });
+      expect(result.matches).toHaveLength(1);
+      expect(result.matches[0]?.snippet).toContain(query);
+      const match = result.matches[0];
+      assert(match && full);
+      expect(match.snippet).toBe(
+        full.text.slice(match.offset, match.offset + match.snippet.length),
+      );
+      expect(result.scannedBytes).toBeLessThanOrEqual(500_000);
+    },
+  );
+
+  it('stops an in-episode search when its byte budget is exhausted', async () => {
+    const id = '2026-10-06/1-12-00.jsonl';
+    const { feed } = attached(
+      await episodicDir({ [id]: file(`${'x'.repeat(80_000)}late-match`) }),
+    );
+    const result = await feed.search('late-match', {
+      offset: 0,
+      maxBytes: 90_000,
+      limit: 1,
+    });
+    expect(result).toMatchObject({ matches: [], truncated: true });
+    expect(result.scannedBytes).toBeLessThanOrEqual(90_000);
+  });
+
   it('charges bytes scanned before candidate failure against the search budget', async () => {
     const { feed } = attached(
       await episodicDir({

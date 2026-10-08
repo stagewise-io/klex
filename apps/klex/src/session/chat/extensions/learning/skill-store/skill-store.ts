@@ -147,16 +147,24 @@ class SkillStoreModule implements SkillStore {
       const path = join(this.root, entry.name, SKILL_FILE);
       let content: string;
       try {
-        if (!(await lstat(path)).isFile()) {
+        const original = await lstat(path, { bigint: true });
+        if (!original.isFile()) {
           throw new Error('SKILL.md is not a regular file');
         }
         const handle = await open(
           path,
-          constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
+          constants.O_RDONLY |
+            (constants.O_NOFOLLOW ?? 0) |
+            (constants.O_NONBLOCK ?? 0),
         );
         try {
-          if (!(await handle.stat()).isFile())
+          const opened = await handle.stat({ bigint: true });
+          if (!opened.isFile())
             throw new Error('SKILL.md is not a regular file');
+          // Windows lacks O_NOFOLLOW. Verify the opened file's identity before
+          // reading so a link/file swapped after lstat is never trusted.
+          if (opened.dev !== original.dev || opened.ino !== original.ino)
+            throw new Error('SKILL.md changed while opening');
           content = await handle.readFile('utf-8');
         } finally {
           await handle.close();

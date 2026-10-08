@@ -879,14 +879,6 @@ class ChatSessionModule implements AgentSession {
       );
     }
 
-    // Critical urgency: abort the current generation immediately.
-    if (event.urgency === SessionInboxUrgency.Critical && this.currentTurn) {
-      this.currentTurn.abortGeneration('inbox_interrupt');
-      this.sessionSpan.addEvent('session.generation_aborted', {
-        'klex.session.abort_reason': 'inbox_interrupt',
-        'inbox.urgency': SessionInboxUrgency[event.urgency],
-      });
-    }
     return false;
   };
 
@@ -903,10 +895,7 @@ class ChatSessionModule implements AgentSession {
     return false;
   };
 
-  private onImmediateMessage = (
-    message: ExtendedUIMessage,
-    urgency: SessionInboxUrgency,
-  ): void => {
+  private onImmediateMessage = (message: ExtendedUIMessage): void => {
     if (this.loopActive) {
       // Queue — will be flushed after the current step commits its
       // response, preserving response-before-new-input ordering.
@@ -914,15 +903,6 @@ class ChatSessionModule implements AgentSession {
     } else {
       this.messages.push(message);
       this.scheduleTranscriptSync();
-    }
-
-    // Critical urgency: abort the current generation immediately.
-    if (urgency === SessionInboxUrgency.Critical && this.currentTurn) {
-      this.currentTurn.abortGeneration('inbox_interrupt');
-      this.sessionSpan.addEvent('session.generation_aborted', {
-        'klex.session.abort_reason': 'inbox_interrupt',
-        'inbox.urgency': SessionInboxUrgency[urgency],
-      });
     }
   };
 
@@ -1079,6 +1059,16 @@ class ChatSessionModule implements AgentSession {
   private onNewInput = (urgency: SessionInboxUrgency): void => {
     // Lease-consumed events are filtered by the inbox before this callback.
     // Native messages still reach it and remain pending until the lane resumes.
+
+    // Interrupt after inbox acceptance, including failed immediate dispatches
+    // buffered for recovery. Lease-consumed events do not reach this callback.
+    if (urgency === SessionInboxUrgency.Critical && this.currentTurn) {
+      this.currentTurn.abortGeneration('inbox_interrupt');
+      this.sessionSpan.addEvent('session.generation_aborted', {
+        'klex.session.abort_reason': 'inbox_interrupt',
+        'inbox.urgency': SessionInboxUrgency[urgency],
+      });
+    }
 
     // If currently in a backoff wait, interrupt it so the new input is
     // processed immediately.

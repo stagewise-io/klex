@@ -107,8 +107,7 @@ export interface SessionInboxBuffer extends ChatSessionInbox {
 export interface InboxDependencies {
   /**
    * Called for Critical and Default urgency events. The session appends
-   * the event to the message history immediately. For Critical urgency,
-   * the session also aborts the running generation.
+   * the event to the message history immediately.
    */
   /** Returns true when an active interaction lease consumed the event. */
   onImmediateEvent: (event: SessionInboxEvent) => boolean;
@@ -119,8 +118,7 @@ export interface InboxDependencies {
   onDeferredEvent?: (event: SessionInboxEvent) => boolean;
   /**
    * Called for Critical and Default urgency native messages. The session
-   * appends the message to the message history immediately. For Critical
-   * urgency, the session also aborts the running generation.
+   * appends the message to the message history immediately.
    */
   onImmediateMessage: (
     message: ExtendedUIMessage,
@@ -128,7 +126,8 @@ export interface InboxDependencies {
   ) => void;
   /**
    * Called for any input (any urgency). The session uses this to trigger
-   * the loop, track new input during a turn, and interrupt backoff waits.
+   * the loop, track new input during a turn, interrupt critical generation,
+   * and interrupt backoff waits. Lease-consumed events skip this callback.
    * The urgency is passed so the session can distinguish Deferrable
    * arrivals (which do not trigger check-retry) from Critical/Default.
    */

@@ -20,6 +20,7 @@ function harness(allowDefer = true) {
     existingNames: ['old'],
     signal: controller.signal,
     allowDefer,
+    allowCreate: allowDefer,
   });
   const call = async (input: unknown) => {
     const output = await submission.tools.submitLearnings?.execute?.(input, {
@@ -123,6 +124,33 @@ describe('learning submission tools', () => {
     expect(submission.read([await call(batch)])).toEqual({
       ok: true,
       submission: batch,
+    });
+  });
+
+  it('rejects consolidation creates at execution and when reading staged results', async () => {
+    const { call, submission } = harness(false);
+    const batch = { operations: [create] };
+    expect((await call(batch)).output).toMatchObject({
+      status: 'rejected',
+      reason: expect.stringContaining('cannot create'),
+    });
+    expect(
+      submission.read([
+        {
+          toolName: 'submitLearnings',
+          output: { status: 'accepted', submission: batch },
+        },
+      ]),
+    ).toMatchObject({
+      ok: false,
+      error: expect.stringContaining('cannot create'),
+    });
+    const corrected = {
+      operations: [{ ...create, op: 'update', name: 'old' }],
+    };
+    expect(submission.read([await call(corrected)])).toEqual({
+      ok: true,
+      submission: corrected,
     });
   });
 

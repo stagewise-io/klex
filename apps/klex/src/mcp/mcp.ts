@@ -378,6 +378,8 @@ interface McpServerRuntime {
 class McpModule implements Mcp {
   private readonly servers = new Map<string, McpServerRuntime>();
   private readonly eventWorkers = new Map<string, PushNotificationWorker>();
+  /** Serializes deduplication and delivery across worker replacement. */
+  private readonly eventCommitQueues = new Map<string, Promise<void>>();
   private readonly eventListeners = new Set<McpPushNotificationListener>();
   /** Per namespace: event ids delivered to listeners but not acknowledged. */
   private readonly deliveredUnacked = new Map<string, Set<string>>();
@@ -468,14 +470,12 @@ class McpModule implements Mcp {
       if (!worker || !this.isCurrentWorker(worker)) continue;
       // Snapshot synchronously: the caller checked quiescence in this tick.
       const eventIds = [...ids];
-      ids.clear();
+      // Keep these ids in flight until ACK succeeds. Concurrent recovery
+      // must not mistake a pending flush for an already-acknowledged event.
       const flush = worker.queue.then(async () => {
         await this.acknowledgeEvents(worker, eventIds);
-        if (!this.isCurrentWorker(worker)) {
-          // The ACK may not have reached the server. Retry on a later flush.
-          this.markDelivered(namespace, eventIds);
-          return;
-        }
+        if (!this.isCurrentWorker(worker)) return;
+        for (const eventId of eventIds) ids.delete(eventId);
         if (worker.recoveryBlocked && !this.pushDeliveryPaused) {
           await this.recoverEvents(worker).catch((error: unknown) => {
             this.deps.logger.warn(
@@ -1150,7 +1150,26 @@ class McpModule implements Mcp {
    * were already acknowledged (a lost ACK) are acknowledged again right away;
    * duplicates still in flight are skipped.
    */
-  private async commitEvents(
+  private commitEvents(
+    worker: PushNotificationWorker,
+    events: readonly PushNotification[],
+  ): Promise<{ progressed: boolean; unhandled: boolean }> {
+    const namespace = worker.connection.namespace;
+    const previous = this.eventCommitQueues.get(namespace) ?? Promise.resolve();
+    const run = previous.then(() => this.commitEventBatch(worker, events));
+    const settled = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    this.eventCommitQueues.set(namespace, settled);
+    void settled.then(() => {
+      if (this.eventCommitQueues.get(namespace) === settled)
+        this.eventCommitQueues.delete(namespace);
+    });
+    return run;
+  }
+
+  private async commitEventBatch(
     worker: PushNotificationWorker,
     events: readonly PushNotification[],
   ): Promise<{ progressed: boolean; unhandled: boolean }> {
@@ -1166,12 +1185,9 @@ class McpModule implements Mcp {
       namespace,
       fresh,
     );
-    if (!this.isCurrentWorker(worker)) {
-      return { progressed: false, unhandled: false };
-    }
-    if (this.pushDeliveryPaused) {
-      // Paused during the commit: leave the events on the server for the
-      // next process instead of starting work the drain must wait for.
+    if (!this.isCurrentWorker(worker) || this.pushDeliveryPaused) {
+      // A stale or paused commit has not delivered these events. Release
+      // its reservations before the replacement worker can inspect them.
       this.deps.pushNotificationInbox.release(
         namespace,
         accepted.map((event) => event.eventId),
@@ -1182,9 +1198,9 @@ class McpModule implements Mcp {
     let handledCount = 0;
     let pausedCount = 0;
     for (const [index, event] of accepted.entries()) {
-      if (this.pushDeliveryPaused) {
-        // Paused while an earlier listener was awaited: leave the rest on
-        // the server for the next process instead of starting new work.
+      if (!this.isCurrentWorker(worker) || this.pushDeliveryPaused) {
+        // A previous listener may have yielded through shutdown or reconnect.
+        // Release the rest before a replacement attempts recovery.
         const remaining = accepted.slice(index).map((rest) => rest.eventId);
         this.deps.pushNotificationInbox.release(namespace, remaining);
         pausedCount = remaining.length;

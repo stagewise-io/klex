@@ -57,17 +57,15 @@ class LearningExtension implements Extension {
         episodes: this.options.episodes,
         store: this.data.store,
         state: this.data.state,
-        generateText: this.deps.generateText,
+        createChildSession: this.deps.createChildSession,
         getAgent: () => ({
           name: this.deps.config.get().officialName,
           soul: this.options.getSoul(),
         }),
-        getModels: () => {
-          const memory = this.deps.config.getModelSelection('memory');
-          return memory.length > 0
-            ? memory
-            : this.deps.config.getModelSelection('chat');
-        },
+        getModelPurpose: () =>
+          this.deps.config.getModelSelection('memory').length > 0
+            ? 'memory'
+            : 'chat',
         logger: this.deps.logging.child({
           name: 'learning-worker',
           bindings: { module: 'learning-worker' },

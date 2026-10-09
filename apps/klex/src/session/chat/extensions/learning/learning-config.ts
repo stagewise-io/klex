@@ -4,7 +4,6 @@
  */
 
 export const PRIMARY_PASS_CHARACTERS = 120_000;
-export const INVESTIGATION_MAX_STEPS = 6;
 export const FAILURE_RETRY_DELAYS_MS = [30_000, 120_000] as const;
 /** With no cursor yet, learn only from the newest N finished episodes. */
 export const INITIAL_BACKFILL_EPISODES = 20;
@@ -29,8 +28,5 @@ export const SOFT_SKILL_COUNT = 25;
 export const SOFT_THRESHOLD_CHANGE_WEIGHT = 5;
 export const STALE_AFTER_EPISODES = 100;
 export const STALE_CONSOLIDATION_SPACING = 10;
-
-export const EXTRACTION_MAX_OUTPUT_TOKENS = 4_000;
-export const CONSOLIDATION_MAX_OUTPUT_TOKENS = 8_000;
 
 export const SKILL_NAME_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;

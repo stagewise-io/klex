@@ -83,7 +83,7 @@ function fakeDeps(dataDir: string, sessionId: string): ExtensionDeps {
       get: () => ({ officialName: 'Atlas' }),
       getModelSelection: () => ['test/model'],
     },
-    generateText: vi.fn(),
+    createChildSession: vi.fn(),
   } as unknown as ExtensionDeps;
 }
 

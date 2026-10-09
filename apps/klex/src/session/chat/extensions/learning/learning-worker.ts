@@ -1,19 +1,22 @@
+import { randomUUID } from 'node:crypto';
+
+import type { ToolSet } from 'ai';
+
 import type { ModuleLogger } from '@stagewise/logger';
 
 import type {
-  GenerateTextArgs,
-  GenerateTextResult,
+  Extension,
+  ExtensionDeps,
 } from '@/session/chat/extensions/extension-api';
 import type { EpisodeFeed } from '@/session/chat/extensions/memory';
+import { SessionInboxUrgency } from '@/session/inbox';
+import type { ChildSessionHandle } from '@/session/types';
 
 import { createEpisodeInvestigation } from './episode-tools';
 import {
   CONSOLIDATE_CHANGE_WEIGHT,
-  CONSOLIDATION_MAX_OUTPUT_TOKENS,
-  EXTRACTION_MAX_OUTPUT_TOKENS,
   FAILURE_RETRY_DELAYS_MS,
   INITIAL_BACKFILL_EPISODES,
-  INVESTIGATION_MAX_STEPS,
   MAX_EPISODE_CHARACTERS,
   MAX_FAILURES_PER_EPISODE,
   MAX_SKILLS,
@@ -31,6 +34,7 @@ import type {
 } from './learning-state';
 import { type SkillOperation, toSkill, validateOperations } from './operations';
 import {
+  type BuiltPrompt,
   buildConsolidationPrompt,
   buildExtractionPrompt,
   isStale,
@@ -43,8 +47,8 @@ export interface LearningWorkerOptions {
   episodes: EpisodeFeed;
   store: SkillStore;
   state: LearningState;
-  generateText: (args: GenerateTextArgs) => Promise<GenerateTextResult>;
-  getModels: () => GenerateTextArgs['modelIds'];
+  createChildSession: ExtensionDeps['createChildSession'];
+  getModelPurpose: () => 'memory' | 'chat';
   getAgent: () => PromptAgent;
   logger: ModuleLogger;
   now?: () => number;
@@ -90,6 +94,7 @@ class LearningWorkerModule implements LearningWorker {
   private pumping = false;
   private recoveryFailures = 0;
   private abort: AbortController | undefined;
+  private child: ChildSessionHandle | undefined;
   private inFlight: Promise<LearningRunResult> | undefined;
   private closed = false;
   private lastRunAt: string | null = null;
@@ -114,6 +119,7 @@ class LearningWorkerModule implements LearningWorker {
     this.abort?.abort();
     if (this.timer) clearTimeout(this.timer);
     this.timer = undefined;
+    await this.child?.close();
     await this.inFlight?.catch(() => undefined);
   }
 
@@ -347,68 +353,44 @@ class LearningWorkerModule implements LearningWorker {
       controller.signal,
       id,
     );
+    let outcome: EpisodeOutcome = 'unchanged';
     const submission = createLearningSubmissionTools({
       evidence: investigation.evidence,
-      existingNames: store.list().map((skill) => skill.name),
+      getExistingNames: () => store.list().map((skill) => skill.name),
       allowDefer: true,
       allowCreate: true,
       signal: controller.signal,
-    });
-    const generated = await this.options.generateText({
-      modelIds: this.options.getModels(),
-      system: `${system}\n\n${submission.instructions}`,
-      prompt,
-      maxOutputTokens: EXTRACTION_MAX_OUTPUT_TOKENS,
-      tools: { ...investigation.tools, ...submission.tools },
-      completionTool: submission.completionTool,
-      maxSteps: INVESTIGATION_MAX_STEPS,
-      abortSignal: controller.signal,
-    });
-    this.abort = undefined;
-    if (this.closed || controller.signal.aborted) return 'stop';
-    const parsed = generated.success
-      ? submission.read(generated.toolResults ?? [])
-      : null;
-    if (!parsed?.ok) {
-      const reason = !generated.success
-        ? generated.failureReason
-        : parsed && !parsed.ok
-          ? parsed.error
-          : 'unknown';
-      return this.recordFailure(id, reason);
-    }
-
-    if (parsed.submission.deferred) {
-      await this.options.state.update((draft) => {
-        const existing = draft.deferred.find((item) => item.id === id);
-        const after = revisit ? (draft.cursor ?? id) : id;
-        if (existing) existing.after = after;
-        else {
-          if (draft.deferred.length >= 20) {
-            const dropped = draft.deferred.shift();
-            logger.debug(
-              { episode: dropped?.id },
-              'Deferred queue full; dropped oldest candidate',
-            );
-          }
-          draft.deferred.push({ id, after, attempts: 0 });
+      persist: async (batch) => {
+        if (batch.deferred) {
+          await this.options.state.update((draft) => {
+            const existing = draft.deferred.find((item) => item.id === id);
+            const after = revisit ? (draft.cursor ?? id) : id;
+            if (existing) existing.after = after;
+            else {
+              if (draft.deferred.length >= 20) draft.deferred.shift();
+              draft.deferred.push({ id, after, attempts: 0 });
+            }
+          });
+          outcome = 'deferred';
+          return 0;
         }
-      });
-      if (!revisit) await this.advance(id);
-      return 'deferred';
-    }
-    let applied: number;
-    try {
-      applied = await this.apply(parsed.submission.operations, id);
-    } catch (error) {
-      return this.recordFailure(
-        id,
-        error instanceof Error ? error.message : String(error),
-      );
-    }
+        const applied = await this.persist(batch.operations, id);
+        outcome = applied > 0 ? 'changed' : 'unchanged';
+        logger.info({ episode: id, applied }, 'Learned from episode');
+        return applied;
+      },
+    });
+    await this.investigate(
+      'extraction',
+      {
+        system: `${system}\n\n${submission.instructions}`,
+        prompt,
+      },
+      { ...investigation.tools, ...submission.tools },
+    );
+    if (this.closed) return 'stop';
     if (!revisit) await this.advance(id);
-    logger.info({ episode: id, applied }, 'Learned from episode');
-    return applied > 0 ? 'changed' : 'unchanged';
+    return outcome;
   }
 
   private async recordFailure(
@@ -515,6 +497,7 @@ class LearningWorkerModule implements LearningWorker {
     const before = state.get().skills;
     let applied = 0;
     for (const operation of accepted) {
+      if (this.closed) break;
       const at = new Date(this.now()).toISOString();
       if (operation.op === 'delete') {
         await this.deleteSkill(operation.name);
@@ -600,7 +583,7 @@ class LearningWorkerModule implements LearningWorker {
       await this.consolidate();
     } catch (error) {
       if (!this.closed) {
-        await this.recordConsolidationFailure();
+        await this.spaceConsolidation();
         this.options.logger.warn({ error }, 'Skill consolidation failed');
       }
     } finally {
@@ -652,73 +635,102 @@ class LearningWorkerModule implements LearningWorker {
       controller.signal,
       null,
     );
+    let submitted = false;
     const submission = createLearningSubmissionTools({
       evidence: investigation.evidence,
-      existingNames: skills.map((skill) => skill.name),
+      getExistingNames: () => store.list().map((skill) => skill.name),
       allowDefer: false,
       allowCreate: false,
       signal: controller.signal,
+      persist: async (batch) => {
+        const applied = await this.persist(batch.operations, null);
+        await state.update((draft) => {
+          draft.pendingChangeWeight = 0;
+          draft.lastConsolidationEpisode = draft.processedEpisodeCount;
+          draft.lastConsolidationSkillCount = store.list().length;
+          draft.consolidationFailures = 0;
+          draft.nextConsolidationEpisode = null;
+          draft.lastConsolidationAt = new Date(this.now()).toISOString();
+        });
+        submitted = true;
+        logger.info(
+          { applied, skills: store.list().length },
+          'Consolidated skills',
+        );
+        return applied;
+      },
     });
-    const generated = await this.options.generateText({
-      modelIds: this.options.getModels(),
-      system: `${system}\n\n${submission.instructions}`,
-      prompt,
-      maxOutputTokens: CONSOLIDATION_MAX_OUTPUT_TOKENS,
-      tools: { ...investigation.tools, ...submission.tools },
-      completionTool: submission.completionTool,
-      maxSteps: INVESTIGATION_MAX_STEPS,
-      abortSignal: controller.signal,
-    });
-    this.abort = undefined;
-    if (this.closed || controller.signal.aborted) return;
-    const parsed = generated.success
-      ? submission.read(generated.toolResults ?? [])
-      : null;
-    if (!parsed?.ok) {
-      await this.recordConsolidationFailure();
-      logger.warn(
-        {
-          reason: generated.success
-            ? parsed && !parsed.ok
-              ? parsed.error
-              : 'missing submission'
-            : generated.failureReason,
-        },
-        'Skill consolidation failed',
-      );
-      return;
-    }
-    let applied: number;
-    try {
-      applied = await this.apply(parsed.submission.operations, null);
-    } catch (error) {
-      await this.recordConsolidationFailure();
-      logger.warn({ error }, 'Skill consolidation write failed');
-      return;
-    }
-    await state.update((draft) => {
-      draft.pendingChangeWeight = 0;
-      draft.lastConsolidationEpisode = draft.processedEpisodeCount;
-      draft.lastConsolidationSkillCount = store.list().length;
-      draft.consolidationFailures = 0;
-      draft.nextConsolidationEpisode = null;
-      draft.lastConsolidationAt = new Date(this.now()).toISOString();
-    });
-    logger.info(
-      { applied, skills: store.list().length },
-      'Consolidated skills',
+    await this.investigate(
+      'consolidation',
+      {
+        system: `${system}\n\n${submission.instructions}`,
+        prompt,
+      },
+      { ...investigation.tools, ...submission.tools },
     );
+    if (!this.closed && !submitted) await this.spaceConsolidation();
   }
 
-  private async recordConsolidationFailure(): Promise<void> {
+  private async spaceConsolidation(): Promise<void> {
     await this.options.state.update((draft) => {
-      const spacing = Math.min(
-        8,
-        2 ** Math.min(3, draft.consolidationFailures),
-      );
-      draft.consolidationFailures += 1;
-      draft.nextConsolidationEpisode = draft.processedEpisodeCount + spacing;
+      draft.nextConsolidationEpisode =
+        draft.processedEpisodeCount + STALE_CONSOLIDATION_SPACING;
     });
+  }
+
+  private async persist(
+    operations: readonly SkillOperation[],
+    source: string | null,
+  ): Promise<number> {
+    try {
+      return await this.apply(operations, source);
+    } catch (error) {
+      this.options.logger.warn(
+        { error, episode: source },
+        'Learning persistence failed',
+      );
+      throw error;
+    } finally {
+      await this.enforceCap();
+    }
+  }
+
+  private async investigate(
+    kind: 'extraction' | 'consolidation',
+    task: BuiltPrompt,
+    tools: ToolSet,
+  ): Promise<void> {
+    const child = await this.options.createChildSession({
+      name: `learning-${kind}`,
+      extensionIdentifier: 'io.stagewise/learning',
+      basePrompt: task.system,
+      modelPurpose: this.options.getModelPurpose(),
+      extensions: [
+        {
+          identifier: 'io.stagewise/learning-investigation',
+          create: () => createInvestigationExtension(tools),
+        },
+      ],
+    });
+    this.child = child;
+    try {
+      if (this.closed) return;
+      child.inbox.sendMessage(
+        {
+          id: randomUUID(),
+          role: 'user',
+          parts: [{ type: 'text', text: task.prompt }],
+        },
+        SessionInboxUrgency.Default,
+      );
+      // This observes the ordinary session lifecycle; it is not a model budget.
+      while (!this.closed && child.getSessionInfo().status !== 'terminated') {
+        if (await child.waitForIdle(1_000)) break;
+      }
+    } finally {
+      await child.close();
+      this.child = undefined;
+    }
   }
 
   /** Persist removal before touching the file; restore bookkeeping on failure. */
@@ -805,6 +817,17 @@ class LearningWorkerModule implements LearningWorker {
       logger.info({ skill: name }, 'Evicted least-recently-used skill');
     }
   }
+}
+
+class InvestigationExtension implements Extension {
+  constructor(private readonly tools: ToolSet) {}
+  getTools(): ToolSet {
+    return this.tools;
+  }
+}
+
+function createInvestigationExtension(tools: ToolSet): Extension {
+  return new InvestigationExtension(tools);
 }
 
 interface RecordContext {

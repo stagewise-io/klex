@@ -26,7 +26,6 @@ const logging = {
     warn: vi.fn(),
   }),
 } as unknown as RootLogger;
-
 function scope(path: string[] = []): IntrospectionScope {
   return {
     path,
@@ -35,7 +34,6 @@ function scope(path: string[] = []): IntrospectionScope {
     removeChild: vi.fn(),
   };
 }
-
 function call(
   value: string,
   finish: 'tool-calls' | 'content-filter' | 'error' = 'tool-calls',
@@ -57,7 +55,6 @@ function call(
     warnings: [],
   };
 }
-
 async function harness(models: MockLanguageModelV4[]) {
   let deps: ExtensionDeps | undefined;
   const modelResolver: ChatSessionDependencies['modelResolver'] = {
@@ -105,144 +102,43 @@ async function harness(models: MockLanguageModelV4[]) {
   });
   await session.start();
   if (!deps) throw new Error('Extension dependencies missing');
-  const submit = vi.fn(({ value }: { value: string }) =>
-    value === 'invalid'
-      ? { status: 'rejected', reason: 'Correct the value.' }
-      : { status: 'accepted', value },
-  );
+  const submit = vi.fn(({ value }: { value: string }) => ({ value }));
   const args: GenerateTextArgs = {
     modelIds: models.map((_, index) => ({
       providerId: 'test',
       modelId: String(index),
     })),
     prompt: 'Submit a value.',
-    maxSteps: 3,
     tools: {
-      investigate: tool({
-        inputSchema: z.object({}),
-        execute: async () => ({ evidence: 'Observed.' }),
-      }),
       submit: tool({
         inputSchema: z.object({ value: z.string() }),
         execute: submit,
       }),
     },
-    completionTool: {
-      name: 'submit',
-      isComplete: (output) =>
-        z.object({ status: z.literal('accepted') }).safeParse(output).success,
-    },
   };
   return { generate: deps.generateText, session, args, submit };
 }
 
-describe('extension generation SDK contract', () => {
-  it('stops on an accepted submission and returns executed tool results', async () => {
+describe('single-step extension generation', () => {
+  it('executes one step and retains text, model and usage without a learning-result contract', async () => {
     const model = new MockLanguageModelV4({ doGenerate: [call('accepted')] });
     const { generate, session, args, submit } = await harness([model]);
     try {
-      const result = await generate(args);
-      expect(result.success).toBe(true);
-      if (!result.success) throw new Error('Generation failed');
-      expect(result.text).toBe('');
-      expect(result.toolResults).toEqual([
-        {
-          toolName: 'submit',
-          output: { status: 'accepted', value: 'accepted' },
-        },
-      ]);
+      expect(await generate(args)).toMatchObject({
+        success: true,
+        text: '',
+        modelId: '0',
+        usage: { totalTokens: 2 },
+      });
       expect(submit).toHaveBeenCalledOnce();
       expect(model.doGenerateCalls).toHaveLength(1);
+      expect(model.doGenerateCalls[0]?.toolChoice).toEqual({ type: 'auto' });
     } finally {
       await session.close();
     }
   });
-
-  it('returns rejection feedback to the model and permits correction', async () => {
-    const model = new MockLanguageModelV4({
-      doGenerate: [call('invalid'), call('corrected')],
-    });
-    const { generate, session, args } = await harness([model]);
-    try {
-      const result = await generate(args);
-      expect(result.success && result.toolResults).toEqual([
-        {
-          toolName: 'submit',
-          output: { status: 'rejected', reason: 'Correct the value.' },
-        },
-        {
-          toolName: 'submit',
-          output: { status: 'accepted', value: 'corrected' },
-        },
-      ]);
-      expect(model.doGenerateCalls).toHaveLength(2);
-      expect(JSON.stringify(model.doGenerateCalls[1]?.prompt)).toContain(
-        'Correct the value.',
-      );
-    } finally {
-      await session.close();
-    }
-  });
-
-  it('forces only the completion tool on the final step and stays bounded', async () => {
-    const model = new MockLanguageModelV4({
-      doGenerate: [call('invalid'), call('invalid'), call('invalid')],
-    });
-    const { generate, session, args } = await harness([model]);
-    try {
-      await generate(args);
-      expect(model.doGenerateCalls).toHaveLength(3);
-      expect(model.doGenerateCalls[0]?.toolChoice).toEqual({
-        type: 'required',
-      });
-      expect(model.doGenerateCalls[0]?.tools?.map((item) => item.name)).toEqual(
-        ['investigate', 'submit'],
-      );
-      expect(model.doGenerateCalls[2]?.toolChoice).toEqual({
-        type: 'tool',
-        toolName: 'submit',
-      });
-      expect(model.doGenerateCalls[2]?.tools?.map((item) => item.name)).toEqual(
-        ['submit'],
-      );
-    } finally {
-      await session.close();
-    }
-  });
-
-  it.each(['content-filter', 'error'] as const)(
-    'discards staged output and stops fallback after tool execution on %s',
-    async (finish) => {
-      const losing = new MockLanguageModelV4({
-        doGenerate: [call('losing', finish)],
-      });
-      const winning = new MockLanguageModelV4({
-        doGenerate: [call('winning')],
-      });
-      const { generate, session, args, submit } = await harness([
-        losing,
-        winning,
-      ]);
-      try {
-        const result = await generate(args);
-        expect(submit).toHaveBeenCalledOnce();
-        expect(result).toMatchObject({
-          success: false,
-          failureReason:
-            finish === 'content-filter'
-              ? 'content-filter'
-              : 'all-models-failed',
-        });
-        expect(result).not.toHaveProperty('toolResults');
-        expect(winning.doGenerateCalls).toHaveLength(0);
-      } finally {
-        await session.close();
-      }
-    },
-  );
-
   it.each(['content-filter', 'error', 'throw'] as const)(
-    'permits fallback on %s before any tool executes',
+    'falls back after %s',
     async (finish) => {
       const losing = new MockLanguageModelV4({
         doGenerate: async () => {
@@ -258,13 +154,10 @@ describe('extension generation SDK contract', () => {
         winning,
       ]);
       try {
-        const result = await generate(args);
-        expect(result.success && result.toolResults).toEqual([
-          {
-            toolName: 'submit',
-            output: { status: 'accepted', value: 'winning' },
-          },
-        ]);
+        expect(await generate(args)).toMatchObject({
+          success: true,
+          modelId: '1',
+        });
         expect(submit).toHaveBeenCalledOnce();
         expect(winning.doGenerateCalls).toHaveLength(1);
       } finally {
@@ -272,41 +165,30 @@ describe('extension generation SDK contract', () => {
       }
     },
   );
-
-  it('stops fallback when a later provider step throws after investigation', async () => {
-    let steps = 0;
-    const losing = new MockLanguageModelV4({
-      doGenerate: async () => {
-        if (steps++ > 0)
-          throw new Error('Provider unavailable after investigation');
-        const response = call('investigated');
-        return {
-          ...response,
-          content: [
-            {
-              type: 'tool-call' as const,
-              toolCallId: 'investigated',
-              toolName: 'investigate',
-              input: '{}',
-            },
-          ],
-        };
-      },
+  it('classifies exhausted content-filter results', async () => {
+    const model = new MockLanguageModelV4({
+      doGenerate: [{ ...call('filtered', 'content-filter'), content: [] }],
     });
-    const winning = new MockLanguageModelV4({ doGenerate: [call('winning')] });
-    const { generate, session, args, submit } = await harness([
-      losing,
-      winning,
-    ]);
+    const { generate, session, args } = await harness([model]);
     try {
-      const result = await generate(args);
-      expect(result).toMatchObject({
+      expect(await generate(args)).toMatchObject({
         success: false,
-        failureReason: 'all-models-failed',
+        failureReason: 'content-filter',
       });
-      expect(losing.doGenerateCalls).toHaveLength(2);
-      expect(submit).not.toHaveBeenCalled();
-      expect(winning.doGenerateCalls).toHaveLength(0);
+    } finally {
+      await session.close();
+    }
+  });
+  it('cancels before starting a model', async () => {
+    const model = new MockLanguageModelV4({ doGenerate: [call('unused')] });
+    const { generate, session, args } = await harness([model]);
+    const controller = new AbortController();
+    controller.abort();
+    try {
+      expect(
+        await generate({ ...args, abortSignal: controller.signal }),
+      ).toMatchObject({ success: false, failureReason: 'cancelled' });
+      expect(model.doGenerateCalls).toHaveLength(0);
     } finally {
       await session.close();
     }

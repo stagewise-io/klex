@@ -2,6 +2,28 @@
 
 All notable Klex changes are documented here.
 
+## 0.15.0 (2026-10-09)
+
+### Features
+
+- submit agent-grounded learnings through validated tools (c9b741d)
+- drive learning by episode activity (cda211e)
+
+### Bug Fixes
+
+- simplify skill deletion and clarify submission retries (b727ef9)
+- harden learning bookkeeping and episode truncation (c3af0a0)
+- address learning review findings (5880e08)
+- address learning and notification review findings (ce2254d)
+- retain complete records at tail scan boundaries (27f57b9)
+- preserve learning progress and episode evidence (848a679)
+- keep skill reads on rollback and cap overflow row (1a04b69)
+- harden learned skill writes and episode ordering (c0f56e3)
+
+### Other Changes
+
+- run learning investigations in child sessions (5a750d8)
+
 ## 0.14.0 (2026-10-08)
 
 ### Features

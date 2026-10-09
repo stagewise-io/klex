@@ -11,7 +11,6 @@ import type {
   EpisodeFeed,
 } from '@/session/chat/extensions/memory';
 
-import type { GenerateTextArgs, GenerateTextResult } from '../extension-api';
 import {
   CONSOLIDATE_CHANGE_WEIGHT,
   INITIAL_BACKFILL_EPISODES,
@@ -22,7 +21,12 @@ import {
 import { createLearningState } from './learning-state';
 import { createLearningWorker } from './learning-worker';
 import { createSkillStore } from './skill-store';
-import { executeFixtureSubmission } from './test-generation';
+import {
+  type ChildReply,
+  childHarness,
+  reply as ok,
+  submitFixture,
+} from './test-child';
 
 vi.mock('@/session/chat/extensions/time/system-prompt.md', () => ({
   default: '',
@@ -116,27 +120,8 @@ function fakeFeed(
   };
 }
 
-function ok(text: string): Extract<GenerateTextResult, { success: true }> {
-  return {
-    success: true,
-    text,
-    modelId: 'model',
-    usage: {
-      inputTokens: 1,
-      outputTokens: 1,
-      totalTokens: 2,
-      inputTokenDetails: {
-        noCacheTokens: 1,
-        cacheReadTokens: 0,
-        cacheWriteTokens: 0,
-      },
-      outputTokenDetails: { textTokens: 1, reasoningTokens: 0 },
-    },
-  };
-}
-
-function failed(failureReason: string): GenerateTextResult {
-  return { success: false, failureReason } as GenerateTextResult;
+function noSubmission(text = 'No submission.'): ChildReply {
+  return { text, submit: false };
 }
 
 function createReply(name: string): string {
@@ -165,18 +150,15 @@ async function harness(feed: EpisodeFeed) {
   const store = createSkillStore(join(dataDir, 'skills'), logger);
   const state = createLearningState(dataDir);
   await Promise.all([store.start(), state.start()]);
-  const generateText = vi.fn<
-    (args: GenerateTextArgs) => Promise<GenerateTextResult>
-  >(async () => ok('{"operations": []}'));
+  const { runChild, createChildSession, children } = childHarness();
   const getAgent = vi.fn(() => ({ name: 'Atlas', soul: 'Initial soul' }));
   let now = Date.parse('2026-10-02T00:00:00.000Z');
   const worker = createLearningWorker({
     episodes: feed,
     store,
     state,
-    generateText: async (args) =>
-      executeFixtureSubmission(args, await generateText(args)),
-    getModels: () => [{ providerId: 'test', modelId: 'model' }],
+    createChildSession,
+    getModelPurpose: () => 'memory',
     getAgent,
     logger,
     now: () => now,
@@ -185,7 +167,9 @@ async function harness(feed: EpisodeFeed) {
     worker,
     store,
     state,
-    generateText,
+    runChild,
+    createChildSession,
+    children,
     getAgent,
     dataDir,
     logger,
@@ -197,7 +181,7 @@ async function harness(feed: EpisodeFeed) {
 
 describe('learning worker', () => {
   it('creates an evidence-cited constructor skill without treating inherited properties as usage', async () => {
-    const { worker, store, state, generateText, dataDir } = await harness(
+    const { worker, store, state, runChild, dataDir } = await harness(
       fakeFeed(1),
     );
     const skill = {
@@ -205,7 +189,7 @@ describe('learning worker', () => {
       description: 'Use when configuring a constructor.',
       body: 'Use explicit dependencies.',
     };
-    generateText.mockResolvedValueOnce(
+    runChild.mockResolvedValueOnce(
       ok(
         JSON.stringify({
           operations: [
@@ -230,7 +214,7 @@ describe('learning worker', () => {
   });
 
   it('consolidates a restored constructor skill with no bookkeeping', async () => {
-    const { worker, store, state, generateText } = await harness(fakeFeed(0));
+    const { worker, store, state, runChild } = await harness(fakeFeed(0));
     for (const name of ['constructor', 'other'])
       await store.write({
         name,
@@ -241,110 +225,91 @@ describe('learning worker', () => {
       draft.pendingChangeWeight = CONSOLIDATE_CHANGE_WEIGHT;
     });
     expect(await worker.runOnce()).toBe('idle');
-    expect(generateText).toHaveBeenCalledTimes(1);
-    expect(generateText.mock.calls[0]?.[0].prompt).not.toContain('undefined');
+    expect(runChild).toHaveBeenCalledTimes(1);
+    expect(runChild.mock.calls[0]?.[0].prompt).not.toContain('undefined');
   });
 
-  it('commits a tool submission regardless of response text', async () => {
-    const { worker, store, generateText } = await harness(fakeFeed(1));
-    generateText.mockImplementationOnce(async (args) => {
-      expect(args.completionTool?.name).toBe('submitLearnings');
-      const result = await executeFixtureSubmission(
-        args,
-        ok(createReply('lesson')),
-      );
-      if (!result.success) throw new Error('Expected fixture success');
-      return { ...result, text: 'This is prose, not JSON.' };
+  it('persists through the tool and ignores response prose', async () => {
+    const { worker, store, runChild } = await harness(fakeFeed(1));
+    runChild.mockImplementationOnce(async (task) => {
+      expect(await submitFixture(task, createReply('lesson'))).toMatchObject({
+        status: 'applied',
+      });
+      expect(store.get('lesson')).not.toBeNull();
+      return noSubmission('This is prose, not JSON.');
     });
     expect(await worker.runOnce()).toBe('processed');
     expect(store.get('lesson')).not.toBeNull();
   });
 
-  it('never treats JSON response text as a submission', async () => {
-    const { worker, state, store, generateText } = await harness(fakeFeed(1));
-    generateText.mockResolvedValueOnce({
-      ...ok(createReply('lesson')),
-      toolResults: [],
-    });
-    expect(await worker.runOnce()).toBe('retry-later');
-    expect(state.get().cursor).toBeNull();
+  it('consumes settled episodes without treating JSON response text as a submission', async () => {
+    const { worker, state, store, runChild } = await harness(fakeFeed(1));
+    runChild.mockResolvedValueOnce(noSubmission(createReply('lesson')));
+    expect(await worker.runOnce()).toBe('processed');
+    expect(state.get().cursor).toBe(episodeId(0));
     expect(store.list()).toEqual([]);
+    expect(await worker.runOnce()).toBe('idle');
+    expect(runChild).toHaveBeenCalledOnce();
   });
 
-  it('does not commit a staged submission when generation subsequently fails', async () => {
-    const { worker, state, store, generateText } = await harness(fakeFeed(1));
-    generateText.mockImplementationOnce(async (args) => {
-      const submitted = await executeFixtureSubmission(
-        args,
-        ok(createReply('lesson')),
-      );
-      expect(
-        submitted.success && submitted.toolResults?.[0]?.output,
-      ).toMatchObject({ status: 'accepted' });
-      expect(store.list()).toEqual([]);
-      expect(state.get().skills).toEqual({});
-      return failed('all-models-failed');
+  it('preserves tool writes when the child subsequently fails', async () => {
+    const { worker, state, store, runChild, children } = await harness(
+      fakeFeed(1),
+    );
+    runChild.mockImplementationOnce(async (task) => {
+      await submitFixture(task, createReply('lesson'));
+      expect(store.get('lesson')).not.toBeNull();
+      throw new Error('Provider failed after persistence');
     });
-    expect(await worker.runOnce()).toBe('retry-later');
-    expect(store.list()).toEqual([]);
-    expect(state.get().cursor).toBeNull();
+    expect(await worker.runOnce()).toBe('processed');
+    expect(store.get('lesson')).not.toBeNull();
+    expect(state.get().cursor).toBe(episodeId(0));
+    expect(children[0]?.close).toHaveBeenCalled();
   });
 
   it('allows correction of a rejected batch before committing a valid submission', async () => {
-    const { worker, store, generateText } = await harness(fakeFeed(1));
-    generateText.mockImplementationOnce(async (args) => {
-      const rejected = await executeFixtureSubmission(
-        args,
-        ok(
+    const { worker, store, runChild } = await harness(fakeFeed(1));
+    runChild.mockImplementationOnce(async (task) => {
+      expect(
+        await submitFixture(
+          task,
           JSON.stringify({
             operations: [{ op: 'delete', name: 'missing', reason: 'obsolete' }],
           }),
         ),
-      );
-      const accepted = await executeFixtureSubmission(
-        args,
-        ok(createReply('lesson')),
-      );
-      if (!rejected.success || !accepted.success)
-        throw new Error('Expected fixture success');
-      expect(rejected.toolResults?.[0]?.output).toMatchObject({
-        status: 'rejected',
+      ).toMatchObject({ status: 'rejected' });
+      expect(await submitFixture(task, createReply('lesson'))).toMatchObject({
+        status: 'applied',
       });
-      return {
-        ...accepted,
-        toolResults: [
-          ...(rejected.toolResults ?? []),
-          ...(accepted.toolResults ?? []),
-        ],
-      };
+      return noSubmission();
     });
     expect(await worker.runOnce()).toBe('processed');
     expect(store.list().map((skill) => skill.name)).toEqual(['lesson']);
   });
 
   it('reads current name and soul for each extraction rather than caching identity', async () => {
-    const { worker, generateText, getAgent } = await harness(fakeFeed(2));
-    generateText.mockImplementationOnce(async ({ system }) => {
+    const { worker, runChild, getAgent } = await harness(fakeFeed(2));
+    runChild.mockImplementationOnce(async ({ system }) => {
       expect(system).toContain('Extract. Atlas');
       expect(system).toContain('<soul>Initial soul</soul>');
       getAgent.mockReturnValue({ name: 'Kristine', soul: 'Updated soul' });
       return ok('{"operations": []}');
     });
-    generateText.mockImplementationOnce(async ({ system }) => {
+    runChild.mockImplementationOnce(async ({ system }) => {
       expect(system).toContain('Extract. Kristine');
       expect(system).toContain('<soul>Updated soul</soul>');
       return ok('{"operations": []}');
     });
     expect(await worker.runOnce()).toBe('processed');
-    expect(generateText).toHaveBeenCalledTimes(2);
+    expect(runChild).toHaveBeenCalledTimes(2);
     expect(getAgent).toHaveBeenCalledTimes(2);
     await worker.close();
   });
 
   it('reads current name and soul when consolidating after extraction', async () => {
-    const { worker, generateText, getAgent } = await harness(fakeFeed(10));
+    const { worker, runChild, getAgent } = await harness(fakeFeed(10));
     let extraction = 0;
-    generateText.mockImplementation(async ({ system }) => {
+    runChild.mockImplementation(async ({ system }) => {
       if (system?.startsWith('Extract.')) {
         getAgent.mockReturnValue({ name: 'Kristine', soul: 'Updated soul' });
         return ok(createReply(`lesson-${extraction++}`));
@@ -355,17 +320,17 @@ describe('learning worker', () => {
       return ok('{"operations": []}');
     });
     expect(await worker.runOnce()).toBe('processed');
-    expect(generateText).toHaveBeenCalledTimes(11);
+    expect(runChild).toHaveBeenCalledTimes(11);
     expect(getAgent).toHaveBeenCalledTimes(11);
     await worker.close();
   });
 
   it('consolidates at weight twenty during a burst and never by elapsed time', async () => {
-    const { worker, state, generateText, advanceClock } = await harness(
+    const { worker, state, runChild, advanceClock } = await harness(
       fakeFeed(11),
     );
     let extraction = 0;
-    generateText.mockImplementation(async ({ system }) =>
+    runChild.mockImplementation(async ({ system }) =>
       ok(
         system?.startsWith('Extract.')
           ? createReply(`lesson-${extraction++}`)
@@ -373,7 +338,7 @@ describe('learning worker', () => {
       ),
     );
     await worker.runOnce();
-    expect(generateText).toHaveBeenCalledTimes(12);
+    expect(runChild).toHaveBeenCalledTimes(12);
     expect(state.get()).toMatchObject({
       processedEpisodeCount: 11,
       pendingChangeWeight: 2,
@@ -381,16 +346,16 @@ describe('learning worker', () => {
     });
     advanceClock(365 * 24 * 60 * 60_000);
     expect(await worker.runOnce()).toBe('idle');
-    expect(generateText).toHaveBeenCalledTimes(12);
+    expect(runChild).toHaveBeenCalledTimes(12);
     await worker.close();
   });
 
   it('does not count unchanged rewrites or refresh their activity age', async () => {
-    const { worker, state, generateText } = await harness(fakeFeed(2));
+    const { worker, state, runChild } = await harness(fakeFeed(2));
     const initial = JSON.parse(createReply('lesson')) as {
       operations: object[];
     };
-    generateText
+    runChild
       .mockResolvedValueOnce(ok(JSON.stringify(initial)))
       .mockResolvedValueOnce(
         ok(
@@ -409,7 +374,7 @@ describe('learning worker', () => {
   });
 
   it('preserves new evidence on unchanged skills without refreshing their age or weight', async () => {
-    const { worker, state, store, generateText } = await harness(fakeFeed(2));
+    const { worker, state, store, runChild } = await harness(fakeFeed(2));
     const skill = {
       name: 'lesson',
       description: 'Use when lesson applies.',
@@ -430,7 +395,7 @@ describe('learning worker', () => {
       };
     });
     const write = vi.spyOn(store, 'write');
-    generateText.mockImplementationOnce(async ({ tools, abortSignal }) => {
+    runChild.mockImplementationOnce(async ({ tools, abortSignal }) => {
       await tools?.readEpisode?.execute?.(
         { id: episodeId(1), offset: 0, limit: 100 },
         {
@@ -458,29 +423,20 @@ describe('learning worker', () => {
     expect(write).not.toHaveBeenCalled();
   });
 
-  it('retries failed deferred investigation without consuming a revisit or requiring new progress', async () => {
-    const { worker, state, generateText } = await harness(fakeFeed(2));
-    generateText
+  it('consumes a settled deferred revisit without submission or recounting progress', async () => {
+    const { worker, state, runChild } = await harness(fakeFeed(2));
+    runChild
       .mockResolvedValueOnce(ok('{"operations": [], "deferred": true}'))
       .mockResolvedValueOnce(ok('{"operations": []}'))
-      .mockResolvedValueOnce(failed('provider unavailable'))
-      .mockRejectedValueOnce(new Error('provider exception'))
-      .mockResolvedValueOnce(ok(createReply('recovered')));
-    expect(await worker.runOnce()).toBe('retry-later');
-    expect(state.get()).toMatchObject({
-      processedEpisodeCount: 2,
-      deferred: [{ id: episodeId(0), attempts: 0, after: episodeId(0) }],
-      episodeFailures: { [episodeId(0)]: 1 },
-    });
-    expect(await worker.runOnce()).toBe('retry-later');
-    expect(state.get().deferred[0]?.attempts).toBe(0);
-    expect(await worker.runOnce()).toBe('idle');
+      .mockResolvedValueOnce(noSubmission());
+    expect(await worker.runOnce()).toBe('processed');
     expect(state.get()).toMatchObject({
       processedEpisodeCount: 2,
       deferred: [],
       episodeFailures: {},
     });
-    expect(state.get().skills.recovered).toBeDefined();
+    expect(await worker.runOnce()).toBe('idle');
+    expect(runChild).toHaveBeenCalledTimes(3);
   });
 
   it('retains the partial marker when the primary page fills the character budget', async () => {
@@ -490,20 +446,20 @@ describe('learning worker', () => {
       const page = await read(id, options);
       return page ? { ...page, truncated: true } : null;
     };
-    const { worker, generateText } = await harness(feed);
+    const { worker, runChild } = await harness(feed);
     await worker.runOnce();
-    expect(generateText.mock.calls[0]?.[0].prompt).toContain(
+    expect(runChild.mock.calls[0]?.[0].prompt).toContain(
       '[Partial episode: scan or character budget exhausted; omitted content is not evidence.]',
     );
   });
 
   it('retains weight from earlier persisted operations when a later write fails', async () => {
-    const { worker, store, state, generateText } = await harness(fakeFeed(1));
+    const { worker, store, state, runChild } = await harness(fakeFeed(1));
     const first = JSON.parse(createReply('first')) as { operations: object[] };
     const second = JSON.parse(createReply('second')) as {
       operations: object[];
     };
-    generateText.mockResolvedValue(
+    runChild.mockResolvedValue(
       ok(
         JSON.stringify({
           operations: [...first.operations, ...second.operations],
@@ -515,22 +471,22 @@ describe('learning worker', () => {
       if (skill.name === 'second') throw new Error('write failed');
       await original(skill);
     });
-    expect(await worker.runOnce()).toBe('retry-later');
+    expect(await worker.runOnce()).toBe('processed');
     expect(store.list().map((skill) => skill.name)).toEqual(['first']);
     expect(state.get()).toMatchObject({
       pendingChangeWeight: 2,
-      processedEpisodeCount: 0,
+      processedEpisodeCount: 1,
     });
   });
 
   it('persists deferred references and revisits only after newer progress without recounting', async () => {
-    const { worker, state, generateText, dataDir } = await harness(fakeFeed(2));
-    generateText
+    const { worker, state, runChild, dataDir } = await harness(fakeFeed(2));
+    runChild
       .mockResolvedValueOnce(ok('{"operations": [], "deferred": true}'))
       .mockResolvedValueOnce(ok('{"operations": []}'))
       .mockResolvedValueOnce(ok(createReply('verified-fix')));
     await worker.runOnce();
-    expect(generateText).toHaveBeenCalledTimes(3);
+    expect(runChild).toHaveBeenCalledTimes(3);
     expect(state.get()).toMatchObject({
       processedEpisodeCount: 2,
       cursor: episodeId(1),
@@ -544,57 +500,53 @@ describe('learning worker', () => {
     await reloaded.start();
     expect(reloaded.get().processedEpisodeCount).toBe(2);
     await worker.runOnce();
-    expect(generateText).toHaveBeenCalledTimes(3);
+    expect(runChild).toHaveBeenCalledTimes(3);
   });
 
-  it('spaces consolidation failures by episode activity, not drain passes', async () => {
-    const { worker, store, state, generateText } = await harness(fakeFeed(0));
+  it('spaces unsubmitted consolidation by ten episodes, not drain passes', async () => {
+    const { worker, store, state, runChild } = await harness(fakeFeed(0));
     for (const name of ['one', 'two'])
       await store.write({ name, description: `Use when ${name}.`, body: name });
     await state.update((draft) => {
       draft.pendingChangeWeight = 20;
     });
-    generateText.mockResolvedValue(failed('provider unavailable'));
+    runChild.mockResolvedValue(noSubmission('provider unavailable'));
     await worker.runOnce();
     expect(state.get()).toMatchObject({
       pendingChangeWeight: 20,
-      consolidationFailures: 1,
-      nextConsolidationEpisode: 1,
+      consolidationFailures: 0,
+      nextConsolidationEpisode: 10,
     });
     await worker.runOnce();
-    expect(generateText).toHaveBeenCalledTimes(1);
+    expect(runChild).toHaveBeenCalledTimes(1);
     await state.update((draft) => {
-      draft.processedEpisodeCount = 1;
+      draft.processedEpisodeCount = 10;
     });
     await worker.runOnce();
-    expect(generateText).toHaveBeenCalledTimes(2);
-    expect(state.get().nextConsolidationEpisode).toBe(3);
+    expect(runChild).toHaveBeenCalledTimes(2);
+    expect(state.get().nextConsolidationEpisode).toBe(20);
   });
 
   it('cancels in-flight investigation without committing or recording failures', async () => {
-    const { worker, state, store, generateText } = await harness(fakeFeed(2));
+    const { worker, state, store, runChild } = await harness(fakeFeed(2));
     let started!: () => void;
     const ready = new Promise<void>((resolve) => {
       started = resolve;
     });
-    generateText.mockImplementation(async (args) => {
-      const staged = await executeFixtureSubmission(
-        args,
-        ok(createReply('late-proposal')),
-      );
+    runChild.mockImplementation(async (args) => {
       started();
       await new Promise<void>((resolve) =>
         args.abortSignal?.addEventListener('abort', () => resolve(), {
           once: true,
         }),
       );
-      return staged;
+      return ok(createReply('late-proposal'));
     });
     const run = worker.runOnce();
     await ready;
     await worker.close();
     await run;
-    expect(generateText).toHaveBeenCalledTimes(1);
+    expect(runChild).toHaveBeenCalledTimes(1);
     expect(store.list()).toEqual([]);
     expect(state.get()).toMatchObject({
       processedEpisodeCount: 0,
@@ -615,13 +567,13 @@ describe('learning worker', () => {
       await blocked;
       return readPage(...args);
     };
-    const { worker, state, store, generateText } = await harness(feed);
+    const { worker, state, store, runChild } = await harness(feed);
     const run = worker.runOnce();
     await vi.waitFor(() => expect(reading).toBe(true));
     const closing = worker.close();
     release();
     await Promise.all([run, closing]);
-    expect(generateText).not.toHaveBeenCalled();
+    expect(runChild).not.toHaveBeenCalled();
     expect(store.list()).toEqual([]);
     expect(state.get()).toMatchObject({
       cursor: null,
@@ -631,18 +583,16 @@ describe('learning worker', () => {
   });
 
   it('does nothing while memory is unavailable', async () => {
-    const { worker, generateText } = await harness(
-      fakeFeed(3, undefined, false),
-    );
+    const { worker, runChild } = await harness(fakeFeed(3, undefined, false));
     expect(await worker.runOnce()).toBe('unavailable');
-    expect(generateText).not.toHaveBeenCalled();
+    expect(runChild).not.toHaveBeenCalled();
   });
 
   it('backfills only the newest episodes and records provenance', async () => {
     const total = INITIAL_BACKFILL_EPISODES + 5;
     const feed = fakeFeed(total);
-    const { worker, store, state, generateText } = await harness(feed);
-    generateText.mockResolvedValueOnce(ok(createReply('ask-first')));
+    const { worker, store, state, runChild } = await harness(feed);
+    runChild.mockResolvedValueOnce(ok(createReply('ask-first')));
 
     expect(await worker.runOnce()).toBe('processed');
 
@@ -666,8 +616,10 @@ describe('learning worker', () => {
 
   it('pins the backfill window when the first episode fails', async () => {
     const total = INITIAL_BACKFILL_EPISODES + 5;
-    const { worker, state, generateText } = await harness(fakeFeed(total));
-    generateText.mockResolvedValueOnce(failed('provider down'));
+    const { worker, state, createChildSession } = await harness(
+      fakeFeed(total),
+    );
+    createChildSession.mockRejectedValueOnce(new Error('Child startup failed'));
 
     expect(await worker.runOnce()).toBe('retry-later');
     expect(state.get().cursor).toBe(
@@ -676,7 +628,7 @@ describe('learning worker', () => {
   });
 
   it('carries provenance of merged skills over to the survivor', async () => {
-    const { worker, store, state, generateText } = await harness(fakeFeed(0));
+    const { worker, store, state, runChild } = await harness(fakeFeed(0));
     for (const name of ['keep-me', 'drop-me']) {
       await store.write({
         name,
@@ -698,7 +650,7 @@ describe('learning worker', () => {
       draft.skills['keep-me'] = usage([episodeId(2)]);
       draft.skills['drop-me'] = usage([episodeId(1)]);
     });
-    generateText.mockResolvedValueOnce(
+    runChild.mockResolvedValueOnce(
       ok(
         JSON.stringify({
           operations: [
@@ -735,8 +687,8 @@ describe('learning worker', () => {
         (await shown(after)).slice(0, limit),
       listLatestCompleted: async (count) => (await shown(null)).slice(-count),
     };
-    const { worker, state, generateText } = await harness(feed);
-    generateText.mockResolvedValueOnce(failed('provider down'));
+    const { worker, state, createChildSession } = await harness(feed);
+    createChildSession.mockRejectedValueOnce(new Error('Child startup failed'));
 
     expect(await worker.runOnce()).toBe('retry-later');
     expect(state.get().cursor).toBeNull();
@@ -747,10 +699,10 @@ describe('learning worker', () => {
   });
 
   it('persists deletion bookkeeping before removing the skill file', async () => {
-    const { worker, store, state, generateText, dataDir } = await harness(
+    const { worker, store, state, runChild, dataDir } = await harness(
       fakeFeed(1),
     );
-    generateText.mockResolvedValueOnce(ok(createReply('lesson')));
+    runChild.mockResolvedValueOnce(ok(createReply('lesson')));
     await worker.runOnce();
     await state.update((draft) => {
       draft.pendingChangeWeight = CONSOLIDATE_CHANGE_WEIGHT;
@@ -769,7 +721,7 @@ describe('learning worker', () => {
       expect(store.get(name)).not.toBeNull();
       await originalDelete(name);
     });
-    generateText.mockResolvedValueOnce(
+    runChild.mockResolvedValueOnce(
       ok(
         '{"operations": [{"op": "delete", "name": "lesson", "reason": "obsolete"}]}',
       ),
@@ -779,8 +731,8 @@ describe('learning worker', () => {
   });
 
   it('does not delete the file when persisting removal fails', async () => {
-    const { worker, store, state, generateText } = await harness(fakeFeed(1));
-    generateText.mockResolvedValueOnce(ok(createReply('lesson')));
+    const { worker, store, state, runChild } = await harness(fakeFeed(1));
+    runChild.mockResolvedValueOnce(ok(createReply('lesson')));
     await worker.runOnce();
     await store.write({
       name: 'other',
@@ -795,7 +747,7 @@ describe('learning worker', () => {
       new Error('state write failed'),
     );
     const remove = vi.spyOn(store, 'delete');
-    generateText.mockResolvedValueOnce(
+    runChild.mockResolvedValueOnce(
       ok(
         '{"operations": [{"op": "delete", "name": "lesson", "reason": "obsolete"}]}',
       ),
@@ -807,10 +759,10 @@ describe('learning worker', () => {
   });
 
   it('restores deletion bookkeeping and concurrent reads when file removal fails', async () => {
-    const { worker, store, state, generateText, dataDir } = await harness(
+    const { worker, store, state, runChild, dataDir } = await harness(
       fakeFeed(1),
     );
-    generateText.mockResolvedValueOnce(ok(createReply('lesson')));
+    runChild.mockResolvedValueOnce(ok(createReply('lesson')));
     await worker.runOnce();
     await store.write({
       name: 'other',
@@ -838,7 +790,7 @@ describe('learning worker', () => {
       });
       throw new Error('delete failed');
     });
-    generateText.mockResolvedValueOnce(
+    runChild.mockResolvedValueOnce(
       ok(
         '{"operations": [{"op": "delete", "name": "lesson", "reason": "obsolete"}]}',
       ),
@@ -857,7 +809,7 @@ describe('learning worker', () => {
   });
 
   it('restores skill state when the skill file write fails', async () => {
-    const { worker, store, state, generateText, dataDir } = await harness(
+    const { worker, store, state, runChild, dataDir } = await harness(
       fakeFeed(1),
     );
     await store.write({
@@ -879,7 +831,7 @@ describe('learning worker', () => {
     const folder = join(dataDir, 'skills', 'ask-first');
     await rm(folder, { recursive: true });
     await symlink(dataDir, folder);
-    generateText.mockResolvedValueOnce(
+    runChild.mockResolvedValueOnce(
       ok(
         JSON.stringify({
           operations: [
@@ -895,13 +847,14 @@ describe('learning worker', () => {
       ),
     );
 
-    expect(await worker.runOnce()).toBe('retry-later');
+    expect(await worker.runOnce()).toBe('processed');
     expect(state.get().skills['ask-first']).toEqual(before);
-    expect(state.get().episodeFailures[episodeId(0)]).toBe(1);
+    expect(state.get().cursor).toBe(episodeId(0));
+    expect(state.get().episodeFailures).toEqual({});
   });
 
   it('keeps reads recorded while a failed skill write was in flight', async () => {
-    const { worker, store, state, generateText, dataDir } = await harness(
+    const { worker, store, state, runChild, dataDir } = await harness(
       fakeFeed(1),
     );
     await store.write({
@@ -935,7 +888,7 @@ describe('learning worker', () => {
       });
       return write(skill);
     });
-    generateText.mockResolvedValueOnce(
+    runChild.mockResolvedValueOnce(
       ok(
         JSON.stringify({
           operations: [
@@ -951,7 +904,7 @@ describe('learning worker', () => {
       ),
     );
 
-    expect(await worker.runOnce()).toBe('retry-later');
+    expect(await worker.runOnce()).toBe('processed');
     expect(state.get().skills['ask-first']).toEqual({
       ...before,
       lastReadAt: readAt,
@@ -962,21 +915,21 @@ describe('learning worker', () => {
   it('retries an unavailable episode without advancing before a later successful read', async () => {
     const feed = fakeFeed(1);
     vi.spyOn(feed, 'readPage').mockResolvedValueOnce(null);
-    const { worker, state, generateText } = await harness(feed);
+    const { worker, state, runChild } = await harness(feed);
     expect(await worker.runOnce()).toBe('retry-later');
     expect(state.get()).toMatchObject({
       cursor: null,
       processedEpisodeCount: 0,
       episodeFailures: { [episodeId(0)]: 1 },
     });
-    expect(generateText).not.toHaveBeenCalled();
+    expect(runChild).not.toHaveBeenCalled();
     expect(await worker.runOnce()).toBe('processed');
     expect(state.get()).toMatchObject({
       cursor: episodeId(0),
       processedEpisodeCount: 1,
       episodeFailures: {},
     });
-    expect(generateText).toHaveBeenCalledTimes(1);
+    expect(runChild).toHaveBeenCalledTimes(1);
   });
 
   it('applies the retry ceiling to permanently unavailable episodes', async () => {
@@ -984,7 +937,7 @@ describe('learning worker', () => {
     const read = feed.readPage.bind(feed);
     feed.readPage = async (id, options) =>
       id === episodeId(0) ? null : read(id, options);
-    const { worker, state, generateText } = await harness(feed);
+    const { worker, state, runChild } = await harness(feed);
     for (let attempt = 1; attempt < MAX_FAILURES_PER_EPISODE; attempt++) {
       expect(await worker.runOnce()).toBe('retry-later');
       expect(state.get().cursor).toBeNull();
@@ -995,7 +948,7 @@ describe('learning worker', () => {
       processedEpisodeCount: 2,
       episodeFailures: {},
     });
-    expect(generateText).toHaveBeenCalledTimes(1);
+    expect(runChild).toHaveBeenCalledTimes(1);
   });
 
   it('preserves a deferred revisit when its page is temporarily unavailable', async () => {
@@ -1004,8 +957,8 @@ describe('learning worker', () => {
     let unavailable = false;
     feed.readPage = async (id, options) =>
       unavailable && id === episodeId(0) ? null : read(id, options);
-    const { worker, state, generateText } = await harness(feed);
-    generateText
+    const { worker, state, runChild } = await harness(feed);
+    runChild
       .mockResolvedValueOnce(ok('{"operations": [], "deferred": true}'))
       .mockImplementationOnce(async () => {
         unavailable = true;
@@ -1027,17 +980,17 @@ describe('learning worker', () => {
   });
 
   it('skips short episodes without a model call', async () => {
-    const { worker, state, generateText } = await harness(
+    const { worker, state, runChild } = await harness(
       fakeFeed(2, () => 'short'),
     );
     expect(await worker.runOnce()).toBe('processed');
-    expect(generateText).not.toHaveBeenCalled();
+    expect(runChild).not.toHaveBeenCalled();
     expect(state.get().cursor).toBe(episodeId(1));
   });
 
-  it('retries a failing episode, then skips it', async () => {
-    const { worker, state, generateText } = await harness(fakeFeed(1));
-    generateText.mockResolvedValue(failed('provider down'));
+  it('retries child startup failures, then skips the episode', async () => {
+    const { worker, state, createChildSession } = await harness(fakeFeed(1));
+    createChildSession.mockRejectedValue(new Error('Child startup failed'));
 
     for (let attempt = 1; attempt < MAX_FAILURES_PER_EPISODE; attempt += 1) {
       expect(await worker.runOnce()).toBe('retry-later');
@@ -1057,7 +1010,7 @@ describe('learning worker', () => {
       if (id === episodeId(0)) throw new Error('unreadable episode');
       return read(id, options);
     };
-    const { worker, state, generateText, logger } = await harness(feed);
+    const { worker, state, runChild, logger } = await harness(feed);
     for (let attempt = 1; attempt < MAX_FAILURES_PER_EPISODE; attempt++) {
       expect(await worker.runOnce()).toBe('retry-later');
       expect(state.get().episodeFailures[episodeId(0)]).toBe(attempt);
@@ -1069,7 +1022,7 @@ describe('learning worker', () => {
       processedEpisodeCount: 2,
       episodeFailures: {},
     });
-    expect(generateText).toHaveBeenCalledTimes(1);
+    expect(runChild).toHaveBeenCalledTimes(1);
     expect(logger.warn).toHaveBeenCalledWith(
       expect.objectContaining({
         episode: episodeId(0),
@@ -1088,25 +1041,26 @@ describe('learning worker', () => {
         ? { ...page, startedAt: null, endedAt: null, truncated: true }
         : null;
     };
-    const { worker, state, generateText } = await harness(feed);
+    const { worker, state, runChild } = await harness(feed);
     expect(await worker.runOnce()).toBe('retry-later');
     expect(state.get()).toMatchObject({
       cursor: null,
       processedEpisodeCount: 0,
       episodeFailures: { [episodeId(0)]: 1 },
     });
-    expect(generateText).not.toHaveBeenCalled();
+    expect(runChild).not.toHaveBeenCalled();
   });
 
-  it('treats a missing submission as a failure', async () => {
-    const { worker, state, generateText } = await harness(fakeFeed(1));
-    generateText.mockResolvedValueOnce(ok('not json'));
-    expect(await worker.runOnce()).toBe('retry-later');
-    expect(state.get().cursor).toBeNull();
+  it('consumes a terminated child without retrying model outcomes', async () => {
+    const { worker, state, runChild } = await harness(fakeFeed(1));
+    runChild.mockRejectedValueOnce(new Error('Provider unavailable'));
+    expect(await worker.runOnce()).toBe('processed');
+    expect(state.get().cursor).toBe(episodeId(0));
+    expect(state.get().episodeFailures).toEqual({});
   });
 
   it('consolidates after enough weighted changes', async () => {
-    const { worker, store, state, generateText } = await harness(fakeFeed(0));
+    const { worker, store, state, runChild } = await harness(fakeFeed(0));
     for (const name of ['keep-me', 'drop-me']) {
       await store.write({
         name,
@@ -1125,7 +1079,7 @@ describe('learning worker', () => {
         sourceEpisodes: [episodeId(0)],
       };
     });
-    generateText.mockResolvedValueOnce(
+    runChild.mockResolvedValueOnce(
       ok(
         JSON.stringify({
           operations: [{ op: 'delete', name: 'drop-me', reason: 'duplicate' }],
@@ -1141,18 +1095,16 @@ describe('learning worker', () => {
   });
 
   it.each([0, 1])(
-    'enforces the cap and records backoff when consolidation throws, primary episodes: %i',
+    'enforces the cap and spaces consolidation without submission, primary episodes: %i',
     async (count) => {
-      const { worker, store, state, generateText } = await harness(
-        fakeFeed(count),
-      );
+      const { worker, store, state, runChild } = await harness(fakeFeed(count));
       for (let index = 0; index <= MAX_SKILLS; index++)
         await store.write({
           name: `skill-${index}`,
           description: 'Use when x.',
           body: 'Body.',
         });
-      generateText.mockImplementation(async ({ system }) => {
+      runChild.mockImplementation(async ({ system }) => {
         if (system?.startsWith('Consolidate.'))
           throw new Error('provider exception');
         return ok('{"operations": []}');
@@ -1160,16 +1112,16 @@ describe('learning worker', () => {
       expect(await worker.runOnce()).toBe(count ? 'processed' : 'idle');
       expect(store.list()).toHaveLength(MAX_SKILLS);
       expect(state.get()).toMatchObject({
-        consolidationFailures: 1,
-        nextConsolidationEpisode: count + 1,
+        consolidationFailures: 0,
+        nextConsolidationEpisode: count + 10,
       });
       expect(worker.introspect().running).toBe(false);
     },
   );
 
   it('evicts least-recently-used skills above the cap', async () => {
-    const { worker, store, state, generateText } = await harness(fakeFeed(0));
-    generateText.mockResolvedValue(failed('provider down'));
+    const { worker, store, state, runChild } = await harness(fakeFeed(0));
+    runChild.mockResolvedValue(noSubmission('provider down'));
     const names = Array.from(
       { length: MAX_SKILLS + 1 },
       (_, index) => `skill-${index}`,
@@ -1196,8 +1148,8 @@ describe('learning worker', () => {
   });
 
   it('preserves historical recency of migrated skills when enforcing the cap', async () => {
-    const { worker, store, state, generateText } = await harness(fakeFeed(0));
-    generateText.mockResolvedValue(failed('provider down'));
+    const { worker, store, state, runChild } = await harness(fakeFeed(0));
+    runChild.mockResolvedValue(noSubmission('provider down'));
     for (let index = 0; index <= MAX_SKILLS; index++) {
       const name = `skill-${index}`;
       await store.write({ name, description: 'Use when x.', body: 'Body.' });
@@ -1220,9 +1172,9 @@ describe('learning worker', () => {
   });
 
   it('does not overlap runs', async () => {
-    const { worker, generateText } = await harness(fakeFeed(1));
-    let release: (value: GenerateTextResult) => void = () => {};
-    generateText.mockReturnValueOnce(
+    const { worker, runChild } = await harness(fakeFeed(1));
+    let release: (value: ChildReply) => void = () => {};
+    runChild.mockReturnValueOnce(
       new Promise((resolve) => {
         release = resolve;
       }),
@@ -1230,21 +1182,21 @@ describe('learning worker', () => {
     const first = worker.runOnce();
     const second = worker.runOnce();
     expect(second).toBe(first);
-    await vi.waitFor(() => expect(generateText).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(runChild).toHaveBeenCalledTimes(1));
     release(ok('{"operations": []}'));
     expect(await first).toBe('processed');
   });
 
   it('close waits for the in-flight run', async () => {
-    const { worker, state, generateText } = await harness(fakeFeed(1));
-    let release: (value: GenerateTextResult) => void = () => {};
-    generateText.mockReturnValueOnce(
+    const { worker, state, runChild } = await harness(fakeFeed(1));
+    let release: (value: ChildReply) => void = () => {};
+    runChild.mockReturnValueOnce(
       new Promise((resolve) => {
         release = resolve;
       }),
     );
     void worker.runOnce();
-    await vi.waitFor(() => expect(generateText).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(runChild).toHaveBeenCalledTimes(1));
     let closed = false;
     const closing = worker.close().then(() => {
       closed = true;
@@ -1255,7 +1207,7 @@ describe('learning worker', () => {
     await closing;
     expect(state.get().cursor).toBeNull();
     expect(state.get().episodeFailures).toEqual({});
-    expect(generateText.mock.calls[0]?.[0].abortSignal?.aborted).toBe(true);
+    expect(runChild.mock.calls[0]?.[0].abortSignal?.aborted).toBe(true);
   });
 
   it('automatically drains successive unreadable episodes with a fresh retry budget after progress', async () => {
@@ -1293,9 +1245,9 @@ describe('learning worker', () => {
   });
 
   it('starts catch-up immediately without a learning timer', async () => {
-    const { worker, generateText } = await harness(fakeFeed(1));
+    const { worker, runChild } = await harness(fakeFeed(1));
     worker.start();
-    await vi.waitFor(() => expect(generateText).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(runChild).toHaveBeenCalledTimes(1));
     await worker.close();
   });
 });

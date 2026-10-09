@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 
 import { learningSubmissionSchema } from '../operations';
@@ -15,82 +15,74 @@ const create = {
 function harness(allowDefer = true) {
   const controller = new AbortController();
   const evidence = new Set(['primary']);
+  const persist = vi.fn(async (batch) => batch.operations.length);
   const submission = createLearningSubmissionTools({
     evidence,
-    existingNames: ['old'],
+    getExistingNames: () => ['old'],
+    persist,
     signal: controller.signal,
     allowDefer,
     allowCreate: allowDefer,
   });
-  const call = async (input: unknown) => {
-    const output = await submission.tools.submitLearnings?.execute?.(input, {
+  const execute = submission.tools.submitLearnings?.execute;
+  if (!execute) throw new Error('Submission tool missing');
+  const call = (input: unknown) =>
+    execute(input, {
       toolCallId: 'submit',
       messages: [],
       context: undefined,
       abortSignal: controller.signal,
     });
-    return { toolName: 'submitLearnings', output };
-  };
-  return { submission, controller, evidence, call };
+  return { controller, evidence, call, persist };
 }
 
 describe('learning submission tools', () => {
-  it('exposes a provider-convertible schema, not an untyped operation array', () => {
-    const schema = z.toJSONSchema(learningSubmissionSchema);
-    expect(schema).toMatchObject({
+  it('exposes a provider-convertible bounded operation schema', () => {
+    expect(z.toJSONSchema(learningSubmissionSchema)).toMatchObject({
       type: 'object',
       properties: {
         operations: { type: 'array', items: { oneOf: expect.any(Array) } },
       },
     });
   });
-
-  it('stages one validated batch in the tool result without applying it', async () => {
-    const { call, submission } = harness();
-    const result = await call({ operations: [create] });
-    expect(result.output).toEqual({
-      status: 'accepted',
-      submission: { operations: [create] },
+  it('persists a validated batch during execution', async () => {
+    const { call, persist } = harness();
+    expect(await call({ operations: [create] })).toEqual({
+      status: 'applied',
+      applied: 1,
+      deferred: false,
     });
-    expect(submission.completionTool.isComplete(result.output)).toBe(true);
-    expect(submission.read([result])).toEqual({
-      ok: true,
-      submission: { operations: [create] },
+    expect(persist).toHaveBeenCalledWith({ operations: [create] });
+    expect(await call({ operations: [] })).toEqual({
+      status: 'already-submitted',
     });
+    expect(persist).toHaveBeenCalledOnce();
   });
-
-  it('supports explicit no-learning and extraction deferral', async () => {
-    const { call, submission } = harness();
-    for (const batch of [
-      { operations: [] },
-      { operations: [], deferred: true },
-    ]) {
-      expect(submission.read([await call(batch)])).toEqual({
-        ok: true,
-        submission: batch,
+  it.each([false, true])(
+    'allows explicit no-learning or deferral: %s',
+    async (deferred) => {
+      const { call, persist } = harness();
+      expect(await call({ operations: [], deferred })).toMatchObject({
+        status: 'applied',
+        applied: 0,
+        deferred,
       });
-    }
-  });
-
-  it('rejects unread citations, then accepts corrected evidence', async () => {
-    const { call, submission, evidence } = harness();
+      expect(persist).toHaveBeenCalledOnce();
+    },
+  );
+  it('permits correction after unread citations without consuming the allowance', async () => {
+    const { call, evidence, persist } = harness();
     const batch = {
       operations: [{ ...create, evidenceEpisodes: ['support'] }],
     };
-    const rejected = await call(batch);
-    expect(rejected.output).toMatchObject({
+    expect(await call(batch)).toMatchObject({
       status: 'rejected',
       reason: expect.stringContaining('Unread evidence'),
     });
-    expect(submission.completionTool.isComplete(rejected.output)).toBe(false);
+    expect(persist).not.toHaveBeenCalled();
     evidence.add('support');
-    const accepted = await call(batch);
-    expect(submission.read([rejected, accepted])).toEqual({
-      ok: true,
-      submission: batch,
-    });
+    expect(await call(batch)).toMatchObject({ status: 'applied' });
   });
-
   it.each([
     { operations: [create, { ...create, op: 'update', name: 'missing' }] },
     { operations: [{ ...create, name: 'old' }] },
@@ -102,82 +94,67 @@ describe('learning submission tools', () => {
     { operations: [create], deferred: true },
     { operations: [{ ...create, description: 'multi\nline' }] },
     { operations: [create, { op: 'rename', name: 'old' }] },
-  ])(
-    'rejects the entire batch, without partial acceptance %j',
-    async (batch) => {
-      const { call, submission } = harness();
-      const result = await call(batch);
-      expect(result.output).toMatchObject({ status: 'rejected' });
-      expect(submission.read([result]).ok).toBe(false);
-    },
-  );
-
-  it('permits ordered operations and retiring superseded skills during extraction', async () => {
-    const { call, submission } = harness();
-    const batch = {
-      operations: [
-        create,
-        { ...create, op: 'update', body: 'Updated.' },
-        { op: 'delete', name: 'old', reason: 'superseded' },
-      ],
-    };
-    expect(submission.read([await call(batch)])).toEqual({
-      ok: true,
-      submission: batch,
-    });
+  ])('rejects the entire invalid batch %j', async (batch) => {
+    const { call, persist } = harness();
+    expect(await call(batch)).toMatchObject({ status: 'rejected' });
+    expect(persist).not.toHaveBeenCalled();
   });
-
-  it('rejects consolidation creates at execution and when reading staged results', async () => {
-    const { call, submission } = harness(false);
-    const batch = { operations: [create] };
-    expect((await call(batch)).output).toMatchObject({
-      status: 'rejected',
-      reason: expect.stringContaining('cannot create'),
-    });
+  it('permits ordered operations and retiring superseded skills', async () => {
+    const { call } = harness();
     expect(
-      submission.read([
-        {
-          toolName: 'submitLearnings',
-          output: { status: 'accepted', submission: batch },
-        },
-      ]),
-    ).toMatchObject({
-      ok: false,
-      error: expect.stringContaining('cannot create'),
-    });
-    const corrected = {
-      operations: [{ ...create, op: 'update', name: 'old' }],
-    };
-    expect(submission.read([await call(corrected)])).toEqual({
-      ok: true,
-      submission: corrected,
-    });
+      await call({
+        operations: [
+          create,
+          { ...create, op: 'update', body: 'Updated.' },
+          { op: 'delete', name: 'old', reason: 'superseded' },
+        ],
+      }),
+    ).toMatchObject({ status: 'applied', applied: 3 });
   });
-
-  it('does not accept consolidation deferral', async () => {
+  it('rejects consolidation creates and deferrals, allowing correction', async () => {
     const { call } = harness(false);
-    expect(
-      (await call({ operations: [], deferred: true })).output,
-    ).toMatchObject({ status: 'rejected' });
-  });
-
-  it('rejects missing or multiple accepted submissions, and ignores unrelated tool output', async () => {
-    const { call, submission } = harness();
-    const result = await call({ operations: [] });
-    expect(submission.read([]).ok).toBe(false);
-    expect(submission.read([{ ...result, toolName: 'readEpisode' }]).ok).toBe(
-      false,
-    );
-    expect(submission.read([result, result]).ok).toBe(false);
-  });
-
-  it('rejects execution and staged results after cancellation', async () => {
-    const { call, submission, controller } = harness();
-    const result = await call({ operations: [create] });
-    controller.abort();
-    expect(submission.read([result]).ok).toBe(false);
-    expect((await call({ operations: [] })).output).toEqual({
-      status: 'cancelled',
+    expect(await call({ operations: [create] })).toMatchObject({
+      status: 'rejected',
     });
+    expect(await call({ operations: [], deferred: true })).toMatchObject({
+      status: 'rejected',
+    });
+    expect(
+      await call({ operations: [{ ...create, op: 'update', name: 'old' }] }),
+    ).toMatchObject({ status: 'applied' });
+  });
+  it('claims the allowance before asynchronous persistence begins', async () => {
+    const { call, persist } = harness();
+    let release!: () => void;
+    persist.mockImplementationOnce(async () => {
+      await new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      return 1;
+    });
+    const first = call({ operations: [create] });
+    expect(await call({ operations: [] })).toEqual({
+      status: 'already-submitted',
+    });
+    release();
+    expect(await first).toMatchObject({ status: 'applied' });
+    expect(persist).toHaveBeenCalledOnce();
+  });
+  it('does not replay persistence failures, including partial writes', async () => {
+    const { call, persist } = harness();
+    persist.mockRejectedValueOnce(new Error('partial write'));
+    expect(await call({ operations: [create] })).toMatchObject({
+      status: 'failed',
+    });
+    expect(await call({ operations: [create] })).toEqual({
+      status: 'already-submitted',
+    });
+    expect(persist).toHaveBeenCalledOnce();
+  });
+  it('cancels without invoking persistence', async () => {
+    const { call, persist, controller } = harness();
+    controller.abort();
+    expect(await call({ operations: [] })).toEqual({ status: 'cancelled' });
+    expect(persist).not.toHaveBeenCalled();
   });
 });

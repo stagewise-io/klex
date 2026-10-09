@@ -9,11 +9,10 @@ import type { ModuleLogger } from '@stagewise/logger';
 
 import { createEpisodeFeed } from '@/session/chat/extensions/memory';
 
-import type { GenerateTextArgs, GenerateTextResult } from '../extension-api';
 import { createLearningState } from './learning-state';
 import { createLearningWorker } from './learning-worker';
 import { createSkillStore } from './skill-store';
-import { executeFixtureSubmission } from './test-generation';
+import { type ChildReply, childHarness, reply as ok } from './test-child';
 
 // The real prompt text, so the test sees the sections the model sees.
 vi.mock('./extraction-prompt.md', async () => {
@@ -66,11 +65,7 @@ afterEach(async () => {
   );
 });
 
-function ok(text: string): GenerateTextResult {
-  return { success: true, text } as GenerateTextResult;
-}
-
-function reply(...operations: object[]): GenerateTextResult {
+function reply(...operations: object[]): ChildReply {
   return ok(JSON.stringify({ operations }));
 }
 
@@ -102,20 +97,18 @@ async function harness() {
   const state = createLearningState(dataDir);
   await Promise.all([store.start(), state.start()]);
 
-  const generateText =
-    vi.fn<(options: GenerateTextArgs) => Promise<GenerateTextResult>>();
+  const { runChild, createChildSession } = childHarness();
   const worker = createLearningWorker({
     episodes,
     store,
     state,
-    generateText: async (args) =>
-      executeFixtureSubmission(args, await generateText(args)),
-    getModels: () => [{ providerId: 'test', modelId: 'model' }],
+    createChildSession,
+    getModelPurpose: () => 'memory',
     getAgent: () => ({ name: 'Atlas', soul: 'Product manager.' }),
     logger,
     now: () => Date.parse('2026-10-02T00:00:00.000Z'),
   });
-  return { root, episodes, store, state, generateText, worker };
+  return { root, episodes, store, state, runChild, worker };
 }
 
 describe('learning fixtures', () => {
@@ -131,10 +124,10 @@ describe('learning fixtures', () => {
   });
 
   it('runs extraction end to end and records provenance', async () => {
-    const { store, state, generateText, worker } = await harness();
+    const { store, state, runChild, worker } = await harness();
     const [feedbackId, fixId, noLessonId] = EPISODES.map(([, id]) => id);
 
-    generateText
+    runChild
       .mockImplementationOnce(async ({ system, prompt }) => {
         expect(system).toContain('### How to determine learning');
         expect(system).toContain('AI Agent *Atlas*');
@@ -175,7 +168,7 @@ describe('learning fixtures', () => {
       });
 
     expect(await worker.runOnce()).toBe('processed');
-    expect(generateText).toHaveBeenCalledTimes(3);
+    expect(runChild).toHaveBeenCalledTimes(3);
 
     expect(
       store
@@ -198,8 +191,8 @@ describe('learning fixtures', () => {
   });
 
   it('writes learned skills as Agent Skills files', async () => {
-    const { root, generateText, worker } = await harness();
-    generateText
+    const { root, runChild, worker } = await harness();
+    runChild
       .mockResolvedValueOnce(
         reply({
           op: 'create',

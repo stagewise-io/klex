@@ -698,7 +698,7 @@ describe('learning worker', () => {
     expect(full.reads.slice(0, 2)).toEqual([episodeId(0), episodeId(0)]);
   });
 
-  it('persists deletion bookkeeping before removing the skill file', async () => {
+  it('removes the skill file before its bookkeeping', async () => {
     const { worker, store, state, runChild, dataDir } = await harness(
       fakeFeed(1),
     );
@@ -717,7 +717,7 @@ describe('learning worker', () => {
     vi.spyOn(store, 'delete').mockImplementation(async (name) => {
       const persisted = createLearningState(dataDir);
       await persisted.start();
-      expect(Object.hasOwn(persisted.get().skills, name)).toBe(false);
+      expect(Object.hasOwn(persisted.get().skills, name)).toBe(true);
       expect(store.get(name)).not.toBeNull();
       await originalDelete(name);
     });
@@ -728,10 +728,13 @@ describe('learning worker', () => {
     );
     expect(await worker.runOnce()).toBe('idle');
     expect(store.get('lesson')).toBeNull();
+    expect(Object.hasOwn(state.get().skills, 'lesson')).toBe(false);
   });
 
-  it('does not delete the file when persisting removal fails', async () => {
-    const { worker, store, state, runChild } = await harness(fakeFeed(1));
+  it('does not revive a deleted skill after bookkeeping cleanup fails and restarts', async () => {
+    const { worker, store, state, runChild, dataDir, logger } = await harness(
+      fakeFeed(1),
+    );
     runChild.mockResolvedValueOnce(ok(createReply('lesson')));
     await worker.runOnce();
     await store.write({
@@ -753,12 +756,18 @@ describe('learning worker', () => {
       ),
     );
     await worker.runOnce();
-    expect(remove).not.toHaveBeenCalled();
-    expect(store.get('lesson')).not.toBeNull();
+    expect(remove).toHaveBeenCalledWith('lesson');
+    expect(store.get('lesson')).toBeNull();
     expect(state.get().skills.lesson).toEqual(before);
+    const reloadedStore = createSkillStore(join(dataDir, 'skills'), logger);
+    const reloadedState = createLearningState(dataDir);
+    await Promise.all([reloadedStore.start(), reloadedState.start()]);
+    expect(reloadedState.get().skills.lesson).toEqual(before);
+    expect(reloadedStore.get('lesson')).toBeNull();
+    expect(reloadedStore.list().map((skill) => skill.name)).toEqual(['other']);
   });
 
-  it('restores deletion bookkeeping and concurrent reads when file removal fails', async () => {
+  it('retains bookkeeping and concurrent reads when file removal fails', async () => {
     const { worker, store, state, runChild, dataDir } = await harness(
       fakeFeed(1),
     );
@@ -777,16 +786,14 @@ describe('learning worker', () => {
     const before = state.get().skills.lesson;
     const readAt = '2026-10-03T00:00:00.000Z';
     vi.spyOn(store, 'delete').mockImplementationOnce(async () => {
-      expect(Object.hasOwn(state.get().skills, 'lesson')).toBe(false);
+      expect(state.get().skills.lesson).toEqual(before);
       await state.update((draft) => {
-        draft.skills.lesson = {
-          createdAt: readAt,
-          updatedAt: readAt,
-          lastReadAt: readAt,
-          readCount: 1,
-          sourceEpisodes: [],
-          lastReadEpisode: draft.processedEpisodeCount,
-        };
+        const entry = draft.skills.lesson;
+        if (entry) {
+          entry.lastReadAt = readAt;
+          entry.readCount += 1;
+          entry.lastReadEpisode = draft.processedEpisodeCount;
+        }
       });
       throw new Error('delete failed');
     });

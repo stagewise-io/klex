@@ -472,9 +472,9 @@ class LearningWorkerModule implements LearningWorker {
 
   /**
    * Applies validated operations; returns how many were applied. Creates and
-   * updates persist provenance before publishing a file. Deletions persist
-   * removal before deleting the file. Failed file operations restore prior
-   * bookkeeping while retaining main-session reads recorded in flight.
+   * updates persist provenance before publishing a file. Deletions remove
+   * the file before its bookkeeping so interrupted cleanup cannot revive it.
+   * Failed writes restore bookkeeping while retaining reads recorded in flight.
    */
   private async apply(
     operations: readonly SkillOperation[],
@@ -733,42 +733,13 @@ class LearningWorkerModule implements LearningWorker {
     }
   }
 
-  /** Persist removal before touching the file; restore bookkeeping on failure. */
+  /** Files define available skills; stale bookkeeping cannot revive a deletion. */
   private async deleteSkill(name: string): Promise<void> {
     const { store, state } = this.options;
-    let previous: SkillState | undefined;
+    await store.delete(name);
     await state.update((draft) => {
-      previous = Object.hasOwn(draft.skills, name)
-        ? draft.skills[name]
-        : undefined;
       delete draft.skills[name];
     });
-    try {
-      await store.delete(name);
-    } catch (error) {
-      if (previous) {
-        const saved = previous;
-        await state.update((draft) => {
-          // readSkill can recreate usage while the cached file is still visible.
-          const current = Object.hasOwn(draft.skills, name)
-            ? draft.skills[name]
-            : undefined;
-          draft.skills[name] = {
-            ...saved,
-            lastReadAt: current?.lastReadAt ?? saved.lastReadAt,
-            lastReadEpisode:
-              current?.lastReadEpisode == null && saved.lastReadEpisode == null
-                ? null
-                : Math.max(
-                    current?.lastReadEpisode ?? 0,
-                    saved.lastReadEpisode ?? 0,
-                  ),
-            readCount: saved.readCount + (current?.readCount ?? 0),
-          };
-        });
-      }
-      throw error;
-    }
   }
 
   /** Drops least-recently-used skills above `MAX_SKILLS`. */

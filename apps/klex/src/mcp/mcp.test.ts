@@ -25,6 +25,7 @@ import {
 } from './connection';
 import { createMcp, type Mcp, shouldUseCloudAuthorization } from './mcp';
 import { McpPendingAuthorizationRegistry } from './oauth/pending-authorizations';
+import * as registeredClient from './oauth/register-client';
 
 const logging = {
   child: () => ({
@@ -1302,6 +1303,148 @@ function authorizationOf(mcp: Mcp, name: string) {
 }
 
 describe('MCP cloud authorization requests', () => {
+  it('can restart authorization after registered-client discovery fails', async () => {
+    const configure = vi
+      .spyOn(registeredClient, 'saveRegisteredOAuthClient')
+      .mockRejectedValue(new Error('Discovery unavailable'));
+    let attempt = 0;
+    const { mcp, pendingAuthorizations } = setupAuthorization(
+      { protected: { url: 'https://protected.example/mcp' } },
+      async ({ namespace, signal, onAuthorizationStatus }) => {
+        onAuthorizationStatus?.('authorizing');
+        const state = `retry-${++attempt}`;
+        await pendingAuthorizations.register(
+          {
+            serverName: namespace,
+            serverUrl: 'https://protected.example/mcp',
+            authorizationUrl: `https://auth.example/authorize?state=${state}`,
+            state,
+          },
+          { signal, timeoutMs: 60_000 },
+        );
+        return connection(namespace);
+      },
+    );
+    try {
+      await mcp.start();
+      await vi.waitFor(() =>
+        expect(authorizationOf(mcp, 'protected')).not.toBeNull(),
+      );
+      await expect(
+        mcp.requestAuthorization('protected', { clientId: 'customer-app' }),
+      ).rejects.toThrow('Discovery unavailable');
+      expect(serverRow(mcp, 'protected')?.status).toBe(
+        'authorization_required',
+      );
+      expect(await mcp.requestAuthorization('protected')).toMatchObject({
+        outcome: 'pending',
+      });
+    } finally {
+      await mcp.close();
+      configure.mockRestore();
+    }
+  });
+
+  it('replaces the OAuth client on a connected server and retires its old connection', async () => {
+    const active = connection('protected');
+    const configure = vi
+      .spyOn(registeredClient, 'saveRegisteredOAuthClient')
+      .mockImplementation(async () => {
+        expect(active.close).toHaveBeenCalledTimes(1);
+      });
+    let attempts = 0;
+    const { mcp, pendingAuthorizations } = setupAuthorization(
+      { protected: { url: 'https://protected.example/mcp' } },
+      async ({ namespace, signal }) => {
+        if (++attempts === 1) return active;
+        await pendingAuthorizations.register(
+          {
+            serverName: namespace,
+            serverUrl: 'https://protected.example/mcp',
+            authorizationUrl:
+              'https://auth.example/authorize?state=replacement',
+            state: 'replacement',
+          },
+          { signal, timeoutMs: 60_000 },
+        );
+        return connection(namespace);
+      },
+    );
+    try {
+      await mcp.start();
+      await waitForNamespace(mcp, 'protected');
+      expect(await mcp.requestAuthorization('protected')).toEqual({
+        outcome: 'already_connected',
+      });
+      const client = {
+        clientId: 'replacement',
+        clientSecret: 'replacement-secret',
+      };
+      expect(await mcp.requestAuthorization('protected', client)).toMatchObject(
+        {
+          outcome: 'pending',
+          authorization: { state: 'replacement' },
+        },
+      );
+      expect(configure.mock.calls[0]?.[4]).toEqual(client);
+      expect(serverRow(mcp, 'protected')?.toolCount).toBe(0);
+    } finally {
+      await mcp.close();
+      configure.mockRestore();
+    }
+  });
+
+  it('applies corrected secrets and scopes for the same client, including concurrent replacements', async () => {
+    const gate = deferred<void>();
+    const configure = vi
+      .spyOn(registeredClient, 'saveRegisteredOAuthClient')
+      .mockImplementationOnce(() => gate.promise)
+      .mockResolvedValue(undefined);
+    let attempt = 0;
+    const { mcp, pendingAuthorizations } = setupAuthorization(
+      { protected: { url: 'https://protected.example/mcp' } },
+      async ({ namespace, signal }) => {
+        const state = `attempt-${++attempt}`;
+        await pendingAuthorizations.register(
+          {
+            serverName: namespace,
+            serverUrl: 'https://protected.example/mcp',
+            authorizationUrl: `https://auth.example/authorize?client_id=same-client&state=${state}`,
+            state,
+          },
+          { signal, timeoutMs: 60_000 },
+        );
+        return connection(namespace);
+      },
+    );
+    try {
+      await mcp.start();
+      await vi.waitFor(() =>
+        expect(authorizationOf(mcp, 'protected')).not.toBeNull(),
+      );
+      const original = authorizationOf(mcp, 'protected');
+      const corrected = { clientId: 'same-client', clientSecret: 'corrected' };
+      const first = mcp.requestAuthorization('protected', corrected);
+      await vi.waitFor(() => expect(configure).toHaveBeenCalledTimes(1));
+      const expanded = { ...corrected, scope: 'crm.read crm.write' };
+      const second = mcp.requestAuthorization('protected', expanded);
+      gate.resolve();
+      const [firstResult, secondResult] = await Promise.all([first, second]);
+      expect(firstResult.outcome).toBe('pending');
+      expect(secondResult.outcome).toBe('pending');
+      expect(configure).toHaveBeenCalledTimes(2);
+      expect(configure.mock.calls.map((call) => call[4])).toEqual([
+        corrected,
+        expanded,
+      ]);
+      expect(authorizationOf(mcp, 'protected')?.id).not.toBe(original?.id);
+      expect(await mcp.requestAuthorization('protected')).toEqual(secondResult);
+    } finally {
+      await mcp.close();
+      configure.mockRestore();
+    }
+  });
+
   it('reports unknown servers and servers that do not use interactive OAuth', async () => {
     const { mcp } = setupAuthorization(
       {

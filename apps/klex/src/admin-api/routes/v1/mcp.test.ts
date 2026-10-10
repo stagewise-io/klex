@@ -8,6 +8,8 @@ import { ConfigValidationError } from '@/config';
 import type { Mcp, McpServerInfo, McpToolCallRecord } from '@/mcp';
 
 import {
+  callMcpTool,
+  callMcpToolRoute,
   createMcpServer,
   createMcpServerRoute,
   deleteMcpServer,
@@ -94,6 +96,7 @@ function makeDeps(
 
 function createApp(deps: McpRouteDependencies): OpenAPIHono {
   return setupTestApp((app) => {
+    app.openapi(callMcpToolRoute, callMcpTool(deps));
     app.openapi(getMcpServersRoute, getMcpServers(deps));
     app.openapi(getMcpServerRoute, getMcpServer(deps));
     app.openapi(createMcpServerRoute, createMcpServer(deps));
@@ -173,6 +176,103 @@ describe('GET /v1/mcp-servers — list MCP servers', () => {
     });
     expect(body.servers[1]?.lastError?.message).toBe('connect ECONNREFUSED');
     expect(body.servers[1]?.nextRetryAt).toBe('2026-07-28T08:00:30.000Z');
+  });
+});
+
+describe('POST /v1/mcp-servers/:name/tool-calls', () => {
+  function setup(status = 'connected') {
+    const invoke = vi.fn<Mcp['invoke']>(async () => ({
+      content: [{ type: 'text', text: 'ok' }],
+    }));
+    const describe = vi.fn<Mcp['describe']>(async () => ({
+      reference: { namespace: 'test-server', name: 'lookup' },
+    }));
+    const app = createApp(
+      makeDeps(
+        {},
+        {
+          getServerStatuses: () => [
+            makeServerInfo({ status: status as McpServerInfo['status'] }),
+          ],
+          describe,
+          invoke,
+        },
+      ),
+    );
+    const call = (
+      body: unknown = { toolName: 'lookup', arguments: { query: 'hello' } },
+      name = 'test-server',
+      signal?: AbortSignal,
+    ) =>
+      app.request(`/v1/mcp-servers/${name}/tool-calls`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+        signal,
+      });
+    return { call, invoke, describe };
+  }
+
+  it('invokes the named tool with its arguments and returns the MCP result', async () => {
+    const { call, invoke } = setup();
+    const response = await call();
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      result: { content: [{ type: 'text', text: 'ok' }] },
+    });
+    expect(invoke).toHaveBeenCalledWith(
+      { namespace: 'test-server', name: 'lookup' },
+      { query: 'hello' },
+      { executionId: expect.any(String), signal: expect.any(AbortSignal) },
+    );
+  });
+
+  it('rejects missing/disconnected servers and unknown tools before invoking', async () => {
+    const missing = setup();
+    expect((await missing.call(undefined, 'missing')).status).toBe(404);
+    expect(missing.invoke).not.toHaveBeenCalled();
+    const disconnected = setup('disconnected');
+    expect((await disconnected.call()).status).toBe(409);
+    expect(disconnected.invoke).not.toHaveBeenCalled();
+    const unknown = setup();
+    unknown.describe.mockRejectedValue(new Error('unknown'));
+    expect((await unknown.call()).status).toBe(404);
+    expect(unknown.invoke).not.toHaveBeenCalled();
+  });
+
+  it('rejects invalid arguments and sanitizes transport failures', async () => {
+    const { call, invoke } = setup();
+    expect((await call({ toolName: 'lookup', arguments: [] })).status).toBe(
+      400,
+    );
+    expect(invoke).not.toHaveBeenCalled();
+    invoke.mockRejectedValue(new Error('private token'));
+    const response = await call();
+    expect(response.status).toBe(502);
+    expect(await response.json()).toEqual({
+      error: 'MCP tool request failed',
+      code: 'tool_call_failed',
+    });
+  });
+
+  it('propagates request cancellation and bounds calls with a timeout', async () => {
+    vi.useFakeTimers();
+    const timeout = vi.spyOn(AbortSignal, 'timeout');
+    try {
+      const { call, invoke } = setup();
+      const controller = new AbortController();
+      invoke.mockImplementation(async (_reference, _input, context) => {
+        controller.abort();
+        context.signal.throwIfAborted();
+        return { content: [] };
+      });
+      const response = await call(undefined, 'test-server', controller.signal);
+      expect(response.status).toBe(504);
+      expect(timeout).toHaveBeenCalledWith(30_000);
+    } finally {
+      timeout.mockRestore();
+      vi.useRealTimers();
+    }
   });
 });
 

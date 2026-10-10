@@ -22,6 +22,7 @@ const IMAGE_MEDIA_TYPES = [
   'image/webp',
   'image/gif',
 ];
+const AUDIO_MEDIA_TYPES = ['audio/mpeg', 'audio/wav'];
 const MODEL_FALLBACKS = [
   {
     prefixes: ['gpt-realtime-', 'gpt-4o-realtime-'],
@@ -60,7 +61,12 @@ const MODEL_FALLBACKS = [
   },
   {
     prefixes: ['gpt-audio-'],
-    metadata: { kind: 'language', capabilities: { input: { audio: {} } } },
+    metadata: {
+      kind: 'language',
+      capabilities: {
+        input: { audio: { mediaTypes: AUDIO_MEDIA_TYPES } },
+      },
+    },
     documentationUrl: MODEL_DOCS,
   },
   {
@@ -204,7 +210,9 @@ const MODEL_CATALOG = [
       kind: 'language',
       displayName: 'GPT-Audio-1.5',
       contextSize: 128_000,
-      capabilities: { input: { audio: {} } },
+      capabilities: {
+        input: { audio: { mediaTypes: AUDIO_MEDIA_TYPES } },
+      },
     },
     `${MODEL_DOCS}/gpt-audio-1.5`,
   ),
@@ -274,9 +282,13 @@ function createLanguageModel(
   instance: ProviderInstance,
   modelId: string,
 ): LanguageModelV4 {
-  return createOpenAI({
+  const provider = createOpenAI({
     baseURL: setting(instance, 'baseUrl') ?? BASE_URL,
     apiKey: requiredSetting(instance, 'apiKey'),
     headers: customHeaders(instance),
-  }).languageModel(modelId);
+  });
+  // GPT Audio accepts audio through Chat Completions, not Responses.
+  return modelId.startsWith('gpt-audio')
+    ? provider.chat(modelId)
+    : provider.languageModel(modelId);
 }

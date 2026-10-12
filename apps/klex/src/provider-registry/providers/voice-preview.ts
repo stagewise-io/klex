@@ -173,7 +173,7 @@ export async function generateVoicePreview(
         )
       )
         throw new Error('Invalid audio');
-      const pcm = Buffer.from(value, 'base64');
+      let pcm = Buffer.from(value, 'base64');
       if (!pcm.length || pcm.length % 2)
         throw new Error('Invalid audio length');
       if (pcm.length > MAX_PCM_BYTES) throw new Error('Audio limit exceeded');
@@ -190,6 +190,11 @@ export async function generateVoicePreview(
         if (voiced) {
           clearTimeout(quiet);
           quiet = setTimeout(complete, 750);
+        } else {
+          // Keep the silence timer running even when the WAV buffer is full.
+          // Only silence may be truncated; subsequent speech still hits the cap.
+          pcm = pcm.subarray(0, MAX_PCM_BYTES - bytes);
+          if (!pcm.length) return;
         }
       }
       if (bytes + pcm.length > MAX_PCM_BYTES)

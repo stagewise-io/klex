@@ -1,5 +1,7 @@
 import WebSocket from 'ws';
 
+import { geminiLiveWebSocketUrl } from '@/config';
+
 import type {
   ProviderInstance,
   ProviderOperationResult,
@@ -92,28 +94,29 @@ export async function generateVoicePreview(
     const base =
       setting(instance, 'baseUrl') ??
       (gemini
-        ? 'https://generativelanguage.googleapis.com/v1beta'
+        ? 'https://generativelanguage.googleapis.com'
         : 'https://api.openai.com/v1');
-    const url = new URL(base);
+    const endpoint = new URL(base);
     if (
-      !['https:', 'http:'].includes(url.protocol) ||
-      url.username ||
-      url.password
+      !['https:', 'http:'].includes(endpoint.protocol) ||
+      endpoint.username ||
+      endpoint.password
     )
       return unavailable('invalid_configuration', 'Invalid preview endpoint');
-    url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
-    url.search = '';
-    url.hash = '';
-    url.pathname = gemini
-      ? `${url.pathname.replace(/\/$/, '').replace(/\/v1beta$/, '')}/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent`
-      : `${url.pathname.replace(/\/$/, '')}/${live ? 'live/sessions' : 'realtime'}`;
-    if (!gemini && !live) url.searchParams.set('model', modelId);
+    endpoint.hash = '';
+    const url = gemini
+      ? new URL(geminiLiveWebSocketUrl(endpoint.toString(), key))
+      : endpoint;
+    if (!gemini) {
+      url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
+      url.search = '';
+      url.pathname = `${url.pathname.replace(/\/$/, '')}/${live ? 'live/sessions' : 'realtime'}`;
+      if (!live) url.searchParams.set('model', modelId);
+    }
     socket = connect(url.toString(), {
       headers: {
         ...customHeaders(instance),
-        ...(gemini
-          ? { 'x-goog-api-key': key }
-          : { Authorization: `Bearer ${key}` }),
+        ...(!gemini && { Authorization: `Bearer ${key}` }),
       },
       maxPayload: MAX_MESSAGE_BYTES,
       handshakeTimeout: 10_000,

@@ -3,6 +3,8 @@ import { EventEmitter } from 'node:events';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type WebSocket from 'ws';
 
+import { geminiLiveWebSocketUrl } from '@/config';
+
 import type {
   ProviderInstance,
   ProviderVoicePreviewContext,
@@ -118,10 +120,11 @@ describe('isolated voice previews', () => {
       { apiKey: 'secret' },
     );
     expect(h.connect).toHaveBeenCalledWith(
-      expect.stringContaining(
-        '/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent',
+      geminiLiveWebSocketUrl(
+        'https://generativelanguage.googleapis.com',
+        'secret',
       ),
-      expect.objectContaining({ headers: { 'x-goog-api-key': 'secret' } }),
+      expect.objectContaining({ headers: {} }),
     );
     h.socket.emit('open');
     expect(
@@ -155,6 +158,35 @@ describe('isolated voice previews', () => {
     expect((await h.result).ok).toBe(true);
     expect(h.socket.terminate).toHaveBeenCalledOnce();
   });
+
+  it.each([
+    'https://proxy.example.test/gemini',
+    'https://proxy.example.test/v1beta',
+    'https://proxy.example.test/gemini/?old=query#fragment',
+    'http://localhost:9000/gemini',
+  ])(
+    'uses the live Gemini URL builder for custom endpoint %s',
+    async (baseUrl) => {
+      const h = setup('google-gemini', 'gemini-3.8-live', 'Puck', {
+        apiKey: 'key with +/&?',
+        baseUrl,
+        headers: { 'X-Proxy-Auth': 'proxy-secret' },
+      });
+      const url = new URL(geminiLiveWebSocketUrl(baseUrl, 'key with +/&?'));
+      url.hash = '';
+      expect(h.connect).toHaveBeenCalledWith(
+        url.toString(),
+        expect.objectContaining({
+          headers: { 'X-Proxy-Auth': 'proxy-secret' },
+          followRedirects: false,
+          handshakeTimeout: 10_000,
+          maxPayload: 1_048_576,
+        }),
+      );
+      h.controller.abort();
+      expect((await h.result).ok).toBe(false);
+    },
+  );
 
   it('starts GPT-Live in explicit client mode, appends commentary, supplies clock, and closes after speech', async () => {
     vi.useFakeTimers();

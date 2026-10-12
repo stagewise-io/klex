@@ -2,6 +2,15 @@
 
 All notable Klex changes are documented here.
 
+## 0.15.1 (2026-10-12)
+
+### Bug Fixes
+
+- align Gemini previews with live connection URLs (8e5e9b9)
+- discover Gemini voices from the live catalog (cdab02b)
+- allow trailing Live silence at the preview audio cap (be18392)
+- preserve selected GPT-Live snapshots (33a4acc)
+
 ## 0.15.0 (2026-10-09)
 
 ### Features

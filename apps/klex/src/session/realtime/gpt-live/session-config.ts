@@ -16,6 +16,7 @@ const MAX_HISTORY_TOOL_STRING_CHARACTERS = 1_024;
 const MAX_HISTORY_TOOL_COLLECTION_ENTRIES = 128;
 
 export interface GPTLiveSessionConfigOptions {
+  readonly modelId?: string;
   readonly responsesModel: string;
   readonly frontendInstructions: string;
   readonly voice?: string;
@@ -46,7 +47,7 @@ interface GPTLiveFunctionTool {
 }
 
 export interface GPTLiveSessionConfig {
-  readonly model: 'gpt-live-1';
+  readonly model: string;
   readonly instructions: string;
   readonly audio: {
     readonly format: { readonly type: 'audio/pcm'; readonly rate: 24_000 };
@@ -111,7 +112,7 @@ export function buildGPTLiveSessionConfig(
 
   return {
     session: {
-      model: 'gpt-live-1',
+      model: options.modelId ?? 'gpt-live-1',
       instructions: options.frontendInstructions,
       audio: {
         format: { type: 'audio/pcm', rate: 24_000 },

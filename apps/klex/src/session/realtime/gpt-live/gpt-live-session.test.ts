@@ -60,7 +60,7 @@ const context: PreparedInferenceContext = {
   updateWatermark: 0,
 };
 
-function setup(voiceId?: string, voice?: string) {
+function setup(voiceId?: string, voice?: string, modelId = 'gpt-live-1') {
   const socket = new FakeSocket();
   let replacementSocket: FakeSocket | undefined;
   let connectionCount = 0;
@@ -71,7 +71,7 @@ function setup(voiceId?: string, voice?: string) {
     voice,
     config: {
       voiceId,
-      modelId: 'gpt-live-1',
+      modelId,
       apiKey: 'secret-test-key',
       baseUrl: 'https://example.test/v1',
       responsesModelId: 'gpt-5.2',
@@ -143,6 +143,41 @@ describe('GPT-Live model session', () => {
       harness.controller.abort();
     }
   });
+  it.each(['gpt-live-1', 'gpt-live-1-2026-10-01'])(
+    'preserves selected model %s on startup and replacement connections',
+    async (modelId) => {
+      const harness = setup('quartz', undefined, modelId);
+      try {
+        harness.socket.open();
+        expect(JSON.parse(harness.socket.sent[0] ?? '{}')).toMatchObject({
+          type: 'session.start',
+          session: { model: modelId, audio: { output: { voice: 'quartz' } } },
+        });
+        harness.socket.message({
+          type: 'session.started',
+          session: { id: 'live-1' },
+        });
+        await harness.creating;
+        harness.socket.readyState = 3;
+        harness.socket.emit('close');
+        const replacement = harness.replacementSocket();
+        expect(replacement).toBeDefined();
+        replacement?.open();
+        expect(JSON.parse(replacement?.sent[0] ?? '{}')).toMatchObject({
+          type: 'session.start',
+          session: { model: modelId, audio: { output: { voice: 'quartz' } } },
+        });
+        replacement?.message({
+          type: 'session.started',
+          session: { id: 'live-2' },
+        });
+      } finally {
+        harness.controller.abort();
+        await harness.creating.catch(() => undefined);
+      }
+    },
+  );
+
   it('authenticates, starts with Responses delegation, and waits for readiness', async () => {
     const setupResult = setup();
     setupResult.socket.open();

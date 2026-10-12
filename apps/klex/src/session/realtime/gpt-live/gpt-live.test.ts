@@ -431,6 +431,16 @@ describe('GPT-Live startup configuration', () => {
     expect(prepared.session.instructions).not.toContain('backend');
   });
 
+  it('preserves an explicit Live snapshot without changing the Responses model', () => {
+    const prepared = buildGPTLiveSessionConfig(context, {
+      modelId: 'gpt-live-1-2026-10-01',
+      responsesModel: 'gpt-5.2',
+      frontendInstructions: 'frontend voice policy',
+    });
+    expect(prepared.session.model).toBe('gpt-live-1-2026-10-01');
+    expect(prepared.session.delegation.responses.model).toBe('gpt-5.2');
+  });
+
   it('does not require optional tool parameters through strict mode', () => {
     const prepared = buildGPTLiveSessionConfig(
       {

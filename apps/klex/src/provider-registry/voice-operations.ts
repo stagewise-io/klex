@@ -8,6 +8,7 @@ import { VOICE_PREVIEW_VERSION } from './providers/voice-preview-context';
 interface Owned {
   id: string;
   signature: string;
+  dependencies?: readonly { id: string; signature: string }[];
 }
 interface Cached<T> extends Owned {
   expires: number;
@@ -42,15 +43,20 @@ class VoiceOperations {
     { signature: string; times: number[] }
   >();
   private active = 0;
+  private activeLists = 0;
 
   invalidate(valid: (id: string, signature: string) => boolean): void {
+    const isValid = (entry: Owned) =>
+      valid(entry.id, entry.signature) &&
+      (entry.dependencies ?? []).every((dependency) =>
+        valid(dependency.id, dependency.signature),
+      );
     for (const cache of [this.lists, this.previews]) {
-      for (const [key, entry] of cache)
-        if (!valid(entry.id, entry.signature)) cache.delete(key);
+      for (const [key, entry] of cache) if (!isValid(entry)) cache.delete(key);
     }
     for (const pending of [this.pendingLists, this.pendingPreviews]) {
       for (const [key, entry] of pending)
-        if (!valid(entry.id, entry.signature)) {
+        if (!isValid(entry)) {
           entry.controller.abort();
           pending.delete(key);
         }
@@ -79,11 +85,27 @@ class VoiceOperations {
     const cached = this.lists.get(key);
     if (!refresh && cached && cached.expires > Date.now() && !signal?.aborted)
       return success(structuredClone(cached.value));
+    if (
+      !this.pendingLists.has(key) &&
+      !signal?.aborted &&
+      (this.pendingLists.size >= 4 || this.activeLists >= 4)
+    )
+      return failure(
+        'rate_limited',
+        'Voice discovery limit reached; retry later',
+      );
     const result = await this.work(
       key,
       { id, signature },
       this.pendingLists,
-      hook,
+      async (abort) => {
+        this.activeLists++;
+        try {
+          return await hook(abort);
+        } finally {
+          this.activeLists--;
+        }
+      },
       10_000,
       signal,
       (value) => {
@@ -120,6 +142,7 @@ class VoiceOperations {
     ) => Promise<ProviderOperationResult<ProviderVoicePreview>>,
     signal?: AbortSignal,
     contextSignature = '',
+    dependencies: Owned['dependencies'] = [],
   ): Promise<ProviderOperationResult<ProviderVoicePreview>> {
     const key = JSON.stringify([
       id,
@@ -150,7 +173,7 @@ class VoiceOperations {
     }
     const result = await this.work(
       key,
-      { id, signature },
+      { id, signature, dependencies },
       this.pendingPreviews,
       async (abort) => {
         this.active++;
@@ -176,6 +199,7 @@ class VoiceOperations {
         this.previews.set(key, {
           id,
           signature,
+          dependencies,
           value: structuredClone(value),
           expires: Date.now() + 86_400_000,
         });

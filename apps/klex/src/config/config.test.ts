@@ -1213,6 +1213,46 @@ describe('config v2', () => {
     await config.close();
   });
 
+  it.each(['gpt-live-1', 'gpt-live-1-2026-10-01'])(
+    'resolves %s through the Live adapter with its selected voice',
+    async (modelId) => {
+      const config = createConfig({
+        logging,
+        dataDirectory: await directory(true),
+      });
+      await config.start();
+      try {
+        await config.writeProviderInstance('voice', {
+          type: 'openai',
+          settings: { apiKey: 'live-key' },
+          knownModels: {
+            [modelId]: { capabilities: { voice: { sts: true } } },
+          },
+        });
+        await config.writeModelSelection({
+          ...emptyModelSelection,
+          voice: {
+            ...emptyModelSelection.voice,
+            sts: [
+              {
+                providerId: 'voice',
+                modelId,
+                voiceId: 'meridian',
+              },
+            ],
+          },
+        });
+        expect(config.resolveRealtimeProvider()).toMatchObject({
+          kind: 'openai-live',
+          model: { modelId },
+          config: { modelId, voiceId: 'meridian' },
+        });
+      } finally {
+        await config.close();
+      }
+    },
+  );
+
   it('resolves GPT-Live with Responses delegation options', async () => {
     const config = createConfig({
       logging,

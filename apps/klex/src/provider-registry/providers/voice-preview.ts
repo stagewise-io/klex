@@ -260,7 +260,17 @@ export async function generateVoicePreview(
         const event: unknown = JSON.parse(raw.toString());
         if (!isRecord(event)) throw new Error('Malformed message');
         if (event.error || event.type === 'error') {
-          fail(providerErrorSummary(event.error));
+          const quota =
+            isRecord(event.error) &&
+            ['rate_limit_exceeded', 'insufficient_quota'].includes(
+              String(event.error.code),
+            );
+          finish(
+            unavailable(
+              quota ? 'rate_limited' : 'preview_failed',
+              providerErrorSummary(event.error),
+            ),
+          );
           return;
         }
         if (gemini) {

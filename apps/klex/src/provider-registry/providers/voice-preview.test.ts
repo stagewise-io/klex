@@ -393,6 +393,40 @@ describe('isolated voice previews', () => {
     }
   });
 
+  it.each(['rate_limit_exceeded', 'insufficient_quota'])(
+    'classifies post-handshake %s as rate_limited without leaking upstream text',
+    async (code) => {
+      for (const modelId of ['gpt-live-1', 'gpt-realtime']) {
+        const h = setup('openai', modelId, 'marin');
+        await Promise.resolve();
+        h.socket.emit('open');
+        h.socket.message({ type: 'error', error: { code, message: 'secret' } });
+        expect(await h.result).toMatchObject({
+          ok: false,
+          code: 'rate_limited',
+        });
+        expect(JSON.stringify(await h.result)).not.toContain('secret');
+        expect(h.socket.terminate).toHaveBeenCalledOnce();
+        expect(h.socket.listenerCount('message')).toBe(0);
+      }
+    },
+  );
+
+  it('uses the Live endpoint and exact dated model for snapshots', async () => {
+    const h = setup('openai', 'gpt-live-1-2026-10-01', 'marin');
+    await Promise.resolve();
+    expect(h.connect.mock.calls[0]?.[0]).toBe(
+      'wss://example.test/v1/live/sessions',
+    );
+    h.socket.emit('open');
+    expect(h.socket.sent[0]).toMatchObject({
+      type: 'session.start',
+      session: { model: 'gpt-live-1-2026-10-01' },
+    });
+    h.controller.abort();
+    expect((await h.result).ok).toBe(false);
+  });
+
   it('reports known provider error codes and parameters without exposing arbitrary upstream text', async () => {
     const h = setup('openai', 'gpt-live-1', 'meridian');
     await Promise.resolve();

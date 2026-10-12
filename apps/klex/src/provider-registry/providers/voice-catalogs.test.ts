@@ -329,6 +329,34 @@ describe('Gemini voice catalogs', () => {
     ).toMatchObject({ ok: false, code: 'authentication_required' });
   });
 
+  it('rejects oversized Gemini bodies with or without Content-Length and cancels the stream', async () => {
+    for (const headers of [
+      { 'content-length': String(8 * 1024 * 1024 + 1) },
+      {},
+    ]) {
+      const cancel = vi.fn();
+      const response = new Response(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(new Uint8Array(8 * 1024 * 1024));
+            controller.enqueue(new Uint8Array(1));
+          },
+          cancel,
+        }),
+        { headers },
+      );
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response));
+      expect(
+        await discoverGeminiVoices(instance, model, signal()),
+      ).toMatchObject({
+        ok: false,
+        code: 'discovery_failed',
+      });
+      expect(cancel).toHaveBeenCalledOnce();
+      expect(response.body?.locked).toBe(false);
+    }
+  });
+
   it('rejects malformed/repeated pagination and skips network for unsupported profiles', async () => {
     const fetcher = vi.fn().mockResolvedValue(Response.json({ voices: 'bad' }));
     vi.stubGlobal('fetch', fetcher);

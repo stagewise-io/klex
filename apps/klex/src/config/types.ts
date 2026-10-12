@@ -50,6 +50,17 @@ const modelSelectionEntrySchema = z
   })
   .strict();
 
+const stsModelSelectionEntrySchema = modelSelectionEntrySchema.extend({
+  voiceId: z
+    .string()
+    .min(1)
+    .refine(
+      (value) => value.trim() === value,
+      'Must not contain surrounding whitespace',
+    )
+    .optional(),
+});
+type StsModelSelectionEntry = z.infer<typeof stsModelSelectionEntrySchema>;
 type ModelSelectionEntry = z.infer<typeof modelSelectionEntrySchema>;
 type ModelId = string;
 
@@ -465,6 +476,10 @@ const voiceModelSelectionSchema = z
   })
   .strict();
 
+const currentVoiceModelSelectionSchema = voiceModelSelectionSchema.extend({
+  sts: z.array(stsModelSelectionEntrySchema).default([]),
+});
+
 export const MODEL_PURPOSES = [
   'chat',
   'compaction',
@@ -486,7 +501,16 @@ const modelSelectionSchema = z
   })
   .strict();
 
-type ModelSelection = z.infer<typeof modelSelectionSchema>;
+const historicalModelSelectionSchema = modelSelectionSchema;
+const currentModelSelectionSchema = modelSelectionSchema.extend({
+  voice: currentVoiceModelSelectionSchema.default({
+    sts: [],
+    tts: [],
+    stt: [],
+  }),
+});
+
+type ModelSelection = z.infer<typeof currentModelSelectionSchema>;
 type ModelPurpose = (typeof MODEL_PURPOSES)[number];
 type VoiceModelPurpose = keyof ModelSelection['voice'];
 
@@ -580,7 +604,7 @@ const klexConfigV4Schema = z.object({
   providers: z
     .record(providerInstanceIdSchema, providerConfigSchema)
     .default({}),
-  modelSelection: modelSelectionSchema.default({
+  modelSelection: historicalModelSelectionSchema.default({
     chat: [],
     compaction: [],
     memory: [],
@@ -652,7 +676,7 @@ const klexConfigSchema = z.object({
   providers: z
     .record(providerInstanceIdSchema, providerConfigSchema)
     .default({}),
-  modelSelection: modelSelectionSchema.default({
+  modelSelection: currentModelSelectionSchema.default({
     chat: [],
     compaction: [],
     memory: [],
@@ -960,9 +984,11 @@ export type {
   ProviderType,
   SessionHistoryConfig,
   StdioServerConfig,
+  StsModelSelectionEntry,
   VoiceModelPurpose,
 };
 export {
+  currentModelSelectionSchema as modelSelectionSchema,
   dropLegacyTelemetryConfig,
   getProviderSettingsJsonSchema,
   isProviderSecretSetting,
@@ -972,7 +998,6 @@ export {
   modelCapabilitiesSchema,
   modelIdSchema,
   modelKindSchema,
-  modelSelectionSchema,
   nestMemoryExtensionConfig,
   parseKlexConfig,
   parseLegacyKlexConfig,
@@ -983,5 +1008,6 @@ export {
   providerConfigSchema,
   providerInstanceIdSchema,
   providerTypeSchema,
+  stsModelSelectionEntrySchema,
   timezoneSchema,
 };

@@ -20,6 +20,8 @@ import {
   testDiscoveryConnection,
   unavailable,
 } from './shared';
+import { discoverGeminiVoices } from './voice-catalogs';
+import { generateVoicePreview } from './voice-preview';
 
 const BASE_URL = 'https://generativelanguage.googleapis.com/v1beta';
 const MODEL_DOCS = 'https://ai.google.dev/gemini-api/docs/models';
@@ -259,6 +261,8 @@ export const googleGeminiProviderDefinition: ProviderDefinition = {
   resolveModelMetadata: resolveGoogleModelMetadata,
   createLanguageModel,
   discoverModels,
+  listVoices: discoverGeminiVoices,
+  getVoicePreview: generateVoicePreview,
   testConnection: (instance, signal) =>
     testDiscoveryConnection(instance, BASE_URL, () =>
       discoverModels(instance, signal),

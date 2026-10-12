@@ -75,6 +75,10 @@ import {
   getProvidersRoute,
   getProviderTypes,
   getProviderTypesRoute,
+  getProviderVoices,
+  getProviderVoicesRoute,
+  getVoicePreview,
+  getVoicePreviewRoute,
   testProvider,
   testProviderRoute,
   updateKnownModel,
@@ -185,6 +189,8 @@ export function createAdminApp(deps: AdminAppDependencies) {
     .openapi(deleteProviderRoute, deleteProvider(deps))
     .openapi(testProviderRoute, testProvider(deps))
     .openapi(getProviderModelsRoute, getProviderModels(deps))
+    .openapi(getProviderVoicesRoute, getProviderVoices(deps))
+    .openapi(getVoicePreviewRoute, getVoicePreview(deps))
     .openapi(createKnownModelRoute, createKnownModel(deps))
     .openapi(updateKnownModelRoute, updateKnownModel(deps))
     .openapi(deleteKnownModelRoute, deleteKnownModel(deps));

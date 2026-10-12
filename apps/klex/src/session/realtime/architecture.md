@@ -71,6 +71,12 @@ GPT-Live transcript deltas have timeline intervals but no authoritative turn bou
 
 Usage snapshots are cumulative. One replacement connection is permitted only when no delegated operation is ambiguous; a loss during tool work, a second loss, or an exhausted timeout fails closed without replaying side effects.
 
+## Voice selection and auditions
+
+STS references carry optional `voiceId` through resolved provider configuration. A new call resolves the current selection; active model sessions snapshot it, including reconnect setup. OpenAI Realtime emits the selected `audio.output.voice` or its existing `marin` default. Gemini emits `generationConfig.speechConfig.voiceConfig.prebuiltVoiceConfig.voiceName` only for an explicit selection. GPT-Live precedence is explicit factory override, persisted voice, then `marin`.
+
+Voice auditions belong to the provider registry, not the conversation/session coordinator. An isolated WebSocket uses the exact selected Live model and voice, no canonical history or tools, and no Live Responses delegation. Realtime/Gemini improvise a short introduction using the current agent name and full soul as reference data. GPT-Live first generates bounded commentary with the first configured chat model, then speaks it in client mode. The full soul is intentionally supplied to the relevant generation provider; other configuration and conversation content are excluded. OpenAI Realtime completes at `response.done`; Gemini at `turnComplete`. GPT-Live uses client-mode commentary and silence-clock input, completing after 750 ms without voiced output even while silent PCM frames continue. Only bounded mono 24-kHz PCM16 is wrapped as WAV. Abort, timeout, malformed/empty audio, and upstream closure terminate resources without retries. Credentialed upstream acceptance is separate from mock protocol verification.
+
 ## Observability and data handling
 
 Lifecycle logs correlate `leaseId`, `canonicalSessionId`, `externalMediaSessionId`, and MCP namespace. Observability must never include transcript bodies, tool arguments or results, secrets, credentials, or binary media. Counts, sequence numbers, non-secret tool names, model metadata, and closure classes are sufficient for diagnosis.

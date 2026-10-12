@@ -60,7 +60,7 @@ const context: PreparedInferenceContext = {
   updateWatermark: 0,
 };
 
-function setup() {
+function setup(voiceId?: string, voice?: string) {
   const socket = new FakeSocket();
   let replacementSocket: FakeSocket | undefined;
   let connectionCount = 0;
@@ -68,7 +68,9 @@ function setup() {
   let authorization: string | string[] | undefined;
   const factory = createGPTLiveProcessorFactory({
     logging,
+    voice,
     config: {
+      voiceId,
       modelId: 'gpt-live-1',
       apiKey: 'secret-test-key',
       baseUrl: 'https://example.test/v1',
@@ -122,6 +124,25 @@ function inputFrame(): AudioFrame {
 }
 
 describe('GPT-Live model session', () => {
+  it('uses explicit override, persisted voice, then the existing default', async () => {
+    for (const [voiceId, voice, expected] of [
+      [undefined, undefined, 'marin'],
+      ['quartz', undefined, 'quartz'],
+      ['quartz', 'cedar', 'cedar'],
+    ]) {
+      const harness = setup(voiceId, voice);
+      harness.socket.open();
+      expect(
+        JSON.parse(harness.socket.sent[0] ?? '{}').session.audio.output.voice,
+      ).toBe(expected);
+      harness.socket.message({
+        type: 'session.started',
+        session: { id: 'live' },
+      });
+      await harness.creating;
+      harness.controller.abort();
+    }
+  });
   it('authenticates, starts with Responses delegation, and waits for readiness', async () => {
     const setupResult = setup();
     setupResult.socket.open();

@@ -920,7 +920,7 @@ export function createGPTLiveProcessorFactory(options: {
       ((url, socketOptions) => new WebSocket(url, socketOptions)),
     options.startupTimeoutMs ?? STARTUP_TIMEOUT_MS,
     options.frontendInstructions ?? DEFAULT_FRONTEND_INSTRUCTIONS,
-    options.voice ?? DEFAULT_VOICE,
+    options.voice ?? options.config.voiceId ?? DEFAULT_VOICE,
     options.logging.child({
       name: 'gpt-live',
       bindings: { module: 'gpt-live' },

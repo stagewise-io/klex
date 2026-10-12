@@ -278,8 +278,21 @@ const modelSelectionEntryOapiSchema = z
   .strict()
   .openapi('ModelSelectionEntry');
 
+const stsModelSelectionEntryOapiSchema = modelSelectionEntryOapiSchema
+  .extend({
+    voiceId: z
+      .string()
+      .min(1)
+      .refine(
+        (value) => value.trim() === value,
+        'Must not contain surrounding whitespace',
+      )
+      .optional(),
+  })
+  .openapi('StsModelSelectionEntry');
+
 const voiceModelSelectionSchema = z.object({
-  sts: z.array(modelSelectionEntryOapiSchema),
+  sts: z.array(stsModelSelectionEntryOapiSchema),
   tts: z.array(modelSelectionEntryOapiSchema),
   stt: z.array(modelSelectionEntryOapiSchema),
 });
@@ -334,6 +347,8 @@ const providerMetadataSchema = z.object({
   documentationUrl: z.string().optional(),
   capabilities: z.object({
     modelDiscovery: z.boolean(),
+    voiceDiscovery: z.boolean(),
+    voicePreview: z.boolean(),
     connectivityTest: z.boolean(),
     customModels: z.boolean(),
   }),
@@ -531,6 +546,51 @@ const providerModelSchema = knownModelSchema.extend({
 const providerModelsResponseSchema = z.object({
   models: z.array(providerModelSchema),
 });
+const providerVoicesQuerySchema = z
+  .object({
+    modelId: z.string().min(1),
+    refresh: z.enum(['true', 'false']).optional(),
+  })
+  .strict();
+const voicePreviewBodySchema = z
+  .object({
+    modelId: z.string().min(1),
+    voiceId: z
+      .string()
+      .min(1)
+      .refine((value) => value.trim() === value),
+  })
+  .strict();
+const providerVoicesResponseSchema = z
+  .object({
+    selectionSupported: z.boolean(),
+    defaultVoiceId: z.string().optional(),
+    fallback: z.boolean().optional(),
+    stale: z.boolean().optional(),
+    voices: z.array(
+      z.object({
+        voiceId: z.string(),
+        displayName: z.string(),
+        description: z.string().optional(),
+        language: z.string().optional(),
+        region: z.string().optional(),
+        provenance: z.object({
+          source: z.enum(['maintained', 'discovered']),
+          documentationUrl: z.string(),
+          reviewedAt: z.string().optional(),
+        }),
+        preview: z.object({
+          available: z.boolean(),
+          mode: z.literal('live').optional(),
+        }),
+      }),
+    ),
+  })
+  .openapi('ProviderVoices');
+const voicePreviewAudioSchema = z
+  .string()
+  .openapi({ type: 'string', format: 'binary' });
+
 const providerModelsQuerySchema = z.object({
   refresh: z.enum(['true', 'false']).optional(),
 });
@@ -1113,6 +1173,8 @@ export {
   providersResponseSchema,
   providerTypeParamSchema,
   providerTypesResponseSchema,
+  providerVoicesQuerySchema,
+  providerVoicesResponseSchema,
   serializedMessagePartSchema,
   serializedMessageSchema,
   sessionHistoryListQuerySchema,
@@ -1137,4 +1199,6 @@ export {
   usageQuerySchema,
   usageResponseSchema,
   usageSplitBySchema,
+  voicePreviewAudioSchema,
+  voicePreviewBodySchema,
 };

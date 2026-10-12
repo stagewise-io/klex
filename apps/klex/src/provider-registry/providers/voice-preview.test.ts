@@ -368,13 +368,33 @@ describe('isolated voice previews', () => {
     expect((await h.result).ok).toBe(false);
   });
 
+  it('accepts newly discovered Gemini IDs without a local voice whitelist or an extra fetch', async () => {
+    const h = setup('google-gemini', 'gemini-3.8-live', 'Future-Voice');
+    expect(h.connect).toHaveBeenCalledOnce();
+    h.socket.emit('open');
+    expect(h.socket.sent[0]).toMatchObject({
+      setup: {
+        generationConfig: {
+          speechConfig: {
+            voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Future-Voice' } },
+          },
+        },
+      },
+    });
+    h.controller.abort();
+    expect((await h.result).ok).toBe(false);
+  });
+
   it('rejects missing credentials, unsupported models and malformed voice IDs without opening a socket', async () => {
     for (const h of [
       setup('openai', 'gpt-realtime', 'cedar', {}),
       setup('openai', 'gpt-realtime', 'invalid voice'),
       setup('openai', 'gpt-realtime', 'voice_custom'),
       setup('openai', 'gpt-5', 'cedar'),
-      setup('google-gemini', 'gemini-3.8-live', 'unknown'),
+      setup('google-gemini', 'gemini-3.8-live', 'invalid voice'),
+      setup('google-gemini', 'gemini-3.8-live', 'voice_custom'),
+      setup('google-gemini', 'gemini-3.8-live', 'voicekey_custom'),
+      setup('google-gemini', 'custom-live', 'Puck'),
     ]) {
       expect((await h.result).ok).toBe(false);
       expect(h.connect).not.toHaveBeenCalled();

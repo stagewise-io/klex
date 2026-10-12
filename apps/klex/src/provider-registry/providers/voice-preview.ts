@@ -13,7 +13,11 @@ import {
   setting,
   unavailable,
 } from './shared';
-import { geminiVoices, openAiVoiceProfile } from './voice-catalogs';
+import {
+  isGeminiVoiceId,
+  isGeminiVoiceModel,
+  openAiVoiceProfile,
+} from './voice-catalogs';
 import {
   validVoiceIntroduction,
   voicePreviewInstructions,
@@ -36,7 +40,7 @@ export async function generateVoicePreview(
 ): Promise<ProviderOperationResult<ProviderVoicePreview>> {
   const gemini = instance.type === 'google-gemini';
   const supported = gemini
-    ? geminiVoices(modelId).voices.some((voice) => voice.voiceId === voiceId)
+    ? isGeminiVoiceModel(modelId) && isGeminiVoiceId(voiceId)
     : openAiVoiceProfile(modelId) !== undefined &&
       /^[a-z][a-z0-9_-]{0,63}$/.test(voiceId) &&
       !voiceId.startsWith('voice_');

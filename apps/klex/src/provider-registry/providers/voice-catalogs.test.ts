@@ -4,7 +4,7 @@ import { createVoiceOperations } from '../voice-operations';
 import {
   discoverGeminiVoices,
   discoverOpenAiVoices,
-  geminiVoices,
+  isGeminiVoiceModel,
 } from './voice-catalogs';
 
 const model = 'gemini-2.5-flash-native-audio-preview-12-2025';
@@ -252,12 +252,11 @@ components:
 
 describe('Gemini voice catalogs', () => {
   it('excludes unrelated Gemini models and retains provider defaults', () => {
-    expect(geminiVoices(`models/${model}`).selectionSupported).toBe(true);
-    expect(geminiVoices('gemini-custom-live').selectionSupported).toBe(false);
-    expect(geminiVoices(model).defaultVoiceId).toBeUndefined();
+    expect(isGeminiVoiceModel(`models/${model}`)).toBe(true);
+    expect(isGeminiVoiceModel('gemini-custom-live')).toBe(false);
   });
 
-  it('paginates snake-case discovery metadata and filters incompatible/custom voices', async () => {
+  it('discovers new prebuilt IDs, paginates metadata, deduplicates and excludes custom voices', async () => {
     const fetcher = vi
       .fn()
       .mockResolvedValueOnce(
@@ -278,7 +277,15 @@ describe('Gemini voice catalogs', () => {
       )
       .mockResolvedValueOnce(
         Response.json({
-          voices: [{ id: 'Charon', type: 'prebuilt', region_code: 'US' }],
+          voices: [
+            { id: 'Charon', type: 'prebuilt', region_code: 'US' },
+            {
+              id: 'Unknown',
+              type: 'prebuilt',
+              description: 'New catalog voice',
+            },
+            { id: 'voice_private', type: 'replicated' },
+          ],
         }),
       );
     vi.stubGlobal('fetch', fetcher);
@@ -295,23 +302,43 @@ describe('Gemini voice catalogs', () => {
       expect(result.value.voices.map((item) => item.voiceId)).not.toContain(
         'voice_secret',
       );
-      expect(result.value.voices.map((item) => item.voiceId)).not.toContain(
+      expect(result.value.voices.map((item) => item.voiceId)).toEqual([
+        'Puck',
         'Unknown',
-      );
+        'Charon',
+      ]);
+      expect(result.value.voices[1]).toMatchObject({
+        voiceId: 'Unknown',
+        displayName: 'Unknown',
+        description: 'New catalog voice',
+        provenance: { source: 'discovered' },
+        preview: { available: true, mode: 'live' },
+      });
+      expect(result.value.defaultVoiceId).toBeUndefined();
     }
     expect(fetcher.mock.calls[1]?.[0].searchParams.get('page_token')).toBe(
       'next',
     );
     expect(fetcher.mock.calls[0]?.[1].headers['x-goog-api-key']).toBe('secret');
+    expect(fetcher.mock.calls[0]?.[0].searchParams.get('type')).toBe(
+      'prebuilt',
+    );
+    expect(fetcher.mock.calls[0]?.[1].signal).toBeInstanceOf(AbortSignal);
   });
 
-  it('uses explicit maintained fallback for an unavailable endpoint, never for rejected credentials', async () => {
-    vi.stubGlobal(
-      'fetch',
-      vi.fn().mockResolvedValue(new Response(null, { status: 404 })),
-    );
+  it('returns discovery errors rather than fixed fallback voices and preserves authentication errors', async () => {
+    for (const status of [404, 405, 501, 503]) {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn().mockResolvedValue(new Response(null, { status })),
+      );
+      expect(
+        await discoverGeminiVoices(instance, model, signal()),
+      ).toMatchObject({ ok: false, code: 'discovery_failed' });
+    }
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('offline')));
     expect(await discoverGeminiVoices(instance, model, signal())).toMatchObject(
-      { ok: true, value: { fallback: true } },
+      { ok: false, code: 'discovery_failed' },
     );
     vi.stubGlobal(
       'fetch',
@@ -327,6 +354,128 @@ describe('Gemini voice catalogs', () => {
         signal(),
       ),
     ).toMatchObject({ ok: false, code: 'authentication_required' });
+  });
+
+  it.each([
+    {},
+    { voices: [] },
+    { voices: [null] },
+    { voices: [{ id: 'voice_custom', type: 'prebuilt' }] },
+    { voices: [{ id: 'voicekey_custom', type: 'prebuilt' }] },
+    { voices: [{ id: 'bad voice', type: 'prebuilt' }] },
+    { voices: [{ id: 42, type: 'prebuilt' }] },
+    { voices: [{ id: 'voice_private', type: 'prompted' }] },
+    { voices: [{ id: 'Puck', type: 'prebuilt' }], next_page_token: 42 },
+  ])('rejects empty or malformed catalogs: %j', async (body) => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockImplementation(async () => Response.json(body)),
+    );
+    expect(await discoverGeminiVoices(instance, model, signal())).toMatchObject(
+      { ok: false, code: 'discovery_failed' },
+    );
+  });
+
+  it('uses registry caching, refreshes changed IDs and preserves only the last good catalog on failure', async () => {
+    const fetcher = vi
+      .fn()
+      .mockImplementation(async () =>
+        Response.json({ voices: [{ id: 'NewVoice', type: 'prebuilt' }] }),
+      );
+    vi.stubGlobal('fetch', fetcher);
+    const operations = createVoiceOperations();
+    const hook = (abort: AbortSignal) =>
+      discoverGeminiVoices(instance, model, abort);
+    try {
+      const first = await operations.list('p', 's', model, false, hook);
+      expect(first).toMatchObject({
+        ok: true,
+        value: { voices: [{ voiceId: 'NewVoice' }] },
+      });
+      expect(await operations.list('p', 's', model, false, hook)).toEqual(
+        first,
+      );
+      expect(fetcher).toHaveBeenCalledTimes(1);
+      fetcher.mockImplementation(async () =>
+        Response.json({ voices: [{ id: 'NextVoice', type: 'prebuilt' }] }),
+      );
+      expect(await operations.list('p', 's', model, true, hook)).toMatchObject({
+        ok: true,
+        value: { voices: [{ voiceId: 'NextVoice' }] },
+      });
+      fetcher.mockRejectedValue(new Error('offline'));
+      expect(await operations.list('p', 's', model, true, hook)).toMatchObject({
+        ok: true,
+        value: { stale: true, voices: [{ voiceId: 'NextVoice' }] },
+      });
+      expect(
+        await operations.list('cold', 's', model, true, hook),
+      ).toMatchObject({ ok: false, code: 'discovery_failed' });
+      fetcher.mockImplementation(
+        async () => new Response(null, { status: 403 }),
+      );
+      expect(await operations.list('p', 's', model, true, hook)).toMatchObject({
+        ok: false,
+        code: 'authentication_required',
+      });
+    } finally {
+      operations.close();
+    }
+  });
+
+  it('skips fetch when cancelled and cancels error response bodies', async () => {
+    const fetcher = vi.fn();
+    vi.stubGlobal('fetch', fetcher);
+    expect(
+      await discoverGeminiVoices(instance, model, AbortSignal.abort()),
+    ).toMatchObject({ ok: false, code: 'discovery_failed' });
+    expect(fetcher).not.toHaveBeenCalled();
+    const cancel = vi.fn();
+    fetcher.mockResolvedValue(
+      new Response(new ReadableStream({ cancel }), { status: 403 }),
+    );
+    expect(await discoverGeminiVoices(instance, model, signal())).toMatchObject(
+      { ok: false, code: 'authentication_required' },
+    );
+    expect(cancel).toHaveBeenCalledOnce();
+  });
+
+  it('bounds pagination and catalog size and never returns a partially fetched catalog', async () => {
+    let page = 0;
+    const fetcher = vi.fn().mockImplementation(async () =>
+      Response.json({
+        voices: [{ id: 'Puck', type: 'prebuilt' }],
+        next_page_token: `page-${++page}`,
+      }),
+    );
+    vi.stubGlobal('fetch', fetcher);
+    expect(await discoverGeminiVoices(instance, model, signal())).toMatchObject(
+      { ok: false, code: 'discovery_failed' },
+    );
+    expect(fetcher).toHaveBeenCalledTimes(100);
+    fetcher.mockImplementation(async () =>
+      Response.json({
+        voices: Array.from({ length: 10_001 }, (_, i) => ({
+          id: `NewVoice-${i}`,
+          type: 'prebuilt',
+        })),
+      }),
+    );
+    expect(await discoverGeminiVoices(instance, model, signal())).toMatchObject(
+      { ok: false, code: 'discovery_failed' },
+    );
+    fetcher
+      .mockReset()
+      .mockResolvedValueOnce(
+        Response.json({
+          voices: [{ id: 'Puck', type: 'prebuilt' }],
+          next_page_token: 'next',
+        }),
+      )
+      .mockRejectedValueOnce(new Error('offline'));
+    expect(await discoverGeminiVoices(instance, model, signal())).toMatchObject(
+      { ok: false, code: 'discovery_failed' },
+    );
   });
 
   it('rejects oversized Gemini bodies with or without Content-Length and cancels the stream', async () => {

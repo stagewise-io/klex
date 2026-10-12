@@ -17,41 +17,7 @@ import {
 const OPENAI_SCHEMA_URL =
   'https://raw.githubusercontent.com/openai/openai-openapi/master/openapi.yaml';
 const MAX_SCHEMA_BYTES = 8 * 1024 * 1024;
-const GEMINI_DOCS = 'https://ai.google.dev/gemini-api/docs/live-guide';
 const VOICE_DOCS = 'https://ai.google.dev/api/voices';
-const REVIEWED_AT = '2026-10-12';
-const GEMINI = [
-  'Achernar',
-  'Achird',
-  'Algenib',
-  'Algieba',
-  'Alnilam',
-  'Aoede',
-  'Autonoe',
-  'Callirrhoe',
-  'Charon',
-  'Despina',
-  'Enceladus',
-  'Erinome',
-  'Fenrir',
-  'Gacrux',
-  'Iapetus',
-  'Kore',
-  'Laomedeia',
-  'Leda',
-  'Orus',
-  'Puck',
-  'Pulcherrima',
-  'Rasalgethi',
-  'Sadachbia',
-  'Sadaltager',
-  'Schedar',
-  'Sulafat',
-  'Umbriel',
-  'Vindemiatrix',
-  'Zephyr',
-  'Zubenelgenubi',
-];
 // Translate/transcription variants have different output contracts; intentionally excluded.
 const GEMINI_MODELS = new Set([
   'gemini-3.8-live',
@@ -59,19 +25,6 @@ const GEMINI_MODELS = new Set([
   'gemini-2.5-flash-native-audio-preview-12-2025',
   'gemini-2.5-flash-native-audio-preview-09-2025',
 ]);
-
-function voice(voiceId: string, documentationUrl: string): ProviderVoice {
-  return {
-    voiceId,
-    displayName: voiceId,
-    provenance: {
-      source: 'maintained',
-      documentationUrl,
-      reviewedAt: REVIEWED_AT,
-    },
-    preview: { available: true, mode: 'live' },
-  };
-}
 
 export function openAiVoiceProfile(
   modelId: string,
@@ -242,13 +195,16 @@ function schemaVoiceIds(
   return [...ids];
 }
 
-export function geminiVoices(modelId: string): ProviderVoiceList {
-  if (!GEMINI_MODELS.has(modelId.replace(/^models\//, '')))
-    return { selectionSupported: false, voices: [] };
-  return {
-    selectionSupported: true,
-    voices: GEMINI.map((id) => voice(id, GEMINI_DOCS)),
-  };
+export function isGeminiVoiceModel(modelId: string): boolean {
+  return GEMINI_MODELS.has(modelId.replace(/^models\//, ''));
+}
+
+export function isGeminiVoiceId(voiceId: string): boolean {
+  return (
+    /^[A-Za-z][A-Za-z0-9_-]{0,127}$/.test(voiceId) &&
+    !voiceId.startsWith('voice_') &&
+    !voiceId.startsWith('voicekey_')
+  );
 }
 
 export async function discoverGeminiVoices(
@@ -256,16 +212,25 @@ export async function discoverGeminiVoices(
   modelId: string,
   signal: AbortSignal,
 ): Promise<ProviderOperationResult<ProviderVoiceList>> {
-  const maintained = geminiVoices(modelId);
-  if (!maintained.selectionSupported) return available(maintained);
+  if (!isGeminiVoiceModel(modelId))
+    return available({ selectionSupported: false, voices: [] });
   const apiKey = setting(instance, 'apiKey');
   if (!apiKey)
     return unavailable('authentication_required', 'Configure a Gemini API key');
-  const voices = new Map(maintained.voices.map((item) => [item.voiceId, item]));
+  const voices = new Map<string, ProviderVoice>();
   const tokens = new Set<string>();
   let pageToken = '';
+  let pages = 0;
   try {
+    signal.throwIfAborted();
+    const requestSignal = AbortSignal.any([signal, AbortSignal.timeout(8_000)]);
     do {
+      requestSignal.throwIfAborted();
+      if (++pages > 100)
+        return unavailable(
+          'discovery_failed',
+          'Voice catalog has too many pages',
+        );
       const url = new URL(
         `${(setting(instance, 'baseUrl') ?? 'https://generativelanguage.googleapis.com/v1beta').replace(/\/$/, '')}/voices`,
       );
@@ -273,17 +238,16 @@ export async function discoverGeminiVoices(
       url.searchParams.set('page_size', '1000');
       if (pageToken) url.searchParams.set('page_token', pageToken);
       const response = await fetch(url, {
-        signal,
+        signal: requestSignal,
         redirect: 'error',
         headers: { ...customHeaders(instance), 'x-goog-api-key': apiKey },
       });
+      if (!response.ok) await response.body?.cancel();
       if ([401, 403].includes(response.status))
         return unavailable(
           'authentication_required',
           'Gemini rejected the configured credentials or voice catalog access',
         );
-      if ([404, 405, 501].includes(response.status))
-        return available({ ...maintained, fallback: true });
       if (response.status === 400)
         return unavailable(
           'invalid_configuration',
@@ -296,7 +260,7 @@ export async function discoverGeminiVoices(
         );
       let body: unknown;
       try {
-        body = JSON.parse(await readSchema(response, signal));
+        body = JSON.parse(await readSchema(response, requestSignal));
       } catch {
         return unavailable('discovery_failed', 'Malformed voice catalog');
       }
@@ -306,23 +270,20 @@ export async function discoverGeminiVoices(
       )
         return unavailable('discovery_failed', 'Malformed voice catalog');
       for (const item of (body.voices ?? []) as unknown[]) {
-        if (
-          !isRecord(item) ||
-          item.type !== 'prebuilt' ||
-          typeof item.id !== 'string'
-        )
-          continue;
-        const compatible = voices.get(item.id);
-        if (!compatible) continue;
+        if (!isRecord(item))
+          return unavailable('discovery_failed', 'Malformed voice catalog');
+        if (item.type !== 'prebuilt') continue;
+        if (typeof item.id !== 'string' || !isGeminiVoiceId(item.id))
+          return unavailable('discovery_failed', 'Invalid prebuilt voice ID');
         voices.set(item.id, {
-          ...compatible,
+          voiceId: item.id,
           displayName:
-            typeof item.display_name === 'string'
-              ? item.display_name
-              : compatible.displayName,
-          ...(typeof item.persona === 'string' && {
-            description: item.persona,
-          }),
+            typeof item.display_name === 'string' ? item.display_name : item.id,
+          ...(typeof item.description === 'string'
+            ? { description: item.description }
+            : typeof item.persona === 'string' && {
+                description: item.persona,
+              }),
           ...(typeof item.language_code === 'string' && {
             language: item.language_code,
           }),
@@ -332,9 +293,12 @@ export async function discoverGeminiVoices(
           provenance: {
             source: 'discovered',
             documentationUrl: VOICE_DOCS,
-            reviewedAt: REVIEWED_AT,
+            reviewedAt: new Date().toISOString().slice(0, 10),
           },
+          preview: { available: true, mode: 'live' },
         });
+        if (voices.size > 10_000)
+          return unavailable('discovery_failed', 'Voice catalog too large');
       }
       if (
         body.next_page_token !== undefined &&
@@ -345,17 +309,26 @@ export async function discoverGeminiVoices(
           'Malformed voice catalog pagination',
         );
       pageToken = (body.next_page_token as string | undefined) ?? '';
-      if (pageToken && (tokens.has(pageToken) || tokens.size >= 100))
+      if (pageToken && tokens.has(pageToken))
         return unavailable(
           'discovery_failed',
           'Voice catalog pagination did not terminate',
         );
       tokens.add(pageToken);
     } while (pageToken);
-    return available({ ...maintained, voices: [...voices.values()] });
+    requestSignal.throwIfAborted();
+    if (!voices.size)
+      return unavailable('discovery_failed', 'Missing prebuilt voices');
+    return available({
+      selectionSupported: true,
+      voices: [...voices.values()],
+    });
   } catch {
     if (signal.aborted)
       return unavailable('discovery_failed', 'Voice discovery cancelled');
-    return available({ ...maintained, fallback: true });
+    return unavailable(
+      'discovery_failed',
+      'Could not load Gemini voice options',
+    );
   }
 }

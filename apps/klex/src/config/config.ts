@@ -42,18 +42,21 @@ export interface ResolvedModelConfig {
 }
 
 export interface ResolvedOpenAIRealtimeConfig {
+  voiceId?: string;
   modelId: string;
   apiKey: string;
   websocketUrl: string;
 }
 
 export interface ResolvedGeminiLiveConfig {
+  voiceId?: string;
   modelId: string;
   apiKey: string;
   websocketUrl: string;
 }
 
 export interface ResolvedOpenAILiveConfig {
+  voiceId?: string;
   modelId: 'gpt-live-1';
   apiKey: string;
   baseUrl: string;
@@ -353,6 +356,9 @@ class ConfigModule implements Config {
         kind: 'gemini-live',
         model,
         config: {
+          ...(reference.voiceId !== undefined && {
+            voiceId: reference.voiceId,
+          }),
           modelId: resolved.modelId,
           apiKey,
           websocketUrl: geminiLiveWebSocketUrl(baseUrl, apiKey),
@@ -364,6 +370,9 @@ class ConfigModule implements Config {
         kind: 'openai-live',
         model,
         config: {
+          ...(reference.voiceId !== undefined && {
+            voiceId: reference.voiceId,
+          }),
           modelId: resolved.modelId,
           apiKey,
           baseUrl,
@@ -377,6 +386,7 @@ class ConfigModule implements Config {
       kind: 'openai-realtime',
       model,
       config: {
+        ...(reference.voiceId !== undefined && { voiceId: reference.voiceId }),
         modelId: resolved.modelId,
         apiKey,
         websocketUrl: openAIRealtimeWebSocketUrl(baseUrl, resolved.modelId),

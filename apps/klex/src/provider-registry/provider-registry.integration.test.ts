@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import type { LanguageModelV4 } from '@ai-sdk/provider';
+import { MockLanguageModelV4 } from 'ai/test';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { RootLogger } from '@stagewise/logger';
@@ -20,6 +21,7 @@ import {
   createProviderRegistry,
   type ProviderDefinition,
 } from './provider-registry';
+import { voicePreviewInstructions } from './providers/voice-preview-context';
 
 const directories: string[] = [];
 const logging = {
@@ -60,6 +62,268 @@ async function createDataDirectory(): Promise<string> {
 }
 
 describe('provider registry module integration', () => {
+  it('reads current identity and soul, refreshes personalized caches, and uses configured chat for Live', async () => {
+    const config = createConfig({
+      logging,
+      dataDirectory: await createDataDirectory(),
+    });
+    await config.start();
+    let soul: string | null = 'Help organize projects.';
+    const model = new MockLanguageModelV4({
+      doGenerate: async () => ({
+        content: [
+          {
+            type: 'text',
+            text: "Hi, I'm Integration Agent, your Klex bot. I help organize projects.",
+          },
+        ],
+        finishReason: { unified: 'stop', raw: 'stop' },
+        usage: {
+          inputTokens: { total: 1, noCache: 1, cacheRead: 0, cacheWrite: 0 },
+          outputTokens: { total: 1, text: 1, reasoning: 0 },
+        },
+        warnings: [],
+      }),
+    });
+    const getVoicePreview = vi.fn<
+      NonNullable<ProviderDefinition['getVoicePreview']>
+    >(async (_instance, modelId, voiceId, signal, context) => {
+      expect(context).toBeDefined();
+      if (modelId.startsWith('gpt-live-') && context?.generateIntroduction) {
+        expect(
+          await context.generateIntroduction(
+            voicePreviewInstructions(context, voiceId),
+            signal,
+          ),
+        ).toContain('Integration Agent');
+      }
+      return {
+        ok: true,
+        code: 'available',
+        value: {
+          audio: new Uint8Array(48),
+          mimeType: 'audio/wav',
+          sourceModelId: modelId,
+          mode: 'live',
+        },
+      };
+    });
+    const registry = createProviderRegistry({
+      logging,
+      config,
+      getSoul: () => soul,
+      definitions: [
+        {
+          type: 'openai',
+          usageGuidance:
+            'Use this injected provider to verify personalized preview generation.',
+          metadata: {
+            displayName: 'Preview Test',
+            description: 'Preview Test',
+          },
+          createLanguageModel: () => model,
+          resolveModelMetadata: (modelId) => ({
+            kind: modelId === 'chat' ? 'language' : 'speech-to-speech',
+            capabilities: modelId === 'chat' ? {} : { voice: { sts: true } },
+          }),
+          testConnection: async () => ({
+            ok: true,
+            code: 'available',
+            value: { latencyMs: 0 },
+          }),
+          listVoices: async () => ({
+            ok: true,
+            code: 'available',
+            value: {
+              selectionSupported: true,
+              voices: [
+                {
+                  voiceId: 'cedar',
+                  displayName: 'Cedar',
+                  provenance: {
+                    source: 'maintained',
+                    documentationUrl: 'https://example.test',
+                    reviewedAt: '2026-10-12',
+                  },
+                  preview: { available: true, mode: 'live' },
+                },
+              ],
+            },
+          }),
+          getVoicePreview,
+        },
+      ],
+    });
+    await registry.start();
+    try {
+      await config.writeProviderInstance('voice', {
+        type: 'openai',
+        settings: { apiKey: 'voice-key' },
+      });
+      await config.writeProviderInstance('chat', {
+        type: 'openai',
+        settings: { apiKey: 'chat-key' },
+      });
+      await config.mutate((value) => ({
+        ...value,
+        modelSelection: {
+          ...value.modelSelection,
+          chat: [
+            {
+              providerId: 'chat',
+              modelId: 'chat',
+              providerOptions: { openai: { reasoningEffort: 'low' } },
+            },
+          ],
+        },
+      }));
+      for (let index = 0; index < 2; index++) {
+        expect(
+          (await registry.getVoicePreview('voice', 'gpt-realtime', 'cedar')).ok,
+        ).toBe(true);
+      }
+      expect(getVoicePreview).toHaveBeenCalledTimes(1);
+      expect(getVoicePreview.mock.calls[0]?.[4]).toMatchObject({
+        name: 'Integration Agent',
+        soul: 'Help organize projects.',
+      });
+      expect(
+        getVoicePreview.mock.calls[0]?.[4]?.generateIntroduction,
+      ).toBeUndefined();
+      soul = 'Help plan the week.';
+      await registry.getVoicePreview('voice', 'gpt-realtime', 'cedar');
+      expect(getVoicePreview).toHaveBeenCalledTimes(2);
+      expect(getVoicePreview.mock.calls[1]?.[4]?.soul).toBe(soul);
+      await config.mutate((value) => ({ ...value, officialName: 'Ada' }));
+      await registry.getVoicePreview('voice', 'gpt-realtime', 'cedar');
+      expect(getVoicePreview).toHaveBeenCalledTimes(3);
+      expect(getVoicePreview.mock.calls[2]?.[4]?.name).toBe('Ada');
+      soul = null;
+      await registry.getVoicePreview('voice', 'gpt-realtime', 'cedar');
+      expect(getVoicePreview.mock.calls[3]?.[4]?.soul).toBeNull();
+      expect(
+        (await registry.getVoicePreview('voice', 'gpt-live-1', 'cedar')).ok,
+      ).toBe(true);
+      expect(
+        (await registry.getVoicePreview('voice', 'gpt-live-1', 'cedar')).ok,
+      ).toBe(true);
+      expect(model.doGenerateCalls).toHaveLength(1);
+      expect(model.doGenerateCalls[0]?.tools).toBeUndefined();
+      expect(model.doGenerateCalls[0]?.providerOptions).toMatchObject({
+        openai: { reasoningEffort: 'low' },
+      });
+      expect(JSON.stringify(model.doGenerateCalls[0]?.prompt)).toContain('Ada');
+      await config.writeProviderInstance('chat', {
+        type: 'openai',
+        settings: { apiKey: 'new-chat-key' },
+      });
+      await registry.getVoicePreview('voice', 'gpt-live-1', 'cedar');
+      expect(model.doGenerateCalls).toHaveLength(2);
+    } finally {
+      await registry.close();
+      await config.close();
+    }
+  });
+
+  it('validates new choices atomically and retains unchanged choices offline without previewing', async () => {
+    const config = createConfig({
+      logging,
+      dataDirectory: await createDataDirectory(),
+    });
+    await config.start();
+    const listVoices = vi.fn<NonNullable<ProviderDefinition['listVoices']>>(
+      async () => ({
+        ok: true,
+        code: 'available',
+        value: {
+          selectionSupported: true,
+          voices: [
+            {
+              voiceId: 'cedar',
+              displayName: 'Cedar',
+              provenance: {
+                source: 'maintained',
+                documentationUrl: 'https://example.test',
+                reviewedAt: '2026-10-12',
+              },
+              preview: { available: true, mode: 'live' },
+            },
+          ],
+        },
+      }),
+    );
+    const getVoicePreview = vi.fn();
+    const registry = createProviderRegistry({
+      logging,
+      config,
+      definitions: [
+        {
+          type: 'openai',
+          usageGuidance:
+            'Use this test provider for speech-to-speech models with a supported voice catalog.',
+          metadata: { displayName: 'Test', description: 'Test' },
+          createLanguageModel: () => ({}) as LanguageModelV4,
+          testConnection: async () => ({
+            ok: true,
+            code: 'available',
+            value: { latencyMs: 0 },
+          }),
+          resolveModelMetadata: () => ({
+            kind: 'speech-to-speech',
+            capabilities: { voice: { sts: true } },
+          }),
+          listVoices,
+          getVoicePreview,
+        },
+      ],
+    });
+    await registry.start();
+    await config.writeProviderInstance('voice', {
+      type: 'openai',
+      settings: { apiKey: 'key' },
+    });
+    const reference = { providerId: 'voice', modelId: 'gpt-realtime' };
+    const voice = {
+      sts: [{ ...reference, voiceId: 'cedar' }],
+      tts: [],
+      stt: [],
+    };
+    expect(await registry.updateModelSelection({ voice })).toMatchObject({
+      ok: true,
+    });
+    expect(registry.resolveRealtimeProvider()?.config).toMatchObject({
+      voiceId: 'cedar',
+    });
+    expect(listVoices).toHaveBeenCalledTimes(1);
+    listVoices.mockResolvedValue({
+      ok: false,
+      code: 'discovery_failed',
+      message: 'Offline',
+    });
+    expect(await registry.updateModelSelection({ voice })).toMatchObject({
+      ok: true,
+    });
+    expect(listVoices).toHaveBeenCalledTimes(1);
+    const before = config.get();
+    expect(
+      await registry.updateModelSelection({
+        chat: [],
+        voice: { ...voice, sts: [{ ...reference, voiceId: 'unknown' }] },
+      }),
+    ).toMatchObject({ ok: false, code: 'invalid_configuration' });
+    expect(config.get()).toEqual(before);
+    expect(getVoicePreview).not.toHaveBeenCalled();
+    expect(
+      await registry.updateModelSelection({
+        voice: { ...voice, sts: [reference] },
+      }),
+    ).toMatchObject({ ok: true });
+    expect(registry.resolveRealtimeProvider()?.config).not.toHaveProperty(
+      'voiceId',
+    );
+    await registry.close();
+    await config.close();
+  });
   it('runs the provider lifecycle across config, discovery, and runtime resolution', async () => {
     const discoverModels = vi.fn(async () => ({
       ok: true as const,

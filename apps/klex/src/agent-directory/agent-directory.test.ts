@@ -47,7 +47,7 @@ describe('AgentDirectory', () => {
       _klex: {
         store: 'config',
         schemaVersion: 5,
-        compatibilityVersion: 6,
+        compatibilityVersion: 7,
       },
       configVersion: 2,
       officialName: 'Ada',

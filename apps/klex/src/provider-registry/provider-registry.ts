@@ -1,6 +1,8 @@
 import { createHash, randomBytes } from 'node:crypto';
 
 import type { LanguageModelV4 } from '@ai-sdk/provider';
+import { generateText } from 'ai';
+import { z } from 'zod';
 
 import type { ModuleLogger, RootLogger } from '@stagewise/logger';
 
@@ -14,6 +16,7 @@ import {
   type ModelKind,
   type ModelSelection,
   type ModelSelectionEntry,
+  modelSelectionSchema,
   type ProviderType,
   parseProviderSettings,
   type ResolvedModelConfig,
@@ -21,7 +24,9 @@ import {
 } from '@/config';
 
 import { mergeProviderModels } from './model-metadata';
+import { VOICE_PREVIEW_VERSION } from './providers/voice-preview-context';
 import { withRemoteInputMapping } from './remote-input';
+import { createVoiceOperations } from './voice-operations';
 
 export type { ProviderType } from '@/config';
 export type ProviderInstanceId = string;
@@ -37,6 +42,9 @@ export type ProviderErrorCode =
   | 'unsupported_platform'
   | 'connectivity_failed'
   | 'discovery_failed'
+  | 'unsupported_operation'
+  | 'preview_failed'
+  | 'rate_limited'
   | 'conflict'
   | 'referential_integrity'
   | 'internal_error';
@@ -60,6 +68,8 @@ export type ProviderOperationResult<T = undefined> =
 
 export interface ProviderCapabilities {
   modelDiscovery: boolean;
+  voiceDiscovery: boolean;
+  voicePreview: boolean;
   connectivityTest: boolean;
   customModels: boolean;
 }
@@ -96,6 +106,45 @@ export interface ProviderModel {
   provenance?: ModelMetadataProvenance[];
 }
 
+export interface ProviderVoice {
+  voiceId: string;
+  displayName: string;
+  description?: string;
+  language?: string;
+  region?: string;
+  provenance: {
+    source: 'maintained' | 'discovered';
+    documentationUrl: string;
+    reviewedAt?: string;
+  };
+  preview: { available: boolean; mode?: 'live' };
+}
+
+export interface ProviderVoiceList {
+  selectionSupported: boolean;
+  defaultVoiceId?: string;
+  voices: readonly ProviderVoice[];
+  fallback?: boolean;
+  stale?: boolean;
+}
+
+export interface ProviderVoicePreviewContext {
+  name: string;
+  soul: string | null;
+  /** Used only by transports that require text commentary before speaking. */
+  generateIntroduction?: (
+    instructions: string,
+    signal: AbortSignal,
+  ) => Promise<string>;
+}
+
+export interface ProviderVoicePreview {
+  audio: Uint8Array;
+  mimeType: 'audio/wav';
+  sourceModelId: string;
+  mode: 'live';
+}
+
 export interface ProviderInstance {
   id: ProviderInstanceId;
   type: ProviderType;
@@ -125,6 +174,18 @@ export interface ProviderDefinition {
     instance: ProviderInstance,
     signal: AbortSignal,
   ): Promise<ProviderOperationResult<readonly ProviderModel[]>>;
+  listVoices?(
+    instance: ProviderInstance,
+    modelId: string,
+    signal: AbortSignal,
+  ): Promise<ProviderOperationResult<ProviderVoiceList>>;
+  getVoicePreview?(
+    instance: ProviderInstance,
+    modelId: string,
+    voiceId: string,
+    signal: AbortSignal,
+    context?: ProviderVoicePreviewContext,
+  ): Promise<ProviderOperationResult<ProviderVoicePreview>>;
   resolveModelMetadata?(
     modelId: string,
   ): Omit<ProviderModel, 'modelId'> | undefined;
@@ -183,6 +244,18 @@ export interface ProviderModelResolver {
 }
 
 export interface ProviderRegistry extends ProviderModelResolver {
+  listVoices(
+    id: string,
+    modelId: string,
+    refresh?: boolean,
+    signal?: AbortSignal,
+  ): Promise<ProviderOperationResult<ProviderVoiceList>>;
+  getVoicePreview(
+    id: string,
+    modelId: string,
+    voiceId: string,
+    signal?: AbortSignal,
+  ): Promise<ProviderOperationResult<ProviderVoicePreview>>;
   start(): Promise<void>;
   close(): Promise<void>;
   listProviderTypes(): readonly ProviderTypeInfo[];
@@ -234,11 +307,13 @@ export interface ProviderRegistryDependencies {
   logging: RootLogger;
   definitions: readonly ProviderDefinition[];
   config?: Config;
+  getSoul?: () => string | null;
 }
 
 class ProviderRegistryModule implements ProviderRegistry {
   private readonly definitions: ReadonlyMap<ProviderType, ProviderDefinition>;
   private started = false;
+  private readonly voices = createVoiceOperations();
   private unsubscribe: (() => void) | undefined;
   private readonly modelCache = new Map<
     ProviderInstanceId,
@@ -257,6 +332,7 @@ class ProviderRegistryModule implements ProviderRegistry {
       logger: ModuleLogger;
       definitions: readonly ProviderDefinition[];
       config?: Config;
+      getSoul?: () => string | null;
     },
   ) {
     this.definitions = validateDefinitions(deps.definitions);
@@ -265,6 +341,13 @@ class ProviderRegistryModule implements ProviderRegistry {
   async start(): Promise<void> {
     if (this.started) return;
     this.unsubscribe = this.deps.config?.subscribe(() => {
+      this.voices.invalidate((id, signature) => {
+        const instance = this.getInstance(id);
+        return (
+          instance.ok &&
+          this.settingsSignature(instance.value.settings) === signature
+        );
+      });
       this.configGeneration += 1;
       this.modelCache.clear();
       this.pendingDiscovery.clear();
@@ -279,6 +362,7 @@ class ProviderRegistryModule implements ProviderRegistry {
   async close(): Promise<void> {
     if (!this.started) return;
     this.started = false;
+    this.voices.close();
     this.unsubscribe?.();
     this.unsubscribe = undefined;
     this.configGeneration += 1;
@@ -545,6 +629,8 @@ class ProviderRegistryModule implements ProviderRegistry {
       consult: patch.consult ?? current.modelSelection.consult,
       voice: patch.voice ?? current.modelSelection.voice,
     };
+    if (!modelSelectionSchema.safeParse(merged).success)
+      return failure('invalid_configuration', 'Invalid model selection');
     const changed: ModelSelection = {
       chat: patch.chat ?? [],
       compaction: patch.compaction ?? [],
@@ -594,6 +680,44 @@ class ProviderRegistryModule implements ProviderRegistry {
             modelId: entry.modelId,
             message: `Capabilities for model '${entry.modelId}' could not be determined from provider discovery or the static catalog. Add it to knownModels to confirm its capabilities.`,
           });
+        }
+        if (
+          purpose === 'voice.sts' &&
+          'voiceId' in entry &&
+          entry.voiceId !== undefined
+        ) {
+          if (
+            typeof entry.voiceId !== 'string' ||
+            !entry.voiceId ||
+            entry.voiceId.trim() !== entry.voiceId
+          )
+            return failure(
+              'invalid_configuration',
+              'Voice ID must be a nonempty string without surrounding whitespace',
+            );
+          const unchangedVoice = current.modelSelection.voice.sts.some(
+            (previous) =>
+              previous.providerId === entry.providerId &&
+              previous.modelId === entry.modelId &&
+              previous.voiceId === entry.voiceId,
+          );
+          if (!unchangedVoice) {
+            const catalog = await this.listVoices(
+              entry.providerId,
+              entry.modelId,
+            );
+            if (!catalog.ok) return catalog;
+            if (
+              !catalog.value.selectionSupported ||
+              !catalog.value.voices.some(
+                (voice) => voice.voiceId === entry.voiceId,
+              )
+            )
+              return failure(
+                'invalid_configuration',
+                'Voice is not supported by this model',
+              );
+          }
         }
         const effective = this.resolveModel(entry);
         const voiceCapability = voiceCapabilityForPurpose(purpose);
@@ -767,6 +891,128 @@ class ProviderRegistryModule implements ProviderRegistry {
         inputCapabilities: model.inputCapabilities,
       },
     };
+  }
+
+  async listVoices(
+    id: string,
+    modelId: string,
+    refresh = false,
+    signal?: AbortSignal,
+  ): Promise<ProviderOperationResult<ProviderVoiceList>> {
+    const instance = this.getInstance(id);
+    if (!instance.ok) return instance;
+    const definition = this.requireDefinition(instance.value.type);
+    if (!definition.listVoices)
+      return success({ selectionSupported: false, voices: [] });
+    const signature = this.settingsSignature(instance.value.settings);
+    return this.voices.list(
+      id,
+      signature,
+      modelId,
+      refresh,
+      (abort) => definition.listVoices!(instance.value, modelId, abort),
+      signal,
+    );
+  }
+
+  async getVoicePreview(
+    id: string,
+    modelId: string,
+    voiceId: string,
+    signal?: AbortSignal,
+  ): Promise<ProviderOperationResult<ProviderVoicePreview>> {
+    const instance = this.getInstance(id);
+    if (!instance.ok) return instance;
+    const definition = this.requireDefinition(instance.value.type);
+    if (!definition.getVoicePreview)
+      return failure(
+        'unsupported_operation',
+        'Voice previews are unavailable for this provider',
+      );
+    const signature = this.settingsSignature(instance.value.settings);
+    const voices = await this.listVoices(id, modelId, false, signal);
+    if (!voices.ok) return voices;
+    const voice = voices.value.voices.find((item) => item.voiceId === voiceId);
+    if (!voices.value.selectionSupported || !voice)
+      return failure(
+        'invalid_configuration',
+        'Voice is not supported by this model',
+      );
+    if (!voice.preview.available)
+      return failure(
+        'unsupported_operation',
+        'Preview is unavailable for this voice',
+      );
+    const current = this.getInstance(id);
+    if (
+      !current.ok ||
+      this.settingsSignature(current.value.settings) !== signature
+    )
+      return failure(
+        'invalid_configuration',
+        'Provider changed during preview request',
+      );
+    let context: ProviderVoicePreviewContext;
+    let contextSignature: string;
+    try {
+      const config = this.deps.config?.get();
+      const live =
+        instance.value.type === 'openai' && modelId.startsWith('gpt-live-');
+      const chat = live ? config?.modelSelection.chat[0] : undefined;
+      const chatInstance = chat ? this.getInstance(chat.providerId) : undefined;
+      context = {
+        name: config?.officialName ?? 'Agent',
+        soul: this.deps.getSoul?.() ?? null,
+        ...(chat && {
+          generateIntroduction: async (
+            instructions: string,
+            abortSignal: AbortSignal,
+          ) => {
+            const result = await generateText({
+              model: this.getLanguageModel(chat),
+              system: instructions,
+              prompt: 'Write a fresh introduction for this voice audition now.',
+              maxOutputTokens: 2048,
+              maxRetries: 0,
+              abortSignal,
+              ...(chat.providerOptions && {
+                providerOptions: z
+                  .record(z.string(), z.record(z.string(), z.json()))
+                  .parse(chat.providerOptions),
+              }),
+            });
+            return result.text.trim();
+          },
+        }),
+      };
+      contextSignature = this.settingsSignature({
+        name: context.name,
+        soul: context.soul,
+        version: VOICE_PREVIEW_VERSION,
+        chat,
+        chatSettings: chatInstance?.ok
+          ? this.settingsSignature(chatInstance.value.settings)
+          : undefined,
+      });
+    } catch {
+      return failure('preview_failed', 'Could not read voice preview context');
+    }
+    return this.voices.preview(
+      id,
+      signature,
+      modelId,
+      voiceId,
+      (abort) =>
+        definition.getVoicePreview!(
+          instance.value,
+          modelId,
+          voiceId,
+          abort,
+          context,
+        ),
+      signal,
+      contextSignature,
+    );
   }
 
   async testConnection(
@@ -1114,6 +1360,8 @@ function providerMetadata(definition: ProviderDefinition): ProviderMetadata {
     ...definition.metadata,
     capabilities: {
       modelDiscovery: definition.discoverModels !== undefined,
+      voiceDiscovery: definition.listVoices !== undefined,
+      voicePreview: definition.getVoicePreview !== undefined,
       connectivityTest: true,
       customModels: true,
     },
@@ -1162,5 +1410,6 @@ export function createProviderRegistry(
     }),
     definitions: deps.definitions,
     ...(deps.config && { config: deps.config }),
+    ...(deps.getSoul && { getSoul: deps.getSoul }),
   });
 }

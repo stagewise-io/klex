@@ -235,6 +235,26 @@ file.
 After migration, the persisted document has `configVersion: 2`; subsequent
 starts parse it directly and do not migrate it again.
 
+## STS voice selection
+
+Only `modelSelection.voice.sts` entries accept optional `voiceId`. Obtain compatible opaque IDs from the provider's model-scoped voice catalog before saving through the model-selection API:
+
+```json
+{
+  "voice": {
+    "sts": [{ "providerId": "openai-primary", "modelId": "gpt-realtime", "voiceId": "cedar" }],
+    "tts": [],
+    "stt": []
+  }
+}
+```
+
+This is the body for `PATCH /v1/settings/model-selection`; the `voice` object replaces all three voice lists. Preserve existing TTS/STT lists when editing STS. To reset, replace the STS reference with the same provider/model and omit `voiceId`. Empty or whitespace-padded IDs are invalid. Other selection purposes reject the field.
+
+New voices are validated atomically against the compatible catalog; unchanged persisted triples can be retained offline. Config loading and new-call resolution do not discover voices over the network. Upstream rejection is an explicit error rather than a silent substitution. Existing selections without a voice keep their defaults: OpenAI Realtime and GPT-Live use `marin`; Gemini leaves its default to the provider. GPT-Live's explicit factory override takes precedence over persistence.
+
+Changes apply to new calls; active calls and reconnects retain their startup voice. The field raises the config compatibility floor to 7 while preserving schema 5 and frozen historical schemas. Local-data upgrades metadata without transforming the document; older writers reject the new floor before mutation. The minimum-version diagnostic is `0.16.0`, the first stable release supporting this compatibility floor.
+
 ## Realtime media
 
 The realtime media slice is opt-in:

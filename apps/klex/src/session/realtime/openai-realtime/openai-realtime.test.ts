@@ -116,12 +116,13 @@ const preparedContext: PreparedInferenceContext = {
 async function setup(
   startupTimeoutMs = 1_000,
   context?: PreparedInferenceContext,
+  voiceId?: string,
 ) {
   const socket = new FakeSocket();
   let authorization: string | undefined;
   const factory = createOpenAIRealtimeProcessorFactory({
     logging,
-    config,
+    config: { ...config, ...(voiceId !== undefined && { voiceId }) },
     startupTimeoutMs,
     // Reconnection is opt-in per test so unexpected closes stay terminal.
     reconnect: { maxAttempts: 0 },
@@ -235,6 +236,17 @@ function pcm24(sampleCount: number, value = 1_000): string {
 }
 
 describe('OpenAI realtime processor', () => {
+  it('uses the selected voice while retaining the existing default', async () => {
+    for (const voiceId of [undefined, 'cedar']) {
+      const harness = await setup(1_000, undefined, voiceId);
+      harness.socket.open();
+      expect(
+        JSON.parse(harness.socket.sent[0] ?? '{}').session.audio.output.voice,
+      ).toBe(voiceId ?? 'marin');
+      harness.socket.message({ type: 'session.updated' });
+      await (await harness.promise).close();
+    }
+  });
   afterEach(() => vi.useRealTimers());
 
   it('authenticates, configures PCM and waits for readiness', async () => {

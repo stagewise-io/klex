@@ -444,6 +444,8 @@ async function main(): Promise<void> {
       logging: logger,
       config,
       definitions: builtInProviderDefinitions,
+      getSoul: () =>
+        readSoul(join(dataDirectory, 'extensions', createSoulExt.identifier)),
     });
     await providerRegistry.start();
     preRuntime.push(providerRegistry);

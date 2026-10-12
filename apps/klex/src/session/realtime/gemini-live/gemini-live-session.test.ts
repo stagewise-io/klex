@@ -76,11 +76,12 @@ function source(queue: BoundedAsyncQueue<AudioFrame>): AudioSource {
 async function setup(
   startupTimeoutMs = 1_000,
   contextOverride?: Partial<PreparedInferenceContext>,
+  voiceId?: string,
 ) {
   const socket = new FakeSocket();
   const factory = createGeminiLiveProcessorFactory({
     logging,
-    config,
+    config: { ...config, ...(voiceId !== undefined && { voiceId }) },
     startupTimeoutMs,
     connect: () => socket,
   });
@@ -126,6 +127,24 @@ async function activate(contextOverride?: Partial<PreparedInferenceContext>) {
 }
 
 describe('Gemini live processor', () => {
+  it('sends a selected prebuilt voice and omits speechConfig for the default', async () => {
+    for (const voiceId of [undefined, 'Puck']) {
+      const harness = await setup(1_000, undefined, voiceId);
+      harness.socket.open();
+      const setupMsg = JSON.parse(harness.socket.sent[0] ?? '{}');
+      if (voiceId)
+        expect(
+          setupMsg.setup.generationConfig.speechConfig.voiceConfig
+            .prebuiltVoiceConfig.voiceName,
+        ).toBe(voiceId);
+      else
+        expect(setupMsg.setup.generationConfig).not.toHaveProperty(
+          'speechConfig',
+        );
+      harness.socket.message({ setupComplete: {} });
+      await (await harness.promise).close();
+    }
+  });
   it('sends setup message with model, instructions, transcription, and tools on open', async () => {
     const harness = await setup();
     let settled = false;

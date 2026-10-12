@@ -24,6 +24,7 @@ import type { ModuleLogger } from '@stagewise/logger';
 
 import type { Config } from '@/config';
 import type { Mcp, McpServerInfo } from '@/mcp';
+import type { ProviderRegistry } from '@/provider-registry';
 
 import {
   getMcpServers,
@@ -35,6 +36,10 @@ import {
   completeAuthorizationRoute,
   type McpAuthorizationRouteDependencies,
 } from '../admin-api/routes/v1/mcp.authorization';
+import {
+  getVoicePreview,
+  getVoicePreviewRoute,
+} from '../admin-api/routes/v1/providers';
 import { setupTestApp } from '../admin-api/routes/v1/test-utils';
 
 const logger = {
@@ -69,6 +74,7 @@ interface TunneledResponse {
   status: number;
   headers: Record<string, string | string[]>;
   body: string;
+  bytes: Buffer;
 }
 
 /**
@@ -190,6 +196,7 @@ class TunnelPeer {
           status: head.status,
           headers: head.headers,
           body: Buffer.concat(this.chunks).toString('utf8'),
+          bytes: Buffer.concat(this.chunks),
         });
         break;
       }
@@ -206,6 +213,7 @@ interface Harness {
 
 async function startHarness(
   deps: McpAuthorizationRouteDependencies,
+  providerRegistry?: ProviderRegistry,
 ): Promise<Harness> {
   // The list route only reads `mcp`; `config` exists to satisfy its dependency
   // contract.
@@ -217,6 +225,11 @@ async function startHarness(
     instance
       .openapi(getMcpServersRoute, getMcpServers(mcpDeps))
       .openapi(completeAuthorizationRoute, completeAuthorization(deps));
+    if (providerRegistry)
+      instance.openapi(
+        getVoicePreviewRoute,
+        getVoicePreview({ logger, providerRegistry }),
+      );
   });
   // The tunnel dispatches into a plain Hono app, mirroring the admin server.
   const app = new Hono().route('/', routes);
@@ -254,6 +267,36 @@ async function startHarness(
 }
 
 describe('admin MCP authorization routes over a tunnel connection', () => {
+  it('preserves voice preview binary bytes through real tunnel framing', async () => {
+    const audio = Buffer.from([82, 73, 70, 70, 0, 128, 255, 0, 192]);
+    const getVoicePreview = vi.fn(async () => ({
+      ok: true as const,
+      code: 'available' as const,
+      value: {
+        audio,
+        mimeType: 'audio/wav' as const,
+        sourceModelId: 'gpt-realtime',
+        mode: 'live' as const,
+      },
+    }));
+    const harness = await startHarness({ mcp: {} as Mcp, logger }, {
+      getVoicePreview,
+    } as unknown as ProviderRegistry);
+    try {
+      const response = await harness.peer.request(
+        1,
+        HttpMethod.POST,
+        '/v1/providers/voice/voices/preview',
+        JSON.stringify({ modelId: 'gpt-realtime', voiceId: 'cedar' }),
+      );
+      expect(response.status).toBe(200);
+      expect(response.headers['content-type']).toBe('audio/wav');
+      expect(response.bytes).toEqual(audio);
+      expect(getVoicePreview).toHaveBeenCalledOnce();
+    } finally {
+      await harness.close();
+    }
+  });
   it('serves the server listing with its embedded authorization', async () => {
     const harness = await startHarness({
       mcp: {

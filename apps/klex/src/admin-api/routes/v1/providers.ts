@@ -132,6 +132,7 @@ export function getProviderVoices(
     if (result.ok)
       return c.json({ ...result.value, voices: [...result.value.voices] }, 200);
     if (result.code === 'not_found') return c.json(failureBody(result), 404);
+    if (result.code === 'rate_limited') return c.json(failureBody(result), 429);
     if (result.code === 'internal_error')
       return c.json(failureBody(result), 500);
     return c.json(failureBody(result), 400);

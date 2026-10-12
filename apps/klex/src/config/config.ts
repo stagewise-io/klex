@@ -57,7 +57,7 @@ export interface ResolvedGeminiLiveConfig {
 
 export interface ResolvedOpenAILiveConfig {
   voiceId?: string;
-  modelId: 'gpt-live-1';
+  modelId: string;
   apiKey: string;
   baseUrl: string;
   responsesModelId: string;
@@ -365,7 +365,7 @@ class ConfigModule implements Config {
         },
       };
     }
-    if (resolved.modelId === 'gpt-live-1') {
+    if (/^gpt-live-1(?:-\d{4}-\d{2}-\d{2})?$/.test(resolved.modelId)) {
       return {
         kind: 'openai-live',
         model,

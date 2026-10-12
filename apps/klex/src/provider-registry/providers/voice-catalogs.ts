@@ -296,7 +296,7 @@ export async function discoverGeminiVoices(
         );
       let body: unknown;
       try {
-        body = await response.json();
+        body = JSON.parse(await readSchema(response, signal));
       } catch {
         return unavailable('discovery_failed', 'Malformed voice catalog');
       }

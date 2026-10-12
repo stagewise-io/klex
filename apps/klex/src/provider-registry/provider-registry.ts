@@ -954,12 +954,18 @@ class ProviderRegistryModule implements ProviderRegistry {
       );
     let context: ProviderVoicePreviewContext;
     let contextSignature: string;
+    const dependencies: { id: string; signature: string }[] = [];
     try {
       const config = this.deps.config?.get();
       const live =
         instance.value.type === 'openai' && modelId.startsWith('gpt-live-');
       const chat = live ? config?.modelSelection.chat[0] : undefined;
       const chatInstance = chat ? this.getInstance(chat.providerId) : undefined;
+      if (chat && chatInstance?.ok)
+        dependencies.push({
+          id: chat.providerId,
+          signature: this.settingsSignature(chatInstance.value.settings),
+        });
       context = {
         name: config?.officialName ?? 'Agent',
         soul: this.deps.getSoul?.() ?? null,
@@ -972,6 +978,8 @@ class ProviderRegistryModule implements ProviderRegistry {
               model: this.getLanguageModel(chat),
               system: instructions,
               prompt: 'Write a fresh introduction for this voice audition now.',
+              // This budget includes reasoning tokens on supported chat models.
+              // A 64-token total cap can exhaust reasoning before any text is emitted.
               maxOutputTokens: 2048,
               maxRetries: 0,
               abortSignal,
@@ -1012,6 +1020,7 @@ class ProviderRegistryModule implements ProviderRegistry {
         ),
       signal,
       contextSignature,
+      dependencies,
     );
   }
 

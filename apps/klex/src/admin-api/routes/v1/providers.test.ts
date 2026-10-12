@@ -153,6 +153,21 @@ describe('provider registry routes', () => {
     expect(getVoicePreview).toHaveBeenCalledTimes(1);
   });
 
+  it('returns HTTP 429 when voice discovery is at capacity', async () => {
+    const app = makeApp({
+      listVoices: async () => ({
+        ok: false,
+        code: 'rate_limited',
+        message: 'Voice discovery limit reached; retry later',
+      }),
+    });
+    const response = await app.request(
+      '/v1/providers/test-main/voices?modelId=gpt-live-1',
+    );
+    expect(response.status).toBe(429);
+    expect(await response.json()).toMatchObject({ code: 'rate_limited' });
+  });
+
   it('maps preview failures to stable HTTP statuses', async () => {
     for (const [code, status] of [
       ['not_found', 404],

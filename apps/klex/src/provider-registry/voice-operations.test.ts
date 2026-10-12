@@ -36,6 +36,131 @@ describe('voice operations', () => {
     operations.close();
   });
 
+  it('bounds catalog work across model IDs while allowing shared work and cache hits', async () => {
+    const operations = createVoiceOperations();
+    const releases: (() => void)[] = [];
+    const hook = vi.fn(
+      () =>
+        new Promise<ProviderOperationResult<ProviderVoiceList>>((resolve) => {
+          releases.push(() => resolve(ok(list)));
+        }),
+    );
+    await operations.list('p', 's', 'cached', false, async () => ok(list));
+    const pending = Array.from({ length: 4 }, (_, i) =>
+      operations.list('p', 's', `m${i}`, false, hook),
+    );
+    const shared = operations.list('p', 's', 'm0', false, hook);
+    expect(
+      await operations.list('other', 's', 'm4', false, hook),
+    ).toMatchObject({ code: 'rate_limited' });
+    expect(await operations.list('p', 's', 'cached', false, hook)).toEqual(
+      ok(list),
+    );
+    expect(
+      await operations.list('p', 's', 'm4', false, hook, AbortSignal.abort()),
+    ).toMatchObject({ code: 'discovery_failed' });
+    await Promise.resolve();
+    expect(hook).toHaveBeenCalledTimes(4);
+    for (const release of releases) release();
+    expect(await Promise.all([...pending, shared])).toEqual(
+      Array(5).fill(ok(list)),
+    );
+    expect(
+      await operations.list('p', 's', 'm4', false, async () => ok(list)),
+    ).toEqual(ok(list));
+    operations.close();
+  });
+
+  it('keeps abandoned hooks counted until they settle and never caches their late results', async () => {
+    const operations = createVoiceOperations();
+    const releases: (() => void)[] = [];
+    const signals: AbortSignal[] = [];
+    const hook = vi.fn(
+      (signal: AbortSignal) =>
+        new Promise<ProviderOperationResult<ProviderVoiceList>>((resolve) => {
+          signals.push(signal);
+          releases.push(() => resolve(ok(list)));
+        }),
+    );
+    const pending = Array.from({ length: 4 }, (_, i) =>
+      operations.list('p', 's', `m${i}`, false, hook),
+    );
+    await Promise.resolve();
+    operations.invalidate(() => false);
+    await Promise.all(pending);
+    expect(signals.every((signal) => signal.aborted)).toBe(true);
+    expect(await operations.list('p', 'new', 'm0', false, hook)).toMatchObject({
+      code: 'rate_limited',
+    });
+    for (const release of releases) release();
+    await vi.waitFor(async () => {
+      expect(
+        await operations.list('p', 'new', 'm0', false, async () => ok(list)),
+      ).toEqual(ok(list));
+    });
+    expect(hook).toHaveBeenCalledTimes(4);
+    operations.close();
+  });
+
+  it('invalidates dependent preview work and caches without cancelling independent previews', async () => {
+    const operations = createVoiceOperations();
+    const dependencies = [{ id: 'chat', signature: 'old' }];
+    const hook = vi.fn(async () => ok(audio));
+    await operations.preview(
+      'speech',
+      's',
+      'm',
+      'cached',
+      hook,
+      undefined,
+      'context',
+      dependencies,
+    );
+    let upstream!: AbortSignal;
+    let release!: () => void;
+    const pending = operations.preview(
+      'speech',
+      's',
+      'm',
+      'pending',
+      (signal) => {
+        upstream = signal;
+        return new Promise<ProviderOperationResult<ProviderVoicePreview>>(
+          (resolve) => {
+            release = () => resolve(ok(audio));
+          },
+        );
+      },
+      undefined,
+      'context',
+      dependencies,
+    );
+    await operations.preview('speech', 's', 'm', 'independent', hook);
+    operations.invalidate(() => true);
+    expect(upstream.aborted).toBe(false);
+    operations.invalidate(
+      (id, signature) => id !== 'chat' || signature === 'new',
+    );
+    expect(upstream.aborted).toBe(true);
+    expect((await pending).ok).toBe(false);
+    release();
+    await Promise.resolve();
+    await operations.preview('speech', 's', 'm', 'independent', hook);
+    expect(hook).toHaveBeenCalledTimes(2);
+    await operations.preview(
+      'speech',
+      's',
+      'm',
+      'cached',
+      hook,
+      undefined,
+      'context',
+      [{ id: 'chat', signature: 'new' }],
+    );
+    expect(hook).toHaveBeenCalledTimes(3);
+    operations.close();
+  });
+
   it('cancels one waiter without aborting shared work', async () => {
     const operations = createVoiceOperations();
     let complete!: (value: ProviderOperationResult<ProviderVoiceList>) => void;

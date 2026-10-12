@@ -219,6 +219,50 @@ describe('provider registry module integration', () => {
       });
       await registry.getVoicePreview('voice', 'gpt-live-1', 'cedar');
       expect(model.doGenerateCalls).toHaveLength(2);
+
+      // Chat credentials are a dependency even when speech settings are unchanged.
+      await config.writeProviderInstance('chat', {
+        type: 'openai',
+        settings: { apiKey: 'pending-chat-key' },
+      });
+      const originalGenerate = model.doGenerate.bind(model);
+      let started!: () => void;
+      const generationStarted = new Promise<void>((resolve) => {
+        started = resolve;
+      });
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      let upstream: AbortSignal | undefined;
+      const spy = vi
+        .spyOn(model, 'doGenerate')
+        .mockImplementationOnce(async (options) => {
+          upstream = options.abortSignal;
+          started();
+          await gate;
+          return originalGenerate(options);
+        });
+      const pending = registry.getVoicePreview('voice', 'gpt-live-1', 'cedar');
+      await generationStarted;
+      await config.mutate((value) => ({
+        ...value,
+        officialName: 'Ada Updated',
+      }));
+      expect(upstream?.aborted).toBe(false);
+      await config.writeProviderInstance('chat', {
+        type: 'openai',
+        settings: { apiKey: 'latest-chat-key' },
+      });
+      expect(upstream?.aborted).toBe(true);
+      expect((await pending).ok).toBe(false);
+      release();
+      await vi.waitFor(() => expect(model.doGenerateCalls).toHaveLength(3));
+      spy.mockRestore();
+      expect(
+        (await registry.getVoicePreview('voice', 'gpt-live-1', 'cedar')).ok,
+      ).toBe(true);
+      expect(model.doGenerateCalls).toHaveLength(4);
     } finally {
       await registry.close();
       await config.close();

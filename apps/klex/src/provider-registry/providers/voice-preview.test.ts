@@ -272,33 +272,71 @@ describe('isolated voice previews', () => {
     expect(h.socket.terminate).toHaveBeenCalledOnce();
   });
 
-  it('accepts eleven seconds of Live speech plus the trailing silence window', async () => {
-    vi.useFakeTimers();
-    const h = setup('openai', 'gpt-live-1', 'meridian');
-    await Promise.resolve();
-    h.socket.emit('open');
-    h.socket.message({ type: 'session.started' });
-    h.socket.message({
-      type: 'session.output_audio.delta',
-      delta: Buffer.alloc(24_000 * 2 * 11, 1).toString('base64'),
-    });
-    for (let index = 0; index < 37; index++) {
+  it.each([11, 11.3, 11.98, 12])(
+    'accepts %s seconds of Live speech plus the trailing silence window',
+    async (seconds) => {
+      vi.useFakeTimers();
+      const h = setup('openai', 'gpt-live-1', 'meridian');
+      await Promise.resolve();
+      h.socket.emit('open');
+      h.socket.message({ type: 'session.started' });
       h.socket.message({
         type: 'session.output_audio.delta',
-        delta: Buffer.alloc(960).toString('base64'),
+        delta: Buffer.alloc(24_000 * 2 * seconds, 1).toString('base64'),
       });
-      await vi.advanceTimersByTimeAsync(20);
-    }
-    await vi.advanceTimersByTimeAsync(10);
-    const result = await h.result;
-    expect(result.ok).toBe(true);
-    if (result.ok)
-      expect(Buffer.from(result.value.audio).readUInt32LE(40)).toBe(
-        24_000 * 2 * 11 + 37 * 960,
-      );
-    expect(h.socket.terminate).toHaveBeenCalledOnce();
-    expect(vi.getTimerCount()).toBe(0);
-  });
+      for (let index = 0; index < 37; index++) {
+        h.socket.message({
+          type: 'session.output_audio.delta',
+          delta: Buffer.alloc(960).toString('base64'),
+        });
+        await vi.advanceTimersByTimeAsync(20);
+      }
+      expect(h.socket.terminate).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(10);
+      const result = await h.result;
+      expect(result.ok).toBe(true);
+      if (result.ok)
+        expect(Buffer.from(result.value.audio).readUInt32LE(40)).toBe(
+          Math.min(24_000 * 2 * seconds + 37 * 960, 24_000 * 2 * 12),
+        );
+      expect(h.socket.terminate).toHaveBeenCalledOnce();
+      expect(vi.getTimerCount()).toBe(0);
+    },
+  );
+
+  it.each([false, true])(
+    'rejects Live speech beyond the cap with intervening silence: %s',
+    async (withSilence) => {
+      vi.useFakeTimers();
+      const h = setup('openai', 'gpt-live-1', 'meridian');
+      await Promise.resolve();
+      h.socket.emit('open');
+      h.socket.message({ type: 'session.started' });
+      h.socket.message({
+        type: 'session.output_audio.delta',
+        delta: Buffer.alloc(24_000 * 2 * 12, 1).toString('base64'),
+      });
+      if (withSilence) {
+        h.socket.message({
+          type: 'session.output_audio.delta',
+          delta: Buffer.alloc(960).toString('base64'),
+        });
+        await vi.advanceTimersByTimeAsync(20);
+        expect(h.socket.terminate).not.toHaveBeenCalled();
+      }
+      h.socket.message({
+        type: 'session.output_audio.delta',
+        delta: pcm.toString('base64'),
+      });
+      expect(await h.result).toMatchObject({
+        ok: false,
+        code: 'preview_failed',
+        message: 'Voice preview failed: Audio limit exceeded',
+      });
+      expect(h.socket.terminate).toHaveBeenCalledOnce();
+      expect(vi.getTimerCount()).toBe(0);
+    },
+  );
 
   it('times out Live sessions that produce only silent frames', async () => {
     vi.useFakeTimers();

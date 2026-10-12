@@ -93,11 +93,14 @@ describe('voice operations', () => {
       code: 'rate_limited',
     });
     for (const release of releases) release();
+    const fresh: ProviderVoiceList = { selectionSupported: false, voices: [] };
+    const freshHook = vi.fn(async () => ok(fresh));
     await vi.waitFor(async () => {
-      expect(
-        await operations.list('p', 'new', 'm0', false, async () => ok(list)),
-      ).toEqual(ok(list));
+      expect(await operations.list('p', 's', 'm0', false, freshHook)).toEqual(
+        ok(fresh),
+      );
     });
+    expect(freshHook).toHaveBeenCalledTimes(1);
     expect(hook).toHaveBeenCalledTimes(4);
     operations.close();
   });

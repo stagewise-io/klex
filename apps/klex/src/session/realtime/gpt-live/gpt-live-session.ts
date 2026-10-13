@@ -856,7 +856,7 @@ class GPTLiveSessionFactory implements RealtimeModelSessionFactory {
       attributes: {
         'gpt_live.external_media_session_id': options.sessionId,
         'gpt_live.namespace': options.namespace,
-        'gpt_live.model': 'gpt-live-1',
+        'gpt_live.model': this.config.modelId,
         'gpt_live.responses_model': this.config.responsesModelId,
         'server.address': endpoint.hostname,
         'server.port': endpoint.port,
@@ -869,6 +869,7 @@ class GPTLiveSessionFactory implements RealtimeModelSessionFactory {
       if (options.context === undefined)
         throw new Error('GPT-Live requires prepared inference context');
       const prepared = buildGPTLiveSessionConfig(options.context, {
+        modelId: this.config.modelId,
         responsesModel: this.config.responsesModelId,
         frontendInstructions: this.frontendInstructions,
         voice: this.voice,
@@ -920,7 +921,7 @@ export function createGPTLiveProcessorFactory(options: {
       ((url, socketOptions) => new WebSocket(url, socketOptions)),
     options.startupTimeoutMs ?? STARTUP_TIMEOUT_MS,
     options.frontendInstructions ?? DEFAULT_FRONTEND_INSTRUCTIONS,
-    options.voice ?? DEFAULT_VOICE,
+    options.voice ?? options.config.voiceId ?? DEFAULT_VOICE,
     options.logging.child({
       name: 'gpt-live',
       bindings: { module: 'gpt-live' },

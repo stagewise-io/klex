@@ -34,12 +34,10 @@
               "minLength": 1
             }
           },
-          "required": ["sessionId"],
-          "additionalProperties": false
+          "required": ["sessionId"]
         }
       },
-      "required": ["jsonrpc", "id", "method", "params"],
-      "additionalProperties": false
+      "required": ["jsonrpc", "id", "method", "params"]
     },
     "AcceptRealtimeMediaSessionResult": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -54,8 +52,7 @@
               },
               "additionalProperties": {}
             }
-          },
-          "additionalProperties": false
+          }
         },
         {
           "type": "object",
@@ -77,14 +74,12 @@
                       "minLength": 1
                     }
                   },
-                  "required": ["profile"],
-                  "additionalProperties": false
+                  "required": ["profile"]
                 }
               ]
             }
           },
-          "required": ["transport"],
-          "additionalProperties": false
+          "required": ["transport"]
         }
       ]
     },
@@ -118,12 +113,10 @@
               "minLength": 1
             }
           },
-          "required": ["sessionId"],
-          "additionalProperties": false
+          "required": ["sessionId"]
         }
       },
-      "required": ["jsonrpc", "id", "method", "params"],
-      "additionalProperties": false
+      "required": ["jsonrpc", "id", "method", "params"]
     },
     "EndRealtimeMediaSessionResult": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -136,8 +129,7 @@
           },
           "additionalProperties": {}
         }
-      },
-      "additionalProperties": false
+      }
     },
     "LiveKitRoomTransportDescriptor": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -156,8 +148,7 @@
           "minLength": 1
         }
       },
-      "required": ["profile", "url", "token"],
-      "additionalProperties": false
+      "required": ["profile", "url", "token"]
     },
     "MissingRequiredClientCapabilityData": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -208,22 +199,18 @@
                               ]
                             }
                           },
-                          "required": ["transports", "media"],
-                          "additionalProperties": false
+                          "required": ["transports", "media"]
                         }
-                      },
-                      "additionalProperties": false
+                      }
                     }
                   ]
                 }
-              },
-              "additionalProperties": false
+              }
             }
           ]
         }
       },
-      "required": ["requiredCapabilities"],
-      "additionalProperties": false
+      "required": ["requiredCapabilities"]
     },
     "RealtimeMediaCapabilities": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -271,16 +258,13 @@
                           ]
                         }
                       },
-                      "required": ["transports", "media"],
-                      "additionalProperties": false
+                      "required": ["transports", "media"]
                     }
-                  },
-                  "additionalProperties": false
+                  }
                 }
               ]
             }
-          },
-          "additionalProperties": false
+          }
         }
       ]
     },
@@ -342,21 +326,53 @@
                                   ]
                                 }
                               },
-                              "required": ["transports", "media"],
-                              "additionalProperties": false
+                              "required": ["transports", "media"]
                             }
-                          },
-                          "additionalProperties": false
+                          }
                         }
                       ]
                     }
-                  },
-                  "additionalProperties": false
+                  }
                 }
               ]
             }
-          },
-          "additionalProperties": false
+          }
+        }
+      ]
+    },
+    "RealtimeMediaContextJSONValue": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "anyOf": [
+        {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/RealtimeMediaContextJSONValue"
+              }
+            },
+            {
+              "type": "object",
+              "propertyNames": {
+                "type": "string"
+              },
+              "additionalProperties": {
+                "$ref": "#/$defs/RealtimeMediaContextJSONValue"
+              }
+            }
+          ]
+        },
+        {
+          "type": "null"
         }
       ]
     },
@@ -394,11 +410,9 @@
                   ]
                 }
               },
-              "required": ["transports", "media"],
-              "additionalProperties": false
+              "required": ["transports", "media"]
             }
-          },
-          "additionalProperties": false
+          }
         }
       ]
     },
@@ -424,8 +438,7 @@
           ]
         }
       },
-      "required": ["transports", "media"],
-      "additionalProperties": false
+      "required": ["transports", "media"]
     },
     "RealtimeMediaNotification": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -453,8 +466,7 @@
                       },
                       "additionalProperties": {}
                     }
-                  },
-                  "additionalProperties": false
+                  }
                 },
                 {
                   "type": "object",
@@ -467,16 +479,32 @@
                       "type": "string",
                       "format": "date-time",
                       "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$"
+                    },
+                    "context": {
+                      "type": "object",
+                      "properties": {
+                        "text": {
+                          "type": "string"
+                        },
+                        "metadata": {
+                          "type": "object",
+                          "propertyNames": {
+                            "type": "string"
+                          },
+                          "additionalProperties": {
+                            "$ref": "#/$defs/RealtimeMediaNotification/$defs/__schema0"
+                          }
+                        }
+                      },
+                      "additionalProperties": false
                     }
                   },
-                  "required": ["sessionId", "expiresAt"],
-                  "additionalProperties": false
+                  "required": ["sessionId", "expiresAt"]
                 }
               ]
             }
           },
-          "required": ["jsonrpc", "method", "params"],
-          "additionalProperties": false
+          "required": ["jsonrpc", "method", "params"]
         },
         {
           "type": "object",
@@ -501,8 +529,7 @@
                       },
                       "additionalProperties": {}
                     }
-                  },
-                  "additionalProperties": false
+                  }
                 },
                 {
                   "type": "object",
@@ -515,16 +542,51 @@
                       "type": "string"
                     }
                   },
-                  "required": ["sessionId"],
-                  "additionalProperties": false
+                  "required": ["sessionId"]
                 }
               ]
             }
           },
-          "required": ["jsonrpc", "method", "params"],
-          "additionalProperties": false
+          "required": ["jsonrpc", "method", "params"]
         }
-      ]
+      ],
+      "$defs": {
+        "__schema0": {
+          "anyOf": [
+            {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/$defs/RealtimeMediaNotification/$defs/__schema0"
+                  }
+                },
+                {
+                  "type": "object",
+                  "propertyNames": {
+                    "type": "string"
+                  },
+                  "additionalProperties": {
+                    "$ref": "#/$defs/RealtimeMediaNotification/$defs/__schema0"
+                  }
+                }
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
     },
     "RealtimeMediaProtocolErrorData": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -551,8 +613,7 @@
           "minLength": 1
         }
       },
-      "required": ["kind", "sessionId"],
-      "additionalProperties": false
+      "required": ["kind", "sessionId"]
     },
     "RealtimeMediaProtocolErrorKind": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -571,6 +632,62 @@
         }
       ]
     },
+    "RealtimeMediaSessionContext": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "text": {
+          "type": "string"
+        },
+        "metadata": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {
+            "$ref": "#/$defs/RealtimeMediaSessionContext/$defs/__schema0"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "$defs": {
+        "__schema0": {
+          "anyOf": [
+            {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/$defs/RealtimeMediaSessionContext/$defs/__schema0"
+                  }
+                },
+                {
+                  "type": "object",
+                  "propertyNames": {
+                    "type": "string"
+                  },
+                  "additionalProperties": {
+                    "$ref": "#/$defs/RealtimeMediaSessionContext/$defs/__schema0"
+                  }
+                }
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
     "RealtimeMediaSessionEndedNotificationParams": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "allOf": [
@@ -584,8 +701,7 @@
               },
               "additionalProperties": {}
             }
-          },
-          "additionalProperties": false
+          }
         },
         {
           "type": "object",
@@ -598,8 +714,7 @@
               "type": "string"
             }
           },
-          "required": ["sessionId"],
-          "additionalProperties": false
+          "required": ["sessionId"]
         }
       ]
     },
@@ -627,8 +742,7 @@
                   },
                   "additionalProperties": {}
                 }
-              },
-              "additionalProperties": false
+              }
             },
             {
               "type": "object",
@@ -641,14 +755,12 @@
                   "type": "string"
                 }
               },
-              "required": ["sessionId"],
-              "additionalProperties": false
+              "required": ["sessionId"]
             }
           ]
         }
       },
-      "required": ["jsonrpc", "method", "params"],
-      "additionalProperties": false
+      "required": ["jsonrpc", "method", "params"]
     },
     "RealtimeMediaSessionOfferedNotificationParams": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -663,8 +775,7 @@
               },
               "additionalProperties": {}
             }
-          },
-          "additionalProperties": false
+          }
         },
         {
           "type": "object",
@@ -677,12 +788,66 @@
               "type": "string",
               "format": "date-time",
               "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$"
+            },
+            "context": {
+              "type": "object",
+              "properties": {
+                "text": {
+                  "type": "string"
+                },
+                "metadata": {
+                  "type": "object",
+                  "propertyNames": {
+                    "type": "string"
+                  },
+                  "additionalProperties": {
+                    "$ref": "#/$defs/RealtimeMediaSessionOfferedNotificationParams/$defs/__schema0"
+                  }
+                }
+              },
+              "additionalProperties": false
             }
           },
-          "required": ["sessionId", "expiresAt"],
-          "additionalProperties": false
+          "required": ["sessionId", "expiresAt"]
         }
-      ]
+      ],
+      "$defs": {
+        "__schema0": {
+          "anyOf": [
+            {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/$defs/RealtimeMediaSessionOfferedNotificationParams/$defs/__schema0"
+                  }
+                },
+                {
+                  "type": "object",
+                  "propertyNames": {
+                    "type": "string"
+                  },
+                  "additionalProperties": {
+                    "$ref": "#/$defs/RealtimeMediaSessionOfferedNotificationParams/$defs/__schema0"
+                  }
+                }
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
     },
     "RealtimeMediaSessionOfferedNotification": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -708,8 +873,7 @@
                   },
                   "additionalProperties": {}
                 }
-              },
-              "additionalProperties": false
+              }
             },
             {
               "type": "object",
@@ -722,16 +886,69 @@
                   "type": "string",
                   "format": "date-time",
                   "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$"
+                },
+                "context": {
+                  "type": "object",
+                  "properties": {
+                    "text": {
+                      "type": "string"
+                    },
+                    "metadata": {
+                      "type": "object",
+                      "propertyNames": {
+                        "type": "string"
+                      },
+                      "additionalProperties": {
+                        "$ref": "#/$defs/RealtimeMediaSessionOfferedNotification/$defs/__schema0"
+                      }
+                    }
+                  },
+                  "additionalProperties": false
                 }
               },
-              "required": ["sessionId", "expiresAt"],
-              "additionalProperties": false
+              "required": ["sessionId", "expiresAt"]
             }
           ]
         }
       },
       "required": ["jsonrpc", "method", "params"],
-      "additionalProperties": false
+      "$defs": {
+        "__schema0": {
+          "anyOf": [
+            {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/$defs/RealtimeMediaSessionOfferedNotification/$defs/__schema0"
+                  }
+                },
+                {
+                  "type": "object",
+                  "propertyNames": {
+                    "type": "string"
+                  },
+                  "additionalProperties": {
+                    "$ref": "#/$defs/RealtimeMediaSessionOfferedNotification/$defs/__schema0"
+                  }
+                }
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
     },
     "RealtimeMediaSessionParams": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -742,8 +959,7 @@
           "minLength": 1
         }
       },
-      "required": ["sessionId"],
-      "additionalProperties": false
+      "required": ["sessionId"]
     },
     "RealtimeMediaSubscriptionAcknowledgedNotifications": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -758,8 +974,7 @@
             "not": {}
           }
         }
-      },
-      "additionalProperties": false
+      }
     },
     "RealtimeMediaSubscriptionNotifications": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -774,8 +989,7 @@
             "not": {}
           }
         }
-      },
-      "additionalProperties": false
+      }
     },
     "RealtimeMediaSubscription": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -805,8 +1019,7 @@
               "minLength": 1
             }
           },
-          "required": ["profile"],
-          "additionalProperties": false
+          "required": ["profile"]
         }
       ]
     },
@@ -840,12 +1053,10 @@
               "minLength": 1
             }
           },
-          "required": ["sessionId"],
-          "additionalProperties": false
+          "required": ["sessionId"]
         }
       },
-      "required": ["jsonrpc", "id", "method", "params"],
-      "additionalProperties": false
+      "required": ["jsonrpc", "id", "method", "params"]
     },
     "RejectRealtimeMediaSessionResult": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -858,8 +1069,7 @@
           },
           "additionalProperties": {}
         }
-      },
-      "additionalProperties": false
+      }
     },
     "ServerDiscoverRequest": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -891,8 +1101,7 @@
           "additionalProperties": {}
         }
       },
-      "required": ["jsonrpc", "id", "method", "params"],
-      "additionalProperties": false
+      "required": ["jsonrpc", "id", "method", "params"]
     },
     "ServerDiscoverResult": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -907,8 +1116,7 @@
               },
               "additionalProperties": {}
             }
-          },
-          "additionalProperties": false
+          }
         },
         {
           "type": "object",
@@ -958,22 +1166,18 @@
                                   ]
                                 }
                               },
-                              "required": ["transports", "media"],
-                              "additionalProperties": false
+                              "required": ["transports", "media"]
                             }
-                          },
-                          "additionalProperties": false
+                          }
                         }
                       ]
                     }
-                  },
-                  "additionalProperties": false
+                  }
                 }
               ]
             }
           },
-          "required": ["capabilities"],
-          "additionalProperties": false
+          "required": ["capabilities"]
         }
       ]
     },
@@ -1001,8 +1205,7 @@
                   },
                   "additionalProperties": {}
                 }
-              },
-              "additionalProperties": false
+              }
             },
             {
               "type": "object",
@@ -1021,8 +1224,7 @@
                             "not": {}
                           }
                         }
-                      },
-                      "additionalProperties": false
+                      }
                     },
                     {
                       "type": "object",
@@ -1034,14 +1236,12 @@
                   ]
                 }
               },
-              "required": ["notifications"],
-              "additionalProperties": false
+              "required": ["notifications"]
             }
           ]
         }
       },
-      "required": ["jsonrpc", "method", "params"],
-      "additionalProperties": false
+      "required": ["jsonrpc", "method", "params"]
     },
     "SubscriptionsListenRequest": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -1091,8 +1291,7 @@
                             "not": {}
                           }
                         }
-                      },
-                      "additionalProperties": false
+                      }
                     },
                     {
                       "type": "object",
@@ -1104,14 +1303,12 @@
                   ]
                 }
               },
-              "required": ["notifications"],
-              "additionalProperties": false
+              "required": ["notifications"]
             }
           ]
         }
       },
-      "required": ["jsonrpc", "id", "method", "params"],
-      "additionalProperties": false
+      "required": ["jsonrpc", "id", "method", "params"]
     },
     "SubscriptionsListenResult": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -1124,8 +1321,7 @@
           },
           "additionalProperties": {}
         }
-      },
-      "additionalProperties": false
+      }
     }
   }
 }

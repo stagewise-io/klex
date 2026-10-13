@@ -107,8 +107,7 @@ export interface SessionInboxBuffer extends ChatSessionInbox {
 export interface InboxDependencies {
   /**
    * Called for Critical and Default urgency events. The session appends
-   * the event to the message history immediately. For Critical urgency,
-   * the session also aborts the running generation.
+   * the event to the message history immediately.
    */
   /** Returns true when an active interaction lease consumed the event. */
   onImmediateEvent: (event: SessionInboxEvent) => boolean;
@@ -119,8 +118,7 @@ export interface InboxDependencies {
   onDeferredEvent?: (event: SessionInboxEvent) => boolean;
   /**
    * Called for Critical and Default urgency native messages. The session
-   * appends the message to the message history immediately. For Critical
-   * urgency, the session also aborts the running generation.
+   * appends the message to the message history immediately.
    */
   onImmediateMessage: (
     message: ExtendedUIMessage,
@@ -128,7 +126,8 @@ export interface InboxDependencies {
   ) => void;
   /**
    * Called for any input (any urgency). The session uses this to trigger
-   * the loop, track new input during a turn, and interrupt backoff waits.
+   * the loop, track new input during a turn, interrupt critical generation,
+   * and interrupt backoff waits. Lease-consumed events skip this callback.
    * The urgency is passed so the session can distinguish Deferrable
    * arrivals (which do not trigger check-retry) from Critical/Default.
    */
@@ -143,12 +142,12 @@ export interface InboxDependencies {
  * The inbox is a buffer for all external inputs to a session.
  * It holds two separate buffers for deferred items: one for context
  * events and one for native messages. Critical and Default urgency
- * items bypass the buffer via callbacks — they are appended to the
- * session history immediately on arrival.
+ * items normally bypass the buffer via callbacks. Failed immediate dispatch
+ * is buffered for the next drain with its original urgency.
  */
 class InboxModule implements SessionInboxBuffer {
   // Sorted by age. Newer entries have higher index.
-  // Only Deferrable urgency items are buffered here.
+  // Deferrable events and failed immediate dispatches are buffered here.
   private deferredEvents: SessionInboxEvent[] = [];
 
   private deferredMessages: DeferredMessageEntry[] = [];
@@ -186,6 +185,14 @@ class InboxModule implements SessionInboxBuffer {
       const immediate = this.notifyImmediateEvent(accepted);
       recorded = immediate.recorded;
       consumed = immediate.consumed;
+      if (!recorded) {
+        // Keep failed immediate delivery for the next drain before accepting
+        // its event ID. notifyNewInput retains the original urgency to wake
+        // the idle session (or interrupt a critical generation).
+        this.deferredEvents.push(accepted);
+        this.deps.onDepthChange?.(1);
+        recorded = true;
+      }
     }
 
     if (recorded) this.recordAccepted(accepted.eventId);
@@ -253,7 +260,7 @@ class InboxModule implements SessionInboxBuffer {
     } catch (err) {
       this.deps.logger?.error(
         { urgency: SessionInboxUrgency[event.urgency], err },
-        'Inbox onImmediateEvent callback threw — event may not be in history',
+        'Inbox onImmediateEvent callback threw — buffering event instead',
       );
       return { recorded: false, consumed: false };
     }

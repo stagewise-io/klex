@@ -15,6 +15,15 @@ export interface DirectoryLockDependencies {
 
 const LOCK_FILE_NAME = '.klex.lock';
 
+/**
+ * Lock paths held by this process. A lock file carrying our own PID is live
+ * only if this process registered it; otherwise it was left by an earlier
+ * process that got the same PID. That is the normal case in containers, where
+ * PIDs are deterministic and a SIGKILLed run is restarted with the same PID on
+ * the same volume.
+ */
+const heldLockPaths = new Set<string>();
+
 class DirectoryLockModule implements DirectoryLock {
   private handle: FileHandle | null = null;
   private acquired = false;
@@ -65,6 +74,7 @@ class DirectoryLockModule implements DirectoryLock {
       });
       this.handle = null;
     }
+    heldLockPaths.delete(this.deps.lockPath);
     if (removeError) throw removeError;
     this.deps.logger.debug('Working directory lock released');
   }
@@ -73,6 +83,7 @@ class DirectoryLockModule implements DirectoryLock {
     // O_EXCL ensures atomic creation — fails if file already exists
     const handle = await open(this.deps.lockPath, 'wx', 0o600);
     this.handle = handle;
+    heldLockPaths.add(this.deps.lockPath);
     const content = JSON.stringify({
       pid: process.pid,
       startedAt: new Date().toISOString(),
@@ -105,13 +116,19 @@ class DirectoryLockModule implements DirectoryLock {
       return;
     }
 
-    if (isProcessAlive(pid)) {
+    const heldByUs =
+      pid === process.pid && heldLockPaths.has(this.deps.lockPath);
+    if (heldByUs || (pid !== process.pid && isProcessAlive(pid))) {
       throw new Error(
         `Working directory is already in use by Klex process ${pid}. Remove the lock file at "${this.deps.lockPath}" or use a different directory.`,
       );
     }
 
     // Stale lock — remove it
+    this.deps.logger.info(
+      { lockPath: this.deps.lockPath, stalePid: pid },
+      'Removing stale working directory lock',
+    );
     await this.safeRemoveLock();
   }
 
@@ -146,9 +163,12 @@ export async function isDirectoryInUse(
   dataDirectory: string,
 ): Promise<boolean> {
   try {
-    const content = await readFile(join(dataDirectory, LOCK_FILE_NAME), 'utf8');
+    const lockPath = join(dataDirectory, LOCK_FILE_NAME);
+    const content = await readFile(lockPath, 'utf8');
     const pid = (JSON.parse(content) as { pid?: unknown }).pid;
-    return typeof pid === 'number' && isProcessAlive(pid);
+    if (typeof pid !== 'number') return false;
+    if (pid === process.pid) return heldLockPaths.has(lockPath);
+    return isProcessAlive(pid);
   } catch {
     return false;
   }

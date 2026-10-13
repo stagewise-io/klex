@@ -23,6 +23,7 @@ import type {
 import type { ProviderModelResolver } from '@/provider-registry';
 import type { SessionInboxEvent } from '@/session/inbox';
 import {
+  appendExternalInteractionContext,
   assembleInferenceContext,
   describeInteractionTools,
   GenerationLaneLeaseManager,
@@ -221,6 +222,14 @@ class ChatSessionModule implements AgentSession {
   // --- Observability tracking ---
 
   private runtimeState: SessionRuntimeState = 'idle';
+  /** Started child sessions, tracked for {@link isQuiescent}. */
+  private readonly childSessions = new Set<ChildSessionHandle>();
+  /** Child sessions still in `start()`; they count as busy. */
+  private pendingChildStarts = 0;
+  /** True once close() cleanup (extensions, transcript) has completed. */
+  private closeSettled = false;
+  /** True once a self-termination has finished its onTerminated hook. */
+  private terminationSettled = false;
   private readonly idleWaiters = new Set<{
     resolve: (idle: boolean) => void;
     timer: NodeJS.Timeout;
@@ -621,6 +630,11 @@ class ChatSessionModule implements AgentSession {
           let contentFilterCount = 0;
 
           for (const entry of modelIds) {
+            if (args.abortSignal?.aborted)
+              return {
+                success: false as const,
+                failureReason: 'cancelled' as const,
+              };
             const modelId = entry.modelId;
             try {
               const model =
@@ -639,6 +653,7 @@ class ChatSessionModule implements AgentSession {
                       temperature: args.temperature,
                       maxOutputTokens: args.maxOutputTokens,
                       maxRetries: args.maxRetries ?? 0,
+                      abortSignal: args.abortSignal,
                       telemetry: {
                         isEnabled: true,
                         functionId,
@@ -667,6 +682,7 @@ class ChatSessionModule implements AgentSession {
                       temperature: args.temperature,
                       maxOutputTokens: args.maxOutputTokens,
                       maxRetries: args.maxRetries ?? 0,
+                      abortSignal: args.abortSignal,
                       telemetry: {
                         isEnabled: true,
                         functionId,
@@ -689,6 +705,12 @@ class ChatSessionModule implements AgentSession {
                     },
               );
 
+              if (args.abortSignal?.aborted)
+                return {
+                  success: false as const,
+                  failureReason: 'cancelled' as const,
+                };
+
               // Per-extension usage tracking is handled by the
               // onExtensionUsage callback in the extension handler wrapper.
 
@@ -703,7 +725,7 @@ class ChatSessionModule implements AgentSession {
                 contentFilterCount++;
                 this.deps.logger.warn(
                   { modelId, finishReason: result.finishReason },
-                  'Extension generateText returned content-filter — trying next model',
+                  'Extension generateText returned content-filter',
                 );
                 span.addEvent('gen.model_content_filter', {
                   'gen.modelId': modelId,
@@ -711,6 +733,11 @@ class ChatSessionModule implements AgentSession {
                 });
                 continue;
               }
+
+              if (result.finishReason === 'error')
+                throw new Error(
+                  'Extension generation ended with a model error',
+                );
 
               span.setAttribute('gen.outcome', 'success');
               span.setAttribute('gen.modelId', modelId);
@@ -740,12 +767,17 @@ class ChatSessionModule implements AgentSession {
                 usage: result.usage,
               };
             } catch (error) {
+              if (args.abortSignal?.aborted)
+                return {
+                  success: false as const,
+                  failureReason: 'cancelled' as const,
+                };
               const msg =
                 error instanceof Error ? error.message : String(error);
               failures.push(`${modelId}: ${msg}`);
               this.deps.logger.warn(
                 { error, modelId },
-                'Extension generateText model failed — trying next',
+                'Extension generateText model failed',
               );
               span.addEvent('gen.model_failed', {
                 'gen.modelId': modelId,
@@ -755,7 +787,7 @@ class ChatSessionModule implements AgentSession {
           }
 
           const allContentFilter =
-            contentFilterCount > 0 && contentFilterCount === modelIds.length;
+            contentFilterCount > 0 && contentFilterCount === failures.length;
 
           span.setAttribute(
             'gen.outcome',
@@ -815,14 +847,6 @@ class ChatSessionModule implements AgentSession {
       );
     }
 
-    // Critical urgency: abort the current generation immediately.
-    if (event.urgency === SessionInboxUrgency.Critical && this.currentTurn) {
-      this.currentTurn.abortGeneration('inbox_interrupt');
-      this.sessionSpan.addEvent('session.generation_aborted', {
-        'klex.session.abort_reason': 'inbox_interrupt',
-        'inbox.urgency': SessionInboxUrgency[event.urgency],
-      });
-    }
     return false;
   };
 
@@ -839,10 +863,7 @@ class ChatSessionModule implements AgentSession {
     return false;
   };
 
-  private onImmediateMessage = (
-    message: ExtendedUIMessage,
-    urgency: SessionInboxUrgency,
-  ): void => {
+  private onImmediateMessage = (message: ExtendedUIMessage): void => {
     if (this.loopActive) {
       // Queue — will be flushed after the current step commits its
       // response, preserving response-before-new-input ordering.
@@ -850,15 +871,6 @@ class ChatSessionModule implements AgentSession {
     } else {
       this.messages.push(message);
       this.scheduleTranscriptSync();
-    }
-
-    // Critical urgency: abort the current generation immediately.
-    if (urgency === SessionInboxUrgency.Critical && this.currentTurn) {
-      this.currentTurn.abortGeneration('inbox_interrupt');
-      this.sessionSpan.addEvent('session.generation_aborted', {
-        'klex.session.abort_reason': 'inbox_interrupt',
-        'inbox.urgency': SessionInboxUrgency[urgency],
-      });
     }
   };
 
@@ -953,7 +965,7 @@ class ChatSessionModule implements AgentSession {
     return {
       context: {
         instructions: assembled.instructions,
-        messages: assembled.messages,
+        messages: appendExternalInteractionContext(assembled.messages, request),
         tools: describeInteractionTools(assembled.tools),
         model: request.model,
         historyRevision,
@@ -1015,6 +1027,16 @@ class ChatSessionModule implements AgentSession {
   private onNewInput = (urgency: SessionInboxUrgency): void => {
     // Lease-consumed events are filtered by the inbox before this callback.
     // Native messages still reach it and remain pending until the lane resumes.
+
+    // Interrupt after inbox acceptance, including failed immediate dispatches
+    // buffered for recovery. Lease-consumed events do not reach this callback.
+    if (urgency === SessionInboxUrgency.Critical && this.currentTurn) {
+      this.currentTurn.abortGeneration('inbox_interrupt');
+      this.sessionSpan.addEvent('session.generation_aborted', {
+        'klex.session.abort_reason': 'inbox_interrupt',
+        'inbox.urgency': SessionInboxUrgency[urgency],
+      });
+    }
 
     // If currently in a backoff wait, interrupt it so the new input is
     // processed immediately.
@@ -1526,6 +1548,32 @@ class ChatSessionModule implements AgentSession {
     return [...this.messages];
   }
 
+  public isQuiescent(): boolean {
+    for (const child of this.childSessions) {
+      if (
+        child.getSessionInfo().status === 'terminated' &&
+        child.isQuiescent()
+      ) {
+        this.childSessions.delete(child);
+      }
+    }
+    // Children (including ones still starting or rolling back) keep this
+    // session busy whether or not it has terminated itself.
+    const childrenSettled =
+      this.pendingChildStarts === 0 &&
+      [...this.childSessions].every((child) => child.isQuiescent());
+    if (this._status === 'terminated') {
+      // Terminated is not finished: extension cleanup, transcript
+      // persistence and the replacement hook still run asynchronously.
+      return (
+        childrenSettled &&
+        this.closeSettled &&
+        (!this.selfTerminating || this.terminationSettled)
+      );
+    }
+    return this.runtimeState === 'idle' && childrenSettled;
+  }
+
   public waitForIdle(timeoutMs: number): Promise<boolean> {
     if (this._status === 'terminated') return Promise.resolve(false);
     if (this.runtimeState === 'idle') return Promise.resolve(true);
@@ -1616,6 +1664,7 @@ class ChatSessionModule implements AgentSession {
           this.deps.telemetryMetrics?.unregisterSession(this.sessionId);
           this.analyticsSession?.close();
           this.deps.introspectionScope.removeChild(this.sessionId);
+          this.closeSettled = true;
 
           this.deps.logger.info(
             {
@@ -1700,6 +1749,8 @@ class ChatSessionModule implements AgentSession {
         { sessionId: this.sessionId, error },
         'Session host replacement failed after self-termination',
       );
+    } finally {
+      this.terminationSettled = true;
     }
   }
 
@@ -1768,6 +1819,20 @@ class ChatSessionModule implements AgentSession {
         : {}),
     });
 
+    // Counts until the child is either registered or fully rolled back, so
+    // a startup-failure close() is never invisible to quiescence.
+    this.pendingChildStarts += 1;
+    try {
+      return await this.startChild(child, childSessionId);
+    } finally {
+      this.pendingChildStarts -= 1;
+    }
+  }
+
+  private async startChild(
+    child: ChatSessionHandle,
+    childSessionId: string,
+  ): Promise<ChatSessionHandle> {
     try {
       await child.start();
       if (this.closePromise) {
@@ -1775,9 +1840,13 @@ class ChatSessionModule implements AgentSession {
           'Parent chat session terminated while child session was starting',
         );
       }
+      this.childSessions.add(child);
       return child;
     } catch (error) {
       await child.close().catch((closeError: unknown) => {
+        // Keep tracking a child whose rollback failed: its own quiescence
+        // (pruned once settled) must still gate this session's drain.
+        this.childSessions.add(child);
         this.deps.logger.error(
           { error: closeError, childSessionId },
           'Failed child session cleanup after startup error',

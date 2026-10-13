@@ -205,8 +205,45 @@ describe('MCP Push Notification subscriptions', () => {
   });
 });
 
+function liveNotification(
+  event: PushNotification,
+): PushNotificationNotification {
+  return {
+    method: 'io.stagewise/push-notifications/event',
+    params: { event },
+  } as PushNotificationNotification;
+}
+
+function numberedEvent(index: number): PushNotification {
+  return { ...pushNotification, eventId: `event-${index}` };
+}
+
+/** Mimics a cursorless Cloud event store: oldest unACKed events first. */
+function pendingQueueServer(events: PushNotification[]) {
+  const pending = [...events];
+  const closed = deferred<void>();
+  const getEvents = vi.fn(async ({ limit }: { limit: number }) => ({
+    events: pending.slice(0, limit),
+    hasMore: pending.length > limit,
+  }));
+  const acknowledgeEvents = vi.fn(
+    async ({ eventIds }: { eventIds: string[] }) => {
+      for (const id of eventIds) {
+        const index = pending.findIndex((event) => event.eventId === id);
+        if (index >= 0) pending.splice(index, 1);
+      }
+    },
+  );
+  const server = pushNotificationConnection({
+    listen: vi.fn(async () => ({ closed: closed.promise })),
+    getEvents,
+    acknowledgeEvents,
+  });
+  return { server, pending, getEvents, acknowledgeEvents };
+}
+
 describe('MCP Push Notification worker', () => {
-  it('subscribes before draining and acknowledges after publication', async () => {
+  it('subscribes before draining and acknowledges only after the flush', async () => {
     const order: string[] = [];
     const closed = deferred<void>();
     const server = pushNotificationConnection({
@@ -231,8 +268,13 @@ describe('MCP Push Notification worker', () => {
     });
 
     await mcp.start();
-    await vi.waitFor(() => expect(order).toContain('ack'));
+    await vi.waitFor(() => expect(order).toContain('publish'));
+    expect(order).toEqual(['listen', 'get', 'publish']);
+    expect(mcp.hasUnacknowledgedEvents()).toBe(true);
+
+    await mcp.acknowledgeDeliveredEvents();
     expect(order).toEqual(['listen', 'get', 'publish', 'ack']);
+    expect(mcp.hasUnacknowledgedEvents()).toBe(false);
     await mcp.close();
   });
 
@@ -259,9 +301,12 @@ describe('MCP Push Notification worker', () => {
     mcp.onPushNotification(listener);
 
     await mcp.start();
+    await vi.waitFor(() => expect(listener).toHaveBeenCalledOnce());
+    const flush = mcp.acknowledgeDeliveredEvents();
     await vi.waitFor(() => expect(acknowledgeEvents).toHaveBeenCalledOnce());
     await vi.advanceTimersByTimeAsync(1_000);
-    await vi.waitFor(() => expect(acknowledgeEvents).toHaveBeenCalledTimes(2));
+    await flush;
+    expect(acknowledgeEvents).toHaveBeenCalledTimes(2);
     expect(listener).toHaveBeenCalledOnce();
     await mcp.close();
   });
@@ -291,14 +336,373 @@ describe('MCP Push Notification worker', () => {
 
     await mcp.start();
     await vi.waitFor(() => expect(connectOptions).toBeDefined());
-    await connectOptions?.onPushNotification(server, {
-      method: 'io.stagewise/push-notifications/event',
-      params: { event: pushNotification },
-    } as PushNotificationNotification);
+    await connectOptions?.onPushNotification(
+      server,
+      liveNotification(pushNotification),
+    );
     pendingPage.resolve({ events: [pushNotification], hasMore: false });
 
-    await vi.waitFor(() => expect(acknowledgeEvents).toHaveBeenCalledTimes(2));
+    await vi.waitFor(() => expect(listener).toHaveBeenCalledOnce());
+    // The live copy is still in flight, so it is neither republished nor ACKed.
+    expect(acknowledgeEvents).not.toHaveBeenCalled();
+    await mcp.acknowledgeDeliveredEvents();
+    expect(acknowledgeEvents).toHaveBeenCalledOnce();
+    expect(acknowledgeEvents).toHaveBeenCalledWith(
+      { eventIds: ['event-1'] },
+      expect.anything(),
+    );
     expect(listener).toHaveBeenCalledTimes(1);
+    await mcp.close();
+  });
+
+  it('re-acknowledges an already acknowledged duplicate immediately', async () => {
+    let connectOptions: ConnectMcpServerOptions | undefined;
+    const { server, acknowledgeEvents } = pendingQueueServer([
+      pushNotification,
+    ]);
+    const { mcp } = setup(
+      { chat: { url: 'https://chat.example/mcp' } },
+      async (options) => {
+        connectOptions = options;
+        return server;
+      },
+    );
+    const listener = vi.fn();
+    mcp.onPushNotification(listener);
+
+    await mcp.start();
+    await vi.waitFor(() => expect(listener).toHaveBeenCalledOnce());
+    await mcp.acknowledgeDeliveredEvents();
+    expect(acknowledgeEvents).toHaveBeenCalledOnce();
+
+    // A lost ACK makes the server redeliver the event.
+    await connectOptions?.onPushNotification(
+      server,
+      liveNotification(pushNotification),
+    );
+    await vi.waitFor(() => expect(acknowledgeEvents).toHaveBeenCalledTimes(2));
+    expect(listener).toHaveBeenCalledOnce();
+    expect(mcp.hasUnacknowledgedEvents()).toBe(false);
+    await mcp.close();
+  });
+
+  it('stops recovery at a page without progress and resumes after a flush', async () => {
+    const events = Array.from({ length: 150 }, (_, index) =>
+      numberedEvent(index),
+    );
+    const { server, pending, getEvents } = pendingQueueServer(events);
+    const { mcp } = setup(
+      { chat: { url: 'https://chat.example/mcp' } },
+      async () => server,
+    );
+    const listener = vi.fn();
+    mcp.onPushNotification(listener);
+
+    await mcp.start();
+    // Page one delivers 100 events; page two repeats them and stops recovery.
+    await vi.waitFor(() => expect(getEvents).toHaveBeenCalledTimes(2));
+    expect(listener).toHaveBeenCalledTimes(100);
+
+    await mcp.acknowledgeDeliveredEvents();
+    expect(getEvents).toHaveBeenCalledTimes(3);
+    expect(listener).toHaveBeenCalledTimes(150);
+    expect(pending).toHaveLength(50);
+
+    await mcp.acknowledgeDeliveredEvents();
+    expect(pending).toHaveLength(0);
+    expect(getEvents).toHaveBeenCalledTimes(3);
+    await mcp.close();
+  });
+
+  it('leaves an event without listeners unacknowledged and redelivers it to the next listener', async () => {
+    const { server, pending, getEvents, acknowledgeEvents } =
+      pendingQueueServer([pushNotification]);
+    const { mcp } = setup(
+      { chat: { url: 'https://chat.example/mcp' } },
+      async () => server,
+    );
+
+    // No listener: the default session is being replaced.
+    await mcp.start();
+    await vi.waitFor(() => expect(getEvents).toHaveBeenCalledOnce());
+    expect(mcp.hasUnacknowledgedEvents()).toBe(false);
+    await mcp.acknowledgeDeliveredEvents();
+    expect(acknowledgeEvents).not.toHaveBeenCalled();
+    expect(pending).toHaveLength(1);
+
+    // Registering the replacement listener alone re-drives recovery; no
+    // live event or reconnect is needed.
+    const listener = vi.fn();
+    mcp.onPushNotification(listener);
+    await vi.waitFor(() => expect(listener).toHaveBeenCalledOnce());
+    expect(listener).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event: expect.objectContaining({
+          eventId: pushNotification.eventId,
+        }),
+      }),
+    );
+    expect(getEvents).toHaveBeenCalledTimes(2);
+
+    await mcp.acknowledgeDeliveredEvents();
+    expect(pending).toHaveLength(0);
+    expect(mcp.hasUnacknowledgedEvents()).toBe(false);
+    await mcp.close();
+  });
+
+  it('retries listener-triggered recovery after a transient failure', async () => {
+    const { server, pending, getEvents } = pendingQueueServer([
+      pushNotification,
+    ]);
+    const { mcp } = setup(
+      { chat: { url: 'https://chat.example/mcp' } },
+      async () => server,
+    );
+
+    // Listener gap: the event stays pending with no delivered id to flush.
+    await mcp.start();
+    await vi.waitFor(() => expect(getEvents).toHaveBeenCalledOnce());
+    expect(pending).toHaveLength(1);
+
+    getEvents.mockRejectedValueOnce(new Error('transient'));
+    const listener = vi.fn();
+    mcp.onPushNotification(listener);
+    await vi.waitFor(() => expect(getEvents).toHaveBeenCalledTimes(2));
+    expect(listener).not.toHaveBeenCalled();
+
+    // The retry runs after the first backoff step without another trigger.
+    await vi.waitFor(() => expect(listener).toHaveBeenCalledOnce(), {
+      timeout: 3_000,
+    });
+    expect(getEvents).toHaveBeenCalledTimes(3);
+    await mcp.acknowledgeDeliveredEvents();
+    expect(pending).toHaveLength(0);
+    await mcp.close();
+  });
+
+  it('redelivers to a listener that registers while initial recovery is running', async () => {
+    const first = numberedEvent(1);
+    const skipped = numberedEvent(2);
+    const secondPage = deferred<{
+      events: PushNotification[];
+      hasMore: boolean;
+    }>();
+    const closed = deferred<void>();
+    const getEvents = vi
+      .fn()
+      .mockResolvedValueOnce({ events: [first, skipped], hasMore: true })
+      .mockReturnValueOnce(secondPage.promise)
+      .mockResolvedValue({ events: [skipped], hasMore: false });
+    const server = pushNotificationConnection({
+      listen: vi.fn(async () => ({ closed: closed.promise })),
+      getEvents,
+      acknowledgeEvents: vi.fn(async () => undefined),
+    });
+    const { mcp } = setup(
+      { chat: { url: 'https://chat.example/mcp' } },
+      async () => server,
+    );
+    // The outgoing session takes the first event, then goes away.
+    const unsubscribe = mcp.onPushNotification(({ event }) => {
+      if (event.eventId === skipped.eventId) {
+        unsubscribe();
+        throw new Error('inbox closed');
+      }
+    });
+
+    await mcp.start();
+    await vi.waitFor(() => expect(getEvents).toHaveBeenCalledTimes(2));
+    // The replacement registers while the second page is still in flight.
+    const replacement = vi.fn();
+    mcp.onPushNotification(replacement);
+    secondPage.resolve({ events: [], hasMore: false });
+
+    await vi.waitFor(() => expect(replacement).toHaveBeenCalledOnce());
+    expect(replacement).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event: expect.objectContaining({ eventId: skipped.eventId }),
+      }),
+    );
+    expect(getEvents).toHaveBeenCalledTimes(3);
+    await mcp.close();
+  });
+
+  it('does not re-run recovery for a new listener when nothing is pending', async () => {
+    const { server, getEvents } = pendingQueueServer([pushNotification]);
+    const { mcp } = setup(
+      { chat: { url: 'https://chat.example/mcp' } },
+      async () => server,
+    );
+    const listener = vi.fn();
+    mcp.onPushNotification(listener);
+
+    await mcp.start();
+    await vi.waitFor(() => expect(listener).toHaveBeenCalledOnce());
+    await mcp.acknowledgeDeliveredEvents();
+    const calls = getEvents.mock.calls.length;
+
+    mcp.onPushNotification(vi.fn());
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(getEvents).toHaveBeenCalledTimes(calls);
+    await mcp.close();
+  });
+
+  it('leaves an event unacknowledged when its listener fails', async () => {
+    const { server, pending, getEvents, acknowledgeEvents } =
+      pendingQueueServer([pushNotification]);
+    const { mcp } = setup(
+      { chat: { url: 'https://chat.example/mcp' } },
+      async () => server,
+    );
+    const listener = vi.fn(() => {
+      throw new Error('inbox closed');
+    });
+    mcp.onPushNotification(listener);
+
+    await mcp.start();
+    await vi.waitFor(() => expect(listener).toHaveBeenCalledOnce());
+    await vi.waitFor(() => expect(getEvents).toHaveBeenCalledOnce());
+    expect(mcp.hasUnacknowledgedEvents()).toBe(false);
+    await mcp.acknowledgeDeliveredEvents();
+    expect(acknowledgeEvents).not.toHaveBeenCalled();
+    expect(pending).toHaveLength(1);
+    await mcp.close();
+  });
+
+  it('stops publishing the rest of a page once delivery is paused mid-page', async () => {
+    const first = numberedEvent(1);
+    const second = numberedEvent(2);
+    const { server, pending } = pendingQueueServer([first, second]);
+    const { mcp } = setup(
+      { chat: { url: 'https://chat.example/mcp' } },
+      async () => server,
+    );
+    // The drain begins while the first listener call is still running.
+    const listener = vi.fn(() => mcp.pausePushDelivery());
+    mcp.onPushNotification(listener);
+
+    await mcp.start();
+    await vi.waitFor(() => expect(listener).toHaveBeenCalledOnce());
+    await mcp.acknowledgeDeliveredEvents();
+
+    expect(listener).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event: expect.objectContaining({ eventId: first.eventId }),
+      }),
+    );
+    expect(listener).toHaveBeenCalledOnce();
+    // Only the handled event is ACKed; the second stays for the next process.
+    expect(pending.map((event) => event.eventId)).toEqual([second.eventId]);
+    await mcp.close();
+  });
+
+  it('neither publishes nor acknowledges while delivery is paused', async () => {
+    let connectOptions: ConnectMcpServerOptions | undefined;
+    const { server, getEvents, acknowledgeEvents } = pendingQueueServer([
+      pushNotification,
+    ]);
+    const { mcp } = setup(
+      { chat: { url: 'https://chat.example/mcp' } },
+      async (options) => {
+        connectOptions = options;
+        return server;
+      },
+    );
+    const listener = vi.fn();
+    mcp.onPushNotification(listener);
+    mcp.pausePushDelivery();
+
+    await mcp.start();
+    await vi.waitFor(() => expect(connectOptions).toBeDefined());
+    await connectOptions?.onPushNotification(
+      server,
+      liveNotification(numberedEvent(2)),
+    );
+    await mcp.acknowledgeDeliveredEvents();
+
+    expect(getEvents).not.toHaveBeenCalled();
+    expect(listener).not.toHaveBeenCalled();
+    expect(acknowledgeEvents).not.toHaveBeenCalled();
+    await mcp.close();
+  });
+
+  it.each([true, false])(
+    'serializes replacement recovery behind an outgoing listener, handled=%s',
+    async (handled) => {
+      const first = pendingQueueServer([numberedEvent(1), numberedEvent(2)]);
+      const second = pendingQueueServer([numberedEvent(1), numberedEvent(2)]);
+      const servers = [first.server, second.server];
+      const { mcp, config } = setup(
+        { chat: { url: 'https://chat.example/mcp' } },
+        async () => servers.shift() ?? second.server,
+      );
+      const release = deferred<void>();
+      let calls = 0;
+      const listener = vi.fn(
+        async (_notification: { event: PushNotification }) => {
+          if (calls++ === 0) {
+            await release.promise;
+            if (!handled) throw new Error('Outgoing inbox closed');
+          }
+        },
+      );
+      mcp.onPushNotification(listener);
+      try {
+        await mcp.start();
+        await vi.waitFor(() => expect(listener).toHaveBeenCalledOnce());
+        await config.publish({ chat: { url: 'https://chat.example/v2/mcp' } });
+        await vi.waitFor(() => expect(second.getEvents).toHaveBeenCalled());
+        // The old reservation is not proof that either event was handled.
+        await mcp.acknowledgeDeliveredEvents();
+        expect(second.acknowledgeEvents).not.toHaveBeenCalled();
+        expect(second.pending).toHaveLength(2);
+        expect(listener).toHaveBeenCalledOnce();
+        release.resolve();
+        await vi.waitFor(() =>
+          expect(listener).toHaveBeenCalledTimes(handled ? 2 : 3),
+        );
+        await mcp.acknowledgeDeliveredEvents();
+        expect(second.pending).toEqual([]);
+        expect(first.acknowledgeEvents).not.toHaveBeenCalled();
+        expect(
+          listener.mock.calls.map(
+            ([notification]) => notification.event.eventId,
+          ),
+        ).toEqual(
+          handled ? ['event-1', 'event-2'] : ['event-1', 'event-1', 'event-2'],
+        );
+      } finally {
+        release.resolve();
+        await mcp.close();
+      }
+    },
+  );
+
+  it('keeps in-flight events across a reconnect and acknowledges them later', async () => {
+    const first = pendingQueueServer([pushNotification]);
+    const second = pendingQueueServer([pushNotification]);
+    const servers = [first.server, second.server];
+    const { mcp, config } = setup(
+      { chat: { url: 'https://chat.example/mcp' } },
+      async () => servers.shift() ?? second.server,
+    );
+    const listener = vi.fn();
+    mcp.onPushNotification(listener);
+
+    await mcp.start();
+    await vi.waitFor(() => expect(listener).toHaveBeenCalledOnce());
+
+    await config.publish({ chat: { url: 'https://chat.example/v2/mcp' } });
+    await vi.waitFor(() => expect(second.getEvents).toHaveBeenCalled());
+    // The redelivered copy is still in flight: not republished, not ACKed.
+    expect(listener).toHaveBeenCalledOnce();
+    expect(second.acknowledgeEvents).not.toHaveBeenCalled();
+    expect(mcp.hasUnacknowledgedEvents()).toBe(true);
+
+    await mcp.acknowledgeDeliveredEvents();
+    expect(first.acknowledgeEvents).not.toHaveBeenCalled();
+    expect(second.acknowledgeEvents).toHaveBeenCalledOnce();
+    expect(second.pending).toHaveLength(0);
     await mcp.close();
   });
 });

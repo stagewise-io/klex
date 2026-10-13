@@ -60,8 +60,9 @@ export const CONFIG_STORE_DEFINITION: JsonStoreDefinition = {
   relativePath: 'config.json',
   required: true,
   schemaVersion: 5,
-  compatibilityVersion: 6,
-  minimumKlexVersion: '0.9.2',
+  compatibilityVersion: 7,
+  // First stable release supporting voice selection; keep this floor fixed.
+  minimumKlexVersion: '0.16.0',
   legacySchemaVersion: 1,
   versions: [
     { version: 1, schema: legacyConfigStorageSchema },

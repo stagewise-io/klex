@@ -1,8 +1,16 @@
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import {
+  mkdir,
+  mkdtemp,
+  readdir,
+  readFile,
+  rm,
+  writeFile,
+} from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
+import { fileURLToPath } from 'node:url';
 
 import {
   checkGeneratedContract,
@@ -24,7 +32,14 @@ test('maps changes to each publishable package scope', () => {
   );
   assert.deepEqual(
     publishablePackages.map(({ scope }) => scope),
-    ['agent-admin-api', 'mcp-proxy-sdk', 'machine'],
+    [
+      'agent-admin-api',
+      'mcp-proxy-sdk',
+      'machine',
+      'mcp-extension-client',
+      'mcp-extension-push-notifications',
+      'mcp-extension-realtime-media',
+    ],
   );
 });
 
@@ -92,6 +107,98 @@ test('rejects scoped commits that do not change files', () => {
       [{ changedFiles: [], message: 'feat(machine): empty release marker' }],
     ),
     ['machine'],
+  );
+});
+
+test('helper changes require both consumers, while consumer-only changes stay independent', () => {
+  const required = scopesForChangedFiles([
+    'packages/mcp-extension-client/src/index.ts',
+  ]);
+  assert.deepEqual(required, [
+    'mcp-extension-client',
+    'mcp-extension-push-notifications',
+    'mcp-extension-realtime-media',
+  ]);
+  const changedFiles = ['packages/mcp-extension-client/src/index.ts'];
+  assert.deepEqual(
+    missingReleaseScopes(required, [
+      { changedFiles, message: 'fix(mcp-extension-client): repair helper' },
+    ]),
+    required.slice(1),
+  );
+  assert.deepEqual(
+    missingReleaseScopes(required, [
+      { changedFiles, message: `fix(${required.join(',')}): repair helper` },
+    ]),
+    [],
+  );
+  assert.deepEqual(
+    scopesForChangedFiles([
+      'packages/mcp-extension-realtime-media/src/index.ts',
+    ]),
+    ['mcp-extension-realtime-media'],
+  );
+  assert.deepEqual(
+    scopesForChangedFiles([
+      'packages/mcp-extension-push-notifications/README.md',
+    ]),
+    ['mcp-extension-push-notifications'],
+  );
+  assert.deepEqual(
+    scopesForChangedFiles([
+      'mcp-servers/calculator/src/index.ts',
+      'packages/mcp-extension-client-extra/index.ts',
+    ]),
+    [],
+  );
+});
+
+test('covers every public workspace package and excludes private packages', async () => {
+  const root = fileURLToPath(new URL('../', import.meta.url));
+  const workflow = await readFile(
+    join(root, '.github/workflows/release.yml'),
+    'utf8',
+  );
+  const actual = [];
+  for (const directory of ['apps', 'packages', 'mcp-servers']) {
+    for (const entry of await readdir(join(root, directory), {
+      withFileTypes: true,
+    })) {
+      if (!entry.isDirectory()) continue;
+      const path = `${directory}/${entry.name}/`;
+      let manifest;
+      try {
+        manifest = JSON.parse(
+          await readFile(join(root, path, 'package.json'), 'utf8'),
+        );
+      } catch (error) {
+        if (error.code === 'ENOENT') continue;
+        throw error;
+      }
+      const declared = publishablePackages.find(
+        (target) => target.path === path,
+      );
+      if (manifest.private) {
+        assert.equal(
+          declared,
+          undefined,
+          `Private package has release scope: ${manifest.name}`,
+        );
+        assert.ok(!workflow.includes(`--extends ./${path}.releaserc.js`));
+      } else {
+        actual.push(path);
+        assert.ok(declared, `Missing release scope: ${manifest.name}`);
+        await readFile(join(root, path, '.releaserc.js'), 'utf8');
+        assert.ok(
+          workflow.includes(`--extends ./${path}.releaserc.js`),
+          `Missing workflow release: ${manifest.name}`,
+        );
+      }
+    }
+  }
+  assert.deepEqual(
+    actual.sort(),
+    publishablePackages.map(({ path }) => path).sort(),
   );
 });
 

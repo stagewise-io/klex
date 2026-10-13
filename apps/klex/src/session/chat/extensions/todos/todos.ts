@@ -186,6 +186,8 @@ function collectTodoParts(
 class TodosExtension implements Extension {
   private closed = false;
   private readonly reminderTimers = new Map<string, ReminderTimer>();
+  /** Detached reminder deliveries; awaited on close so restores persist. */
+  private readonly pendingReminders = new Set<Promise<void>>();
 
   constructor(
     private readonly deps: ExtensionDeps,
@@ -216,6 +218,7 @@ class TodosExtension implements Extension {
   async onClose(): Promise<void> {
     this.closed = true;
     this.clearReminderTimers();
+    await Promise.allSettled([...this.pendingReminders]);
     this.deps.logger.info(
       { pendingTodos: this.store.getTodos().length },
       'Todos extension closed',
@@ -544,16 +547,22 @@ class TodosExtension implements Extension {
   }
 
   private runReminder(id: string, reminderTime: string): void {
-    void this.fireReminder(id, reminderTime).catch((error) => {
-      this.deps.logger.error(
-        { error, todoId: id, reminderTime },
-        'Todo reminder failed',
-      );
-    });
+    const pending = this.fireReminder(id, reminderTime)
+      .catch((error) => {
+        this.deps.logger.error(
+          { error, todoId: id, reminderTime },
+          'Todo reminder failed',
+        );
+      })
+      .finally(() => {
+        this.pendingReminders.delete(pending);
+      });
+    this.pendingReminders.add(pending);
   }
 
   private async fireReminder(id: string, reminderTime: string): Promise<void> {
     this.clearReminder(id, reminderTime);
+    if (this.closed) return;
     let due = false;
     const todos = await this.store.update((current) => {
       const todo = current.find((candidate) => candidate.id === id);
@@ -561,9 +570,20 @@ class TodosExtension implements Extension {
       todo.reminderTime = null;
       due = true;
     });
+    if (!due) return;
+    if (this.closed) {
+      // Closed between persisting and delivering (e.g. restart teardown):
+      // restore the reminder so the next startup fires it instead of
+      // losing it.
+      await this.store.update((current) => {
+        const todo = current.find((candidate) => candidate.id === id);
+        if (todo && todo.reminderTime === null)
+          todo.reminderTime = reminderTime;
+      });
+      return;
+    }
     // Deliver even mid-step: Default urgency appends to history and
     // forces a check-retry turn, so the reminder is never lost.
-    if (this.closed || !due) return;
     this.deps.inbox.sendMessage(
       {
         id: randomUUID(),

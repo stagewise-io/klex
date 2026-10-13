@@ -786,7 +786,12 @@ class McpIngressExtension implements Extension {
           return;
         }
         // Resource is open but not live — send a lightweight notice.
-        this.sendPushNotificationNotice(window.handle, namespace, resourceUri);
+        this.sendPushNotificationNotice(
+          window.handle,
+          namespace,
+          resourceUri,
+          event.eventId,
+        );
         return;
       }
     }
@@ -804,6 +809,7 @@ class McpIngressExtension implements Extension {
     handle: string,
     namespace: string,
     uri: string,
+    eventId: string,
   ): void {
     const metadata: Record<string, ContextMetadataValue> = {
       handle,
@@ -817,8 +823,10 @@ class McpIngressExtension implements Extension {
     ];
 
     const event: SessionInboxEvent = {
+      eventId: `${namespace}:${eventId}`,
       sourceEnv: WATCHER_SOURCE_ENV,
-      urgency: SessionInboxUrgency.Deferrable,
+      // A Push Notification must wake an idle agent before quiescence can ACK it.
+      urgency: SessionInboxUrgency.Default,
       context: {
         sourceEnv: WATCHER_SOURCE_ENV,
         metadata,
@@ -826,14 +834,9 @@ class McpIngressExtension implements Extension {
       },
     };
 
-    try {
-      this.deps.inbox.send(event);
-    } catch (error: unknown) {
-      this.deps.logger.error(
-        { error, namespace, uri, handle },
-        'Failed to send push notification notice to inbox',
-      );
-    }
+    // Propagate closed-inbox failures so MCP releases deduplication state
+    // and leaves the notification on the server for redelivery.
+    this.deps.inbox.send(event);
   }
 
   private beginResourceInitialization(namespace: string, uri: string): void {

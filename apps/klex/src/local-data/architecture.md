@@ -15,11 +15,14 @@ The composition root in `local-data-registry` contains every structured Klex-own
 | `cloud-enrollment` | `identity/enrollment.json` | JSON | Optional |
 | `todos-extension-todos` | `extensions/io.stagewise/todos/todos.json` | JSON | Optional |
 | `episodic-search-index` | `extensions/io.stagewise/memory/episodic-search.sqlite` | SQLite | Created when missing |
+| `learning-extension-state` | `extensions/io.stagewise/learning/state.json` | JSON | Optional |
 | `sessions` | `sessions.sqlite` | SQLite | Created when missing |
 
 Initialization creates missing parent directories for nested stores. SQLite definitions may declare `initPragmas`, which run one by one before `initSql` only when the database is created. Settings such as `auto_vacuum` take effect only on an empty file and are never re-applied to existing stores.
 
-`identity/private-key.pem`, `SOUL.md`, episode JSONL files under `episodic/`, locks, logs, downloaded assets, and reconstructable caches are not migration stores. Private identity keys are opaque and must never be transformed by a migration. Soul and episode files are append-only documents, not versioned migration stores; episode lines carry their own format version `v` and readers skip lines they cannot validate.
+`identity/private-key.pem`, `SOUL.md`, episode JSONL files under `episodic/`, learned `SKILL.md` folders under `extensions/io.stagewise/learning/skills/`, locks, logs, downloaded assets, and reconstructable caches are not migration stores. Private identity keys are opaque and must never be transformed by a migration. Soul, episode, and skill files are plain documents, not versioned migration stores; skill files use Agent Skills frontmatter for metadata and a Markdown instruction body, and readers skip skills they cannot parse; episode lines carry their own format version `v` and readers skip lines they cannot validate.
+
+The learning state store uses schema v2. Its deterministic v1-to-v2 migration keeps cursor, failures, per-skill usage and sources, timestamps, legacy counters and unknown fields. Activity counters and skill activity positions start at zero; pending weighted changes, retry scheduling and deferred references start empty. Historical wall-clock timestamps never become synthetic episode activity. Older writers reject v2 before mutation; skill and episode documents remain unchanged.
 
 ## Metadata contract
 

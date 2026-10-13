@@ -89,6 +89,7 @@ function createStubSessionFactory() {
         stub.runtimeState = 'terminated';
       },
       restorePendingEvents: vi.fn(),
+      isQuiescent: () => stub.runtimeState === 'idle',
       getMessages: () => [...stub.messages],
       getSessionInfo: (): SessionInfo => ({
         id: stub.sessionId,
@@ -279,6 +280,47 @@ describe('GodMessagesModule — sendGodMessage()', () => {
       godMessages.sendGodMessage([{ type: 'text', text: 'too early' }]),
     ).rejects.toMatchObject({ code: 'not-running' });
     expect(sessions).toHaveLength(0);
+  });
+});
+
+describe('GodMessagesModule — drain', () => {
+  it('rejects new messages after beginDrain', async () => {
+    const { godMessages, sessions } = setup();
+    await godMessages.start();
+
+    godMessages.beginDrain();
+
+    await expect(
+      godMessages.sendGodMessage([{ type: 'text', text: 'during update' }]),
+    ).rejects.toMatchObject({ code: 'draining' });
+    expect(sessions[0]?.sentMessages).toHaveLength(0);
+  });
+
+  it('rejects a message whose session wait overlaps the start of a drain', async () => {
+    const { godMessages, sessions } = setup();
+    await godMessages.start();
+
+    // Passes the entry check, then awaits ensureSession().
+    const sending = godMessages.sendGodMessage([
+      { type: 'text', text: 'raced the drain' },
+    ]);
+    godMessages.beginDrain();
+
+    await expect(sending).rejects.toMatchObject({ code: 'draining' });
+    expect(sessions[0]?.sentMessages).toHaveLength(0);
+  });
+
+  it('reports quiescence from the god session runtime state', async () => {
+    const { godMessages, sessions } = setup();
+    expect(godMessages.isQuiescent()).toBe(true);
+    await godMessages.start();
+    expect(godMessages.isQuiescent()).toBe(true);
+
+    getSession(sessions, 0).runtimeState = 'working';
+    expect(godMessages.isQuiescent()).toBe(false);
+
+    getSession(sessions, 0).runtimeState = 'idle';
+    expect(godMessages.isQuiescent()).toBe(true);
   });
 });
 

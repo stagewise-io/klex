@@ -7,7 +7,10 @@ import type { RootLogger } from '@stagewise/logger';
 import type { AudioFrame, AudioSource } from '@/media-transport';
 import { BoundedAsyncQueue } from '@/media-transport/async-queue';
 import type { SessionInboxEvent } from '@/session/inbox';
-import type { PreparedInferenceContext } from '@/session/interaction';
+import {
+  appendExternalInteractionContext,
+  type PreparedInferenceContext,
+} from '@/session/interaction';
 
 import { toGeminiContentTurns } from './conversation-items';
 import {
@@ -76,11 +79,12 @@ function source(queue: BoundedAsyncQueue<AudioFrame>): AudioSource {
 async function setup(
   startupTimeoutMs = 1_000,
   contextOverride?: Partial<PreparedInferenceContext>,
+  voiceId?: string,
 ) {
   const socket = new FakeSocket();
   const factory = createGeminiLiveProcessorFactory({
     logging,
-    config,
+    config: { ...config, ...(voiceId !== undefined && { voiceId }) },
     startupTimeoutMs,
     connect: () => socket,
   });
@@ -126,6 +130,24 @@ async function activate(contextOverride?: Partial<PreparedInferenceContext>) {
 }
 
 describe('Gemini live processor', () => {
+  it('sends a selected prebuilt voice and omits speechConfig for the default', async () => {
+    for (const voiceId of [undefined, 'Puck']) {
+      const harness = await setup(1_000, undefined, voiceId);
+      harness.socket.open();
+      const setupMsg = JSON.parse(harness.socket.sent[0] ?? '{}');
+      if (voiceId)
+        expect(
+          setupMsg.setup.generationConfig.speechConfig.voiceConfig
+            .prebuiltVoiceConfig.voiceName,
+        ).toBe(voiceId);
+      else
+        expect(setupMsg.setup.generationConfig).not.toHaveProperty(
+          'speechConfig',
+        );
+      harness.socket.message({ setupComplete: {} });
+      await (await harness.promise).close();
+    }
+  });
   it('sends setup message with model, instructions, transcription, and tools on open', async () => {
     const harness = await setup();
     let settled = false;
@@ -158,6 +180,22 @@ describe('Gemini live processor', () => {
 
     harness.socket.message({ setupComplete: {} });
     await expect(harness.promise).resolves.toBeDefined();
+  });
+
+  it('seeds external session data as a user turn without completing it', async () => {
+    const messages = appendExternalInteractionContext([], {
+      namespace: 'voice',
+      externalSessionId: 'call-1',
+      externalContext: { text: 'external session facts' },
+    });
+    const { socket, processor } = await activate({ messages });
+    expect(JSON.parse(socket.sent[1] ?? '{}')).toEqual({
+      clientContent: {
+        turns: [{ role: 'user', parts: [{ text: messages[0]?.content }] }],
+        turnComplete: false,
+      },
+    });
+    await processor.close();
   });
 
   it('seeds prior canonical conversation history on setupComplete', async () => {

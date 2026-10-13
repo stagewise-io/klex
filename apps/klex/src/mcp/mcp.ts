@@ -202,6 +202,25 @@ export interface McpToolCallRecord {
 export interface Mcp extends ToolProvider {
   start(): Promise<void>;
   onPushNotification(listener: McpPushNotificationListener): () => void;
+  /**
+   * Whether Push Notifications were delivered to listeners but not yet
+   * acknowledged to their server. Delivery is at-least-once: events stay
+   * unacknowledged until the agent handled them.
+   */
+  hasUnacknowledgedEvents(): boolean;
+  /**
+   * Acknowledges every delivered Push Notification. Call only once the agent
+   * finished handling them (no running turn anywhere), so a crash before this
+   * point makes the server redeliver them instead of losing them. Events of a
+   * disconnected server stay pending until a later call.
+   */
+  acknowledgeDeliveredEvents(): Promise<void>;
+  /**
+   * Stops accepting Push Notifications for the rest of the process lifetime.
+   * New events are neither delivered nor acknowledged, so the server keeps
+   * them for the next process. Used before an update restart.
+   */
+  pausePushDelivery(): void;
   onRealtimeMediaNotification(
     listener: McpRealtimeMediaNotificationListener,
   ): () => void;
@@ -309,6 +328,14 @@ interface PushNotificationWorker {
   notifications: PushNotificationNotification[];
   queue: Promise<void>;
   recovered: boolean;
+  /**
+   * Recovery left events pending: a page whose events were all still in
+   * flight, or events no listener handled. Recovery resumes after the next
+   * acknowledgement flush or listener registration.
+   */
+  recoveryBlocked: boolean;
+  /** A listener registered while the initial recovery was still running. */
+  listenerAddedDuringRecovery: boolean;
 }
 
 interface RealtimeMediaWorker {
@@ -351,7 +378,12 @@ interface McpServerRuntime {
 class McpModule implements Mcp {
   private readonly servers = new Map<string, McpServerRuntime>();
   private readonly eventWorkers = new Map<string, PushNotificationWorker>();
+  /** Serializes deduplication and delivery across worker replacement. */
+  private readonly eventCommitQueues = new Map<string, Promise<void>>();
   private readonly eventListeners = new Set<McpPushNotificationListener>();
+  /** Per namespace: event ids delivered to listeners but not acknowledged. */
+  private readonly deliveredUnacked = new Map<string, Set<string>>();
+  private pushDeliveryPaused = false;
   private readonly realtimeWorkers = new Map<string, RealtimeMediaWorker>();
   private readonly realtimeListeners =
     new Set<McpRealtimeMediaNotificationListener>();
@@ -408,12 +440,121 @@ class McpModule implements Mcp {
 
   onPushNotification(listener: McpPushNotificationListener): () => void {
     this.eventListeners.add(listener);
+    // Events left pending during a listener gap have no delivered id to
+    // flush, so a new listener is what re-drives their recovery.
+    for (const worker of this.eventWorkers.values()) {
+      if (!worker.recovered) worker.listenerAddedDuringRecovery = true;
+      else if (worker.recoveryBlocked) this.scheduleRecovery(worker);
+    }
     let subscribed = true;
     return () => {
       if (!subscribed) return;
       subscribed = false;
       this.eventListeners.delete(listener);
     };
+  }
+
+  hasUnacknowledgedEvents(): boolean {
+    for (const [namespace, ids] of this.deliveredUnacked) {
+      // A removed server can never receive the ACK; it must not block.
+      if (ids.size > 0 && this.servers.has(namespace)) return true;
+    }
+    return false;
+  }
+
+  async acknowledgeDeliveredEvents(): Promise<void> {
+    const flushes: Promise<void>[] = [];
+    for (const [namespace, ids] of this.deliveredUnacked) {
+      if (ids.size === 0) continue;
+      const worker = this.eventWorkers.get(namespace);
+      if (!worker || !this.isCurrentWorker(worker)) continue;
+      // Snapshot synchronously: the caller checked quiescence in this tick.
+      const eventIds = [...ids];
+      // Keep these ids in flight until ACK succeeds. Concurrent recovery
+      // must not mistake a pending flush for an already-acknowledged event.
+      const flush = worker.queue.then(async () => {
+        await this.acknowledgeEvents(worker, eventIds);
+        if (!this.isCurrentWorker(worker)) return;
+        for (const eventId of eventIds) ids.delete(eventId);
+        if (worker.recoveryBlocked && !this.pushDeliveryPaused) {
+          await this.recoverEvents(worker).catch((error: unknown) => {
+            this.deps.logger.warn(
+              { error, namespace },
+              'Push Notification recovery after acknowledgement failed',
+            );
+            this.retryRecoveryLater(worker, 1);
+          });
+        }
+      });
+      worker.queue = flush.catch(() => undefined);
+      flushes.push(flush);
+    }
+    await Promise.all(flushes);
+  }
+
+  /**
+   * Re-runs recovery on the worker queue, serialized with ingestion. A
+   * failed run retries with backoff: events left pending during a listener
+   * gap have no delivered id, so no ACK flush would re-drive them.
+   */
+  private scheduleRecovery(worker: PushNotificationWorker, attempt = 0): void {
+    // Before the initial recovery, the worker loop recovers on its own.
+    if (!worker.recovered) return;
+    worker.queue = worker.queue.then(async () => {
+      if (
+        !this.isCurrentWorker(worker) ||
+        !worker.recoveryBlocked ||
+        this.pushDeliveryPaused
+      ) {
+        return;
+      }
+      await this.recoverEvents(worker).catch((error: unknown) => {
+        this.deps.logger.warn(
+          { error, namespace: worker.connection.namespace, attempt },
+          'Push Notification recovery failed; retrying',
+        );
+        this.retryRecoveryLater(worker, attempt + 1);
+      });
+    });
+  }
+
+  /** Schedules a recovery retry off the queue so ingestion is not blocked. */
+  private retryRecoveryLater(
+    worker: PushNotificationWorker,
+    attempt: number,
+  ): void {
+    // The failed page may have stopped mid-way; keep recovery armed.
+    worker.recoveryBlocked = true;
+    void abortableDelay(
+      Math.min(RETRY_INITIAL_MS * 2 ** (attempt - 1), RETRY_MAX_MS),
+      worker.controller.signal,
+    )
+      .then(() => {
+        if (this.isCurrentWorker(worker)) {
+          this.scheduleRecovery(worker, attempt);
+        }
+      })
+      .catch(() => undefined);
+  }
+
+  pausePushDelivery(): void {
+    if (this.pushDeliveryPaused) return;
+    this.pushDeliveryPaused = true;
+    for (const worker of this.eventWorkers.values()) {
+      worker.notifications.length = 0;
+    }
+    this.deps.logger.info(
+      'Push Notification delivery paused; new events stay on their servers',
+    );
+  }
+
+  private markDelivered(namespace: string, eventIds: readonly string[]): void {
+    let ids = this.deliveredUnacked.get(namespace);
+    if (!ids) {
+      ids = new Set();
+      this.deliveredUnacked.set(namespace, ids);
+    }
+    for (const id of eventIds) ids.add(id);
   }
 
   onRealtimeMediaNotification(
@@ -900,6 +1041,8 @@ class McpModule implements Mcp {
       notifications: [],
       queue: Promise.resolve(),
       recovered: false,
+      recoveryBlocked: false,
+      listenerAddedDuringRecovery: false,
     };
     this.eventWorkers.set(connection.namespace, worker);
     void this.runEventWorker(worker);
@@ -910,12 +1053,18 @@ class McpModule implements Mcp {
     while (this.isCurrentWorker(worker)) {
       try {
         worker.recovered = false;
+        worker.listenerAddedDuringRecovery = false;
         const subscription = await worker.connection.pushNotifications.listen(
           undefined,
           { request: { signal: worker.controller.signal } },
         );
         await this.recoverEvents(worker);
         worker.recovered = true;
+        // A listener registered mid-recovery may have missed skipped events.
+        if (worker.listenerAddedDuringRecovery) {
+          worker.listenerAddedDuringRecovery = false;
+          this.scheduleRecovery(worker);
+        }
         this.drainNotifications(worker);
         attempt = 0;
         await subscription.closed;
@@ -939,7 +1088,8 @@ class McpModule implements Mcp {
   }
 
   private async recoverEvents(worker: PushNotificationWorker): Promise<void> {
-    while (this.isCurrentWorker(worker)) {
+    let unhandled = false;
+    while (this.isCurrentWorker(worker) && !this.pushDeliveryPaused) {
       const page = await worker.connection.pushNotifications.getEvents(
         { limit: EVENT_PAGE_SIZE },
         { request: { signal: worker.controller.signal } },
@@ -949,12 +1099,20 @@ class McpModule implements Mcp {
           'Push Notifications returned an empty non-terminal page',
         );
       }
-      await this.commitEvents(
-        worker,
-        page.events,
-        page.events.map((event) => event.eventId),
-      );
-      if (!page.hasMore) return;
+      const result = await this.commitEvents(worker, page.events);
+      unhandled ||= result.unhandled;
+      if (!page.hasMore) {
+        // Unhandled events stay on the server; the next flush recovers them.
+        worker.recoveryBlocked = unhandled;
+        return;
+      }
+      // Pages hold the oldest unacknowledged events. When all of them are
+      // still in flight, the next page would be identical, so wait for the
+      // acknowledgement flush instead of looping.
+      if (!result.progressed) {
+        worker.recoveryBlocked = true;
+        return;
+      }
     }
   }
 
@@ -962,6 +1120,7 @@ class McpModule implements Mcp {
     connection: McpConnection,
     notification: PushNotificationNotification,
   ): void {
+    if (this.pushDeliveryPaused) return;
     const worker = this.eventWorkers.get(connection.namespace);
     if (!worker || worker.connection !== connection) return;
     worker.notifications.push(notification);
@@ -972,13 +1131,9 @@ class McpModule implements Mcp {
     const notifications = worker.notifications.splice(0);
     for (const notification of notifications) {
       worker.queue = worker.queue
-        .then(() =>
-          this.commitEvents(
-            worker,
-            [notification.params.event],
-            [notification.params.event.eventId],
-          ),
-        )
+        .then(async () => {
+          await this.commitEvents(worker, [notification.params.event]);
+        })
         .catch((error: unknown) => {
           if (this.isCurrentWorker(worker))
             this.deps.logger.error(
@@ -989,21 +1144,94 @@ class McpModule implements Mcp {
     }
   }
 
-  private async commitEvents(
+  /**
+   * Delivers new events to listeners and records them as delivered. They are
+   * acknowledged later by `acknowledgeDeliveredEvents()`. Duplicates that
+   * were already acknowledged (a lost ACK) are acknowledged again right away;
+   * duplicates still in flight are skipped.
+   */
+  private commitEvents(
     worker: PushNotificationWorker,
     events: readonly PushNotification[],
-    eventIds: string[],
-  ): Promise<void> {
-    if (!this.isCurrentWorker(worker)) return;
-    const accepted = await this.deps.pushNotificationInbox.commit(
-      worker.connection.namespace,
-      events,
+  ): Promise<{ progressed: boolean; unhandled: boolean }> {
+    const namespace = worker.connection.namespace;
+    const previous = this.eventCommitQueues.get(namespace) ?? Promise.resolve();
+    const run = previous.then(() => this.commitEventBatch(worker, events));
+    const settled = run.then(
+      () => undefined,
+      () => undefined,
     );
-    for (const event of accepted)
-      await this.publishPushNotification(worker, event);
-    if (eventIds.length > 0) {
-      await this.acknowledgeEvents(worker, eventIds);
+    this.eventCommitQueues.set(namespace, settled);
+    void settled.then(() => {
+      if (this.eventCommitQueues.get(namespace) === settled)
+        this.eventCommitQueues.delete(namespace);
+    });
+    return run;
+  }
+
+  private async commitEventBatch(
+    worker: PushNotificationWorker,
+    events: readonly PushNotification[],
+  ): Promise<{ progressed: boolean; unhandled: boolean }> {
+    if (!this.isCurrentWorker(worker) || this.pushDeliveryPaused) {
+      return { progressed: false, unhandled: false };
     }
+    const namespace = worker.connection.namespace;
+    const inFlight = this.deliveredUnacked.get(namespace);
+    const fresh = events.filter((event) => !inFlight?.has(event.eventId));
+    if (fresh.length === 0) return { progressed: false, unhandled: false };
+
+    const accepted = await this.deps.pushNotificationInbox.commit(
+      namespace,
+      fresh,
+    );
+    if (!this.isCurrentWorker(worker) || this.pushDeliveryPaused) {
+      // A stale or paused commit has not delivered these events. Release
+      // its reservations before the replacement worker can inspect them.
+      this.deps.pushNotificationInbox.release(
+        namespace,
+        accepted.map((event) => event.eventId),
+      );
+      return { progressed: false, unhandled: false };
+    }
+    const acceptedIds = new Set(accepted.map((event) => event.eventId));
+    let handledCount = 0;
+    let pausedCount = 0;
+    for (const [index, event] of accepted.entries()) {
+      if (!this.isCurrentWorker(worker) || this.pushDeliveryPaused) {
+        // A previous listener may have yielded through shutdown or reconnect.
+        // Release the rest before a replacement attempts recovery.
+        const remaining = accepted.slice(index).map((rest) => rest.eventId);
+        this.deps.pushNotificationInbox.release(namespace, remaining);
+        pausedCount = remaining.length;
+        break;
+      }
+      if (await this.publishPushNotification(worker, event)) {
+        this.markDelivered(namespace, [event.eventId]);
+        handledCount += 1;
+        continue;
+      }
+      // No listener took the event (e.g. the default session is being
+      // replaced, or its inbox is closed). It stays unacknowledged on the
+      // server; forget it locally so recovery after the next flush or
+      // reconnect delivers it again.
+      this.deps.pushNotificationInbox.release(namespace, [event.eventId]);
+      worker.recoveryBlocked = true;
+      this.deps.logger.warn(
+        { namespace, eventId: event.eventId },
+        'Push Notification not handled; left unacknowledged for redelivery',
+      );
+    }
+    const reacknowledge = fresh
+      .filter((event) => !acceptedIds.has(event.eventId))
+      .map((event) => event.eventId);
+    if (reacknowledge.length > 0) {
+      await this.acknowledgeEvents(worker, reacknowledge);
+    }
+    return {
+      progressed: handledCount > 0 || reacknowledge.length > 0,
+      unhandled: handledCount + pausedCount < accepted.length,
+    };
   }
 
   private async acknowledgeEvents(
@@ -1033,26 +1261,36 @@ class McpModule implements Mcp {
     }
   }
 
+  /**
+   * Publishes an event to all listeners.
+   *
+   * @returns `true` only when at least one listener exists and none failed.
+   */
   private async publishPushNotification(
     worker: PushNotificationWorker,
     event: PushNotification,
-  ): Promise<void> {
-    if (!this.isCurrentWorker(worker)) return;
-    await Promise.allSettled(
-      [...this.eventListeners].map(async (listener) => {
+  ): Promise<boolean> {
+    if (!this.isCurrentWorker(worker)) return false;
+    const listeners = [...this.eventListeners];
+    if (listeners.length === 0) return false;
+    const results = await Promise.all(
+      listeners.map(async (listener) => {
         try {
           await listener({
             namespace: worker.connection.namespace,
             event: structuredClone(event),
           });
+          return true;
         } catch (error) {
           this.deps.logger.error(
             { error, namespace: worker.connection.namespace },
             'MCP Push Notification listener failed',
           );
+          return false;
         }
       }),
     );
+    return results.every(Boolean);
   }
 
   private async publishResourceUpdated(

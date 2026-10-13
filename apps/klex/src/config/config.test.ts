@@ -77,9 +77,141 @@ afterEach(async () => {
 });
 
 describe('config v2', () => {
+  it('upgrades compatibility 6 metadata only and rejects older writers with a saved voice', async () => {
+    const dataDirectory = await directory(true);
+    const file = join(dataDirectory, CONFIG_FILE_NAME);
+    const original = JSON.parse(await readFile(file, 'utf8'));
+    original._klex.compatibilityVersion = 6;
+    original._klex.minimumKlexVersion = '0.9.2';
+    await writeFile(file, JSON.stringify(original));
+    await prepareConfigStore(dataDirectory);
+    const upgraded = JSON.parse(await readFile(file, 'utf8'));
+    expect(upgraded._klex.compatibilityVersion).toBe(7);
+    expect({ ...upgraded, _klex: undefined }).toEqual({
+      ...original,
+      _klex: undefined,
+    });
+    upgraded.modelSelection.voice.sts = [
+      { providerId: 'saved', modelId: 'gpt-realtime', voiceId: 'cedar' },
+    ];
+    await writeFile(file, JSON.stringify(upgraded));
+    const before = await readFile(file);
+    await expect(
+      createLocalData({
+        logging,
+        dataDirectory,
+        klexVersion: '0.9.2',
+        stores: [
+          {
+            ...CONFIG_STORE_DEFINITION,
+            compatibilityVersion: 6,
+            minimumKlexVersion: '0.9.2',
+          },
+        ],
+      }).start(),
+    ).rejects.toThrow(/compatibility/);
+    expect(await readFile(file)).toEqual(before);
+  });
+  it('accepts a voice only for current STS entries and retains historical schemas', () => {
+    const entry = {
+      providerId: 'openai-primary',
+      modelId: 'gpt-realtime',
+      voiceId: 'cedar',
+    };
+    const value = {
+      ...completeV2Config,
+      modelSelection: {
+        ...emptyModelSelection,
+        voice: { sts: [entry], tts: [], stt: [] },
+      },
+    };
+    expect(parseKlexConfig(value).modelSelection.voice.sts[0]?.voiceId).toBe(
+      'cedar',
+    );
+    for (const voiceId of ['', ' cedar', 'cedar ', 12])
+      expect(() =>
+        parseKlexConfig({
+          ...value,
+          modelSelection: {
+            ...emptyModelSelection,
+            voice: { sts: [{ ...entry, voiceId }], tts: [], stt: [] },
+          },
+        }),
+      ).toThrow();
+    for (const purpose of ['chat', 'consult'])
+      expect(() =>
+        parseKlexConfig({
+          ...completeV2Config,
+          modelSelection: { ...emptyModelSelection, [purpose]: [entry] },
+        }),
+      ).toThrow();
+    for (const purpose of ['tts', 'stt'])
+      expect(() =>
+        parseKlexConfig({
+          ...completeV2Config,
+          modelSelection: {
+            ...emptyModelSelection,
+            voice: { ...emptyModelSelection.voice, [purpose]: [entry] },
+          },
+        }),
+      ).toThrow();
+    for (const version of CONFIG_STORE_DEFINITION.versions.filter(
+      (item) => item.version >= 2 && item.version <= 4,
+    ))
+      expect(() =>
+        version.schema.parse({
+          ...completeV4StoredConfig,
+          modelSelection: value.modelSelection,
+        }),
+      ).toThrow();
+  });
+
+  it('round-trips and resets STS voices without discovery for all realtime configs', async () => {
+    const dataDirectory = await directory(true);
+    const config = createConfig({ logging, dataDirectory });
+    await config.start();
+    for (const [type, modelId, voiceId, kind] of [
+      ['openai', 'gpt-realtime', 'cedar', 'openai-realtime'],
+      ['openai', 'gpt-live-1', 'quartz', 'openai-live'],
+      ['google-gemini', 'gemini-3.1-flash-live-preview', 'Puck', 'gemini-live'],
+    ] as const) {
+      await config.writeProviderInstance('voice', {
+        type,
+        settings: { apiKey: 'key' },
+      });
+      await config.writeModelSelection({
+        ...emptyModelSelection,
+        voice: {
+          sts: [{ providerId: 'voice', modelId, voiceId }],
+          tts: [],
+          stt: [],
+        },
+      });
+      expect(config.resolveRealtimeProvider()).toMatchObject({
+        kind,
+        config: { voiceId },
+      });
+      const persisted = JSON.parse(
+        await readFile(join(dataDirectory, CONFIG_FILE_NAME), 'utf8'),
+      );
+      expect(persisted.modelSelection.voice.sts[0].voiceId).toBe(voiceId);
+      await config.close();
+      await config.start();
+      expect(config.get().modelSelection.voice.sts[0]?.voiceId).toBe(voiceId);
+      await config.writeModelSelection({
+        ...emptyModelSelection,
+        voice: { sts: [{ providerId: 'voice', modelId }], tts: [], stt: [] },
+      });
+      expect(config.resolveRealtimeProvider()?.config).not.toHaveProperty(
+        'voiceId',
+      );
+    }
+    await config.close();
+  });
+
   it('advances compatibility metadata for consult model selection', async () => {
-    expect(CONFIG_STORE_DEFINITION.compatibilityVersion).toBe(6);
-    expect(CONFIG_STORE_DEFINITION.minimumKlexVersion).toBe('0.9.2');
+    expect(CONFIG_STORE_DEFINITION.compatibilityVersion).toBe(7);
+    expect(CONFIG_STORE_DEFINITION.minimumKlexVersion).toBe('0.16.0');
 
     const dataDirectory = await directory();
     await writeFile(
@@ -103,8 +235,8 @@ describe('config v2', () => {
       _klex: { compatibilityVersion: number; minimumKlexVersion: string };
     };
     expect(persisted._klex).toMatchObject({
-      compatibilityVersion: 6,
-      minimumKlexVersion: '0.9.2',
+      compatibilityVersion: 7,
+      minimumKlexVersion: '0.16.0',
     });
   });
 
@@ -349,8 +481,8 @@ describe('config v2', () => {
   });
 
   it('advances compatibility metadata for consult model selection', async () => {
-    expect(CONFIG_STORE_DEFINITION.compatibilityVersion).toBe(6);
-    expect(CONFIG_STORE_DEFINITION.minimumKlexVersion).toBe('0.9.2');
+    expect(CONFIG_STORE_DEFINITION.compatibilityVersion).toBe(7);
+    expect(CONFIG_STORE_DEFINITION.minimumKlexVersion).toBe('0.16.0');
 
     const dataDirectory = await directory();
     await writeFile(
@@ -374,8 +506,8 @@ describe('config v2', () => {
       _klex: { compatibilityVersion: number; minimumKlexVersion: string };
     };
     expect(persisted._klex).toMatchObject({
-      compatibilityVersion: 6,
-      minimumKlexVersion: '0.9.2',
+      compatibilityVersion: 7,
+      minimumKlexVersion: '0.16.0',
     });
   });
 
@@ -1080,6 +1212,46 @@ describe('config v2', () => {
     expect(resolved?.model).not.toHaveProperty('websocketUrl');
     await config.close();
   });
+
+  it.each(['gpt-live-1', 'gpt-live-1-2026-10-01'])(
+    'resolves %s through the Live adapter with its selected voice',
+    async (modelId) => {
+      const config = createConfig({
+        logging,
+        dataDirectory: await directory(true),
+      });
+      await config.start();
+      try {
+        await config.writeProviderInstance('voice', {
+          type: 'openai',
+          settings: { apiKey: 'live-key' },
+          knownModels: {
+            [modelId]: { capabilities: { voice: { sts: true } } },
+          },
+        });
+        await config.writeModelSelection({
+          ...emptyModelSelection,
+          voice: {
+            ...emptyModelSelection.voice,
+            sts: [
+              {
+                providerId: 'voice',
+                modelId,
+                voiceId: 'meridian',
+              },
+            ],
+          },
+        });
+        expect(config.resolveRealtimeProvider()).toMatchObject({
+          kind: 'openai-live',
+          model: { modelId },
+          config: { modelId, voiceId: 'meridian' },
+        });
+      } finally {
+        await config.close();
+      }
+    },
+  );
 
   it('resolves GPT-Live with Responses delegation options', async () => {
     const config = createConfig({

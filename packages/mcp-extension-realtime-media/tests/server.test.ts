@@ -74,6 +74,37 @@ describe('Realtime Media server', () => {
     ).rejects.toBeInstanceOf(RealtimeMediaProtocolError);
   });
 
+  it('validates offered context before sending and preserves valid data', async () => {
+    const { server } = fakeServer();
+    const registered = registerRealtimeMediaServer(server, {
+      accept: vi.fn(),
+      reject: vi.fn(),
+      end: vi.fn(),
+    });
+    const offered = {
+      sessionId: 'session-1',
+      expiresAt: '2026-08-01T18:00:00.000Z',
+      context: { text: 'session facts', metadata: { value: [1, null] } },
+    };
+    const options = { metadata: withRealtimeMediaClientCapability({}) };
+    await registered.sendSessionOffered(offered, options);
+    expect(server.notification).toHaveBeenCalledWith(
+      {
+        method: 'io.stagewise/realtime-media/session-offered',
+        params: offered,
+      },
+      expect.anything(),
+    );
+    vi.mocked(server.notification).mockClear();
+    await expect(
+      registered.sendSessionOffered(
+        { ...offered, context: { text: 'x'.repeat(4096) } },
+        options,
+      ),
+    ).rejects.toThrow();
+    expect(server.notification).not.toHaveBeenCalled();
+  });
+
   it('creates typed session errors without credentials', () => {
     const error = realtimeMediaSessionError('expired-offer', 'session-1');
     expect(error).toMatchObject({ code: -32_021 });

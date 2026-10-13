@@ -5,6 +5,15 @@
   "sideEffects": false,
   "description": "Shared client infrastructure for stagewise MCP extensions",
   "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/stagewise-io/klex.git",
+    "directory": "packages/mcp-extension-client"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": false
+  },
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
@@ -12,13 +21,17 @@
     }
   },
   "files": [
-    "dist"
+    "dist",
+    "LICENSE",
+    "README.md"
   ],
   "scripts": {
     "clean": "rm -rf dist",
     "build": "pnpm run clean && tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "prepack": "pnpm build",
+    "verify": "node ../../scripts/verify-mcp-extension-packages.mjs"
   },
   "peerDependencies": {
     "@modelcontextprotocol/client": "2.0.0-beta.4",

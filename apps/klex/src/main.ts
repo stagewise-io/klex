@@ -1,11 +1,12 @@
 import { randomUUID } from 'node:crypto';
-import { resolve } from 'node:path';
+import { join, resolve } from 'node:path';
 
 import { attachOtelTransport, createLogger } from '@stagewise/logger';
 
 import { type AdminApi, createAdminApi } from '@/admin-api';
 import { createAgentDirectory, defaultAgentRoot } from '@/agent-directory';
 import { createAgentPicker } from '@/agent-picker';
+import { type AutoUpdate, createAutoUpdate } from '@/auto-update';
 import { type CliOptions, parseCliArgs } from '@/cli';
 import { createCliUi } from '@/cli-ui';
 import {
@@ -16,7 +17,13 @@ import { type RuntimeHandle, startRuntime } from '@/composition/runtime';
 import { createConfig } from '@/config';
 import { ensureDataDirectory } from '@/data-directory';
 import { createDirectoryLock, type DirectoryLock } from '@/directory-lock';
-import { createGodMessages } from '@/god-messages';
+import {
+  createDrain,
+  DEFAULT_TERMINATION_DRAIN_TIMEOUT_MS,
+  type Drain,
+} from '@/drain';
+import { createGodMessages, type GodMessages } from '@/god-messages';
+import { createHealthServer, type HealthServer } from '@/health-server';
 import { createIntrospector } from '@/introspection';
 import { createLocalData, type LocalData } from '@/local-data';
 import { KLEX_LOCAL_DATA_STORES } from '@/local-data-registry';
@@ -48,13 +55,21 @@ import {
 } from '@/session/chat/extensions/god-messages';
 import { createImageInputOptimizerExt } from '@/session/chat/extensions/image-input-optimizer';
 import { createJsReplSandboxExt } from '@/session/chat/extensions/js-repl-sandbox';
+import {
+  createLearningExt,
+  createSkillCatalog,
+} from '@/session/chat/extensions/learning';
 import { createMcpIngressExt } from '@/session/chat/extensions/mcp-ingress';
-import { createMemoryExt } from '@/session/chat/extensions/memory';
+import {
+  createEpisodeFeed,
+  createMemoryExt,
+} from '@/session/chat/extensions/memory';
 import { createNameLoaderExt } from '@/session/chat/extensions/name-loader';
 import { createReadAttachmentExt } from '@/session/chat/extensions/read-attachment/read-attachment';
 import {
   createSoulExt,
   createSoulExtGod,
+  readSoul,
 } from '@/session/chat/extensions/soul';
 import {
   createTimeExt,
@@ -67,7 +82,7 @@ import {
   createRealtime,
   PRODUCTION_REALTIME_MEDIA_CAPABILITY,
 } from '@/session/realtime';
-import { createSessionHost } from '@/session/session-host';
+import { createSessionHost, type SessionHost } from '@/session/session-host';
 import type { SessionFactory } from '@/session/types';
 import { createSessionHistory } from '@/session-history';
 import {
@@ -97,6 +112,8 @@ import { createTracing, mapProviderName } from '@/tracing';
 
 /** Minimum seconds between time updates before executable generations. */
 const TIME_UPDATE_PERIOD_SECONDS = 300;
+/** Manual TUI updates keep UpdateManager's 4 h default. */
+const AUTO_UPDATE_CHECK_INTERVAL_MS = 2 * 60 * 60 * 1000;
 
 const cli: CliOptions = parseCliArgs(process.argv.slice(2));
 const logStore = createLogStore(500);
@@ -120,6 +137,7 @@ const telemetryWarning = describeTelemetryWarning(
 
 /** Set once created so a fatal startup error still flushes analytics. */
 let startupProductAnalytics: ProductAnalytics | undefined;
+let healthServer: HealthServer | undefined;
 
 async function main(): Promise<void> {
   if (telemetryWarning) {
@@ -157,8 +175,19 @@ async function main(): Promise<void> {
     );
   }
 
+  if (cli.healthPort !== undefined) {
+    healthServer = createHealthServer({
+      logging: logger,
+      port: cli.healthPort,
+      host: cli.healthHost,
+    });
+    await healthServer.start();
+  }
+
   let runtimeCloud: CloudConnectivity | undefined;
   let runtimeMcp: ReturnType<typeof createMcp> | undefined;
+  let runtimeSessionHost: SessionHost | undefined;
+  let runtimeGodMessages: GodMessages | undefined;
   // Aggregate-only product analytics. On by default, independent of the
   // opt-in OTel telemetry. Started before the agent picker so its enrollment
   // flow is observable; `klex_agent_started` is sent only once an agent
@@ -273,6 +302,7 @@ async function main(): Promise<void> {
     }).choose();
     finishPickerEnrollment('aborted');
     if (selectedDirectory === undefined) {
+      await healthServer?.close();
       await interactiveCloud?.close().catch(() => undefined);
       await interactiveLocalData?.close().catch(() => undefined);
       await interactiveLock?.release().catch(() => undefined);
@@ -414,6 +444,8 @@ async function main(): Promise<void> {
       logging: logger,
       config,
       definitions: builtInProviderDefinitions,
+      getSoul: () =>
+        readSoul(join(dataDirectory, 'extensions', createSoulExt.identifier)),
     });
     await providerRegistry.start();
     preRuntime.push(providerRegistry);
@@ -518,6 +550,10 @@ async function main(): Promise<void> {
       timezone,
     });
 
+    // Agent-wide hubs: memory publishes episodes, learning publishes skills.
+    const episodeFeed = createEpisodeFeed();
+    const skillCatalog = createSkillCatalog();
+
     // Default session: full extension set + MCP access.
     const defaultSessionFactory = makeSessionFactory([
       createNameLoaderExt,
@@ -531,7 +567,13 @@ async function main(): Promise<void> {
       createReadAttachmentExt,
       createTodosExt,
       createMcpIngressExt(),
-      createMemoryExt(),
+      createMemoryExt({ episodeFeed }),
+      createLearningExt({
+        episodes: episodeFeed,
+        skillCatalog,
+        getSoul: () =>
+          readSoul(join(dataDirectory, 'extensions', createSoulExt.identifier)),
+      }),
       createConsultExt({
         childExtensionFactories: [createSoulExt, defaultTimeExt],
         maxActiveSessions: 2,
@@ -547,6 +589,7 @@ async function main(): Promise<void> {
       sessionFactory: defaultSessionFactory,
       basePrompt: systemPrompt,
     });
+    runtimeSessionHost = sessionHost;
 
     // God session: no MCP, trust-mode god-messages, soul-god variant.
     // js-repl-sandbox excluded — it requires MCP access.
@@ -570,6 +613,7 @@ async function main(): Promise<void> {
         createTodosExt,
       ],
     });
+    runtimeGodMessages = godMessages;
     const adminApi = createAdminApi({
       logging: logger,
       config,
@@ -580,6 +624,7 @@ async function main(): Promise<void> {
       cloudConnectivity,
       godMessages,
       sessionHistory,
+      skillCatalog,
       localPort: cli.dangerousLocalAdminApiPort,
       timezone,
     });
@@ -634,6 +679,17 @@ async function main(): Promise<void> {
   const runningAdminApi = adminApiForUi;
   let cliUi: { start(): void; close(): void } | undefined;
   let updateManager: UpdateManager | undefined;
+  let autoUpdate: AutoUpdate | undefined;
+  const drain: Drain | undefined =
+    runtimeSessionHost && runtimeGodMessages && runtimeMcp
+      ? createDrain({
+          logging: logger,
+          sessionHost: runtimeSessionHost,
+          godMessages: runtimeGodMessages,
+          mcp: runtimeMcp,
+          onBegin: () => healthServer?.markNotReady(),
+        })
+      : undefined;
 
   const flushTelemetry = async (): Promise<void> => {
     const telemetryFlushes = await Promise.allSettled([
@@ -648,7 +704,10 @@ async function main(): Promise<void> {
   };
 
   const shutdown = createShutdownCoordinator({
-    beforeCleanup: flushTelemetry,
+    beforeCleanup: async () => {
+      healthServer?.markNotReady();
+      await flushTelemetry();
+    },
     closeUi: () => cliUi?.close(),
     cleanup: async () => {
       // Tell Klex Cloud first: the agent stops accepting tunneled work now,
@@ -659,6 +718,7 @@ async function main(): Promise<void> {
         logger.warn({ error }, 'Klex Cloud disconnect failed');
       });
       const updateState = updateManager?.getState();
+      autoUpdate?.close();
       updateManager?.stop();
       if (updateState?.status !== 'restarting') {
         await updateManager?.cancelInstall();
@@ -666,6 +726,7 @@ async function main(): Promise<void> {
       // Ordered teardown: event ingress and realtime sessions stop before the
       // default session and its extensions close.
       await runningRuntime?.close();
+      await healthServer?.close();
       // Flush telemetry after producers stop, while providers are still alive.
       // This avoids relying solely on provider shutdown hooks under the outer
       // shutdown deadline.
@@ -696,14 +757,38 @@ async function main(): Promise<void> {
     },
   });
 
-  process.on('SIGINT', shutdown.requestExit);
-  process.on('SIGTERM', shutdown.requestExit);
+  const requestExit = () => {
+    healthServer?.markNotReady();
+    shutdown.requestExit();
+  };
+  process.on('SIGINT', requestExit);
+  // Headless (hosted agents, Kubernetes rollouts): SIGTERM lets the current
+  // work finish within a wall-clock budget, because the orchestrator sends
+  // SIGKILL at its own deadline. A second SIGTERM or a SIGINT exits at once.
+  const terminationDrainTimeoutMs = resolveTerminationDrainTimeoutMs(
+    process.env.KLEX_DRAIN_TIMEOUT_MS,
+  );
+  process.on('SIGTERM', () => {
+    healthServer?.markNotReady();
+    if (!cli.headless || !drain || terminationDrainTimeoutMs === 0) {
+      shutdown.requestExit();
+      return;
+    }
+    shutdown.requestGracefulExit(() =>
+      drain.drain({
+        reason: 'termination',
+        timeoutMs: terminationDrainTimeoutMs,
+        pauseWhileLeased: false,
+      }),
+    );
+  });
   // Closing the terminal (or the console window on Windows) sends SIGHUP.
   // Without a handler Node terminates immediately and skips cloud notification.
-  process.on('SIGHUP', shutdown.requestExit);
+  process.on('SIGHUP', requestExit);
 
-  // Interactive CLI UI — default mode. Headless mode skips the UI.
-  if (!cli.headless) {
+  // Self-update: offered in the interactive UI, or installed automatically
+  // with --auto-update (TUI and headless).
+  if (!cli.headless || cli.autoUpdate) {
     const installation = await discoverManagedInstallation({
       executablePath: process.execPath,
       platform: process.platform,
@@ -718,25 +803,50 @@ async function main(): Promise<void> {
     if (installation) {
       updateManager = new UpdateManager({
         installation,
-        onRestartRequested: (updatedInstallation) =>
-          shutdown.requestRestart({
-            arguments: process.argv.slice(2),
-            cwd: process.cwd(),
-            environment: {
-              ...process.env,
-              KLEX_DATA_DIR: resolve(dataDirectory),
-            },
-            launcher: updatedInstallation.currentExecutable,
-          }),
+        ...(cli.autoUpdate
+          ? { checkIntervalMs: AUTO_UPDATE_CHECK_INTERVAL_MS }
+          : {}),
+        onRestartRequested: (updatedInstallation) => {
+          const restart = () =>
+            shutdown.requestRestart({
+              arguments: process.argv.slice(2),
+              cwd: process.cwd(),
+              environment: {
+                ...process.env,
+                KLEX_DATA_DIR: resolve(dataDirectory),
+              },
+              launcher: updatedInstallation.currentExecutable,
+            });
+          // With --auto-update every restart (manual ones included) waits
+          // for the agent to finish its work first. Without it, restart
+          // stays synchronous as before.
+          return autoUpdate
+            ? autoUpdate.drainForRestart().then(restart)
+            : restart();
+        },
       });
+      if (cli.autoUpdate && drain) {
+        autoUpdate = createAutoUpdate({
+          logging: logger,
+          updateManager,
+          drain,
+        });
+      }
+    } else if (cli.autoUpdate) {
+      logger.warn(
+        'Auto-update was requested but this is not a managed installation; continuing without updates',
+      );
     }
+  }
 
+  // Interactive CLI UI — default mode. Headless mode skips the UI.
+  if (!cli.headless) {
     // The ESM SEA entry bundles the interactive UI together with the
     // application. This keeps the executable self-contained; only native
     // addons and runtime binaries remain external filesystem assets.
     const ui = createCliUi({
       logging: logger,
-      onQuit: shutdown.requestExit,
+      onQuit: requestExit,
       adminApi: runningAdminApi,
       dataDirectory: cli.dataDirectory,
       logStore,
@@ -747,8 +857,20 @@ async function main(): Promise<void> {
     });
     cliUi = ui;
     ui.start();
-    updateManager?.start();
   }
+  updateManager?.start();
+  autoUpdate?.start();
+  // Readiness signal for orchestrators and the container smoke test: every
+  // runtime module has started and SIGTERM now drains instead of exiting.
+  healthServer?.markReady();
+  logger.info(
+    {
+      'event.name': 'klex.ready',
+      'service.version': KLEX_VERSION,
+      headless: cli.headless,
+    },
+    'Klex Bot ready',
+  );
 }
 
 function resolveShutdownTimeoutMs(value: string | undefined): number {
@@ -762,6 +884,20 @@ function resolveShutdownTimeoutMs(value: string | undefined): number {
     'Ignoring invalid KLEX_SHUTDOWN_TIMEOUT_MS',
   );
   return DEFAULT_SHUTDOWN_TIMEOUT_MS;
+}
+
+function resolveTerminationDrainTimeoutMs(value: string | undefined): number {
+  if (!value) return DEFAULT_TERMINATION_DRAIN_TIMEOUT_MS;
+  const parsed = Number(value);
+  // 0 disables the drain; the upper bound keeps a typo from parking a pod.
+  if (Number.isFinite(parsed) && parsed >= 0 && parsed <= 3_600_000) {
+    return Math.floor(parsed);
+  }
+  logger.warn(
+    { value, fallback: DEFAULT_TERMINATION_DRAIN_TIMEOUT_MS },
+    'Ignoring invalid KLEX_DRAIN_TIMEOUT_MS',
+  );
+  return DEFAULT_TERMINATION_DRAIN_TIMEOUT_MS;
 }
 
 async function closeReverse(
@@ -780,6 +916,7 @@ main().catch(async (error: unknown) => {
   logger.settings.type = 'pretty';
   logger.fatal({ error }, 'Klex Bot startup failed');
   // Idempotent: a no-op when the pre-runtime rollback already closed it.
+  await healthServer?.close();
   await startupProductAnalytics?.close();
   await logger[Symbol.asyncDispose]();
   process.exitCode = 1;

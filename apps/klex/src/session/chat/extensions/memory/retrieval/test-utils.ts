@@ -42,6 +42,7 @@ export function makeChildSessionFixture(
     getSessionInfo: vi.fn(() => info),
     close: vi.fn(async () => undefined),
     waitForIdle: vi.fn(async () => true),
+    isQuiescent: vi.fn(() => true),
     createChildSession: vi.fn(async () => {
       throw new Error('fixture child cannot create children');
     }),

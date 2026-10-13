@@ -1,4 +1,4 @@
-import { resolve } from 'node:path';
+import { join, resolve } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -30,8 +30,17 @@ const mocks = vi.hoisted(() => {
   logger.child.mockReturnValue(logger);
   return {
     resource,
+    healthServer: {
+      start: vi.fn(async () => undefined),
+      close: vi.fn(async () => undefined),
+      markReady: vi.fn(),
+      markNotReady: vi.fn(),
+    },
     logger,
     selectedDirectory: 'agents/selected agent',
+    createLearningExt:
+      vi.fn<(options: { getSoul: () => string | null }) => void>(),
+    readSoul: vi.fn((_directory: string) => 'Current soul'),
     createAgentPicker: vi.fn(),
     createCliUi: vi.fn(),
     ensureDataDirectory: vi.fn(),
@@ -66,6 +75,9 @@ vi.mock('@/directory-lock', () => ({
   createDirectoryLock: () => mocks.resource,
 }));
 vi.mock('@/god-messages', () => ({ createGodMessages: vi.fn() }));
+vi.mock('@/health-server', () => ({
+  createHealthServer: () => mocks.healthServer,
+}));
 vi.mock('@/introspection', () => ({ createIntrospector: vi.fn() }));
 vi.mock('@/local-data', () => ({ createLocalData: () => mocks.resource }));
 vi.mock('@/local-data-registry', () => ({ KLEX_LOCAL_DATA_STORES: [] }));
@@ -113,10 +125,15 @@ vi.mock('@/session/chat/extensions/image-input-optimizer', () => ({
 vi.mock('@/session/chat/extensions/js-repl-sandbox', () => ({
   createJsReplSandboxExt: vi.fn(),
 }));
+vi.mock('@/session/chat/extensions/learning', () => ({
+  createLearningExt: mocks.createLearningExt,
+  createSkillCatalog: vi.fn(),
+}));
 vi.mock('@/session/chat/extensions/mcp-ingress', () => ({
   createMcpIngressExt: vi.fn(),
 }));
 vi.mock('@/session/chat/extensions/memory', () => ({
+  createEpisodeFeed: vi.fn(),
   createMemoryExt: vi.fn(),
 }));
 vi.mock('@/session/chat/extensions/name-loader', () => ({
@@ -126,8 +143,9 @@ vi.mock('@/session/chat/extensions/read-attachment/read-attachment', () => ({
   createReadAttachmentExt: vi.fn(),
 }));
 vi.mock('@/session/chat/extensions/soul', () => ({
-  createSoulExt: vi.fn(),
+  createSoulExt: { identifier: 'io.stagewise/soul', create: vi.fn() },
   createSoulExtGod: vi.fn(),
+  readSoul: mocks.readSoul,
 }));
 vi.mock('@/session/chat/extensions/time', () => ({
   createTimeExt: vi.fn(),
@@ -178,6 +196,7 @@ describe('managed-update agent continuity', () => {
     vi.stubEnv('KLEX_NO_CLOUD', '1');
     vi.stubEnv('KLEX_DISABLE_TELEMETRY', '1');
     vi.stubEnv('KLEX_NO_ANALYTICS', '1');
+    vi.stubEnv('KLEX_HEALTH_PORT', '');
     vi.spyOn(process, 'on').mockReturnValue(process);
     mocks.onRestartRequested = undefined;
     mocks.createAgentPicker.mockImplementation(
@@ -215,6 +234,49 @@ describe('managed-update agent continuity', () => {
     if (!request) throw new Error('No restart request was captured');
     return request;
   }
+
+  it.each([false, true])(
+    'closes the health listener on picker cancellation after preparation=%s',
+    async (prepareAgent) => {
+      mocks.createAgentPicker.mockImplementation(
+        (options: {
+          prepareAgent: (directory: string) => Promise<boolean>;
+        }) => ({
+          choose: async () => {
+            expect(mocks.healthServer.start).toHaveBeenCalledOnce();
+            if (prepareAgent) {
+              await options.prepareAgent(mocks.selectedDirectory);
+            }
+            return undefined;
+          },
+        }),
+      );
+      process.argv = [process.execPath, 'klex', '--health-port', '8081'];
+      await import('./main');
+      await vi.waitFor(() => {
+        expect(mocks.resource.close).toHaveBeenCalled();
+        expect(mocks.healthServer.close).toHaveBeenCalledOnce();
+      });
+      expect(mocks.logger.fatal).not.toHaveBeenCalled();
+      expect(mocks.healthServer.markReady).not.toHaveBeenCalled();
+      expect(mocks.createCliUi).not.toHaveBeenCalled();
+      expect(mocks.onRestartRequested).toBeUndefined();
+      if (prepareAgent) {
+        expect(mocks.resource.release).toHaveBeenCalledOnce();
+      }
+    },
+  );
+
+  it('wires a lazy soul reader for the selected agent into learning', async () => {
+    await launch();
+    const options = mocks.createLearningExt.mock.calls[0]?.[0];
+    expect(options).toBeDefined();
+    expect(mocks.readSoul).not.toHaveBeenCalled();
+    expect(options?.getSoul()).toBe('Current soul');
+    expect(mocks.readSoul).toHaveBeenCalledWith(
+      join(mocks.selectedDirectory, 'extensions', 'io.stagewise/soul'),
+    );
+  });
 
   it('carries the picker selection only in the restart environment', async () => {
     await launch(['--verbose']);

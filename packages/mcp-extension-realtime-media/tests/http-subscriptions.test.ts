@@ -52,11 +52,22 @@ describe('Realtime Media HTTP subscriptions', () => {
     manager.publishSessionOffered('consumer-a', {
       sessionId: 'session-1',
       expiresAt: '2026-08-01T18:00:00.000Z',
+      context: { text: 'session facts', metadata: { value: [1, null] } },
     });
     expect(await readMessage(reader)).toMatchObject({
       method: 'io.stagewise/realtime-media/session-offered',
-      params: { sessionId: 'session-1' },
+      params: {
+        sessionId: 'session-1',
+        context: { text: 'session facts', metadata: { value: [1, null] } },
+      },
     });
+    expect(() =>
+      manager.publishSessionOffered('consumer-a', {
+        sessionId: 'invalid',
+        expiresAt: '2026-08-01T18:00:00.000Z',
+        context: { text: 'x'.repeat(4096) },
+      }),
+    ).toThrow();
     manager.publishSessionEnded('consumer-a', {
       sessionId: 'session-1',
       reason: 'remote',

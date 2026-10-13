@@ -22,6 +22,10 @@ import {
   getProvidersRoute,
   getProviderTypes,
   getProviderTypesRoute,
+  getProviderVoices,
+  getProviderVoicesRoute,
+  getVoicePreview,
+  getVoicePreviewRoute,
   type ProviderRouteDependencies,
   testProvider,
   testProviderRoute,
@@ -37,6 +41,8 @@ const metadata = {
   description: 'Test transport',
   capabilities: {
     modelDiscovery: true,
+    voiceDiscovery: true,
+    voicePreview: true,
     connectivityTest: true,
     customModels: true,
   },
@@ -66,6 +72,8 @@ function makeApp(registry: Partial<ProviderRegistry>): OpenAPIHono {
     app.openapi(deleteProviderRoute, deleteProvider(deps));
     app.openapi(testProviderRoute, testProvider(deps));
     app.openapi(getProviderModelsRoute, getProviderModels(deps));
+    app.openapi(getProviderVoicesRoute, getProviderVoices(deps));
+    app.openapi(getVoicePreviewRoute, getVoicePreview(deps));
     app.openapi(createKnownModelRoute, createKnownModel(deps));
     app.openapi(updateKnownModelRoute, updateKnownModel(deps));
     app.openapi(deleteKnownModelRoute, deleteKnownModel(deps));
@@ -73,6 +81,148 @@ function makeApp(registry: Partial<ProviderRegistry>): OpenAPIHono {
 }
 
 describe('provider registry routes', () => {
+  it('lists voices scoped to opaque model IDs without previewing', async () => {
+    const listVoices = vi.fn(async () => ({
+      ok: true as const,
+      code: 'available' as const,
+      value: { voices: [] },
+    }));
+    const getVoicePreview = vi.fn();
+    const app = makeApp({ listVoices, getVoicePreview });
+    const response = await app.request(
+      '/v1/providers/test-main/voices?modelId=models%2Fopaque%3Amodel&refresh=true',
+    );
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      voices: [],
+    });
+    expect(listVoices).toHaveBeenCalledWith(
+      'test-main',
+      'models/opaque:model',
+      true,
+      expect.any(AbortSignal),
+    );
+    expect(getVoicePreview).not.toHaveBeenCalled();
+    expect((await app.request('/v1/providers/test-main/voices')).status).toBe(
+      400,
+    );
+  });
+
+  it('exposes the simplified voice contract with optional descriptions and catalog state', async () => {
+    const catalog = {
+      defaultVoiceId: 'cedar',
+      stale: true,
+      voices: [
+        {
+          voiceId: 'cedar',
+          displayName: 'Cedar',
+          description: 'Warm voice',
+          isPreviewAvailable: true,
+        },
+        {
+          voiceId: 'other',
+          displayName: 'Other',
+          isPreviewAvailable: false,
+        },
+      ],
+    };
+    const app = makeApp({
+      listVoices: async () => ({ ok: true, code: 'available', value: catalog }),
+    });
+    const response = await app.request(
+      '/v1/providers/test-main/voices?modelId=gpt-realtime',
+    );
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual(catalog);
+  });
+
+  it('returns binary preview bytes and private headers; rejects arbitrary preview inputs', async () => {
+    const audio = new Uint8Array([82, 73, 70, 70, 0, 128, 255]);
+    const getVoicePreview = vi.fn(async () => ({
+      ok: true as const,
+      code: 'available' as const,
+      value: {
+        audio,
+        mimeType: 'audio/wav' as const,
+        sourceModelId: 'models/opaque:model',
+        mode: 'live' as const,
+      },
+    }));
+    const app = makeApp({ getVoicePreview });
+    const request = (body: unknown) =>
+      app.request('/v1/providers/test-main/voices/preview', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+    const response = await request({
+      modelId: 'models/opaque:model',
+      voiceId: 'Puck',
+    });
+    expect(response.status).toBe(200);
+    expect(response.headers.get('content-type')).toBe('audio/wav');
+    expect(response.headers.get('cache-control')).toBe('private, no-store');
+    expect(response.headers.get('x-voice-preview-mode')).toBe('live');
+    expect(
+      decodeURIComponent(response.headers.get('x-voice-preview-model') ?? ''),
+    ).toBe('models/opaque:model');
+    expect(new Uint8Array(await response.arrayBuffer())).toEqual(audio);
+    expect(getVoicePreview).toHaveBeenCalledWith(
+      'test-main',
+      'models/opaque:model',
+      'Puck',
+      expect.any(AbortSignal),
+    );
+    expect(
+      (await request({ modelId: 'm', voiceId: 'Puck', text: 'arbitrary' }))
+        .status,
+    ).toBe(400);
+    expect(getVoicePreview).toHaveBeenCalledTimes(1);
+  });
+
+  it('returns HTTP 429 when voice discovery is at capacity', async () => {
+    const app = makeApp({
+      listVoices: async () => ({
+        ok: false,
+        code: 'rate_limited',
+        message: 'Voice discovery limit reached; retry later',
+      }),
+    });
+    const response = await app.request(
+      '/v1/providers/test-main/voices?modelId=gpt-live-1',
+    );
+    expect(response.status).toBe(429);
+    expect(await response.json()).toMatchObject({ code: 'rate_limited' });
+  });
+
+  it('maps preview failures to stable HTTP statuses', async () => {
+    for (const [code, status] of [
+      ['not_found', 404],
+      ['rate_limited', 429],
+      ['preview_failed', 502],
+      ['unsupported_operation', 400],
+      ['authentication_required', 400],
+      ['internal_error', 500],
+    ] as const) {
+      const app = makeApp({
+        getVoicePreview: vi.fn(async () => ({
+          ok: false as const,
+          code,
+          message: 'Unavailable',
+        })),
+      });
+      const response = await app.request(
+        '/v1/providers/test-main/voices/preview',
+        {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ modelId: 'm', voiceId: 'v' }),
+        },
+      );
+      expect(response.status).toBe(status);
+      expect(await response.json()).toEqual({ error: 'Unavailable', code });
+    }
+  });
   it('exposes provider metadata and redacted instance settings', async () => {
     const app = makeApp({
       listProviderTypes: () => [

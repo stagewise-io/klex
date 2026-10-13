@@ -173,6 +173,7 @@ class OpenAIRealtimeSession implements RealtimeModelSession {
     private readonly reconnectPolicy: RealtimeReconnectPolicy,
     private readonly logger: ModuleLogger,
     private readonly context: PreparedInferenceContext | undefined,
+    private readonly voice: string,
   ) {
     this.socket = this.attachSocket(connect());
     signal.addEventListener('abort', this.handleAbort, { once: true });
@@ -334,7 +335,7 @@ class OpenAIRealtimeSession implements RealtimeModelSession {
           },
           output: {
             format: { type: 'audio/pcm', rate: OUTPUT_SAMPLE_RATE_HZ },
-            voice: DEFAULT_VOICE,
+            voice: this.voice,
           },
         },
       },
@@ -856,6 +857,7 @@ class OpenAIRealtimeSessionFactory implements RealtimeModelSessionFactory {
       this.reconnectPolicy,
       this.logger,
       options.context,
+      this.config.voiceId ?? DEFAULT_VOICE,
     );
     await session.waitUntilReady();
     return session;

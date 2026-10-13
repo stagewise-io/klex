@@ -129,9 +129,24 @@ export interface InteractionLease {
   release(reason?: string, finalEvent?: RealtimeCommitEvent): Promise<void>;
 }
 
+export type ExternalInteractionContextValue =
+  | string
+  | number
+  | boolean
+  | null
+  | readonly ExternalInteractionContextValue[]
+  | { readonly [key: string]: ExternalInteractionContextValue };
+
+/** Ephemeral producer-defined data, not instructions or authorization. */
+export interface ExternalInteractionContext {
+  readonly text?: string;
+  readonly metadata?: Readonly<Record<string, ExternalInteractionContextValue>>;
+}
+
 export interface InteractionLeaseRequest {
   readonly mode: InteractionMode;
   readonly externalSessionId: string;
+  readonly externalContext?: ExternalInteractionContext;
   readonly namespace: string;
   readonly signal: AbortSignal;
   readonly model: InteractionModelMetadata;

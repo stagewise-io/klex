@@ -25,8 +25,12 @@ import {
   providersResponseSchema,
   providerTypeParamSchema,
   providerTypesResponseSchema,
+  providerVoicesQuerySchema,
+  providerVoicesResponseSchema,
   updateKnownModelBodySchema,
   updateProviderBodySchema,
+  voicePreviewAudioSchema,
+  voicePreviewBodySchema,
 } from './schemas';
 
 export interface ProviderRouteDependencies {
@@ -75,6 +79,120 @@ function serializeInstance(info: ProviderInstanceInfo) {
 
 function serializeModels(models: readonly ResolvedProviderModel[]) {
   return models.map((model) => ({ ...model }));
+}
+
+const voiceErrors = {
+  400: {
+    content: { 'application/json': { schema: errorResponseSchema } },
+    description: 'Invalid configuration or discovery failure',
+  },
+  404: {
+    content: { 'application/json': { schema: errorResponseSchema } },
+    description: 'Provider not found',
+  },
+  429: {
+    content: { 'application/json': { schema: errorResponseSchema } },
+    description: 'Preview generation rate limit',
+  },
+  500: {
+    content: { 'application/json': { schema: errorResponseSchema } },
+    description: 'Internal error',
+  },
+  502: {
+    content: { 'application/json': { schema: errorResponseSchema } },
+    description: 'Upstream preview failure',
+  },
+};
+
+export const getProviderVoicesRoute = createRoute({
+  method: 'get',
+  path: '/v1/providers/{id}/voices',
+  tags: ['Providers'],
+  summary: 'List model-compatible voices without generating samples',
+  request: { params: providerIdParamSchema, query: providerVoicesQuerySchema },
+  responses: {
+    200: {
+      content: { 'application/json': { schema: providerVoicesResponseSchema } },
+      description: 'Model-scoped voice catalog',
+    },
+    ...voiceErrors,
+  },
+});
+export function getProviderVoices(
+  deps: ProviderRouteDependencies,
+): RouteHandler<typeof getProviderVoicesRoute> {
+  return async (c) => {
+    const { modelId, refresh } = c.req.valid('query');
+    const result = await deps.providerRegistry.listVoices(
+      c.req.valid('param').id,
+      modelId,
+      refresh === 'true',
+      c.req.raw.signal,
+    );
+    if (result.ok)
+      return c.json({ ...result.value, voices: [...result.value.voices] }, 200);
+    if (result.code === 'not_found') return c.json(failureBody(result), 404);
+    if (result.code === 'rate_limited') return c.json(failureBody(result), 429);
+    if (result.code === 'internal_error')
+      return c.json(failureBody(result), 500);
+    return c.json(failureBody(result), 400);
+  };
+}
+
+export const getVoicePreviewRoute = createRoute({
+  method: 'post',
+  path: '/v1/providers/{id}/voices/preview',
+  tags: ['Providers'],
+  summary:
+    'Generate or retrieve an isolated same-model audio preview (potentially billable)',
+  request: {
+    params: providerIdParamSchema,
+    body: {
+      required: true,
+      content: { 'application/json': { schema: voicePreviewBodySchema } },
+    },
+  },
+  responses: {
+    200: {
+      content: { 'audio/wav': { schema: voicePreviewAudioSchema } },
+      description:
+        'PCM16 mono WAV; X-Voice-Preview-Model is the selected model, X-Voice-Preview-Mode is live',
+    },
+    ...voiceErrors,
+  },
+});
+export function getVoicePreview(
+  deps: ProviderRouteDependencies,
+): RouteHandler<typeof getVoicePreviewRoute> {
+  return async (c) => {
+    const { modelId, voiceId } = c.req.valid('json');
+    const result = await deps.providerRegistry.getVoicePreview(
+      c.req.valid('param').id,
+      modelId,
+      voiceId,
+      c.req.raw.signal,
+    );
+    c.header('Cache-Control', 'private, no-store');
+    if (result.ok) {
+      c.header('Content-Type', result.value.mimeType);
+      c.header(
+        'X-Voice-Preview-Model',
+        encodeURIComponent(result.value.sourceModelId),
+      );
+      c.header('X-Voice-Preview-Mode', result.value.mode);
+      return c.body(new Uint8Array(result.value.audio), 200);
+    }
+    if (result.code === 'not_found') return c.json(failureBody(result), 404);
+    if (result.code === 'rate_limited') return c.json(failureBody(result), 429);
+    if (
+      result.code === 'preview_failed' ||
+      result.code === 'connectivity_failed'
+    )
+      return c.json(failureBody(result), 502);
+    if (result.code === 'internal_error')
+      return c.json(failureBody(result), 500);
+    return c.json(failureBody(result), 400);
+  };
 }
 
 export const getProviderTypesRoute = createRoute({

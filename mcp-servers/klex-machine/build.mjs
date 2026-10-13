@@ -14,6 +14,20 @@ await build({
   target: 'node24',
   outfile: outputFile,
   external: ['node-pty'],
+  alias: {
+    '@stagewise/mcp-extension-client': resolve(
+      packageRoot,
+      '../../packages/mcp-extension-client/src/index.ts',
+    ),
+    '@stagewise/mcp-extension-push-notifications/server': resolve(
+      packageRoot,
+      '../../packages/mcp-extension-push-notifications/src/server/index.ts',
+    ),
+    '@stagewise/mcp-extension-push-notifications': resolve(
+      packageRoot,
+      '../../packages/mcp-extension-push-notifications/src/index.ts',
+    ),
+  },
   banner: {
     js: "#!/usr/bin/env node\nimport { createRequire as __klexCreateRequire } from 'node:module';\nconst require = __klexCreateRequire(import.meta.url);",
   },

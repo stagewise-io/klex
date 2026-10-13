@@ -26,8 +26,9 @@ function fakeClient(
   };
   const client = {
     registerCapabilities: vi.fn(),
-    setNotificationHandler: vi.fn((method, _schema, handler) => {
-      handlers.set(method, handler);
+    setNotificationHandler: vi.fn((method, schema, handler) => {
+      // Mirror protocol dispatch: validate with the registered schema before calling the handler.
+      handlers.set(method, (value) => handler(schema.params.parse(value)));
     }),
     request: vi.fn(async (request) => {
       requests.push(request);
@@ -134,6 +135,63 @@ describe('Realtime Media client', () => {
     expect(result.transport.descriptor).toMatchObject({
       vendor: { trace: 'trace-1' },
     });
+  });
+
+  it('validates and preserves context in the registered incoming handler', async () => {
+    const { client, handlers, requests } = fakeClient();
+    const onNotification = vi.fn();
+    registerRealtimeMediaClient(client, { onNotification });
+    const offered = {
+      sessionId: 'session-1',
+      expiresAt: '2026-08-01T18:00:00.000Z',
+      context: { text: 'session facts', metadata: { value: [1, null] } },
+    };
+    await handlers.get('io.stagewise/realtime-media/session-offered')?.(
+      offered as never,
+    );
+    expect(onNotification).toHaveBeenCalledWith({
+      jsonrpc: '2.0',
+      method: 'io.stagewise/realtime-media/session-offered',
+      params: offered,
+    });
+    onNotification.mockClear();
+    for (const context of [
+      { text: 'x'.repeat(4096) },
+      { text: 42 },
+      { metadata: { invalid: undefined } },
+    ]) {
+      await handlers.get('io.stagewise/realtime-media/session-offered')?.({
+        ...offered,
+        context,
+      } as never);
+    }
+    expect(onNotification).not.toHaveBeenCalled();
+    expect(requests).toHaveLength(3);
+    for (const request of requests) {
+      expect(request).toMatchObject({
+        method: 'io.stagewise/realtime-media/reject',
+        params: { sessionId: offered.sessionId },
+      });
+      expect(request).not.toHaveProperty('params.context');
+    }
+  });
+
+  it('does not reject offers with invalid routing fields', () => {
+    const { client, handlers, requests } = fakeClient();
+    const onNotification = vi.fn();
+    registerRealtimeMediaClient(client, { onNotification });
+    for (const params of [
+      { sessionId: '', expiresAt: '2026-08-01T18:00:00.000Z' },
+      { sessionId: 'session-1', expiresAt: 'not-a-date' },
+    ]) {
+      expect(() =>
+        handlers.get('io.stagewise/realtime-media/session-offered')?.(
+          params as never,
+        ),
+      ).toThrow();
+    }
+    expect(requests).toHaveLength(0);
+    expect(onNotification).not.toHaveBeenCalled();
   });
 
   it('opens a generic subscription and forwards both notifications', async () => {

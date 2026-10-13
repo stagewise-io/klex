@@ -45,7 +45,17 @@ Implementations MUST NOT send these methods in the opposite direction.
 
 ### `io.stagewise/realtime-media/session-offered`
 
-This is a server-to-client notification. Parameters are `{ sessionId, expiresAt }`. `sessionId` is non-empty and opaque within authenticated server scope. `expiresAt` is an ISO 8601 timestamp. The notification MUST NOT include transport credentials.
+This is a server-to-client notification. Parameters are `{ sessionId, expiresAt, context? }`. `sessionId` is non-empty and opaque within authenticated server scope. `expiresAt` is an ISO 8601 timestamp. The notification MUST NOT include transport credentials.
+
+#### Optional context
+
+`context` MAY contain `text?: string` and `metadata?: { [key: string]: JSONValue }`, separately or together. JSONValue permits strings, finite numbers, booleans, null, arrays, and objects containing JSONValue. Context MUST NOT contain other top-level fields. Nested metadata fields are producer-defined; this extension assigns them no application-specific meaning.
+
+The serialized context object MUST NOT exceed 4,096 UTF-8 bytes, nesting depth 8, or 128 visited values. The root counts as depth 0 and one visited value. Each object property value and array element counts as a value. Implementations MUST reject invalid or oversized context rather than truncate facts. They MUST bound traversal before recursive parsing or serialization. JSON Schema describes the structure; aggregate byte, depth, and value limits require additional validation.
+
+Producers MUST derive supplied facts from their authenticated application state and limit disclosure to what is appropriate for the receiving client. Context MUST NOT carry secrets or transport credentials. Consumers MUST treat it as external data, not instructions or authorization. They MUST NOT fetch resources or follow URLs solely because context contains them, and MUST NOT include payloads in validation diagnostics.
+
+An absent or empty context is a no-op. Older SDK consumers ignore the optional field; context-free offers remain compatible. Consumers that seed model sessions SHOULD keep context call-local and separate from system/developer instructions and canonical history. Receiving context does not request a model response or define response arbitration.
 
 ### `io.stagewise/realtime-media/accept`
 

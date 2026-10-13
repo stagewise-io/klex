@@ -29,7 +29,7 @@ channel or environment
   -> channel or environment
 ```
 
-Push Notifications use at-least-once delivery. The server owns an identity-scoped pending queue. Clients subscribe before draining pending notifications, persist before ack, and deduplicate by `eventId`. Live notifications are the fast path; pending retrieval is the recovery path.
+Push Notifications use at-least-once delivery. The server owns an identity-scoped pending queue. Clients subscribe before draining pending notifications, handle (or persist) before ack, and deduplicate by `eventId`. Live notifications are the fast path; pending retrieval is the recovery path.
 
 ## No user-facing sessions
 
@@ -102,6 +102,8 @@ Every structured store under an agent data directory participates in the forward
 
 ## Technical docs
 
+- `apps/klex/container/README.md`
+- `apps/klex/src/drain/architecture.md`
 - `apps/klex/src/local-data/architecture.md`
 - `apps/klex/src/mcp/architecture.md`
 - `apps/klex/src/session/architecture.md`

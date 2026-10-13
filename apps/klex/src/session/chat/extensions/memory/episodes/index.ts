@@ -1,4 +1,17 @@
 export {
+  type CompletedEpisode,
+  compareEpisodeIds,
+  compareEpisodeRefs,
+  createEpisodeFeed,
+  type EpisodeFeed,
+  type EpisodeFeedHub,
+  type EpisodeFeedSource,
+  type EpisodePage,
+  type EpisodeRef,
+  type EpisodeSearchResult,
+  parseEpisodeId,
+} from './episode-feed';
+export {
   EpisodeStore,
   type EpisodeStoreOptions,
   type EpisodeStoreState,
@@ -15,6 +28,7 @@ export {
   renderEpisodeText,
   toEpisodeRecordInputs,
 } from './episode-format';
+export { EpisodePageReadError } from './episode-reader';
 export {
   createEpisodeRecorder,
   EpisodeRecorder,

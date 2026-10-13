@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { type ToolSet, tool } from 'ai';
@@ -43,6 +43,21 @@ const SOUL_TAG_PATTERN = /<\/?soul\b[^>]*>/gi;
  */
 type SoulMode = 'standard' | 'god';
 
+/** Reads current soul content without adopting the agent's identity or creating files. */
+export function readSoul(soulDirectory: string): string | null {
+  let content: string;
+  try {
+    content = readFileSync(join(soulDirectory, SOUL_FILE), 'utf-8');
+  } catch (error) {
+    if (error instanceof Error && 'code' in error && error.code === 'ENOENT') {
+      return null;
+    }
+    throw error;
+  }
+  const sanitized = content.replace(SOUL_TAG_PATTERN, '');
+  return sanitized.trim().length === 0 ? null : sanitized;
+}
+
 class SoulExt implements Extension {
   /** Absolute path to the global extension data directory. */
   private readonly soulDir: string;
@@ -66,13 +81,7 @@ class SoulExt implements Extension {
    * this method so they stay consistent.
    */
   private readSoul(): string | null {
-    if (!existsSync(this.soulPath)) return null;
-    const content = readFileSync(this.soulPath, 'utf-8').replace(
-      SOUL_TAG_PATTERN,
-      '',
-    );
-    if (content.trim().length === 0) return null;
-    return content;
+    return readSoul(this.soulDir);
   }
 
   private soulContentSchema() {

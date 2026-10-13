@@ -24,6 +24,12 @@ export interface ShutdownCoordinatorOptions {
 export interface ShutdownCoordinator {
   isShuttingDown(): boolean;
   requestExit(): void;
+  /**
+   * Exits once `waitUntilIdle` settles. A second graceful request, or any
+   * `requestExit()`, skips the wait and exits at once. A pending graceful exit
+   * wins over a later restart request.
+   */
+  requestGracefulExit(waitUntilIdle: () => Promise<unknown>): void;
   requestRestart(request: RestartRequest): void;
 }
 
@@ -31,6 +37,7 @@ export function createShutdownCoordinator(
   options: ShutdownCoordinatorOptions,
 ): ShutdownCoordinator {
   let shuttingDown = false;
+  let gracefulExitPending = false;
 
   const shutdown = (mode: ShutdownMode, restart?: RestartRequest) => {
     if (shuttingDown) return;
@@ -97,7 +104,22 @@ export function createShutdownCoordinator(
   return {
     isShuttingDown: () => shuttingDown,
     requestExit: () => shutdown('exit'),
-    requestRestart: (request) => shutdown('restart', request),
+    requestGracefulExit: (waitUntilIdle) => {
+      if (gracefulExitPending) {
+        shutdown('exit');
+        return;
+      }
+      if (shuttingDown) return;
+      gracefulExitPending = true;
+      void Promise.resolve()
+        .then(waitUntilIdle)
+        .catch(() => undefined)
+        .then(() => shutdown('exit'));
+    },
+    requestRestart: (request) => {
+      if (gracefulExitPending) return;
+      shutdown('restart', request);
+    },
   };
 }
 

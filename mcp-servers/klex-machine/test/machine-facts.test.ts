@@ -1,0 +1,253 @@
+import { afterEach, describe, expect, it, vi } from 'vitest';
+
+import {
+  createMachineFactsCollector,
+  encodeMachineFactsHeader,
+  type MachineFacts,
+  type MachineFactsProbes,
+  prettyOsName,
+} from '../src/cloud/facts/index.js';
+
+function probes(
+  overrides: Partial<MachineFactsProbes> = {},
+): MachineFactsProbes {
+  return {
+    platform: () => 'linux',
+    arch: () => 'arm64',
+    release: () => '6.1',
+    cpuModel: () => ' CPU ',
+    availableParallelism: () => 4,
+    totalmem: () => 8 * 1024 ** 3,
+    hostname: () => 'work-host',
+    readOsRelease: async () => 'PRETTY_NAME="Ubuntu 24.04"',
+    volumeBytes: async () => 100n * 1024n ** 3n,
+    ...overrides,
+  };
+}
+const options = {
+  cwd: '/work/日本語',
+  version: '0.1.0',
+  omitHostDetails: false,
+};
+afterEach(() => vi.useRealTimers());
+
+describe('machine facts', () => {
+  it('collects runtime-visible facts and round-trips Unicode', async () => {
+    const facts = await createMachineFactsCollector(
+      options,
+      probes(),
+    ).collect();
+    expect(facts).toEqual({
+      v: 1,
+      machineVersion: '0.1.0',
+      os: {
+        platform: 'linux',
+        arch: 'arm64',
+        release: '6.1',
+        name: 'Ubuntu 24.04',
+      },
+      cpu: { model: 'CPU', logicalCores: 4 },
+      memory: { totalBytes: 8 * 1024 ** 3 },
+      host: {
+        hostname: 'work-host',
+        workspacePath: options.cwd,
+        workspaceVolumeTotalBytes: 100 * 1024 ** 3,
+      },
+    });
+    const header = encodeMachineFactsHeader(facts);
+    expect(header).toBeDefined();
+    expect(
+      JSON.parse(Buffer.from(header ?? '', 'base64url').toString('utf8')),
+    ).toEqual(facts);
+  });
+
+  it.each([
+    ['darwin', 'macOS'],
+    ['win32', 'Windows'],
+    ['freebsd', undefined],
+  ])(
+    'uses the platform name on %s without reading Linux files',
+    async (platform, name) => {
+      const readOsRelease = vi.fn();
+      const facts = await createMachineFactsCollector(
+        options,
+        probes({ platform: () => platform, readOsRelease }),
+      ).collect();
+      expect(facts.os.name).toBe(name);
+      expect(facts.os.release).toBe('6.1');
+      expect(readOsRelease).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([' /work/project ', '/work/project\t'])(
+    'preserves workspace path whitespace in %j',
+    async (cwd) => {
+      const volumeBytes = vi.fn(async () => 42n);
+      const facts = await createMachineFactsCollector(
+        { ...options, cwd },
+        probes({ volumeBytes }),
+      ).collect();
+      expect(facts.host?.workspacePath).toBe(cwd);
+      expect(volumeBytes).toHaveBeenCalledExactlyOnceWith(cwd);
+    },
+  );
+
+  it('omits host details without probing hostname or volume', async () => {
+    const hostname = vi.fn();
+    const volumeBytes = vi.fn();
+    const facts = await createMachineFactsCollector(
+      { ...options, omitHostDetails: true },
+      probes({ hostname, volumeBytes }),
+    ).collect();
+    expect(facts).not.toHaveProperty('host');
+    expect(hostname).not.toHaveBeenCalled();
+    expect(volumeBytes).not.toHaveBeenCalled();
+  });
+
+  it('falls back to the second os-release file and treats input as data', async () => {
+    const readOsRelease = vi
+      .fn()
+      .mockRejectedValueOnce(new Error())
+      .mockResolvedValue('PRETTY_NAME="$(do-not-execute)"');
+    const facts = await createMachineFactsCollector(
+      options,
+      probes({ readOsRelease }),
+    ).collect();
+    expect(facts.os.name).toBe('$(do-not-execute)');
+    expect(readOsRelease.mock.calls.map((call) => call[0])).toEqual([
+      '/etc/os-release',
+      '/usr/lib/os-release',
+    ]);
+    expect(prettyOsName('PRETTY_NAME="unterminated')).toBeUndefined();
+    expect(prettyOsName(`PRETTY_NAME="${'x'.repeat(20_000)}"`)).toBeUndefined();
+  });
+
+  it('omits failed probes, unsafe numbers and oversized paths', async () => {
+    const fail = () => {
+      throw new Error('unavailable');
+    };
+    const facts = await createMachineFactsCollector(
+      { ...options, cwd: '/'.repeat(1025) },
+      probes({
+        release: fail,
+        cpuModel: () => 'x'.repeat(300),
+        availableParallelism: () => 0,
+        totalmem: () => Infinity,
+        hostname: fail,
+        readOsRelease: async () => {
+          throw new Error();
+        },
+        volumeBytes: async () => BigInt(Number.MAX_SAFE_INTEGER) + 1n,
+      }),
+    ).collect();
+    expect(JSON.parse(JSON.stringify(facts))).toEqual({
+      v: 1,
+      machineVersion: '0.1.0',
+      os: { platform: 'linux', arch: 'arm64' },
+      cpu: { model: 'x'.repeat(256) },
+      memory: {},
+      host: {},
+    });
+  });
+
+  it('omits unsupported statfs results', async () => {
+    const facts = await createMachineFactsCollector(
+      options,
+      probes({
+        volumeBytes: async () => {
+          throw new Error('ENOSYS');
+        },
+      }),
+    ).collect();
+    expect(facts.host?.workspaceVolumeTotalBytes).toBeUndefined();
+  });
+
+  it('returns within one second and does not mutate on delayed probe completion', async () => {
+    vi.useFakeTimers();
+    let resolve: ((value: bigint) => void) | undefined;
+    const result = createMachineFactsCollector(
+      options,
+      probes({
+        volumeBytes: () =>
+          new Promise((r) => {
+            resolve = r;
+          }),
+      }),
+    ).collect();
+    await vi.advanceTimersByTimeAsync(1000);
+    const facts = await result;
+    resolve?.(42n);
+    await Promise.resolve();
+    expect(facts.host?.workspaceVolumeTotalBytes).toBeUndefined();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it.each(['resolve', 'reject'])(
+    'bounds unfinished filesystem probes across reconnects until they %s',
+    async (settlement) => {
+      vi.useFakeTimers();
+      const disk = Promise.withResolvers<bigint>();
+      const name = Promise.withResolvers<string>();
+      const volumeBytes = vi
+        .fn()
+        .mockReturnValueOnce(disk.promise)
+        .mockResolvedValue(84n);
+      const readOsRelease = vi
+        .fn()
+        .mockReturnValueOnce(name.promise)
+        .mockResolvedValue('PRETTY_NAME="Fresh OS"');
+      const hostname = vi.fn().mockReturnValue('first');
+      const collector = createMachineFactsCollector(
+        options,
+        probes({ volumeBytes, readOsRelease, hostname }),
+      );
+      const pending = collector.collect();
+      await vi.advanceTimersByTimeAsync(1000);
+      const first = await pending;
+      for (let attempt = 0; attempt < 5; attempt++) {
+        hostname.mockReturnValue(`reconnect-${attempt}`);
+        const next = await collector.collect();
+        expect(next.host?.hostname).toBe(`reconnect-${attempt}`);
+        expect(next.host?.workspaceVolumeTotalBytes).toBeUndefined();
+        expect(next.os.name).toBeUndefined();
+      }
+      expect(volumeBytes).toHaveBeenCalledTimes(1);
+      expect(readOsRelease).toHaveBeenCalledTimes(1);
+      if (settlement === 'resolve') {
+        disk.resolve(42n);
+        name.resolve('PRETTY_NAME="Stale OS"');
+      } else {
+        disk.reject(new Error('stalled disk'));
+        name.reject(new Error('stalled os-release'));
+      }
+      await vi.advanceTimersByTimeAsync(0);
+      expect(first.host?.workspaceVolumeTotalBytes).toBeUndefined();
+      expect(first.os.name).toBeUndefined();
+      const fresh = await collector.collect();
+      expect(fresh.host?.workspaceVolumeTotalBytes).toBe(84);
+      expect(fresh.os.name).toBe('Fresh OS');
+      expect(volumeBytes).toHaveBeenCalledTimes(2);
+      expect(readOsRelease).toHaveBeenCalledTimes(2);
+      expect(vi.getTimerCount()).toBe(0);
+    },
+  );
+
+  it('refreshes probes for each collection and bounds encoded bytes', async () => {
+    const hostname = vi
+      .fn()
+      .mockReturnValueOnce('first')
+      .mockReturnValueOnce('second');
+    const collector = createMachineFactsCollector(
+      options,
+      probes({ hostname }),
+    );
+    expect((await collector.collect()).host?.hostname).toBe('first');
+    const second = await collector.collect();
+    expect(second.host?.hostname).toBe('second');
+    const oversized: MachineFacts = {
+      ...second,
+      host: { workspacePath: '🙂'.repeat(1024) },
+    };
+    expect(encodeMachineFactsHeader(oversized)).toBeUndefined();
+  });
+});

@@ -38,7 +38,14 @@ export interface CliOptions {
   deployment: Deployment;
   cloudEnrollToken: string | undefined;
   headless: boolean;
+  /**
+   * Install updates automatically and restart once the agent is idle or the
+   * drain deadline passed. Independent of `headless`.
+   */
+  autoUpdate: boolean;
   dangerousLocalAdminApiPort: number | undefined;
+  healthPort: number | undefined;
+  healthHost: string;
   allowDangerousUnsecureCloud: boolean;
   verbose: boolean;
   /**
@@ -58,16 +65,19 @@ function pathOrUndefined(value: string | undefined): string | undefined {
   return trimmed === undefined || trimmed === '' ? undefined : trimmed;
 }
 
-function portOrUndefined(value: string | undefined): number | undefined {
+function portOrUndefined(
+  value: string | undefined,
+  name = 'local Admin API',
+): number | undefined {
   const trimmed = value?.trim();
   if (trimmed === undefined || trimmed === '') return undefined;
   if (!/^\d+$/.test(trimmed)) {
-    throw new Error(`Invalid local Admin API port: ${value}`);
+    throw new Error(`Invalid ${name} port: ${value}`);
   }
 
   const port = Number(trimmed);
   if (!Number.isSafeInteger(port) || port < 1 || port > 65_535) {
-    throw new Error(`Invalid local Admin API port: ${value}`);
+    throw new Error(`Invalid ${name} port: ${value}`);
   }
   return port;
 }
@@ -79,6 +89,7 @@ export function parseCliArgs(argv: string[]): CliOptions {
       'data-dir': { type: 'string', short: 'd' },
       help: { type: 'boolean', short: 'h' },
       headless: { type: 'boolean', short: 'H' },
+      'auto-update': { type: 'boolean' },
       'cloud-base-url': { type: 'string' },
       'telemetry-endpoint': { type: 'string' },
       'telemetry-debug': { type: 'boolean' },
@@ -88,6 +99,7 @@ export function parseCliArgs(argv: string[]): CliOptions {
       cloud: { type: 'boolean' },
       'cloud-enroll-token': { type: 'string' },
       'dangerous-local-admin-api-port': { type: 'string' },
+      'health-port': { type: 'string' },
       'allow-dangerous-unsecure-cloud': { type: 'boolean' },
       verbose: { type: 'boolean', short: 'v' },
       version: { type: 'boolean' },
@@ -164,10 +176,20 @@ export function parseCliArgs(argv: string[]): CliOptions {
   // CLI wins over env. --no-headless sets values.headless to false.
   const headless = values.headless ?? process.env.KLEX_HEADLESS === '1';
 
+  // CLI wins over env. --no-auto-update sets values['auto-update'] to false.
+  const autoUpdate =
+    values['auto-update'] ?? process.env.KLEX_AUTO_UPDATE === '1';
+
   const dangerousLocalAdminApiPort = portOrUndefined(
     values['dangerous-local-admin-api-port'] ??
       process.env.KLEX_DANGEROUS_LOCAL_ADMIN_API_PORT,
   );
+
+  const healthPort = portOrUndefined(
+    values['health-port'] ?? process.env.KLEX_HEALTH_PORT,
+    'health',
+  );
+  const healthHost = process.env.KLEX_HEALTH_HOST?.trim() || '0.0.0.0';
 
   const allowDangerousUnsecureCloud =
     values['allow-dangerous-unsecure-cloud'] !== undefined
@@ -189,7 +211,10 @@ export function parseCliArgs(argv: string[]): CliOptions {
     deployment,
     cloudEnrollToken,
     headless,
+    autoUpdate,
     dangerousLocalAdminApiPort,
+    healthPort,
+    healthHost,
     allowDangerousUnsecureCloud,
     verbose,
     verifyNative,
@@ -208,6 +233,8 @@ Options:
   -d, --data-dir <path>        Directory for agent data (overrides KLEX_DATA_DIR; interactive mode otherwise discovers agents under KLEX_HOME)
   -H, --headless               Run without the interactive CLI UI (overrides KLEX_HEADLESS)
   --no-headless                Run with the interactive CLI UI (overrides KLEX_HEADLESS)
+  --auto-update                Install updates automatically and restart once the agent is idle, or after a 10-minute drain timeout (overrides KLEX_AUTO_UPDATE)
+  --no-auto-update             Disable automatic updates (overrides KLEX_AUTO_UPDATE)
   -h, --help                   Show this help message
   --version                    Print the version and exit
   --cloud-base-url <url>       Klex Cloud API base URL (overrides KLEX_CLOUD_BASE_URL, default: https://cloud.klex.bot)
@@ -220,12 +247,16 @@ Options:
   --no-cloud                   Disable Klex Cloud connectivity (overrides KLEX_NO_CLOUD)
   --cloud                      Enable Klex Cloud connectivity (overrides KLEX_NO_CLOUD)
   --cloud-enroll-token <code>  Enrollment token for headless enrollment (overrides KLEX_CLOUD_ENROLLMENT_TOKEN)
+  --health-port <port>         Enable GET /livez and /readyz (overrides KLEX_HEALTH_PORT; disabled by default)
   --dangerous-local-admin-api-port <port>  Expose the unauthenticated Admin API on 127.0.0.1 (overrides KLEX_DANGEROUS_LOCAL_ADMIN_API_PORT)
   --allow-dangerous-unsecure-cloud  Allow http cloud base URL and ws tunnel (overrides KLEX_ALLOW_UNSECURE_CLOUD, default: false)
   -v, --verbose                   Enable verbose (pretty) logging (default: compact)
 
 Environment:
+  KLEX_HEALTH_PORT             Opt-in HTTP probe port; exposes no Admin API
+  KLEX_HEALTH_HOST             Probe bind address (default: 0.0.0.0)
   KLEX_HOME                    Root directory for all Klex data (default: ~/.klex)
+  KLEX_AUTO_UPDATE             Install updates automatically when set to 1
   KLEX_TELEMETRY_ENDPOINT      Enable telemetry and export to this OTLP base URL
   KLEX_TELEMETRY_HEADERS       JSON object of extra OTLP request headers
   KLEX_TELEMETRY_DEBUG         Enable debug telemetry (chat content and PII) when set to 1; requires an endpoint
@@ -239,6 +270,10 @@ Environment:
   KLEX_DEPLOYMENT              Deployment label reported in analytics: self_hosted (default) or cloud;
                                set by hosting launchers, other values are reported as other
   KLEX_SHUTDOWN_TIMEOUT_MS      Maximum graceful shutdown time in milliseconds (default: 15000)
+  KLEX_DRAIN_TIMEOUT_MS        Headless only: on SIGTERM, wait up to this many milliseconds for current
+                               work to finish before shutting down (default: 300000, 0 disables).
+                               Set the orchestrator's grace period above this plus
+                               KLEX_SHUTDOWN_TIMEOUT_MS. A second SIGTERM or SIGINT exits at once
 `,
   );
 }

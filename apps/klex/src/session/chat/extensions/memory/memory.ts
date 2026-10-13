@@ -10,6 +10,7 @@ import type {
 } from '../extension-api';
 import {
   createEpisodeRecorder,
+  type EpisodeFeedHub,
   type EpisodeRecorder,
   EpisodeStore,
 } from './episodes';
@@ -28,27 +29,66 @@ const SHUTDOWN_FLUSH_TIMEOUT_MS = 25_000;
 const MAX_OBSERVATION_BATCHES_PER_STEP = 4;
 const EPISODE_FLUSH_INTERVAL_MS = 30_000;
 
+export interface MemoryExtOptions {
+  /** Receives the live episode store so other extensions can read finished episodes. */
+  episodeFeed?: EpisodeFeedHub;
+}
+
 class MemoryExt implements Extension {
   private recorder: EpisodeRecorder | null = null;
+  private detachEpisodeFeed: (() => void) | null = null;
   private retrievalCoordinator: MemoryRetrievalCoordinator | null = null;
   private closed = false;
   /** Retrieval observation cursor; independent of the recorder cursor. */
   private lastObservedMessageId: string | null = null;
-  // If step.run throws after onStepStart, this stays true until the next step;
-  // the interval pauses, while shutdown still flushes.
+  // onStepComplete settles this guard on both normal and throwing steps.
   private stepActive = false;
   private flushTimer: NodeJS.Timeout | null = null;
   private operation: Promise<void> = Promise.resolve();
 
-  constructor(private readonly deps: ExtensionDeps) {}
+  constructor(
+    private readonly deps: ExtensionDeps,
+    private readonly options: MemoryExtOptions,
+  ) {}
 
   async onStart(): Promise<void> {
     if (this.recorder) return;
+    const episodicDir = join(this.deps.getDataDir(true), 'episodic');
+    const getLimits = () => this.deps.config.get().extensions.memory.episodes;
     const store = new EpisodeStore({
-      episodicDir: join(this.deps.getDataDir(true), 'episodic'),
-      getLimits: () => this.deps.config.get().extensions.memory.episodes,
+      episodicDir,
+      getLimits,
       logger: this.deps.logger,
+      onCompleted: () => {
+        if (this.detachEpisodeFeed) this.options.episodeFeed?.notifyChanged();
+      },
     });
+    if (this.options.episodeFeed) {
+      try {
+        this.detachEpisodeFeed = this.options.episodeFeed.attach({
+          episodicDir,
+          getOpenEpisode: async () => {
+            // Idle without a running step: the next step or append rotates
+            // it, so it never receives records again and counts as finished.
+            // A step running at either end may still extend the snapshot.
+            const stepWasActive = this.stepActive;
+            const open = await store.readOpenEpisode();
+            const finished =
+              open !== null &&
+              !stepWasActive &&
+              !this.stepActive &&
+              open.lastActivityAt !== null &&
+              Date.now() - open.lastActivityAt >= getLimits().idleTimeoutMs;
+            return finished ? null : open;
+          },
+        });
+      } catch (error) {
+        this.deps.logger.warn(
+          { error },
+          'Episode feed already attached — not exposing this episode store',
+        );
+      }
+    }
     this.recorder = createEpisodeRecorder({
       getHistory: () => this.deps.getHistory(),
       store,
@@ -58,6 +98,7 @@ class MemoryExt implements Extension {
       void this.serialize(async () => {
         if (this.closed || this.stepActive) return;
         await this.recorder?.flush();
+        if (!this.stepActive) await this.recorder?.store.closeIdle();
       });
     }, EPISODE_FLUSH_INTERVAL_MS);
     this.flushTimer.unref();
@@ -83,6 +124,8 @@ class MemoryExt implements Extension {
       );
     }
     this.recorder = null;
+    this.detachEpisodeFeed?.();
+    this.detachEpisodeFeed = null;
     this.deps.logger.info('Memory extension closed');
   }
 
@@ -193,10 +236,12 @@ class MemoryExt implements Extension {
 }
 
 /** Maintains episodic memory through deterministic history recording. */
-export function createMemoryExt(): ExtensionFactory {
+export function createMemoryExt(
+  options: MemoryExtOptions = {},
+): ExtensionFactory {
   return {
     identifier: 'io.stagewise/memory',
     displayName: 'Memory',
-    create: (deps) => new MemoryExt(deps),
+    create: (deps) => new MemoryExt(deps, options),
   };
 }

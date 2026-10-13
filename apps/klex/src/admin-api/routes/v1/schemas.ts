@@ -278,8 +278,21 @@ const modelSelectionEntryOapiSchema = z
   .strict()
   .openapi('ModelSelectionEntry');
 
+const stsModelSelectionEntryOapiSchema = modelSelectionEntryOapiSchema
+  .extend({
+    voiceId: z
+      .string()
+      .min(1)
+      .refine(
+        (value) => value.trim() === value,
+        'Must not contain surrounding whitespace',
+      )
+      .optional(),
+  })
+  .openapi('StsModelSelectionEntry');
+
 const voiceModelSelectionSchema = z.object({
-  sts: z.array(modelSelectionEntryOapiSchema),
+  sts: z.array(stsModelSelectionEntryOapiSchema),
   tts: z.array(modelSelectionEntryOapiSchema),
   stt: z.array(modelSelectionEntryOapiSchema),
 });
@@ -334,6 +347,8 @@ const providerMetadataSchema = z.object({
   documentationUrl: z.string().optional(),
   capabilities: z.object({
     modelDiscovery: z.boolean(),
+    voiceDiscovery: z.boolean(),
+    voicePreview: z.boolean(),
     connectivityTest: z.boolean(),
     customModels: z.boolean(),
   }),
@@ -531,6 +546,39 @@ const providerModelSchema = knownModelSchema.extend({
 const providerModelsResponseSchema = z.object({
   models: z.array(providerModelSchema),
 });
+const providerVoicesQuerySchema = z
+  .object({
+    modelId: z.string().min(1),
+    refresh: z.enum(['true', 'false']).optional(),
+  })
+  .strict();
+const voicePreviewBodySchema = z
+  .object({
+    modelId: z.string().min(1),
+    voiceId: z
+      .string()
+      .min(1)
+      .refine((value) => value.trim() === value),
+  })
+  .strict();
+const providerVoicesResponseSchema = z
+  .object({
+    defaultVoiceId: z.string().optional(),
+    stale: z.boolean().optional(),
+    voices: z.array(
+      z.object({
+        voiceId: z.string(),
+        displayName: z.string(),
+        description: z.string().optional(),
+        isPreviewAvailable: z.boolean(),
+      }),
+    ),
+  })
+  .openapi('ProviderVoices');
+const voicePreviewAudioSchema = z
+  .string()
+  .openapi({ type: 'string', format: 'binary' });
+
 const providerModelsQuerySchema = z.object({
   refresh: z.enum(['true', 'false']).optional(),
 });
@@ -716,6 +764,65 @@ const godMessageResetResponseSchema = z
     sessionId: z.string(),
   })
   .openapi('GodMessageResetResponse');
+
+// --- Skills ---
+
+const skillSummarySchema = z
+  .object({
+    name: z.string().describe('Skill name, unique across the agent'),
+    description: z
+      .string()
+      .describe('One-line description of when the skill applies'),
+    origin: z
+      .literal('learned')
+      .describe('Where the skill comes from. Only learned skills exist today'),
+    createdAt: z
+      .string()
+      .datetime()
+      .optional()
+      .describe('When the skill was first written'),
+    updatedAt: z
+      .string()
+      .datetime()
+      .optional()
+      .describe('When the skill was last rewritten'),
+    lastReadAt: z
+      .string()
+      .datetime()
+      .nullable()
+      .optional()
+      .describe('When the agent last read the skill; null if never'),
+    readCount: z
+      .number()
+      .int()
+      .min(0)
+      .optional()
+      .describe('How often the agent has read the skill'),
+  })
+  .openapi('SkillSummary');
+
+const skillListResponseSchema = z
+  .object({
+    skills: z.array(skillSummarySchema),
+  })
+  .openapi('SkillListResponse');
+
+const skillDetailSchema = skillSummarySchema
+  .extend({
+    body: z.string().describe('Markdown body of the SKILL.md'),
+    sourceEpisodes: z
+      .array(z.string())
+      .optional()
+      .describe('Memory episode IDs the skill was learned from'),
+  })
+  .openapi('SkillDetail');
+
+const skillNameParamsSchema = z.object({
+  name: z.string().min(1).openapi({
+    description: 'Skill name',
+    example: 'ask-before-contract-changes',
+  }),
+});
 
 // --- Session history ---
 
@@ -1054,6 +1161,8 @@ export {
   providersResponseSchema,
   providerTypeParamSchema,
   providerTypesResponseSchema,
+  providerVoicesQuerySchema,
+  providerVoicesResponseSchema,
   serializedMessagePartSchema,
   serializedMessageSchema,
   sessionHistoryListQuerySchema,
@@ -1064,6 +1173,10 @@ export {
   sessionHistoryRecordSchema,
   sessionInstanceIdParamSchema,
   sessionKindSchema,
+  skillDetailSchema,
+  skillListResponseSchema,
+  skillNameParamsSchema,
+  skillSummarySchema,
   timezoneSettingsSchema,
   toolCallHistoryResponseSchema,
   updateKnownModelBodySchema,
@@ -1074,4 +1187,6 @@ export {
   usageQuerySchema,
   usageResponseSchema,
   usageSplitBySchema,
+  voicePreviewAudioSchema,
+  voicePreviewBodySchema,
 };

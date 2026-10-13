@@ -7,7 +7,10 @@ import type { RootLogger } from '@stagewise/logger';
 import type { AudioFrame, AudioSource } from '@/media-transport';
 import { BoundedAsyncQueue } from '@/media-transport/async-queue';
 import { SessionInboxUrgency } from '@/session/inbox';
-import type { PreparedInferenceContext } from '@/session/interaction';
+import {
+  appendExternalInteractionContext,
+  type PreparedInferenceContext,
+} from '@/session/interaction';
 
 import {
   createOpenAIRealtimeProcessorFactory,
@@ -116,12 +119,13 @@ const preparedContext: PreparedInferenceContext = {
 async function setup(
   startupTimeoutMs = 1_000,
   context?: PreparedInferenceContext,
+  voiceId?: string,
 ) {
   const socket = new FakeSocket();
   let authorization: string | undefined;
   const factory = createOpenAIRealtimeProcessorFactory({
     logging,
-    config,
+    config: { ...config, ...(voiceId !== undefined && { voiceId }) },
     startupTimeoutMs,
     // Reconnection is opt-in per test so unexpected closes stay terminal.
     reconnect: { maxAttempts: 0 },
@@ -235,6 +239,17 @@ function pcm24(sampleCount: number, value = 1_000): string {
 }
 
 describe('OpenAI realtime processor', () => {
+  it('uses the selected voice while retaining the existing default', async () => {
+    for (const voiceId of [undefined, 'cedar']) {
+      const harness = await setup(1_000, undefined, voiceId);
+      harness.socket.open();
+      expect(
+        JSON.parse(harness.socket.sent[0] ?? '{}').session.audio.output.voice,
+      ).toBe(voiceId ?? 'marin');
+      harness.socket.message({ type: 'session.updated' });
+      await (await harness.promise).close();
+    }
+  });
   afterEach(() => vi.useRealTimers());
 
   it('authenticates, configures PCM and waits for readiness', async () => {
@@ -711,6 +726,34 @@ describe('OpenAI realtime processor', () => {
         },
       },
     ]);
+  });
+
+  it('seeds external session data as a user item without requesting a response', async () => {
+    const messages = appendExternalInteractionContext(
+      preparedContext.messages,
+      {
+        namespace: 'voice',
+        externalSessionId: 'call-1',
+        externalContext: { text: 'external session facts' },
+      },
+    );
+    const { socket, processor } = await activate({
+      ...preparedContext,
+      messages,
+    });
+    expect(
+      sent(socket)
+        .filter((event) => event.type === 'conversation.item.create')
+        .at(-1)?.item,
+    ).toEqual({
+      type: 'message',
+      role: 'user',
+      content: [{ type: 'input_text', text: messages.at(-1)?.content }],
+    });
+    expect(sent(socket).some((event) => event.type === 'response.create')).toBe(
+      false,
+    );
+    await processor.close();
   });
 
   it('seeds canonical history in order before readiness resolves', async () => {

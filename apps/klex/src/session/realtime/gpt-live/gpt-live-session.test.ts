@@ -7,7 +7,10 @@ import type { RootLogger } from '@stagewise/logger';
 import type { AudioFrame, AudioSource } from '@/media-transport';
 import { BoundedAsyncQueue } from '@/media-transport/async-queue';
 import { SessionInboxUrgency } from '@/session/inbox';
-import type { PreparedInferenceContext } from '@/session/interaction';
+import {
+  appendExternalInteractionContext,
+  type PreparedInferenceContext,
+} from '@/session/interaction';
 
 import {
   createGPTLiveProcessorFactory,
@@ -60,7 +63,12 @@ const context: PreparedInferenceContext = {
   updateWatermark: 0,
 };
 
-function setup() {
+function setup(
+  voiceId?: string,
+  voice?: string,
+  modelId = 'gpt-live-1',
+  preparedContext = context,
+) {
   const socket = new FakeSocket();
   let replacementSocket: FakeSocket | undefined;
   let connectionCount = 0;
@@ -68,8 +76,10 @@ function setup() {
   let authorization: string | string[] | undefined;
   const factory = createGPTLiveProcessorFactory({
     logging,
+    voice,
     config: {
-      modelId: 'gpt-live-1',
+      voiceId,
+      modelId,
       apiKey: 'secret-test-key',
       baseUrl: 'https://example.test/v1',
       responsesModelId: 'gpt-5.2',
@@ -90,7 +100,7 @@ function setup() {
     namespace: 'test',
     sessionId: 'call-1',
     signal: controller.signal,
-    context,
+    context: preparedContext,
   });
   return {
     socket,
@@ -122,6 +132,106 @@ function inputFrame(): AudioFrame {
 }
 
 describe('GPT-Live model session', () => {
+  it('preserves the call-local user envelope in startup and replacement input', async () => {
+    const messages = appendExternalInteractionContext(context.messages, {
+      namespace: 'voice',
+      externalSessionId: 'call-1',
+      externalContext: { text: 'external session facts' },
+    });
+    const harness = setup(undefined, undefined, undefined, {
+      ...context,
+      messages,
+    });
+    try {
+      harness.socket.open();
+      const envelope = {
+        status: 'completed',
+        type: 'message',
+        role: 'user',
+        content: [{ type: 'input_text', text: messages.at(-1)?.content }],
+      };
+      expect(
+        JSON.parse(harness.socket.sent[0] ?? '{}').session.input.at(-1),
+      ).toEqual(envelope);
+      harness.socket.message({
+        type: 'session.started',
+        session: { id: 'live-1' },
+      });
+      await harness.creating;
+      harness.socket.readyState = 3;
+      harness.socket.emit('close');
+      const replacement = harness.replacementSocket();
+      expect(replacement).toBeDefined();
+      replacement?.open();
+      expect(
+        JSON.parse(replacement?.sent[0] ?? '{}').session.input.at(-1),
+      ).toEqual(envelope);
+      expect(JSON.stringify(harness.socket.sent)).not.toContain(
+        'response.create',
+      );
+      replacement?.message({
+        type: 'session.started',
+        session: { id: 'live-2' },
+      });
+    } finally {
+      harness.controller.abort();
+      await harness.creating.catch(() => undefined);
+    }
+  });
+  it('uses explicit override, persisted voice, then the existing default', async () => {
+    for (const [voiceId, voice, expected] of [
+      [undefined, undefined, 'marin'],
+      ['quartz', undefined, 'quartz'],
+      ['quartz', 'cedar', 'cedar'],
+    ]) {
+      const harness = setup(voiceId, voice);
+      harness.socket.open();
+      expect(
+        JSON.parse(harness.socket.sent[0] ?? '{}').session.audio.output.voice,
+      ).toBe(expected);
+      harness.socket.message({
+        type: 'session.started',
+        session: { id: 'live' },
+      });
+      await harness.creating;
+      harness.controller.abort();
+    }
+  });
+  it.each(['gpt-live-1', 'gpt-live-1-2026-10-01'])(
+    'preserves selected model %s on startup and replacement connections',
+    async (modelId) => {
+      const harness = setup('quartz', undefined, modelId);
+      try {
+        harness.socket.open();
+        expect(JSON.parse(harness.socket.sent[0] ?? '{}')).toMatchObject({
+          type: 'session.start',
+          session: { model: modelId, audio: { output: { voice: 'quartz' } } },
+        });
+        harness.socket.message({
+          type: 'session.started',
+          session: { id: 'live-1' },
+        });
+        await harness.creating;
+        harness.socket.readyState = 3;
+        harness.socket.emit('close');
+        const replacement = harness.replacementSocket();
+        expect(replacement).toBeDefined();
+        replacement?.open();
+        expect(JSON.parse(replacement?.sent[0] ?? '{}')).toMatchObject({
+          type: 'session.start',
+          session: { model: modelId, audio: { output: { voice: 'quartz' } } },
+        });
+        replacement?.message({
+          type: 'session.started',
+          session: { id: 'live-2' },
+        });
+      } finally {
+        harness.controller.abort();
+        await harness.creating.catch(() => undefined);
+      }
+    },
+  );
+
   it('authenticates, starts with Responses delegation, and waits for readiness', async () => {
     const setupResult = setup();
     setupResult.socket.open();

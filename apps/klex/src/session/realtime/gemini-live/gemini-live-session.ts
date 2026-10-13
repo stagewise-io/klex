@@ -226,6 +226,13 @@ export class GeminiLiveSession implements RealtimeModelSession {
         model,
         generationConfig: {
           responseModalities: ['AUDIO'],
+          ...(this.config.voiceId !== undefined && {
+            speechConfig: {
+              voiceConfig: {
+                prebuiltVoiceConfig: { voiceName: this.config.voiceId },
+              },
+            },
+          }),
         },
         inputAudioTranscription: {},
         outputAudioTranscription: {},

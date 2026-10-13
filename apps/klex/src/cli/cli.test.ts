@@ -11,6 +11,8 @@ describe('parseCliArgs', () => {
   const originalEnv = { ...process.env };
 
   beforeEach(() => {
+    delete process.env.KLEX_HEALTH_PORT;
+    delete process.env.KLEX_HEALTH_HOST;
     delete process.env.KLEX_HOME;
     delete process.env.KLEX_DATA_DIR;
     delete process.env.KLEX_NO_CLOUD;
@@ -25,10 +27,13 @@ describe('parseCliArgs', () => {
     delete process.env.KLEX_NO_ANALYTICS;
     delete process.env.DO_NOT_TRACK;
     delete process.env.KLEX_DEPLOYMENT;
+    delete process.env.KLEX_AUTO_UPDATE;
   });
 
   afterEach(() => {
     for (const key of [
+      'KLEX_HEALTH_PORT',
+      'KLEX_HEALTH_HOST',
       'KLEX_HOME',
       'KLEX_DATA_DIR',
       'KLEX_NO_CLOUD',
@@ -43,6 +48,7 @@ describe('parseCliArgs', () => {
       'KLEX_NO_ANALYTICS',
       'DO_NOT_TRACK',
       'KLEX_DEPLOYMENT',
+      'KLEX_AUTO_UPDATE',
     ]) {
       if (key in originalEnv) {
         // biome-ignore lint/suspicious/noExplicitAny: restore env
@@ -51,6 +57,57 @@ describe('parseCliArgs', () => {
         delete process.env[key as keyof typeof process.env];
       }
     }
+  });
+
+  describe('health listener', () => {
+    it('is disabled by default', () => {
+      expect(parseCliArgs([]).healthPort).toBeUndefined();
+      expect(parseCliArgs([]).healthHost).toBe('0.0.0.0');
+    });
+    it('resolves env and lets the CLI port override it', () => {
+      process.env.KLEX_HEALTH_PORT = '8080';
+      process.env.KLEX_HEALTH_HOST = '127.0.0.1';
+      expect(parseCliArgs([]).healthPort).toBe(8080);
+      expect(parseCliArgs(['--health-port', '8081']).healthPort).toBe(8081);
+      expect(parseCliArgs([]).healthHost).toBe('127.0.0.1');
+    });
+    it('treats blank env values as unset', () => {
+      process.env.KLEX_HEALTH_PORT = ' ';
+      process.env.KLEX_HEALTH_HOST = ' ';
+      expect(parseCliArgs([]).healthPort).toBeUndefined();
+      expect(parseCliArgs([]).healthHost).toBe('0.0.0.0');
+    });
+    it.each(['0', '-1', '65536', '1.5', 'abc'])('rejects port %s', (port) => {
+      expect(() => parseCliArgs([`--health-port=${port}`])).toThrow(
+        'Invalid health port',
+      );
+    });
+  });
+
+  describe('auto-update', () => {
+    it('is disabled by default', () => {
+      expect(parseCliArgs([]).autoUpdate).toBe(false);
+    });
+
+    it('is enabled by --auto-update', () => {
+      expect(parseCliArgs(['--auto-update']).autoUpdate).toBe(true);
+    });
+
+    it('is enabled by KLEX_AUTO_UPDATE=1', () => {
+      process.env.KLEX_AUTO_UPDATE = '1';
+      expect(parseCliArgs([]).autoUpdate).toBe(true);
+    });
+
+    it('lets --no-auto-update override KLEX_AUTO_UPDATE', () => {
+      process.env.KLEX_AUTO_UPDATE = '1';
+      expect(parseCliArgs(['--no-auto-update']).autoUpdate).toBe(false);
+    });
+
+    it('is independent of headless mode', () => {
+      const options = parseCliArgs(['--headless', '--auto-update']);
+      expect(options.headless).toBe(true);
+      expect(options.autoUpdate).toBe(true);
+    });
   });
 
   describe('analytics', () => {

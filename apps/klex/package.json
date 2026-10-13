@@ -1,6 +1,6 @@
 {
   "name": "@stagewise/klex",
-  "version": "0.13.3",
+  "version": "0.15.1",
   "private": true,
   "type": "module",
   "main": "./dist/main.js",
@@ -20,6 +20,7 @@
     "release:assemble": "tsx scripts/release/aggregate-manifest.ts",
     "release:nightly-version": "tsx scripts/release/nightly-version.ts",
     "release:prepare": "tsx scripts/release/prepare-stable-release.ts",
+    "container:stage": "tsx scripts/container/stage-context.ts",
     "test:exe": "pnpm run build:exe -- --skip-notarize && tsx scripts/smoke-exe.ts",
     "typecheck": "tsc --noEmit",
     "build:admin-api-types": "rm -rf .types/admin-api && tsc -p tsconfig.admin-api-types.json",
@@ -92,6 +93,7 @@
     "react": "19.2.8",
     "sharp": "0.35.3",
     "ws": "8.18.1",
+    "yaml": "2.9.0",
     "zod": "4.4.3"
   },
   "keywords": [],

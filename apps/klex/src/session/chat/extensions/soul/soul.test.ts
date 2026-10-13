@@ -1,5 +1,6 @@
 import {
   existsSync,
+  mkdirSync,
   mkdtempSync,
   readFileSync,
   rmSync,
@@ -11,7 +12,7 @@ import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { ExtensionDeps } from '../extension-api';
-import { createSoulExt, createSoulExtGod } from './soul';
+import { createSoulExt, createSoulExtGod, readSoul } from './soul';
 
 vi.mock('./system-prompt-part/no-soul-god.md', () => ({
   default: 'god no-soul prompt',
@@ -80,6 +81,35 @@ function makeDeps(
 // ---------------------------------------------------------------------------
 // Factory metadata
 // ---------------------------------------------------------------------------
+
+describe('readSoul', () => {
+  it('reads sanitized content on every call and distinguishes missing or empty souls', () => {
+    const dir = makeTmpDir();
+    try {
+      expect(readSoul(dir)).toBeNull();
+      writeFileSync(join(dir, 'SOUL.md'), '<soul>First</soul>');
+      expect(readSoul(dir)).toBe('First');
+      writeFileSync(join(dir, 'SOUL.md'), 'Updated');
+      expect(readSoul(dir)).toBe('Updated');
+      writeFileSync(join(dir, 'SOUL.md'), ' \n<soul></soul>\t ');
+      expect(readSoul(dir)).toBeNull();
+      rmSync(join(dir, 'SOUL.md'));
+      expect(readSoul(dir)).toBeNull();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('propagates read failures instead of treating unreadable content as a missing soul', () => {
+    const dir = makeTmpDir();
+    try {
+      mkdirSync(join(dir, 'SOUL.md'));
+      expect(() => readSoul(dir)).toThrow();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
 
 describe('SoulExt — factory metadata', () => {
   it('createSoulExt has identifier io.stagewise/soul and displayName Soul', () => {

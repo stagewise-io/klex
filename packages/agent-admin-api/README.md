@@ -34,6 +34,16 @@ returned by the API are redacted and must never contain resolved environment
 secrets. Model selection uses separate `providerId` and opaque `modelId` fields;
 clients must not split model IDs on colons.
 
+## Realtime voice client contract
+
+- `GET /v1/providers/{id}/voices?modelId=...&refresh=false` returns `voices`, optional `defaultVoiceId`, and optional `stale`. Each voice contains opaque `voiceId`, `displayName`, optional `description`, and `isPreviewAvailable`. An empty list means no selectable voices are available for this provider/model. Provider capabilities advertise discovery/preview hooks. Listing does not generate audio. Encode the complete model ID in the query, including slashes/colons.
+- `POST /v1/providers/{id}/voices/preview` takes `{ modelId, voiceId }`. It can trigger billable same-model Live generation and returns binary `audio/wav`, not JSON/base64 or a public URL. `X-Voice-Preview-Model` is URI-encoded and `X-Voice-Preview-Mode` is `live`. On failure parse the JSON error contract; 429 means quota, 502 means upstream generation failure. Arbitrary text/URLs/model overrides are not accepted.
+- `PATCH /v1/settings/model-selection` saves `voice.sts` references with optional `voiceId`. Preserve both `voice.tts` and `voice.stt` because the voice object is replaced. Omit `voiceId` in the replacement STS reference to reset. Other selection purposes reject it. New calls use changes; active calls do not switch voices.
+
+Existing omitted defaults remain: OpenAI Realtime/GPT-Live `marin`, Gemini's provider default. Unknown/custom model profiles remain usable with defaults, but have no selectable catalog. `defaultVoiceId` identifies a known default for previewing without saving an explicit choice. `stale: true` means discovery failed and the last successful cached catalog was returned; ordinary cache hits do not set it. Cold-start discovery failures return errors. Samples improvise a short introduction from the current agent name and full soul. Realtime/Gemini generate it directly; GPT-Live uses the first configured chat model to write commentary before speaking it with the selected Live voice. That extra text call is potentially billable and requires a chat selection. GPT-Live may paraphrase commentary. Name/soul changes bypass old cached samples; different voices may use different wording. Browser clients fetch over their existing authorized Cloud path, check `response.ok`, then use `response.blob()` and an object URL for playback (revoke it afterward). Headless/TUI clients use `arrayBuffer()` and an external WAV player; the backend does not implement playback.
+
+Local admin access remains unauthenticated and loopback-only; Cloud access remains authorized through the existing tunnel. Responses use private/no-store headers, while the agent caches successful samples in bounded memory for reuse. Previewing never starts a production call or supplies history, tools, or credentials as prompt context. It intentionally supplies the full soul to the speech provider or, for GPT-Live, the configured chat provider. Prompts instruct models not to speak private details, but generated output still depends on provider behavior. No UI selector is included in this contract change.
+
 ## MCP OAuth authorization
 
 Version 0.2 adds the consolidated MCP authorization contract. Authorization is

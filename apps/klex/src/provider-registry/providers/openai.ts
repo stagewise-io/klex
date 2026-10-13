@@ -13,6 +13,8 @@ import {
   setting,
   testDiscoveryConnection,
 } from './shared';
+import { discoverOpenAiVoices } from './voice-catalogs';
+import { generateVoicePreview } from './voice-preview';
 
 const BASE_URL = 'https://api.openai.com/v1';
 const MODEL_DOCS = 'https://developers.openai.com/api/docs/models';
@@ -261,6 +263,9 @@ export const openAiProviderDefinition: ProviderDefinition = {
     documentationUrl: 'https://platform.openai.com/docs',
   },
   createLanguageModel,
+  listVoices: (_instance, modelId, signal) =>
+    discoverOpenAiVoices(modelId, signal),
+  getVoicePreview: generateVoicePreview,
   resolveModelMetadata: resolveOpenAiModelMetadata,
   discoverModels: (instance, signal) =>
     discoverOpenAiCompatibleModels(instance, BASE_URL, signal, false),

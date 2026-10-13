@@ -4,6 +4,7 @@ import type { RootLogger } from '@stagewise/logger';
 import type {
   RealtimeMediaClientAcceptResult,
   RealtimeMediaNotification,
+  RealtimeMediaSessionContext,
 } from '@stagewise/mcp-extension-realtime-media';
 
 import type {
@@ -17,6 +18,7 @@ import type {
   InteractionUpdateEnvelope,
   PreparedInferenceContextHandle,
 } from '@/session/interaction';
+import { SessionHostDrainingError } from '@/session/session-host';
 import * as telemetryMetrics from '@/telemetry-metrics';
 import {
   getRealtimeSessionCount,
@@ -153,11 +155,12 @@ function update(sequence: number): InteractionUpdateEnvelope {
 function offered(
   sessionId = 'session-1',
   expiresAt = '2026-08-01T19:00:00.000Z',
+  context?: RealtimeMediaSessionContext,
 ): RealtimeMediaNotification {
   return {
     jsonrpc: '2.0',
     method: 'io.stagewise/realtime-media/session-offered',
-    params: { sessionId, expiresAt },
+    params: { sessionId, expiresAt, ...(context !== undefined && { context }) },
   };
 }
 
@@ -194,6 +197,57 @@ describe('realtime session coordinator', () => {
   afterEach(() => {
     vi.restoreAllMocks();
     setTelemetryActivityEnabled(false);
+  });
+
+  it('snapshots the first offer before async setup and ignores duplicate context', async () => {
+    const { coordinator, mcpHarness, host, processorFactory } = setup();
+    const context = {
+      text: 'original facts',
+      metadata: { nested: { value: 'original' } },
+    };
+    await coordinator.start();
+    await mcpHarness.notify(offered('session-1', undefined, context));
+    context.text = 'mutated';
+    context.metadata.nested.value = 'mutated';
+    await mcpHarness.notify(
+      offered('session-1', undefined, { text: 'replacement' }),
+    );
+    const processor = await processorFactory.nextProcessor();
+    expect(host.requests).toHaveLength(1);
+    expect(host.requests[0]?.externalContext).toEqual({
+      text: 'original facts',
+      metadata: { nested: { value: 'original' } },
+    });
+    expect(
+      Object.isFrozen(host.requests[0]?.externalContext?.metadata?.nested),
+    ).toBe(true);
+    expect(processor.context.messages.at(-1)?.content).toContain(
+      'original facts',
+    );
+    expect(processor.context.instructions).not.toContain('original facts');
+    await coordinator.close();
+  });
+
+  it('rejects invalid context before acquiring a lease or creating media/model', async () => {
+    const { coordinator, mcpHarness, host, connector, processorFactory } =
+      setup();
+    const create = vi.spyOn(processorFactory, 'create');
+    await coordinator.start();
+    await mcpHarness.notify(
+      offered('session-1', undefined, {
+        text: 'private-invalid-payload'.repeat(300),
+      }),
+    );
+    await vi.waitFor(() => expect(coordinator.getActiveSessionCount()).toBe(0));
+    expect(mcpHarness.rejectRealtimeMediaSession).toHaveBeenCalledWith(
+      'voice',
+      'session-1',
+    );
+    expect(host.requests).toEqual([]);
+    expect(mcpHarness.acceptRealtimeMediaSession).not.toHaveBeenCalled();
+    expect(connector.descriptors).toEqual([]);
+    expect(create).not.toHaveBeenCalled();
+    await coordinator.close();
   });
 
   it('does not retain an activity provider when closed before start', async () => {
@@ -451,6 +505,26 @@ describe('realtime session coordinator', () => {
     expect(mcpHarness.endRealtimeMediaSession).not.toHaveBeenCalled();
     expect(transport.closeCount).toBe(1);
     expect(processor.closeCount).toBe(1);
+    await coordinator.close();
+  });
+
+  it('rejects the offer once without retrying while the host drains', async () => {
+    const host = createDeterministicConversationHost();
+    host.rejectAcquisitions(new SessionHostDrainingError());
+    const { coordinator, mcpHarness } = setup({ host });
+    await coordinator.start();
+    await mcpHarness.notify(offered());
+
+    await vi.waitFor(() =>
+      expect(mcpHarness.rejectRealtimeMediaSession).toHaveBeenCalledWith(
+        'voice',
+        'session-1',
+      ),
+    );
+    await vi.waitFor(() => expect(coordinator.getActiveSessionCount()).toBe(0));
+    expect(mcpHarness.acceptRealtimeMediaSession).not.toHaveBeenCalled();
+    expect(mcpHarness.rejectRealtimeMediaSession).toHaveBeenCalledOnce();
+    expect(host.requests).toHaveLength(1);
     await coordinator.close();
   });
 

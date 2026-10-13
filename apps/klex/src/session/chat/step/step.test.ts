@@ -365,6 +365,33 @@ describe('Step — extension handler hooks', () => {
     );
   });
 
+  it('settles extension lifecycle state when generation unexpectedly throws', async () => {
+    const extensionHandler = makeExtensionHandler();
+    const error = new Error('unexpected runner failure');
+    const runner = {
+      run: vi.fn().mockRejectedValueOnce(error),
+      abort: vi.fn(),
+      abortTools: vi.fn(),
+    };
+    vi.mocked(createGenerationRunner).mockReturnValueOnce(runner as never);
+    const step = createStep(
+      makeDeps({
+        messages: [makeUserMessage()],
+        extensionHandler: extensionHandler as never,
+      }),
+    );
+    await expect(step.run()).rejects.toBe(error);
+    expect(extensionHandler.runStepStartHooks).toHaveBeenCalledOnce();
+    expect(extensionHandler.runStepCompleteHooks).toHaveBeenCalledOnce();
+    expect(extensionHandler.runStepCompleteHooks).toHaveBeenCalledWith(
+      expect.objectContaining({
+        fatalError: true,
+        shouldContinue: false,
+        generation: null,
+      }),
+    );
+  });
+
   it('calls runStepStartHooks even when the step is skipped', async () => {
     const extensionHandler = makeExtensionHandler();
 

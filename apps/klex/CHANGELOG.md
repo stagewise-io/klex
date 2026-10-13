@@ -2,6 +2,66 @@
 
 All notable Klex changes are documented here.
 
+## 0.15.1 (2026-10-12)
+
+### Bug Fixes
+
+- align Gemini previews with live connection URLs (8e5e9b9)
+- discover Gemini voices from the live catalog (cdab02b)
+- allow trailing Live silence at the preview audio cap (be18392)
+- preserve selected GPT-Live snapshots (33a4acc)
+
+## 0.15.0 (2026-10-09)
+
+### Features
+
+- submit agent-grounded learnings through validated tools (c9b741d)
+- drive learning by episode activity (cda211e)
+
+### Bug Fixes
+
+- simplify skill deletion and clarify submission retries (b727ef9)
+- harden learning bookkeeping and episode truncation (c3af0a0)
+- address learning review findings (5880e08)
+- address learning and notification review findings (ce2254d)
+- retain complete records at tail scan boundaries (27f57b9)
+- preserve learning progress and episode evidence (848a679)
+- keep skill reads on rollback and cap overflow row (1a04b69)
+- harden learned skill writes and episode ordering (c0f56e3)
+
+### Other Changes
+
+- run learning investigations in child sessions (5a750d8)
+
+## 0.14.0 (2026-10-08)
+
+### Features
+
+- add isolated HTTP health probes (c773ed7)
+- add container image and smoke test (bb36e0f)
+- drain current work on SIGTERM in headless mode (6af295a)
+- add --auto-update with graceful drain (8c18121)
+
+### Bug Fixes
+
+- close cancelled probes and handle listener errors (beac03b)
+- address container image review findings (f1938bd)
+- replace stale directory lock that carries our own PID (ac9715e)
+- document SIGINT drain bypass and deflake model picker test (ecf5c38)
+- keep tracking children whose rollback close failed (7fdfd7b)
+- close drain races in child start, god messages, MCP pages (5c37b63)
+- keep closing sessions busy and retry recovery (bdad5b1)
+- close remaining auto-update drain gaps (0becee8)
+- redeliver pending push events to newly registered listeners (6543fb1)
+- address review findings for push ack and todos close (0e31803)
+- ack push notifications only after handling (3ed861c)
+
+### Other Changes
+
+- document the container contract (5f6ca55)
+- publish multi-arch klex image to GHCR (c0e7827)
+- avoid leaking a session in failed-rollback mock (8f7a505)
+
 ## 0.13.3 (2026-10-05)
 
 ### Bug Fixes

@@ -6,6 +6,7 @@ import type { Config } from '@/config';
 import type { IntrospectionScope } from '@/introspection';
 import type { Mcp } from '@/mcp';
 import type { ProductAnalyticsRecorder } from '@/product-analytics';
+import { SessionInboxUrgency } from '@/session/inbox';
 import type {
   ChatSessionHandle,
   ChildSessionHandle,
@@ -18,6 +19,9 @@ import type {
   ExtensionDeps,
   ExtensionFactory,
 } from './extensions/extension-api';
+import type { SessionInboxBuffer } from './inbox';
+import type { ExtendedUIMessage } from './message-types';
+import type { Turn } from './turn';
 
 const logger = {
   debug: vi.fn(),
@@ -112,6 +116,7 @@ function createFakeChild(
     getSessionInfo: vi.fn(),
     createChildSession: vi.fn(),
     waitForIdle: vi.fn(async () => true),
+    isQuiescent: vi.fn(() => true),
     status: 'active',
   };
   return child;
@@ -232,6 +237,68 @@ describe('ChatSession lifecycle', () => {
       'Cannot start a terminated chat session',
     );
   });
+
+  it.each([false, true])(
+    'interrupts critical events even when immediate dispatch fails: %s',
+    async (failedDispatch) => {
+      const session = createSession();
+      const abortGeneration = vi.fn();
+      const internals = session as unknown as {
+        currentTurn: Pick<Turn, 'abortGeneration' | 'abortTools'>;
+        laneSuspended: boolean;
+        inboxEventMessage: (event: unknown) => ExtendedUIMessage;
+        inbox: Pick<SessionInboxBuffer, 'getEvents'>;
+      };
+      internals.currentTurn = { abortGeneration, abortTools: vi.fn() };
+      internals.laneSuspended = true;
+      if (failedDispatch)
+        vi.spyOn(internals, 'inboxEventMessage').mockImplementationOnce(() => {
+          throw new Error('dispatch failed');
+        });
+      const event = {
+        eventId: 'critical-event',
+        sourceEnv: 'test',
+        urgency: SessionInboxUrgency.Critical,
+        context: { sourceEnv: 'test', metadata: {}, content: [] },
+      };
+      session.inbox.send(event);
+      expect(abortGeneration).toHaveBeenCalledExactlyOnceWith(
+        'inbox_interrupt',
+      );
+      if (failedDispatch) expect(internals.inbox.getEvents()).toEqual([event]);
+      session.inbox.send(event);
+      expect(abortGeneration).toHaveBeenCalledOnce();
+      await session.close();
+    },
+  );
+
+  it.each([SessionInboxUrgency.Critical, SessionInboxUrgency.Default])(
+    'interrupts native messages only for critical urgency: %s',
+    async (urgency) => {
+      const session = createSession();
+      const abortGeneration = vi.fn();
+      const internals = session as unknown as {
+        currentTurn: Pick<Turn, 'abortGeneration' | 'abortTools'>;
+        laneSuspended: boolean;
+      };
+      internals.currentTurn = { abortGeneration, abortTools: vi.fn() };
+      internals.laneSuspended = true;
+      session.inbox.sendMessage(
+        {
+          id: 'native',
+          role: 'user',
+          parts: [{ type: 'text', text: 'input' }],
+        },
+        urgency,
+      );
+      if (urgency === SessionInboxUrgency.Critical)
+        expect(abortGeneration).toHaveBeenCalledExactlyOnceWith(
+          'inbox_interrupt',
+        );
+      else expect(abortGeneration).not.toHaveBeenCalled();
+      await session.close();
+    },
+  );
 
   it('aborts generation and tools synchronously while cleanup is pending', async () => {
     const cleanup = Promise.withResolvers<void>();
@@ -460,6 +527,210 @@ describe('ChatSession lifecycle', () => {
       }),
     ).rejects.toBe(startupError);
     expect(child.close).toHaveBeenCalledOnce();
+    await parent.close();
+  });
+
+  it('stays non-quiescent while a started child is busy', async () => {
+    let extensionDeps: ExtensionDeps | undefined;
+    const extension: ExtensionFactory = {
+      identifier: 'test/parent',
+      create: (deps) => {
+        extensionDeps = deps;
+        return {};
+      },
+    };
+    let childQuiescent = false;
+    let childStatus: 'active' | 'terminated' = 'active';
+    const child = createFakeChild(async () => undefined);
+    child.isQuiescent = vi.fn(() => childQuiescent);
+    child.getSessionInfo = vi.fn(() => ({ status: childStatus }) as never);
+    const parent = createSession({
+      extensions: [extension],
+      sessionFactory: () => child,
+    });
+    await parent.start();
+    expect(parent.isQuiescent()).toBe(true);
+
+    await requireExtensionDeps(extensionDeps).createChildSession({
+      name: 'consult-like',
+      extensionIdentifier: 'test-extension',
+      extensions: [],
+      basePrompt: 'You are a child.',
+    });
+
+    expect(parent.isQuiescent()).toBe(false);
+    childQuiescent = true;
+    expect(parent.isQuiescent()).toBe(true);
+
+    // Terminated but still cleaning up: the child keeps the parent busy.
+    childQuiescent = false;
+    childStatus = 'terminated';
+    expect(parent.isQuiescent()).toBe(false);
+    childQuiescent = true;
+    expect(parent.isQuiescent()).toBe(true);
+    await parent.close();
+  });
+
+  it('stays non-quiescent while its own close cleanup is running', async () => {
+    let finishClose!: () => void;
+    const extension: ExtensionFactory = {
+      identifier: 'test/slow-close',
+      create: () => ({
+        onClose: () =>
+          new Promise<void>((resolve) => {
+            finishClose = resolve;
+          }),
+      }),
+    };
+    const session = createSession({ extensions: [extension] });
+    await session.start();
+    expect(session.isQuiescent()).toBe(true);
+
+    const closing = session.close();
+    await vi.waitFor(() => expect(finishClose).toBeTypeOf('function'));
+    expect(session.getSessionInfo().status).toBe('terminated');
+    expect(session.isQuiescent()).toBe(false);
+
+    finishClose();
+    await closing;
+    expect(session.isQuiescent()).toBe(true);
+  });
+
+  it('stays non-quiescent while a child session is still starting', async () => {
+    let extensionDeps: ExtensionDeps | undefined;
+    const extension: ExtensionFactory = {
+      identifier: 'test/parent',
+      create: (deps) => {
+        extensionDeps = deps;
+        return {};
+      },
+    };
+    let finishStart!: () => void;
+    const child = createFakeChild(
+      () =>
+        new Promise<void>((resolve) => {
+          finishStart = resolve;
+        }),
+    );
+    child.isQuiescent = vi.fn(() => true);
+    child.getSessionInfo = vi.fn(() => ({ status: 'active' }) as never);
+    const parent = createSession({
+      extensions: [extension],
+      sessionFactory: () => child,
+    });
+    await parent.start();
+
+    const creating = requireExtensionDeps(extensionDeps).createChildSession({
+      name: 'starting-child',
+      extensionIdentifier: 'test-extension',
+      extensions: [],
+      basePrompt: 'You are a child.',
+    });
+    await vi.waitFor(() => expect(child.start).toHaveBeenCalledOnce());
+    expect(parent.isQuiescent()).toBe(false);
+
+    finishStart();
+    await creating;
+    expect(parent.isQuiescent()).toBe(true);
+    await parent.close();
+  });
+
+  it('stays non-quiescent after closing while a child is still starting', async () => {
+    let extensionDeps: ExtensionDeps | undefined;
+    const extension: ExtensionFactory = {
+      identifier: 'test/parent',
+      create: (deps) => {
+        extensionDeps = deps;
+        return {};
+      },
+    };
+    let finishStart!: () => void;
+    let finishChildClose!: () => void;
+    const child = createFakeChild(
+      () =>
+        new Promise<void>((resolve) => {
+          finishStart = resolve;
+        }),
+    );
+    child.close = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          finishChildClose = resolve;
+        }),
+    );
+    const parent = createSession({
+      extensions: [extension],
+      sessionFactory: () => child,
+    });
+    await parent.start();
+
+    const creating = requireExtensionDeps(extensionDeps)
+      .createChildSession({
+        name: 'starting-child',
+        extensionIdentifier: 'test-extension',
+        extensions: [],
+        basePrompt: 'You are a child.',
+      })
+      .catch((error: unknown) => error);
+    await vi.waitFor(() => expect(child.start).toHaveBeenCalledOnce());
+
+    await parent.close();
+    // Own cleanup is done, but the child is still starting.
+    expect(parent.isQuiescent()).toBe(false);
+
+    // Startup finishes after the parent closed: the child is rolled back,
+    // and that close must also hold quiescence.
+    finishStart();
+    await vi.waitFor(() => expect(child.close).toHaveBeenCalledOnce());
+    expect(parent.isQuiescent()).toBe(false);
+
+    finishChildClose();
+    await expect(creating).resolves.toBeInstanceOf(Error);
+    expect(parent.isQuiescent()).toBe(true);
+  });
+
+  it('stays non-quiescent while a failed-start child has unsettled cleanup', async () => {
+    let extensionDeps: ExtensionDeps | undefined;
+    const extension: ExtensionFactory = {
+      identifier: 'test/parent',
+      create: (deps) => {
+        extensionDeps = deps;
+        return {};
+      },
+    };
+    let childSettled = false;
+    const child = createFakeChild(async () => {
+      throw new Error('start failed');
+    });
+    child.close = vi.fn(async () => {
+      throw new Error('rollback failed');
+    });
+    child.isQuiescent = vi.fn(() => childSettled);
+    const parent = createSession({
+      extensions: [extension],
+      sessionFactory: () => child,
+    });
+    // Reuse the parent's real info shape; no extra session (and span) needed.
+    child.getSessionInfo = vi.fn(() => ({
+      ...parent.getSessionInfo(),
+      status: 'terminated' as const,
+    }));
+    await parent.start();
+
+    await expect(
+      requireExtensionDeps(extensionDeps).createChildSession({
+        name: 'failing-child',
+        extensionIdentifier: 'test-extension',
+        extensions: [],
+        basePrompt: 'You are a child.',
+      }),
+    ).rejects.toThrow('start failed');
+
+    // The rollback close rejected before the child settled its cleanup.
+    expect(parent.isQuiescent()).toBe(false);
+
+    childSettled = true;
+    expect(parent.isQuiescent()).toBe(true);
     await parent.close();
   });
 });

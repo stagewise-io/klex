@@ -5,6 +5,15 @@
   "sideEffects": false,
   "description": "Realtime Media extension for the Model Context Protocol",
   "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/stagewise-io/klex.git",
+    "directory": "packages/mcp-extension-realtime-media"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": false
+  },
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
@@ -22,6 +31,7 @@
   },
   "files": [
     "dist",
+    "LICENSE",
     "schema.json",
     "specification",
     "README.md"
@@ -32,7 +42,9 @@
     "clean": "rm -rf dist",
     "build": "pnpm run generate:schemas && pnpm run clean && tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "prepack": "pnpm build",
+    "verify": "node ../../scripts/verify-mcp-extension-packages.mjs"
   },
   "dependencies": {
     "@stagewise/mcp-extension-client": "workspace:*"
@@ -49,6 +61,7 @@
     "@modelcontextprotocol/server": "2.0.0-beta.4",
     "@stagewise/typescript-config": "workspace:*",
     "@types/node": "24.10.1",
+    "ajv": "8.20.0",
     "ts-to-zod": "5.1.0",
     "tsx": "4.23.1",
     "typescript": "7.0.2",

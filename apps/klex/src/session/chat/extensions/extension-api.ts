@@ -201,6 +201,8 @@ export interface GenerateTextArgs {
   maxOutputTokens?: number;
   /** Max retries per model (default 0 — the fallback list handles retries). */
   maxRetries?: number;
+  /** Cancels generation and prevents further fallback model attempts. */
+  abortSignal?: AbortSignal;
 }
 
 /**
@@ -228,10 +230,12 @@ export type GenerateTextFailureReason =
   /** The model returned a content-filter finish reason. */
   | 'content-filter'
   /** Catch-all for unexpected failures. */
-  | 'other';
+  | 'other'
+  /** The caller's abort signal cancelled generation, without model fallback. */
+  | 'cancelled';
 
 /**
- * Failed generation result — all models in the fallback list failed.
+ * Failed generation result, including caller cancellation or exhausted models.
  */
 export interface GenerateTextFailure {
   /** Structured reason for the failure — comparable as a literal. */
@@ -526,7 +530,8 @@ export interface ExtensionDeps {
    *
    * @returns A discriminated union — `{ success: true, text, modelId, usage }`
    *          on success, or `{ success: false, failureReason }` when all
-   *          models failed.
+   *          models failed or the caller cancelled via `abortSignal`. Cancellation
+   *          stops generation without trying the remaining fallback models.
    */
   generateText: (args: GenerateTextArgs) => Promise<GenerateTextResult>;
 

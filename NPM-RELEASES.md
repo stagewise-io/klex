@@ -32,7 +32,7 @@ The helper remains a runtime dependency. Bundling it separately into each extens
 
 For each new Stagewise package, configure npm trusted publishing for the GitHub repository `stagewise-io/klex` and workflow `release.yml`. Confirm the npm organization owns the package. The workflow uses npm OIDC and GitHub's workflow token. Do not add an npm token secret. Existing provenance settings remain unchanged.
 
-The extension packages already exist on npm but lack historical release tags. Research for this change found these versions; recheck npm before creating baselines:
+The extension packages already existed on npm without scoped release tags. Artifact verification established these source baselines:
 
 | Package | Published version found | Required baseline tag |
 | --- | --- | --- |
@@ -42,26 +42,19 @@ The extension packages already exist on npm but lack historical release tags. Re
 
 Before any npm publication, preflight checks that each package's latest reachable stable release tag agrees with npm's published version. Missing or mismatched tags stop the entire npm job. This prevents semantic-release from treating an established package as a first release and selecting `1.0.0`.
 
-A maintainer must identify the historical commit that produced each published artifact. Inspect npm metadata, old release records, and packed contents against candidate commits. npm did not supply `gitHead` during this investigation, so there is no verified commit mapping in this change. Do not assume the stale source manifest is authoritative, or tag this implementation commit as an old release.
+Client and Realtime Media reproduce their published artifacts from `7ccf2dc378a5f6a0500b5fcb25520cbafd24d956`, with 6 and 49 matching package files respectively. Their annotated tags identify a verified historical source snapshot, not proven original publication commits.
+
+Push Notifications `0.1.1` had no npm `gitHead`, and the original release commit could not be recovered. The published `registerDiscoveryHandler: false` implementation and README survived as orphaned Git blobs. Commit `075b092` reconstructs that release on the same historical parent and reproduces all 45 published package files. Its annotated tag explicitly identifies a reconstruction created in October 2026, not the original publication commit. See [NPM-BASELINE-RECOVERY.md](./NPM-BASELINE-RECOVERY.md) for the evidence and manifest normalization.
+
+PR #211 preserves the reconstructed commit as ancestry without removing newer `resourceLink` support. **Merge this PR with a merge commit, not a rebase or squash merge.** GitHub merge commits are temporarily enabled for this recovery; restore the previous rebase-only repository setting after the PR is merged. Rebasing would leave the tagged reconstruction outside main's ancestry and fail release preflight.
 
 ```sh
-npm view @stagewise/mcp-extension-client@0.1.0 version gitHead dist.integrity --json
-npm view @stagewise/mcp-extension-push-notifications@0.1.1 version gitHead dist.integrity --json
-npm view @stagewise/mcp-extension-realtime-media@0.1.0 version gitHead dist.integrity --json
-# Only after independently confirming each commit, establish and push its baseline tag.
-git tag '@stagewise/mcp-extension-client-v0.1.0' <VERIFIED_HELPER_RELEASE_COMMIT>
-git tag '@stagewise/mcp-extension-push-notifications-v0.1.1' <VERIFIED_PUSH_RELEASE_COMMIT>
-git tag '@stagewise/mcp-extension-realtime-media-v0.1.0' <VERIFIED_REALTIME_RELEASE_COMMIT>
-git push origin \
-  'refs/tags/@stagewise/mcp-extension-client-v0.1.0' \
-  'refs/tags/@stagewise/mcp-extension-push-notifications-v0.1.1' \
-  'refs/tags/@stagewise/mcp-extension-realtime-media-v0.1.0'
-# Then fetch full release history and run the read-only preflight.
+# Read-only verification from the PR branch before merging, or main afterward.
 git fetch origin --tags
 node scripts/mcp-extension-release-plugin.mjs --preflight
 ```
 
-Never move an existing published tag. Verify that each baseline commit is reachable from `main`. This implementation does not create or push these tags.
+Never move an existing published tag or tag an unrelated implementation commit as an old release. Each baseline must be reachable from the PR head before merging and from `main` before publication. Do not rebase the tagged reconstruction.
 
 ## Workflow and publication preparation
 

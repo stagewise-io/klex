@@ -30,7 +30,7 @@ test('requires a reachable baseline matching the published version, not the sour
   ]) {
     assert.throws(
       () => assertBaseline({ ...target, tags, publishedVersion: '0.1.1' }),
-      /historical release commit/,
+      /verified historical or explicitly reconstructed baseline/,
     );
   }
 });

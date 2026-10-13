@@ -55,7 +55,7 @@ export function assertBaseline({ name, tagFormat, tags, publishedVersion }) {
   if (tag !== expected) {
     throw new Error(
       `${name}: npm publishes ${publishedVersion}, but the latest reachable release tag is ${tag ?? 'missing'}. ` +
-        `Verify release history and establish ${expected} at its historical release commit before publishing. ` +
+        `Verify release history and establish ${expected} at a verified historical or explicitly reconstructed baseline before publishing. ` +
         'Do not move existing published tags. See NPM-RELEASES.md.',
     );
   }

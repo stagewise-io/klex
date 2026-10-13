@@ -1,7 +1,12 @@
 import type { ModelMessage } from 'ai';
 import { describe, expect, it } from 'vitest';
 
-import type { PreparedInferenceContext } from '@/session/interaction';
+import { RealtimeMediaSessionContextSchema } from '@stagewise/mcp-extension-realtime-media';
+
+import {
+  appendExternalInteractionContext,
+  type PreparedInferenceContext,
+} from '@/session/interaction';
 
 import { createGPTLiveProtocolState } from './gpt-live';
 import { buildGPTLiveSessionConfig } from './session-config';
@@ -636,6 +641,43 @@ describe('GPT-Live startup configuration', () => {
       '"__proto__":"preserved"',
     );
   });
+
+  it.each(['a', 'é', '"', '\n'])(
+    'retains maximum-size %j context after long history under the default budget',
+    (character) => {
+      // Repeat until adding another character would cross the 4096-byte boundary.
+      let text = 'x';
+      while (
+        new TextEncoder().encode(JSON.stringify({ text: text + character }))
+          .length <= 4096
+      )
+        text += character;
+      const externalContext = RealtimeMediaSessionContextSchema.parse({ text });
+      const history: ModelMessage[] = Array.from({ length: 150 }, () => ({
+        role: 'user',
+        content: 'old history '.repeat(100),
+      }));
+      const messages = appendExternalInteractionContext(history, {
+        namespace: 'n'.repeat(300),
+        externalSessionId: 's'.repeat(300),
+        externalContext,
+      });
+      const prepared = buildGPTLiveSessionConfig(
+        { ...context, messages },
+        { responsesModel: 'gpt-5.2', frontendInstructions: 'voice' },
+      );
+      expect(prepared.omittedHistoryMessages).toBeGreaterThan(0);
+      expect(prepared.session.input.at(-1)).toEqual({
+        status: 'completed',
+        type: 'message',
+        role: 'user',
+        content: [{ type: 'input_text', text: messages.at(-1)?.content }],
+      });
+      expect(prepared.session.delegation.responses.instructions).toBe(
+        context.instructions,
+      );
+    },
+  );
 
   it('fails closed when the newest history message exceeds its budget', () => {
     expect(() =>

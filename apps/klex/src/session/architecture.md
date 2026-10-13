@@ -67,6 +67,16 @@ MCP access and MCP ingress are independent. Supplying `deps.mcp` makes MCP tools
 
 The `SessionHost` starts before MCP, so the ingress extension's listener is installed before MCP workers connect and drain pending events. MCP persists accepted events before acknowledgement and deduplicates by `eventId`.
 
+## Realtime offer context
+
+Realtime MCP offers may include bounded generic `context` with optional text and producer-defined JSON metadata. The coordinator validates and snapshots the first offer before acquiring a lease. Duplicate offers for the same namespace/session cannot replace that snapshot. Invalid context is rejected before lease, media, or model creation; diagnostics contain routing IDs and a validation code, not the payload.
+
+The interaction lease carries the snapshot as `externalContext`. After inference transformers, `ChatSession` appends one user-role text message to a fresh prepared-message array. It contains a fixed trust explanation and a JSON envelope with namespace/session provenance. Displayed provenance is capped at 256 characters per ID with a truncation marker; routing still uses full IDs. Supplied values never enter system instructions or authorization decisions. Klex does not interpret caller, organization, room, or participant schemas, fetch context URLs, or request a response because context arrived.
+
+The envelope is bootstrap-only, not an inbox event or canonical transcript message. History revision, update watermark, tools, and commit/rollback semantics stay unchanged. OpenAI Realtime and Gemini Live seed it as user data; GPT-Live retains it as the newest input within the existing history budget. A replacement provider connection within the same call retains it, but teardown releases the lease and later context-free calls do not inherit it. Normal transcripts may still mention facts learned during the call.
+
+Context limits are shared with the SDK: 4,096 serialized UTF-8 bytes, depth 8, and 128 visited values. Context is not silently truncated. The producer owns authenticated fact derivation and disclosure; Klex treats the supplied values as external data, never as instructions or credentials.
+
 ## Child sessions
 
 Extensions can spawn child sessions — isolated execution units with their own message history, inbox, and extensions. Child sessions have no MCP access and no MCP ingress extension. Their only input is messages injected by the parent extension.

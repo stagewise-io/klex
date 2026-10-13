@@ -21,7 +21,10 @@ import type {
   PreparedInferenceContextHandle,
   RealtimeCommitEvent,
 } from '@/session/interaction';
-import { SessionInteractionLease } from '@/session/interaction';
+import {
+  appendExternalInteractionContext,
+  SessionInteractionLease,
+} from '@/session/interaction';
 import type {
   RealtimeModelEvent,
   RealtimeModelSession,
@@ -538,7 +541,13 @@ class DeterministicConversationHostModule
       sessionId: DEFAULT_SESSION_ID,
       mode: request.mode,
       bootstrap: async (): Promise<PreparedInferenceContextHandle> => ({
-        context: DETERMINISTIC_CONTEXT,
+        context: {
+          ...DETERMINISTIC_CONTEXT,
+          messages: appendExternalInteractionContext(
+            DETERMINISTIC_CONTEXT.messages,
+            request,
+          ),
+        },
         commit: () => {
           counters.contextCommits += 1;
         },

@@ -27,6 +27,27 @@ The extension's methods are directional:
 
 The subscription owns its sessions. Losing it ends pending and active sessions; this first revision has no recovery.
 
+## Optional session context
+
+An offer can include `context: { text?: string, metadata?: Record<string, JSONValue> }`. Both fields can coexist. Metadata keys and nested values belong to the producer; the extension does not define caller, room, or participant fields.
+
+```json
+{
+  "sessionId": "session-1",
+  "expiresAt": "2026-08-01T19:00:00.000Z",
+  "context": {
+    "text": "This session concerns the scheduled demonstration.",
+    "metadata": { "topic": "demonstration", "languages": ["en"] }
+  }
+}
+```
+
+The producer derives facts from authenticated application state and sends only information appropriate for the receiving client. Do not send secrets or transport credentials. Consumers treat context as external data, never as instructions or authorization, and must not fetch resources or follow URLs merely because context mentions them.
+
+The SDK validates context before publishing or dispatching an offer. Its serialized JSON object must fit within 4,096 UTF-8 bytes, nesting depth 8, and 128 visited values. The root counts as depth 0 and one value; each property value and array element counts as another value. Only finite JSON values are accepted. Invalid or oversized context is rejected, not truncated. These aggregate limits supplement the structural JSON Schema.
+
+Context is optional. Existing offers remain valid, and older SDK consumers ignore the additional field. Empty context has no effect. Klex snapshots the first offer's context and appends one user-role data envelope to that call's model bootstrap. It does not change system instructions, trigger a response, or store the raw envelope in canonical history. Reconnects within that call retain it; later context-free calls do not inherit it.
+
 ## Client
 
 ```ts

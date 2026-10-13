@@ -1,6 +1,7 @@
 {
   "name": "@stagewise/calculator",
   "version": "1.0.0",
+  "private": true,
   "type": "module",
   "description": "Calculator MCP server with LaTeX input and symbolic math support",
   "scripts": {

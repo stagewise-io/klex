@@ -6,6 +6,9 @@ import {
   analyzeCommits,
   commitHasScope,
 } from '../../scripts/scoped-release-plugin.mjs';
+import clientConfig from '../mcp-extension-client/.releaserc.js';
+import pushConfig from '../mcp-extension-push-notifications/.releaserc.js';
+import realtimeConfig from '../mcp-extension-realtime-media/.releaserc.js';
 import mcpProxySdkConfig from '../mcp-proxy-sdk/.releaserc.js';
 import agentAdminApiConfig from './.releaserc.js';
 
@@ -104,6 +107,16 @@ test('configures independent package roots, scopes, and tag formats', () => {
       scope: 'machine',
       tagFormat: `@klex/machine-v\${version}`,
     },
+    ...[
+      ['mcp-extension-client', clientConfig],
+      ['mcp-extension-push-notifications', pushConfig],
+      ['mcp-extension-realtime-media', realtimeConfig],
+    ].map(([scope, config]) => ({
+      config,
+      scope,
+      packageRoot: `packages/${scope}`,
+      tagFormat: `@stagewise/${scope}-v\${version}`,
+    })),
   ];
 
   assert.equal(
@@ -122,5 +135,17 @@ test('configures independent package roots, scopes, and tag formats', () => {
       packageRoot,
     );
     assert.ok(config.plugins.includes('@semantic-release/github'));
+    if (scope.startsWith('mcp-extension-')) {
+      const npmIndex = config.plugins.findIndex(
+        (plugin) =>
+          Array.isArray(plugin) && plugin[0] === '@semantic-release/npm',
+      );
+      const preparationIndex = config.plugins.findIndex(
+        (plugin) =>
+          Array.isArray(plugin) &&
+          plugin[0].endsWith('mcp-extension-release-plugin.mjs'),
+      );
+      assert.ok(preparationIndex > npmIndex);
+    }
   }
 });

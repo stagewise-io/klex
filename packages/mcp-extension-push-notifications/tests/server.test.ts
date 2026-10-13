@@ -35,6 +35,56 @@ function fakeServer(initializationSupport = false) {
 const metadata = withPushNotificationsClientCapability({});
 
 describe('Push Notifications server', () => {
+  it.each([{}, { registerDiscoveryHandler: true }])(
+    'registers discovery unless explicitly disabled: %j',
+    (options) => {
+      const { server, handlers } = fakeServer();
+      registerPushNotificationsServer(
+        server,
+        {
+          getEvents: () => ({ events: [], hasMore: false }),
+          acknowledgeEvents: () => undefined,
+        },
+        options,
+      );
+      expect(handlers.get('server/discover')?.({}, {})).toEqual({
+        capabilities: {
+          extensions: { [PUSH_NOTIFICATIONS_EXTENSION_ID]: {} },
+        },
+      });
+    },
+  );
+
+  it('preserves composed discovery while retaining push handlers', async () => {
+    const { server, handlers } = fakeServer();
+    const discover = vi.fn(() => ({ capabilities: { tools: {} } }));
+    handlers.set('server/discover', discover);
+    const getEvents = vi.fn(() => ({ events: [], hasMore: false }));
+    const acknowledgeEvents = vi.fn();
+    registerPushNotificationsServer(
+      server,
+      { getEvents, acknowledgeEvents },
+      { registerDiscoveryHandler: false },
+    );
+    expect(handlers.get('server/discover')).toBe(discover);
+    expect(server.registerCapabilities).toHaveBeenCalledWith({
+      extensions: { [PUSH_NOTIFICATIONS_EXTENSION_ID]: {} },
+    });
+    const context = { mcpReq: { envelope: metadata } };
+    await expect(
+      handlers.get('io.stagewise/push-notifications/get')?.(
+        { limit: 10 },
+        context,
+      ),
+    ).resolves.toEqual({ events: [], hasMore: false });
+    await handlers.get('io.stagewise/push-notifications/ack')?.(
+      { eventIds: ['event-1'] },
+      context,
+    );
+    expect(getEvents).toHaveBeenCalled();
+    expect(acknowledgeEvents).toHaveBeenCalled();
+  });
+
   it('requires per-request capability by default', async () => {
     const { server, handlers } = fakeServer(true);
     registerPushNotificationsServer(server, {

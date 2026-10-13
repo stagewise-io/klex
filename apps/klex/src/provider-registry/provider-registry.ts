@@ -110,21 +110,12 @@ export interface ProviderVoice {
   voiceId: string;
   displayName: string;
   description?: string;
-  language?: string;
-  region?: string;
-  provenance: {
-    source: 'maintained' | 'discovered';
-    documentationUrl: string;
-    reviewedAt?: string;
-  };
-  preview: { available: boolean; mode?: 'live' };
+  isPreviewAvailable: boolean;
 }
 
 export interface ProviderVoiceList {
-  selectionSupported: boolean;
   defaultVoiceId?: string;
   voices: readonly ProviderVoice[];
-  fallback?: boolean;
   stale?: boolean;
 }
 
@@ -708,7 +699,6 @@ class ProviderRegistryModule implements ProviderRegistry {
             );
             if (!catalog.ok) return catalog;
             if (
-              !catalog.value.selectionSupported ||
               !catalog.value.voices.some(
                 (voice) => voice.voiceId === entry.voiceId,
               )
@@ -902,8 +892,7 @@ class ProviderRegistryModule implements ProviderRegistry {
     const instance = this.getInstance(id);
     if (!instance.ok) return instance;
     const definition = this.requireDefinition(instance.value.type);
-    if (!definition.listVoices)
-      return success({ selectionSupported: false, voices: [] });
+    if (!definition.listVoices) return success({ voices: [] });
     const signature = this.settingsSignature(instance.value.settings);
     return this.voices.list(
       id,
@@ -933,12 +922,12 @@ class ProviderRegistryModule implements ProviderRegistry {
     const voices = await this.listVoices(id, modelId, false, signal);
     if (!voices.ok) return voices;
     const voice = voices.value.voices.find((item) => item.voiceId === voiceId);
-    if (!voices.value.selectionSupported || !voice)
+    if (!voice)
       return failure(
         'invalid_configuration',
         'Voice is not supported by this model',
       );
-    if (!voice.preview.available)
+    if (!voice.isPreviewAvailable)
       return failure(
         'unsupported_operation',
         'Preview is unavailable for this voice',

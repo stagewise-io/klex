@@ -17,7 +17,6 @@ import {
 const OPENAI_SCHEMA_URL =
   'https://raw.githubusercontent.com/openai/openai-openapi/master/openapi.yaml';
 const MAX_SCHEMA_BYTES = 8 * 1024 * 1024;
-const VOICE_DOCS = 'https://ai.google.dev/api/voices';
 // Translate/transcription variants have different output contracts; intentionally excluded.
 const GEMINI_MODELS = new Set([
   'gemini-3.8-live',
@@ -43,7 +42,7 @@ export async function discoverOpenAiVoices(
   signal: AbortSignal,
 ): Promise<ProviderOperationResult<ProviderVoiceList>> {
   const profile = openAiVoiceProfile(modelId);
-  if (!profile) return available({ selectionSupported: false, voices: [] });
+  if (!profile) return available({ voices: [] });
   try {
     signal.throwIfAborted();
     const requestSignal = AbortSignal.any([signal, AbortSignal.timeout(8_000)]);
@@ -81,18 +80,12 @@ export async function discoverOpenAiVoices(
     const ids = schemaVoiceIds(root, schemas);
     requestSignal.throwIfAborted();
     return available({
-      selectionSupported: true,
       ...(!modelId.startsWith('gpt-4o') &&
         ids.includes('marin') && { defaultVoiceId: 'marin' }),
       voices: ids.map((voiceId) => ({
         voiceId,
         displayName: voiceId,
-        provenance: {
-          source: 'discovered',
-          documentationUrl: OPENAI_SCHEMA_URL,
-          reviewedAt: new Date().toISOString().slice(0, 10),
-        },
-        preview: { available: true, mode: 'live' },
+        isPreviewAvailable: true,
       })),
     });
   } catch {
@@ -212,8 +205,7 @@ export async function discoverGeminiVoices(
   modelId: string,
   signal: AbortSignal,
 ): Promise<ProviderOperationResult<ProviderVoiceList>> {
-  if (!isGeminiVoiceModel(modelId))
-    return available({ selectionSupported: false, voices: [] });
+  if (!isGeminiVoiceModel(modelId)) return available({ voices: [] });
   const apiKey = setting(instance, 'apiKey');
   if (!apiKey)
     return unavailable('authentication_required', 'Configure a Gemini API key');
@@ -284,18 +276,7 @@ export async function discoverGeminiVoices(
             : typeof item.persona === 'string' && {
                 description: item.persona,
               }),
-          ...(typeof item.language_code === 'string' && {
-            language: item.language_code,
-          }),
-          ...(typeof item.region_code === 'string' && {
-            region: item.region_code,
-          }),
-          provenance: {
-            source: 'discovered',
-            documentationUrl: VOICE_DOCS,
-            reviewedAt: new Date().toISOString().slice(0, 10),
-          },
-          preview: { available: true, mode: 'live' },
+          isPreviewAvailable: true,
         });
         if (voices.size > 10_000)
           return unavailable('discovery_failed', 'Voice catalog too large');
@@ -320,7 +301,6 @@ export async function discoverGeminiVoices(
     if (!voices.size)
       return unavailable('discovery_failed', 'Missing prebuilt voices');
     return available({
-      selectionSupported: true,
       voices: [...voices.values()],
     });
   } catch {

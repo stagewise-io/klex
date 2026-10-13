@@ -56,20 +56,17 @@ describe('OpenAI schema voice discovery', () => {
     const live = await discoverOpenAiVoices('gpt-live-1-2026-10-01', signal());
     expect(live).toMatchObject({
       ok: true,
-      value: { selectionSupported: true, defaultVoiceId: 'marin' },
+      value: { defaultVoiceId: 'marin' },
     });
     if (live.ok) {
       expect(live.value.voices.map((item) => item.voiceId)).toEqual([
         'future-live',
         'marin',
       ]);
-      expect(live.value.voices[0]).toMatchObject({
-        provenance: {
-          source: 'discovered',
-          documentationUrl:
-            'https://raw.githubusercontent.com/openai/openai-openapi/master/openapi.yaml',
-        },
-        preview: { available: true, mode: 'live' },
+      expect(live.value.voices[0]).toEqual({
+        voiceId: 'future-live',
+        displayName: 'future-live',
+        isPreviewAvailable: true,
       });
     }
     const realtime = await discoverOpenAiVoices('gpt-realtime-2.1', signal());
@@ -128,7 +125,7 @@ components:
     ])
       expect(await discoverOpenAiVoices(id, signal())).toMatchObject({
         ok: true,
-        value: { selectionSupported: false, voices: [] },
+        value: { voices: [] },
       });
     expect(
       await discoverOpenAiVoices('gpt-live-1', AbortSignal.abort()),
@@ -294,10 +291,11 @@ describe('Gemini voice catalogs', () => {
     if (result.ok) {
       expect(
         result.value.voices.find((item) => item.voiceId === 'Puck'),
-      ).toMatchObject({
+      ).toEqual({
+        voiceId: 'Puck',
         displayName: 'Puck voice',
-        language: 'en-US',
-        provenance: { source: 'discovered' },
+        description: 'Upbeat',
+        isPreviewAvailable: true,
       });
       expect(result.value.voices.map((item) => item.voiceId)).not.toContain(
         'voice_secret',
@@ -307,13 +305,18 @@ describe('Gemini voice catalogs', () => {
         'Unknown',
         'Charon',
       ]);
-      expect(result.value.voices[1]).toMatchObject({
+      expect(result.value.voices[1]).toEqual({
         voiceId: 'Unknown',
         displayName: 'Unknown',
         description: 'New catalog voice',
-        provenance: { source: 'discovered' },
-        preview: { available: true, mode: 'live' },
+        isPreviewAvailable: true,
       });
+      expect(result.value.voices[2]).toEqual({
+        voiceId: 'Charon',
+        displayName: 'Charon',
+        isPreviewAvailable: true,
+      });
+      expect(Object.keys(result.value)).toEqual(['voices']);
       expect(result.value.defaultVoiceId).toBeUndefined();
     }
     expect(fetcher.mock.calls[1]?.[0].searchParams.get('page_token')).toBe(
@@ -521,7 +524,7 @@ describe('Gemini voice catalogs', () => {
     fetcher.mockClear();
     expect(
       await discoverGeminiVoices(instance, 'custom/live', signal()),
-    ).toMatchObject({ ok: true, value: { selectionSupported: false } });
+    ).toMatchObject({ ok: true, value: { voices: [] } });
     expect(fetcher).not.toHaveBeenCalled();
   });
 });

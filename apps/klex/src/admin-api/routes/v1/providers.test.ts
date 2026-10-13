@@ -85,7 +85,7 @@ describe('provider registry routes', () => {
     const listVoices = vi.fn(async () => ({
       ok: true as const,
       code: 'available' as const,
-      value: { selectionSupported: false, voices: [] },
+      value: { voices: [] },
     }));
     const getVoicePreview = vi.fn();
     const app = makeApp({ listVoices, getVoicePreview });
@@ -94,7 +94,6 @@ describe('provider registry routes', () => {
     );
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({
-      selectionSupported: false,
       voices: [],
     });
     expect(listVoices).toHaveBeenCalledWith(
@@ -107,6 +106,34 @@ describe('provider registry routes', () => {
     expect((await app.request('/v1/providers/test-main/voices')).status).toBe(
       400,
     );
+  });
+
+  it('exposes the simplified voice contract with optional descriptions and catalog state', async () => {
+    const catalog = {
+      defaultVoiceId: 'cedar',
+      stale: true,
+      voices: [
+        {
+          voiceId: 'cedar',
+          displayName: 'Cedar',
+          description: 'Warm voice',
+          isPreviewAvailable: true,
+        },
+        {
+          voiceId: 'other',
+          displayName: 'Other',
+          isPreviewAvailable: false,
+        },
+      ],
+    };
+    const app = makeApp({
+      listVoices: async () => ({ ok: true, code: 'available', value: catalog }),
+    });
+    const response = await app.request(
+      '/v1/providers/test-main/voices?modelId=gpt-realtime',
+    );
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual(catalog);
   });
 
   it('returns binary preview bytes and private headers; rejects arbitrary preview inputs', async () => {

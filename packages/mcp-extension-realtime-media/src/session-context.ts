@@ -45,12 +45,11 @@ export function isBoundedRealtimeMediaContext(value: unknown): boolean {
             return false;
         }
       } else {
-        for (const key in input) {
-          if (!Object.hasOwn(input, key)) continue;
+        for (const key of Object.getOwnPropertyNames(input)) {
           if (key.length > REALTIME_MEDIA_CONTEXT_MAX_BYTES) return false;
           const descriptor = Object.getOwnPropertyDescriptor(input, key);
           if (
-            !descriptor ||
+            !descriptor?.enumerable ||
             !('value' in descriptor) ||
             !visit(descriptor.value, depth + 1)
           )

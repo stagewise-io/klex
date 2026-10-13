@@ -138,7 +138,7 @@ describe('Realtime Media client', () => {
   });
 
   it('validates and preserves context in the registered incoming handler', async () => {
-    const { client, handlers } = fakeClient();
+    const { client, handlers, requests } = fakeClient();
     const onNotification = vi.fn();
     registerRealtimeMediaClient(client, { onNotification });
     const offered = {
@@ -155,12 +155,42 @@ describe('Realtime Media client', () => {
       params: offered,
     });
     onNotification.mockClear();
-    expect(() =>
-      handlers.get('io.stagewise/realtime-media/session-offered')?.({
+    for (const context of [
+      { text: 'x'.repeat(4096) },
+      { text: 42 },
+      { metadata: { invalid: undefined } },
+    ]) {
+      await handlers.get('io.stagewise/realtime-media/session-offered')?.({
         ...offered,
-        context: { text: 'x'.repeat(4096) },
-      } as never),
-    ).toThrow();
+        context,
+      } as never);
+    }
+    expect(onNotification).not.toHaveBeenCalled();
+    expect(requests).toHaveLength(3);
+    for (const request of requests) {
+      expect(request).toMatchObject({
+        method: 'io.stagewise/realtime-media/reject',
+        params: { sessionId: offered.sessionId },
+      });
+      expect(request).not.toHaveProperty('params.context');
+    }
+  });
+
+  it('does not reject offers with invalid routing fields', () => {
+    const { client, handlers, requests } = fakeClient();
+    const onNotification = vi.fn();
+    registerRealtimeMediaClient(client, { onNotification });
+    for (const params of [
+      { sessionId: '', expiresAt: '2026-08-01T18:00:00.000Z' },
+      { sessionId: 'session-1', expiresAt: 'not-a-date' },
+    ]) {
+      expect(() =>
+        handlers.get('io.stagewise/realtime-media/session-offered')?.(
+          params as never,
+        ),
+      ).toThrow();
+    }
+    expect(requests).toHaveLength(0);
     expect(onNotification).not.toHaveBeenCalled();
   });
 

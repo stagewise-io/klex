@@ -1,3 +1,6 @@
+import { readFileSync } from 'node:fs';
+
+import { Ajv2020 } from 'ajv/dist/2020.js';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -8,6 +11,59 @@ import {
 } from '../src/generated/schema.js';
 
 const capability = { transports: ['livekit-room'], media: ['audio'] } as const;
+
+describe('published JSON Schema', () => {
+  const document = JSON.parse(
+    readFileSync(new URL('../schema.json', import.meta.url), 'utf8'),
+  ) as { $id: string; $defs: Record<string, unknown> };
+  const ajv = new Ajv2020({ strict: false, validateFormats: false });
+  ajv.addSchema(document);
+
+  const context = {
+    text: 'Incoming session',
+    metadata: { participant: { label: 'Ada', flags: [true, null, 42] } },
+  };
+  const params = {
+    sessionId: 'session-1',
+    expiresAt: '2026-08-01T18:00:00.000Z',
+    context,
+  };
+  const notification = {
+    jsonrpc: '2.0',
+    method: 'io.stagewise/realtime-media/session-offered',
+    params,
+  };
+
+  it('compiles every definition through the complete document', () => {
+    for (const name of Object.keys(document.$defs)) {
+      expect(ajv.getSchema(`${document.$id}#/$defs/${name}`)).toBeDefined();
+    }
+  });
+
+  it.each([
+    ['RealtimeMediaSessionContext', context, { metadata: [42] }],
+    [
+      'RealtimeMediaSessionOfferedNotificationParams',
+      params,
+      { ...params, context: { text: 42 } },
+    ],
+    [
+      'RealtimeMediaSessionOfferedNotification',
+      notification,
+      { ...notification, params: { ...params, context: { text: 42 } } },
+    ],
+    [
+      'RealtimeMediaNotification',
+      notification,
+      { ...notification, params: { ...params, context: { text: 42 } } },
+    ],
+  ])('validates %s through the complete document', (name, valid, invalid) => {
+    const validate = ajv.getSchema(`${document.$id}#/$defs/${name}`);
+    expect(validate).toBeDefined();
+    expect(validate?.(valid)).toBe(true);
+    expect(validate?.(invalid)).toBe(false);
+  });
+});
 
 describe('Realtime Media schemas', () => {
   it('accepts non-empty profile capability lists', () => {
@@ -143,6 +199,32 @@ describe('Realtime Media schemas', () => {
       }).success,
     ).toBe(false);
     expect(invoked).toBe(false);
+  });
+
+  it('rejects hidden fields before parsing known properties', () => {
+    const oversized = Object.defineProperty({}, 'text', {
+      value: 'x'.repeat(4096),
+    });
+    expect(RealtimeMediaSessionContextSchema.safeParse(oversized).success).toBe(
+      false,
+    );
+    let invoked = false;
+    const getter = Object.defineProperty({}, 'text', {
+      get() {
+        invoked = true;
+        return 'hidden';
+      },
+    });
+    expect(RealtimeMediaSessionContextSchema.safeParse(getter).success).toBe(
+      false,
+    );
+    expect(invoked).toBe(false);
+    const metadata = Object.defineProperty({}, 'metadata', {
+      value: { nested: 'x'.repeat(4096) },
+    });
+    expect(RealtimeMediaSessionContextSchema.safeParse(metadata).success).toBe(
+      false,
+    );
   });
 
   it('validates accepted transport credentials', () => {

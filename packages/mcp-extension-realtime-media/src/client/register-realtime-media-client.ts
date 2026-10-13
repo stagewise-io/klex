@@ -1,4 +1,5 @@
 import type { Client, RequestOptions } from '@modelcontextprotocol/client';
+import { z } from 'zod/v4';
 
 import { registerSubscriptionAcknowledgementHandler } from '@stagewise/mcp-extension-client';
 
@@ -21,6 +22,7 @@ import {
   EndRealtimeMediaSessionResultSchema,
   RealtimeMediaSessionEndedNotificationParamsSchema,
   RealtimeMediaSessionOfferedNotificationParamsSchema,
+  RealtimeMediaSessionParamsSchema,
   ServerDiscoverResultSchema,
   SubscriptionsAcknowledgedNotificationSchema,
   SubscriptionsListenResultSchema,
@@ -170,15 +172,46 @@ export function registerRealtimeMediaClient(
     }
   };
 
+  const reject = async (
+    sessionId: string,
+    requestOptions?: RealtimeMediaRequestOptions,
+  ): Promise<void> => {
+    await requireServerSupport(requestOptions);
+    await client.request(
+      {
+        method: REALTIME_MEDIA_REJECT_METHOD,
+        params: paramsWithCapability(
+          { sessionId },
+          capability,
+          requestOptions?.metadata,
+        ),
+      },
+      EndRealtimeMediaSessionResultSchema,
+      requestOptions?.request,
+    );
+  };
+
   client.setNotificationHandler(
     REALTIME_MEDIA_SESSION_OFFERED_METHOD,
-    { params: RealtimeMediaSessionOfferedNotificationParamsSchema },
+    {
+      // Validate routing before context so malformed context can be rejected
+      // by session ID without forwarding it or exposing validation errors.
+      params: RealtimeMediaSessionParamsSchema.extend({
+        expiresAt: z.iso.datetime(),
+      }).passthrough(),
+    },
     async (params) => {
       markServerSupport();
+      const parsed =
+        RealtimeMediaSessionOfferedNotificationParamsSchema.safeParse(params);
+      if (!parsed.success) {
+        await reject(params.sessionId);
+        return;
+      }
       await options.onNotification?.({
         jsonrpc: '2.0',
         method: REALTIME_MEDIA_SESSION_OFFERED_METHOD,
-        params,
+        params: parsed.data,
       });
     },
   );
@@ -259,21 +292,7 @@ export function registerRealtimeMediaClient(
       );
       return decodeRealtimeMediaAcceptResult(result);
     },
-    async reject(sessionId, requestOptions) {
-      await requireServerSupport(requestOptions);
-      await client.request(
-        {
-          method: REALTIME_MEDIA_REJECT_METHOD,
-          params: paramsWithCapability(
-            { sessionId },
-            capability,
-            requestOptions?.metadata,
-          ),
-        },
-        EndRealtimeMediaSessionResultSchema,
-        requestOptions?.request,
-      );
-    },
+    reject,
     async end(sessionId, requestOptions) {
       await requireServerSupport(requestOptions);
       await client.request(

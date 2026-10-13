@@ -636,6 +636,9 @@ importers:
       '@types/node':
         specifier: 24.10.1
         version: 24.10.1
+      ajv:
+        specifier: 8.20.0
+        version: 8.20.0
       ts-to-zod:
         specifier: 5.1.0
         version: 5.1.0(supports-color@8.1.1)

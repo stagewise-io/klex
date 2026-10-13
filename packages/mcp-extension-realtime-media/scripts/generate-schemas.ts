@@ -65,6 +65,23 @@ function postProcess(content: string): string {
   return output;
 }
 
+// Zod emits document-local recursive references. Each generated document is
+// embedded under its own $defs entry, so references must include that prefix.
+function rebaseLocalReferences(value: unknown, prefix: string): unknown {
+  if (Array.isArray(value)) {
+    return value.map((entry) => rebaseLocalReferences(entry, prefix));
+  }
+  if (value === null || typeof value !== 'object') return value;
+  return Object.fromEntries(
+    Object.entries(value).map(([key, entry]) => [
+      key,
+      key === '$ref' && typeof entry === 'string' && entry.startsWith('#')
+        ? `${prefix}${entry.slice(1)}`
+        : rebaseLocalReferences(entry, prefix),
+    ]),
+  );
+}
+
 async function buildJsonSchema(generated: string): Promise<string> {
   mkdirSync(generatedDirectory, { recursive: true });
   const temporarySchemaFile = join(
@@ -95,9 +112,24 @@ async function buildJsonSchema(generated: string): Promise<string> {
       continue;
     }
 
-    definitions[name.slice(0, -'Schema'.length)] = toJSONSchema(
-      schema as $ZodType,
-      { unrepresentable: 'any' },
+    const definitionName = name.slice(0, -'Schema'.length);
+    const pointerName = definitionName
+      .replaceAll('~', '~0')
+      .replaceAll('/', '~1');
+    definitions[definitionName] = rebaseLocalReferences(
+      toJSONSchema(schema as $ZodType, {
+        unrepresentable: 'any',
+        override: ({ zodSchema, jsonSchema }) => {
+          // Stripping objects accept extra input fields. Closing them makes
+          // intersections reject fields declared by their other branch.
+          // Keep output mode so the bounded context pipe retains its shape.
+          const definition = zodSchema._zod.def;
+          if (definition.type === 'object' && !definition.catchall) {
+            delete jsonSchema.additionalProperties;
+          }
+        },
+      }),
+      `#/$defs/${pointerName}`,
     );
   }
 

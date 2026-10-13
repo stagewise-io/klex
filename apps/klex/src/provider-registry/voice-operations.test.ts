@@ -7,7 +7,7 @@ import type {
 } from './provider-registry';
 import { createVoiceOperations } from './voice-operations';
 
-const list: ProviderVoiceList = { selectionSupported: true, voices: [] };
+const list: ProviderVoiceList = { voices: [], defaultVoiceId: 'original' };
 const audio: ProviderVoicePreview = {
   audio: new Uint8Array(48),
   mimeType: 'audio/wav',
@@ -30,7 +30,7 @@ describe('voice operations', () => {
       operations.list('p', 's', 'm', false, hook),
     ]);
     const result = await operations.list('p', 's', 'm', false, hook);
-    if (result.ok) result.value.selectionSupported = false;
+    if (result.ok) result.value.defaultVoiceId = 'mutated';
     expect(await operations.list('p', 's', 'm', false, hook)).toEqual(ok(list));
     expect(hook).toHaveBeenCalledTimes(1);
     operations.close();
@@ -93,7 +93,7 @@ describe('voice operations', () => {
       code: 'rate_limited',
     });
     for (const release of releases) release();
-    const fresh: ProviderVoiceList = { selectionSupported: false, voices: [] };
+    const fresh: ProviderVoiceList = { voices: [], defaultVoiceId: 'fresh' };
     const freshHook = vi.fn(async () => ok(fresh));
     await vi.waitFor(async () => {
       expect(await operations.list('p', 's', 'm0', false, freshHook)).toEqual(

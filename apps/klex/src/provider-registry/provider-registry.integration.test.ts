@@ -135,17 +135,11 @@ describe('provider registry module integration', () => {
             ok: true,
             code: 'available',
             value: {
-              selectionSupported: true,
               voices: [
                 {
                   voiceId: 'cedar',
                   displayName: 'Cedar',
-                  provenance: {
-                    source: 'maintained',
-                    documentationUrl: 'https://example.test',
-                    reviewedAt: '2026-10-12',
-                  },
-                  preview: { available: true, mode: 'live' },
+                  isPreviewAvailable: true,
                 },
               ],
             },
@@ -280,17 +274,11 @@ describe('provider registry module integration', () => {
         ok: true,
         code: 'available',
         value: {
-          selectionSupported: true,
           voices: [
             {
               voiceId: 'cedar',
               displayName: 'Cedar',
-              provenance: {
-                source: 'maintained',
-                documentationUrl: 'https://example.test',
-                reviewedAt: '2026-10-12',
-              },
-              preview: { available: true, mode: 'live' },
+              isPreviewAvailable: true,
             },
           ],
         },
@@ -339,6 +327,34 @@ describe('provider registry module integration', () => {
       voiceId: 'cedar',
     });
     expect(listVoices).toHaveBeenCalledTimes(1);
+    listVoices.mockResolvedValueOnce({
+      ok: true,
+      code: 'available',
+      value: {
+        voices: [
+          { voiceId: 'cedar', displayName: 'Cedar', isPreviewAvailable: false },
+        ],
+      },
+    });
+    await registry.listVoices('voice', reference.modelId, true);
+    expect(
+      await registry.getVoicePreview('voice', reference.modelId, 'cedar'),
+    ).toMatchObject({
+      ok: false,
+      code: 'unsupported_operation',
+    });
+    listVoices.mockResolvedValueOnce({
+      ok: true,
+      code: 'available',
+      value: { voices: [] },
+    });
+    await registry.listVoices('voice', reference.modelId, true);
+    expect(
+      await registry.getVoicePreview('voice', reference.modelId, 'cedar'),
+    ).toMatchObject({
+      ok: false,
+      code: 'invalid_configuration',
+    });
     listVoices.mockResolvedValue({
       ok: false,
       code: 'discovery_failed',
@@ -347,7 +363,7 @@ describe('provider registry module integration', () => {
     expect(await registry.updateModelSelection({ voice })).toMatchObject({
       ok: true,
     });
-    expect(listVoices).toHaveBeenCalledTimes(1);
+    expect(listVoices).toHaveBeenCalledTimes(3);
     const before = config.get();
     expect(
       await registry.updateModelSelection({

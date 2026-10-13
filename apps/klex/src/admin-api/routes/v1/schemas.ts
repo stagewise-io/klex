@@ -563,26 +563,14 @@ const voicePreviewBodySchema = z
   .strict();
 const providerVoicesResponseSchema = z
   .object({
-    selectionSupported: z.boolean(),
     defaultVoiceId: z.string().optional(),
-    fallback: z.boolean().optional(),
     stale: z.boolean().optional(),
     voices: z.array(
       z.object({
         voiceId: z.string(),
         displayName: z.string(),
         description: z.string().optional(),
-        language: z.string().optional(),
-        region: z.string().optional(),
-        provenance: z.object({
-          source: z.enum(['maintained', 'discovered']),
-          documentationUrl: z.string(),
-          reviewedAt: z.string().optional(),
-        }),
-        preview: z.object({
-          available: z.boolean(),
-          mode: z.literal('live').optional(),
-        }),
+        isPreviewAvailable: z.boolean(),
       }),
     ),
   })

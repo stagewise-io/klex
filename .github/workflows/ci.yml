@@ -44,6 +44,8 @@ jobs:
       - run: pnpm format:check
       - run: pnpm build
       - run: pnpm typecheck
+      - name: Verify packed MCP extensions
+        run: node scripts/verify-mcp-extension-packages.mjs
 
   klex-machine:
     name: klex-machine (${{ matrix.os }})

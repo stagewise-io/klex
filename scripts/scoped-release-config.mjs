@@ -4,7 +4,16 @@ const scopedReleasePlugin = fileURLToPath(
   new URL('./scoped-release-plugin.mjs', import.meta.url),
 );
 
-export function createScopedReleaseConfig({ packageRoot, scope, tagFormat }) {
+const extensionReleasePlugin = fileURLToPath(
+  new URL('./mcp-extension-release-plugin.mjs', import.meta.url),
+);
+
+export function createScopedReleaseConfig({
+  packageRoot,
+  scope,
+  tagFormat,
+  mcpExtension = false,
+}) {
   return {
     branches: ['main'],
     tagFormat,
@@ -16,6 +25,9 @@ export function createScopedReleaseConfig({ packageRoot, scope, tagFormat }) {
           pkgRoot: packageRoot,
         },
       ],
+      ...(mcpExtension
+        ? [[extensionReleasePlugin, { pkgRoot: packageRoot, tagFormat }]]
+        : []),
       '@semantic-release/github',
     ],
   };

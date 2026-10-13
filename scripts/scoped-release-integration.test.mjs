@@ -157,3 +157,36 @@ test('dry-run produces no release for unrelated history', async () => {
   });
   assert.equal(result, false);
 });
+
+for (const scope of [
+  'mcp-extension-client',
+  'mcp-extension-push-notifications',
+  'mcp-extension-realtime-media',
+]) {
+  test(`dry-runs independent ${scope} versions`, async () => {
+    const baseline =
+      scope === 'mcp-extension-push-notifications' ? '0.1.1' : '0.1.0';
+    const result = await dryRunFixture({
+      baseline,
+      commits: [
+        `fix(${scope}): repair release packaging`,
+        'feat(machine): unrelated feature',
+      ],
+      packageRoot: `packages/${scope}`,
+      scope,
+      tagFormat: `@stagewise/${scope}-v\${version}`,
+    });
+    assert.equal(
+      result.nextRelease.version,
+      baseline === '0.1.1' ? '0.1.2' : '0.1.1',
+    );
+    const unrelated = await dryRunFixture({
+      baseline,
+      commits: ['fix(machine): unrelated fix'],
+      packageRoot: `packages/${scope}`,
+      scope,
+      tagFormat: `@stagewise/${scope}-v\${version}`,
+    });
+    assert.equal(unrelated, false);
+  });
+}

@@ -25,11 +25,25 @@ export const publishablePackages = [
     path: 'mcp-servers/klex-machine/',
     scope: 'machine',
   },
+  ...[
+    'mcp-extension-client',
+    'mcp-extension-push-notifications',
+    'mcp-extension-realtime-media',
+  ].map((scope) => ({ path: `packages/${scope}/`, scope })),
 ];
 
 export function scopesForChangedFiles(files) {
+  const required = new Set(
+    publishablePackages
+      .filter(({ path }) => files.some((file) => file.startsWith(path)))
+      .map(({ scope }) => scope),
+  );
+  if (required.has('mcp-extension-client')) {
+    required.add('mcp-extension-push-notifications');
+    required.add('mcp-extension-realtime-media');
+  }
   return publishablePackages
-    .filter(({ path }) => files.some((file) => file.startsWith(path)))
+    .filter(({ scope }) => required.has(scope))
     .map(({ scope }) => scope);
 }
 

@@ -182,7 +182,7 @@ test('workflow validates before publishing and releases the helper before consum
     previous = position;
   }
   assert.equal(
-    (workflow.match(/npm_config_verify_deps_before_run: "false"/g) ?? [])
+    (workflow.match(/PNPM_CONFIG_VERIFY_DEPS_BEFORE_RUN: "false"/g) ?? [])
       .length,
     6,
   );

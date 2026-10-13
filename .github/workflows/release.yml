@@ -54,46 +54,47 @@ jobs:
       - name: Check MCP extension release baselines
         run: node scripts/mcp-extension-release-plugin.mjs --preflight
       # Release preparation intentionally rewrites manifests after frozen validation.
-      # Keep pnpm 11 from reinstalling dependencies or rewriting the lockfile in prepack.
+      # pnpm 11 requires PNPM_CONFIG_* (not npm_config_*) for this setting.
+      # Prevent reinstalls in later release commands and nested prepack builds.
       - name: Release mcp-proxy-sdk
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          npm_config_verify_deps_before_run: "false"
+          PNPM_CONFIG_VERIFY_DEPS_BEFORE_RUN: "false"
         run: >-
           pnpm exec semantic-release
           --extends ./packages/mcp-proxy-sdk/.releaserc.js
       - name: Release mcp-extension-client
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          npm_config_verify_deps_before_run: "false"
+          PNPM_CONFIG_VERIFY_DEPS_BEFORE_RUN: "false"
         run: >-
           pnpm exec semantic-release
           --extends ./packages/mcp-extension-client/.releaserc.js
       - name: Release mcp-extension-push-notifications
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          npm_config_verify_deps_before_run: "false"
+          PNPM_CONFIG_VERIFY_DEPS_BEFORE_RUN: "false"
         run: >-
           pnpm exec semantic-release
           --extends ./packages/mcp-extension-push-notifications/.releaserc.js
       - name: Release mcp-extension-realtime-media
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          npm_config_verify_deps_before_run: "false"
+          PNPM_CONFIG_VERIFY_DEPS_BEFORE_RUN: "false"
         run: >-
           pnpm exec semantic-release
           --extends ./packages/mcp-extension-realtime-media/.releaserc.js
       - name: Release klex-machine
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          npm_config_verify_deps_before_run: "false"
+          PNPM_CONFIG_VERIFY_DEPS_BEFORE_RUN: "false"
         run: >-
           pnpm exec semantic-release
           --extends ./mcp-servers/klex-machine/.releaserc.js
       - name: Release agent-admin-api
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          npm_config_verify_deps_before_run: "false"
+          PNPM_CONFIG_VERIFY_DEPS_BEFORE_RUN: "false"
         run: >-
           pnpm exec semantic-release
           --extends ./packages/agent-admin-api/.releaserc.js

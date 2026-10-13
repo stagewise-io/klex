@@ -62,7 +62,7 @@ The single release job installs with the frozen lockfile, builds, typechecks, te
 
 The npm plugin prepares each package version. The extension plugin then rewrites runtime `workspace:` dependencies to exact registry versions in the disposable checkout. It selects the latest reachable helper release tag and confirms that exact version exists on npm, with three bounded attempts for propagation. It never falls back to the helper's stale authored version or an unverified npm dist-tag. Missing, private, or unknown workspace runtime dependencies stop preparation.
 
-Authored manifests keep `workspace:*`. There are no release commits, cross-package version synchronization, or lockfile rewrites. The release steps disable pnpm 11's automatic dependency verification/reinstall after intentional manifest rewrites, including nested prepack builds. Frozen installation and all workspace validation occur earlier with normal settings.
+Authored manifests keep `workspace:*`. There are no release commits, cross-package version synchronization, or lockfile rewrites. The release steps set `PNPM_CONFIG_VERIFY_DEPS_BEFORE_RUN=false` to disable pnpm 11's automatic dependency verification/reinstall after intentional manifest rewrites, including nested prepack builds. pnpm 11 does not read this setting from the former `npm_config_` prefix. Frozen installation and all workspace validation occur earlier with normal settings.
 
 ## Local verification
 

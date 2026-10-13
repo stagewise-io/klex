@@ -1,8 +1,9 @@
 import type { ModuleLogger, RootLogger } from '@stagewise/logger';
-import type {
-  LiveKitRoomTransportDescriptor,
-  RealtimeMediaNotification,
-  RealtimeMediaSessionOfferedNotificationParams,
+import {
+  type LiveKitRoomTransportDescriptor,
+  type RealtimeMediaNotification,
+  RealtimeMediaSessionContextSchema,
+  type RealtimeMediaSessionOfferedNotificationParams,
 } from '@stagewise/mcp-extension-realtime-media';
 
 import type {
@@ -17,6 +18,7 @@ import type {
 } from '@/media-transport';
 import type {
   ConversationHost,
+  ExternalInteractionContext,
   InteractionLease,
   InteractionModelMetadata,
   InteractionUpdateEnvelope,
@@ -77,6 +79,8 @@ interface ActiveRealtimeSession {
     processorFactory: RealtimeModelSessionFactory;
   };
   contextSettled: boolean;
+  externalContext?: ExternalInteractionContext;
+  contextInvalid?: boolean;
   setup?: Promise<void>;
   modelEventTask?: Promise<void>;
   tasks: Promise<void>[];
@@ -197,6 +201,11 @@ class RealtimeSessionCoordinatorModule implements RealtimeSessionCoordinator {
   ): void {
     const key = sessionKey(namespace, offer.sessionId);
     if (this.sessions.has(key)) return;
+    const parsedContext =
+      offer.context === undefined
+        ? undefined
+        : RealtimeMediaSessionContextSchema.safeParse(offer.context);
+    if (parsedContext?.success) freezeContext(parsedContext.data);
     const session: ActiveRealtimeSession = {
       key,
       namespace,
@@ -206,6 +215,8 @@ class RealtimeSessionCoordinatorModule implements RealtimeSessionCoordinator {
       accepted: false,
       endSent: false,
       contextSettled: false,
+      ...(parsedContext?.success && { externalContext: parsedContext.data }),
+      ...(parsedContext && !parsedContext.success && { contextInvalid: true }),
       tasks: [],
     };
     this.sessions.set(key, session);
@@ -230,6 +241,23 @@ class RealtimeSessionCoordinatorModule implements RealtimeSessionCoordinator {
     offer: RealtimeMediaSessionOfferedNotificationParams,
   ): Promise<void> {
     if (Date.parse(offer.expiresAt) <= this.deps.now()) {
+      await this.deps.mcp.rejectRealtimeMediaSession(
+        session.namespace,
+        session.sessionId,
+      );
+      void this.finishSession(session, { notifyRemote: false });
+      return;
+    }
+
+    if (session.contextInvalid) {
+      this.deps.logger.warn(
+        {
+          namespace: session.namespace,
+          sessionId: session.sessionId,
+          code: 'invalid-session-context',
+        },
+        'Rejecting realtime session offer: invalid context',
+      );
       await this.deps.mcp.rejectRealtimeMediaSession(
         session.namespace,
         session.sessionId,
@@ -339,6 +367,9 @@ class RealtimeSessionCoordinatorModule implements RealtimeSessionCoordinator {
       return await this.deps.conversationHost.acquireInteractionLease({
         mode: 'realtime',
         externalSessionId: session.sessionId,
+        ...(session.externalContext !== undefined && {
+          externalContext: session.externalContext,
+        }),
         namespace: session.namespace,
         signal: session.acquisitionController.signal,
         model:
@@ -776,6 +807,14 @@ async function waitForSettlement(
     ]);
   } finally {
     if (timeout) clearTimeout(timeout);
+  }
+}
+
+/** Only called on schema-parsed data with bounded depth and node count. */
+function freezeContext(value: unknown): void {
+  if (value !== null && typeof value === 'object') {
+    for (const child of Object.values(value)) freezeContext(child);
+    Object.freeze(value);
   }
 }
 

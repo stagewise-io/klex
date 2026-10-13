@@ -23,6 +23,7 @@ import type {
 import type { ProviderModelResolver } from '@/provider-registry';
 import type { SessionInboxEvent } from '@/session/inbox';
 import {
+  appendExternalInteractionContext,
   assembleInferenceContext,
   describeInteractionTools,
   GenerationLaneLeaseManager,
@@ -964,7 +965,7 @@ class ChatSessionModule implements AgentSession {
     return {
       context: {
         instructions: assembled.instructions,
-        messages: assembled.messages,
+        messages: appendExternalInteractionContext(assembled.messages, request),
         tools: describeInteractionTools(assembled.tools),
         model: request.model,
         historyRevision,

@@ -227,6 +227,10 @@ describe('realtime and default chat interaction', () => {
       params: {
         sessionId: 'call-1',
         expiresAt: '2026-08-01T19:00:00.000Z',
+        context: {
+          text: 'ephemeral session facts',
+          metadata: { label: 'external participant' },
+        },
       },
     });
 
@@ -254,6 +258,23 @@ describe('realtime and default chat interaction', () => {
         }),
       ]),
     );
+    expect(processor.context.messages.at(-1)).toEqual({
+      role: 'user',
+      content: expect.stringContaining('ephemeral session facts'),
+    });
+    expect(processor.context.messages.at(-1)?.content).toContain(
+      '"source":{"namespace":"voice","sessionId":"call-1"}',
+    );
+    expect(processor.context.instructions).not.toContain(
+      'ephemeral session facts',
+    );
+    expect(JSON.stringify(chatSession?.getMessages())).not.toContain(
+      'ephemeral session facts',
+    );
+    expect(processor.context.historyRevision).toBeLessThan(
+      processor.context.messages.length,
+    );
+    expect(processor.context.updateWatermark).toBe(0);
     expect(processor.context.tools).toEqual(
       expect.arrayContaining([expect.objectContaining({ name: 'echo' })]),
     );
@@ -328,6 +349,14 @@ describe('realtime and default chat interaction', () => {
       signal: new AbortController().signal,
       model: DETERMINISTIC_REALTIME_MODEL,
     });
+    const contextFree = await releaseProbe.bootstrap();
+    expect(JSON.stringify(contextFree.context.messages)).not.toContain(
+      'ephemeral session facts',
+    );
+    expect(contextFree.context.instructions).toBe(
+      processor.context.instructions,
+    );
+    contextFree.rollback();
     await releaseProbe.release('call-ended');
     await expect(releaseProbe.closed).resolves.toEqual({
       type: 'released',
@@ -338,6 +367,10 @@ describe('realtime and default chat interaction', () => {
     expect(warnLog).not.toHaveBeenCalled();
 
     const messages = chatSession?.getMessages() ?? [];
+    expect(JSON.stringify(messages)).not.toContain('ephemeral session facts');
+    expect(JSON.stringify(messages)).not.toContain(
+      'External realtime session context',
+    );
     expect(messages.some((message) => message.id === 'user-transcript-1')).toBe(
       true,
     );

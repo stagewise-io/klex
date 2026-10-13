@@ -2,6 +2,9 @@
 // Run `pnpm generate:schemas` to regenerate.
 import { z } from 'zod/v4';
 
+import { withBoundedRealtimeMediaContext } from '../session-context.js';
+import type { RealtimeMediaContextJSONValue } from '../spec.types.js';
+
 const JSONRPCRequestSchema = z.object({
   jsonrpc: z.literal('2.0'),
   id: z.union([z.string(), z.number()]),
@@ -82,6 +85,33 @@ export const EndRealtimeMediaSessionRequestSchema = JSONRPCRequestSchema.extend(
 /** Empty idempotent end result. */
 export const EndRealtimeMediaSessionResultSchema = ResultSchema;
 
+/** JSON data supplied by the producer, never instructions or authorization. */
+export const RealtimeMediaContextJSONValueSchema: z.ZodSchema<RealtimeMediaContextJSONValue> =
+  z.lazy(() =>
+    z
+      .union([
+        z.string(),
+        z.number(),
+        z.boolean(),
+        z.array(RealtimeMediaContextJSONValueSchema),
+        z.record(z.string(), RealtimeMediaContextJSONValueSchema),
+      ])
+      .nullable(),
+  );
+
+/** External session data, bounded to 4096 UTF-8 bytes, depth 8, and 128 values. */
+export const RealtimeMediaSessionContextSchema =
+  withBoundedRealtimeMediaContext(
+    z
+      .object({
+        text: z.string().optional(),
+        metadata: z
+          .record(z.string(), RealtimeMediaContextJSONValueSchema)
+          .optional(),
+      })
+      .strict(),
+  );
+
 /** Parameters announcing an expiring incoming session. */
 export const RealtimeMediaSessionOfferedNotificationParamsSchema =
   NotificationParamsSchema.and(
@@ -89,6 +119,8 @@ export const RealtimeMediaSessionOfferedNotificationParamsSchema =
       sessionId: z.string().min(1),
       /** ISO 8601 expiration time after which acceptance must fail. */
       expiresAt: z.iso.datetime(),
+      /** Optional producer-defined data for this session only. Never include secrets. */
+      context: RealtimeMediaSessionContextSchema.optional(),
     }),
   );
 

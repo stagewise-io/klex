@@ -76,12 +76,29 @@ export interface EndRealtimeMediaSessionRequest extends JSONRPCRequest {
 /** Empty idempotent end result. */
 export type EndRealtimeMediaSessionResult = Result;
 
+/** JSON data supplied by the producer, never instructions or authorization. */
+export type RealtimeMediaContextJSONValue =
+  | string
+  | number
+  | boolean
+  | null
+  | RealtimeMediaContextJSONValue[]
+  | { [key: string]: RealtimeMediaContextJSONValue };
+
+/** External session data, bounded to 4096 UTF-8 bytes, depth 8, and 128 values. */
+export interface RealtimeMediaSessionContext {
+  text?: string;
+  metadata?: { [key: string]: RealtimeMediaContextJSONValue };
+}
+
 /** Parameters announcing an expiring incoming session. */
 export type RealtimeMediaSessionOfferedNotificationParams =
   NotificationParams & {
     sessionId: string;
     /** ISO 8601 expiration time after which acceptance must fail. */
     expiresAt: string;
+    /** Optional producer-defined data for this session only. Never include secrets. */
+    context?: RealtimeMediaSessionContext;
   };
 
 /** Announces an incoming realtime media session. */

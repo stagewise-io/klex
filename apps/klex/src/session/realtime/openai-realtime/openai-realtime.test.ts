@@ -7,7 +7,10 @@ import type { RootLogger } from '@stagewise/logger';
 import type { AudioFrame, AudioSource } from '@/media-transport';
 import { BoundedAsyncQueue } from '@/media-transport/async-queue';
 import { SessionInboxUrgency } from '@/session/inbox';
-import type { PreparedInferenceContext } from '@/session/interaction';
+import {
+  appendExternalInteractionContext,
+  type PreparedInferenceContext,
+} from '@/session/interaction';
 
 import {
   createOpenAIRealtimeProcessorFactory,
@@ -723,6 +726,34 @@ describe('OpenAI realtime processor', () => {
         },
       },
     ]);
+  });
+
+  it('seeds external session data as a user item without requesting a response', async () => {
+    const messages = appendExternalInteractionContext(
+      preparedContext.messages,
+      {
+        namespace: 'voice',
+        externalSessionId: 'call-1',
+        externalContext: { text: 'external session facts' },
+      },
+    );
+    const { socket, processor } = await activate({
+      ...preparedContext,
+      messages,
+    });
+    expect(
+      sent(socket)
+        .filter((event) => event.type === 'conversation.item.create')
+        .at(-1)?.item,
+    ).toEqual({
+      type: 'message',
+      role: 'user',
+      content: [{ type: 'input_text', text: messages.at(-1)?.content }],
+    });
+    expect(sent(socket).some((event) => event.type === 'response.create')).toBe(
+      false,
+    );
+    await processor.close();
   });
 
   it('seeds canonical history in order before readiness resolves', async () => {

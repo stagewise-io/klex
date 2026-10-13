@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { delimiter, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 
@@ -45,14 +46,32 @@ Object.assign(env, {
   NPM_CONFIG_GLOBALCONFIG: join(temporary, 'global-npmrc'),
 });
 
+function windowsNpmCli() {
+  const path = process.env.PATH ?? '';
+  for (const entry of path.split(delimiter)) {
+    const directory = entry.replace(/^"|"$/g, '');
+    if (!directory || !existsSync(join(directory, 'npm.cmd'))) continue;
+    const cli = join(directory, 'node_modules', 'npm', 'bin', 'npm-cli.js');
+    if (!existsSync(cli)) throw new Error('Could not locate the npm CLI');
+    return cli;
+  }
+  throw new Error('Could not locate npm.cmd on PATH');
+}
+
 async function run(command, args, cwd) {
   try {
-    return await exec(command, args, {
-      cwd,
-      env,
-      timeout: 120_000,
-      maxBuffer: 4 * 1024 * 1024,
-    });
+    // Launch JavaScript directly so Windows never interprets .cmd arguments.
+    const windowsNpm = process.platform === 'win32' && command === 'npm';
+    return await exec(
+      windowsNpm ? process.execPath : command,
+      windowsNpm ? [windowsNpmCli(), ...args] : args,
+      {
+        cwd,
+        env,
+        timeout: 120_000,
+        maxBuffer: 4 * 1024 * 1024,
+      },
+    );
   } catch (error) {
     throw new Error(
       `${command} ${args.join(' ')} failed\n${error.stdout ?? ''}\n${error.stderr ?? ''}`,
@@ -164,13 +183,11 @@ try {
     .join('\n');
   await writeFile(join(consumer, 'types.ts'), imports);
   await run(
-    join(
-      root,
-      'node_modules',
-      '.bin',
-      process.platform === 'win32' ? 'tsc.cmd' : 'tsc',
-    ),
+    process.execPath,
     [
+      fileURLToPath(
+        new URL('./bin/tsc', import.meta.resolve('typescript/package.json')),
+      ),
       '--noEmit',
       '--strict',
       '--types',

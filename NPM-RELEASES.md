@@ -52,7 +52,12 @@ npm view @stagewise/mcp-extension-realtime-media@0.1.0 version gitHead dist.inte
 git tag '@stagewise/mcp-extension-client-v0.1.0' <VERIFIED_HELPER_RELEASE_COMMIT>
 git tag '@stagewise/mcp-extension-push-notifications-v0.1.1' <VERIFIED_PUSH_RELEASE_COMMIT>
 git tag '@stagewise/mcp-extension-realtime-media-v0.1.0' <VERIFIED_REALTIME_RELEASE_COMMIT>
+git push origin \
+  'refs/tags/@stagewise/mcp-extension-client-v0.1.0' \
+  'refs/tags/@stagewise/mcp-extension-push-notifications-v0.1.1' \
+  'refs/tags/@stagewise/mcp-extension-realtime-media-v0.1.0'
 # Then fetch full release history and run the read-only preflight.
+git fetch origin --tags
 node scripts/mcp-extension-release-plugin.mjs --preflight
 ```
 

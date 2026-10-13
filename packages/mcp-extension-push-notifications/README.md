@@ -85,7 +85,7 @@ await store.append(consumerKey, event);
 await events.sendEvent({ event }, { metadata: requestMeta });
 ```
 
-Acknowledgement is idempotent. Acknowledged IDs disappear immediately from pending retrieval. Retention of payloads and acknowledgement tombstones is server policy.
+Acknowledgement is idempotent. Acknowledged IDs disappear immediately from pending retrieval. Retention of payloads and acknowledgement tombstones is server policy. Applications that expose several MCP extensions can pass `registerDiscoveryHandler: false` and register one composed `server/discover` handler.
 
 ## HTTP subscriptions
 

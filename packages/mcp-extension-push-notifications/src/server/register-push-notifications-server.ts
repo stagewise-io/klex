@@ -53,6 +53,8 @@ export interface PushNotificationsServerHandlers {
 
 export interface RegisterPushNotificationsServerOptions {
   acceptInitializationCapabilities?: boolean;
+  /** Disable when an application composes discovery through another handler. */
+  registerDiscoveryHandler?: boolean;
 }
 
 export class PushNotificationsProtocolError extends Error {
@@ -102,14 +104,16 @@ export function registerPushNotificationsServer(
     }
   };
 
-  server.setRequestHandler(
-    SERVER_DISCOVER_METHOD,
-    {
-      params: z.record(z.string(), z.unknown()),
-      result: ServerDiscoverResultSchema,
-    },
-    () => ({ capabilities: pushNotificationsCapabilities() }),
-  );
+  if (options.registerDiscoveryHandler !== false) {
+    server.setRequestHandler(
+      SERVER_DISCOVER_METHOD,
+      {
+        params: z.record(z.string(), z.unknown()),
+        result: ServerDiscoverResultSchema,
+      },
+      () => ({ capabilities: pushNotificationsCapabilities() }),
+    );
+  }
   server.setRequestHandler(
     PUSH_NOTIFICATIONS_GET_METHOD,
     { params: GetEventsParamsSchema, result: GetEventsResultSchema },

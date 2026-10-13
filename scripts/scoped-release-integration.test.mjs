@@ -1,6 +1,13 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  readlink,
+  rm,
+  writeFile,
+} from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -103,6 +110,112 @@ async function dryRunFixture({
     await rm(temporaryRoot, { recursive: true, force: true });
   }
 }
+
+test('sequential release commands preserve the installed workspace after manifest preparation', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'sequential-release-'));
+  const workflow = await readFile(
+    new URL('../.github/workflows/release.yml', import.meta.url),
+    'utf8',
+  );
+  const setting = workflow.match(
+    /^\s+((?:PNPM_CONFIG|npm_config)_VERIFY_DEPS_BEFORE_RUN): "false"$/im,
+  );
+  assert.ok(setting, 'Missing release dependency verification setting');
+  const { packageManager } = JSON.parse(
+    await readFile(new URL('../package.json', import.meta.url), 'utf8'),
+  );
+  const environment = { ...createReleaseEnvironment(), CI: 'true' };
+  const releaseEnvironment = { ...environment, [setting[1]]: 'false' };
+  const pnpm = (args, env = environment) =>
+    exec('pnpm', args, {
+      cwd: root,
+      env,
+      timeout: 30_000,
+      shell: process.platform === 'win32',
+    });
+
+  try {
+    await mkdir(join(root, 'packages', 'helper'), { recursive: true });
+    await mkdir(join(root, 'packages', 'consumer'), { recursive: true });
+    await writeFile(
+      join(root, 'package.json'),
+      JSON.stringify({
+        private: true,
+        packageManager,
+        scripts: { 'release-check': 'pnpm exec node -p 42' },
+      }),
+    );
+    await writeFile(
+      join(root, 'pnpm-workspace.yaml'),
+      'packages:\n  - packages/*\nverifyDepsBeforeRun: install\n',
+    );
+    const helper = { name: '@fixture/helper', version: '0.1.0' };
+    const consumer = {
+      name: '@fixture/consumer',
+      version: '0.1.0',
+      dependencies: { [helper.name]: 'workspace:*' },
+    };
+    await writeFile(
+      join(root, 'packages', 'helper', 'package.json'),
+      JSON.stringify(helper),
+    );
+    const consumerPath = join(root, 'packages', 'consumer', 'package.json');
+    await writeFile(consumerPath, JSON.stringify(consumer));
+    assert.equal(
+      (await pnpm(['--version'])).stdout.trim(),
+      packageManager.slice('pnpm@'.length),
+    );
+    await pnpm(['install', '--offline', '--ignore-scripts']);
+    await pnpm([
+      'install',
+      '--offline',
+      '--ignore-scripts',
+      '--frozen-lockfile',
+    ]);
+    const lockfilePath = join(root, 'pnpm-lock.yaml');
+    const helperLinkPath = join(
+      root,
+      'packages',
+      'consumer',
+      'node_modules',
+      '@fixture',
+      'helper',
+    );
+    const lockfile = await readFile(lockfilePath, 'utf8');
+    const helperLink = await readlink(helperLinkPath);
+
+    const prepared = {
+      ...consumer,
+      version: '0.2.0',
+      dependencies: { [helper.name]: '0.1.1' },
+    };
+    const preparedJson = JSON.stringify(prepared);
+    await writeFile(consumerPath, preparedJson);
+    await assert.rejects(
+      pnpm(['exec', 'node', '-p', '42'], {
+        ...environment,
+        npm_config_verify_deps_before_run: 'false',
+      }),
+      (error) => {
+        assert.match(error.stdout + error.stderr, /ERR_PNPM_OUTDATED_LOCKFILE/);
+        return true;
+      },
+    );
+
+    for (const args of [
+      ['exec', 'node', '-p', '42'],
+      ['run', 'release-check'],
+    ]) {
+      const { stdout } = await pnpm(args, releaseEnvironment);
+      assert.match(stdout, /42/);
+      assert.equal(await readFile(lockfilePath, 'utf8'), lockfile);
+      assert.equal(await readlink(helperLinkPath), helperLink);
+      assert.equal(await readFile(consumerPath, 'utf8'), preparedJson);
+    }
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
 
 test('release fixture only receives allowlisted environment variables', () => {
   assert.deepEqual(

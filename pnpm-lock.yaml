@@ -99,8 +99,8 @@ importers:
         specifier: 0.32.0
         version: 0.32.0
       '@klex/cloud-api':
-        specifier: 1.2.0
-        version: 1.2.0(zod@4.4.3)
+        specifier: 1.2.2
+        version: 1.2.2(zod@4.4.3)
       '@libsql/client':
         specifier: 0.17.4
         version: 0.17.4
@@ -2223,8 +2223,8 @@ packages:
     peerDependencies:
       jsep: ^0.4.0||^1.0.0
 
-  '@klex/cloud-api@1.2.0':
-    resolution: {integrity: sha512-6cLm1GYErmYPY2xS0y9xMg9KtPbZtimz2kTjt4oMo7H5+0ZG722StaJ75O7iGteoxhJ51Fu4X7cJiWjuZEgl8g==}
+  '@klex/cloud-api@1.2.2':
+    resolution: {integrity: sha512-7MLtObObIPHXE29NNQ2Dq95kjUGiG28fyucy0GgfmY8wuewVCh6xpeJVHjzO4iuJqMLReMGRE/Cyj2erzAYCkA==}
     engines: {node: '>=22'}
 
   '@libsql/client@0.17.4':
@@ -10758,7 +10758,7 @@ snapshots:
     dependencies:
       jsep: 1.4.0
 
-  '@klex/cloud-api@1.2.0(zod@4.4.3)':
+  '@klex/cloud-api@1.2.2(zod@4.4.3)':
     dependencies:
       '@hono/zod-openapi': 1.6.1(hono@4.12.30)(zod@4.4.3)
       '@types/node': 24.13.3

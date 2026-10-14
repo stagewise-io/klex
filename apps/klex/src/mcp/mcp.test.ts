@@ -1374,6 +1374,62 @@ describe('MCP cloud authorization requests', () => {
     await mcp.close();
   });
 
+  it('reuses discovery already in progress when authorization is requested for a new server', async () => {
+    const discovery = deferred<void>();
+    const connect = vi.fn(
+      async ({ namespace, signal }: ConnectMcpServerOptions) => {
+        await discovery.promise;
+        signal.throwIfAborted();
+        await pendingAuthorizations.register(
+          {
+            serverName: namespace,
+            serverUrl: 'https://protected.example/mcp',
+            authorizationUrl: 'https://auth.example/authorize?state=secret',
+            state: 'secret',
+          },
+          { signal, timeoutMs: 60_000 },
+        );
+        return connection(namespace);
+      },
+    );
+    const { config, mcp, pendingAuthorizations } = setupAuthorization(
+      {},
+      connect,
+    );
+
+    await mcp.start();
+    try {
+      await config.publish({
+        protected: { url: 'https://protected.example/mcp' },
+      });
+      await vi.waitFor(() => expect(connect).toHaveBeenCalledOnce());
+      const requests = [
+        mcp.requestAuthorization('protected'),
+        mcp.requestAuthorization('protected'),
+      ];
+      discovery.resolve();
+      const [first, repeated] = await Promise.all(requests);
+
+      expect(first).toMatchObject({
+        outcome: 'pending',
+        authorization: { serverName: 'protected', state: 'secret' },
+      });
+      expect(repeated).toEqual(first);
+      expect(connect).toHaveBeenCalledOnce();
+      expect(connect.mock.calls[0]?.[0].signal.aborted).toBe(false);
+      expect(
+        mcp.completeAuthorization(
+          'secret',
+          new URLSearchParams({ code: 'auth-code' }),
+        ),
+      ).toBe('accepted');
+      await waitForNamespace(mcp, 'protected');
+    } finally {
+      discovery.resolve();
+      await mcp.close();
+    }
+  });
+
   it('re-drives a connection attempt and returns the parked authorization', async () => {
     let parked = false;
     const { mcp, pendingAuthorizations } = setupAuthorization(

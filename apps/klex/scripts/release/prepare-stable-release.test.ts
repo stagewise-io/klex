@@ -88,6 +88,36 @@ describe('prepare stable release', () => {
     expect(await readFile(output, 'utf8')).toContain('version=0.2.0');
   });
 
+  it('prepares a minor release when the feature uses multiple scopes', async () => {
+    const repo = await createRepository();
+    execFileSync(
+      'git',
+      [
+        'commit',
+        '--amend',
+        '-qm',
+        'feat(klex,mcp-extension-realtime-media): add call-local context',
+      ],
+      { cwd: repo },
+    );
+    const result = await prepareStableRelease({
+      date: '2026-09-04',
+      repoRoot: repo,
+    });
+    expect(result).toMatchObject({
+      bump: 'minor',
+      version: '0.2.0',
+      tag: 'v0.2.0',
+    });
+    expect(result.notes).toContain('### Features');
+    expect(result.notes).toContain('add call-local context');
+    expect(
+      JSON.parse(
+        await readFile(path.join(repo, 'apps/klex/package.json'), 'utf8'),
+      ).version,
+    ).toBe('0.2.0');
+  });
+
   it('runs through a script path containing spaces and accepts pnpm separators', async () => {
     const repo = await createRepository();
     const scriptDirectory = path.join(repo, 'release scripts');

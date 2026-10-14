@@ -2,6 +2,12 @@
 
 All notable Klex changes are documented here.
 
+## 0.16.1 (2026-10-14)
+
+### Bug Fixes
+
+- adopt cloud SDK heartbeat recovery (3d8b9e4)
+
 ## 0.16.0 (2026-10-14)
 
 ### Features

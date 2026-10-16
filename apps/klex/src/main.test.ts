@@ -115,6 +115,10 @@ vi.mock('@/session/chat/extensions/consult', () => ({
 vi.mock('@/session/chat/extensions/context-compaction', () => ({
   createContextCompactionExt: vi.fn(),
 }));
+vi.mock('@/session/chat/extensions/episode-summary', () => ({
+  createEpisodeSummaryExt: vi.fn(),
+  createEpisodeSummaryLog: vi.fn(),
+}));
 vi.mock('@/session/chat/extensions/god-messages', () => ({
   createGodMessagesDistrustExt: vi.fn(),
   createGodMessagesTrustExt: vi.fn(),

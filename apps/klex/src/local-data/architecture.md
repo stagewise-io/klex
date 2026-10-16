@@ -16,6 +16,7 @@ The composition root in `local-data-registry` contains every structured Klex-own
 | `todos-extension-todos` | `extensions/io.stagewise/todos/todos.json` | JSON | Optional |
 | `episodic-search-index` | `extensions/io.stagewise/memory/episodic-search.sqlite` | SQLite | Created when missing |
 | `learning-extension-state` | `extensions/io.stagewise/learning/state.json` | JSON | Optional |
+| `episode-summaries` | `extensions/io.stagewise/episode-summary/summaries.sqlite` | SQLite | Created when missing |
 | `sessions` | `sessions.sqlite` | SQLite | Created when missing |
 
 Initialization creates missing parent directories for nested stores. SQLite definitions may declare `initPragmas`, which run one by one before `initSql` only when the database is created. Settings such as `auto_vacuum` take effect only on an empty file and are never re-applied to existing stores.

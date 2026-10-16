@@ -824,6 +824,44 @@ const skillNameParamsSchema = z.object({
   }),
 });
 
+// --- Episode summaries ---
+
+const episodeSummarySchema = z
+  .object({
+    episodeId: z
+      .string()
+      .describe('Opaque memory episode ID; also the pagination cursor'),
+    title: z
+      .string()
+      .describe('Short English past-tense title of what the agent did'),
+    startedAt: z
+      .string()
+      .datetime()
+      .describe('When the episode started; the log is sorted by this'),
+    endedAt: z.string().datetime().describe('When the episode ended'),
+    createdAt: z.string().datetime().describe('When the title was written'),
+  })
+  .openapi('EpisodeSummary');
+
+const episodeSummaryListQuerySchema = z
+  .object({
+    limit: z.coerce.number().int().min(1).max(100).default(20),
+    cursor: z
+      .string()
+      .min(1)
+      .optional()
+      .describe('`nextCursor` from the previous page'),
+  })
+  .openapi('EpisodeSummaryListQuery');
+
+const episodeSummaryListResponseSchema = z
+  .object({
+    summaries: z.array(episodeSummarySchema),
+    nextCursor: z.string().nullable(),
+    hasMore: z.boolean(),
+  })
+  .openapi('EpisodeSummaryListResponse');
+
 // --- Session history ---
 
 const sessionKindSchema = z
@@ -1126,6 +1164,9 @@ export {
   createKnownModelBodySchema,
   createMcpServerBodySchema,
   createProviderBodySchema,
+  episodeSummaryListQuerySchema,
+  episodeSummaryListResponseSchema,
+  episodeSummarySchema,
   errorResponseSchema,
   godMessageResetResponseSchema,
   godMessagesQuerySchema,

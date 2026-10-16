@@ -17,9 +17,12 @@ const HEAD_CHARACTERS = 4_000;
 const OMITTED_MARKER = '\n\n[… middle omitted …]\n\n';
 /** Episodes with fewer records are skipped without a model call. */
 export const MIN_RECORDS = 2;
-/** Headroom for reasoning models; title length is enforced by `parseTitle`. */
-export const MAX_OUTPUT_TOKENS = 256;
-const TEMPERATURE = 0.2;
+/**
+ * Reasoning models spend most of the budget thinking before the title, so
+ * 256 truncated them in E2E runs. Title length is enforced by `parseTitle`.
+ * No temperature: reasoning models the provider does not recognize reject it.
+ */
+export const MAX_OUTPUT_TOKENS = 1024;
 const PASS_BATCH = 20;
 const MAX_TITLE_WORDS = 12;
 const MAX_TITLE_CHARACTERS = 100;
@@ -172,7 +175,6 @@ class SummarizerModule implements Summarizer {
       system: SUMMARY_SYSTEM_PROMPT,
       prompt: buildEpisodeInput(episode.text),
       maxOutputTokens: MAX_OUTPUT_TOKENS,
-      temperature: TEMPERATURE,
       abortSignal: this.abort.signal,
     });
     if (!result.success) {
@@ -190,6 +192,16 @@ class SummarizerModule implements Summarizer {
       return false;
     }
     if (this.closed) return false;
+    // Truncated or empty output is not a model decision to skip; storing it
+    // would permanently lose the title, so retry like a failed call.
+    if (result.finishReason === 'length' || result.text.trim() === '') {
+      this.lastError = `incomplete output (${result.finishReason})`;
+      this.deps.logger.warn(
+        { episodeId: episode.id, finishReason: result.finishReason },
+        'Episode summary output was incomplete; retrying on the next episode event',
+      );
+      return false;
+    }
     const title = parseTitle(result.text);
     await this.commit(
       episode.id,

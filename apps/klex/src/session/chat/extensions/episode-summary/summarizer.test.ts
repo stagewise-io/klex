@@ -1,5 +1,6 @@
-import type { ModuleLogger } from '@stagewise/logger';
 import { describe, expect, it, vi } from 'vitest';
+
+import type { ModuleLogger } from '@stagewise/logger';
 
 import type {
   CompletedEpisode,
@@ -11,6 +12,7 @@ import {
   buildEpisodeInput,
   createSummarizer,
   MAX_INPUT_CHARACTERS,
+  MAX_OUTPUT_TOKENS,
   parseTitle,
   type Summarizer,
 } from './summarizer';
@@ -87,12 +89,18 @@ function createStore(initialized = true, episodeId: string | null = null) {
   return { store, rows, cursor: () => cursor };
 }
 
-function success(text: string): GenerateTextResult {
+type Success = Extract<GenerateTextResult, { success: true }>;
+
+function success(
+  text: string,
+  finishReason: Success['finishReason'] = 'stop',
+): GenerateTextResult {
   return {
     success: true,
     text,
     modelId: 'test:model',
-    usage: {} as Extract<GenerateTextResult, { success: true }>['usage'],
+    usage: {} as Success['usage'],
+    finishReason,
   };
 }
 
@@ -219,8 +227,9 @@ describe('summarizer', () => {
     expect(generateText.mock.calls[0]?.[0]).toMatchObject({
       modelIds: [MODEL],
       prompt: 'text of e1',
-      maxOutputTokens: 256,
+      maxOutputTokens: MAX_OUTPUT_TOKENS,
     });
+    expect(generateText.mock.calls[0]?.[0]).not.toHaveProperty('temperature');
     expect(Object.fromEntries(store.rows)).toMatchObject({
       e1: { status: 'titled', title: 'Did text of e1', modelId: 'test:model' },
       e2: { status: 'skipped', title: null, modelId: null },
@@ -260,6 +269,34 @@ describe('summarizer', () => {
     expect([...store.rows.keys()]).toEqual(['e1', 'e2']);
     expect(summarizer.introspect().lastError).toBeNull();
   });
+
+  it.each([
+    ['truncated', success('Confirmed PR', 'length')],
+    ['empty', success('  \n')],
+  ])(
+    'keeps the cursor on %s output and retries on the next wake',
+    async (_, first) => {
+      let calls = 0;
+      const { store, summarizer } = setup({
+        episodes: [episode('e1')],
+        generateText: async () =>
+          calls++ === 0 ? first : success('Confirmed PR #231 preview'),
+      });
+
+      summarizer.wake();
+      await settle(summarizer);
+      expect(store.rows.size).toBe(0);
+      expect(store.cursor().episodeId).toBeNull();
+      expect(summarizer.introspect().lastError).toMatch(/^incomplete output/u);
+
+      summarizer.wake();
+      await settle(summarizer);
+      expect(store.rows.get('e1')).toMatchObject({
+        status: 'titled',
+        title: 'Confirmed PR #231 preview',
+      });
+    },
+  );
 
   it('reruns once when woken during a pass', async () => {
     let release: () => void = () => undefined;

@@ -215,6 +215,8 @@ export interface GenerateTextSuccess {
   modelId: string;
   /** Token usage from the successful generation, including cache details. */
   usage: LanguageModelUsage;
+  /** Why generation stopped; `length` means the output budget cut it off. */
+  finishReason: FinishReason;
 }
 
 /**

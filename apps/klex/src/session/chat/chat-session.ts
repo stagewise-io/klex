@@ -765,6 +765,7 @@ class ChatSessionModule implements AgentSession {
                 text: result.text,
                 modelId,
                 usage: result.usage,
+                finishReason: result.finishReason,
               };
             } catch (error) {
               if (args.abortSignal?.aborted)

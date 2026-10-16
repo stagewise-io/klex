@@ -104,6 +104,7 @@ export function genSuccess(
   text: string;
   modelId: string;
   usage: Record<string, unknown>;
+  finishReason: 'stop';
 } {
   return {
     success: true,
@@ -114,6 +115,7 @@ export function genSuccess(
       outputTokens: 0,
       totalTokens: 0,
     },
+    finishReason: 'stop',
   };
 }
 

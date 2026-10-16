@@ -1,3 +1,4 @@
+import { Text } from 'ink';
 import SelectInput from 'ink-select-input';
 import { useState } from 'react';
 
@@ -7,6 +8,7 @@ export interface MenuItem<Value> {
   key?: string;
   label: string;
   value: Value;
+  disabled?: boolean;
 }
 
 export interface MenuListProps<Value> {
@@ -18,6 +20,26 @@ export interface MenuListProps<Value> {
   isFocused?: boolean;
   visibleCount?: number;
   bordered?: boolean;
+}
+
+function MenuListItem({
+  label,
+  isSelected = false,
+  disabled,
+}: {
+  label: string;
+  isSelected?: boolean;
+  disabled?: boolean;
+}) {
+  return (
+    <Text
+      color={isSelected ? 'blue' : undefined}
+      dimColor={disabled}
+      wrap="truncate-end"
+    >
+      {label.replace(/\s+/g, ' ').trim()}
+    </Text>
+  );
 }
 
 export function MenuList<Value>({
@@ -46,6 +68,7 @@ export function MenuList<Value>({
     >
       <SelectInput
         items={items}
+        itemComponent={MenuListItem}
         isFocused={isFocused}
         initialIndex={highlightedIndex}
         limit={limit}
@@ -53,7 +76,10 @@ export function MenuList<Value>({
           setInternalIndex(items.indexOf(item));
           onHighlight?.(item);
         }}
-        onSelect={onSelect}
+        onSelect={(item) => {
+          const selectedItem = items[items.indexOf(item)];
+          if (selectedItem && !selectedItem.disabled) onSelect?.(selectedItem);
+        }}
       />
     </ScrollableBox>
   );

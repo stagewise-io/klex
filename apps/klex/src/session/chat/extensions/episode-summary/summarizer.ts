@@ -100,6 +100,9 @@ class SummarizerModule implements Summarizer {
     }
     this.running = this.loop().finally(() => {
       this.running = null;
+      // A wake between the loop's last `dirty` check and this callback
+      // would otherwise be dropped.
+      if (this.dirty) this.wake();
     });
   }
 

@@ -1,6 +1,6 @@
 import { createRoute, type RouteHandler } from '@hono/zod-openapi';
 
-import type { EpisodeSummaryLog } from '@/session/chat/extensions/episode-summary';
+import type { EpisodeSummaryLog } from '@/session/chat/extensions/episode-summary/summary-log';
 
 import {
   episodeSummaryListQuerySchema,
@@ -34,6 +34,12 @@ export const listEpisodeSummariesRoute = createRoute({
         'application/json': { schema: episodeSummaryListResponseSchema },
       },
       description: 'Episode summaries, sorted by start time, newest first',
+    },
+    400: {
+      content: {
+        'application/json': { schema: errorResponseSchema },
+      },
+      description: 'Invalid query parameters',
     },
     500: {
       content: {

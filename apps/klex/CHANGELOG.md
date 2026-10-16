@@ -2,6 +2,17 @@
 
 All notable Klex changes are documented here.
 
+## 0.17.0 (2026-10-16)
+
+### Features
+
+- add episode summary log (5690c71)
+
+### Bug Fixes
+
+- handle reasoning model episode summaries (9f5ae43)
+- address episode summary review findings (b59ad5c)
+
 ## 0.16.1 (2026-10-14)
 
 ### Bug Fixes

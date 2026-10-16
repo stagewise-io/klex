@@ -46,7 +46,7 @@ export function parseConventionalCommit(
   requiredScope = 'klex',
 ): ConventionalCommit | null {
   const match = conventionalSubjectPattern.exec(subject);
-  if (!match || match[2] !== requiredScope || !match[1] || !match[4])
+  if (!match?.[2]?.split(',').includes(requiredScope) || !match[1] || !match[4])
     return null;
   const breakingMatch = /(?:^|\n)BREAKING CHANGE:\s*(.+)/.exec(body);
   const breaking = match[3] === '!' || breakingMatch !== null;

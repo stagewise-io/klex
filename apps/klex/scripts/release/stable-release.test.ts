@@ -79,6 +79,49 @@ describe('stable release versioning', () => {
     );
   });
 
+  it.each([
+    'klex,mcp-extension-realtime-media',
+    'mcp-extension-realtime-media,klex',
+  ])('parses a feature with klex in the scope list %s', (scope) => {
+    const parsed = parseConventionalCommit(
+      'abcdef012345',
+      `feat(${scope}): add call-local context`,
+      '',
+    );
+    expect(parsed).toMatchObject({
+      scope,
+      subject: 'add call-local context',
+      type: 'feat',
+      breaking: false,
+    });
+    expect(inferVersionBump(parsed ? [parsed] : [])).toBe('minor');
+  });
+
+  it('preserves breaking changes and custom scope selection in scope lists', () => {
+    expect(
+      parseConventionalCommit(
+        'abc',
+        'fix(klex,agent-admin-api)!: replace protocol',
+        'BREAKING CHANGE: old clients fail',
+        'agent-admin-api',
+      ),
+    ).toMatchObject({
+      breaking: true,
+      breakingDescription: 'old clients fail',
+      scope: 'klex,agent-admin-api',
+      type: 'fix',
+    });
+  });
+
+  it.each([
+    'feat: no scope',
+    'feat(klex-machine,agent-admin-api): unrelated scopes',
+    'feat(not-klex,klex-extra): similar scopes',
+    'feat(klex/agent-admin-api): slash-separated scopes',
+  ])('ignores commits without an exact klex scope: %s', (subject) => {
+    expect(parseConventionalCommit('abc', subject, '')).toBeNull();
+  });
+
   it('parses only conventional klex commits', () => {
     expect(
       parseConventionalCommit(

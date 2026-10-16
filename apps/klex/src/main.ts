@@ -48,6 +48,10 @@ import { createChatSession } from '@/session/chat';
 import { createAudioInputOptimizerExt } from '@/session/chat/extensions/audio-input-optimizer';
 import { createConsultExt } from '@/session/chat/extensions/consult';
 import { createContextCompactionExt } from '@/session/chat/extensions/context-compaction';
+import {
+  createEpisodeSummaryExt,
+  createEpisodeSummaryLog,
+} from '@/session/chat/extensions/episode-summary';
 import type { ExtensionFactory } from '@/session/chat/extensions/extension-api';
 import {
   createGodMessagesDistrustExt,
@@ -550,9 +554,11 @@ async function main(): Promise<void> {
       timezone,
     });
 
-    // Agent-wide hubs: memory publishes episodes, learning publishes skills.
+    // Agent-wide hubs: memory publishes episodes, learning publishes skills,
+    // episode-summary publishes episode titles.
     const episodeFeed = createEpisodeFeed();
     const skillCatalog = createSkillCatalog();
+    const episodeSummaryLog = createEpisodeSummaryLog();
 
     // Default session: full extension set + MCP access.
     const defaultSessionFactory = makeSessionFactory([
@@ -573,6 +579,10 @@ async function main(): Promise<void> {
         skillCatalog,
         getSoul: () =>
           readSoul(join(dataDirectory, 'extensions', createSoulExt.identifier)),
+      }),
+      createEpisodeSummaryExt({
+        episodes: episodeFeed,
+        summaryLog: episodeSummaryLog,
       }),
       createConsultExt({
         childExtensionFactories: [createSoulExt, defaultTimeExt],
@@ -625,6 +635,7 @@ async function main(): Promise<void> {
       godMessages,
       sessionHistory,
       skillCatalog,
+      episodeSummaryLog,
       localPort: cli.dangerousLocalAdminApiPort,
       timezone,
     });

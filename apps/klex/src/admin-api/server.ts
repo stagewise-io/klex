@@ -9,6 +9,7 @@ import type { Introspector } from '@/introspection';
 import type { Mcp } from '@/mcp';
 import type { ModelCallLogger } from '@/model-call-logger';
 import type { ProviderRegistry } from '@/provider-registry';
+import type { EpisodeSummaryLog } from '@/session/chat/extensions/episode-summary/summary-log';
 import type { SkillCatalog } from '@/session/chat/extensions/learning/skill-store';
 import type { SessionHistory } from '@/session-history';
 
@@ -19,6 +20,10 @@ import {
   getCloudStatus,
   getCloudStatusRoute,
 } from './routes/v1/cloud';
+import {
+  listEpisodeSummaries,
+  listEpisodeSummariesRoute,
+} from './routes/v1/episode-summaries';
 import {
   createGodMessage,
   createGodMessageRoute,
@@ -124,6 +129,7 @@ export interface AdminAppDependencies {
   godMessages: GodMessages;
   sessionHistory: SessionHistory;
   skillCatalog: SkillCatalog;
+  episodeSummaryLog: EpisodeSummaryLog;
   logger: ModuleLogger;
   localPort: number | undefined;
   timezone: string;
@@ -181,6 +187,7 @@ export function createAdminApp(deps: AdminAppDependencies) {
     .openapi(getUsageRoute, getUsage(deps))
     .openapi(listSkillsRoute, listSkills(deps))
     .openapi(getSkillRoute, getSkill(deps))
+    .openapi(listEpisodeSummariesRoute, listEpisodeSummaries(deps))
     .openapi(getProviderTypesRoute, getProviderTypes(deps))
     .openapi(canAddProviderRoute, canAddProvider(deps))
     .openapi(getProvidersRoute, getProviders(deps))

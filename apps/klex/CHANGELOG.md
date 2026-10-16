@@ -2,6 +2,37 @@
 
 All notable Klex changes are documented here.
 
+## 0.17.0 (2026-10-16)
+
+### Features
+
+- add episode summary log (5690c71)
+
+### Bug Fixes
+
+- handle reasoning model episode summaries (9f5ae43)
+- address episode summary review findings (b59ad5c)
+
+## 0.16.1 (2026-10-14)
+
+### Bug Fixes
+
+- adopt cloud SDK heartbeat recovery (3d8b9e4)
+
+## 0.16.0 (2026-10-14)
+
+### Features
+
+- add call-local context (a16847b)
+
+### Bug Fixes
+
+- recognize multiple scopes in stable release history (33d6571)
+
+### Other Changes
+
+- simplify voice catalog contract (b1a514c)
+
 ## 0.15.1 (2026-10-12)
 
 ### Bug Fixes

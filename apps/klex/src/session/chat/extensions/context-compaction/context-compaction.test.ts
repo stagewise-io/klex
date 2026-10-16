@@ -195,11 +195,13 @@ function genSuccess(text: string): {
   text: string;
   modelId: string;
   usage: LanguageModelUsage;
+  finishReason: 'stop';
 } {
   return {
     success: true,
     text,
     modelId: 'test-model',
+    finishReason: 'stop',
     usage: {
       inputTokens: 0,
       outputTokens: 0,

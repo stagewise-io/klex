@@ -9,6 +9,7 @@ import type { Introspector } from '@/introspection';
 import type { Mcp } from '@/mcp';
 import type { ModelCallLogger } from '@/model-call-logger';
 import type { ProviderRegistry } from '@/provider-registry';
+import type { EpisodeSummaryLog } from '@/session/chat/extensions/episode-summary';
 import type { SkillCatalog } from '@/session/chat/extensions/learning/skill-store';
 import type { SessionHistory } from '@/session-history';
 
@@ -64,6 +65,10 @@ const skillCatalog: SkillCatalog = {
   get: () => null,
   getUsage: () => null,
 };
+const episodeSummaryLog: EpisodeSummaryLog = {
+  isAvailable: () => false,
+  list: async () => ({ items: [], nextCursor: null, hasMore: false }),
+};
 
 describe('AdminApi', () => {
   describe('dangerous local port enabled', () => {
@@ -81,6 +86,7 @@ describe('AdminApi', () => {
         godMessages,
         sessionHistory,
         skillCatalog,
+        episodeSummaryLog,
         localPort: 19999,
         timezone: 'UTC',
       });
@@ -115,6 +121,7 @@ describe('AdminApi', () => {
         godMessages,
         sessionHistory,
         skillCatalog,
+        episodeSummaryLog,
         localPort: undefined,
         timezone: 'UTC',
       });

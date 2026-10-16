@@ -198,23 +198,129 @@ function authenticatedFetch(instance: ProviderInstance): typeof fetch {
     if (auth.accountId) headers.set('ChatGPT-Account-Id', auth.accountId);
     headers.set('originator', 'codex_cli_rs');
     headers.set('User-Agent', 'codex_cli_rs');
-    return fetch(input, {
+    const request = codexRequestBody(init?.body);
+    const response = await fetch(input, {
       ...init,
       headers,
-      body: codexRequestBody(init?.body),
+      body: request.body,
     });
+    return request.streaming ? response : collectCodexResponse(response);
   };
 }
 
-function codexRequestBody(body: RequestInit['body']): RequestInit['body'] {
-  if (typeof body !== 'string') return body;
+function codexRequestBody(body: RequestInit['body']): {
+  body: RequestInit['body'];
+  streaming: boolean;
+} {
+  if (typeof body !== 'string') return { body, streaming: true };
   try {
     const parsed = JSON.parse(body) as unknown;
-    if (!isRecord(parsed)) return body;
-    const { max_output_tokens: _maxOutputTokens, ...request } = parsed;
-    return JSON.stringify({ ...request, store: false });
+    if (!isRecord(parsed)) return { body, streaming: true };
+    // The subscription endpoint is streaming-only and does not accept sampling
+    // controls. Keep structured-output settings intact: Codex supports schemas.
+    const {
+      max_output_tokens: _maxOutputTokens,
+      temperature: _temperature,
+      top_p: _topP,
+      presence_penalty: _presencePenalty,
+      frequency_penalty: _frequencyPenalty,
+      ...request
+    } = parsed;
+    return {
+      body: JSON.stringify({ ...request, store: false, stream: true }),
+      streaming: parsed.stream === true,
+    };
   } catch {
-    return body;
+    return { body, streaming: true };
+  }
+}
+
+/** Adapt only non-streaming SDK calls; the SDK still owns response decoding. */
+async function collectCodexResponse(response: Response): Promise<Response> {
+  const contentType = response.headers.get('content-type');
+  // Every Codex request above explicitly asks for SSE, but successful responses
+  // can omit Content-Type. Do not pass those streams to the SDK's JSON decoder.
+  // Preserve explicitly non-SSE responses and HTTP errors for SDK handling.
+  if (
+    !response.ok ||
+    (contentType !== null && !contentType.includes('text/event-stream'))
+  )
+    return response;
+  if (!response.body)
+    throw new Error('Codex returned an empty response stream');
+  const reader = response.body.pipeThrough(new TextDecoderStream()).getReader();
+  const items = new Map<number, unknown>();
+  let pending = '';
+  const jsonResponse = (body: Record<string, unknown>) => {
+    const headers = new Headers(response.headers);
+    headers.set('content-type', 'application/json');
+    headers.delete('content-length');
+    headers.delete('content-encoding');
+    headers.delete('transfer-encoding');
+    return new Response(JSON.stringify(body), {
+      status: response.status,
+      statusText: response.statusText,
+      headers,
+    });
+  };
+  const consumeEvent = (frame: string): Response | undefined => {
+    const data = frame
+      .split(/\r?\n/)
+      .filter((line) => line.startsWith('data:'))
+      .map((line) => line.slice(5).replace(/^ /, ''))
+      .join('\n');
+    if (!data || data === '[DONE]') return;
+    const event: unknown = JSON.parse(data);
+    if (!isRecord(event)) return;
+    if (
+      event.type === 'response.output_item.done' &&
+      Number.isInteger(event.output_index) &&
+      typeof event.output_index === 'number' &&
+      event.output_index >= 0 &&
+      isRecord(event.item)
+    )
+      items.set(event.output_index, event.item);
+    if (event.type === 'error')
+      return jsonResponse({
+        error: isRecord(event.error)
+          ? event.error
+          : { message: 'Codex returned a stream error' },
+      });
+    if (
+      (event.type === 'response.completed' ||
+        event.type === 'response.incomplete' ||
+        event.type === 'response.failed') &&
+      isRecord(event.response)
+    ) {
+      const final = event.response;
+      // Some Codex terminal events carry only metadata/usage. Completed item
+      // events are authoritative; never manufacture output from partial deltas.
+      const output =
+        Array.isArray(final.output) && final.output.length > 0
+          ? final.output
+          : [...items].sort(([a], [b]) => a - b).map(([, item]) => item);
+      return jsonResponse({ ...final, output });
+    }
+  };
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      pending += value;
+      let separator = /\r?\n\r?\n/.exec(pending);
+      while (separator) {
+        const result = consumeEvent(pending.slice(0, separator.index));
+        pending = pending.slice(separator.index + separator[0].length);
+        if (result) return result;
+        separator = /\r?\n\r?\n/.exec(pending);
+      }
+    }
+    const result = consumeEvent(pending);
+    if (result) return result;
+    throw new Error('Codex response stream ended before completion');
+  } finally {
+    await reader.cancel().catch(() => {});
+    reader.releaseLock();
   }
 }
 

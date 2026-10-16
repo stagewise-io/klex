@@ -22,6 +22,7 @@ export interface AppFrameProps {
   onDismissToast: (id: number) => void;
   telemetryWarning?: TelemetryWarningNotice;
   updateBanner?: ReactNode;
+  showRuntimeStatus?: boolean;
   children: ReactNode;
 }
 
@@ -36,6 +37,7 @@ export function AppFrame({
   onDismissToast,
   telemetryWarning,
   updateBanner,
+  showRuntimeStatus,
   children,
 }: AppFrameProps) {
   const { width: terminalWidth, height: terminalHeight } = useTerminalSize();
@@ -72,7 +74,7 @@ export function AppFrame({
         ) : null}
       </Box>
       {updateBanner}
-      <Box>
+      <Box flexShrink={0}>
         <GlobalFooter
           keys={keys}
           sessions={sessions}
@@ -80,6 +82,7 @@ export function AppFrame({
           loading={loading}
           toastCount={toasts.length}
           width={terminalWidth}
+          showRuntimeStatus={showRuntimeStatus}
         />
       </Box>
     </Box>

@@ -1,81 +1,51 @@
 import { Box, render, Text, useInput, useStdout } from 'ink';
 import Spinner from 'ink-spinner';
 import TextInput from 'ink-text-input';
-import { type ComponentProps, useEffect, useState } from 'react';
+import {
+  type ComponentProps,
+  type ReactNode,
+  useEffect,
+  useState,
+} from 'react';
 
 import type { AgentDirectory, DiscoveredAgent } from '@/agent-directory';
+import { AppFrame, EmptyState, type MenuItem, MenuList } from '@/cli-ui';
 import { isDirectoryInUse } from '@/directory-lock';
 
 export interface AgentPicker {
   choose(): Promise<string | undefined>;
 }
 
-interface Choice {
-  label: string;
-  value: string;
-  disabled?: boolean;
-}
-
-function GroupedChoiceList({
+function AgentChoiceList({
   items,
   onSelect,
 }: {
-  items: Choice[];
-  onSelect: (item: Choice) => void;
+  items: MenuItem<string>[];
+  onSelect: (item: MenuItem<string>) => void;
 }) {
-  const selectableItems = items.filter((item) => !item.disabled);
-  const [selectedValue, setSelectedValue] = useState(selectableItems[0]?.value);
-
-  useInput((input, key) => {
-    const selectedIndex = Math.max(
-      0,
-      selectableItems.findIndex((item) => item.value === selectedValue),
-    );
-
-    if (input === 'k' || key.upArrow) {
-      const previousIndex =
-        (selectedIndex - 1 + selectableItems.length) % selectableItems.length;
-      setSelectedValue(selectableItems[previousIndex]?.value);
-    } else if (input === 'j' || key.downArrow) {
-      const nextIndex = (selectedIndex + 1) % selectableItems.length;
-      setSelectedValue(selectableItems[nextIndex]?.value);
-    } else if (key.return) {
-      const selectedItem = selectableItems[selectedIndex];
-      if (selectedItem) onSelect(selectedItem);
-    } else if (/^[1-9]$/.test(input)) {
-      const selectedItem = selectableItems[Number.parseInt(input, 10) - 1];
-      if (selectedItem) onSelect(selectedItem);
-    }
-  });
-
+  const { stdout } = useStdout();
   return (
-    <Box flexDirection="column">
-      {items.map((item) => {
-        const isAction = item.value === '__create__';
-        const isSelected = item.value === selectedValue;
-        return (
-          <Box key={item.value} flexDirection="column">
-            {isAction ? (
-              <Box marginTop={1} marginBottom={0}>
-                <Text dimColor>Actions</Text>
-              </Box>
-            ) : null}
-            <Box>
-              <Box width={2}>
-                <Text color={isSelected ? 'blue' : undefined}>
-                  {isSelected ? '›' : ' '}
-                </Text>
-              </Box>
-              <Text
-                color={isSelected ? 'blue' : undefined}
-                dimColor={item.disabled}
-              >
-                {item.label}
-              </Text>
-            </Box>
-          </Box>
-        );
-      })}
+    <MenuList
+      items={items}
+      initialIndex={Math.max(
+        0,
+        items.findIndex((item) => !item.disabled),
+      )}
+      visibleCount={Math.max(
+        1,
+        Math.min(items.length, 10, (stdout.rows || 24) - 10),
+      )}
+      onSelect={onSelect}
+    />
+  );
+}
+
+function PickerError({ message }: { message: string }) {
+  return (
+    <Box height={1} width="100%" overflow="hidden">
+      <Text color="red" wrap="truncate-end">
+        {message.replace(/\s+/g, ' ').trim()}
+      </Text>
     </Box>
   );
 }
@@ -122,17 +92,33 @@ async function chooseAgent(deps: {
   });
 }
 
-function PickerSurface(props: ComponentProps<typeof PickerScreen>) {
-  const { stdout } = useStdout();
+export function PickerSurface(props: ComponentProps<typeof PickerScreen>) {
+  return <PickerScreen {...props} />;
+}
+
+function PickerFrame({
+  title,
+  keys,
+  children,
+}: {
+  title: string;
+  keys: { key: string; label: string }[];
+  children: ReactNode;
+}) {
   return (
-    <Box
-      flexDirection="column"
-      justifyContent="center"
-      height={stdout.rows || 24}
-      width={stdout.columns || 80}
+    <AppFrame
+      screenTitle={title}
+      breadcrumb={title === 'Select a Klex Bot' ? [] : ['Bots']}
+      keys={keys}
+      sessions={[]}
+      cloud={null}
+      loading={false}
+      toasts={[]}
+      onDismissToast={() => {}}
+      showRuntimeStatus={false}
     >
-      <PickerScreen {...props} />
-    </Box>
+      <Box flexDirection="column">{children}</Box>
+    </AppFrame>
   );
 }
 
@@ -163,13 +149,19 @@ function PickerScreen({
       // An in-flight request decides the outcome: cancelling here would
       // report an abort and then open the agent if the request succeeds.
       if (enrollmentSubmitting) return;
+      setError(undefined);
       if (enrolling) {
         onEnrollmentCancelled?.(enrolling);
         setEnrolling(undefined);
       } else if (creating) setCreating(false);
       else onComplete(undefined);
-    } else if (input.toLowerCase() === 'q' && !creating && !enrolling) {
-      onComplete(undefined);
+    } else if (!creating && !enrolling && !key.ctrl && !key.meta) {
+      if (input.toLowerCase() === 'q') onComplete(undefined);
+      else if (input.toLowerCase() === 'a') {
+        setError(undefined);
+        setName('');
+        setCreating(true);
+      }
     }
   });
 
@@ -181,38 +173,50 @@ function PickerScreen({
   }, [creating]);
 
   const selectDirectory = (directory: string) => {
-    void isDirectoryInUse(directory).then((inUse) => {
-      if (inUse) {
-        setError('This agent is already started. Choose another agent.');
-        return;
-      }
-      if (!prepareAgent) {
-        onComplete(directory);
-        return;
-      }
-      void prepareAgent(directory).then(
-        (needsEnrollment) => {
-          if (needsEnrollment && enrollCloud) {
-            setEnrollmentToken('');
-            setEnrollmentSubmitting(false);
-            setError(undefined);
-            setEnrolling(directory);
-          } else {
-            onComplete(directory);
-          }
-        },
-        (cause: unknown) =>
-          setError(cause instanceof Error ? cause.message : String(cause)),
+    setError(undefined);
+    void isDirectoryInUse(directory)
+      .then((inUse) => {
+        if (inUse) {
+          setError('This agent is already started. Choose another agent.');
+          return;
+        }
+        if (!prepareAgent) {
+          onComplete(directory);
+          return;
+        }
+        void prepareAgent(directory).then(
+          (needsEnrollment) => {
+            if (needsEnrollment && enrollCloud) {
+              setEnrollmentToken('');
+              setEnrollmentSubmitting(false);
+              setError(undefined);
+              setEnrolling(directory);
+            } else {
+              onComplete(directory);
+            }
+          },
+          (cause: unknown) =>
+            setError(cause instanceof Error ? cause.message : String(cause)),
+        );
+      })
+      .catch((cause: unknown) =>
+        setError(cause instanceof Error ? cause.message : String(cause)),
       );
-    });
   };
 
   if (enrolling) {
     return (
-      <Box flexDirection="column">
-        <Text bold color="blue">
-          Cloud enrollment
-        </Text>
+      <PickerFrame
+        title="Cloud enrollment"
+        keys={
+          enrollmentSubmitting
+            ? []
+            : [
+                { key: 'enter', label: 'Enroll' },
+                { key: 'esc', label: 'Back' },
+              ]
+        }
+      >
         <Text dimColor>
           Connect this Klex Bot to the cloud so it can be reached remotely.
         </Text>
@@ -224,9 +228,6 @@ function PickerScreen({
           ) : (
             <>
               <Text>Paste your enrollment token below:</Text>
-              <Text dimColor>
-                Press Enter to enroll, or Escape to return to the bot list.
-              </Text>
               <Box marginTop={1}>
                 <Text>
                   Token:{' '}
@@ -239,6 +240,7 @@ function PickerScreen({
                         setError('Enter an enrollment token to continue.');
                         return;
                       }
+                      setError(undefined);
                       setEnrollmentSubmitting(true);
                       void enrollCloud(enrolling, enrollmentToken.trim()).then(
                         () => onComplete(enrolling),
@@ -259,17 +261,20 @@ function PickerScreen({
             </>
           )}
         </Box>
-        {error ? <Text color="red">{error}</Text> : null}
-      </Box>
+        <Box height={1}>{error ? <PickerError message={error} /> : null}</Box>
+      </PickerFrame>
     );
   }
 
   if (creating) {
     return (
-      <Box flexDirection="column">
-        <Text bold color="blue">
-          Create a new Klex Bot
-        </Text>
+      <PickerFrame
+        title="Create a new Klex Bot"
+        keys={[
+          { key: 'enter', label: 'Create' },
+          { key: 'esc', label: 'Back' },
+        ]}
+      >
         <Text dimColor>
           Choose a name for this bot. It will be used as its local identity.
         </Text>
@@ -289,51 +294,49 @@ function PickerScreen({
             }}
           />
         </Box>
-        {error ? <Text color="red">{error}</Text> : null}
-        <Text dimColor>Press Escape to return.</Text>
-      </Box>
+        <Box height={1}>{error ? <PickerError message={error} /> : null}</Box>
+      </PickerFrame>
     );
   }
 
-  const items: Choice[] = [
-    ...agents.map((agent) => ({
-      label: agent.inUse
-        ? `${agent.officialName} (${agent.directory}) — already started`
-        : agent.compatibilityError
-          ? `${agent.officialName} — ${agent.compatibilityError}`
-          : agent.officialName,
-      value: agent.directory,
-      disabled: agent.inUse || Boolean(agent.compatibilityError),
-    })),
-    { label: 'Create a new Klex Bot', value: '__create__' },
-    { label: 'Quit', value: '__quit__' },
-  ];
+  const items: MenuItem<string>[] = agents.map((agent) => ({
+    label: agent.inUse
+      ? `${agent.officialName} (${agent.directory}) — already started`
+      : agent.compatibilityError
+        ? `${agent.officialName} — ${agent.compatibilityError}`
+        : agent.officialName,
+    value: agent.directory,
+    disabled: agent.inUse || Boolean(agent.compatibilityError),
+  }));
 
   return (
-    <Box flexDirection="column">
-      <Text bold color="blue">
-        Select a Klex Bot
+    <PickerFrame
+      title="Select a Klex Bot"
+      keys={[
+        ...(agents.length > 0
+          ? [
+              { key: '↑↓', label: 'Navigate' },
+              { key: 'enter', label: 'Select' },
+            ]
+          : []),
+        { key: 'a', label: 'Create a new Klex Bot' },
+        { key: 'q', label: 'Quit' },
+      ]}
+    >
+      <Text dimColor wrap="truncate-end">
+        Started or incompatible bots cannot be selected.
       </Text>
-      <Text dimColor>
-        Choose an existing bot, or create a new one. Started or incompatible
-        bots are unavailable.
-      </Text>
-      <Box marginTop={1} flexDirection="column">
-        {error ? <Text color="red">{error}</Text> : null}
-        <GroupedChoiceList
+      {items.length > 0 ? (
+        <AgentChoiceList
           items={items}
-          onSelect={(item) => {
-            if (item.value === '__create__') {
-              setName('');
-              setCreating(true);
-            } else if (item.value === '__quit__') {
-              onComplete(undefined);
-            } else {
-              selectDirectory(item.value);
-            }
-          }}
+          onSelect={(item) => selectDirectory(item.value)}
         />
-      </Box>
-    </Box>
+      ) : (
+        <Box marginTop={1}>
+          <EmptyState>No Klex Bots found. Press [a] to create one.</EmptyState>
+        </Box>
+      )}
+      <Box height={1}>{error ? <PickerError message={error} /> : null}</Box>
+    </PickerFrame>
   );
 }

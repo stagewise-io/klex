@@ -54,9 +54,90 @@ Every turn terminates. A hard cap of `MAX_STEPS_PER_TURN` (200) steps covers lon
 
 ## Step
 
-Coordinator: history repair → decision (can a step run?) → model fetch → history transformation (clone → extension pre-process → model-aware conversion → extension post-process) → delegate to GenerationRunner.
+Coordinator: history repair → decision (can a step run?) → shared instinct → model fetch → history transformation (clone → extension pre-process → model-aware conversion → extension post-process) → delegate to GenerationRunner.
 
 Generation operates on a `structuredClone` copy, so mid-turn appends are visible to the next step without corrupting the original. The original is only mutated in synchronous sequential code (turn-start drain, history repair, Continue/check injection, response push, immediate inbox appends).
+
+### Instinct subsystem
+
+`ChatSession` owns one `InstinctRunner`, shared through Turn and Step. It runs before every executable main-agent step, after history repair and the executable-step decision, but before main-model resolution and generation. Extensions opt into classification and/or context preparation through the hooks below; no built-in extension currently participates. With no participating extensions, the phase performs no classifier call.
+
+#### Requests and history delta
+
+Core snapshots canonical history and computes an ID-set delta against the last **committed** instinct, across steps and turns. The first delta contains all history; subsequent deltas include added messages in history order and removed IDs. Mid-history inserts are detected, but edits to an existing message ID are not additions. Interrupted instinct does not advance the baseline, so a retry sees the input again. Persistent parts committed by instinct appear in the next delta.
+
+`getInstinctClassificationRequest(input)` synchronously returns a trusted `prompt`, boolean/predicate/enum/score `keys`, and optional changing `context`, or `null` to opt out. Keep fixed policy in `prompt` and extension state in `context`; never interpolate conversation data into the prompt. Throws and invalid requests opt out. The extension API documents request limits.
+
+Valid requests share one stateless classification batch using `modelSelection.instincts`. Extensions describe classifications; core owns input projection, backend choice, deadlines, and fallback. Both adapters share short question IDs, exact-match policies and extension-state aliases. Generation retains temperature 0 and returns a flat `{ q0: ..., q1: ... }` object, with per-extension partial-JSON salvage after remapping. Evaluation maps predicate/choice/score to SDK boolean/choice/score questions and accepts only complete validated results. Both APIs use zero SDK retries. Each extension receives only its own normalized answer slice. No valid requests means no classifier call. An empty Instincts list defaults to the ordered Chat model list via generation; with neither list available, classification is `unavailable`. Reaction-only extensions receive `classification: null`.
+
+Generation predicates and SDK booleans carry `P(true)`, not confidence in the selected answer. Legacy boolean keys normalize to true only when `P(true) > 0.5`; a tie is false. New predicate keys expose the numeric probability directly. Score keys declare 2–32 uniquely labelled, described, ordered levels and return a probability-weighted mean of zero-based level indices (fractional values allowed), not the most probable label. Provider-specific limits still apply (the installed native TypeSafe SDK allows at most 10 score levels). Successful evaluation outcomes may include key-scoped raw probabilities and genuine choice/score distributions; generation estimates are not represented as provider evaluation metadata or calibrated confidence. Enum descriptors may provide `valueDescriptions` for declared values (500 characters each); they do not introduce an implicit unknown option. The shared batch is capped at 128 questions and 128,000 serialized adapter-payload characters, including the schema and adapter-specific instructions/options. Oversized batches fail open rather than truncating extension policy.
+
+#### Model input and configuration
+
+Generation places trusted policies and question declarations in its system prompt, with question meanings omitted from the JSON schema to avoid duplication. Both adapters use the shared history-view `LINES_FORMAT_PROMPT` rather than a classifier-specific description of record headers. Evaluation places that legend and shared policies once in its shared state, not in every question. Evidence contains optional `<state extension="eN">` blocks and one chronological `<agent-activity>` block. The classifier selects exactly the last five main-agent history messages (or all if fewer exist), oldest to newest, without `[new]` / `[earlier]` annotations. The prompt explains that the final entry is the most recent. Empty projections consume a window slot; selection never scans further back to fill them. `createInstinctHistoryView` supplies the canonical records directly: `user`, `your_output`, `your_action <tool> <status>` with `result`/`error` sections, `context <source>` and extension data labels, with the shared `¦` data-line prefix; message IDs are omitted, not used to deduplicate equal text. State and activity are data, never question instructions. Wrapper, policy and question-tag lookalikes are neutralized. These are injection mitigations, not guarantees about model compliance.
+
+The `instinct` config schema defines deadlines and size limits. The five-message window is fixed; legacy `recentMessageCount` and `deltaMessageCap` fields remain readable for stored-config compatibility but no longer control classifier input. Size limits can reduce the window further, preferring its newest messages; an oversized newest message is truncated. The history budget includes record separators but not the system prompt, schema or extension-state blocks. Data-part transformers project only the selected window, once per data-part occurrence, retaining full-history occurrence indices. Binary media and model-private reasoning are not forwarded. Delta tracking still serves extension lifecycle callbacks, not classifier evidence selection.
+
+Configure `modelSelection.instincts` with ordered `{ providerId, modelId, api: 'generation' | 'evaluation', providerOptions?, attemptTimeoutMs? }` entries. Identity includes the API, so the same model can appear once per API. Other purposes remain generation-only. Existing selections migrate to generation without changing options/order or adding attempt limits. Its default list is empty. When no Instincts entries are selected, classification uses the ordered Chat model list via generation, preserving provider options without persisting a separate Instincts selection. Explicit Instincts entries replace this default; their failures do not append Chat candidates. With neither list available, classification reports unavailable. The instinct enabled flag and existing classifier budgets still apply.
+
+Each attempt uses the lesser of its configured timeout and the remaining absolute classifier budget. Omitted timeouts use that remaining budget; new CLI entries default to 1,500 ms and can be edited from 1 to 120,000 ms or cleared. Resolution/preparation/inference/validation share the deadline. Candidates are resolved from one settings snapshot and attempted in order, including across APIs. Unsupported, malformed, and individually timed-out attempts permit fallback. A complete result wins. After exhaustion, core may salvage only the latest recoverable generation response, never fragments from multiple attempts or partial evaluation answers. Caller cancellation/global timeout discard even salvage. Late results cannot change preparation or session accounting.
+
+OpenAI, Anthropic, and Google Gemini expose SDK evaluation factories, but the installed adapters internally perform structured generation, force reasoning off, and lack standard temperature/output-token controls. Evaluation is not inherently faster, cheaper, or more accurate. The native `typesafe-ai` provider exposes evaluation only, with documented `jev-latest` model listing; configure its `apiKey` (environment placeholders supported), optional `baseUrl`, and optional `headers` through the existing provider settings. It is rejected for chat. Its connectivity test itself performs a paid synthetic evaluation; listing/discovery does not.
+
+In the instinct detail view, `e` edits the highlighted production attempt timeout. There is no synthetic operation-test action, results dialog, or dedicated Admin API test endpoint. Normal provider connectivity tests remain separate from session instinct execution.
+
+#### Awaited reactions and staging
+
+`onInstinct(ctx)` runs concurrently for every extension defining it, with isolated snapshots and private staging buffers. Main generation waits for all reactions or the shared deadline. Classification consumes part of that budget.
+
+Pass `ctx.signal` to I/O and avoid blocking the event loop. Await all staged writes: buffers seal as each reaction settles, and late writes throw. Background results must use normal inbox delivery.
+
+| Preparation method | Retention |
+| --- | --- |
+| `appendPersistent(parts)` | One canonical message per extension, in factory order; survives generation failure. Only extension-owned `data-*` parts with registered transformers are accepted. |
+| `appendProvisional(parts)` | Merged into provisional step context; retained only on successful generation without fallback, like `getProvisionalStepContext`. |
+| `appendEphemeral(parts)` | This step's inference clone only; never canonical history or the next classifier's transcript. |
+
+Successful buffers commit synchronously in factory order, once. A failed or timed-out reaction loses its entire buffer; already successful reactions can still commit. Critical input, lease quiescence or session cancellation drops **all** staged context and preserves the delta baseline. The transaction covers staged parts only: extension-owned state mutations and external side effects are not rolled back automatically.
+
+#### Integration example
+
+Inside an extension class, with extension-owned state and context-loading methods:
+
+```ts
+const CONTEXT_QUESTION = defineInstinctClassification({
+  prompt:
+    'Decide whether the new input needs additional context beyond the supplied state. Choose false when already covered or uncertain.',
+  keys: {
+    needsContext: {
+      type: 'boolean',
+      description: 'Whether additional context should be loaded before generation.',
+    },
+  },
+});
+
+getInstinctClassificationRequest(input: InstinctInput) {
+  if (!input.delta.added.some((message) => message.role === 'user')) return null;
+  return { ...CONTEXT_QUESTION, context: this.describeLoadedState() };
+}
+
+async onInstinct(ctx: InstinctContext): Promise<void> {
+  const answers = readInstinctClassification(ctx, CONTEXT_QUESTION);
+  if (!answers?.needsContext || ctx.signal.aborted) return;
+  const text = await this.loadContext(ctx.history, ctx.signal);
+  if (text && !ctx.signal.aborted) {
+    ctx.prepare.appendEphemeral([{ type: 'text', text }]);
+  }
+}
+```
+
+Import the helpers and types from the extension API. This example skips work on absent or unsuccessful classification. Ephemeral results must not be recorded as durably loaded in extension state.
+
+#### Observability
+
+Every settled attempt contributes available session usage once under `core:instinct-classifier`, including failed generation usage when exposed by the SDK. Durable SDK tracing records generation and evaluation separately, respecting the content-capture policy for evaluation state/questions/results and cleaning up errors/aborts without late duplicate records. Missing token/cache metrics are not emitted as measured zero; event records expose API and nullable availability flags, and aggregate incompleteness counts indicate when numeric sums are only reported lower bounds.
+
+Classifier usage is attributed to `core:instinct-classifier`. In regular sessions, the session → turn → step trace contains `step.instinct` → `step.instinct.classifier` → `instinct.attempt` → the SDK model-call span (`generate_content` or `evaluate`), plus per-extension `step.instinct.reaction` spans. These spans share the session trace and conversation identity; the whole instinct phase finishes before the main `generate_content` span starts. Advanced tracing retains call metadata without prompt/output content. Debug tracing includes generation system instructions, input/output messages, or evaluation state/questions/answers, subject to credential scrubbing. Session-level integration tests exercise the production tracing registration and export-time privacy filter for generation, evaluation, and mixed fallback. Session introspection exposes `instinct.lastSummary`; step-completion events include instinct duration, classifier status, per-extension reaction status and staged-part counts, plus interruption accounting.
 
 ## Native media input
 
@@ -105,7 +186,7 @@ The memory extension also owns a second child session, `memory-retrieval`, creat
 - **Index**: `episodic-search.sqlite` in the extension data directory is a rebuildable FTS index over the JSONL episode files, registered as a local-data store. The episode files are the source of truth. The index reconciles against them before search; schema mismatches stop startup instead of rewriting the file.
 - **Inputs**: the main session sends explicit `recall` tool calls, and after every step `renderObservation` streams the history delta after a cursor. Observations contain only incoming data (user text, context, one-line tool-call summaries), and exclude memory results and `recall` calls so the child never observes its own output. A backlog drains oldest-first in budget-sized batches (a few per step); each message is clipped on its own, so no message between batches is skipped. The cursor only advances past batches the child accepted.
 - **Tools**: the child searches with `searchMemory` (`auto`, `exact`, or `fuzzy` mode; fuzzy expands unknown terms by bounded edit distance), expands hits with `readMemoryContext` through opaque per-turn handles, and checks index state with `inspectMemory`. Search, read, and output budgets apply per child turn.
-- **Output**: the only path back is `surfaceMemory`. Every text memory puts into the main session is wrapped in exactly one `<memory>` block; memory tags inside the content are defused. Each recall carries an id (`<recall id="r1">`); a surface answers a recall only when it cites an id that is still open (answer window), otherwise it is proactive. Recall answers arrive with `Default` urgency and bypass deduplication. Proactive memories are `Default` while a main turn is active and `Deferrable` otherwise, and are deduplicated by scope and text fingerprint. Recalls are limited per fingerprint per main-session task (latest user message).
+- **Background output**: the retrieval child's path back is `surfaceMemory`. Every text memory puts into the main session is wrapped in exactly one `<memory>` block; memory tags inside the content are defused. Each recall carries an id (`<recall id="r1">`); a surface answers a recall only when it cites an id that is still open (answer window), otherwise it is proactive. Recall answers arrive with `Default` urgency and bypass deduplication. Proactive memories are `Default` while a main turn is active and `Deferrable` otherwise, and are deduplicated by scope and text fingerprint. Recalls are limited per fingerprint per main-session task (latest user message).
 
 ## Learned skills
 

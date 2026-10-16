@@ -138,7 +138,11 @@ class ModelCallLoggerModule implements ModelCallLogger {
       {
         'event.name': 'model.call_completed',
         ...(record.sessionId ? { 'klex.session.id': record.sessionId } : {}),
-        'gen_ai.operation.name': 'generate_content',
+        'gen_ai.operation.name':
+          record.api === 'evaluation' ? 'evaluate' : 'generate_content',
+        'klex.model.api': record.api,
+        'klex.usage.token_reported': record.tokenUsageReported,
+        'klex.usage.cache_reported': record.cacheUsageReported,
         'gen_ai.provider.name': record.providerType,
         'klex.model.provider_type': record.providerType,
         'klex.model.provider_id': record.providerId,
@@ -146,11 +150,20 @@ class ModelCallLoggerModule implements ModelCallLogger {
         'klex.call.source': record.source,
         'klex.outcome': record.isError ? 'error' : 'success',
         'gen_ai.response.finish_reasons': [record.finishReason],
-        'gen_ai.usage.input_tokens': record.inputTokens,
-        'gen_ai.usage.output_tokens': record.outputTokens,
-        'gen_ai.usage.cache_read.input_tokens': record.inputCacheReadTokens,
-        'gen_ai.usage.cache_creation.input_tokens':
-          record.inputCacheWriteTokens,
+        ...(record.tokenUsageReported === true
+          ? {
+              'gen_ai.usage.input_tokens': record.inputTokens,
+              'gen_ai.usage.output_tokens': record.outputTokens,
+            }
+          : {}),
+        ...(record.cacheUsageReported === true
+          ? {
+              'gen_ai.usage.cache_read.input_tokens':
+                record.inputCacheReadTokens,
+              'gen_ai.usage.cache_creation.input_tokens':
+                record.inputCacheWriteTokens,
+            }
+          : {}),
         duration_ms: record.totalDurationMs,
         ...(record.ttftMs === null
           ? {}
@@ -222,6 +235,11 @@ class ModelCallLoggerModule implements ModelCallLogger {
       bucket: null,
       splitKey: this.resolveSplitKey(row, query.splitBy),
       callCount: 1,
+      api: row.api,
+      tokenUsageReported: row.tokenUsageReported,
+      cacheUsageReported: row.cacheUsageReported,
+      tokenUsageUnreportedCount: row.tokenUsageReported === true ? 0 : 1,
+      cacheUsageUnreportedCount: row.cacheUsageReported === true ? 0 : 1,
       inputTokens: row.inputTokens,
       outputTokens: row.outputTokens,
       inputCacheWriteTokens: row.inputCacheWriteTokens,
@@ -278,6 +296,8 @@ SELECT
   ${bucketExpr} AS bucket,
   ${splitSelect} AS split_key,
   COUNT(*) AS call_count,
+  SUM(CASE WHEN token_usage_reported = 1 THEN 0 ELSE 1 END) AS token_usage_unreported_count,
+  SUM(CASE WHEN cache_usage_reported = 1 THEN 0 ELSE 1 END) AS cache_usage_unreported_count,
   SUM(input_tokens) AS input_tokens,
   SUM(output_tokens) AS output_tokens,
   SUM(input_cache_write_tokens) AS input_cache_write_tokens,
@@ -297,6 +317,11 @@ ${orderByClause}
       bucket: (row.bucket as string | null) ?? null,
       splitKey: (row.split_key as string | null) ?? null,
       callCount: Number(row.call_count ?? 0),
+      api: null,
+      tokenUsageReported: null,
+      cacheUsageReported: null,
+      tokenUsageUnreportedCount: Number(row.token_usage_unreported_count ?? 0),
+      cacheUsageUnreportedCount: Number(row.cache_usage_unreported_count ?? 0),
       inputTokens: Number(row.input_tokens ?? 0),
       outputTokens: Number(row.output_tokens ?? 0),
       inputCacheWriteTokens: Number(row.input_cache_write_tokens ?? 0),

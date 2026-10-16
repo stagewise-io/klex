@@ -164,18 +164,20 @@ export interface SessionTelemetryState {
   lastCallCacheReadTokens?: number;
   lastCallCacheWriteTokens?: number;
   lastCallCacheReadRatio?: number;
-  lastCallSource?: 'chat' | 'extension';
+  lastCallSource?: 'chat' | 'extension' | 'operation-test';
 }
 
 export interface ModelCallUsage {
   sessionId?: string | null;
+  tokenUsageReported?: boolean;
+  cacheUsageReported?: boolean;
   inputTokens: number;
   outputTokens: number;
   inputCacheReadTokens: number;
   inputCacheWriteTokens: number;
   operationName?: string;
   providerName?: string;
-  source?: 'chat' | 'extension';
+  source?: 'chat' | 'extension' | 'operation-test';
   finishReason?: string;
   isError?: boolean;
   errorType?: string | null;
@@ -870,10 +872,19 @@ class TelemetryMetricsModule implements TelemetryMetrics {
     if (advanced && usage.sessionId) {
       const session = this.sessions.get(usage.sessionId);
       if (session) {
-        session.lastCallInputTokens = usage.inputTokens;
-        session.lastCallCacheReadTokens = usage.inputCacheReadTokens;
-        session.lastCallCacheWriteTokens = usage.inputCacheWriteTokens;
+        session.lastCallInputTokens =
+          usage.tokenUsageReported === false ? undefined : usage.inputTokens;
+        session.lastCallCacheReadTokens =
+          usage.cacheUsageReported === false
+            ? undefined
+            : usage.inputCacheReadTokens;
+        session.lastCallCacheWriteTokens =
+          usage.cacheUsageReported === false
+            ? undefined
+            : usage.inputCacheWriteTokens;
         session.lastCallCacheReadRatio =
+          usage.tokenUsageReported !== false &&
+          usage.cacheUsageReported !== false &&
           usage.inputTokens > 0
             ? usage.inputCacheReadTokens / usage.inputTokens
             : undefined;
@@ -903,7 +914,7 @@ class TelemetryMetricsModule implements TelemetryMetrics {
     }
     // Failed and aborted calls carry no provider usage; recording their
     // placeholder zeros would distort the per-operation distributions.
-    if (!usage.isError) {
+    if (!usage.isError && usage.tokenUsageReported !== false) {
       this.inputTokensPerOperation?.record(
         usage.inputTokens,
         dimensions,

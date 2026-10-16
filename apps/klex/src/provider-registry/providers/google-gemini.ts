@@ -260,6 +260,8 @@ export const googleGeminiProviderDefinition: ProviderDefinition = {
   },
   resolveModelMetadata: resolveGoogleModelMetadata,
   createLanguageModel,
+  createEvaluationModel: (instance, modelId) =>
+    createProvider(instance).evaluationModel(modelId),
   discoverModels,
   listVoices: discoverGeminiVoices,
   getVoicePreview: generateVoicePreview,
@@ -273,10 +275,14 @@ function createLanguageModel(
   instance: ProviderInstance,
   modelId: string,
 ): LanguageModelV4 {
+  return createProvider(instance).languageModel(modelId);
+}
+
+function createProvider(instance: ProviderInstance) {
   return createGoogle({
     apiKey: setting(instance, 'apiKey') ?? '',
     headers: customHeaders(instance),
-  }).languageModel(modelId);
+  });
 }
 
 async function discoverModels(

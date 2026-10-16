@@ -20,6 +20,8 @@ const type: ProviderTypeInfo = {
     modelDiscovery: true,
     connectivityTest: true,
     customModels: true,
+    generation: true,
+    evaluation: false,
   },
   settingsSchema: {
     type: 'object',

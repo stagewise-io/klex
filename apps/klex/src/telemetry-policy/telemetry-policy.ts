@@ -28,6 +28,7 @@ const ADVANCED_STRING_SPAN_ATTRIBUTES = new Set([
   'klex.model.provider_type',
   'klex.model.provider_id',
   'klex.model.model_id',
+  'klex.model.api',
   // Klex operation and outcome enums
   'klex.operation.name',
   'klex.outcome',

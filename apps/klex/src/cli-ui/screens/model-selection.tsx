@@ -6,6 +6,7 @@ import {
   type AdminApiClient,
   AdminApiClientError,
   entryToModelId,
+  type InstinctModelSelectionEntry,
   type KnownModel,
   type KnownModelsResponse,
   type ModelSelection,
@@ -39,18 +40,25 @@ type Purpose =
   | 'memory'
   | 'imageVision'
   | 'audioListening'
+  | 'instincts'
   | 'voice.sts'
   | 'voice.tts'
   | 'voice.stt';
 
+type ModelReference = ModelSelectionEntry | InstinctModelSelectionEntry;
+
 export function containsModelReference(
-  entries: readonly ModelSelectionEntry[],
-  reference: ModelSelectionEntry,
+  entries: readonly ModelReference[],
+  reference: ModelReference,
+  instincts = false,
 ): boolean {
   return entries.some(
     (entry) =>
       entry.providerId === reference.providerId &&
-      entry.modelId === reference.modelId,
+      entry.modelId === reference.modelId &&
+      (!instincts ||
+        ('api' in entry ? entry.api : 'generation') ===
+          ('api' in reference ? reference.api : 'generation')),
   );
 }
 
@@ -58,6 +66,7 @@ const PURPOSES: { key: Purpose; label: string }[] = [
   { key: 'chat', label: 'Chat' },
   { key: 'consult', label: 'Consult' },
   { key: 'compaction', label: 'Compaction' },
+  { key: 'instincts', label: 'Instincts' },
   { key: 'memory', label: 'Memory' },
   { key: 'imageVision', label: 'Image Vision' },
   { key: 'audioListening', label: 'Audio Listening' },
@@ -83,7 +92,27 @@ export function matchesModelSearch(model: KnownModel, query: string): boolean {
   );
 }
 
+export function availableInstinctApis(
+  provider: ProviderInfo,
+  model?: KnownModel,
+): InstinctModelSelectionEntry['api'][] {
+  const kind = model?.kind;
+  if (kind && !['language', 'evaluation', 'unknown'].includes(kind)) return [];
+  const capabilities = provider.metadata.capabilities;
+  return [
+    ...(capabilities.generation && kind !== 'evaluation'
+      ? ['generation' as const]
+      : []),
+    ...(capabilities.evaluation ? ['evaluation' as const] : []),
+  ];
+}
+
+function modelReferenceLabel(entry: ModelReference): string {
+  return `${entryToModelId(entry)}${'api' in entry ? ` [${entry.api}]` : ''}`;
+}
+
 function supportsPurpose(model: KnownModel, purpose: Purpose): boolean {
+  if (purpose === 'instincts' && model.kind === 'evaluation') return true;
   if (purpose === 'imageVision')
     return model.capabilities?.input?.image !== undefined;
   if (purpose === 'audioListening')
@@ -105,7 +134,9 @@ type Mode =
   | 'choose-provider'
   | 'choose-model'
   | 'add-manual'
-  | 'delete-confirm';
+  | 'delete-confirm'
+  | 'choose-api'
+  | 'edit-timeout';
 
 export function ModelSelectionScreen({
   apiClient,
@@ -128,7 +159,20 @@ export function ModelSelectionScreen({
   const [selection, setSelection] = useState<ModelSelection | null>(null);
   const [detailIndex, setDetailIndex] = useState(0);
   const [loading, setLoading] = useState(true);
+  const [mutationState, setMutationState] = useState({ pending: false });
+  const mutationPending = mutationState.pending;
+  const mutationLock = useRef(false);
+  // Keep the synchronous input lock until the confirmed selection and highlight
+  // have rendered together, not merely until the HTTP promise settles.
+  useEffect(() => {
+    mutationLock.current = mutationState.pending;
+  }, [mutationState]);
   const modelsRequest = useRef(0);
+  const [pendingTimeout, setPendingTimeout] = useState('');
+  const highlightedInstinct =
+    selectedPurpose === 'instincts'
+      ? selection?.instincts[detailIndex]
+      : undefined;
 
   useEffect(() => {
     let cancelled = false;
@@ -173,7 +217,9 @@ export function ModelSelectionScreen({
 
   useEffect(() => {
     setActive(
-      mode === 'add-manual' || (mode === 'choose-model' && modelFilterFocused),
+      mode === 'add-manual' ||
+        mode === 'edit-timeout' ||
+        (mode === 'choose-model' && modelFilterFocused),
     );
   }, [mode, modelFilterFocused, setActive]);
 
@@ -185,6 +231,8 @@ export function ModelSelectionScreen({
       'choose-model': `Choose Model — ${selectedPurpose ?? ''}`,
       'add-manual': `Add Manual Model — ${selectedPurpose ?? ''}`,
       'delete-confirm': `Delete Model — ${selectedPurpose ?? ''}`,
+      'choose-api': 'Choose Instinct API',
+      'edit-timeout': 'Edit Instinct Attempt Timeout',
     };
     let detailModelCount = 0;
     if (selectedPurpose && selection) {
@@ -201,6 +249,8 @@ export function ModelSelectionScreen({
       detailKeys.push({ key: 'shift+↓', label: 'Move down' });
     if (detailModelCount > 0)
       detailKeys.push({ key: 'd', label: 'Delete last' });
+    if (selectedPurpose === 'instincts' && detailModelCount > 0)
+      detailKeys.push({ key: 'e', label: 'Attempt timeout' });
     detailKeys.push({ key: 'esc', label: 'Back' });
 
     const keysByMode: Record<Mode, { key: string; label: string }[]> = {
@@ -218,6 +268,14 @@ export function ModelSelectionScreen({
         { key: 'enter', label: 'Add' },
         { key: 'esc', label: 'Models' },
       ],
+      'choose-api': [
+        { key: 'enter', label: 'Choose API' },
+        { key: 'esc', label: 'Cancel' },
+      ],
+      'edit-timeout': [
+        { key: 'enter', label: 'Save' },
+        { key: 'esc', label: 'Cancel' },
+      ],
       'delete-confirm': [
         { key: 'y', label: 'Confirm' },
         { key: 'n', label: 'Cancel' },
@@ -226,12 +284,13 @@ export function ModelSelectionScreen({
     setMeta({
       title: titles[mode],
       breadcrumb: ['Home', 'Settings'],
-      keys: keysByMode[mode],
+      keys: mutationPending ? [] : keysByMode[mode],
     });
-  }, [setMeta, mode, selectedPurpose, selection, detailIndex]);
+  }, [setMeta, mode, selectedPurpose, selection, detailIndex, mutationPending]);
 
   useMenuInput({
     [MenuKeys.Back]: () => {
+      if (mutationLock.current) return;
       if (mode === 'list') onBack();
       else if (mode === 'detail') {
         setMode('list');
@@ -243,6 +302,7 @@ export function ModelSelectionScreen({
       } else setMode('detail');
     },
     [MenuKeys.Add]: () => {
+      if (mutationLock.current) return;
       if (mode === 'detail') {
         setPendingModelId('');
         setHighlightedProviderId(undefined);
@@ -254,14 +314,24 @@ export function ModelSelectionScreen({
       }
     },
     [MenuKeys.Delete]: () => {
+      if (mutationLock.current) return;
       if (mode === 'detail') setMode('delete-confirm');
+    },
+    e: () => {
+      if (mutationLock.current) return;
+      if (mode === 'detail' && highlightedInstinct) {
+        setPendingTimeout(
+          highlightedInstinct.attemptTimeoutMs?.toString() ?? '',
+        );
+        setMode('edit-timeout');
+      }
     },
     '/': () => {
       if (mode === 'choose-model') setModelFilterFocused(true);
     },
   });
 
-  function getModels(purpose: Purpose): ModelSelectionEntry[] {
+  function getModels(purpose: Purpose): ModelReference[] {
     if (!selection) return [];
     if (purpose.startsWith('voice.')) {
       const voiceKey = purpose.split('.')[1] as 'sts' | 'tts' | 'stt';
@@ -272,9 +342,12 @@ export function ModelSelectionScreen({
 
   async function patchPurpose(
     purpose: Purpose,
-    references: ModelSelectionEntry[],
+    references: ModelReference[],
+    confirmedIndex?: number,
   ): Promise<boolean> {
-    if (!selection) return false;
+    if (!selection || mutationLock.current) return false;
+    mutationLock.current = true;
+    setMutationState({ pending: true });
     let patchBody: Record<string, unknown>;
     if (purpose.startsWith('voice.')) {
       const voiceKey = purpose.split('.')[1] as 'sts' | 'tts' | 'stt';
@@ -292,6 +365,7 @@ export function ModelSelectionScreen({
     try {
       const updated = await apiClient.patchModelSelection(patchBody);
       setSelection(updated);
+      if (confirmedIndex !== undefined) setDetailIndex(confirmedIndex);
       if (updated.warnings && updated.warnings.length > 0) {
         for (const w of updated.warnings) {
           pushToast(w.message, 'warning');
@@ -304,11 +378,13 @@ export function ModelSelectionScreen({
         'error',
       );
       return false;
+    } finally {
+      setMutationState({ pending: false });
     }
   }
 
   async function moveHighlightedModel(offset: -1 | 1): Promise<void> {
-    if (!selectedPurpose) return;
+    if (!selectedPurpose || mutationLock.current) return;
     const current = getModels(selectedPurpose);
     const from = Math.min(detailIndex, current.length - 1);
     const to = from + offset;
@@ -317,18 +393,21 @@ export function ModelSelectionScreen({
     const [moved] = reordered.splice(from, 1);
     if (!moved) return;
     reordered.splice(to, 0, moved);
-    setDetailIndex(to);
-    if (await patchPurpose(selectedPurpose, reordered)) {
+    if (await patchPurpose(selectedPurpose, reordered, to)) {
       pushToast('Model priority updated', 'info');
-    } else {
-      setDetailIndex(from);
     }
   }
 
-  async function addModel(reference: ModelSelectionEntry): Promise<void> {
+  async function addModel(reference: ModelReference): Promise<void> {
     if (!selectedPurpose) return;
     const current = getModels(selectedPurpose);
-    if (containsModelReference(current, reference)) {
+    if (
+      containsModelReference(
+        current,
+        reference,
+        selectedPurpose === 'instincts',
+      )
+    ) {
       pushToast('Model already in list', 'error');
       setMode('detail');
       return;
@@ -341,14 +420,104 @@ export function ModelSelectionScreen({
     }
   }
 
+  function chooseModel(modelId: string) {
+    if (!selectedProvider || !selectedPurpose) return;
+    const reference = { providerId: selectedProvider.id, modelId };
+    if (selectedPurpose !== 'instincts') {
+      void addModel(reference);
+      return;
+    }
+    const apis = availableInstinctApis(
+      selectedProvider,
+      availableModels?.find((model) => model.modelId === modelId),
+    );
+    if (apis.length === 2) {
+      setPendingModelId(modelId);
+      setMode('choose-api');
+    } else if (apis[0])
+      void addModel({ ...reference, api: apis[0], attemptTimeoutMs: 1500 });
+    else
+      pushToast(
+        'No compatible instinct API is available for this model',
+        'error',
+      );
+  }
+
+  if (mode === 'choose-api' && selectedProvider)
+    return (
+      <MenuList
+        items={availableInstinctApis(
+          selectedProvider,
+          availableModels?.find((model) => model.modelId === pendingModelId),
+        ).map((api) => ({ label: `${api} — ${pendingModelId}`, value: api }))}
+        onSelect={(item) =>
+          void addModel({
+            providerId: selectedProvider.id,
+            modelId: pendingModelId,
+            api: item.value,
+            attemptTimeoutMs: 1500,
+          })
+        }
+      />
+    );
+
+  if (mode === 'edit-timeout' && highlightedInstinct)
+    return (
+      <Box flexDirection="column">
+        <Text>
+          Attempt timeout in ms (1–120000). Blank uses the remaining classifier
+          budget.
+        </Text>
+        <TextInput
+          value={pendingTimeout}
+          onChange={setPendingTimeout}
+          onSubmit={async () => {
+            const value = pendingTimeout.trim();
+            if (
+              value &&
+              (!/^[1-9]\d*$/.test(value) || Number(value) > 120000)
+            ) {
+              pushToast(
+                'Enter an integer from 1 to 120000, or leave blank',
+                'error',
+              );
+              return;
+            }
+            const updated = { ...highlightedInstinct };
+            if (value) updated.attemptTimeoutMs = Number(value);
+            else delete updated.attemptTimeoutMs;
+            const entries = [...getModels('instincts')];
+            entries[detailIndex] = updated;
+            if (await patchPurpose('instincts', entries)) setMode('detail');
+          }}
+        />
+      </Box>
+    );
+
   if (mode === 'choose-provider' && selectedPurpose) {
+    const compatibleProviders = providers.filter((provider) =>
+      selectedPurpose === 'instincts'
+        ? provider.metadata.capabilities.generation ||
+          provider.metadata.capabilities.evaluation
+        : selectedPurpose.startsWith('voice.') ||
+          provider.metadata.capabilities.generation,
+    );
+    if (compatibleProviders.length === 0)
+      return (
+        <EmptyState>
+          No configured provider supports this purpose. Add a compatible
+          provider, then try again.
+        </EmptyState>
+      );
     const highlightedProviderIndex = Math.max(
       0,
-      providers.findIndex((provider) => provider.id === highlightedProviderId),
+      compatibleProviders.findIndex(
+        (provider) => provider.id === highlightedProviderId,
+      ),
     );
     return (
       <MenuList
-        items={providers.map((provider) => ({
+        items={compatibleProviders.map((provider) => ({
           label: `${provider.metadata.displayName} (${provider.id})`,
           value: provider.id,
         }))}
@@ -388,6 +557,11 @@ export function ModelSelectionScreen({
     }
     const matchingModels = availableModels
       .filter((model) => supportsPurpose(model, selectedPurpose))
+      .filter(
+        (model) =>
+          selectedPurpose !== 'instincts' ||
+          availableInstinctApis(selectedProvider, model).length > 0,
+      )
       .filter((model) => matchesModelSearch(model, modelSearch));
     const items: Array<{
       key: string;
@@ -445,11 +619,7 @@ export function ModelSelectionScreen({
             onHighlight={(item) => setHighlightedModelKey(item.key)}
             onSelect={(item) => {
               if (item.value.kind === 'manual') setMode('add-manual');
-              else
-                void addModel({
-                  providerId: selectedProvider.id,
-                  modelId: item.value.modelId,
-                });
+              else chooseModel(item.value.modelId);
             }}
           />
         )}
@@ -478,9 +648,7 @@ export function ModelSelectionScreen({
                   modelId,
                   displayName: modelId,
                 })
-                .then(() =>
-                  addModel({ providerId: selectedProvider.id, modelId }),
-                )
+                .then(() => chooseModel(modelId))
                 .catch((error) =>
                   pushToast(
                     error instanceof Error
@@ -517,7 +685,7 @@ export function ModelSelectionScreen({
         onCancel={() => setMode('detail')}
       >
         Delete the last model "
-        {entryToModelId(models[models.length - 1] as ModelSelectionEntry)}"?
+        {modelReferenceLabel(models[models.length - 1] as ModelReference)}"?
       </ConfirmationPanel>
     );
   }
@@ -532,7 +700,11 @@ export function ModelSelectionScreen({
         <Box marginTop={1} flexDirection="column">
           <Text bold>{purposeLabel}</Text>
           {models.length === 0 && (
-            <EmptyState>No models configured for this purpose.</EmptyState>
+            <EmptyState>
+              {selectedPurpose === 'instincts'
+                ? 'No Instincts models configured. Uses Chat models via generation when available.'
+                : 'No models configured for this purpose.'}
+            </EmptyState>
           )}
           {models.length > 0 && (
             <ScrollableBox
@@ -542,12 +714,36 @@ export function ModelSelectionScreen({
               <ModelPriorityList
                 models={models}
                 selectedIndex={detailIndex}
-                onHighlight={setDetailIndex}
+                onHighlight={(index) => {
+                  if (mutationLock.current) return;
+                  setDetailIndex(index);
+                }}
                 onMove={(offset) => void moveHighlightedModel(offset)}
               />
             </ScrollableBox>
           )}
         </Box>
+        {mutationPending && (
+          <ActivityIndicator label="Saving model selection…" />
+        )}
+        {highlightedInstinct && (
+          <Box flexDirection="column" marginTop={1}>
+            <Text>
+              API: {highlightedInstinct.api} · Attempt:{' '}
+              {highlightedInstinct.attemptTimeoutMs === undefined
+                ? 'remaining classifier budget'
+                : `${highlightedInstinct.attemptTimeoutMs} ms`}
+            </Text>
+            <Text>
+              Factory:{' '}
+              {providers.find(
+                (provider) => provider.id === highlightedInstinct.providerId,
+              )?.metadata.capabilities[highlightedInstinct.api]
+                ? 'available'
+                : 'unavailable'}
+            </Text>
+          </Box>
+        )}
       </Box>
     );
   }
@@ -558,7 +754,7 @@ export function ModelSelectionScreen({
     const models = getModels(p.key);
     const preview =
       models.length > 0
-        ? entryToModelId(models[0] as ModelSelectionEntry)
+        ? modelReferenceLabel(models[0] as ModelReference)
         : '—';
     return {
       label: `${p.label} (${models.length} model${models.length === 1 ? '' : 's'}) — ${preview}`,
@@ -601,7 +797,7 @@ function ModelPriorityList({
   onHighlight,
   onMove,
 }: {
-  models: ModelSelectionEntry[];
+  models: ModelReference[];
   selectedIndex: number;
   onHighlight: (index: number) => void;
   onMove: (offset: -1 | 1) => void;
@@ -623,9 +819,15 @@ function ModelPriorityList({
   return (
     <Box flexDirection="column">
       {models.map((model, index) => (
-        <Text key={`${model.providerId}:${model.modelId}`}>
+        <Text
+          key={JSON.stringify([
+            model.providerId,
+            model.modelId,
+            'api' in model ? model.api : null,
+          ])}
+        >
           {index === selectedIndex ? '❯ ' : '  '}
-          {index + 1}. {entryToModelId(model)}{' '}
+          {index + 1}. {modelReferenceLabel(model)}{' '}
           {index === 0 ? '(primary)' : `(fallback #${index})`}
         </Text>
       ))}

@@ -69,6 +69,13 @@ import {
   type SessionInboxBuffer,
   SessionInboxUrgency,
 } from './inbox';
+import {
+  createInstinctRunner,
+  executeInstinctClassification,
+  type InstinctClassificationCallArgs,
+  type InstinctClassificationCallResult,
+  type InstinctRunner,
+} from './instinct';
 import type { ExtendedUIMessage } from './message-types';
 import { createTurn, type Turn, type TurnResult } from './turn';
 import { BackoffManager } from './utils/backoff-manager';
@@ -78,7 +85,9 @@ import {
   sessionIdentityAttributes,
   sessionSpanName,
   tracer,
+  withExtensionIdentifier,
 } from './utils/tracing';
+import { extractUsage } from './utils/usage';
 
 /**
  * Maximum consecutive complete-failure turns before the session terminates.
@@ -88,6 +97,8 @@ const MAX_CONSECUTIVE_FAILURES = 5;
 
 /** Upper bound for an aborted loop to settle before the transcript ends. */
 const LOOP_SETTLE_TIMEOUT_MS = 5_000;
+/** Synthetic identifier for trace and usage attribution of the classifier. */
+const INSTINCT_CLASSIFIER_IDENTIFIER = 'core:instinct-classifier';
 
 export interface ChatSessionDependencies {
   logging: RootLogger;
@@ -154,6 +165,9 @@ class ChatSessionModule implements AgentSession {
   private readonly sessionInbox: SessionInboxBuffer;
 
   private readonly extensionHandler: ExtensionHandler;
+
+  /** Session-scoped: the instinct delta baseline spans steps and turns. */
+  private readonly instinctRunner: InstinctRunner;
 
   private fallbackManager: ModelFallbackManager;
 
@@ -488,27 +502,8 @@ class ChatSessionModule implements AgentSession {
         dataDirectory: this.deps.dataDirectory,
         sessionId: this.sessionId,
         introspectionScope: extensionsScope,
-        onExtensionUsage: (identifier, usage) => {
-          const existing = this.extensionUsage.get(identifier);
-          if (existing) {
-            existing.latest = usage;
-            existing.total = {
-              inputTokens: existing.total.inputTokens + usage.inputTokens,
-              outputTokens: existing.total.outputTokens + usage.outputTokens,
-              inputCacheWriteTokens:
-                existing.total.inputCacheWriteTokens +
-                usage.inputCacheWriteTokens,
-              inputCacheReadTokens:
-                existing.total.inputCacheReadTokens +
-                usage.inputCacheReadTokens,
-            };
-          } else {
-            this.extensionUsage.set(identifier, {
-              latest: usage,
-              total: { ...usage },
-            });
-          }
-        },
+        onExtensionUsage: (identifier, usage) =>
+          this.recordExtensionUsage(identifier, usage),
       });
     } catch (error) {
       this.sessionInbox.close();
@@ -521,6 +516,16 @@ class ChatSessionModule implements AgentSession {
       this.sessionSpan.end();
       throw error;
     }
+
+    this.instinctRunner = createInstinctRunner({
+      logger: this.deps.logger,
+      extensionHandler: this.extensionHandler,
+      getConfig: () => this.deps.config.get().instinct,
+      execute: (args) => this.executeInstinctClassification(args),
+    });
+    sessionScope
+      .child('instinct')
+      .introspect(() => ({ lastSummary: this.instinctRunner.lastSummary }));
 
     this.leaseManager = new GenerationLaneLeaseManager({
       logger: this.deps.logger,
@@ -561,6 +566,58 @@ class ChatSessionModule implements AgentSession {
       this.deps.logger.error({ error }, 'ChatSession startup failed');
       throw error;
     }
+  }
+
+  private recordExtensionUsage(identifier: string, usage: Usage): void {
+    const existing = this.extensionUsage.get(identifier);
+    if (existing) {
+      existing.latest = usage;
+      existing.total = {
+        inputTokens: existing.total.inputTokens + usage.inputTokens,
+        outputTokens: existing.total.outputTokens + usage.outputTokens,
+        inputCacheWriteTokens:
+          existing.total.inputCacheWriteTokens + usage.inputCacheWriteTokens,
+        inputCacheReadTokens:
+          existing.total.inputCacheReadTokens + usage.inputCacheReadTokens,
+      };
+    } else {
+      this.extensionUsage.set(identifier, {
+        latest: usage,
+        total: { ...usage },
+      });
+    }
+  }
+
+  /** Snapshot the configured candidates once; account each settled attempt. */
+  private async executeInstinctClassification(
+    args: InstinctClassificationCallArgs,
+  ): Promise<InstinctClassificationCallResult> {
+    const configuredEntries = this.deps.config.getModelSelection('instincts');
+    const entries =
+      configuredEntries.length > 0
+        ? configuredEntries
+        : this.deps.config.getModelSelection('chat').map((entry) => ({
+            ...entry,
+            api: 'generation' as const,
+          }));
+    const candidates =
+      this.deps.modelResolver.resolveInstinctCandidates(entries);
+    const ctx = withExtensionIdentifier(
+      context.active(),
+      INSTINCT_CLASSIFIER_IDENTIFIER,
+    );
+    return context.with(ctx, () =>
+      executeInstinctClassification(args, {
+        candidates,
+        sessionId: this.sessionId,
+        functionId: `extension:${INSTINCT_CLASSIFIER_IDENTIFIER}`,
+        onUsage: (usage) =>
+          this.recordExtensionUsage(
+            INSTINCT_CLASSIFIER_IDENTIFIER,
+            extractUsage(usage),
+          ),
+      }),
+    );
   }
 
   // ---------------------------------------------------------------------------
@@ -628,13 +685,17 @@ class ChatSessionModule implements AgentSession {
 
           const failures: string[] = [];
           let contentFilterCount = 0;
+          const aborted = () => {
+            span.setAttribute('gen.outcome', 'aborted');
+            return {
+              success: false as const,
+              failureReason: 'cancelled' as const,
+              failureDetails: failures.join('; '),
+            };
+          };
 
           for (const entry of modelIds) {
-            if (args.abortSignal?.aborted)
-              return {
-                success: false as const,
-                failureReason: 'cancelled' as const,
-              };
+            if (args.abortSignal?.aborted) return aborted();
             const modelId = entry.modelId;
             try {
               const model =
@@ -643,67 +704,37 @@ class ChatSessionModule implements AgentSession {
               const providerOptions = resolved.providerOptions as
                 | Record<string, JSONObject>
                 | undefined;
-              const result = await generateText(
-                args.messages
-                  ? {
-                      model,
-                      system: args.system,
-                      messages: args.messages,
-                      tools: args.tools,
-                      temperature: args.temperature,
-                      maxOutputTokens: args.maxOutputTokens,
-                      maxRetries: args.maxRetries ?? 0,
-                      abortSignal: args.abortSignal,
-                      telemetry: {
-                        isEnabled: true,
-                        functionId,
-                        recordInputs: true,
-                        recordOutputs: true,
-                        includeRuntimeContext: {
-                          'conversation.id': true,
-                          'conversation.providerType': true,
-                          'conversation.providerId': true,
-                          'conversation.modelId': true,
-                        },
-                      },
-                      runtimeContext: {
-                        'conversation.id': this.sessionId,
-                        'conversation.providerType': resolved.providerType,
-                        'conversation.providerId': resolved.providerId,
-                        'conversation.modelId': resolved.modelId,
-                      },
-                      ...(providerOptions !== undefined && { providerOptions }),
-                    }
-                  : {
-                      model,
-                      system: args.system,
-                      prompt: args.prompt ?? '',
-                      tools: args.tools,
-                      temperature: args.temperature,
-                      maxOutputTokens: args.maxOutputTokens,
-                      maxRetries: args.maxRetries ?? 0,
-                      abortSignal: args.abortSignal,
-                      telemetry: {
-                        isEnabled: true,
-                        functionId,
-                        recordInputs: true,
-                        recordOutputs: true,
-                        includeRuntimeContext: {
-                          'conversation.id': true,
-                          'conversation.providerType': true,
-                          'conversation.providerId': true,
-                          'conversation.modelId': true,
-                        },
-                      },
-                      runtimeContext: {
-                        'conversation.id': this.sessionId,
-                        'conversation.providerType': resolved.providerType,
-                        'conversation.providerId': resolved.providerId,
-                        'conversation.modelId': resolved.modelId,
-                      },
-                      ...(providerOptions !== undefined && { providerOptions }),
-                    },
-              );
+              const result = await generateText({
+                model,
+                system: args.system,
+                ...(args.messages
+                  ? { messages: args.messages }
+                  : { prompt: args.prompt ?? '' }),
+                tools: args.tools,
+                temperature: args.temperature,
+                maxOutputTokens: args.maxOutputTokens,
+                maxRetries: args.maxRetries ?? 0,
+                abortSignal: args.abortSignal,
+                telemetry: {
+                  isEnabled: true,
+                  functionId,
+                  recordInputs: true,
+                  recordOutputs: true,
+                  includeRuntimeContext: {
+                    'conversation.id': true,
+                    'conversation.providerType': true,
+                    'conversation.providerId': true,
+                    'conversation.modelId': true,
+                  },
+                },
+                runtimeContext: {
+                  'conversation.id': this.sessionId,
+                  'conversation.providerType': resolved.providerType,
+                  'conversation.providerId': resolved.providerId,
+                  'conversation.modelId': resolved.modelId,
+                },
+                ...(providerOptions !== undefined && { providerOptions }),
+              });
 
               if (args.abortSignal?.aborted)
                 return {
@@ -768,11 +799,7 @@ class ChatSessionModule implements AgentSession {
                 finishReason: result.finishReason,
               };
             } catch (error) {
-              if (args.abortSignal?.aborted)
-                return {
-                  success: false as const,
-                  failureReason: 'cancelled' as const,
-                };
+              if (args.abortSignal?.aborted) return aborted();
               const msg =
                 error instanceof Error ? error.message : String(error);
               failures.push(`${modelId}: ${msg}`);
@@ -1195,6 +1222,7 @@ class ChatSessionModule implements AgentSession {
           flushPendingImmediate: this.flushPendingImmediate,
           shouldYieldGenerationLane: () => this.laneSuspended,
           basePrompt: this.deps.basePrompt,
+          instinctRunner: this.instinctRunner,
         });
         this.currentTurn = turn;
 

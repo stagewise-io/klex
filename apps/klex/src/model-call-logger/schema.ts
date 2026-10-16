@@ -30,6 +30,9 @@ export const modelCallsTable = sqliteTable(
     modelId: text('model_id').notNull(),
     source: text('source').notNull(),
     extensionId: text('extension_id'),
+    api: text('api', { enum: ['generation', 'evaluation'] }),
+    tokenUsageReported: integer('token_usage_reported', { mode: 'boolean' }),
+    cacheUsageReported: integer('cache_usage_reported', { mode: 'boolean' }),
     inputTokens: integer('input_tokens').notNull().default(0),
     outputTokens: integer('output_tokens').notNull().default(0),
     inputCacheWriteTokens: integer('input_cache_write_tokens')
@@ -64,7 +67,7 @@ export type ModelCallSchema = {
 };
 
 /** Schema version — increment when adding migrations. */
-export const MODEL_CALL_SCHEMA_VERSION = 2;
+export const MODEL_CALL_SCHEMA_VERSION = 3;
 
 export const MODEL_CALL_MIGRATIONS: SqliteMigration[] = [
   {
@@ -78,6 +81,20 @@ export const MODEL_CALL_MIGRATIONS: SqliteMigration[] = [
       await database.execute('DROP INDEX IF EXISTS idx_model_calls_split');
       await database.execute(
         'CREATE INDEX idx_model_calls_split ON model_calls (provider_type, provider_id, endpoint_id, model_id)',
+      );
+    },
+  },
+  {
+    from: 2,
+    to: 3,
+    name: 'add-api-and-usage-availability',
+    up: async (database) => {
+      await database.execute('ALTER TABLE model_calls ADD COLUMN api TEXT');
+      await database.execute(
+        'ALTER TABLE model_calls ADD COLUMN token_usage_reported INTEGER',
+      );
+      await database.execute(
+        'ALTER TABLE model_calls ADD COLUMN cache_usage_reported INTEGER',
       );
     },
   },
@@ -102,6 +119,9 @@ CREATE TABLE IF NOT EXISTS model_calls (
   model_id TEXT NOT NULL,
   source TEXT NOT NULL,
   extension_id TEXT,
+  api TEXT,
+  token_usage_reported INTEGER,
+  cache_usage_reported INTEGER,
   input_tokens INTEGER NOT NULL DEFAULT 0,
   output_tokens INTEGER NOT NULL DEFAULT 0,
   input_cache_write_tokens INTEGER NOT NULL DEFAULT 0,
@@ -126,12 +146,14 @@ export const MODEL_CALL_STORE_DEFINITION: SqliteStoreDefinition = {
   required: false,
   createIfMissing: true,
   schemaVersion: MODEL_CALL_SCHEMA_VERSION,
-  compatibilityVersion: 1,
-  minimumKlexVersion: '0.3.0',
+  compatibilityVersion: 2,
+  minimumKlexVersion: '0.13.0',
   legacySchemaVersion: 1,
   initSql: MODEL_CALL_INIT_SQL,
   migrations: MODEL_CALL_MIGRATIONS,
   validate: async (client) => {
-    await client.execute('SELECT id FROM model_calls LIMIT 1');
+    await client.execute(
+      'SELECT id, api, token_usage_reported, cache_usage_reported FROM model_calls LIMIT 1',
+    );
   },
 };

@@ -290,6 +290,12 @@ const stsModelSelectionEntryOapiSchema = modelSelectionEntryOapiSchema
       .optional(),
   })
   .openapi('StsModelSelectionEntry');
+const instinctModelSelectionEntryOapiSchema = modelSelectionEntryOapiSchema
+  .extend({
+    api: z.enum(['generation', 'evaluation']).default('generation'),
+    attemptTimeoutMs: z.number().int().positive().max(120_000).optional(),
+  })
+  .openapi('InstinctModelSelectionEntry');
 
 const voiceModelSelectionSchema = z.object({
   sts: z.array(stsModelSelectionEntryOapiSchema),
@@ -305,6 +311,7 @@ const modelSelectionSchema = z
     imageVision: z.array(modelSelectionEntryOapiSchema).default([]),
     audioListening: z.array(modelSelectionEntryOapiSchema).default([]),
     consult: z.array(modelSelectionEntryOapiSchema).default([]),
+    instincts: z.array(instinctModelSelectionEntryOapiSchema).default([]),
     voice: voiceModelSelectionSchema,
   })
   .openapi('ModelSelection');
@@ -317,6 +324,7 @@ const modelSelectionPatchSchema = z
     imageVision: z.array(modelSelectionEntryOapiSchema).optional(),
     audioListening: z.array(modelSelectionEntryOapiSchema).optional(),
     consult: z.array(modelSelectionEntryOapiSchema).optional(),
+    instincts: z.array(instinctModelSelectionEntryOapiSchema).optional(),
     voice: voiceModelSelectionSchema.optional(),
   })
   .openapi('ModelSelectionPatch');
@@ -351,6 +359,8 @@ const providerMetadataSchema = z.object({
     voicePreview: z.boolean(),
     connectivityTest: z.boolean(),
     customModels: z.boolean(),
+    generation: z.boolean(),
+    evaluation: z.boolean(),
   }),
 });
 
@@ -415,6 +425,7 @@ const connectivityResultSchema = z.object({
 
 const modelKindSchema = z.enum([
   'language',
+  'evaluation',
   'speech-to-speech',
   'text-to-speech',
   'speech-to-text',
@@ -1022,7 +1033,36 @@ const usageDataPointSchema = z
       .number()
       .int()
       .describe('Number of model calls in this bucket/split'),
-    inputTokens: z.number().int().describe('Total input (prompt) tokens'),
+    api: z
+      .enum(['generation', 'evaluation'])
+      .nullable()
+      .describe('API identity; null for historical rows or aggregations'),
+    tokenUsageReported: z
+      .boolean()
+      .nullable()
+      .describe(
+        'Both token totals were reported; null for historical rows or aggregations',
+      ),
+    cacheUsageReported: z
+      .boolean()
+      .nullable()
+      .describe(
+        'Both cache totals were reported; null for historical rows or aggregations',
+      ),
+    tokenUsageUnreportedCount: z
+      .number()
+      .int()
+      .nonnegative()
+      .describe('Calls without fully reported token totals'),
+    cacheUsageUnreportedCount: z
+      .number()
+      .int()
+      .nonnegative()
+      .describe('Calls without fully reported cache totals'),
+    inputTokens: z
+      .number()
+      .int()
+      .describe('Reported input-token lower bound when usage is incomplete'),
     outputTokens: z.number().int().describe('Total output (completion) tokens'),
     inputCacheWriteTokens: z
       .number()
@@ -1076,7 +1116,7 @@ const usageDataPointSchema = z
       .nullable()
       .describe('Model ID. Null for aggregated granularities.'),
     source: z
-      .enum(['chat', 'extension'])
+      .enum(['chat', 'extension', 'operation-test'])
       .nullable()
       .describe(
         'Call source: chat-session generation or extension-initiated. Null for aggregated granularities.',

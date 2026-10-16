@@ -135,11 +135,13 @@ describe('learning child session execution', () => {
     const config = {
       get: () => ({
         officialName: 'Atlas',
+        instinct: { enabled: false },
         modelSelection: { chat: ['test:model'], memory: ['test:model'] },
       }),
       getModelSelection: () => [{ providerId: 'test', modelId: 'model' }],
     } as unknown as Config;
     const modelResolver: ChatSessionDependencies['modelResolver'] = {
+      resolveInstinctCandidates: () => [],
       getLanguageModel: () => model,
       resolveModel: () => ({
         providerId: 'test',

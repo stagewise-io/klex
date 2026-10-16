@@ -11,6 +11,8 @@ export interface ProviderMetadata {
     modelDiscovery: boolean;
     connectivityTest: boolean;
     customModels: boolean;
+    generation: boolean;
+    evaluation: boolean;
   };
 }
 
@@ -46,6 +48,7 @@ export interface ProviderOperationResponse {
 }
 export type ModelKind =
   | 'language'
+  | 'evaluation'
   | 'speech-to-speech'
   | 'text-to-speech'
   | 'speech-to-text'
@@ -150,6 +153,11 @@ export interface ModelSelectionEntry {
   providerOptions?: Record<string, Record<string, unknown>>;
 }
 
+export interface InstinctModelSelectionEntry extends ModelSelectionEntry {
+  api: 'generation' | 'evaluation';
+  attemptTimeoutMs?: number;
+}
+
 export function entryToModelId(entry: ModelSelectionEntry): string {
   return `${entry.providerId}:${entry.modelId}`;
 }
@@ -161,6 +169,7 @@ export interface ModelSelection {
   imageVision: ModelSelectionEntry[];
   audioListening: ModelSelectionEntry[];
   consult: ModelSelectionEntry[];
+  instincts: InstinctModelSelectionEntry[];
   voice: {
     sts: ModelSelectionEntry[];
     tts: ModelSelectionEntry[];
@@ -290,10 +299,16 @@ export class AdminApiClient {
 
   private async request<T>(
     path: string,
-    options?: { method?: string; body?: unknown; contentType?: string },
+    options?: {
+      method?: string;
+      body?: unknown;
+      contentType?: string;
+      signal?: AbortSignal;
+    },
   ): Promise<T> {
     const response = await this.fetcher(`${this.baseUrl}${path}`, {
       method: options?.method ?? 'GET',
+      ...(options?.signal && { signal: options.signal }),
       headers:
         options?.body !== undefined
           ? { 'Content-Type': options?.contentType ?? 'application/json' }

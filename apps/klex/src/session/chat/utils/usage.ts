@@ -9,7 +9,10 @@ import type { Usage } from '@/session/types';
  * Cache token details are nested under `inputTokenDetails` and may be
  * absent when the provider does not report them — they default to 0.
  */
-export function extractUsage(usage: LanguageModelUsage): Usage {
+export function extractUsage(
+  usage: Pick<LanguageModelUsage, 'inputTokens' | 'outputTokens'> &
+    Partial<Pick<LanguageModelUsage, 'inputTokenDetails'>>,
+): Usage {
   return {
     inputTokens: usage.inputTokens ?? 0,
     outputTokens: usage.outputTokens ?? 0,

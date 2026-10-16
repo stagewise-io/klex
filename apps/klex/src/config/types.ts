@@ -11,7 +11,7 @@ const providerInstanceIdSchema = z
 const nativeModelIdSchema = z.string().min(1);
 const modelIdSchema = nativeModelIdSchema;
 
-const providerTypeSchema = z.enum([
+const historicalProviderTypeSchema = z.enum([
   'openai',
   'anthropic',
   'google-gemini',
@@ -38,6 +38,14 @@ const providerTypeSchema = z.enum([
   'google-generative',
   'ollama',
 ]);
+const v8ProviderTypeSchema = z.enum([
+  ...historicalProviderTypeSchema.options,
+  'typesafe-ai',
+]);
+const providerTypeSchema = z.enum([
+  ...v8ProviderTypeSchema.options,
+  'vercel-ai-gateway',
+]);
 type ProviderType = z.infer<typeof providerTypeSchema>;
 
 const modelSelectionEntrySchema = z
@@ -61,6 +69,13 @@ const stsModelSelectionEntrySchema = modelSelectionEntrySchema.extend({
     .optional(),
 });
 type StsModelSelectionEntry = z.infer<typeof stsModelSelectionEntrySchema>;
+const instinctModelSelectionEntrySchema = modelSelectionEntrySchema.extend({
+  api: z.enum(['generation', 'evaluation']).default('generation'),
+  attemptTimeoutMs: z.number().int().positive().max(120_000).optional(),
+});
+type InstinctModelSelectionEntry = z.infer<
+  typeof instinctModelSelectionEntrySchema
+>;
 type ModelSelectionEntry = z.infer<typeof modelSelectionEntrySchema>;
 type ModelId = string;
 
@@ -135,7 +150,7 @@ const audioInputCapabilitySchema = z
   })
   .strict();
 
-const modelKindSchema = z.enum([
+const historicalModelKindSchema = z.enum([
   'language',
   'speech-to-speech',
   'text-to-speech',
@@ -145,6 +160,11 @@ const modelKindSchema = z.enum([
   'reranking',
   'moderation',
   'unknown',
+]);
+
+const modelKindSchema = z.enum([
+  ...historicalModelKindSchema.options,
+  'evaluation',
 ]);
 
 const modelInputCapabilitiesSchema = z
@@ -183,6 +203,9 @@ const modelDefinitionSchema = z
   })
   .strict();
 
+const historicalModelDefinitionSchema = modelDefinitionSchema.extend({
+  kind: historicalModelKindSchema.optional(),
+});
 type ModelKind = z.infer<typeof modelKindSchema>;
 type ModelInputCapabilities = z.infer<typeof modelInputCapabilitiesSchema>;
 type ModelCapabilities = z.infer<typeof modelCapabilitiesSchema>;
@@ -318,7 +341,13 @@ const codexSubscriptionSettingsSchema = z
   })
   .strict();
 
+const vercelAiGatewaySettingsSchema = openAiSettingsSchema.extend({
+  teamIdOrSlug: z.string().min(1).optional(),
+});
+
 const providerSettingsSchemas = {
+  'vercel-ai-gateway': vercelAiGatewaySettingsSchema,
+  'typesafe-ai': openAiSettingsSchema,
   openai: openAiSettingsSchema,
   anthropic: apiKeySettingsSchema,
   'google-gemini': apiKeySettingsSchema,
@@ -347,6 +376,8 @@ const providerSettingsSchemas = {
 } satisfies Record<ProviderType, z.ZodType<Record<string, unknown>>>;
 
 const providerSecretSettings = {
+  'vercel-ai-gateway': ['apiKey'],
+  'typesafe-ai': ['apiKey'],
   openai: ['apiKey'],
   anthropic: ['apiKey'],
   'google-gemini': ['apiKey'],
@@ -437,10 +468,24 @@ const providerConfigSchema = z
     settings: parseProviderSettings(provider.type, provider.settings),
   }));
 
+const historicalProviderConfigSchema = z
+  .object({
+    type: historicalProviderTypeSchema,
+    settings: z.record(z.string(), z.unknown()).default({}),
+    knownModels: z
+      .record(z.string().min(1), historicalModelDefinitionSchema)
+      .optional(),
+  })
+  .strict()
+  .transform((provider) => ({
+    ...provider,
+    settings: parseProviderSettings(provider.type, provider.settings),
+  }));
+
 type ProviderConfig = z.infer<typeof providerConfigSchema>;
 
 const legacyManualEndpointSchema = legacyEndpointConfigSchema.extend({
-  knownModels: z.record(z.string(), modelDefinitionSchema).optional(),
+  knownModels: z.record(z.string(), historicalModelDefinitionSchema).optional(),
 });
 
 const legacyProviderConfigSchema = z.union([
@@ -448,7 +493,9 @@ const legacyProviderConfigSchema = z.union([
     .object({
       preset: legacyProviderPresetSchema,
       auth: legacyEndpointAuthSchema,
-      knownModels: z.record(z.string(), modelDefinitionSchema).optional(),
+      knownModels: z
+        .record(z.string(), historicalModelDefinitionSchema)
+        .optional(),
     })
     .strict(),
   z
@@ -487,9 +534,10 @@ export const MODEL_PURPOSES = [
   'imageVision',
   'audioListening',
   'consult',
+  'instincts',
 ] as const;
 
-const modelSelectionSchema = z
+const historicalModelSelectionSchema = z
   .object({
     chat: z.array(modelSelectionEntrySchema).default([]),
     compaction: z.array(modelSelectionEntrySchema).default([]),
@@ -501,16 +549,34 @@ const modelSelectionSchema = z
   })
   .strict();
 
-const historicalModelSelectionSchema = modelSelectionSchema;
-const currentModelSelectionSchema = modelSelectionSchema.extend({
+const v5ModelSelectionSchema = historicalModelSelectionSchema.extend({
   voice: currentVoiceModelSelectionSchema.default({
     sts: [],
     tts: [],
     stt: [],
   }),
+  classifier: z.array(modelSelectionEntrySchema).default([]),
 });
 
-type ModelSelection = z.infer<typeof currentModelSelectionSchema>;
+const v7ModelSelectionSchema = historicalModelSelectionSchema.extend({
+  voice: currentVoiceModelSelectionSchema.default({
+    sts: [],
+    tts: [],
+    stt: [],
+  }),
+  instincts: z.array(modelSelectionEntrySchema).default([]),
+});
+const modelSelectionSchema = historicalModelSelectionSchema.extend({
+  voice: currentVoiceModelSelectionSchema.default({
+    sts: [],
+    tts: [],
+    stt: [],
+  }),
+  instincts: z.array(instinctModelSelectionEntrySchema).default([]),
+});
+
+type ModelSelection = z.infer<typeof modelSelectionSchema>;
+type InstinctConfig = z.infer<typeof instinctConfigSchema>;
 type ModelPurpose = (typeof MODEL_PURPOSES)[number];
 type VoiceModelPurpose = keyof ModelSelection['voice'];
 
@@ -576,6 +642,51 @@ const timezoneSchema = z
   );
 
 /**
+ * Tunables of the step instinct phase (shared classification and
+ * extension reactions before model generation). All fields have defaults.
+ */
+const instinctConfigSchema = z
+  .object({
+    /** Kill switch. When false, steps never run instinct. */
+    enabled: z.boolean().default(true),
+    /** Shared deadline for classification plus all reactions. */
+    timeoutMs: z.number().int().positive().max(120_000).default(8_000),
+    /** Deadline of the classifier call alone (bounded by `timeoutMs`). */
+    classifierTimeoutMs: z
+      .number()
+      .int()
+      .positive()
+      .max(120_000)
+      .default(4_000),
+    /** Earlier messages shown to the classifier before the delta. */
+    recentMessageCount: z.number().int().min(0).max(50).default(5),
+    /** Maximum number of new (delta) messages shown; newest are kept. */
+    deltaMessageCap: z.number().int().positive().max(500).default(20),
+    /** Character budget for recent plus new messages together. */
+    historyCharacterCap: z
+      .number()
+      .int()
+      .positive()
+      .max(1_000_000)
+      .default(16_000),
+    /** Maximum rendered length of one message. */
+    messageCharacterCap: z
+      .number()
+      .int()
+      .positive()
+      .max(100_000)
+      .default(2_000),
+    /** Maximum length of one extension's `context`. */
+    contextCharacterCap: z
+      .number()
+      .int()
+      .positive()
+      .max(100_000)
+      .default(2_000),
+  })
+  .strict();
+
+/**
  * Frozen shape of stored config schemas 2–4. Historical validation and
  * migrations (1→2, 3→4) use it so they keep producing the shape that
  * schema 4 accepts. Do not change it; evolve `klexConfigSchema` instead.
@@ -602,7 +713,7 @@ const klexConfigV4Schema = z.object({
     .transform((name) => Array.from(name).slice(0, 128).join(''))
     .default('Agent'),
   providers: z
-    .record(providerInstanceIdSchema, providerConfigSchema)
+    .record(providerInstanceIdSchema, historicalProviderConfigSchema)
     .default({}),
   modelSelection: historicalModelSelectionSchema.default({
     chat: [],
@@ -665,7 +776,8 @@ const extensionsConfigSchema = z
   .object({ memory: memoryExtensionConfigSchema.prefault({}) })
   .strict();
 
-const klexConfigSchema = z.object({
+/** Frozen stored schema 5; retains the former subsystem settings key. */
+const klexConfigV5Schema = z.object({
   configVersion: z.literal(2).default(2),
   officialName: z
     .string()
@@ -674,24 +786,41 @@ const klexConfigSchema = z.object({
     .transform((name) => Array.from(name).slice(0, 128).join(''))
     .default('Agent'),
   providers: z
-    .record(providerInstanceIdSchema, providerConfigSchema)
+    .record(providerInstanceIdSchema, historicalProviderConfigSchema)
     .default({}),
-  modelSelection: currentModelSelectionSchema.default({
+  modelSelection: v5ModelSelectionSchema.default({
     chat: [],
     compaction: [],
     memory: [],
     imageVision: [],
     audioListening: [],
     consult: [],
+    classifier: [],
     voice: { sts: [], tts: [], stt: [] },
   }),
   mcpServers: z.record(z.string(), mcpServerConfigSchema).default({}),
   timezone: timezoneSchema.default('UTC'),
+  preflight: instinctConfigSchema.prefault({}),
   // `.prefault` (not `.default`) so nested defaults are applied.
   extensions: extensionsConfigSchema.prefault({}),
   sessionHistory: sessionHistoryConfigSchema.optional(),
 });
 
+const klexConfigV6Schema = klexConfigV5Schema.omit({ preflight: true }).extend({
+  instinct: instinctConfigSchema.prefault({}),
+});
+
+const klexConfigV7Schema = klexConfigV6Schema.extend({
+  modelSelection: v7ModelSelectionSchema.prefault({}),
+});
+const klexConfigSchema = klexConfigV7Schema.extend({
+  providers: z
+    .record(providerInstanceIdSchema, providerConfigSchema)
+    .default({}),
+  modelSelection: modelSelectionSchema.prefault({}),
+});
+
+type KlexConfigV5 = z.infer<typeof klexConfigV5Schema>;
 type KlexConfig = z.infer<typeof klexConfigSchema>;
 type SessionHistoryConfig = z.infer<typeof sessionHistoryConfigSchema>;
 type EpisodeRotationConfig = z.infer<typeof episodeRotationConfigSchema>;
@@ -753,7 +882,35 @@ const storedKlexConfigV4Schema = klexConfigV4Schema
   .extend({ configVersion: z.literal(2) })
   .strict();
 
-/** Stored schema 5: the runtime config shape; unknown keys are rejected. */
+const storedKlexConfigV5Schema = klexConfigV5Schema
+  .extend({ configVersion: z.literal(2) })
+  .strict();
+
+const storedKlexConfigV6Schema = klexConfigV6Schema
+  .extend({ configVersion: z.literal(2) })
+  .strict();
+
+/** Frozen schema 7, before explicit classifier API selection. */
+const storedKlexConfigV7Schema = klexConfigV7Schema
+  .extend({ configVersion: z.literal(2) })
+  .strict();
+
+/** Frozen schema 8: explicit instinct API selection, before Gateway support. */
+const storedKlexConfigV8Schema = klexConfigSchema
+  .extend({
+    configVersion: z.literal(2),
+    providers: z
+      .record(providerInstanceIdSchema, providerConfigSchema)
+      .default({})
+      .refine((providers) =>
+        Object.values(providers).every(
+          (provider) => v8ProviderTypeSchema.safeParse(provider.type).success,
+        ),
+      ),
+  })
+  .strict();
+
+/** Stored schema 9: native Vercel AI Gateway provider. */
 const storedKlexConfigSchema = klexConfigSchema
   .extend({ configVersion: z.literal(2) })
   .strict();
@@ -769,14 +926,14 @@ function dropLegacyTelemetryConfig(input: unknown): KlexConfigV4 {
  * `memoryWriteIntervalMs` / `memoryWriteStepInterval`. The other rotation
  * limits receive their defaults.
  */
-function nestMemoryExtensionConfig(input: unknown): KlexConfig {
+function nestMemoryExtensionConfig(input: unknown): KlexConfigV5 {
   const {
     episodeFinishIdleTriggerTimeMs,
     memoryWriteIntervalMs: _memoryWriteIntervalMs,
     memoryWriteStepInterval: _memoryWriteStepInterval,
     ...rest
   } = storedKlexConfigV4Schema.parse(input);
-  return klexConfigSchema.parse({
+  return klexConfigV5Schema.parse({
     ...rest,
     extensions: {
       memory: { episodes: { idleTimeoutMs: episodeFinishIdleTriggerTimeMs } },
@@ -802,6 +959,57 @@ function parseStoredKlexConfigV2(input: unknown): Record<string, unknown> {
 
 function parseStoredKlexConfigV4(input: unknown): Record<string, unknown> {
   return storedKlexConfigV4Schema.parse(input);
+}
+
+function parseStoredKlexConfigV5(input: unknown): Record<string, unknown> {
+  return storedKlexConfigV5Schema.parse(input);
+}
+
+/** 5→6 migration: preserves existing settings under the instinct name. */
+function migrateInstinctConfig(
+  input: unknown,
+): z.infer<typeof klexConfigV6Schema> {
+  const { preflight, ...rest } = storedKlexConfigV5Schema.parse(input);
+  return klexConfigV6Schema.parse({ ...rest, instinct: preflight });
+}
+
+function parseStoredKlexConfigV6(input: unknown): Record<string, unknown> {
+  return storedKlexConfigV6Schema.parse(input);
+}
+
+/** 6→7 migration: preserves the ordered classifier models and provider options. */
+function migrateInstinctModelSelection(
+  input: unknown,
+): z.infer<typeof klexConfigV7Schema> {
+  const { modelSelection, ...rest } = storedKlexConfigV6Schema.parse(input);
+  const { classifier, ...selection } = modelSelection;
+  return klexConfigV7Schema.parse({
+    ...rest,
+    modelSelection: { ...selection, instincts: classifier },
+  });
+}
+
+function parseStoredKlexConfigV7(input: unknown): Record<string, unknown> {
+  return storedKlexConfigV7Schema.parse(input);
+}
+
+/** 7→8: keep old model ordering/options and make generation semantics explicit. */
+function migrateInstinctApis(input: unknown): KlexConfig {
+  const parsed = storedKlexConfigV7Schema.parse(input);
+  return klexConfigSchema.parse({
+    ...parsed,
+    modelSelection: {
+      ...parsed.modelSelection,
+      instincts: parsed.modelSelection.instincts.map((entry) => ({
+        ...entry,
+        api: 'generation',
+      })),
+    },
+  });
+}
+
+function parseStoredKlexConfigV8(input: unknown): Record<string, unknown> {
+  return storedKlexConfigV8Schema.parse(input);
 }
 
 function parseStoredKlexConfig(input: unknown): Record<string, unknown> {
@@ -917,7 +1125,7 @@ function migrateLegacyModelEntry(
 function addMigratedProvider(
   providers: KlexConfigV4['providers'],
   providerId: string,
-  provider: ProviderConfig,
+  provider: KlexConfigV4['providers'][string],
 ): void {
   if (providers[providerId]) {
     throw new Error(`Provider migration ID collision at '${providerId}'`);
@@ -945,7 +1153,9 @@ function migrateLegacyEnvironmentReferences(value: string): string {
   return value.replace(/(?<!\$)\{env:([A-Za-z_][A-Za-z0-9_]*)\}/g, '${env:$1}');
 }
 
-function legacyFormatProviderType(format: ApiFormat): ProviderType {
+function legacyFormatProviderType(
+  format: ApiFormat,
+): KlexConfigV4['providers'][string]['type'] {
   switch (format) {
     case 'openai':
       return 'openai';
@@ -968,6 +1178,8 @@ function legacyFormatProviderType(format: ApiFormat): ProviderType {
 export type {
   EpisodeRotationConfig,
   HttpServerConfig,
+  InstinctConfig,
+  InstinctModelSelectionEntry,
   KlexConfig,
   McpServerConfig,
   McpVersionNegotiation,
@@ -988,16 +1200,20 @@ export type {
   VoiceModelPurpose,
 };
 export {
-  currentModelSelectionSchema as modelSelectionSchema,
   dropLegacyTelemetryConfig,
   getProviderSettingsJsonSchema,
+  instinctModelSelectionEntrySchema,
   isProviderSecretSetting,
   klexConfigSchema,
   mcpServerConfigSchema,
+  migrateInstinctApis,
+  migrateInstinctConfig,
+  migrateInstinctModelSelection,
   migrateLegacyKlexConfig,
   modelCapabilitiesSchema,
   modelIdSchema,
   modelKindSchema,
+  modelSelectionSchema,
   nestMemoryExtensionConfig,
   parseKlexConfig,
   parseLegacyKlexConfig,
@@ -1005,6 +1221,10 @@ export {
   parseStoredKlexConfig,
   parseStoredKlexConfigV2,
   parseStoredKlexConfigV4,
+  parseStoredKlexConfigV5,
+  parseStoredKlexConfigV6,
+  parseStoredKlexConfigV7,
+  parseStoredKlexConfigV8,
   providerConfigSchema,
   providerInstanceIdSchema,
   providerTypeSchema,

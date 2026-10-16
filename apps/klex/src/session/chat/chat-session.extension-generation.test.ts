@@ -58,6 +58,7 @@ function call(
 async function harness(models: MockLanguageModelV4[]) {
   let deps: ExtensionDeps | undefined;
   const modelResolver: ChatSessionDependencies['modelResolver'] = {
+    resolveInstinctCandidates: () => [],
     getLanguageModel: ({ modelId }) => {
       const model = models[Number(modelId)];
       if (!model) throw new Error('Unknown model');

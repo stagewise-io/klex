@@ -18,6 +18,7 @@ const emptySelection: ModelSelection = {
   memory: [],
   imageVision: [],
   audioListening: [],
+  instincts: [],
   voice: { sts: [], tts: [], stt: [] },
 };
 
@@ -33,6 +34,8 @@ function provider(id: string): ProviderInfo {
         modelDiscovery: true,
         connectivityTest: true,
         customModels: true,
+        generation: true,
+        evaluation: true,
       },
     },
     operations: {
@@ -105,22 +108,39 @@ async function typeText(
 }
 
 describe('ModelSelectionScreen', () => {
-  it('lists and patches the consult model purpose', async () => {
-    const initial: ModelSelection = { ...emptySelection };
-    const patchModelSelection = vi.fn().mockResolvedValue(initial);
+  it('adds a second API, preserves ordered options, and edits its production budget without test controls', async () => {
+    let selection: ModelSelection = {
+      ...emptySelection,
+      instincts: [
+        {
+          providerId: 'openai-primary',
+          modelId: 'vendor:model:latest',
+          api: 'generation',
+          attemptTimeoutMs: 900,
+          providerOptions: { openai: { mode: 'original' } },
+        },
+      ],
+    };
+    const patchModelSelection = vi.fn(
+      async (patch: { instincts: ModelSelection['instincts'] }) => {
+        selection = { ...selection, ...patch };
+        return selection;
+      },
+    );
     const view = renderScreen(
       makeClient({
-        getModelSelection: vi.fn().mockResolvedValue(initial),
+        getModelSelection: vi.fn().mockResolvedValue(selection),
         patchModelSelection,
       }),
     );
-
-    await vi.waitFor(() => expect(view.lastFrame()).toContain('Consult'));
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    view.stdin.write('\u001B[B');
+    await vi.waitFor(() => expect(view.lastFrame()).toContain('Instincts'));
+    for (let index = 0; index < 3; index++) {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      view.stdin.write('\u001B[B');
+    }
     await new Promise((resolve) => setTimeout(resolve, 0));
     view.stdin.write('\r');
-    await vi.waitFor(() => expect(view.lastFrame()).toContain('No models'));
+    await vi.waitFor(() => expect(view.lastFrame()).toContain('[generation]'));
     await new Promise((resolve) => setTimeout(resolve, 0));
     view.stdin.write('a');
     await vi.waitFor(() =>
@@ -132,16 +152,128 @@ describe('ModelSelectionScreen', () => {
     // Ink registers the picker's input handler in an effect after the frame.
     await new Promise((resolve) => setTimeout(resolve, 0));
     view.stdin.write('\r');
-
+    await vi.waitFor(() => expect(view.lastFrame()).toContain('evaluation —'));
+    view.stdin.write('\u001B[B');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    view.stdin.write('\r');
+    await vi.waitFor(() => expect(selection.instincts).toHaveLength(2));
+    expect(selection.instincts[1]).toMatchObject({
+      api: 'evaluation',
+      attemptTimeoutMs: 1500,
+    });
     await vi.waitFor(() =>
-      expect(patchModelSelection).toHaveBeenCalledWith({
-        consult: [
-          { providerId: 'openai-primary', modelId: 'vendor:model:latest' },
-        ],
-      }),
+      expect(view.lastFrame()).toContain('API: evaluation'),
     );
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    view.stdin.write('\u001B[1;2A');
+    await vi.waitFor(() =>
+      expect(selection.instincts[0]?.api).toBe('evaluation'),
+    );
+    expect(selection.instincts[1]).toMatchObject({
+      api: 'generation',
+      attemptTimeoutMs: 900,
+      providerOptions: { openai: { mode: 'original' } },
+    });
+    await vi.waitFor(() => {
+      expect(view.lastFrame()).toContain(
+        '❯ 1. openai-primary:vendor:model:latest [evaluation]',
+      );
+      expect(view.lastFrame()).not.toContain('Saving model selection');
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    view.stdin.write('e');
+    await vi.waitFor(() =>
+      expect(view.lastFrame()).toContain('Attempt timeout in ms'),
+    );
+    for (let index = 0; index < 4; index++) {
+      view.stdin.write('\u007F');
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+    await typeText(view, '2500');
+    view.stdin.write('\r');
+    await vi.waitFor(() => expect(view.lastFrame()).toContain('2500 ms'));
+    expect(selection.instincts[0]?.attemptTimeoutMs).toBe(2500);
+    const savedSelection = structuredClone(selection);
+    const patchCount = patchModelSelection.mock.calls.length;
+    view.stdin.write('t');
+    view.stdin.write('r');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(view.lastFrame()).toContain('API: evaluation');
+    expect(view.lastFrame()).not.toContain('Synthetic');
+    expect(selection).toEqual(savedSelection);
+    expect(patchModelSelection).toHaveBeenCalledTimes(patchCount);
     view.unmount();
   });
+
+  it.each([
+    { purpose: 'consult', label: 'Consult', index: 1 },
+    { purpose: 'instincts', label: 'Instincts', index: 3 },
+  ])(
+    'lists and patches the $purpose model purpose',
+    async ({ purpose, label, index }) => {
+      const initial: ModelSelection = { ...emptySelection };
+      const patchModelSelection = vi.fn().mockResolvedValue(initial);
+      const view = renderScreen(
+        makeClient({
+          getModelSelection: vi.fn().mockResolvedValue(initial),
+          patchModelSelection,
+        }),
+      );
+
+      await vi.waitFor(() => expect(view.lastFrame()).toContain(label));
+      if (purpose === 'instincts') {
+        const frame = view.lastFrame() ?? '';
+        expect(frame.indexOf('Compaction')).toBeLessThan(
+          frame.indexOf('Instincts'),
+        );
+        expect(frame.indexOf('Instincts')).toBeLessThan(
+          frame.indexOf('Memory'),
+        );
+      }
+      for (let i = 0; i < index; i++) {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        view.stdin.write('\u001B[B');
+      }
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      view.stdin.write('\r');
+      await vi.waitFor(() =>
+        expect(view.lastFrame()).toContain(
+          purpose === 'instincts'
+            ? 'Uses Chat models via generation'
+            : 'No models',
+        ),
+      );
+      view.stdin.write('a');
+      await vi.waitFor(() =>
+        expect(view.lastFrame()).toContain('openai-primary'),
+      );
+      view.stdin.write('\r');
+      await vi.waitFor(() => expect(view.lastFrame()).toContain('Latest'));
+      view.stdin.write('\r');
+      if (purpose === 'instincts') {
+        await vi.waitFor(() =>
+          expect(view.lastFrame()).toContain('generation —'),
+        );
+        view.stdin.write('\r');
+      }
+
+      await vi.waitFor(() =>
+        expect(patchModelSelection).toHaveBeenCalledWith({
+          [purpose]: [
+            {
+              providerId: 'openai-primary',
+              modelId: 'vendor:model:latest',
+              ...(purpose === 'instincts' && {
+                api: 'generation',
+                attemptTimeoutMs: 1500,
+              }),
+            },
+          ],
+        }),
+      );
+      view.unmount();
+    },
+  );
 
   it('reorders model priority with Shift+Arrow keys', async () => {
     const initial: ModelSelection = {
@@ -196,6 +328,95 @@ describe('ModelSelectionScreen', () => {
     });
     view.unmount();
   });
+
+  it.each(['success', 'failure'] as const)(
+    'blocks overlapping priority changes and preserves the confirmed highlight after %s',
+    async (outcome) => {
+      const first = { providerId: 'openai-primary', modelId: 'first' };
+      const second = { providerId: 'openai-primary', modelId: 'second' };
+      const third = { providerId: 'openai-primary', modelId: 'third' };
+      const initial: ModelSelection = {
+        ...emptySelection,
+        chat: [first, second, third],
+      };
+      let resolve!: (value: ModelSelection) => void;
+      let reject!: (error: Error) => void;
+      const patchModelSelection = vi.fn(
+        () =>
+          new Promise<ModelSelection>((yes, no) => {
+            resolve = yes;
+            reject = no;
+          }),
+      );
+      const view = renderScreen(
+        makeClient({
+          getModelSelection: vi.fn().mockResolvedValue(initial),
+          patchModelSelection,
+        }),
+      );
+      try {
+        await vi.waitFor(() => expect(view.lastFrame()).toContain('Chat'));
+        await new Promise((done) => setTimeout(done, 0));
+        view.stdin.write('\r');
+        await vi.waitFor(() =>
+          expect(view.lastFrame()).toContain('❯ 1. openai-primary:first'),
+        );
+        view.stdin.write('\u001B[1;2B');
+        // Same-frame input must be locked before React renders pending state.
+        view.stdin.write('\u001B[1;2B');
+        await vi.waitFor(() =>
+          expect(patchModelSelection).toHaveBeenCalledTimes(1),
+        );
+        expect(patchModelSelection).toHaveBeenLastCalledWith({
+          chat: [second, first, third],
+        });
+        // A second move used to mix the new highlight with the old list.
+        view.stdin.write('\u001B[1;2B');
+        view.stdin.write('\u001B[B');
+        view.stdin.write('a');
+        await vi.waitFor(() =>
+          expect(view.lastFrame()).toContain('Saving model selection'),
+        );
+        expect(patchModelSelection).toHaveBeenCalledTimes(1);
+        expect(view.lastFrame()).toContain('❯ 1. openai-primary:first');
+        if (outcome === 'success')
+          resolve({
+            ...initial,
+            chat: [second, first, third],
+          });
+        else reject(new Error('synthetic update failure'));
+        await vi.waitFor(() => {
+          expect(view.lastFrame()).not.toContain('Saving model selection');
+          expect(view.lastFrame()).toContain(
+            outcome === 'success'
+              ? '❯ 2. openai-primary:first'
+              : '❯ 1. openai-primary:first',
+          );
+        });
+        // Further movement uses the confirmed list and the same selected model.
+        view.stdin.write('\u001B[1;2B');
+        await vi.waitFor(() =>
+          expect(patchModelSelection).toHaveBeenCalledTimes(2),
+        );
+        const expected =
+          outcome === 'success'
+            ? [second, third, first]
+            : [second, first, third];
+        expect(patchModelSelection).toHaveBeenLastCalledWith({
+          chat: expected,
+        });
+        view.stdin.write('\u001B[1;2A');
+        await new Promise((done) => setTimeout(done, 0));
+        expect(patchModelSelection).toHaveBeenCalledTimes(2);
+        resolve({ ...initial, chat: expected });
+        await vi.waitFor(() =>
+          expect(view.lastFrame()).not.toContain('Saving model selection'),
+        );
+      } finally {
+        view.unmount();
+      }
+    },
+  );
 
   it('selects a discovered model by explicit provider instance', async () => {
     const patchModelSelection = vi.fn().mockResolvedValue(emptySelection);

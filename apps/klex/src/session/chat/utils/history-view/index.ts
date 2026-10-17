@@ -7,6 +7,7 @@ export {
 } from './lines';
 export { CONTEXT_SUMMARY_KEY, createTranscriptHistoryView } from './presets';
 export { historyAfterCursor } from './project';
+export { serializeValue, truncateText } from './truncate';
 export type {
   ContextItem,
   FieldLimit,

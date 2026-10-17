@@ -1,6 +1,7 @@
 import type { ModelMessage } from 'ai';
 import { getEncoding } from 'js-tiktoken';
 
+import { serializeValue } from '@/session/chat/utils/history-view';
 import type {
   InteractionToolDescriptor,
   PreparedInferenceContext,
@@ -9,11 +10,7 @@ import type {
 const tokenizer = getEncoding('o200k_base');
 
 const MAX_HISTORY_TEXT_CHARACTERS = 131_072;
-const MAX_HISTORY_TOOL_VALUE_CHARACTERS = 16_384;
-const MAX_HISTORY_TOOL_VALUE_NODES = 128;
-const MAX_HISTORY_TOOL_VALUE_DEPTH = 16;
-const MAX_HISTORY_TOOL_STRING_CHARACTERS = 1_024;
-const MAX_HISTORY_TOOL_COLLECTION_ENTRIES = 128;
+const DEFAULT_MAX_HISTORY_TOKENS = 32_000;
 
 export interface GPTLiveSessionConfigOptions {
   readonly modelId?: string;
@@ -23,7 +20,6 @@ export interface GPTLiveSessionConfigOptions {
   readonly maxFrontendInstructionTokens?: number;
   readonly maxBackendInstructionTokens?: number;
   readonly maxHistoryTokens?: number;
-  readonly maxHistoryMessages?: number;
 }
 
 interface GPTLiveInitialItem {
@@ -82,12 +78,8 @@ export function buildGPTLiveSessionConfig(
     'maxBackendInstructionTokens',
   );
   const maxHistoryTokens = positiveInteger(
-    options.maxHistoryTokens ?? 7_000,
+    options.maxHistoryTokens ?? DEFAULT_MAX_HISTORY_TOKENS,
     'maxHistoryTokens',
-  );
-  const maxHistoryMessages = positiveInteger(
-    options.maxHistoryMessages ?? 128,
-    'maxHistoryMessages',
   );
 
   assertWithinTokenBudget(
@@ -106,8 +98,7 @@ export function buildGPTLiveSessionConfig(
     .filter((item): item is GPTLiveInitialItem => item !== undefined);
   const input = retainNewestHistory(
     projected,
-    Math.min(maxHistoryMessages, 128),
-    Math.min(maxHistoryTokens, 8_192),
+    Math.min(maxHistoryTokens, 32_000),
   );
 
   return {
@@ -178,9 +169,9 @@ function collectText(message: ModelMessage): string {
         case 'text':
           return part.text.trim();
         case 'tool-call':
-          return `[Prior tool call ${part.toolName} (${part.toolCallId}): ${safeStringify(part.input)}]`;
+          return `[Prior tool call ${part.toolName} (${part.toolCallId}): ${serializeValue(part.input, { max: 1_000, truncate: 'end-overflow', json: 'compact' }) ?? 'null'}]`;
         case 'tool-result':
-          return `[Prior tool result ${part.toolName} (${part.toolCallId}): ${safeStringify(part.output)}]`;
+          return `[Prior tool result ${part.toolName} (${part.toolCallId}): ${serializeValue(part.output, { max: 1_000, truncate: 'end-overflow', json: 'compact' }) ?? 'null'}]`;
         default:
           return '';
       }
@@ -191,33 +182,54 @@ function collectText(message: ModelMessage): string {
 
 function retainNewestHistory(
   items: readonly GPTLiveInitialItem[],
-  maxMessages: number,
   maxTokens: number,
 ): { items: GPTLiveInitialItem[] } {
   const retained: GPTLiveInitialItem[] = [];
-  let usedTokens = 0;
+  const newest = items.at(-1);
+  if (newest === undefined) return { items: retained };
+  if (newest.content[0].text.length > MAX_HISTORY_TEXT_CHARACTERS)
+    throw new Error(
+      'Newest GPT-Live history message exceeds text character budget',
+    );
+  const newestTokens = countInitialItemTokens(newest);
+  if (newestTokens > maxTokens)
+    throw new Error('Newest GPT-Live history message exceeds token budget');
 
-  for (let index = items.length - 1; index >= 0; index -= 1) {
-    if (retained.length >= maxMessages) break;
+  const first = items[0];
+  const summaryIndex =
+    first?.role === 'assistant' &&
+    first.content[0].text.startsWith('<summary>') &&
+    first.content[0].text.endsWith('</summary>') &&
+    items.length > 1
+      ? 0
+      : -1;
+  let summary: GPTLiveInitialItem | undefined;
+  let usedTokens = 0;
+  if (
+    summaryIndex === 0 &&
+    first !== undefined &&
+    first.content[0].text.length <= MAX_HISTORY_TEXT_CHARACTERS
+  ) {
+    const summaryTokens = countInitialItemTokens(first);
+    if (summaryTokens + newestTokens <= maxTokens) {
+      summary = first;
+      usedTokens = summaryTokens;
+    }
+  }
+
+  for (let index = items.length - 1; index > summaryIndex; index -= 1) {
     const item = items[index];
     if (item === undefined) continue;
     const text = item.content[0]?.text ?? '';
-    if (text.length > MAX_HISTORY_TEXT_CHARACTERS) {
-      if (index === items.length - 1)
-        throw new Error(
-          'Newest GPT-Live history message exceeds text character budget',
-        );
-      continue;
-    }
+    if (text.length > MAX_HISTORY_TEXT_CHARACTERS) break;
     const tokens = countInitialItemTokens(item);
-    if (index === items.length - 1 && tokens > maxTokens)
-      throw new Error('Newest GPT-Live history message exceeds token budget');
-    if (tokens > maxTokens - usedTokens) continue;
+    if (tokens > maxTokens - usedTokens) break;
     retained.push(item);
     usedTokens += tokens;
   }
 
   retained.reverse();
+  if (summary !== undefined) retained.unshift(summary);
   return { items: retained };
 }
 
@@ -225,73 +237,6 @@ function countInitialItemTokens(item: GPTLiveInitialItem): number {
   const text = item.content[0]?.text ?? '';
   // Include a conservative per-message allowance for role and envelope tokens.
   return tokenizer.encode(text).length + 8;
-}
-
-function safeStringify(value: unknown): string {
-  try {
-    const budget = { nodes: MAX_HISTORY_TOOL_VALUE_NODES };
-    const bounded = toBoundedSerializable(value, budget, new WeakSet(), 0);
-    const serialized = JSON.stringify(bounded) ?? 'null';
-    return serialized.length <= MAX_HISTORY_TOOL_VALUE_CHARACTERS
-      ? serialized
-      : `${serialized.slice(0, MAX_HISTORY_TOOL_VALUE_CHARACTERS)}…`;
-  } catch {
-    return '[unserializable]';
-  }
-}
-
-function toBoundedSerializable(
-  value: unknown,
-  budget: { nodes: number },
-  ancestors: WeakSet<object>,
-  depth: number,
-): unknown {
-  if (budget.nodes <= 0) return '[truncated]';
-  budget.nodes -= 1;
-  if (typeof value === 'string')
-    return value.length <= MAX_HISTORY_TOOL_STRING_CHARACTERS
-      ? value
-      : `${value.slice(0, MAX_HISTORY_TOOL_STRING_CHARACTERS)}…`;
-  if (value === null || typeof value === 'boolean' || typeof value === 'number')
-    return value;
-  if (typeof value !== 'object') return `[unsupported ${typeof value}]`;
-  if (ancestors.has(value)) return '[circular]';
-  if (depth >= MAX_HISTORY_TOOL_VALUE_DEPTH) return '[max depth]';
-
-  ancestors.add(value);
-  try {
-    if (Array.isArray(value)) {
-      const result: unknown[] = [];
-      const count = Math.min(value.length, MAX_HISTORY_TOOL_COLLECTION_ENTRIES);
-      for (let index = 0; index < count && budget.nodes > 0; index += 1)
-        result.push(
-          toBoundedSerializable(value[index], budget, ancestors, depth + 1),
-        );
-      if (count < value.length || budget.nodes <= 0) result.push('[truncated]');
-      return result;
-    }
-
-    const result: Record<string, unknown> = Object.create(null);
-    let count = 0;
-    for (const key in value) {
-      if (!Object.hasOwn(value, key)) continue;
-      if (count >= MAX_HISTORY_TOOL_COLLECTION_ENTRIES || budget.nodes <= 0) {
-        result['[truncated]'] = true;
-        break;
-      }
-      result[key.slice(0, MAX_HISTORY_TOOL_STRING_CHARACTERS)] =
-        toBoundedSerializable(
-          (value as Record<string, unknown>)[key],
-          budget,
-          ancestors,
-          depth + 1,
-        );
-      count += 1;
-    }
-    return result;
-  } finally {
-    ancestors.delete(value);
-  }
 }
 
 function toFunctionTools(

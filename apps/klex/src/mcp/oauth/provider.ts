@@ -9,7 +9,11 @@ import type {
   StoredOAuthTokens,
 } from '@modelcontextprotocol/client';
 
-import type { McpOAuthStore, OAuthCredentialScope } from './store';
+import type {
+  McpOAuthClientInformation,
+  McpOAuthStore,
+  OAuthCredentialScope,
+} from './store';
 
 export type AuthorizationRedirectHandler = (
   authorizationUrl: URL,
@@ -19,6 +23,7 @@ export interface McpOAuthProviderOptions {
   redirectUrl: URL;
   serverName: string;
   store: McpOAuthStore;
+  signal?: AbortSignal;
   onAuthorizationRedirect: AuthorizationRedirectHandler;
 }
 
@@ -26,6 +31,7 @@ export class McpOAuthProvider implements OAuthClientProvider {
   private readonly onAuthorizationRedirect: AuthorizationRedirectHandler;
   private readonly serverName: string;
   private readonly store: McpOAuthStore;
+  private readonly signal?: AbortSignal;
 
   public readonly redirectUrl: URL;
 
@@ -34,6 +40,7 @@ export class McpOAuthProvider implements OAuthClientProvider {
     this.redirectUrl = options.redirectUrl;
     this.serverName = options.serverName;
     this.store = options.store;
+    this.signal = options.signal;
   }
 
   public get clientMetadata(): OAuthClientMetadata {
@@ -48,7 +55,7 @@ export class McpOAuthProvider implements OAuthClientProvider {
 
   public async clientInformation(
     context?: OAuthClientInformationContext,
-  ): Promise<StoredOAuthClientInformation | undefined> {
+  ): Promise<McpOAuthClientInformation | undefined> {
     return this.store.clientInformation(
       this.serverName,
       this.redirectUrl.toString(),
@@ -70,18 +77,39 @@ export class McpOAuthProvider implements OAuthClientProvider {
     return this.store.discoveryState(this.serverName);
   }
 
-  public invalidateCredentials(scope: OAuthCredentialScope): Promise<void> {
-    return this.store.invalidate(this.serverName, scope);
+  public async invalidateCredentials(
+    scope: OAuthCredentialScope,
+  ): Promise<void> {
+    this.signal?.throwIfAborted();
+    if (scope === 'client') {
+      const client = await this.currentClientInformation();
+      // A customer-owned app cannot be repaired by dynamically registering another.
+      if (client?.klex_registered) return;
+    }
+    this.signal?.throwIfAborted();
+    await this.store.invalidate(this.serverName, scope);
   }
 
-  public redirectToAuthorization(authorizationUrl: URL): void | Promise<void> {
-    return this.onAuthorizationRedirect(authorizationUrl);
+  public async redirectToAuthorization(authorizationUrl: URL): Promise<void> {
+    this.signal?.throwIfAborted();
+    const client = await this.currentClientInformation();
+    if (client && 'scope' in client && client.scope) {
+      const scopes = new Set(
+        `${authorizationUrl.searchParams.get('scope') ?? ''} ${client.scope}`
+          .split(/\s+/)
+          .filter(Boolean),
+      );
+      authorizationUrl.searchParams.set('scope', [...scopes].join(' '));
+    }
+    this.signal?.throwIfAborted();
+    await this.onAuthorizationRedirect(authorizationUrl);
   }
 
   public saveClientInformation(
     clientInformation: StoredOAuthClientInformation,
     context?: OAuthClientInformationContext,
   ): Promise<void> {
+    this.signal?.throwIfAborted();
     return this.store.saveClientInformation(
       this.serverName,
       this.redirectUrl.toString(),
@@ -91,12 +119,14 @@ export class McpOAuthProvider implements OAuthClientProvider {
   }
 
   public saveCodeVerifier(codeVerifier: string): Promise<void> {
+    this.signal?.throwIfAborted();
     return this.store.saveCodeVerifier(this.serverName, codeVerifier);
   }
 
   public saveDiscoveryState(
     discoveryState: OAuthDiscoveryState,
   ): Promise<void> {
+    this.signal?.throwIfAborted();
     return this.store.saveDiscoveryState(this.serverName, discoveryState);
   }
 
@@ -104,6 +134,7 @@ export class McpOAuthProvider implements OAuthClientProvider {
     tokens: StoredOAuthTokens,
     context?: OAuthClientInformationContext,
   ): Promise<void> {
+    this.signal?.throwIfAborted();
     return this.store.saveTokens(this.serverName, tokens, context?.issuer);
   }
 
@@ -115,5 +146,13 @@ export class McpOAuthProvider implements OAuthClientProvider {
     context?: OAuthClientInformationContext,
   ): Promise<StoredOAuthTokens | undefined> {
     return this.store.tokens(this.serverName, context?.issuer);
+  }
+
+  private async currentClientInformation() {
+    const discovery = await this.discoveryState();
+    const issuer =
+      discovery?.authorizationServerMetadata?.issuer ??
+      discovery?.authorizationServerUrl;
+    return issuer ? this.clientInformation({ issuer }) : undefined;
   }
 }

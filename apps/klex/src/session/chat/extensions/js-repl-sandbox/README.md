@@ -57,9 +57,16 @@ return matches;
 
 Search takes a positional string, not an object. MCP search matches all query words against names, titles, and descriptions. Compact search returns `{ reference: { namespace, name }, description? }`, omitting schemas by default and retaining its unlimited default result count. With `includeInputSchema: true`, results additionally contain the complete registered `inputSchema` when available; the default count is 5, maximum 20. Supplied limits must be positive finite integers, and the flag must be a boolean.
 
-Inspect the returned schemas before calling a tool in a later execution. Select a relevant result, use its exact `namespace` and `name`, and invoke `await mcp[namespace][name](input)` with actual arguments matching the schema. Never pass the schema as input or blindly invoke the first match. No extra describe call is needed when the returned input schema is sufficient.
+Inspect the returned schemas before calling a tool in a later execution. Select a relevant result from `globalThis.deploymentTools`. Assign its exact reference fields to `namespace` and `name`, and construct `input` with actual arguments matching the schema in the invocation execution. Use `return await mcp[namespace][name](input)` to execute the tool and receive its result. Awaiting a call alone does not expose its result to the model: return the result or log the information needed. Never pass the schema as input or blindly invoke the first match. No extra describe call is needed when the returned input schema is sufficient.
 
-For compact discovery, call `await tools.search('deployment', { limit: 5 })`. After checking for a relevant match, `await tools.describe(matches[0].reference)` or `await tools.describe({ namespace, name })` returns `{ reference, description?, inputSchema?, outputSchema? }`. Describe remains useful for full details, output schemas, or absent input schemas. Schemas come from the live registry without extra remote calls. Schema contents are never truncated. Existing byte limits still apply; narrow queries or lower result limits if responses are too large.
+Alternatively, discover without schemas:
+
+```js
+globalThis.deploymentTools = await tools.search('deployment', { limit: 5 });
+return globalThis.deploymentTools;
+```
+
+Inspect the returned results. If none is relevant, refine the query instead of invoking a tool. In a later execution, select the relevant reference from `globalThis.deploymentTools` and assign its exact fields to `namespace` and `name`. Use `return await tools.describe({ namespace, name })` to receive `{ reference, description?, inputSchema?, outputSchema? }`. Top-level declarations from the discovery execution do not survive, but the explicitly persisted results do. Describe remains useful for full details, output schemas, or absent input schemas. Schemas come from the live registry without extra remote calls. Schema contents are never truncated. Existing byte limits still apply; narrow queries or lower result limits if responses are too large.
 
 The frozen `mcp`, `tools`, namespace, and wrapper objects are presentation APIs over the `ToolProvider`;  the Worker does not contain MCP-specific transport or policy logic.
 

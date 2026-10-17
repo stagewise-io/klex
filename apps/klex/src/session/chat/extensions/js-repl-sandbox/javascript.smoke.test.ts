@@ -53,6 +53,19 @@ describe('packaged JavaScript sandbox Worker', () => {
           code: `console.log('first'); return 'second'`,
         }),
       ).resolves.toEqual(['first', 'second']);
+      await expect(
+        javaScriptTool.execute({
+          code: `return await tools.search('echo', { limit: 1, includeInputSchema: true })`,
+        }),
+      ).resolves.toEqual([
+        expect.objectContaining({
+          reference: { namespace: 'git.hub', name: 'echo-value' },
+          inputSchema: expect.objectContaining({
+            type: 'object',
+            required: ['value'],
+          }),
+        }),
+      ]);
       await javaScriptTool.reset();
       await expect(
         javaScriptTool.execute({ code: `return typeof globalThis.packaged` }),

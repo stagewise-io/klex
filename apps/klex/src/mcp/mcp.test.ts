@@ -707,6 +707,110 @@ describe('MCP Push Notification worker', () => {
   });
 });
 
+describe('MCP tool discovery', () => {
+  async function discoveryHarness() {
+    const { mcp } = setup(
+      {
+        'git.hub': { url: 'https://github.example/mcp' },
+        other: { url: 'https://other.example/mcp' },
+      },
+      async ({ namespace }) => ({
+        ...connection(namespace),
+        tools: Array.from({ length: 23 }, (_, index) => ({
+          name: `deploy-${index}`,
+          title: 'Release preview',
+          description: 'Deploy an application',
+          inputSchema: {
+            type: 'object',
+            properties: { project: { type: 'string' } },
+            required: ['project'],
+          },
+          outputSchema: {
+            type: 'object',
+            properties: { url: { type: 'string' } },
+          },
+        })),
+      }),
+    );
+    await mcp.start();
+    await waitForNamespace(mcp, 'git.hub');
+    await waitForNamespace(mcp, 'other');
+    return mcp;
+  }
+
+  it('keeps compact results and matching unchanged, including explicit false', async () => {
+    const mcp = await discoveryHarness();
+    try {
+      const matches = await mcp.search('GIT.HUB release', {}, toolContext);
+      expect(matches).toHaveLength(23);
+      expect(matches[0]).toEqual({
+        reference: { namespace: 'git.hub', name: 'deploy-0' },
+        description: 'Deploy an application',
+      });
+      expect(matches.map((match) => match.reference.name)).toEqual(
+        Array.from({ length: 23 }, (_, index) => `deploy-${index}`).sort(),
+      );
+      expect(
+        await mcp.search(
+          'git.hub release',
+          { includeInputSchema: false },
+          toolContext,
+        ),
+      ).toEqual(matches);
+      expect(
+        await mcp.search('git.hub release', { limit: 2 }, toolContext),
+      ).toEqual(matches.slice(0, 2));
+      expect(await mcp.search('release missing', {}, toolContext)).toEqual([]);
+    } finally {
+      await mcp.close();
+    }
+  });
+
+  it('includes only input schemas and retains exact namespace references', async () => {
+    const mcp = await discoveryHarness();
+    try {
+      const matches = await mcp.search(
+        'other preview',
+        { includeInputSchema: true },
+        toolContext,
+      );
+      expect(matches).toHaveLength(5);
+      for (const match of matches) {
+        expect(match.reference.namespace).toBe('other');
+        const details = await mcp.describe(match.reference, toolContext);
+        expect(match.inputSchema).toEqual(details.inputSchema);
+        expect(match).not.toHaveProperty('outputSchema');
+        expect(details).toHaveProperty('outputSchema');
+      }
+      const bounded = await mcp.search(
+        'preview',
+        { includeInputSchema: true, limit: 20 },
+        toolContext,
+      );
+      expect(bounded).toHaveLength(20);
+      expect(
+        await mcp.search(
+          'other preview',
+          { includeInputSchema: true, limit: 1 },
+          toolContext,
+        ),
+      ).toEqual(matches.slice(0, 1));
+      await expect(
+        mcp.search(
+          'preview',
+          { includeInputSchema: true, limit: 21 },
+          toolContext,
+        ),
+      ).rejects.toThrow('at most 20');
+      await expect(
+        mcp.search('preview', { limit: 0 }, toolContext),
+      ).rejects.toThrow('positive finite integer');
+    } finally {
+      await mcp.close();
+    }
+  });
+});
+
 describe('MCP namespace isolation', () => {
   it('starts immediately and publishes a healthy namespace independently', async () => {
     const pending = deferred<McpConnection>();

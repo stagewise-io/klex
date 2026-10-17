@@ -74,7 +74,15 @@ export const compactRecallScopeSchema = z
 export const recallInputSchema = z
   .object({
     question: z.string().trim().min(1).max(RECALL_QUESTION_MAX_LENGTH),
-    scope: compactRecallScopeSchema.optional(),
+    scope: z
+      .string()
+      .trim()
+      .min(1)
+      .max(RECALL_SCOPE_MAX_LENGTH)
+      .optional()
+      .describe(
+        "Optional context hint identifying the relevant app, conversation, person, or project, not an enforced filter or authorization boundary. Prefer exact known IDs; never invent them. Examples: 'slack conversation:C123 user:U456', 'GitHub stagewise-io/klex PR #222', \"Julian's work on deployment previews\". Omit when unknown; memory infers context from the question and observations.",
+      ),
   })
   .strict();
 

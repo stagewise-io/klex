@@ -131,15 +131,13 @@ describe('streamed tool errors reaching the model', () => {
     {
       name: 'empty scope',
       input: { question: 'Yesterday?', scope: '' },
-      detail:
-        'Scope must contain an app name and optional conversation:/user: locators',
+      detail: '>=1',
       field: 'scope',
     },
     {
-      name: 'malformed scope',
-      input: { question: 'Yesterday?', scope: 'some unstructured text' },
-      detail:
-        'Scope must contain an app name and optional conversation:/user: locators',
+      name: 'oversized scope',
+      input: { question: 'Yesterday?', scope: 'x'.repeat(257) },
+      detail: '<=256',
       field: 'scope',
     },
     {
@@ -182,10 +180,14 @@ describe('streamed tool errors reaching the model', () => {
     await expectModelError(message, error);
   });
 
-  it('still dispatches valid arguments exactly once', async () => {
+  it.each([
+    'chat',
+    'some unstructured text',
+    "Julian's work on deployment previews",
+  ])('dispatches valid scope %s exactly once', async (scope) => {
     const tools = recallTools();
     const { message, dispatcher } = await generate(
-      JSON.stringify({ question: 'Yesterday?', scope: 'chat' }),
+      JSON.stringify({ question: 'Yesterday?', scope }),
       tools,
     );
     expect(tools.recall.execute).toHaveBeenCalledOnce();

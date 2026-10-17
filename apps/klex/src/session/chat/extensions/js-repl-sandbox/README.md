@@ -32,7 +32,7 @@ Every execution receives a fresh tool snapshot. The JavaScript tool replaces `gl
 ```ts
 tools.search(
   query: string,
-  options?: { limit?: number },
+  options?: { limit?: number; includeInputSchema?: boolean },
 ): Promise<ToolSearchResult[]>;
 
 tools.describe(
@@ -47,13 +47,19 @@ console.log(...data: unknown[]): void;
 Use bracket notation for tool names so punctuation, dots, slashes, and other exact names are preserved:
 
 ```js
-const matches = await tools.search('open pull requests');
-const details = await tools.describe(matches[0].reference);
-return await mcp[details.reference.namespace][details.reference.name]({
-  owner: 'stagewise',
-  repo: 'stagewise',
+const matches = await tools.search('deployment', {
+  limit: 5,
+  includeInputSchema: true,
 });
+globalThis.deploymentTools = matches;
+return matches;
 ```
+
+Search takes a positional string, not an object. MCP search matches all query words against names, titles, and descriptions. Compact search returns `{ reference: { namespace, name }, description? }`, omitting schemas by default and retaining its unlimited default result count. With `includeInputSchema: true`, results additionally contain the complete registered `inputSchema` when available; the default count is 5, maximum 20. Supplied limits must be positive finite integers, and the flag must be a boolean.
+
+Inspect the returned schemas before calling a tool in a later execution. Select a relevant result, use its exact `namespace` and `name`, and invoke `await mcp[namespace][name](input)` with actual arguments matching the schema. Never pass the schema as input or blindly invoke the first match. No extra describe call is needed when the returned input schema is sufficient.
+
+For compact discovery, call `await tools.search('deployment', { limit: 5 })`. After checking for a relevant match, `await tools.describe(matches[0].reference)` or `await tools.describe({ namespace, name })` returns `{ reference, description?, inputSchema?, outputSchema? }`. Describe remains useful for full details, output schemas, or absent input schemas. Schemas come from the live registry without extra remote calls. Schema contents are never truncated. Existing byte limits still apply; narrow queries or lower result limits if responses are too large.
 
 The frozen `mcp`, `tools`, namespace, and wrapper objects are presentation APIs over the `ToolProvider`;  the Worker does not contain MCP-specific transport or policy logic.
 

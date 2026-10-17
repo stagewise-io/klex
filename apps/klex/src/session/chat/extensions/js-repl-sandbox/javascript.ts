@@ -80,7 +80,7 @@ class JavaScriptToolModule implements JavaScriptTool {
   readonly tools = {
     runInSandbox: {
       description:
-        'Run JavaScript. Persistent state: globalThis. Top-level await and return work. console.log captures text; return emits JSON. MCP: tools.search(), tools.describe(), then mcp[namespace][name](input).',
+        'Run JavaScript. Persistent state: globalThis. Top-level await and return work. console.log captures text; return emits JSON. Discover with tools.search(query: string, options?: { limit?: number, includeInputSchema?: boolean }), e.g. await tools.search("deployment", { limit: 5, includeInputSchema: true }). Returns [{ reference: { namespace, name }, description?, inputSchema? }]; input schemas are omitted by default. Schema-inclusive search defaults to 5 results, maximum 20; limits must be positive integers. Inspect inputSchema to skip describe; use await tools.describe({ namespace, name }) for missing schemas, full details or outputSchema. Then await mcp[namespace][name](input) with a JSON object matching the schema. Never guess names or arguments, pass schemas as inputs, or blindly invoke the first match. Narrow the query or reduce limit if results exceed byte limits.',
       inputSchema: z.object({
         code: z.string().describe('JavaScript to execute.'),
       }),
@@ -394,7 +394,10 @@ class JavaScriptToolModule implements JavaScriptTool {
       case 'search':
         result = await this.deps.provider.search(
           request.query,
-          { limit: request.limit },
+          {
+            limit: request.limit,
+            includeInputSchema: request.includeInputSchema,
+          },
           context,
         );
         break;

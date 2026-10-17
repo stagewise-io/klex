@@ -1,6 +1,11 @@
 import type { QuickJSContext, QuickJSHandle } from 'quickjs-emscripten-core';
 
-import { assertJsonValue, type JsonValue } from '@/tool-provider';
+import {
+  assertJsonValue,
+  type JsonValue,
+  parseToolSearchOptions,
+  TOOL_SEARCH_USAGE,
+} from '@/tool-provider';
 
 import { CONSOLE_FACTORY_SOURCE } from './console-format';
 import type { ProviderRequest, ToolSnapshotMessage } from './protocol';
@@ -31,16 +36,15 @@ export function createNamespaceController(
       'search',
       requireBridge,
       (query, options) => {
-        if (typeof query !== 'string')
-          throw new TypeError('tools.search query must be a string');
-        const limit =
-          isRecord(options) && typeof options.limit === 'number'
-            ? options.limit
-            : undefined;
+        if (typeof query !== 'string' || query.trim().length === 0)
+          throw new TypeError(
+            `Search query must be a non-empty string. ${TOOL_SEARCH_USAGE}`,
+          );
+        const parsedOptions = parseToolSearchOptions(options);
         return {
           operation: 'search',
           query,
-          ...(limit === undefined ? {} : { limit }),
+          ...parsedOptions,
         };
       },
     );
@@ -208,9 +212,14 @@ function freeze(context: QuickJSContext, handle: QuickJSHandle): void {
 }
 
 function asInput(value: unknown): { [key: string]: JsonValue } {
-  assertJsonValue(value);
-  if (!isRecord(value))
-    throw new TypeError('Tool input must be a plain object');
+  const usage =
+    'Tool input must be a plain JSON object. Use mcp[namespace][name](input), e.g. mcp[namespace][name]({ value: 1 }) when its input schema requires a value. Inspect tools.search(query, { includeInputSchema: true }) or tools.describe({ namespace, name }) for the required fields.';
+  try {
+    assertJsonValue(value);
+  } catch {
+    throw new TypeError(usage);
+  }
+  if (!isRecord(value)) throw new TypeError(usage);
   return value;
 }
 
@@ -218,9 +227,13 @@ function asReference(value: unknown): { namespace: string; name: string } {
   if (
     !isRecord(value) ||
     typeof value.namespace !== 'string' ||
-    typeof value.name !== 'string'
+    value.namespace.trim().length === 0 ||
+    typeof value.name !== 'string' ||
+    value.name.trim().length === 0
   ) {
-    throw new TypeError('Tool reference must contain namespace and name');
+    throw new TypeError(
+      'Tool reference must contain non-empty namespace and name strings. Use tools.describe({ namespace: string, name: string }), e.g. tools.describe(matches[0].reference) after tools.search("deployment"). Use the exact returned names.',
+    );
   }
   return { namespace: value.namespace, name: value.name };
 }

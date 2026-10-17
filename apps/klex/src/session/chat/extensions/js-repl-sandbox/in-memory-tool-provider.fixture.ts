@@ -1,13 +1,15 @@
-import type {
-  JsonObject,
-  JsonValue,
-  ToolDescription,
-  ToolProvider,
-  ToolReference,
-  ToolRequestContext,
-  ToolSearchOptions,
-  ToolSearchResult,
-  ToolSnapshot,
+import {
+  type JsonObject,
+  type JsonValue,
+  parseToolSearchOptions,
+  type ToolDescription,
+  type ToolProvider,
+  type ToolReference,
+  type ToolRequestContext,
+  type ToolSearchOptions,
+  type ToolSearchResult,
+  type ToolSnapshot,
+  toolSearchLimit,
 } from '@/tool-provider';
 
 const TOOLS = [
@@ -38,6 +40,17 @@ const TOOLS = [
     description: 'Can become stale',
   },
 ] as const;
+
+const INPUT_SCHEMA: JsonObject = {
+  type: 'object',
+  properties: { value: { type: 'number', description: 'Value to echo' } },
+  required: ['value'],
+  additionalProperties: false,
+};
+
+function inputSchema(reference: ToolReference): JsonObject | undefined {
+  return reference.name === 'echo-value' ? INPUT_SCHEMA : undefined;
+}
 
 export class InMemoryToolProvider implements ToolProvider {
   readonly invoked: ToolReference[] = [];
@@ -70,6 +83,7 @@ export class InMemoryToolProvider implements ToolProvider {
     options: ToolSearchOptions,
     _context: ToolRequestContext,
   ): Promise<ToolSearchResult[]> {
+    options = parseToolSearchOptions(options);
     this.searches.push({ query, options });
     const normalizedQuery = query.toLowerCase();
     return TOOLS.filter(
@@ -79,10 +93,13 @@ export class InMemoryToolProvider implements ToolProvider {
           .toLowerCase()
           .includes(normalizedQuery),
     )
-      .slice(0, options.limit)
+      .slice(0, toolSearchLimit(options))
       .map((capability) => ({
         reference: { namespace: capability.namespace, name: capability.name },
         description: capability.description,
+        ...(options.includeInputSchema && inputSchema(capability)
+          ? { inputSchema: inputSchema(capability) }
+          : {}),
       }));
   }
 
@@ -92,7 +109,13 @@ export class InMemoryToolProvider implements ToolProvider {
   ): Promise<ToolDescription> {
     this.described.push(reference);
     const capability = this.requireCapability(reference);
-    return { reference, description: capability.description };
+    return {
+      reference,
+      description: capability.description,
+      ...(inputSchema(reference)
+        ? { inputSchema: inputSchema(reference) }
+        : {}),
+    };
   }
 
   async invoke(

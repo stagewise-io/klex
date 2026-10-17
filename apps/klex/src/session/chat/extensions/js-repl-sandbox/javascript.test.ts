@@ -1,4 +1,6 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
+
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { ModuleLogger, RootLogger } from '@stagewise/logger';
 
@@ -42,6 +44,146 @@ describe('JavaScriptTool', () => {
       ),
     ).resolves.toBe(42);
   });
+
+  it('advertises schema-inclusive discovery in both model-facing descriptions', () => {
+    const prompt = readFileSync(
+      new URL('./system-prompt-part.md', import.meta.url),
+      'utf8',
+    );
+    const description = javaScriptTool.tools.runInSandbox?.description;
+    for (const text of [prompt, description]) {
+      expect(text).toContain('includeInputSchema: true');
+      expect(text).toContain('"deployment", { limit: 5');
+      expect(text).toContain('tools.describe({ namespace, name })');
+      expect(text).toContain('maximum 20');
+    }
+  });
+
+  it('returns schemas through the real worker and invokes without describe', async () => {
+    const matches = await javaScriptTool.execute({
+      code: `globalThis.matches = await tools.search('echo', { includeInputSchema: true, limit: 1 }); return globalThis.matches;`,
+    });
+    expect(matches).toEqual([
+      {
+        reference: { namespace: 'git.hub', name: 'echo-value' },
+        description: 'Echoes its input',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            value: { type: 'number', description: 'Value to echo' },
+          },
+          required: ['value'],
+          additionalProperties: false,
+        },
+      },
+    ]);
+    expect(provider.searches).toEqual([
+      { query: 'echo', options: { includeInputSchema: true, limit: 1 } },
+    ]);
+    await expect(
+      javaScriptTool.execute({
+        code: `const { namespace, name } = globalThis.matches[0].reference; return await mcp[namespace][name]({ value: 42 });`,
+      }),
+    ).resolves.toEqual({ value: 42 });
+    expect(provider.invoked).toEqual([
+      { namespace: 'git.hub', name: 'echo-value' },
+    ]);
+    expect(provider.described).toEqual([]);
+  });
+
+  it('keeps compact results, supports false, and omits unavailable schemas', async () => {
+    const expected = [
+      {
+        reference: { namespace: 'git.hub', name: 'echo-value' },
+        description: 'Echoes its input',
+      },
+    ];
+    for (const options of ['', ', { includeInputSchema: false }']) {
+      await expect(
+        javaScriptTool.execute({
+          code: `return await tools.search('echo'${options})`,
+        }),
+      ).resolves.toEqual(expected);
+    }
+    await expect(
+      javaScriptTool.execute({
+        code: `return await tools.search('asynchronously', { includeInputSchema: true })`,
+      }),
+    ).resolves.toEqual([
+      {
+        reference: { namespace: 'git.hub', name: 'wait' },
+        description: 'Resolves asynchronously',
+      },
+    ]);
+    const rich = await javaScriptTool.execute({
+      code: `return await tools.search('echo', { includeInputSchema: true })`,
+    });
+    const details = await javaScriptTool.execute({
+      code: `return await tools.describe({ namespace: 'git.hub', name: 'echo-value' })`,
+    });
+    expect(rich).toEqual([details]);
+  });
+
+  it.each([
+    { size: 1_048_576, error: /Provider response exceeds 1048576 bytes/ },
+    { size: 262_144, error: /Output exceeds/ },
+  ])(
+    'keeps schema search byte limits for $size-byte schemas',
+    async ({ size, error }) => {
+      vi.spyOn(provider, 'search').mockResolvedValue([
+        {
+          reference: { namespace: 'git.hub', name: 'echo-value' },
+          inputSchema: { type: 'object', description: 'x'.repeat(size) },
+        },
+      ]);
+      await expect(
+        javaScriptTool.execute({
+          code: `return await tools.search('echo', { includeInputSchema: true })`,
+        }),
+      ).rejects.toThrow(error);
+      expect(provider.invoked).toEqual([]);
+    },
+  );
+
+  it.each([
+    'tools.search()',
+    'tools.search({ query: "deployment" })',
+    'tools.search("")',
+    'tools.search("deployment", null)',
+    'tools.search("deployment", [])',
+    'tools.search("deployment", 5)',
+    'tools.search("deployment", { limit: 0 })',
+    'tools.search("deployment", { limit: -1 })',
+    'tools.search("deployment", { limit: 1.5 })',
+    'tools.search("deployment", { limit: NaN })',
+    'tools.search("deployment", { limit: Infinity })',
+    'tools.search("deployment", { limit: "5" })',
+    'tools.search("deployment", { includeInputSchema: "true" })',
+    'tools.search("deployment", { includeInputSchema: null })',
+    'tools.search("deployment", { includeInputSchema: true, limit: 21 })',
+    'tools.describe("git.hub.echo-value")',
+    'tools.describe({ namespace: "git.hub" })',
+    'tools.describe({ namespace: "", name: "echo-value" })',
+    'tools.describe({ namespace: "git.hub", name: " " })',
+    'mcp["git.hub"]["echo-value"]()',
+    'mcp["git.hub"]["echo-value"]([])',
+    'mcp["git.hub"]["echo-value"](null)',
+    'mcp["git.hub"]["echo-value"](Infinity)',
+  ])(
+    'explains malformed call without sending a provider request: %s',
+    async (code) => {
+      await javaScriptTool.execute({ code: 'globalThis.preserved = 42' });
+      await expect(
+        javaScriptTool.execute({ code: `return await ${code}` }),
+      ).rejects.toThrow(/tools\.(search|describe)\(/);
+      expect(provider.searches).toEqual([]);
+      expect(provider.described).toEqual([]);
+      expect(provider.invoked).toEqual([]);
+      await expect(
+        javaScriptTool.execute({ code: 'return globalThis.preserved' }),
+      ).resolves.toBe(42);
+    },
+  );
 
   it('preserves globalThis values and functions across executions', async () => {
     await expect(

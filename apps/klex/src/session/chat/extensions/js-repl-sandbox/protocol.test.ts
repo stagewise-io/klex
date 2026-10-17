@@ -30,6 +30,49 @@ describe('JavaScript sandbox protocol', () => {
   });
 
   it.each([
+    {},
+    { includeInputSchema: false },
+    { includeInputSchema: true },
+    { includeInputSchema: true, limit: 20 },
+    { limit: 100 },
+  ])('parses search options %j', (options) => {
+    const request = { operation: 'search', query: 'deployment', ...options };
+    expect(
+      parseWorkerMessage({
+        type: 'provider-request',
+        executionId: 'e',
+        requestId: 'r',
+        request,
+      }),
+    ).toEqual({
+      type: 'provider-request',
+      executionId: 'e',
+      requestId: 'r',
+      request,
+    });
+  });
+
+  it.each([
+    { includeInputSchema: 'true' },
+    { includeInputSchema: null },
+    { includeInputSchema: true, limit: 21 },
+    { limit: 0 },
+    { limit: -1 },
+    { limit: 1.5 },
+    { limit: '5' },
+    { limit: null },
+  ])('rejects invalid search options %j', (options) => {
+    expect(() =>
+      parseWorkerMessage({
+        type: 'provider-request',
+        executionId: 'e',
+        requestId: 'r',
+        request: { operation: 'search', query: 'deployment', ...options },
+      }),
+    ).toThrow(/tools.search/);
+  });
+
+  it.each([
     null,
     {},
     { type: 'unknown', executionId: 'execution' },

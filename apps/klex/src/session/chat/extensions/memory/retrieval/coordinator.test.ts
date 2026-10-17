@@ -215,6 +215,27 @@ describe('memory retrieval coordinator recalls', () => {
     await coordinator.close();
   });
 
+  it('forwards trimmed prose context and retains per-scope recall attempt limits', async () => {
+    const { coordinator, childInbox, delivered } = await createHarness({
+      config: { maxRecallAttemptsPerMainTask: 1 },
+    });
+    coordinator.remember({
+      question: ' What changed? ',
+      scope: " Julian's work on deployment previews ",
+    });
+    expect(sentText(childInbox(), 0)).toBe(
+      '<recall id="r1">\n[Julian\'s work on deployment previews] What changed?\n</recall>',
+    );
+    expect(() =>
+      coordinator.remember({
+        question: 'what changed?',
+        scope: "Julian's work on deployment previews",
+      }),
+    ).toThrow(expect.objectContaining({ reason: 'attempt-limit' }));
+    expect(delivered).not.toHaveBeenCalled();
+    await coordinator.close();
+  });
+
   it('delivers surfaces citing an open recall at default urgency without dedup', async () => {
     const { coordinator, delivered } = await createHarness();
     surface('known fact');

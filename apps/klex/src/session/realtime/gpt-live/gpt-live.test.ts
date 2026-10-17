@@ -610,12 +610,14 @@ describe('GPT-Live startup configuration', () => {
       {
         responsesModel: 'gpt-5.2',
         frontendInstructions: 'voice',
-        maxHistoryTokens: 60,
+        maxHistoryTokens: 90,
       },
     );
-    expect(
-      prepared.session.input.map((item) => item.content[0].text),
-    ).toEqual([summary, 'recent question', 'newest answer']);
+    expect(prepared.session.input.map((item) => item.content[0].text)).toEqual([
+      summary,
+      'recent question',
+      'newest answer',
+    ]);
     expect(prepared.session.input[0]?.role).toBe('assistant');
     expect(prepared.omittedHistoryMessages).toBe(2);
   });

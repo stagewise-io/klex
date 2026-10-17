@@ -245,7 +245,7 @@ describe('GPT-Live model session', () => {
       type: 'session.start',
       session: {
         model: 'gpt-live-1',
-        instructions: 'frontend voice policy',
+        instructions: 'frontend voice policy\n\nbackend policy',
         input: [{ role: 'user' }],
         delegation: {
           type: 'responses',

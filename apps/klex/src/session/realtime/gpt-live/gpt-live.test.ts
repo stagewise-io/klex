@@ -403,7 +403,7 @@ describe('GPT-Live startup configuration', () => {
     updateWatermark: 4,
   };
 
-  it('separates frontend voice policy from backend instructions and tools', () => {
+  it('includes assembled context instructions alongside frontend voice policy while keeping tools on the Responses backend', () => {
     const prepared = buildGPTLiveSessionConfig(context, {
       responsesModel: 'gpt-5.2',
       frontendInstructions: 'frontend voice policy',
@@ -412,7 +412,7 @@ describe('GPT-Live startup configuration', () => {
 
     expect(prepared.session).toMatchObject({
       model: 'gpt-live-1',
-      instructions: 'frontend voice policy',
+      instructions: 'frontend voice policy\n\nbackend business policy',
       audio: {
         format: { type: 'audio/pcm', rate: 24_000 },
         output: { voice: 'alloy' },
@@ -433,7 +433,6 @@ describe('GPT-Live startup configuration', () => {
         },
       },
     });
-    expect(prepared.session.instructions).not.toContain('backend');
   });
 
   it('preserves an explicit Live snapshot without changing the Responses model', () => {
@@ -702,6 +701,19 @@ describe('GPT-Live startup configuration', () => {
         frontendInstructions: 'too many words',
         maxFrontendInstructionTokens: 1,
       }),
+    ).toThrow('frontend instructions');
+    expect(() =>
+      buildGPTLiveSessionConfig(
+        {
+          ...context,
+          instructions: 'too many context words for speaking session',
+        },
+        {
+          responsesModel: 'gpt-5.2',
+          frontendInstructions: 'voice',
+          maxFrontendInstructionTokens: 2,
+        },
+      ),
     ).toThrow('frontend instructions');
     expect(() =>
       buildGPTLiveSessionConfig(

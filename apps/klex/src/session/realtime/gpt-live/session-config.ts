@@ -90,8 +90,15 @@ export function buildGPTLiveSessionConfig(
     'maxHistoryMessages',
   );
 
+  const sessionInstructions = [
+    options.frontendInstructions.trim(),
+    context.instructions.trim(),
+  ]
+    .filter((part) => part.length > 0)
+    .join('\n\n');
+
   assertWithinTokenBudget(
-    options.frontendInstructions,
+    sessionInstructions,
     maxFrontendInstructionTokens,
     'GPT-Live frontend instructions',
   );
@@ -113,7 +120,7 @@ export function buildGPTLiveSessionConfig(
   return {
     session: {
       model: options.modelId ?? 'gpt-live-1',
-      instructions: options.frontendInstructions,
+      instructions: sessionInstructions,
       audio: {
         format: { type: 'audio/pcm', rate: 24_000 },
         output: {

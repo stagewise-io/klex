@@ -1,6 +1,6 @@
 ## MCP tool execution
 
-Use `runInSandbox` to discover and call MCP tools. Top-level `await` and `return` work. `console.log` captures text; `return` emits JSON. Persist state explicitly on `globalThis` between calls.
+Use `runInSandbox` to discover and call MCP tools. Top-level `await` and `return` work. Discovery and MCP calls return Promises; await them. `console.log` captures text; `return` emits JSON. Awaiting a call alone does not expose its result to you: return the result or log the information you need. Top-level declarations are execution-local. Persist state explicitly on `globalThis` between calls.
 
 - `tools.search(query: string, options?: { limit?: number, includeInputSchema?: boolean })` returns an array of `{ reference: { namespace, name }, description? }`. The query is a positional string, not an object. Matching requires every query word to appear in the tool's name, title, or description, so start with a few specific terms.
 - Set `includeInputSchema: true` to also receive each tool's complete `inputSchema` when available. This lets you inspect arguments without a separate describe call. Schema-inclusive search defaults to 5 results, maximum 20. Compact search omits schemas and has no default count limit. Supplied limits must be positive integers.
@@ -15,6 +15,13 @@ globalThis.deploymentTools = matches;
 return matches;
 ```
 
-For compact discovery, use `await tools.search("deployment", { limit: 5 })`, then `await tools.describe(matches[0].reference)` after checking that matches is non-empty and selecting a relevant tool. Equivalently, `await tools.describe({ namespace, name })` accepts names from a returned reference.
+Alternatively, discover without schemas:
 
-In a later call, select the relevant returned reference and invoke `await mcp[namespace][name](input)` using actual values for the fields you inspected. Do not blindly invoke the first result. If a response is too large, narrow the query or lower the limit. Existing provider-response and execution-output byte limits still apply.
+```js
+globalThis.deploymentTools = await tools.search("deployment", { limit: 5 });
+return globalThis.deploymentTools;
+```
+
+Inspect the returned results. If none is relevant, refine the query instead of invoking a tool. In a later call, select the relevant reference from `globalThis.deploymentTools`. Assign its exact reference fields to `namespace` and `name` in that execution. Use `return await tools.describe({ namespace, name })` to inspect its schema when needed.
+
+Once you have inspected the schema, assign the selected reference's exact `namespace` and `name` and construct `input` with actual values matching that schema in the invocation execution. Use `return await mcp[namespace][name](input)` to execute the tool and receive its result. If processing the result first, await it and return or log the information you need. Do not blindly invoke the first result. If a response is too large, narrow the query or lower the limit. Existing provider-response and execution-output byte limits still apply.

@@ -56,7 +56,81 @@ describe('JavaScriptTool', () => {
       expect(text).toContain('"deployment", { limit: 5');
       expect(text).toContain('tools.describe({ namespace, name })');
       expect(text).toContain('maximum 20');
+      expect(text).toContain(
+        'return await tools.describe({ namespace, name })',
+      );
+      expect(text).toContain('return await mcp[namespace][name](input)');
+      expect(text).toContain('return globalThis.deploymentTools;');
+      expect(text).toContain('Top-level declarations are execution-local');
+      expect(text).toContain(
+        'Awaiting a call alone does not expose its result',
+      );
+      expect(text).not.toContain('matches[0]');
     }
+  });
+
+  it.each(['system-prompt-part.md', 'README.md'])(
+    'executes the discovery examples from %s across worker executions',
+    async (file) => {
+      const text = readFileSync(new URL(`./${file}`, import.meta.url), 'utf8');
+      const examples = [...text.matchAll(/```js\n([\s\S]*?)```/gu)]
+        .map((match) => match[1] ?? '')
+        .filter((code) => code.includes('tools.search('));
+      expect(examples).toHaveLength(2);
+      for (const example of examples) {
+        await javaScriptTool.execute({
+          code: 'delete globalThis.deploymentTools;',
+        });
+        // Only replace the illustrative query with a registered fixture term.
+        const result = await javaScriptTool.execute({
+          code: example.replace(/(['"])deployment\1/u, '$1echo$1'),
+        });
+        expect(result).toEqual([
+          expect.objectContaining({
+            reference: { namespace: 'git.hub', name: 'echo-value' },
+          }),
+        ]);
+        await expect(
+          javaScriptTool.execute({
+            code: `
+              const selected = globalThis.deploymentTools.find(tool =>
+                tool.reference.namespace === 'git.hub' && tool.reference.name === 'echo-value');
+              if (!selected) throw new Error('No relevant tool');
+              const { namespace, name } = selected.reference;
+              return await tools.describe({ namespace, name });
+            `,
+          }),
+        ).resolves.toEqual(
+          expect.objectContaining({ inputSchema: expect.any(Object) }),
+        );
+        await expect(
+          javaScriptTool.execute({
+            code: `
+              const selected = globalThis.deploymentTools.find(tool =>
+                tool.reference.namespace === 'git.hub' && tool.reference.name === 'echo-value');
+              if (!selected) throw new Error('No relevant tool');
+              const { namespace, name } = selected.reference;
+              const input = { value: 42 };
+              return await mcp[namespace][name](input);
+            `,
+          }),
+        ).resolves.toEqual({ value: 42 });
+      }
+    },
+  );
+
+  it('requires explicit output to expose an awaited MCP result', async () => {
+    await expect(
+      javaScriptTool.execute({
+        code: `await mcp['git.hub']['echo-value']({ value: 42 });`,
+      }),
+    ).resolves.toBeNull();
+    await expect(
+      javaScriptTool.execute({
+        code: `return await mcp['git.hub']['echo-value']({ value: 42 });`,
+      }),
+    ).resolves.toEqual({ value: 42 });
+    expect(provider.invoked).toHaveLength(2);
   });
 
   it('returns schemas through the real worker and invokes without describe', async () => {

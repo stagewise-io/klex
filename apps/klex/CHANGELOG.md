@@ -2,6 +2,22 @@
 
 All notable Klex changes are documented here.
 
+## 0.18.0 (2026-10-17)
+
+### Features
+
+- include assembled context instructions in gpt-live speaking session (f68ee17)
+- preserve compaction summary and raise gpt-live history budget to 32k (d3fac86)
+
+### Bug Fixes
+
+- preserve tool argument validation errors (144b4a9)
+- match compaction summary when merged with extension context (cbcc3cd)
+
+### Other Changes
+
+- format and adjust token budget for prepended summary test (f0cb568)
+
 ## 0.17.0 (2026-10-16)
 
 ### Features

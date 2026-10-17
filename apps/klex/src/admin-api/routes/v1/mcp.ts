@@ -299,7 +299,7 @@ export const deleteMcpServerRoute = createRoute({
   tags: ['MCP Servers'],
   summary: 'Remove an MCP server',
   description:
-    'Removes an MCP server from the configuration and disconnects it.',
+    'Removes an MCP server, cancels authorization, deletes local OAuth credentials, and attempts token revocation when the provider supports it.',
   request: {
     params: mcpServerNameParamSchema,
   },
@@ -332,7 +332,7 @@ export function deleteMcpServer(
     const { name } = c.req.valid('param');
 
     try {
-      await deps.config.removeMcpServer(name);
+      await deps.mcp.removeServer(name);
       return c.json({ servers: deps.mcp.getServerStatuses() }, 200);
     } catch (error) {
       if (error instanceof ConfigValidationError) {

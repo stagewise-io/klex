@@ -266,13 +266,18 @@ export async function connectMcpServer(
         await options.onResourceUpdated(connection, notification.params.uri);
     },
   );
-  const oauth = await createOAuthTransportOptions(options);
+  const oauthLifetime = new AbortController();
+  const oauth = await createOAuthTransportOptions({
+    ...options,
+    signal: AbortSignal.any([options.signal, oauthLifetime.signal]),
+  });
   let transport = createTransport(
     options.config,
     oauth?.provider,
     options.cloudAuth,
   );
   client.onclose = () => {
+    if (connection) oauthLifetime.abort();
     if (connection && !expectedClose) options.onDisconnect(connection);
   };
 
@@ -335,11 +340,13 @@ export async function connectMcpServer(
     const originalClose = connection.close.bind(connection);
     connection.close = async () => {
       expectedClose = true;
+      oauthLifetime.abort();
       await originalClose();
     };
     return connection;
   } catch (error) {
     expectedClose = true;
+    oauthLifetime.abort();
     await client.close().catch(() => undefined);
     const connectionError =
       error instanceof UnauthorizedError
@@ -398,6 +405,7 @@ async function createOAuthTransportOptions(
     redirectUrl: session.redirectUrl,
     serverName: `${options.namespace}\u0000${options.config.url}`,
     store: options.oauth.store,
+    signal: options.signal,
   });
   return {
     get callback() {

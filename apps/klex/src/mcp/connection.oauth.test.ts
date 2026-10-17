@@ -7,11 +7,12 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { connectMcpServer } from './connection';
 import { LocalOAuthAuthorizationCoordinator } from './oauth/coordinator';
 import { LocalOAuthCallbackReceiver } from './oauth/local-callback';
+import { McpOAuthProvider } from './oauth/provider';
 import { McpOAuthStore } from './oauth/store';
 
 const temporaryDirectories: string[] = [];
@@ -32,16 +33,21 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 async function readJsonRequest(
   request: IncomingMessage,
 ): Promise<Record<string, unknown>> {
-  const chunks: Buffer[] = [];
-  for await (const chunk of request) {
-    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
-  }
-  const parsed: unknown = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+  const parsed: unknown = JSON.parse(await readRequestBody(request));
   if (!isRecord(parsed)) throw new Error('Expected a JSON object');
   return parsed;
 }
 
+async function readRequestBody(request: IncomingMessage): Promise<string> {
+  const chunks: Buffer[] = [];
+  for await (const chunk of request) {
+    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+  }
+  return Buffer.concat(chunks).toString('utf8');
+}
+
 afterEach(async () => {
+  vi.restoreAllMocks();
   await Promise.all(
     temporaryDirectories
       .splice(0)
@@ -50,12 +56,16 @@ afterEach(async () => {
 });
 
 describe('connectMcpServer OAuth lifecycle', () => {
-  it('reauthorizes against a local server and reconnects with a fresh transport', async () => {
+  it('authorizes, refreshes tokens, and rejects late credentials after disconnect', async () => {
     let origin = '';
     const requests: string[] = [];
     let unauthorizedRequests = 0;
     let authorizedRequests = 0;
     let tokenExchanges = 0;
+    let expectedAccessToken = 'local-test-token';
+    const grants: string[] = [];
+    const saveTokens = vi.spyOn(McpOAuthProvider.prototype, 'saveTokens');
+    const tool = { name: 'echo', inputSchema: { type: 'object' as const } };
     const authorizationStatuses: string[] = [];
     const server = createServer(async (request, response) => {
       const requestUrl = new URL(request.url ?? '/', origin);
@@ -90,15 +100,18 @@ describe('connectMcpServer OAuth lifecycle', () => {
       }
       if (requestUrl.pathname === '/token') {
         tokenExchanges += 1;
+        const form = new URLSearchParams(await readRequestBody(request));
+        grants.push(form.get('grant_type') ?? '');
         sendJson(response, 200, {
-          access_token: 'local-test-token',
+          access_token: expectedAccessToken,
+          refresh_token: `refresh-${tokenExchanges}`,
           expires_in: 3600,
           token_type: 'Bearer',
         });
         return;
       }
       if (requestUrl.pathname === '/mcp') {
-        if (request.headers.authorization !== 'Bearer local-test-token') {
+        if (request.headers.authorization !== `Bearer ${expectedAccessToken}`) {
           unauthorizedRequests += 1;
           response.writeHead(401, {
             'WWW-Authenticate': `Bearer resource_metadata="${origin}/.well-known/oauth-protected-resource/mcp"`,
@@ -114,10 +127,26 @@ describe('connectMcpServer OAuth lifecycle', () => {
               id: message.id,
               jsonrpc: '2.0',
               result: {
-                capabilities: {},
+                capabilities: { tools: {} },
                 protocolVersion: '2025-11-25',
                 serverInfo: { name: 'oauth-fixture', version: '1.0.0' },
               },
+            });
+            return;
+          }
+          if (message.method === 'tools/list') {
+            sendJson(response, 200, {
+              id: message.id,
+              jsonrpc: '2.0',
+              result: { tools: [tool] },
+            });
+            return;
+          }
+          if (message.method === 'tools/call') {
+            sendJson(response, 200, {
+              id: message.id,
+              jsonrpc: '2.0',
+              result: { content: [{ type: 'text', text: 'ok' }] },
             });
             return;
           }
@@ -190,7 +219,28 @@ describe('connectMcpServer OAuth lifecycle', () => {
       expect(authorizedRequests).toBeGreaterThan(0);
       expect(tokenExchanges).toBe(1);
       expect(requests).toContain('POST /token');
+      expectedAccessToken = 'refreshed-test-token';
+      await expect(
+        connection.invoke(tool, {}, new AbortController().signal),
+      ).resolves.toMatchObject({ content: [{ text: 'ok' }] });
+      expect(grants).toEqual(['authorization_code', 'refresh_token']);
+      const storeKey = `oauth-fixture\u0000${origin}/mcp`;
+      await expect(store.tokens(storeKey)).resolves.toMatchObject({
+        access_token: 'refreshed-test-token',
+        refresh_token: 'refresh-2',
+      });
+      const provider = saveTokens.mock.contexts[0];
+      if (!(provider instanceof McpOAuthProvider))
+        throw new Error('Expected the SDK OAuth provider');
       await connection.close();
+      await store.removeServer('oauth-fixture');
+      await expect(
+        provider.saveTokens({
+          access_token: 'late-refresh',
+          token_type: 'Bearer',
+        }),
+      ).rejects.toThrow();
+      await expect(store.tokens(storeKey)).resolves.toBeUndefined();
     } finally {
       await coordinator.close();
       await new Promise<void>((resolve, reject) => {

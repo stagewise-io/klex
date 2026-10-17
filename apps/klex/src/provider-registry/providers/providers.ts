@@ -21,6 +21,8 @@ import { openCodeGoProviderDefinition } from './opencode-go';
 import { openCodeZenProviderDefinition } from './opencode-zen';
 import { openRouterProviderDefinition } from './openrouter';
 import { responsesProviderDefinition } from './responses';
+import { typeSafeAiProviderDefinition } from './typesafe-ai';
+import { vercelAiGatewayProviderDefinition } from './vercel-ai-gateway';
 import { xaiProviderDefinition } from './xai';
 import { xiaomiMimoProviderDefinition } from './xiaomi-mimo';
 import { zaiProviderDefinition } from './zai';
@@ -51,4 +53,6 @@ export const builtInProviderDefinitions: readonly ProviderDefinition[] = [
   anthropicMessagesProviderDefinition,
   googleGenerativeProviderDefinition,
   ollamaProviderDefinition,
+  typeSafeAiProviderDefinition,
+  vercelAiGatewayProviderDefinition,
 ];

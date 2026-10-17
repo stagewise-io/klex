@@ -10,6 +10,8 @@ const CASES: ReadonlyArray<{
   kind: ModelKind | undefined;
 }> = [
   { type: 'openai', modelId: 'gpt-4o', kind: 'language' },
+  { type: 'typesafe-ai', modelId: 'jev-latest', kind: 'evaluation' },
+  { type: 'vercel-ai-gateway', modelId: 'typesafe-ai/jev', kind: 'evaluation' },
   { type: 'anthropic', modelId: 'claude-sonnet-5', kind: 'language' },
   { type: 'google-gemini', modelId: 'gemini-2.5-pro', kind: 'language' },
   { type: 'google-vertex', modelId: 'gemini-2.5-pro', kind: 'language' },

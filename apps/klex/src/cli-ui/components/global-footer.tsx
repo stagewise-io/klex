@@ -11,6 +11,7 @@ export interface GlobalFooterProps {
   loading: boolean;
   toastCount: number;
   width?: number;
+  showRuntimeStatus?: boolean;
 }
 
 export function GlobalFooter({
@@ -20,6 +21,7 @@ export function GlobalFooter({
   loading,
   toastCount,
   width,
+  showRuntimeStatus = true,
 }: GlobalFooterProps) {
   const activeSessions = sessions.filter(
     (session) =>
@@ -31,7 +33,13 @@ export function GlobalFooter({
     <Box flexDirection="column" flexShrink={0} width={width} paddingX={1}>
       <Text dimColor>{'─'.repeat(Math.max(availableWidth - 2, 1))}</Text>
       <Box justifyContent="space-between" flexWrap="wrap">
-        <Box gap={2} flexWrap="wrap">
+        <Box
+          columnGap={2}
+          flexWrap="wrap"
+          width={
+            showRuntimeStatus ? undefined : Math.max(availableWidth - 2, 1)
+          }
+        >
           {keys.map((shortcut) => (
             <Text key={shortcut.key}>
               <KeyHint keyName={shortcut.key} />{' '}
@@ -40,26 +48,31 @@ export function GlobalFooter({
           ))}
         </Box>
         <Box gap={2} flexWrap="wrap">
-          {loading ? (
-            <Text dimColor>Starting…</Text>
-          ) : (
-            <>
-              <Text dimColor>
-                {sessions.length} session{sessions.length === 1 ? '' : 's'}
-                {activeSessions > 0 ? ` · ${activeSessions} active` : ''}
-              </Text>
-              {cloud ? (
-                <StatusBadge
-                  status={
-                    cloud.enrolled ? 'ok' : cloud.cloudEnabled ? 'warn' : 'idle'
-                  }
-                  label={
-                    cloud.enrolled ? 'Cloud connected' : 'Cloud disconnected'
-                  }
-                />
-              ) : null}
-            </>
-          )}
+          {showRuntimeStatus &&
+            (loading ? (
+              <Text dimColor>Starting…</Text>
+            ) : (
+              <>
+                <Text dimColor>
+                  {sessions.length} session{sessions.length === 1 ? '' : 's'}
+                  {activeSessions > 0 ? ` · ${activeSessions} active` : ''}
+                </Text>
+                {cloud ? (
+                  <StatusBadge
+                    status={
+                      cloud.enrolled
+                        ? 'ok'
+                        : cloud.cloudEnabled
+                          ? 'warn'
+                          : 'idle'
+                    }
+                    label={
+                      cloud.enrolled ? 'Cloud connected' : 'Cloud disconnected'
+                    }
+                  />
+                ) : null}
+              </>
+            ))}
           {toastCount > 0 ? (
             <Text color="yellow">
               {toastCount} notice{toastCount === 1 ? '' : 's'}

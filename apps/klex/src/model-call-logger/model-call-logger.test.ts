@@ -29,6 +29,9 @@ function makeRecord(overrides: Partial<ModelCallRecord> = {}): ModelCallRecord {
     endpointId: 'default',
     modelId: 'gpt-4o',
     source: 'chat',
+    api: 'generation',
+    tokenUsageReported: true,
+    cacheUsageReported: true,
     extensionId: null,
     inputTokens: 100,
     outputTokens: 50,
@@ -769,81 +772,179 @@ describe('ModelCallLogger', () => {
     });
   });
 
-  describe('schema migration', () => {
-    it('preserves v1 rows and leaves legacy endpoint identity queryable', async () => {
-      const directory = await mkdtemp(join(tmpdir(), 'klex-modelcall-v1-'));
-      directories.push(directory);
-      const client = createClient({
-        url: `file:${join(directory, 'model-calls.sqlite')}`,
-      });
-      const v1InitSql = MODEL_CALL_INIT_SQL.replace(
-        '  provider_type TEXT,\n',
-        '',
-      ).replace(
-        '(provider_type, provider_id, endpoint_id, model_id)',
-        '(provider_id, endpoint_id, model_id)',
+  it('preserves reported zero and individual totals while aggregates expose incompleteness', async () => {
+    const { module } = await createLoggerModule();
+    try {
+      module.recordCall(
+        makeRecord({
+          id: 'zero',
+          api: 'evaluation',
+          inputTokens: 0,
+          outputTokens: 0,
+          inputCacheReadTokens: 0,
+          inputCacheWriteTokens: 0,
+          cacheUsageReported: false,
+        }),
       );
-      await client.executeMultiple(v1InitSql);
-      await client.execute({
-        sql: 'INSERT INTO meta (key, value) VALUES (?, ?)',
-        args: ['version', '1'],
+      module.recordCall(
+        makeRecord({
+          id: 'partial',
+          api: 'evaluation',
+          inputTokens: 7,
+          outputTokens: 0,
+          inputCacheReadTokens: 0,
+          inputCacheWriteTokens: 0,
+          tokenUsageReported: false,
+          cacheUsageReported: false,
+        }),
+      );
+      await module.flush();
+      const events = await module.queryUsage({
+        splitBy: 'none',
+        from: null,
+        to: null,
+        granularity: 'event',
+        limit: 10,
       });
-      await client.execute({
-        sql: `INSERT INTO model_calls (
+      expect(events.find((event) => event.id === 'zero')).toMatchObject({
+        api: 'evaluation',
+        inputTokens: 0,
+        outputTokens: 0,
+        tokenUsageReported: true,
+        cacheUsageReported: false,
+        tokenUsageUnreportedCount: 0,
+        cacheUsageUnreportedCount: 1,
+      });
+      expect(events.find((event) => event.id === 'partial')).toMatchObject({
+        inputTokens: 7,
+        outputTokens: 0,
+        tokenUsageReported: false,
+        tokenUsageUnreportedCount: 1,
+      });
+      const aggregate = await module.queryUsage({
+        splitBy: 'none',
+        from: null,
+        to: null,
+        granularity: 'daily',
+        limit: 10,
+      });
+      expect(aggregate).toHaveLength(1);
+      expect(aggregate[0]).toMatchObject({
+        callCount: 2,
+        inputTokens: 7,
+        outputTokens: 0,
+        tokenUsageUnreportedCount: 1,
+        cacheUsageUnreportedCount: 2,
+        api: null,
+        tokenUsageReported: null,
+        cacheUsageReported: null,
+      });
+    } finally {
+      await module.close();
+    }
+  });
+
+  describe('schema migration', () => {
+    it.each([1, 2])(
+      'preserves v%s rows with unknown usage availability',
+      async (version) => {
+        const directory = await mkdtemp(join(tmpdir(), 'klex-modelcall-v1-'));
+        directories.push(directory);
+        const client = createClient({
+          url: `file:${join(directory, 'model-calls.sqlite')}`,
+        });
+        let legacyInitSql = MODEL_CALL_INIT_SQL.replace('  api TEXT,\n', '')
+          .replace('  token_usage_reported INTEGER,\n', '')
+          .replace('  cache_usage_reported INTEGER,\n', '');
+        if (version === 1)
+          legacyInitSql = legacyInitSql
+            .replace('  provider_type TEXT,\n', '')
+            .replace(
+              '(provider_type, provider_id, endpoint_id, model_id)',
+              '(provider_id, endpoint_id, model_id)',
+            );
+        await client.executeMultiple(legacyInitSql);
+        await client.execute({
+          sql: 'INSERT INTO meta (key, value) VALUES (?, ?)',
+          args: ['version', String(version)],
+        });
+        await client.execute({
+          sql: `INSERT INTO model_calls (
           id, session_id, provider_id, endpoint_id, model_id, source,
           extension_id, input_tokens, output_tokens,
           input_cache_write_tokens, input_cache_read_tokens, ttft_ms,
           total_duration_ms, finish_reason, is_error, error_type,
           started_at, finished_at
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        args: [
-          'legacy-call',
-          'legacy-session',
-          'openai',
-          'custom-endpoint',
-          'gpt-4o',
-          'chat',
-          null,
-          10,
-          5,
-          0,
-          0,
-          100,
-          500,
-          'stop',
-          0,
-          null,
-          '2026-08-14T10:00:00.000Z',
-          '2026-08-14T10:00:00.500Z',
-        ],
-      });
-      client.close();
-      await prepareModelStore(directory);
+          args: [
+            'legacy-call',
+            'legacy-session',
+            'openai',
+            'custom-endpoint',
+            'gpt-4o',
+            'chat',
+            null,
+            10,
+            5,
+            0,
+            0,
+            100,
+            500,
+            'stop',
+            0,
+            null,
+            '2026-08-14T10:00:00.000Z',
+            '2026-08-14T10:00:00.500Z',
+          ],
+        });
+        if (version === 2) {
+          for (const [key, value] of Object.entries({
+            store: 'model-calls',
+            schemaVersion: '2',
+            compatibilityVersion: '1',
+            minimumKlexVersion: KLEX_VERSION,
+            writtenByKlexVersion: KLEX_VERSION,
+          }))
+            await client.execute({
+              sql: 'INSERT INTO meta (key, value) VALUES (?, ?)',
+              args: [key, value],
+            });
+        }
+        client.close();
+        await prepareModelStore(directory);
 
-      const module = createModelCallLogger({
-        logging: logger,
-        dataDirectory: directory,
-      });
-      await module.start();
-      const result = await module.queryUsage({
-        splitBy: 'endpoint',
-        from: null,
-        to: null,
-        granularity: 'event',
-        limit: 10,
-      });
+        const module = createModelCallLogger({
+          logging: logger,
+          dataDirectory: directory,
+        });
+        await module.start();
+        const result = await module.queryUsage({
+          splitBy: 'endpoint',
+          from: null,
+          to: null,
+          granularity: 'event',
+          limit: 10,
+        });
 
-      expect(result).toHaveLength(1);
-      expect(result[0]).toMatchObject({
-        id: 'legacy-call',
-        providerType: null,
-        providerId: 'openai',
-        endpointId: 'custom-endpoint',
-        modelId: 'gpt-4o',
-        splitKey: 'custom-endpoint',
-      });
-      await module.close();
-    });
+        expect(result).toHaveLength(1);
+        expect(result[0]).toMatchObject({
+          id: 'legacy-call',
+          api: null,
+          tokenUsageReported: null,
+          cacheUsageReported: null,
+          tokenUsageUnreportedCount: 1,
+          cacheUsageUnreportedCount: 1,
+          inputTokens: 10,
+          outputTokens: 5,
+          providerType: null,
+          providerId: 'openai',
+          endpointId: 'custom-endpoint',
+          modelId: 'gpt-4o',
+          splitKey: 'custom-endpoint',
+        });
+        await module.close();
+      },
+    );
   });
 
   describe('retention cleanup', () => {

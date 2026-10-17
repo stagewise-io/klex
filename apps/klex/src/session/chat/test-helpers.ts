@@ -48,9 +48,13 @@ export function makeExtensionHandler() {
     ),
     runStepCompleteHooks: vi.fn(() => Promise.resolve()),
     getDataPartTransformers: vi.fn(() => ({})),
+    getOwnedDataPartKeys: vi.fn(() => new Set<string>()),
     getProvisionalStepContext: vi.fn(() => Promise.resolve({ parts: [] })),
     getTools: vi.fn(() => ({})),
     getSystemPromptParts: vi.fn(() => []),
+    hasInstinctParticipants: vi.fn(() => false),
+    collectInstinctClassificationRequests: vi.fn(() => []),
+    runInstinctReactions: vi.fn(() => Promise.resolve([])),
   };
 }
 

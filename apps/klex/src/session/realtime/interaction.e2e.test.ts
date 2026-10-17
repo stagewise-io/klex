@@ -162,6 +162,7 @@ describe('realtime and default chat interaction', () => {
       },
     });
     const modelResolver: ChatSessionDependencies['modelResolver'] = {
+      resolveInstinctCandidates: () => [],
       getLanguageModel: () => model,
       resolveModel: () => ({
         providerId: 'test',

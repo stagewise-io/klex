@@ -20,6 +20,10 @@ export interface ModelCallRecord {
   source: ModelCallSource;
   /** Extension identifier, when source is 'extension'. */
   extensionId: string | null;
+  /** API identity and metric availability; null means historical/unknown. */
+  api: 'generation' | 'evaluation' | null;
+  tokenUsageReported: boolean | null;
+  cacheUsageReported: boolean | null;
   /** Input (prompt) tokens. */
   inputTokens: number;
   /** Output (completion) tokens. */
@@ -45,7 +49,7 @@ export interface ModelCallRecord {
 }
 
 /** Where the model call originated. */
-export type ModelCallSource = 'chat' | 'extension';
+export type ModelCallSource = 'chat' | 'extension' | 'operation-test';
 
 /** Dimension to split usage data by. */
 export type UsageSplitBy = 'none' | 'model' | 'provider' | 'endpoint';
@@ -73,7 +77,14 @@ export interface UsageDataPoint {
   splitKey: string | null;
   /** Number of model calls in this bucket/split. */
   callCount: number;
-  /** Total input tokens. */
+  /** Calls without fully reported totals/cache metrics, including historical unknowns. */
+  tokenUsageUnreportedCount: number;
+  cacheUsageUnreportedCount: number;
+  /** Event availability; null for aggregations and historical unknowns. */
+  api: ModelCallRecord['api'];
+  tokenUsageReported: boolean | null;
+  cacheUsageReported: boolean | null;
+  /** Total input tokens (a lower bound when reporting is incomplete). */
   inputTokens: number;
   /** Total output tokens. */
   outputTokens: number;

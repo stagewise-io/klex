@@ -1,3 +1,5 @@
+import './ai-sdk-warnings';
+
 import { randomUUID } from 'node:crypto';
 import { join, resolve } from 'node:path';
 
@@ -502,7 +504,10 @@ async function main(): Promise<void> {
         outputTokens: record.outputTokens,
         inputCacheReadTokens: record.inputCacheReadTokens,
         inputCacheWriteTokens: record.inputCacheWriteTokens,
-        operationName: 'generate_content',
+        operationName:
+          record.api === 'evaluation' ? 'evaluate' : 'generate_content',
+        tokenUsageReported: record.tokenUsageReported === true,
+        cacheUsageReported: record.cacheUsageReported === true,
         providerName: mapProviderName(record.providerType),
         source: record.source,
         finishReason: record.finishReason,

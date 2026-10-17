@@ -141,7 +141,9 @@ export interface Config {
   replace(input: unknown): Promise<Readonly<KlexConfig>>;
   mutate(fn: (config: KlexConfig) => KlexConfig): Promise<Readonly<KlexConfig>>;
   subscribe(listener: ConfigListener): () => void;
-  getModelSelection(purpose: ModelPurpose): readonly ModelSelectionEntry[];
+  getModelSelection<P extends ModelPurpose>(
+    purpose: P,
+  ): Readonly<ModelSelection[P]>;
   resolveModel(entry: ModelSelectionEntry): ResolvedModelConfig;
   resolveModelInfo(entry: ModelSelectionEntry): ModelInfo;
   getMcpServers(): Readonly<Record<string, McpServerConfig>>;
@@ -266,11 +268,13 @@ class ConfigModule implements Config {
     return () => this.listeners.delete(listener);
   }
 
-  getModelSelection(purpose: ModelPurpose): readonly ModelSelectionEntry[] {
+  getModelSelection<P extends ModelPurpose>(
+    purpose: P,
+  ): Readonly<ModelSelection[P]> {
     const config = this.getRuntime();
     return config.modelSelection[purpose].filter((entry) =>
       this.isValidModelReference(config, entry),
-    );
+    ) as ModelSelection[P];
   }
 
   resolveModel(entry: ModelSelectionEntry): ResolvedModelConfig {

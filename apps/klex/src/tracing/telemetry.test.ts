@@ -1,12 +1,23 @@
+import '@/ai-sdk-warnings';
+
+import type {
+  Experimental_EvaluationModelV4 as EvaluationModel,
+  LanguageModelV4GenerateResult,
+} from '@ai-sdk/provider';
 import { trace } from '@opentelemetry/api';
 import {
   BasicTracerProvider,
   InMemorySpanExporter,
   SimpleSpanProcessor,
 } from '@opentelemetry/sdk-trace-base';
-import { describe, expect, it } from 'vitest';
+import { experimental_evaluate as evaluate } from 'ai';
+import { MockLanguageModelV4 } from 'ai/test';
+import { describe, expect, it, vi } from 'vitest';
+import z from 'zod';
 
 import type { ModelCallRecord } from '@/model-call-logger';
+import type { InstinctModelCandidate } from '@/provider-registry';
+import { executeInstinctClassification } from '@/session/chat/instinct';
 import { createTelemetrySpanProcessor } from '@/telemetry-manager';
 
 import { createKlexTelemetry, type KlexTelemetry } from './telemetry';
@@ -40,6 +51,278 @@ function makeAbortEvent(event: Record<string, unknown>): AbortEvent {
 function makeCallEndEvent(event: Record<string, unknown>): CallEndEvent {
   return event as unknown as CallEndEvent;
 }
+
+describe('KlexTelemetry — instinct generation cancellation', () => {
+  it.each(
+    (['timeout', 'caller', 'deadline'] as const).flatMap((cause) =>
+      (['resolve', 'reject', 'never'] as const).map((late) => ({
+        cause,
+        late,
+      })),
+    ),
+  )(
+    'closes $cause telemetry once and ignores late $late',
+    async ({ cause, late }) => {
+      vi.useFakeTimers({
+        toFake: ['setTimeout', 'clearTimeout', 'performance'],
+      });
+      const exporter = new InMemorySpanExporter();
+      const provider = new BasicTracerProvider({
+        spanProcessors: [new SimpleSpanProcessor(exporter)],
+      });
+      const telemetry = createKlexTelemetry(provider.getTracer('test'));
+      const records: ModelCallRecord[] = [];
+      telemetry.setModelCallSink((record) => records.push(record));
+      vi.stubGlobal('AI_SDK_TELEMETRY_INTEGRATIONS', [telemetry]);
+      let resolve!: (value: LanguageModelV4GenerateResult) => void;
+      let reject!: (error: Error) => void;
+      const transport = vi.fn(
+        () =>
+          new Promise<LanguageModelV4GenerateResult>((yes, no) => {
+            resolve = yes;
+            reject = no;
+          }),
+      );
+      const response: LanguageModelV4GenerateResult = {
+        content: [{ type: 'text', text: '{"flag":true}' }],
+        usage: {
+          inputTokens: { total: 10, noCache: 10, cacheRead: 0, cacheWrite: 0 },
+          outputTokens: { total: 3, text: 3, reasoning: 0 },
+        },
+        finishReason: { unified: 'stop', raw: 'stop' },
+        warnings: [],
+      };
+      const stalled: InstinctModelCandidate = {
+        status: 'ready',
+        api: 'generation',
+        providerType: 'openai',
+        entry: {
+          api: 'generation',
+          providerId: 'test',
+          modelId: 'stalled',
+          attemptTimeoutMs: cause === 'timeout' ? 10 : 1000,
+        },
+        model: new MockLanguageModelV4({
+          modelId: 'stalled',
+          doGenerate: transport,
+        }),
+      };
+      const fallbackCall = vi.fn(async () => response);
+      const fallback: InstinctModelCandidate = {
+        ...stalled,
+        entry: { ...stalled.entry, modelId: 'fallback' },
+        model: new MockLanguageModelV4({
+          modelId: 'fallback',
+          doGenerate: fallbackCall,
+        }),
+      };
+      const controller = new AbortController();
+      const onUsage = vi.fn();
+      try {
+        const pending = executeInstinctClassification(
+          {
+            entries: [],
+            system: 'Classify facts',
+            prompt: 'The flag is true.',
+            state: 'The flag is true.',
+            schema: z.object({ flag: z.boolean() }),
+            questions: {},
+            abortSignal: controller.signal,
+            deadlineAt: performance.now() + (cause === 'deadline' ? 10 : 1000),
+          },
+          {
+            candidates: [stalled, fallback],
+            functionId: 'extension:core:instinct-classifier',
+            onUsage,
+          },
+        );
+        const assertion =
+          cause === 'timeout'
+            ? expect(pending).resolves.toMatchObject({
+                status: 'ok',
+                modelId: 'fallback',
+              })
+            : expect(pending).rejects.toThrow();
+        await vi.advanceTimersByTimeAsync(0);
+        expect(transport).toHaveBeenCalledTimes(1);
+        expect(
+          (telemetry as unknown as { callStates: Map<string, unknown> })
+            .callStates.size,
+        ).toBe(1);
+        expect(records).toHaveLength(0);
+        if (cause === 'caller') controller.abort(new Error('cancelled'));
+        else await vi.advanceTimersByTimeAsync(11);
+        await assertion;
+        await vi.advanceTimersByTimeAsync(0);
+        await provider.forceFlush();
+        expect(
+          records.filter((record) => record.modelId === 'stalled'),
+        ).toHaveLength(1);
+        expect(records[0]).toMatchObject({
+          api: 'generation',
+          isError: true,
+          inputTokens: 0,
+          outputTokens: 0,
+        });
+        expect(records).toHaveLength(cause === 'timeout' ? 2 : 1);
+        expect(fallbackCall).toHaveBeenCalledTimes(cause === 'timeout' ? 1 : 0);
+        if (cause === 'timeout') {
+          expect(onUsage).toHaveBeenCalledExactlyOnceWith(
+            expect.objectContaining({ inputTokens: 10, outputTokens: 3 }),
+          );
+        } else {
+          expect(onUsage).not.toHaveBeenCalled();
+        }
+        expect(
+          (telemetry as unknown as { callStates: Map<string, unknown> })
+            .callStates.size,
+        ).toBe(0);
+        const before = records.slice();
+        const attemptsBefore = onUsage.mock.calls.slice();
+        const spansBefore = exporter.getFinishedSpans().length;
+        if (late === 'resolve') resolve(response);
+        else if (late === 'reject')
+          reject(new Error('late private transport failure'));
+        await vi.advanceTimersByTimeAsync(0);
+        await provider.forceFlush();
+        expect(records).toEqual(before);
+        expect(onUsage.mock.calls).toEqual(attemptsBefore);
+        expect(exporter.getFinishedSpans()).toHaveLength(spansBefore);
+        expect(
+          (telemetry as unknown as { callStates: Map<string, unknown> })
+            .callStates.size,
+        ).toBe(0);
+      } finally {
+        vi.unstubAllGlobals();
+        vi.useRealTimers();
+        await provider.shutdown();
+      }
+    },
+  );
+});
+
+describe('KlexTelemetry — evaluation', () => {
+  it.each([{ inputTokens: 0, outputTokens: 0 }, undefined, { inputTokens: 7 }])(
+    'records genuine usage availability through the installed SDK (%j)',
+    async (usage) => {
+      const exporter = new InMemorySpanExporter();
+      const provider = new BasicTracerProvider({
+        spanProcessors: [new SimpleSpanProcessor(exporter)],
+      });
+      const telemetry = createKlexTelemetry(provider.getTracer('test'));
+      const records: ModelCallRecord[] = [];
+      telemetry.setModelCallSink((record) => records.push(record));
+      const model: EvaluationModel = {
+        specificationVersion: 'v4',
+        provider: 'typesafe.evaluation',
+        modelId: 'requested',
+        supportedQuestionTypes: ['boolean'],
+        doEvaluate: async () => ({
+          answers: { fact: { type: 'boolean', probability: 1 } },
+          usage,
+          warnings: [{ type: 'other', message: 'private warning' }],
+          response: { modelId: 'returned', id: 'response' },
+        }),
+      };
+      try {
+        await evaluate({
+          model,
+          state: 'private state',
+          questions: {
+            fact: { type: 'boolean', instructions: 'private question' },
+          },
+          maxRetries: 0,
+          telemetry: {
+            integrations: [telemetry],
+            functionId: 'extension:core:instinct-classifier',
+            recordInputs: true,
+            recordOutputs: true,
+          },
+        });
+        await provider.forceFlush();
+        expect(records).toHaveLength(1);
+        expect(records[0]).toMatchObject({
+          api: 'evaluation',
+          source: 'extension',
+          sessionId: null,
+          modelId: 'requested',
+          inputTokens: usage?.inputTokens ?? 0,
+          outputTokens: usage?.outputTokens ?? 0,
+          tokenUsageReported:
+            usage?.inputTokens !== undefined &&
+            usage?.outputTokens !== undefined,
+          cacheUsageReported: false,
+        });
+        const span = exporter.getFinishedSpans()[0];
+        expect(span?.attributes['gen_ai.response.model']).toBe('returned');
+        expect(span?.attributes['gen_ai.usage.input_tokens']).toBe(
+          usage?.inputTokens,
+        );
+        expect(span?.attributes['gen_ai.usage.output_tokens']).toBe(
+          usage?.outputTokens,
+        );
+        expect(span?.attributes['klex.evaluation.warning_count']).toBe(1);
+        expect(JSON.stringify(span?.attributes)).not.toContain('private');
+      } finally {
+        await provider.shutdown();
+      }
+    },
+  );
+
+  it.each(['Error', 'AbortError'])(
+    'sanitizes %s diagnostics, closes state, and rejects late duplicate events',
+    async (errorName) => {
+      const exporter = new InMemorySpanExporter();
+      const provider = new BasicTracerProvider({
+        spanProcessors: [new SimpleSpanProcessor(exporter)],
+      });
+      const telemetry = createKlexTelemetry(provider.getTracer('test'));
+      const records: ModelCallRecord[] = [];
+      telemetry.setModelCallSink((record) => records.push(record));
+      const model: EvaluationModel = {
+        specificationVersion: 'v4',
+        provider: 'typesafe.evaluation',
+        modelId: 'native',
+        supportedQuestionTypes: ['boolean'],
+        doEvaluate: async () => {
+          const error = new Error('private request and credential');
+          error.name = errorName;
+          throw error;
+        },
+      };
+      try {
+        await expect(
+          evaluate({
+            model,
+            state: 'private state',
+            questions: { fact: { type: 'boolean', instructions: 'fact' } },
+            maxRetries: 0,
+            telemetry: { integrations: [telemetry] },
+          }),
+        ).rejects.toThrow();
+        const callId = records[0]?.id;
+        telemetry.onError({ callId, error: new Error('late private failure') });
+        await provider.forceFlush();
+        expect(records).toHaveLength(1);
+        expect(records[0]).toMatchObject({
+          api: 'evaluation',
+          isError: true,
+          tokenUsageReported: false,
+          cacheUsageReported: false,
+        });
+        expect(exporter.getFinishedSpans()).toHaveLength(1);
+        expect(exporter.getFinishedSpans()[0]?.attributes['klex.outcome']).toBe(
+          errorName === 'AbortError' ? 'aborted' : 'error',
+        );
+        expect(
+          JSON.stringify(exporter.getFinishedSpans()[0]?.events),
+        ).not.toContain('private');
+      } finally {
+        await provider.shutdown();
+      }
+    },
+  );
+});
 
 describe('KlexTelemetry — model content', () => {
   it('exports model inputs and outputs through the debug span pipeline', async () => {

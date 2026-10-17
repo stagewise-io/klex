@@ -1,6 +1,6 @@
 import { join } from 'node:path';
 
-import { context } from '@opentelemetry/api';
+import { context, SpanStatusCode } from '@opentelemetry/api';
 import type { ModelMessage, ToolSet } from 'ai';
 
 import type { IntrospectionScope } from '@/introspection';
@@ -13,13 +13,16 @@ import type {
   ExtensionDeps,
   ExtensionFactory,
   GenerateTextResult,
+  InstinctClassificationRequest,
+  InstinctContext,
+  InstinctInput,
   ProvisionalStepContext,
   ResolvedModel,
   StepCompleteEvent,
   TransformationFlags,
 } from '../extensions/extension-api';
 import type { ExtendedUIMessage } from '../message-types';
-import { withExtensionIdentifier } from '../utils/tracing';
+import { tracer, withExtensionIdentifier } from '../utils/tracing';
 import { extractUsage } from '../utils/usage';
 
 /**
@@ -50,9 +53,55 @@ function mergeFlags(
   };
 }
 
+/** A classification request tagged with the extension that returned it. */
+export interface CollectedInstinctClassificationRequest {
+  readonly extensionIdentifier: string;
+  readonly request: InstinctClassificationRequest;
+}
+
+/** How one extension's `onInstinct` reaction settled. */
+export interface InstinctReactionSettlement {
+  readonly extensionIdentifier: string;
+  /**
+   * `aborted`: the context signal fired before the hook settled. The hook
+   * may still be running; its preparation is sealed by the caller.
+   */
+  readonly status: 'fulfilled' | 'rejected' | 'aborted';
+}
+
 export interface ExtensionHandler {
   /** All instantiated extensions. */
   readonly extensions: readonly Extension[];
+
+  /**
+   * True when at least one extension defines `getInstinctClassificationRequest` or
+   * `onInstinct`. Without participants the step skips instinct entirely.
+   */
+  hasInstinctParticipants: () => boolean;
+
+  /**
+   * Call `getInstinctClassificationRequest` on every extension that defines it, in
+   * factory order. Each receives its own structured clone of the input. A
+   * throw is logged and treated as `null`. Requests are not validated here.
+   */
+  collectInstinctClassificationRequests: (
+    input: InstinctInput,
+  ) => CollectedInstinctClassificationRequest[];
+
+  /**
+   * Run `onInstinct` on every extension that defines it, **in parallel**.
+   * `createContext` builds each extension's context (own clone, own
+   * preparation, own signal). Each hook is raced against its context
+   * signal, so a hook that ignores the signal cannot hold the step past the
+   * deadline. Errors are logged per extension and never propagate.
+   */
+  runInstinctReactions: (
+    createContext: (extensionIdentifier: string) => InstinctContext,
+    onSettled?: (
+      extensionIdentifier: string,
+      status: InstinctReactionSettlement['status'],
+    ) => void,
+  ) => Promise<InstinctReactionSettlement[]>;
 
   /**
    * Run `onStepStart` across all extensions **in parallel** via
@@ -156,6 +205,8 @@ export interface ExtensionHandler {
    * type — only one converter per type is allowed.
    */
   getDataPartTransformers: () => DataPartTransformers;
+  /** Registered data-part keys owned by one extension (duplicate keys throw). */
+  getOwnedDataPartKeys: (extensionIdentifier: string) => ReadonlySet<string>;
 
   /**
    * Run `onStepComplete` across all extensions **in parallel** via
@@ -283,6 +334,119 @@ class ExtensionHandlerModule implements ExtensionHandler {
 
       return ext;
     });
+  }
+
+  hasInstinctParticipants(): boolean {
+    return this.extensions.some(
+      (ext) =>
+        !this.closedExtensions.has(ext) &&
+        (ext.getInstinctClassificationRequest !== undefined ||
+          ext.onInstinct !== undefined),
+    );
+  }
+
+  collectInstinctClassificationRequests(
+    input: InstinctInput,
+  ): CollectedInstinctClassificationRequest[] {
+    const collected: CollectedInstinctClassificationRequest[] = [];
+    for (const ext of this.extensions) {
+      if (
+        !ext.getInstinctClassificationRequest ||
+        this.closedExtensions.has(ext)
+      ) {
+        continue;
+      }
+      const extensionIdentifier = this.identifiersByExtension.get(ext)!;
+      try {
+        const request = ext.getInstinctClassificationRequest(
+          structuredClone(input),
+        );
+        if (request) collected.push({ extensionIdentifier, request });
+      } catch (error) {
+        this.extensionDeps.logger.error(
+          { error, extensionIdentifier },
+          'Extension getInstinctClassificationRequest failed',
+        );
+      }
+    }
+    return collected;
+  }
+
+  async runInstinctReactions(
+    createContext: (extensionIdentifier: string) => InstinctContext,
+    onSettled?: (
+      extensionIdentifier: string,
+      status: InstinctReactionSettlement['status'],
+    ) => void,
+  ): Promise<InstinctReactionSettlement[]> {
+    const extensions = this.extensions.filter(
+      (ext) => ext.onInstinct && !this.closedExtensions.has(ext),
+    );
+    if (extensions.length === 0) return [];
+
+    return Promise.all(
+      extensions.map(async (ext): Promise<InstinctReactionSettlement> => {
+        const extensionIdentifier = this.identifiersByExtension.get(ext)!;
+        let signal: AbortSignal | undefined;
+        let onAbort: (() => void) | undefined;
+        let status: InstinctReactionSettlement['status'] = 'rejected';
+        try {
+          const ctx = createContext(extensionIdentifier);
+          signal = ctx.signal;
+          if (signal.aborted) {
+            status = 'aborted';
+            return { extensionIdentifier, status };
+          }
+          const aborted = new Promise<'aborted'>((resolve) => {
+            onAbort = () => resolve('aborted');
+            signal!.addEventListener('abort', onAbort, { once: true });
+          });
+          status = await tracer.startActiveSpan(
+            'step.instinct.reaction',
+            { attributes: { 'instinct.extension': extensionIdentifier } },
+            async (span) => {
+              // Start inside the span's context. Promise.race observes late
+              // rejections, but the span tracks only the work core waits for.
+              const hook = Promise.resolve().then(async () => {
+                await ext.onInstinct!(ctx);
+                return 'fulfilled' as const;
+              });
+              hook.catch((error: unknown) => {
+                if (signal?.aborted) {
+                  this.extensionDeps.logger.debug(
+                    { error, extensionIdentifier },
+                    'Extension onInstinct rejected after abort',
+                  );
+                }
+              });
+              try {
+                const settled = await Promise.race([hook, aborted]);
+                span.setAttribute('instinct.reactionStatus', settled);
+                if (settled === 'fulfilled')
+                  span.setStatus({ code: SpanStatusCode.OK });
+                return settled;
+              } catch (error) {
+                span.recordException(error as Error);
+                span.setStatus({ code: SpanStatusCode.ERROR });
+                throw error;
+              } finally {
+                span.end();
+              }
+            },
+          );
+          return { extensionIdentifier, status };
+        } catch (error) {
+          this.extensionDeps.logger.error(
+            { error, extensionIdentifier },
+            'Extension onInstinct hook failed',
+          );
+          return { extensionIdentifier, status: 'rejected' };
+        } finally {
+          if (signal && onAbort) signal.removeEventListener('abort', onAbort);
+          onSettled?.(extensionIdentifier, status);
+        }
+      }),
+    );
   }
 
   async runStepStartHooks(): Promise<void> {
@@ -495,6 +659,15 @@ class ExtensionHandlerModule implements ExtensionHandler {
     }
 
     return merged;
+  }
+
+  getOwnedDataPartKeys(extensionIdentifier: string): ReadonlySet<string> {
+    // Apply the same uniqueness validation as the merged registry.
+    this.getDataPartTransformers();
+    const extension = this.extensions.find(
+      (ext) => this.identifiersByExtension.get(ext) === extensionIdentifier,
+    );
+    return new Set(Object.keys(extension?.dataPartTransformers ?? {}));
   }
 
   async runStepCompleteHooks(event: StepCompleteEvent): Promise<void> {

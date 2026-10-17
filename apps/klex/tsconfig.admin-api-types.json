@@ -8,5 +8,5 @@
     "outDir": ".types/admin-api",
     "rootDir": "./src"
   },
-  "include": ["src/admin-api/server.ts"]
+  "include": ["src/admin-api/server.ts", "src/text.d.ts"]
 }

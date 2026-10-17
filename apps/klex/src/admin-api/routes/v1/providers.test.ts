@@ -1,5 +1,5 @@
 import type { OpenAPIHono } from '@hono/zod-openapi';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { ModuleLogger } from '@stagewise/logger';
 
@@ -45,6 +45,8 @@ const metadata = {
     voicePreview: true,
     connectivityTest: true,
     customModels: true,
+    generation: true,
+    evaluation: false,
   },
 };
 const instance = {
@@ -79,6 +81,8 @@ function makeApp(registry: Partial<ProviderRegistry>): OpenAPIHono {
     app.openapi(deleteKnownModelRoute, deleteKnownModel(deps));
   });
 }
+
+afterEach(() => vi.restoreAllMocks());
 
 describe('provider registry routes', () => {
   it('lists voices scoped to opaque model IDs without previewing', async () => {
@@ -223,6 +227,16 @@ describe('provider registry routes', () => {
       expect(await response.json()).toEqual({ error: 'Unavailable', code });
     }
   });
+  it('does not expose the removed synthetic operation endpoint', async () => {
+    const resolveInstinctCandidates = vi.fn();
+    const response = await makeApp({ resolveInstinctCandidates }).request(
+      '/v1/providers/test-main/operation-test',
+      { method: 'POST' },
+    );
+    expect(response.status).toBe(404);
+    expect(resolveInstinctCandidates).not.toHaveBeenCalled();
+  });
+
   it('exposes provider metadata and redacted instance settings', async () => {
     const app = makeApp({
       listProviderTypes: () => [

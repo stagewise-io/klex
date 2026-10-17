@@ -12,6 +12,7 @@ import type { TelemetryMetrics } from '@/telemetry-metrics';
 
 import type { ExtensionHandler } from '../extension-handler';
 import type { SessionInboxBuffer } from '../inbox';
+import type { InstinctRunner } from '../instinct';
 import type { ExtendedUIMessage } from '../message-types';
 import { createStep, type Step, type StepCompleteEvent } from '../step';
 import { inboxDrainAttributes } from '../utils/inbox-drain-attributes';
@@ -72,6 +73,8 @@ export interface TurnDependencies {
    * Base system prompt forwarded to each step.
    */
   basePrompt: string;
+  /** Session-scoped instinct runner forwarded to each step. */
+  instinctRunner?: InstinctRunner;
 }
 
 export interface TurnResult {
@@ -281,6 +284,9 @@ class TurnModule implements Turn {
             sessionId: this.deps.sessionId,
             telemetryMetrics: this.deps.telemetryMetrics,
             basePrompt: this.deps.basePrompt,
+            ...(this.deps.instinctRunner !== undefined && {
+              instinctRunner: this.deps.instinctRunner,
+            }),
           });
           this.currentStep = step;
 
@@ -322,6 +328,7 @@ class TurnModule implements Turn {
           // Track whether any step succeeded or failed.
           if (
             stepResult.shouldContinue &&
+            !stepResult.instinctAborted &&
             !stepResult.forceNextStep &&
             !stepResult.modelFallbackOccurred &&
             !stepResult.generationFailed &&

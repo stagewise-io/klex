@@ -4,7 +4,11 @@ import { context } from '@opentelemetry/api';
 import { isToolUIPart, type LanguageModel } from 'ai';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { StepCompleteEvent } from '../extensions/extension-api';
+import type {
+  InstinctSummary,
+  StepCompleteEvent,
+} from '../extensions/extension-api';
+import type { InstinctRunner } from '../instinct';
 import type { ExtendedUIMessage } from '../message-types';
 import {
   testLogger as logger,
@@ -121,6 +125,216 @@ function setupDefaultMocks() {
 }
 
 // --- tests ---
+
+describe('Step — preparation cancellation and completion', () => {
+  const summary: InstinctSummary = {
+    durationMs: 1,
+    classifierStatus: 'skipped',
+    reactions: [],
+  };
+  function makeInstinct(): InstinctRunner {
+    return {
+      lastSummary: summary,
+      run: vi.fn(async () => ({
+        status: 'ready' as const,
+        summary,
+        persistent: [],
+        provisional: [{ type: 'text' as const, text: 'staged context' }],
+        ephemeral: [],
+        commit: vi.fn(),
+      })),
+    };
+  }
+  beforeEach(() => {
+    vi.clearAllMocks();
+    setupDefaultMocks();
+  });
+
+  it.each([
+    'start',
+    'model',
+    'model-error',
+    'provisional',
+    'history',
+    'conversion',
+    'context',
+    'tools',
+  ] as const)(
+    'preserves interruption during %s and rolls back provisional context',
+    async (phase) => {
+      const extensionHandler = makeExtensionHandler();
+      const resolver = makeModelResolver();
+      const fallbackManager = makeFallbackManager();
+      const messages = [makeUserMessage()];
+      const instinct = makeInstinct();
+      const step = createStep(
+        makeDeps({
+          messages,
+          extensionHandler: extensionHandler as never,
+          modelResolver: resolver as never,
+          fallbackManager: fallbackManager as never,
+          instinctRunner: instinct,
+        }),
+      );
+      const abort = () => step.abortGeneration('inbox_interrupt');
+      switch (phase) {
+        case 'start':
+          extensionHandler.runStepStartHooks.mockImplementation(async () => {
+            abort();
+          });
+          break;
+        case 'model':
+          resolver.getLanguageModel.mockImplementation(async () => {
+            abort();
+            return {} as LanguageModel;
+          });
+          break;
+        case 'model-error':
+          resolver.getLanguageModel.mockImplementation(async () => {
+            abort();
+            throw new Error('cancelled model fetch');
+          });
+          break;
+        case 'provisional':
+          extensionHandler.getProvisionalStepContext.mockImplementation(
+            async () => {
+              abort();
+              return { parts: [] };
+            },
+          );
+          break;
+        case 'history':
+          extensionHandler.runHistoryTransformers.mockImplementation(
+            async (history) => {
+              abort();
+              return { history, flags: {} };
+            },
+          );
+          break;
+        case 'conversion':
+          vi.mocked(convertToModelMessagesExtended).mockImplementation(
+            async () => {
+              abort();
+              return [];
+            },
+          );
+          break;
+        case 'context':
+          extensionHandler.runContextTransformers.mockImplementation(
+            async (history) => {
+              abort();
+              return { history, flags: {} };
+            },
+          );
+          break;
+        case 'tools':
+          extensionHandler.getSystemPromptParts.mockImplementation(() => {
+            abort();
+            return [];
+          });
+          break;
+      }
+      const result = await step.run();
+      expect(result).toMatchObject({
+        shouldContinue: true,
+        instinctAborted: true,
+        generation: null,
+        generationFailed: false,
+        modelFallbackOccurred: false,
+        fatalError: false,
+      });
+      expect(createGenerationRunner).not.toHaveBeenCalled();
+      expect(fallbackManager.fallbackToNextModel).not.toHaveBeenCalled();
+      expect(messages).toHaveLength(1);
+      expect(
+        extensionHandler.runStepCompleteHooks,
+      ).toHaveBeenCalledExactlyOnceWith(result);
+      expect(result.instinct).toEqual(phase === 'start' ? undefined : summary);
+    },
+  );
+
+  it.each(['session_shutdown', 'generation_lane_quiesce'])(
+    'handles %s while resolving the model without starting generation',
+    async (reason) => {
+      const resolver = makeModelResolver();
+      const step = createStep(
+        makeDeps({
+          messages: [makeUserMessage()],
+          modelResolver: resolver as never,
+          instinctRunner: makeInstinct(),
+        }),
+      );
+      resolver.getLanguageModel.mockImplementation(async () => {
+        step.abortGeneration(reason);
+        return {} as LanguageModel;
+      });
+      const result = await step.run();
+      expect(result.shouldContinue).toBe(reason !== 'session_shutdown');
+      expect(result.instinctAborted).toBe(true);
+      expect(createGenerationRunner).not.toHaveBeenCalled();
+    },
+  );
+
+  it('honours cancellation even when instinct is disabled', async () => {
+    const resolver = makeModelResolver();
+    const step = createStep(
+      makeDeps({
+        messages: [makeUserMessage()],
+        modelResolver: resolver as never,
+      }),
+    );
+    resolver.getLanguageModel.mockImplementation(async () => {
+      step.abortGeneration('inbox_interrupt');
+      return {} as LanguageModel;
+    });
+    expect(await step.run()).toMatchObject({
+      shouldContinue: true,
+      instinctAborted: true,
+    });
+    expect(createGenerationRunner).not.toHaveBeenCalled();
+  });
+
+  it.each(['model', 'provisional', 'history', 'context'] as const)(
+    'includes the committed instinct summary on %s failure',
+    async (phase) => {
+      const extensionHandler = makeExtensionHandler();
+      const resolver = makeModelResolver();
+      const failure = new Error('preparation failure');
+      switch (phase) {
+        case 'model':
+          resolver.getLanguageModel.mockRejectedValue(failure);
+          break;
+        case 'provisional':
+          extensionHandler.getProvisionalStepContext.mockRejectedValue(failure);
+          break;
+        case 'history':
+          extensionHandler.runHistoryTransformers.mockRejectedValue(failure);
+          break;
+        case 'context':
+          extensionHandler.runContextTransformers.mockRejectedValue(failure);
+          break;
+      }
+      const messages = [makeUserMessage()];
+      const step = createStep(
+        makeDeps({
+          messages,
+          extensionHandler: extensionHandler as never,
+          modelResolver: resolver as never,
+          instinctRunner: makeInstinct(),
+        }),
+      );
+      const result = await step.run();
+      expect(result.instinct).toEqual(summary);
+      expect(result.modelFallbackOccurred).toBe(phase === 'model');
+      expect(result.fatalError).toBe(phase !== 'model');
+      expect(messages).toHaveLength(1);
+      expect(
+        extensionHandler.runStepCompleteHooks,
+      ).toHaveBeenCalledExactlyOnceWith(result);
+      expect(createGenerationRunner).not.toHaveBeenCalled();
+    },
+  );
+});
 
 describe('Step — decision: skip', () => {
   beforeEach(() => {

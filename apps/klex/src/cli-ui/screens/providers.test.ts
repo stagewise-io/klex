@@ -87,6 +87,8 @@ describe('provider setup fields', () => {
         modelDiscovery: false,
         connectivityTest: true,
         customModels: true,
+        generation: true,
+        evaluation: false,
       },
       settingsSchema: {
         oneOf: [
@@ -136,6 +138,8 @@ describe('provider setup fields', () => {
         modelDiscovery: true,
         connectivityTest: true,
         customModels: true,
+        generation: true,
+        evaluation: false,
       },
       settingsSchema: {
         type: 'object',

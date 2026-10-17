@@ -2,6 +2,17 @@
 
 All notable Klex changes are documented here.
 
+## 0.19.0 (2026-10-17)
+
+### Features
+
+- improve recall scope and tool discovery (a6c4085)
+
+### Bug Fixes
+
+- encode recall fields to preserve message boundaries (c7d2a93)
+- clarify sandbox results and cross-call state (6ff444c)
+
 ## 0.18.0 (2026-10-17)
 
 ### Features

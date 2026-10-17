@@ -595,6 +595,31 @@ describe('GPT-Live startup configuration', () => {
     },
   );
 
+  it('pins compaction summary when prepended with transformer context', () => {
+    const summary =
+      '<time>Saturday, 17.10.2026, 11:35</time>\n<timezone>UTC, UTC, +00:00</timezone>\n<summary>Earlier context</summary>';
+    const messages: ModelMessage[] = [
+      { role: 'assistant', content: summary },
+      { role: 'user', content: 'older small message' },
+      { role: 'assistant', content: 'large middle message '.repeat(100) },
+      { role: 'user', content: 'recent question' },
+      { role: 'assistant', content: 'newest answer' },
+    ];
+    const prepared = buildGPTLiveSessionConfig(
+      { ...context, messages },
+      {
+        responsesModel: 'gpt-5.2',
+        frontendInstructions: 'voice',
+        maxHistoryTokens: 60,
+      },
+    );
+    expect(
+      prepared.session.input.map((item) => item.content[0].text),
+    ).toEqual([summary, 'recent question', 'newest answer']);
+    expect(prepared.session.input[0]?.role).toBe('assistant');
+    expect(prepared.omittedHistoryMessages).toBe(2);
+  });
+
   it.each(['context '.repeat(20), 'x'.repeat(131_073)])(
     'retains the newest message when the summary cannot fit (%#)',
     (summaryText) => {

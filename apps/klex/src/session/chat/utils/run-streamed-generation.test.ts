@@ -1,5 +1,6 @@
 import { APICallError } from '@ai-sdk/provider';
 import {
+  InvalidToolInputError,
   type LanguageModel,
   NoOutputGeneratedError,
   readUIMessageStream,
@@ -112,6 +113,59 @@ describe('runStreamedGeneration — success', () => {
     expect(result.finishReason).toBe('stop');
     expect(result.usage.inputTokens).toBe(15);
     expect(result.usage.outputTokens).toBe(8);
+  });
+
+  it('only preserves typed input errors and their exact SDK string within one generation', async () => {
+    const inputError = new InvalidToolInputError({
+      toolName: 'recall',
+      toolInput: '{"scope":""}',
+      cause: new Error('scope must name an app'),
+    });
+    const formatters = [];
+    for (let generation = 0; generation < 2; generation++) {
+      setupSuccessResult({
+        messages: [
+          {
+            id: 'msg-1',
+            role: 'assistant',
+            parts: [{ type: 'text', text: 'hello' }],
+          },
+        ],
+      });
+      await runStreamedGeneration({
+        model,
+        modelMessages: [],
+        tools,
+        onUpdate: vi.fn(),
+        abortSignal,
+        logger,
+        modelContext,
+        sessionId: 'test-session',
+        compacted: false,
+        basePrompt: 'mock system prompt',
+      });
+      const onError = vi
+        .mocked(toUIMessageStream)
+        .mock.calls.at(-1)?.[0].onError;
+      if (!onError) throw new Error('Expected a stream error formatter');
+      formatters.push(onError);
+      // A string alone is not evidence of a validation error, even if another
+      // generation has already encountered the corresponding typed error.
+      expect(onError(inputError.toString())).toBe('An error occurred.');
+      expect(onError(inputError)).toBe(inputError.message);
+      expect(onError(inputError.toString())).toBe(inputError.message);
+      for (const error of [
+        new Error('private provider response'),
+        'private provider response',
+        `${inputError.toString()} with private provider details`,
+        { message: inputError.message },
+        null,
+        undefined,
+      ]) {
+        expect(onError(error)).toBe('An error occurred.');
+      }
+    }
+    expect(formatters[0]).not.toBe(formatters[1]);
   });
 
   it('calls onUpdate for each UI message chunk from the stream', async () => {

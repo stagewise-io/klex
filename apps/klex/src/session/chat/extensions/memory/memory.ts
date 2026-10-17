@@ -135,7 +135,7 @@ class MemoryExt implements Extension {
     return {
       recall: tool({
         description:
-          'Ask memory in the background. Answers arrive later in `<memory>` blocks, including when I remember nothing. Meanwhile continue silently unless memory is strictly required.',
+          'Ask memory in the background. Answers arrive later in `<memory>` blocks, including when I remember nothing. Meanwhile continue silently unless memory is strictly required. Optional scope is a context hint for the app, conversation, person, or project, not an enforced filter or authorization boundary. Prefer known IDs, e.g. "slack conversation:C123 user:U456"; prose such as "GitHub stagewise-io/klex PR #222" or "Julian\'s work on deployment previews" also works. Never invent IDs; omit scope when unknown.',
         inputSchema: recallInputSchema,
         execute: async (input) => {
           try {

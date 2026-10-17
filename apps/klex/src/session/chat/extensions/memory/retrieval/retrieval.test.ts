@@ -19,7 +19,41 @@ describe('retrieval contracts', () => {
     });
   });
 
-  it('rejects semantic scope prose and oversized scopes', () => {
+  it.each([
+    'chat',
+    'slack conversation:C123 user:U456',
+    'GitHub stagewise-io/klex PR #222',
+    "Julian's work on deployment previews",
+    'x'.repeat(256),
+  ])('accepts recall input scope %s', (scope) => {
+    expect(
+      recallInputSchema.parse({ question: ' q ', scope: ` ${scope} ` }),
+    ).toEqual({
+      question: 'q',
+      scope,
+    });
+  });
+
+  it.each(['', '   ', 123, null, {}, 'x'.repeat(257)])(
+    'rejects invalid recall input scope %j',
+    (scope) => {
+      expect(
+        recallInputSchema.safeParse({ question: 'q', scope }).success,
+      ).toBe(false);
+    },
+  );
+
+  it('allows omitted scope and retains strict question and field validation', () => {
+    expect(recallInputSchema.parse({ question: ' q ' })).toEqual({
+      question: 'q',
+    });
+    expect(recallInputSchema.safeParse({ question: ' ' }).success).toBe(false);
+    expect(
+      recallInputSchema.safeParse({ question: 'q', extra: true }).success,
+    ).toBe(false);
+  });
+
+  it('keeps returned scopes compact and bounded', () => {
     expect(() =>
       compactRecallScopeSchema.parse('the billing migration chat'),
     ).toThrow();

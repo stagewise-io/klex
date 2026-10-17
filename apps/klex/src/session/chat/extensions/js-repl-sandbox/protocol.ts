@@ -2,6 +2,7 @@ import {
   assertJsonValue,
   type JsonObject,
   type JsonValue,
+  parseToolSearchOptions,
 } from '@/tool-provider';
 
 import type { SerializedError } from './serialization';
@@ -19,7 +20,12 @@ export interface ToolSnapshotMessage {
 }
 
 export type ProviderRequest =
-  | { operation: 'search'; query: string; limit?: number }
+  | {
+      operation: 'search';
+      query: string;
+      limit?: number;
+      includeInputSchema?: boolean;
+    }
   | { operation: 'describe'; reference: ToolReferenceMessage }
   | {
       operation: 'invoke';
@@ -122,7 +128,7 @@ function assertProviderRequest(
     throw new Error('Invalid provider request');
   if (value.operation === 'search') {
     assertString(value.query, 'query');
-    if (value.limit !== undefined) assertNumber(value.limit, 'limit');
+    parseToolSearchOptions(value);
     return;
   }
   assertReference(value.reference);

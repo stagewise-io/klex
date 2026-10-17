@@ -24,16 +24,18 @@ import {
   createInMemoryPushNotificationInbox,
   type PushNotificationInbox,
 } from '@/mcp/push-notification-inbox';
-import type {
-  JsonObject,
-  JsonValue,
-  ToolDescription,
-  ToolProvider,
-  ToolReference,
-  ToolRequestContext,
-  ToolSearchOptions,
-  ToolSearchResult,
-  ToolSnapshot,
+import {
+  type JsonObject,
+  type JsonValue,
+  parseToolSearchOptions,
+  type ToolDescription,
+  type ToolProvider,
+  type ToolReference,
+  type ToolRequestContext,
+  type ToolSearchOptions,
+  type ToolSearchResult,
+  type ToolSnapshot,
+  toolSearchLimit,
 } from '@/tool-provider';
 
 import {
@@ -722,6 +724,7 @@ class McpModule implements Mcp {
     options: ToolSearchOptions,
     _context: ToolRequestContext,
   ): Promise<ToolSearchResult[]> {
+    const parsedOptions = parseToolSearchOptions(options);
     const terms = query.toLocaleLowerCase().split(/\s+/u).filter(Boolean);
     const matches = [...this.registry.entries()].flatMap(
       ([namespace, registeredNamespace]) =>
@@ -732,12 +735,17 @@ class McpModule implements Mcp {
           return terms.every((term) => haystack.includes(term));
         }),
     );
-    return matches.slice(0, options.limit ?? matches.length).map((entry) => ({
-      reference: entry.descriptor.reference,
-      ...(entry.tool.description
-        ? { description: entry.tool.description }
-        : {}),
-    }));
+    return matches
+      .slice(0, toolSearchLimit(parsedOptions) ?? matches.length)
+      .map((entry) => ({
+        reference: entry.descriptor.reference,
+        ...(entry.tool.description
+          ? { description: entry.tool.description }
+          : {}),
+        ...(parsedOptions.includeInputSchema && entry.descriptor.inputSchema
+          ? { inputSchema: entry.descriptor.inputSchema }
+          : {}),
+      }));
   }
 
   async describe(

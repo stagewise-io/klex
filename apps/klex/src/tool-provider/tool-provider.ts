@@ -14,11 +14,56 @@ export interface ToolSnapshot {
 
 export interface ToolSearchOptions {
   limit?: number;
+  includeInputSchema?: boolean;
+}
+
+export const TOOL_SEARCH_USAGE =
+  'Use tools.search(query: string, options?: { limit?: number, includeInputSchema?: boolean }), e.g. tools.search("deployment", { limit: 5, includeInputSchema: true }).';
+
+/** Shared validation for guest, worker protocol, and direct provider calls. */
+export function parseToolSearchOptions(value: unknown): ToolSearchOptions {
+  if (value === undefined) return {};
+  if (typeof value !== 'object' || value === null || Array.isArray(value))
+    throw new TypeError(
+      `Search options must be an object. ${TOOL_SEARCH_USAGE}`,
+    );
+  const limit = 'limit' in value ? value.limit : undefined;
+  const includeInputSchema =
+    'includeInputSchema' in value ? value.includeInputSchema : undefined;
+  if (
+    limit !== undefined &&
+    (typeof limit !== 'number' || !Number.isSafeInteger(limit) || limit < 1)
+  )
+    throw new TypeError(
+      `Search limit must be a positive finite integer. ${TOOL_SEARCH_USAGE}`,
+    );
+  if (
+    includeInputSchema !== undefined &&
+    typeof includeInputSchema !== 'boolean'
+  )
+    throw new TypeError(
+      `includeInputSchema must be a boolean. ${TOOL_SEARCH_USAGE}`,
+    );
+  if (includeInputSchema && limit !== undefined && limit > 20)
+    throw new TypeError(
+      `Schema-inclusive search limit must be at most 20. ${TOOL_SEARCH_USAGE}`,
+    );
+  return {
+    ...(limit === undefined ? {} : { limit }),
+    ...(includeInputSchema === undefined ? {} : { includeInputSchema }),
+  };
+}
+
+export function toolSearchLimit(
+  options: ToolSearchOptions,
+): number | undefined {
+  return options.limit ?? (options.includeInputSchema ? 5 : undefined);
 }
 
 export interface ToolSearchResult {
   reference: ToolReference;
   description?: string;
+  inputSchema?: JsonObject;
 }
 
 export interface ToolDescription {

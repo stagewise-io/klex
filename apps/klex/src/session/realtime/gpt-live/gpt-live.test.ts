@@ -538,7 +538,7 @@ describe('GPT-Live startup configuration', () => {
     const prepared = buildGPTLiveSessionConfig(context, {
       responsesModel: 'gpt-5.2',
       frontendInstructions: 'voice policy',
-      maxHistoryMessages: 2,
+      maxHistoryTokens: 45,
     });
 
     expect(prepared.omittedHistoryMessages).toBe(3);
@@ -548,12 +548,84 @@ describe('GPT-Live startup configuration', () => {
     ]);
   });
 
+  it('retains more than 128 messages within the 32,000-token default budget', () => {
+    const messages: ModelMessage[] = Array.from({ length: 150 }, () => ({
+      role: 'user',
+      content: 'history '.repeat(100),
+    }));
+    const prepared = buildGPTLiveSessionConfig(
+      { ...context, messages },
+      { responsesModel: 'gpt-5.2', frontendInstructions: 'voice' },
+    );
+    expect(prepared.session.input).toHaveLength(150);
+    expect(prepared.omittedHistoryMessages).toBe(0);
+  });
+
+  it.each([false, true])(
+    'retains a contiguous newest tail with summary pinning %j',
+    (withSummary) => {
+      const summary = '<summary>Earlier context</summary>';
+      const messages: ModelMessage[] = [
+        ...(withSummary
+          ? [{ role: 'assistant' as const, content: summary }]
+          : []),
+        { role: 'user', content: 'older small message' },
+        { role: 'assistant', content: 'large middle message '.repeat(100) },
+        { role: 'user', content: 'recent question' },
+        { role: 'assistant', content: 'newest answer' },
+      ];
+      const prepared = buildGPTLiveSessionConfig(
+        { ...context, messages },
+        {
+          responsesModel: 'gpt-5.2',
+          frontendInstructions: 'voice',
+          maxHistoryTokens: 60,
+        },
+      );
+      expect(
+        prepared.session.input.map((item) => item.content[0].text),
+      ).toEqual([
+        ...(withSummary ? [summary] : []),
+        'recent question',
+        'newest answer',
+      ]);
+      if (withSummary)
+        expect(prepared.session.input[0]?.role).toBe('assistant');
+      expect(prepared.omittedHistoryMessages).toBe(2);
+    },
+  );
+
+  it.each(['context '.repeat(20), 'x'.repeat(131_073)])(
+    'retains the newest message when the summary cannot fit (%#)',
+    (summaryText) => {
+      const prepared = buildGPTLiveSessionConfig(
+        {
+          ...context,
+          messages: [
+            { role: 'assistant', content: `<summary>${summaryText}</summary>` },
+            { role: 'user', content: 'newest' },
+          ],
+        },
+        {
+          responsesModel: 'gpt-5.2',
+          frontendInstructions: 'voice',
+          maxHistoryTokens: 40,
+        },
+      );
+      expect(prepared.session.input).toMatchObject([
+        { role: 'user', content: [{ text: 'newest' }] },
+      ]);
+      expect(prepared.omittedHistoryMessages).toBe(1);
+    },
+  );
+
   it('bounds ordinary history text before tokenization', () => {
     const oversized = 'x'.repeat(131_073);
     const prepared = buildGPTLiveSessionConfig(
       {
         ...context,
         messages: [
+          { role: 'user', content: 'older small message' },
           { role: 'user', content: oversized },
           { role: 'user', content: 'newest' },
         ],
@@ -563,7 +635,7 @@ describe('GPT-Live startup configuration', () => {
         frontendInstructions: 'voice',
       },
     );
-    expect(prepared.omittedHistoryMessages).toBe(1);
+    expect(prepared.omittedHistoryMessages).toBe(2);
     expect(prepared.session.input).toMatchObject([
       { content: [{ text: 'newest' }] },
     ]);
@@ -579,7 +651,7 @@ describe('GPT-Live startup configuration', () => {
     ).toThrow('Newest GPT-Live history message');
   });
 
-  it('bounds tool history values before tokenization', () => {
+  it('uses compact tool value serialization and bounds text before tokenization', () => {
     const prepared = buildGPTLiveSessionConfig(
       {
         ...context,
@@ -595,6 +667,20 @@ describe('GPT-Live startup configuration', () => {
               },
             ],
           },
+          {
+            role: 'tool',
+            content: [
+              {
+                type: 'tool-result',
+                toolCallId: 'large-call',
+                toolName: 'large',
+                output: {
+                  type: 'json',
+                  value: { first: 'a'.repeat(600), second: 'b'.repeat(600) },
+                },
+              },
+            ],
+          },
         ],
       },
       {
@@ -603,10 +689,16 @@ describe('GPT-Live startup configuration', () => {
       },
     );
 
-    expect(prepared.session.input[0]?.content[0].text.length).toBeLessThan(
-      20_000,
+    expect(prepared.session.input[0]?.content[0].text).toBe(
+      `[Prior tool call large (large-call): {"value":"${'x'.repeat(600)}"}]`,
     );
-    expect(prepared.session.input[0]?.content[0].text).toContain('…');
+    const compactOutput = JSON.stringify({
+      type: 'json',
+      value: { first: 'a'.repeat(600), second: 'b'.repeat(600) },
+    });
+    expect(prepared.session.input[1]?.content[0].text).toBe(
+      `[Prior tool result large (large-call): ${compactOutput.slice(0, 1_000)}…]`,
+    );
   });
 
   it('preserves own prototype keys in bounded tool history values', () => {
@@ -653,7 +745,7 @@ describe('GPT-Live startup configuration', () => {
       )
         text += character;
       const externalContext = RealtimeMediaSessionContextSchema.parse({ text });
-      const history: ModelMessage[] = Array.from({ length: 150 }, () => ({
+      const history: ModelMessage[] = Array.from({ length: 200 }, () => ({
         role: 'user',
         content: 'old history '.repeat(100),
       }));
@@ -677,6 +769,7 @@ describe('GPT-Live startup configuration', () => {
         context.instructions,
       );
     },
+    15_000,
   );
 
   it('fails closed when the newest history message exceeds its budget', () => {

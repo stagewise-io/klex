@@ -4,6 +4,7 @@ import type { JSONObject } from '@ai-sdk/provider';
 import {
   EmptyResponseBodyError,
   type FinishReason,
+  InvalidToolInputError,
   type LanguageModel,
   type LanguageModelUsage,
   type ModelMessage,
@@ -136,10 +137,25 @@ export async function runStreamedGeneration(
     }),
   });
 
+  const toolInputErrors = new Map<string, string>();
   const uiMsgChunkStream = toUIMessageStream<AgentTools, ExtendedUIMessage>({
     stream: result.stream,
     generateMessageId: randomUUID,
     tools: params.tools,
+    // This stream also becomes model history. Keep argument feedback so the
+    // model can correct its call, without exposing unrelated server errors.
+    onError: (error) => {
+      if (InvalidToolInputError.isInstance(error)) {
+        // The SDK emits the typed error first, then a tool-error containing
+        // error.toString(). Preserve both, or the second chunk hides the first.
+        toolInputErrors.set(error.toString(), error.message);
+        return error.message;
+      }
+      return (
+        (typeof error === 'string' ? toolInputErrors.get(error) : undefined) ??
+        'An error occurred.'
+      );
+    },
   });
   const uiMsgUpdateStream = readUIMessageStream<ExtendedUIMessage>({
     stream: uiMsgChunkStream,

@@ -180,6 +180,13 @@ function collectText(message: ModelMessage): string {
     .join('\n');
 }
 
+function hasCompactionSummary(text: string): boolean {
+  const start = text.indexOf('<summary>');
+  if (start === -1) return false;
+  const end = text.indexOf('</summary>', start + '<summary>'.length);
+  return end !== -1;
+}
+
 function retainNewestHistory(
   items: readonly GPTLiveInitialItem[],
   maxTokens: number,
@@ -198,8 +205,7 @@ function retainNewestHistory(
   const first = items[0];
   const summaryIndex =
     first?.role === 'assistant' &&
-    first.content[0].text.startsWith('<summary>') &&
-    first.content[0].text.endsWith('</summary>') &&
+    hasCompactionSummary(first.content[0]?.text ?? '') &&
     items.length > 1
       ? 0
       : -1;

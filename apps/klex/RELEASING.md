@@ -28,6 +28,22 @@ Pull requests read/write for this repository. It must not bypass branch
 protection. The Prepare workflow needs it because pull requests created with the
 default `GITHUB_TOKEN` do not trigger normal pull-request CI.
 
+### Cloud production promotion
+
+`CLOUD_PROMOTION_TOKEN` is an optional repository secret used to dispatch the
+Cloud production promotion workflow. Configure a token authorized to run
+`docker.yml` in `stagewise-io/cloud`. If it is absent, the release workflow logs
+that automatic Cloud promotion dispatch is skipped and succeeds.
+
+Once `image-stable-pointer` advances and verifies
+`ghcr.io/stagewise-io/klex:stable`, it dispatches `docker.yml` on
+`stagewise-io/cloud` at `main`, passing the immutable
+`ghcr.io/stagewise-io/klex@sha256:...` image as `klex_image` and the release
+version as `klex_version`. The Cloud production-promotion PR
+(`automation/promote-cloud-production`) rolls out the new Klex runtime image
+alongside Cloud changes. If the stable pointer already holds a newer version,
+the workflow leaves it untouched and does not dispatch a promotion.
+
 ### macOS
 
 - `MACOS_CERT_P12_BASE64`

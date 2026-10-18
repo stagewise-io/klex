@@ -20,6 +20,8 @@ on:
         required: true
         type: string
     secrets:
+      CLOUD_PROMOTION_TOKEN:
+        required: false
       APPLE_ID:
         required: false
       APPLE_PASSWORD:
@@ -847,6 +849,7 @@ jobs:
             newest="$(printf '%s\n%s\n' "$previous" "$VERSION" | sort -V | tail -n1)"
             if [[ "$newest" != "$VERSION" ]]; then
               echo "$KLEX_IMAGE:$CHANNEL_TAG is at $previous, newer than $VERSION; leaving it untouched"
+              echo 'promoted=false' >> "$GITHUB_OUTPUT"
               exit 0
             fi
           fi
@@ -857,11 +860,18 @@ jobs:
             echo "$KLEX_IMAGE:$CHANNEL_TAG is $actual, expected $expected" >&2
             exit 1
           }
+          echo 'promoted=true' >> "$GITHUB_OUTPUT"
+          echo "digest=$actual" >> "$GITHUB_OUTPUT"
+          echo "image=$KLEX_IMAGE@$actual" >> "$GITHUB_OUTPUT"
 
   # :stable moves only after the published release installs and verifies on
   # every platform, mirroring publish-stable-pointer.
   image-stable-pointer:
     needs: [image-manifest, verify-stable-install]
+    outputs:
+      digest: ${{ steps.move.outputs.digest }}
+      image: ${{ steps.move.outputs.image }}
+      promoted: ${{ steps.move.outputs.promoted }}
     if: inputs.channel == 'stable'
     runs-on: ubuntu-22.04
     timeout-minutes: 10
@@ -878,8 +888,27 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Move the stable tag
+        id: move
         shell: bash
         env:
           CHANNEL_TAG: stable
           VERSION: ${{ inputs.version }}
         run: *move-channel-tag
+      - name: Trigger Cloud production promotion
+        if: steps.move.outputs.promoted == 'true'
+        shell: bash
+        env:
+          CLOUD_PROMOTION_TOKEN: ${{ secrets.CLOUD_PROMOTION_TOKEN }}
+          KLEX_IMAGE_DIGEST: ${{ steps.move.outputs.image }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$CLOUD_PROMOTION_TOKEN" ]]; then
+            echo "CLOUD_PROMOTION_TOKEN is not configured; skipping automatic Cloud promotion dispatch for $KLEX_IMAGE_DIGEST"
+            exit 0
+          fi
+          GH_TOKEN="$CLOUD_PROMOTION_TOKEN" gh workflow run docker.yml \
+            --repo stagewise-io/cloud \
+            --ref main \
+            -f klex_image="$KLEX_IMAGE_DIGEST" \
+            -f klex_version="$VERSION"

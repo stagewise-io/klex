@@ -2,7 +2,6 @@ import quickJsVariant from '@jitl/quickjs-singlefile-mjs-release-sync';
 import {
   newQuickJSWASMModuleFromVariant,
   type QuickJSContext,
-  type QuickJSHandle,
   type QuickJSRuntime,
 } from 'quickjs-emscripten-core';
 
@@ -96,13 +95,8 @@ class PersistentQuickJsRuntimeModule implements PersistentQuickJsRuntime {
           strict: true,
         },
       );
-      let promiseHandle: QuickJSHandle;
-      try {
-        promiseHandle = this.context.unwrapResult(evaluation);
-      } catch (error) {
-        evaluation.dispose();
-        throw error;
-      }
+      // unwrapResult consumes the error handle before throwing.
+      const promiseHandle = this.context.unwrapResult(evaluation);
       try {
         while (true) {
           executeJobs(this.runtime);
@@ -221,6 +215,7 @@ function executeJobs(runtime: QuickJSRuntime): void {
   try {
     if (result.error) result.error.context.unwrapResult(result);
   } finally {
-    result.dispose();
+    // unwrapResult consumes failed results; only dispose a still-live result.
+    if (result.alive) result.dispose();
   }
 }

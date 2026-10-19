@@ -7,17 +7,22 @@ Aggregate product analytics are a separate, on-by-default system with their own 
 | Setting | CLI | Environment |
 | --- | --- | --- |
 | OTLP base URL (enables telemetry) | `--telemetry-endpoint <url>` | `KLEX_TELEMETRY_ENDPOINT` |
+| Level: `basic`, `advanced`, or `debug` (requires endpoint) | `--telemetry-level <level>` | `KLEX_TELEMETRY_LEVEL` |
 | Debug telemetry (requires endpoint) | `--telemetry-debug` | `KLEX_TELEMETRY_DEBUG=1` |
+| Allow plain HTTP on any host | `--telemetry-allow-insecure` | `KLEX_TELEMETRY_ALLOW_INSECURE=1` |
 | Force off (overrides everything) | `--disable-telemetry` | `KLEX_DISABLE_TELEMETRY=1` |
 | Extra OTLP headers (JSON object) | — | `KLEX_TELEMETRY_HEADERS` |
 
 Levels:
 
 - `no` (default): no OTLP logs, traces, or metrics are exported or collected.
+- `basic` (endpoint and explicit level): process and aggregate usage metrics with bounded, low-cardinality dimensions, plus sanitized WARN-and-above logs. No traces, session IDs, names, or discrete event logs are exported. Intended for fleet health and crash diagnosis (memory, heap headroom, CPU, uptime).
 - `advanced` (endpoint set): lifecycle, aggregate usage, process metrics, operational span detail, bounded error diagnostics, and identity-bearing per-session metrics for active-session state, history size, tool calls, and last-call token/cache usage, with sanitized WARN-and-above logs plus the discrete event logs below. It excludes AI content and stack traces. Session IDs, names, parent relationships, and tool names make advanced exports sensitive operational data.
 - `debug` (endpoint and explicit opt-in): adds all log levels (TRACE and above), full structured logs, and content-enabled tracing. **Debug exports chat content, prompts, tool payloads, and other PII.** All exported log messages are best-effort sanitized for credentials, secrets, and URLs; debug additionally preserves arbitrary structured fields after recursively redacting sensitive field names. Use only with a collector you control. Passing `--telemetry-debug` without an endpoint is a startup error.
 
-While telemetry is active, Klex shows a persistent warning naming the endpoint: a yellow banner in the interactive UI (and a framed notice on stderr in headless mode) for `advanced`, and a red, high-contrast banner for `debug`.
+Without an explicit level, an endpoint selects `advanced`, and the debug flag selects `debug`. An explicit level without an endpoint, an unknown level name, or the debug flag combined with `basic` or `advanced` is a startup error. `--disable-telemetry` overrides every other setting.
+
+While telemetry is active, Klex shows a persistent warning naming the endpoint: a yellow banner in the interactive UI (and a framed notice on stderr in headless mode) for `basic` and `advanced`, and a red, high-contrast banner for `debug`. The warning also states when telemetry is sent unencrypted over HTTP.
 
 The telemetry identity is a random UUID generated per process. It does not include hostnames, usernames, network addresses, or machine fingerprints.
 
@@ -103,7 +108,9 @@ docker run --rm --name klex-otel-lgtm \
   grafana/otel-lgtm:latest
 ```
 
-The container's Grafana UI is available at `http://localhost:3000`. For a deployment, keep the container on the private network and put it behind an authenticated HTTPS reverse proxy. Klex requires telemetry endpoints to use HTTPS in deployments. For local development only, plain HTTP is allowed for `localhost`, `127.0.0.1`, and `::1`; do not use the container's plain HTTP listener outside loopback. Set the proxy URL with `KLEX_TELEMETRY_ENDPOINT` or `--telemetry-endpoint`; Klex appends `/v1/logs`, `/v1/traces`, and `/v1/metrics` for the OTLP HTTP exporters.
+The container's Grafana UI is available at `http://localhost:3000`. For a deployment, keep the container on the private network and put it behind an authenticated HTTPS reverse proxy. Klex requires telemetry endpoints to use HTTPS in deployments. For local development only, plain HTTP is allowed for `localhost`, `127.0.0.1`, and `::1`; do not use the container's plain HTTP listener outside loopback.
+
+`--telemetry-allow-insecure` / `KLEX_TELEMETRY_ALLOW_INSECURE=1` accepts plain `http:` for any host. It exists for collectors on a trusted private network, such as an in-cluster collector reached through a Kubernetes service. Klex refuses to start if `KLEX_TELEMETRY_HEADERS` is set together with a non-loopback HTTP endpoint, so collector tokens are never sent in cleartext; the in-network collector must authenticate upstream itself. Set the proxy URL with `KLEX_TELEMETRY_ENDPOINT` or `--telemetry-endpoint`; Klex appends `/v1/logs`, `/v1/traces`, and `/v1/metrics` for the OTLP HTTP exporters.
 
 Treat the local LGTM instance as sensitive operational data. Apply the same retention, access-control, and debug-mode rules as any other telemetry backend, and use `no` telemetry when a build or deployment must not export telemetry at all.
 

@@ -58,6 +58,7 @@ Only observable gauges carry the unbounded `klex.session.id` / `klex.session.par
 | `process.uptime` | Observable gauge | `s` | none |
 | `klex.data_directory.size` | Observable gauge | `By` | none |
 | `klex.process.memory.rss` | Histogram | `By` | none |
+| `klex.process.memory.heap` | Observable gauge | `By` | `klex.memory.state`: `used` or `limit` |
 | `klex.process.cpu.utilization.distribution` | Histogram | `1` | `cpu.mode`: `user` or `system` |
 | `gen_ai.client.inference.usage.input_tokens` | Counter | `{token}` | `gen_ai.operation.name`, `gen_ai.provider.name`, `gen_ai.token.modality` |
 | `gen_ai.client.inference.usage.output_tokens` | Counter | `{token}` | same as input tokens |

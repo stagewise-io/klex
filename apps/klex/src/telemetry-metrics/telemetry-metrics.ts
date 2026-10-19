@@ -1,6 +1,7 @@
 import { readdir, stat } from 'node:fs/promises';
 import { availableParallelism, freemem, totalmem } from 'node:os';
 import { join } from 'node:path';
+import { getHeapStatistics } from 'node:v8';
 
 import {
   type Attributes,
@@ -572,6 +573,23 @@ class TelemetryMetricsModule implements TelemetryMetrics {
       .addCallback((observable) => {
         if (!this.started || !this.enabled) return;
         observable.observe(process.uptime());
+      });
+    // V8 heap headroom: `used` approaching `limit` precedes JS heap OOM
+    // crashes, which RSS alone cannot distinguish from native growth.
+    meter
+      .createObservableGauge('klex.process.memory.heap', {
+        description: 'V8 heap used by the Klex process and its heap size limit',
+        unit: 'By',
+      })
+      .addCallback((observable) => {
+        if (!this.started || !this.enabled) return;
+        const heap = getHeapStatistics();
+        observable.observe(heap.used_heap_size, {
+          'klex.memory.state': 'used',
+        });
+        observable.observe(heap.heap_size_limit, {
+          'klex.memory.state': 'limit',
+        });
       });
     meter
       .createObservableGauge('klex.host.logical_processor.count', {

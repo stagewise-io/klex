@@ -20,6 +20,8 @@ describe('parseCliArgs', () => {
     delete process.env.KLEX_TELEMETRY_ENDPOINT;
     delete process.env.KLEX_TELEMETRY_DEBUG;
     delete process.env.KLEX_DISABLE_TELEMETRY;
+    delete process.env.KLEX_TELEMETRY_LEVEL;
+    delete process.env.KLEX_TELEMETRY_ALLOW_INSECURE;
     delete process.env.KLEX_CLOUD_ENROLLMENT_TOKEN;
     delete process.env.KLEX_DANGEROUS_LOCAL_ADMIN_API_PORT;
     delete process.env.KLEX_ALLOW_UNSECURE_CLOUD;
@@ -41,6 +43,8 @@ describe('parseCliArgs', () => {
       'KLEX_TELEMETRY_ENDPOINT',
       'KLEX_TELEMETRY_DEBUG',
       'KLEX_DISABLE_TELEMETRY',
+      'KLEX_TELEMETRY_LEVEL',
+      'KLEX_TELEMETRY_ALLOW_INSECURE',
       'KLEX_CLOUD_ENROLLMENT_TOKEN',
       'KLEX_DANGEROUS_LOCAL_ADMIN_API_PORT',
       'KLEX_ALLOW_UNSECURE_CLOUD',
@@ -277,6 +281,64 @@ describe('parseCliArgs', () => {
     });
     delete process.env.KLEX_DISABLE_TELEMETRY;
     expect(parseCliArgs(['--disable-telemetry']).telemetryLevel).toBe('no');
+  });
+
+  it('selects an explicit telemetry level from CLI or env', () => {
+    const endpoint = ['--telemetry-endpoint', 'https://cli.example'];
+    expect(
+      parseCliArgs([...endpoint, '--telemetry-level', 'basic']).telemetryLevel,
+    ).toBe('basic');
+    process.env.KLEX_TELEMETRY_LEVEL = 'basic';
+    expect(parseCliArgs(endpoint).telemetryLevel).toBe('basic');
+    expect(
+      parseCliArgs([...endpoint, '--telemetry-level', 'advanced'])
+        .telemetryLevel,
+    ).toBe('advanced');
+  });
+
+  it('rejects invalid or endpoint-less telemetry levels', () => {
+    expect(() =>
+      parseCliArgs([
+        '--telemetry-endpoint',
+        'https://cli.example',
+        '--telemetry-level',
+        'full',
+      ]),
+    ).toThrow('Invalid telemetry level');
+    expect(() => parseCliArgs(['--telemetry-level', 'basic'])).toThrow(
+      'Telemetry level basic requires an endpoint',
+    );
+  });
+
+  it('lets disable-telemetry override an explicit level', () => {
+    process.env.KLEX_TELEMETRY_LEVEL = 'basic';
+    process.env.KLEX_TELEMETRY_ENDPOINT = 'https://env.example';
+    expect(parseCliArgs(['--disable-telemetry'])).toMatchObject({
+      telemetryEndpoint: undefined,
+      telemetryLevel: 'no',
+    });
+  });
+
+  it('allows a non-loopback HTTP endpoint only with the insecure opt-in', () => {
+    const endpoint = [
+      '--telemetry-endpoint',
+      'http://alloy.monitoring.svc:4318',
+    ];
+    expect(() => parseCliArgs(endpoint)).toThrow(
+      'Telemetry endpoint must use HTTPS',
+    );
+    expect(
+      parseCliArgs([...endpoint, '--telemetry-allow-insecure']),
+    ).toMatchObject({
+      telemetryEndpoint: 'http://alloy.monitoring.svc:4318',
+      telemetryAllowInsecure: true,
+    });
+    process.env.KLEX_TELEMETRY_ALLOW_INSECURE = '1';
+    process.env.KLEX_TELEMETRY_LEVEL = 'basic';
+    expect(parseCliArgs(endpoint)).toMatchObject({
+      telemetryLevel: 'basic',
+      telemetryAllowInsecure: true,
+    });
   });
 
   it('allows HTTP only for loopback telemetry endpoints', () => {

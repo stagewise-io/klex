@@ -374,7 +374,9 @@ async function main(): Promise<void> {
     const telemetryPolicy = createTelemetryPolicy(telemetryLevel);
     const spanProcessor = createTelemetrySpanProcessor(telemetryLevel);
     const telemetryExport = cli.telemetryEndpoint
-      ? createTelemetryExportConfiguration(cli.telemetryEndpoint)
+      ? createTelemetryExportConfiguration(cli.telemetryEndpoint, process.env, {
+          allowInsecure: cli.telemetryAllowInsecure,
+        })
       : undefined;
     // OTel `service.instance.id` is per process instance; the stable identity
     // is the enrolled cloud client id carried in the resource attributes.

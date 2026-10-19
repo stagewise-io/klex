@@ -2,6 +2,8 @@ export const TELEMETRY_ENDPOINT_ENV = 'KLEX_TELEMETRY_ENDPOINT';
 export const TELEMETRY_HEADERS_ENV = 'KLEX_TELEMETRY_HEADERS';
 export const TELEMETRY_DEBUG_ENV = 'KLEX_TELEMETRY_DEBUG';
 export const TELEMETRY_DISABLE_ENV = 'KLEX_DISABLE_TELEMETRY';
+export const TELEMETRY_AGENT_OBSERVABILITY_ENV =
+  'KLEX_TELEMETRY_AGENT_OBSERVABILITY';
 
 /**
  * Process-wide telemetry level. Telemetry is off unless an endpoint is given;
@@ -27,6 +29,24 @@ export function resolveTelemetryMode(input: TelemetryModeInput): TelemetryMode {
     return 'no';
   }
   return input.debug ? 'debug' : 'advanced';
+}
+
+/**
+ * Resolves the Grafana Agent Observability opt-in. It marks model spans with
+ * `agento11y.record=true`; it is meaningless without an exporting endpoint.
+ */
+export function resolveAgentObservability(input: {
+  enabled: boolean;
+  endpoint: string | undefined;
+  disabled: boolean;
+}): boolean {
+  if (input.disabled || !input.enabled) return false;
+  if (input.endpoint === undefined) {
+    throw new Error(
+      `Agent Observability telemetry requires an endpoint: set --telemetry-endpoint or ${TELEMETRY_ENDPOINT_ENV}`,
+    );
+  }
+  return true;
 }
 
 export interface TelemetryExportConfiguration {
@@ -94,8 +114,12 @@ export interface TelemetryWarning {
 export function describeTelemetryWarning(
   mode: TelemetryMode,
   endpoint: string | undefined,
+  agentObservability = false,
 ): TelemetryWarning | undefined {
   if (mode === 'no' || endpoint === undefined) return undefined;
+  const agentObservabilityLines = agentObservability
+    ? ['Model calls are also recorded in Grafana Agent Observability.']
+    : [];
   if (mode === 'advanced') {
     return {
       mode,
@@ -103,6 +127,7 @@ export function describeTelemetryWarning(
       lines: [
         `Logs, metrics, and traces are exported to ${endpoint}.`,
         'Chat content, message text, and credentials are excluded.',
+        ...agentObservabilityLines,
       ],
     };
   }
@@ -115,6 +140,7 @@ export function describeTelemetryWarning(
       'personal information (PII).',
       'Use only with a collector you control. Restart without',
       `--telemetry-debug / ${TELEMETRY_DEBUG_ENV} to stop.`,
+      ...agentObservabilityLines,
     ],
   };
 }

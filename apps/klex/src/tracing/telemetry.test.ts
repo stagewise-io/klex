@@ -41,52 +41,104 @@ function makeCallEndEvent(event: Record<string, unknown>): CallEndEvent {
   return event as unknown as CallEndEvent;
 }
 
+async function exportContentCall(options: {
+  level: 'advanced' | 'debug';
+  agentObservability?: boolean;
+}) {
+  const exporter = new InMemorySpanExporter();
+  const spanProcessor = createTelemetrySpanProcessor(options.level);
+  spanProcessor.setDelegate(new SimpleSpanProcessor(exporter));
+  const provider = new BasicTracerProvider({
+    spanProcessors: [spanProcessor],
+  });
+  const telemetry = createKlexTelemetry(provider.getTracer('test'), {
+    contentAllowed: () => options.level === 'debug',
+    agentObservability: options.agentObservability,
+  });
+
+  telemetry.onStart(
+    makeStartEvent({
+      callId: 'content-call',
+      operationId: 'ai.generateText',
+      provider: 'openai',
+      modelId: 'gpt-test',
+      functionId: 'chat-session',
+      instructions: 'System instructions',
+      messages: [{ role: 'user', content: 'Model input' }],
+      recordInputs: true,
+      recordOutputs: true,
+    }),
+  );
+  telemetry.onEnd(
+    makeEndEvent({
+      callId: 'content-call',
+      finishReason: 'stop',
+      usage: { inputTokens: 2, outputTokens: 3 },
+      content: [{ type: 'text', text: 'Model output' }],
+      text: 'Model output',
+    }),
+  );
+  await provider.forceFlush();
+  const span = exporter.getFinishedSpans()[0];
+  await provider.shutdown();
+  return span?.attributes ?? {};
+}
+
+function parseAttribute(value: unknown): unknown {
+  expect(typeof value).toBe('string');
+  return JSON.parse(value as string);
+}
+
 describe('KlexTelemetry — model content', () => {
-  it('exports model inputs and outputs through the debug span pipeline', async () => {
-    const exporter = new InMemorySpanExporter();
-    const spanProcessor = createTelemetrySpanProcessor('debug');
-    spanProcessor.setDelegate(new SimpleSpanProcessor(exporter));
-    const provider = new BasicTracerProvider({
-      spanProcessors: [spanProcessor],
+  it('exports model content in the GenAI parts format at debug', async () => {
+    const attributes = await exportContentCall({ level: 'debug' });
+
+    expect(parseAttribute(attributes['gen_ai.system_instructions'])).toEqual([
+      { type: 'text', content: 'System instructions' },
+    ]);
+    expect(parseAttribute(attributes['gen_ai.input.messages'])).toEqual([
+      { role: 'user', parts: [{ type: 'text', content: 'Model input' }] },
+    ]);
+    expect(parseAttribute(attributes['gen_ai.output.messages'])).toEqual([
+      {
+        role: 'assistant',
+        parts: [{ type: 'text', content: 'Model output' }],
+        finish_reason: 'stop',
+      },
+    ]);
+  });
+
+  it('exports no content at advanced', async () => {
+    const attributes = await exportContentCall({ level: 'advanced' });
+
+    expect(attributes['gen_ai.system_instructions']).toBeUndefined();
+    expect(attributes['gen_ai.input.messages']).toBeUndefined();
+    expect(attributes['gen_ai.output.messages']).toBeUndefined();
+    expect(attributes['gen_ai.request.model']).toBe('gpt-test');
+  });
+});
+
+describe('KlexTelemetry — Agent Observability marker', () => {
+  it('marks model spans only when the option is on', async () => {
+    const on = await exportContentCall({
+      level: 'advanced',
+      agentObservability: true,
     });
-    const telemetry = createKlexTelemetry(provider.getTracer('test'), {
-      contentAllowed: () => true,
+    const off = await exportContentCall({ level: 'advanced' });
+
+    expect(on['agento11y.record']).toBe(true);
+    expect(on['gen_ai.input.messages']).toBeUndefined();
+    expect(off['agento11y.record']).toBeUndefined();
+  });
+
+  it('keeps the marker next to content at debug', async () => {
+    const attributes = await exportContentCall({
+      level: 'debug',
+      agentObservability: true,
     });
 
-    telemetry.onStart(
-      makeStartEvent({
-        callId: 'content-call',
-        operationId: 'ai.generateText',
-        provider: 'openai',
-        modelId: 'gpt-test',
-        functionId: 'chat-session',
-        instructions: 'System instructions',
-        messages: [{ role: 'user', content: 'Model input' }],
-        recordInputs: true,
-        recordOutputs: true,
-      }),
-    );
-    telemetry.onEnd(
-      makeEndEvent({
-        callId: 'content-call',
-        finishReason: 'stop',
-        usage: { inputTokens: 2, outputTokens: 3 },
-        content: [{ type: 'text', text: 'Model output' }],
-        text: 'Model output',
-      }),
-    );
-    await provider.forceFlush();
-
-    const span = exporter.getFinishedSpans()[0];
-    expect(span?.attributes['gen_ai.system_instructions']).toBe(
-      'System instructions',
-    );
-    expect(span?.attributes['gen_ai.input.messages']).toContain('Model input');
-    expect(span?.attributes['gen_ai.output.messages']).toContain(
-      'Model output',
-    );
-
-    await provider.shutdown();
+    expect(attributes['agento11y.record']).toBe(true);
+    expect(attributes['gen_ai.input.messages']).toBeDefined();
   });
 });
 

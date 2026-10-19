@@ -36,6 +36,8 @@ export interface TracingDependencies {
   agentName?: string;
   /** Stable agent id (enrolled cloud client id), as `gen_ai.agent.id`. */
   getAgentId?: () => string | null | undefined;
+  /** Mark model spans for Grafana Agent Observability (`agento11y.record`). */
+  agentObservability?: boolean;
 }
 
 export interface Tracing {
@@ -64,6 +66,7 @@ class TracingModule implements Tracing {
       policy?: Readonly<Pick<TelemetryPolicy, 'getSnapshot'>>;
       agentName?: string;
       getAgentId?: () => string | null | undefined;
+      agentObservability: boolean;
     },
   ) {
     const resource = createTelemetryResourceFromAttributes({
@@ -98,6 +101,7 @@ class TracingModule implements Tracing {
       contentAllowed: () => deps.policy?.getSnapshot().contentAllowed ?? false,
       agentName: deps.agentName,
       getAgentId: deps.getAgentId,
+      agentObservability: deps.agentObservability,
     });
     registerTelemetry(this.telemetryInstance);
   }
@@ -173,5 +177,6 @@ export function createTracing(deps: TracingDependencies): Tracing {
     policy: deps.policy,
     agentName: deps.agentName,
     getAgentId: deps.getAgentId,
+    agentObservability: deps.agentObservability ?? false,
   });
 }

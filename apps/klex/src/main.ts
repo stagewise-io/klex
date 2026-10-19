@@ -137,6 +137,7 @@ const logger = createLogger({
 const telemetryWarning = describeTelemetryWarning(
   cli.telemetryLevel,
   cli.telemetryEndpoint,
+  cli.telemetryAgentObservability,
 );
 
 /** Set once created so a fatal startup error still flushes analytics. */
@@ -426,6 +427,7 @@ async function main(): Promise<void> {
       // identity never reaches basic telemetry.
       agentName: config.get().officialName,
       getAgentId: getCloudClientId,
+      agentObservability: cli.telemetryAgentObservability,
       enabled: telemetryPolicy.getSnapshot().tracesEnabled,
     });
     await tracing.start();

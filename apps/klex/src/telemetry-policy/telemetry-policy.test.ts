@@ -13,6 +13,7 @@ describe('telemetry policy', () => {
       'gen_ai.prompt',
       'prompt',
       'gen_ai.input_messages',
+      'gen_ai.tool.definitions',
       'gen_ai.Prompt',
       'GEN_AI.PROMPT',
     ]) {
@@ -53,6 +54,7 @@ describe('telemetry policy', () => {
       ['klex.session.id', 'session-1'],
       ['klex.outcome', 'success'],
       ['error.type', 'TypeError'],
+      ['agento11y.record', true],
     ] as const) {
       expect(isAllowedTelemetryAttribute(name, 'advanced', value)).toBe(true);
     }
@@ -62,6 +64,7 @@ describe('telemetry policy', () => {
       ['gen_ai.system_instructions', 'be nice'],
       ['gen_ai.tool.call.arguments', '{}'],
       ['gen_ai.tool.call.result', '{}'],
+      ['gen_ai.tool.definitions', '[]'],
       ['klex.abort.reason', 'Error: /Users/x'],
       ['error.message', 'boom'],
       ['host.name', 'laptop'],

@@ -43,6 +43,19 @@ const LEVEL_RANK: Record<RuntimeTelemetryLevel, number> = {
   debug: 3,
 };
 const MAX_RESOURCE_PATH_LENGTH = 4_096;
+/**
+ * GenAI content attributes holding JSON documents. At `debug` they are
+ * scrubbed per string leaf so the exported value stays parseable; slicing or
+ * regex-scrubbing the serialized text would corrupt it. Size is bounded at the
+ * source by the telemetry content budget.
+ */
+const GENAI_JSON_CONTENT_ATTRIBUTES = new Set([
+  'gen_ai.input.messages',
+  'gen_ai.output.messages',
+  'gen_ai.system_instructions',
+  'gen_ai.tool.definitions',
+]);
+const MAX_JSON_CONTENT_DEPTH = 64;
 const SAFE_EXCEPTION_ATTRIBUTES = new Set(['exception.type']);
 
 /** Supplies resource attributes that can change at runtime (e.g. enrollment). */
@@ -158,9 +171,50 @@ function sanitizeDebugValue(
   return String(value);
 }
 
+function scrubJsonLeaves(value: unknown, depth: number): unknown {
+  if (depth > MAX_JSON_CONTENT_DEPTH) return '[MAX_DEPTH]';
+  if (typeof value === 'string') return scrubCredentials(value);
+  if (Array.isArray(value)) {
+    return value.map((entry) => scrubJsonLeaves(entry, depth + 1));
+  }
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, entry]) => [
+        key,
+        isAlwaysForbiddenTelemetryAttribute(key)
+          ? '[REDACTED]'
+          : scrubJsonLeaves(entry, depth + 1),
+      ]),
+    );
+  }
+  return value;
+}
+
+/** Returns undefined when the value is not JSON; callers then fall back. */
+function sanitizeDebugJsonContent(value: string): string | undefined {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value);
+  } catch {
+    return undefined;
+  }
+  return JSON.stringify(scrubJsonLeaves(parsed, 0));
+}
+
 function safeDebugAttributes(attributes: Attributes): Attributes {
   const result: Attributes = {};
   for (const [key, value] of Object.entries(attributes)) {
+    if (
+      typeof value === 'string' &&
+      GENAI_JSON_CONTENT_ATTRIBUTES.has(key) &&
+      !isAlwaysForbiddenTelemetryAttribute(key)
+    ) {
+      const json = sanitizeDebugJsonContent(value);
+      if (json !== undefined) {
+        result[key] = json;
+        continue;
+      }
+    }
     if (!isAlwaysForbiddenTelemetryAttribute(key)) {
       result[key] = sanitizeDebugValue(
         value,

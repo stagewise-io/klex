@@ -430,4 +430,79 @@ describe('TelemetrySpanProcessor', () => {
     tp.setLevel('advanced');
     expect(tp.getLevel()).toBe('advanced');
   });
+
+  describe('GenAI JSON content', () => {
+    const toolDefinitions = JSON.stringify([
+      {
+        type: 'function',
+        name: 'read_file',
+        description: 'x'.repeat(2_000),
+        inputSchema: { type: 'object' },
+      },
+    ]);
+    const inputMessages = JSON.stringify([
+      {
+        role: 'user',
+        parts: [{ type: 'text', content: 'use token=abc"} and continue' }],
+      },
+    ]);
+    const exportAt = (level: 'advanced' | 'debug') => {
+      const tp = createTelemetrySpanProcessor(level);
+      const { processor, onEnd } = makeDelegate();
+      tp.setDelegate(processor);
+      tp.onEnd(
+        makeSpan({
+          attributes: {
+            'gen_ai.operation.name': 'generate_content',
+            'gen_ai.input.messages': inputMessages,
+            'gen_ai.tool.definitions': toolDefinitions,
+            'agento11y.record': true,
+          },
+        }),
+      );
+      const exported = onEnd.mock.calls[0]?.[0] as ReadableSpan | undefined;
+      if (exported === undefined) throw new Error('span was not exported');
+      return exported.attributes;
+    };
+
+    it('excludes content and tool definitions at advanced but keeps the AO marker', () => {
+      const attributes = exportAt('advanced');
+      expect(attributes['gen_ai.input.messages']).toBeUndefined();
+      expect(attributes['gen_ai.tool.definitions']).toBeUndefined();
+      expect(attributes['agento11y.record']).toBe(true);
+    });
+
+    it('keeps tool definitions whole at debug', () => {
+      const attributes = exportAt('debug');
+      expect(attributes['gen_ai.tool.definitions']).toBe(toolDefinitions);
+      expect(attributes['agento11y.record']).toBe(true);
+    });
+
+    it('redacts credentials per string leaf so the JSON stays valid', () => {
+      const value = exportAt('debug')['gen_ai.input.messages'];
+      expect(typeof value).toBe('string');
+      const parsed: unknown = JSON.parse(value as string);
+      expect(parsed).toEqual([
+        {
+          role: 'user',
+          parts: [{ type: 'text', content: 'use [REDACTED] and continue' }],
+        },
+      ]);
+    });
+
+    it('falls back to string scrubbing for non-JSON values', () => {
+      const tp = createTelemetrySpanProcessor('debug');
+      const { processor, onEnd } = makeDelegate();
+      tp.setDelegate(processor);
+      tp.onEnd(
+        makeSpan({
+          attributes: { 'gen_ai.output.messages': 'not json password=hunter2' },
+        }),
+      );
+      const forwarded = onEnd.mock.calls[0]?.[0] as ReadableSpan;
+      expect(forwarded.attributes['gen_ai.output.messages']).toBe(
+        'not json [REDACTED]',
+      );
+    });
+  });
 });

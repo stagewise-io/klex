@@ -16,6 +16,7 @@ import type { TelemetryPolicy } from '@/telemetry-policy';
 import { createTelemetryResourceFromAttributes } from '@/telemetry-resource';
 
 import {
+  GenAiIdentitySpanProcessor,
   KlexOpenTelemetry,
   type ModelCallSink,
   ModelCallUsageTelemetry,
@@ -85,7 +86,12 @@ class TracingModule implements Tracing {
     this.provider = new BasicTracerProvider({
       resource,
       sampler,
-      spanProcessors: [deps.spanProcessor],
+      spanProcessors: [
+        // Runs first so Klex-owned GenAI spans carry their identity before
+        // the policy processor sees them.
+        new GenAiIdentitySpanProcessor({ getAgentId: deps.getAgentId }),
+        deps.spanProcessor,
+      ],
     });
     // Register exactly one provider and context manager for this process.
     trace.setGlobalTracerProvider(this.provider);

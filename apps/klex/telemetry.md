@@ -23,7 +23,9 @@ The telemetry identity is a random UUID generated per process. It does not inclu
 
 ## Model content format
 
-AI SDK spans come from [`@ai-sdk/otel`](https://www.npmjs.com/package/@ai-sdk/otel), pinned to the version matching `ai`. Each call produces an `invoke_agent` span with `step` (`gen_ai.operation.name=agent_step`), `chat`, and `execute_tool` children. Every span of a call carries the Klex identity attributes (`klex.call.source`, `klex.extension.id`, `klex.model.*`, `gen_ai.agent.id`, `gen_ai.conversation.id`); `gen_ai.agent.name` is the configured agent name.
+AI SDK spans come from [`@ai-sdk/otel`](https://www.npmjs.com/package/@ai-sdk/otel), pinned to the version matching `ai`. Each call produces an `invoke_agent` span with `step` (`gen_ai.operation.name=agent_step`) and `chat` children. Every span of a call carries the Klex identity attributes (`klex.call.source`, `klex.extension.id`, `klex.model.*`, `gen_ai.agent.id`, `gen_ai.conversation.id`); `gen_ai.agent.name` is the configured agent name.
+
+Klex executes tools itself, so `execute_tool {tool}` spans come from the session tool executor, not from `@ai-sdk/otel`. They carry `gen_ai.tool.*`, `klex.session.id`, and `klex.outcome`; at `debug` also `gen_ai.tool.call.arguments` and `gen_ai.tool.call.result` (each bounded to 4 KiB).
 
 At `debug`, content is recorded in the [OpenTelemetry GenAI semantic-convention](https://opentelemetry.io/docs/specs/semconv/gen-ai/) parts format. Below `debug`, content is not captured at all:
 
@@ -36,7 +38,7 @@ System instructions, input, and output are each limited to 512 KiB of serialized
 
 ## Grafana Agent Observability
 
-AI SDK spans are built for [Grafana Agent Observability](https://grafana.com/docs/grafana-cloud/monitor-applications/ai-observability/). Every span of an AI SDK call carries `agento11y.record=true`; Grafana Cloud strips `gen_ai.*` content attributes from spans without it.
+AI SDK spans are built for [Grafana Agent Observability](https://grafana.com/docs/grafana-cloud/monitor-applications/ai-observability/). Every span of an AI SDK call carries `agento11y.record=true`; Grafana Cloud strips `gen_ai.*` content attributes from spans without it. Klex-owned GenAI spans (`execute_tool`) receive the same marker, `gen_ai.agent.id`, and `gen_ai.conversation.id` (the session id) from a span processor at span start.
 
 - `advanced`: Agent Observability records metadata only (model, provider, token usage, latency, errors, agent and conversation ids).
 - `debug`: Agent Observability also records the content described above, including tool calls and tool results.

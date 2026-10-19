@@ -34,7 +34,7 @@ At `debug`, content is recorded in the [OpenTelemetry GenAI semantic-convention]
 - `gen_ai.output.messages`: JSON array of `{ role, parts, finish_reason }`.
 - `gen_ai.tool.definitions`: JSON array of tool definitions on `chat` spans.
 
-System instructions, input, and output are each limited to 512 KiB of serialized JSON. When messages exceed the limit, the oldest are dropped (the last message is always kept) and `klex.telemetry.input_messages_dropped` records the count. When a document still exceeds it, the largest part payloads are shortened and `klex.telemetry.content_truncated=true` is set. The exported value is valid JSON in every case: debug credential redaction runs on each string inside the document, not on the serialized text.
+System instructions, input, output, and tool definitions are each limited to 512 KiB of serialized JSON. When input messages exceed the limit, the oldest are dropped (the last message is always kept) and `klex.telemetry.input_messages_dropped` records the count. When a document still exceeds it, the largest part payloads are shortened (by UTF-8 bytes), then the largest remaining strings, and `klex.telemetry.content_truncated=true` is set. A document that still cannot fit is exported as an empty placeholder (`[]`). The exported value is valid JSON in every case: debug credential redaction runs on each string inside the document, not on the serialized text.
 
 ## Grafana Agent Observability
 

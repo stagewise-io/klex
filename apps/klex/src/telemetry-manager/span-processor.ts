@@ -49,17 +49,12 @@ const LEVEL_RANK: Record<RuntimeTelemetryLevel, number> = {
 };
 const MAX_RESOURCE_PATH_LENGTH = 4_096;
 /**
- * GenAI content attributes holding JSON documents. At `debug` they are
- * scrubbed per string leaf so the exported value stays parseable; slicing or
- * regex-scrubbing the serialized text would corrupt it. Message and system
- * instruction documents are then bounded by the GenAI content budget.
+ * GenAI content attributes holding JSON documents (see
+ * `isBudgetedGenAiAttribute`) are scrubbed at `debug` per key and string
+ * leaf so the exported value stays parseable; slicing or regex-scrubbing the
+ * serialized text would corrupt it. They are then bounded by the GenAI
+ * content budget.
  */
-const GENAI_JSON_CONTENT_ATTRIBUTES = new Set([
-  'gen_ai.input.messages',
-  'gen_ai.output.messages',
-  'gen_ai.system_instructions',
-  'gen_ai.tool.definitions',
-]);
 const MAX_JSON_CONTENT_DEPTH = 64;
 const SAFE_EXCEPTION_ATTRIBUTES = new Set(['exception.type']);
 
@@ -189,7 +184,7 @@ function scrubJsonLeaves(value: unknown, depth: number): unknown {
       Object.entries(value)
         .filter(([key]) => !(isBlob && key === 'content'))
         .map(([key, entry]) => [
-          key,
+          scrubCredentials(key),
           isAlwaysForbiddenTelemetryAttribute(key)
             ? '[REDACTED]'
             : scrubJsonLeaves(entry, depth + 1),
@@ -200,8 +195,8 @@ function scrubJsonLeaves(value: unknown, depth: number): unknown {
 }
 
 /**
- * Scrubs (and, for budgeted attributes, bounds) a JSON content value into
- * `result`. Returns false when the value is not JSON; callers then fall back.
+ * Scrubs and bounds a JSON content value into `result`. Returns false when
+ * the value is not JSON; callers then fall back.
  */
 function writeDebugJsonContent(
   result: Attributes,
@@ -215,10 +210,6 @@ function writeDebugJsonContent(
     return false;
   }
   const scrubbed = scrubJsonLeaves(parsed, 0);
-  if (!isBudgetedGenAiAttribute(key)) {
-    result[key] = JSON.stringify(scrubbed);
-    return true;
-  }
   const bounded = boundGenAiContent(key, scrubbed);
   if (!bounded) return false;
   result[key] = bounded.json;
@@ -234,7 +225,7 @@ function safeDebugAttributes(attributes: Attributes): Attributes {
   for (const [key, value] of Object.entries(attributes)) {
     if (
       typeof value === 'string' &&
-      GENAI_JSON_CONTENT_ATTRIBUTES.has(key) &&
+      isBudgetedGenAiAttribute(key) &&
       !isAlwaysForbiddenTelemetryAttribute(key) &&
       writeDebugJsonContent(result, key, value)
     ) {

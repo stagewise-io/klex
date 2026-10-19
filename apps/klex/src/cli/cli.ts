@@ -7,11 +7,14 @@ import { createLogger } from '@stagewise/logger';
 import { type Deployment, resolveDeployment } from '@/product-analytics';
 import { KLEX_VERSION } from '@/release';
 import {
+  parseTelemetryLevel,
   resolveTelemetryEndpoint,
   resolveTelemetryMode,
+  TELEMETRY_ALLOW_INSECURE_ENV,
   TELEMETRY_DEBUG_ENV,
   TELEMETRY_DISABLE_ENV,
   TELEMETRY_ENDPOINT_ENV,
+  TELEMETRY_LEVEL_ENV,
   type TelemetryMode,
 } from '@/telemetry-config';
 
@@ -26,6 +29,8 @@ export interface CliOptions {
   telemetryEndpoint: string | undefined;
   /** Effective process-wide telemetry level. Never read from config. */
   telemetryLevel: TelemetryMode;
+  /** Accept a plain-HTTP telemetry endpoint for any host. */
+  telemetryAllowInsecure: boolean;
   /**
    * Aggregate-only product analytics. On by default; CLI/env only, never
    * configurable from the UI or config.json.
@@ -93,6 +98,8 @@ export function parseCliArgs(argv: string[]): CliOptions {
       'cloud-base-url': { type: 'string' },
       'telemetry-endpoint': { type: 'string' },
       'telemetry-debug': { type: 'boolean' },
+      'telemetry-level': { type: 'string' },
+      'telemetry-allow-insecure': { type: 'boolean' },
       'disable-telemetry': { type: 'boolean' },
       analytics: { type: 'boolean' },
       deployment: { type: 'string' },
@@ -148,13 +155,20 @@ export function parseCliArgs(argv: string[]): CliOptions {
     values['disable-telemetry'] ?? process.env[TELEMETRY_DISABLE_ENV] === '1';
   const telemetryDebug =
     values['telemetry-debug'] ?? process.env[TELEMETRY_DEBUG_ENV] === '1';
+  const telemetryAllowInsecure =
+    values['telemetry-allow-insecure'] ??
+    process.env[TELEMETRY_ALLOW_INSECURE_ENV] === '1';
   const endpoint = resolveTelemetryEndpoint(
     values['telemetry-endpoint'] ?? process.env[TELEMETRY_ENDPOINT_ENV],
+    { allowInsecure: telemetryAllowInsecure },
   );
   const telemetryLevel = resolveTelemetryMode({
     endpoint,
     debug: telemetryDebug,
     disabled: telemetryDisabled,
+    level: parseTelemetryLevel(
+      values['telemetry-level'] ?? process.env[TELEMETRY_LEVEL_ENV],
+    ),
   });
   const telemetryEndpoint = telemetryLevel === 'no' ? undefined : endpoint;
 
@@ -207,6 +221,7 @@ export function parseCliArgs(argv: string[]): CliOptions {
     cloudBaseUrl,
     telemetryEndpoint,
     telemetryLevel,
+    telemetryAllowInsecure,
     analyticsEnabled,
     deployment,
     cloudEnrollToken,
@@ -240,6 +255,8 @@ Options:
   --cloud-base-url <url>       Klex Cloud API base URL (overrides KLEX_CLOUD_BASE_URL, default: https://cloud.klex.bot)
   --telemetry-endpoint <url>   Enable telemetry and export to this OTLP base URL (overrides KLEX_TELEMETRY_ENDPOINT; telemetry is off without it)
   --telemetry-debug            Also export chat content and PII for this process; requires an endpoint (overrides KLEX_TELEMETRY_DEBUG)
+  --telemetry-level <level>    Telemetry level: basic, advanced or debug; requires an endpoint (overrides KLEX_TELEMETRY_LEVEL, default: advanced)
+  --telemetry-allow-insecure   Allow a plain-HTTP telemetry endpoint on any host, for cluster-internal collectors (overrides KLEX_TELEMETRY_ALLOW_INSECURE)
   --disable-telemetry          Force telemetry off even if an endpoint is set (overrides KLEX_DISABLE_TELEMETRY)
   --no-analytics               Disable anonymous aggregate usage analytics (overrides KLEX_NO_ANALYTICS and DO_NOT_TRACK)
   --analytics                  Enable analytics even if KLEX_NO_ANALYTICS or DO_NOT_TRACK is set
@@ -260,6 +277,8 @@ Environment:
   KLEX_TELEMETRY_ENDPOINT      Enable telemetry and export to this OTLP base URL
   KLEX_TELEMETRY_HEADERS       JSON object of extra OTLP request headers
   KLEX_TELEMETRY_DEBUG         Enable debug telemetry (chat content and PII) when set to 1; requires an endpoint
+  KLEX_TELEMETRY_LEVEL         Telemetry level: basic (metrics and warnings only), advanced (default) or debug
+  KLEX_TELEMETRY_ALLOW_INSECURE  Allow a plain-HTTP telemetry endpoint on any host when set to 1; headers are refused over HTTP
   KLEX_DISABLE_TELEMETRY       Force telemetry off when set to 1
   KLEX_NO_ANALYTICS            Disable anonymous usage analytics when set to 1. Analytics send one
                                start event, cloud enrollment outcomes, then aggregate counts every

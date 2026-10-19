@@ -285,6 +285,44 @@ describe('TelemetryMetrics', () => {
     vi.useRealTimers();
   });
 
+  it('exports V8 heap used and limit at basic', async () => {
+    vi.useFakeTimers();
+    const exporter = new FakeExporter();
+    const metrics = createMetrics(exporter);
+    await metrics.start();
+    await metrics.setLevel('basic');
+    await vi.advanceTimersByTimeAsync(60_000);
+
+    const points =
+      metricsNamed(exporter, 'klex.process.memory.heap')[0]?.dataPoints ?? [];
+    const byState = new Map(
+      points.map((point) => [point.attributes?.['klex.memory.state'], point]),
+    );
+    expect([...byState.keys()].sort()).toEqual(['limit', 'used']);
+    expect(
+      points.every((point) => Object.keys(point.attributes ?? {}).length === 1),
+    ).toBe(true);
+    const used = byState.get('used')?.value;
+    const limit = byState.get('limit')?.value;
+    expect(typeof used).toBe('number');
+    expect(used).toBeGreaterThan(0);
+    expect(limit).toBeGreaterThan(used as number);
+    await metrics.close();
+    vi.useRealTimers();
+  });
+
+  it('does not export the heap gauge at no', async () => {
+    vi.useFakeTimers();
+    const exporter = new FakeExporter();
+    const metrics = createMetrics(exporter);
+    await metrics.start();
+    await metrics.setLevel('no');
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(metricsNamed(exporter, 'klex.process.memory.heap')).toEqual([]);
+    await metrics.close();
+    vi.useRealTimers();
+  });
+
   it('exports privacy-safe basic model-call dimensions', async () => {
     vi.useFakeTimers();
     const exporter = new FakeExporter();
@@ -574,6 +612,7 @@ describe('TelemetryMetrics', () => {
       ['gen_ai.client.inference.operation.output_tokens', '{token}'],
       ['gen_ai.client.operation.time_to_first_chunk', 's'],
       ['process.uptime', 's'],
+      ['klex.process.memory.heap', 'By'],
       ['klex.interaction.lease.active', '{lease}'],
       ['klex.interaction.queue.depth', '{update}'],
       ['klex.interaction.queue.overflow', '{event}'],
@@ -606,6 +645,7 @@ describe('TelemetryMetrics', () => {
       ],
       ['gen_ai.client.operation.time_to_first_chunk', DataPointType.HISTOGRAM],
       ['process.uptime', DataPointType.GAUGE],
+      ['klex.process.memory.heap', DataPointType.GAUGE],
       ['klex.interaction.lease.active', DataPointType.GAUGE],
       ['klex.interaction.queue.depth', DataPointType.GAUGE],
       ['klex.interaction.queue.overflow', DataPointType.SUM],

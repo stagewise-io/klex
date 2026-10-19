@@ -9,6 +9,7 @@ import type { ModelCallRecord } from '@/model-call-logger';
 import { createTelemetrySpanProcessor } from '@/telemetry-manager';
 
 import {
+  GenAiIdentitySpanProcessor,
   KlexOpenTelemetry,
   type KlexOpenTelemetryOptions,
   ModelCallUsageTelemetry,
@@ -225,6 +226,79 @@ describe('KlexOpenTelemetry — agent identity', () => {
     expect(second?.attributes['gen_ai.agent.name']).toBe('Klex');
     expect(second?.attributes['klex.call.source']).toBe('extension');
     expect(second?.attributes['klex.extension.id']).toBe('vision');
+    await provider.shutdown();
+  });
+});
+
+describe('GenAiIdentitySpanProcessor', () => {
+  function createIdentityHarness(agentId: string | null) {
+    const exporter = new InMemorySpanExporter();
+    const provider = new BasicTracerProvider({
+      spanProcessors: [
+        new GenAiIdentitySpanProcessor({ getAgentId: () => agentId }),
+        new SimpleSpanProcessor(exporter),
+      ],
+    });
+    return { exporter, provider, tracer: provider.getTracer('test') };
+  }
+
+  it('marks Klex tool spans with the Agent Observability identity', async () => {
+    const { exporter, provider, tracer } = createIdentityHarness('client-1');
+    tracer
+      .startSpan('execute_tool read_file', {
+        attributes: {
+          'gen_ai.operation.name': 'execute_tool',
+          'gen_ai.tool.name': 'read_file',
+          'klex.session.id': 'session-1',
+        },
+      })
+      .end();
+    await provider.forceFlush();
+
+    const attributes = exporter.getFinishedSpans()[0]?.attributes ?? {};
+    expect(attributes['agento11y.record']).toBe(true);
+    expect(attributes['gen_ai.agent.id']).toBe('client-1');
+    expect(attributes['gen_ai.conversation.id']).toBe('session-1');
+    await provider.shutdown();
+  });
+
+  it('omits the agent id before enrollment', async () => {
+    const { exporter, provider, tracer } = createIdentityHarness(null);
+    tracer
+      .startSpan('execute_tool read_file', {
+        attributes: { 'gen_ai.operation.name': 'execute_tool' },
+      })
+      .end();
+    await provider.forceFlush();
+
+    const attributes = exporter.getFinishedSpans()[0]?.attributes ?? {};
+    expect(attributes['agento11y.record']).toBe(true);
+    expect(attributes['gen_ai.agent.id']).toBeUndefined();
+    expect(attributes['gen_ai.conversation.id']).toBeUndefined();
+    await provider.shutdown();
+  });
+
+  it('leaves AI SDK spans and non-GenAI spans unchanged', async () => {
+    const { exporter, provider, tracer } = createIdentityHarness('client-1');
+    tracer
+      .startSpan('chat gpt-test', {
+        attributes: {
+          'gen_ai.operation.name': 'chat',
+          'agento11y.record': true,
+          'gen_ai.conversation.id': 'session-sdk',
+        },
+      })
+      .end();
+    tracer
+      .startSpan('turn', { attributes: { 'klex.session.id': 'session-1' } })
+      .end();
+    await provider.forceFlush();
+
+    const [sdkSpan, turnSpan] = exporter.getFinishedSpans();
+    expect(sdkSpan?.attributes['gen_ai.agent.id']).toBeUndefined();
+    expect(sdkSpan?.attributes['gen_ai.conversation.id']).toBe('session-sdk');
+    expect(turnSpan?.attributes['agento11y.record']).toBeUndefined();
+    expect(turnSpan?.attributes['gen_ai.conversation.id']).toBeUndefined();
     await provider.shutdown();
   });
 });

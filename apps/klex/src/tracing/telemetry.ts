@@ -1,5 +1,6 @@
 import { OpenTelemetry } from '@ai-sdk/otel';
 import type { Attributes, Tracer } from '@opentelemetry/api';
+import type { Span, SpanProcessor } from '@opentelemetry/sdk-trace-base';
 import type {
   GenerateTextAbortEvent,
   GenerateTextEndEvent,
@@ -187,12 +188,7 @@ export class KlexOpenTelemetry extends OpenTelemetry {
     if (identity.extensionId) {
       attributes['klex.extension.id'] = identity.extensionId;
     }
-    let agentId: string | null | undefined;
-    try {
-      agentId = this.getAgentId();
-    } catch {
-      agentId = null;
-    }
+    const agentId = resolveAgentId(this.getAgentId);
     if (agentId) attributes['gen_ai.agent.id'] = agentId;
     if (identity.conversationId) {
       attributes['gen_ai.conversation.id'] = identity.conversationId;
@@ -244,6 +240,59 @@ export class KlexOpenTelemetry extends OpenTelemetry {
 
 function stringOrUndefined(value: unknown): string | undefined {
   return typeof value === 'string' ? value : undefined;
+}
+
+function resolveAgentId(
+  getAgentId: () => string | null | undefined,
+): string | null | undefined {
+  try {
+    return getAgentId();
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Gives GenAI spans that Klex creates itself (session `execute_tool` spans)
+ * the Agent Observability marker and identity that {@link KlexOpenTelemetry}
+ * puts on AI SDK spans. AI SDK spans carry the marker from the start and are
+ * left unchanged. `gen_ai.conversation.id` is the Klex session id, as on AI
+ * SDK spans.
+ */
+export class GenAiIdentitySpanProcessor implements SpanProcessor {
+  private readonly getAgentId: () => string | null | undefined;
+
+  constructor(options: Pick<KlexOpenTelemetryOptions, 'getAgentId'> = {}) {
+    this.getAgentId = options.getAgentId ?? (() => null);
+  }
+
+  onStart(span: Span): void {
+    const { attributes } = span;
+    if (attributes['gen_ai.operation.name'] === undefined) return;
+    if (attributes['agento11y.record'] !== undefined) return;
+    span.setAttribute('agento11y.record', true);
+    const agentId = resolveAgentId(this.getAgentId);
+    if (agentId && attributes['gen_ai.agent.id'] === undefined) {
+      span.setAttribute('gen_ai.agent.id', agentId);
+    }
+    const sessionId = attributes['klex.session.id'];
+    if (
+      typeof sessionId === 'string' &&
+      attributes['gen_ai.conversation.id'] === undefined
+    ) {
+      span.setAttribute('gen_ai.conversation.id', sessionId);
+    }
+  }
+
+  onEnd(): void {}
+
+  forceFlush(): Promise<void> {
+    return Promise.resolve();
+  }
+
+  shutdown(): Promise<void> {
+    return Promise.resolve();
+  }
 }
 
 // ---------------------------------------------------------------------------

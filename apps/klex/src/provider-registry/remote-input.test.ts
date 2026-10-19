@@ -1,6 +1,10 @@
 import { readFile, writeFile } from 'node:fs/promises';
 
-import type { LanguageModelV4 } from '@ai-sdk/provider';
+import type {
+  LanguageModelV4,
+  LanguageModelV4Prompt,
+  LanguageModelV4ToolResultOutput,
+} from '@ai-sdk/provider';
 import { generateText, type ModelMessage, streamText } from 'ai';
 import { afterEach, assert, describe, expect, it, vi } from 'vitest';
 
@@ -54,6 +58,116 @@ function model(type: ProviderType, modelId = 'gemini-2.5-pro') {
 }
 
 afterEach(() => vi.unstubAllGlobals());
+
+describe('Google JSON tool result references (KLEX-61)', () => {
+  const ref = '#/$defs/__schema0';
+  const schema = {
+    $ref: ref,
+    $defs: { __schema0: { type: 'string', description: 'A useful schema' } },
+  };
+  const outputs = [
+    { type: 'json', value: schema },
+    { type: 'json', value: { tools: [{ schema }] } },
+    { type: 'json', value: [schema] },
+    { type: 'error-json', value: { schema } },
+    { type: 'json', value: { ok: true, items: [null, 1, 'text'] } },
+    { type: 'json', value: { description: `$ref: ${ref}` } },
+    { type: 'text', value: JSON.stringify(schema) },
+    { type: 'error-text', value: 'Tool failed' },
+    {
+      type: 'content',
+      value: [
+        { type: 'text', text: JSON.stringify(schema) },
+        {
+          type: 'file',
+          mediaType: 'image/png',
+          data: { type: 'data', data: 'aGVsbG8=' },
+        },
+      ],
+    },
+  ] satisfies LanguageModelV4ToolResultOutput[];
+  const prompt: LanguageModelV4Prompt = [
+    {
+      role: 'assistant',
+      content: outputs.map((_, i) => ({
+        type: 'tool-call',
+        toolCallId: `call-${i}`,
+        toolName: 'inspect',
+        input: {},
+      })),
+    },
+    {
+      role: 'tool',
+      content: outputs.map((output, i) => ({
+        type: 'tool-result',
+        toolCallId: `call-${i}`,
+        toolName: 'inspect',
+        output,
+      })),
+    },
+  ];
+
+  it.each(['google-gemini', 'google-generative', 'google-vertex'] as const)(
+    '%s sends refs as lossless text for generation and streaming',
+    async (type) => {
+      const requests: {
+        contents: {
+          parts: { functionResponse?: { response: { content: unknown } } }[];
+        }[];
+      }[] = [];
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async (_input, init) => {
+          requests.push(JSON.parse(init.body));
+          // Only request serialization is under test; no live Gemini call.
+          return new Response(
+            JSON.stringify({ error: { message: 'Test response' } }),
+            {
+              status: 400,
+              headers: { 'content-type': 'application/json' },
+            },
+          );
+        }),
+      );
+      const before = structuredClone(prompt);
+      const selected = model(type);
+      await expect(selected.doGenerate({ prompt })).rejects.toThrow();
+      await expect(selected.doStream({ prompt })).rejects.toThrow();
+      expect(prompt).toEqual(before);
+      expect(requests).toHaveLength(2);
+      for (const request of requests) {
+        const parts = request.contents.flatMap((message) => message.parts);
+        const responses = parts.flatMap((part) =>
+          part.functionResponse ? [part.functionResponse.response.content] : [],
+        );
+        expect(responses).toHaveLength(outputs.length);
+        for (const i of [0, 1, 2, 3]) {
+          expect(typeof responses[i]).toBe('string');
+          expect(responses[i]).toContain(ref);
+          expect(JSON.parse(responses[i] as string)).toEqual(outputs[i]?.value);
+        }
+        for (const i of [4, 5, 6, 7]) {
+          expect(responses[i]).toEqual(outputs[i]?.value);
+        }
+        expect(responses[8]).toBe(JSON.stringify(schema));
+        expect(parts).toContainEqual({
+          inlineData: { mimeType: 'image/png', data: 'aGVsbG8=' },
+        });
+      }
+    },
+  );
+
+  it('does not wrap any non-Google provider', () => {
+    const selected = {} as LanguageModelV4;
+    for (const { type } of builtInProviderDefinitions) {
+      if (
+        ['google-gemini', 'google-generative', 'google-vertex'].includes(type)
+      )
+        continue;
+      expect(withRemoteInputMapping(selected, type)).toBe(selected);
+    }
+  });
+});
 
 describe('remote input capability contract', () => {
   it.each([

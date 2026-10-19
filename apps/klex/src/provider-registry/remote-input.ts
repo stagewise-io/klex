@@ -180,11 +180,21 @@ export function remoteInputModelOutput(
   };
 }
 
+function containsSchemaRef(value: unknown): boolean {
+  if (value === null || typeof value !== 'object') return false;
+  if (Array.isArray(value)) return value.some(containsSchemaRef);
+  return Object.entries(value).some(
+    ([key, nested]) => key === '$ref' || containsSchemaRef(nested),
+  );
+}
+
 /**
  * Google only accepts inline bytes inside functionResponse. Carry remote files
  * as adjacent native user input instead, keeping the tool result paired with its
  * call. Other adapters already map supported tool URLs natively (Responses,
  * Anthropic), or declare no supported HTTP URLs (compatible chat, Bedrock).
+ * JSON containing $ref is sent as text: Google can interpret literal response
+ * keys as schema references. Preserve the complete JSON as inert model input.
  */
 export function withRemoteInputMapping(
   model: LanguageModelV4,
@@ -197,8 +207,25 @@ export function withRemoteInputMapping(
       if (message.role !== 'tool') return [message];
       const files: LanguageModelV4FilePart[] = [];
       const content = message.content.map((part) => {
-        if (part.type !== 'tool-result' || part.output.type !== 'content')
-          return part;
+        if (part.type !== 'tool-result') return part;
+        const output = part.output;
+        if (
+          (output.type === 'json' || output.type === 'error-json') &&
+          containsSchemaRef(output.value)
+        ) {
+          return {
+            ...part,
+            output: {
+              ...output,
+              type:
+                output.type === 'json'
+                  ? ('text' as const)
+                  : ('error-text' as const),
+              value: JSON.stringify(output.value),
+            },
+          };
+        }
+        if (part.output.type !== 'content') return part;
         const value = part.output.value.filter((item) => {
           if (item.type !== 'file' || item.data.type !== 'url') return true;
           files.push(item);

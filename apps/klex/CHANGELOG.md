@@ -2,6 +2,22 @@
 
 All notable Klex changes are documented here.
 
+## 0.20.0 (2026-10-19)
+
+### Features
+
+- export GenAI parts format and Agent Observability opt-in (c3af123)
+
+### Bug Fixes
+
+- enforce GenAI content budget in bytes (ae4a621)
+- mark tool spans for Agent Observability (72607b7)
+
+### Other Changes
+
+- use @ai-sdk/otel for GenAI trace export (b0eddc8)
+- always mark model spans for Agent Observability (08bddd6)
+
 ## 0.19.0 (2026-10-17)
 
 ### Features

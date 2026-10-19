@@ -364,6 +364,90 @@ describe('TelemetrySpanProcessor', () => {
     expect(forwarded.attributes['klex.telemetry.content_truncated']).toBe(true);
   });
 
+  it('truncates multibyte text by bytes, not UTF-16 units', () => {
+    const tp = createTelemetrySpanProcessor('debug');
+    const { processor, onEnd } = makeDelegate();
+    tp.setDelegate(processor);
+
+    const messages = [
+      {
+        role: 'tool',
+        parts: [
+          {
+            type: 'tool_call_response',
+            id: 't1',
+            response: 'é'.repeat(400_000),
+          },
+        ],
+      },
+    ];
+    tp.onEnd(
+      makeSpan({
+        attributes: { 'gen_ai.input.messages': JSON.stringify(messages) },
+      }),
+    );
+
+    const forwarded = onEnd.mock.calls[0]?.[0] as ReadableSpan;
+    const exported = forwarded.attributes['gen_ai.input.messages'] as string;
+    const size = Buffer.byteLength(exported);
+    expect(size).toBeLessThanOrEqual(512 * 1024);
+    // Only the excess is removed; a UTF-16 based cut would keep ~240 KiB.
+    expect(size).toBeGreaterThan(511 * 1024);
+    const parsed = JSON.parse(exported) as typeof messages;
+    expect(parsed[0]?.parts[0]?.response).toMatch(/^é+…\[truncated\]$/);
+  });
+
+  it('shortens large strings outside part payloads', () => {
+    const tp = createTelemetrySpanProcessor('debug');
+    const { processor, onEnd } = makeDelegate();
+    tp.setDelegate(processor);
+
+    const messages = [
+      {
+        role: 'user',
+        name: 'n'.repeat(700 * 1024),
+        parts: [{ type: 'text', content: 'hi' }],
+      },
+    ];
+    tp.onEnd(
+      makeSpan({
+        attributes: { 'gen_ai.output.messages': JSON.stringify(messages) },
+      }),
+    );
+
+    const forwarded = onEnd.mock.calls[0]?.[0] as ReadableSpan;
+    const exported = forwarded.attributes['gen_ai.output.messages'] as string;
+    expect(Buffer.byteLength(exported)).toBeLessThanOrEqual(512 * 1024);
+    const parsed = JSON.parse(exported) as typeof messages;
+    expect(parsed[0]?.parts).toEqual(messages[0]?.parts);
+    expect(parsed[0]?.name.endsWith('…[truncated]')).toBe(true);
+    expect(forwarded.attributes['klex.telemetry.content_truncated']).toBe(true);
+  });
+
+  it('falls back to an empty document when nothing can be shortened', () => {
+    const tp = createTelemetrySpanProcessor('debug');
+    const { processor, onEnd } = makeDelegate();
+    tp.setDelegate(processor);
+
+    const parts = Array.from({ length: 30_000 }, () => ({
+      type: 'text',
+      content: 'tiny',
+    }));
+    tp.onEnd(
+      makeSpan({
+        attributes: {
+          'gen_ai.output.messages': JSON.stringify([
+            { role: 'assistant', parts },
+          ]),
+        },
+      }),
+    );
+
+    const forwarded = onEnd.mock.calls[0]?.[0] as ReadableSpan;
+    expect(forwarded.attributes['gen_ai.output.messages']).toBe('[]');
+    expect(forwarded.attributes['klex.telemetry.content_truncated']).toBe(true);
+  });
+
   it('preserves array-valued debug content without index-based truncation', () => {
     const tp = createTelemetrySpanProcessor();
     const { processor, onEnd } = makeDelegate();
@@ -586,6 +670,65 @@ describe('TelemetrySpanProcessor', () => {
           parts: [{ type: 'text', content: 'use [REDACTED] and continue' }],
         },
       ]);
+    });
+
+    it('bounds oversized tool definitions and keeps them valid JSON', () => {
+      const tp = createTelemetrySpanProcessor('debug');
+      const { processor, onEnd } = makeDelegate();
+      tp.setDelegate(processor);
+      const tools = Array.from({ length: 4 }, (_, index) => ({
+        type: 'function',
+        name: `tool_${index}`,
+        description: 'd'.repeat(200 * 1024),
+        inputSchema: { type: 'object' },
+      }));
+      tp.onEnd(
+        makeSpan({
+          attributes: { 'gen_ai.tool.definitions': JSON.stringify(tools) },
+        }),
+      );
+      const forwarded = onEnd.mock.calls[0]?.[0] as ReadableSpan;
+      const exported = forwarded.attributes['gen_ai.tool.definitions'];
+      expect(typeof exported).toBe('string');
+      expect(Buffer.byteLength(exported as string)).toBeLessThanOrEqual(
+        512 * 1024,
+      );
+      const parsed = JSON.parse(exported as string) as typeof tools;
+      expect(parsed.map((tool) => tool.name)).toEqual(
+        tools.map((tool) => tool.name),
+      );
+      expect(forwarded.attributes['klex.telemetry.content_truncated']).toBe(
+        true,
+      );
+    });
+
+    it('redacts credentials in object keys', () => {
+      const tp = createTelemetrySpanProcessor('debug');
+      const { processor, onEnd } = makeDelegate();
+      tp.setDelegate(processor);
+      const messages = [
+        {
+          role: 'assistant',
+          parts: [
+            {
+              type: 'tool_call',
+              id: 'c1',
+              name: 'fetch',
+              arguments: { 'Bearer abc123secret': 'value' },
+            },
+          ],
+        },
+      ];
+      tp.onEnd(
+        makeSpan({
+          attributes: { 'gen_ai.output.messages': JSON.stringify(messages) },
+        }),
+      );
+      const forwarded = onEnd.mock.calls[0]?.[0] as ReadableSpan;
+      const exported = forwarded.attributes['gen_ai.output.messages'] as string;
+      expect(exported).not.toContain('abc123secret');
+      expect(exported).toContain('Bearer [REDACTED]');
+      expect(() => JSON.parse(exported)).not.toThrow();
     });
 
     it('falls back to string scrubbing for non-JSON values', () => {

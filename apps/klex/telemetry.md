@@ -23,18 +23,20 @@ The telemetry identity is a random UUID generated per process. It does not inclu
 
 ## Model content format
 
-At `debug`, model spans (`gen_ai.operation.name=generate_content`) carry content in the [OpenTelemetry GenAI semantic-convention](https://opentelemetry.io/docs/specs/semconv/gen-ai/) parts format:
+AI SDK spans come from [`@ai-sdk/otel`](https://www.npmjs.com/package/@ai-sdk/otel), pinned to the version matching `ai`. Each call produces an `invoke_agent` span with `step` (`gen_ai.operation.name=agent_step`), `chat`, and `execute_tool` children. Every span of a call carries the Klex identity attributes (`klex.call.source`, `klex.extension.id`, `klex.model.*`, `gen_ai.agent.id`, `gen_ai.conversation.id`); `gen_ai.agent.name` is the configured agent name.
+
+At `debug`, content is recorded in the [OpenTelemetry GenAI semantic-convention](https://opentelemetry.io/docs/specs/semconv/gen-ai/) parts format. Below `debug`, content is not captured at all:
 
 - `gen_ai.system_instructions`: JSON array of `{ type: 'text', content }` parts.
-- `gen_ai.input.messages`: JSON array of `{ role, parts }` with the full input sent to the model. Parts are `text`, `reasoning`, `tool_call` (`id`, `name`, `arguments`), `tool_call_response` (`id`, `response`), and `blob` (`modality`, `mime_type`). File and image bytes are never exported.
-- `gen_ai.output.messages`: JSON array of `{ role: 'assistant', parts, finish_reason }`. An aborted call emits one message per completed step, with `finish_reason: 'aborted'` on the last.
-- `gen_ai.tool.definitions`: JSON array of `{ name, description, inputSchema, outputSchema }`.
+- `gen_ai.input.messages`: JSON array of `{ role, parts }`. Parts are `text`, `reasoning`, `tool_call`, `tool_call_response`, `uri`, and `blob`. Inline `blob` bytes are removed at export; `modality` and `mime_type` are kept.
+- `gen_ai.output.messages`: JSON array of `{ role, parts, finish_reason }`.
+- `gen_ai.tool.definitions`: JSON array of tool definitions on `chat` spans.
 
-System instructions, input, and output are each limited to 512 KiB of serialized JSON. When the input exceeds the limit, the oldest messages are dropped (the last message is always kept) and `klex.telemetry.input_messages_dropped` records the count. When output or system instructions exceed it, the longest text parts are shortened and `klex.telemetry.content_truncated=true` is set. The exported value is valid JSON in every case: debug credential redaction runs on each string inside the document, not on the serialized text.
+System instructions, input, and output are each limited to 512 KiB of serialized JSON. When messages exceed the limit, the oldest are dropped (the last message is always kept) and `klex.telemetry.input_messages_dropped` records the count. When a document still exceeds it, the largest part payloads are shortened and `klex.telemetry.content_truncated=true` is set. The exported value is valid JSON in every case: debug credential redaction runs on each string inside the document, not on the serialized text.
 
 ## Grafana Agent Observability
 
-Model spans are built for [Grafana Agent Observability](https://grafana.com/docs/grafana-cloud/monitor-applications/ai-observability/). Every model span carries `agento11y.record=true`; Grafana Cloud strips `gen_ai.*` content attributes from spans without it.
+AI SDK spans are built for [Grafana Agent Observability](https://grafana.com/docs/grafana-cloud/monitor-applications/ai-observability/). Every span of an AI SDK call carries `agento11y.record=true`; Grafana Cloud strips `gen_ai.*` content attributes from spans without it.
 
 - `advanced`: Agent Observability records metadata only (model, provider, token usage, latency, errors, agent and conversation ids).
 - `debug`: Agent Observability also records the content described above, including tool calls and tool results.

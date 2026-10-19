@@ -1,98 +1,33 @@
-import {
-  type Attributes,
-  type Context,
-  context,
-  type Span,
-  SpanKind,
-  SpanStatusCode,
-  type Tracer,
-  trace,
-} from '@opentelemetry/api';
+import { OpenTelemetry } from '@ai-sdk/otel';
+import type { Attributes, Tracer } from '@opentelemetry/api';
 import type {
   GenerateTextAbortEvent,
   GenerateTextEndEvent,
   GenerateTextStartEvent,
-  GenerateTextStepEndEvent,
-  GenerateTextStepStartEvent,
   InferTelemetryEvent,
   LanguageModelCallEndEvent,
-  LanguageModelCallStartEvent,
   Telemetry,
 } from 'ai';
 
 import type { ModelCallRecord, ModelCallSource } from '@/model-call-logger';
 import { normalizeAgentName } from '@/telemetry-resource';
 
-import {
-  type BudgetedJson,
-  serializeMessagesWithBudget,
-  serializePartsWithBudget,
-  toGenAiInputMessages,
-  toGenAiOutputMessages,
-  toGenAiOutputMessagesFromSteps,
-  toGenAiSystemInstructions,
-} from './genai-messages';
-
-// Extract the exact event types the Telemetry interface expects for
-// onStart / onEnd. These are unions (OperationStartEvent / OperationEndEvent)
-// that the `ai` package does not export directly.
 type TelemetryStartEvent = Parameters<NonNullable<Telemetry['onStart']>>[0];
 type TelemetryEndEvent = Parameters<NonNullable<Telemetry['onEnd']>>[0];
+type OtelStartEvent = Parameters<OpenTelemetry['onStart']>[0];
+type OtelEndEvent = Parameters<OpenTelemetry['onEnd']>[0];
+type OtelAbortEvent = Parameters<OpenTelemetry['onAbort']>[0];
 
 /** Sink function that receives a `ModelCallRecord` at the end of every model call. */
 export type ModelCallSink = (record: ModelCallRecord) => void;
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
+const TEXT_OPERATIONS = new Set(['ai.streamText', 'ai.generateText']);
+const EXTENSION_FUNCTION_PREFIX = 'extension:';
 
 /**
- * Serializes a value to a JSON string for OTel opt-in content attributes.
- * Returns `undefined` when the value is absent or serialization fails.
- */
-function serializeJson(value: unknown): string | undefined {
-  if (value == null) return undefined;
-  try {
-    return JSON.stringify(value);
-  } catch {
-    return undefined;
-  }
-}
-
-/** Span attributes that report how the content budget changed an attribute. */
-function budgetAttributes(result: BudgetedJson): Attributes {
-  const attributes: Attributes = {};
-  if (result.droppedMessages > 0) {
-    attributes['klex.telemetry.input_messages_dropped'] =
-      result.droppedMessages;
-  }
-  if (result.truncated) attributes['klex.telemetry.content_truncated'] = true;
-  return attributes;
-}
-
-/**
- * Extracts tool definitions (name, description, input schema) from a tool set,
- * stripping execute functions and other runtime fields that are not relevant
- * for `gen_ai.tool.definitions`.
- */
-function toolsToDefinitions(
-  tools: Record<string, unknown> | undefined,
-): unknown[] | undefined {
-  if (tools == null || Object.keys(tools).length === 0) return undefined;
-  return Object.entries(tools).map(([name, tool]) => {
-    const t = tool as Record<string, unknown>;
-    return {
-      name,
-      description: t.description,
-      inputSchema: t.inputSchema,
-      outputSchema: t.outputSchema,
-    };
-  });
-}
-
-/**
- * Maps AI SDK provider identifiers to OTel semantic convention `gen_ai.system`
- * values.
+ * Maps AI SDK provider identifiers to OTel semantic convention
+ * `gen_ai.provider.name` values. Used for usage metrics; spans use the
+ * mapping of `@ai-sdk/otel`.
  */
 export function mapProviderName(provider: string): string {
   const lower = provider.toLowerCase();
@@ -132,244 +67,126 @@ export function mapProviderName(provider: string): string {
   return provider;
 }
 
-/** Converts milliseconds to seconds for OTel duration attributes. */
-function msToSeconds(ms: number | undefined): number | undefined {
-  return ms == null ? undefined : ms / 1_000;
-}
-
-/**
- * Records an error on a span, including the OTel `error.type` attribute.
- *
- * Sets `error.type`, records the exception, and marks the span status as
- * ERROR so that failing operations are visible in tracing backends.
- */
-export function recordErrorOnSpan(span: Span, error: unknown): void {
-  let errorType: string | undefined;
-  if (error instanceof Error) {
-    errorType = error.name;
-    span.recordException({
-      name: error.name,
-      message: error.message,
-      stack: error.stack,
-    });
-    span.setStatus({ code: SpanStatusCode.ERROR, message: error.message });
-  } else {
-    errorType = String(error);
-    span.setStatus({ code: SpanStatusCode.ERROR });
-  }
-  // OTel gen_ai semantic convention: error.type SHOULD match the error code
-  // or canonical exception name.
-  span.setAttribute('error.type', errorType);
-}
-
-// ---------------------------------------------------------------------------
-// Call state
-// ---------------------------------------------------------------------------
-
-interface CallState {
-  /** Root operation span — `generate_content {modelId}`. */
-  rootSpan: Span;
-  rootContext: Context;
-  /** Telemetry options saved from the `onStart` event. */
-  recordOutputs: boolean;
-  functionId: string | undefined;
-  operationId: string;
-  /** Session UUID from runtimeContext — set on root span as gen_ai.conversation.id. */
+/** Klex identity of one AI SDK call, read from the runtime context. */
+interface CallIdentity {
+  source: ModelCallSource;
+  extensionId: string | null;
   conversationId: string | undefined;
-  /** Registered provider type from runtime context. */
+  compacted: boolean | undefined;
   providerType: string | undefined;
-  /** Stable configured provider-instance ID from runtime context. */
   providerId: string | undefined;
-  /** Native model ID from runtime context. */
   modelId: string | undefined;
-  /** Wall-clock timestamp (ms) when onStart fired. */
-  spanStartTime: number;
-  /** Time to first token in ms, set in onLanguageModelCallEnd. */
-  ttftMs: number | undefined;
-  /** Total response time in ms, set in onLanguageModelCallEnd. */
-  totalDurationMs: number | undefined;
-  terminalRecorded: boolean;
+}
+
+function stringField(
+  record: Record<string, unknown> | undefined,
+  key: string,
+): string | undefined {
+  const value = record?.[key];
+  return typeof value === 'string' ? value : undefined;
+}
+
+/**
+ * Provider identity is passed as separate runtime-context values. Native
+ * model IDs are opaque and may contain colons, so telemetry must not parse
+ * identity out of a composite string. The SDK fields are a fallback for
+ * callers that do not allow-list Klex runtime context.
+ */
+function resolveCallIdentity(event: {
+  functionId?: string;
+  runtimeContext?: unknown;
+  provider?: string;
+  modelId?: string;
+}): CallIdentity {
+  const runtimeContext =
+    typeof event.runtimeContext === 'object' && event.runtimeContext !== null
+      ? (event.runtimeContext as Record<string, unknown>)
+      : undefined;
+  const isExtension =
+    event.functionId?.startsWith(EXTENSION_FUNCTION_PREFIX) ?? false;
+  const compacted = runtimeContext?.['conversation.compacted'];
+  return {
+    source: isExtension ? 'extension' : 'chat',
+    extensionId: isExtension
+      ? (event.functionId?.slice(EXTENSION_FUNCTION_PREFIX.length) ?? null)
+      : null,
+    conversationId: stringField(runtimeContext, 'conversation.id'),
+    compacted: typeof compacted === 'boolean' ? compacted : undefined,
+    providerType:
+      stringField(runtimeContext, 'conversation.providerType') ??
+      event.provider,
+    providerId:
+      stringField(runtimeContext, 'conversation.providerId') ?? event.provider,
+    modelId:
+      stringField(runtimeContext, 'conversation.modelId') ?? event.modelId,
+  };
+}
+
+function eventField(event: object, key: string): unknown {
+  return key in event ? (event as Record<string, unknown>)[key] : undefined;
+}
+
+/** Copies an SDK event, keeping its prototype, with some fields replaced. */
+function withFields<T extends object>(event: T, fields: Partial<T>): T {
+  const copy: T = Object.create(Object.getPrototypeOf(event));
+  return Object.assign(copy, event, fields);
 }
 
 // ---------------------------------------------------------------------------
-// KlexTelemetry
+// Spans: @ai-sdk/otel with Klex identity
 // ---------------------------------------------------------------------------
 
+export interface KlexOpenTelemetryOptions {
+  /** Evaluated per call; content is captured only while this returns true. */
+  contentAllowed?: () => boolean;
+  /** Configured agent name, recorded as `gen_ai.agent.name`. */
+  agentName?: string;
+  /** Evaluated per call; stable agent id recorded as `gen_ai.agent.id`. */
+  getAgentId?: () => string | null | undefined;
+}
+
 /**
- * Custom AI SDK `Telemetry` integration that creates spans fitting the
- * klex trace hierarchy: `session → turn → step → generate_content`.
+ * `@ai-sdk/otel` spans (`invoke_agent` → `step` → `chat` → `execute_tool`)
+ * in the GenAI semantic-convention format, plus Klex identity on every span
+ * of a call. Grafana Agent Observability keeps `gen_ai.*` content only on
+ * spans marked `agento11y.record=true`.
  *
- * - `onStart` creates a `generate_content {modelId}` span as a child of the
- *   active context (the step context). It reads `conversation.id` and
- *   `conversation.compacted` from the `runtimeContext` to set
- *   `gen_ai.conversation.id` and `klex.conversation.compacted` attributes.
- * - `onLanguageModelCallStart` is a no-op — the single root span replaces
- *   the redundant model-call span.
- * - `executeLanguageModelCall` runs the provider call within the root span's
- *   context so the SDK's internal HTTP spans nest correctly.
- * - `onLanguageModelCallEnd` records response id, response model, usage,
- *   finish reasons, cache/reasoning tokens, and performance metrics on the
- *   root span.
- * - `onStepStart` / `onStepEnd` are no-ops — the klex `step` span is
- *   managed by `step.ts` and there is no multi-step tool loop (tools are
- *   passed without `execute`).
- * - Tool execution events are implemented for completeness but will not fire
- *   in the current architecture (tools have no `execute` function).
- * - `onError` records the error on all open spans, including the OTel
- *   `error.type` attribute.
- *
- * `gen_ai.*` keys follow the OTel GenAI semantic conventions. Values without a
- * convention (outcome, cache ratio, reasoning tokens, timings) use `klex.*`.
+ * Content is captured only while `contentAllowed` returns true, so content
+ * is not even serialized below `debug`. `gen_ai.agent.name` is the configured
+ * agent name instead of the AI SDK `functionId`.
  */
-export class KlexTelemetry implements Telemetry {
-  private readonly callStates = new Map<string, CallState>();
-  private modelCallSink: ModelCallSink | null = null;
+export class KlexOpenTelemetry extends OpenTelemetry {
+  private readonly callAttributes: Map<string, Attributes>;
   private readonly agentName: string;
+  private readonly contentAllowed: () => boolean;
+  private readonly getAgentId: () => string | null | undefined;
 
-  constructor(
-    private readonly tracer: Tracer,
-    private readonly contentAllowed: () => boolean = () => false,
-    agentName = '',
-    private readonly getAgentId: () => string | null | undefined = () => null,
-  ) {
-    this.agentName = normalizeAgentName(agentName);
+  constructor(tracer: Tracer, options: KlexOpenTelemetryOptions = {}) {
+    const callAttributes = new Map<string, Attributes>();
+    super({
+      tracer,
+      enrichSpan: ({ callId }) => callAttributes.get(callId),
+    });
+    this.callAttributes = callAttributes;
+    this.agentName = normalizeAgentName(options.agentName ?? '');
+    this.contentAllowed = options.contentAllowed ?? (() => false);
+    this.getAgentId = options.getAgentId ?? (() => null);
   }
 
-  private getCallState(callId: string): CallState | undefined {
-    return this.callStates.get(callId);
-  }
-
-  private cleanupCallState(callId: string): void {
-    this.callStates.delete(callId);
-  }
-
-  /** Register a sink that receives a `ModelCallRecord` at the end of every model call. */
-  setModelCallSink(sink: ModelCallSink | null): void {
-    this.modelCallSink = sink;
-  }
-
-  /**
-   * Builds a `ModelCallRecord` from `CallState` and forwards it to the sink.
-   * Fire-and-forget — never throws.
-   */
-  private forwardModelCallRecord(
-    callId: string,
-    state: CallState,
-    finishReason: string,
-    isError: boolean,
-    errorType: string | null,
-    inputTokens: number,
-    outputTokens: number,
-    cacheWriteTokens: number,
-    cacheReadTokens: number,
-  ): void {
-    if (state.terminalRecorded) return;
-    state.terminalRecorded = true;
-    if (!this.modelCallSink) return;
-
-    // Derive source and extensionId from functionId.
-    // functionId patterns: 'chat-session', 'extension:<id>', or undefined.
-    const functionId = state.functionId;
-    let source: ModelCallSource = 'chat';
-    let extensionId: string | null = null;
-    if (functionId?.startsWith('extension:')) {
-      source = 'extension';
-      extensionId = functionId.slice('extension:'.length);
-    }
-
-    const now = Date.now();
-    const record: ModelCallRecord = {
-      id: callId,
-      sessionId: state.conversationId ?? null,
-      providerType: state.providerType ?? 'unknown',
-      providerId: state.providerId ?? 'unknown',
-      endpointId: null,
-      modelId: state.modelId ?? 'unknown',
-      source,
-      extensionId,
-      inputTokens,
-      outputTokens,
-      inputCacheWriteTokens: cacheWriteTokens,
-      inputCacheReadTokens: cacheReadTokens,
-      ttftMs: state.ttftMs ?? null,
-      // Use the AI SDK's responseTimeMs when available; fall back to
-      // wall-clock duration for abort/error paths (no performance data).
-      totalDurationMs: state.totalDurationMs ?? now - state.spanStartTime,
-      finishReason,
-      isError,
-      errorType,
-      startedAt: new Date(state.spanStartTime).toISOString(),
-      finishedAt: new Date(now).toISOString(),
-    };
-
-    try {
-      this.modelCallSink(record);
-    } catch {
-      // Fire-and-forget — never propagate sink errors.
-    }
-  }
-
-  // --- Operation lifecycle --------------------------------------------------
-
-  onStart(event: TelemetryStartEvent): void {
-    // Only instrument text generation operations.
-    if (
-      event.operationId !== 'ai.streamText' &&
-      event.operationId !== 'ai.generateText'
-    ) {
-      return;
-    }
-
-    // Narrow to the text-generation-specific event shape.
-    const genEvent = event as InferTelemetryEvent<GenerateTextStartEvent>;
-
-    const providerName = mapProviderName(genEvent.provider);
-
-    // Extract conversation metadata from runtimeContext.
-    const runtimeContext = genEvent.runtimeContext as
-      | Record<string, unknown>
-      | undefined;
-    const conversationId =
-      typeof runtimeContext?.['conversation.id'] === 'string'
-        ? (runtimeContext['conversation.id'] as string)
-        : undefined;
-    const compacted =
-      typeof runtimeContext?.['conversation.compacted'] === 'boolean'
-        ? (runtimeContext['conversation.compacted'] as boolean)
-        : undefined;
-    // Provider identity is passed as separate runtime-context values. Native
-    // model IDs are opaque and may contain colons, so telemetry must not parse
-    // identity out of a composite string. The SDK fields remain a defensive
-    // fallback for callers that do not allow-list Klex runtime context.
-    const providerType =
-      typeof runtimeContext?.['conversation.providerType'] === 'string'
-        ? (runtimeContext['conversation.providerType'] as string)
-        : genEvent.provider;
-    const providerId =
-      typeof runtimeContext?.['conversation.providerId'] === 'string'
-        ? (runtimeContext['conversation.providerId'] as string)
-        : genEvent.provider;
-    const modelId =
-      typeof runtimeContext?.['conversation.modelId'] === 'string'
-        ? (runtimeContext['conversation.modelId'] as string)
-        : genEvent.modelId;
-    const requestModel = modelId;
-
-    const spanName = 'generate_content';
-
+  private spanAttributes(event: OtelStartEvent): Attributes {
+    const identity = resolveCallIdentity({
+      functionId: event.functionId,
+      runtimeContext: eventField(event, 'runtimeContext'),
+      provider: stringOrUndefined(eventField(event, 'provider')),
+      modelId: stringOrUndefined(eventField(event, 'modelId')),
+    });
     const attributes: Attributes = {
-      'gen_ai.operation.name': 'generate_content',
-      'gen_ai.provider.name': providerName,
-      'gen_ai.request.model': requestModel,
-      'gen_ai.request.stream': genEvent.operationId === 'ai.streamText',
-      'klex.call.source': genEvent.functionId?.startsWith('extension:')
-        ? 'extension'
-        : 'chat',
+      'agento11y.record': true,
+      'klex.call.source': identity.source,
     };
-    // Agent identity (OTel GenAI): the configured agent name and, once
-    // enrolled, the stable cloud client id. Spans are exported only at
-    // advanced/debug, so this never reaches basic telemetry.
-    if (this.agentName) attributes['gen_ai.agent.name'] = this.agentName;
+    if (identity.extensionId) {
+      attributes['klex.extension.id'] = identity.extensionId;
+    }
     let agentId: string | null | undefined;
     try {
       agentId = this.getAgentId();
@@ -377,386 +194,201 @@ export class KlexTelemetry implements Telemetry {
       agentId = null;
     }
     if (agentId) attributes['gen_ai.agent.id'] = agentId;
-    // Grafana Cloud keeps gen_ai content only on spans opted into Agent
-    // Observability; without content capture AO still gets metadata.
-    attributes['agento11y.record'] = true;
+    if (identity.conversationId) {
+      attributes['gen_ai.conversation.id'] = identity.conversationId;
+    }
+    if (identity.compacted != null) {
+      attributes['klex.conversation.compacted'] = identity.compacted;
+    }
+    if (identity.providerType) {
+      attributes['klex.model.provider_type'] = identity.providerType;
+    }
+    if (identity.providerId) {
+      attributes['klex.model.provider_id'] = identity.providerId;
+    }
+    if (identity.modelId) attributes['klex.model.model_id'] = identity.modelId;
+    return attributes;
+  }
 
-    attributes['klex.model.provider_type'] = providerType;
-    attributes['klex.model.provider_id'] = providerId;
-    attributes['klex.model.model_id'] = modelId;
+  override onStart(event: OtelStartEvent): void {
+    this.callAttributes.set(event.callId, this.spanAttributes(event));
+    const contentAllowed = this.contentAllowed();
+    super.onStart(
+      withFields(event, {
+        recordInputs: contentAllowed && event.recordInputs !== false,
+        recordOutputs: contentAllowed && event.recordOutputs !== false,
+        functionId: this.agentName || undefined,
+      }),
+    );
+  }
 
-    // Conversation metadata from runtimeContext.
-    if (conversationId != null) {
-      attributes['gen_ai.conversation.id'] = conversationId;
-    }
-    if (compacted != null) {
-      attributes['klex.conversation.compacted'] = compacted;
-    }
+  override onEnd(event: OtelEndEvent): void {
+    super.onEnd(event);
+    this.callAttributes.delete(event.callId);
+  }
 
-    // Optional request parameters from LanguageModelCallOptions.
-    if (genEvent.maxOutputTokens != null) {
-      attributes['gen_ai.request.max_tokens'] = genEvent.maxOutputTokens;
-    }
-    if (genEvent.temperature != null) {
-      attributes['gen_ai.request.temperature'] = genEvent.temperature;
-    }
-    if (genEvent.topP != null) {
-      attributes['gen_ai.request.top_p'] = genEvent.topP;
-    }
-    if (genEvent.topK != null) {
-      attributes['gen_ai.request.top_k'] = genEvent.topK;
-    }
-    if (genEvent.presencePenalty != null) {
-      attributes['gen_ai.request.presence_penalty'] = genEvent.presencePenalty;
-    }
-    if (genEvent.frequencyPenalty != null) {
-      attributes['gen_ai.request.frequency_penalty'] =
-        genEvent.frequencyPenalty;
-    }
+  override onAbort(event: OtelAbortEvent): void {
+    super.onAbort(event);
+    this.callAttributes.delete(event.callId);
+  }
 
-    // Opt-in content attributes (gen_ai semantic conventions).
-    // Only recorded when telemetry.recordInputs is not false.
-    const recordInputs =
-      this.contentAllowed() && genEvent.recordInputs !== false;
-    if (recordInputs) {
-      const instructionParts = toGenAiSystemInstructions(genEvent.instructions);
-      const systemInstructions = instructionParts
-        ? serializePartsWithBudget(instructionParts)
+  override onError(error: unknown): void {
+    super.onError(error);
+    const callId =
+      typeof error === 'object' && error !== null
+        ? eventField(error, 'callId')
         : undefined;
-      if (systemInstructions != null) {
-        attributes['gen_ai.system_instructions'] = systemInstructions.json;
-        Object.assign(attributes, budgetAttributes(systemInstructions));
-      }
+    if (typeof callId === 'string') this.callAttributes.delete(callId);
+  }
+}
 
-      const inputMessages = genEvent.messages
-        ? serializeMessagesWithBudget(toGenAiInputMessages(genEvent.messages))
-        : undefined;
-      if (inputMessages != null) {
-        attributes['gen_ai.input.messages'] = inputMessages.json;
-        Object.assign(attributes, budgetAttributes(inputMessages));
-      }
+function stringOrUndefined(value: unknown): string | undefined {
+  return typeof value === 'string' ? value : undefined;
+}
 
-      const toolDefs = toolsToDefinitions(
-        genEvent.tools as Record<string, unknown> | undefined,
-      );
-      if (toolDefs != null) {
-        attributes['gen_ai.tool.definitions'] = serializeJson(toolDefs);
-      }
-    }
+// ---------------------------------------------------------------------------
+// Usage records: one ModelCallRecord per terminal text-generation call
+// ---------------------------------------------------------------------------
 
-    const rootSpan = this.tracer.startSpan(spanName, {
-      attributes,
-      kind: SpanKind.INTERNAL,
-    });
+interface UsageCallState {
+  identity: CallIdentity;
+  startedAt: number;
+  ttftMs: number | undefined;
+  totalDurationMs: number | undefined;
+}
 
-    // Inherit the active context (the step context) as parent.
-    const rootContext = trace.setSpan(context.active(), rootSpan);
+interface TerminalUsage {
+  finishReason: string;
+  isError: boolean;
+  errorType: string | null;
+  inputTokens: number;
+  outputTokens: number;
+  cacheWriteTokens: number;
+  cacheReadTokens: number;
+}
 
-    this.callStates.set(genEvent.callId, {
-      rootSpan,
-      rootContext,
-      recordOutputs: this.contentAllowed() && genEvent.recordOutputs !== false,
-      functionId: genEvent.functionId,
-      operationId: genEvent.operationId,
-      conversationId,
-      providerType,
-      providerId,
-      modelId,
-      spanStartTime: Date.now(),
-      terminalRecorded: false,
+const NO_USAGE = {
+  inputTokens: 0,
+  outputTokens: 0,
+  cacheWriteTokens: 0,
+  cacheReadTokens: 0,
+};
+
+/**
+ * Span-free AI SDK integration that forwards one `ModelCallRecord` per
+ * terminal text-generation call (success, error, or abort) to the sink.
+ */
+export class ModelCallUsageTelemetry implements Telemetry {
+  private readonly callStates = new Map<string, UsageCallState>();
+  private sink: ModelCallSink | null = null;
+
+  setModelCallSink(sink: ModelCallSink | null): void {
+    this.sink = sink;
+  }
+
+  onStart(event: TelemetryStartEvent): void {
+    if (!TEXT_OPERATIONS.has(event.operationId)) return;
+    const textEvent = event as InferTelemetryEvent<GenerateTextStartEvent>;
+    this.callStates.set(textEvent.callId, {
+      identity: resolveCallIdentity(textEvent),
+      startedAt: Date.now(),
       ttftMs: undefined,
       totalDurationMs: undefined,
     });
   }
 
-  // --- Step lifecycle (no-op) -----------------------------------------------
-
-  onStepStart(_event: InferTelemetryEvent<GenerateTextStepStartEvent>): void {
-    // No-op: the klex step span is managed by step.ts.
-    // The AI SDK's internal step concept is redundant here because tools
-    // are passed without execute — there is no multi-step tool loop.
-  }
-
-  onStepEnd(_event: InferTelemetryEvent<GenerateTextStepEndEvent>): void {
-    // No-op: see onStepStart.
-  }
-
-  // --- Model call lifecycle -------------------------------------------------
-
-  onLanguageModelCallStart(
-    _event: InferTelemetryEvent<LanguageModelCallStartEvent>,
-  ): void {
-    // No-op: the single root span replaces the redundant model-call span.
-    // Provider-specific request attributes are already set on the root span
-    // in onStart. The HTTP call runs in the root context via
-    // executeLanguageModelCall so the SDK's internal HTTP spans nest
-    // correctly under the root span.
-  }
-
-  executeLanguageModelCall<T>(options: {
-    callId: string;
-    execute: () => PromiseLike<T>;
-  }): PromiseLike<T> {
-    const state = this.getCallState(options.callId);
-    const ctx = state?.rootContext ?? context.active();
-    return context.with(ctx, options.execute);
-  }
-
   onLanguageModelCallEnd(
     event: InferTelemetryEvent<LanguageModelCallEndEvent>,
   ): void {
-    const state = this.getCallState(event.callId);
-    if (!state?.rootSpan) return;
-
-    const span = state.rootSpan;
-
-    span.setAttributes({
-      'gen_ai.response.id': event.responseId,
-      // Use the full klex modelId if available; fall back to the
-      // AI SDK's internal response model name.
-      'gen_ai.response.model': state.modelId ?? event.modelId,
-    });
-
-    // Performance attributes — only available at model-call end.
-    if (event.performance) {
-      const perfAttrs: Attributes = {};
-      if (event.performance.responseTimeMs != null) {
-        perfAttrs['klex.model.response_time'] = msToSeconds(
-          event.performance.responseTimeMs,
-        );
-        state.totalDurationMs = event.performance.responseTimeMs;
-      }
-      if (event.performance.timeToFirstOutputMs != null) {
-        perfAttrs['klex.model.time_to_first_chunk'] = msToSeconds(
-          event.performance.timeToFirstOutputMs,
-        );
-        state.ttftMs = event.performance.timeToFirstOutputMs;
-      }
-      span.setAttributes(perfAttrs);
+    const state = this.callStates.get(event.callId);
+    if (!state) return;
+    if (event.performance?.responseTimeMs != null) {
+      state.totalDurationMs = event.performance.responseTimeMs;
+    }
+    if (event.performance?.timeToFirstOutputMs != null) {
+      state.ttftMs = event.performance.timeToFirstOutputMs;
     }
   }
-
-  // --- Operation end --------------------------------------------------------
 
   onEnd(event: TelemetryEndEvent): void {
-    const state = this.getCallState(event.callId);
-    if (!state?.rootSpan) return;
-
-    // Only record text-generation-specific attributes and forward model call records.
-    if (
-      state.operationId === 'ai.streamText' ||
-      state.operationId === 'ai.generateText'
-    ) {
-      const textEndEvent = event as InferTelemetryEvent<GenerateTextEndEvent>;
-
-      const usage = textEndEvent.usage;
-      state.rootSpan.setAttributes({
-        'gen_ai.response.finish_reasons': [textEndEvent.finishReason],
-        'gen_ai.usage.input_tokens': usage.inputTokens,
-        'gen_ai.usage.output_tokens': usage.outputTokens,
-        'klex.outcome':
-          textEndEvent.finishReason === 'error' ? 'error' : 'success',
-      });
-      if (usage.inputTokenDetails?.noCacheTokens != null) {
-        state.rootSpan.setAttribute(
-          'klex.usage.uncached_input_tokens',
-          usage.inputTokenDetails.noCacheTokens,
-        );
-      }
-      if (usage.outputTokenDetails?.reasoningTokens != null) {
-        state.rootSpan.setAttribute(
-          'klex.usage.reasoning_tokens',
-          usage.outputTokenDetails.reasoningTokens,
-        );
-      }
-      const cacheReadTokens = usage.inputTokenDetails?.cacheReadTokens;
-      if (
-        cacheReadTokens != null &&
-        usage.inputTokens != null &&
-        usage.inputTokens > 0
-      ) {
-        // AI SDK input tokens include cached tokens, so this is the share of
-        // the prompt served from the provider cache (0..1).
-        state.rootSpan.setAttribute(
-          'klex.usage.cache_read_ratio',
-          cacheReadTokens / usage.inputTokens,
-        );
-      }
-
-      // Set error.type when the generation ended in an error state.
-      if (textEndEvent.finishReason === 'error') {
-        state.rootSpan.setAttribute('error.type', 'generation_error');
-        state.rootSpan.setStatus({ code: SpanStatusCode.ERROR });
-      }
-
-      if (textEndEvent.usage.inputTokenDetails?.cacheReadTokens != null) {
-        state.rootSpan.setAttribute(
-          'gen_ai.usage.cache_read.input_tokens',
-          textEndEvent.usage.inputTokenDetails.cacheReadTokens,
-        );
-      }
-      if (textEndEvent.usage.inputTokenDetails?.cacheWriteTokens != null) {
-        state.rootSpan.setAttribute(
-          'gen_ai.usage.cache_creation.input_tokens',
-          textEndEvent.usage.inputTokenDetails.cacheWriteTokens,
-        );
-      }
-
-      // Opt-in content attribute: gen_ai.output.messages
-      // Only recorded when telemetry.recordOutputs is not false.
-      if (state.recordOutputs && this.contentAllowed()) {
-        const outputMessages = serializeMessagesWithBudget(
-          toGenAiOutputMessages(
-            textEndEvent.content ?? [],
-            textEndEvent.finishReason,
-          ),
-        );
-        if (outputMessages != null) {
-          state.rootSpan.setAttribute(
-            'gen_ai.output.messages',
-            outputMessages.json,
-          );
-          state.rootSpan.setAttributes(budgetAttributes(outputMessages));
-        }
-      }
-
-      // Forward model call record to the sink (if registered).
-      this.forwardModelCallRecord(
-        event.callId,
-        state,
-        textEndEvent.finishReason,
-        textEndEvent.finishReason === 'error',
-        textEndEvent.finishReason === 'error' ? 'generation_error' : null,
-        textEndEvent.usage.inputTokens ?? 0,
-        textEndEvent.usage.outputTokens ?? 0,
-        textEndEvent.usage.inputTokenDetails?.cacheWriteTokens ?? 0,
-        textEndEvent.usage.inputTokenDetails?.cacheReadTokens ?? 0,
-      );
-    }
-
-    state.rootSpan.end();
-    this.cleanupCallState(event.callId);
+    const state = this.callStates.get(event.callId);
+    if (!state) return;
+    const { finishReason, usage } =
+      event as InferTelemetryEvent<GenerateTextEndEvent>;
+    const isError = finishReason === 'error';
+    this.finish(event.callId, state, {
+      finishReason,
+      isError,
+      errorType: isError ? 'generation_error' : null,
+      inputTokens: usage.inputTokens ?? 0,
+      outputTokens: usage.outputTokens ?? 0,
+      cacheWriteTokens: usage.inputTokenDetails?.cacheWriteTokens ?? 0,
+      cacheReadTokens: usage.inputTokenDetails?.cacheReadTokens ?? 0,
+    });
   }
 
-  // --- Abort & error --------------------------------------------------------
-
   onAbort(event: InferTelemetryEvent<GenerateTextAbortEvent>): void {
-    const state = this.getCallState(event.callId);
+    const state = this.callStates.get(event.callId);
     if (!state) return;
-
-    // Mark the generation as aborted on the root span.
-    state.rootSpan.setAttribute('gen_ai.response.finish_reasons', ['aborted']);
-    state.rootSpan.setAttribute('error.type', 'aborted');
-    state.rootSpan.setAttribute('klex.outcome', 'aborted');
-    state.rootSpan.setStatus({
-      code: SpanStatusCode.ERROR,
-      message: 'Generation aborted',
+    this.finish(event.callId, state, {
+      finishReason: 'aborted',
+      isError: true,
+      errorType: 'aborted',
+      ...NO_USAGE,
     });
-
-    // Record partial output from completed steps so traces show what
-    // was generated before the abort: one assistant message per step.
-    if (
-      state.recordOutputs &&
-      this.contentAllowed() &&
-      event.steps.length > 0
-    ) {
-      const serialized = serializeMessagesWithBudget(
-        toGenAiOutputMessagesFromSteps(event.steps),
-      );
-      if (serialized != null) {
-        state.rootSpan.setAttribute('gen_ai.output.messages', serialized.json);
-        state.rootSpan.setAttributes(budgetAttributes(serialized));
-      }
-    }
-
-    // Record abort reason if available.
-    if (event.reason != null) {
-      const reasonStr =
-        event.reason instanceof Error
-          ? `${event.reason.name}: ${event.reason.message}`
-          : String(event.reason);
-      state.rootSpan.setAttribute('klex.abort.reason', reasonStr);
-    }
-
-    // Forward model call record to the sink (if registered).
-    this.forwardModelCallRecord(
-      event.callId,
-      state,
-      'aborted',
-      true,
-      'aborted',
-      0,
-      0,
-      0,
-      0,
-    );
-
-    state.rootSpan.end();
-    this.cleanupCallState(event.callId);
   }
 
   onError(error: unknown): void {
-    const maybeEvent = error as
-      | { callId?: string; error?: unknown }
-      | undefined;
-    if (!maybeEvent?.callId) return;
-
-    const state = this.getCallState(maybeEvent.callId);
+    if (typeof error !== 'object' || error === null) return;
+    const callId = eventField(error, 'callId');
+    if (typeof callId !== 'string') return;
+    const state = this.callStates.get(callId);
     if (!state) return;
-
-    const actualError = maybeEvent.error ?? error;
-
-    recordErrorOnSpan(state.rootSpan, actualError);
-    state.rootSpan.setAttribute('klex.outcome', 'error');
-
-    // Forward model call record to the sink (if registered).
-    // Best-effort: if onEnd already forwarded a record for this callId,
-    // the PRIMARY KEY constraint in SQLite silently rejects the duplicate.
-    const errorType =
-      actualError instanceof Error ? actualError.name : String(actualError);
-    this.forwardModelCallRecord(
-      maybeEvent.callId,
-      state,
-      'error',
-      true,
-      errorType,
-      0,
-      0,
-      0,
-      0,
-    );
-
-    state.rootSpan.end();
-    this.cleanupCallState(maybeEvent.callId);
+    const actual = eventField(error, 'error') ?? error;
+    this.finish(callId, state, {
+      finishReason: 'error',
+      isError: true,
+      errorType: actual instanceof Error ? actual.name : String(actual),
+      ...NO_USAGE,
+    });
   }
-}
 
-// ---------------------------------------------------------------------------
-// Factory
-// ---------------------------------------------------------------------------
-
-/**
- * Creates a custom `Telemetry` integration for the AI SDK.
- *
- * Uses the provided tracer to create spans that nest under the active OTel
- * context (the klex step context).  Register globally via
- * `registerTelemetry(createKlexTelemetry(tracer))`.
- */
-export function createKlexTelemetry(
-  tracer: Tracer,
-  options: {
-    /** Evaluated per call; content is captured only while this returns true. */
-    contentAllowed?: () => boolean;
-    /** Configured agent name, recorded as `gen_ai.agent.name`. */
-    agentName?: string;
-    /** Evaluated per call; stable agent id recorded as `gen_ai.agent.id`. */
-    getAgentId?: () => string | null | undefined;
-  } = {},
-): KlexTelemetry {
-  return new KlexTelemetry(
-    tracer,
-    options.contentAllowed,
-    options.agentName,
-    options.getAgentId,
-  );
+  /** Forwards the record once per call. Fire-and-forget; never throws. */
+  private finish(
+    callId: string,
+    state: UsageCallState,
+    usage: TerminalUsage,
+  ): void {
+    this.callStates.delete(callId);
+    if (!this.sink) return;
+    const now = Date.now();
+    const { identity } = state;
+    try {
+      this.sink({
+        id: callId,
+        sessionId: identity.conversationId ?? null,
+        providerType: identity.providerType ?? 'unknown',
+        providerId: identity.providerId ?? 'unknown',
+        endpointId: null,
+        modelId: identity.modelId ?? 'unknown',
+        source: identity.source,
+        extensionId: identity.extensionId,
+        inputTokens: usage.inputTokens,
+        outputTokens: usage.outputTokens,
+        inputCacheWriteTokens: usage.cacheWriteTokens,
+        inputCacheReadTokens: usage.cacheReadTokens,
+        ttftMs: state.ttftMs ?? null,
+        // The SDK's response time when available; wall-clock duration for
+        // abort and error paths that carry no performance data.
+        totalDurationMs: state.totalDurationMs ?? now - state.startedAt,
+        finishReason: usage.finishReason,
+        isError: usage.isError,
+        errorType: usage.errorType,
+        startedAt: new Date(state.startedAt).toISOString(),
+        finishedAt: new Date(now).toISOString(),
+      });
+    } catch {
+      // Fire-and-forget — never propagate sink errors.
+    }
+  }
 }

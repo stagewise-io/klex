@@ -266,6 +266,104 @@ describe('TelemetrySpanProcessor', () => {
     expect(forwarded).not.toBe(span);
   });
 
+  it('drops inline blob bytes from debug content but keeps their metadata', () => {
+    const tp = createTelemetrySpanProcessor('debug');
+    const { processor, onEnd } = makeDelegate();
+    tp.setDelegate(processor);
+
+    const messages = [
+      {
+        role: 'user',
+        parts: [
+          { type: 'text', content: 'look' },
+          {
+            type: 'blob',
+            modality: 'image',
+            mime_type: 'image/png',
+            content: 'AAAA',
+          },
+        ],
+      },
+    ];
+    tp.onEnd(
+      makeSpan({
+        attributes: { 'gen_ai.input.messages': JSON.stringify(messages) },
+      }),
+    );
+
+    const forwarded = onEnd.mock.calls[0]?.[0] as ReadableSpan;
+    expect(
+      JSON.parse(forwarded.attributes['gen_ai.input.messages'] as string),
+    ).toEqual([
+      {
+        role: 'user',
+        parts: [
+          { type: 'text', content: 'look' },
+          { type: 'blob', modality: 'image', mime_type: 'image/png' },
+        ],
+      },
+    ]);
+  });
+
+  it('bounds oversized message content and keeps it valid JSON', () => {
+    const tp = createTelemetrySpanProcessor('debug');
+    const { processor, onEnd } = makeDelegate();
+    tp.setDelegate(processor);
+
+    const big = 'x'.repeat(300 * 1024);
+    const messages = [
+      { role: 'user', parts: [{ type: 'text', content: big }] },
+      { role: 'assistant', parts: [{ type: 'text', content: big }] },
+      { role: 'user', parts: [{ type: 'text', content: 'latest' }] },
+    ];
+    tp.onEnd(
+      makeSpan({
+        attributes: { 'gen_ai.input.messages': JSON.stringify(messages) },
+      }),
+    );
+
+    const forwarded = onEnd.mock.calls[0]?.[0] as ReadableSpan;
+    const exported = forwarded.attributes['gen_ai.input.messages'] as string;
+    expect(Buffer.byteLength(exported)).toBeLessThanOrEqual(512 * 1024);
+    const parsed = JSON.parse(exported) as Array<{ role: string }>;
+    expect(parsed).toHaveLength(2);
+    expect(parsed.at(-1)).toEqual(messages[2]);
+    expect(forwarded.attributes['klex.telemetry.input_messages_dropped']).toBe(
+      1,
+    );
+  });
+
+  it('truncates a single oversized part instead of dropping the last message', () => {
+    const tp = createTelemetrySpanProcessor('debug');
+    const { processor, onEnd } = makeDelegate();
+    tp.setDelegate(processor);
+
+    const messages = [
+      {
+        role: 'tool',
+        parts: [
+          {
+            type: 'tool_call_response',
+            id: 't1',
+            response: 'y'.repeat(700 * 1024),
+          },
+        ],
+      },
+    ];
+    tp.onEnd(
+      makeSpan({
+        attributes: { 'gen_ai.input.messages': JSON.stringify(messages) },
+      }),
+    );
+
+    const forwarded = onEnd.mock.calls[0]?.[0] as ReadableSpan;
+    const exported = forwarded.attributes['gen_ai.input.messages'] as string;
+    expect(Buffer.byteLength(exported)).toBeLessThanOrEqual(512 * 1024);
+    const parsed = JSON.parse(exported) as typeof messages;
+    expect(parsed[0]?.parts[0]?.response.endsWith('…[truncated]')).toBe(true);
+    expect(forwarded.attributes['klex.telemetry.content_truncated']).toBe(true);
+  });
+
   it('preserves array-valued debug content without index-based truncation', () => {
     const tp = createTelemetrySpanProcessor();
     const { processor, onEnd } = makeDelegate();

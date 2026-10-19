@@ -78,7 +78,7 @@ const CREDENTIAL_NAME_PATTERN =
 const PRIVACY_NAME_PATTERN =
   /(?:^|[._-])(?:host(?:name)?|user(?:name)?|home|mac|ip)(?:$|[._-])/i;
 const CONTENT_NAME_PATTERN =
-  /(?:^|[._-])(?:prompt|completion|system|tool(?:[._-]call)?[._-]?(?:arguments?|results?|outputs?|inputs?)|messages?|contents?)(?:$|[._-])/i;
+  /(?:^|[._-])(?:prompt|completion|system|tool(?:[._-]call)?[._-]?(?:arguments?|results?|outputs?|inputs?)|messages?|contents?|definitions?)(?:$|[._-])/i;
 
 export type TelemetryTraceMode = 'none' | 'coarse' | 'detailed' | 'content';
 export type TelemetryMetricDetail = 'none' | 'aggregate' | 'detailed';

@@ -15,7 +15,6 @@ import type {
   GenerateTextStepEndEvent,
   GenerateTextStepStartEvent,
   InferTelemetryEvent,
-  Instructions,
   LanguageModelCallEndEvent,
   LanguageModelCallStartEvent,
   Telemetry,
@@ -23,6 +22,16 @@ import type {
 
 import type { ModelCallRecord, ModelCallSource } from '@/model-call-logger';
 import { normalizeAgentName } from '@/telemetry-resource';
+
+import {
+  type BudgetedJson,
+  serializeMessagesWithBudget,
+  serializePartsWithBudget,
+  toGenAiInputMessages,
+  toGenAiOutputMessages,
+  toGenAiOutputMessagesFromSteps,
+  toGenAiSystemInstructions,
+} from './genai-messages';
 
 // Extract the exact event types the Telemetry interface expects for
 // onStart / onEnd. These are unions (OperationStartEvent / OperationEndEvent)
@@ -50,17 +59,15 @@ function serializeJson(value: unknown): string | undefined {
   }
 }
 
-/**
- * Converts an `Instructions` value (string, SystemModelMessage, or array)
- * to a plain string suitable for `gen_ai.system_instructions`.
- */
-function instructionsToString(
-  instructions: Instructions | undefined,
-): string | undefined {
-  if (instructions == null) return undefined;
-  if (typeof instructions === 'string') return instructions;
-  // SystemModelMessage or SystemModelMessage[] — serialize to JSON.
-  return serializeJson(instructions);
+/** Span attributes that report how the content budget changed an attribute. */
+function budgetAttributes(result: BudgetedJson): Attributes {
+  const attributes: Attributes = {};
+  if (result.droppedMessages > 0) {
+    attributes['klex.telemetry.input_messages_dropped'] =
+      result.droppedMessages;
+  }
+  if (result.truncated) attributes['klex.telemetry.content_truncated'] = true;
+  return attributes;
 }
 
 /**
@@ -224,6 +231,7 @@ export class KlexTelemetry implements Telemetry {
     private readonly contentAllowed: () => boolean = () => false,
     agentName = '',
     private readonly getAgentId: () => string | null | undefined = () => null,
+    private readonly agentObservability = false,
   ) {
     this.agentName = normalizeAgentName(agentName);
   }
@@ -370,6 +378,9 @@ export class KlexTelemetry implements Telemetry {
       agentId = null;
     }
     if (agentId) attributes['gen_ai.agent.id'] = agentId;
+    // Grafana Cloud keeps gen_ai content only on spans opted into Agent
+    // Observability; without content capture AO still gets metadata.
+    if (this.agentObservability) attributes['agento11y.record'] = true;
 
     attributes['klex.model.provider_type'] = providerType;
     attributes['klex.model.provider_id'] = providerId;
@@ -409,14 +420,21 @@ export class KlexTelemetry implements Telemetry {
     const recordInputs =
       this.contentAllowed() && genEvent.recordInputs !== false;
     if (recordInputs) {
-      const systemInstructions = instructionsToString(genEvent.instructions);
+      const instructionParts = toGenAiSystemInstructions(genEvent.instructions);
+      const systemInstructions = instructionParts
+        ? serializePartsWithBudget(instructionParts)
+        : undefined;
       if (systemInstructions != null) {
-        attributes['gen_ai.system_instructions'] = systemInstructions;
+        attributes['gen_ai.system_instructions'] = systemInstructions.json;
+        Object.assign(attributes, budgetAttributes(systemInstructions));
       }
 
-      const inputMessages = serializeJson(genEvent.messages);
+      const inputMessages = genEvent.messages
+        ? serializeMessagesWithBudget(toGenAiInputMessages(genEvent.messages))
+        : undefined;
       if (inputMessages != null) {
-        attributes['gen_ai.input.messages'] = inputMessages;
+        attributes['gen_ai.input.messages'] = inputMessages.json;
+        Object.assign(attributes, budgetAttributes(inputMessages));
       }
 
       const toolDefs = toolsToDefinitions(
@@ -588,20 +606,18 @@ export class KlexTelemetry implements Telemetry {
       // Opt-in content attribute: gen_ai.output.messages
       // Only recorded when telemetry.recordOutputs is not false.
       if (state.recordOutputs && this.contentAllowed()) {
-        // Build a minimal output message from the response content.
-        const outputMessage: Record<string, unknown> = {
-          role: 'assistant',
-          content: textEndEvent.content,
-        };
-        if (textEndEvent.text) {
-          outputMessage.text = textEndEvent.text;
-        }
-        if (textEndEvent.toolCalls && textEndEvent.toolCalls.length > 0) {
-          outputMessage.toolCalls = textEndEvent.toolCalls;
-        }
-        const outputMessages = serializeJson([outputMessage]);
+        const outputMessages = serializeMessagesWithBudget(
+          toGenAiOutputMessages(
+            textEndEvent.content ?? [],
+            textEndEvent.finishReason,
+          ),
+        );
         if (outputMessages != null) {
-          state.rootSpan.setAttribute('gen_ai.output.messages', outputMessages);
+          state.rootSpan.setAttribute(
+            'gen_ai.output.messages',
+            outputMessages.json,
+          );
+          state.rootSpan.setAttributes(budgetAttributes(outputMessages));
         }
       }
 
@@ -639,27 +655,18 @@ export class KlexTelemetry implements Telemetry {
     });
 
     // Record partial output from completed steps so traces show what
-    // was generated before the abort. Each step's text, tool calls, and
-    // content are serialized into gen_ai.output.messages.
+    // was generated before the abort: one assistant message per step.
     if (
       state.recordOutputs &&
       this.contentAllowed() &&
       event.steps.length > 0
     ) {
-      const outputMessages = event.steps.map((step) => {
-        const msg: Record<string, unknown> = {
-          role: 'assistant',
-          content: step.content,
-          text: step.text,
-        };
-        if (step.toolCalls && step.toolCalls.length > 0) {
-          msg.toolCalls = step.toolCalls;
-        }
-        return msg;
-      });
-      const serialized = serializeJson(outputMessages);
+      const serialized = serializeMessagesWithBudget(
+        toGenAiOutputMessagesFromSteps(event.steps),
+      );
       if (serialized != null) {
-        state.rootSpan.setAttribute('gen_ai.output.messages', serialized);
+        state.rootSpan.setAttribute('gen_ai.output.messages', serialized.json);
+        state.rootSpan.setAttributes(budgetAttributes(serialized));
       }
     }
 
@@ -745,6 +752,8 @@ export function createKlexTelemetry(
     agentName?: string;
     /** Evaluated per call; stable agent id recorded as `gen_ai.agent.id`. */
     getAgentId?: () => string | null | undefined;
+    /** Adds `agento11y.record=true` to model spans. */
+    agentObservability?: boolean;
   } = {},
 ): KlexTelemetry {
   return new KlexTelemetry(
@@ -752,5 +761,6 @@ export function createKlexTelemetry(
     options.contentAllowed,
     options.agentName,
     options.getAgentId,
+    options.agentObservability,
   );
 }

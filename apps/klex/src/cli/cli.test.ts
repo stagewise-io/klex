@@ -19,6 +19,7 @@ describe('parseCliArgs', () => {
     delete process.env.KLEX_CLOUD_BASE_URL;
     delete process.env.KLEX_TELEMETRY_ENDPOINT;
     delete process.env.KLEX_TELEMETRY_DEBUG;
+    delete process.env.KLEX_TELEMETRY_AGENT_OBSERVABILITY;
     delete process.env.KLEX_DISABLE_TELEMETRY;
     delete process.env.KLEX_CLOUD_ENROLLMENT_TOKEN;
     delete process.env.KLEX_DANGEROUS_LOCAL_ADMIN_API_PORT;
@@ -40,6 +41,7 @@ describe('parseCliArgs', () => {
       'KLEX_CLOUD_BASE_URL',
       'KLEX_TELEMETRY_ENDPOINT',
       'KLEX_TELEMETRY_DEBUG',
+      'KLEX_TELEMETRY_AGENT_OBSERVABILITY',
       'KLEX_DISABLE_TELEMETRY',
       'KLEX_CLOUD_ENROLLMENT_TOKEN',
       'KLEX_DANGEROUS_LOCAL_ADMIN_API_PORT',
@@ -265,6 +267,34 @@ describe('parseCliArgs', () => {
     expect(() => parseCliArgs(['--telemetry-debug'])).toThrow(
       'Debug telemetry requires an endpoint',
     );
+  });
+
+  it('enables Agent Observability only with an explicit opt-in', () => {
+    const endpoint = ['--telemetry-endpoint', 'https://cli.example'];
+    expect(parseCliArgs(endpoint).telemetryAgentObservability).toBe(false);
+    expect(
+      parseCliArgs([...endpoint, '--telemetry-agent-observability'])
+        .telemetryAgentObservability,
+    ).toBe(true);
+    process.env.KLEX_TELEMETRY_AGENT_OBSERVABILITY = '1';
+    expect(parseCliArgs(endpoint).telemetryAgentObservability).toBe(true);
+    expect(
+      parseCliArgs([...endpoint, '--no-telemetry-agent-observability'])
+        .telemetryAgentObservability,
+    ).toBe(false);
+  });
+
+  it('rejects Agent Observability without an endpoint', () => {
+    expect(() => parseCliArgs(['--telemetry-agent-observability'])).toThrow(
+      'Agent Observability telemetry requires an endpoint',
+    );
+  });
+
+  it('turns Agent Observability off when telemetry is disabled', () => {
+    process.env.KLEX_TELEMETRY_AGENT_OBSERVABILITY = '1';
+    expect(
+      parseCliArgs(['--disable-telemetry']).telemetryAgentObservability,
+    ).toBe(false);
   });
 
   it('lets disable-telemetry override an endpoint', () => {

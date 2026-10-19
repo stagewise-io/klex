@@ -8,6 +8,7 @@ Aggregate product analytics are a separate, on-by-default system with their own 
 | --- | --- | --- |
 | OTLP base URL (enables telemetry) | `--telemetry-endpoint <url>` | `KLEX_TELEMETRY_ENDPOINT` |
 | Debug telemetry (requires endpoint) | `--telemetry-debug` | `KLEX_TELEMETRY_DEBUG=1` |
+| Grafana Agent Observability marker (requires endpoint) | `--telemetry-agent-observability` | `KLEX_TELEMETRY_AGENT_OBSERVABILITY=1` |
 | Force off (overrides everything) | `--disable-telemetry` | `KLEX_DISABLE_TELEMETRY=1` |
 | Extra OTLP headers (JSON object) | — | `KLEX_TELEMETRY_HEADERS` |
 
@@ -20,6 +21,27 @@ Levels:
 While telemetry is active, Klex shows a persistent warning naming the endpoint: a yellow banner in the interactive UI (and a framed notice on stderr in headless mode) for `advanced`, and a red, high-contrast banner for `debug`.
 
 The telemetry identity is a random UUID generated per process. It does not include hostnames, usernames, network addresses, or machine fingerprints.
+
+## Model content format
+
+At `debug`, model spans (`gen_ai.operation.name=generate_content`) carry content in the [OpenTelemetry GenAI semantic-convention](https://opentelemetry.io/docs/specs/semconv/gen-ai/) parts format:
+
+- `gen_ai.system_instructions`: JSON array of `{ type: 'text', content }` parts.
+- `gen_ai.input.messages`: JSON array of `{ role, parts }` with the full input sent to the model. Parts are `text`, `reasoning`, `tool_call` (`id`, `name`, `arguments`), `tool_call_response` (`id`, `response`), and `blob` (`modality`, `mime_type`). File and image bytes are never exported.
+- `gen_ai.output.messages`: JSON array of `{ role: 'assistant', parts, finish_reason }`. An aborted call emits one message per completed step, with `finish_reason: 'aborted'` on the last.
+- `gen_ai.tool.definitions`: JSON array of `{ name, description, inputSchema, outputSchema }`.
+
+System instructions, input, and output are each limited to 512 KiB of serialized JSON. When the input exceeds the limit, the oldest messages are dropped (the last message is always kept) and `klex.telemetry.input_messages_dropped` records the count. When output or system instructions exceed it, the longest text parts are shortened and `klex.telemetry.content_truncated=true` is set. The exported value is valid JSON in every case: debug credential redaction runs on each string inside the document, not on the serialized text.
+
+## Grafana Agent Observability
+
+Grafana Cloud strips `gen_ai.*` content attributes from Tempo spans unless the span is opted into [Agent Observability](https://grafana.com/docs/grafana-cloud/monitor-applications/ai-observability/). `--telemetry-agent-observability` (or `KLEX_TELEMETRY_AGENT_OBSERVABILITY=1`) adds the span attribute `agento11y.record=true` to every model span.
+
+- `advanced` + marker: Agent Observability records metadata only (model, provider, token usage, latency, errors, agent and conversation ids).
+- `debug` + marker: Agent Observability also records the content described above, including tool calls and tool results.
+- No marker: spans are exported unchanged; on Grafana Cloud, content attributes are dropped at ingest.
+
+The marker has no effect when telemetry is off. Passing it without an endpoint is a startup error. The marker only routes data that the selected level already exports; it does not raise the level.
 
 ## Export and shutdown timing
 

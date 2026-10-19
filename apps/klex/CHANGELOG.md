@@ -2,6 +2,12 @@
 
 All notable Klex changes are documented here.
 
+## 0.21.0 (2026-10-19)
+
+### Features
+
+- add selectable basic telemetry level and http opt-in (1e98d1e)
+
 ## 0.20.0 (2026-10-19)
 
 ### Features

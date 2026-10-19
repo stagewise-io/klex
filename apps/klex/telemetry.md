@@ -8,7 +8,6 @@ Aggregate product analytics are a separate, on-by-default system with their own 
 | --- | --- | --- |
 | OTLP base URL (enables telemetry) | `--telemetry-endpoint <url>` | `KLEX_TELEMETRY_ENDPOINT` |
 | Debug telemetry (requires endpoint) | `--telemetry-debug` | `KLEX_TELEMETRY_DEBUG=1` |
-| Grafana Agent Observability marker (requires endpoint) | `--telemetry-agent-observability` | `KLEX_TELEMETRY_AGENT_OBSERVABILITY=1` |
 | Force off (overrides everything) | `--disable-telemetry` | `KLEX_DISABLE_TELEMETRY=1` |
 | Extra OTLP headers (JSON object) | — | `KLEX_TELEMETRY_HEADERS` |
 
@@ -35,13 +34,12 @@ System instructions, input, and output are each limited to 512 KiB of serialized
 
 ## Grafana Agent Observability
 
-Grafana Cloud strips `gen_ai.*` content attributes from Tempo spans unless the span is opted into [Agent Observability](https://grafana.com/docs/grafana-cloud/monitor-applications/ai-observability/). `--telemetry-agent-observability` (or `KLEX_TELEMETRY_AGENT_OBSERVABILITY=1`) adds the span attribute `agento11y.record=true` to every model span.
+Model spans are built for [Grafana Agent Observability](https://grafana.com/docs/grafana-cloud/monitor-applications/ai-observability/). Every model span carries `agento11y.record=true`; Grafana Cloud strips `gen_ai.*` content attributes from spans without it.
 
-- `advanced` + marker: Agent Observability records metadata only (model, provider, token usage, latency, errors, agent and conversation ids).
-- `debug` + marker: Agent Observability also records the content described above, including tool calls and tool results.
-- No marker: spans are exported unchanged; on Grafana Cloud, content attributes are dropped at ingest.
+- `advanced`: Agent Observability records metadata only (model, provider, token usage, latency, errors, agent and conversation ids).
+- `debug`: Agent Observability also records the content described above, including tool calls and tool results.
 
-The marker has no effect when telemetry is off. Passing it without an endpoint is a startup error. The marker only routes data that the selected level already exports; it does not raise the level.
+The marker only routes data that the selected level already exports; it does not raise the level. Other OTLP backends ignore it.
 
 ## Export and shutdown timing
 

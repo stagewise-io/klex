@@ -7,10 +7,8 @@ import { createLogger } from '@stagewise/logger';
 import { type Deployment, resolveDeployment } from '@/product-analytics';
 import { KLEX_VERSION } from '@/release';
 import {
-  resolveAgentObservability,
   resolveTelemetryEndpoint,
   resolveTelemetryMode,
-  TELEMETRY_AGENT_OBSERVABILITY_ENV,
   TELEMETRY_DEBUG_ENV,
   TELEMETRY_DISABLE_ENV,
   TELEMETRY_ENDPOINT_ENV,
@@ -28,8 +26,6 @@ export interface CliOptions {
   telemetryEndpoint: string | undefined;
   /** Effective process-wide telemetry level. Never read from config. */
   telemetryLevel: TelemetryMode;
-  /** Mark model spans for Grafana Agent Observability. CLI/env only. */
-  telemetryAgentObservability: boolean;
   /**
    * Aggregate-only product analytics. On by default; CLI/env only, never
    * configurable from the UI or config.json.
@@ -97,7 +93,6 @@ export function parseCliArgs(argv: string[]): CliOptions {
       'cloud-base-url': { type: 'string' },
       'telemetry-endpoint': { type: 'string' },
       'telemetry-debug': { type: 'boolean' },
-      'telemetry-agent-observability': { type: 'boolean' },
       'disable-telemetry': { type: 'boolean' },
       analytics: { type: 'boolean' },
       deployment: { type: 'string' },
@@ -162,13 +157,6 @@ export function parseCliArgs(argv: string[]): CliOptions {
     disabled: telemetryDisabled,
   });
   const telemetryEndpoint = telemetryLevel === 'no' ? undefined : endpoint;
-  const telemetryAgentObservability = resolveAgentObservability({
-    enabled:
-      values['telemetry-agent-observability'] ??
-      process.env[TELEMETRY_AGENT_OBSERVABILITY_ENV] === '1',
-    endpoint,
-    disabled: telemetryDisabled,
-  });
 
   // CLI wins over env. --no-analytics sets values.analytics to false.
   const analyticsEnabled =
@@ -219,7 +207,6 @@ export function parseCliArgs(argv: string[]): CliOptions {
     cloudBaseUrl,
     telemetryEndpoint,
     telemetryLevel,
-    telemetryAgentObservability,
     analyticsEnabled,
     deployment,
     cloudEnrollToken,
@@ -253,7 +240,6 @@ Options:
   --cloud-base-url <url>       Klex Cloud API base URL (overrides KLEX_CLOUD_BASE_URL, default: https://cloud.klex.bot)
   --telemetry-endpoint <url>   Enable telemetry and export to this OTLP base URL (overrides KLEX_TELEMETRY_ENDPOINT; telemetry is off without it)
   --telemetry-debug            Also export chat content and PII for this process; requires an endpoint (overrides KLEX_TELEMETRY_DEBUG)
-  --telemetry-agent-observability  Record model calls in Grafana Agent Observability; content only with --telemetry-debug; requires an endpoint (overrides KLEX_TELEMETRY_AGENT_OBSERVABILITY)
   --disable-telemetry          Force telemetry off even if an endpoint is set (overrides KLEX_DISABLE_TELEMETRY)
   --no-analytics               Disable anonymous aggregate usage analytics (overrides KLEX_NO_ANALYTICS and DO_NOT_TRACK)
   --analytics                  Enable analytics even if KLEX_NO_ANALYTICS or DO_NOT_TRACK is set
@@ -274,7 +260,6 @@ Environment:
   KLEX_TELEMETRY_ENDPOINT      Enable telemetry and export to this OTLP base URL
   KLEX_TELEMETRY_HEADERS       JSON object of extra OTLP request headers
   KLEX_TELEMETRY_DEBUG         Enable debug telemetry (chat content and PII) when set to 1; requires an endpoint
-  KLEX_TELEMETRY_AGENT_OBSERVABILITY  Record model calls in Grafana Agent Observability when set to 1; requires an endpoint
   KLEX_DISABLE_TELEMETRY       Force telemetry off when set to 1
   KLEX_NO_ANALYTICS            Disable anonymous usage analytics when set to 1. Analytics send one
                                start event, cloud enrollment outcomes, then aggregate counts every

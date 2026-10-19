@@ -231,7 +231,6 @@ export class KlexTelemetry implements Telemetry {
     private readonly contentAllowed: () => boolean = () => false,
     agentName = '',
     private readonly getAgentId: () => string | null | undefined = () => null,
-    private readonly agentObservability = false,
   ) {
     this.agentName = normalizeAgentName(agentName);
   }
@@ -380,7 +379,7 @@ export class KlexTelemetry implements Telemetry {
     if (agentId) attributes['gen_ai.agent.id'] = agentId;
     // Grafana Cloud keeps gen_ai content only on spans opted into Agent
     // Observability; without content capture AO still gets metadata.
-    if (this.agentObservability) attributes['agento11y.record'] = true;
+    attributes['agento11y.record'] = true;
 
     attributes['klex.model.provider_type'] = providerType;
     attributes['klex.model.provider_id'] = providerId;
@@ -752,8 +751,6 @@ export function createKlexTelemetry(
     agentName?: string;
     /** Evaluated per call; stable agent id recorded as `gen_ai.agent.id`. */
     getAgentId?: () => string | null | undefined;
-    /** Adds `agento11y.record=true` to model spans. */
-    agentObservability?: boolean;
   } = {},
 ): KlexTelemetry {
   return new KlexTelemetry(
@@ -761,6 +758,5 @@ export function createKlexTelemetry(
     options.contentAllowed,
     options.agentName,
     options.getAgentId,
-    options.agentObservability,
   );
 }

@@ -41,10 +41,7 @@ function makeCallEndEvent(event: Record<string, unknown>): CallEndEvent {
   return event as unknown as CallEndEvent;
 }
 
-async function exportContentCall(options: {
-  level: 'advanced' | 'debug';
-  agentObservability?: boolean;
-}) {
+async function exportContentCall(options: { level: 'advanced' | 'debug' }) {
   const exporter = new InMemorySpanExporter();
   const spanProcessor = createTelemetrySpanProcessor(options.level);
   spanProcessor.setDelegate(new SimpleSpanProcessor(exporter));
@@ -53,7 +50,6 @@ async function exportContentCall(options: {
   });
   const telemetry = createKlexTelemetry(provider.getTracer('test'), {
     contentAllowed: () => options.level === 'debug',
-    agentObservability: options.agentObservability,
   });
 
   telemetry.onStart(
@@ -119,23 +115,15 @@ describe('KlexTelemetry — model content', () => {
 });
 
 describe('KlexTelemetry — Agent Observability marker', () => {
-  it('marks model spans only when the option is on', async () => {
-    const on = await exportContentCall({
-      level: 'advanced',
-      agentObservability: true,
-    });
-    const off = await exportContentCall({ level: 'advanced' });
+  it('marks every model span without exporting content at advanced', async () => {
+    const attributes = await exportContentCall({ level: 'advanced' });
 
-    expect(on['agento11y.record']).toBe(true);
-    expect(on['gen_ai.input.messages']).toBeUndefined();
-    expect(off['agento11y.record']).toBeUndefined();
+    expect(attributes['agento11y.record']).toBe(true);
+    expect(attributes['gen_ai.input.messages']).toBeUndefined();
   });
 
   it('keeps the marker next to content at debug', async () => {
-    const attributes = await exportContentCall({
-      level: 'debug',
-      agentObservability: true,
-    });
+    const attributes = await exportContentCall({ level: 'debug' });
 
     expect(attributes['agento11y.record']).toBe(true);
     expect(attributes['gen_ai.input.messages']).toBeDefined();

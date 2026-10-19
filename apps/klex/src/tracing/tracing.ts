@@ -16,9 +16,9 @@ import type { TelemetryPolicy } from '@/telemetry-policy';
 import { createTelemetryResourceFromAttributes } from '@/telemetry-resource';
 
 import {
-  createKlexTelemetry,
-  type KlexTelemetry,
+  KlexOpenTelemetry,
   type ModelCallSink,
+  ModelCallUsageTelemetry,
 } from './telemetry';
 
 export interface TracingDependencies {
@@ -50,7 +50,7 @@ class TracingModule implements Tracing {
   private readonly provider: BasicTracerProvider;
   private exporterProcessor: BatchSpanProcessor | null = null;
   private providerShutdown = false;
-  private readonly telemetryInstance: KlexTelemetry;
+  private readonly usageTelemetry = new ModelCallUsageTelemetry();
 
   constructor(
     private readonly deps: {
@@ -94,12 +94,15 @@ class TracingModule implements Tracing {
     );
 
     const tracer = this.provider.getTracer(deps.serviceName);
-    this.telemetryInstance = createKlexTelemetry(tracer, {
-      contentAllowed: () => deps.policy?.getSnapshot().contentAllowed ?? false,
-      agentName: deps.agentName,
-      getAgentId: deps.getAgentId,
-    });
-    registerTelemetry(this.telemetryInstance);
+    registerTelemetry(
+      new KlexOpenTelemetry(tracer, {
+        contentAllowed: () =>
+          deps.policy?.getSnapshot().contentAllowed ?? false,
+        agentName: deps.agentName,
+        getAgentId: deps.getAgentId,
+      }),
+      this.usageTelemetry,
+    );
   }
 
   async start(): Promise<void> {
@@ -124,7 +127,7 @@ class TracingModule implements Tracing {
   }
 
   setModelCallSink(sink: ModelCallSink | null): void {
-    this.telemetryInstance.setModelCallSink(sink);
+    this.usageTelemetry.setModelCallSink(sink);
   }
 
   async setEnabled(enabled: boolean): Promise<void> {

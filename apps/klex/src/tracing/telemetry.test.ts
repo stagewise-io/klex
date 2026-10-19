@@ -1,4 +1,3 @@
-import { trace } from '@opentelemetry/api';
 import {
   BasicTracerProvider,
   InMemorySpanExporter,
@@ -9,21 +8,27 @@ import { describe, expect, it } from 'vitest';
 import type { ModelCallRecord } from '@/model-call-logger';
 import { createTelemetrySpanProcessor } from '@/telemetry-manager';
 
-import { createKlexTelemetry, type KlexTelemetry } from './telemetry';
+import {
+  KlexOpenTelemetry,
+  type KlexOpenTelemetryOptions,
+  ModelCallUsageTelemetry,
+} from './telemetry';
 
-const tracer = trace.getTracer('test');
-
-function createTelemetry(): KlexTelemetry {
-  return createKlexTelemetry(tracer);
+function createTelemetry(): ModelCallUsageTelemetry {
+  return new ModelCallUsageTelemetry();
 }
 
 // Cast helpers — the AI SDK event types are large unions with many
-// required fields we don't use. KlexTelemetry only reads a small subset,
+// required fields we don't use. The integrations only read a small subset,
 // so we cast through `unknown` to avoid constructing full mock objects.
-type StartEvent = Parameters<KlexTelemetry['onStart']>[0];
-type EndEvent = Parameters<KlexTelemetry['onEnd']>[0];
-type AbortEvent = Parameters<KlexTelemetry['onAbort']>[0];
-type CallEndEvent = Parameters<KlexTelemetry['onLanguageModelCallEnd']>[0];
+type StartEvent = Parameters<ModelCallUsageTelemetry['onStart']>[0];
+type EndEvent = Parameters<ModelCallUsageTelemetry['onEnd']>[0];
+type AbortEvent = Parameters<ModelCallUsageTelemetry['onAbort']>[0];
+type CallEndEvent = Parameters<
+  ModelCallUsageTelemetry['onLanguageModelCallEnd']
+>[0];
+type OtelStartEvent = Parameters<KlexOpenTelemetry['onStart']>[0];
+type OtelEndEvent = Parameters<KlexOpenTelemetry['onEnd']>[0];
 
 function makeStartEvent(event: Record<string, unknown>): StartEvent {
   return event as unknown as StartEvent;
@@ -31,6 +36,37 @@ function makeStartEvent(event: Record<string, unknown>): StartEvent {
 
 function makeEndEvent(event: Record<string, unknown>): EndEvent {
   return event as unknown as EndEvent;
+}
+
+function makeOtelStartEvent(event: Record<string, unknown>): OtelStartEvent {
+  return event as unknown as OtelStartEvent;
+}
+
+/** Fields `@ai-sdk/otel` reads from a generateText end event. */
+function makeOtelEndEvent(event: Record<string, unknown>): OtelEndEvent {
+  return {
+    finalStep: { reasoning: [] },
+    toolCalls: [],
+    files: [],
+    ...event,
+  } as unknown as OtelEndEvent;
+}
+
+function createSpanHarness(
+  level: 'advanced' | 'debug',
+  options: KlexOpenTelemetryOptions = {},
+) {
+  const exporter = new InMemorySpanExporter();
+  const spanProcessor = createTelemetrySpanProcessor(level);
+  spanProcessor.setDelegate(new SimpleSpanProcessor(exporter));
+  const provider = new BasicTracerProvider({
+    spanProcessors: [spanProcessor],
+  });
+  const telemetry = new KlexOpenTelemetry(provider.getTracer('test'), {
+    contentAllowed: () => level === 'debug',
+    ...options,
+  });
+  return { exporter, provider, telemetry };
 }
 
 function makeAbortEvent(event: Record<string, unknown>): AbortEvent {
@@ -42,18 +78,10 @@ function makeCallEndEvent(event: Record<string, unknown>): CallEndEvent {
 }
 
 async function exportContentCall(options: { level: 'advanced' | 'debug' }) {
-  const exporter = new InMemorySpanExporter();
-  const spanProcessor = createTelemetrySpanProcessor(options.level);
-  spanProcessor.setDelegate(new SimpleSpanProcessor(exporter));
-  const provider = new BasicTracerProvider({
-    spanProcessors: [spanProcessor],
-  });
-  const telemetry = createKlexTelemetry(provider.getTracer('test'), {
-    contentAllowed: () => options.level === 'debug',
-  });
+  const { exporter, provider, telemetry } = createSpanHarness(options.level);
 
   telemetry.onStart(
-    makeStartEvent({
+    makeOtelStartEvent({
       callId: 'content-call',
       operationId: 'ai.generateText',
       provider: 'openai',
@@ -61,16 +89,14 @@ async function exportContentCall(options: { level: 'advanced' | 'debug' }) {
       functionId: 'chat-session',
       instructions: 'System instructions',
       messages: [{ role: 'user', content: 'Model input' }],
-      recordInputs: true,
-      recordOutputs: true,
+      runtimeContext: { 'conversation.id': 'session-1' },
     }),
   );
   telemetry.onEnd(
-    makeEndEvent({
+    makeOtelEndEvent({
       callId: 'content-call',
       finishReason: 'stop',
       usage: { inputTokens: 2, outputTokens: 3 },
-      content: [{ type: 'text', text: 'Model output' }],
       text: 'Model output',
     }),
   );
@@ -85,7 +111,7 @@ function parseAttribute(value: unknown): unknown {
   return JSON.parse(value as string);
 }
 
-describe('KlexTelemetry — model content', () => {
+describe('KlexOpenTelemetry — model content', () => {
   it('exports model content in the GenAI parts format at debug', async () => {
     const attributes = await exportContentCall({ level: 'debug' });
 
@@ -111,10 +137,40 @@ describe('KlexTelemetry — model content', () => {
     expect(attributes['gen_ai.input.messages']).toBeUndefined();
     expect(attributes['gen_ai.output.messages']).toBeUndefined();
     expect(attributes['gen_ai.request.model']).toBe('gpt-test');
+    expect(attributes['gen_ai.operation.name']).toBe('invoke_agent');
+    expect(attributes['gen_ai.conversation.id']).toBe('session-1');
+  });
+
+  it('does not record content the caller opted out of', async () => {
+    const { exporter, provider, telemetry } = createSpanHarness('debug');
+    telemetry.onStart(
+      makeOtelStartEvent({
+        callId: 'opt-out',
+        operationId: 'ai.generateText',
+        provider: 'openai',
+        modelId: 'gpt-test',
+        messages: [{ role: 'user', content: 'secret' }],
+        recordInputs: false,
+      }),
+    );
+    telemetry.onEnd(
+      makeOtelEndEvent({
+        callId: 'opt-out',
+        finishReason: 'stop',
+        usage: { inputTokens: 1, outputTokens: 1 },
+        text: 'visible',
+      }),
+    );
+    await provider.forceFlush();
+    const attributes = exporter.getFinishedSpans()[0]?.attributes ?? {};
+    await provider.shutdown();
+
+    expect(attributes['gen_ai.input.messages']).toBeUndefined();
+    expect(attributes['gen_ai.output.messages']).toBeDefined();
   });
 });
 
-describe('KlexTelemetry — Agent Observability marker', () => {
+describe('KlexOpenTelemetry — Agent Observability marker', () => {
   it('marks every model span without exporting content at advanced', async () => {
     const attributes = await exportContentCall({ level: 'advanced' });
 
@@ -130,22 +186,16 @@ describe('KlexTelemetry — Agent Observability marker', () => {
   });
 });
 
-describe('KlexTelemetry — agent identity', () => {
+describe('KlexOpenTelemetry — agent identity', () => {
   it('records the configured agent name and enrolled agent id', async () => {
-    const exporter = new InMemorySpanExporter();
-    const spanProcessor = createTelemetrySpanProcessor('advanced');
-    spanProcessor.setDelegate(new SimpleSpanProcessor(exporter));
-    const provider = new BasicTracerProvider({
-      spanProcessors: [spanProcessor],
-    });
     let agentId: string | null = null;
-    const telemetry = createKlexTelemetry(provider.getTracer('test'), {
+    const { exporter, provider, telemetry } = createSpanHarness('advanced', {
       agentName: '  Klex  ',
       getAgentId: () => agentId,
     });
     const run = (callId: string, functionId: string) => {
       telemetry.onStart(
-        makeStartEvent({
+        makeOtelStartEvent({
           callId,
           operationId: 'ai.generateText',
           provider: 'openai',
@@ -154,7 +204,7 @@ describe('KlexTelemetry — agent identity', () => {
         }),
       );
       telemetry.onEnd(
-        makeEndEvent({
+        makeOtelEndEvent({
           callId,
           finishReason: 'stop',
           usage: { inputTokens: 1, outputTokens: 1 },
@@ -172,12 +222,14 @@ describe('KlexTelemetry — agent identity', () => {
     expect(first?.attributes['gen_ai.agent.id']).toBeUndefined();
     expect(first?.attributes['klex.call.source']).toBe('chat');
     expect(second?.attributes['gen_ai.agent.id']).toBe('client-1');
+    expect(second?.attributes['gen_ai.agent.name']).toBe('Klex');
     expect(second?.attributes['klex.call.source']).toBe('extension');
+    expect(second?.attributes['klex.extension.id']).toBe('vision');
     await provider.shutdown();
   });
 });
 
-describe('KlexTelemetry — model ID propagation', () => {
+describe('ModelCallUsageTelemetry — model ID propagation', () => {
   it('emits exactly one terminal model-call record per generation lifecycle', () => {
     const telemetry = createTelemetry();
     const records: ModelCallRecord[] = [];

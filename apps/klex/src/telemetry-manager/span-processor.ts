@@ -13,6 +13,11 @@ import {
   type RuntimeTelemetryLevel,
 } from '@/telemetry-policy';
 
+import {
+  boundGenAiContent,
+  isBudgetedGenAiAttribute,
+} from './genai-content-budget';
+
 const MAX_SAFE_STRING_LENGTH = 512;
 const MAX_DEBUG_CONTENT_STRING_LENGTH = 1_000_000;
 const SAFE_RESOURCE_ATTRIBUTES = new Set([
@@ -46,8 +51,8 @@ const MAX_RESOURCE_PATH_LENGTH = 4_096;
 /**
  * GenAI content attributes holding JSON documents. At `debug` they are
  * scrubbed per string leaf so the exported value stays parseable; slicing or
- * regex-scrubbing the serialized text would corrupt it. Size is bounded at the
- * source by the telemetry content budget.
+ * regex-scrubbing the serialized text would corrupt it. Message and system
+ * instruction documents are then bounded by the GenAI content budget.
  */
 const GENAI_JSON_CONTENT_ATTRIBUTES = new Set([
   'gen_ai.input.messages',
@@ -178,27 +183,50 @@ function scrubJsonLeaves(value: unknown, depth: number): unknown {
     return value.map((entry) => scrubJsonLeaves(entry, depth + 1));
   }
   if (value && typeof value === 'object') {
+    // Inline file and image bytes are never exported, only their metadata.
+    const isBlob = (value as Record<string, unknown>).type === 'blob';
     return Object.fromEntries(
-      Object.entries(value).map(([key, entry]) => [
-        key,
-        isAlwaysForbiddenTelemetryAttribute(key)
-          ? '[REDACTED]'
-          : scrubJsonLeaves(entry, depth + 1),
-      ]),
+      Object.entries(value)
+        .filter(([key]) => !(isBlob && key === 'content'))
+        .map(([key, entry]) => [
+          key,
+          isAlwaysForbiddenTelemetryAttribute(key)
+            ? '[REDACTED]'
+            : scrubJsonLeaves(entry, depth + 1),
+        ]),
     );
   }
   return value;
 }
 
-/** Returns undefined when the value is not JSON; callers then fall back. */
-function sanitizeDebugJsonContent(value: string): string | undefined {
+/**
+ * Scrubs (and, for budgeted attributes, bounds) a JSON content value into
+ * `result`. Returns false when the value is not JSON; callers then fall back.
+ */
+function writeDebugJsonContent(
+  result: Attributes,
+  key: string,
+  value: string,
+): boolean {
   let parsed: unknown;
   try {
     parsed = JSON.parse(value);
   } catch {
-    return undefined;
+    return false;
   }
-  return JSON.stringify(scrubJsonLeaves(parsed, 0));
+  const scrubbed = scrubJsonLeaves(parsed, 0);
+  if (!isBudgetedGenAiAttribute(key)) {
+    result[key] = JSON.stringify(scrubbed);
+    return true;
+  }
+  const bounded = boundGenAiContent(key, scrubbed);
+  if (!bounded) return false;
+  result[key] = bounded.json;
+  if (bounded.droppedMessages > 0) {
+    result['klex.telemetry.input_messages_dropped'] = bounded.droppedMessages;
+  }
+  if (bounded.truncated) result['klex.telemetry.content_truncated'] = true;
+  return true;
 }
 
 function safeDebugAttributes(attributes: Attributes): Attributes {
@@ -207,13 +235,10 @@ function safeDebugAttributes(attributes: Attributes): Attributes {
     if (
       typeof value === 'string' &&
       GENAI_JSON_CONTENT_ATTRIBUTES.has(key) &&
-      !isAlwaysForbiddenTelemetryAttribute(key)
+      !isAlwaysForbiddenTelemetryAttribute(key) &&
+      writeDebugJsonContent(result, key, value)
     ) {
-      const json = sanitizeDebugJsonContent(value);
-      if (json !== undefined) {
-        result[key] = json;
-        continue;
-      }
+      continue;
     }
     if (!isAlwaysForbiddenTelemetryAttribute(key)) {
       result[key] = sanitizeDebugValue(

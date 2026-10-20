@@ -15,6 +15,7 @@ function makeDeps(config: Config): ExtensionDeps {
   return {
     getHistory: vi.fn(() => []),
     insertMessageAfter: vi.fn(() => true),
+    checkpoints: { commit: vi.fn(() => ({ status: 'pending' as const })) },
     inbox: { send: vi.fn(), sendMessage: vi.fn(), close: vi.fn() },
     config,
     modelResolver: {} as ExtensionDeps['modelResolver'],

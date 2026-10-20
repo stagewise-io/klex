@@ -9,11 +9,13 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { createLogger } from '@stagewise/logger';
 
 import { type KlexConfig, klexConfigSchema } from '@/config';
+import type { SqliteStoreDefinition } from '@/local-data';
 import { createLocalData } from '@/local-data';
 import { KLEX_VERSION } from '@/release';
 import type { ExtendedUIMessage } from '@/session/chat/message-types';
 
 import {
+  CHECKPOINT_PART_TYPE,
   SESSION_HISTORY_RELATIVE_PATH,
   SESSION_HISTORY_STORE_DEFINITION,
 } from './schema';
@@ -309,16 +311,13 @@ describe('session history sync', () => {
           (await raw.execute('SELECT key, value FROM meta ORDER BY key')).rows,
           (await raw.execute('SELECT * FROM sessions ORDER BY instance_id'))
             .rows,
-          (
-            await raw.execute(
-              'SELECT * FROM messages ORDER BY instance_id, seq',
-            )
-          ).rows,
+          (await raw.execute('SELECT * FROM messages ORDER BY session_id, ord'))
+            .rows,
         ]);
       try {
         await raw.execute({
           sql: 'UPDATE meta SET value = ? WHERE key = ?',
-          args: ['2', key],
+          args: ['99', key],
         });
         const before = await snapshot();
 
@@ -391,7 +390,7 @@ describe('session history size cap', () => {
     expect(await storedIds(history, live.instanceId)).toEqual(['l1', 'l2']);
   });
 
-  it('trims live messages oldest first and never rewrites trimmed rows', async () => {
+  it('trims live messages oldest first and never restores trimmed rows', async () => {
     const { history, setMaxBytes } = await setup();
     const recorder = history.openRecorder(meta());
     const messages = [bulky('a'), bulky('b'), bulky('c')];
@@ -407,6 +406,8 @@ describe('session history size cap', () => {
     expect(session).toMatchObject({ trimmedMessageCount: 2, messageCount: 3 });
 
     setMaxBytes(DEFAULT_SESSION_HISTORY_MAX_BYTES);
+    // A mid-window insert takes the next `ord`; known rows that now follow
+    // it move to fresh `ord`s. Evicted rows (`b`) stay evicted.
     messages.splice(1, 0, bulky('x'));
     recorder.scheduleSync(() => messages);
     await history.flush();
@@ -414,8 +415,8 @@ describe('session history size cap', () => {
     expect(
       page?.messages.map((entry) => [entry.seq, entry.message.id]),
     ).toEqual([
-      [2, 'b'],
-      [3, 'c'],
+      [3, 'x'],
+      [5, 'c'],
     ]);
     expect(page?.trimmedMessageCount).toBe(2);
   });
@@ -473,6 +474,338 @@ describe('session history size cap', () => {
     } finally {
       client.close();
     }
+  });
+});
+
+function header(id: string, summary = 'summary'): ExtendedUIMessage {
+  return {
+    id,
+    role: 'user',
+    parts: [{ type: CHECKPOINT_PART_TYPE, data: { summary } }],
+  } as unknown as ExtendedUIMessage;
+}
+
+async function windowIds(history: SessionHistory, sessionId = 'default') {
+  const window = await history.loadWindow(sessionId, {
+    fallbackMaxBytes: 1024 * 1024,
+  });
+  return window.entries.map((entry) => entry.message.id);
+}
+
+describe('session history log', () => {
+  it('continues ord across instances of the same logical session', async () => {
+    const { history } = await setup();
+    const first = history.openRecorder(meta());
+    first.scheduleSync(() => [message('a'), message('b', 'b', 'assistant')]);
+    await first.end('replaced');
+    const second = history.openRecorder(meta());
+    second.scheduleSync(() => [message('c')]);
+    await history.flush();
+
+    const page = await history.getMessages(second.instanceId, { limit: 10 });
+    expect(page?.messages.map((entry) => entry.seq)).toEqual([2]);
+    expect(await windowIds(history)).toEqual(['a', 'b', 'c']);
+  });
+
+  it('deletes rolled-back messages but keeps trimmed ones', async () => {
+    const { history } = await setup();
+    const recorder = history.openRecorder(meta());
+    const messages = [message('a'), message('b'), message('c')];
+    recorder.scheduleSync(() => messages);
+    await history.flush();
+
+    // Rollback: removed without a trim announcement.
+    messages.pop();
+    recorder.scheduleSync(() => messages);
+    await history.flush();
+    expect(await storedIds(history, recorder.instanceId)).toEqual(['a', 'b']);
+
+    // Trim: announced, so the row stays in the log.
+    recorder.markTrimmed(['a']);
+    messages.shift();
+    recorder.scheduleSync(() => messages);
+    await history.flush();
+    expect(await storedIds(history, recorder.instanceId)).toEqual(['a', 'b']);
+    expect((await history.getSession(recorder.instanceId))?.messageCount).toBe(
+      2,
+    );
+  });
+
+  it('commits a checkpoint and restores header plus tail', async () => {
+    const { history } = await setup();
+    const recorder = history.openRecorder(meta());
+    const messages = [
+      message('a'),
+      message('b', 'b', 'assistant'),
+      message('c'),
+      message('d', 'd', 'assistant'),
+    ];
+    recorder.scheduleSync(() => messages);
+    await history.flush();
+
+    const checkpoint = header('h1');
+    await recorder.commitCheckpoint(checkpoint, 'b', () => messages);
+    recorder.markTrimmed(['a', 'b']);
+    messages.splice(0, 2, checkpoint);
+    messages.push(message('e'));
+    recorder.scheduleSync(() => messages);
+    await history.flush();
+
+    // The header is not re-inserted and trimmed rows stay in the log.
+    expect(await storedIds(history, recorder.instanceId)).toEqual([
+      'a',
+      'b',
+      'c',
+      'd',
+      'h1',
+      'e',
+    ]);
+    const window = await history.loadWindow('default', {
+      fallbackMaxBytes: 1,
+    });
+    expect(window.hasCheckpoint).toBe(true);
+    expect(window.entries.map((entry) => entry.message.id)).toEqual([
+      'h1',
+      'c',
+      'd',
+      'e',
+    ]);
+    expect(window.entries[0]?.isCheckpoint).toBe(true);
+  });
+
+  it('rejects a checkpoint whose anchor is not in the window', async () => {
+    const { history } = await setup();
+    const recorder = history.openRecorder(meta());
+    const messages = [message('a'), message('b')];
+    await expect(
+      recorder.commitCheckpoint(header('h1'), 'missing', () => messages),
+    ).rejects.toThrow(/not persisted/);
+    expect(await windowIds(history)).toEqual(['a', 'b']);
+  });
+
+  it('seeds a restored window without re-inserting it', async () => {
+    const first = await setup();
+    const old = first.history.openRecorder(meta());
+    const messages = [message('a'), message('b'), message('c')];
+    old.scheduleSync(() => messages);
+    const checkpoint = header('h1');
+    await old.commitCheckpoint(checkpoint, 'a', () => messages);
+    await old.end('closed');
+    await first.history.close();
+
+    const second = await setup({ directory: first.directory });
+    const window = await second.history.loadWindow('default', {
+      fallbackMaxBytes: 1,
+    });
+    const recorder = second.history.openRecorder(meta());
+    recorder.seed(window);
+    const restored = window.entries.map((entry) => entry.message);
+    restored.push(message('d'));
+    recorder.scheduleSync(() => restored);
+    await second.history.flush();
+
+    expect(await storedIds(second.history, recorder.instanceId)).toEqual(['d']);
+    expect(await storedIds(second.history, old.instanceId)).toEqual([
+      'a',
+      'b',
+      'c',
+      'h1',
+    ]);
+    expect(await windowIds(second.history)).toEqual(['h1', 'b', 'c', 'd']);
+
+    // Rolling back a restored message deletes the old instance's row.
+    restored.splice(1, 1);
+    recorder.scheduleSync(() => restored);
+    await second.history.flush();
+    expect(await windowIds(second.history)).toEqual(['h1', 'c', 'd']);
+  });
+
+  it('falls back to the newest messages within the byte budget', async () => {
+    const { history } = await setup();
+    const recorder = history.openRecorder(meta());
+    const messages = [
+      message('a', 'x'.repeat(500)),
+      message('b', 'x'.repeat(500), 'assistant'),
+      message('c', 'x'.repeat(500), 'assistant'),
+      message('d', 'x'.repeat(500)),
+      message('e', 'x'.repeat(500), 'assistant'),
+    ];
+    recorder.scheduleSync(() => messages);
+    await history.flush();
+
+    const window = await history.loadWindow('default', {
+      fallbackMaxBytes: 2_000,
+    });
+    // Budget fits c, d, e; the window starts at the first user message.
+    expect(window.hasCheckpoint).toBe(false);
+    expect(window.entries.map((entry) => entry.message.id)).toEqual(['d', 'e']);
+  });
+
+  it('never evicts the protected default-session window', async () => {
+    const { history, setMaxBytes } = await setup();
+    const old = history.openRecorder(meta());
+    const messages = [bulkyMessage('a'), bulkyMessage('b'), bulkyMessage('c')];
+    old.scheduleSync(() => messages);
+    await old.commitCheckpoint(header('h1'), 'a', () => messages);
+    await old.end('replaced');
+    const child = history.openRecorder(
+      meta({ kind: 'child', sessionId: 'child' }),
+    );
+    child.scheduleSync(() => [bulkyMessage('x')]);
+    await child.end('closed');
+
+    setMaxBytes(1);
+    await history.enforceSizeCap();
+
+    expect(await history.getSession(child.instanceId)).toBeUndefined();
+    expect(await storedIds(history, old.instanceId)).toEqual(['b', 'c', 'h1']);
+    expect(await windowIds(history)).toEqual(['h1', 'b', 'c']);
+  });
+});
+
+function bulkyMessage(id: string): ExtendedUIMessage {
+  return message(id, 'x'.repeat(1_000));
+}
+
+describe('session history v1 migration', () => {
+  const V1_INIT_SQL = `
+CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS sessions (
+  instance_id TEXT PRIMARY KEY,
+  session_id TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  name TEXT NOT NULL,
+  parent_instance_id TEXT,
+  extension_identifier TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  ended_at TEXT,
+  end_reason TEXT,
+  message_count INTEGER NOT NULL DEFAULT 0,
+  trimmed_message_count INTEGER NOT NULL DEFAULT 0,
+  byte_size INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS messages (
+  instance_id TEXT NOT NULL,
+  seq INTEGER NOT NULL,
+  message_id TEXT NOT NULL,
+  role TEXT NOT NULL,
+  content TEXT NOT NULL,
+  byte_size INTEGER NOT NULL,
+  persisted_at TEXT NOT NULL,
+  PRIMARY KEY (instance_id, seq)
+);
+`;
+  const V1_DEFINITION: SqliteStoreDefinition = {
+    ...SESSION_HISTORY_STORE_DEFINITION,
+    schemaVersion: 1,
+    compatibilityVersion: 1,
+    minimumKlexVersion: '0.14.0',
+    initSql: V1_INIT_SQL,
+    migrations: [],
+    validate: async () => {},
+  };
+
+  it('backfills ord per logical session and converts legacy summaries', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'klex-session-history-'));
+    directories.push(directory);
+    await createLocalData({
+      logging: logger,
+      dataDirectory: directory,
+      klexVersion: KLEX_VERSION,
+      stores: [V1_DEFINITION],
+    }).start();
+
+    const raw = createClient({
+      url: `file:${join(directory, SESSION_HISTORY_RELATIVE_PATH)}`,
+    });
+    const sessions: [string, string, string, string][] = [
+      // instance, session, kind, created_at (out of insertion order)
+      ['i2', 'default', 'default', '2026-01-02T00:00:00.000Z'],
+      ['i1', 'default', 'default', '2026-01-01T00:00:00.000Z'],
+      ['c1', 'child-1', 'child', '2026-01-01T12:00:00.000Z'],
+    ];
+    const rows: [string, number, string, string, string][] = [
+      ['i1', 0, 'a', 'user', JSON.stringify(message('a'))],
+      [
+        'i1',
+        1,
+        'b',
+        'assistant',
+        JSON.stringify(message('b', 'b', 'assistant')),
+      ],
+      [
+        'i1',
+        2,
+        's',
+        'assistant',
+        JSON.stringify({
+          id: 's',
+          role: 'assistant',
+          parts: [{ type: CHECKPOINT_PART_TYPE, data: { summary: 'old' } }],
+        }),
+      ],
+      ['i1', 3, 'c', 'user', JSON.stringify(message('c'))],
+      ['i2', 0, 'd', 'user', JSON.stringify(message('d'))],
+      ['c1', 0, 'x', 'user', JSON.stringify(message('x'))],
+    ];
+    try {
+      for (const [instanceId, sessionId, kind, createdAt] of sessions) {
+        await raw.execute({
+          sql: `INSERT INTO sessions (instance_id, session_id, kind, name, created_at, updated_at, ended_at)
+                VALUES (?, ?, ?, 'n', ?, ?, ?)`,
+          args: [instanceId, sessionId, kind, createdAt, createdAt, createdAt],
+        });
+      }
+      for (const [instanceId, seq, id, role, content] of rows) {
+        await raw.execute({
+          sql: `INSERT INTO messages (instance_id, seq, message_id, role, content, byte_size, persisted_at)
+                VALUES (?, ?, ?, ?, ?, ?, '2026-01-01T00:00:00.000Z')`,
+          args: [instanceId, seq, id, role, content, content.length],
+        });
+      }
+    } finally {
+      raw.close();
+    }
+
+    const { history } = await setup({ directory });
+    const migrated = createClient({
+      url: `file:${join(directory, SESSION_HISTORY_RELATIVE_PATH)}`,
+    });
+    try {
+      const result = await migrated.execute(
+        `SELECT session_id, ord, message_id, is_checkpoint, covers_through_ord
+         FROM messages ORDER BY session_id, ord`,
+      );
+      expect(
+        result.rows.map((row) => [
+          row.session_id,
+          Number(row.ord),
+          row.message_id,
+          Number(row.is_checkpoint),
+          row.covers_through_ord === null
+            ? null
+            : Number(row.covers_through_ord),
+        ]),
+      ).toEqual([
+        ['child-1', 0, 'x', 0, null],
+        ['default', 0, 'a', 0, null],
+        ['default', 1, 'b', 0, null],
+        ['default', 2, 's', 1, 1],
+        ['default', 3, 'c', 0, null],
+        ['default', 4, 'd', 0, null],
+      ]);
+    } finally {
+      migrated.close();
+    }
+    expect(await windowIds(history)).toEqual(['s', 'c', 'd']);
+
+    // New writes continue after the migrated log.
+    const recorder = history.openRecorder(meta());
+    recorder.scheduleSync(() => [message('e')]);
+    await history.flush();
+    const page = await history.getMessages(recorder.instanceId, { limit: 1 });
+    expect(page?.messages[0]?.seq).toBe(5);
   });
 });
 

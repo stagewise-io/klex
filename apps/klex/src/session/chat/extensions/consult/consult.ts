@@ -238,32 +238,21 @@ class ConsultExtension implements Extension {
     });
   }
 
-  historyTransformer(history: ExtendedUIMessage[]): ExtendedUIMessage[] {
-    const first = history[0];
-    if (!first) return history;
-
-    const original = this.deps.getHistory();
-    const cutoffIndex = original.findIndex(
-      (message) => message.id === first.id,
-    );
-    if (cutoffIndex <= 0) return history;
-
-    const previous = this.latestSessionContext(original.slice(0, cutoffIndex));
-    if (!previous) return history;
-
+  /**
+   * Carries the latest consult session list out of the dropped prefix as a
+   * full list, so change diffs after the trim have a base in the header.
+   */
+  getCheckpointCarry(
+    dropped: readonly ExtendedUIMessage[],
+  ): ExtendedUIMessage['parts'] {
+    const previous = this.latestSessionContext(dropped);
+    if (!previous) return [];
     return [
-      {
-        ...first,
-        parts: [
-          createDataPart(CONSULTS_KEY, {
-            mode: 'full',
-            sessions: previous,
-          }) as never,
-          ...first.parts,
-        ],
-      },
-      ...history.slice(1),
-    ];
+      createDataPart(CONSULTS_KEY, {
+        mode: 'full',
+        sessions: previous,
+      }),
+    ] as unknown as ExtendedUIMessage['parts'];
   }
 
   private sessionContextPart(

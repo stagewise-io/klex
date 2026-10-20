@@ -46,6 +46,7 @@ function makeDeps(
   return {
     getHistory: vi.fn(() => []),
     insertMessageAfter: vi.fn(() => true),
+    checkpoints: { commit: vi.fn(() => ({ status: 'pending' as const })) },
     inbox: {
       send: vi.fn(),
       sendMessage: vi.fn(),

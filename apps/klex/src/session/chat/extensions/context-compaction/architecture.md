@@ -58,6 +58,8 @@ class MyExtension implements Extension {
   historyTransformer(history) { return history; }
   contextTransformer(history) { return history; }
   async onStepComplete(event) {}
+  getCheckpointCarry(dropped) { return []; }
+  async onCheckpointApplying(event) {}
   dataPartTransformers = {
     'my-custom-type': (data) => [{ type: 'text', text: data.value }],
   };
@@ -76,7 +78,8 @@ All hooks are optional. An extension can implement any subset.
 
 | Dep | Purpose |
 |-----|---------|
-| `getHistory()` | Returns a copy of the current session messages. |
+| `getHistory()` | Returns a copy of the current bounded window. `messages[0]` may be a checkpoint header; older messages exist only in the durable log. |
+| `checkpoints.commit(request)` | Asks core to replace the window up to `coversThroughMessageId` with a header carrying `summary`. Returns `pending` or `rejected` synchronously; core applies at the next safe boundary. |
 | `insertMessageAfter(id, msg)` | Mutates the live history array — inserts a message after the one with the given ID. Returns `false` if not found or session is terminated. |
 | `inbox` | The session inbox — send buffered messages or context events. |
 | `config` | Application config. |
@@ -117,6 +120,11 @@ The handler exposes lifecycle methods (`start`, `close`) called by the session, 
 - `getDataPartTransformers` — during message conversion
 - `runStepCompleteHooks` — after every step, including skips and cancellations
 
+Checkpoint apply, called by core at a step boundary or while idle (see [Context window and checkpoints](../../architecture.md#context-window-and-checkpoints)):
+
+- `collectCheckpointCarry(dropped)` — gathers `getCheckpointCarry` parts for the header
+- `runCheckpointApplyingHooks(event)` — lets extensions flush or re-point state before messages leave the window
+
 ```mermaid
 flowchart TD
   StepStart["Step.run()"] --> StartHooks["runStepStartHooks"]
@@ -148,9 +156,17 @@ After UI-to-model conversion, before generation. Same sequential pipeline and er
 
 After every step completes — skipped, cancelled, succeeded, or failed. All extensions' `onStepComplete` hooks are called **in parallel** via `Promise.allSettled`. Each receives a `structuredClone` of the event — mutations cannot leak. If a hook throws, the error is caught and logged; one extension's failure does not break other hooks. Hook errors do not cancel the step.
 
+### `collectCheckpointCarry(dropped)`
+
+Extensions are called **sequentially** in factory order. Each receives a `structuredClone` of the dropped messages (previous header first) and returns data parts that stand for its latest state within them; the parts are cloned into the header in the same order. If an extension throws, the error is logged and this apply aborts; the checkpoint stays pending.
+
+### `runCheckpointApplyingHooks(event)`
+
+Extensions are called **sequentially** in factory order with `{ droppedMessageIds, checkpointMessageId }`. A hook may return `{ defer: true }` to keep the checkpoint pending (for example, the memory extension when an episode flush failed). A throwing hook is logged and counts as a deferral. Core applies anyway after `MAX_CHECKPOINT_DEFERRALS` consecutive deferrals.
+
 ### `getDataPartTransformers()`
 
-Called during message conversion. Iterates all extensions and merges their `dataPartTransformers` into a single map. If two extensions register a transformer for the same data part type, the handler throws at call time — only one converter per type is allowed.
+Called during message conversion. Iterates all extensions and merges their `dataPartTransformers` into a single map, plus the core `context-summary` renderer for checkpoint headers. If two sources register a transformer for the same data part type, the handler throws at call time — only one converter per type is allowed.
 
 ## Error isolation
 
@@ -159,5 +175,7 @@ Called during message conversion. Iterates all extensions and merges their `data
 | `historyTransformer` | Sequential pipeline | Caught, logged, re-thrown | Pipeline aborts | Step cancelled (`fatalError`) |
 | `contextTransformer` | Sequential pipeline | Caught, logged, re-thrown | Pipeline aborts | Step cancelled (`fatalError`) |
 | `onStepComplete` | Parallel (`allSettled`) | Caught, logged | Other hooks unaffected | No effect |
+| `getCheckpointCarry` | Sequential | Caught, logged | Apply aborts | Checkpoint stays pending |
+| `onCheckpointApplying` | Sequential | Caught, logged, counts as defer | Remaining hooks still run | Checkpoint deferred (forced after 3) |
 
 **Transformer failures are fatal to the session; callback failures are contained.** Transformers are pure data transformations with no transient failure modes, so retrying identical inputs would produce the same error. Callbacks are observers — their failures must not affect control flow.

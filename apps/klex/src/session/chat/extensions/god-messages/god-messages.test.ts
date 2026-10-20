@@ -13,6 +13,7 @@ function makeDeps(): ExtensionDeps {
   return {
     getHistory: vi.fn(() => []),
     insertMessageAfter: vi.fn(() => true),
+    checkpoints: { commit: vi.fn(() => ({ status: 'pending' as const })) },
     inbox: { send: vi.fn(), sendMessage: vi.fn(), close: vi.fn() },
     config: {} as unknown as ExtensionDeps['config'],
     generateText: vi.fn(),

@@ -165,7 +165,7 @@ function formatDiff(diff: TodosDiff): string {
  * and associating each part with its containing message ID.
  */
 function collectTodoParts(
-  history: ExtendedUIMessage[],
+  history: readonly ExtendedUIMessage[],
 ): { messageId: string; todos: Todo[] }[] {
   const parts: { messageId: string; todos: Todo[] }[] = [];
   for (const msg of history) {
@@ -317,7 +317,7 @@ class TodosExtension implements Extension {
   ): Promise<ProvisionalStepContext> {
     await this.store.start();
     const todos = [...this.store.getTodos()];
-    const existingParts = collectTodoParts([...history]);
+    const existingParts = collectTodoParts(history);
     const previous = existingParts.at(-1)?.todos;
     if (previous && todosEqual(previous, todos)) return { parts: [] };
     if (!previous && todos.length === 0) return { parts: [] };
@@ -327,49 +327,31 @@ class TodosExtension implements Extension {
     return { parts };
   }
 
+  /**
+   * Carries the last todo list from the dropped prefix as a full
+   * `data-todos` part. It lands in the checkpoint message at the window
+   * head, so the history transformer renders it as the full-list base
+   * for subsequent diffs.
+   */
+  getCheckpointCarry(
+    dropped: readonly ExtendedUIMessage[],
+  ): ExtendedUIMessage['parts'] {
+    const last = collectTodoParts(dropped).at(-1);
+    if (!last) return [];
+    return [
+      createDataPart(TODOS_KEY, { todos: last.todos }),
+    ] as unknown as ExtendedUIMessage['parts'];
+  }
+
   historyTransformer(history: ExtendedUIMessage[]): HistoryProcessingResult {
-    // Get the full un-sliced history to detect whether compaction
-    // removed any data-todos parts.
-    const fullHistory = this.deps.getHistory();
-
-    const fullParts = collectTodoParts(fullHistory);
-    const compactedParts = collectTodoParts(history);
-
-    if (fullParts.length === 0) return history;
-
-    // Detect compaction: parts in the full history whose containing
-    // message is NOT present in the compacted history were sliced away.
-    const compactedMessageIds = new Set(compactedParts.map((p) => p.messageId));
-    const removedParts = fullParts.filter(
-      (p) => !compactedMessageIds.has(p.messageId),
-    );
-
-    // The last removed part's todos array is the state that existed
-    // just before the compaction boundary. We inject it as a full-list
-    // message at position 0 so the model always has at least one
-    // complete todo list in context.
-    const baseState =
-      removedParts.length > 0
-        ? (removedParts[removedParts.length - 1]?.todos ?? null)
-        : null;
+    if (collectTodoParts(history).length === 0) return history;
 
     const output: ExtendedUIMessage[] = [];
 
-    // diffBase tracks the previous todo state for diff computation.
-    // If we injected a base state, diffs are computed against it.
-    // If not, the first data-todos part renders as a full list.
-    let diffBase: Todo[] | null = baseState;
+    // The first data-todos part in the window (usually the checkpoint
+    // carry) renders as a full list; later parts render as diffs.
+    let diffBase: Todo[] | null = null;
 
-    if (baseState !== null) {
-      output.push({
-        id: randomUUID(),
-        role: 'user',
-        parts: [{ type: 'text', text: formatFullList(baseState) }],
-      } as unknown as ExtendedUIMessage);
-    }
-
-    // Walk the compacted history, replacing each data-todos part
-    // with a text part.
     for (const msg of history) {
       let hasTodoPart = false;
       const newParts = msg.parts.map((part) => {

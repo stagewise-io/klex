@@ -44,7 +44,7 @@ Lease acquisition is a safe-boundary handoff: quiesce the generation lane, inter
 
 ### Context preparation
 
-Both chat steps and leased interactions use the same context assembly: provisional extension context, cloned canonical history, history transformers and compaction, model-message conversion, context transformers, tool collection, then instructions. The preparation handle is committed only after provider setup succeeds; setup failure rolls it back.
+Both chat steps and leased interactions use the same context assembly: provisional extension context, cloned canonical history (the bounded window), history transformers, model-message conversion, context transformers, tool collection, then instructions. The preparation handle is committed only after provider setup succeeds; setup failure rolls it back.
 
 ## Turn
 
@@ -157,6 +157,29 @@ At-most-once tool execution via a `dispatchedToolCallIds` set. Owns tool lookup,
 
 Extensions can transform UI history and model context, register custom data-part transformers, expose tools, and contribute system prompts. `onStepComplete` receives `requestRejected`; extensions that injected request content (for example `readAttachment` remote media) use it to replace that content with an error text in later model context. This degrade state is in memory and does not change persisted history. After a restart, at most one more rejected attempt happens before the content is degraded again. `getProvisionalStepContext` prepares dynamic context after model resolution, immediately before inference. Providers receive isolated history snapshots and run sequentially in factory order; they do not mutate canonical history directly.
 
+## Context window and checkpoints
+
+The in-memory `messages` array is a bounded **window** over the durable transcript log, not the whole conversation. `deps.getHistory()` returns exactly this window.
+
+**Window invariant.** When a checkpoint exists, `messages[0]` is its header, followed by every non-checkpoint message with `ord` greater than the header's `covers_through_ord`, in `ord` order. `isCheckpointHeader()` (`checkpoint/`) identifies the header. The header is a user-role message (providers such as Anthropic require a user-first conversation) whose parts are a core-owned `context-summary` part (`{ summary, coversThroughMessageId }`), followed by state parts carried forward by extensions in factory order. Core registers the summary renderer (`CHECKPOINT_DATA_PART_TRANSFORMERS`); an extension that registers the same key fails. A window that starts with a header forces `hasCompacted` for inference, so span attributes and the generation runner see compaction without any extension raising a flag.
+
+**Producers.** Checkpoints are a core concept. An extension, normally context compaction, calls `deps.checkpoints.commit({ coversThroughMessageId, summary })`. Core validates synchronously and returns `{ status: 'pending' }` or `{ status: 'rejected', reason }`. The anchor must be in the window, must not be the header, must lie past the current header's coverage, and at least one non-checkpoint message must follow it. A newer valid commit replaces an older pending one.
+
+**Apply.** Core applies the pending checkpoint only at safe boundaries: after each step commits its response (`TurnDependencies.atStepBoundary`, right after `flushPendingImmediate`), or immediately when the session is idle. Within a step the provisional context, the generation runner, and tool dispatch mutate the window, so mid-step trims are never safe. Leases and new turns wait for an idle apply to finish. Apply runs these steps in order:
+
+1. Re-validate the anchor (it may have been rolled back) and reject on failure.
+2. `dropped` = current header (if any) plus window messages up to and including the anchor.
+3. Collect `getCheckpointCarry(dropped)` from every extension, sequentially in factory order on structured clones. A throwing extension aborts this apply; the checkpoint stays pending.
+4. Run `onCheckpointApplying({ droppedMessageIds, checkpointMessageId })` hooks. A hook that returns `{ defer: true }` or throws keeps the checkpoint pending for the next boundary. After `MAX_CHECKPOINT_DEFERRALS` (3) consecutive deferrals core applies anyway with a warning, so a broken extension cannot reintroduce unbounded growth. If the window prefix changed while hooks ran, the apply is retried later.
+5. Durably append the header to the log (`recorder.commitCheckpoint`) and await it. Memory is trimmed only after the write succeeds, so a crash always restores a consistent window. A write failure keeps the checkpoint pending.
+6. Splice the array in place (`messages.splice(0, anchorIndex + 1, header)`); turn, step, and generation runner hold the same array reference. Then `recorder.markTrimmed(droppedIds)` so the trimmed rows stay in the log.
+
+Telemetry span events: `checkpoint.committed`, `checkpoint.applied`, `checkpoint.deferred`, `checkpoint.rejected`.
+
+**Carry-forward.** `getCheckpointCarry(dropped)` returns data parts that represent the extension's latest state within the dropped messages (time and timezone, consult list, MCP server list and open resources, todos). Because the header is part of the window, the existing `latest*Part(history)` lookups find carried state like any other part, and `getProvisionalStepContext` does not re-emit it. Extensions no longer read pre-cutoff history in `historyTransformer`.
+
+**Restore.** The default session restores its window before extensions start, so `onStart` hooks see it. `SessionHistory.loadWindow('default')` returns the latest checkpoint header plus its raw tail. Without a checkpoint it returns the newest messages within `RESTORE_FALLBACK_MAX_BYTES` (2 MiB), starting at a user message and never cutting a message; the first compaction threshold hit then produces a checkpoint. The session seeds its recorder with the restored IDs, ords, and hashes, so nothing is written twice. Child and god sessions start empty.
+
 ## Episodic memory
 
 The memory extension loads only in the default session. During startup it creates a deterministic episode recorder and an optional retrieval child. The recorder has no model, child session, or MCP access.
@@ -171,7 +194,9 @@ Episodes rotate when the next persisted representation would exceed `maxCharacte
 
 ### Writer input
 
-The recorder tracks the last native message ID and renders only the history excerpt after that cursor through the shared line-format history view. It records agent actions, thoughts, outputs, incoming context, and time. Raw user text, `recall` calls, and memory results are omitted. Media is represented by MIME-type placeholders; text and serialized values are aggressively bounded, and explicit omission counts mark dropped parts.
+The recorder tracks the last recorded message ID (never an array index) and renders only the history excerpt after that cursor through the shared line-format history view. It records agent actions, thoughts, outputs, incoming context, and time. Raw user text, `recall` calls, and memory results are omitted. Media is represented by MIME-type placeholders; text and serialized values are aggressively bounded, and explicit omission counts mark dropped parts.
+
+Cursors follow the checkpoint lifecycle. On `onStart` the recorder and the retrieval observation cursor are set to the last message of the restored window, so restored messages are not recorded again. On `onCheckpointApplying` the extension drains observation and flushes the recorder; a failed flush defers the checkpoint. A cursor whose message is being dropped is re-pointed to the new header, so the after-cursor scope covers exactly the unrecorded raw tail. A cursor missing from the window can only come from a bug: it is logged as an error and moved to the window end, so records may be lost but never duplicated. A crash between step persistence and the episode flush loses those records.
 
 ### Episode storage
 
@@ -219,7 +244,7 @@ The episode-summary extension (`io.stagewise/episode-summary`) gives each newly 
 
 ## Consult context and lifecycle
 
-Consult receives the latest durable context-compaction summary plus the configurable newest non-summary message suffix from the parent (five ordinary messages by default), rendered in the line format through the shared transcript preset of `utils/history-view`; the child prompt appends `LINES_FORMAT_PROMPT`. The durable summary is selected independently and does not consume the ordinary-message quota. This is deliberately separate from the episodic recorder preset: memory records are optimized for durable storage and omit raw user text, while the consult needs recent conversation evidence for the current task. The consult has no MCP access and can only receive the task, parent updates, and lifecycle messages. The parent publishes active consult state as a custom `consults` data part so it remains available in the main session context. The first visible snapshot is a compact Markdown table inside `<consults mode="full">`; subsequent changes use one line per change inside `<consults mode="change">`. After compaction, the history transformer reinjects the last known full snapshot. Reports are intermediate until the child explicitly marks one final; report-limit closure is surfaced as `termination="limit-reached"` rather than a verdict.
+Consult receives the latest durable context-compaction summary plus the configurable newest non-summary message suffix from the parent (five ordinary messages by default), rendered in the line format through the shared transcript preset of `utils/history-view`; the child prompt appends `LINES_FORMAT_PROMPT`. The durable summary is selected independently and does not consume the ordinary-message quota. This is deliberately separate from the episodic recorder preset: memory records are optimized for durable storage and omit raw user text, while the consult needs recent conversation evidence for the current task. The consult has no MCP access and can only receive the task, parent updates, and lifecycle messages. The parent publishes active consult state as a custom `consults` data part so it remains available in the main session context. The first visible snapshot is a compact Markdown table inside `<consults mode="full">`; subsequent changes use one line per change inside `<consults mode="change">`. When a checkpoint drops the latest snapshot, `getCheckpointCarry` places it in the header as `mode="full"`. Reports are intermediate until the child explicitly marks one final; report-limit closure is surfaced as `termination="limit-reached"` rather than a verdict.
 
 ## History views
 
@@ -235,17 +260,27 @@ Consumers own their presets. The line-format transcript preset (`createTranscrip
 
 Each `ChatSession` instance gets a random `instanceId` when it is constructed. The `id` is not unique enough: the default session reuses `sessionId = "default"` each time the host replaces it. When composed with `session-history`, the session opens a `SessionHistoryRecorder` with its kind, name, `parentInstanceId` (for child sessions), and extension identifier.
 
-Persistence is write-only from the session's point of view. The session never reads its transcript back, and the in-memory `messages` array stays the source of truth for model input. `scheduleTranscriptSync()` hands the recorder a getter and does not wait for the write. The recorder merges calls that arrive in quick succession, compares each message's content hash with the stored row, and writes only messages that changed. It compares content, not object identity, because history repair mutates older messages in place. Sync errors are logged and retried on the next sync. They never reach the run loop.
+The log is append-only and addressed by `message_id` plus a per-`session_id` monotonic `ord`. Rows of all default-session instances share `session_id = "default"`, so the log continues across restarts and host replacements. The in-memory window stays the source of truth for model input; the session reads the log back only to restore the default window at startup (see [Context window and checkpoints](#context-window-and-checkpoints)).
+
+`scheduleTranscriptSync()` hands the recorder a getter and does not wait for the write. The recorder merges calls that arrive in quick succession and tracks the window by ID (`messageId → { ord, hash }`):
+
+- A new ID is inserted with the next `ord`.
+- A known ID whose content hash changed is updated in place. It compares content, not object identity, because history repair mutates older messages in place.
+- An ID passed to `markTrimmed` (checkpoint apply) is forgotten; its row stays.
+- Any other ID that disappears (provisional rollback) has its row deleted, so restore never resurrects rolled-back context.
+
+Sync errors are logged and retried on the next sync. They never reach the run loop. Only `commitCheckpoint` throws, because the checkpoint manager must not trim memory after a failed header write.
 
 Sync points are the moments when history is consistent:
 
 - After each step commits its response (`flushPendingImmediate`). This runs even when no pending input exists.
 - When immediate inbox input is appended while the session is idle. Deferrable events are buffered in the inbox until the next turn drains them, so they are persisted at that turn's post-step flush, not on arrival. The exception is a deferred event that is forwarded to an active lease: it is appended and synced at once.
-- After history inserts from extensions, such as compaction summaries.
+- After history inserts from extensions.
+- When a checkpoint is applied (the header write is awaited; see above).
 - After a realtime lease commit.
 - On termination. `close()` waits up to 5 seconds for an aborted turn to commit its last step (skipped when the loop itself terminates the session). Then the recorder does a final sync, retries it once if it failed, and records `endReason`. A store failure here is caught so that session cleanup still runs.
 
-On startup, any instance that has no end marker is marked as ended with reason `unclean_shutdown`. The size cap and eviction rules belong to `session-history`, not to the session.
+On startup, any instance that has no end marker is marked as ended with reason `unclean_shutdown`. The size cap and eviction rules belong to `session-history`, not to the session. Eviction never deletes the latest default-session checkpoint row or any default-session row after it, so the restorable window survives the cap.
 
 ## Error handling
 

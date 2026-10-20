@@ -53,6 +53,7 @@ import type {
 import type { SessionHistory, SessionHistoryRecorder } from '@/session-history';
 import type { TelemetryMetrics } from '@/telemetry-metrics';
 
+import { type CheckpointManager, createCheckpointManager } from './checkpoint';
 import {
   createExtensionHandler,
   type ExtensionHandler,
@@ -99,6 +100,9 @@ const MAX_CONSECUTIVE_FAILURES = 5;
 const LOOP_SETTLE_TIMEOUT_MS = 5_000;
 /** Synthetic identifier for trace and usage attribution of the classifier. */
 const INSTINCT_CLASSIFIER_IDENTIFIER = 'core:instinct-classifier';
+
+/** Byte budget of the restored window when the log has no checkpoint. */
+const RESTORE_FALLBACK_MAX_BYTES = 2 * 1024 * 1024;
 
 export interface ChatSessionDependencies {
   logging: RootLogger;
@@ -225,6 +229,11 @@ class ChatSessionModule implements AgentSession {
   readonly instanceId: string = randomUUID();
 
   private readonly transcriptRecorder: SessionHistoryRecorder | undefined;
+
+  private readonly checkpointManager: CheckpointManager;
+
+  /** Checkpoint apply started while the loop was idle. Never rejects. */
+  private idleCheckpointApply: Promise<void> | null = null;
 
   /** Recorded as the transcript end reason on close. */
   private endReason = 'closed';
@@ -470,8 +479,28 @@ class ChatSessionModule implements AgentSession {
     // Create the extension deps — functions that let extensions interoperate
     // with this session asynchronously. getDataDir is injected per-extension
     // by the ExtensionHandler, not here.
+    this.checkpointManager = createCheckpointManager({
+      logger: this.deps.logger,
+      span: this.sessionSpan,
+      messages: this.messages,
+      extensionHandler: () => this.extensionHandler,
+      recorder: this.transcriptRecorder,
+      onApplied: () => this.scheduleTranscriptSync(),
+      isClosed: () => this._status === 'terminated',
+    });
+
     const extensionDeps: BaseExtensionDeps = {
       getHistory: () => [...this.messages],
+      checkpoints: {
+        commit: (request) => {
+          if (this._status === 'terminated') {
+            return { status: 'rejected', reason: 'session is terminated' };
+          }
+          const result = this.checkpointManager.commit(request);
+          if (result.status === 'pending') this.applyCheckpointIfIdle();
+          return result;
+        },
+      },
       insertMessageAfter: (afterMessageId, message) => {
         // Reject inserts once the session is terminated so an
         // outstanding extension task (e.g. compaction) can't mutate
@@ -555,6 +584,8 @@ class ChatSessionModule implements AgentSession {
 
   private async startUnlocked(): Promise<void> {
     try {
+      // Restore before extensions start so onStart sees the restored window.
+      await this.restoreWindow();
       await this.extensionHandler.start();
       if (this._status === 'terminated') {
         throw new Error(
@@ -618,6 +649,45 @@ class ChatSessionModule implements AgentSession {
             extractUsage(usage),
           ),
       }),
+    );
+  }
+
+  /**
+   * Restore the default session's window from the durable log: the latest
+   * checkpoint header plus its tail. Other session kinds start empty. A
+   * failed restore is logged and the session starts empty.
+   */
+  private async restoreWindow(): Promise<void> {
+    const history = this.deps.sessionHistory;
+    if (!history || this.deps.sessionContext.kind !== 'default') return;
+    let window: Awaited<ReturnType<SessionHistory['loadWindow']>>;
+    try {
+      window = await history.loadWindow(this.sessionId, {
+        fallbackMaxBytes: RESTORE_FALLBACK_MAX_BYTES,
+      });
+    } catch (error) {
+      this.deps.logger.error(
+        { error },
+        'Session window restore failed — starting empty',
+      );
+      return;
+    }
+    if (window.entries.length === 0) return;
+    // Seed and insert in one synchronous step so no sync observes the
+    // restored messages without knowing their rows.
+    this.transcriptRecorder?.seed(window);
+    this.messages.unshift(...window.entries.map((entry) => entry.message));
+    this.scheduleTranscriptSync();
+    this.sessionSpan.addEvent('session.window_restored', {
+      'klex.session.restored_count': window.entries.length,
+      'klex.session.restored_has_checkpoint': window.hasCheckpoint,
+    });
+    this.deps.logger.info(
+      {
+        restoredCount: window.entries.length,
+        hasCheckpoint: window.hasCheckpoint,
+      },
+      'Session window restored',
     );
   }
 
@@ -922,6 +992,29 @@ class ChatSessionModule implements AgentSession {
     this.transcriptRecorder?.scheduleSync(() => this.messages);
   }
 
+  /** Step boundary inside a turn: apply a pending checkpoint. */
+  private readonly atStepBoundary = async (): Promise<void> => {
+    if (!this.checkpointManager.hasPending) return;
+    await this.checkpointManager.applyPending();
+    // Input that arrived while applying belongs after the committed step.
+    this.flushPendingImmediate();
+  };
+
+  /**
+   * Compaction usually commits after the turn ended, while the session is
+   * idle. Apply right away instead of waiting for the next step boundary;
+   * runLoop and lane quiescing await this before touching the window.
+   */
+  private applyCheckpointIfIdle(): void {
+    if (this.loopActive || this.laneSuspended || this.idleCheckpointApply) {
+      return;
+    }
+    const apply = this.checkpointManager.applyPending().finally(() => {
+      if (this.idleCheckpointApply === apply) this.idleCheckpointApply = null;
+    });
+    this.idleCheckpointApply = apply;
+  }
+
   // ---------------------------------------------------------------------------
   // Generation-lane leasing — the chat loop and a leased interaction mode
   // (e.g. a realtime call) must never generate concurrently.
@@ -945,6 +1038,8 @@ class ChatSessionModule implements AgentSession {
     this.currentTurn?.abortGeneration('generation_lane_leased');
     this.backoffInterrupt?.();
 
+    // An idle checkpoint apply must finish before the lease reads history.
+    await this.idleCheckpointApply;
     if (!this.loopActive) return;
     await new Promise<void>((resolve) => {
       this.laneQuiesceWaiters.push(resolve);
@@ -1140,6 +1235,9 @@ class ChatSessionModule implements AgentSession {
 
     this.setRuntimeState('working');
 
+    // Never start a turn while an idle checkpoint apply mutates the window.
+    await this.idleCheckpointApply;
+
     let needsBackoffRetry = false;
     let needsCheckRetry = false;
 
@@ -1221,6 +1319,7 @@ class ChatSessionModule implements AgentSession {
           forceContinue: needsBackoffRetry,
           forceCheck: needsCheckRetry,
           flushPendingImmediate: this.flushPendingImmediate,
+          atStepBoundary: this.atStepBoundary,
           shouldYieldGenerationLane: () => this.laneSuspended,
           basePrompt: this.deps.basePrompt,
           instinctRunner: this.instinctRunner,
@@ -1236,6 +1335,8 @@ class ChatSessionModule implements AgentSession {
           // committed but before the turn returned.
           this.flushPendingImmediate();
         }
+        // Turn end is a boundary too (commits during the last step).
+        await this.atStepBoundary();
 
         // Update observability counters.
         this.turnCount++;

@@ -1,9 +1,7 @@
-import { randomUUID } from 'node:crypto';
-
 import { context, type Span, trace } from '@opentelemetry/api';
 
 import type { ModelPurpose } from '@/config';
-import { escapeXml } from '@/session/chat/utils/escape-xml';
+import { isCheckpointHeader } from '@/session/chat/checkpoint';
 import {
   CONTEXT_SUMMARY_KEY,
   createTranscriptHistoryView,
@@ -13,13 +11,9 @@ import {
 import type { ExtendedUIMessage } from '../../message-types';
 import { startChildSpan } from '../../utils/tracing';
 import {
-  createDataPart,
-  type DataPartTransformers,
-  dataPartTransformer,
   type Extension,
   type ExtensionDeps,
   type ExtensionFactory,
-  type HistoryProcessingResult,
   isDataPartOf,
   type StepCompleteEvent,
 } from '../extension-api';
@@ -27,15 +21,6 @@ import compactionPrompt from './compaction-prompt.md';
 
 const COMPACTION_TRANSCRIPT_VIEW = createTranscriptHistoryView();
 const COMPACTION_SYSTEM_PROMPT = `${compactionPrompt}\n\n${LINES_FORMAT_PROMPT}`;
-
-/**
- * Custom data part that stores a history summary of the chat session.
- * This type is local to the extension — it is NOT registered in the
- * central `CustomUIDataParts` map.
- */
-export type ContextSummaryDataUIPart = {
-  summary: string;
-};
 
 /**
  * Hard upper bound for the compaction threshold in tokens. The dynamic
@@ -58,22 +43,8 @@ export const CONTEXT_SIZE_THRESHOLD_RATIO = 0.5;
 export const FALLBACK_COMPACTION_THRESHOLD = 10_000;
 
 /**
- * Minimum number of user messages that must exist after a summary before
- * it is applied during history preprocessing. If a newer summary has fewer
- * user messages after it than this threshold, it is skipped and an older
- * summary is used instead.
- */
-export const MIN_USER_MESSAGES_AFTER_SUMMARY = 2;
-
-/**
- * Minimum number of assistant messages that must exist after a summary
- * before it is applied during history preprocessing.
- */
-export const MIN_ASSISTANT_MESSAGES_AFTER_SUMMARY = 1;
-
-/**
  * Hysteresis margin for post-compaction re-triggering. After a
- * successful compaction, the inputTokens of the first subsequent
+ * checkpoint was applied, the inputTokens of the first subsequent
  * step become the post-compaction baseline. The next compaction
  * only triggers when the latest step's inputTokens exceed this
  * baseline by at least this fraction (0.1 = 10% growth), preventing
@@ -82,6 +53,55 @@ export const MIN_ASSISTANT_MESSAGES_AFTER_SUMMARY = 1;
  * check must be satisfied to trigger.
  */
 export const COMPACTION_HYSTERESIS_RATIO = 0.1;
+
+/**
+ * Share of the compaction threshold that the raw tail (messages kept
+ * verbatim after the checkpoint) may occupy.
+ */
+export const RAW_TAIL_THRESHOLD_RATIO = 0.2;
+
+/** Rough serialized-characters-per-token ratio for raw tail sizing. */
+export const RAW_TAIL_CHARS_PER_TOKEN = 4;
+
+/**
+ * Picks the checkpoint anchor: the message right before the raw tail.
+ *
+ * The raw tail is the newest run of messages whose cumulative serialized
+ * size stays within `maxTailChars`, but always includes the last assistant
+ * message and everything after it. When the size-bounded tail would cover
+ * every raw message, the minimal tail (last assistant onward, or only the
+ * newest message) is used instead so the threshold hit still frees space.
+ * Returns `null` when even the minimal tail leaves nothing to cover.
+ */
+export function selectCheckpointAnchor(
+  window: readonly ExtendedUIMessage[],
+  maxTailChars: number,
+): { anchorIndex: number } | null {
+  const firstRawIndex = isCheckpointHeader(window[0]) ? 1 : 0;
+
+  let tailStart = window.length;
+  let tailChars = 0;
+  for (let i = window.length - 1; i >= firstRawIndex; i--) {
+    const message = window[i];
+    if (!message) continue;
+    const size = JSON.stringify(message).length;
+    if (tailChars + size > maxTailChars) break;
+    tailChars += size;
+    tailStart = i;
+  }
+
+  const lastAssistant = window.findLastIndex(
+    (message, index) => index >= firstRawIndex && message.role === 'assistant',
+  );
+  // Minimal tail: the last assistant onward, else only the newest message.
+  const minimalStart = lastAssistant !== -1 ? lastAssistant : window.length - 1;
+  tailStart = Math.min(tailStart, minimalStart);
+  if (tailStart - 1 < firstRawIndex) tailStart = minimalStart;
+
+  const anchorIndex = tailStart - 1;
+  if (anchorIndex < firstRawIndex) return null;
+  return { anchorIndex };
+}
 
 class ContextCompactionExt implements Extension {
   /**
@@ -94,7 +114,7 @@ class ContextCompactionExt implements Extension {
   private lastStepInputTokens = 0;
 
   /**
-   * After a successful compaction, the inputTokens of the first
+   * After a checkpoint was applied, the inputTokens of the first
    * subsequent step are captured as the post-compaction baseline.
    * The next compaction requires the latest step's inputTokens to
    * exceed this baseline by at least {@link COMPACTION_HYSTERESIS_RATIO},
@@ -105,36 +125,21 @@ class ContextCompactionExt implements Extension {
   private postCompactionBaseline = 0;
 
   /**
-   * Set to true after a successful compaction. The next
-   * {@link onStepComplete} call captures inputTokens as the new
-   * postCompactionBaseline and clears this flag. This ensures the
-   * baseline reflects the actual compacted context size as measured
-   * by the model, not a pre-compaction estimate.
+   * Anchor of the last checkpoint this extension committed. While set,
+   * {@link onStepComplete} waits for the window to start with a header
+   * covering this anchor, captures inputTokens of that step as the
+   * baseline, and clears it.
    */
-  private awaitingPostCompactionBaseline = false;
+  private awaitingCheckpointAnchor: string | null = null;
 
   private compacting = false;
   private cachedThreshold: number | null = null;
   private latestSummary: string | null = null;
 
-  /**
-   * Per-step flag set by `historyTransformer` when the summary was
-   * actually applied (slicing occurred). Reset to `false` in
-   * `onStepStart` at the beginning of each step. Checked by
-   * `onStepComplete` before capturing the post-compaction baseline —
-   * if the summary wasn't applied, the baseline capture is deferred
-   * to a future step where the transformer does apply it.
-   */
-  private summaryAppliedThisStep = false;
-
   constructor(
     private readonly deps: ExtensionDeps,
     private readonly thresholdModelPurpose: ModelPurpose = 'chat',
   ) {}
-
-  onStepStart(): void {
-    this.summaryAppliedThisStep = false;
-  }
 
   /**
    * Computes the compaction threshold as the minimum of
@@ -193,63 +198,6 @@ class ContextCompactionExt implements Extension {
 
     return this.cachedThreshold;
   }
-  historyTransformer(history: ExtendedUIMessage[]): HistoryProcessingResult {
-    // Collect indices of all summary messages (newest first).
-    const summaryIndices: number[] = [];
-    for (let i = history.length - 1; i >= 0; i--) {
-      if (history[i]?.parts.some((p) => isDataPartOf(CONTEXT_SUMMARY_KEY, p))) {
-        summaryIndices.push(i);
-      }
-    }
-
-    if (summaryIndices.length === 0) return history;
-
-    // Walk summaries from newest to oldest. The first summary that
-    // has enough user and assistant messages after it is the cutoff
-    // point. No messages before the cutoff summary are retained —
-    // the summary replaces all preceding history.
-    let cutoffIndex = -1;
-    for (const idx of summaryIndices) {
-      const { userCount, assistantCount } = countMessagesByRoleAfter(
-        history,
-        idx,
-      );
-      if (
-        userCount >= MIN_USER_MESSAGES_AFTER_SUMMARY &&
-        assistantCount >= MIN_ASSISTANT_MESSAGES_AFTER_SUMMARY
-      ) {
-        cutoffIndex = idx;
-        break;
-      }
-    }
-
-    if (cutoffIndex === -1) {
-      // No summary has enough messages after it to be a viable cutoff.
-      // Still mark as compacted since summaries exist in the history,
-      // but the summary was NOT applied — don't set the flag.
-      return { history, flags: { hasCompacted: true } };
-    }
-
-    // The summary is being applied — record this so `onStepComplete`
-    // knows the compacted history was actually used by the model.
-    this.summaryAppliedThisStep = true;
-
-    // Slice from the cutoff summary. Strip any other summary messages
-    // from the result so only the cutoff summary remains — multiple
-    // summaries in the context would confuse the model. No messages
-    // before the summary are retained.
-    const sliced = history.slice(cutoffIndex);
-    const filtered = sliced.filter(
-      (msg, i) =>
-        i === 0 || // always keep the cutoff summary (first element)
-        !msg.parts.some((p) => isDataPartOf(CONTEXT_SUMMARY_KEY, p)),
-    );
-
-    return {
-      history: filtered,
-      flags: { hasCompacted: true },
-    };
-  }
 
   introspect(): Record<string, unknown> {
     return {
@@ -258,46 +206,40 @@ class ContextCompactionExt implements Extension {
     };
   }
 
-  dataPartTransformers: DataPartTransformers = {
-    [CONTEXT_SUMMARY_KEY]: dataPartTransformer<ContextSummaryDataUIPart>(
-      (data) => [
-        {
-          type: 'text',
-          text: `<summary>${escapeXml(data.summary)}</summary>`,
-        },
-      ],
-    ),
-  };
-
   async onStepComplete(event: StepCompleteEvent): Promise<void> {
     if (event.generation === null) return;
 
     const inputTokens = event.generation.usage.inputTokens ?? 0;
     this.lastStepInputTokens = inputTokens;
 
-    // After a successful compaction, the first subsequent step where
-    // the summary was ACTUALLY applied by the history transformer
-    // establishes the post-compaction baseline. This is the actual
-    // measured context size after compaction — more accurate than
-    // any estimate. We skip the trigger check for this step because
-    // it IS the baseline: there is nothing to compare against.
-    //
-    // If the summary was not applied (not enough messages after it
-    // yet), we keep awaiting — the baseline is deferred to a future
-    // step where the transformer does apply the summary.
-    if (this.awaitingPostCompactionBaseline) {
-      if (!this.summaryAppliedThisStep) {
+    // The first step whose window starts with our checkpoint establishes
+    // the post-compaction baseline: the measured context size after the
+    // trim. The trigger check is skipped for this step because it IS the
+    // baseline. Until the checkpoint is applied (core applies it at the
+    // next step boundary), keep waiting.
+    if (this.awaitingCheckpointAnchor !== null) {
+      if (!this.windowCovers(this.awaitingCheckpointAnchor)) {
+        const anchorId = this.awaitingCheckpointAnchor;
+        if (!this.deps.getHistory().some((m) => m.id === anchorId)) {
+          // Core dropped the checkpoint (anchor rolled back); re-arm the
+          // trigger without a baseline.
+          this.awaitingCheckpointAnchor = null;
+          this.deps.logger.warn(
+            { anchorId },
+            'Committed checkpoint was not applied — re-arming compaction',
+          );
+        }
         this.deps.logger.debug(
           { inputTokens },
-          'Awaiting baseline but summary was not applied this step — deferring',
+          'Awaiting baseline but checkpoint is not applied yet — deferring',
         );
         return;
       }
       this.postCompactionBaseline = inputTokens;
-      this.awaitingPostCompactionBaseline = false;
+      this.awaitingCheckpointAnchor = null;
       this.deps.logger.info(
         { postCompactionBaseline: this.postCompactionBaseline },
-        'Post-compaction baseline established from first step where summary was applied',
+        'Post-compaction baseline established from first step after checkpoint',
       );
       return;
     }
@@ -332,11 +274,27 @@ class ContextCompactionExt implements Extension {
     }
   }
 
+  /** True when the window header covers the given anchor. */
+  private windowCovers(anchorId: string): boolean {
+    const header = this.deps.getHistory()[0];
+    if (!isCheckpointHeader(header)) return false;
+    return (
+      header?.parts.some(
+        (part: { type: string; data?: unknown }) =>
+          isDataPartOf<
+            typeof CONTEXT_SUMMARY_KEY,
+            { coversThroughMessageId?: string }
+          >(CONTEXT_SUMMARY_KEY, part) &&
+          part.data.coversThroughMessageId === anchorId,
+      ) ?? false
+    );
+  }
+
   private async runCompaction(): Promise<void> {
     this.compacting = true;
 
     let span: Span | null = null;
-    let success = false;
+    let committedAnchor: string | null = null;
     try {
       const childSpan = startChildSpan('context_compaction', {
         attributes: {
@@ -347,7 +305,7 @@ class ContextCompactionExt implements Extension {
       });
       span = childSpan;
 
-      success = await context.with(
+      committedAnchor = await context.with(
         trace.setSpan(context.active(), childSpan),
         async () => this.runCompactionInner(childSpan),
       );
@@ -359,28 +317,20 @@ class ContextCompactionExt implements Extension {
       span?.addEvent('compaction.error', { error: String(error) });
     } finally {
       this.compacting = false;
-      if (success) {
-        // Mark that the next step should establish the post-compaction
-        // baseline. We don't set the baseline here because the actual
-        // context size after compaction is only known once the model
-        // processes the compacted history — measured by the next
-        // step's inputTokens.
-        this.awaitingPostCompactionBaseline = true;
-        this.postCompactionBaseline = 0;
+      // On failure, skip, or rejection the baseline resets so the next
+      // step can re-trigger without hysteresis. On success, the baseline
+      // is measured once the checkpoint is applied.
+      this.postCompactionBaseline = 0;
+      this.awaitingCheckpointAnchor = committedAnchor;
+      if (committedAnchor !== null) {
         span?.setAttribute('compaction.awaitingBaseline', true);
-      } else {
-        // On failure or skip, reset the baseline so the next step
-        // can re-trigger without hysteresis (only the absolute
-        // threshold applies). If compaction didn't happen, there's
-        // no compacted context to use as a reference point.
-        this.postCompactionBaseline = 0;
-        this.awaitingPostCompactionBaseline = false;
       }
       span?.end();
     }
   }
 
-  private async runCompactionInner(span: Span): Promise<boolean> {
+  /** Returns the committed anchor ID, or `null` when nothing was committed. */
+  private async runCompactionInner(span: Span): Promise<string | null> {
     let modelIds = this.deps.config.getModelSelection('compaction');
 
     // Tracks whether modelIds was already set to chat models because
@@ -396,7 +346,7 @@ class ContextCompactionExt implements Extension {
           'No compaction or chat models configured — skipping',
         );
         span.addEvent('compaction.skipped', { reason: 'no-models' });
-        return false;
+        return null;
       }
       this.deps.logger.warn(
         'No compaction models configured — falling back to chat models',
@@ -410,29 +360,28 @@ class ContextCompactionExt implements Extension {
     const history = this.deps.getHistory();
     span.setAttribute('compaction.historyLength', history.length);
 
-    // Slice starting from the last summary (if one exists) so the
-    // compaction model has access to the previous summary as context.
-    // If there is no summary, compact the entire history.
-    const lastSummaryIndex = history.findLastIndex((m) =>
-      m.parts.some((p) => isDataPartOf(CONTEXT_SUMMARY_KEY, p)),
-    );
-    const sliceStart = lastSummaryIndex === -1 ? 0 : lastSummaryIndex;
-    const slice = history.slice(sliceStart);
-    span.setAttribute('compaction.sliceLength', slice.length);
-
-    // Skip only when there are no messages at all, or when the only
-    // message in the slice is a summary with nothing new after it.
-    const hasNewMessages =
-      slice.length > 1 || (slice.length === 1 && lastSummaryIndex === -1);
-
-    if (!hasNewMessages) {
+    const maxTailChars =
+      this.getCompactionThreshold() *
+      RAW_TAIL_THRESHOLD_RATIO *
+      RAW_TAIL_CHARS_PER_TOKEN;
+    const selection = selectCheckpointAnchor(history, maxTailChars);
+    if (!selection) {
       this.deps.logger.debug(
-        { totalHistory: history.length, sliceLength: slice.length },
-        'No new messages to compact — skipping',
+        { totalHistory: history.length },
+        'No checkpoint anchor available — skipping compaction',
       );
-      span.addEvent('compaction.skipped', { reason: 'no-messages' });
-      return false;
+      span.addEvent('compaction.skipped', { reason: 'no-anchor' });
+      return null;
     }
+
+    // The slice includes a previous header, so the transcript view starts
+    // at its summary and the new summary covers everything up to the anchor.
+    const slice = history.slice(0, selection.anchorIndex + 1);
+    span.setAttribute('compaction.sliceLength', slice.length);
+    span.setAttribute(
+      'compaction.rawTailLength',
+      history.length - slice.length,
+    );
 
     const transcript = COMPACTION_TRANSCRIPT_VIEW.render(slice).text;
     span.setAttribute('compaction.transcriptLength', transcript.length);
@@ -440,7 +389,7 @@ class ContextCompactionExt implements Extension {
     if (transcript.trim().length === 0) {
       this.deps.logger.debug('Empty transcript — skipping compaction');
       span.addEvent('compaction.skipped', { reason: 'empty-transcript' });
-      return false;
+      return null;
     }
 
     span.addEvent('compaction.transcript_ready', {
@@ -448,16 +397,12 @@ class ContextCompactionExt implements Extension {
       'compaction.sliceLength': slice.length,
     });
 
-    // Capture the ID of the last message in the compaction slice.
-    // The summary will be inserted right after it so it stays in the
-    // correct position even if new messages have been appended to the
-    // history while compaction was running.
-    const lastSliceMessage = slice.at(-1);
-    if (!lastSliceMessage) {
+    const anchorMessage = slice.at(-1);
+    if (!anchorMessage) {
       throw new Error('Cannot record an empty compaction slice');
     }
-    const lastSliceMessageId = lastSliceMessage.id;
-    span.setAttribute('compaction.lastSliceMessageId', lastSliceMessageId);
+    const anchorId = anchorMessage.id;
+    span.setAttribute('compaction.lastSliceMessageId', anchorId);
 
     const result = await this.deps.generateText({
       modelIds,
@@ -505,14 +450,10 @@ class ContextCompactionExt implements Extension {
               failureReason: fallbackResult.failureReason,
               failureDetails: fallbackResult.failureDetails ?? '',
             });
-            return false;
+            return null;
           }
 
-          return this.injectSummary(
-            fallbackResult.text,
-            lastSliceMessageId,
-            span,
-          );
+          return this.commitCheckpoint(fallbackResult.text, anchorId, span);
         }
       }
 
@@ -521,73 +462,44 @@ class ContextCompactionExt implements Extension {
         failureReason: result.failureReason,
         failureDetails: result.failureDetails ?? '',
       });
-      return false;
+      return null;
     }
 
-    return this.injectSummary(result.text, lastSliceMessageId, span);
+    return this.commitCheckpoint(result.text, anchorId, span);
   }
 
-  /**
-   * Inserts the summary message into the chat history after the anchor
-   * message and records telemetry.
-   */
-  private async injectSummary(
+  /** Hands the summary to core; returns the anchor when it was accepted. */
+  private commitCheckpoint(
     summary: string,
     anchorId: string,
     span: Span,
-  ): Promise<boolean> {
-    const summaryMessage = {
-      id: randomUUID(),
-      role: 'assistant',
-      parts: [createDataPart(CONTEXT_SUMMARY_KEY, { summary })],
-    } as unknown as ExtendedUIMessage;
+  ): string | null {
+    const result = this.deps.checkpoints.commit({
+      coversThroughMessageId: anchorId,
+      summary,
+    });
 
-    // Insert the summary directly after the last message that was part
-    // of the compaction slice — not at the end of history, which may
-    // have grown since compaction was triggered.
-    const inserted = this.deps.insertMessageAfter(anchorId, summaryMessage);
-
-    if (!inserted) {
+    if (result.status === 'rejected') {
+      // Retried on the next threshold check with a fresh anchor.
       this.deps.logger.warn(
-        { anchorId },
-        'Last compaction-slice message no longer exists — summary dropped',
+        { anchorId, reason: result.reason },
+        'Checkpoint rejected — summary dropped',
       );
-      span.addEvent('compaction.insert_failed', {
-        reason: 'anchor-message-gone',
+      span.addEvent('compaction.checkpoint_rejected', {
+        reason: result.reason,
       });
-      return false;
+      return null;
     }
 
     this.latestSummary = summary;
     span.setAttribute('compaction.summaryLength', summary.length);
-    span.addEvent('compaction.summary_injected');
+    span.addEvent('compaction.checkpoint_committed');
     this.deps.logger.info(
-      { summaryLength: summary.length },
-      'History compacted and summary injected after last slice message',
+      { summaryLength: summary.length, anchorId },
+      'Compaction summary committed as checkpoint',
     );
-    return true;
+    return anchorId;
   }
-}
-
-/**
- * Counts non-summary user and assistant messages after the given
- * index in the history. Summary messages are excluded from the
- * count because they will be stripped from the transformed result.
- */
-function countMessagesByRoleAfter(
-  history: ExtendedUIMessage[],
-  index: number,
-): { userCount: number; assistantCount: number } {
-  let userCount = 0;
-  let assistantCount = 0;
-  for (let i = index + 1; i < history.length; i++) {
-    const msg = history[i];
-    if (!msg || msg.parts.some((p) => isDataPartOf(CONTEXT_SUMMARY_KEY, p)))
-      continue;
-    if (msg.role === 'user') userCount++;
-    else if (msg.role === 'assistant') assistantCount++;
-  }
-  return { userCount, assistantCount };
 }
 
 /** Compacts long session histories while preserving durable conversational context. */

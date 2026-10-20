@@ -376,8 +376,6 @@ class McpIngressExtension implements Extension {
     history: ExtendedUIMessage[],
     _model: ResolvedModel,
   ): HistoryProcessingResult {
-    let transformed = false;
-
     for (const msg of history) {
       if (msg.role !== 'user') continue;
 
@@ -389,63 +387,54 @@ class McpIngressExtension implements Extension {
           return part;
         }
 
-        transformed = true;
         return createDataPart(
           'mcp-resource-state',
           this.contextToStateData(part.data),
         ) as unknown as ExtendedUIMessage['parts'][number];
       });
 
-      if (
-        transformed &&
-        parts.some((part, index) => part !== msg.parts[index])
-      ) {
+      if (parts.some((part, index) => part !== msg.parts[index])) {
         msg.parts = parts;
       }
     }
 
-    // -- Post-compaction: inject last known server list and open resources ---
-    const first = history[0];
-    if (first) {
-      const original = this.deps.getHistory();
-      const cutoffIndex = original.findIndex(
-        (message) => message.id === first.id,
+    return history;
+  }
+
+  // -- getCheckpointCarry -------------------------------------------------
+
+  /**
+   * Carries the latest server list and open-resource list out of the
+   * dropped prefix as initial (full) parts. Resource state parts are not
+   * carried: provisional context re-emits full state for windows whose
+   * state is missing from the window.
+   */
+  getCheckpointCarry(
+    dropped: readonly ExtendedUIMessage[],
+  ): ExtendedUIMessage['parts'] {
+    const carry: ExtendedUIMessage['parts'][number][] = [];
+
+    const lastServerList = latestServerListPart(dropped);
+    if (lastServerList) {
+      carry.push(
+        createDataPart(SERVER_LIST_KEY, {
+          isInitial: true,
+          servers: lastServerList.servers,
+        }) as unknown as ExtendedUIMessage['parts'][number],
       );
-      if (cutoffIndex > 0) {
-        const removed = original.slice(0, cutoffIndex);
-        const syntheticParts: ExtendedUIMessage['parts'][number][] = [];
-
-        const lastServerList = latestServerListPart(removed);
-        if (lastServerList) {
-          syntheticParts.push(
-            createDataPart(SERVER_LIST_KEY, {
-              isInitial: true,
-              servers: lastServerList.servers,
-            }) as unknown as ExtendedUIMessage['parts'][number],
-          );
-        }
-
-        const lastOpenResources = latestOpenResourcesPart(removed);
-        if (lastOpenResources) {
-          syntheticParts.push(
-            createDataPart(OPEN_RESOURCES_KEY, {
-              isInitial: true,
-              resources: lastOpenResources.resources,
-            }) as unknown as ExtendedUIMessage['parts'][number],
-          );
-        }
-
-        if (syntheticParts.length > 0) {
-          history[0] = {
-            ...first,
-            parts: [...syntheticParts, ...first.parts],
-          };
-          transformed = true;
-        }
-      }
     }
 
-    return transformed ? { history, flags: { hasCompacted: true } } : history;
+    const lastOpenResources = latestOpenResourcesPart(dropped);
+    if (lastOpenResources) {
+      carry.push(
+        createDataPart(OPEN_RESOURCES_KEY, {
+          isInitial: true,
+          resources: lastOpenResources.resources,
+        }) as unknown as ExtendedUIMessage['parts'][number],
+      );
+    }
+
+    return carry;
   }
 
   // -- dataPartTransformer ------------------------------------------------

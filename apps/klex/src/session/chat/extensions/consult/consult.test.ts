@@ -862,7 +862,7 @@ describe('consult extension', () => {
     });
   });
 
-  it('reinjects the last known full list after history compaction', () => {
+  it('carries the last known list as a full list into the checkpoint header', async () => {
     const previous = {
       mode: 'full' as const,
       sessions: [
@@ -882,26 +882,34 @@ describe('consult extension', () => {
         parts: [
           {
             type: 'data-consults',
-            data: previous,
+            data: { ...previous, mode: 'change', changes: ['x'] },
           },
         ],
       },
-      { id: 'survivor', role: 'user' as const, parts: [] },
+      { id: 'later', role: 'assistant' as const, parts: [] },
     ] as unknown as ExtendedUIMessage[];
-    const extension = createConsultExt(DEEP_THINK_CONFIG).create(
-      makeDeps({
-        getHistory: vi.fn(() => original),
-      }),
-    );
+    const extension = createConsultExt(DEEP_THINK_CONFIG).create(makeDeps());
 
-    const transformed = extension.historyTransformer?.(
-      [original[1]!],
-      {} as never,
-    ) as ExtendedUIMessage[];
-    expect(transformed[0]?.parts[0]).toMatchObject({
-      type: 'data-consults',
-      data: previous,
-    });
+    expect(extension.historyTransformer).toBeUndefined();
+    const carry = await extension.getCheckpointCarry?.(original);
+    expect(carry).toEqual([{ type: 'data-consults', data: previous }]);
+    // The carried full list is the diff base for the next provisional step.
+    const header = {
+      id: 'header',
+      role: 'user',
+      parts: carry,
+    } as unknown as ExtendedUIMessage;
+    expect(
+      extension.getProvisionalStepContext?.([header], {} as never),
+    ).toMatchObject({ parts: [{ data: { mode: 'change' } }] });
+  });
+
+  it('carries nothing when no consult list was dropped', async () => {
+    const extension = createConsultExt(DEEP_THINK_CONFIG).create(makeDeps());
+    const carry = await extension.getCheckpointCarry?.([
+      { id: 'm', role: 'user', parts: [] } as unknown as ExtendedUIMessage,
+    ]);
+    expect(carry).toEqual([]);
   });
 
   it('preserves cleanup failures when startup races with parent closure', async () => {

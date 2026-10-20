@@ -67,6 +67,12 @@ export interface TurnDependencies {
    * step's generation, preserving response-before-new-input ordering.
    */
   flushPendingImmediate?: () => void;
+  /**
+   * Called after each step committed and pending input was flushed — the
+   * safe boundary at which core applies a pending checkpoint. Must not
+   * reject.
+   */
+  atStepBoundary?: () => Promise<void>;
   /** Stops the turn after the current step reaches its commit boundary. */
   shouldYieldGenerationLane?: () => boolean;
   /**
@@ -300,6 +306,7 @@ class TurnModule implements Turn {
           // step's generation. This ensures new input appears after
           // the assistant response, preserving correct ordering.
           this.deps.flushPendingImmediate?.();
+          await this.deps.atStepBoundary?.();
 
           stepCount++;
           totalStepCount = stepCount;

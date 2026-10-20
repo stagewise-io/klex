@@ -49,6 +49,7 @@ function createMockDeps(
   const deps = {
     getHistory: () => currentHistory,
     insertMessageAfter: vi.fn(() => true),
+    checkpoints: { commit: vi.fn(() => ({ status: 'pending' as const })) },
     inbox: {
       send: vi.fn(),
       sendMessage,
@@ -144,14 +145,6 @@ function createTextMessage(
     id: id ?? randomUUID(),
     role,
     parts: [{ type: 'text', text }],
-  } as unknown as ExtendedUIMessage;
-}
-
-function createSummaryMessage(text: string): ExtendedUIMessage {
-  return {
-    id: randomUUID(),
-    role: 'assistant',
-    parts: [createDataPart('context-summary', { summary: text })],
   } as unknown as ExtendedUIMessage;
 }
 
@@ -791,105 +784,66 @@ describe('Todos extension', () => {
     expect(text3).not.toContain('<todos>');
   });
 
-  it('historyTransformer injects base state at position 0 when compaction removed todo parts', () => {
-    const { deps, setHistory } = createMockDeps();
+  it('getCheckpointCarry carries the last dropped todo list without reminder', async () => {
+    const { deps } = createMockDeps();
     const ext = createTodosExt.create(deps);
     const t1 = makeTodo({ id: 'aaaa', description: 'Task A' });
     const t2 = makeTodo({ id: 'bbbb', description: 'Task B' });
-
-    // Full history: [msg1, todos#1, msg3, todos#2, summary, msg6, todos#3, msg7]
-    const msg1 = createTextMessage('user', 'Start');
-    const todos1 = createTodosMessage([t1]);
-    const msg3 = createTextMessage('assistant', 'Set A');
-    const todos2 = createTodosMessage([t1, t2]);
-    const summary = createSummaryMessage('Summary of earlier');
-    const msg6 = createTextMessage('user', 'After compaction');
-    const todos3 = createTodosMessage([t2]);
-    const msg7 = createTextMessage('assistant', 'Cleared A');
-
-    const fullHistory = [
-      msg1,
-      todos1,
-      msg3,
-      todos2,
-      summary,
-      msg6,
-      todos3,
-      msg7,
+    const dropped = [
+      createTextMessage('user', 'Start'),
+      createTodosMessage([t1]),
+      createTextMessage('assistant', 'Set A'),
+      createTodosMessage([t1, t2]),
     ];
-    // Compacted history (what the transformer receives): [summary, msg6, todos#3, msg7]
-    const compactedHistory = [summary, msg6, todos3, msg7];
 
-    setHistory(fullHistory);
+    const carry = (await ext.getCheckpointCarry?.(dropped)) ?? [];
+
+    expect(carry).toHaveLength(1);
+    const part = carry[0] as unknown as { type: string; data: TodosDataUIPart };
+    expect(part.type).toBe('data-todos');
+    expect(part.data.todos.map((todo) => todo.id)).toEqual(['aaaa', 'bbbb']);
+    expect(part.data.reminderTodoId).toBeUndefined();
+  });
+
+  it('getCheckpointCarry carries nothing when no todo parts were dropped', async () => {
+    const { deps } = createMockDeps();
+    const ext = createTodosExt.create(deps);
+    const carry = await ext.getCheckpointCarry?.([
+      createTextMessage('user', 'Start'),
+    ]);
+    expect(carry).toEqual([]);
+  });
+
+  it('historyTransformer renders the carried list as base and later parts as diffs', async () => {
+    const { deps } = createMockDeps();
+    const ext = createTodosExt.create(deps);
+    const t1 = makeTodo({ id: 'aaaa', description: 'Task A' });
+    const t2 = makeTodo({ id: 'bbbb', description: 'Task B' });
+    const carry =
+      (await ext.getCheckpointCarry?.([createTodosMessage([t1, t2])])) ?? [];
+    const checkpoint = {
+      id: 'checkpoint',
+      role: 'user',
+      parts: carry,
+    } as unknown as ExtendedUIMessage;
+    const msg = createTextMessage('user', 'After checkpoint');
+    const todos = createTodosMessage([t2]);
 
     const result = ext.historyTransformer?.(
-      compactedHistory,
+      [checkpoint, msg, todos],
       {} as never,
     ) as ExtendedUIMessage[];
 
-    // Should have 5 messages: injected base state + 4 compacted messages
-    expect(result).toHaveLength(5);
-
-    // Position 0: injected full list from todos#2 (state = [t1, t2])
-    const injected = result[0]!;
-    expect(injected.role).toBe('user');
-    const injectedText = extractTextParts(injected);
-    expect(injectedText).toContain('<todos>');
-    expect(injectedText).toContain('aaaa');
-    expect(injectedText).toContain('bbbb');
-    expect(injectedText).toContain('Task A');
-    expect(injectedText).toContain('Task B');
-
-    // Position 1: summary (unchanged)
-    expect(result[1]).toBe(summary);
-
-    // Position 2: msg6 (unchanged)
-    expect(result[2]).toBe(msg6);
-
-    // Position 3: todos#3 replaced with diff([t1,t2] → [t2]) = cleared aaaa
-    const diffText = extractTextParts(result[3]!);
+    expect(result).toHaveLength(3);
+    const baseText = extractTextParts(result[0]!);
+    expect(baseText).toContain('<todos>');
+    expect(baseText).toContain('aaaa');
+    expect(baseText).toContain('bbbb');
+    expect(result[1]).toBe(msg);
+    const diffText = extractTextParts(result[2]!);
     expect(diffText).toContain('Todo cleared');
     expect(diffText).toContain('aaaa');
     expect(diffText).not.toContain('<todos>');
-
-    // Position 4: msg7 (unchanged)
-    expect(result[4]).toBe(msg7);
-  });
-
-  it('historyTransformer injects base state when ALL todo parts were compacted away', () => {
-    const { deps, setHistory } = createMockDeps();
-    const ext = createTodosExt.create(deps);
-    const t1 = makeTodo({ id: 'aaaa', description: 'Task A' });
-    const t2 = makeTodo({ id: 'bbbb', description: 'Task B' });
-
-    const msg1 = createTextMessage('user', 'Start');
-    const todos1 = createTodosMessage([t1, t2]);
-    const msg2 = createTextMessage('assistant', 'Set both');
-    const summary = createSummaryMessage('Summary');
-    const msg3 = createTextMessage('user', 'After compaction');
-    const msg4 = createTextMessage('assistant', 'Response');
-
-    const fullHistory = [msg1, todos1, msg2, summary, msg3, msg4];
-    // Compacted: no todo parts survive
-    const compactedHistory = [summary, msg3, msg4];
-
-    setHistory(fullHistory);
-
-    const result = ext.historyTransformer?.(
-      compactedHistory,
-      {} as never,
-    ) as ExtendedUIMessage[];
-
-    // Injected base state + 3 compacted messages
-    expect(result).toHaveLength(4);
-    const injectedText = extractTextParts(result[0]!);
-    expect(injectedText).toContain('<todos>');
-    expect(injectedText).toContain('aaaa');
-    expect(injectedText).toContain('bbbb');
-    // Rest unchanged
-    expect(result[1]).toBe(summary);
-    expect(result[2]).toBe(msg3);
-    expect(result[3]).toBe(msg4);
   });
 
   it('historyTransformer handles empty todos list in a data part', () => {

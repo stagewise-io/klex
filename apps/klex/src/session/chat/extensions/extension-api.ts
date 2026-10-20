@@ -151,6 +151,48 @@ export interface ProvisionalStepContext {
 }
 
 // ---------------------------------------------------------------------------
+// Checkpoints
+// ---------------------------------------------------------------------------
+
+/** Request to replace the window up to an anchor with a summary header. */
+export interface CheckpointCommitRequest {
+  /**
+   * Last message covered by the summary. It and everything before it leave
+   * the window; at least one non-checkpoint message must follow it.
+   */
+  coversThroughMessageId: string;
+  /** Summary of every covered message, including a previous header. */
+  summary: string;
+}
+
+/**
+ * Synchronous validation result. `pending` means core applies the checkpoint
+ * at the next safe step boundary, where it is validated again; a newer
+ * commit replaces an older pending one.
+ */
+export type CheckpointCommitResult =
+  | { status: 'pending' }
+  | { status: 'rejected'; reason: string };
+
+/** Core API for checkpoint producers such as context compaction. */
+export interface CheckpointApi {
+  commit: (request: CheckpointCommitRequest) => CheckpointCommitResult;
+}
+
+/** Passed to {@link Extension.onCheckpointApplying} before a trim. */
+export interface CheckpointApplyingEvent {
+  /** IDs leaving the window, in window order (a previous header first). */
+  droppedMessageIds: readonly string[];
+  /** ID of the header that replaces them as `messages[0]`. */
+  checkpointMessageId: string;
+}
+
+export interface CheckpointApplyingResult {
+  /** Keep the checkpoint pending and retry at the next boundary. */
+  defer?: boolean;
+}
+
+// ---------------------------------------------------------------------------
 // Resolved model metadata
 // ---------------------------------------------------------------------------
 
@@ -713,6 +755,35 @@ export interface Extension {
    */
   onStepComplete?: (event: StepCompleteEvent) => void | Promise<void>;
 
+  /**
+   * Returns data parts that represent this extension's latest state within
+   * `dropped` (the messages about to leave the window, a previous checkpoint
+   * header first). Core appends them to the new checkpoint header, so state
+   * lookups over the window keep finding them after the trim.
+   *
+   * Called sequentially in factory order with a structured clone. A throw
+   * aborts this apply; the checkpoint stays pending for the next boundary.
+   */
+  getCheckpointCarry?: (
+    dropped: readonly ExtendedUIMessage[],
+  ) => ExtendedUIMessage['parts'] | Promise<ExtendedUIMessage['parts']>;
+
+  /**
+   * Called after carry collection and before the header is persisted and
+   * the window is trimmed. Use it to flush work that still reads the
+   * dropped messages or to re-point cursors to `checkpointMessageId`.
+   *
+   * Hooks run sequentially in factory order. Returning `{ defer: true }`
+   * (or throwing) keeps the checkpoint pending; after
+   * `MAX_CHECKPOINT_DEFERRALS` consecutive deferrals core applies anyway.
+   */
+  onCheckpointApplying?: (
+    event: CheckpointApplyingEvent,
+  ) =>
+    | CheckpointApplyingResult
+    | undefined
+    | Promise<CheckpointApplyingResult | undefined>;
+
   dataPartTransformers?: DataPartTransformers;
 
   /**
@@ -728,9 +799,14 @@ export interface Extension {
 
 export interface ExtensionDeps {
   /**
-   * @returns A copy of the current history inside the session.
+   * @returns A copy of the current window. The window is bounded: once a
+   * checkpoint was applied, `messages[0]` is its header and older messages
+   * are only in the durable log.
    */
   getHistory: () => ExtendedUIMessage[];
+
+  /** Core checkpoint API; see {@link CheckpointApi}. */
+  checkpoints: CheckpointApi;
 
   /**
    * Inserts a message into the session history immediately after the

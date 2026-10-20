@@ -11,13 +11,9 @@ interface RecorderDependencies {
   logger: ModuleLogger;
 }
 
-interface RecorderCursor {
-  id: string;
-  index: number;
-}
-
 export interface EpisodeRecorderState {
-  cursor: RecorderCursor | null;
+  /** ID of the last recorded window message; records resume after it. */
+  cursor: string | null;
   lastError: string | null;
   episode: ReturnType<EpisodeStore['introspect']>;
 }
@@ -25,34 +21,62 @@ export interface EpisodeRecorderState {
 /** Deterministically records the canonical compressed history into episodes. */
 export class EpisodeRecorder {
   readonly store: EpisodeStore;
-  private cursor: RecorderCursor | null = null;
+  private cursor: string | null = null;
   private lastError: unknown = null;
 
   constructor(private readonly deps: RecorderDependencies) {
     this.store = deps.store;
   }
 
-  async flush(): Promise<void> {
+  /**
+   * Marks every message of `window` as already recorded. Used at start so a
+   * restored window is not recorded a second time.
+   */
+  seed(window: readonly ExtendedUIMessage[]): void {
+    this.cursor = window.at(-1)?.id ?? null;
+  }
+
+  /**
+   * Re-points a cursor that is about to leave the window to the checkpoint
+   * header. After-cursor scoping then covers exactly the raw tail.
+   */
+  repoint(
+    droppedMessageIds: readonly string[],
+    checkpointMessageId: string,
+  ): void {
+    if (this.cursor !== null && droppedMessageIds.includes(this.cursor)) {
+      this.cursor = checkpointMessageId;
+    }
+  }
+
+  /** Records the window delta; resolves `false` when the append failed. */
+  async flush(): Promise<boolean> {
     const history = this.deps.getHistory();
-    const scope =
-      this.cursor === null
-        ? null
-        : history.some((message) => message.id === this.cursor?.id)
-          ? this.cursor.id
-          : this.scopeAfterMissingCursor(history);
-    const collected = collectEpisodicHistory(history, scope);
+    if (
+      this.cursor !== null &&
+      !history.some((message) => message.id === this.cursor)
+    ) {
+      // Checkpoints re-point the cursor before trimming, so this is a bug.
+      // Skipping to the window end loses records but never duplicates them.
+      this.deps.logger.error(
+        { cursorId: this.cursor },
+        'Episode history cursor left the window; skipping to its end',
+      );
+      this.seed(history);
+      return true;
+    }
+    const collected = collectEpisodicHistory(history, this.cursor);
     const records = toEpisodeRecordInputs(collected.messages);
 
     try {
       if (records.length > 0) await this.store.append(records);
-      this.cursor =
-        collected.cursor === null
-          ? null
-          : { id: collected.cursor, index: history.length - 1 };
+      this.cursor = collected.cursor;
       this.lastError = null;
+      return true;
     } catch (error) {
       this.lastError = error;
       this.deps.logger.error({ error }, 'Episode history recording failed');
+      return false;
     }
   }
 
@@ -62,17 +86,6 @@ export class EpisodeRecorder {
       lastError: this.lastError ? String(this.lastError) : null,
       episode: this.store.introspect(),
     };
-  }
-
-  private scopeAfterMissingCursor(
-    history: readonly ExtendedUIMessage[],
-  ): string | null {
-    const index = Math.min(this.cursor?.index ?? 0, history.length) - 1;
-    this.deps.logger.warn(
-      { cursorId: this.cursor?.id, cursorIndex: this.cursor?.index },
-      'Episode history cursor disappeared; rescoping before removed message',
-    );
-    return history[index]?.id ?? null;
   }
 }
 

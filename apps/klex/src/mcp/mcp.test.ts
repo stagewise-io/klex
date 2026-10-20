@@ -761,6 +761,19 @@ describe('MCP tool discovery', () => {
         await mcp.search('git.hub release', { limit: 2 }, toolContext),
       ).toEqual(matches.slice(0, 2));
       expect(await mcp.search('release missing', {}, toolContext)).toEqual([]);
+      const emptyQueryMatches = await mcp.search('', {}, toolContext);
+      expect(emptyQueryMatches).toHaveLength(20);
+      expect(await mcp.search('   ', {}, toolContext)).toEqual(
+        emptyQueryMatches,
+      );
+      expect(await mcp.search('', { limit: 30 }, toolContext)).toHaveLength(30);
+      const emptyQueryWithSchemas = await mcp.search(
+        '',
+        { includeInputSchema: true },
+        toolContext,
+      );
+      expect(emptyQueryWithSchemas).toHaveLength(5);
+      expect(emptyQueryWithSchemas[0]).toHaveProperty('inputSchema');
     } finally {
       await mcp.close();
     }

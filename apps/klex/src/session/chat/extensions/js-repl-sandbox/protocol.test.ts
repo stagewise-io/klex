@@ -53,16 +53,29 @@ describe('JavaScript sandbox protocol', () => {
   });
 
   it.each(['', '   '])(
-    'rejects empty or whitespace search query %j',
+    'accepts empty or whitespace search query %j',
     (query) => {
+      const message = {
+        type: 'provider-request',
+        executionId: 'e',
+        requestId: 'r',
+        request: { operation: 'search', query },
+      };
+      expect(parseWorkerMessage(message)).toEqual(message);
+    },
+  );
+
+  it.each([{}, { query: 123 }, { query: null }, { query: {} }])(
+    'rejects non-string search query %j',
+    (fields) => {
       expect(() =>
         parseWorkerMessage({
           type: 'provider-request',
           executionId: 'e',
           requestId: 'r',
-          request: { operation: 'search', query },
+          request: { operation: 'search', ...fields },
         }),
-      ).toThrow(/tools\.listNamespaces\(\) or tools\.listTools\(\)/);
+      ).toThrow(/tools\.search/);
     },
   );
 

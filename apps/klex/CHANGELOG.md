@@ -2,6 +2,27 @@
 
 All notable Klex changes are documented here.
 
+## 0.22.0 (2026-10-20)
+
+### Features
+
+- add shared instinct classification backends (04439d5)
+- make JavaScript sandbox MCP gateway guidance explicit (KLEX-63) (d665dfe)
+- allow empty-query tools.search with default 20-result cap (02a2f42)
+- expose MCP namespace and tool enumeration in JavaScript sandbox (c0a1e9f)
+
+### Bug Fixes
+
+- align instinct telemetry with shared privacy policy (fd2949f)
+- export traces using OTLP HTTP Protobuf (9d71182)
+- support Codex streaming transport for generation (b53a6ee)
+- keep system-prompt-part.md unchanged in KLEX-64 (218ef0b)
+
+### Other Changes
+
+- streamline instinct and usage reporting (05df041)
+- align agent picker with shared CLI components (fc2df37)
+
 ## 0.21.1 (2026-10-20)
 
 ### Bug Fixes

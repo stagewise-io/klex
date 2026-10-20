@@ -125,10 +125,18 @@ export function parseToolSearchOptions(value: unknown): ToolSearchOptions {
   };
 }
 
+export const EMPTY_QUERY_TOOL_SEARCH_LIMIT = 20;
+
 export function toolSearchLimit(
   options: ToolSearchOptions,
+  query?: string,
 ): number | undefined {
-  return options.limit ?? (options.includeInputSchema ? 5 : undefined);
+  if (options.limit !== undefined) return options.limit;
+  if (options.includeInputSchema) return 5;
+  if (query !== undefined && query.trim().length === 0) {
+    return EMPTY_QUERY_TOOL_SEARCH_LIMIT;
+  }
+  return undefined;
 }
 
 export interface ToolSearchResult {

@@ -128,9 +128,9 @@ function assertProviderRequest(
   if (!isRecord(value) || typeof value.operation !== 'string')
     throw new Error('Invalid provider request');
   if (value.operation === 'search') {
-    if (typeof value.query !== 'string' || value.query.trim().length === 0)
+    if (typeof value.query !== 'string')
       throw new TypeError(
-        `Search query must be a non-empty string. Use tools.listNamespaces() or tools.listTools() to enumerate available MCP namespaces and tools without a search term. ${TOOL_SEARCH_USAGE}`,
+        `Search query must be a string. ${TOOL_SEARCH_USAGE}`,
       );
     parseToolSearchOptions(value);
     return;

@@ -98,9 +98,9 @@ export function createNamespaceController(
       'search',
       requireBridge,
       (query, options) => {
-        if (typeof query !== 'string' || query.trim().length === 0)
+        if (typeof query !== 'string')
           throw new TypeError(
-            `Search query must be a non-empty string. Use tools.listNamespaces() or tools.listTools() to enumerate available MCP namespaces and tools without a search term. ${TOOL_SEARCH_USAGE}`,
+            `Search query must be a string. ${TOOL_SEARCH_USAGE}`,
           );
         const parsedOptions = parseToolSearchOptions(options);
         return {

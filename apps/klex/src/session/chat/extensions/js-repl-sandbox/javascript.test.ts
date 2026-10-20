@@ -260,13 +260,72 @@ describe('JavaScriptTool', () => {
     }
   });
 
-  it.each(['tools.search("")', 'tools.search("   ")'])(
-    'points empty or whitespace search queries to the enumeration APIs: %s',
-    async (code) => {
+  it.each(['""', '"   "'])(
+    'returns capped tool results for empty or whitespace search queries: %s',
+    async (queryLiteral) => {
       await expect(
-        javaScriptTool.execute({ code: `return await ${code}` }),
-      ).rejects.toThrow(/tools\.listNamespaces\(\) or tools\.listTools\(\)/);
-      expect(provider.searches).toEqual([]);
+        javaScriptTool.execute({
+          code: `return {
+            defaultMatches: await tools.search(${queryLiteral}),
+            limitedMatches: await tools.search(${queryLiteral}, { limit: 2 }),
+            schemaMatches: await tools.search(${queryLiteral}, { includeInputSchema: true, limit: 1 }),
+          }`,
+        }),
+      ).resolves.toEqual({
+        defaultMatches: [
+          {
+            reference: { namespace: 'git.hub', name: 'echo-value' },
+            description: 'Echoes its input',
+          },
+          {
+            reference: { namespace: 'git.hub', name: 'same' },
+            description: 'Returns its exact identity',
+          },
+          {
+            reference: { namespace: 'git.hub', name: 'wait' },
+            description: 'Resolves asynchronously',
+          },
+          {
+            reference: { namespace: 'other', name: 'same' },
+            description: 'Returns its exact identity',
+          },
+          {
+            reference: { namespace: 'odd namespace', name: 'slash/name' },
+            description: 'Requires bracket notation',
+          },
+          {
+            reference: {
+              namespace: 'stale.namespace',
+              name: 'temporary-tool',
+            },
+            description: 'Can become stale',
+          },
+        ],
+        limitedMatches: [
+          {
+            reference: { namespace: 'git.hub', name: 'echo-value' },
+            description: 'Echoes its input',
+          },
+          {
+            reference: { namespace: 'git.hub', name: 'same' },
+            description: 'Returns its exact identity',
+          },
+        ],
+        schemaMatches: [
+          {
+            reference: { namespace: 'git.hub', name: 'echo-value' },
+            description: 'Echoes its input',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                value: { type: 'number', description: 'Value to echo' },
+              },
+              required: ['value'],
+              additionalProperties: false,
+            },
+          },
+        ],
+      });
     },
   );
 
@@ -443,8 +502,6 @@ describe('JavaScriptTool', () => {
     'tools.listTools({}, {})',
     'tools.search()',
     'tools.search({ query: "deployment" })',
-    'tools.search("")',
-    'tools.search("   ")',
     'tools.search("deployment", null)',
     'tools.search("deployment", [])',
     'tools.search("deployment", 5)',

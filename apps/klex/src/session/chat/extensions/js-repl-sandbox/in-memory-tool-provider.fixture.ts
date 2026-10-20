@@ -85,7 +85,7 @@ export class InMemoryToolProvider implements ToolProvider {
   ): Promise<ToolSearchResult[]> {
     options = parseToolSearchOptions(options);
     this.searches.push({ query, options });
-    const normalizedQuery = query.toLowerCase();
+    const normalizedQuery = query.trim().toLowerCase();
     return TOOLS.filter(
       (capability) =>
         this.available.has(capabilityKey(capability)) &&
@@ -93,7 +93,7 @@ export class InMemoryToolProvider implements ToolProvider {
           .toLowerCase()
           .includes(normalizedQuery),
     )
-      .slice(0, toolSearchLimit(options))
+      .slice(0, toolSearchLimit(options, query))
       .map((capability) => ({
         reference: { namespace: capability.namespace, name: capability.name },
         description: capability.description,

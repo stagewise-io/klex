@@ -736,7 +736,7 @@ class McpModule implements Mcp {
         }),
     );
     return matches
-      .slice(0, toolSearchLimit(parsedOptions) ?? matches.length)
+      .slice(0, toolSearchLimit(parsedOptions, query) ?? matches.length)
       .map((entry) => ({
         reference: entry.descriptor.reference,
         ...(entry.tool.description

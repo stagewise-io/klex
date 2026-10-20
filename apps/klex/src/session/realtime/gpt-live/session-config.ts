@@ -10,7 +10,8 @@ import type {
 const tokenizer = getEncoding('o200k_base');
 
 const MAX_HISTORY_TEXT_CHARACTERS = 131_072;
-const DEFAULT_MAX_HISTORY_TOKENS = 32_000;
+export const GPT_LIVE_MAX_INITIAL_ITEM_TOKENS = 8_192;
+export const DEFAULT_MAX_HISTORY_TOKENS = 7_000;
 
 export interface GPTLiveSessionConfigOptions {
   readonly modelId?: string;
@@ -105,7 +106,7 @@ export function buildGPTLiveSessionConfig(
     .filter((item): item is GPTLiveInitialItem => item !== undefined);
   const input = retainNewestHistory(
     projected,
-    Math.min(maxHistoryTokens, 32_000),
+    Math.min(maxHistoryTokens, GPT_LIVE_MAX_INITIAL_ITEM_TOKENS),
   );
 
   return {

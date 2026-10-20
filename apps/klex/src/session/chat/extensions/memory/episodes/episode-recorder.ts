@@ -1,6 +1,10 @@
 import type { ModuleLogger } from '@stagewise/logger';
 
 import type { ExtendedUIMessage } from '../../../message-types';
+import {
+  resolveCheckpointCursor,
+  type StagedCheckpoint,
+} from '../checkpoint-cursor';
 import { collectEpisodicHistory } from '../history-compression';
 import type { EpisodeStore } from './episode-files';
 import { toEpisodeRecordInputs } from './episode-format';
@@ -22,6 +26,7 @@ export interface EpisodeRecorderState {
 export class EpisodeRecorder {
   readonly store: EpisodeStore;
   private cursor: string | null = null;
+  private staged: StagedCheckpoint | null = null;
   private lastError: unknown = null;
 
   constructor(private readonly deps: RecorderDependencies) {
@@ -37,26 +42,23 @@ export class EpisodeRecorder {
   }
 
   /**
-   * Re-points a cursor that is about to leave the window to the checkpoint
-   * header. After-cursor scoping then covers exactly the raw tail.
+   * Announces a checkpoint that may trim the cursor. The cursor moves to
+   * the header only once the trim is visible in the window, so an aborted
+   * or deferred apply leaves it untouched.
    */
-  repoint(
-    droppedMessageIds: readonly string[],
-    checkpointMessageId: string,
-  ): void {
-    if (this.cursor !== null && droppedMessageIds.includes(this.cursor)) {
-      this.cursor = checkpointMessageId;
-    }
+  stageCheckpoint(checkpoint: StagedCheckpoint): void {
+    this.staged = checkpoint;
   }
 
   /** Records the window delta; resolves `false` when the append failed. */
   async flush(): Promise<boolean> {
     const history = this.deps.getHistory();
+    this.cursor = resolveCheckpointCursor(this.cursor, history, this.staged);
     if (
       this.cursor !== null &&
       !history.some((message) => message.id === this.cursor)
     ) {
-      // Checkpoints re-point the cursor before trimming, so this is a bug.
+      // Staged checkpoints resolve trimmed cursors, so this is a bug.
       // Skipping to the window end loses records but never duplicates them.
       this.deps.logger.error(
         { cursorId: this.cursor },

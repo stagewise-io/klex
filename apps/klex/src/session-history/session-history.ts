@@ -408,6 +408,8 @@ class SessionHistoryModule implements SessionHistory {
     messageCount: number,
     touchedInstances: ReadonlySet<string>,
     now: string,
+    /** Rows of other instances this write rolled back. */
+    removedByInstance: ReadonlyMap<string, number> = new Map(),
   ): InStatement[] {
     const others = [...touchedInstances].filter((id) => id !== instanceId);
     const statements: InStatement[] = [
@@ -422,13 +424,17 @@ class SessionHistoryModule implements SessionHistory {
         args: [messageCount, instanceId, now, instanceId],
       },
     ];
+    // Restored rows of earlier instances may have been rewritten or rolled
+    // back. `message_count` survives eviction, so decrement, not recount.
     for (const other of others) {
       statements.push({
-        sql: `UPDATE sessions SET byte_size = (
-                SELECT COALESCE(SUM(byte_size), 0) FROM messages WHERE instance_id = ?
-              )
+        sql: `UPDATE sessions SET
+                message_count = MAX(0, message_count - ?),
+                byte_size = (
+                  SELECT COALESCE(SUM(byte_size), 0) FROM messages WHERE instance_id = ?
+                )
               WHERE instance_id = ?`,
-        args: [other, other],
+        args: [removedByInstance.get(other) ?? 0, other, other],
       });
     }
     return statements;
@@ -534,6 +540,7 @@ class SessionHistoryModule implements SessionHistory {
     // never restored.
     const nextEntries = new Map<string, RecordedEntry>();
     const touched = new Set<string>([meta.instanceId]);
+    const removedByInstance = new Map<string, number>();
     let nextOrd = await this.peekOrd(client, meta.sessionId);
     let lastOrd = -1;
     let messageCount = recorder.messageCount;
@@ -642,7 +649,14 @@ class SessionHistoryModule implements SessionHistory {
       // Removed from the window without a trim: a rollback.
       changed = true;
       touched.add(entry.instanceId);
-      if (entry.instanceId === meta.instanceId) messageCount--;
+      if (entry.instanceId === meta.instanceId) {
+        messageCount--;
+      } else {
+        removedByInstance.set(
+          entry.instanceId,
+          (removedByInstance.get(entry.instanceId) ?? 0) + 1,
+        );
+      }
       statements.push({
         sql: 'DELETE FROM messages WHERE session_id = ? AND ord = ?',
         args: [meta.sessionId, entry.ord],
@@ -661,6 +675,7 @@ class SessionHistoryModule implements SessionHistory {
         messageCount,
         touched,
         now,
+        removedByInstance,
       ),
     );
 

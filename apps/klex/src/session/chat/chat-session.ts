@@ -1004,11 +1004,16 @@ class ChatSessionModule implements AgentSession {
    * Compaction usually commits after the turn ended, while the session is
    * idle. Apply right away instead of waiting for the next step boundary;
    * runLoop and lane quiescing await this before touching the window.
+   * Also re-run when the loop exits and when the lane resumes, so a commit
+   * that arrived while either guard held is not left pending until the
+   * next turn.
    */
   private applyCheckpointIfIdle(): void {
     if (this.loopActive || this.laneSuspended || this.idleCheckpointApply) {
       return;
     }
+    if (!this.checkpointManager.hasPending) return;
+    if (this._status === 'terminated') return;
     const apply = this.checkpointManager.applyPending().finally(() => {
       if (this.idleCheckpointApply === apply) this.idleCheckpointApply = null;
     });
@@ -1055,6 +1060,8 @@ class ChatSessionModule implements AgentSession {
     if (this.runtimeState === 'leased') this.setRuntimeState('idle');
     this.sessionSpan.addEvent('session.generation_lane_resumed', {});
     if (this._status === 'terminated') return;
+    // Before startLoop, so a restarted loop awaits the apply.
+    this.applyCheckpointIfIdle();
     if (this.hasPendingInput || !this.sessionInbox.isEmpty()) {
       this.startLoop();
     }
@@ -1555,6 +1562,7 @@ class ChatSessionModule implements AgentSession {
     } finally {
       this.loopActive = false;
       this.releaseQuiesceWaiters();
+      this.applyCheckpointIfIdle();
     }
   }
 

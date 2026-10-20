@@ -121,6 +121,14 @@ export const SESSION_HISTORY_MIGRATIONS: SqliteMigration[] = [
             )`,
         args: [`%"type":"${CHECKPOINT_PART_TYPE}"%`],
       });
+      // Legacy summaries were assistant messages. A restored window opens
+      // with its header, and providers require a user-first conversation.
+      await database.execute(`
+        UPDATE messages_v2
+        SET role = 'user',
+            content = json_set(content, '$.role', 'user'),
+            byte_size = length(CAST(json_set(content, '$.role', 'user') AS BLOB))
+        WHERE is_checkpoint = 1 AND role <> 'user'`);
       await database.execute('DROP TABLE messages');
       await database.execute('ALTER TABLE messages_v2 RENAME TO messages');
       await database.execute(

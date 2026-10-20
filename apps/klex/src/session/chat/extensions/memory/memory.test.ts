@@ -266,11 +266,17 @@ describe('memory extension lifecycle', () => {
     expect(await recorded()).toEqual(['first', 'second']);
     expect(cursor()).toBe('a2');
 
+    // Staged only: an aborted apply must not move the cursor.
     await extension.onCheckpointApplying?.({
-      droppedMessageIds: ['a2'],
+      droppedMessageIds: ['a1', 'a2'],
+      checkpointMessageId: 'cp-aborted',
+    });
+    expect(cursor()).toBe('a2');
+
+    await extension.onCheckpointApplying?.({
+      droppedMessageIds: ['a1', 'a2'],
       checkpointMessageId: 'cp2',
     });
-    expect(cursor()).toBe('cp2');
     history.splice(0, 2, message('cp2', 'header'));
     extension.onStepStart?.();
     history.push(message('a3', 'third'));

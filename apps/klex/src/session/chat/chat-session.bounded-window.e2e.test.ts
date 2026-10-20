@@ -163,7 +163,9 @@ interface Internals {
   instanceId: string;
   messages: ExtendedUIMessage[];
   idleCheckpointApply: Promise<void> | null;
+  laneSuspended: boolean;
   flushPendingImmediate: () => void;
+  resumeGenerationLane: () => void;
 }
 
 function internals(session: ChatSessionHandle): Internals {
@@ -300,5 +302,36 @@ describe('default session bounded window (end to end)', () => {
       ...answers,
       `answer ${TURNS}`,
     ]);
+  });
+
+  it('applies a checkpoint committed during a lease once the lane resumes', async () => {
+    const dataDirectory = await mkdtemp(join(tmpdir(), 'klex-bounded-e2e-'));
+    directories.push(dataDirectory);
+    const history = await openHistory(dataDirectory);
+    const checkpointProducer = producer();
+    const session = createSession(dataDirectory, history, [
+      checkpointProducer.factory,
+    ]);
+    await session.start();
+    const state = internals(session);
+    state.messages.push(...turn(0), ...turn(1));
+    state.flushPendingImmediate();
+
+    state.laneSuspended = true;
+    const result = checkpointProducer.deps().checkpoints.commit({
+      coversThroughMessageId: 'a0',
+      summary: 'summary through turn 0',
+    });
+    expect(result).toEqual({ status: 'pending' });
+    expect(state.idleCheckpointApply).toBeNull();
+    expect(state.messages.map((m) => m.id)).toEqual(['u0', 'a0', 'u1', 'a1']);
+
+    state.resumeGenerationLane();
+    await state.idleCheckpointApply;
+    expect(isCheckpointHeader(state.messages[0])).toBe(true);
+    expect(state.messages.slice(1).map((m) => m.id)).toEqual(['u1', 'a1']);
+
+    await session.close();
+    await history.flush();
   });
 });

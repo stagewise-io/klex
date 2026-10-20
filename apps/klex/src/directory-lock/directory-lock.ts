@@ -91,11 +91,13 @@ class DirectoryLockModule implements DirectoryLock {
   }
 
   private async tryAcquire(): Promise<void> {
+    // Resolve before open(): concurrent acquirers treat an empty lock file as
+    // stale, so nothing may be awaited between creation and the write.
+    const processStartTime = await readProcessStartTime(process.pid);
     // O_EXCL ensures atomic creation — fails if file already exists
     const handle = await open(this.deps.lockPath, 'wx', 0o600);
     this.handle = handle;
     heldLockPaths.add(this.deps.lockPath);
-    const processStartTime = await readProcessStartTime(process.pid);
     const content = JSON.stringify({
       pid: process.pid,
       startedAt: new Date().toISOString(),

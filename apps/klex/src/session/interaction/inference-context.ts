@@ -1,5 +1,6 @@
 import type { ModelMessage, ToolSet } from 'ai';
 
+import { isCheckpointHeader } from '@/session/chat/checkpoint';
 import type { ExtensionHandler } from '@/session/chat/extension-handler';
 import type {
   ResolvedModel,
@@ -66,7 +67,12 @@ export async function runInferenceHistoryTransformers(
   history: ExtendedUIMessage[],
   model: ResolvedModel,
 ): Promise<{ history: ExtendedUIMessage[]; flags: TransformationFlags }> {
-  return handler.runHistoryTransformers(history, model);
+  // A checkpoint header at the window start means older history was
+  // replaced by a summary; read it before transformers can reshape the view.
+  const startsWithCheckpoint = isCheckpointHeader(history[0]);
+  const result = await handler.runHistoryTransformers(history, model);
+  if (!startsWithCheckpoint) return result;
+  return { ...result, flags: { ...result.flags, hasCompacted: true } };
 }
 
 export async function convertInferenceHistory(

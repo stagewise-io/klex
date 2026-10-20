@@ -3,6 +3,8 @@ import { join } from 'node:path';
 import { type ToolSet, tool } from 'ai';
 
 import type {
+  CheckpointApplyingEvent,
+  CheckpointApplyingResult,
   Extension,
   ExtensionDeps,
   ExtensionFactory,
@@ -94,6 +96,11 @@ class MemoryExt implements Extension {
       store,
       logger: this.deps.logger,
     });
+    // The window may be restored from a previous instance that already
+    // recorded and observed it; resume after its last message.
+    const window = this.deps.getHistory();
+    this.recorder.seed(window);
+    this.lastObservedMessageId = window.at(-1)?.id ?? null;
     this.flushTimer = setInterval(() => {
       void this.serialize(async () => {
         if (this.closed || this.stepActive) return;
@@ -189,6 +196,30 @@ class MemoryExt implements Extension {
     return this.serialize(() => this.recorder?.flush() ?? Promise.resolve());
   }
 
+  /**
+   * Records everything up to the trim before it happens and moves cursors
+   * that would leave the window onto the checkpoint header. Defers the
+   * checkpoint while episode writes fail so no unrecorded message is trimmed.
+   */
+  onCheckpointApplying(
+    event: CheckpointApplyingEvent,
+  ): Promise<CheckpointApplyingResult | undefined> {
+    return this.serializeResult(async () => {
+      const recorder = this.recorder;
+      if (this.closed || !recorder) return undefined;
+      this.observeDelta();
+      if (!(await recorder.flush())) return { defer: true };
+      recorder.repoint(event.droppedMessageIds, event.checkpointMessageId);
+      if (
+        this.lastObservedMessageId !== null &&
+        event.droppedMessageIds.includes(this.lastObservedMessageId)
+      ) {
+        this.lastObservedMessageId = event.checkpointMessageId;
+      }
+      return undefined;
+    });
+  }
+
   introspect(): Record<string, unknown> {
     return {
       lastObservedMessageId: this.lastObservedMessageId,
@@ -228,9 +259,16 @@ class MemoryExt implements Extension {
     }
   }
 
-  private serialize(action: () => Promise<void>): Promise<void> {
+  private serialize(action: () => Promise<unknown>): Promise<void> {
+    return this.serializeResult(action).then(() => undefined);
+  }
+
+  private serializeResult<T>(action: () => Promise<T>): Promise<T> {
     const result = this.operation.then(action, action);
-    this.operation = result.catch(() => undefined);
+    this.operation = result.then(
+      () => undefined,
+      () => undefined,
+    );
     return result;
   }
 }

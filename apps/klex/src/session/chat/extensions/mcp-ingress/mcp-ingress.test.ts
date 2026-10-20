@@ -38,6 +38,7 @@ function createMockDeps(
   return {
     getHistory: () => [],
     insertMessageAfter: vi.fn(() => true),
+    checkpoints: { commit: vi.fn(() => ({ status: 'pending' as const })) },
     inbox: {
       send: vi.fn(),
       sendMessage: vi.fn(),
@@ -1755,37 +1756,21 @@ describe('MCP Ingress extension', () => {
     expect(serverPart?.data.diff?.changed[0]?.resourceCount).toBe(7);
   });
 
-  it('historyTransformer injects last known server list after compaction', () => {
+  it('getCheckpointCarry carries the last known server list as initial', async () => {
     const removedServerList = [
       { name: 'github', status: 'connected', toolCount: 12, resourceCount: 3 },
       { name: 'slack', status: 'connected', toolCount: 5, resourceCount: 0 },
     ];
-    // Simulate compaction: original history has server-list msg, then a text msg.
-    // The transformer receives only the post-compaction history (starting from the text msg).
-    const originalHistory: ExtendedUIMessage[] = [
+    const dropped: ExtendedUIMessage[] = [
       createServerListMessage(
         { isInitial: true, servers: removedServerList },
         'msg-server-list',
       ),
-      createTextMessage(
-        'user',
-        'what resources are available?',
-        'msg-survivor',
-      ),
+      createTextMessage('user', 'what resources are available?', 'msg-later'),
     ];
-    const deps = createMockDeps();
-    // Override getHistory to return the full pre-compaction history
-    (deps as { getHistory: () => ExtendedUIMessage[] }).getHistory = () =>
-      originalHistory;
-    const ext = createMcpIngressExt().create(deps);
-    // The transformer receives only the survivor message (post-compaction)
-    const postCompactionHistory = [originalHistory[1]!];
-    const result = unwrapHistoryResult(
-      ext.historyTransformer?.(postCompactionHistory, {} as never),
-    );
-    // The first message should now have a server-list part prepended
-    const firstParts = result[0]?.parts ?? [];
-    const serverPart = findServerListPart(firstParts) as
+    const ext = createMcpIngressExt().create(createMockDeps());
+    const carry = (await ext.getCheckpointCarry?.(dropped)) ?? [];
+    const serverPart = findServerListPart(carry) as
       | { data: { isInitial: boolean; servers: { name: string }[] } }
       | undefined;
     expect(serverPart).toBeDefined();
@@ -1796,15 +1781,20 @@ describe('MCP Ingress extension', () => {
     ]);
   });
 
-  it('historyTransformer does not inject server list when no compaction occurred', () => {
-    const deps = createMockDeps();
-    const ext = createMcpIngressExt().create(deps);
+  it('getCheckpointCarry carries nothing when no lists were dropped', async () => {
+    const ext = createMcpIngressExt().create(createMockDeps());
+    const carry = await ext.getCheckpointCarry?.([
+      createTextMessage('user', 'hello'),
+    ]);
+    expect(carry).toEqual([]);
+  });
+
+  it('historyTransformer does not modify the window head or raise hasCompacted', () => {
+    const ext = createMcpIngressExt().create(createMockDeps());
     const history = [createTextMessage('user', 'hello')];
-    const result = unwrapHistoryResult(
-      ext.historyTransformer?.(history, {} as never),
-    );
-    const serverPart = findServerListPart(result[0]?.parts ?? []);
-    expect(serverPart).toBeUndefined();
+    const result = ext.historyTransformer?.(history, {} as never);
+    expect(result).toBe(history);
+    expect(findServerListPart(history[0]?.parts ?? [])).toBeUndefined();
   });
 
   it('dataPartTransformers renders initial server list as mcp-servers XML', () => {
@@ -2005,7 +1995,7 @@ describe('MCP Ingress extension', () => {
     expect(openPart).toBeUndefined();
   });
 
-  it('historyTransformer injects last known open-resources list after compaction', async () => {
+  it('getCheckpointCarry carries the last known open-resources list as initial', async () => {
     const removedResources = [
       {
         handle: 'r1',
@@ -2015,23 +2005,16 @@ describe('MCP Ingress extension', () => {
         live: true,
       },
     ];
-    const originalHistory: ExtendedUIMessage[] = [
+    const dropped: ExtendedUIMessage[] = [
       createOpenResourcesMessage(
         { isInitial: true, resources: removedResources },
         'msg-open-resources',
       ),
-      createTextMessage('user', 'what is in r1?', 'msg-survivor'),
+      createTextMessage('user', 'what is in r1?', 'msg-later'),
     ];
-    const deps = createMockDeps();
-    (deps as { getHistory: () => ExtendedUIMessage[] }).getHistory = () =>
-      originalHistory;
-    const ext = createMcpIngressExt().create(deps);
-    const postCompactionHistory = [originalHistory[1]!];
-    const result = unwrapHistoryResult(
-      ext.historyTransformer?.(postCompactionHistory, {} as never),
-    );
-    const firstParts = result[0]?.parts ?? [];
-    const openPart = findOpenResourcesPart(firstParts) as
+    const ext = createMcpIngressExt().create(createMockDeps());
+    const carry = (await ext.getCheckpointCarry?.(dropped)) ?? [];
+    const openPart = findOpenResourcesPart(carry) as
       | { data: { isInitial: boolean; resources: { handle: string }[] } }
       | undefined;
     expect(openPart).toBeDefined();

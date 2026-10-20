@@ -87,6 +87,7 @@ afterAll(() => {
 const noopDeps: BaseExtensionDeps = {
   getHistory: () => [],
   insertMessageAfter: vi.fn(() => true),
+  checkpoints: { commit: vi.fn(() => ({ status: 'pending' as const })) },
   inbox: {
     send: vi.fn(),
     sendMessage: vi.fn(),
@@ -597,12 +598,28 @@ describe('ExtensionHandler — runContextTransformers', () => {
 });
 
 describe('ExtensionHandler — getDataPartTransformers', () => {
-  it('returns an empty object when no extensions define transformers', () => {
+  it('returns only core transformers when no extensions define any', () => {
     const handler = createExtensionHandler({
       factories: [factoryWith({}), factoryWith({})],
       ...HANDLER_OPTS,
     });
-    expect(handler.getDataPartTransformers()).toEqual({});
+    expect(Object.keys(handler.getDataPartTransformers())).toEqual([
+      'context-summary',
+    ]);
+  });
+
+  it('rejects extensions that register the core checkpoint transformer', () => {
+    const handler = createExtensionHandler({
+      factories: [
+        factoryWith({
+          dataPartTransformers: {
+            'context-summary': vi.fn(() => []),
+          } as unknown as DataPartTransformers,
+        }),
+      ],
+      ...HANDLER_OPTS,
+    });
+    expect(() => handler.getDataPartTransformers()).toThrow();
   });
 
   it('merges transformers from multiple extensions', () => {
@@ -615,7 +632,7 @@ describe('ExtensionHandler — getDataPartTransformers', () => {
       context: transformer1,
     } as unknown as DataPartTransformers;
     const transformers2 = {
-      'context-summary': transformer2,
+      summary: transformer2,
     } as unknown as DataPartTransformers;
 
     const handler = createExtensionHandler({
@@ -628,7 +645,7 @@ describe('ExtensionHandler — getDataPartTransformers', () => {
 
     const merged = handler.getDataPartTransformers();
     expect(merged.context).toBe(transformer1);
-    expect(merged['context-summary']).toBe(transformer2);
+    expect(merged.summary).toBe(transformer2);
   });
 
   it('throws when two extensions register a transformer for the same type', () => {

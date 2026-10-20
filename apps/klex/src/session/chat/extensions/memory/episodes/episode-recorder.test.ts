@@ -45,7 +45,7 @@ describe('EpisodeRecorder', () => {
     const { recorder, store } = harness(history);
     await recorder.flush();
     expect(store.append).toHaveBeenCalledOnce();
-    expect(recorder.introspect().cursor).toEqual({ id: 'a1', index: 0 });
+    expect(recorder.introspect().cursor).toBe('a1');
   });
 
   it('retries a failed append without advancing or duplicating', async () => {
@@ -57,9 +57,9 @@ describe('EpisodeRecorder', () => {
         throw new Error('disk full');
       }
     });
-    await recorder.flush();
+    await expect(recorder.flush()).resolves.toBe(false);
     expect(recorder.introspect().cursor).toBeNull();
-    await recorder.flush();
+    await expect(recorder.flush()).resolves.toBe(true);
     expect(store.append).toHaveBeenCalledTimes(2);
     expect(recorder.introspect().lastError).toBeNull();
   });
@@ -79,13 +79,55 @@ describe('EpisodeRecorder', () => {
     expect(store.append).toHaveBeenLastCalledWith([output('second', 'a2')]);
   });
 
-  it('rescopes safely when the cursor message disappeared', async () => {
+  it('keeps an ID cursor stable when earlier messages leave the window', async () => {
     const history = [message('a1', 'first'), message('a2', 'second')];
-    const { recorder } = harness(history);
+    const { recorder, store } = harness(history);
     await recorder.flush();
     history.splice(0, 1);
     history.push(message('a3', 'third'));
     await recorder.flush();
-    expect(recorder.introspect().cursor?.id).toBe('a3');
+    expect(store.append).toHaveBeenLastCalledWith([output('third', 'a3')]);
+    expect(recorder.introspect().cursor).toBe('a3');
+  });
+
+  it('seeds past a restored window without recording it', async () => {
+    const history = [message('a1', 'first'), message('a2', 'second')];
+    const { recorder, store } = harness(history);
+    recorder.seed(history);
+    await recorder.flush();
+    expect(store.append).not.toHaveBeenCalled();
+    history.push(message('a3', 'third'));
+    await recorder.flush();
+    expect(store.append).toHaveBeenCalledWith([output('third', 'a3')]);
+  });
+
+  it('re-points a dropped cursor to the checkpoint header', async () => {
+    const history = [message('a1', 'first'), message('a2', 'second')];
+    const { recorder, store } = harness(history);
+    await recorder.flush();
+    recorder.repoint(['a1', 'a2'], 'cp');
+    expect(recorder.introspect().cursor).toBe('cp');
+    history.splice(0, 2, message('cp', 'header'), message('a3', 'third'));
+    await recorder.flush();
+    expect(store.append).toHaveBeenLastCalledWith([output('third', 'a3')]);
+  });
+
+  it('leaves a cursor in the tail untouched on re-point', async () => {
+    const history = [message('a1', 'first'), message('a2', 'second')];
+    const { recorder } = harness(history);
+    await recorder.flush();
+    recorder.repoint(['a1'], 'cp');
+    expect(recorder.introspect().cursor).toBe('a2');
+  });
+
+  it('skips to the window end without duplicates when the cursor is gone', async () => {
+    const history = [message('a1', 'first'), message('a2', 'second')];
+    const { logger, recorder, store } = harness(history);
+    await recorder.flush();
+    history.splice(0, 2, message('b1', 'other'));
+    await expect(recorder.flush()).resolves.toBe(true);
+    expect(store.append).toHaveBeenCalledOnce();
+    expect(logger.error).toHaveBeenCalledOnce();
+    expect(recorder.introspect().cursor).toBe('b1');
   });
 });

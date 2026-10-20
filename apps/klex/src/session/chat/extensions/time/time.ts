@@ -236,35 +236,25 @@ class TimeExt implements Extension {
     return { parts };
   }
 
-  historyTransformer(history: ExtendedUIMessage[]): ExtendedUIMessage[] {
-    const first = history[0];
-    if (!first) return history;
-
-    const original = this.deps.getHistory();
-    const cutoffIndex = original.findIndex(
-      (message) => message.id === first.id,
-    );
-    if (cutoffIndex <= 0) return history;
-
-    const removed = original.slice(0, cutoffIndex);
-    const time = latestPart(removed, TIME_KEY, isTimeData);
+  /**
+   * Carries the latest valid time and timezone out of the dropped prefix.
+   * A missing time is not invented; a missing timezone falls back to the
+   * startup timezone so the header always anchors the clock's zone.
+   */
+  getCheckpointCarry(
+    dropped: readonly ExtendedUIMessage[],
+  ): ExtendedUIMessage['parts'] {
+    const time = latestPart(dropped, TIME_KEY, isTimeData);
     const timezone =
-      latestPart(removed, TIMEZONE_KEY, isTimezoneData) ??
-      createDataPart(TIMEZONE_KEY, {
+      latestPart(dropped, TIMEZONE_KEY, isTimezoneData) ??
+      (createDataPart(TIMEZONE_KEY, {
         tz: this.cfg.timezone,
         timestamp: Math.floor(Date.now() / 1000),
-      });
+      }) as unknown as ExtendedUIMessage['parts'][number]);
 
     return [
-      {
-        ...first,
-        parts: [
-          ...(time ? [structuredClone(time)] : []),
-          structuredClone(timezone) as never,
-          ...first.parts,
-        ],
-      },
-      ...history.slice(1),
+      ...(time ? [structuredClone(time)] : []),
+      structuredClone(timezone),
     ];
   }
 

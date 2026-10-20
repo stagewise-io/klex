@@ -6,8 +6,10 @@ import type { ModelMessage, ToolSet } from 'ai';
 import type { IntrospectionScope } from '@/introspection';
 import type { Usage } from '@/session/types';
 
+import { CHECKPOINT_DATA_PART_TRANSFORMERS } from '../checkpoint';
 import type {
   BaseExtensionDeps,
+  CheckpointApplyingEvent,
   DataPartTransformers,
   Extension,
   ExtensionDeps,
@@ -200,9 +202,10 @@ export interface ExtensionHandler {
   ) => Promise<{ history: ModelMessage[]; flags: TransformationFlags }>;
 
   /**
-   * Collect and merge all `dataPartTransformers` from all extensions.
-   * Throws if two extensions register a transformer for the same data part
-   * type — only one converter per type is allowed.
+   * Collect and merge all `dataPartTransformers` from all extensions on top
+   * of core-owned transformers (the checkpoint summary). Throws if two
+   * sources register a transformer for the same data part type — only one
+   * converter per type is allowed.
    */
   getDataPartTransformers: () => DataPartTransformers;
   /** Registered data-part keys owned by one extension (duplicate keys throw). */
@@ -219,6 +222,24 @@ export interface ExtensionHandler {
    * failure does not affect others.
    */
   runStepCompleteHooks: (event: StepCompleteEvent) => Promise<void>;
+
+  /**
+   * Collect `getCheckpointCarry(dropped)` parts sequentially in factory
+   * order. Each extension receives its own structured clone. Throws (after
+   * logging) if any extension fails, so the caller can abort the apply.
+   */
+  collectCheckpointCarry: (
+    dropped: readonly ExtendedUIMessage[],
+  ) => Promise<ExtendedUIMessage['parts']>;
+
+  /**
+   * Run `onCheckpointApplying` sequentially in factory order. Returns
+   * `defer: true` if any hook deferred or threw (throws are logged). All
+   * hooks run even after a deferral so each can prepare for the trim.
+   */
+  runCheckpointApplyingHooks: (
+    event: CheckpointApplyingEvent,
+  ) => Promise<{ defer: boolean }>;
 }
 
 export interface ExtensionHandlerDependencies {
@@ -645,7 +666,11 @@ class ExtensionHandlerModule implements ExtensionHandler {
   }
 
   getDataPartTransformers(): DataPartTransformers {
-    const merged: DataPartTransformers = {};
+    // Core-owned parts (checkpoint headers) are rendered by core; an
+    // extension registering the same key is a duplicate.
+    const merged: DataPartTransformers = {
+      ...CHECKPOINT_DATA_PART_TRANSFORMERS,
+    };
 
     for (const ext of this.extensions) {
       if (!ext.dataPartTransformers) continue;
@@ -708,6 +733,57 @@ class ExtensionHandlerModule implements ExtensionHandler {
         );
       }
     }
+  }
+
+  async collectCheckpointCarry(
+    dropped: readonly ExtendedUIMessage[],
+  ): Promise<ExtendedUIMessage['parts']> {
+    const parts: ExtendedUIMessage['parts'] = [];
+
+    for (const ext of this.extensions) {
+      if (!ext.getCheckpointCarry) continue;
+      try {
+        const carried = await ext.getCheckpointCarry(structuredClone(dropped));
+        parts.push(...structuredClone(carried));
+      } catch (error) {
+        this.extensionDeps.logger.error(
+          { error, extensionIdentifier: this.identifiersByExtension.get(ext) },
+          'Extension checkpoint carry failed',
+        );
+        throw error;
+      }
+    }
+
+    return parts;
+  }
+
+  async runCheckpointApplyingHooks(
+    event: CheckpointApplyingEvent,
+  ): Promise<{ defer: boolean }> {
+    let defer = false;
+
+    for (const ext of this.extensions) {
+      if (!ext.onCheckpointApplying) continue;
+      const extensionIdentifier = this.identifiersByExtension.get(ext);
+      try {
+        const result = await ext.onCheckpointApplying(structuredClone(event));
+        if (result?.defer === true) {
+          defer = true;
+          this.extensionDeps.logger.info(
+            { extensionIdentifier },
+            'Extension deferred checkpoint apply',
+          );
+        }
+      } catch (error) {
+        defer = true;
+        this.extensionDeps.logger.error(
+          { error, extensionIdentifier },
+          'Extension onCheckpointApplying hook failed — deferring checkpoint',
+        );
+      }
+    }
+
+    return { defer };
   }
 }
 

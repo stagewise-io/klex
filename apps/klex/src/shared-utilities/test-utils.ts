@@ -30,6 +30,9 @@ export function makeDeps(overrides?: Partial<ExtensionDeps>): ExtensionDeps {
   return {
     getHistory: vi.fn(() => []),
     insertMessageAfter: vi.fn(() => true),
+    checkpoints: {
+      commit: vi.fn(() => ({ status: 'pending' })),
+    } as unknown as ExtensionDeps['checkpoints'],
     inbox: {
       send: vi.fn(),
       sendMessage: vi.fn(),

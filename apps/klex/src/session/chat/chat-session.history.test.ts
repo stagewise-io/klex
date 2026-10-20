@@ -68,6 +68,9 @@ function fakeSessionHistory(options: { endError?: Error } = {}): {
           end: vi.fn(async () => {
             if (options.endError) throw options.endError;
           }),
+          seed: vi.fn(),
+          markTrimmed: vi.fn(),
+          commitCheckpoint: vi.fn(async () => {}),
         },
       };
       recorders.push(entry);

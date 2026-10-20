@@ -27,6 +27,9 @@ import type {
   SessionHistoryRecord,
   SessionHistoryRecorder,
   SessionHistoryRecorderMetadata,
+  SessionHistoryWindow,
+  SessionHistoryWindowEntry,
+  SessionHistoryWindowQuery,
 } from './types';
 
 export interface SessionHistoryDependencies {
@@ -49,6 +52,16 @@ export interface SessionHistory {
     instanceId: string,
     query: SessionHistoryMessagesQuery,
   ): Promise<SessionHistoryMessagesPage | undefined>;
+  /**
+   * Load the restorable window of a logical session: the latest checkpoint
+   * header plus all later messages, or the newest messages within
+   * `fallbackMaxBytes` when no checkpoint exists. Runs on the write queue,
+   * so it observes every write enqueued before the call.
+   */
+  loadWindow(
+    sessionId: string,
+    query: SessionHistoryWindowQuery,
+  ): Promise<SessionHistoryWindow>;
   /** Wait until all queued writes have completed. */
   flush(): Promise<void>;
   /** Run size-cap enforcement immediately on the write queue. */
@@ -75,6 +88,12 @@ const ENFORCEMENT_THROTTLE_MS = 30_000;
 /** Rows fetched per eviction query. */
 const EVICTION_BATCH_SIZE = 200;
 
+/**
+ * Logical session whose restorable window is protected from size-cap
+ * eviction. Only the default session is restored across restarts.
+ */
+const PROTECTED_SESSION_ID = 'default';
+
 const SESSION_KINDS: readonly SessionKind[] = ['default', 'god', 'child'];
 
 export function resolveSessionHistoryMaxBytes(
@@ -83,20 +102,38 @@ export function resolveSessionHistoryMaxBytes(
   return config.sessionHistory?.maxBytes ?? DEFAULT_SESSION_HISTORY_MAX_BYTES;
 }
 
-/** Per-instance write state. Only mutated on the store write queue. */
-class RecorderState implements SessionHistoryRecorder {
+/** Persisted state of one window message. */
+interface RecordedEntry {
+  ord: number;
   /**
-   * Content hashes as of the last committed write, by `seq`. Content, not
-   * object identity, decides what is rewritten: history repair mutates
-   * older messages in place.
+   * Content hash as of the last committed write. Content, not object
+   * identity, decides what is rewritten: history repair mutates older
+   * messages in place.
    */
-  persistedHashes: string[] = [];
-  /** Message count as of the last committed write. */
-  persistedLength = 0;
-  /** `persisted_at` values as of the last committed write, by `seq`. */
-  persistedAt: string[] = [];
-  /** Leading `seq` values removed by size-cap enforcement. */
-  trimmed = 0;
+  hash: string;
+  /** Instance that wrote the row (differs for restored messages). */
+  instanceId: string;
+  /** Checkpoint headers keep their `ord` outside the window order. */
+  isCheckpoint: boolean;
+  /**
+   * False for a committed checkpoint header that has not appeared in a
+   * synced window yet; its absence must not delete the row.
+   */
+  seen: boolean;
+}
+
+/** Per-instance write state. Entries are only mutated on the write queue. */
+class RecorderState implements SessionHistoryRecorder {
+  /** Persisted window messages by message ID. */
+  entries = new Map<string, RecordedEntry>();
+  /**
+   * IDs announced as trimmed. Written synchronously by the session, consumed
+   * by the next sync, so a sync that runs after the trim forgets instead of
+   * deleting them.
+   */
+  readonly pendingTrimmed = new Set<string>();
+  /** Rows written by this instance minus rolled-back ones. */
+  messageCount = 0;
   inserted = false;
   ended = false;
   pending: (() => readonly ExtendedUIMessage[]) | null = null;
@@ -121,6 +158,41 @@ class RecorderState implements SessionHistoryRecorder {
     void this.store.enqueue(() => this.store.runSync(this));
   }
 
+  seed(window: SessionHistoryWindow): void {
+    for (const entry of window.entries) {
+      this.entries.set(entry.message.id, {
+        ord: entry.ord,
+        hash: entry.hash,
+        instanceId: entry.instanceId,
+        isCheckpoint: entry.isCheckpoint,
+        seen: true,
+      });
+    }
+  }
+
+  markTrimmed(messageIds: readonly string[]): void {
+    for (const id of messageIds) this.pendingTrimmed.add(id);
+  }
+
+  commitCheckpoint(
+    header: ExtendedUIMessage,
+    coversThroughMessageId: string,
+    getMessages: () => readonly ExtendedUIMessage[],
+  ): Promise<void> {
+    if (this.ended) {
+      return Promise.reject(new Error('Session history recorder has ended'));
+    }
+    this.lastGetter = getMessages;
+    return this.store.enqueueResult(() =>
+      this.store.runCommitCheckpoint(
+        this,
+        header,
+        coversThroughMessageId,
+        getMessages,
+      ),
+    );
+  }
+
   end(reason: string): Promise<void> {
     if (this.ended) return Promise.resolve();
     this.ended = true;
@@ -137,6 +209,11 @@ class SessionHistoryModule implements SessionHistory {
   private lastEnforcementAt = 0;
   private enforcementTimer: ReturnType<typeof setTimeout> | null = null;
   private readonly liveRecorders = new Map<string, RecorderState>();
+  /**
+   * Next free `ord` per logical session. Valid because this process holds
+   * the data-directory lock and every write goes through the queue.
+   */
+  private readonly nextOrds = new Map<string, number>();
 
   constructor(
     private readonly deps: {
@@ -205,6 +282,7 @@ class SessionHistoryModule implements SessionHistory {
     this.client = null;
     this.closed = true;
     this.liveRecorders.clear();
+    this.nextOrds.clear();
     this.deps.logger.info('SessionHistory stopped');
   }
 
@@ -233,6 +311,127 @@ class SessionHistoryModule implements SessionHistory {
     });
     this.queue = run;
     return run;
+  }
+
+  /**
+   * Serialize `task` behind all queued writes and propagate its outcome.
+   * The queue itself never rejects.
+   */
+  enqueueResult<T>(task: () => Promise<T>): Promise<T> {
+    if (this.closed) {
+      return Promise.reject(new Error('SessionHistory is closed'));
+    }
+    const run = this.queue.then(task);
+    this.queue = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run;
+  }
+
+  async runCommitCheckpoint(
+    recorder: RecorderState,
+    header: ExtendedUIMessage,
+    coversThroughMessageId: string,
+    getMessages: () => readonly ExtendedUIMessage[],
+  ): Promise<void> {
+    const client = this.requireClient();
+    // Persist the window first so the anchor and the raw tail are durable.
+    recorder.pending = null;
+    await this.writeSnapshot(client, recorder, [...getMessages()]);
+    const anchor = recorder.entries.get(coversThroughMessageId);
+    if (!anchor || anchor.isCheckpoint) {
+      throw new Error(
+        `Checkpoint anchor ${coversThroughMessageId} is not persisted`,
+      );
+    }
+    const { meta } = recorder;
+    const now = this.nowIso();
+    const content = JSON.stringify(header);
+    const ord = await this.peekOrd(client, meta.sessionId);
+    await client.batch(
+      [
+        {
+          sql: `INSERT INTO messages (
+                  session_id, ord, instance_id, message_id, role, content,
+                  byte_size, persisted_at, is_checkpoint, covers_through_ord
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?)`,
+          args: [
+            meta.sessionId,
+            ord,
+            meta.instanceId,
+            header.id,
+            header.role,
+            content,
+            Buffer.byteLength(content, 'utf8'),
+            now,
+            anchor.ord,
+          ],
+        },
+        ...this.sessionTotalsStatements(
+          meta.instanceId,
+          recorder.messageCount + 1,
+          new Set(),
+          now,
+        ),
+      ],
+      'write',
+    );
+    this.nextOrds.set(meta.sessionId, ord + 1);
+    recorder.messageCount++;
+    recorder.entries.set(header.id, {
+      ord,
+      hash: hashContent(content),
+      instanceId: meta.instanceId,
+      isCheckpoint: true,
+      seen: false,
+    });
+    this.maybeScheduleEnforcement();
+  }
+
+  /** Next free `ord` of `sessionId`; callers advance the cache on commit. */
+  private async peekOrd(client: Client, sessionId: string): Promise<number> {
+    const cached = this.nextOrds.get(sessionId);
+    if (cached !== undefined) return cached;
+    const result = await client.execute({
+      sql: 'SELECT COALESCE(MAX(ord), -1) + 1 AS next FROM messages WHERE session_id = ?',
+      args: [sessionId],
+    });
+    const next = toNumber(result.rows[0]?.next);
+    this.nextOrds.set(sessionId, next);
+    return next;
+  }
+
+  /** Session-row bookkeeping after a write by `recorder`. */
+  private sessionTotalsStatements(
+    instanceId: string,
+    messageCount: number,
+    touchedInstances: ReadonlySet<string>,
+    now: string,
+  ): InStatement[] {
+    const others = [...touchedInstances].filter((id) => id !== instanceId);
+    const statements: InStatement[] = [
+      {
+        sql: `UPDATE sessions SET
+                message_count = ?,
+                byte_size = (
+                  SELECT COALESCE(SUM(byte_size), 0) FROM messages WHERE instance_id = ?
+                ),
+                updated_at = ?
+              WHERE instance_id = ?`,
+        args: [messageCount, instanceId, now, instanceId],
+      },
+    ];
+    for (const other of others) {
+      statements.push({
+        sql: `UPDATE sessions SET byte_size = (
+                SELECT COALESCE(SUM(byte_size), 0) FROM messages WHERE instance_id = ?
+              )
+              WHERE instance_id = ?`,
+        args: [other, other],
+      });
+    }
+    return statements;
   }
 
   async runSync(recorder: RecorderState): Promise<void> {
@@ -326,69 +525,160 @@ class SessionHistoryModule implements SessionHistory {
       });
     }
 
-    // Messages below `trimmed` were evicted by the size cap; never restore them.
-    const hashes: string[] = [];
-    const persistedAt: string[] = [];
-    for (let seq = recorder.trimmed; seq < snapshot.length; seq++) {
-      const message = snapshot[seq];
-      if (!message) continue;
+    // Addressing is by message ID. `ord` must follow window order for
+    // non-checkpoint rows, so restore reproduces the window: new messages
+    // take the next `ord`, and known messages that now follow a newer one
+    // (a mid-window insert) move to a fresh `ord`. Checkpoint headers keep
+    // their `ord` and are excluded from the order check. Rows evicted by the
+    // size cap stay known, so updates to them affect nothing and they are
+    // never restored.
+    const nextEntries = new Map<string, RecordedEntry>();
+    const touched = new Set<string>([meta.instanceId]);
+    let nextOrd = await this.peekOrd(client, meta.sessionId);
+    let lastOrd = -1;
+    let messageCount = recorder.messageCount;
+    for (const message of snapshot) {
+      if (nextEntries.has(message.id)) continue;
       const content = JSON.stringify(message);
-      const hash = createHash('sha1').update(content).digest('base64');
-      hashes[seq] = hash;
-      const previousAt = recorder.persistedAt[seq];
-      if (recorder.persistedHashes[seq] === hash && previousAt !== undefined) {
-        persistedAt[seq] = previousAt;
+      const hash = hashContent(content);
+      const bytes = Buffer.byteLength(content, 'utf8');
+      const previous = recorder.entries.get(message.id);
+      if (previous?.isCheckpoint) {
+        nextEntries.set(message.id, { ...previous, hash, seen: true });
+        if (previous.hash === hash) continue;
+        changed = true;
+        touched.add(previous.instanceId);
+        statements.push({
+          sql: `UPDATE messages SET role = ?, content = ?, byte_size = ?, persisted_at = ?
+                WHERE session_id = ? AND ord = ?`,
+          args: [
+            message.role,
+            content,
+            bytes,
+            now,
+            meta.sessionId,
+            previous.ord,
+          ],
+        });
         continue;
       }
-      persistedAt[seq] = now;
+      if (previous && previous.ord > lastOrd) {
+        lastOrd = previous.ord;
+        nextEntries.set(message.id, { ...previous, hash });
+        if (previous.hash === hash) continue;
+        changed = true;
+        touched.add(previous.instanceId);
+        statements.push({
+          sql: `UPDATE messages SET role = ?, content = ?, byte_size = ?, persisted_at = ?
+                WHERE session_id = ? AND ord = ?`,
+          args: [
+            message.role,
+            content,
+            bytes,
+            now,
+            meta.sessionId,
+            previous.ord,
+          ],
+        });
+        continue;
+      }
+      const ord = nextOrd++;
+      lastOrd = ord;
       changed = true;
+      if (previous) {
+        touched.add(previous.instanceId);
+        nextEntries.set(message.id, { ...previous, ord, hash });
+        statements.push({
+          sql: `UPDATE messages SET ord = ?, role = ?, content = ?, byte_size = ?, persisted_at = ?
+                WHERE session_id = ? AND ord = ?`,
+          args: [
+            ord,
+            message.role,
+            content,
+            bytes,
+            now,
+            meta.sessionId,
+            previous.ord,
+          ],
+        });
+        continue;
+      }
+      messageCount++;
+      nextEntries.set(message.id, {
+        ord,
+        hash,
+        instanceId: meta.instanceId,
+        isCheckpoint: false,
+        seen: true,
+      });
       statements.push({
         sql: `INSERT INTO messages (
-                instance_id, seq, message_id, role, content, byte_size, persisted_at
-              ) VALUES (?, ?, ?, ?, ?, ?, ?)
-              ON CONFLICT (instance_id, seq) DO UPDATE SET
-                message_id = excluded.message_id,
-                role = excluded.role,
-                content = excluded.content,
-                byte_size = excluded.byte_size,
-                persisted_at = excluded.persisted_at`,
+                session_id, ord, instance_id, message_id, role, content,
+                byte_size, persisted_at
+              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
         args: [
+          meta.sessionId,
+          ord,
           meta.instanceId,
-          seq,
           message.id,
           message.role,
           content,
-          Buffer.byteLength(content, 'utf8'),
+          bytes,
           now,
         ],
       });
     }
-    if (recorder.persistedLength > snapshot.length) {
+    const trimmed: string[] = [];
+    for (const [id, entry] of recorder.entries) {
+      if (nextEntries.has(id)) continue;
+      if (recorder.pendingTrimmed.has(id)) {
+        trimmed.push(id);
+        continue;
+      }
+      if (entry.isCheckpoint && !entry.seen) {
+        nextEntries.set(id, entry);
+        continue;
+      }
+      // Removed from the window without a trim: a rollback.
       changed = true;
+      touched.add(entry.instanceId);
+      if (entry.instanceId === meta.instanceId) messageCount--;
       statements.push({
-        sql: 'DELETE FROM messages WHERE instance_id = ? AND seq >= ?',
-        args: [meta.instanceId, snapshot.length],
+        sql: 'DELETE FROM messages WHERE session_id = ? AND ord = ?',
+        args: [meta.sessionId, entry.ord],
       });
     }
-    if (!changed) return false;
+    if (!changed) {
+      recorder.entries = nextEntries;
+      for (const id of trimmed) recorder.pendingTrimmed.delete(id);
+      this.prunePendingTrimmed(recorder);
+      return false;
+    }
 
-    statements.push({
-      sql: `UPDATE sessions SET
-              message_count = ?,
-              byte_size = (
-                SELECT COALESCE(SUM(byte_size), 0) FROM messages WHERE instance_id = ?
-              ),
-              updated_at = ?
-            WHERE instance_id = ?`,
-      args: [snapshot.length, meta.instanceId, now, meta.instanceId],
-    });
+    statements.push(
+      ...this.sessionTotalsStatements(
+        meta.instanceId,
+        messageCount,
+        touched,
+        now,
+      ),
+    );
 
     await client.batch(statements, 'write');
-    recorder.persistedHashes = hashes;
-    recorder.persistedLength = snapshot.length;
-    recorder.persistedAt = persistedAt;
+    this.nextOrds.set(meta.sessionId, nextOrd);
+    recorder.entries = nextEntries;
+    recorder.messageCount = messageCount;
+    for (const id of trimmed) recorder.pendingTrimmed.delete(id);
+    this.prunePendingTrimmed(recorder);
     recorder.inserted = true;
     return true;
+  }
+
+  /** Drop trim announcements for IDs that were never persisted. */
+  private prunePendingTrimmed(recorder: RecorderState): void {
+    for (const id of recorder.pendingTrimmed) {
+      if (!recorder.entries.has(id)) recorder.pendingTrimmed.delete(id);
+    }
   }
 
   private maybeScheduleEnforcement(): void {
@@ -437,40 +727,87 @@ class SessionHistoryModule implements SessionHistory {
     let total = initialTotal;
     let evictedSessions = 0;
     let trimmedMessages = 0;
+    // The default session's restorable window (latest checkpoint and its
+    // tail) is never evicted, regardless of which instance wrote it. Without
+    // a checkpoint nothing is protected, so a single oversized message cannot
+    // pin the store above the cap.
+    const deletable = await this.deletablePredicate(client);
 
-    // 1. Oldest ended sessions first.
+    // 1. Oldest ended sessions first. Sessions holding protected rows keep
+    // those rows and their session row.
+    let cursor: { endedAt: string; instanceId: string } | null = null;
     while (total > target) {
-      const result = await client.execute({
-        sql: `SELECT instance_id, byte_size FROM sessions
-              WHERE ended_at IS NOT NULL
-              ORDER BY ended_at ASC, instance_id ASC
-              LIMIT ?`,
-        args: [EVICTION_BATCH_SIZE],
-      });
+      const result: Awaited<ReturnType<Client['execute']>> =
+        await client.execute({
+          sql: `SELECT instance_id, ended_at FROM sessions
+                WHERE ended_at IS NOT NULL
+                  AND (? IS NULL OR ended_at > ? OR (ended_at = ? AND instance_id > ?))
+                ORDER BY ended_at ASC, instance_id ASC
+                LIMIT ?`,
+          args: [
+            cursor?.endedAt ?? null,
+            cursor?.endedAt ?? null,
+            cursor?.endedAt ?? null,
+            cursor?.instanceId ?? null,
+            EVICTION_BATCH_SIZE,
+          ],
+        });
       if (result.rows.length === 0) break;
-      const statements: InStatement[] = [];
       for (const row of result.rows) {
         if (total <= target) break;
         const instanceId = toText(row.instance_id);
-        statements.push(
-          {
-            sql: 'DELETE FROM messages WHERE instance_id = ?',
-            args: [instanceId],
-          },
-          {
-            sql: 'DELETE FROM sessions WHERE instance_id = ?',
-            args: [instanceId],
-          },
-        );
-        total -= toNumber(row.byte_size);
-        evictedSessions++;
+        cursor = { endedAt: toText(row.ended_at), instanceId };
+        const counts = await client.execute({
+          sql: `SELECT
+                  COALESCE(SUM(CASE WHEN ${deletable.sql} THEN byte_size END), 0) AS bytes,
+                  COUNT(CASE WHEN ${deletable.sql} THEN 1 END) AS removable,
+                  COUNT(*) AS rows
+                FROM messages WHERE instance_id = ?`,
+          args: [...deletable.args, ...deletable.args, instanceId],
+        });
+        const bytes = toNumber(counts.rows[0]?.bytes);
+        const removable = toNumber(counts.rows[0]?.removable);
+        const rows = toNumber(counts.rows[0]?.rows);
+        if (removable === rows) {
+          await client.batch(
+            [
+              {
+                sql: 'DELETE FROM messages WHERE instance_id = ?',
+                args: [instanceId],
+              },
+              {
+                sql: 'DELETE FROM sessions WHERE instance_id = ?',
+                args: [instanceId],
+              },
+            ],
+            'write',
+          );
+          evictedSessions++;
+        } else if (removable > 0) {
+          await client.batch(
+            [
+              {
+                sql: `DELETE FROM messages WHERE instance_id = ? AND ${deletable.sql}`,
+                args: [instanceId, ...deletable.args],
+              },
+              {
+                sql: `UPDATE sessions
+                      SET trimmed_message_count = trimmed_message_count + ?,
+                          byte_size = byte_size - ?
+                      WHERE instance_id = ?`,
+                args: [removable, bytes, instanceId],
+              },
+            ],
+            'write',
+          );
+          trimmedMessages += removable;
+        }
+        total -= bytes;
       }
-      await client.batch(statements, 'write');
     }
 
-    // 2. Oldest messages of live sessions. This can include a session's
-    // newest message: one message larger than the cap must not pin the store
-    // above it.
+    // 2. Oldest unprotected messages of live sessions. This can include a
+    // session's newest message.
     if (total > target) {
       const live = await client.execute(
         `SELECT instance_id FROM sessions WHERE ended_at IS NULL
@@ -481,43 +818,37 @@ class SessionHistoryModule implements SessionHistory {
         const instanceId = toText(sessionRow.instance_id);
         while (total > target) {
           const result = await client.execute({
-            sql: `SELECT seq, byte_size FROM messages
-                  WHERE instance_id = ?
-                  ORDER BY seq ASC
+            sql: `SELECT session_id, ord, byte_size FROM messages
+                  WHERE instance_id = ? AND ${deletable.sql}
+                  ORDER BY ord ASC
                   LIMIT ?`,
-            args: [instanceId, EVICTION_BATCH_SIZE],
+            args: [instanceId, ...deletable.args, EVICTION_BATCH_SIZE],
           });
           if (result.rows.length === 0) break;
-          let lastSeq = -1;
+          const statements: InStatement[] = [];
           let removedBytes = 0;
           let removed = 0;
           for (const row of result.rows) {
             if (total <= target) break;
-            lastSeq = toNumber(row.seq);
             const bytes = toNumber(row.byte_size);
+            statements.push({
+              sql: 'DELETE FROM messages WHERE session_id = ? AND ord = ?',
+              args: [toText(row.session_id), toNumber(row.ord)],
+            });
             removedBytes += bytes;
             total -= bytes;
             removed++;
           }
-          if (lastSeq < 0) break;
-          await client.batch(
-            [
-              {
-                sql: 'DELETE FROM messages WHERE instance_id = ? AND seq <= ?',
-                args: [instanceId, lastSeq],
-              },
-              {
-                sql: `UPDATE sessions
-                      SET trimmed_message_count = ?, byte_size = byte_size - ?
-                      WHERE instance_id = ?`,
-                args: [lastSeq + 1, removedBytes, instanceId],
-              },
-            ],
-            'write',
-          );
+          if (removed === 0) break;
+          statements.push({
+            sql: `UPDATE sessions
+                  SET trimmed_message_count = trimmed_message_count + ?,
+                      byte_size = byte_size - ?
+                  WHERE instance_id = ?`,
+            args: [removed, removedBytes, instanceId],
+          });
+          await client.batch(statements, 'write');
           trimmedMessages += removed;
-          const recorder = this.liveRecorders.get(instanceId);
-          if (recorder) recorder.trimmed = lastSeq + 1;
         }
       }
     }
@@ -535,6 +866,134 @@ class SessionHistoryModule implements SessionHistory {
       },
       'Session history size cap enforced',
     );
+  }
+
+  /**
+   * SQL predicate (over `messages` columns) matching rows outside the
+   * protected default-session window.
+   */
+  private async deletablePredicate(
+    client: Client,
+  ): Promise<{ sql: string; args: (string | number)[] }> {
+    const checkpoint = await this.latestCheckpoint(
+      client,
+      PROTECTED_SESSION_ID,
+    );
+    if (!checkpoint) return { sql: '1 = 1', args: [] };
+    return {
+      sql: `NOT (session_id = ? AND (ord = ? OR (ord > ? AND is_checkpoint = 0)))`,
+      args: [PROTECTED_SESSION_ID, checkpoint.ord, checkpoint.coversThroughOrd],
+    };
+  }
+
+  private async latestCheckpoint(
+    client: Client,
+    sessionId: string,
+  ): Promise<
+    | {
+        ord: number;
+        coversThroughOrd: number;
+        instanceId: string;
+        content: string;
+      }
+    | undefined
+  > {
+    const result = await client.execute({
+      sql: `SELECT ord, covers_through_ord, instance_id, content FROM messages
+            WHERE session_id = ? AND is_checkpoint = 1
+            ORDER BY ord DESC
+            LIMIT 1`,
+      args: [sessionId],
+    });
+    const row = result.rows[0];
+    if (!row) return undefined;
+    return {
+      ord: toNumber(row.ord),
+      coversThroughOrd: toNumber(row.covers_through_ord),
+      instanceId: toText(row.instance_id),
+      content: toText(row.content),
+    };
+  }
+
+  loadWindow(
+    sessionId: string,
+    query: SessionHistoryWindowQuery,
+  ): Promise<SessionHistoryWindow> {
+    return this.enqueueResult(async () => {
+      const client = this.requireClient();
+      const checkpoint = await this.latestCheckpoint(client, sessionId);
+      if (checkpoint) {
+        const tail = await client.execute({
+          sql: `SELECT ord, instance_id, content FROM messages
+                WHERE session_id = ? AND is_checkpoint = 0 AND ord > ?
+                ORDER BY ord ASC`,
+          args: [sessionId, checkpoint.coversThroughOrd],
+        });
+        return {
+          hasCheckpoint: true,
+          entries: [
+            toWindowEntry(
+              checkpoint.ord,
+              checkpoint.instanceId,
+              checkpoint.content,
+              true,
+            ),
+            ...tail.rows.map((row) =>
+              toWindowEntry(
+                toNumber(row.ord),
+                toText(row.instance_id),
+                toText(row.content),
+                false,
+              ),
+            ),
+          ],
+        };
+      }
+      // No checkpoint: newest messages within the byte budget, starting at
+      // a user message so the window never opens mid-step.
+      const entries: SessionHistoryWindowEntry[] = [];
+      let bytes = 0;
+      let beforeOrd: number | null = null;
+      let exhausted = false;
+      while (!exhausted) {
+        const page: Awaited<ReturnType<Client['execute']>> =
+          await client.execute({
+            sql: `SELECT ord, instance_id, content, byte_size FROM messages
+                  WHERE session_id = ? AND is_checkpoint = 0
+                    AND (? IS NULL OR ord < ?)
+                  ORDER BY ord DESC
+                  LIMIT ?`,
+            args: [sessionId, beforeOrd, beforeOrd, EVICTION_BATCH_SIZE],
+          });
+        if (page.rows.length === 0) break;
+        for (const row of page.rows) {
+          const size = toNumber(row.byte_size);
+          if (bytes + size > query.fallbackMaxBytes) {
+            exhausted = true;
+            break;
+          }
+          bytes += size;
+          beforeOrd = toNumber(row.ord);
+          entries.push(
+            toWindowEntry(
+              beforeOrd,
+              toText(row.instance_id),
+              toText(row.content),
+              false,
+            ),
+          );
+        }
+        if (page.rows.length < EVICTION_BATCH_SIZE) break;
+      }
+      entries.reverse();
+      const firstUser = entries.findIndex(
+        (entry) => entry.message.role === 'user',
+      );
+      return {
+        hasCheckpoint: false,
+        entries: firstUser < 0 ? [] : entries.slice(firstUser),
+      };
+    });
   }
 
   async listSessions(
@@ -602,9 +1061,9 @@ class SessionHistoryModule implements SessionHistory {
     if (!session) return undefined;
     const client = this.requireClient();
     const result = await client.execute({
-      sql: `SELECT seq, content, persisted_at FROM messages
-            WHERE instance_id = ? AND (? IS NULL OR seq < ?)
-            ORDER BY seq DESC
+      sql: `SELECT ord, content, persisted_at FROM messages
+            WHERE instance_id = ? AND (? IS NULL OR ord < ?)
+            ORDER BY ord DESC
             LIMIT ?`,
       args: [
         instanceId,
@@ -618,7 +1077,7 @@ class SessionHistoryModule implements SessionHistory {
       .slice(0, query.limit)
       .reverse()
       .map((row) => ({
-        seq: toNumber(row.seq),
+        seq: toNumber(row.ord),
         persistedAt: toText(row.persisted_at),
         message: parseMessage(toText(row.content)),
       }));
@@ -643,6 +1102,25 @@ class SessionHistoryModule implements SessionHistory {
 function parseMessage(content: string): ExtendedUIMessage {
   const message: ExtendedUIMessage = JSON.parse(content);
   return message;
+}
+
+function hashContent(content: string): string {
+  return createHash('sha1').update(content).digest('base64');
+}
+
+function toWindowEntry(
+  ord: number,
+  instanceId: string,
+  content: string,
+  isCheckpoint: boolean,
+): SessionHistoryWindowEntry {
+  return {
+    message: parseMessage(content),
+    ord,
+    instanceId,
+    isCheckpoint,
+    hash: hashContent(content),
+  };
 }
 
 function encodeListCursor(createdAt: string, instanceId: string): string {

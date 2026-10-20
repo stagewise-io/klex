@@ -238,7 +238,44 @@ describe('memory extension lifecycle', () => {
 
     await extension.onStepComplete?.({ ...success, fatalError: true });
     vi.advanceTimersByTime(30_000);
-    await vi.waitFor(() => expect(cursor()).toEqual({ id: 'a1', index: 0 }));
+    await vi.waitFor(() => expect(cursor()).toBe('a1'));
+    await extension.onClose?.();
+  });
+
+  it('does not re-record a restored window on start', async () => {
+    const { extension, history, recorded, cursor } = await harness();
+    history.push(message('old1', 'restored'), message('old2', 'restored too'));
+    await extension.onStart?.();
+    expect(cursor()).toBe('old2');
+    extension.onStepStart?.();
+    history.push(message('a1', 'new'));
+    await extension.onStepComplete?.(success);
+    expect(await recorded()).toEqual(['new']);
+    await extension.onClose?.();
+  });
+
+  it('records before a checkpoint trims and resumes after the header', async () => {
+    const { extension, history, recorded, cursor } = await harness();
+    await extension.onStart?.();
+    history.push(message('a1', 'first'), message('a2', 'second'));
+    const result = await extension.onCheckpointApplying?.({
+      droppedMessageIds: ['a1'],
+      checkpointMessageId: 'cp',
+    });
+    expect(result).toBeUndefined();
+    expect(await recorded()).toEqual(['first', 'second']);
+    expect(cursor()).toBe('a2');
+
+    await extension.onCheckpointApplying?.({
+      droppedMessageIds: ['a2'],
+      checkpointMessageId: 'cp2',
+    });
+    expect(cursor()).toBe('cp2');
+    history.splice(0, 2, message('cp2', 'header'));
+    extension.onStepStart?.();
+    history.push(message('a3', 'third'));
+    await extension.onStepComplete?.(success);
+    expect(await recorded()).toEqual(['first', 'second', 'third']);
     await extension.onClose?.();
   });
 });

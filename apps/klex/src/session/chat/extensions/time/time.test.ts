@@ -2,19 +2,15 @@ import { randomUUID } from 'node:crypto';
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { CHECKPOINT_DATA_PART_TRANSFORMERS } from '../../checkpoint';
 import type { ExtendedUIMessage } from '../../message-types';
 import { convertToModelMessagesExtended } from '../../utils/convert-to-model-messages';
-import { createContextCompactionExt } from '../context-compaction';
 import {
   createDataPart,
   type ExtensionDeps,
   type ProvisionalStepContext,
 } from '../extension-api';
 import { createTimeExt, createTimeExtGod, type TimeExtConfig } from './time';
-
-vi.mock('../context-compaction/compaction-prompt.md', () => ({
-  default: 'Compaction prompt',
-}));
 
 vi.mock('./system-prompt.md', () => ({
   default: 'time prompt',
@@ -104,6 +100,7 @@ function makeDeps(
   return {
     getHistory: vi.fn(() => []),
     insertMessageAfter: vi.fn(() => true),
+    checkpoints: { commit: vi.fn(() => ({ status: 'pending' as const })) },
     inbox: {
       send: vi.fn(),
       sendMessage: vi.fn(),
@@ -415,98 +412,77 @@ describe('TimeExt.getProvisionalStepContext', () => {
   });
 });
 
-describe('TimeExt.historyTransformer — compacted history', () => {
-  async function runCompaction(
-    original: ExtendedUIMessage[],
-    deps: ExtensionDeps,
-  ): Promise<ExtendedUIMessage[]> {
-    const result = await createContextCompactionExt
-      .create(deps)
-      .historyTransformer?.(structuredClone(original), {} as never);
-    if (!result) throw new Error('history transformer not registered');
-    return Array.isArray(result) ? result : result.history;
+describe('TimeExt.getCheckpointCarry', () => {
+  /** Builds the header core would write: summary first, then carry parts. */
+  function makeHeader(
+    carry: ExtendedUIMessage['parts'],
+    summary = 'Earlier history',
+  ): ExtendedUIMessage {
+    const header = makeSummaryMessage(summary);
+    return { ...header, parts: [...header.parts, ...carry] };
   }
 
-  it('carries the last time and timezone before the cutoff into the summary', async () => {
+  it('no longer transforms history itself', () => {
+    const ext = createTimeExt(DEFAULT_CONFIG).create(makeDeps());
+    expect(ext.historyTransformer).toBeUndefined();
+  });
+
+  it('carries the latest time and timezone from the dropped prefix', async () => {
     const earlier = makeTimeAndTimezoneMessage(TS_SUN_1530, 'UTC');
     const latest = makeTimeAndTimezoneMessage(TS_SUN_1645, 'Europe/Berlin');
-    const summary = makeSummaryMessage('Earlier history');
-    const retained = makeTimeAndTimezoneMessage(TS_MON_0900, 'Asia/Tokyo');
-    const original = [
-      earlier,
-      latest,
-      summary,
-      makeUserMessage('one'),
-      makeTextMessage('answer'),
-      makeUserMessage('two'),
-      retained,
-    ];
-    const deps = makeDeps({ getHistory: vi.fn(() => original) });
-    const ext = createTimeExt(DEFAULT_CONFIG).create(deps);
-    const compacted = await runCompaction(original, deps);
-    const result = ext.historyTransformer?.(compacted, {} as never);
-    if (!result || !Array.isArray(result)) throw new Error('invalid result');
+    const dropped = [earlier, makeTextMessage('answer'), latest];
+    const ext = createTimeExt(DEFAULT_CONFIG).create(makeDeps());
 
-    expect(result[0]?.parts).toEqual([
-      latest.parts[0],
-      latest.parts[1],
-      summary.parts[0],
-    ]);
-    expect(result.slice(1)).toEqual(compacted.slice(1));
-    expect(result.at(-1)).toEqual(retained);
-    expect(original[2]).toEqual(summary);
+    const carry = await ext.getCheckpointCarry?.(dropped);
 
-    const compactionExt = createContextCompactionExt.create(deps);
-    const modelMessages = await convertToModelMessagesExtended(result, {
-      ...compactionExt.dataPartTransformers,
-      ...ext.dataPartTransformers,
-    });
+    expect(carry).toEqual([latest.parts[0], latest.parts[1]]);
+    // Returned parts are clones, not references into the dropped messages.
+    expect(carry?.[0]).not.toBe(latest.parts[0]);
+
+    const modelMessages = await convertToModelMessagesExtended(
+      [makeHeader(carry ?? [])],
+      { ...CHECKPOINT_DATA_PART_TRANSFORMERS, ...ext.dataPartTransformers },
+    );
     expect(modelMessages[0]).toMatchObject({
       role: 'user',
       content: [
-        {
-          type: 'text',
-          text: '<time>Sunday, 12.4.2026, 18:45</time>',
-        },
+        { type: 'text', text: '<summary>Earlier history</summary>' },
+        { type: 'text', text: '<time>Sunday, 12.4.2026, 18:45</time>' },
         {
           type: 'text',
           text: '<timezone>Europe/Berlin, CEST, +02:00</timezone>',
         },
-        { type: 'text', text: '<summary>Earlier history</summary>' },
       ],
     });
   });
 
-  it('omits synthetic time and uses the current timezone when none existed', async () => {
-    const now = 1_800_000_000;
-    const clock = vi.spyOn(Date, 'now').mockReturnValue(now * 1000);
-    const summary = makeSummaryMessage('Earlier history');
-    const original = [
-      makeTextMessage('before'),
-      summary,
+  it('carries state that only lives in a previous checkpoint header', async () => {
+    const latest = makeTimeAndTimezoneMessage(TS_SUN_1645, 'Europe/Berlin');
+    const previousHeader = makeHeader(latest.parts);
+    const ext = createTimeExt(DEFAULT_CONFIG).create(makeDeps());
+
+    const carry = await ext.getCheckpointCarry?.([
+      previousHeader,
       makeUserMessage('one'),
       makeTextMessage('answer'),
-      makeUserMessage('two'),
-    ];
-    const deps = makeDeps({ getHistory: vi.fn(() => original) });
+    ]);
+
+    expect(carry).toEqual(latest.parts);
+  });
+
+  it('omits synthetic time and uses the startup timezone when none existed', async () => {
+    const now = 1_800_000_000;
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(now * 1000);
     const ext = createTimeExt({
       timeUpdatePeriod: 300,
       timezone: 'Asia/Tokyo',
-    }).create(deps);
-    const compacted = await runCompaction(original, deps);
-    const result = ext.historyTransformer?.(compacted, {} as never);
-    if (!result || !Array.isArray(result)) throw new Error('invalid result');
+    }).create(makeDeps());
 
-    expect(result[0]?.parts).toEqual([
-      {
-        type: 'data-timezone',
-        data: { tz: 'Asia/Tokyo', timestamp: now },
-      },
-      summary.parts[0],
+    const carry = await ext.getCheckpointCarry?.([makeTextMessage('before')]);
+
+    expect(carry).toEqual([
+      { type: 'data-timezone', data: { tz: 'Asia/Tokyo', timestamp: now } },
     ]);
-    expect(
-      result[0]?.parts.some((part) => (part.type as string) === 'data-time'),
-    ).toBe(false);
     clock.mockRestore();
   });
 
@@ -514,26 +490,13 @@ describe('TimeExt.historyTransformer — compacted history', () => {
     const now = 1_800_000_000;
     const clock = vi.spyOn(Date, 'now').mockReturnValue(now * 1000);
     const time = makeTimeMessage(TS_SUN_1530, 'Europe/Berlin');
-    const summary = makeSummaryMessage('Earlier history');
-    const original = [
-      time,
-      summary,
-      makeUserMessage('one'),
-      makeTextMessage('answer'),
-      makeUserMessage('two'),
-    ];
-    const deps = makeDeps({ getHistory: vi.fn(() => original) });
-    const ext = createTimeExt(DEFAULT_CONFIG).create(deps);
-    const compacted = await runCompaction(original, deps);
-    const result = ext.historyTransformer?.(compacted, {} as never);
-    if (!result || !Array.isArray(result)) throw new Error('invalid result');
+    const ext = createTimeExt(DEFAULT_CONFIG).create(makeDeps());
 
-    expect(result[0]?.parts.slice(0, 2)).toEqual([
+    const carry = await ext.getCheckpointCarry?.([time]);
+
+    expect(carry).toEqual([
       time.parts[0],
-      {
-        type: 'data-timezone',
-        data: { tz: 'UTC', timestamp: now },
-      },
+      { type: 'data-timezone', data: { tz: 'UTC', timestamp: now } },
     ]);
     clock.mockRestore();
   });
@@ -549,27 +512,14 @@ describe('TimeExt.historyTransformer — compacted history', () => {
         }) as never,
       ],
     } as ExtendedUIMessage;
-    const summary = makeSummaryMessage('Earlier history');
-    const original = [
-      timezone,
-      summary,
-      makeUserMessage('one'),
-      makeTextMessage('answer'),
-      makeUserMessage('two'),
-    ];
-    const deps = makeDeps({ getHistory: vi.fn(() => original) });
-    const ext = createTimeExt(DEFAULT_CONFIG).create(deps);
-    const compacted = await runCompaction(original, deps);
-    const result = ext.historyTransformer?.(compacted, {} as never);
-    if (!result || !Array.isArray(result)) throw new Error('invalid result');
+    const ext = createTimeExt(DEFAULT_CONFIG).create(makeDeps());
 
-    expect(result[0]?.parts).toEqual([timezone.parts[0], summary.parts[0]]);
-    expect(
-      result[0]?.parts.some((part) => (part.type as string) === 'data-time'),
-    ).toBe(false);
+    const carry = await ext.getCheckpointCarry?.([timezone]);
+
+    expect(carry).toEqual([timezone.parts[0]]);
   });
 
-  it('ignores malformed cutoff context and carries the latest valid parts', async () => {
+  it('ignores malformed context and carries the latest valid parts', async () => {
     const valid = makeTimeAndTimezoneMessage(TS_SUN_1530, 'UTC');
     const malformed = {
       id: randomUUID(),
@@ -582,33 +532,28 @@ describe('TimeExt.historyTransformer — compacted history', () => {
         },
       ],
     } as unknown as ExtendedUIMessage;
-    const summary = makeSummaryMessage('Earlier history');
-    const original = [
-      valid,
-      malformed,
-      summary,
-      makeUserMessage('one'),
-      makeTextMessage('answer'),
-      makeUserMessage('two'),
-    ];
-    const deps = makeDeps({ getHistory: vi.fn(() => original) });
-    const ext = createTimeExt(DEFAULT_CONFIG).create(deps);
-    const compacted = await runCompaction(original, deps);
-    const result = ext.historyTransformer?.(compacted, {} as never);
-    if (!result || !Array.isArray(result)) throw new Error('invalid result');
+    const ext = createTimeExt(DEFAULT_CONFIG).create(makeDeps());
 
-    expect(result[0]?.parts.slice(0, 2)).toEqual(valid.parts);
+    const carry = await ext.getCheckpointCarry?.([valid, malformed]);
+
+    expect(carry).toEqual(valid.parts);
   });
 
-  it('does nothing when history was not cut from the front', () => {
-    const original = [makeUserMessage('one'), makeTextMessage('answer')];
-    const deps = makeDeps({ getHistory: vi.fn(() => original) });
-    const ext = createTimeExt(DEFAULT_CONFIG).create(deps);
+  it('carried parts suppress redundant provisional re-emission', async () => {
+    const now = TS_MON_0900;
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(now * 1000);
+    const recent = makeTimeAndTimezoneMessage(now - 10, 'UTC');
+    const ext = createTimeExt(DEFAULT_CONFIG).create(makeDeps());
 
-    expect(ext.historyTransformer?.(original, {} as never)).toBe(original);
-    expect(
-      ext.historyTransformer?.([makeUserMessage('unknown')], {} as never),
-    ).toEqual([expect.objectContaining({ role: 'user' })]);
+    const carry = (await ext.getCheckpointCarry?.([recent])) ?? [];
+    const window = [makeHeader(carry), makeUserMessage('next')];
+    const result = ext.getProvisionalStepContext?.(
+      window,
+      {} as never,
+    ) as ProvisionalStepContext;
+
+    expect(result).toEqual({ parts: [] });
+    clock.mockRestore();
   });
 });
 

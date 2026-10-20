@@ -11,6 +11,10 @@ import type {
   StepCompleteEvent,
 } from '../extension-api';
 import {
+  resolveCheckpointCursor,
+  type StagedCheckpoint,
+} from './checkpoint-cursor';
+import {
   createEpisodeRecorder,
   type EpisodeFeedHub,
   type EpisodeRecorder,
@@ -43,6 +47,7 @@ class MemoryExt implements Extension {
   private closed = false;
   /** Retrieval observation cursor; independent of the recorder cursor. */
   private lastObservedMessageId: string | null = null;
+  private stagedCheckpoint: StagedCheckpoint | null = null;
   // onStepComplete settles this guard on both normal and throwing steps.
   private stepActive = false;
   private flushTimer: NodeJS.Timeout | null = null;
@@ -197,9 +202,11 @@ class MemoryExt implements Extension {
   }
 
   /**
-   * Records everything up to the trim before it happens and moves cursors
-   * that would leave the window onto the checkpoint header. Defers the
-   * checkpoint while episode writes fail so no unrecorded message is trimmed.
+   * Records everything up to the trim before it happens and stages the
+   * checkpoint so cursors it trims resolve to its header once applied.
+   * Staging happens first, so a forced apply after repeated deferrals still
+   * resumes at the header. Defers the checkpoint while episode writes fail
+   * so no unrecorded message is trimmed.
    */
   onCheckpointApplying(
     event: CheckpointApplyingEvent,
@@ -207,15 +214,10 @@ class MemoryExt implements Extension {
     return this.serializeResult(async () => {
       const recorder = this.recorder;
       if (this.closed || !recorder) return undefined;
+      this.stagedCheckpoint = event;
+      recorder.stageCheckpoint(event);
       this.observeDelta();
       if (!(await recorder.flush())) return { defer: true };
-      recorder.repoint(event.droppedMessageIds, event.checkpointMessageId);
-      if (
-        this.lastObservedMessageId !== null &&
-        event.droppedMessageIds.includes(this.lastObservedMessageId)
-      ) {
-        this.lastObservedMessageId = event.checkpointMessageId;
-      }
       return undefined;
     });
   }
@@ -242,6 +244,11 @@ class MemoryExt implements Extension {
     try {
       for (let batch = 0; batch < MAX_OBSERVATION_BATCHES_PER_STEP; batch++) {
         const history = this.deps.getHistory();
+        this.lastObservedMessageId = resolveCheckpointCursor(
+          this.lastObservedMessageId,
+          history,
+          this.stagedCheckpoint,
+        );
         const { text, cursor, hasMore } = renderObservation(
           history,
           this.lastObservedMessageId,

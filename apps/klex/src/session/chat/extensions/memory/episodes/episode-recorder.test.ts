@@ -101,22 +101,62 @@ describe('EpisodeRecorder', () => {
     expect(store.append).toHaveBeenCalledWith([output('third', 'a3')]);
   });
 
-  it('re-points a dropped cursor to the checkpoint header', async () => {
+  it('resolves a trimmed cursor to the staged checkpoint header', async () => {
     const history = [message('a1', 'first'), message('a2', 'second')];
-    const { recorder, store } = harness(history);
+    const { logger, recorder, store } = harness(history);
     await recorder.flush();
-    recorder.repoint(['a1', 'a2'], 'cp');
-    expect(recorder.introspect().cursor).toBe('cp');
+    recorder.stageCheckpoint({
+      droppedMessageIds: ['a1', 'a2'],
+      checkpointMessageId: 'cp',
+    });
+    expect(recorder.introspect().cursor).toBe('a2');
     history.splice(0, 2, message('cp', 'header'), message('a3', 'third'));
     await recorder.flush();
     expect(store.append).toHaveBeenLastCalledWith([output('third', 'a3')]);
+    expect(logger.error).not.toHaveBeenCalled();
   });
 
-  it('leaves a cursor in the tail untouched on re-point', async () => {
+  it('keeps the cursor when a staged checkpoint is never applied', async () => {
+    const history = [message('a1', 'first'), message('a2', 'second')];
+    const { logger, recorder, store } = harness(history);
+    await recorder.flush();
+    recorder.stageCheckpoint({
+      droppedMessageIds: ['a1', 'a2'],
+      checkpointMessageId: 'cp',
+    });
+    history.push(message('a3', 'third'));
+    await recorder.flush();
+    expect(store.append).toHaveBeenLastCalledWith([output('third', 'a3')]);
+    expect(logger.error).not.toHaveBeenCalled();
+  });
+
+  it('resumes at the header after a forced apply over a failed flush', async () => {
+    const history = [message('a1', 'first')];
+    const { logger, recorder, store } = harness(history);
+    await recorder.flush();
+    history.push(message('a2', 'unrecorded'));
+    recorder.stageCheckpoint({
+      droppedMessageIds: ['a1', 'a2'],
+      checkpointMessageId: 'cp',
+    });
+    vi.mocked(store.append).mockRejectedValueOnce(new Error('disk full'));
+    await expect(recorder.flush()).resolves.toBe(false);
+    history.splice(0, 2, message('cp', 'header'), message('a3', 'third'));
+    await recorder.flush();
+    expect(store.append).toHaveBeenLastCalledWith([output('third', 'a3')]);
+    expect(logger.error).toHaveBeenCalledOnce();
+  });
+
+  it('leaves a cursor in the tail untouched by a staged checkpoint', async () => {
     const history = [message('a1', 'first'), message('a2', 'second')];
     const { recorder } = harness(history);
     await recorder.flush();
-    recorder.repoint(['a1'], 'cp');
+    recorder.stageCheckpoint({
+      droppedMessageIds: ['a1'],
+      checkpointMessageId: 'cp',
+    });
+    history.splice(0, 1, message('cp', 'header'));
+    await recorder.flush();
     expect(recorder.introspect().cursor).toBe('a2');
   });
 

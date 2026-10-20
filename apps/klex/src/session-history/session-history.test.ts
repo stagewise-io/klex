@@ -613,11 +613,20 @@ describe('session history log', () => {
     ]);
     expect(await windowIds(second.history)).toEqual(['h1', 'b', 'c', 'd']);
 
-    // Rolling back a restored message deletes the old instance's row.
+    const oldCount = async () =>
+      (await second.history.getSession(old.instanceId))?.messageCount;
+    expect(await oldCount()).toBe(4);
+
+    // Rolling back a restored message deletes the old instance's row and
+    // keeps that instance's count in step.
     restored.splice(1, 1);
     recorder.scheduleSync(() => restored);
     await second.history.flush();
     expect(await windowIds(second.history)).toEqual(['h1', 'c', 'd']);
+    expect(await oldCount()).toBe(3);
+    expect(
+      (await second.history.getSession(recorder.instanceId))?.messageCount,
+    ).toBe(1);
   });
 
   it('falls back to the newest messages within the byte budget', async () => {
@@ -795,6 +804,15 @@ CREATE TABLE IF NOT EXISTS messages (
         ['default', 3, 'c', 0, null],
         ['default', 4, 'd', 0, null],
       ]);
+      const header = await migrated.execute(
+        `SELECT role, content, byte_size FROM messages WHERE message_id = 's'`,
+      );
+      const row = header.rows[0];
+      expect(row?.role).toBe('user');
+      expect(JSON.parse(String(row?.content)).role).toBe('user');
+      expect(Number(row?.byte_size)).toBe(
+        Buffer.byteLength(String(row?.content)),
+      );
     } finally {
       migrated.close();
     }

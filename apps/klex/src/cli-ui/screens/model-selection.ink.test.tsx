@@ -193,15 +193,6 @@ describe('ModelSelectionScreen', () => {
     view.stdin.write('\r');
     await vi.waitFor(() => expect(view.lastFrame()).toContain('2500 ms'));
     expect(selection.instincts[0]?.attemptTimeoutMs).toBe(2500);
-    const savedSelection = structuredClone(selection);
-    const patchCount = patchModelSelection.mock.calls.length;
-    view.stdin.write('t');
-    view.stdin.write('r');
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(view.lastFrame()).toContain('API: evaluation');
-    expect(view.lastFrame()).not.toContain('Synthetic');
-    expect(selection).toEqual(savedSelection);
-    expect(patchModelSelection).toHaveBeenCalledTimes(patchCount);
     view.unmount();
   });
 

@@ -49,7 +49,7 @@ export interface ModelCallRecord {
 }
 
 /** Where the model call originated. */
-export type ModelCallSource = 'chat' | 'extension' | 'operation-test';
+export type ModelCallSource = 'chat' | 'extension';
 
 /** Dimension to split usage data by. */
 export type UsageSplitBy = 'none' | 'model' | 'provider' | 'endpoint';

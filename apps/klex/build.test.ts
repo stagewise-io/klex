@@ -1,6 +1,76 @@
+import { resolve } from 'node:path';
+import { runInNewContext } from 'node:vm';
+
+import { build } from 'esbuild';
 import { describe, expect, it } from 'vitest';
 
 import { createBuildOptions } from './build';
+
+// Exercise the actual Vitest load hook, including its query-suffix handling.
+const prompts = import.meta.glob<string>(
+  [
+    './src/session/chat/instinct/classifier-prompt.md',
+    './src/session/chat/extensions/memory/retrieval/retrieval-prompt.md',
+  ],
+  {
+    eager: true,
+    import: 'default',
+  },
+);
+const queriedPrompts = import.meta.glob<string>(
+  [
+    './src/session/chat/instinct/classifier-prompt.md',
+    './src/session/chat/extensions/memory/retrieval/retrieval-prompt.md',
+  ],
+  {
+    eager: true,
+    import: 'default',
+    query: '?loader-parity',
+  },
+);
+
+describe('markdown loader parity', () => {
+  it('discovers prompt files, including the instinct classifier prompt', () => {
+    expect(prompts).toHaveProperty(
+      './src/session/chat/instinct/classifier-prompt.md',
+    );
+    expect(Object.keys(queriedPrompts)).toEqual(Object.keys(prompts));
+  });
+
+  it('uses the text loader in both targets and build modes', () => {
+    for (const isSea of [false, true]) {
+      for (const target of ['main', 'worker'] as const) {
+        expect(createBuildOptions(isSea)[target].loader?.['.md']).toBe('text');
+      }
+    }
+  });
+
+  it.each(Object.entries(prompts))(
+    'matches the production text loader: %s',
+    async (path, prompt) => {
+      const result = await build({
+        stdin: {
+          contents: `export { default } from ${JSON.stringify(resolve(import.meta.dirname, path))};`,
+          loader: 'js',
+          resolveDir: import.meta.dirname,
+        },
+        loader: createBuildOptions(false).main.loader,
+        bundle: true,
+        write: false,
+        format: 'cjs',
+      });
+      const output = result.outputFiles[0];
+      expect(output).toBeDefined();
+      if (!output) throw new Error('Missing bundled prompt');
+      const module = { exports: {} as { default: string } };
+      runInNewContext(output.text, { module, exports: module.exports });
+
+      expect(module.exports.default).toBeTypeOf('string');
+      expect(prompt).toBe(module.exports.default);
+      expect(queriedPrompts[path]).toBe(module.exports.default);
+    },
+  );
+});
 
 describe('createBuildOptions', () => {
   it('embeds the application version in both build modes', () => {

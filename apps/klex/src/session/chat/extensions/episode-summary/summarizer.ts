@@ -178,7 +178,7 @@ class SummarizerModule implements Summarizer {
       abortSignal: this.abort.signal,
     });
     if (!result.success) {
-      if (result.failureReason !== 'cancelled') {
+      if (result.failureReason !== 'aborted') {
         this.lastError = `${result.failureReason}${result.failureDetails ? `: ${result.failureDetails}` : ''}`;
         this.deps.logger.warn(
           {

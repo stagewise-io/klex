@@ -1,9 +1,8 @@
-export type {
-  InstinctClassificationCallArgs,
-  InstinctClassificationCallResult,
-  InstinctClassifier,
-} from './classifier';
-export { executeInstinctClassification } from './classifier-executor';
+export {
+  executeInstinctClassification,
+  type InstinctClassificationArgs,
+  type InstinctClassifier,
+} from './classifier-executor';
 export {
   createInstinctRunner,
   type InstinctResult,

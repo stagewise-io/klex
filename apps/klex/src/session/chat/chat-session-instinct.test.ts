@@ -45,14 +45,9 @@ const usage: LanguageModelV4Usage = {
 
 function harness(
   options: {
-    disabled?: boolean;
-    unavailable?: boolean;
-    emptyInstincts?: boolean;
-    rejectReaction?: boolean;
     interrupt?: boolean;
     evaluationFallback?: boolean;
     evaluationOnly?: boolean;
-    score?: boolean;
   } = {},
 ) {
   const order: string[] = [];
@@ -83,17 +78,15 @@ function harness(
     specificationVersion: 'v4',
     provider: 'typesafe.evaluation',
     modelId: 'native',
-    supportedQuestionTypes: ['boolean', 'score'],
+    supportedQuestionTypes: ['boolean'],
     doEvaluate: async (args) => {
       order.push('evaluation');
       expect(args.state).toContain('Remember the project');
       return {
         answers: Object.fromEntries(
-          Object.entries(args.questions).map(([id, question]) => [
+          Object.keys(args.questions).map((id) => [
             id,
-            question.type === 'score'
-              ? { type: 'score', score: 0.75 }
-              : { type: 'boolean', probability: 0.9 },
+            { type: 'boolean', probability: 0.9 },
           ]),
         ),
         usage: { inputTokens: 7, outputTokens: 3 },
@@ -133,27 +126,21 @@ function harness(
       ChatSessionDependencies['modelResolver']['resolveInstinctCandidates']
     >((entries) =>
       entries.map((entry) =>
-        options.unavailable
+        entry.api === 'evaluation'
           ? {
-              status: 'unavailable',
+              status: 'ready',
               entry,
-              reason: 'Selected model unavailable',
+              providerType: 'typesafe-ai',
+              api: 'evaluation',
+              model: evaluator,
             }
-          : entry.api === 'evaluation'
-            ? {
-                status: 'ready',
-                entry,
-                providerType: 'typesafe-ai',
-                api: 'evaluation',
-                model: evaluator,
-              }
-            : {
-                status: 'ready',
-                entry,
-                providerType: 'openai',
-                api: 'generation',
-                model: entry.modelId === 'classifier' ? classifier : chat,
-              },
+          : {
+              status: 'ready',
+              entry,
+              providerType: 'openai',
+              api: 'generation',
+              model: entry.modelId === 'classifier' ? classifier : chat,
+            },
       ),
     ),
     getLanguageModel: (entry) =>
@@ -175,22 +162,19 @@ function harness(
   };
   const configValue = {
     ...completeV2Config,
-    instinct: { ...completeV2Config.instinct, enabled: !options.disabled },
     modelSelection: {
       ...completeV2Config.modelSelection,
       chat: [{ providerId: 'test', modelId: 'chat' }],
-      instincts: options.emptyInstincts
-        ? []
-        : [
-            {
-              providerId: 'test',
-              modelId: options.evaluationOnly ? 'native' : 'classifier',
-              api: options.evaluationOnly ? 'evaluation' : 'generation',
-            },
-            ...(options.evaluationFallback
-              ? [{ providerId: 'test', modelId: 'native', api: 'evaluation' }]
-              : []),
-          ],
+      instincts: [
+        {
+          providerId: 'test',
+          modelId: options.evaluationOnly ? 'native' : 'classifier',
+          api: options.evaluationOnly ? 'evaluation' : 'generation',
+        },
+        ...(options.evaluationFallback
+          ? [{ providerId: 'test', modelId: 'native', api: 'evaluation' }]
+          : []),
+      ],
     },
   };
   const config = {
@@ -208,16 +192,7 @@ function harness(
       getInstinctClassificationRequest: () => ({
         prompt: 'Memory needed?',
         keys: {
-          needed: options.score
-            ? {
-                type: 'score',
-                description: 'How much does memory help?',
-                levels: [
-                  { label: 'none', description: 'Memory does not help.' },
-                  { label: 'useful', description: 'Memory helps.' },
-                ],
-              }
-            : { type: 'boolean', description: 'Memory helps.' },
+          needed: { type: 'boolean', description: 'Memory helps.' },
         },
       }),
       onInstinct: async (ctx) => {
@@ -233,7 +208,6 @@ function harness(
           { type: 'text', text: 'ephemeral memory' },
         ]);
         await Promise.resolve();
-        if (options.rejectReaction) throw new Error('retrieval failed');
         if (options.interrupt && contexts.length === 1)
           deps.inbox.sendMessage(
             {
@@ -380,10 +354,19 @@ describe('ChatSession instinct tracing', () => {
       const classifier = named('step.instinct.classifier');
       const attempts = spans.filter((span) => span.name === 'instinct.attempt');
       const calls = spans.filter(
-        (span) => span.attributes['klex.call.source'] === 'extension',
+        (span) =>
+          span.attributes['klex.call.source'] === 'extension' &&
+          attempts.some(
+            (attempt) =>
+              attempt.spanContext().spanId === span.parentSpanContext?.spanId,
+          ),
       );
       const main = requiredSpan(
-        spans.find((span) => span.attributes['klex.call.source'] === 'chat'),
+        spans.find(
+          (span) =>
+            span.attributes['klex.call.source'] === 'chat' &&
+            span.parentSpanContext?.spanId === step.spanContext().spanId,
+        ),
         'main generation',
       );
       expect(turn?.parentSpanContext?.spanId).toBe(root.spanContext().spanId);
@@ -454,7 +437,13 @@ describe('ChatSession instinct tracing', () => {
         ),
         'successful instinct call',
       );
-      expect(successful.attributes['klex.outcome']).toBe('success');
+      if (successful.name === 'evaluate') {
+        expect(successful.attributes['klex.outcome']).toBe('success');
+      } else {
+        expect(
+          successful.attributes['gen_ai.response.finish_reasons'],
+        ).toContain('stop');
+      }
       if (options.level === 'debug') {
         if (successful.name === 'evaluate') {
           expect(
@@ -467,9 +456,12 @@ describe('ChatSession instinct tracing', () => {
             successful.attributes['klex.evaluation.answers.content'],
           ).toContain('0.9');
         } else {
-          expect(successful.attributes['gen_ai.system_instructions']).toContain(
-            '<question id="q0"',
-          );
+          const instructions = JSON.parse(
+            String(successful.attributes['gen_ai.system_instructions']),
+          ) as { content: string }[];
+          expect(
+            instructions.map(({ content }) => content).join('\n'),
+          ).toContain('<question id="q0"');
           expect(successful.attributes['gen_ai.input.messages']).toContain(
             'Remember the project',
           );
@@ -501,11 +493,22 @@ describe('ChatSession instinct tracing', () => {
 
 describe('ChatSession instinct integration', () => {
   it('classifies and awaits reactions, retaining persistent and successful provisional preparation', async () => {
-    const { session, send, order, contexts, completed, mainPrompts } =
-      harness();
+    const {
+      session,
+      send,
+      order,
+      contexts,
+      completed,
+      mainPrompts,
+      configValue,
+      resolver,
+    } = harness();
     try {
       await session.start();
       await send('Remember the project');
+      expect(resolver.resolveInstinctCandidates).toHaveBeenCalledWith(
+        configValue.modelSelection.instincts,
+      );
       // Existing step-start notification precedes the executable-step check.
       expect(order.filter((entry) => entry !== 'step-start')).toEqual([
         'classifier',
@@ -542,9 +545,8 @@ describe('ChatSession instinct integration', () => {
   });
 
   it('uses ordered Chat models through generation when Instincts is empty without changing config', async () => {
-    const { session, send, order, contexts, configValue, resolver } = harness({
-      emptyInstincts: true,
-    });
+    const { session, send, order, contexts, configValue, resolver } = harness();
+    configValue.modelSelection.instincts = [];
     const chatEntries = [
       {
         providerId: 'test',
@@ -576,43 +578,6 @@ describe('ChatSession instinct integration', () => {
         session.getSessionInfo().usage.extensions['core:instinct-classifier']
           ?.total.inputTokens,
       ).toBe(10);
-    } finally {
-      await session.close();
-    }
-  });
-
-  it('runs score questions through the resolved evaluation model', async () => {
-    const { session, send, contexts, configValue, resolver } = harness({
-      evaluationOnly: true,
-      score: true,
-    });
-    try {
-      await session.start();
-      await send('Remember the project');
-      expect(resolver.resolveInstinctCandidates).toHaveBeenCalledWith(
-        configValue.modelSelection.instincts,
-      );
-      expect(contexts[0]?.classification).toMatchObject({
-        status: 'ok',
-        answers: { needed: 0.75 },
-      });
-    } finally {
-      await session.close();
-    }
-  });
-
-  it('does not append Chat models when an explicit Instincts selection is unavailable', async () => {
-    const { session, send, contexts, configValue, resolver } = harness({
-      unavailable: true,
-    });
-    try {
-      await session.start();
-      await send('Remember the project');
-      expect(resolver.resolveInstinctCandidates).toHaveBeenCalledWith(
-        configValue.modelSelection.instincts,
-      );
-      expect(contexts[0]?.classification?.status).toBe('unavailable');
-      expect(configValue.modelSelection.chat).not.toEqual([]);
     } finally {
       await session.close();
     }
@@ -672,30 +637,6 @@ describe('ChatSession instinct integration', () => {
             message.parts.some((part) => isDataPartOf('instinct-test', part)),
           ),
       ).toHaveLength(mainPrompts.length);
-    } finally {
-      await session.close();
-    }
-  });
-
-  it.each([
-    { disabled: true },
-    { unavailable: true },
-    { rejectReaction: true },
-  ])('continues main generation for %j', async (options) => {
-    const { session, send, order, contexts, mainPrompts } = harness(options);
-    try {
-      await session.start();
-      await send('New input');
-      expect(order).toContain('generation');
-      if (options.disabled) expect(contexts).toHaveLength(0);
-      if (options.unavailable)
-        expect(contexts[0]?.classification?.status).toBe('unavailable');
-      if (options.rejectReaction) {
-        expect(JSON.stringify(mainPrompts[0]?.prompt)).not.toContain('memory');
-        expect(JSON.stringify(session.getMessages())).not.toContain(
-          'data-instinct-test',
-        );
-      }
     } finally {
       await session.close();
     }

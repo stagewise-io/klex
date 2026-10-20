@@ -56,12 +56,11 @@ export function createTranscriptHistoryView(
 /**
  * Line-format transcript for the instinct classifier. Uses the transcript
  * filter plus projectors for extension data parts (so the classifier sees
- * extension content the way the main agent does) and a per-message
- * character cap. The classifier fits its five-message window together, then
+ * extension content the way the main agent does). The classifier truncates
+ * rendered messages before fitting its five-message window, then
  * applies its aggregate character budget while retaining newest activity.
  */
 export function createInstinctHistoryView(options: {
-  messageLimit: number;
   data: Readonly<Record<string, DataProjector>>;
 }): HistoryView {
   return createHistoryView({
@@ -70,6 +69,5 @@ export function createInstinctHistoryView(options: {
       godMessages: true,
       data: options.data,
     },
-    lines: { messageLimit: options.messageLimit },
   });
 }

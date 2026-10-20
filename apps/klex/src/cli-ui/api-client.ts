@@ -249,6 +249,11 @@ export interface UsageDataPoint {
   bucket: string | null;
   splitKey: string | null;
   callCount: number;
+  tokenUsageUnreportedCount: number;
+  cacheUsageUnreportedCount: number;
+  api: 'generation' | 'evaluation' | null;
+  tokenUsageReported: boolean | null;
+  cacheUsageReported: boolean | null;
   inputTokens: number;
   outputTokens: number;
   inputCacheWriteTokens: number;
@@ -303,12 +308,10 @@ export class AdminApiClient {
       method?: string;
       body?: unknown;
       contentType?: string;
-      signal?: AbortSignal;
     },
   ): Promise<T> {
     const response = await this.fetcher(`${this.baseUrl}${path}`, {
       method: options?.method ?? 'GET',
-      ...(options?.signal && { signal: options.signal }),
       headers:
         options?.body !== undefined
           ? { 'Content-Type': options?.contentType ?? 'application/json' }

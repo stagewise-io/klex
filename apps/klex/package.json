@@ -62,7 +62,7 @@
     "@ai-sdk/open-responses": "2.0.58",
     "@ai-sdk/openai": "4.0.83",
     "@ai-sdk/openai-compatible": "3.0.62",
-    "@ai-sdk/otel": "1.0.31",
+    "@ai-sdk/otel": "1.0.126",
     "@ai-sdk/provider": "4.0.21",
     "@ai-sdk/typesafe-ai": "3.0.12",
     "@ffprobe-installer/ffprobe": "2.1.2",

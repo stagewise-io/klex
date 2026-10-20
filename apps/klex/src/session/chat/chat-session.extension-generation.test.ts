@@ -188,7 +188,7 @@ describe('single-step extension generation', () => {
     try {
       expect(
         await generate({ ...args, abortSignal: controller.signal }),
-      ).toMatchObject({ success: false, failureReason: 'cancelled' });
+      ).toMatchObject({ success: false, failureReason: 'aborted' });
       expect(model.doGenerateCalls).toHaveLength(0);
     } finally {
       await session.close();

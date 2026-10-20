@@ -242,7 +242,6 @@ export type InstinctModelCandidate =
   | {
       readonly status: 'unavailable';
       readonly entry: InstinctModelSelectionEntry;
-      readonly reason: string;
     }
   | {
       readonly status: 'ready';
@@ -1118,21 +1117,7 @@ class ProviderRegistryModule implements ProviderRegistry {
           ...provider,
         };
         const definition = this.requireDefinition(provider.type);
-        const cached = this.modelCache.get(entry.providerId);
-        const discovered =
-          cached?.signature === this.settingsSignature(instance.settings)
-            ? cached.models.find(({ modelId }) => modelId === entry.modelId)
-            : undefined;
-        const kind = mergeProviderModels(
-          {
-            modelId: entry.modelId,
-            ...definition.resolveModelMetadata?.(entry.modelId),
-          },
-          discovered,
-          provider.knownModels?.[entry.modelId]
-            ? { modelId: entry.modelId, ...provider.knownModels[entry.modelId] }
-            : undefined,
-        )?.kind;
+        const kind = this.resolveModelMetadata(instance, entry.modelId)?.kind;
         if (
           kind &&
           kind !== 'unknown' &&
@@ -1172,7 +1157,6 @@ class ProviderRegistryModule implements ProviderRegistry {
         return {
           status: 'unavailable',
           entry,
-          reason: 'Model/API configuration is unavailable or incompatible',
         };
       }
     });
@@ -1184,21 +1168,9 @@ class ProviderRegistryModule implements ProviderRegistry {
     const base = config.resolveModel(reference);
     const instance = this.getInstance(reference.providerId);
     if (!instance.ok) throw new Error(instance.message);
-    const definition = this.requireDefinition(instance.value.type);
-    const cached = this.modelCache.get(reference.providerId);
-    const discovered =
-      cached?.signature === this.settingsSignature(instance.value.settings)
-        ? cached.models.find((model) => model.modelId === reference.modelId)
-        : undefined;
-    const user = instance.value.knownModels?.[reference.modelId];
-    const maintained = definition.resolveModelMetadata?.(reference.modelId);
-    const metadata = mergeProviderModels(
-      {
-        modelId: reference.modelId,
-        ...maintained,
-      },
-      discovered,
-      user ? { modelId: reference.modelId, ...user } : undefined,
+    const metadata = this.resolveModelMetadata(
+      instance.value,
+      reference.modelId,
     );
     return {
       ...base,
@@ -1209,6 +1181,22 @@ class ProviderRegistryModule implements ProviderRegistry {
       inputCapabilities:
         metadata?.capabilities?.input ?? base.inputCapabilities,
     };
+  }
+
+  /** Resolve metadata against the caller's provider snapshot, including cache freshness. */
+  private resolveModelMetadata(instance: ProviderInstance, modelId: string) {
+    const definition = this.requireDefinition(instance.type);
+    const cached = this.modelCache.get(instance.id);
+    const discovered =
+      cached?.signature === this.settingsSignature(instance.settings)
+        ? cached.models.find((model) => model.modelId === modelId)
+        : undefined;
+    const user = instance.knownModels?.[modelId];
+    return mergeProviderModels(
+      { modelId, ...definition.resolveModelMetadata?.(modelId) },
+      discovered,
+      user ? { modelId, ...user } : undefined,
+    );
   }
 
   resolveModelInfo(reference: ModelSelectionEntry): ModelInfo {

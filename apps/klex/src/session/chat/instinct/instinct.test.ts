@@ -15,7 +15,7 @@ import type { ExtendedUIMessage } from '@/session/chat/message-types';
 import { testLogger } from '@/session/chat/test-helpers';
 import { tracer } from '@/session/chat/utils/tracing';
 
-import type { InstinctClassifier } from './classifier';
+import type { InstinctClassifier } from './classifier-executor';
 import { createInstinctRunner } from './instinct';
 
 const request = {
@@ -33,6 +33,13 @@ const scope = (): IntrospectionScope => ({
   introspect: vi.fn(),
   removeChild: vi.fn(),
 });
+const classify: InstinctClassifier = async ({ entries }) =>
+  new Map(
+    entries.map(({ extensionIdentifier }, index) => [
+      extensionIdentifier,
+      { status: 'ok', answers: { needed: index === 0 }, modelId: 'classifier' },
+    ]),
+  );
 const part: ExtendedUIMessage['parts'][number] = {
   type: 'data-check',
   data: {},
@@ -40,11 +47,7 @@ const part: ExtendedUIMessage['parts'][number] = {
 
 function harness(
   extensions: Record<string, Extension>,
-  generate: InstinctClassifier = async () => ({
-    status: 'ok',
-    output: { q0: 1, q1: 0 },
-    modelId: 'classifier',
-  }),
+  generate: InstinctClassifier = classify,
   limits = {},
 ) {
   const extensionHandler = createExtensionHandler({
@@ -84,11 +87,7 @@ function harness(
 describe('InstinctRunner', () => {
   it('makes one shared call, isolates contexts, stages in factory order and commits once', async () => {
     const contexts: InstinctContext[] = [];
-    const generate = vi.fn<InstinctClassifier>().mockResolvedValue({
-      status: 'ok',
-      modelId: 'classifier',
-      output: { q0: 1, q1: 0 },
-    });
+    const generate = vi.fn<InstinctClassifier>(classify);
     const first: Extension = {
       getInstinctClassificationRequest: () => request,
       dataPartTransformers: { check: () => [] },
@@ -169,7 +168,7 @@ describe('InstinctRunner', () => {
             },
           },
         },
-        async () => ({ status, reason: 'test failure' }),
+        async () => new Map([['first', { status, reason: 'test failure' }]]),
       );
       expect(await run()).toMatchObject({
         status: 'ready',
@@ -223,28 +222,6 @@ describe('InstinctRunner', () => {
     if (result.status !== 'ready') throw new Error('Not ready');
     result.commit(history);
     expect(history).toHaveLength(1);
-  });
-
-  it('reports shared budget expiry as timeout, not caller cancellation', async () => {
-    const reaction = vi.fn();
-    const { run } = harness(
-      {
-        first: {
-          getInstinctClassificationRequest: () => request,
-          onInstinct: reaction,
-        },
-      },
-      () => new Promise(() => {}),
-      { timeoutMs: 20, classifierTimeoutMs: 1000 },
-    );
-    expect(await run()).toMatchObject({
-      status: 'ready',
-      summary: {
-        classifierStatus: 'timeout',
-        reactions: [{ status: 'timeout' }],
-      },
-    });
-    expect(reaction).not.toHaveBeenCalled();
   });
 
   it('ends a timed-out reaction span even if the hook never settles', async () => {
@@ -311,13 +288,12 @@ describe('InstinctRunner', () => {
     expect(generate).not.toHaveBeenCalled();
   });
 
-  it('bounds uncooperative classifier and reaction work and seals late writes', async () => {
+  it('bounds uncooperative reactions and seals late writes', async () => {
     let context: InstinctContext | undefined;
     let finish!: () => void;
     const { run } = harness(
       {
         first: {
-          getInstinctClassificationRequest: () => request,
           onInstinct: (ctx) => {
             context = ctx;
             ctx.prepare.appendEphemeral([{ type: 'text', text: 'discard' }]);
@@ -327,15 +303,15 @@ describe('InstinctRunner', () => {
           },
         },
       },
-      () => new Promise(() => {}),
-      { classifierTimeoutMs: 10, timeoutMs: 40 },
+      undefined,
+      { timeoutMs: 20 },
     );
     const result = await run();
     expect(result).toMatchObject({
       status: 'ready',
       ephemeral: [],
       summary: {
-        classifierStatus: 'timeout',
+        classifierStatus: 'skipped',
         reactions: [{ status: 'timeout' }],
       },
     });

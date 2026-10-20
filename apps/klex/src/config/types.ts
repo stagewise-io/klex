@@ -38,12 +38,9 @@ const historicalProviderTypeSchema = z.enum([
   'google-generative',
   'ollama',
 ]);
-const v8ProviderTypeSchema = z.enum([
+const providerTypeSchema = z.enum([
   ...historicalProviderTypeSchema.options,
   'typesafe-ai',
-]);
-const providerTypeSchema = z.enum([
-  ...v8ProviderTypeSchema.options,
   'vercel-ai-gateway',
 ]);
 type ProviderType = z.infer<typeof providerTypeSchema>;
@@ -555,17 +552,8 @@ const v5ModelSelectionSchema = historicalModelSelectionSchema.extend({
     tts: [],
     stt: [],
   }),
-  classifier: z.array(modelSelectionEntrySchema).default([]),
 });
 
-const v7ModelSelectionSchema = historicalModelSelectionSchema.extend({
-  voice: currentVoiceModelSelectionSchema.default({
-    sts: [],
-    tts: [],
-    stt: [],
-  }),
-  instincts: z.array(modelSelectionEntrySchema).default([]),
-});
 const modelSelectionSchema = historicalModelSelectionSchema.extend({
   voice: currentVoiceModelSelectionSchema.default({
     sts: [],
@@ -658,11 +646,7 @@ const instinctConfigSchema = z
       .positive()
       .max(120_000)
       .default(4_000),
-    /** Earlier messages shown to the classifier before the delta. */
-    recentMessageCount: z.number().int().min(0).max(50).default(5),
-    /** Maximum number of new (delta) messages shown; newest are kept. */
-    deltaMessageCap: z.number().int().positive().max(500).default(20),
-    /** Character budget for recent plus new messages together. */
+    /** Character budget for the last five messages together. */
     historyCharacterCap: z
       .number()
       .int()
@@ -776,7 +760,7 @@ const extensionsConfigSchema = z
   .object({ memory: memoryExtensionConfigSchema.prefault({}) })
   .strict();
 
-/** Frozen stored schema 5; retains the former subsystem settings key. */
+/** Frozen released schema 5: memory extensions and voice selection, no instinct. */
 const klexConfigV5Schema = z.object({
   configVersion: z.literal(2).default(2),
   officialName: z
@@ -795,25 +779,17 @@ const klexConfigV5Schema = z.object({
     imageVision: [],
     audioListening: [],
     consult: [],
-    classifier: [],
     voice: { sts: [], tts: [], stt: [] },
   }),
   mcpServers: z.record(z.string(), mcpServerConfigSchema).default({}),
   timezone: timezoneSchema.default('UTC'),
-  preflight: instinctConfigSchema.prefault({}),
   // `.prefault` (not `.default`) so nested defaults are applied.
   extensions: extensionsConfigSchema.prefault({}),
   sessionHistory: sessionHistoryConfigSchema.optional(),
 });
 
-const klexConfigV6Schema = klexConfigV5Schema.omit({ preflight: true }).extend({
+const klexConfigSchema = klexConfigV5Schema.extend({
   instinct: instinctConfigSchema.prefault({}),
-});
-
-const klexConfigV7Schema = klexConfigV6Schema.extend({
-  modelSelection: v7ModelSelectionSchema.prefault({}),
-});
-const klexConfigSchema = klexConfigV7Schema.extend({
   providers: z
     .record(providerInstanceIdSchema, providerConfigSchema)
     .default({}),
@@ -886,31 +862,7 @@ const storedKlexConfigV5Schema = klexConfigV5Schema
   .extend({ configVersion: z.literal(2) })
   .strict();
 
-const storedKlexConfigV6Schema = klexConfigV6Schema
-  .extend({ configVersion: z.literal(2) })
-  .strict();
-
-/** Frozen schema 7, before explicit classifier API selection. */
-const storedKlexConfigV7Schema = klexConfigV7Schema
-  .extend({ configVersion: z.literal(2) })
-  .strict();
-
-/** Frozen schema 8: explicit instinct API selection, before Gateway support. */
-const storedKlexConfigV8Schema = klexConfigSchema
-  .extend({
-    configVersion: z.literal(2),
-    providers: z
-      .record(providerInstanceIdSchema, providerConfigSchema)
-      .default({})
-      .refine((providers) =>
-        Object.values(providers).every(
-          (provider) => v8ProviderTypeSchema.safeParse(provider.type).success,
-        ),
-      ),
-  })
-  .strict();
-
-/** Stored schema 9: native Vercel AI Gateway provider. */
+/** Stored schema 6: instinct backends and native Gateway provider. */
 const storedKlexConfigSchema = klexConfigSchema
   .extend({ configVersion: z.literal(2) })
   .strict();
@@ -965,51 +917,9 @@ function parseStoredKlexConfigV5(input: unknown): Record<string, unknown> {
   return storedKlexConfigV5Schema.parse(input);
 }
 
-/** 5→6 migration: preserves existing settings under the instinct name. */
-function migrateInstinctConfig(
-  input: unknown,
-): z.infer<typeof klexConfigV6Schema> {
-  const { preflight, ...rest } = storedKlexConfigV5Schema.parse(input);
-  return klexConfigV6Schema.parse({ ...rest, instinct: preflight });
-}
-
-function parseStoredKlexConfigV6(input: unknown): Record<string, unknown> {
-  return storedKlexConfigV6Schema.parse(input);
-}
-
-/** 6→7 migration: preserves the ordered classifier models and provider options. */
-function migrateInstinctModelSelection(
-  input: unknown,
-): z.infer<typeof klexConfigV7Schema> {
-  const { modelSelection, ...rest } = storedKlexConfigV6Schema.parse(input);
-  const { classifier, ...selection } = modelSelection;
-  return klexConfigV7Schema.parse({
-    ...rest,
-    modelSelection: { ...selection, instincts: classifier },
-  });
-}
-
-function parseStoredKlexConfigV7(input: unknown): Record<string, unknown> {
-  return storedKlexConfigV7Schema.parse(input);
-}
-
-/** 7→8: keep old model ordering/options and make generation semantics explicit. */
-function migrateInstinctApis(input: unknown): KlexConfig {
-  const parsed = storedKlexConfigV7Schema.parse(input);
-  return klexConfigSchema.parse({
-    ...parsed,
-    modelSelection: {
-      ...parsed.modelSelection,
-      instincts: parsed.modelSelection.instincts.map((entry) => ({
-        ...entry,
-        api: 'generation',
-      })),
-    },
-  });
-}
-
-function parseStoredKlexConfigV8(input: unknown): Record<string, unknown> {
-  return storedKlexConfigV8Schema.parse(input);
+/** 5→6: add default instinct behavior and an empty, explicitly typed selection. */
+function migrateInstinctConfig(input: unknown): KlexConfig {
+  return klexConfigSchema.parse(storedKlexConfigV5Schema.parse(input));
 }
 
 function parseStoredKlexConfig(input: unknown): Record<string, unknown> {
@@ -1206,9 +1116,7 @@ export {
   isProviderSecretSetting,
   klexConfigSchema,
   mcpServerConfigSchema,
-  migrateInstinctApis,
   migrateInstinctConfig,
-  migrateInstinctModelSelection,
   migrateLegacyKlexConfig,
   modelCapabilitiesSchema,
   modelIdSchema,
@@ -1222,9 +1130,6 @@ export {
   parseStoredKlexConfigV2,
   parseStoredKlexConfigV4,
   parseStoredKlexConfigV5,
-  parseStoredKlexConfigV6,
-  parseStoredKlexConfigV7,
-  parseStoredKlexConfigV8,
   providerConfigSchema,
   providerInstanceIdSchema,
   providerTypeSchema,

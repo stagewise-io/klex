@@ -15,8 +15,6 @@ export const defaultInstinctConfig: KlexConfig['instinct'] = {
   enabled: true,
   timeoutMs: 8_000,
   classifierTimeoutMs: 4_000,
-  recentMessageCount: 5,
-  deltaMessageCap: 20,
   historyCharacterCap: 16_000,
   messageCharacterCap: 2_000,
   contextCharacterCap: 2_000,
@@ -100,22 +98,18 @@ export const completeV2Config: KlexConfig = {
 const { instincts: _instincts, ...historicalModelSelection } =
   completeV2Config.modelSelection;
 
-/** Stored schema 5 retains the historical subsystem settings key. */
+const { instinct: _instinct, ...releasedConfig } = completeV2Config;
+const { extensions: _extensions, ...releasedV4Config } = releasedConfig;
+
+/** Actual released schema 5: no instinct configuration or selection. */
 export const completeV5StoredConfig = {
-  ...Object.fromEntries(
-    Object.entries(completeV2Config).filter(([key]) => key !== 'instinct'),
-  ),
-  modelSelection: { ...historicalModelSelection, classifier: [] },
-  preflight: defaultInstinctConfig,
+  ...releasedConfig,
+  modelSelection: historicalModelSelection,
 };
 
 /** Stored schema 2–4 shape: root memory keys, no `extensions`. */
 export const completeV4StoredConfig = {
-  ...Object.fromEntries(
-    Object.entries(completeV2Config).filter(
-      ([key]) => key !== 'extensions' && key !== 'instinct',
-    ),
-  ),
+  ...releasedV4Config,
   modelSelection: historicalModelSelection,
   episodeFinishIdleTriggerTimeMs: 450_000,
   memoryWriteIntervalMs: 60_000,

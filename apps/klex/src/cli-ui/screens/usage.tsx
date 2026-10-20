@@ -75,6 +75,80 @@ function UsageTable({
   models: ModelUsage[];
   totals: Omit<ModelUsage, 'modelId'>;
 }) {
+  const renderRow = (
+    label: string,
+    usage: Omit<ModelUsage, 'modelId'>,
+    isTotal: boolean,
+  ) => (
+    <UsageTableRow
+      key={label}
+      cells={[
+        {
+          content: (
+            <Text bold={isTotal} wrap={isTotal ? undefined : 'truncate-end'}>
+              {label}
+            </Text>
+          ),
+        },
+        {
+          content: <Text bold={isTotal}>{usage.callCount}</Text>,
+          align: 'right',
+        },
+        {
+          content: (
+            <Text bold={isTotal}>
+              {formatTokens(usage.inputTokens, usage.tokenUsageUnreportedCount)}
+            </Text>
+          ),
+          align: 'right',
+        },
+        {
+          content: (
+            <Text bold={isTotal}>
+              {formatTokens(
+                usage.outputTokens,
+                usage.tokenUsageUnreportedCount,
+              )}
+            </Text>
+          ),
+          align: 'right',
+        },
+        {
+          content: (
+            <Text bold={isTotal} dimColor>
+              {formatTokens(
+                usage.inputCacheWriteTokens,
+                usage.cacheUsageUnreportedCount,
+              )}
+            </Text>
+          ),
+          align: 'right',
+        },
+        {
+          content: (
+            <Text bold={isTotal} dimColor>
+              {formatTokens(
+                usage.inputCacheReadTokens,
+                usage.cacheUsageUnreportedCount,
+              )}
+            </Text>
+          ),
+          align: 'right',
+        },
+        {
+          content: (
+            <Text
+              bold={isTotal}
+              color={usage.errorCount > 0 ? 'red' : undefined}
+            >
+              {usage.errorCount}
+            </Text>
+          ),
+          align: 'right',
+        },
+      ]}
+    />
+  );
   const header = [
     'Model',
     'Calls',
@@ -98,87 +172,18 @@ function UsageTable({
         }))}
       />
       <UsageTableDivider left="├" middle="┼" right="┤" />
-      {models.map((model) => (
-        <UsageTableRow
-          key={model.modelId}
-          cells={[
-            {
-              content: <Text wrap="truncate-end">{model.modelId}</Text>,
-            },
-            { content: <Text>{model.callCount}</Text>, align: 'right' },
-            {
-              content: <Text>{formatTokens(model.inputTokens)}</Text>,
-              align: 'right',
-            },
-            {
-              content: <Text>{formatTokens(model.outputTokens)}</Text>,
-              align: 'right',
-            },
-            {
-              content: (
-                <Text dimColor>
-                  {formatTokens(model.inputCacheWriteTokens)}
-                </Text>
-              ),
-              align: 'right',
-            },
-            {
-              content: (
-                <Text dimColor>{formatTokens(model.inputCacheReadTokens)}</Text>
-              ),
-              align: 'right',
-            },
-            {
-              content: (
-                <Text color={model.errorCount > 0 ? 'red' : undefined}>
-                  {model.errorCount}
-                </Text>
-              ),
-              align: 'right',
-            },
-          ]}
-        />
-      ))}
+      {models.map((model) => renderRow(model.modelId, model, false))}
       <UsageTableDivider left="├" middle="┼" right="┤" />
-      <UsageTableRow
-        cells={[
-          { content: <Text bold>Total</Text> },
-          { content: <Text bold>{totals.callCount}</Text>, align: 'right' },
-          {
-            content: <Text bold>{formatTokens(totals.inputTokens)}</Text>,
-            align: 'right',
-          },
-          {
-            content: <Text bold>{formatTokens(totals.outputTokens)}</Text>,
-            align: 'right',
-          },
-          {
-            content: (
-              <Text bold dimColor>
-                {formatTokens(totals.inputCacheWriteTokens)}
-              </Text>
-            ),
-            align: 'right',
-          },
-          {
-            content: (
-              <Text bold dimColor>
-                {formatTokens(totals.inputCacheReadTokens)}
-              </Text>
-            ),
-            align: 'right',
-          },
-          {
-            content: (
-              <Text bold color={totals.errorCount > 0 ? 'red' : undefined}>
-                {totals.errorCount}
-              </Text>
-            ),
-            align: 'right',
-          },
-        ]}
-      />
+      {renderRow('Total', totals, true)}
       <UsageTableDivider left="╰" middle="┴" right="╯" />
+      {(totals.tokenUsageUnreportedCount > 0 ||
+        totals.cacheUsageUnreportedCount > 0) && (
+        <Text>
+          Incomplete reporting: {totals.tokenUsageUnreportedCount} calls missing
+          token totals; {totals.cacheUsageUnreportedCount} missing cache
+          metrics. Values marked ≥ are reported lower bounds.
+        </Text>
+      )}
     </Box>
   );
 }
@@ -207,6 +212,8 @@ const TIMEFRAMES: { key: Timeframe; label: string }[] = [
 interface ModelUsage {
   modelId: string;
   callCount: number;
+  tokenUsageUnreportedCount: number;
+  cacheUsageUnreportedCount: number;
   inputTokens: number;
   outputTokens: number;
   inputCacheWriteTokens: number;
@@ -221,6 +228,8 @@ function aggregateByModel(dataPoints: UsageDataPoint[]): ModelUsage[] {
     const existing = map.get(key);
     if (existing) {
       existing.callCount += dp.callCount;
+      existing.tokenUsageUnreportedCount += dp.tokenUsageUnreportedCount;
+      existing.cacheUsageUnreportedCount += dp.cacheUsageUnreportedCount;
       existing.inputTokens += dp.inputTokens;
       existing.outputTokens += dp.outputTokens;
       existing.inputCacheWriteTokens += dp.inputCacheWriteTokens;
@@ -230,6 +239,8 @@ function aggregateByModel(dataPoints: UsageDataPoint[]): ModelUsage[] {
       map.set(key, {
         modelId: key,
         callCount: dp.callCount,
+        tokenUsageUnreportedCount: dp.tokenUsageUnreportedCount,
+        cacheUsageUnreportedCount: dp.cacheUsageUnreportedCount,
         inputTokens: dp.inputTokens,
         outputTokens: dp.outputTokens,
         inputCacheWriteTokens: dp.inputCacheWriteTokens,
@@ -243,10 +254,11 @@ function aggregateByModel(dataPoints: UsageDataPoint[]): ModelUsage[] {
   );
 }
 
-function formatTokens(n: number): string {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
-  return String(n);
+function formatTokens(n: number, unreportedCount: number): string {
+  const prefix = unreportedCount > 0 ? '≥' : '';
+  if (n >= 1_000_000) return `${prefix}${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `${prefix}${(n / 1_000).toFixed(1)}K`;
+  return `${prefix}${n}`;
 }
 
 function getFromDate(timeframe: Timeframe): string | undefined {
@@ -344,6 +356,10 @@ export function UsageScreen({ apiClient, onBack }: UsageScreenProps) {
       models.reduce(
         (acc, m) => ({
           callCount: acc.callCount + m.callCount,
+          tokenUsageUnreportedCount:
+            acc.tokenUsageUnreportedCount + m.tokenUsageUnreportedCount,
+          cacheUsageUnreportedCount:
+            acc.cacheUsageUnreportedCount + m.cacheUsageUnreportedCount,
           inputTokens: acc.inputTokens + m.inputTokens,
           outputTokens: acc.outputTokens + m.outputTokens,
           inputCacheWriteTokens:
@@ -354,6 +370,8 @@ export function UsageScreen({ apiClient, onBack }: UsageScreenProps) {
         }),
         {
           callCount: 0,
+          tokenUsageUnreportedCount: 0,
+          cacheUsageUnreportedCount: 0,
           inputTokens: 0,
           outputTokens: 0,
           inputCacheWriteTokens: 0,

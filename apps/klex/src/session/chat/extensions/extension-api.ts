@@ -234,9 +234,7 @@ export type GenerateTextFailureReason =
   /** The caller's `abortSignal` fired. */
   | 'aborted'
   /** Catch-all for unexpected failures. */
-  | 'other'
-  /** The caller's abort signal cancelled generation, without model fallback. */
-  | 'cancelled';
+  | 'other';
 
 /**
  * Failed generation result, including caller cancellation or exhausted models.

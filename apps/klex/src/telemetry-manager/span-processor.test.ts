@@ -117,6 +117,32 @@ describe('TelemetrySpanProcessor', () => {
     expect(forwarded.attributes['custom.attr']).toBeUndefined();
   });
 
+  it.each(['advanced', 'debug'] as const)(
+    'scrubs credentials in error status messages at %s without mutating the span',
+    (level) => {
+      const tp = createTelemetrySpanProcessor(level);
+      const { processor, onEnd } = makeDelegate();
+      tp.setDelegate(processor);
+      const message =
+        'Request failed: api_key=private-key Bearer private-token https://user:pass@example.test';
+      const span = makeSpan({
+        status: { code: SpanStatusCode.ERROR, message },
+      });
+      tp.onEnd(span);
+
+      const forwarded = onEnd.mock.calls[0]?.[0] as ReadableSpan;
+      expect(forwarded.status.code).toBe(SpanStatusCode.ERROR);
+      if (level === 'advanced')
+        expect(forwarded.status.message).toBeUndefined();
+      else {
+        expect(forwarded.status.message).toBe(
+          'Request failed: [REDACTED] Bearer [REDACTED] https://[REDACTED]@example.test',
+        );
+      }
+      expect(span.status.message).toBe(message);
+    },
+  );
+
   it('preserves the standard service instance resource attribute', () => {
     const tp = createTelemetrySpanProcessor();
     const { processor, onEnd } = makeDelegate();

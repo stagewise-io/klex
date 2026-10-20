@@ -299,6 +299,11 @@ function scrubSpan(
 ): ReadableSpan {
   const status = { ...span.status };
   if (level !== 'debug') delete status.message;
+  else if (status.message !== undefined)
+    status.message = sanitizeDebugString(
+      status.message,
+      MAX_DEBUG_CONTENT_STRING_LENGTH,
+    );
   const resourceAttributes = {
     ...safeResourceAttributes(span.resource.attributes, level),
     ...dynamicResourceAttributes,

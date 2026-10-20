@@ -59,6 +59,8 @@ const ADVANCED_STRING_SPAN_ATTRIBUTES = new Set([
   'step.finishReason',
   'step.skipReason',
   'step.errorClassification',
+  'instinct.status',
+  'instinct.classifierStatus',
   'generation.modelId',
   'generation.finishReason',
   'model.id',

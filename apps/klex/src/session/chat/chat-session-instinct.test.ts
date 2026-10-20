@@ -14,9 +14,10 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import { createLogger } from '@stagewise/logger';
 
-import type { Config } from '@/config';
+import { type Config, interpolateEnvironment } from '@/config';
 import { completeV2Config } from '@/config/config.test-fixtures';
 import { createIntrospector } from '@/introspection';
+import type { ModelCallRecord } from '@/model-call-logger';
 import { SessionInboxUrgency } from '@/session/inbox';
 import { createTelemetrySpanProcessor } from '@/telemetry-manager';
 import { createTelemetryPolicy } from '@/telemetry-policy';
@@ -48,6 +49,8 @@ function harness(
     interrupt?: boolean;
     evaluationFallback?: boolean;
     evaluationOnly?: boolean;
+    classifierError?: boolean;
+    env?: NodeJS.ProcessEnv;
   } = {},
 ) {
   const order: string[] = [];
@@ -57,6 +60,8 @@ function harness(
   const classifier = new MockLanguageModelV4({
     doGenerate: async (args) => {
       order.push('classifier');
+      if (options.classifierError)
+        throw new Error('private-classifier-error api_key=private-credential');
       expect(args.temperature).toBe(0);
       expect(args.responseFormat?.type).toBe('json');
       return {
@@ -81,6 +86,8 @@ function harness(
     supportedQuestionTypes: ['boolean'],
     doEvaluate: async (args) => {
       order.push('evaluation');
+      if (options.classifierError)
+        throw new Error('private-classifier-error api_key=private-credential');
       expect(args.state).toContain('Remember the project');
       return {
         answers: Object.fromEntries(
@@ -162,6 +169,7 @@ function harness(
   };
   const configValue = {
     ...completeV2Config,
+    providers: { test: { type: 'openai', settings: { apiKey: 'test-key' } } },
     modelSelection: {
       ...completeV2Config.modelSelection,
       chat: [{ providerId: 'test', modelId: 'chat' }],
@@ -179,8 +187,11 @@ function harness(
   };
   const config = {
     get: () => configValue,
+    getRuntime: () => interpolateEnvironment(configValue, options.env ?? {}),
     getModelSelection: ((purpose) =>
-      configValue.modelSelection[purpose]) as Config['getModelSelection'],
+      interpolateEnvironment(configValue, options.env ?? {}).modelSelection[
+        purpose
+      ]) as Config['getModelSelection'],
     subscribe: () => () => {},
   } as unknown as Config;
   const extension: ExtensionFactory = {
@@ -259,9 +270,24 @@ function harness(
     contexts,
     completed,
     mainPrompts,
+    classifier,
+    evaluator,
     configValue,
     resolver,
   };
+}
+
+function exportedSpansJson(spans: readonly ReadableSpan[]): string {
+  return JSON.stringify(
+    spans.map((span) => ({
+      name: span.name,
+      attributes: span.attributes,
+      events: span.events,
+      links: span.links,
+      status: span.status,
+      resource: span.resource.attributes,
+    })),
+  );
 }
 
 function requiredSpan(
@@ -306,7 +332,7 @@ describe('ChatSession instinct tracing', () => {
   });
 
   it.each(
-    (['advanced', 'debug'] as const).flatMap((level) =>
+    (['no', 'basic', 'advanced', 'debug'] as const).flatMap((level) =>
       [
         {
           backend: 'generation',
@@ -326,22 +352,58 @@ describe('ChatSession instinct tracing', () => {
       ].map((options) => ({ level, ...options })),
     ),
   )(
-    'exports $backend instinct before main generation at $level',
+    'applies $level policy to $backend instinct without losing accounting',
     async (options) => {
       exporter.reset();
       finishedBeforeMain = [];
       processor.setLevel(options.level);
       policy.setLevel(options.level);
+      const records: ModelCallRecord[] = [];
+      tracing.setModelCallSink((record) => records.push(record));
       const { session, send } = harness(options);
       try {
         await session.start();
-        await send('Remember the project');
+        await send('Remember the project api_key=private-credential');
+        expect(
+          session.getSessionInfo().usage.extensions['core:instinct-classifier']
+            ?.total,
+        ).toMatchObject({
+          inputTokens: options.evaluationFallback
+            ? 17
+            : options.evaluationOnly
+              ? 7
+              : 10,
+          outputTokens: options.evaluationFallback
+            ? 8
+            : options.evaluationOnly
+              ? 3
+              : 5,
+        });
       } finally {
         await session.close();
       }
       await tracing.forceFlush();
 
+      const instinctRecords = records.filter(
+        (record) => record.extensionId === 'core:instinct-classifier',
+      );
+      expect(instinctRecords.map((record) => record.api)).toEqual(
+        options.evaluationFallback
+          ? ['generation', 'evaluation']
+          : [options.evaluationOnly ? 'evaluation' : 'generation'],
+      );
+      for (const record of instinctRecords) {
+        expect(record.sessionId).toBe(session.sessionId);
+        expect(record.source).toBe('extension');
+        expect(record.tokenUsageReported).toBe(true);
+      }
+      expect(JSON.stringify(records)).not.toContain('Remember the project');
       const spans = exporter.getFinishedSpans();
+      if (options.level === 'no' || options.level === 'basic') {
+        expect(spans).toEqual([]);
+        return;
+      }
+      expect(exportedSpansJson(spans)).not.toContain('private-credential');
       const named = (name: string) =>
         requiredSpan(
           spans.find((span) => span.name === name),
@@ -351,6 +413,18 @@ describe('ChatSession instinct tracing', () => {
       const turn = named('turn');
       const step = named('step');
       const phase = named('step.instinct');
+      expect(phase.attributes).toMatchObject({
+        'instinct.status': 'ready',
+        'instinct.classifierStatus': 'ok',
+      });
+      const reaction = named('step.instinct.reaction');
+      expect(reaction.attributes).toMatchObject({
+        'klex.extension.id': 'memory',
+        'klex.outcome': 'success',
+      });
+      expect(reaction.parentSpanContext?.spanId).toBe(
+        phase.spanContext().spanId,
+      );
       const classifier = named('step.instinct.classifier');
       const attempts = spans.filter((span) => span.name === 'instinct.attempt');
       const calls = spans.filter(
@@ -408,6 +482,18 @@ describe('ChatSession instinct tracing', () => {
         expect(call.attributes['gen_ai.conversation.id']).toBe(
           session.sessionId,
         );
+        expect(attempt.attributes).toMatchObject({
+          'klex.model.api': call.attributes['klex.model.api'],
+          'klex.model.provider_id': 'test',
+          'klex.model.provider_type':
+            call.attributes['klex.model.provider_type'],
+          'klex.model.model_id': call.attributes['klex.model.model_id'],
+          'klex.outcome':
+            call.attributes['klex.model.api'] === 'generation' &&
+            options.evaluationFallback
+              ? 'error'
+              : 'success',
+        });
       }
       // Observe actual lifecycle order at the main span's onStart. Comparing
       // nanosecond timestamps is unreliable: SDK spans use per-span wall-clock
@@ -474,6 +560,18 @@ describe('ChatSession instinct tracing', () => {
         );
         expect(main.attributes['gen_ai.output.messages']).toContain('Answer.');
       } else {
+        const exported = exportedSpansJson(spans);
+        for (const content of [
+          'Remember the project',
+          'Memory needed?',
+          'Memory helps.',
+          'persistent memory',
+          'provisional memory',
+          'ephemeral memory',
+          'Answer.',
+          'invalid JSON',
+        ])
+          expect(exported).not.toContain(content);
         for (const call of [...calls, main]) {
           for (const key of [
             'gen_ai.system_instructions',
@@ -489,9 +587,120 @@ describe('ChatSession instinct tracing', () => {
       }
     },
   );
+
+  it.each(
+    (['no', 'basic', 'advanced', 'debug'] as const).flatMap((level) =>
+      (['generation', 'evaluation'] as const).map((api) => ({ level, api })),
+    ),
+  )(
+    'keeps $api failures private at $level without losing accounting',
+    async ({ level, api }) => {
+      exporter.reset();
+      processor.setLevel(level);
+      policy.setLevel(level);
+      const records: ModelCallRecord[] = [];
+      tracing.setModelCallSink((record) => records.push(record));
+      const { session, send, contexts } = harness({
+        evaluationOnly: api === 'evaluation',
+        classifierError: true,
+      });
+      try {
+        await session.start();
+        await send('Remember the project');
+        expect(contexts[0]?.classification?.status).toBe('failed');
+      } finally {
+        await session.close();
+      }
+      await tracing.forceFlush();
+
+      const instinctRecords = records.filter(
+        (record) => record.extensionId === 'core:instinct-classifier',
+      );
+      expect(instinctRecords).toHaveLength(1);
+      expect(instinctRecords[0]).toMatchObject({
+        sessionId: session.sessionId,
+        api,
+        source: 'extension',
+        isError: true,
+        tokenUsageReported: false,
+      });
+      expect(JSON.stringify(records)).not.toContain('private-classifier-error');
+      const spans = exporter.getFinishedSpans();
+      if (level === 'no' || level === 'basic') {
+        expect(spans).toEqual([]);
+      } else {
+        expect(
+          spans.some((span) => span.attributes['klex.outcome'] === 'error'),
+        ).toBe(true);
+        expect(exportedSpansJson(spans)).not.toContain('private-credential');
+        if (level === 'advanced') {
+          expect(exportedSpansJson(spans)).not.toContain(
+            'Remember the project',
+          );
+          expect(exportedSpansJson(spans)).not.toContain(
+            'private-classifier-error',
+          );
+        }
+      }
+    },
+  );
 });
 
 describe('ChatSession instinct integration', () => {
+  it.each(['generation', 'evaluation'] as const)(
+    'interpolates explicit %s selections per run without changing persisted placeholders',
+    async (api) => {
+      const env = {
+        INSTINCT_PROVIDER: 'test',
+        INSTINCT_MODEL: api === 'evaluation' ? 'native' : 'classifier',
+        INSTINCT_TENANT: 'first-tenant',
+      };
+      const { session, send, configValue, resolver, classifier, evaluator } =
+        harness({
+          evaluationOnly: api === 'evaluation',
+          env,
+        });
+      const entry = {
+        providerId: `\${env:INSTINCT_PROVIDER}`,
+        modelId: `\${env:INSTINCT_MODEL}`,
+        api,
+        providerOptions: {
+          custom: {
+            tenant: `\${env:INSTINCT_TENANT}`,
+            literal: '$${env:KEEP_LITERAL}',
+          },
+        },
+      };
+      configValue.modelSelection.instincts = [entry];
+      const generate = vi.spyOn(classifier, 'doGenerate');
+      const evaluate = vi.spyOn(evaluator, 'doEvaluate');
+      try {
+        await session.start();
+        for (const tenant of ['first-tenant', 'second-tenant']) {
+          env.INSTINCT_TENANT = tenant;
+          await send('Remember the project');
+          const providerOptions = {
+            custom: { tenant, literal: `\${env:KEEP_LITERAL}` },
+          };
+          expect(resolver.resolveInstinctCandidates).toHaveBeenLastCalledWith([
+            {
+              ...entry,
+              providerId: 'test',
+              modelId: env.INSTINCT_MODEL,
+              providerOptions,
+            },
+          ]);
+          const calls =
+            api === 'evaluation' ? evaluate.mock.calls : generate.mock.calls;
+          expect(calls.at(-1)?.[0].providerOptions).toEqual(providerOptions);
+          expect(configValue.modelSelection.instincts).toEqual([entry]);
+        }
+      } finally {
+        await session.close();
+      }
+    },
+  );
+
   it('classifies and awaits reactions, retaining persistent and successful provisional preparation', async () => {
     const {
       session,

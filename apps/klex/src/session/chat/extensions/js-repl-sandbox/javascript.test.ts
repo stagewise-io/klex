@@ -51,13 +51,15 @@ describe('JavaScriptTool', () => {
       'utf8',
     );
     const description = javaScriptTool.tools.runInSandbox?.description;
+    expect(description).toContain(
+      'tools.listNamespaces(options?: { limit?: number })',
+    );
+    expect(description).toContain(
+      'tools.listTools(options?: { namespace?: string, limit?: number })',
+    );
+    expect(prompt).not.toContain('tools.listNamespaces');
+    expect(prompt).not.toContain('tools.listTools');
     for (const text of [prompt, description]) {
-      expect(text).toContain(
-        'tools.listNamespaces(options?: { limit?: number })',
-      );
-      expect(text).toContain(
-        'tools.listTools(options?: { namespace?: string, limit?: number })',
-      );
       expect(text).toContain('includeInputSchema: true');
       expect(text).toContain('"deployment", { limit: 5');
       expect(text).toContain('tools.describe({ namespace, name })');
@@ -125,7 +127,7 @@ describe('JavaScriptTool', () => {
     },
   );
 
-  it.each(['system-prompt-part.md', 'README.md'])(
+  it.each(['README.md'])(
     'executes the enumeration examples from %s and invokes a discovered reference',
     async (file) => {
       const text = readFileSync(new URL(`./${file}`, import.meta.url), 'utf8');

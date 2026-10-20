@@ -9,7 +9,11 @@ import {
 } from '@/session/interaction';
 
 import { createGPTLiveProtocolState } from './gpt-live';
-import { buildGPTLiveSessionConfig } from './session-config';
+import {
+  buildGPTLiveSessionConfig,
+  DEFAULT_MAX_HISTORY_TOKENS,
+  GPT_LIVE_MAX_INITIAL_ITEM_TOKENS,
+} from './session-config';
 import {
   GPT_LIVE_MAX_AUDIO_DELTA_BYTES,
   GPT_LIVE_MAX_FUNCTION_ARGUMENT_CHARACTERS,
@@ -547,10 +551,10 @@ describe('GPT-Live startup configuration', () => {
     ]);
   });
 
-  it('retains more than 128 messages within the 32,000-token default budget', () => {
+  it('retains more than 128 messages within the 7,000-token default budget', () => {
     const messages: ModelMessage[] = Array.from({ length: 150 }, () => ({
       role: 'user',
-      content: 'history '.repeat(100),
+      content: 'history '.repeat(25),
     }));
     const prepared = buildGPTLiveSessionConfig(
       { ...context, messages },
@@ -558,6 +562,75 @@ describe('GPT-Live startup configuration', () => {
     );
     expect(prepared.session.input).toHaveLength(150);
     expect(prepared.omittedHistoryMessages).toBe(0);
+  });
+
+  it('caps >8,192-token history below the provider initial-items limit while retaining summary and newest tail', () => {
+    const summary = '<summary>Earlier context summary</summary>';
+    const messages: ModelMessage[] = [
+      { role: 'assistant', content: summary },
+      ...Array.from({ length: 120 }, (_, index) => ({
+        role: (index % 2 === 0 ? 'user' : 'assistant') as 'user' | 'assistant',
+        content: `turn-${index} ${'history '.repeat(100)}`,
+      })),
+      { role: 'user', content: 'latest user turn' },
+    ];
+
+    const defaultPrepared = buildGPTLiveSessionConfig(
+      { ...context, messages },
+      { responsesModel: 'gpt-5.2', frontendInstructions: 'voice' },
+    );
+    expect(defaultPrepared.omittedHistoryMessages).toBeGreaterThan(0);
+    expect(defaultPrepared.session.input[0]).toMatchObject({
+      role: 'assistant',
+      content: [{ type: 'output_text', text: summary }],
+    });
+    expect(defaultPrepared.session.input.at(-1)).toMatchObject({
+      role: 'user',
+      content: [{ type: 'input_text', text: 'latest user turn' }],
+    });
+    // Default 7,000-token budget retains the summary + newest ~65 turns (~109 tokens each) < 7,000 tokens
+    expect(defaultPrepared.session.input.length).toBeLessThan(70);
+
+    const cappedOverridePrepared = buildGPTLiveSessionConfig(
+      { ...context, messages },
+      {
+        responsesModel: 'gpt-5.2',
+        frontendInstructions: 'voice',
+        maxHistoryTokens: 32_000,
+      },
+    );
+    expect(cappedOverridePrepared.omittedHistoryMessages).toBeGreaterThan(0);
+    expect(cappedOverridePrepared.session.input[0]).toMatchObject({
+      role: 'assistant',
+      content: [{ type: 'output_text', text: summary }],
+    });
+    expect(cappedOverridePrepared.session.input.at(-1)).toMatchObject({
+      role: 'user',
+      content: [{ type: 'input_text', text: 'latest user turn' }],
+    });
+    // Even with maxHistoryTokens=32,000, wire cap is clamped to GPT_LIVE_MAX_INITIAL_ITEM_TOKENS (8,192)
+    expect(DEFAULT_MAX_HISTORY_TOKENS).toBe(7_000);
+    expect(GPT_LIVE_MAX_INITIAL_ITEM_TOKENS).toBe(8_192);
+    expect(cappedOverridePrepared.session.input.length).toBeGreaterThan(
+      defaultPrepared.session.input.length,
+    );
+    expect(cappedOverridePrepared.session.input.length).toBeLessThan(80);
+  });
+
+  it('fails closed when the newest history message alone exceeds the 8,192-token initial-items cap', () => {
+    expect(() =>
+      buildGPTLiveSessionConfig(
+        {
+          ...context,
+          messages: [{ role: 'user', content: 'token '.repeat(8_200) }],
+        },
+        {
+          responsesModel: 'gpt-5.2',
+          frontendInstructions: 'voice',
+          maxHistoryTokens: 32_000,
+        },
+      ),
+    ).toThrow('Newest GPT-Live history message exceeds token budget');
   });
 
   it.each([false, true])(

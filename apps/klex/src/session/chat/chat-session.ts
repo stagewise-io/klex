@@ -592,7 +592,8 @@ class ChatSessionModule implements AgentSession {
   private async executeInstinctClassification(
     args: InstinctClassificationArgs,
   ): Promise<Map<string, InstinctClassificationOutcome>> {
-    const configuredEntries = this.deps.config.get().modelSelection.instincts;
+    const configuredEntries =
+      this.deps.config.getRuntime().modelSelection.instincts;
     const entries =
       configuredEntries.length > 0
         ? configuredEntries

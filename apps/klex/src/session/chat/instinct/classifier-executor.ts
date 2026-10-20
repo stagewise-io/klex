@@ -195,8 +195,10 @@ export async function executeInstinctClassification(
           'instinct.attempt',
           {
             attributes: {
-              'klex.instinct.api': candidate.api,
-              'klex.provider.id': entry.providerId,
+              'klex.model.api': candidate.api,
+              'klex.model.provider_type': candidate.providerType,
+              'klex.model.provider_id': entry.providerId,
+              'klex.model.model_id': entry.modelId,
               'gen_ai.request.model': entry.modelId,
               'klex.instinct.attempt_timeout_ms': budget,
             },
@@ -211,6 +213,10 @@ export async function executeInstinctClassification(
                 'conversation.providerId': entry.providerId,
                 'conversation.modelId': entry.modelId,
               };
+              // Keep SDK lifecycle hooks and identity available for local usage
+              // accounting at every level, just like ordinary extension calls.
+              // KlexOpenTelemetry gates content to debug; the shared policy
+              // sampler and span processor control whether anything is exported.
               const telemetry = {
                 isEnabled: true,
                 functionId: options.functionId,
@@ -271,12 +277,12 @@ export async function executeInstinctClassification(
               );
               const result = await raceAbort(work, signal);
               signal.throwIfAborted();
-              span.setAttribute('klex.instinct.outcome', 'ok');
+              span.setAttribute('klex.outcome', 'success');
               return result;
             } catch (error) {
               span.setAttribute(
-                'klex.instinct.outcome',
-                signal.aborted ? 'aborted' : 'failed',
+                'klex.outcome',
+                signal.aborted ? 'aborted' : 'error',
               );
               throw error;
             } finally {

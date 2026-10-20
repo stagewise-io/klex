@@ -403,7 +403,7 @@ class ExtensionHandlerModule implements ExtensionHandler {
           });
           status = await tracer.startActiveSpan(
             'step.instinct.reaction',
-            { attributes: { 'instinct.extension': extensionIdentifier } },
+            { attributes: { 'klex.extension.id': extensionIdentifier } },
             async (span) => {
               // Start inside the span's context. Promise.race observes late
               // rejections, but the span tracks only the work core waits for.
@@ -421,11 +421,15 @@ class ExtensionHandlerModule implements ExtensionHandler {
               });
               try {
                 const settled = await Promise.race([hook, aborted]);
-                span.setAttribute('instinct.reactionStatus', settled);
+                span.setAttribute(
+                  'klex.outcome',
+                  settled === 'fulfilled' ? 'success' : 'aborted',
+                );
                 if (settled === 'fulfilled')
                   span.setStatus({ code: SpanStatusCode.OK });
                 return settled;
               } catch (error) {
+                span.setAttribute('klex.outcome', 'error');
                 span.recordException(error as Error);
                 span.setStatus({ code: SpanStatusCode.ERROR });
                 throw error;

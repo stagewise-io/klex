@@ -4,8 +4,17 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { ModuleLogger, RootLogger } from '@stagewise/logger';
 
+import type { ExtensionDeps, ResolvedModel } from '../extension-api';
 import { InMemoryToolProvider } from './in-memory-tool-provider.fixture';
 import { createJavaScriptTool, type JavaScriptTool } from './javascript';
+import { createJsReplSandboxExt } from './js-repl-sandbox';
+
+vi.mock('./system-prompt-part.md', () => ({
+  default: readFileSync(
+    new URL('./system-prompt-part.md', import.meta.url),
+    'utf8',
+  ),
+}));
 
 const logging = {
   child: () => ({ info: () => undefined }) as unknown as ModuleLogger,
@@ -57,8 +66,8 @@ describe('JavaScriptTool', () => {
     expect(description).toContain(
       'tools.listTools(options?: { namespace?: string, limit?: number })',
     );
-    expect(prompt).not.toContain('tools.listNamespaces');
-    expect(prompt).not.toContain('tools.listTools');
+    expect(prompt).toContain('tools.listNamespaces(...)');
+    expect(prompt).toContain('tools.listTools(...)');
     for (const text of [prompt, description]) {
       expect(text).toContain('includeInputSchema: true');
       expect(text).toContain('"deployment", { limit: 5');
@@ -75,6 +84,50 @@ describe('JavaScriptTool', () => {
       );
       expect(text).not.toContain('matches[0]');
     }
+  });
+
+  it('includes the static MCP gateway instruction once across effective sandbox guidance and preserves prompt-cache stability', () => {
+    const gatewayInstruction =
+      'This JavaScript runtime is the gateway to the connected MCP tools. Before concluding that a capability is unavailable, enumerate connected namespaces and tools with tools.listNamespaces(...) or tools.listTools(...) and inspect the returned references.';
+    const snapshotSpy = vi.spyOn(provider, 'snapshot');
+    const searchSpy = vi.spyOn(provider, 'search');
+
+    const firstExt = createJsReplSandboxExt.create({
+      logging,
+      mcp: provider as unknown as NonNullable<ExtensionDeps['mcp']>,
+      sessionId: 'session-1',
+    } as ExtensionDeps);
+    const firstPrompt = firstExt.getSystemPromptPart?.() ?? '';
+    const firstDescription =
+      firstExt.getTools?.({} as ResolvedModel).runInSandbox?.description ?? '';
+    const effectiveGuidance = [firstPrompt, firstDescription].join('\n');
+
+    expect(effectiveGuidance.split(gatewayInstruction)).toHaveLength(2);
+    expect(firstPrompt).toContain(gatewayInstruction);
+    expect(firstDescription).not.toContain(gatewayInstruction);
+    for (const namespace of [
+      'git.hub',
+      'other',
+      'odd namespace',
+      'stale.namespace',
+    ]) {
+      expect(effectiveGuidance).not.toContain(namespace);
+    }
+
+    provider.remove({ namespace: 'git.hub', name: 'echo-value' });
+    provider.remove({ namespace: 'stale.namespace', name: 'temporary-tool' });
+
+    const secondExt = createJsReplSandboxExt.create({
+      logging,
+      mcp: provider as unknown as NonNullable<ExtensionDeps['mcp']>,
+      sessionId: 'session-2',
+    } as ExtensionDeps);
+    expect(secondExt.getSystemPromptPart?.()).toBe(firstPrompt);
+    expect(
+      secondExt.getTools?.({} as ResolvedModel).runInSandbox?.description,
+    ).toBe(firstDescription);
+    expect(snapshotSpy).not.toHaveBeenCalled();
+    expect(searchSpy).not.toHaveBeenCalled();
   });
 
   it.each(['system-prompt-part.md', 'README.md'])(

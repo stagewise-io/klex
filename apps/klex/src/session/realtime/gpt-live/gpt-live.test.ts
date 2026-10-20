@@ -591,46 +591,43 @@ describe('GPT-Live startup configuration', () => {
     // Default 7,000-token budget retains the summary + newest ~65 turns (~109 tokens each) < 7,000 tokens
     expect(defaultPrepared.session.input.length).toBeLessThan(70);
 
-    const cappedOverridePrepared = buildGPTLiveSessionConfig(
-      { ...context, messages },
-      {
-        responsesModel: 'gpt-5.2',
-        frontendInstructions: 'voice',
-        maxHistoryTokens: 32_000,
-      },
-    );
-    expect(cappedOverridePrepared.omittedHistoryMessages).toBeGreaterThan(0);
-    expect(cappedOverridePrepared.session.input[0]).toMatchObject({
-      role: 'assistant',
-      content: [{ type: 'output_text', text: summary }],
-    });
-    expect(cappedOverridePrepared.session.input.at(-1)).toMatchObject({
-      role: 'user',
-      content: [{ type: 'input_text', text: 'latest user turn' }],
-    });
-    // Even with maxHistoryTokens=32,000, wire cap is clamped to GPT_LIVE_MAX_INITIAL_ITEM_TOKENS (8,192)
     expect(DEFAULT_MAX_HISTORY_TOKENS).toBe(7_000);
-    expect(GPT_LIVE_MAX_INITIAL_ITEM_TOKENS).toBe(8_192);
-    expect(cappedOverridePrepared.session.input.length).toBeGreaterThan(
-      defaultPrepared.session.input.length,
-    );
-    expect(cappedOverridePrepared.session.input.length).toBeLessThan(80);
-  });
+    expect(GPT_LIVE_MAX_INITIAL_ITEM_TOKENS).toBe(7_000);
 
-  it('fails closed when the newest history message alone exceeds the 8,192-token initial-items cap', () => {
-    expect(() =>
-      buildGPTLiveSessionConfig(
-        {
-          ...context,
-          messages: [{ role: 'user', content: 'token '.repeat(8_200) }],
-        },
+    for (const override of [8_192, 32_000]) {
+      const cappedOverridePrepared = buildGPTLiveSessionConfig(
+        { ...context, messages },
         {
           responsesModel: 'gpt-5.2',
           frontendInstructions: 'voice',
-          maxHistoryTokens: 32_000,
+          maxHistoryTokens: override,
         },
-      ),
-    ).toThrow('Newest GPT-Live history message exceeds token budget');
+      );
+      expect(cappedOverridePrepared.omittedHistoryMessages).toBe(
+        defaultPrepared.omittedHistoryMessages,
+      );
+      expect(cappedOverridePrepared.session.input).toEqual(
+        defaultPrepared.session.input,
+      );
+    }
+  });
+
+  it('fails closed when the newest history message alone exceeds the 7,000-token initial-items cap', () => {
+    for (const override of [8_192, 32_000]) {
+      expect(() =>
+        buildGPTLiveSessionConfig(
+          {
+            ...context,
+            messages: [{ role: 'user', content: 'token '.repeat(7_100) }],
+          },
+          {
+            responsesModel: 'gpt-5.2',
+            frontendInstructions: 'voice',
+            maxHistoryTokens: override,
+          },
+        ),
+      ).toThrow('Newest GPT-Live history message exceeds token budget');
+    }
   });
 
   it.each([false, true])(

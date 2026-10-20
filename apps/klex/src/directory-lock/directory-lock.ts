@@ -24,6 +24,17 @@ const LOCK_FILE_NAME = '.klex.lock';
  */
 const heldLockPaths = new Set<string>();
 
+/** Contents of the lock file. Unknown fields are ignored. */
+interface LockRecord {
+  pid?: unknown;
+  /**
+   * Kernel start time of the owning process (`/proc/<pid>/stat` field 22,
+   * clock ticks since boot). Linux only; absent on other platforms and in
+   * locks written by older Klex versions.
+   */
+  processStartTime?: unknown;
+}
+
 class DirectoryLockModule implements DirectoryLock {
   private handle: FileHandle | null = null;
   private acquired = false;
@@ -84,9 +95,11 @@ class DirectoryLockModule implements DirectoryLock {
     const handle = await open(this.deps.lockPath, 'wx', 0o600);
     this.handle = handle;
     heldLockPaths.add(this.deps.lockPath);
+    const processStartTime = await readProcessStartTime(process.pid);
     const content = JSON.stringify({
       pid: process.pid,
       startedAt: new Date().toISOString(),
+      ...(processStartTime === undefined ? {} : { processStartTime }),
     });
     await handle.writeFile(content, 'utf8');
     // Keep the handle open — the open fd is part of the lock
@@ -102,23 +115,22 @@ class DirectoryLockModule implements DirectoryLock {
       return;
     }
 
-    let pid: number | undefined;
+    let record: LockRecord;
     try {
-      pid = (JSON.parse(content) as { pid?: number }).pid;
+      record = JSON.parse(content) as LockRecord;
     } catch {
       // Unparseable — stale lock
       await this.safeRemoveLock();
       return;
     }
 
-    if (pid === undefined) {
+    const pid = record?.pid;
+    if (typeof pid !== 'number') {
       await this.safeRemoveLock();
       return;
     }
 
-    const heldByUs =
-      pid === process.pid && heldLockPaths.has(this.deps.lockPath);
-    if (heldByUs || (pid !== process.pid && isProcessAlive(pid))) {
+    if (await isLockLive(this.deps.lockPath, record)) {
       throw new Error(
         `Working directory is already in use by Klex process ${pid}. Remove the lock file at "${this.deps.lockPath}" or use a different directory.`,
       );
@@ -139,6 +151,52 @@ class DirectoryLockModule implements DirectoryLock {
       if (!isNodeError(error) || error.code !== 'ENOENT') throw error;
     }
   }
+}
+
+/**
+ * Whether the process named by a lock record still owns the lock. A live PID
+ * alone is not proof: after a crash, containers commonly reuse low PIDs, so the
+ * recorded PID may belong to an unrelated process in the new container. When
+ * the lock carries a kernel start time, the PID must still have that start
+ * time. Without it (older lock, non-Linux, unreadable `/proc`), a live PID is
+ * trusted as before.
+ */
+async function isLockLive(
+  lockPath: string,
+  record: LockRecord,
+): Promise<boolean> {
+  const { pid } = record;
+  if (typeof pid !== 'number') return false;
+  if (pid === process.pid) return heldLockPaths.has(lockPath);
+  if (!isProcessAlive(pid)) return false;
+  if (typeof record.processStartTime !== 'string') return true;
+  const current = await readProcessStartTime(pid);
+  return current === undefined || current === record.processStartTime;
+}
+
+async function readProcessStartTime(pid: number): Promise<string | undefined> {
+  if (process.platform !== 'linux') return undefined;
+  try {
+    return parseProcessStartTime(await readFile(`/proc/${pid}/stat`, 'utf8'));
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Extracts field 22 (`starttime`) from `/proc/<pid>/stat`. The second field is
+ * the command name in parentheses and may itself contain spaces or `)`, so
+ * fields are counted from the last `)`.
+ */
+export function parseProcessStartTime(stat: string): string | undefined {
+  const end = stat.lastIndexOf(')');
+  if (end < 0) return undefined;
+  // Fields after the command name start at field 3 (state); starttime is 22.
+  const value = stat
+    .slice(end + 1)
+    .trim()
+    .split(/\s+/)[19];
+  return value !== undefined && /^\d+$/.test(value) ? value : undefined;
 }
 
 function isProcessAlive(pid: number): boolean {
@@ -165,10 +223,7 @@ export async function isDirectoryInUse(
   try {
     const lockPath = join(dataDirectory, LOCK_FILE_NAME);
     const content = await readFile(lockPath, 'utf8');
-    const pid = (JSON.parse(content) as { pid?: unknown }).pid;
-    if (typeof pid !== 'number') return false;
-    if (pid === process.pid) return heldLockPaths.has(lockPath);
-    return isProcessAlive(pid);
+    return await isLockLive(lockPath, JSON.parse(content) as LockRecord);
   } catch {
     return false;
   }

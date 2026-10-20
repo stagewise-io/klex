@@ -6,7 +6,11 @@ import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { createLogger } from '@stagewise/logger';
 
-import { createDirectoryLock, isDirectoryInUse } from './directory-lock';
+import {
+  createDirectoryLock,
+  isDirectoryInUse,
+  parseProcessStartTime,
+} from './directory-lock';
 
 const logging = createLogger({ name: 'klex', type: 'hidden' });
 
@@ -105,6 +109,72 @@ describe('DirectoryLock', () => {
     await expect(isDirectoryInUse(dir)).resolves.toBe(false);
   });
 
+  describe.runIf(process.platform === 'linux')('process start time', () => {
+    async function startTimeOf(pid: number): Promise<string> {
+      const value = parseProcessStartTime(
+        await readFile(`/proc/${pid}/stat`, 'utf8'),
+      );
+      if (value === undefined) throw new Error('no start time');
+      return value;
+    }
+
+    async function writeLock(record: object): Promise<void> {
+      const { writeFile } = await import('node:fs/promises');
+      await writeFile(join(dir, '.klex.lock'), JSON.stringify(record), 'utf8');
+    }
+
+    it('records its own start time', async () => {
+      const lock = createDirectoryLock({ logging, dataDirectory: dir });
+      await lock.acquire();
+      const parsed = JSON.parse(
+        await readFile(join(dir, '.klex.lock'), 'utf8'),
+      );
+      expect(parsed.processStartTime).toBe(await startTimeOf(process.pid));
+      await lock.release();
+    });
+
+    it('replaces a lock whose live PID was reused by another process', async () => {
+      // After a crash, the new container's PID layout can differ, so the
+      // recorded PID may now belong to an unrelated live process.
+      const reusedPid = process.ppid;
+      const actual = await startTimeOf(reusedPid);
+      await writeLock({
+        pid: reusedPid,
+        startedAt: '2026-01-01T00:00:00Z',
+        processStartTime: `${actual}0`,
+      });
+      await expect(isDirectoryInUse(dir)).resolves.toBe(false);
+
+      const lock = createDirectoryLock({ logging, dataDirectory: dir });
+      await lock.acquire();
+      const parsed = JSON.parse(
+        await readFile(join(dir, '.klex.lock'), 'utf8'),
+      );
+      expect(parsed.pid).toBe(process.pid);
+      await lock.release();
+    });
+
+    it('respects a lock whose live PID still has the recorded start time', async () => {
+      const ownerPid = process.ppid;
+      await writeLock({
+        pid: ownerPid,
+        startedAt: '2026-01-01T00:00:00Z',
+        processStartTime: await startTimeOf(ownerPid),
+      });
+      await expect(isDirectoryInUse(dir)).resolves.toBe(true);
+      const lock = createDirectoryLock({ logging, dataDirectory: dir });
+      await expect(lock.acquire()).rejects.toThrow(/already in use/);
+    });
+
+    it('trusts a live PID when the lock has no start time', async () => {
+      // Locks written by older Klex versions.
+      await writeLock({ pid: process.ppid, startedAt: '2026-01-01T00:00:00Z' });
+      await expect(isDirectoryInUse(dir)).resolves.toBe(true);
+      const lock = createDirectoryLock({ logging, dataDirectory: dir });
+      await expect(lock.acquire()).rejects.toThrow(/already in use/);
+    });
+  });
+
   it('released lock can be reacquired by another instance in this process', async () => {
     const lock1 = createDirectoryLock({ logging, dataDirectory: dir });
     await lock1.acquire();
@@ -154,6 +224,16 @@ describe('DirectoryLock', () => {
     // On macOS, stat returns the full mode including file type bits
     expect(stats.mode & 0o777).toBe(0o600);
     await lock.release();
+  });
+
+  it('parses the start time from /proc stat content', () => {
+    const fields = (comm: string) =>
+      `42 (${comm}) S 1 42 42 0 -1 4194560 100 0 0 0 1 2 0 0 20 0 1 0 987654 1000 10`;
+    expect(parseProcessStartTime(fields('node'))).toBe('987654');
+    // The command name may contain spaces and parentheses.
+    expect(parseProcessStartTime(fields('a b) (c'))).toBe('987654');
+    expect(parseProcessStartTime('42 (node) S 1')).toBeUndefined();
+    expect(parseProcessStartTime('garbage')).toBeUndefined();
   });
 
   it('release does not delete a lock file created by another process', async () => {

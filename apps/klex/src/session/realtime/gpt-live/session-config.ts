@@ -10,8 +10,15 @@ import type {
 const tokenizer = getEncoding('o200k_base');
 
 const MAX_HISTORY_TEXT_CHARACTERS = 131_072;
-export const GPT_LIVE_MAX_INITIAL_ITEM_TOKENS = 8_192;
-export const DEFAULT_MAX_HISTORY_TOKENS = 7_000;
+/**
+ * GPT-Live rejects `session.input` items exceeding 8,192 provider tokens:
+ * `invalid_value: Initial items must not exceed 8192 tokens.`
+ * Cap both the default budget and any caller `maxHistoryTokens` override at
+ * 7,000 estimated tokens so `o200k_base + 8/item` leaves headroom for
+ * provider-side wire framing.
+ */
+export const GPT_LIVE_MAX_INITIAL_ITEM_TOKENS = 7_000;
+export const DEFAULT_MAX_HISTORY_TOKENS = GPT_LIVE_MAX_INITIAL_ITEM_TOKENS;
 
 export interface GPTLiveSessionConfigOptions {
   readonly modelId?: string;

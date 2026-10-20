@@ -2,6 +2,15 @@
 
 All notable Klex changes are documented here.
 
+## 0.21.1 (2026-10-20)
+
+### Bug Fixes
+
+- clamp maxHistoryTokens overrides at conservative 7000-token cap (88ab79e)
+- cap GPT-Live initial items below 8192-token limit (97fe7fc)
+- preserve Gemini tool result schema refs (420783b)
+- preserve QuickJS evaluation errors (440f688)
+
 ## 0.21.0 (2026-10-19)
 
 ### Features

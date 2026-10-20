@@ -3,16 +3,24 @@ import type { QuickJSContext, QuickJSHandle } from 'quickjs-emscripten-core';
 import {
   assertJsonValue,
   type JsonValue,
+  parseToolListNamespacesOptions,
+  parseToolListToolsOptions,
   parseToolSearchOptions,
+  TOOL_LIST_NAMESPACES_USAGE,
+  TOOL_LIST_TOOLS_USAGE,
   TOOL_SEARCH_USAGE,
 } from '@/tool-provider';
 
 import { CONSOLE_FACTORY_SOURCE } from './console-format';
 import type { ProviderRequest, ToolSnapshotMessage } from './protocol';
+import { assertSerializedSize } from './serialization';
+
+const DEFAULT_MAXIMUM_RESPONSE_BYTES = 1024 * 1024;
 
 export interface NamespaceBridge {
   request(request: ProviderRequest): Promise<JsonValue>;
   emit(value: JsonValue): void;
+  notify?(): void;
 }
 
 export interface NamespaceController {
@@ -22,15 +30,69 @@ export interface NamespaceController {
 
 export function createNamespaceController(
   context: QuickJSContext,
+  maximumResponseBytes = DEFAULT_MAXIMUM_RESPONSE_BYTES,
 ): NamespaceController {
   let activeBridge: NamespaceBridge | undefined;
+  let activeSnapshot: ToolSnapshotMessage | undefined;
   const requireBridge = (): NamespaceBridge => {
     if (!activeBridge) throw new Error('No JavaScript execution is active');
     return activeBridge;
   };
+  const requireSnapshot = (): ToolSnapshotMessage => {
+    if (!activeSnapshot) throw new Error('No JavaScript execution is active');
+    return activeSnapshot;
+  };
 
   const tools = context.newObject();
   try {
+    const listNamespaces = createSnapshotFunction(
+      context,
+      'listNamespaces',
+      requireSnapshot,
+      requireBridge,
+      maximumResponseBytes,
+      (snapshot, ...args) => {
+        if (args.length > 1) {
+          throw new TypeError(
+            `tools.listNamespaces accepts at most 1 argument. ${TOOL_LIST_NAMESPACES_USAGE}`,
+          );
+        }
+        const { limit } = parseToolListNamespacesOptions(args[0]);
+        const namespaces = snapshot.namespaces.map((namespace) => ({
+          namespace: namespace.name,
+          tools: namespace.capabilities.map((capability) => capability.name),
+        }));
+        return limit === undefined ? namespaces : namespaces.slice(0, limit);
+      },
+    );
+    const listTools = createSnapshotFunction(
+      context,
+      'listTools',
+      requireSnapshot,
+      requireBridge,
+      maximumResponseBytes,
+      (snapshot, ...args) => {
+        if (args.length > 1) {
+          throw new TypeError(
+            `tools.listTools accepts at most 1 argument. ${TOOL_LIST_TOOLS_USAGE}`,
+          );
+        }
+        const { namespace, limit } = parseToolListToolsOptions(args[0]);
+        const matchingNamespaces =
+          namespace === undefined
+            ? snapshot.namespaces
+            : snapshot.namespaces.filter((entry) => entry.name === namespace);
+        const listed = matchingNamespaces.flatMap((entry) =>
+          entry.capabilities.map((capability) => ({
+            reference: {
+              namespace: entry.name,
+              name: capability.name,
+            },
+          })),
+        );
+        return limit === undefined ? listed : listed.slice(0, limit);
+      },
+    );
     const search = createBridgeFunction(
       context,
       'search',
@@ -38,7 +100,7 @@ export function createNamespaceController(
       (query, options) => {
         if (typeof query !== 'string' || query.trim().length === 0)
           throw new TypeError(
-            `Search query must be a non-empty string. ${TOOL_SEARCH_USAGE}`,
+            `Search query must be a non-empty string. Use tools.listNamespaces() or tools.listTools() to enumerate available MCP namespaces and tools without a search term. ${TOOL_SEARCH_USAGE}`,
           );
         const parsedOptions = parseToolSearchOptions(options);
         return {
@@ -57,8 +119,12 @@ export function createNamespaceController(
         reference: asReference(reference),
       }),
     );
+    context.setProp(tools, 'listNamespaces', listNamespaces);
+    context.setProp(tools, 'listTools', listTools);
     context.setProp(tools, 'search', search);
     context.setProp(tools, 'describe', describe);
+    listNamespaces.dispose();
+    listTools.dispose();
     search.dispose();
     describe.dispose();
     freeze(context, tools);
@@ -71,10 +137,12 @@ export function createNamespaceController(
 
   return {
     activate(snapshot, bridge) {
+      activeSnapshot = snapshot;
       activeBridge = bridge;
       installMcpNamespace(context, snapshot, requireBridge);
     },
     deactivate() {
+      activeSnapshot = undefined;
       activeBridge = undefined;
     },
   };
@@ -144,6 +212,40 @@ function installMcpNamespace(
   } finally {
     mcp.dispose();
   }
+}
+
+function createSnapshotFunction(
+  context: QuickJSContext,
+  name: string,
+  requireSnapshot: () => ToolSnapshotMessage,
+  requireBridge: () => NamespaceBridge,
+  maximumResponseBytes: number,
+  compute: (snapshot: ToolSnapshotMessage, ...args: unknown[]) => JsonValue,
+): QuickJSHandle {
+  return context.newFunction(name, (...handles) => {
+    const deferred = context.newPromise();
+    try {
+      const bridge = requireBridge();
+      const snapshot = requireSnapshot();
+      const args = handles.map((handle) => context.dump(handle));
+      const value = compute(snapshot, ...args);
+      assertSerializedSize(value, maximumResponseBytes, 'Provider response');
+      void Promise.resolve(value).then((resolved) => {
+        const handle = jsonToHandle(context, resolved);
+        try {
+          deferred.resolve(handle);
+        } finally {
+          handle.dispose();
+          deferred.dispose();
+          bridge.notify?.();
+        }
+      });
+      return deferred.handle;
+    } catch (error) {
+      deferred.dispose();
+      throw error;
+    }
+  });
 }
 
 function createBridgeFunction(
@@ -232,7 +334,7 @@ function asReference(value: unknown): { namespace: string; name: string } {
     value.name.trim().length === 0
   ) {
     throw new TypeError(
-      'Tool reference must contain non-empty namespace and name strings. Use tools.describe({ namespace: string, name: string }), e.g. tools.describe(matches[0].reference) after tools.search("deployment"). Use the exact returned names.',
+      'Tool reference must contain non-empty namespace and name strings. Use tools.describe({ namespace: string, name: string }), e.g. tools.describe(matches[0].reference) after tools.search("deployment") or tools.listTools(). Use the exact returned names.',
     );
   }
   return { namespace: value.namespace, name: value.name };

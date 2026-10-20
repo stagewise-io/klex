@@ -30,6 +30,14 @@ Explicit global state survives subsequent `execute()` calls until reset, fatal r
 Every execution receives a fresh tool snapshot. The JavaScript tool replaces `globalThis.mcp` with frozen namespaces and wrappers generated from that snapshot. Retained wrappers still pass through the live provider, which remains responsible for authorization and can reject removed capabilities.
 
 ```ts
+tools.listNamespaces(
+  options?: { limit?: number },
+): Promise<{ namespace: string; tools: string[] }[]>;
+
+tools.listTools(
+  options?: { namespace?: string; limit?: number },
+): Promise<{ reference: { namespace: string; name: string } }[]>;
+
 tools.search(
   query: string,
   options?: { limit?: number; includeInputSchema?: boolean },
@@ -42,6 +50,17 @@ tools.describe(
 mcp[namespace][capability](input: JsonObject): Promise<JsonValue>;
 
 console.log(...data: unknown[]): void;
+```
+
+When no search term is known yet, enumerate connected namespaces and tools directly from the per-execution snapshot:
+
+```js
+globalThis.namespaces = await tools.listNamespaces();
+globalThis.availableTools = await tools.listTools({ limit: 20 });
+return {
+  namespaces: globalThis.namespaces,
+  availableTools: globalThis.availableTools,
+};
 ```
 
 Use bracket notation for tool names so punctuation, dots, slashes, and other exact names are preserved:

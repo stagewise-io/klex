@@ -52,6 +52,12 @@ describe('JavaScriptTool', () => {
     );
     const description = javaScriptTool.tools.runInSandbox?.description;
     for (const text of [prompt, description]) {
+      expect(text).toContain(
+        'tools.listNamespaces(options?: { limit?: number })',
+      );
+      expect(text).toContain(
+        'tools.listTools(options?: { namespace?: string, limit?: number })',
+      );
       expect(text).toContain('includeInputSchema: true');
       expect(text).toContain('"deployment", { limit: 5');
       expect(text).toContain('tools.describe({ namespace, name })');
@@ -116,6 +122,200 @@ describe('JavaScriptTool', () => {
           }),
         ).resolves.toEqual({ value: 42 });
       }
+    },
+  );
+
+  it.each(['system-prompt-part.md', 'README.md'])(
+    'executes the enumeration examples from %s and invokes a discovered reference',
+    async (file) => {
+      const text = readFileSync(new URL(`./${file}`, import.meta.url), 'utf8');
+      const examples = [...text.matchAll(/```js\n([\s\S]*?)```/gu)]
+        .map((match) => match[1] ?? '')
+        .filter((code) => code.includes('tools.listNamespaces('));
+      expect(examples).toHaveLength(1);
+      for (const example of examples) {
+        const result = await javaScriptTool.execute({ code: example });
+        expect(result).toEqual({
+          namespaces: [
+            { namespace: 'git.hub', tools: ['echo-value', 'same', 'wait'] },
+            { namespace: 'other', tools: ['same'] },
+            { namespace: 'odd namespace', tools: ['slash/name'] },
+            { namespace: 'stale.namespace', tools: ['temporary-tool'] },
+          ],
+          availableTools: [
+            { reference: { namespace: 'git.hub', name: 'echo-value' } },
+            { reference: { namespace: 'git.hub', name: 'same' } },
+            { reference: { namespace: 'git.hub', name: 'wait' } },
+            { reference: { namespace: 'other', name: 'same' } },
+            { reference: { namespace: 'odd namespace', name: 'slash/name' } },
+            {
+              reference: {
+                namespace: 'stale.namespace',
+                name: 'temporary-tool',
+              },
+            },
+          ],
+        });
+        await expect(
+          javaScriptTool.execute({
+            code: `
+              const selected = globalThis.availableTools.find(
+                tool => tool.reference.namespace === 'odd namespace' && tool.reference.name === 'slash/name',
+              );
+              if (!selected) throw new Error('Missing enumerated tool');
+              const { namespace, name } = selected.reference;
+              return await mcp[namespace][name]({ value: 7 });
+            `,
+          }),
+        ).resolves.toEqual({ value: 7 });
+      }
+    },
+  );
+
+  it('enumerates namespaces and tools from the runtime snapshot with limits and without mutating the system prompt', async () => {
+    const initialPrompt = readFileSync(
+      new URL('./system-prompt-part.md', import.meta.url),
+      'utf8',
+    );
+    const initialDescription = javaScriptTool.tools.runInSandbox?.description;
+    await expect(
+      javaScriptTool.execute({
+        code: `return {
+          allNamespaces: await tools.listNamespaces(),
+          limitedNamespaces: await tools.listNamespaces({ limit: 2 }),
+          allTools: await tools.listTools(),
+          limitedTools: await tools.listTools({ limit: 3 }),
+          filteredTools: await tools.listTools({ namespace: 'git.hub', limit: 2 }),
+          oddNamespaceTools: await tools.listTools({ namespace: 'odd namespace' }),
+          missingNamespaceTools: await tools.listTools({ namespace: 'missing' }),
+        }`,
+      }),
+    ).resolves.toEqual({
+      allNamespaces: [
+        { namespace: 'git.hub', tools: ['echo-value', 'same', 'wait'] },
+        { namespace: 'other', tools: ['same'] },
+        { namespace: 'odd namespace', tools: ['slash/name'] },
+        { namespace: 'stale.namespace', tools: ['temporary-tool'] },
+      ],
+      limitedNamespaces: [
+        { namespace: 'git.hub', tools: ['echo-value', 'same', 'wait'] },
+        { namespace: 'other', tools: ['same'] },
+      ],
+      allTools: [
+        { reference: { namespace: 'git.hub', name: 'echo-value' } },
+        { reference: { namespace: 'git.hub', name: 'same' } },
+        { reference: { namespace: 'git.hub', name: 'wait' } },
+        { reference: { namespace: 'other', name: 'same' } },
+        { reference: { namespace: 'odd namespace', name: 'slash/name' } },
+        { reference: { namespace: 'stale.namespace', name: 'temporary-tool' } },
+      ],
+      limitedTools: [
+        { reference: { namespace: 'git.hub', name: 'echo-value' } },
+        { reference: { namespace: 'git.hub', name: 'same' } },
+        { reference: { namespace: 'git.hub', name: 'wait' } },
+      ],
+      filteredTools: [
+        { reference: { namespace: 'git.hub', name: 'echo-value' } },
+        { reference: { namespace: 'git.hub', name: 'same' } },
+      ],
+      oddNamespaceTools: [
+        { reference: { namespace: 'odd namespace', name: 'slash/name' } },
+      ],
+      missingNamespaceTools: [],
+    });
+    expect(provider.searches).toEqual([]);
+    expect(provider.described).toEqual([]);
+    expect(provider.invoked).toEqual([]);
+
+    provider.remove({
+      namespace: 'stale.namespace',
+      name: 'temporary-tool',
+    });
+    await expect(
+      javaScriptTool.execute({
+        code: `return {
+          namespaces: await tools.listNamespaces(),
+          tools: await tools.listTools({ namespace: 'stale.namespace' }),
+        }`,
+      }),
+    ).resolves.toEqual({
+      namespaces: [
+        { namespace: 'git.hub', tools: ['echo-value', 'same', 'wait'] },
+        { namespace: 'other', tools: ['same'] },
+        { namespace: 'odd namespace', tools: ['slash/name'] },
+      ],
+      tools: [],
+    });
+    expect(
+      readFileSync(new URL('./system-prompt-part.md', import.meta.url), 'utf8'),
+    ).toBe(initialPrompt);
+    expect(javaScriptTool.tools.runInSandbox?.description).toBe(
+      initialDescription,
+    );
+    for (const namespace of ['git.hub', 'odd namespace', 'stale.namespace']) {
+      expect(initialPrompt).not.toContain(namespace);
+      expect(initialDescription).not.toContain(namespace);
+    }
+  });
+
+  it.each(['tools.search("")', 'tools.search("   ")'])(
+    'points empty or whitespace search queries to the enumeration APIs: %s',
+    async (code) => {
+      await expect(
+        javaScriptTool.execute({ code: `return await ${code}` }),
+      ).rejects.toThrow(/tools\.listNamespaces\(\) or tools\.listTools\(\)/);
+      expect(provider.searches).toEqual([]);
+    },
+  );
+
+  it.each([
+    {
+      count: 25_000,
+      code: 'return await tools.listTools()',
+      error: /Provider response exceeds 1048576 bytes/,
+    },
+    {
+      count: 6_000,
+      code: 'return await tools.listTools()',
+      error: /Output exceeds 262144 bytes/,
+    },
+    {
+      count: 60_000,
+      code: 'return await tools.listNamespaces()',
+      error: /Provider response exceeds 1048576 bytes/,
+    },
+  ])(
+    'enforces byte limits on snapshot enumeration ($code with $count tools) while allowing bounded limits',
+    async ({ count, code, error }) => {
+      vi.spyOn(provider, 'snapshot').mockResolvedValue({
+        namespaces: [
+          {
+            name: 'bulk.namespace',
+            capabilities: Array.from({ length: count }, (_, index) => ({
+              name: `capability-${String(index).padStart(6, '0')}`,
+            })),
+          },
+        ],
+      });
+      await expect(javaScriptTool.execute({ code })).rejects.toThrow(error);
+      await expect(
+        javaScriptTool.execute({
+          code: 'return await tools.listTools({ namespace: "bulk.namespace", limit: 2 })',
+        }),
+      ).resolves.toEqual([
+        {
+          reference: {
+            namespace: 'bulk.namespace',
+            name: 'capability-000000',
+          },
+        },
+        {
+          reference: {
+            namespace: 'bulk.namespace',
+            name: 'capability-000001',
+          },
+        },
+      ]);
     },
   );
 
@@ -220,9 +420,29 @@ describe('JavaScriptTool', () => {
   );
 
   it.each([
+    'tools.listNamespaces(null)',
+    'tools.listNamespaces([])',
+    'tools.listNamespaces("git.hub")',
+    'tools.listNamespaces({ limit: 0 })',
+    'tools.listNamespaces({ limit: -1 })',
+    'tools.listNamespaces({ limit: 1.5 })',
+    'tools.listNamespaces({ limit: "2" })',
+    'tools.listNamespaces({}, {})',
+    'tools.listTools(null)',
+    'tools.listTools([])',
+    'tools.listTools("")',
+    'tools.listTools({ namespace: "" })',
+    'tools.listTools({ namespace: "   " })',
+    'tools.listTools({ namespace: 123 })',
+    'tools.listTools({ limit: 0 })',
+    'tools.listTools({ limit: -1 })',
+    'tools.listTools({ limit: 1.5 })',
+    'tools.listTools({ limit: "2" })',
+    'tools.listTools({}, {})',
     'tools.search()',
     'tools.search({ query: "deployment" })',
     'tools.search("")',
+    'tools.search("   ")',
     'tools.search("deployment", null)',
     'tools.search("deployment", [])',
     'tools.search("deployment", 5)',
@@ -249,7 +469,7 @@ describe('JavaScriptTool', () => {
       await javaScriptTool.execute({ code: 'globalThis.preserved = 42' });
       await expect(
         javaScriptTool.execute({ code: `return await ${code}` }),
-      ).rejects.toThrow(/tools\.(search|describe)\(/);
+      ).rejects.toThrow(/tools\.(search|describe|listNamespaces|listTools)\(/);
       expect(provider.searches).toEqual([]);
       expect(provider.described).toEqual([]);
       expect(provider.invoked).toEqual([]);

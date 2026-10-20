@@ -55,6 +55,20 @@ describe('packaged JavaScript sandbox Worker', () => {
       ).resolves.toEqual(['first', 'second']);
       await expect(
         javaScriptTool.execute({
+          code: `return {
+            namespaces: await tools.listNamespaces({ limit: 2 }),
+            tools: await tools.listTools({ namespace: 'git.hub', limit: 1 }),
+          }`,
+        }),
+      ).resolves.toEqual({
+        namespaces: [
+          { namespace: 'git.hub', tools: ['echo-value', 'same', 'wait'] },
+          { namespace: 'other', tools: ['same'] },
+        ],
+        tools: [{ reference: { namespace: 'git.hub', name: 'echo-value' } }],
+      });
+      await expect(
+        javaScriptTool.execute({
           code: `return await tools.search('echo', { limit: 1, includeInputSchema: true })`,
         }),
       ).resolves.toEqual([

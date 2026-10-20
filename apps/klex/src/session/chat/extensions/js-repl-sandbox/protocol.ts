@@ -3,6 +3,7 @@ import {
   type JsonObject,
   type JsonValue,
   parseToolSearchOptions,
+  TOOL_SEARCH_USAGE,
 } from '@/tool-provider';
 
 import type { SerializedError } from './serialization';
@@ -127,7 +128,10 @@ function assertProviderRequest(
   if (!isRecord(value) || typeof value.operation !== 'string')
     throw new Error('Invalid provider request');
   if (value.operation === 'search') {
-    assertString(value.query, 'query');
+    if (typeof value.query !== 'string' || value.query.trim().length === 0)
+      throw new TypeError(
+        `Search query must be a non-empty string. Use tools.listNamespaces() or tools.listTools() to enumerate available MCP namespaces and tools without a search term. ${TOOL_SEARCH_USAGE}`,
+      );
     parseToolSearchOptions(value);
     return;
   }

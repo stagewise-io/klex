@@ -52,6 +52,20 @@ describe('JavaScript sandbox protocol', () => {
     });
   });
 
+  it.each(['', '   '])(
+    'rejects empty or whitespace search query %j',
+    (query) => {
+      expect(() =>
+        parseWorkerMessage({
+          type: 'provider-request',
+          executionId: 'e',
+          requestId: 'r',
+          request: { operation: 'search', query },
+        }),
+      ).toThrow(/tools\.listNamespaces\(\) or tools\.listTools\(\)/);
+    },
+  );
+
   it.each([
     { includeInputSchema: 'true' },
     { includeInputSchema: null },

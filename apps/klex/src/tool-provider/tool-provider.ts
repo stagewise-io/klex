@@ -12,13 +12,84 @@ export interface ToolSnapshot {
   }[];
 }
 
+export interface ToolNamespaceSummary {
+  namespace: string;
+  tools: readonly string[];
+}
+
+export interface ToolListNamespacesOptions {
+  limit?: number;
+}
+
+export interface ToolListToolsOptions {
+  namespace?: string;
+  limit?: number;
+}
+
 export interface ToolSearchOptions {
   limit?: number;
   includeInputSchema?: boolean;
 }
 
+export const TOOL_LIST_NAMESPACES_USAGE =
+  'Use tools.listNamespaces(options?: { limit?: number }), e.g. tools.listNamespaces() or tools.listNamespaces({ limit: 10 }).';
+
+export const TOOL_LIST_TOOLS_USAGE =
+  'Use tools.listTools(options?: { namespace?: string, limit?: number }), e.g. tools.listTools() or tools.listTools({ namespace: "linear", limit: 20 }).';
+
 export const TOOL_SEARCH_USAGE =
   'Use tools.search(query: string, options?: { limit?: number, includeInputSchema?: boolean }), e.g. tools.search("deployment", { limit: 5, includeInputSchema: true }).';
+
+export function parseToolListNamespacesOptions(
+  value: unknown,
+): ToolListNamespacesOptions {
+  if (value === undefined) return {};
+  if (typeof value !== 'object' || value === null || Array.isArray(value))
+    throw new TypeError(
+      `List options must be an object. ${TOOL_LIST_NAMESPACES_USAGE}`,
+    );
+  const limit = 'limit' in value ? value.limit : undefined;
+  if (
+    limit !== undefined &&
+    (typeof limit !== 'number' || !Number.isSafeInteger(limit) || limit < 1)
+  )
+    throw new TypeError(
+      `List limit must be a positive finite integer. ${TOOL_LIST_NAMESPACES_USAGE}`,
+    );
+  return {
+    ...(limit === undefined ? {} : { limit }),
+  };
+}
+
+export function parseToolListToolsOptions(
+  value: unknown,
+): ToolListToolsOptions {
+  if (value === undefined) return {};
+  if (typeof value !== 'object' || value === null || Array.isArray(value))
+    throw new TypeError(
+      `List options must be an object. ${TOOL_LIST_TOOLS_USAGE}`,
+    );
+  const namespace = 'namespace' in value ? value.namespace : undefined;
+  const limit = 'limit' in value ? value.limit : undefined;
+  if (
+    namespace !== undefined &&
+    (typeof namespace !== 'string' || namespace.trim().length === 0)
+  )
+    throw new TypeError(
+      `Tool namespace filter must be a non-empty string. ${TOOL_LIST_TOOLS_USAGE}`,
+    );
+  if (
+    limit !== undefined &&
+    (typeof limit !== 'number' || !Number.isSafeInteger(limit) || limit < 1)
+  )
+    throw new TypeError(
+      `List limit must be a positive finite integer. ${TOOL_LIST_TOOLS_USAGE}`,
+    );
+  return {
+    ...(namespace === undefined ? {} : { namespace }),
+    ...(limit === undefined ? {} : { limit }),
+  };
+}
 
 /** Shared validation for guest, worker protocol, and direct provider calls. */
 export function parseToolSearchOptions(value: unknown): ToolSearchOptions {

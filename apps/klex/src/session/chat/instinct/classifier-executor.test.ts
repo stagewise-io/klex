@@ -7,19 +7,23 @@ import type {
   LanguageModelV4Usage,
   SharedV4Warning,
 } from '@ai-sdk/provider';
-import { createTypeSafeAi } from '@ai-sdk/typesafe-ai';
 import { APICallError } from 'ai';
 import { MockLanguageModelV4 } from 'ai/test';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import type { InstinctModelCandidate } from '@/provider-registry';
+import {
+  builtInProviderDefinitions,
+  type InstinctModelCandidate,
+} from '@/provider-registry';
 
 import {
   compileInstinctClassificationBatch,
-  type InstinctClassificationCallArgs,
-  normalizeInstinctEvaluation,
+  validateInstinctClassificationRequest,
 } from './classifier';
-import { executeInstinctClassification } from './classifier-executor';
+import {
+  executeInstinctClassification,
+  type InstinctClassificationArgs,
+} from './classifier-executor';
 
 const usage: LanguageModelV4Usage = {
   inputTokens: { total: 10, noCache: 10, cacheRead: 0, cacheWrite: 0 },
@@ -28,7 +32,7 @@ const usage: LanguageModelV4Usage = {
 function args(
   signal = new AbortController().signal,
   budget = 1000,
-): InstinctClassificationCallArgs {
+): InstinctClassificationArgs {
   return {
     ...compileInstinctClassificationBatch(
       [
@@ -49,7 +53,7 @@ function args(
       ],
       '<external-input>synthetic</external-input>',
     ),
-    abortSignal: signal,
+    signal,
     deadlineAt: performance.now() + budget,
   };
 }
@@ -119,9 +123,95 @@ const options = (candidates: readonly InstinctModelCandidate[]) => ({
 afterEach(() => {
   vi.useRealTimers();
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
 });
 
 describe('instinct executor', () => {
+  it('does no work for empty entries or pre-interrupted calls, with caller abort taking precedence', async () => {
+    const candidate = evaluation();
+    const opts = options([candidate]);
+    const caller = new AbortController();
+    const deadline = new AbortController();
+    deadline.abort();
+    const call = { ...args(caller.signal), deadline: deadline.signal };
+    expect(
+      (await executeInstinctClassification(call, opts)).get('memory'),
+    ).toEqual({ status: 'timeout' });
+    caller.abort();
+    expect(
+      (await executeInstinctClassification(call, opts)).get('memory'),
+    ).toEqual({ status: 'aborted' });
+    expect(
+      await executeInstinctClassification({ ...call, entries: [] }, opts),
+    ).toEqual(new Map());
+    expect(candidate.model.doEvaluate).not.toHaveBeenCalled();
+    expect(opts.onUsage).not.toHaveBeenCalled();
+  });
+
+  it('executes valid evaluation even when the unused generation adapter is oversized', async () => {
+    const entries = Array.from({ length: 8 }, (_, i) => ({
+      extensionIdentifier: `extension-${i}`,
+      request: {
+        prompt: 'Policy',
+        keys: Object.fromEntries(
+          Array.from({ length: 16 }, (_, j) => [
+            `flag${j}`,
+            { type: 'boolean' as const, description: '&'.repeat(500) },
+          ]),
+        ),
+      },
+    }));
+    for (const entry of entries)
+      expect(validateInstinctClassificationRequest(entry.request)).toBeNull();
+    const batch = compileInstinctClassificationBatch(entries, 'Activity');
+    expect(
+      JSON.stringify({ system: batch.system, prompt: batch.prompt }).length,
+    ).toBeGreaterThan(128_000);
+    expect(
+      JSON.stringify({ state: batch.state, questions: batch.questions }).length,
+    ).toBeLessThan(128_000);
+    const gen = generation();
+    const generate = vi.spyOn(gen.model, 'doGenerate');
+    const native = evaluation(
+      vi.fn(async (options) => ({
+        answers: Object.fromEntries(
+          Object.keys(options.questions).map((id) => [
+            id,
+            { type: 'boolean' as const, probability: 0.9 },
+          ]),
+        ),
+        warnings: [],
+      })),
+    );
+    const result = await executeInstinctClassification(
+      {
+        ...batch,
+        signal: new AbortController().signal,
+        deadlineAt: performance.now() + 2000,
+      },
+      options([gen, native]),
+    );
+    expect(result.size).toBe(8);
+    expect(result.get('extension-7')).toMatchObject({
+      status: 'ok',
+      answers: { flag15: true },
+    });
+    expect(generate).not.toHaveBeenCalled();
+    expect(native.model.doEvaluate).toHaveBeenCalledOnce();
+  });
+
+  it('does not bound the unused evaluation adapter for a generation candidate', async () => {
+    const call = args();
+    expect(
+      await executeInstinctClassification(
+        { ...call, state: 'x'.repeat(128_000) },
+        options([generation()]),
+      ),
+    ).toMatchObject(
+      new Map([['memory', expect.objectContaining({ status: 'ok' })]]),
+    );
+  });
+
   it('bounds the actual evaluation state including policies and provider options', async () => {
     const candidate = evaluation();
     const call = args();
@@ -130,114 +220,150 @@ describe('instinct executor', () => {
       { ...call, state: 'x'.repeat(128_000) },
       executionOptions,
     );
-    expect(result.status).toBe('unavailable');
+    expect(result.get('memory')?.status).toBe('unavailable');
     expect(executionOptions.onUsage).not.toHaveBeenCalled();
     expect(candidate.model.doEvaluate).not.toHaveBeenCalled();
   });
 
-  it('executes the compact predicate, choice and score batch through the real TypeSafe SDK transport', async () => {
-    const batch = compileInstinctClassificationBatch(
-      [
-        {
-          extensionIdentifier: 'rubric',
-          request: {
-            prompt: 'Judge the new activity.',
-            keys: {
-              likelihood: { type: 'predicate', description: 'Likely?' },
-              route: {
-                type: 'enum',
-                description: 'Route?',
-                values: ['technical', 'other'],
-              },
-              severity: {
-                type: 'score',
-                description: 'Severity?',
-                levels: [
-                  { label: 'low', description: 'No loss.' },
-                  { label: 'medium', description: 'Workaround exists.' },
-                  { label: 'high', description: 'Blocked.' },
-                ],
+  it.each([true, false])(
+    'executes the application TypeSafe transport (reported usage=%s)',
+    async (reportedUsage) => {
+      const batch = compileInstinctClassificationBatch(
+        [
+          {
+            extensionIdentifier: 'rubric',
+            request: {
+              prompt: 'Judge the new activity.',
+              keys: {
+                likelihood: { type: 'predicate', description: 'Likely?' },
+                route: {
+                  type: 'enum',
+                  description: 'Route?',
+                  values: ['technical', 'other'],
+                },
+                severity: {
+                  type: 'score',
+                  description: 'Severity?',
+                  levels: [
+                    { label: 'low', description: 'No loss.' },
+                    { label: 'medium', description: 'Workaround exists.' },
+                    { label: 'high', description: 'Blocked.' },
+                  ],
+                },
+                needed: { type: 'boolean', description: 'Needed?' },
               },
             },
           },
-        },
-      ],
-      '<agent-activity>\nuser\n¦Export fails but another browser works.\n</agent-activity>',
-    );
-    const fetch = vi.fn(
-      async (_url: string | URL | Request, _init?: RequestInit) =>
-        new Response(
-          JSON.stringify({
-            answers: {
-              q0: { type: 'noul', noul: 0.8 },
-              q1: {
-                type: 'choice',
-                choice: 'technical',
-                probabilities: { technical: 0.9, other: 0.1 },
-              },
-              q2: {
-                type: 'score',
-                score: 1.25,
-                probabilities: { '0': 0.125, '1': 0.5, '2': 0.375 },
-              },
-            },
-            usage: { input_tokens: 42, output_tokens: 6 },
-          }),
-          { headers: { 'content-type': 'application/json' } },
-        ),
-    );
-    const native = evaluation();
-    const candidate = {
-      ...native,
-      entry: { ...native.entry, attemptTimeoutMs: 1000 },
-      model: createTypeSafeAi({
-        apiKey: 'synthetic',
-        baseURL: 'https://synthetic.invalid',
-        fetch,
-      }).evaluationModel('jev-latest'),
-    };
-    const opts = options([candidate]);
-    const result = await executeInstinctClassification(
-      {
-        ...batch,
-        abortSignal: new AbortController().signal,
-        deadlineAt: performance.now() + 2000,
-      },
-      opts,
-    );
-    expect(result.status).toBe('evaluation');
-    if (result.status !== 'evaluation')
-      throw new Error('Missing native result');
-    expect(
-      normalizeInstinctEvaluation(batch, result.answers, result.modelId).get(
-        'rubric',
-      ),
-    ).toMatchObject({
-      status: 'ok',
-      answers: { likelihood: 0.8, route: 'technical', severity: 1.25 },
-    });
-    expect(fetch).toHaveBeenCalledTimes(1);
-    const body = JSON.parse(String(fetch.mock.calls[0]?.[1]?.body));
-    expect(body.state).toBe(batch.state);
-    expect(body.state.match(/Judge the new activity\./g)).toHaveLength(1);
-    expect(body.questions).toMatchObject({
-      q0: { type: 'noul' },
-      q1: { type: 'choice', criteria: { technical: null, other: null } },
-      q2: {
-        type: 'score',
-        criteria: [
-          'low: No loss.',
-          'medium: Workaround exists.',
-          'high: Blocked.',
         ],
-      },
-    });
-    expect(JSON.stringify(body.questions)).not.toContain('Content lines');
-    expect(opts.onUsage.mock.calls[0]?.[0]).toMatchObject({
-      inputTokens: 42,
-      outputTokens: 6,
-    });
-  });
+        '<agent-activity>\nuser\n¦Export fails but another browser works.\n</agent-activity>',
+      );
+      const fetch = vi.fn(
+        async (_url: string | URL | Request, _init?: RequestInit) =>
+          new Response(
+            JSON.stringify({
+              answers: {
+                q0: { type: 'noul', noul: 0.8 },
+                q1: {
+                  type: 'choice',
+                  choice: 'technical',
+                  probabilities: { technical: 0.9, other: 0.1 },
+                },
+                q2: {
+                  type: 'score',
+                  score: 1.25,
+                  probabilities: { '0': 0.125, '1': 0.5, '2': 0.375 },
+                },
+                q3: { type: 'noul', noul: 0.5 },
+              },
+              ...(reportedUsage && {
+                usage: { input_tokens: 42, output_tokens: 6 },
+              }),
+            }),
+            { headers: { 'content-type': 'application/json' } },
+          ),
+      );
+      vi.stubGlobal('fetch', fetch);
+      const factory = builtInProviderDefinitions.find(
+        ({ type }) => type === 'typesafe-ai',
+      )?.createEvaluationModel;
+      if (!factory) throw new Error('Missing TypeSafe factory');
+      const model = factory(
+        {
+          id: 'native',
+          type: 'typesafe-ai',
+          settings: {
+            apiKey: 'synthetic-key',
+            baseUrl: 'https://synthetic.invalid/v1/',
+            headers: { 'x-test': 'synthetic' },
+          },
+        },
+        'jev-latest',
+      );
+      const evaluateCall = vi.spyOn(model, 'doEvaluate');
+      const native = evaluation();
+      const candidate = {
+        ...native,
+        entry: {
+          ...native.entry,
+          attemptTimeoutMs: 1000,
+          providerOptions: { typesafe: { temperature: 0 } },
+        },
+        model,
+      };
+      const opts = options([candidate]);
+      const result = await executeInstinctClassification(
+        {
+          ...batch,
+          signal: new AbortController().signal,
+          deadlineAt: performance.now() + 2000,
+        },
+        opts,
+      );
+      expect(result.get('rubric')).toMatchObject({
+        status: 'ok',
+        answers: {
+          likelihood: 0.8,
+          route: 'technical',
+          severity: 1.25,
+          needed: false,
+        },
+      });
+      expect(fetch).toHaveBeenCalledTimes(1);
+      const [url, init] = fetch.mock.calls[0] ?? [];
+      expect(url).toBe('https://synthetic.invalid/v1/systemone');
+      const headers = new Headers(init?.headers);
+      expect(headers.get('authorization')).toBe('Bearer synthetic-key');
+      expect(headers.get('x-test')).toBe('synthetic');
+      const body = JSON.parse(String(init?.body));
+      expect(body.model).toBe('jev-latest');
+      expect(body.state).toBe(batch.state);
+      expect(body.state.match(/Judge the new activity\./g)).toHaveLength(1);
+      expect(body.questions).toMatchObject({
+        q0: { type: 'noul' },
+        q3: { type: 'noul' },
+        q1: { type: 'choice', criteria: { technical: null, other: null } },
+        q2: {
+          type: 'score',
+          criteria: [
+            'low: No loss.',
+            'medium: Workaround exists.',
+            'high: Blocked.',
+          ],
+        },
+      });
+      expect(JSON.stringify(body.questions)).not.toContain('Content lines');
+      expect(opts.onUsage).toHaveBeenCalledOnce();
+      expect(opts.onUsage.mock.calls[0]?.[0]).toMatchObject({
+        inputTokens: reportedUsage ? 42 : undefined,
+        outputTokens: reportedUsage ? 6 : undefined,
+      });
+      const raw = await evaluateCall.mock.results[0]?.value;
+      expect(raw.warnings).toContainEqual({
+        type: 'unsupported',
+        feature: 'providerOptions.typesafe.temperature',
+      });
+    },
+  );
   it.each([400, 401, 429])(
     'does not expose provider errors or account missing usage (HTTP %s)',
     async (statusCode) => {
@@ -253,10 +379,13 @@ describe('instinct executor', () => {
       });
       const opts = options([candidate]);
       const result = await executeInstinctClassification(args(), opts);
-      expect(result).toMatchObject({ status: 'failed' });
+      expect(result.get('memory')).toMatchObject({ status: 'failed' });
       expect(opts.onUsage).not.toHaveBeenCalled();
       expect(
-        JSON.stringify({ result, reports: opts.onUsage.mock.calls }),
+        JSON.stringify({
+          result: [...result],
+          reports: opts.onUsage.mock.calls,
+        }),
       ).not.toContain('synthetic-private');
     },
   );
@@ -264,7 +393,7 @@ describe('instinct executor', () => {
   it('accounts usage from malformed model output', async () => {
     const opts = options([generation('not JSON')]);
     const result = await executeInstinctClassification(args(), opts);
-    expect(result).toMatchObject({ status: 'partial', text: 'not JSON' });
+    expect(result.get('memory')).toMatchObject({ status: 'failed' });
     expect(opts.onUsage).toHaveBeenCalledExactlyOnceWith(
       expect.objectContaining({ inputTokens: 10, outputTokens: 5 }),
     );
@@ -330,8 +459,8 @@ describe('instinct executor', () => {
           : [evalCandidate, generation()],
       );
       const result = await executeInstinctClassification(args(), opts);
-      expect(result).toMatchObject({
-        status: first === 'generation' ? 'evaluation' : 'ok',
+      expect(result.get('memory')).toMatchObject({
+        status: 'ok',
         modelId: first === 'generation' ? 'native' : 'generation',
       });
       expect(
@@ -350,19 +479,59 @@ describe('instinct executor', () => {
         }),
       ),
     ];
-    expect(
-      await executeInstinctClassification(args(), options(candidates)),
-    ).toEqual({
-      status: 'partial',
-      text: '{"q0":0}',
-      modelId: 'latest',
-    });
-    expect(
-      await executeInstinctClassification(
-        args(),
-        options([...candidates, evaluation()]),
+    const call = {
+      ...args(),
+      ...compileInstinctClassificationBatch(
+        [
+          {
+            extensionIdentifier: 'memory',
+            request: {
+              prompt: 'Memory',
+              keys: { needed: { type: 'boolean', description: 'Needed?' } },
+            },
+          },
+          {
+            extensionIdentifier: 'planner',
+            request: {
+              prompt: 'Plan',
+              keys: {
+                route: {
+                  type: 'enum',
+                  description: 'Route?',
+                  values: ['read', 'write'],
+                },
+              },
+            },
+          },
+        ],
+        'Activity',
       ),
-    ).toMatchObject({ status: 'evaluation', modelId: 'native' });
+    };
+    expect(
+      await executeInstinctClassification(call, options(candidates)),
+    ).toEqual(
+      new Map([
+        [
+          'memory',
+          { status: 'ok', answers: { needed: false }, modelId: 'latest' },
+        ],
+        ['planner', { status: 'failed', reason: 'invalid answer slice' }],
+      ]),
+    );
+    const complete = await executeInstinctClassification(
+      call,
+      options([...candidates, evaluation()]),
+    );
+    expect(complete.get('memory')).toMatchObject({
+      status: 'ok',
+      answers: { needed: true },
+      modelId: 'native',
+    });
+    expect(complete.get('planner')).toMatchObject({
+      status: 'ok',
+      answers: { route: 'read' },
+      modelId: 'native',
+    });
   });
 
   it.each(['resolve', 'reject'] as const)(
@@ -383,7 +552,7 @@ describe('instinct executor', () => {
       const opts = options([evaluation(transport), generation()]);
       const pending = executeInstinctClassification(args(), opts);
       await vi.advanceTimersByTimeAsync(11);
-      expect(await pending).toMatchObject({ status: 'ok' });
+      expect((await pending).get('memory')).toMatchObject({ status: 'ok' });
       expect(opts.onUsage).toHaveBeenCalledExactlyOnceWith(
         expect.objectContaining({ inputTokens: 10, outputTokens: 5 }),
       );
@@ -404,13 +573,14 @@ describe('instinct executor', () => {
     },
   );
 
-  it.each(['caller', 'deadline'] as const)(
+  it.each(['caller', 'deadline', 'shared deadline'] as const)(
     'stops on %s cancellation without fallback or salvage',
     async (cause) => {
       vi.useFakeTimers({
         toFake: ['setTimeout', 'clearTimeout', 'performance'],
       });
       const controller = new AbortController();
+      const deadline = new AbortController();
       const stalled = evaluation(
         vi.fn(() => new Promise<EvaluationResult>(() => {})),
       );
@@ -422,12 +592,17 @@ describe('instinct executor', () => {
       const nextCall = vi.spyOn(next.model, 'doGenerate');
       const opts = options([generation('{"q0":1}'), bounded, next]);
       const pending = executeInstinctClassification(
-        args(controller.signal, 100),
+        { ...args(controller.signal, 100), deadline: deadline.signal },
         opts,
       );
-      const assertion = expect(pending).rejects.toThrow();
+      const assertion = expect(pending).resolves.toEqual(
+        new Map([
+          ['memory', { status: cause === 'caller' ? 'aborted' : 'timeout' }],
+        ]),
+      );
       await vi.advanceTimersByTimeAsync(0);
       if (cause === 'caller') controller.abort(new Error('cancelled'));
+      else if (cause === 'shared deadline') deadline.abort();
       else await vi.advanceTimersByTimeAsync(101);
       await assertion;
       expect(nextCall).not.toHaveBeenCalled();
@@ -456,15 +631,14 @@ describe('instinct executor', () => {
       {
         status: 'unavailable',
         entry: unsupported.entry,
-        reason: 'unsupported factory',
       },
       limited,
       oversized,
       generation(),
     ]);
-    expect(await executeInstinctClassification(args(), opts)).toMatchObject({
-      status: 'ok',
-    });
+    expect(
+      (await executeInstinctClassification(args(), opts)).get('memory'),
+    ).toMatchObject({ status: 'ok' });
     expect(evaluate).not.toHaveBeenCalled();
   });
 });

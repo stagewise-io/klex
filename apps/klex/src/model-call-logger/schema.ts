@@ -147,7 +147,7 @@ export const MODEL_CALL_STORE_DEFINITION: SqliteStoreDefinition = {
   createIfMissing: true,
   schemaVersion: MODEL_CALL_SCHEMA_VERSION,
   compatibilityVersion: 2,
-  minimumKlexVersion: '0.13.0',
+  minimumKlexVersion: '0.18.0',
   legacySchemaVersion: 1,
   initSql: MODEL_CALL_INIT_SQL,
   migrations: MODEL_CALL_MIGRATIONS,

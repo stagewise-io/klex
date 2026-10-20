@@ -16,11 +16,11 @@ import type { ExtendedUIMessage } from '@/session/chat/message-types';
 import { tracer } from '@/session/chat/utils/tracing';
 
 import {
-  classifyInstinct,
-  type InstinctClassifier,
+  compileInstinctClassificationBatch,
   type InstinctClassifierEntry,
   validateInstinctClassificationRequest,
 } from './classifier';
+import type { InstinctClassifier } from './classifier-executor';
 import { buildInstinctClassifierInput } from './classifier-input';
 import {
   InstinctHistoryDeltaTracker,
@@ -249,13 +249,12 @@ class InstinctRunnerModule implements InstinctRunner {
               this.deps.extensionHandler.getDataPartTransformers(),
             limits: config,
           });
-          const outcomes = await classifyInstinct({
-            entries,
-            prompt,
-            execute: this.deps.execute,
+          const deadlineAt = performance.now() + config.classifierTimeoutMs;
+          const outcomes = await this.deps.execute({
+            ...compileInstinctClassificationBatch(entries, prompt),
             signal,
             deadline,
-            timeoutMs: config.classifierTimeoutMs,
+            deadlineAt,
           });
           span.setAttribute(
             'instinct.classifier.okCount',

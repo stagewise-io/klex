@@ -94,7 +94,6 @@ export function buildInstinctClassifierInput(
     }
   }
   const view = createInstinctHistoryView({
-    messageLimit: limits.messageCharacterCap,
     data: createDataProjectors(args.dataPartTransformers, occurrences),
   });
   const rendered = view

@@ -164,7 +164,7 @@ export interface SessionTelemetryState {
   lastCallCacheReadTokens?: number;
   lastCallCacheWriteTokens?: number;
   lastCallCacheReadRatio?: number;
-  lastCallSource?: 'chat' | 'extension' | 'operation-test';
+  lastCallSource?: 'chat' | 'extension';
 }
 
 export interface ModelCallUsage {
@@ -177,7 +177,7 @@ export interface ModelCallUsage {
   inputCacheWriteTokens: number;
   operationName?: string;
   providerName?: string;
-  source?: 'chat' | 'extension' | 'operation-test';
+  source?: 'chat' | 'extension';
   finishReason?: string;
   isError?: boolean;
   errorType?: string | null;

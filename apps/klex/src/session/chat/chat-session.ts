@@ -62,6 +62,7 @@ import type {
   ExtensionFactory,
   GenerateTextArgs,
   GenerateTextResult,
+  InstinctClassificationOutcome,
 } from './extensions/extension-api';
 import {
   type ChatSessionInbox,
@@ -72,8 +73,7 @@ import {
 import {
   createInstinctRunner,
   executeInstinctClassification,
-  type InstinctClassificationCallArgs,
-  type InstinctClassificationCallResult,
+  type InstinctClassificationArgs,
   type InstinctRunner,
 } from './instinct';
 import type { ExtendedUIMessage } from './message-types';
@@ -590,9 +590,9 @@ class ChatSessionModule implements AgentSession {
 
   /** Snapshot the configured candidates once; account each settled attempt. */
   private async executeInstinctClassification(
-    args: InstinctClassificationCallArgs,
-  ): Promise<InstinctClassificationCallResult> {
-    const configuredEntries = this.deps.config.getModelSelection('instincts');
+    args: InstinctClassificationArgs,
+  ): Promise<Map<string, InstinctClassificationOutcome>> {
+    const configuredEntries = this.deps.config.get().modelSelection.instincts;
     const entries =
       configuredEntries.length > 0
         ? configuredEntries
@@ -689,7 +689,7 @@ class ChatSessionModule implements AgentSession {
             span.setAttribute('gen.outcome', 'aborted');
             return {
               success: false as const,
-              failureReason: 'cancelled' as const,
+              failureReason: 'aborted' as const,
               failureDetails: failures.join('; '),
             };
           };
@@ -739,7 +739,7 @@ class ChatSessionModule implements AgentSession {
               if (args.abortSignal?.aborted)
                 return {
                   success: false as const,
-                  failureReason: 'cancelled' as const,
+                  failureReason: 'aborted' as const,
                 };
 
               // Per-extension usage tracking is handled by the

@@ -1,13 +1,20 @@
 import { OpenTelemetry } from '@ai-sdk/otel';
-import type { Attributes, Tracer } from '@opentelemetry/api';
+import {
+  type Span as ApiSpan,
+  type Attributes,
+  SpanStatusCode,
+  type Tracer,
+} from '@opentelemetry/api';
 import type { Span, SpanProcessor } from '@opentelemetry/sdk-trace-base';
-import type {
-  GenerateTextAbortEvent,
-  GenerateTextEndEvent,
-  GenerateTextStartEvent,
-  InferTelemetryEvent,
-  LanguageModelCallEndEvent,
-  Telemetry,
+import {
+  type GenerateTextAbortEvent,
+  type GenerateTextEndEvent,
+  type GenerateTextStartEvent,
+  type InferTelemetryEvent,
+  type LanguageModelCallEndEvent,
+  type LanguageModelUsage,
+  NoObjectGeneratedError,
+  type Telemetry,
 } from 'ai';
 
 import type { ModelCallRecord, ModelCallSource } from '@/model-call-logger';
@@ -18,6 +25,18 @@ type TelemetryEndEvent = Parameters<NonNullable<Telemetry['onEnd']>>[0];
 type OtelStartEvent = Parameters<OpenTelemetry['onStart']>[0];
 type OtelEndEvent = Parameters<OpenTelemetry['onEnd']>[0];
 type OtelAbortEvent = Parameters<OpenTelemetry['onAbort']>[0];
+type EvaluateStartEvent = Parameters<
+  NonNullable<Telemetry['experimental_onEvaluateStart']>
+>[0];
+type EvaluateEndEvent = Parameters<
+  NonNullable<Telemetry['experimental_onEvaluateEnd']>
+>[0];
+type EvaluationCallEndEvent = Parameters<
+  NonNullable<Telemetry['experimental_onEvaluationModelCallEnd']>
+>[0];
+type ReportedUsage = Partial<
+  Pick<LanguageModelUsage, 'inputTokens' | 'outputTokens' | 'inputTokenDetails'>
+>;
 
 /** Sink function that receives a `ModelCallRecord` at the end of every model call. */
 export type ModelCallSink = (record: ModelCallRecord) => void;
@@ -158,6 +177,11 @@ export interface KlexOpenTelemetryOptions {
  */
 export class KlexOpenTelemetry extends OpenTelemetry {
   private readonly callAttributes: Map<string, Attributes>;
+  private readonly evaluationTracer: Tracer;
+  private readonly evaluationSpans = new Map<
+    string,
+    { span: ApiSpan; recordOutputs: boolean }
+  >();
   private readonly agentName: string;
   private readonly contentAllowed: () => boolean;
   private readonly getAgentId: () => string | null | undefined;
@@ -169,12 +193,15 @@ export class KlexOpenTelemetry extends OpenTelemetry {
       enrichSpan: ({ callId }) => callAttributes.get(callId),
     });
     this.callAttributes = callAttributes;
+    this.evaluationTracer = tracer;
     this.agentName = normalizeAgentName(options.agentName ?? '');
     this.contentAllowed = options.contentAllowed ?? (() => false);
     this.getAgentId = options.getAgentId ?? (() => null);
   }
 
-  private spanAttributes(event: OtelStartEvent): Attributes {
+  private spanAttributes(
+    event: OtelStartEvent | EvaluateStartEvent,
+  ): Attributes {
     const identity = resolveCallIdentity({
       functionId: event.functionId,
       runtimeContext: eventField(event, 'runtimeContext'),
@@ -184,7 +211,13 @@ export class KlexOpenTelemetry extends OpenTelemetry {
     const attributes: Attributes = {
       'agento11y.record': true,
       'klex.call.source': identity.source,
+      'klex.model.api':
+        event.operationId === 'ai.evaluate' ? 'evaluation' : 'generation',
     };
+    if (TEXT_OPERATIONS.has(event.operationId)) {
+      attributes['gen_ai.request.stream'] =
+        event.operationId === 'ai.streamText';
+    }
     if (identity.extensionId) {
       attributes['klex.extension.id'] = identity.extensionId;
     }
@@ -228,7 +261,84 @@ export class KlexOpenTelemetry extends OpenTelemetry {
     this.callAttributes.delete(event.callId);
   }
 
+  // Evaluation uses one bounded span with sanitized diagnostics and explicit
+  // content gating; the SDK's generic error recorder includes raw exceptions.
+  override experimental_onEvaluateStart(event: EvaluateStartEvent): void {
+    const attributes: Attributes = {
+      ...this.spanAttributes(event),
+      'gen_ai.operation.name': 'evaluate',
+      'gen_ai.provider.name': mapProviderName(event.provider),
+      'gen_ai.request.model': event.modelId,
+      'klex.model.api': 'evaluation',
+    };
+    if (this.agentName) attributes['gen_ai.agent.name'] = this.agentName;
+    if (this.contentAllowed() && event.recordInputs !== false) {
+      attributes['klex.evaluation.input.content'] = JSON.stringify(event.state);
+      attributes['klex.evaluation.questions.content'] = JSON.stringify(
+        event.questions,
+      );
+    }
+    this.evaluationSpans.set(event.callId, {
+      span: this.evaluationTracer.startSpan('evaluate', { attributes }),
+      recordOutputs: this.contentAllowed() && event.recordOutputs !== false,
+    });
+  }
+
+  override experimental_onEvaluationModelCallEnd(
+    event: EvaluationCallEndEvent,
+  ): void {
+    const state = this.evaluationSpans.get(event.callId);
+    if (!state) return;
+    if (event.response?.id)
+      state.span.setAttribute('gen_ai.response.id', event.response.id);
+    if (event.response?.modelId)
+      state.span.setAttribute('gen_ai.response.model', event.response.modelId);
+    state.span.setAttribute(
+      'klex.evaluation.warning_count',
+      event.warnings.length,
+    );
+  }
+
+  override experimental_onEvaluateEnd(event: EvaluateEndEvent): void {
+    const state = this.evaluationSpans.get(event.callId);
+    if (!state) return;
+    this.evaluationSpans.delete(event.callId);
+    const { span } = state;
+    if (event.usage.inputTokens != null)
+      span.setAttribute('gen_ai.usage.input_tokens', event.usage.inputTokens);
+    if (event.usage.outputTokens != null)
+      span.setAttribute('gen_ai.usage.output_tokens', event.usage.outputTokens);
+    span.setAttribute('klex.outcome', 'success');
+    if (state.recordOutputs && this.contentAllowed()) {
+      span.setAttribute(
+        'klex.evaluation.answers.content',
+        JSON.stringify(event.answers),
+      );
+    }
+    span.end();
+  }
+
   override onError(error: unknown): void {
+    const evaluationCallId =
+      typeof error === 'object' && error !== null
+        ? eventField(error, 'callId')
+        : undefined;
+    const evaluation =
+      typeof evaluationCallId === 'string'
+        ? this.evaluationSpans.get(evaluationCallId)
+        : undefined;
+    if (evaluation && typeof evaluationCallId === 'string') {
+      this.evaluationSpans.delete(evaluationCallId);
+      const actual = eventField(error as object, 'error') ?? error;
+      const errorType = safeErrorType(actual);
+      evaluation.span.setAttributes({
+        'error.type': errorType,
+        'klex.outcome': errorType === 'AbortError' ? 'aborted' : 'error',
+      });
+      evaluation.span.setStatus({ code: SpanStatusCode.ERROR });
+      evaluation.span.end();
+      return;
+    }
     super.onError(error);
     const callId =
       typeof error === 'object' && error !== null
@@ -236,6 +346,13 @@ export class KlexOpenTelemetry extends OpenTelemetry {
         : undefined;
     if (typeof callId === 'string') this.callAttributes.delete(callId);
   }
+}
+
+function safeErrorType(error: unknown): string {
+  return error instanceof Error &&
+    /^[A-Za-z][A-Za-z0-9_]{0,63}$/.test(error.name)
+    ? error.name
+    : 'Error';
 }
 
 function stringOrUndefined(value: unknown): string | undefined {
@@ -296,11 +413,13 @@ export class GenAiIdentitySpanProcessor implements SpanProcessor {
 }
 
 // ---------------------------------------------------------------------------
-// Usage records: one ModelCallRecord per terminal text-generation call
+// Usage records: one ModelCallRecord per terminal generation/evaluation call
 // ---------------------------------------------------------------------------
 
 interface UsageCallState {
   identity: CallIdentity;
+  api: 'generation' | 'evaluation';
+  usage?: ReportedUsage;
   startedAt: number;
   ttftMs: number | undefined;
   totalDurationMs: number | undefined;
@@ -310,22 +429,15 @@ interface TerminalUsage {
   finishReason: string;
   isError: boolean;
   errorType: string | null;
-  inputTokens: number;
-  outputTokens: number;
-  cacheWriteTokens: number;
-  cacheReadTokens: number;
+  inputTokens?: number;
+  outputTokens?: number;
+  cacheWriteTokens?: number;
+  cacheReadTokens?: number;
 }
-
-const NO_USAGE = {
-  inputTokens: 0,
-  outputTokens: 0,
-  cacheWriteTokens: 0,
-  cacheReadTokens: 0,
-};
 
 /**
  * Span-free AI SDK integration that forwards one `ModelCallRecord` per
- * terminal text-generation call (success, error, or abort) to the sink.
+ * terminal generation or evaluation call (success, error, or abort) to the sink.
  */
 export class ModelCallUsageTelemetry implements Telemetry {
   private readonly callStates = new Map<string, UsageCallState>();
@@ -338,8 +450,19 @@ export class ModelCallUsageTelemetry implements Telemetry {
   onStart(event: TelemetryStartEvent): void {
     if (!TEXT_OPERATIONS.has(event.operationId)) return;
     const textEvent = event as InferTelemetryEvent<GenerateTextStartEvent>;
-    this.callStates.set(textEvent.callId, {
-      identity: resolveCallIdentity(textEvent),
+    this.startCall(textEvent);
+  }
+
+  experimental_onEvaluateStart(event: EvaluateStartEvent): void {
+    this.startCall(event);
+  }
+
+  private startCall(
+    event: InferTelemetryEvent<GenerateTextStartEvent> | EvaluateStartEvent,
+  ): void {
+    this.callStates.set(event.callId, {
+      identity: resolveCallIdentity(event),
+      api: event.operationId === 'ai.evaluate' ? 'evaluation' : 'generation',
       startedAt: Date.now(),
       ttftMs: undefined,
       totalDurationMs: undefined,
@@ -351,12 +474,29 @@ export class ModelCallUsageTelemetry implements Telemetry {
   ): void {
     const state = this.callStates.get(event.callId);
     if (!state) return;
+    state.usage = event.usage;
     if (event.performance?.responseTimeMs != null) {
       state.totalDurationMs = event.performance.responseTimeMs;
     }
     if (event.performance?.timeToFirstOutputMs != null) {
       state.ttftMs = event.performance.timeToFirstOutputMs;
     }
+  }
+
+  experimental_onEvaluationModelCallEnd(event: EvaluationCallEndEvent): void {
+    const state = this.callStates.get(event.callId);
+    if (state) state.usage = event.usage;
+  }
+
+  experimental_onEvaluateEnd(event: EvaluateEndEvent): void {
+    const state = this.callStates.get(event.callId);
+    if (!state) return;
+    state.usage = event.usage;
+    this.finish(event.callId, state, {
+      finishReason: 'stop',
+      isError: false,
+      errorType: null,
+    });
   }
 
   onEnd(event: TelemetryEndEvent): void {
@@ -369,10 +509,10 @@ export class ModelCallUsageTelemetry implements Telemetry {
       finishReason,
       isError,
       errorType: isError ? 'generation_error' : null,
-      inputTokens: usage.inputTokens ?? 0,
-      outputTokens: usage.outputTokens ?? 0,
-      cacheWriteTokens: usage.inputTokenDetails?.cacheWriteTokens ?? 0,
-      cacheReadTokens: usage.inputTokenDetails?.cacheReadTokens ?? 0,
+      inputTokens: usage.inputTokens,
+      outputTokens: usage.outputTokens,
+      cacheWriteTokens: usage.inputTokenDetails?.cacheWriteTokens,
+      cacheReadTokens: usage.inputTokenDetails?.cacheReadTokens,
     });
   }
 
@@ -383,7 +523,6 @@ export class ModelCallUsageTelemetry implements Telemetry {
       finishReason: 'aborted',
       isError: true,
       errorType: 'aborted',
-      ...NO_USAGE,
     });
   }
 
@@ -394,11 +533,12 @@ export class ModelCallUsageTelemetry implements Telemetry {
     const state = this.callStates.get(callId);
     if (!state) return;
     const actual = eventField(error, 'error') ?? error;
+    if (NoObjectGeneratedError.isInstance(actual)) state.usage = actual.usage;
+    const errorType = safeErrorType(actual);
     this.finish(callId, state, {
-      finishReason: 'error',
+      finishReason: errorType === 'AbortError' ? 'aborted' : 'error',
       isError: true,
-      errorType: actual instanceof Error ? actual.name : String(actual),
-      ...NO_USAGE,
+      errorType,
     });
   }
 
@@ -412,20 +552,30 @@ export class ModelCallUsageTelemetry implements Telemetry {
     if (!this.sink) return;
     const now = Date.now();
     const { identity } = state;
+    const inputTokens = usage.inputTokens ?? state.usage?.inputTokens;
+    const outputTokens = usage.outputTokens ?? state.usage?.outputTokens;
+    const cacheWriteTokens =
+      usage.cacheWriteTokens ??
+      state.usage?.inputTokenDetails?.cacheWriteTokens;
+    const cacheReadTokens =
+      usage.cacheReadTokens ?? state.usage?.inputTokenDetails?.cacheReadTokens;
     try {
       this.sink({
         id: callId,
         sessionId: identity.conversationId ?? null,
+        api: state.api,
+        tokenUsageReported: inputTokens != null && outputTokens != null,
+        cacheUsageReported: cacheWriteTokens != null && cacheReadTokens != null,
         providerType: identity.providerType ?? 'unknown',
         providerId: identity.providerId ?? 'unknown',
         endpointId: null,
         modelId: identity.modelId ?? 'unknown',
         source: identity.source,
         extensionId: identity.extensionId,
-        inputTokens: usage.inputTokens,
-        outputTokens: usage.outputTokens,
-        inputCacheWriteTokens: usage.cacheWriteTokens,
-        inputCacheReadTokens: usage.cacheReadTokens,
+        inputTokens: inputTokens ?? 0,
+        outputTokens: outputTokens ?? 0,
+        inputCacheWriteTokens: cacheWriteTokens ?? 0,
+        inputCacheReadTokens: cacheReadTokens ?? 0,
         ttftMs: state.ttftMs ?? null,
         // The SDK's response time when available; wall-clock duration for
         // abort and error paths that carry no performance data.

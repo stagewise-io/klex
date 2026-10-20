@@ -4,9 +4,7 @@ import type { JsonStoreDefinition } from '@/local-data';
 
 import {
   dropLegacyTelemetryConfig,
-  migrateInstinctApis,
   migrateInstinctConfig,
-  migrateInstinctModelSelection,
   migrateLegacyKlexConfig,
   nestMemoryExtensionConfig,
   parseLegacyKlexConfig,
@@ -14,9 +12,6 @@ import {
   parseStoredKlexConfigV2,
   parseStoredKlexConfigV4,
   parseStoredKlexConfigV5,
-  parseStoredKlexConfigV6,
-  parseStoredKlexConfigV7,
-  parseStoredKlexConfigV8,
 } from './types';
 
 function preservingSchema(
@@ -60,15 +55,6 @@ const v4ConfigStorageSchema = preservingSchema((value) => {
 const v5ConfigStorageSchema = preservingSchema((value) => {
   parseStoredKlexConfigV5(value);
 });
-const v6ConfigStorageSchema = preservingSchema((value) => {
-  parseStoredKlexConfigV6(value);
-});
-const v7ConfigStorageSchema = preservingSchema((value) => {
-  parseStoredKlexConfigV7(value);
-});
-const v8ConfigStorageSchema = preservingSchema((value) => {
-  parseStoredKlexConfigV8(value);
-});
 const currentConfigStorageSchema = preservingSchema((value) => {
   parseStoredKlexConfig(value);
 });
@@ -78,9 +64,9 @@ export const CONFIG_STORE_DEFINITION: JsonStoreDefinition = {
   id: 'config',
   relativePath: 'config.json',
   required: true,
-  schemaVersion: 9,
-  // 11: Native Vercel AI Gateway provider settings and model resolution.
-  compatibilityVersion: 11,
+  schemaVersion: 6,
+  // Older writers cannot preserve instinct selections or the new provider types.
+  compatibilityVersion: 8,
   minimumKlexVersion: '0.18.0',
   legacySchemaVersion: 1,
   versions: [
@@ -90,10 +76,7 @@ export const CONFIG_STORE_DEFINITION: JsonStoreDefinition = {
     { version: 3, schema: v2ConfigStorageSchema },
     { version: 4, schema: v4ConfigStorageSchema },
     { version: 5, schema: v5ConfigStorageSchema },
-    { version: 6, schema: v6ConfigStorageSchema },
-    { version: 7, schema: v7ConfigStorageSchema },
-    { version: 8, schema: v8ConfigStorageSchema },
-    { version: 9, schema: currentConfigStorageSchema },
+    { version: 6, schema: currentConfigStorageSchema },
   ],
   migrations: [
     {
@@ -133,30 +116,8 @@ export const CONFIG_STORE_DEFINITION: JsonStoreDefinition = {
     {
       from: 5,
       to: 6,
-      name: 'rename-preflight-to-instinct',
+      name: 'add-instinct-backends',
       up: (value) => migrateInstinctConfig(value),
-    },
-    {
-      from: 6,
-      to: 7,
-      name: 'rename-classifier-models-to-instincts',
-      up: (value) => migrateInstinctModelSelection(value),
-    },
-    {
-      from: 7,
-      to: 8,
-      name: 'select-instinct-inference-api',
-      up: migrateInstinctApis,
-    },
-    {
-      from: 8,
-      to: 9,
-      name: 'support-vercel-ai-gateway',
-      up: (value) => {
-        parseStoredKlexConfigV8(value);
-        // No transformation; retain unknown fields while raising the writer floor.
-        return value;
-      },
     },
   ],
 };

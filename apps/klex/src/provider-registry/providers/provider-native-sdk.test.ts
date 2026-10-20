@@ -1,5 +1,4 @@
-import { experimental_evaluate as evaluate } from 'ai';
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
 import type { ProviderType } from '@/config';
 
@@ -48,64 +47,6 @@ describe('native provider SDK construction', () => {
     },
   );
 
-  it('uses native TypeSafe URL/auth/headers, boolean transport, warnings and missing usage', async () => {
-    const fetch = vi.fn(
-      async () =>
-        new Response(
-          JSON.stringify({ answers: { flag: { type: 'noul', noul: 0.5 } } }),
-          { headers: { 'content-type': 'application/json' } },
-        ),
-    );
-    vi.stubGlobal('fetch', fetch);
-    try {
-      const factory = provider('typesafe-ai').createEvaluationModel;
-      if (!factory) throw new Error('Missing native factory');
-      const model = factory(
-        {
-          id: 'native',
-          type: 'typesafe-ai',
-          settings: {
-            apiKey: 'synthetic-key',
-            baseUrl: 'https://synthetic.invalid/v1/',
-            headers: { 'x-test': 'synthetic' },
-          },
-        },
-        'jev-latest',
-      );
-      const result = await evaluate({
-        model,
-        state: 'synthetic',
-        questions: { flag: { type: 'boolean', instructions: 'Flag?' } },
-        providerOptions: { typesafe: { temperature: 0 } },
-        maxRetries: 0,
-      });
-      expect(fetch).toHaveBeenCalledTimes(1);
-      const [url, options] = fetch.mock.calls[0] as unknown as [
-        string,
-        RequestInit,
-      ];
-      expect(url).toBe('https://synthetic.invalid/v1/systemone');
-      const headers = new Headers(options.headers);
-      expect(headers.get('authorization')).toBe('Bearer synthetic-key');
-      expect(headers.get('x-test')).toBe('synthetic');
-      expect(JSON.parse(options.body as string)).toEqual({
-        model: 'jev-latest',
-        state: 'synthetic',
-        questions: { flag: { type: 'noul', instructions: 'Flag?' } },
-      });
-      expect(result.answers.flag).toEqual({
-        type: 'boolean',
-        probability: 0.5,
-      });
-      expect(result.usage.totalTokens).toBeUndefined();
-      expect(result.warnings).toContainEqual({
-        type: 'unsupported',
-        feature: 'providerOptions.typesafe.temperature',
-      });
-    } finally {
-      vi.unstubAllGlobals();
-    }
-  });
   it('creates an Azure OpenAI model with the native SDK', () => {
     const model = languageProvider('azure-openai')(
       {

@@ -107,41 +107,6 @@ export interface InstinctClassifierEntry {
 }
 
 /**
- * Backend-neutral result. Only generation failures may carry recoverable
- * raw text; evaluation results must be complete before distribution.
- */
-export type InstinctClassificationCallResult =
-  | {
-      readonly status: 'ok';
-      readonly output: unknown;
-      readonly modelId: string;
-    }
-  | {
-      readonly status: 'partial';
-      readonly text: string | undefined;
-      readonly modelId: string;
-    }
-  | {
-      readonly status: 'evaluation';
-      readonly answers: Record<string, EvaluationAnswer>;
-      readonly modelId: string;
-    }
-  | { readonly status: 'unavailable'; readonly reason: string }
-  | { readonly status: 'failed'; readonly reason: string };
-
-export interface InstinctClassificationCallArgs
-  extends InstinctClassificationBatch {
-  readonly abortSignal: AbortSignal;
-  /** Monotonic absolute deadline; preparation and all attempts share it. */
-  readonly deadlineAt: number;
-}
-
-/** Stateless classification call; every invocation is a fresh inference. */
-export type InstinctClassifier = (
-  args: InstinctClassificationCallArgs,
-) => Promise<InstinctClassificationCallResult>;
-
-/**
  * Returns a reason when the request is unusable, otherwise `null`.
  * Checked at runtime because extensions are plain JavaScript at the
  * boundary and the classifier must never receive a malformed schema.
@@ -274,17 +239,6 @@ export function compileInstinctClassificationBatch(
     throw new Error('instinct batch exceeds 128 questions');
   const system = renderSystemPrompt(plan);
   const schema = createInstinctOutputSchema(entries);
-  const generationSize = JSON.stringify({
-    system,
-    prompt,
-    schema: z.toJSONSchema(schema),
-  }).length;
-  const evaluationSize = JSON.stringify({ state, questions }).length;
-  if (
-    Math.max(generationSize, evaluationSize) >
-    INSTINCT_CLASSIFIER_LIMITS.maxSerializedCharacters
-  )
-    throw new Error('instinct batch exceeds 128000 serialized characters');
   return {
     entries,
     system,
@@ -397,7 +351,7 @@ export function distributeInstinctGeneration(
  * Best-effort JSON recovery from raw model text: strips code fences and
  * takes the outermost object. Returns `undefined` when nothing parses.
  */
-function parseLenientJson(text: string | undefined): unknown {
+export function parseLenientJson(text: string | undefined): unknown {
   if (!text) return undefined;
   const start = text.indexOf('{');
   const end = text.lastIndexOf('}');
@@ -406,124 +360,5 @@ function parseLenientJson(text: string | undefined): unknown {
     return JSON.parse(text.slice(start, end + 1));
   } catch {
     return undefined;
-  }
-}
-
-function uniformOutcome(
-  entries: readonly InstinctClassifierEntry[],
-  outcome: InstinctClassificationOutcome,
-): Map<string, InstinctClassificationOutcome> {
-  return new Map(entries.map((entry) => [entry.extensionIdentifier, outcome]));
-}
-
-interface InstinctClassifyArgs {
-  readonly entries: readonly InstinctClassifierEntry[];
-  /** Fully framed user prompt (external-input blocks). */
-  readonly prompt: string;
-  readonly execute: InstinctClassifier;
-  /** Step-level cancellation (critical input, lease, close). */
-  readonly signal: AbortSignal;
-  /** Shared instinct deadline, distinct from caller cancellation. */
-  readonly deadline?: AbortSignal;
-  readonly timeoutMs: number;
-}
-
-/**
- * Runs one fresh classifier inference for all entries and maps the result
- * to one outcome per extension. Never throws; there is no caching, so every
- * call reflects the current input.
- */
-export async function classifyInstinct(
-  args: InstinctClassifyArgs,
-): Promise<Map<string, InstinctClassificationOutcome>> {
-  const { entries, signal } = args;
-  if (entries.length === 0) return new Map();
-  if (signal.aborted) return uniformOutcome(entries, { status: 'aborted' });
-  if (args.deadline?.aborted)
-    return uniformOutcome(entries, { status: 'timeout' });
-
-  const deadlineAt = performance.now() + args.timeoutMs;
-  const timeout = AbortSignal.timeout(args.timeoutMs);
-  const abortSignal = AbortSignal.any([
-    signal,
-    timeout,
-    ...(args.deadline ? [args.deadline] : []),
-  ]);
-  const interrupted = (): InstinctClassificationOutcome | null => {
-    if (signal.aborted) return { status: 'aborted' };
-    if (timeout.aborted || args.deadline?.aborted) return { status: 'timeout' };
-    return null;
-  };
-
-  let onAbort: (() => void) | undefined;
-  let result: InstinctClassificationCallResult;
-  let batch: InstinctClassificationBatch | undefined;
-  try {
-    const aborted = new Promise<never>((_, reject) => {
-      onAbort = () => reject(abortSignal.reason);
-      abortSignal.addEventListener('abort', onAbort, { once: true });
-      if (abortSignal.aborted) onAbort();
-    });
-    // Promise.race observes late rejections even when the generator ignores
-    // cancellation. The deadline must not depend on provider cooperation.
-    const generation = Promise.resolve().then(() => {
-      abortSignal.throwIfAborted();
-      batch = compileInstinctClassificationBatch(entries, args.prompt);
-      return args.execute({ ...batch, abortSignal, deadlineAt });
-    });
-    result = await Promise.race([generation, aborted]);
-  } catch (error) {
-    return uniformOutcome(
-      entries,
-      interrupted() ?? {
-        status: 'failed',
-        reason: error instanceof Error ? error.message : String(error),
-      },
-    );
-  } finally {
-    if (onAbort) abortSignal.removeEventListener('abort', onAbort);
-  }
-
-  // A late result after the deadline or an abort is discarded.
-  const late = interrupted();
-  if (late) return uniformOutcome(entries, late);
-
-  switch (result.status) {
-    case 'evaluation':
-      try {
-        if (!batch) throw new Error('missing classification batch');
-        return normalizeInstinctEvaluation(
-          batch,
-          result.answers,
-          result.modelId,
-        );
-      } catch {
-        return uniformOutcome(entries, {
-          status: 'failed',
-          reason: 'invalid evaluation answers',
-        });
-      }
-    case 'ok':
-      return distributeInstinctGeneration(
-        entries,
-        result.output,
-        result.modelId,
-      );
-    case 'partial':
-      return distributeInstinctGeneration(
-        entries,
-        parseLenientJson(result.text),
-        result.modelId,
-      );
-    case 'unavailable':
-      return uniformOutcome(entries, {
-        status: 'unavailable',
-        reason: result.reason,
-      });
-    case 'failed':
-      return uniformOutcome(entries, {
-        status: 'failed',
-        reason: result.reason,
-      });
   }
 }

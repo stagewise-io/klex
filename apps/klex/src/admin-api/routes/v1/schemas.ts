@@ -1116,7 +1116,7 @@ const usageDataPointSchema = z
       .nullable()
       .describe('Model ID. Null for aggregated granularities.'),
     source: z
-      .enum(['chat', 'extension', 'operation-test'])
+      .enum(['chat', 'extension'])
       .nullable()
       .describe(
         'Call source: chat-session generation or extension-initiated. Null for aggregated granularities.',

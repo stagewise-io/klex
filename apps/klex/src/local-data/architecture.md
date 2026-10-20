@@ -61,15 +61,13 @@ Migrations are deterministic, forward-only, and validated after every step. Do n
 
 ## Instinct API and model-call availability migrations
 
-Config schema 7→8 raises compatibility to 10 and materializes `api: 'generation'` on historical instinct selections. Order and provider options are preserved, and no attempt timeout is added: omission retains the existing remaining-budget behavior. The current instinct entries can explicitly choose generation/evaluation and an optional bounded attempt timeout. Other model purposes retain their original contract; the public `configVersion: 2` is unchanged.
+Config schema 5→6 raises compatibility to 8 and adds instinct configuration and an empty instinct selection to the released schema 5 shape. Empty instinct selections use the ordered Chat models through generation without changing saved configuration. Explicit instinct entries choose generation/evaluation and an optional bounded attempt timeout; omission uses the remaining shared budget. This single unreleased migration also introduces the TypeSafe AI and Vercel AI Gateway provider types. Other model purposes retain their original contract; the public `configVersion: 2` is unchanged. Config and model-call changes first ship in `0.18.0`.
 
-Model-call SQLite schema 2→3 raises compatibility to 2 and adds nullable `api`, `token_usage_reported`, and `cache_usage_reported` columns. Historical rows keep unknown (`null`) API/availability rather than claiming measured usage. New availability flags distinguish fully reported totals/cache metrics from absent or incomplete pairs; individually reported numbers are retained. Existing numeric columns remain additive storage, and aggregate usage reports incompleteness counts so sums with missing metrics are recognized as reported lower bounds, not complete consumption or cost estimates. Synthetic operation tests use explicit `operation-test` source attribution and no chat session identity. No verification store is introduced.
+Model-call SQLite schema 2→3 raises compatibility to 2 and adds nullable `api`, `token_usage_reported`, and `cache_usage_reported` columns. Historical rows keep unknown (`null`) API/availability rather than claiming measured usage. New availability flags distinguish fully reported totals/cache metrics from absent or incomplete pairs; individually reported numbers are retained. Existing numeric columns remain additive storage, and aggregate usage reports incompleteness counts so sums with missing metrics are recognized as reported lower bounds, not complete consumption or cost estimates. No synthetic operation-test source or verification store is introduced.
 
 Both migrations use the same registered checkpoint/preflight/recovery path below and reject incompatible older writers before mutation.
 
-## Gateway config compatibility
-
-Config schema 8→9 preserves the existing representation and selections while adding the native `vercel-ai-gateway` provider. Compatibility 11 blocks older writers that cannot interpret this provider. Historical schema 8 remains frozen. Gateway Jev uses `typesafe-ai/jev` with the instinct evaluation API, independently of the direct TypeSafe `jev-latest` model. Config remains registered in `local-data-registry`; checkpoint, failure, and recovery behavior is unchanged.
+Gateway Jev uses `typesafe-ai/jev` with the instinct evaluation API, independently of the direct TypeSafe `jev-latest` model. Compatibility 8 blocks older config writers that cannot preserve the new provider types and instinct semantics. Released config schemas 1–5 remain frozen. Config remains registered in `local-data-registry`; checkpoint, failure, and recovery behavior is unchanged.
 
 ## Recovery state machine
 

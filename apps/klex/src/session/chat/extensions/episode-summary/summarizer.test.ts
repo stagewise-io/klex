@@ -327,7 +327,7 @@ describe('summarizer', () => {
       generateText: (args) =>
         new Promise((resolve) => {
           args.abortSignal?.addEventListener('abort', () =>
-            resolve({ success: false, failureReason: 'cancelled' }),
+            resolve({ success: false, failureReason: 'aborted' }),
           );
         }),
     });

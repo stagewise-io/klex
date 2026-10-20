@@ -1,15 +1,14 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
 import type { InstinctClassificationRequest } from '@/session/chat/extensions/extension-api';
 
 import {
-  classifyInstinct,
   compileInstinctClassificationBatch,
   createInstinctOutputSchema,
   distributeInstinctGeneration,
-  type InstinctClassifier,
   type InstinctClassifierEntry,
   normalizeInstinctEvaluation,
+  parseLenientJson,
   validateInstinctClassificationRequest,
 } from './classifier';
 
@@ -35,19 +34,6 @@ const entries: InstinctClassifierEntry[] = [
     },
   },
 ];
-const run = (
-  generate: InstinctClassifier,
-  signal = new AbortController().signal,
-  timeoutMs = 20,
-) =>
-  classifyInstinct({
-    entries,
-    prompt: '<external-input>data</external-input>',
-    execute: generate,
-    signal,
-    timeoutMs,
-  });
-
 describe('shared classifier', () => {
   it('compiles predicate, choice and weighted score contracts for generation and SDK evaluation', () => {
     const participants: InstinctClassifierEntry[] = [
@@ -360,9 +346,10 @@ describe('shared classifier', () => {
     expect(() =>
       compileInstinctClassificationBatch(oversized, 'state'),
     ).toThrow('128 questions');
+    // Serialized size is checked by the executor against only the active backend.
     expect(() =>
       compileInstinctClassificationBatch(entries, '"'.repeat(128_000)),
-    ).toThrow('serialized characters');
+    ).not.toThrow();
   });
   it('validates runtime requests and strict required slices', () => {
     expect(validateInstinctClassificationRequest(request)).toBeNull();
@@ -400,16 +387,12 @@ describe('shared classifier', () => {
     expect(prompt).toContain('Decide task status.');
   });
 
-  it('distributes only each extension’s validated answers', async () => {
-    const generate = vi.fn<InstinctClassifier>().mockResolvedValue({
-      status: 'ok',
-      modelId: 'classifier',
-      output: {
-        q0: 0.9,
-        q1: 'ongoing',
-      },
-    });
-    const outcomes = await run(generate);
+  it('distributes only each extension’s validated answers', () => {
+    const outcomes = distributeInstinctGeneration(
+      entries,
+      { q0: 0.9, q1: 'ongoing' },
+      'classifier',
+    );
     expect(outcomes.get('memory')).toEqual({
       status: 'ok',
       modelId: 'classifier',
@@ -420,95 +403,19 @@ describe('shared classifier', () => {
       modelId: 'classifier',
       answers: { state: 'ongoing' },
     });
-    expect(generate).toHaveBeenCalledOnce();
   });
 
-  it('salvages valid slices from a partial structured response', async () => {
-    const outcomes = await run(async () => ({
-      status: 'partial',
-      modelId: 'classifier',
-      text: '```json\n{"q0":0.9,"q1":"invalid"}\n```',
-    }));
+  it('salvages valid slices from a partial structured response', () => {
+    const outcomes = distributeInstinctGeneration(
+      entries,
+      parseLenientJson('```json\n{"q0":0.9,"q1":"invalid"}\n```'),
+      'classifier',
+    );
     expect(outcomes.get('memory')?.status).toBe('ok');
     expect(outcomes.get('task/planner')?.status).toBe('failed');
     expect(
       distributeInstinctGeneration(entries, undefined, 'model').get('memory')
         ?.status,
     ).toBe('failed');
-  });
-
-  it.each(['unavailable', 'failed'] as const)(
-    'distributes %s failures',
-    async (status) => {
-      const outcomes = await run(async () => ({
-        status,
-        reason: 'test reason',
-      }));
-      expect([...outcomes.values()]).toEqual(
-        entries.map(() => ({ status, reason: 'test reason' })),
-      );
-    },
-  );
-
-  it('enforces timeout even if generation ignores cancellation and rejects late', async () => {
-    let reject!: (error: Error) => void;
-    const outcomes = await run(
-      () =>
-        new Promise((_, r) => {
-          reject = r;
-        }),
-    );
-    expect(
-      [...outcomes.values()].every((outcome) => outcome.status === 'timeout'),
-    ).toBe(true);
-    reject(new Error('late rejection'));
-    await new Promise((resolve) => setTimeout(resolve, 0));
-  });
-
-  it('distinguishes shared deadline expiry from caller cancellation', async () => {
-    const controller = new AbortController();
-    const deadline = new AbortController();
-    const generate = vi.fn<InstinctClassifier>(() => new Promise(() => {}));
-    const args = {
-      entries,
-      prompt: 'input',
-      execute: generate,
-      signal: controller.signal,
-      deadline: deadline.signal,
-      timeoutMs: 1000,
-    };
-    const pending = classifyInstinct(args);
-    deadline.abort();
-    expect((await pending).get('memory')?.status).toBe('timeout');
-    expect(generate).not.toHaveBeenCalled();
-    generate.mockClear();
-    expect((await classifyInstinct(args)).get('memory')?.status).toBe(
-      'timeout',
-    );
-    expect(generate).not.toHaveBeenCalled();
-    controller.abort('session_shutdown');
-    expect((await classifyInstinct(args)).get('memory')?.status).toBe(
-      'aborted',
-    );
-  });
-
-  it('cancels immediately before or during uncooperative generation', async () => {
-    const controller = new AbortController();
-    const generate = vi.fn<InstinctClassifier>(() => new Promise(() => {}));
-    const pending = run(generate, controller.signal, 1_000);
-    controller.abort();
-    expect((await pending).get('memory')?.status).toBe('aborted');
-    expect(generate).not.toHaveBeenCalled();
-    const during = new AbortController();
-    const running = run(generate, during.signal, 1_000);
-    await Promise.resolve();
-    expect(generate).toHaveBeenCalledOnce();
-    during.abort();
-    expect((await running).get('memory')?.status).toBe('aborted');
-    generate.mockClear();
-    expect((await run(generate, controller.signal)).get('memory')?.status).toBe(
-      'aborted',
-    );
-    expect(generate).not.toHaveBeenCalled();
   });
 });

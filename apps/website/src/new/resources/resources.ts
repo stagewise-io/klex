@@ -94,7 +94,7 @@ export const pressMarkup = `
       <p>The team started in software development, working on a gap between increasingly capable models and the limited context they could access. Its early work connected agents to the live state of an application: the running interface, selected elements, and surrounding code.</p>
       <p>That experience shaped the team’s approach to bots. Capability depends not only on a model, but also on context, lasting memory, access to surrounding systems, and clear permissions. Klex brings this thinking to digital coworkers that can work across the environments a team already uses.</p>
       <figure class="resource-founder-photo">
-        <img src="/press/stagewise-klex-founders.jpeg" alt="The two stagewise co-founders, Glenn Töws and Julian Götze" width="3754" height="2816" loading="lazy" decoding="async" />
+        <img src="/press/stagewise-klex-founders-1600.webp" srcset="/press/stagewise-klex-founders-800.webp 800w, /press/stagewise-klex-founders-1600.webp 1600w" sizes="(max-width: 800px) 100vw, 800px" alt="The two stagewise co-founders, Glenn Töws and Julian Götze" width="3754" height="2816" loading="lazy" decoding="async" />
         <figcaption><span>stagewise co-founders · 3754 × 2816 px</span><a class="resource-download" href="/press/stagewise-klex-founders.jpeg" download="stagewise-klex-founders.jpeg" aria-label="Download the stagewise founders photo at full resolution">${downloadIcon}<span>Download full resolution</span></a></figcaption>
       </figure>
       <dl class="resource-founders"><div><dt>Glenn Töws</dt><dd>Co-founder &amp; Chief Executive Officer</dd></div><div><dt>Julian Götze</dt><dd>Co-founder &amp; Chief Technology Officer</dd></div></dl>

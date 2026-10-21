@@ -29,7 +29,7 @@ import { assertSerializedSize, toSerializedError } from './serialization';
 export const JAVASCRIPT_SANDBOX_LIMITS = Object.freeze({
   wallTimeMs: 30_000,
   memoryBytes: 64 * 1024 * 1024,
-  stackBytes: 512 * 1024,
+  stackBytes: 256 * 1024,
   sourceBytes: 64 * 1024,
   maximumRequests: 50,
   maximumConcurrentRequests: 8,

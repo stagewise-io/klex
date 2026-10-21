@@ -940,14 +940,16 @@ describe('JavaScriptTool', () => {
 
   it('recovers from guest stack overflow and preserves prior global state', async () => {
     await javaScriptTool.execute({ code: 'globalThis.saved = { value: 7 };' });
-    await expect(
-      javaScriptTool.execute({
-        code: 'const recurse = () => 1 + recurse(); return recurse();',
-      }),
-    ).rejects.toMatchObject({
-      name: 'RangeError',
-      message: expect.stringContaining('Maximum call stack size exceeded'),
-    });
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      await expect(
+        javaScriptTool.execute({
+          code: 'const recurse = () => 1 + recurse(); return recurse();',
+        }),
+      ).rejects.toMatchObject({
+        name: 'RangeError',
+        message: expect.stringContaining('Maximum call stack size exceeded'),
+      });
+    }
     await expect(javaScriptTool.execute({ code: 'return 42' })).resolves.toBe(
       42,
     );

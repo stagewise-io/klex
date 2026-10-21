@@ -2,6 +2,25 @@
 
 All notable Klex changes are documented here.
 
+## 0.23.0 (2026-10-21)
+
+### Features
+
+- wire remaining quickjs-wasi extensions, fix __proto__ bridge, and add stack/OOM tests (cf9e08d)
+- port JavaScript sandbox to quickjs-wasi with Encoding (76c69bd)
+- bound default-session memory with core checkpoints (36e634c)
+
+### Bug Fixes
+
+- settle late bridge promises on live VMs and skip handle disposal after VM disposal (9d4fa26)
+- cap guest stack at 256 KiB so QuickJS unwinds before V8 stack overflow (2d8651d)
+- hold deferred checkpoints until the window changes (3776237)
+- retry raced idle checkpoint applies and settle them on close (dc01aa8)
+- re-arm compaction when core drops its checkpoint (ec13ea7)
+- address checkpoint review findings (73abc20)
+- read start time before creating lock file (ca75509)
+- detect reused PIDs in directory lock (db160a2)
+
 ## 0.22.0 (2026-10-20)
 
 ### Features

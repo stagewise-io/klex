@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { encodingCases, encodingErrors } from './encoding.fixture';
 
 import {
   createQuickJsRuntime,
@@ -41,6 +42,47 @@ describe('QuickJS error ownership', () => {
     });
     expect(request).not.toHaveBeenCalled();
     await expect(execute('return 42;')).resolves.toBe(42);
+  });
+
+  it.each(encodingCases)('supports $name', async ({ code, expected }) => {
+    await expect(execute(code)).resolves.toEqual(expected);
+  });
+
+  it.each(encodingErrors)(
+    'preserves encoding error $name',
+    async ({ code, name }) => {
+      await expect(execute(code)).rejects.toMatchObject({
+        name,
+        message: expect.stringMatching(/.+/),
+      });
+      await expect(execute('return 42')).resolves.toBe(42);
+    },
+  );
+
+  it.each(['resolve', 'reject'])(
+    'ignores late host %s after VM disposal',
+    async (settlement) => {
+      const pending = Promise.withResolvers<null>();
+      const started = Promise.withResolvers<void>();
+      const execution = execute('await tools.search("late")', () => {
+        started.resolve();
+        return pending.promise;
+      });
+      const rejected = expect(execution).rejects.toThrow('disposed');
+      await started.promise;
+      runtime.dispose();
+      if (settlement === 'resolve') pending.resolve(null);
+      else pending.reject(new Error('late rejection'));
+      await rejected;
+      await expect(execute('return 42')).rejects.toThrow('disposed');
+    },
+  );
+
+  it('preserves primitive rejection strings', async () => {
+    await expect(execute(`throw 'primitive failure'`)).rejects.toMatchObject({
+      name: 'Error',
+      message: 'primitive failure',
+    });
   });
 
   it('preserves pending-job exceptions and accepts a subsequent execution', async () => {

@@ -1,9 +1,12 @@
-import quickJsVariant from '@jitl/quickjs-singlefile-mjs-release-sync';
+import { readFile } from 'node:fs/promises';
+import { createRequire } from 'node:module';
 import {
-  newQuickJSWASMModuleFromVariant,
-  type QuickJSContext,
-  type QuickJSRuntime,
-} from 'quickjs-emscripten-core';
+  QuickJS,
+  JSException,
+  MAX_STACK_SIZE,
+  type QuickJSOptions,
+  type JSValueHandle,
+} from 'quickjs-wasi';
 
 import { assertJsonValue, type JsonValue } from '@/tool-provider';
 
@@ -16,6 +19,7 @@ export interface QuickJsExecutionOptions {
   snapshot: ToolSnapshotMessage;
   deadline: number;
   maximumOutputBytes: number;
+  isAborted?(): boolean;
   request(request: ProviderRequest): Promise<JsonValue>;
 }
 
@@ -31,23 +35,53 @@ export interface QuickJsRuntimeOptions {
 
 export class FatalQuickJsError extends Error {}
 
+// This Node-only project excludes DOM types; declare just the WASM compiler.
+declare const WebAssembly: {
+  compile(bytes: Uint8Array): Promise<QuickJSOptions['wasm']>;
+};
+let compiledModules:
+  | Promise<{ wasm: QuickJSOptions['wasm']; encoding: QuickJSOptions['wasm'] }>
+  | undefined;
+function loadModules() {
+  return (compiledModules ??= (async () => {
+    let wasm: Uint8Array;
+    let encoding: Uint8Array;
+    try {
+      // Literal requires let esbuild embed both binaries. Never use ESM WASM
+      // imports: Node's native loader tries to resolve the guest 'env' import.
+      wasm = require('quickjs-wasi/quickjs.wasm');
+      encoding = require('quickjs-wasi/encoding.so');
+    } catch {
+      const require = createRequire(import.meta.url);
+      [wasm, encoding] = await Promise.all([
+        readFile(require.resolve('quickjs-wasi/quickjs.wasm')),
+        readFile(require.resolve('quickjs-wasi/encoding.so')),
+      ]);
+    }
+    return {
+      wasm: await WebAssembly.compile(wasm),
+      encoding: await WebAssembly.compile(encoding),
+    };
+  })());
+}
+
 export async function createQuickJsRuntime(
   options: QuickJsRuntimeOptions,
 ): Promise<PersistentQuickJsRuntime> {
-  const module = await newQuickJSWASMModuleFromVariant(quickJsVariant);
-  let deadline = Number.POSITIVE_INFINITY;
-  const runtime = module.newRuntime({
-    memoryLimitBytes: options.memoryBytes,
-    maxStackSizeBytes: options.stackBytes,
-    interruptHandler: () => Date.now() >= deadline,
+  const { wasm, encoding } = await loadModules();
+  let interrupt: (() => boolean) | null = null;
+  const vm = await QuickJS.create({
+    memoryLimit: options.memoryBytes,
+    maxStackSize: Math.min(options.stackBytes, MAX_STACK_SIZE),
+    wasm,
+    extensions: [{ name: 'encoding', wasm: encoding }],
+    interruptHandler: () => interrupt?.() ?? false,
   });
-  const context = runtime.newContext();
   return new PersistentQuickJsRuntimeModule(
-    context,
-    runtime,
-    createNamespaceController(context),
-    (value) => {
-      deadline = value;
+    vm,
+    createNamespaceController(vm),
+    (handler) => {
+      interrupt = handler;
     },
   );
 }
@@ -57,10 +91,11 @@ class PersistentQuickJsRuntimeModule implements PersistentQuickJsRuntime {
   private disposed = false;
 
   constructor(
-    private readonly context: QuickJSContext,
-    private readonly runtime: QuickJSRuntime,
+    private readonly context: QuickJS,
     private readonly namespace: ReturnType<typeof createNamespaceController>,
-    private readonly setDeadline: (deadline: number) => void,
+    private readonly setInterruptHandler: (
+      handler: (() => boolean) | null,
+    ) => void,
   ) {}
 
   async execute(options: QuickJsExecutionOptions): Promise<JsonValue> {
@@ -68,7 +103,9 @@ class PersistentQuickJsRuntimeModule implements PersistentQuickJsRuntime {
       throw new FatalQuickJsError('QuickJS runtime is disposed');
     if (this.active) throw new FatalQuickJsError('QuickJS runtime is busy');
     this.active = true;
-    this.setDeadline(options.deadline);
+    this.setInterruptHandler(
+      () => options.isAborted?.() === true || Date.now() >= options.deadline,
+    );
     const emissions: JsonValue[] = [];
     let wake: (() => void) | undefined;
     const bridge: NamespaceBridge = {
@@ -91,20 +128,22 @@ class PersistentQuickJsRuntimeModule implements PersistentQuickJsRuntime {
     try {
       this.namespace.activate(options.snapshot, bridge);
       const source = createExecutionSource(options.source);
-      const evaluation = this.context.evalCode(
-        source,
-        'javascript-user-code.js',
-        {
-          strict: true,
-        },
-      );
-      // unwrapResult consumes the error handle before throwing.
-      const promiseHandle = this.context.unwrapResult(evaluation);
+      const promiseHandle = this.context.evalCode(source, 'sandbox.js');
       try {
         while (true) {
-          executeJobs(this.runtime);
-          const state = this.context.getPromiseState(promiseHandle);
-          if (state.type === 'fulfilled') {
+          if (this.disposed)
+            throw new FatalQuickJsError('QuickJS runtime is disposed');
+          executeJobs(this.context);
+          const status = promiseHandle.promiseState;
+          if (status !== 0) {
+            const state = await this.context.resolvePromise(promiseHandle);
+            if ('error' in state) {
+              try {
+                throw extractError(this.context, state.error);
+              } finally {
+                state.error.dispose();
+              }
+            }
             try {
               const serializedReturn = this.context.dump(state.value);
               if (serializedReturn !== undefined) {
@@ -121,17 +160,6 @@ class PersistentQuickJsRuntimeModule implements PersistentQuickJsRuntime {
             }
             break;
           }
-          if (state.type === 'rejected') {
-            const dumped = this.context.dump(state.error) as {
-              message?: unknown;
-            };
-            state.error.dispose();
-            throw new Error(
-              typeof dumped?.message === 'string'
-                ? dumped.message
-                : 'JavaScript execution failed',
-            );
-          }
           if (Date.now() >= options.deadline)
             throw new FatalQuickJsError('JavaScript execution timed out');
           await new Promise<void>((resolve) => {
@@ -146,13 +174,26 @@ class PersistentQuickJsRuntimeModule implements PersistentQuickJsRuntime {
 
       return normalizeEmissions(emissions);
     } catch (error) {
+      if (error instanceof JSException) {
+        const exception = error;
+        try {
+          error = extractError(this.context, exception.handle);
+        } finally {
+          exception.dispose();
+        }
+      }
       if (error instanceof FatalQuickJsError) throw error;
-      if (Date.now() >= options.deadline)
+      if (
+        (error instanceof Error &&
+          error.name === 'InternalError' &&
+          error.message === 'interrupted') ||
+        Date.now() >= options.deadline
+      )
         throw new FatalQuickJsError('JavaScript execution timed out');
       throw error;
     } finally {
       this.namespace.deactivate();
-      this.setDeadline(Number.POSITIVE_INFINITY);
+      if (!this.disposed) this.setInterruptHandler(null);
       this.active = false;
     }
   }
@@ -160,8 +201,8 @@ class PersistentQuickJsRuntimeModule implements PersistentQuickJsRuntime {
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
+    this.namespace.dispose();
     this.context.dispose();
-    this.runtime.dispose();
   }
 }
 
@@ -213,12 +254,47 @@ function normalizeEmissions(emissions: JsonValue[]): JsonValue {
   return emissions;
 }
 
-function executeJobs(runtime: QuickJSRuntime): void {
-  const result = runtime.executePendingJobs();
-  try {
-    if (result.error) result.error.context.unwrapResult(result);
-  } finally {
-    // unwrapResult consumes failed results; only dispose a still-live result.
-    if (result.alive) result.dispose();
+function executeJobs(vm: QuickJS): void {
+  // executePendingJobs currently drops negative return values from the C API.
+  const exports = (
+    vm as unknown as {
+      _getExports(): {
+        qjs_is_job_pending(): number;
+        qjs_execute_pending_job(): number;
+      };
+    }
+  )._getExports();
+  while (exports.qjs_is_job_pending()) {
+    if (exports.qjs_execute_pending_job() < 0) {
+      const handle = vm.getException();
+      try {
+        throw extractError(vm, handle);
+      } finally {
+        handle.dispose();
+      }
+    }
   }
+}
+
+function extractError(vm: QuickJS, handle: JSValueHandle): Error {
+  if (vm.typeof(handle) === 'object' && !handle.isNull) {
+    const name = handle.getProp('name');
+    const message = handle.getProp('message');
+    try {
+      return Object.assign(
+        new Error(
+          vm.typeof(message) === 'string'
+            ? message.toString()
+            : 'JavaScript execution failed',
+        ),
+        {
+          name: vm.typeof(name) === 'string' ? name.toString() : 'Error',
+        },
+      );
+    } finally {
+      name.dispose();
+      message.dispose();
+    }
+  }
+  return Object.assign(new Error(handle.toString()), { name: 'Error' });
 }

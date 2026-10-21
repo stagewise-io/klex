@@ -1,7 +1,10 @@
 import type { BodyShape } from './presets';
 
 function fixed2(value: number) {
-  const rounded = Math.round((value + 8 * Number.EPSILON * Math.abs(value)) * 100);
+  // Neutral rig transforms can introduce roundoff at half-cent boundaries.
+  const rounded = Math.round(
+    (value + 8 * Number.EPSILON * Math.abs(value)) * 100,
+  );
   const absolute = Math.abs(rounded);
   const integer = Math.floor(absolute / 100);
   const fraction = absolute - integer * 100;

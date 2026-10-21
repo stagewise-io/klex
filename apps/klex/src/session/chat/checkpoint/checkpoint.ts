@@ -49,6 +49,26 @@ export const CHECKPOINT_DATA_PART_TRANSFORMERS: DataPartTransformers = {
   ]),
 };
 
+/**
+ * What one {@link CheckpointManager.applyPending} call did. Callers outside
+ * the turn loop use it to decide whether an immediate retry is safe:
+ * `changed` (and a pending commit after `applied`/`rejected`) is a settled
+ * race, while `deferred` and `failed` must wait for the next boundary so a
+ * failing extension cannot burn through its deferral budget.
+ */
+export type CheckpointApplyOutcome =
+  /** Nothing pending, closed, or another apply is in flight. */
+  | 'none'
+  | 'applied'
+  | 'rejected'
+  | 'deferred'
+  /** The window prefix changed during the hooks; still pending. */
+  | 'changed'
+  /** Carry collection or persistence threw; still pending. */
+  | 'failed'
+  /** The owner tore down mid-apply; nothing was persisted. */
+  | 'abandoned';
+
 export interface CheckpointManager {
   /** Validate and queue a checkpoint for the next safe boundary. */
   commit(request: CheckpointCommitRequest): CheckpointCommitResult;
@@ -60,7 +80,9 @@ export interface CheckpointManager {
    * Apply the pending checkpoint, if any. Call only at a step boundary,
    * when nothing else mutates the window. Never rejects.
    */
-  applyPending(): Promise<void>;
+  applyPending(): Promise<CheckpointApplyOutcome>;
+  /** Resolves once the in-flight apply, if any, has finished. */
+  whenSettled(): Promise<void>;
 }
 
 export interface CheckpointManagerDependencies {
@@ -75,8 +97,14 @@ export interface CheckpointManagerDependencies {
   recorder?: SessionHistoryRecorder;
   /** Called after the window was trimmed. */
   onApplied?: () => void;
-  /** Applying is skipped once this returns true. */
+  /** No new apply starts once this returns true. */
   isClosed?: () => boolean;
+  /**
+   * An in-flight apply stops before persisting once this returns true.
+   * Distinct from {@link isClosed} so the owner can let an apply that
+   * already started finish during shutdown.
+   */
+  isAbandoned?: () => boolean;
 }
 
 type ValidationResult =
@@ -86,7 +114,7 @@ type ValidationResult =
 class CheckpointManagerModule implements CheckpointManager {
   private pending: CheckpointCommitRequest | null = null;
   private deferrals = 0;
-  private applying = false;
+  private inFlight: Promise<CheckpointApplyOutcome> | null = null;
 
   constructor(private readonly deps: CheckpointManagerDependencies) {}
 
@@ -121,12 +149,23 @@ class CheckpointManagerModule implements CheckpointManager {
     return { status: 'pending' };
   }
 
-  async applyPending(): Promise<void> {
-    if (!this.pending || this.applying) return;
-    if (this.deps.isClosed?.()) return;
-    this.applying = true;
+  applyPending(): Promise<CheckpointApplyOutcome> {
+    if (!this.pending || this.inFlight) return Promise.resolve('none');
+    if (this.deps.isClosed?.()) return Promise.resolve('none');
+    const run = this.applyGuarded(this.pending);
+    this.inFlight = run;
+    return run;
+  }
+
+  async whenSettled(): Promise<void> {
+    await this.inFlight;
+  }
+
+  private async applyGuarded(
+    request: CheckpointCommitRequest,
+  ): Promise<CheckpointApplyOutcome> {
     try {
-      await this.applyUnlocked(this.pending);
+      return await this.applyUnlocked(request);
     } catch (error) {
       this.deps.logger.error(
         { error },
@@ -135,12 +174,15 @@ class CheckpointManagerModule implements CheckpointManager {
       this.deps.span.addEvent('checkpoint.apply_failed', {
         error: String(error),
       });
+      return 'failed';
     } finally {
-      this.applying = false;
+      this.inFlight = null;
     }
   }
 
-  private async applyUnlocked(request: CheckpointCommitRequest): Promise<void> {
+  private async applyUnlocked(
+    request: CheckpointCommitRequest,
+  ): Promise<CheckpointApplyOutcome> {
     const { messages } = this.deps;
     const anchorId = request.coversThroughMessageId;
 
@@ -148,7 +190,7 @@ class CheckpointManagerModule implements CheckpointManager {
     if (!validation.ok) {
       this.clearPending(request);
       this.reject(request, validation.reason);
-      return;
+      return 'rejected';
     }
 
     const dropped = messages.slice(0, validation.anchorIndex + 1);
@@ -188,7 +230,7 @@ class CheckpointManagerModule implements CheckpointManager {
           { anchorId, deferrals: this.deferrals },
           'Checkpoint deferred by an extension',
         );
-        return;
+        return 'deferred';
       }
       this.deps.logger.warn(
         { anchorId, deferrals: this.deferrals },
@@ -196,7 +238,7 @@ class CheckpointManagerModule implements CheckpointManager {
       );
     }
 
-    if (this.deps.isClosed?.()) return;
+    if (this.deps.isAbandoned?.()) return 'abandoned';
 
     // The hooks may have yielded; make sure the window prefix is unchanged
     // before persisting a header for it.
@@ -204,14 +246,14 @@ class CheckpointManagerModule implements CheckpointManager {
     if (!current.ok) {
       this.clearPending(request);
       this.reject(request, current.reason);
-      return;
+      return 'rejected';
     }
     if (!samePrefix(messages, droppedMessageIds, current.anchorIndex)) {
       this.deps.logger.info(
         { anchorId },
-        'Window changed during checkpoint apply — retrying at next boundary',
+        'Window changed during checkpoint apply — retrying',
       );
-      return;
+      return 'changed';
     }
 
     // Durable first: a crash after this point restores the new window.
@@ -255,6 +297,7 @@ class CheckpointManagerModule implements CheckpointManager {
       'Checkpoint applied — window trimmed',
     );
     this.deps.onApplied?.();
+    return 'applied';
   }
 
   private validate(anchorId: string): ValidationResult {

@@ -235,6 +235,12 @@ class ChatSessionModule implements AgentSession {
   /** Checkpoint apply started while the loop was idle. Never rejects. */
   private idleCheckpointApply: Promise<void> | null = null;
 
+  /** A checkpoint was committed while an idle apply was in flight. */
+  private checkpointCommittedDuringIdleApply = false;
+
+  /** Set by close() once in-flight applies had their chance to land. */
+  private checkpointApplyAbandoned = false;
+
   /** Recorded as the transcript end reason on close. */
   private endReason = 'closed';
 
@@ -487,6 +493,7 @@ class ChatSessionModule implements AgentSession {
       recorder: this.transcriptRecorder,
       onApplied: () => this.scheduleTranscriptSync(),
       isClosed: () => this._status === 'terminated',
+      isAbandoned: () => this.checkpointApplyAbandoned,
     });
 
     const extensionDeps: BaseExtensionDeps = {
@@ -497,7 +504,12 @@ class ChatSessionModule implements AgentSession {
             return { status: 'rejected', reason: 'session is terminated' };
           }
           const result = this.checkpointManager.commit(request);
-          if (result.status === 'pending') this.applyCheckpointIfIdle();
+          if (result.status === 'pending') {
+            if (this.idleCheckpointApply) {
+              this.checkpointCommittedDuringIdleApply = true;
+            }
+            this.applyCheckpointIfIdle();
+          }
           return result;
         },
         isPending: (anchorId) => this.checkpointManager.isPending(anchorId),
@@ -1008,6 +1020,12 @@ class ChatSessionModule implements AgentSession {
    * Also re-run when the loop exits and when the lane resumes, so a commit
    * that arrived while either guard held is not left pending until the
    * next turn.
+   *
+   * When an apply leaves a checkpoint pending, retry right away only after
+   * a settled race (newer commit, prefix change). After a deferral or a
+   * throw, wait for the next boundary: memory defers while episode writes
+   * fail, and an immediate retry would exhaust MAX_CHECKPOINT_DEFERRALS
+   * and trim unrecorded messages.
    */
   private applyCheckpointIfIdle(): void {
     if (this.loopActive || this.laneSuspended || this.idleCheckpointApply) {
@@ -1015,10 +1033,39 @@ class ChatSessionModule implements AgentSession {
     }
     if (!this.checkpointManager.hasPending) return;
     if (this._status === 'terminated') return;
-    const apply = this.checkpointManager.applyPending().finally(() => {
+    this.checkpointCommittedDuringIdleApply = false;
+    const apply = this.checkpointManager.applyPending().then((outcome) => {
       if (this.idleCheckpointApply === apply) this.idleCheckpointApply = null;
+      const committedDuring = this.checkpointCommittedDuringIdleApply;
+      this.checkpointCommittedDuringIdleApply = false;
+      if (outcome === 'none' || outcome === 'abandoned') return;
+      if (
+        (outcome === 'deferred' || outcome === 'failed') &&
+        !committedDuring
+      ) {
+        return;
+      }
+      this.applyCheckpointIfIdle();
     });
     this.idleCheckpointApply = apply;
+  }
+
+  /**
+   * Lets an in-flight checkpoint apply land before extensions and the
+   * recorder shut down, so a trim that already ran its hooks is persisted
+   * instead of being lost. Bounded like {@link waitForLoopToSettle}; after
+   * it, any apply still running stops before persisting.
+   */
+  private async settleCheckpointApply(): Promise<void> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    await Promise.race([
+      this.checkpointManager.whenSettled(),
+      new Promise<void>((resolve) => {
+        timer = setTimeout(resolve, LOOP_SETTLE_TIMEOUT_MS);
+      }),
+    ]);
+    clearTimeout(timer);
+    this.checkpointApplyAbandoned = true;
   }
 
   // ---------------------------------------------------------------------------
@@ -1761,6 +1808,7 @@ class ChatSessionModule implements AgentSession {
       // If startup is in flight, let its rollback finish before asynchronous
       // cleanup. A rejected startup is expected here and its caller owns it.
       await this.startPromise?.catch(() => undefined);
+      await this.settleCheckpointApply();
 
       try {
         await this.extensionHandler.close();

@@ -125,11 +125,9 @@ export async function checkGeneratedContract({
       ['worktree', 'add', '--detach', baseWorktree, baseRef],
       root,
     );
-    await run(
-      'pnpm',
-      ['install', '--frozen-lockfile', '--ignore-scripts'],
-      baseWorktree,
-    );
+    // No --ignore-scripts: pnpm 11 then leaves workspace .bin links (turbo,
+    // tsx) missing, and the base build fails with "turbo not found".
+    await run('pnpm', ['install', '--frozen-lockfile'], baseWorktree);
     const buildContractArgs = [
       'exec',
       'turbo',

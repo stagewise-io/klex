@@ -8,6 +8,7 @@ import type { ExtensionDeps, ResolvedModel } from '../extension-api';
 import { InMemoryToolProvider } from './in-memory-tool-provider.fixture';
 import { createJavaScriptTool, type JavaScriptTool } from './javascript';
 import { createJsReplSandboxExt } from './js-repl-sandbox';
+import { encodingCases, encodingErrors } from './encoding.fixture';
 
 vi.mock('./system-prompt-part.md', () => ({
   default: readFileSync(
@@ -37,6 +38,49 @@ describe('JavaScriptTool', () => {
   afterEach(async () => {
     await javaScriptTool.close();
   });
+
+  it.each(encodingCases)('supports $name', async ({ code, expected }) => {
+    await expect(javaScriptTool.execute({ code })).resolves.toEqual(expected);
+  });
+
+  it.each(encodingErrors)(
+    'preserves encoding error $name',
+    async ({ code, name }) => {
+      await expect(javaScriptTool.execute({ code })).rejects.toMatchObject({
+        name,
+        message: expect.stringMatching(/.+/),
+      });
+      await expect(javaScriptTool.execute({ code: 'return 42' })).resolves.toBe(
+        42,
+      );
+    },
+  );
+
+  it.each(['resolve', 'reject'])(
+    'ignores late provider %s after worker disposal',
+    async (settlement) => {
+      const pending = Promise.withResolvers<[]>();
+      const started = Promise.withResolvers<void>();
+      vi.spyOn(provider, 'search').mockImplementation(() => {
+        started.resolve();
+        return pending.promise;
+      });
+      const controller = new AbortController();
+      const execution = javaScriptTool.execute({
+        code: 'await tools.search("late"); globalThis.revived = true',
+        signal: controller.signal,
+      });
+      const rejected = expect(execution).rejects.toThrow('cancelled');
+      await started.promise;
+      controller.abort(new Error('cancelled'));
+      await rejected;
+      if (settlement === 'resolve') pending.resolve([]);
+      else pending.reject(new Error('late rejection'));
+      await expect(
+        javaScriptTool.execute({ code: 'return typeof globalThis.revived' }),
+      ).resolves.toBe('undefined');
+    },
+  );
 
   it('exposes only runInSandbox and delegates execution', async () => {
     expect(Object.keys(javaScriptTool.tools)).toEqual(['runInSandbox']);

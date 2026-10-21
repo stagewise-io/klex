@@ -31,7 +31,6 @@
     "clean": "rimraf dist"
   },
   "devDependencies": {
-    "@jitl/quickjs-singlefile-mjs-debug-sync": "0.32.0",
     "@opentelemetry/context-async-hooks": "2.9.0",
     "@opentelemetry/sdk-trace-base": "2.9.0",
     "@stagewise/app-packager": "workspace:*",
@@ -68,7 +67,6 @@
     "@ffprobe-installer/ffprobe": "2.1.2",
     "@hono/node-server": "2.0.10",
     "@hono/zod-openapi": "1.5.1",
-    "@jitl/quickjs-singlefile-mjs-release-sync": "0.32.0",
     "@klex/cloud-api": "1.2.2",
     "@libsql/client": "0.17.4",
     "@livekit/rtc-node": "0.13.32",
@@ -91,7 +89,7 @@
     "js-tiktoken": "1.0.21",
     "oauth4webapi": "3.8.7",
     "posthog-node": "5.52.5",
-    "quickjs-emscripten-core": "0.32.0",
+    "quickjs-wasi": "3.6.3",
     "react": "19.2.8",
     "sharp": "0.35.3",
     "ws": "8.18.1",

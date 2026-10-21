@@ -1,4 +1,4 @@
-import type { QuickJSContext, QuickJSHandle } from 'quickjs-emscripten-core';
+import type { QuickJS, JSValueHandle } from 'quickjs-wasi';
 
 import {
   assertJsonValue,
@@ -13,7 +13,7 @@ import {
 
 import { CONSOLE_FACTORY_SOURCE } from './console-format';
 import type { ProviderRequest, ToolSnapshotMessage } from './protocol';
-import { assertSerializedSize } from './serialization';
+import { toSerializedError, assertSerializedSize } from './serialization';
 
 const DEFAULT_MAXIMUM_RESPONSE_BYTES = 1024 * 1024;
 
@@ -26,18 +26,22 @@ export interface NamespaceBridge {
 export interface NamespaceController {
   activate(snapshot: ToolSnapshotMessage, bridge: NamespaceBridge): void;
   deactivate(): void;
+  dispose(): void;
 }
 
 export function createNamespaceController(
-  context: QuickJSContext,
+  context: QuickJS,
   maximumResponseBytes = DEFAULT_MAXIMUM_RESPONSE_BYTES,
 ): NamespaceController {
+  let disposed = false;
   let activeBridge: NamespaceBridge | undefined;
   let activeSnapshot: ToolSnapshotMessage | undefined;
   const requireBridge = (): NamespaceBridge => {
     if (!activeBridge) throw new Error('No JavaScript execution is active');
     return activeBridge;
   };
+  const isActive = (bridge: NamespaceBridge) =>
+    !disposed && activeBridge === bridge;
   const requireSnapshot = (): ToolSnapshotMessage => {
     if (!activeSnapshot) throw new Error('No JavaScript execution is active');
     return activeSnapshot;
@@ -50,6 +54,7 @@ export function createNamespaceController(
       'listNamespaces',
       requireSnapshot,
       requireBridge,
+      isActive,
       maximumResponseBytes,
       (snapshot, ...args) => {
         if (args.length > 1) {
@@ -70,6 +75,7 @@ export function createNamespaceController(
       'listTools',
       requireSnapshot,
       requireBridge,
+      isActive,
       maximumResponseBytes,
       (snapshot, ...args) => {
         if (args.length > 1) {
@@ -97,6 +103,7 @@ export function createNamespaceController(
       context,
       'search',
       requireBridge,
+      isActive,
       (query, options) => {
         if (typeof query !== 'string')
           throw new TypeError(
@@ -114,6 +121,7 @@ export function createNamespaceController(
       context,
       'describe',
       requireBridge,
+      isActive,
       (reference) => ({
         operation: 'describe',
         reference: asReference(reference),
@@ -139,7 +147,12 @@ export function createNamespaceController(
     activate(snapshot, bridge) {
       activeSnapshot = snapshot;
       activeBridge = bridge;
-      installMcpNamespace(context, snapshot, requireBridge);
+      installMcpNamespace(context, snapshot, requireBridge, isActive);
+    },
+    dispose() {
+      disposed = true;
+      activeSnapshot = undefined;
+      activeBridge = undefined;
     },
     deactivate() {
       activeSnapshot = undefined;
@@ -149,7 +162,7 @@ export function createNamespaceController(
 }
 
 function installConsole(
-  context: QuickJSContext,
+  context: QuickJS,
   requireBridge: () => NamespaceBridge,
 ): void {
   const emit = context.newFunction('emitConsoleLog', (value) => {
@@ -157,18 +170,13 @@ function installConsole(
     if (typeof dumped !== 'string')
       throw new TypeError('Console formatter must produce a string');
     requireBridge().emit(dumped);
+    return context.undefined;
   });
-  let factory: QuickJSHandle | undefined;
-  let consoleHandle: QuickJSHandle | undefined;
+  let factory: JSValueHandle | undefined;
+  let consoleHandle: JSValueHandle | undefined;
   try {
-    factory = context.unwrapResult(
-      context.evalCode(CONSOLE_FACTORY_SOURCE, 'console-format.js', {
-        strict: true,
-      }),
-    );
-    consoleHandle = context.unwrapResult(
-      context.callFunction(factory, context.undefined, emit),
-    );
+    factory = context.evalCode(CONSOLE_FACTORY_SOURCE, 'console-format.js');
+    consoleHandle = context.callFunction(factory, context.undefined, emit);
     context.setProp(context.global, 'console', consoleHandle);
   } finally {
     consoleHandle?.dispose();
@@ -178,27 +186,39 @@ function installConsole(
 }
 
 function installMcpNamespace(
-  context: QuickJSContext,
+  context: QuickJS,
   snapshot: ToolSnapshotMessage,
   requireBridge: () => NamespaceBridge,
+  isActive: (bridge: NamespaceBridge) => boolean,
 ): void {
+  context.setProp(context.global, 'mcp', context.undefined);
+  context.runGC();
   const mcp = context.newObject();
   try {
     for (const namespace of snapshot.namespaces) {
       const namespaceHandle = context.newObject();
       try {
         for (const capability of namespace.capabilities) {
+          const callbackKey = `mcp:${JSON.stringify([namespace.name, capability.name])}`;
+          context.unregisterHostCallback(callbackKey);
           const fn = createBridgeFunction(
             context,
-            capability.name,
+            callbackKey,
             requireBridge,
+            isActive,
             (input) => ({
               operation: 'invoke',
               reference: { namespace: namespace.name, name: capability.name },
               input: asInput(input),
             }),
           );
-          context.setProp(namespaceHandle, capability.name, fn);
+          const nameHandle = context.newString(capability.name);
+          try {
+            context.defineProp(fn, 'name', nameHandle, { configurable: true });
+            context.setProp(namespaceHandle, capability.name, fn);
+          } finally {
+            nameHandle.dispose();
+          }
           fn.dispose();
         }
         freeze(context, namespaceHandle);
@@ -215,98 +235,87 @@ function installMcpNamespace(
 }
 
 function createSnapshotFunction(
-  context: QuickJSContext,
+  context: QuickJS,
   name: string,
   requireSnapshot: () => ToolSnapshotMessage,
   requireBridge: () => NamespaceBridge,
+  isActive: (bridge: NamespaceBridge) => boolean,
   maximumResponseBytes: number,
   compute: (snapshot: ToolSnapshotMessage, ...args: unknown[]) => JsonValue,
-): QuickJSHandle {
+): JSValueHandle {
   return context.newFunction(name, (...handles) => {
-    const deferred = context.newPromise();
-    try {
-      const bridge = requireBridge();
-      const snapshot = requireSnapshot();
-      const args = handles.map((handle) => context.dump(handle));
-      const value = compute(snapshot, ...args);
-      assertSerializedSize(value, maximumResponseBytes, 'Provider response');
-      void Promise.resolve(value).then((resolved) => {
-        const handle = jsonToHandle(context, resolved);
-        try {
-          deferred.resolve(handle);
-        } finally {
-          handle.dispose();
-          deferred.dispose();
-          bridge.notify?.();
-        }
-      });
-      return deferred.handle;
-    } catch (error) {
-      deferred.dispose();
-      throw error;
-    }
+    const bridge = requireBridge();
+    const snapshot = requireSnapshot();
+    const args = handles.map((handle) => context.dump(handle));
+    const value = compute(snapshot, ...args);
+    assertSerializedSize(value, maximumResponseBytes, 'Provider response');
+    return bridgePromise(context, bridge, isActive, Promise.resolve(value));
   });
 }
 
 function createBridgeFunction(
-  context: QuickJSContext,
+  context: QuickJS,
   name: string,
   requireBridge: () => NamespaceBridge,
+  isActive: (bridge: NamespaceBridge) => boolean,
   request: (...args: unknown[]) => ProviderRequest,
-): QuickJSHandle {
+): JSValueHandle {
   return context.newFunction(name, (...handles) => {
-    const deferred = context.newPromise();
-    try {
-      const args = handles.map((handle) => context.dump(handle));
-      const pending = requireBridge().request(request(...args));
-      void pending.then(
-        (value) => {
-          const handle = jsonToHandle(context, value);
-          try {
-            deferred.resolve(handle);
-          } finally {
-            handle.dispose();
-            deferred.dispose();
-          }
-        },
-        (error: unknown) => {
-          const handle = context.newError(
-            error instanceof Error ? error.message : 'Provider request failed',
-          );
-          try {
-            deferred.reject(handle);
-          } finally {
-            handle.dispose();
-            deferred.dispose();
-          }
-        },
-      );
-      return deferred.handle;
-    } catch (error) {
-      deferred.dispose();
-      throw error;
-    }
+    const bridge = requireBridge();
+    const args = handles.map((handle) => context.dump(handle));
+    const pending = bridge.request(request(...args));
+    return bridgePromise(context, bridge, isActive, pending);
   });
 }
 
-function jsonToHandle(
-  context: QuickJSContext,
-  value: JsonValue,
-): QuickJSHandle {
-  assertJsonValue(value);
-  const source = `JSON.parse(${JSON.stringify(JSON.stringify(value))})`;
-  return context.unwrapResult(
-    context.evalCode(source, 'javascript-tool-value.js', { strict: true }),
-  );
+function bridgePromise(
+  context: QuickJS,
+  bridge: NamespaceBridge,
+  isActive: (bridge: NamespaceBridge) => boolean,
+  pending: Promise<JsonValue>,
+): JSValueHandle {
+  const deferred = context.newPromise();
+  void pending
+    .then((value) => {
+      if (!isActive(bridge)) return;
+      const handle = jsonToHandle(context, value);
+      try {
+        deferred.resolve(handle);
+      } finally {
+        handle.dispose();
+      }
+    })
+    .catch((error: unknown) => {
+      if (!isActive(bridge)) return;
+      const serialized = toSerializedError(error);
+      const handle = context.newError({
+        name: serialized.name,
+        message: serialized.message,
+      });
+      try {
+        deferred.reject(handle);
+      } finally {
+        handle.dispose();
+      }
+    })
+    .finally(() => {
+      deferred.handle.dispose();
+      if (isActive(bridge)) bridge.notify?.();
+    });
+  return deferred.handle;
 }
 
-function freeze(context: QuickJSContext, handle: QuickJSHandle): void {
-  const object = context.getProp(context.global, 'Object');
-  const freezeFunction = context.getProp(object, 'freeze');
+function jsonToHandle(context: QuickJS, value: JsonValue): JSValueHandle {
+  if (value === undefined) return context.undefined;
+  assertJsonValue(value);
+  return context.evalCode(`(${JSON.stringify(value)})`, 'bridge-result.js');
+}
+
+function freeze(context: QuickJS, handle: JSValueHandle): void {
+  const object = context.global.getProp('Object');
+  const freezeFunction = object.getProp('freeze');
   try {
-    context
-      .unwrapResult(context.callFunction(freezeFunction, object, handle))
-      .dispose();
+    context.callFunction(freezeFunction, object, handle).dispose();
   } finally {
     freezeFunction.dispose();
     object.dispose();

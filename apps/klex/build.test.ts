@@ -1,4 +1,8 @@
 import { resolve } from 'node:path';
+import { once } from 'node:events';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { Worker } from 'node:worker_threads';
 import { runInNewContext } from 'node:vm';
 
 import { build } from 'esbuild';
@@ -41,6 +45,12 @@ describe('markdown loader parity', () => {
     for (const isSea of [false, true]) {
       for (const target of ['main', 'worker'] as const) {
         expect(createBuildOptions(isSea)[target].loader?.['.md']).toBe('text');
+        expect(createBuildOptions(isSea)[target].loader?.['.wasm']).toBe(
+          'binary',
+        );
+        expect(createBuildOptions(isSea)[target].loader?.['.so']).toBe(
+          'binary',
+        );
       }
     }
   });
@@ -73,6 +83,37 @@ describe('markdown loader parity', () => {
 });
 
 describe('createBuildOptions', () => {
+  it('runs the SEA worker with embedded engine and Encoding binaries outside the repository', async () => {
+    const bundle = await build({
+      ...createBuildOptions(true).worker,
+      write: false,
+    });
+    const directory = await mkdtemp(resolve(tmpdir(), 'klex-wasm-test-'));
+    let worker: Worker | undefined;
+    try {
+      const path = resolve(directory, 'worker.mjs');
+      await writeFile(path, bundle.outputFiles[0]!.contents);
+      worker = new Worker(path);
+      const ready = once(worker, 'message');
+      worker.postMessage({ type: 'initialize' });
+      expect(await ready).toEqual([{ type: 'ready' }]);
+      const complete = once(worker, 'message');
+      worker.postMessage({
+        type: 'execute',
+        executionId: 'embedded-wasm',
+        source: `return new TextDecoder().decode(new TextEncoder().encode('héllo 🌍'));`,
+        snapshot: { namespaces: [] },
+        deadline: Date.now() + 5_000,
+      });
+      expect(await complete).toEqual([
+        { type: 'complete', executionId: 'embedded-wasm', result: 'héllo 🌍' },
+      ]);
+    } finally {
+      await worker?.terminate();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it('embeds the application version in both build modes', () => {
     // The SEA branch adds its own `define` for __dirname. Object spreads
     // replace `define` wholesale rather than merging it, so forgetting to

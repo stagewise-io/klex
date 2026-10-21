@@ -88,6 +88,8 @@ const sharedOptions: BuildOptions = {
   keepNames: false,
   loader: {
     '.md': 'text',
+    '.wasm': 'binary',
+    '.so': 'binary',
   },
 };
 

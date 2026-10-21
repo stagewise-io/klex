@@ -925,11 +925,99 @@ describe('JavaScriptTool', () => {
     });
   });
 
+  it('preserves own __proto__ properties in MCP results', async () => {
+    const payload = JSON.parse('{"__proto__":{"polluted":true},"normal":1}');
+    vi.spyOn(provider, 'invoke').mockResolvedValue(payload);
+    await expect(
+      javaScriptTool.execute({
+        code: `
+      const res = await mcp['git.hub']['echo-value']({ value: 1 });
+      return { res, own: Object.prototype.hasOwnProperty.call(res, '__proto__') };
+    `,
+      }),
+    ).resolves.toEqual({ res: payload, own: true });
+  });
+
+  it('recovers from guest stack overflow and preserves prior global state', async () => {
+    await javaScriptTool.execute({ code: 'globalThis.saved = { value: 7 };' });
+    await expect(
+      javaScriptTool.execute({
+        code: 'const recurse = () => 1 + recurse(); return recurse();',
+      }),
+    ).rejects.toMatchObject({
+      name: 'RangeError',
+      message: expect.stringContaining('Maximum call stack size exceeded'),
+    });
+    await expect(javaScriptTool.execute({ code: 'return 42' })).resolves.toBe(
+      42,
+    );
+    await expect(
+      javaScriptTool.execute({ code: 'return globalThis.saved' }),
+    ).resolves.toEqual({ value: 7 });
+  });
+
+  it('runs a representative tool-heavy script with discovery and runtime globals', async () => {
+    const result = await javaScriptTool.execute({
+      code: `
+      const namespaces = await tools.listNamespaces();
+      const matches = await tools.search('echo', { includeInputSchema: true });
+      const { namespace, name } = matches[0].reference;
+      const description = await tools.describe({ namespace, name });
+      const url = new URL('/echo?value=3', 'https://example.com');
+      const params = new URLSearchParams(url.search);
+      const headers = new Headers({ 'Content-Type': 'application/json' });
+      async function run(value) {
+        function prepare() { return structuredClone({ value }); }
+        return await mcp[namespace][name](prepare());
+      }
+      const parallel = await Promise.all([run(Number(params.get('value'))), run(4), run(5)]);
+      const first = await run(parallel.reduce((sum, item) => sum + item.value, 0));
+      const second = await run(first.value * 2);
+      const decoded = new TextDecoder().decode(Uint8Array.fromBase64('YWJj'));
+      const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(decoded))).toHex();
+      console.log('completed %d calls', parallel.length + 2);
+      return { discovered: namespaces.some(entry => entry.namespace === namespace),
+        schemaMatches: JSON.stringify(matches[0].inputSchema) === JSON.stringify(description.inputSchema),
+        contentType: headers.get('content-type'), parallel, second, decoded, digest };
+    `,
+    });
+    expect(result).toEqual([
+      'completed 5 calls',
+      {
+        discovered: true,
+        schemaMatches: true,
+        contentType: 'application/json',
+        parallel: [{ value: 3 }, { value: 4 }, { value: 5 }],
+        second: { value: 24 },
+        decoded: 'abc',
+        digest:
+          'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad',
+      },
+    ]);
+    expect(provider.searches).toEqual([
+      { query: 'echo', options: { includeInputSchema: true } },
+    ]);
+    expect(provider.described).toEqual([
+      { namespace: 'git.hub', name: 'echo-value' },
+    ]);
+    expect(provider.invoked).toEqual(
+      Array.from({ length: 5 }, () => ({
+        namespace: 'git.hub',
+        name: 'echo-value',
+      })),
+    );
+  });
+
   it('does not expose ambient Node authority', async () => {
     await expect(
       javaScriptTool.execute({
-        code: `return { process: typeof process, require: typeof require }`,
+        code: `return { process: typeof process, require: typeof require, Buffer: typeof Buffer, fetch: typeof fetch }`,
       }),
-    ).resolves.toEqual({ process: 'undefined', require: 'undefined' });
+    ).resolves.toEqual({
+      process: 'undefined',
+      require: 'undefined',
+      Buffer: 'undefined',
+      fetch: 'undefined',
+    });
   });
 });

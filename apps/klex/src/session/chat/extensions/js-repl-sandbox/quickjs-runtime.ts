@@ -40,27 +40,54 @@ declare const WebAssembly: {
   compile(bytes: Uint8Array): Promise<QuickJSOptions['wasm']>;
 };
 let compiledModules:
-  | Promise<{ wasm: QuickJSOptions['wasm']; encoding: QuickJSOptions['wasm'] }>
+  | Promise<{
+      wasm: QuickJSOptions['wasm'];
+      extensions: QuickJSOptions['extensions'];
+    }>
   | undefined;
 function loadModules() {
   return (compiledModules ??= (async () => {
     let wasm: Uint8Array;
     let encoding: Uint8Array;
+    let url: Uint8Array;
+    let crypto: Uint8Array;
+    let structuredClone: Uint8Array;
+    let headers: Uint8Array;
     try {
-      // Literal requires let esbuild embed both binaries. Never use ESM WASM
+      // Literal requires let esbuild embed all binaries. Never use ESM WASM
       // imports: Node's native loader tries to resolve the guest 'env' import.
       wasm = require('quickjs-wasi/quickjs.wasm');
       encoding = require('quickjs-wasi/encoding.so');
+      url = require('quickjs-wasi/url.so');
+      crypto = require('quickjs-wasi/crypto.so');
+      structuredClone = require('quickjs-wasi/structured-clone.so');
+      headers = require('quickjs-wasi/headers.so');
     } catch {
       const require = createRequire(import.meta.url);
-      [wasm, encoding] = await Promise.all([
-        readFile(require.resolve('quickjs-wasi/quickjs.wasm')),
-        readFile(require.resolve('quickjs-wasi/encoding.so')),
-      ]);
+      [wasm, encoding, url, crypto, structuredClone, headers] =
+        await Promise.all([
+          readFile(require.resolve('quickjs-wasi/quickjs.wasm')),
+          readFile(require.resolve('quickjs-wasi/encoding.so')),
+          readFile(require.resolve('quickjs-wasi/url.so')),
+          readFile(require.resolve('quickjs-wasi/crypto.so')),
+          readFile(require.resolve('quickjs-wasi/structured-clone.so')),
+          readFile(require.resolve('quickjs-wasi/headers.so')),
+        ]);
     }
     return {
       wasm: await WebAssembly.compile(wasm),
-      encoding: await WebAssembly.compile(encoding),
+      extensions: await Promise.all(
+        [
+          { name: 'encoding', bytes: encoding },
+          { name: 'url', bytes: url },
+          { name: 'crypto', bytes: crypto },
+          { name: 'structured-clone', bytes: structuredClone },
+          { name: 'headers', bytes: headers },
+        ].map(async ({ name, bytes }) => ({
+          name,
+          wasm: await WebAssembly.compile(bytes),
+        })),
+      ),
     };
   })());
 }
@@ -68,13 +95,13 @@ function loadModules() {
 export async function createQuickJsRuntime(
   options: QuickJsRuntimeOptions,
 ): Promise<PersistentQuickJsRuntime> {
-  const { wasm, encoding } = await loadModules();
+  const { wasm, extensions } = await loadModules();
   let interrupt: (() => boolean) | null = null;
   const vm = await QuickJS.create({
     memoryLimit: options.memoryBytes,
     maxStackSize: Math.min(options.stackBytes, MAX_STACK_SIZE),
     wasm,
-    extensions: [{ name: 'encoding', wasm: encoding }],
+    extensions,
     interruptHandler: () => interrupt?.() ?? false,
   });
   return new PersistentQuickJsRuntimeModule(

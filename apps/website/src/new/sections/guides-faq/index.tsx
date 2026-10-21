@@ -1,6 +1,6 @@
 import './guides-faq.css';
 
-import { createRoot } from 'react-dom/client';
+import { createRoot, hydrateRoot } from 'react-dom/client';
 
 import {
   Accordion,
@@ -58,7 +58,7 @@ const questions = [
   },
 ];
 
-function GuidesFaq() {
+export function GuidesFaq() {
   return (
     <>
       <nav className="guides-intro" id="guides" aria-labelledby="guides-title">
@@ -91,7 +91,7 @@ function GuidesFaq() {
                   <IconPlusOutline18 size={24} />
                 </span>
               </AccordionTrigger>
-              <AccordionContent className="guides-faq-answer">
+              <AccordionContent keepMounted className="guides-faq-answer">
                 <p>{answer}</p>
               </AccordionContent>
             </AccordionItem>
@@ -105,7 +105,9 @@ function GuidesFaq() {
 export function mountGuidesFaq() {
   const host = document.querySelector('.new-guides-faq-mount');
   if (!host) throw new Error('The guides and FAQ section is missing.');
-  const root = createRoot(host);
-  root.render(<GuidesFaq />);
+  const root = host.hasChildNodes()
+    ? hydrateRoot(host, <GuidesFaq />, { identifierPrefix: 'guides-faq-' })
+    : createRoot(host, { identifierPrefix: 'guides-faq-' });
+  if (!host.hasChildNodes()) root.render(<GuidesFaq />);
   return () => root.unmount();
 }

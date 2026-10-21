@@ -1,6 +1,6 @@
 import './coworkers.css';
 
-import { createRoot } from 'react-dom/client';
+import { createRoot, hydrateRoot } from 'react-dom/client';
 
 import {
   Button,
@@ -258,7 +258,7 @@ function MiniDiagram({ topic, team }: { topic: string; team: boolean }) {
   );
 }
 
-function Coworkers() {
+export function Coworkers() {
   return (
     <>
       <h2 id="coworkers-title" className="coworkers-title">
@@ -349,7 +349,9 @@ function Coworkers() {
 export function mountCoworkers() {
   const host = document.querySelector('.new-coworkers-mount');
   if (!host) throw new Error('The coworkers section is missing.');
-  const root = createRoot(host);
-  root.render(<Coworkers />);
+  const root = host.hasChildNodes()
+    ? hydrateRoot(host, <Coworkers />, { identifierPrefix: 'coworkers-' })
+    : createRoot(host, { identifierPrefix: 'coworkers-' });
+  if (!host.hasChildNodes()) root.render(<Coworkers />);
   return () => root.unmount();
 }

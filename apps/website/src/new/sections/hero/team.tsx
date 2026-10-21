@@ -7,7 +7,9 @@ import {
 } from 'motion/react';
 import {
   type CSSProperties,
+  lazy,
   type RefObject,
+  Suspense,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -30,7 +32,11 @@ import { KlexGroundGrid } from '../../klex/ground-grid';
 import { popTransition } from '../../klex/transitions';
 import { botProfileApps, ProfileApps } from '../../profile-card';
 import GradualBlur from './react-bits/GradualBlur';
-import { HeroWork, type WorkState } from './work';
+import type { WorkState } from './work';
+
+const HeroWork = lazy(() =>
+  import('./work').then((module) => ({ default: module.HeroWork })),
+);
 
 const bots = [
   {
@@ -716,15 +722,17 @@ function HeroTeam({ entrance }: { entrance: Promise<void> }) {
           );
         }}
       />
-      {!reducedMotion && (
-        <HeroWork
-          team={() => team.current}
-          order={botIds}
-          ready={ready}
-          busy={busy}
-          active={inView}
-          onWork={onWork}
-        />
+      {!reducedMotion && ready && (
+        <Suspense fallback={null}>
+          <HeroWork
+            team={() => team.current}
+            order={botIds}
+            ready={ready}
+            busy={busy}
+            active={inView}
+            onWork={onWork}
+          />
+        </Suspense>
       )}
       <ul
         ref={team}

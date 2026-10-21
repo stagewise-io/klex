@@ -123,7 +123,9 @@ describe('Klex media resources', () => {
   });
 
   it('provides a founders photo with a clearly named full-resolution download', () => {
-    expect(pressMarkup).toContain('src="/press/stagewise-klex-founders.jpeg"');
+    expect(pressMarkup).toContain(
+      'src="/press/stagewise-klex-founders-1600.webp"',
+    );
     expect(pressMarkup).toContain('width="3754" height="2816"');
     expect(pressMarkup).toContain(
       'href="/press/stagewise-klex-founders.jpeg" download="stagewise-klex-founders.jpeg"',

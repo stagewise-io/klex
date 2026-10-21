@@ -1,6 +1,6 @@
 import './styles.css';
 
-import { IconDiscord } from '@stagewise/ui/src/icons/provider/IconDiscord.tsx';
+import { IconDiscord } from '@stagewise/ui/icons/provider/IconDiscord.tsx';
 
 import {
   type CardProps,

@@ -7,8 +7,8 @@ import {
   AccordionContent,
   AccordionItem,
   AccordionTrigger,
-} from '@stagewise/ui/src/components/ui/accordion.tsx';
-import { IconPlusOutline18 } from '@stagewise/ui/src/icons/nucleo/ui-outline-18/IconPlusOutline18.tsx';
+} from '@stagewise/ui';
+import { IconPlusOutline18 } from '@stagewise/ui/icons/nucleo/ui-outline-18/IconPlusOutline18.tsx';
 
 export const guidesFaqMarkup = `
   <section class="new-guides-faq" id="guides-faq" aria-label="Guides and FAQs">

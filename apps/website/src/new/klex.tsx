@@ -13,7 +13,7 @@ import {
   useState,
 } from 'react';
 
-import { Badge } from '@stagewise/ui/src/components/ui/badge.tsx';
+import { Badge } from '@stagewise/ui';
 
 import type { KlexActivity } from './klex/activity';
 import { EMOTES, type Emote, type EmoteLook } from './klex/emotes';

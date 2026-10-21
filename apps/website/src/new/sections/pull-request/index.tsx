@@ -3,17 +3,13 @@ import './pull-request.css';
 import { type ReactNode, useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 
-import { IconCircleCheckOutline18 } from '@stagewise/ui/icons/nucleo/ui-outline-18/IconCircleCheckOutline18.tsx';
-import { IconOctagonWarningOutline18 } from '@stagewise/ui/icons/nucleo/ui-outline-18/IconOctagonWarningOutline18.tsx';
-import { Button } from '@stagewise/ui/src/components/ui/button.tsx';
 import {
+  Button,
+  createToastManager,
   Field,
   FieldGroup,
   FieldLabel,
-} from '@stagewise/ui/src/components/ui/field.tsx';
-import { Input } from '@stagewise/ui/src/components/ui/input.tsx';
-import {
-  createToastManager,
+  Input,
   Toast,
   ToastContent,
   ToastDescription,
@@ -21,7 +17,9 @@ import {
   ToastTitle,
   ToastViewport,
   useToastManager,
-} from '@stagewise/ui/src/components/ui/toast.tsx';
+} from '@stagewise/ui';
+import { IconCircleCheckOutline18 } from '@stagewise/ui/icons/nucleo/ui-outline-18/IconCircleCheckOutline18.tsx';
+import { IconOctagonWarningOutline18 } from '@stagewise/ui/icons/nucleo/ui-outline-18/IconOctagonWarningOutline18.tsx';
 
 import { heroLooks } from '../../bot-looks';
 import { Klex } from '../../klex';

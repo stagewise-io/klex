@@ -1,16 +1,16 @@
 import type { ReactNode } from 'react';
 import { createRoot } from 'react-dom/client';
 
-import { IconChevronDownOutline18 } from '@stagewise/ui/icons/nucleo/ui-outline-18/IconChevronDownOutline18.tsx';
-import { IconMicrophone3Outline18 } from '@stagewise/ui/icons/nucleo/ui-outline-18/IconMicrophone3Outline18.tsx';
-import { IconPlusOutline18 } from '@stagewise/ui/icons/nucleo/ui-outline-18/IconPlusOutline18.tsx';
-import { IconVideoOutline18 } from '@stagewise/ui/icons/nucleo/ui-outline-18/IconVideoOutline18.tsx';
 import {
   InputGroup,
   InputGroupAddon,
   InputGroupButton,
-} from '@stagewise/ui/src/components/ui/input-group.tsx';
-import { Separator } from '@stagewise/ui/src/components/ui/separator.tsx';
+  Separator,
+} from '@stagewise/ui';
+import { IconChevronDownOutline18 } from '@stagewise/ui/icons/nucleo/ui-outline-18/IconChevronDownOutline18.tsx';
+import { IconMicrophone3Outline18 } from '@stagewise/ui/icons/nucleo/ui-outline-18/IconMicrophone3Outline18.tsx';
+import { IconPlusOutline18 } from '@stagewise/ui/icons/nucleo/ui-outline-18/IconPlusOutline18.tsx';
+import { IconVideoOutline18 } from '@stagewise/ui/icons/nucleo/ui-outline-18/IconVideoOutline18.tsx';
 
 const iconPaths = {
   link: 'M7 11l4-4M6 8l-2 2a3 3 0 004 4l2-2M8 6l2-2a3 3 0 014 4l-2 2',

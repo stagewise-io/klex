@@ -37,7 +37,7 @@ test('distinct forms keep their eyes contained through all idle poses', () => {
       expect(Math.abs(state.pose.lookX)).toBeLessThan(8);
     }
   }
-  expect(paths.size).toBe(4);
+  expect(paths.size).toBe(Object.keys(FAMILY_SHAPES).length);
 });
 
 test('idle is repeatable per seed and independent between bots', () => {

@@ -17,7 +17,7 @@ Each directory under `sections/` owns its section markup, behavior, and CSS:
 - `trust/`: Stagewise's bot roles, a simplified drawing of the first office from reference photos, and the ownership, isolation, and update guarantees, with a Trust Center link. `office.ts` projects the room and furniture into a static SVG; its coordinates keep desks and future occupants in the same space.
 - `footer/`: closing call to action and links
 
-Changes to an existing section should stay in its directory. `main.ts` only needs an edit when the page gains, removes, or reorders a section. The earlier homepage remains at `/old/`, with `old/index.html` loading `src/main.ts`. The mascot implementation in `src/mascot/` and shapes in `src/shared/` are also used by that page and the development demos.
+Changes to an existing section should stay in its directory. `main.ts` only needs an edit when the page gains, removes, or reorders a section. The earlier `/old/` homepage has been removed. The prototype mascot in `src/mascot/` and shapes in `src/shared/` remain available to the development demos.
 
 The feature bento at `/#features` places the feature cards around Klex Bots in the center and collapses to a single column on mobile. Each feature has an illustration, a title, and a description. Animations pause offscreen, in background tabs, and when reduced motion is enabled.
 

@@ -11,7 +11,7 @@ const servePageRoutes: Connect.NextHandleFunction = (
 ) => {
   const url = new URL(request.url ?? '/', 'http://localhost');
   const route = url.pathname.replace(/\/$/, '');
-  if (['/old', '/brand', '/press'].includes(route)) {
+  if (['/brand', '/press'].includes(route)) {
     request.url = `${route}/index.html${url.search}`;
   }
   next();
@@ -80,7 +80,6 @@ export default defineConfig({
     rolldownOptions: {
       input: {
         main: fileURLToPath(new URL('./index.html', import.meta.url)),
-        old: fileURLToPath(new URL('./old/index.html', import.meta.url)),
         brand: fileURLToPath(new URL('./brand/index.html', import.meta.url)),
         press: fileURLToPath(new URL('./press/index.html', import.meta.url)),
       },

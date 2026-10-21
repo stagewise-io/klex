@@ -2,7 +2,62 @@ import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 
 import tailwindcss from '@tailwindcss/vite';
-import { type Connect, defineConfig, type Plugin } from 'vite';
+import { type Connect, createServer, defineConfig, type Plugin } from 'vite';
+
+function prerenderPages(): Plugin {
+  let pages: Promise<Record<string, string>> | undefined;
+  return {
+    name: 'klex-prerender-pages',
+    apply: 'build',
+    transformIndexHtml: {
+      order: 'pre',
+      async handler(html, context) {
+        if (context.path.startsWith('/old/')) return html;
+        pages ??= (async () => {
+          const server = await createServer({
+            configFile: false,
+            root: fileURLToPath(new URL('.', import.meta.url)),
+            appType: 'custom',
+            server: {
+              middlewareMode: true,
+              hmr: false,
+              ws: false,
+              watch: null,
+            },
+            optimizeDeps: { noDiscovery: true, include: [] },
+            ssr: { noExternal: ['@stagewise/ui'] },
+          });
+          try {
+            const { prerenderLandingPage } = await server.ssrLoadModule(
+              '/src/new/prerender.tsx',
+            );
+            const pageMarkup = prerenderLandingPage();
+            const { resourceMarkup } = await server.ssrLoadModule(
+              '/src/new/resources/page-markup.ts',
+            );
+            return {
+              '/index.html': pageMarkup,
+              '/brand/index.html': resourceMarkup(false),
+              '/press/index.html': resourceMarkup(true),
+            };
+          } finally {
+            await server.close();
+          }
+        })();
+        const markup = (await pages)[context.path];
+        if (!markup)
+          throw new Error(`No prerendered markup for ${context.path}`);
+        const rendered = html.replace(
+          '<div id="app"></div>',
+          `<div id="app">${markup}</div>`,
+        );
+        return context.path === '/index.html'
+          ? rendered
+          : rendered.replace('<body>', '<body class="resource-page">');
+      },
+    },
+  };
+}
 
 const servePageRoutes: Connect.NextHandleFunction = (
   request,
@@ -64,6 +119,7 @@ export default defineConfig({
   appType: 'mpa',
   server: { allowedHosts: ['.trycloudflare.com'] },
   plugins: [
+    prerenderPages(),
     {
       name: 'klex-page-routes',
       configureServer(server) {

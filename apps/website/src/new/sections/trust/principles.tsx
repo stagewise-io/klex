@@ -6,44 +6,8 @@ import { createRoot } from 'react-dom/client';
 import { heroLooks } from '../../bot-looks';
 import { Klex, type KlexHandle } from '../../klex';
 import { BODY_SHAPES } from '../../klex/presets';
+import { usePlayback } from '../../playback';
 import { mountOffice } from './office-team';
-
-/** Each miniature runs only while it is visible, on an active page. */
-function useScenePlayback() {
-  const host = useRef<HTMLDivElement>(null);
-  const [visible, setVisible] = useState(false);
-  const [pageVisible, setPageVisible] = useState(!document.hidden);
-  const [reducedMotion, setReducedMotion] = useState(
-    () => matchMedia('(prefers-reduced-motion: reduce)').matches,
-  );
-
-  useEffect(() => {
-    const element = host.current;
-    if (!element) return;
-    const observer = new IntersectionObserver(
-      ([entry]) =>
-        setVisible(entry.isIntersecting && entry.intersectionRatio >= 0.15),
-      { threshold: 0.15 },
-    );
-    observer.observe(element);
-    const onVisibility = () => setPageVisible(!document.hidden);
-    const motionPreference = matchMedia('(prefers-reduced-motion: reduce)');
-    const onMotionPreference = () => setReducedMotion(motionPreference.matches);
-    motionPreference.addEventListener('change', onMotionPreference);
-    document.addEventListener('visibilitychange', onVisibility);
-    return () => {
-      observer.disconnect();
-      motionPreference.removeEventListener('change', onMotionPreference);
-      document.removeEventListener('visibilitychange', onVisibility);
-    };
-  }, []);
-
-  return {
-    host,
-    active: visible && pageVisible && !reducedMotion,
-    reducedMotion,
-  };
-}
 
 const hostingBots = [
   { id: 'jonathan', look: heroLooks.jonathan, size: 36 },
@@ -60,7 +24,7 @@ const hostingBots = [
 const hostingStops = [-35, 0, 35];
 
 function HostingScene() {
-  const { host, active } = useScenePlayback();
+  const { host, active } = usePlayback();
   const bots = useRef<(KlexHandle | null)[]>([]);
 
   useEffect(() => {
@@ -221,7 +185,7 @@ const defaultKlexLook = {
 } as const;
 
 function IsolationScene() {
-  const { host, active } = useScenePlayback();
+  const { host, active } = usePlayback();
   const bot = useRef<KlexHandle>(null);
   useEffect(() => {
     if (active) bot.current?.resume();
@@ -271,7 +235,7 @@ function IsolationScene() {
 }
 
 function MemoryScene() {
-  const { host, active, reducedMotion } = useScenePlayback();
+  const { host, active, reducedMotion } = usePlayback();
   const bot = useRef<KlexHandle>(null);
   const [stage, setStage] = useState(0);
   const age = reducedMotion ? 2 : stage;

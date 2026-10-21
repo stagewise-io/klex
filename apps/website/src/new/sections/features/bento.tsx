@@ -1,8 +1,9 @@
 import './features.css';
 
-import { useEffect, useState } from 'react';
-import { createRoot } from 'react-dom/client';
+import { Fragment } from 'react';
+import { createRoot, hydrateRoot } from 'react-dom/client';
 
+import { usePlayback } from '../../playback';
 import { AutonomyCard } from './cards/autonomy';
 import { CollaborationCard } from './cards/collaboration';
 import { HostingCard } from './cards/hosting';
@@ -12,36 +13,22 @@ import { PermissionsCard } from './cards/permissions';
 import { ProductCard } from './cards/product';
 import { ToolsCard } from './cards/tools';
 
-function FeatureBento() {
-  const [pageVisible, setPageVisible] = useState(!document.hidden);
-  const [reducedMotion, setReducedMotion] = useState(
-    () => matchMedia('(prefers-reduced-motion: reduce)').matches,
-  );
-  const playing = !reducedMotion && pageVisible;
-
-  useEffect(() => {
-    const onVisibility = () => setPageVisible(!document.hidden);
-    const preference = matchMedia('(prefers-reduced-motion: reduce)');
-    const onMotion = () => setReducedMotion(preference.matches);
-    document.addEventListener('visibilitychange', onVisibility);
-    preference.addEventListener('change', onMotion);
-    return () => {
-      document.removeEventListener('visibilitychange', onVisibility);
-      preference.removeEventListener('change', onMotion);
-    };
-  }, []);
+export function FeatureBento() {
+  const { host, active: playing, reducedMotion } = usePlayback(0);
 
   return (
     // Recreate avatar rigs when the OS motion preference changes.
-    <div key={reducedMotion ? 'still' : 'animated'} className="bento-grid">
-      <ProductCard playing={playing} />
-      <ToolsCard playing={playing} />
-      <IdentityCard playing={playing} />
-      <CollaborationCard playing={playing} />
-      <PermissionsCard playing={playing} />
-      <AutonomyCard playing={playing} />
-      <MemoryCard playing={playing} />
-      <HostingCard playing={playing} />
+    <div ref={host} className="bento-grid">
+      <Fragment key={reducedMotion ? 'still' : 'animated'}>
+        <ProductCard playing={playing} />
+        <ToolsCard playing={playing} />
+        <IdentityCard playing={playing} />
+        <CollaborationCard playing={playing} />
+        <PermissionsCard playing={playing} />
+        <AutonomyCard playing={playing} />
+        <MemoryCard playing={playing} />
+        <HostingCard playing={playing} />
+      </Fragment>
     </div>
   );
 }
@@ -49,7 +36,11 @@ function FeatureBento() {
 export function mountFeatures() {
   const container = document.querySelector<HTMLElement>('.new-features-mount');
   if (!container) throw new Error('The feature section is missing.');
-  const root = createRoot(container);
-  root.render(<FeatureBento />);
+  const root = container.hasChildNodes()
+    ? hydrateRoot(container, <FeatureBento />, {
+        identifierPrefix: 'features-',
+      })
+    : createRoot(container, { identifierPrefix: 'features-' });
+  if (!container.hasChildNodes()) root.render(<FeatureBento />);
   return () => root.unmount();
 }

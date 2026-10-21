@@ -116,6 +116,28 @@ describe('QuickJS error ownership', () => {
     },
   );
 
+  it.each(['resolve', 'reject'])(
+    'rejects unawaited deferreds on late host %s after execution finishes',
+    async (settlement) => {
+      const pending = Promise.withResolvers<null>();
+      await expect(
+        execute(
+          'globalThis.unawaited = tools.search("late"); return "done";',
+          () => pending.promise,
+        ),
+      ).resolves.toBe('done');
+      if (settlement === 'resolve') pending.resolve(null);
+      else pending.reject(new Error('late rejection'));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      await expect(
+        execute('return await globalThis.unawaited'),
+      ).rejects.toMatchObject({
+        name: 'Error',
+        message: 'Execution finished',
+      });
+    },
+  );
+
   it('preserves primitive rejection strings', async () => {
     await expect(execute(`throw 'primitive failure'`)).rejects.toMatchObject({
       name: 'Error',

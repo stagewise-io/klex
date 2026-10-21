@@ -40,6 +40,7 @@ export function createNamespaceController(
     if (!activeBridge) throw new Error('No JavaScript execution is active');
     return activeBridge;
   };
+  const isDisposed = () => disposed;
   const isActive = (bridge: NamespaceBridge) =>
     !disposed && activeBridge === bridge;
   const requireSnapshot = (): ToolSnapshotMessage => {
@@ -55,6 +56,7 @@ export function createNamespaceController(
       requireSnapshot,
       requireBridge,
       isActive,
+      isDisposed,
       maximumResponseBytes,
       (snapshot, ...args) => {
         if (args.length > 1) {
@@ -76,6 +78,7 @@ export function createNamespaceController(
       requireSnapshot,
       requireBridge,
       isActive,
+      isDisposed,
       maximumResponseBytes,
       (snapshot, ...args) => {
         if (args.length > 1) {
@@ -104,6 +107,7 @@ export function createNamespaceController(
       'search',
       requireBridge,
       isActive,
+      isDisposed,
       (query, options) => {
         if (typeof query !== 'string')
           throw new TypeError(
@@ -122,6 +126,7 @@ export function createNamespaceController(
       'describe',
       requireBridge,
       isActive,
+      isDisposed,
       (reference) => ({
         operation: 'describe',
         reference: asReference(reference),
@@ -147,7 +152,13 @@ export function createNamespaceController(
     activate(snapshot, bridge) {
       activeSnapshot = snapshot;
       activeBridge = bridge;
-      installMcpNamespace(context, snapshot, requireBridge, isActive);
+      installMcpNamespace(
+        context,
+        snapshot,
+        requireBridge,
+        isActive,
+        isDisposed,
+      );
     },
     dispose() {
       disposed = true;
@@ -190,6 +201,7 @@ function installMcpNamespace(
   snapshot: ToolSnapshotMessage,
   requireBridge: () => NamespaceBridge,
   isActive: (bridge: NamespaceBridge) => boolean,
+  isDisposed: () => boolean,
 ): void {
   context.setProp(context.global, 'mcp', context.undefined);
   context.runGC();
@@ -206,6 +218,7 @@ function installMcpNamespace(
             callbackKey,
             requireBridge,
             isActive,
+            isDisposed,
             (input) => ({
               operation: 'invoke',
               reference: { namespace: namespace.name, name: capability.name },
@@ -240,6 +253,7 @@ function createSnapshotFunction(
   requireSnapshot: () => ToolSnapshotMessage,
   requireBridge: () => NamespaceBridge,
   isActive: (bridge: NamespaceBridge) => boolean,
+  isDisposed: () => boolean,
   maximumResponseBytes: number,
   compute: (snapshot: ToolSnapshotMessage, ...args: unknown[]) => JsonValue,
 ): JSValueHandle {
@@ -249,7 +263,13 @@ function createSnapshotFunction(
     const args = handles.map((handle) => context.dump(handle));
     const value = compute(snapshot, ...args);
     assertSerializedSize(value, maximumResponseBytes, 'Provider response');
-    return bridgePromise(context, bridge, isActive, Promise.resolve(value));
+    return bridgePromise(
+      context,
+      bridge,
+      isActive,
+      isDisposed,
+      Promise.resolve(value),
+    );
   });
 }
 
@@ -258,13 +278,14 @@ function createBridgeFunction(
   name: string,
   requireBridge: () => NamespaceBridge,
   isActive: (bridge: NamespaceBridge) => boolean,
+  isDisposed: () => boolean,
   request: (...args: unknown[]) => ProviderRequest,
 ): JSValueHandle {
   return context.newFunction(name, (...handles) => {
     const bridge = requireBridge();
     const args = handles.map((handle) => context.dump(handle));
     const pending = bridge.request(request(...args));
-    return bridgePromise(context, bridge, isActive, pending);
+    return bridgePromise(context, bridge, isActive, isDisposed, pending);
   });
 }
 
@@ -272,12 +293,14 @@ function bridgePromise(
   context: QuickJS,
   bridge: NamespaceBridge,
   isActive: (bridge: NamespaceBridge) => boolean,
+  isDisposed: () => boolean,
   pending: Promise<JsonValue>,
 ): JSValueHandle {
   const deferred = context.newPromise();
   void pending
     .then((value) => {
-      if (!isActive(bridge)) return;
+      if (isDisposed()) return;
+      if (!isActive(bridge)) throw new Error('Execution finished');
       const handle = jsonToHandle(context, value);
       try {
         deferred.resolve(handle);
@@ -286,8 +309,10 @@ function bridgePromise(
       }
     })
     .catch((error: unknown) => {
-      if (!isActive(bridge)) return;
-      const serialized = toSerializedError(error);
+      if (isDisposed()) return;
+      const serialized = toSerializedError(
+        isActive(bridge) ? error : new Error('Execution finished'),
+      );
       const handle = context.newError({
         name: serialized.name,
         message: serialized.message,
@@ -299,6 +324,7 @@ function bridgePromise(
       }
     })
     .finally(() => {
+      if (isDisposed()) return;
       deferred.handle.dispose();
       if (isActive(bridge)) bridge.notify?.();
     });

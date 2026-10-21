@@ -21,6 +21,7 @@ import {
 import { createChatSession } from './chat-session';
 import { isCheckpointHeader } from './checkpoint';
 import type {
+  Extension,
   ExtensionDeps,
   ExtensionFactory,
 } from './extensions/extension-api';
@@ -102,14 +103,17 @@ async function openHistory(dataDirectory: string): Promise<SessionHistory> {
 }
 
 /** Exposes the producer's deps so the test can commit checkpoints. */
-function producer(): { factory: ExtensionFactory; deps: () => ExtensionDeps } {
+function producer(hooks: Partial<Extension> = {}): {
+  factory: ExtensionFactory;
+  deps: () => ExtensionDeps;
+} {
   let captured: ExtensionDeps | undefined;
   return {
     factory: {
       identifier: 'test/producer',
       create: (deps) => {
         captured = deps;
-        return {};
+        return { ...hooks };
       },
     },
     deps: () => {
@@ -170,6 +174,33 @@ interface Internals {
 
 function internals(session: ChatSessionHandle): Internals {
   return session as unknown as Internals;
+}
+
+/** Awaits idle applies until none is in flight, including retries. */
+async function settleIdleApply(state: Internals): Promise<void> {
+  while (state.idleCheckpointApply) await state.idleCheckpointApply;
+}
+
+/** A checkpoint hook that blocks until released. */
+function blockingHook() {
+  let release: (() => void) | undefined;
+  let calls = 0;
+  const hook = vi.fn(async () => {
+    calls++;
+    if (calls > 1) return undefined;
+    await new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    return undefined;
+  });
+  return {
+    hook,
+    waitUntilBlocked: () =>
+      vi.waitFor(() => {
+        if (!release) throw new Error('hook not reached yet');
+      }),
+    release: () => release?.(),
+  };
 }
 
 function turn(index: number): ExtendedUIMessage[] {
@@ -332,6 +363,112 @@ describe('default session bounded window (end to end)', () => {
     expect(state.messages.slice(1).map((m) => m.id)).toEqual(['u1', 'a1']);
 
     await session.close();
+    await history.flush();
+  });
+
+  it('applies a checkpoint committed during an idle apply without a turn', async () => {
+    const dataDirectory = await mkdtemp(join(tmpdir(), 'klex-bounded-e2e-'));
+    directories.push(dataDirectory);
+    const history = await openHistory(dataDirectory);
+    const blocking = blockingHook();
+    const checkpointProducer = producer({
+      onCheckpointApplying: blocking.hook,
+    });
+    const session = createSession(dataDirectory, history, [
+      checkpointProducer.factory,
+    ]);
+    await session.start();
+    const state = internals(session);
+    state.messages.push(...turn(0), ...turn(1), ...turn(2));
+    state.flushPendingImmediate();
+
+    checkpointProducer.deps().checkpoints.commit({
+      coversThroughMessageId: 'a0',
+      summary: 'first',
+    });
+    await blocking.waitUntilBlocked();
+    expect(
+      checkpointProducer.deps().checkpoints.commit({
+        coversThroughMessageId: 'a1',
+        summary: 'second',
+      }),
+    ).toEqual({ status: 'pending' });
+    blocking.release();
+    await settleIdleApply(state);
+
+    expect(state.messages[0]?.parts[0]).toMatchObject({
+      data: { summary: 'second', coversThroughMessageId: 'a1' },
+    });
+    expect(state.messages.slice(1).map((m) => m.id)).toEqual(['u2', 'a2']);
+    expect(checkpointProducer.deps().checkpoints.isPending('a1')).toBe(false);
+
+    await session.close();
+    await history.flush();
+  });
+
+  it('does not retry a deferred idle apply immediately', async () => {
+    const dataDirectory = await mkdtemp(join(tmpdir(), 'klex-bounded-e2e-'));
+    directories.push(dataDirectory);
+    const history = await openHistory(dataDirectory);
+    const hook = vi.fn(async () => ({ defer: true }));
+    const checkpointProducer = producer({ onCheckpointApplying: hook });
+    const session = createSession(dataDirectory, history, [
+      checkpointProducer.factory,
+    ]);
+    await session.start();
+    const state = internals(session);
+    state.messages.push(...turn(0), ...turn(1));
+    state.flushPendingImmediate();
+
+    checkpointProducer.deps().checkpoints.commit({
+      coversThroughMessageId: 'a0',
+      summary: 'deferred',
+    });
+    await settleIdleApply(state);
+
+    expect(hook).toHaveBeenCalledOnce();
+    expect(checkpointProducer.deps().checkpoints.isPending('a0')).toBe(true);
+    expect(state.messages.map((m) => m.id)).toEqual(['u0', 'a0', 'u1', 'a1']);
+
+    await session.close();
+    await history.flush();
+  });
+
+  it('persists an idle apply that is in flight when the session closes', async () => {
+    const dataDirectory = await mkdtemp(join(tmpdir(), 'klex-bounded-e2e-'));
+    directories.push(dataDirectory);
+    const history = await openHistory(dataDirectory);
+    const blocking = blockingHook();
+    const checkpointProducer = producer({
+      onCheckpointApplying: blocking.hook,
+    });
+    const first = createSession(dataDirectory, history, [
+      checkpointProducer.factory,
+    ]);
+    await first.start();
+    const state = internals(first);
+    state.messages.push(...turn(0), ...turn(1));
+    state.flushPendingImmediate();
+
+    checkpointProducer.deps().checkpoints.commit({
+      coversThroughMessageId: 'a0',
+      summary: 'landed during close',
+    });
+    await blocking.waitUntilBlocked();
+    const closing = first.close();
+    blocking.release();
+    await closing;
+    await history.flush();
+
+    const second = createSession(dataDirectory, history, []);
+    await second.start();
+    const restored = internals(second).messages;
+    expect(restored[0]?.parts[0]).toMatchObject({
+      data: { summary: 'landed during close', coversThroughMessageId: 'a0' },
+    });
+    expect(restored.slice(1).map((m) => m.id)).toEqual(['u1', 'a1']);
+
+    await second.close();
     await history.flush();
   });
 });

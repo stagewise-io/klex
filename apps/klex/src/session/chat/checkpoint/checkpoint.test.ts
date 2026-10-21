@@ -42,6 +42,7 @@ function headerMsg(id: string): ExtendedUIMessage {
 function setup(
   initial: ExtendedUIMessage[],
   hooks: Partial<CheckpointHooks> = {},
+  lifecycle: { isClosed?: () => boolean; isAbandoned?: () => boolean } = {},
 ) {
   const messages = [...initial];
   const handler: CheckpointHooks = {
@@ -63,6 +64,7 @@ function setup(
     extensionHandler: () => handler,
     recorder,
     onApplied,
+    ...lifecycle,
   });
   return {
     messages,
@@ -271,12 +273,137 @@ describe('CheckpointManager — apply', () => {
     holder.messages = messages;
     manager.commit({ coversThroughMessageId: 'b', summary: 's' });
 
-    await manager.applyPending();
+    expect(await manager.applyPending()).toBe('changed');
     expect(commitCheckpoint).not.toHaveBeenCalled();
     expect(manager.hasPending).toBe(true);
 
-    await manager.applyPending();
+    expect(await manager.applyPending()).toBe('applied');
     expect(ids(messages.slice(1))).toEqual(['c']);
+  });
+});
+
+describe('CheckpointManager — outcomes and lifecycle', () => {
+  it('reports what each apply did', async () => {
+    const hooks = vi
+      .fn<CheckpointHooks['runCheckpointApplyingHooks']>()
+      .mockResolvedValueOnce({ defer: true })
+      .mockResolvedValue({ defer: false });
+    const { manager, commitCheckpoint, messages } = setup(
+      [msg('a'), msg('b'), msg('c')],
+      { runCheckpointApplyingHooks: hooks },
+    );
+    expect(await manager.applyPending()).toBe('none');
+
+    manager.commit({ coversThroughMessageId: 'a', summary: 's' });
+    expect(await manager.applyPending()).toBe('deferred');
+    commitCheckpoint.mockRejectedValueOnce(new Error('disk full'));
+    expect(await manager.applyPending()).toBe('failed');
+    expect(await manager.applyPending()).toBe('applied');
+
+    manager.commit({ coversThroughMessageId: 'b', summary: 's2' });
+    messages.splice(1, 1);
+    expect(await manager.applyPending()).toBe('rejected');
+  });
+
+  it('returns none while another apply is in flight', async () => {
+    let release!: () => void;
+    const { manager } = setup([msg('a'), msg('b')], {
+      runCheckpointApplyingHooks: vi.fn(
+        () =>
+          new Promise<{ defer: boolean }>((resolve) => {
+            release = () => resolve({ defer: false });
+          }),
+      ),
+    });
+    manager.commit({ coversThroughMessageId: 'a', summary: 's' });
+    const first = manager.applyPending();
+    await vi.waitFor(() => expect(release).toBeDefined());
+    expect(await manager.applyPending()).toBe('none');
+    release();
+    expect(await first).toBe('applied');
+  });
+
+  it('applies a newer commit only on the next call when it lands mid-apply', async () => {
+    let release!: () => void;
+    const hooks = vi
+      .fn<CheckpointHooks['runCheckpointApplyingHooks']>()
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            release = () => resolve({ defer: false });
+          }),
+      )
+      .mockResolvedValue({ defer: false });
+    const { manager, messages } = setup([msg('a'), msg('b'), msg('c')], {
+      runCheckpointApplyingHooks: hooks,
+    });
+    manager.commit({ coversThroughMessageId: 'a', summary: 'first' });
+    const first = manager.applyPending();
+    await vi.waitFor(() => expect(release).toBeDefined());
+    manager.commit({ coversThroughMessageId: 'b', summary: 'second' });
+    release();
+
+    expect(await first).toBe('applied');
+    expect(manager.hasPending).toBe(true);
+    expect(await manager.applyPending()).toBe('applied');
+    expect(ids(messages.slice(1))).toEqual(['c']);
+    expect(messages[0]?.parts[0]).toMatchObject({
+      data: { summary: 'second' },
+    });
+  });
+
+  it('lets an in-flight apply finish after close but starts no new one', async () => {
+    let closed = false;
+    let release!: () => void;
+    const { manager, messages, commitCheckpoint } = setup(
+      [msg('a'), msg('b')],
+      {
+        runCheckpointApplyingHooks: vi.fn(
+          () =>
+            new Promise<{ defer: boolean }>((resolve) => {
+              release = () => resolve({ defer: false });
+            }),
+        ),
+      },
+      { isClosed: () => closed },
+    );
+    manager.commit({ coversThroughMessageId: 'a', summary: 's' });
+    const apply = manager.applyPending();
+    await vi.waitFor(() => expect(release).toBeDefined());
+    closed = true;
+    const settled = manager.whenSettled();
+    release();
+    await settled;
+
+    expect(await apply).toBe('applied');
+    expect(commitCheckpoint).toHaveBeenCalledOnce();
+    expect(isCheckpointHeader(messages[0])).toBe(true);
+
+    messages.push(msg('c'));
+    expect(
+      manager.commit({ coversThroughMessageId: 'b', summary: 'x' }).status,
+    ).toBe('pending');
+    expect(await manager.applyPending()).toBe('none');
+    expect(manager.hasPending).toBe(true);
+  });
+
+  it('stops before persisting once abandoned', async () => {
+    let abandoned = false;
+    const { manager, messages, commitCheckpoint } = setup(
+      [msg('a'), msg('b')],
+      {
+        runCheckpointApplyingHooks: vi.fn(async () => {
+          abandoned = true;
+          return { defer: false };
+        }),
+      },
+      { isAbandoned: () => abandoned },
+    );
+    manager.commit({ coversThroughMessageId: 'a', summary: 's' });
+
+    expect(await manager.applyPending()).toBe('abandoned');
+    expect(commitCheckpoint).not.toHaveBeenCalled();
+    expect(ids(messages)).toEqual(['a', 'b']);
   });
 });
 

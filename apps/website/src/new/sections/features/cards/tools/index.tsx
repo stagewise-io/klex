@@ -104,7 +104,7 @@ function ToolsScene({ active }: SceneProps) {
   };
 
   return (
-    <div className="bento-tools-scene">
+    <div className="bento-tools-scene" data-klex-viewport="">
       <div ref={conveyor} className="bento-tool-conveyor">
         {toolBlocks.map(({ id, tool, height }) => (
           <div

@@ -1023,9 +1023,10 @@ class ChatSessionModule implements AgentSession {
    *
    * When an apply leaves a checkpoint pending, retry right away only after
    * a settled race (newer commit, prefix change). After a deferral or a
-   * throw, wait for the next boundary: memory defers while episode writes
-   * fail, and an immediate retry would exhaust MAX_CHECKPOINT_DEFERRALS
-   * and trim unrecorded messages.
+   * throw, wait: memory defers while episode writes fail, and an immediate
+   * retry would exhaust MAX_CHECKPOINT_DEFERRALS and trim unrecorded
+   * messages. The manager also holds such a request until the window
+   * changes, which covers the back-to-back in-turn boundaries.
    */
   private applyCheckpointIfIdle(): void {
     if (this.loopActive || this.laneSuspended || this.idleCheckpointApply) {

@@ -53,11 +53,13 @@ export const CHECKPOINT_DATA_PART_TRANSFORMERS: DataPartTransformers = {
  * What one {@link CheckpointManager.applyPending} call did. Callers outside
  * the turn loop use it to decide whether an immediate retry is safe:
  * `changed` (and a pending commit after `applied`/`rejected`) is a settled
- * race, while `deferred` and `failed` must wait for the next boundary so a
- * failing extension cannot burn through its deferral budget.
+ * race, while `deferred` and `failed` wait for the window to change.
  */
 export type CheckpointApplyOutcome =
-  /** Nothing pending, closed, or another apply is in flight. */
+  /**
+   * Nothing pending, closed, another apply is in flight, or the last
+   * attempt deferred or failed and the window has not changed since.
+   */
   | 'none'
   | 'applied'
   | 'rejected'
@@ -115,6 +117,13 @@ class CheckpointManagerModule implements CheckpointManager {
   private pending: CheckpointCommitRequest | null = null;
   private deferrals = 0;
   private inFlight: Promise<CheckpointApplyOutcome> | null = null;
+  /**
+   * Window mark at the last deferred or failed attempt. Back-to-back
+   * boundaries (last step, turn end, loop exit) see the same window and
+   * are not a new chance for the extension; retrying there would burn
+   * MAX_CHECKPOINT_DEFERRALS without any new message to record.
+   */
+  private retryBlockedAt: string | null = null;
 
   constructor(private readonly deps: CheckpointManagerDependencies) {}
 
@@ -135,6 +144,7 @@ class CheckpointManagerModule implements CheckpointManager {
     const replaced = this.pending !== null;
     this.pending = { ...request };
     this.deferrals = 0;
+    this.retryBlockedAt = null;
     this.deps.span.addEvent('checkpoint.committed', {
       'klex.checkpoint.anchor_id': request.coversThroughMessageId,
       'klex.checkpoint.replaced_pending': replaced,
@@ -150,11 +160,24 @@ class CheckpointManagerModule implements CheckpointManager {
   }
 
   applyPending(): Promise<CheckpointApplyOutcome> {
-    if (!this.pending || this.inFlight) return Promise.resolve('none');
+    const request = this.pending;
+    if (!request || this.inFlight) return Promise.resolve('none');
     if (this.deps.isClosed?.()) return Promise.resolve('none');
-    const run = this.applyGuarded(this.pending);
+    if (this.retryBlockedAt === this.windowMark()) {
+      return Promise.resolve('none');
+    }
+    // Start on a microtask so inFlight is set before any hook runs: a
+    // synchronous getCheckpointCarry that commits must not be able to
+    // start a second, concurrent apply.
+    const run = Promise.resolve().then(() => this.applyGuarded(request));
     this.inFlight = run;
     return run;
+  }
+
+  /** Changes whenever a message is appended, removed, or trimmed. */
+  private windowMark(): string {
+    const { messages } = this.deps;
+    return `${messages.length}:${messages.at(-1)?.id ?? ''}`;
   }
 
   async whenSettled(): Promise<void> {
@@ -165,8 +188,11 @@ class CheckpointManagerModule implements CheckpointManager {
     request: CheckpointCommitRequest,
   ): Promise<CheckpointApplyOutcome> {
     try {
-      return await this.applyUnlocked(request);
+      const outcome = await this.applyUnlocked(request);
+      if (outcome === 'deferred') this.blockRetry(request);
+      return outcome;
     } catch (error) {
+      this.blockRetry(request);
       this.deps.logger.error(
         { error },
         'Checkpoint apply failed — keeping it pending',
@@ -318,8 +344,16 @@ class CheckpointManagerModule implements CheckpointManager {
     return { ok: true, anchorIndex };
   }
 
+  private blockRetry(request: CheckpointCommitRequest): void {
+    // A newer commit during the attempt is a fresh request; leave it free.
+    if (this.pending === request) this.retryBlockedAt = this.windowMark();
+  }
+
   private clearPending(request: CheckpointCommitRequest): void {
-    if (this.pending === request) this.pending = null;
+    if (this.pending === request) {
+      this.pending = null;
+      this.retryBlockedAt = null;
+    }
   }
 
   private reject(request: CheckpointCommitRequest, reason: string): void {

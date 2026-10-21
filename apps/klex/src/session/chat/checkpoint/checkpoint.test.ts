@@ -194,6 +194,7 @@ describe('CheckpointManager — apply', () => {
     expect(ids(messages)).toEqual(['a', 'b']);
     expect(manager.hasPending).toBe(true);
 
+    messages.push(msg('c'));
     await manager.applyPending();
     expect(isCheckpointHeader(messages[0])).toBe(true);
   });
@@ -206,8 +207,9 @@ describe('CheckpointManager — apply', () => {
 
     for (let i = 1; i < MAX_CHECKPOINT_DEFERRALS; i++) {
       await manager.applyPending();
-      expect(ids(messages)).toEqual(['a', 'b']);
+      expect(ids(messages).slice(0, 2)).toEqual(['a', 'b']);
       expect(manager.hasPending).toBe(true);
+      messages.push(msg(`next-${i}`));
     }
 
     await manager.applyPending();
@@ -235,6 +237,7 @@ describe('CheckpointManager — apply', () => {
     expect(ids(messages)).toEqual(['a', 'b']);
     expect(manager.hasPending).toBe(true);
 
+    messages.push(msg('c'));
     await manager.applyPending();
     expect(isCheckpointHeader(messages[0])).toBe(true);
   });
@@ -296,13 +299,70 @@ describe('CheckpointManager — outcomes and lifecycle', () => {
 
     manager.commit({ coversThroughMessageId: 'a', summary: 's' });
     expect(await manager.applyPending()).toBe('deferred');
+    messages.push(msg('d'));
     commitCheckpoint.mockRejectedValueOnce(new Error('disk full'));
     expect(await manager.applyPending()).toBe('failed');
+    messages.push(msg('e'));
     expect(await manager.applyPending()).toBe('applied');
 
     manager.commit({ coversThroughMessageId: 'b', summary: 's2' });
     messages.splice(1, 1);
     expect(await manager.applyPending()).toBe('rejected');
+  });
+
+  it('does not retry a deferral or failure until the window changes', async () => {
+    const hooks = vi
+      .fn<CheckpointHooks['runCheckpointApplyingHooks']>()
+      .mockResolvedValue({ defer: true });
+    const { manager, messages, commitCheckpoint } = setup(
+      [msg('a'), msg('b')],
+      { runCheckpointApplyingHooks: hooks },
+    );
+    manager.commit({ coversThroughMessageId: 'a', summary: 's' });
+
+    // Last step, turn end, and loop exit hit back to back.
+    expect(await manager.applyPending()).toBe('deferred');
+    expect(await manager.applyPending()).toBe('none');
+    expect(await manager.applyPending()).toBe('none');
+    expect(hooks).toHaveBeenCalledOnce();
+    expect(manager.hasPending).toBe(true);
+
+    messages.push(msg('c'));
+    hooks.mockResolvedValue({ defer: false });
+    commitCheckpoint.mockRejectedValueOnce(new Error('disk full'));
+    expect(await manager.applyPending()).toBe('failed');
+    expect(await manager.applyPending()).toBe('none');
+    expect(hooks).toHaveBeenCalledTimes(2);
+
+    // A newer commit is a fresh request and is not held back.
+    manager.commit({ coversThroughMessageId: 'b', summary: 's2' });
+    expect(await manager.applyPending()).toBe('applied');
+    expect(ids(messages.slice(1))).toEqual(['c']);
+  });
+
+  it('guards against a commit from a synchronous carry callback', async () => {
+    const holder: { manager?: ReturnType<typeof setup>['manager'] } = {};
+    const nested: Promise<unknown>[] = [];
+    const collect = vi.fn<CheckpointHooks['collectCheckpointCarry']>(() => {
+      if (collect.mock.calls.length === 1) {
+        holder.manager?.commit({ coversThroughMessageId: 'b', summary: 's2' });
+        nested.push(holder.manager!.applyPending());
+      }
+      return Promise.resolve([]);
+    });
+    const { manager, messages } = setup([msg('a'), msg('b'), msg('c')], {
+      collectCheckpointCarry: collect,
+    });
+    holder.manager = manager;
+    manager.commit({ coversThroughMessageId: 'a', summary: 's1' });
+
+    expect(await manager.applyPending()).toBe('applied');
+    expect(await nested[0]).toBe('none');
+    expect(collect).toHaveBeenCalledOnce();
+    expect(manager.hasPending).toBe(true);
+
+    expect(await manager.applyPending()).toBe('applied');
+    expect(ids(messages.slice(1))).toEqual(['c']);
   });
 
   it('returns none while another apply is in flight', async () => {

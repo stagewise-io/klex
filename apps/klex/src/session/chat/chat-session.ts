@@ -500,6 +500,7 @@ class ChatSessionModule implements AgentSession {
           if (result.status === 'pending') this.applyCheckpointIfIdle();
           return result;
         },
+        isPending: (anchorId) => this.checkpointManager.isPending(anchorId),
       },
       insertMessageAfter: (afterMessageId, message) => {
         // Reject inserts once the session is terminated so an

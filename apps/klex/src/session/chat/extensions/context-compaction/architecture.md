@@ -80,6 +80,7 @@ All hooks are optional. An extension can implement any subset.
 |-----|---------|
 | `getHistory()` | Returns a copy of the current bounded window. `messages[0]` may be a checkpoint header; older messages exist only in the durable log. |
 | `checkpoints.commit(request)` | Asks core to replace the window up to `coversThroughMessageId` with a header carrying `summary`. Returns `pending` or `rejected` synchronously; core applies at the next safe boundary. |
+| `checkpoints.isPending(anchorId)` | True while core still holds that checkpoint as pending. When it is false and the window header does not cover the anchor, core dropped the checkpoint on re-validation and compaction re-arms without a baseline. |
 | `insertMessageAfter(id, msg)` | Mutates the live history array — inserts a message after the one with the given ID. Returns `false` if not found or session is terminated. |
 | `inbox` | The session inbox — send buffered messages or context events. |
 | `config` | Application config. |

@@ -169,9 +169,31 @@ type CommitMock = ReturnType<
   typeof vi.fn<(request: CheckpointCommitRequest) => CheckpointCommitResult>
 >;
 
+/** Checkpoint API mock that tracks core's pending anchor. */
+interface CheckpointsMock {
+  commit: CommitMock;
+  isPending: ReturnType<typeof vi.fn<(anchorId: string) => boolean>>;
+  /** Anchor core holds as pending; set to null to simulate apply/drop. */
+  pendingAnchor: string | null;
+}
+
+function makeCheckpointsMock(): CheckpointsMock {
+  const mock: CheckpointsMock = {
+    commit: vi.fn<(request: CheckpointCommitRequest) => CheckpointCommitResult>(
+      (request) => {
+        mock.pendingAnchor = request.coversThroughMessageId;
+        return { status: 'pending' };
+      },
+    ),
+    isPending: vi.fn((anchorId: string) => mock.pendingAnchor === anchorId),
+    pendingAnchor: null,
+  };
+  return mock;
+}
+
 function makeDeps(
   overrides?: Partial<ExtensionDeps>,
-): ExtensionDeps & { checkpoints: { commit: CommitMock } } {
+): ExtensionDeps & { checkpoints: CheckpointsMock } {
   const config =
     overrides?.config ??
     ({
@@ -184,11 +206,7 @@ function makeDeps(
   return {
     getHistory: vi.fn(() => []),
     insertMessageAfter: vi.fn(() => true),
-    checkpoints: {
-      commit: vi.fn<
-        (request: CheckpointCommitRequest) => CheckpointCommitResult
-      >(() => ({ status: 'pending' })),
-    },
+    checkpoints: makeCheckpointsMock(),
     inbox: {
       send: vi.fn(),
       sendMessage: vi.fn(),
@@ -215,7 +233,7 @@ function makeDeps(
     sessionId: 'test-session-id',
     getDataDir: vi.fn(() => '/tmp/test-ext-data'),
     ...overrides,
-  } as ExtensionDeps & { checkpoints: { commit: CommitMock } };
+  } as ExtensionDeps & { checkpoints: CheckpointsMock };
 }
 
 /** Deps whose `getHistory` reads a mutable window. */
@@ -241,6 +259,7 @@ function applyLastCommit(
     (m) => m.id === request.coversThroughMessageId,
   );
   const tail = window.slice(anchorIndex + 1);
+  deps.checkpoints.pendingAnchor = null;
   window.splice(
     0,
     window.length,
@@ -1225,6 +1244,7 @@ describe('ContextCompactionExt — post-compaction baseline & hysteresis', () =>
 
     // The anchor was rolled back; core drops the pending checkpoint.
     window.splice(0, window.length, ...conversation());
+    deps.checkpoints.pendingAnchor = null;
     await step(ext, FALLBACK_COMPACTION_THRESHOLD);
     expect(deps.logger.warn).toHaveBeenCalledWith(
       expect.objectContaining({ anchorId: expect.any(String) }),
@@ -1233,6 +1253,38 @@ describe('ContextCompactionExt — post-compaction baseline & hysteresis', () =>
     expect(deps.generateText).not.toHaveBeenCalled();
 
     // No baseline: the absolute threshold alone re-triggers.
+    await step(ext, FALLBACK_COMPACTION_THRESHOLD);
+    expect(deps.generateText).toHaveBeenCalledTimes(1);
+  });
+
+  it('re-arms when core rejects the pending checkpoint while the anchor stays', async () => {
+    const window = conversation();
+    const deps = makeWindowDeps(window, {
+      generateText: vi.fn().mockResolvedValue(genSuccess('summary')),
+    });
+    const ext = createContextCompactionExt.create(deps);
+
+    await step(ext, FALLBACK_COMPACTION_THRESHOLD);
+    const anchorId = deps.checkpoints.pendingAnchor;
+    expect(anchorId).not.toBeNull();
+    vi.mocked(deps.generateText).mockClear();
+
+    // The tail after the anchor was removed (e.g. provisional context
+    // rolled back); core rejects on re-validation. The anchor remains.
+    const anchorIndex = window.findIndex((m) => m.id === anchorId);
+    window.splice(anchorIndex + 1);
+    deps.checkpoints.pendingAnchor = null;
+    window.push(
+      makeTextMessage('user', 'retry'),
+      makeTextMessage('assistant', 'answer'),
+    );
+
+    await step(ext, FALLBACK_COMPACTION_THRESHOLD);
+    expect(deps.logger.warn).toHaveBeenCalledWith(
+      { anchorId },
+      'Committed checkpoint was not applied — re-arming compaction',
+    );
+
     await step(ext, FALLBACK_COMPACTION_THRESHOLD);
     expect(deps.generateText).toHaveBeenCalledTimes(1);
   });

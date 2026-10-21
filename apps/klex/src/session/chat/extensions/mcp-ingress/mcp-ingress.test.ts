@@ -38,7 +38,10 @@ function createMockDeps(
   return {
     getHistory: () => [],
     insertMessageAfter: vi.fn(() => true),
-    checkpoints: { commit: vi.fn(() => ({ status: 'pending' as const })) },
+    checkpoints: {
+      commit: vi.fn(() => ({ status: 'pending' as const })),
+      isPending: vi.fn(() => false),
+    },
     inbox: {
       send: vi.fn(),
       sendMessage: vi.fn(),

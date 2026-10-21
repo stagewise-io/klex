@@ -177,6 +177,12 @@ export type CheckpointCommitResult =
 /** Core API for checkpoint producers such as context compaction. */
 export interface CheckpointApi {
   commit: (request: CheckpointCommitRequest) => CheckpointCommitResult;
+  /**
+   * True while a checkpoint for this anchor waits for a boundary. False
+   * once core applied it, rejected it on re-validation, or a newer commit
+   * replaced it.
+   */
+  isPending: (anchorId: string) => boolean;
 }
 
 /** Passed to {@link Extension.onCheckpointApplying} before a trim. */

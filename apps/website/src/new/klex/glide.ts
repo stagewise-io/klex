@@ -94,22 +94,23 @@ function headMotion(
     settings.softness * pose.lean * 8;
   return {
     angle: (angle * 180) / Math.PI,
-    point(x: number, y: number, weight = 1) {
+    point(x: number, y: number, weight = 1, point: [number, number] = [0, 0]) {
       const rotation = angle * weight;
       const dx = x - pivotX;
       const pivotY = shape.eyeY + 39;
       const dy = y - pivotY;
-      return [
+      point[0] =
         pivotX +
-          dx * Math.cos(rotation) -
-          dy * Math.sin(rotation) +
-          (reaction.headSway * pose.facing + reaction.gazeHeadX) * weight ** 2,
+        dx * Math.cos(rotation) -
+        dy * Math.sin(rotation) +
+        (reaction.headSway * pose.facing + reaction.gazeHeadX) * weight ** 2;
+      point[1] =
         pivotY +
-          dx * Math.sin(rotation) +
-          dy * Math.cos(rotation) +
-          (nod + reaction.nod) * 2 * weight +
-          reaction.gazeHeadY * weight ** 2,
-      ] as const;
+        dx * Math.sin(rotation) +
+        dy * Math.cos(rotation) +
+        (nod + reaction.nod) * 2 * weight +
+        reaction.gazeHeadY * weight ** 2;
+      return point;
     },
   };
 }
@@ -120,23 +121,28 @@ function deformPoint(
   reaction: typeof REST_EMOTE,
   bodyHeight: number,
   eyeOffset: number,
+  point: [number, number] = [0, 0],
 ) {
   const height = (128 - y) / 110;
-  const h = gsap.utils.clamp(0, 1, (128 - y) / bodyHeight);
+  const h = Math.min(1, Math.max(0, (128 - y) / bodyHeight));
   // A moving band swells both sides of the belly. The crown and sole have
   // zero weight, so this reads as jelly travelling upwards, not a head shake.
   const ripple =
-    reaction.ripple *
-    Math.sin(reaction.ripplePhase - h * Math.PI * 2) *
-    Math.sin(h * Math.PI) ** 2;
+    reaction.ripple === 0
+      ? 0
+      : reaction.ripple *
+        Math.sin(reaction.ripplePhase - h * Math.PI * 2) *
+        Math.sin(h * Math.PI) ** 2;
   const center = 80 + eyeOffset * h;
-  return [
+  point[0] =
     80 +
-      (x - 80) * (1 + reaction.puff * 0.12) +
-      reaction.wave * Math.sin(height * Math.PI * 2) * height +
-      (x - center) * ripple * 0.48,
-    128 + (y - 128) * (1 + reaction.puff * 0.04) + ripple * 2,
-  ] as const;
+    (x - 80) * (1 + reaction.puff * 0.12) +
+    (reaction.wave === 0
+      ? 0
+      : reaction.wave * Math.sin(height * Math.PI * 2) * height) +
+    (x - center) * ripple * 0.48;
+  point[1] = 128 + (y - 128) * (1 + reaction.puff * 0.04) + ripple * 2;
+  return point;
 }
 
 function rotatePoint(x: number, y: number, angle: number) {
@@ -147,11 +153,14 @@ function rotatePoint(x: number, y: number, angle: number) {
   ] as const;
 }
 
+const bodyHeights = new WeakMap<BodyShape, number>();
+
 export function bodyRig(
   pose: typeof REST,
   settings: GlideSettings,
   shape: BodyShape,
   reaction: typeof REST_EMOTE,
+  points: [number, number][] = [],
 ) {
   const { facing, lean, drag, energy, phase } = pose;
   const { softness } = settings;
@@ -159,21 +168,44 @@ export function bodyRig(
   const head = headMotion(pose, settings, shape, reaction);
   const outline = shape.outline;
   const mirrored = mirroredOutline(shape);
-  const bodyHeight = 128 - Math.min(...outline.map((point) => point[1]));
-  const points = outline.map(([rightX, rightY], index) => {
+  let bodyHeight = bodyHeights.get(shape);
+  if (bodyHeight === undefined) {
+    bodyHeight = 128 - Math.min(...outline.map((point) => point[1]));
+    bodyHeights.set(shape, bodyHeight);
+  }
+  const blend = (facing + 1) / 2;
+  const shoulder = shape.eyeY + 7;
+  const gathering =
+    pose.crawl * softness * energy * Math.max(0, -Math.sin(phase));
+  const compression = Math.min(
+    0.45,
+    Math.max(-0.2, pose.compression + reaction.compression),
+  );
+  const radians = (reaction.roll * facing * Math.PI) / 180;
+  const cosine = Math.cos(radians);
+  const sine = Math.sin(radians);
+  let minX = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  points.length = outline.length;
+  for (let index = 0; index < outline.length; index++) {
+    const [rightX, rightY] = outline[index] ?? [80, 128];
+    let point = points[index];
+    if (!point) {
+      point = [0, 0];
+      points[index] = point;
+    }
     const [leftX, leftY] = mirrored[index] ?? [160 - rightX, rightY];
-    const blend = (facing + 1) / 2;
     let x = leftX * (1 - blend) + rightX * blend;
     let y = leftY * (1 - blend) + rightY * blend;
-    const shoulder = shape.eyeY + 7;
-    const belly = gsap.utils.clamp(0, 1, (y - shoulder) / (128 - shoulder));
+    const belly = Math.min(1, Math.max(0, (y - shoulder) / (128 - shoulder)));
     // The trailing mass tucks behind the body in front view, not out to its sides.
     x = 80 + (x - 80) * (1 - (0.05 + 0.15 * belly) * (1 - facing * facing));
     const tail = Math.max(0, (-facing * (x - 80)) / 66);
     const segment =
-      1 - belly + belly * gsap.utils.clamp(-1, 1, (facing * (x - 80) + 8) / 38);
-    const gathering =
-      pose.crawl * softness * energy * Math.max(0, -Math.sin(phase));
+      1 -
+      belly +
+      belly * Math.min(1, Math.max(-1, (facing * (x - 80) + 8) / 38));
     // Front and tail alternate their advance. Mass bunches above the sole
     // as the rear catches up; the underside never lifts like a fabric hem.
     x += facing * reach * segment;
@@ -182,47 +214,49 @@ export function bodyRig(
     y += pose.crawl * softness * energy * 12 * (1 - belly);
     y -= gathering * 28 * belly * (1 - belly);
     y -= pose.floating * 8 * belly * Math.min(1, Math.abs(x - 80) / 55);
-    const [headX, headY] = head.point(x, y, 1 - belly);
-    const compressed = compressPoint(
-      headX,
-      headY,
-      gsap.utils.clamp(-0.2, 0.45, pose.compression + reaction.compression),
-    );
-    const [deformedX, deformedY] = deformPoint(
-      ...compressed,
+    head.point(x, y, 1 - belly, point);
+    const compressedX = 80 + (point[0] - 80) * (1 + compression * 0.5);
+    const compressedY = 128 + (point[1] - 128) * (1 - compression);
+    deformPoint(
+      compressedX,
+      compressedY,
       reaction,
       bodyHeight,
       shape.eyeX * facing,
+      point,
     );
+    const [deformedX, deformedY] = point;
     const angle = (index / outline.length) * Math.PI * 2;
     const meltedX =
-      deformedX * (1 - reaction.melt) +
-      (80 + 61 * Math.sin(angle)) * reaction.melt;
+      reaction.melt === 0
+        ? deformedX
+        : deformedX * (1 - reaction.melt) +
+          (80 + 61 * Math.sin(angle)) * reaction.melt;
     const meltedY =
-      deformedY * (1 - reaction.melt) +
-      (116 - 12 * Math.cos(angle)) * reaction.melt;
-    return rotatePoint(meltedX, meltedY, reaction.roll * facing);
-  });
-  // Rotate the body and its face together, lifting by the same amount so a
-  // fallen silhouette never passes through the floor, including custom shapes.
-  const floorOffset = reaction.roll
-    ? Math.max(...points.map((point) => point[1])) - 128
-    : 0;
+      reaction.melt === 0
+        ? deformedY
+        : deformedY * (1 - reaction.melt) +
+          (116 - 12 * Math.cos(angle)) * reaction.melt;
+    point[0] = 80 + (meltedX - 80) * cosine - (meltedY - 126) * sine;
+    point[1] = 126 + (meltedX - 80) * sine + (meltedY - 126) * cosine;
+    if (reaction.roll) {
+      minX = Math.min(minX, point[0]);
+      maxX = Math.max(maxX, point[0]);
+      maxY = Math.max(maxY, point[1]);
+    }
+  }
+  // Rotate the body and face together, keeping the silhouette above the floor.
+  const floorOffset = reaction.roll ? maxY - 128 : 0;
   const sideOffset = reaction.roll
-    ? ((Math.min(...points.map((point) => point[0])) +
-        Math.max(...points.map((point) => point[0]))) /
-        2 -
-        80) *
-      Math.min(1, Math.abs(reaction.roll) / 90)
+    ? ((minX + maxX) / 2 - 80) * Math.min(1, Math.abs(reaction.roll) / 90)
     : 0;
+  for (const point of points) {
+    point[0] = 80 + (point[0] - sideOffset - 80) * (1 + reaction.impact * 0.3);
+    point[1] = 128 + (point[1] - floorOffset - 128) * (1 - reaction.impact);
+  }
   return {
-    points: points.map(
-      ([x, y]) =>
-        [
-          80 + (x - sideOffset - 80) * (1 + reaction.impact * 0.3),
-          128 + (y - floorOffset - 128) * (1 - reaction.impact),
-        ] as const,
-    ),
+    points,
+    head,
     floorOffset,
     sideOffset,
     bodyHeight,
@@ -280,6 +314,7 @@ export function createGlide(
   const setShake = transformSetter(actor, 'x', 'px');
   const setRotation = transformSetter(actor, 'rotation', 'deg');
   gsap.set(actor, { transformOrigin: '50% 90%' });
+  const rigPoints: [number, number][] = [];
   let settings = initialSettings;
   let shape: BodyShape = BODY_SHAPES[0];
   let scale = 1;
@@ -312,6 +347,7 @@ export function createGlide(
   const rightClosed = eyes.querySelector<SVGPathElement>(
     '[data-eye-closed="right"]',
   );
+  let hand = eyes.querySelector('[data-wave-anchor]');
   let hop: {
     from: number;
     to: number;
@@ -400,9 +436,9 @@ export function createGlide(
       'opacity',
       String(Math.max(0.35, 1 - displayHeight / 180)),
     );
-    const rig = bodyRig(displayPose, settings, shape, reaction);
+    const rig = bodyRig(displayPose, settings, shape, reaction, rigPoints);
     setAttribute(body, 'd', roundedPath(rig.points));
-    const head = headMotion(displayPose, settings, shape, reaction);
+    const head = rig.head;
     const [headX, headY] = head.point(
       80 +
         shape.eyeX * displayPose.facing +
@@ -438,7 +474,6 @@ export function createGlide(
       'transform',
       `translate(${faceX} ${faceY}) rotate(${faceAngle})`,
     );
-    const hand = eyes.querySelector('[data-wave-anchor]');
     if (hand) {
       const anchor = waveAnchor({
         ...shape,
@@ -769,6 +804,7 @@ export function createGlide(
       nextIdle = false,
       nextActivity: KlexActivity = 'idle',
     ) {
+      hand = eyes.querySelector('[data-wave-anchor]');
       const modeChanged = settings.mode !== next.mode;
       const motionChanged = reducedMotion !== reduced;
       settings = next;

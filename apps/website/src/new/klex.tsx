@@ -209,6 +209,7 @@ export function Klex({
     configureSettings(settings);
   }, [settings]);
 
+  // Newly mounted extras need anchoring even when the ticker is stopped.
   useLayoutEffect(() => {
     motionRef.current?.configure(
       currentSettings.current,
@@ -218,7 +219,16 @@ export function Klex({
       idle,
       activity,
     );
-  }, [reducedMotion, shape, scale, idle, activity]);
+  }, [
+    reducedMotion,
+    shape,
+    scale,
+    idle,
+    activity,
+    reactionLook.extra,
+    extra,
+    extrasEnabled,
+  ]);
 
   useImperativeHandle(ref, () => ({
     moveTo(target, mode) {

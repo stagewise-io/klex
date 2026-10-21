@@ -13,7 +13,7 @@ describe('QuickJS error ownership', () => {
   beforeEach(async () => {
     runtime = await createQuickJsRuntime({
       memoryBytes: 64 * 1024 * 1024,
-      stackBytes: 1024 * 1024,
+      stackBytes: 512 * 1024,
     });
   });
 
@@ -33,6 +33,44 @@ describe('QuickJS error ownership', () => {
       request,
     });
   }
+
+  it('preserves own __proto__ properties in provider results', async () => {
+    const payload = JSON.parse('{"__proto__":{"polluted":true},"normal":1}');
+    await expect(
+      execute(
+        `const res = await tools.search('example');
+      return { res, own: Object.prototype.hasOwnProperty.call(res, '__proto__') };`,
+        async () => payload,
+      ),
+    ).resolves.toEqual({ res: payload, own: true });
+  });
+
+  it('recovers from guest stack overflow', async () => {
+    await expect(
+      execute(
+        `const recurse = (a = 1, b = 2, c = 3, d = 4, e = 5, f = 6, g = 7, h = 8) => a + recurse(a, b, c, d, e, f, g, h); return recurse();`,
+      ),
+    ).rejects.toMatchObject({
+      name: 'RangeError',
+      message: expect.stringContaining('Maximum call stack size exceeded'),
+    });
+    await expect(execute('return 42')).resolves.toBe(42);
+  });
+
+  it('recovers from guest out-of-memory errors', async () => {
+    runtime.dispose();
+    runtime = await createQuickJsRuntime({
+      memoryBytes: 2 * 1024 * 1024,
+      stackBytes: 512 * 1024,
+    });
+    await expect(
+      execute(`return 'x'.repeat(10 * 1024 * 1024);`),
+    ).rejects.toMatchObject({
+      name: 'InternalError',
+      message: expect.stringContaining('out of memory'),
+    });
+    await expect(execute('return 42')).resolves.toBe(42);
+  });
 
   it('preserves syntax errors and accepts a subsequent execution', async () => {
     const request = vi.fn(async () => null);

@@ -9,6 +9,10 @@ import { build } from 'esbuild';
 import { describe, expect, it } from 'vitest';
 
 import { createBuildOptions } from './build';
+import {
+  encodingCases,
+  encodingErrors,
+} from './src/session/chat/extensions/js-repl-sandbox/encoding.fixture';
 
 // Exercise the actual Vitest load hook, including its query-suffix handling.
 const prompts = import.meta.glob<string>(
@@ -83,7 +87,7 @@ describe('markdown loader parity', () => {
 });
 
 describe('createBuildOptions', () => {
-  it('runs the SEA worker with embedded engine and Encoding binaries outside the repository', async () => {
+  it('runs the SEA worker with all embedded extension binaries outside the repository', async () => {
     const bundle = await build({
       ...createBuildOptions(true).worker,
       write: false,
@@ -97,17 +101,39 @@ describe('createBuildOptions', () => {
       const ready = once(worker, 'message');
       worker.postMessage({ type: 'initialize' });
       expect(await ready).toEqual([{ type: 'ready' }]);
-      const complete = once(worker, 'message');
-      worker.postMessage({
-        type: 'execute',
-        executionId: 'embedded-wasm',
-        source: `return new TextDecoder().decode(new TextEncoder().encode('héllo 🌍'));`,
-        snapshot: { namespaces: [] },
-        deadline: Date.now() + 5_000,
-      });
-      expect(await complete).toEqual([
-        { type: 'complete', executionId: 'embedded-wasm', result: 'héllo 🌍' },
-      ]);
+      for (const { code, expected } of encodingCases) {
+        const complete = once(worker, 'message');
+        worker.postMessage({
+          type: 'execute',
+          executionId: 'embedded-wasm',
+          source: code,
+          snapshot: { namespaces: [] },
+          deadline: Date.now() + 5_000,
+        });
+        expect(await complete).toEqual([
+          { type: 'complete', executionId: 'embedded-wasm', result: expected },
+        ]);
+      }
+      for (const { code, name } of encodingErrors) {
+        const failure = once(worker, 'message');
+        worker.postMessage({
+          type: 'execute',
+          executionId: 'embedded-error',
+          source: code,
+          snapshot: { namespaces: [] },
+          deadline: Date.now() + 5_000,
+        });
+        expect(await failure).toEqual([
+          expect.objectContaining({
+            type: 'failure',
+            fatal: false,
+            error: expect.objectContaining({
+              name,
+              message: expect.stringMatching(/.+/),
+            }),
+          }),
+        ]);
+      }
     } finally {
       await worker?.terminate();
       await rm(directory, { recursive: true, force: true });

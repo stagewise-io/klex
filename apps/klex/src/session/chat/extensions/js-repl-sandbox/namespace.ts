@@ -308,7 +308,10 @@ function bridgePromise(
 function jsonToHandle(context: QuickJS, value: JsonValue): JSValueHandle {
   if (value === undefined) return context.undefined;
   assertJsonValue(value);
-  return context.evalCode(`(${JSON.stringify(value)})`, 'bridge-result.js');
+  return context.evalCode(
+    `JSON.parse(${JSON.stringify(JSON.stringify(value))})`,
+    'javascript-tool-value.js',
+  );
 }
 
 function freeze(context: QuickJS, handle: JSValueHandle): void {

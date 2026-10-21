@@ -32,6 +32,7 @@ import {
   PALETTES,
 } from './klex/presets';
 import { KlexSpeech, type KlexSpeechValue } from './klex/speech';
+import { observeVisibility } from './observe-visibility';
 
 export type {
   BodyShape,
@@ -140,6 +141,9 @@ export function Klex({
   const [expression, setExpression] = useState(initialExpression);
   const [extra, setExtra] = useState(initialExtra);
   const [paused, setPaused] = useState(false);
+  const [visible, setVisible] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const svgContainerRef = useRef<SVGGElement>(null);
   const [speech, setSpeech] = useState<KlexSpeechValue | null>(null);
   const [reactionLook, setReactionLook] = useState<EmoteLook>({});
   const reducedMotion = useReducedMotion() ?? false;
@@ -178,6 +182,16 @@ export function Klex({
   });
 
   useLayoutEffect(() => {
+    const element =
+      containerRef.current ?? svgContainerRef.current?.ownerSVGElement;
+    if (element)
+      return observeVisibility(
+        element.closest('[data-klex-viewport]') ?? element,
+        setVisible,
+      );
+  }, []);
+
+  useLayoutEffect(() => {
     const travel = travelRef.current ?? svgTravelRef.current;
     const actor = actorRef.current ?? svgActorRef.current;
     const shadow = shadowRef.current;
@@ -203,13 +217,17 @@ export function Klex({
     };
   }, []);
 
+  useLayoutEffect(() => {
+    motionRef.current?.pause(paused || !visible);
+  }, [paused, visible]);
+
   // Keep a mode chosen by moveTo until the caller supplies new settings.
   useLayoutEffect(() => {
     currentSettings.current = settings;
     configureSettings(settings);
   }, [settings]);
 
-  // Newly mounted extras need anchoring even when the ticker is stopped.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: Newly mounted extras need anchoring even when the ticker is stopped.
   useLayoutEffect(() => {
     motionRef.current?.configure(
       currentSettings.current,
@@ -249,7 +267,7 @@ export function Klex({
       }
       motion.moveTo(target === 'left' ? -50 : target === 'right' ? 50 : target);
       setPaused(false);
-      motion.pause(false);
+      motion.pause(!visible);
     },
     snapTo: (target) => motionRef.current?.snapTo(target),
     shiftBy: (offset) => motionRef.current?.shiftBy(offset),
@@ -260,7 +278,7 @@ export function Klex({
       const motion = motionRef.current;
       if (!action || !motion?.playEmote(action)) return false;
       setPaused(false);
-      motion.pause(false);
+      motion.pause(!visible);
       return true;
     },
     say(text, options) {
@@ -275,7 +293,7 @@ export function Klex({
     },
     resume: () => {
       setPaused(false);
-      motionRef.current?.pause(false);
+      motionRef.current?.pause(!visible);
     },
   }));
 
@@ -299,7 +317,7 @@ export function Klex({
         <g style={{ color }}>
           <KlexExtras
             handAnchor={handAnchor}
-            paused={paused}
+            paused={paused || !visible}
             transient={reactionLook.extra === 'wave'}
             extra={extrasEnabled ? (reactionLook.extra ?? extra) : 'none'}
             headTop={
@@ -339,6 +357,7 @@ export function Klex({
   if (layout === 'svg') {
     return (
       <g
+        ref={svgContainerRef}
         className={className}
         data-layout={layout}
         data-movement={settings.mode}
@@ -398,6 +417,7 @@ export function Klex({
 
   return (
     <div
+      ref={containerRef}
       className={className}
       style={{ position: 'relative', flexShrink: 0, width, height: size }}
       data-layout={layout}

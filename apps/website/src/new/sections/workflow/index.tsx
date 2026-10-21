@@ -44,7 +44,7 @@ const steps = [
 
 export const workflowMarkup = (panels: string[]) => `
   <section class="new-workflow" id="how-it-works" aria-labelledby="new-workflow-intro">
-    <div class="new-workflow-viewport">
+    <div class="new-workflow-viewport" data-klex-viewport>
       <div class="new-workflow-body">
         <div class="new-workflow-navigation" role="group" aria-label="Workflow steps">
           <h2 class="new-workflow-intro" id="new-workflow-intro">How Klex Bots work together</h2>

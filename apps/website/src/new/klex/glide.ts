@@ -147,7 +147,7 @@ function rotatePoint(x: number, y: number, angle: number) {
   ] as const;
 }
 
-function bodyRig(
+export function bodyRig(
   pose: typeof REST,
   settings: GlideSettings,
   shape: BodyShape,

@@ -2,6 +2,21 @@
 
 All notable Klex changes are documented here.
 
+## 0.23.0 (2026-10-21)
+
+### Features
+
+- bound default-session memory with core checkpoints (36e634c)
+
+### Bug Fixes
+
+- hold deferred checkpoints until the window changes (3776237)
+- retry raced idle checkpoint applies and settle them on close (dc01aa8)
+- re-arm compaction when core drops its checkpoint (ec13ea7)
+- address checkpoint review findings (73abc20)
+- read start time before creating lock file (ca75509)
+- detect reused PIDs in directory lock (db160a2)
+
 ## 0.22.0 (2026-10-20)
 
 ### Features

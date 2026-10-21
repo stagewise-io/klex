@@ -22,7 +22,6 @@
     "./fonts/*": "./src/fonts/*",
     "./plugin": "./src/plugin/index.ts",
     "./src": "./src",
-    "./src/*": "./src/*",
     "./icons": "./src/icons/index.ts",
     "./icons/*": "./src/icons/*"
   },

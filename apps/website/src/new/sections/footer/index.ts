@@ -1,6 +1,6 @@
 import './footer.css';
 
-import { buttonVariants } from '@stagewise/ui/src/components/ui/button.tsx';
+import { buttonVariants } from '@stagewise/ui';
 
 export const footerMarkup = `
   <footer class="new-footer">

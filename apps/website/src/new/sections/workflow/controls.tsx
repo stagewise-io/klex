@@ -4,8 +4,7 @@ import { animate, motion, useReducedMotion } from 'motion/react';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 
-import { Button } from '@stagewise/ui/src/components/ui/button.tsx';
-import { Progress } from '@stagewise/ui/src/components/ui/progress.tsx';
+import { Button, Progress } from '@stagewise/ui';
 
 const PROGRESS = 'new-workflow-progress';
 

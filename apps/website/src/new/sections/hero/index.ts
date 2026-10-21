@@ -2,7 +2,7 @@ import './hero.css';
 
 import { scroll } from 'motion';
 
-import { buttonVariants } from '@stagewise/ui/src/components/ui/button.tsx';
+import { buttonVariants } from '@stagewise/ui';
 
 import { playHeroIntro } from './intro';
 import { mountHeroTeam } from './team';

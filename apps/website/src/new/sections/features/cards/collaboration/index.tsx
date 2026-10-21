@@ -3,8 +3,8 @@ import './styles.css';
 import { gsap } from 'gsap';
 import { useEffect, useRef } from 'react';
 
-import { IconDiscord } from '@stagewise/ui/src/icons/provider/IconDiscord.tsx';
-import { IconSlack } from '@stagewise/ui/src/icons/provider/IconSlack.tsx';
+import { IconDiscord } from '@stagewise/ui/icons/provider/IconDiscord.tsx';
+import { IconSlack } from '@stagewise/ui/icons/provider/IconSlack.tsx';
 
 import { mascotMarkup } from '../../../../../mascot';
 import { heroLooks } from '../../../../bot-looks';

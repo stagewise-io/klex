@@ -1,6 +1,6 @@
 import './trust.css';
 
-import { buttonVariants } from '@stagewise/ui/src/components/ui/button.tsx';
+import { buttonVariants } from '@stagewise/ui';
 
 import { officeMarkup } from './office';
 

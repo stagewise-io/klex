@@ -2,9 +2,10 @@ import './coworkers.css';
 
 import { createRoot } from 'react-dom/client';
 
-import { Button } from '@stagewise/ui/src/components/ui/button.tsx';
-import { Card, CardContent } from '@stagewise/ui/src/components/ui/card.tsx';
 import {
+  Button,
+  Card,
+  CardContent,
   Table,
   TableBody,
   TableCaption,
@@ -12,7 +13,7 @@ import {
   TableHead,
   TableHeader,
   TableRow,
-} from '@stagewise/ui/src/components/ui/table.tsx';
+} from '@stagewise/ui';
 
 import { heroLooks } from '../../bot-looks';
 import { Klex } from '../../klex';

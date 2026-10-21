@@ -8,10 +8,7 @@ import {
 import { createPortal } from 'react-dom';
 import { createRoot } from 'react-dom/client';
 
-import {
-  Popover,
-  PopoverTrigger,
-} from '@stagewise/ui/src/components/ui/popover.tsx';
+import { Popover, PopoverTrigger } from '@stagewise/ui';
 
 import { Klex, type KlexHandle } from '../../klex';
 import { botProfileApps, ProfileCard } from '../../profile-card';

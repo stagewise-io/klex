@@ -6,7 +6,7 @@ import {
   PopoverContent,
   PopoverDescription,
   PopoverTitle,
-} from '@stagewise/ui/src/components/ui/popover.tsx';
+} from '@stagewise/ui';
 
 import { connectorRegistry } from '../connector-registry';
 

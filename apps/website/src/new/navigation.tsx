@@ -1,13 +1,11 @@
 import { createRoot } from 'react-dom/client';
 
-import { Button } from '@stagewise/ui/src/components/ui/button.tsx';
 import {
+  Button,
   NavigationMenu,
   NavigationMenuItem,
   NavigationMenuLink,
   NavigationMenuList,
-} from '@stagewise/ui/src/components/ui/navigation-menu.tsx';
-import {
   Sidebar,
   SidebarContent,
   SidebarGroup,
@@ -17,10 +15,10 @@ import {
   SidebarMenuItem,
   SidebarProvider,
   useSidebar,
-} from '@stagewise/ui/src/components/ui/sidebar.tsx';
-import { IconGithub } from '@stagewise/ui/src/icons/nucleo/social-media/IconGithub.tsx';
-import { IconMenuOutline18 } from '@stagewise/ui/src/icons/nucleo/ui-outline-18/IconMenuOutline18.tsx';
-import { IconXmarkOutline18 } from '@stagewise/ui/src/icons/nucleo/ui-outline-18/IconXmarkOutline18.tsx';
+} from '@stagewise/ui';
+import { IconGithub } from '@stagewise/ui/icons/nucleo/social-media/IconGithub.tsx';
+import { IconMenuOutline18 } from '@stagewise/ui/icons/nucleo/ui-outline-18/IconMenuOutline18.tsx';
+import { IconXmarkOutline18 } from '@stagewise/ui/icons/nucleo/ui-outline-18/IconXmarkOutline18.tsx';
 
 function MobileNavigation() {
   const { isMobile, openMobile, setOpenMobile } = useSidebar();

@@ -6,7 +6,7 @@ import {
   ContextMenuContent,
   ContextMenuItem,
   ContextMenuTrigger,
-} from '@stagewise/ui/src/components/ui/context-menu.tsx';
+} from '@stagewise/ui';
 
 export function logoMenuActions(dark: boolean) {
   const theme = dark ? 'dark' : 'light';

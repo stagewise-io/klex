@@ -4,20 +4,18 @@ import { Code } from '@sugar-high/react';
 import { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 
-import { Badge } from '@stagewise/ui/src/components/ui/badge.tsx';
-import { Button } from '@stagewise/ui/src/components/ui/button.tsx';
 import {
+  Badge,
+  Button,
   Card,
   CardContent,
   CardHeader,
   CardTitle,
-} from '@stagewise/ui/src/components/ui/card.tsx';
-import {
   Field,
   FieldGroup,
   FieldLabel,
-} from '@stagewise/ui/src/components/ui/field.tsx';
-import { Input } from '@stagewise/ui/src/components/ui/input.tsx';
+  Input,
+} from '@stagewise/ui';
 
 import { careersIssue, LinearIssueDialog, typeIssueText } from '../linear';
 import { SceneProgress } from '../workflow/controls';

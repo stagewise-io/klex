@@ -119,7 +119,7 @@ import { createTracing, mapProviderName } from '@/tracing';
 /** Minimum seconds between time updates before executable generations. */
 const TIME_UPDATE_PERIOD_SECONDS = 300;
 /** Manual TUI updates keep UpdateManager's 4 h default. */
-const AUTO_UPDATE_CHECK_INTERVAL_MS = 2 * 60 * 60 * 1000;
+const AUTO_UPDATE_CHECK_INTERVAL_MS = 5 * 60 * 1000;
 
 const cli: CliOptions = parseCliArgs(process.argv.slice(2));
 const logStore = createLogStore(500);

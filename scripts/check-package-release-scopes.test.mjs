@@ -314,8 +314,7 @@ test('compares matching and changed generated Admin API contracts', async () => 
   assert.ok(
     matching.commands.some(
       ({ command, args }) =>
-        command === 'pnpm' &&
-        args.join(' ') === 'install --frozen-lockfile --ignore-scripts',
+        command === 'pnpm' && args.join(' ') === 'install --frozen-lockfile',
     ),
   );
   assert.equal(

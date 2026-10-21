@@ -13,7 +13,7 @@ describe('QuickJS error ownership', () => {
   beforeEach(async () => {
     runtime = await createQuickJsRuntime({
       memoryBytes: 64 * 1024 * 1024,
-      stackBytes: 512 * 1024,
+      stackBytes: 256 * 1024,
     });
   });
 
@@ -46,14 +46,14 @@ describe('QuickJS error ownership', () => {
   });
 
   it('recovers from guest stack overflow', async () => {
-    await expect(
-      execute(
-        `const recurse = (a = 1, b = 2, c = 3, d = 4, e = 5, f = 6, g = 7, h = 8) => a + recurse(a, b, c, d, e, f, g, h); return recurse();`,
-      ),
-    ).rejects.toMatchObject({
-      name: 'RangeError',
-      message: expect.stringContaining('Maximum call stack size exceeded'),
-    });
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      await expect(
+        execute('const recurse = () => 1 + recurse(); return recurse();'),
+      ).rejects.toMatchObject({
+        name: 'RangeError',
+        message: expect.stringContaining('Maximum call stack size exceeded'),
+      });
+    }
     await expect(execute('return 42')).resolves.toBe(42);
   });
 
@@ -61,7 +61,7 @@ describe('QuickJS error ownership', () => {
     runtime.dispose();
     runtime = await createQuickJsRuntime({
       memoryBytes: 2 * 1024 * 1024,
-      stackBytes: 512 * 1024,
+      stackBytes: 256 * 1024,
     });
     await expect(
       execute(`return 'x'.repeat(10 * 1024 * 1024);`),

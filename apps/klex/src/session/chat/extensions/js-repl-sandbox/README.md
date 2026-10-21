@@ -124,7 +124,7 @@ Fixed limits are exported as `JAVASCRIPT_SANDBOX_LIMITS`:
 
 - 30-second wall time.
 - 64 MiB QuickJS memory.
-- 1 MiB QuickJS stack.
+- 256 KiB QuickJS stack.
 - 64 KiB source code.
 - 50 provider requests per execution.
 - 8 concurrent provider requests.

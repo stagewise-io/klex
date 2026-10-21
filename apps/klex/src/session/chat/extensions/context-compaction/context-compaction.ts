@@ -128,7 +128,8 @@ class ContextCompactionExt implements Extension {
    * Anchor of the last checkpoint this extension committed. While set,
    * {@link onStepComplete} waits for the window to start with a header
    * covering this anchor, captures inputTokens of that step as the
-   * baseline, and clears it.
+   * baseline, and clears it. Cleared without a baseline once core no
+   * longer holds the checkpoint as pending but never applied it.
    */
   private awaitingCheckpointAnchor: string | null = null;
 
@@ -220,14 +221,16 @@ class ContextCompactionExt implements Extension {
     if (this.awaitingCheckpointAnchor !== null) {
       if (!this.windowCovers(this.awaitingCheckpointAnchor)) {
         const anchorId = this.awaitingCheckpointAnchor;
-        if (!this.deps.getHistory().some((m) => m.id === anchorId)) {
-          // Core dropped the checkpoint (anchor rolled back); re-arm the
-          // trigger without a baseline.
+        if (!this.deps.checkpoints.isPending(anchorId)) {
+          // Core dropped the checkpoint on re-validation (anchor rolled
+          // back, tail removed, ...) or a newer one replaced it; re-arm
+          // the trigger without a baseline.
           this.awaitingCheckpointAnchor = null;
           this.deps.logger.warn(
             { anchorId },
             'Committed checkpoint was not applied — re-arming compaction',
           );
+          return;
         }
         this.deps.logger.debug(
           { inputTokens },

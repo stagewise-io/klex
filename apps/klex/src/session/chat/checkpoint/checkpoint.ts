@@ -54,6 +54,8 @@ export interface CheckpointManager {
   commit(request: CheckpointCommitRequest): CheckpointCommitResult;
   /** True while a validated checkpoint waits for a boundary. */
   readonly hasPending: boolean;
+  /** True while the checkpoint for this anchor waits for a boundary. */
+  isPending(anchorId: string): boolean;
   /**
    * Apply the pending checkpoint, if any. Call only at a step boundary,
    * when nothing else mutates the window. Never rejects.
@@ -90,6 +92,10 @@ class CheckpointManagerModule implements CheckpointManager {
 
   get hasPending(): boolean {
     return this.pending !== null;
+  }
+
+  isPending(anchorId: string): boolean {
+    return this.pending?.coversThroughMessageId === anchorId;
   }
 
   commit(request: CheckpointCommitRequest): CheckpointCommitResult {

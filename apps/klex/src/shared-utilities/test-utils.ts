@@ -32,6 +32,7 @@ export function makeDeps(overrides?: Partial<ExtensionDeps>): ExtensionDeps {
     insertMessageAfter: vi.fn(() => true),
     checkpoints: {
       commit: vi.fn(() => ({ status: 'pending' })),
+      isPending: vi.fn(() => false),
     } as unknown as ExtensionDeps['checkpoints'],
     inbox: {
       send: vi.fn(),

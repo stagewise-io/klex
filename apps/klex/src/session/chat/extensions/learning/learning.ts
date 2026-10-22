@@ -45,7 +45,7 @@ interface SharedLearningData {
 class LearningExtension implements Extension {
   private worker: LearningWorker | null = null;
   private detachCatalog: (() => void) | null = null;
-  private readonly latestEditTokens = new Map<string, symbol>();
+  private mutationChain: Promise<unknown> = Promise.resolve();
   private skillList = '';
   private closed = false;
 
@@ -82,97 +82,100 @@ class LearningExtension implements Extension {
       const detach = this.options.skillCatalog.attach({
         store: this.data.store,
         getUsage: (name) => this.getUsage(name),
-        update: async (name, patch) => {
-          if (!isValidSkillName(name)) return null;
-          const existing = this.data.store.get(name);
-          if (!existing) return null;
-          const next = {
-            ...existing,
-            description:
-              patch.description !== undefined
-                ? patch.description.trim()
-                : existing.description,
-            body: patch.body !== undefined ? patch.body.trim() : existing.body,
-          };
-          const reason = validateSkill(next);
-          if (reason) throw new SkillValidationError(reason);
-          const at = new Date().toISOString();
-          const editToken = Symbol();
-          this.latestEditTokens.set(name, editToken);
-          let previous:
-            | Pick<
-                SkillState,
-                'createdAt' | 'updatedAt' | 'updatedEpisode' | 'userEdited'
-              >
-            | undefined;
-          await this.data.state.update((draft) => {
-            const current = Object.hasOwn(draft.skills, name)
-              ? draft.skills[name]
-              : undefined;
-            previous = current
-              ? {
-                  createdAt: current.createdAt,
-                  updatedAt: current.updatedAt,
-                  updatedEpisode: current.updatedEpisode,
-                  userEdited: current.userEdited,
-                }
-              : undefined;
-            const entry = current ?? {
-              createdAt: at,
-              updatedAt: at,
-              lastReadAt: null,
-              readCount: 0,
-              sourceEpisodes: [],
-              createdEpisode: draft.processedEpisodeCount,
-              lastReadEpisode: null,
+        update: (name, patch) =>
+          this.enqueueMutation(async () => {
+            if (!isValidSkillName(name)) return null;
+            const existing = this.data.store.get(name);
+            if (!existing) return null;
+            const next = {
+              ...existing,
+              description:
+                patch.description !== undefined
+                  ? patch.description.trim()
+                  : existing.description,
+              body:
+                patch.body !== undefined ? patch.body.trim() : existing.body,
             };
-            draft.skills[name] = entry;
-            entry.updatedAt = at;
-            entry.updatedEpisode = draft.processedEpisodeCount;
-            entry.userEdited = true;
-          });
-          try {
-            await this.data.store.write(next);
-          } catch (error) {
-            await this.data.state
-              .update((draft) => {
-                if (this.latestEditTokens.get(name) !== editToken) return;
-                const current = Object.hasOwn(draft.skills, name)
-                  ? draft.skills[name]
-                  : undefined;
-                if (!current || current.updatedAt !== at) return;
-                if (!previous) {
-                  if (
-                    current.readCount === 0 &&
-                    current.lastReadAt === null &&
-                    current.sourceEpisodes.length === 0
-                  ) {
-                    delete draft.skills[name];
+            const reason = validateSkill(next);
+            if (reason) throw new SkillValidationError(reason);
+            const at = new Date().toISOString();
+            let previous:
+              | Pick<
+                  SkillState,
+                  'createdAt' | 'updatedAt' | 'updatedEpisode' | 'userEdited'
+                >
+              | undefined;
+            await this.data.state.update((draft) => {
+              const current = Object.hasOwn(draft.skills, name)
+                ? draft.skills[name]
+                : undefined;
+              previous = current
+                ? {
+                    createdAt: current.createdAt,
+                    updatedAt: current.updatedAt,
+                    updatedEpisode: current.updatedEpisode,
+                    userEdited: current.userEdited,
+                  }
+                : undefined;
+              const entry = current ?? {
+                createdAt: at,
+                updatedAt: at,
+                lastReadAt: null,
+                readCount: 0,
+                sourceEpisodes: [],
+                createdEpisode: draft.processedEpisodeCount,
+                lastReadEpisode: null,
+              };
+              draft.skills[name] = entry;
+              entry.updatedAt = at;
+              entry.updatedEpisode = draft.processedEpisodeCount;
+              entry.userEdited = true;
+            });
+            try {
+              await this.data.store.write(next);
+            } catch (error) {
+              await this.data.state
+                .update((draft) => {
+                  const current = Object.hasOwn(draft.skills, name)
+                    ? draft.skills[name]
+                    : undefined;
+                  if (!current) return;
+                  if (current.updatedAt !== at) {
+                    current.userEdited = previous?.userEdited ?? false;
                     return;
                   }
-                  current.updatedAt = current.createdAt;
-                  current.updatedEpisode = current.createdEpisode;
-                  current.userEdited = false;
-                  return;
-                }
-                current.updatedAt = previous.updatedAt;
-                current.updatedEpisode = previous.updatedEpisode;
-                current.userEdited = previous.userEdited ?? false;
-              })
-              .catch(() => undefined);
-            throw error;
-          }
-          return { ...next, origin: 'learned' as const };
-        },
-        delete: async (name) => {
-          if (!this.data.store.get(name)) return false;
-          this.latestEditTokens.delete(name);
-          await this.data.store.delete(name);
-          await this.data.state.update((draft) => {
-            delete draft.skills[name];
-          });
-          return true;
-        },
+                  if (!previous) {
+                    if (
+                      current.readCount === 0 &&
+                      current.lastReadAt === null &&
+                      current.sourceEpisodes.length === 0
+                    ) {
+                      delete draft.skills[name];
+                      return;
+                    }
+                    current.updatedAt = current.createdAt;
+                    current.updatedEpisode = current.createdEpisode;
+                    current.userEdited = false;
+                    return;
+                  }
+                  current.updatedAt = previous.updatedAt;
+                  current.updatedEpisode = previous.updatedEpisode;
+                  current.userEdited = previous.userEdited ?? false;
+                })
+                .catch(() => undefined);
+              throw error;
+            }
+            return { ...next, origin: 'learned' as const };
+          }),
+        delete: (name) =>
+          this.enqueueMutation(async () => {
+            if (!this.data.store.get(name)) return false;
+            await this.data.store.delete(name);
+            await this.data.state.update((draft) => {
+              delete draft.skills[name];
+            });
+            return true;
+          }),
       });
       this.worker = worker;
       this.detachCatalog = () => {
@@ -266,6 +269,15 @@ class LearningExtension implements Extension {
       sourceEpisodes: [...entry.sourceEpisodes],
       userEdited: entry.userEdited,
     };
+  }
+
+  private enqueueMutation<T>(fn: () => Promise<T>): Promise<T> {
+    const next = this.mutationChain.then(fn, fn);
+    this.mutationChain = next.then(
+      () => undefined,
+      () => undefined,
+    );
+    return next;
   }
 
   private refreshSkillList(): void {

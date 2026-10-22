@@ -170,6 +170,24 @@ describe('learning extension', () => {
     expect(await catalog.update('constructor', { body: 'x' })).toBeNull();
     expect(await catalog.delete('constructor')).toBe(false);
   });
+
+  it('does not overwrite skill file if state persistence fails during update', async () => {
+    const dataDir = await seededDataDir(['ask-first']);
+    const catalog = createSkillCatalog();
+    const extension = createLearningExt({
+      getSoul: () => null,
+      episodes: createEpisodeFeed(),
+      skillCatalog: catalog,
+    }).create(fakeDeps(dataDir, DEFAULT_SESSION_ID));
+    await extension.onStart?.();
+    await rm(join(dataDir, 'state.json'), { force: true });
+    await mkdir(join(dataDir, 'state.json'), { recursive: true });
+    await expect(
+      catalog.update('ask-first', { body: 'Unprotected edit.' }),
+    ).rejects.toThrow();
+    expect(catalog.get('ask-first')?.body).toBe('Do ask-first.');
+    await extension.onClose?.();
+  });
   it('lets only the first default session own the worker and catalog', async () => {
     const dataDir = await seededDataDir(['ask-first']);
     const skillCatalog = createSkillCatalog();

@@ -186,6 +186,22 @@ describe('learning extension', () => {
       catalog.update('ask-first', { body: 'Unprotected edit.' }),
     ).rejects.toThrow();
     expect(catalog.get('ask-first')?.body).toBe('Do ask-first.');
+    await rm(join(dataDir, 'state.json'), { recursive: true, force: true });
+    await readSkill(extension, 'ask-first');
+    await vi.waitFor(() =>
+      expect(catalog.getUsage('ask-first')?.readCount).toBe(1),
+    );
+    await rm(join(dataDir, 'skills', 'ask-first', 'SKILL.md'), { force: true });
+    await mkdir(join(dataDir, 'skills', 'ask-first', 'SKILL.md'), {
+      recursive: true,
+    });
+    await expect(
+      catalog.update('ask-first', { body: 'Failed disk write.' }),
+    ).rejects.toThrow();
+    expect(catalog.getUsage('ask-first')).toMatchObject({
+      readCount: 1,
+      userEdited: false,
+    });
     await extension.onClose?.();
   });
   it('lets only the first default session own the worker and catalog', async () => {

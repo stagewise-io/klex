@@ -45,6 +45,7 @@ interface SharedLearningData {
 class LearningExtension implements Extension {
   private worker: LearningWorker | null = null;
   private detachCatalog: (() => void) | null = null;
+  private readonly latestEditTokens = new Map<string, symbol>();
   private skillList = '';
   private closed = false;
 
@@ -96,14 +97,27 @@ class LearningExtension implements Extension {
           const reason = validateSkill(next);
           if (reason) throw new SkillValidationError(reason);
           const at = new Date().toISOString();
-          let previousEntry: SkillState | undefined;
+          const editToken = Symbol();
+          this.latestEditTokens.set(name, editToken);
+          let previous:
+            | Pick<
+                SkillState,
+                'createdAt' | 'updatedAt' | 'updatedEpisode' | 'userEdited'
+              >
+            | undefined;
           await this.data.state.update((draft) => {
-            previousEntry = Object.hasOwn(draft.skills, name)
-              ? structuredClone(draft.skills[name])
-              : undefined;
-            const entry = (Object.hasOwn(draft.skills, name)
+            const current = Object.hasOwn(draft.skills, name)
               ? draft.skills[name]
-              : undefined) ?? {
+              : undefined;
+            previous = current
+              ? {
+                  createdAt: current.createdAt,
+                  updatedAt: current.updatedAt,
+                  updatedEpisode: current.updatedEpisode,
+                  userEdited: current.userEdited,
+                }
+              : undefined;
+            const entry = current ?? {
               createdAt: at,
               updatedAt: at,
               lastReadAt: null,
@@ -122,11 +136,28 @@ class LearningExtension implements Extension {
           } catch (error) {
             await this.data.state
               .update((draft) => {
-                if (previousEntry) {
-                  draft.skills[name] = previousEntry;
-                } else {
-                  delete draft.skills[name];
+                if (this.latestEditTokens.get(name) !== editToken) return;
+                const current = Object.hasOwn(draft.skills, name)
+                  ? draft.skills[name]
+                  : undefined;
+                if (!current || current.updatedAt !== at) return;
+                if (!previous) {
+                  if (
+                    current.readCount === 0 &&
+                    current.lastReadAt === null &&
+                    current.sourceEpisodes.length === 0
+                  ) {
+                    delete draft.skills[name];
+                    return;
+                  }
+                  current.updatedAt = current.createdAt;
+                  current.updatedEpisode = current.createdEpisode;
+                  current.userEdited = false;
+                  return;
                 }
+                current.updatedAt = previous.updatedAt;
+                current.updatedEpisode = previous.updatedEpisode;
+                current.userEdited = previous.userEdited ?? false;
               })
               .catch(() => undefined);
             throw error;
@@ -135,6 +166,7 @@ class LearningExtension implements Extension {
         },
         delete: async (name) => {
           if (!this.data.store.get(name)) return false;
+          this.latestEditTokens.delete(name);
           await this.data.store.delete(name);
           await this.data.state.update((draft) => {
             delete draft.skills[name];

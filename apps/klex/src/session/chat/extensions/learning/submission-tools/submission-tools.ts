@@ -13,6 +13,7 @@ export interface LearningSubmissionTools {
 }
 
 export interface LearningSubmissionToolsOptions {
+  protectedNames?: Iterable<string>;
   evidence: ReadonlySet<string>;
   getExistingNames: () => readonly string[];
   persist: (submission: LearningSubmission) => Promise<number>;
@@ -104,6 +105,7 @@ class LearningSubmissionToolsModule implements LearningSubmissionTools {
     const { rejected } = validateOperations(
       submission.operations,
       existingNames,
+      this.options.protectedNames,
     );
     return rejected[0]?.reason ?? null;
   }

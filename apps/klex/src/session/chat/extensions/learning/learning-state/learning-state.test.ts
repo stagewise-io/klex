@@ -30,6 +30,41 @@ async function dataDir(): Promise<string> {
 }
 
 describe('learning state', () => {
+  it('defaults old skill flags, preserves edits and rejects older writers', async () => {
+    const dir = await dataDir();
+    const folder = join(dir, 'extensions/io.stagewise/learning');
+    await mkdir(folder, { recursive: true });
+    const state = createLearningState(folder);
+    await state.update((draft) => {
+      draft.skills.example = {
+        createdAt: '2026-10-01T00:00:00Z',
+        updatedAt: '2026-10-01T00:00:00Z',
+        lastReadAt: null,
+        readCount: 0,
+        sourceEpisodes: [],
+      };
+    });
+    expect(state.get().skills.example?.userEdited).toBe(false);
+    await state.update((draft) => {
+      draft.skills.example!.userEdited = true;
+    });
+    const reloaded = createLearningState(folder);
+    await reloaded.start();
+    expect(reloaded.get().skills.example?.userEdited).toBe(true);
+    const path = join(folder, 'state.json');
+    const before = await readFile(path, 'utf8');
+    await expect(
+      createLocalData({
+        logging: createLogger({ name: 'learning-downgrade-test' }),
+        dataDirectory: dir,
+        klexVersion: '0.23.0',
+        stores: [
+          { ...LEARNING_STATE_STORE_DEFINITION, compatibilityVersion: 1 },
+        ],
+      }).start(),
+    ).rejects.toThrow();
+    expect(await readFile(path, 'utf8')).toBe(before);
+  });
   it('migrates v1 through the registry without inventing activity or losing unknown fields', async () => {
     const dir = await dataDir();
     const path = join(dir, LEARNING_STATE_STORE_DEFINITION.relativePath);

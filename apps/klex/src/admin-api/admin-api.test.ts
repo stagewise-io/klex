@@ -60,6 +60,8 @@ const godMessages = {
 } as unknown as GodMessages;
 const sessionHistory = {} as unknown as SessionHistory;
 const skillCatalog: SkillCatalog = {
+  update: async () => null,
+  delete: async () => false,
   isAvailable: () => false,
   list: () => [],
   get: () => null,

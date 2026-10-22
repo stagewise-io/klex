@@ -4,6 +4,10 @@ import {
   providerTypeSchema as configProviderTypeSchema,
   MODEL_PURPOSES,
 } from '@/config';
+import {
+  MAX_BODY_LENGTH,
+  MAX_DESCRIPTION_LENGTH,
+} from '@/session/chat/extensions/learning/learning-config';
 
 // Extend Zod with .openapi() metadata support for spec generation.
 extendZodWithOpenApi(z);
@@ -780,6 +784,7 @@ const godMessageResetResponseSchema = z
 
 const skillSummarySchema = z
   .object({
+    userEdited: z.boolean().optional(),
     name: z.string().describe('Skill name, unique across the agent'),
     description: z
       .string()
@@ -834,6 +839,30 @@ const skillNameParamsSchema = z.object({
     example: 'ask-before-contract-changes',
   }),
 });
+
+export const updateSkillBodySchema = z
+  .object({
+    description: z
+      .string()
+      .trim()
+      .min(1)
+      .max(MAX_DESCRIPTION_LENGTH)
+      .refine(
+        (value) => !/[\n\r\u0085\u2028\u2029]/u.test(value),
+        'Description must be a single line',
+      )
+      .optional(),
+    body: z.string().trim().min(1).max(MAX_BODY_LENGTH).optional(),
+  })
+  .refine(
+    (value) => value.description !== undefined || value.body !== undefined,
+    'At least one field is required',
+  )
+  .openapi('UpdateSkillBody');
+
+export const deleteSkillResponseSchema = z
+  .object({ deleted: z.literal(true), name: z.string() })
+  .openapi('DeleteSkillResponse');
 
 // --- Episode summaries ---
 

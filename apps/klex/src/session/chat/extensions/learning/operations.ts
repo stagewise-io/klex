@@ -67,12 +67,22 @@ export interface ValidatedOperations {
 export function validateOperations(
   operations: readonly SkillOperation[],
   existingNames: Iterable<string>,
+  protectedNames?: Iterable<string>,
 ): ValidatedOperations {
   const names = new Set(existingNames);
+  const protectedSkills = new Set(protectedNames);
   const accepted: SkillOperation[] = [];
   const rejected: RejectedOperation[] = [];
   for (const operation of operations) {
-    const reason = rejectionReason(operation, names);
+    const protectedName =
+      operation.op !== 'create' && protectedSkills.has(operation.name)
+        ? operation.name
+        : operation.op === 'update'
+          ? operation.mergedFrom?.find((name) => protectedSkills.has(name))
+          : undefined;
+    const reason = protectedName
+      ? `skill "${protectedName}" is user-edited and cannot be modified by consolidation`
+      : rejectionReason(operation, names);
     if (reason) {
       rejected.push({ operation, reason });
       continue;

@@ -4,7 +4,9 @@ export {
   type SkillCatalog,
   type SkillCatalogHub,
   type SkillCatalogSource,
+  type SkillPatch,
   type SkillUsage,
+  SkillValidationError,
 } from './skill-catalog';
 export {
   isValidSkillName,

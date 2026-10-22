@@ -9,7 +9,11 @@ import { DEFAULT_SESSION_ID } from '@/session/types';
 
 import type { Extension, ExtensionDeps } from '../extension-api';
 import { createLearningExt } from './learning';
-import { createSkillCatalog, serializeSkill } from './skill-store';
+import {
+  createSkillCatalog,
+  SkillValidationError,
+  serializeSkill,
+} from './skill-store';
 
 vi.mock('@/session/chat/extensions/time/system-prompt.md', () => ({
   default: '',
@@ -103,6 +107,69 @@ async function readSkill(extension: Extension, name: string): Promise<unknown> {
 }
 
 describe('learning extension', () => {
+  it('persists edits, preserves usage, and deletes without a tombstone', async () => {
+    const dataDir = await seededDataDir(['ask-first', 'constructor']);
+    const catalog = createSkillCatalog();
+    const start = async () => {
+      const extension = createLearningExt({
+        getSoul: () => null,
+        episodes: createEpisodeFeed(),
+        skillCatalog: catalog,
+      }).create(fakeDeps(dataDir, DEFAULT_SESSION_ID));
+      await extension.onStart?.();
+      return extension;
+    };
+    let extension = await start();
+    await readSkill(extension, 'ask-first');
+    await vi.waitFor(() =>
+      expect(catalog.getUsage('ask-first')?.readCount).toBe(1),
+    );
+    const before = catalog.getUsage('ask-first');
+    expect(
+      await catalog.update('ask-first', { body: '  User instructions.  ' }),
+    ).toMatchObject({
+      body: 'User instructions.',
+      description: 'Use when ask-first applies.',
+    });
+    expect(catalog.getUsage('ask-first')).toMatchObject({
+      ...before,
+      updatedAt: expect.any(String),
+      userEdited: true,
+    });
+    expect(
+      await catalog.update('constructor', {
+        description: '  Restored skill.  ',
+      }),
+    ).toMatchObject({ description: 'Restored skill.' });
+    expect(catalog.getUsage('constructor')).toMatchObject({
+      userEdited: true,
+      readCount: 0,
+    });
+    for (const patch of [
+      { body: '' },
+      { description: 'two\nlines' },
+      { body: 'x'.repeat(4001) },
+    ]) {
+      await expect(catalog.update('ask-first', patch)).rejects.toBeInstanceOf(
+        SkillValidationError,
+      );
+    }
+    expect(await catalog.update('../escape', { body: 'x' })).toBeNull();
+    expect(await catalog.update('missing', { body: 'x' })).toBeNull();
+    await extension.onClose?.();
+    extension = await start();
+    expect(catalog.get('ask-first')?.body).toBe('User instructions.');
+    expect(catalog.getUsage('ask-first')?.userEdited).toBe(true);
+    expect(await catalog.delete('ask-first')).toBe(true);
+    expect(catalog.getUsage('ask-first')).toBeNull();
+    expect(await catalog.delete('ask-first')).toBe(false);
+    await extension.onClose?.();
+    extension = await start();
+    expect(catalog.get('ask-first')).toBeNull();
+    await extension.onClose?.();
+    expect(await catalog.update('constructor', { body: 'x' })).toBeNull();
+    expect(await catalog.delete('constructor')).toBe(false);
+  });
   it('lets only the first default session own the worker and catalog', async () => {
     const dataDir = await seededDataDir(['ask-first']);
     const skillCatalog = createSkillCatalog();

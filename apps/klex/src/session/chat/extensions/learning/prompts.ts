@@ -15,6 +15,7 @@ import type { LearnedSkill } from './skill-store';
 import systemPromptPart from './system-prompt-part.md';
 
 export interface PromptSkillUsage {
+  userEdited?: boolean;
   createdAt: string;
   updatedAt: string;
   lastReadAt: string | null;
@@ -138,7 +139,7 @@ export function buildConsolidationPrompt(input: {
     const lastRead = usage.lastReadAt ?? 'never';
     return (
       ` readCount="${usage.readCount}" lastReadAt="${attribute(lastRead)}"` +
-      ` createdAt="${attribute(usage.createdAt)}" sourceEpisodes="${attribute((usage.sourceEpisodes ?? []).join(','))}"${stale}`
+      ` createdAt="${attribute(usage.createdAt)}" sourceEpisodes="${attribute((usage.sourceEpisodes ?? []).join(','))}"${stale}${usage.userEdited ? ' userEdited="true"' : ''}`
     );
   });
   return {

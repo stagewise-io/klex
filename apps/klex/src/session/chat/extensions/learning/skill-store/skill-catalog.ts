@@ -2,8 +2,15 @@ import type { LearnedSkill } from './skill-format';
 import type { SkillStore } from './skill-store';
 
 export type CatalogSkill = LearnedSkill & { origin: 'learned' };
+export class SkillValidationError extends Error {}
+
+export interface SkillPatch {
+  description?: string;
+  body?: string;
+}
 
 export interface SkillUsage {
+  userEdited?: boolean;
   createdAt: string;
   updatedAt: string;
   lastReadAt: string | null;
@@ -11,8 +18,10 @@ export interface SkillUsage {
   sourceEpisodes: readonly string[];
 }
 
-/** Read-only view of the agent's skills, e.g. for the admin API. */
+/** Access to the agent's skills, e.g. for the admin API. */
 export interface SkillCatalog {
+  update(name: string, patch: SkillPatch): Promise<CatalogSkill | null>;
+  delete(name: string): Promise<boolean>;
   isAvailable(): boolean;
   list(): readonly CatalogSkill[];
   get(name: string): CatalogSkill | null;
@@ -21,6 +30,8 @@ export interface SkillCatalog {
 }
 
 export interface SkillCatalogSource {
+  update(name: string, patch: SkillPatch): Promise<CatalogSkill | null>;
+  delete(name: string): Promise<boolean>;
   store: SkillStore;
   getUsage: (name: string) => SkillUsage | null;
 }
@@ -32,6 +43,14 @@ export interface SkillCatalogHub extends SkillCatalog {
 
 class SkillCatalogModule implements SkillCatalogHub {
   private source: SkillCatalogSource | null = null;
+
+  async update(name: string, patch: SkillPatch): Promise<CatalogSkill | null> {
+    return this.source?.update(name, patch) ?? null;
+  }
+
+  async delete(name: string): Promise<boolean> {
+    return this.source?.delete(name) ?? false;
+  }
 
   attach(source: SkillCatalogSource): () => void {
     if (this.source) throw new Error('Skill catalog is already attached');

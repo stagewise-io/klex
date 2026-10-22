@@ -5,8 +5,18 @@ import type {
   SkillCatalog,
   SkillUsage,
 } from '@/session/chat/extensions/learning/skill-store';
+import { SkillValidationError } from '@/session/chat/extensions/learning/skill-store';
 
-import { getSkill, getSkillRoute, listSkills, listSkillsRoute } from './skills';
+import {
+  deleteSkill,
+  deleteSkillRoute,
+  getSkill,
+  getSkillRoute,
+  listSkills,
+  listSkillsRoute,
+  updateSkill,
+  updateSkillRoute,
+} from './skills';
 import { setupTestApp } from './test-utils';
 
 const tracked: CatalogSkill = {
@@ -32,6 +42,11 @@ const usage: SkillUsage = {
 function createCatalog(available = true): SkillCatalog {
   const skills = [tracked, untracked];
   return {
+    update: async (name, patch) => {
+      const skill = skills.find((skill) => skill.name === name);
+      return skill ? { ...skill, ...patch } : null;
+    },
+    delete: async (name) => skills.some((skill) => skill.name === name),
     isAvailable: () => available,
     list: () => skills,
     get: (name) => skills.find((skill) => skill.name === name) ?? null,
@@ -43,10 +58,122 @@ function createApp(skillCatalog: SkillCatalog) {
   return setupTestApp((app) => {
     app.openapi(listSkillsRoute, listSkills({ skillCatalog }));
     app.openapi(getSkillRoute, getSkill({ skillCatalog }));
+    app.openapi(updateSkillRoute, updateSkill({ skillCatalog }));
+    app.openapi(deleteSkillRoute, deleteSkill({ skillCatalog }));
   });
 }
 
 describe('skills routes', () => {
+  it('updates a skill and returns its detail and provenance', async () => {
+    const response = await createApp(createCatalog()).request(
+      `/v1/skills/${tracked.name}`,
+      {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ body: '  Edited.  ' }),
+      },
+    );
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      body: 'Edited.',
+      description: tracked.description,
+      sourceEpisodes: usage.sourceEpisodes,
+    });
+  });
+
+  it.each([
+    {},
+    { body: '' },
+    { body: ' '.repeat(5) },
+    { body: 'x'.repeat(4001) },
+    { description: 'x'.repeat(301) },
+    { description: 'two\nlines' },
+    { description: null },
+  ])('rejects invalid edits %j', async (body) => {
+    const response = await createApp(createCatalog()).request(
+      `/v1/skills/${tracked.name}`,
+      {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+      },
+    );
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({ code: 'validation_failed' });
+  });
+
+  it.each(['PATCH', 'DELETE'])(
+    'handles missing, unavailable, and failed %s requests',
+    async (method) => {
+      const request = {
+        method,
+        headers: { 'content-type': 'application/json' },
+        ...(method === 'PATCH'
+          ? { body: JSON.stringify({ body: 'Edited.' }) }
+          : {}),
+      };
+      expect(
+        (
+          await createApp(createCatalog()).request(
+            '/v1/skills/missing',
+            request,
+          )
+        ).status,
+      ).toBe(404);
+      expect(
+        (
+          await createApp(createCatalog(false)).request(
+            `/v1/skills/${tracked.name}`,
+            request,
+          )
+        ).status,
+      ).toBe(503);
+      const catalog = createCatalog();
+      catalog.update = catalog.delete = async () => {
+        throw new Error('disk failed');
+      };
+      expect(
+        (
+          await createApp(catalog).request(
+            `/v1/skills/${tracked.name}`,
+            request,
+          )
+        ).status,
+      ).toBe(500);
+    },
+  );
+
+  it('maps catalog validation errors to 400', async () => {
+    const catalog = createCatalog();
+    catalog.update = async () => {
+      throw new SkillValidationError('invalid skill');
+    };
+    const response = await createApp(catalog).request(
+      `/v1/skills/${tracked.name}`,
+      {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ body: 'Edited.' }),
+      },
+    );
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({
+      error: 'invalid skill',
+      code: 'validation_failed',
+    });
+  });
+
+  it('deletes a skill', async () => {
+    const response = await createApp(createCatalog()).request(
+      `/v1/skills/${tracked.name}`,
+      { method: 'DELETE' },
+    );
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      deleted: true,
+      name: tracked.name,
+    });
+  });
   it('declares and returns shared 500 errors for catalog failures', async () => {
     const catalog = createCatalog();
     catalog.list = () => {

@@ -16,9 +16,12 @@ import { createLearningWorker, type LearningWorker } from './learning-worker';
 import { renderSkillList } from './prompts';
 import {
   createSkillStore,
+  isValidSkillName,
   type SkillCatalogHub,
   type SkillStore,
   type SkillUsage,
+  SkillValidationError,
+  validateSkill,
 } from './skill-store';
 
 export const LEARNING_EXTENSION_ID = 'io.stagewise/learning';
@@ -74,6 +77,49 @@ class LearningExtension implements Extension {
       const detach = this.options.skillCatalog.attach({
         store: this.data.store,
         getUsage: (name) => this.getUsage(name),
+        update: async (name, patch) => {
+          if (!isValidSkillName(name)) return null;
+          const existing = this.data.store.get(name);
+          if (!existing) return null;
+          const next = {
+            ...existing,
+            description:
+              patch.description !== undefined
+                ? patch.description.trim()
+                : existing.description,
+            body: patch.body !== undefined ? patch.body.trim() : existing.body,
+          };
+          const reason = validateSkill(next);
+          if (reason) throw new SkillValidationError(reason);
+          await this.data.store.write(next);
+          const at = new Date().toISOString();
+          await this.data.state.update((draft) => {
+            const entry = (Object.hasOwn(draft.skills, name)
+              ? draft.skills[name]
+              : undefined) ?? {
+              createdAt: at,
+              updatedAt: at,
+              lastReadAt: null,
+              readCount: 0,
+              sourceEpisodes: [],
+              createdEpisode: draft.processedEpisodeCount,
+              lastReadEpisode: null,
+            };
+            draft.skills[name] = entry;
+            entry.updatedAt = at;
+            entry.updatedEpisode = draft.processedEpisodeCount;
+            entry.userEdited = true;
+          });
+          return { ...next, origin: 'learned' as const };
+        },
+        delete: async (name) => {
+          if (!this.data.store.get(name)) return false;
+          await this.data.store.delete(name);
+          await this.data.state.update((draft) => {
+            delete draft.skills[name];
+          });
+          return true;
+        },
       });
       this.worker = worker;
       this.detachCatalog = () => {
@@ -165,6 +211,7 @@ class LearningExtension implements Extension {
       lastReadAt: entry.lastReadAt,
       readCount: entry.readCount,
       sourceEpisodes: [...entry.sourceEpisodes],
+      userEdited: entry.userEdited,
     };
   }
 

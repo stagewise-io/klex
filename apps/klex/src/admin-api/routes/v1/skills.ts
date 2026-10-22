@@ -4,12 +4,15 @@ import type {
   CatalogSkill,
   SkillCatalog,
 } from '@/session/chat/extensions/learning/skill-store';
+import { SkillValidationError } from '@/session/chat/extensions/learning/skill-store';
 
 import {
+  deleteSkillResponseSchema,
   errorResponseSchema,
   skillDetailSchema,
   skillListResponseSchema,
   skillNameParamsSchema,
+  updateSkillBodySchema,
 } from './schemas';
 
 export interface SkillsRouteDependencies {
@@ -138,7 +141,89 @@ function toSummary(catalog: SkillCatalog, skill: CatalogSkill) {
           updatedAt: usage.updatedAt,
           lastReadAt: usage.lastReadAt,
           readCount: usage.readCount,
+          userEdited: usage.userEdited,
         }
       : {}),
+  };
+}
+
+export const updateSkillRoute = createRoute({
+  method: 'patch',
+  path: '/v1/skills/{name}',
+  tags: ['Skills'],
+  summary: 'Edit a learned skill',
+  request: {
+    params: skillNameParamsSchema,
+    body: {
+      required: true,
+      content: { 'application/json': { schema: updateSkillBodySchema } },
+    },
+  },
+  responses: {
+    ...getSkillRoute.responses,
+    400: {
+      description: 'Invalid skill edit',
+      content: { 'application/json': { schema: errorResponseSchema } },
+    },
+  },
+});
+
+export function updateSkill(
+  deps: SkillsRouteDependencies,
+): RouteHandler<typeof updateSkillRoute> {
+  return async (c) => {
+    if (!deps.skillCatalog.isAvailable()) return c.json(NOT_RUNNING, 503);
+    const { name } = c.req.valid('param');
+    try {
+      const skill = await deps.skillCatalog.update(name, c.req.valid('json'));
+      if (!skill)
+        return c.json(
+          { error: `Skill "${name}" not found`, code: 'not_found' },
+          404,
+        );
+      const usage = deps.skillCatalog.getUsage(skill.name);
+      return c.json(
+        {
+          ...toSummary(deps.skillCatalog, skill),
+          body: skill.body,
+          ...(usage ? { sourceEpisodes: [...usage.sourceEpisodes] } : {}),
+        },
+        200,
+      );
+    } catch (error) {
+      if (error instanceof SkillValidationError)
+        return c.json({ error: error.message, code: 'validation_failed' }, 400);
+      throw error;
+    }
+  };
+}
+
+export const deleteSkillRoute = createRoute({
+  method: 'delete',
+  path: '/v1/skills/{name}',
+  tags: ['Skills'],
+  summary: 'Delete a learned skill',
+  request: { params: skillNameParamsSchema },
+  responses: {
+    ...getSkillRoute.responses,
+    200: {
+      description: 'Skill deleted',
+      content: { 'application/json': { schema: deleteSkillResponseSchema } },
+    },
+  },
+});
+
+export function deleteSkill(
+  deps: SkillsRouteDependencies,
+): RouteHandler<typeof deleteSkillRoute> {
+  return async (c) => {
+    if (!deps.skillCatalog.isAvailable()) return c.json(NOT_RUNNING, 503);
+    const { name } = c.req.valid('param');
+    if (!(await deps.skillCatalog.delete(name)))
+      return c.json(
+        { error: `Skill "${name}" not found`, code: 'not_found' },
+        404,
+      );
+    return c.json({ deleted: true as const, name }, 200);
   };
 }

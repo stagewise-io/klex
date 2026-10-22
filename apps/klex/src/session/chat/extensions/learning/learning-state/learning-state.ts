@@ -18,7 +18,7 @@ const isoTimestamp = z
     message: 'Timestamp must be a valid ISO 8601 datetime',
   });
 
-const skillStateSchema = z
+const legacySkillStateSchema = z
   .object({
     createdAt: isoTimestamp,
     updatedAt: isoTimestamp,
@@ -34,7 +34,7 @@ const learningStatePayloadSchema = z
     episodeFailures: z.record(z.string(), z.number().int().nonnegative()),
     changedRunsSinceConsolidation: z.number().int().nonnegative(),
     lastConsolidationAt: isoTimestamp.nullable(),
-    skills: z.record(z.string(), skillStateSchema),
+    skills: z.record(z.string(), legacySkillStateSchema),
   })
   .passthrough();
 
@@ -42,6 +42,9 @@ const activity = z.number().int().nonnegative();
 const deferredSchema = z
   .object({ id: z.string(), after: z.string(), attempts: activity })
   .passthrough();
+const skillStateSchema = legacySkillStateSchema.extend({
+  userEdited: z.boolean().default(false),
+});
 const activitySkillSchema = skillStateSchema.extend({
   createdEpisode: activity,
   updatedEpisode: activity,
@@ -76,8 +79,8 @@ export const LEARNING_STATE_STORE_DEFINITION: JsonStoreDefinition = {
   relativePath: 'extensions/io.stagewise/learning/state.json',
   required: false,
   schemaVersion: 2,
-  compatibilityVersion: 1,
-  minimumKlexVersion: '0.14.0',
+  compatibilityVersion: 2,
+  minimumKlexVersion: '0.24.0',
   versions: [
     { version: 1, schema: learningStatePayloadSchema },
     { version: 2, schema: activityStateSchema },
@@ -110,6 +113,7 @@ export const LEARNING_STATE_STORE_DEFINITION: JsonStoreDefinition = {
 };
 
 export interface SkillState {
+  userEdited?: boolean;
   createdAt: string;
   updatedAt: string;
   lastReadAt: string | null;
@@ -194,6 +198,7 @@ class LearningStateModule implements LearningState {
       const next = this.get();
       mutate(next);
       for (const entry of Object.values(next.skills)) {
+        entry.userEdited ??= false;
         entry.createdEpisode ??= next.processedEpisodeCount;
         entry.updatedEpisode ??= next.processedEpisodeCount;
         entry.lastReadEpisode ??= null;

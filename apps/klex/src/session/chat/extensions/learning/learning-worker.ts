@@ -486,6 +486,7 @@ class LearningWorkerModule implements LearningWorker {
     const { accepted, rejected } = validateOperations(
       operations,
       store.list().map((skill) => skill.name),
+      sourceEpisode === null ? this.protectedNames() : undefined,
     );
     for (const { operation, reason } of rejected) {
       logger.debug(
@@ -640,6 +641,7 @@ class LearningWorkerModule implements LearningWorker {
       evidence: investigation.evidence,
       getExistingNames: () => store.list().map((skill) => skill.name),
       allowDefer: false,
+      protectedNames: this.protectedNames(),
       allowCreate: false,
       signal: controller.signal,
       persist: async (batch) => {
@@ -772,6 +774,8 @@ class LearningWorkerModule implements LearningWorker {
       .map((skill) => skill.name)
       .sort(
         (left, right) =>
+          Number(usage[left]?.userEdited === true) -
+            Number(usage[right]?.userEdited === true) ||
           lastUse(left) - lastUse(right) ||
           (lastUse(left) === 0 && lastUse(right) === 0
             ? historicalUse(left) - historicalUse(right)
@@ -787,6 +791,12 @@ class LearningWorkerModule implements LearningWorker {
       await this.deleteSkill(name);
       logger.info({ skill: name }, 'Evicted least-recently-used skill');
     }
+  }
+
+  private protectedNames(): string[] {
+    return Object.entries(this.options.state.get().skills)
+      .filter(([, usage]) => usage.userEdited === true)
+      .map(([name]) => name);
   }
 }
 
@@ -842,6 +852,7 @@ function recordOperation(
     .slice(-MAX_SOURCE_EPISODES);
   draft.skills[operation.name] = {
     ...existing,
+    userEdited: existing?.userEdited ?? false,
     createdAt: existing?.createdAt ?? at,
     updatedAt: at,
     lastReadAt: existing?.lastReadAt ?? null,

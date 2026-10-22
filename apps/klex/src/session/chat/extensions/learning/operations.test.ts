@@ -52,6 +52,33 @@ describe('learning submission schema', () => {
 });
 
 describe('validateOperations', () => {
+  it('protects edits, deletions and merge sources only during consolidation', () => {
+    const operations = learningSubmissionSchema.parse({
+      operations: [
+        { ...create, op: 'update' },
+        { op: 'delete', name: create.name, reason: 'merge' },
+        {
+          ...create,
+          op: 'update',
+          name: 'survivor',
+          mergedFrom: [create.name],
+        },
+      ],
+    }).operations;
+    const result = validateOperations(
+      operations,
+      [create.name, 'survivor'],
+      [create.name],
+    );
+    expect(result.accepted).toEqual([]);
+    expect(result.rejected).toHaveLength(3);
+    expect(
+      result.rejected.every(({ reason }) => reason.includes('user-edited')),
+    ).toBe(true);
+    expect(
+      validateOperations(operations, [create.name, 'survivor']).rejected,
+    ).toEqual([]);
+  });
   it('applies the rejection rules', () => {
     const { accepted, rejected } = validateOperations(
       [

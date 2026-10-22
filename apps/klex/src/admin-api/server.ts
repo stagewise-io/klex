@@ -21,6 +21,10 @@ import {
   getCloudStatusRoute,
 } from './routes/v1/cloud';
 import {
+  listEpisodeSummaries,
+  listEpisodeSummariesRoute,
+} from './routes/v1/episode-summaries';
+import {
   createGodMessage,
   createGodMessageRoute,
   getGodMessages,
@@ -30,10 +34,6 @@ import {
   resetGodSession,
   resetGodSessionRoute,
 } from './routes/v1/god-messages';
-import {
-  listEpisodeSummaries,
-  listEpisodeSummariesRoute,
-} from './routes/v1/episode-summaries';
 import { getHealth, healthRoute } from './routes/v1/health';
 import {
   getIntrospectionPathHandler,
@@ -112,10 +112,14 @@ import {
   patchModelSelectionRoute,
 } from './routes/v1/settings';
 import {
+  deleteSkill,
+  deleteSkillRoute,
   getSkill,
   getSkillRoute,
   listSkills,
   listSkillsRoute,
+  updateSkill,
+  updateSkillRoute,
 } from './routes/v1/skills';
 import { getUsage, getUsageRoute } from './routes/v1/usage';
 
@@ -187,6 +191,8 @@ export function createAdminApp(deps: AdminAppDependencies) {
     .openapi(getUsageRoute, getUsage(deps))
     .openapi(listSkillsRoute, listSkills(deps))
     .openapi(getSkillRoute, getSkill(deps))
+    .openapi(updateSkillRoute, updateSkill(deps))
+    .openapi(deleteSkillRoute, deleteSkill(deps))
     .openapi(listEpisodeSummariesRoute, listEpisodeSummaries(deps))
     .openapi(getProviderTypesRoute, getProviderTypes(deps))
     .openapi(canAddProviderRoute, canAddProvider(deps))

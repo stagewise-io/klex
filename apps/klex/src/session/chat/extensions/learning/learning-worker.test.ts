@@ -180,6 +180,152 @@ async function harness(feed: EpisodeFeed) {
 }
 
 describe('learning worker', () => {
+  it.each(['update', 'delete', 'merge'] as const)(
+    'rejects consolidation %s of a user-edited skill',
+    async (kind) => {
+      const { worker, store, state, runChild } = await harness(fakeFeed(0));
+      for (const name of ['edited', 'automatic'])
+        await store.write({
+          name,
+          description: 'Original.',
+          body: 'Original.',
+        });
+      await state.update((draft) => {
+        draft.pendingChangeWeight = CONSOLIDATE_CHANGE_WEIGHT;
+        draft.skills.edited = {
+          createdAt: '2026-10-01T00:00:00.000Z',
+          updatedAt: '2026-10-01T00:00:00.000Z',
+          lastReadAt: null,
+          readCount: 0,
+          sourceEpisodes: [],
+          userEdited: true,
+        };
+      });
+      runChild.mockImplementation(async (task) => {
+        expect(task.prompt).toContain('userEdited="true"');
+        const operation =
+          kind === 'delete'
+            ? { op: 'delete', name: 'edited', reason: 'obsolete' }
+            : {
+                op: 'update',
+                name: kind === 'merge' ? 'automatic' : 'edited',
+                description: 'Changed.',
+                body: 'Changed.',
+                ...(kind === 'merge' ? { mergedFrom: ['edited'] } : {}),
+              };
+        expect(
+          await submitFixture(
+            task,
+            JSON.stringify({ operations: [operation] }),
+          ),
+        ).toMatchObject({
+          status: 'rejected',
+          reason: expect.stringContaining('user-edited'),
+        });
+        return noSubmission();
+      });
+      await worker.runOnce();
+      expect(runChild).toHaveBeenCalledOnce();
+      expect(store.get('edited')?.body).toBe('Original.');
+      expect(store.get('automatic')?.body).toBe('Original.');
+    },
+  );
+
+  it('rechecks protection when the user edits during consolidation', async () => {
+    const { worker, store, state, runChild } = await harness(fakeFeed(0));
+    for (const name of ['edited', 'automatic'])
+      await store.write({ name, description: 'Original.', body: 'Original.' });
+    await state.update((draft) => {
+      draft.pendingChangeWeight = CONSOLIDATE_CHANGE_WEIGHT;
+    });
+    runChild.mockImplementation(async (task) => {
+      await state.update((draft) => {
+        draft.skills.edited = {
+          createdAt: '2026-10-01T00:00:00.000Z',
+          updatedAt: '2026-10-01T00:00:00.000Z',
+          lastReadAt: null,
+          readCount: 0,
+          sourceEpisodes: [],
+          userEdited: true,
+        };
+      });
+      expect(
+        await submitFixture(
+          task,
+          JSON.stringify({
+            operations: [{ op: 'delete', name: 'edited', reason: 'obsolete' }],
+          }),
+        ),
+      ).toMatchObject({ status: 'applied', applied: 0 });
+      return noSubmission();
+    });
+    await worker.runOnce();
+    expect(store.get('edited')).not.toBeNull();
+  });
+
+  it('keeps userEdited and provenance when extraction updates a skill', async () => {
+    const { worker, store, state, runChild } = await harness(fakeFeed(1));
+    await store.write({
+      name: 'edited',
+      description: 'Original.',
+      body: 'Original.',
+    });
+    await state.update((draft) => {
+      draft.skills.edited = {
+        createdAt: '2026-10-01T00:00:00.000Z',
+        updatedAt: '2026-10-01T00:00:00.000Z',
+        lastReadAt: null,
+        readCount: 3,
+        sourceEpisodes: ['old'],
+        userEdited: true,
+      };
+    });
+    runChild.mockResolvedValue(
+      ok(
+        JSON.stringify({
+          operations: [
+            {
+              op: 'update',
+              name: 'edited',
+              description: 'Changed.',
+              body: 'Changed.',
+            },
+          ],
+        }),
+      ),
+    );
+    await worker.runOnce();
+    expect(store.get('edited')?.body).toBe('Changed.');
+    expect(state.get().skills.edited).toMatchObject({
+      userEdited: true,
+      readCount: 3,
+      sourceEpisodes: expect.arrayContaining(['old', episodeId(0)]),
+    });
+  });
+
+  it('evicts automatic skills before older user-edited skills', async () => {
+    const { worker, store, state, runChild } = await harness(fakeFeed(0));
+    runChild.mockResolvedValue(noSubmission());
+    for (let index = 0; index <= MAX_SKILLS; index++) {
+      const name = `skill-${index}`;
+      await store.write({ name, description: 'Original.', body: 'Original.' });
+      await state.update((draft) => {
+        draft.skills[name] = {
+          createdAt: '2026-10-01T00:00:00.000Z',
+          updatedAt: '2026-10-01T00:00:00.000Z',
+          lastReadAt: null,
+          readCount: 0,
+          sourceEpisodes: [],
+          userEdited: index === 0,
+          updatedEpisode: index,
+        };
+      });
+    }
+    await worker.runOnce();
+    expect(store.list()).toHaveLength(MAX_SKILLS);
+    expect(store.get('skill-0')).not.toBeNull();
+    expect(store.get('skill-1')).toBeNull();
+  });
   it('creates an evidence-cited constructor skill without treating inherited properties as usage', async () => {
     const { worker, store, state, runChild, dataDir } = await harness(
       fakeFeed(1),

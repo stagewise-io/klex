@@ -11,6 +11,7 @@ import type { ModelCallLogger } from '@/model-call-logger';
 import type { ProviderRegistry } from '@/provider-registry';
 import type { EpisodeSummaryLog } from '@/session/chat/extensions/episode-summary/summary-log';
 import type { SkillCatalog } from '@/session/chat/extensions/learning/skill-store';
+import type { EpisodeFeed } from '@/session/chat/extensions/memory';
 import type { SessionHistory } from '@/session-history';
 
 import { createAdminApp } from './server';
@@ -27,6 +28,7 @@ export interface AdminApiDependencies {
   sessionHistory: SessionHistory;
   skillCatalog: SkillCatalog;
   episodeSummaryLog: EpisodeSummaryLog;
+  episodeFeed: EpisodeFeed;
   localPort: number | undefined;
   timezone: string;
 }
@@ -55,6 +57,7 @@ class AdminApiModule implements AdminApi {
       sessionHistory: SessionHistory;
       skillCatalog: SkillCatalog;
       episodeSummaryLog: EpisodeSummaryLog;
+      episodeFeed: EpisodeFeed;
       localPort: number | undefined;
       timezone: string;
     },
@@ -75,6 +78,7 @@ class AdminApiModule implements AdminApi {
       sessionHistory: this.deps.sessionHistory,
       skillCatalog: this.deps.skillCatalog,
       episodeSummaryLog: this.deps.episodeSummaryLog,
+      episodeFeed: this.deps.episodeFeed,
       logger: this.deps.logger,
       localPort: this.deps.localPort,
       timezone: this.deps.timezone,
@@ -139,6 +143,7 @@ export function createAdminApi(deps: AdminApiDependencies): AdminApi {
     sessionHistory: deps.sessionHistory,
     skillCatalog: deps.skillCatalog,
     episodeSummaryLog: deps.episodeSummaryLog,
+    episodeFeed: deps.episodeFeed,
     localPort: deps.localPort,
     timezone: deps.timezone,
   });

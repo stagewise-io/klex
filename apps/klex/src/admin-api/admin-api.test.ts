@@ -11,6 +11,7 @@ import type { ModelCallLogger } from '@/model-call-logger';
 import type { ProviderRegistry } from '@/provider-registry';
 import type { EpisodeSummaryLog } from '@/session/chat/extensions/episode-summary';
 import type { SkillCatalog } from '@/session/chat/extensions/learning/skill-store';
+import { createEpisodeFeed } from '@/session/chat/extensions/memory/episodes/episode-feed';
 import type { SessionHistory } from '@/session-history';
 
 import { type AdminApi, createAdminApi } from './admin-api';
@@ -87,6 +88,7 @@ describe('AdminApi', () => {
         sessionHistory,
         skillCatalog,
         episodeSummaryLog,
+        episodeFeed: createEpisodeFeed(),
         localPort: 19999,
         timezone: 'UTC',
       });
@@ -122,6 +124,7 @@ describe('AdminApi', () => {
         sessionHistory,
         skillCatalog,
         episodeSummaryLog,
+        episodeFeed: createEpisodeFeed(),
         localPort: undefined,
         timezone: 'UTC',
       });

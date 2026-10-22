@@ -166,7 +166,7 @@ const recordSchema = z.discriminatedUnion('kind', [
   }),
 ]);
 
-const recordEntrySchema = z.object({
+export const recordEntrySchema = z.object({
   kind: z.literal('record'),
   v: z.number().int().positive(),
   at: z.iso.datetime(),

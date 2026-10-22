@@ -643,6 +643,7 @@ async function main(): Promise<void> {
       sessionHistory,
       skillCatalog,
       episodeSummaryLog,
+      episodeFeed,
       localPort: cli.dangerousLocalAdminApiPort,
       timezone,
     });

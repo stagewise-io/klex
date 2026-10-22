@@ -2,7 +2,11 @@ import { readdir } from 'node:fs/promises';
 import { join, relative, sep } from 'node:path';
 
 import type { EpisodeStoreState } from './episode-files';
-import { parseEpisodeRecordLine, renderEpisodeText } from './episode-format';
+import {
+  type EpisodeRecordEntry,
+  parseEpisodeRecordLine,
+  renderEpisodeText,
+} from './episode-format';
 import {
   type EpisodePage,
   EpisodePageReadError,
@@ -30,6 +34,7 @@ export interface CompletedEpisode extends EpisodeRef {
   startedAt: string;
   endedAt: string;
   recordCount: number;
+  records: EpisodeRecordEntry[];
   /** Line-format text with `HH:mm` timestamps, as `renderEpisodeText` renders it. */
   text: string;
 }
@@ -337,20 +342,21 @@ class EpisodeFeedModule implements EpisodeFeedHub {
       return null;
     let startedAt: string | null = null;
     let endedAt: string | null = null;
-    let recordCount = 0;
+    const records: EpisodeRecordEntry[] = [];
     for (const line of content.split(/\r?\n/)) {
       const entry = parseEpisodeRecordLine(line);
       if (!entry) continue;
       startedAt ??= entry.at;
       endedAt = entry.at;
-      recordCount += 1;
+      records.push(entry);
     }
     if (!startedAt || !endedAt) return null;
     return {
       ...ref,
       startedAt,
       endedAt,
-      recordCount,
+      recordCount: records.length,
+      records,
       text: renderEpisodeText(content, { timestamps: true }),
     };
   }

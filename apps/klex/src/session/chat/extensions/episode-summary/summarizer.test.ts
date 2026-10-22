@@ -33,6 +33,7 @@ function episode(id: string, recordCount = 3): CompletedEpisode {
     startedAt: `2026-10-01T10:0${id.at(-1)}:00.000Z`,
     endedAt: `2026-10-01T10:0${id.at(-1)}:30.000Z`,
     recordCount,
+    records: [],
     text: `text of ${id}`,
   };
 }

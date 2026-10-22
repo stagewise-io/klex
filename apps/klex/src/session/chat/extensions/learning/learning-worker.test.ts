@@ -114,6 +114,7 @@ function fakeFeed(
         startedAt: '2026-10-01T10:00:00.000Z',
         endedAt: '2026-10-01T10:30:00.000Z',
         recordCount: 1,
+        records: [],
         text: textOf(index),
       };
     },

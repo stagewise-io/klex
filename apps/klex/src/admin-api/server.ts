@@ -11,6 +11,7 @@ import type { ModelCallLogger } from '@/model-call-logger';
 import type { ProviderRegistry } from '@/provider-registry';
 import type { EpisodeSummaryLog } from '@/session/chat/extensions/episode-summary/summary-log';
 import type { SkillCatalog } from '@/session/chat/extensions/learning/skill-store';
+import type { EpisodeFeed } from '@/session/chat/extensions/memory';
 import type { SessionHistory } from '@/session-history';
 
 import { createErrorHandler, notFoundHandler, validationHook } from './errors';
@@ -21,6 +22,14 @@ import {
   getCloudStatusRoute,
 } from './routes/v1/cloud';
 import {
+  listEpisodeSummaries,
+  listEpisodeSummariesRoute,
+} from './routes/v1/episode-summaries';
+import {
+  getEpisodeTrace,
+  getEpisodeTraceRoute,
+} from './routes/v1/episode-trace';
+import {
   createGodMessage,
   createGodMessageRoute,
   getGodMessages,
@@ -30,10 +39,6 @@ import {
   resetGodSession,
   resetGodSessionRoute,
 } from './routes/v1/god-messages';
-import {
-  listEpisodeSummaries,
-  listEpisodeSummariesRoute,
-} from './routes/v1/episode-summaries';
 import { getHealth, healthRoute } from './routes/v1/health';
 import {
   getIntrospectionPathHandler,
@@ -130,6 +135,7 @@ export interface AdminAppDependencies {
   sessionHistory: SessionHistory;
   skillCatalog: SkillCatalog;
   episodeSummaryLog: EpisodeSummaryLog;
+  episodeFeed: EpisodeFeed;
   logger: ModuleLogger;
   localPort: number | undefined;
   timezone: string;
@@ -188,6 +194,7 @@ export function createAdminApp(deps: AdminAppDependencies) {
     .openapi(listSkillsRoute, listSkills(deps))
     .openapi(getSkillRoute, getSkill(deps))
     .openapi(listEpisodeSummariesRoute, listEpisodeSummaries(deps))
+    .openapi(getEpisodeTraceRoute, getEpisodeTrace(deps))
     .openapi(getProviderTypesRoute, getProviderTypes(deps))
     .openapi(canAddProviderRoute, canAddProvider(deps))
     .openapi(getProvidersRoute, getProviders(deps))

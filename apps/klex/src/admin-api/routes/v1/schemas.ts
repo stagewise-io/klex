@@ -179,15 +179,16 @@ const mcpServerAuthorizationStartedSchema = z
   })
   .openapi('McpServerAuthorizationStarted');
 
-// Not `.strict()`: providers add benign extras to the redirect (`scope`, `iss`,
-// `error_uri`), and rejecting the relayed callback with a 400 would leave the
-// parked authorization to time out. Unknown keys are stripped instead.
+// Preserve issuer and error details for SDK callback validation. Other provider
+// extras such as `scope` are stripped rather than rejecting the callback.
 const oauthCallbackBodySchema = z
   .object({
     state: z.string().min(1),
     code: z.string().min(1).optional(),
     error: z.string().min(1).optional(),
     error_description: z.string().optional(),
+    iss: z.string().optional(),
+    error_uri: z.string().optional(),
   })
   .openapi('OAuthCallbackBody');
 

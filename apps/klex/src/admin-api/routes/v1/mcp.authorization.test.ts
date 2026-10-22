@@ -174,6 +174,8 @@ describe('POST /v1/mcp-oauth/callback', () => {
       post('/v1/mcp-oauth/callback', {
         state: 'secret-state',
         code: 'auth-code',
+        iss: 'https://auth.qonto.example/',
+        scope: 'read',
       }),
     );
 
@@ -183,6 +185,8 @@ describe('POST /v1/mcp-oauth/callback', () => {
       .calls[0] as unknown as [string, URLSearchParams];
     expect(state).toBe('secret-state');
     expect(params.get('code')).toBe('auth-code');
+    expect(params.get('iss')).toBe('https://auth.qonto.example/');
+    expect(params.has('scope')).toBe(false);
   });
 
   it('forwards provider errors', async () => {
@@ -194,6 +198,8 @@ describe('POST /v1/mcp-oauth/callback', () => {
         state: 'secret-state',
         error: 'access_denied',
         error_description: 'user said no',
+        iss: 'https://auth.qonto.example/',
+        error_uri: 'https://auth.qonto.example/errors/access-denied',
       }),
     );
 
@@ -204,7 +210,29 @@ describe('POST /v1/mcp-oauth/callback', () => {
     ];
     expect(params.get('error')).toBe('access_denied');
     expect(params.get('error_description')).toBe('user said no');
+    expect(params.get('iss')).toBe('https://auth.qonto.example/');
+    expect(params.get('error_uri')).toBe(
+      'https://auth.qonto.example/errors/access-denied',
+    );
   });
+
+  it.each(['iss', 'error_uri'])(
+    'rejects a non-string %s before delivering the callback',
+    async (field) => {
+      const completeAuthorizationSpy = vi.fn(() => 'accepted' as const);
+      const response = await app(
+        makeDeps({ completeAuthorization: completeAuthorizationSpy }),
+      ).request(
+        post('/v1/mcp-oauth/callback', {
+          state: 'secret-state',
+          code: 'auth-code',
+          [field]: 42,
+        }),
+      );
+      expect(response.status).toBe(400);
+      expect(completeAuthorizationSpy).not.toHaveBeenCalled();
+    },
+  );
 
   it('answers an unknown, expired or replayed state with 404', async () => {
     const response = await app(

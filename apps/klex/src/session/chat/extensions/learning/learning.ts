@@ -11,7 +11,11 @@ import type {
   ExtensionDeps,
   ExtensionFactory,
 } from '../extension-api';
-import { createLearningState, type LearningState } from './learning-state';
+import {
+  createLearningState,
+  type LearningState,
+  type SkillState,
+} from './learning-state';
 import { createLearningWorker, type LearningWorker } from './learning-worker';
 import { renderSkillList } from './prompts';
 import {
@@ -91,9 +95,12 @@ class LearningExtension implements Extension {
           };
           const reason = validateSkill(next);
           if (reason) throw new SkillValidationError(reason);
-          await this.data.store.write(next);
           const at = new Date().toISOString();
+          let previousEntry: SkillState | undefined;
           await this.data.state.update((draft) => {
+            previousEntry = Object.hasOwn(draft.skills, name)
+              ? structuredClone(draft.skills[name])
+              : undefined;
             const entry = (Object.hasOwn(draft.skills, name)
               ? draft.skills[name]
               : undefined) ?? {
@@ -110,6 +117,20 @@ class LearningExtension implements Extension {
             entry.updatedEpisode = draft.processedEpisodeCount;
             entry.userEdited = true;
           });
+          try {
+            await this.data.store.write(next);
+          } catch (error) {
+            await this.data.state
+              .update((draft) => {
+                if (previousEntry) {
+                  draft.skills[name] = previousEntry;
+                } else {
+                  delete draft.skills[name];
+                }
+              })
+              .catch(() => undefined);
+            throw error;
+          }
           return { ...next, origin: 'learned' as const };
         },
         delete: async (name) => {

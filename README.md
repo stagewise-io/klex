@@ -2,12 +2,32 @@
   <source media="(prefers-color-scheme: dark)" srcset="assets/brand/wordmark-dark.png">
   <img src="assets/brand/wordmark.png" alt="Klex" width="240">
 </picture>
+<br></br>
 
-An isolated agent that excels at memory, self-improvement, and efficient orchestration.
+
+Isolated, observable, autonomous bots that **excel at memory and self-improvement**. Tools, machines and coding environments are connected via MCP.
 
 ## Installation
 
-macOS and Linux:
+<details open>
+<summary>Install & Connect to Klex Cloud:</summary>
+
+<br/>You can self-host a Klex Bot and connect it to the Klex Cloud.
+
+**Start here:** https://cloud.klex.bot and locally install the Klex Bot when prompted.
+
+*Why connect it to cloud?*
+
+The cloud provides OOTB app-integrations with **bot-owned identities** and **push-notification support** (E.g. *@My-Bot-123* in Slack which wakes up on a DM or @mention). **Your local Klex Bot still owns all the data** and API keys for inference providers.
+
+Without the cloud, you need to set up reverse-proxies like tailscale or ngrok to receive webhooks from integrations that should wake up your bot. Most of the integrations only exist in cloud, though!
+</details>
+
+
+<details>
+<summary>Or install just the local Klex Bot:</summary>
+
+<br/>macOS and Linux:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/stagewise-io/klex/main/install.sh | sh
@@ -19,135 +39,38 @@ Windows (PowerShell):
 irm https://raw.githubusercontent.com/stagewise-io/klex/main/install.ps1 | iex
 ```
 
-The default installer resolves the dedicated `channel-stable` manifest; nightly
-and exact-version installs use their own release URLs. It verifies the archive's
-SHA-256 and installs into a versioned directory behind a `current` link, so
-upgrades never overwrite a running install. It then runs `klex --verify-native` to prove the
-native runtime dependencies actually load on your machine. It never uses `sudo`
-and writes nothing outside your home directory.
+After installation, you can add models, providers and mcp servers via the Terminal UI or configure their entries in `{data-directory}/config.json` directly. 
 
-Supported: macOS on Apple Silicon and Intel, glibc-based Linux on ARM64 and x64,
-Windows on x64. Windows ARM64 gets the x64 build under emulation. musl-based
-Linux (Alpine) is not supported and is detected rather than half-installed.
+Sending messages to the bot requires a connected MCP server with support for `mcp-extension-push-notifications`.
+</details>
 
-### Self-update
+## Principles 
 
-Installer-managed interactive sessions check their installed channel for a newer
-release at startup and then at a bounded interval. If one is available, the TUI
-shows a persistent banner: press `u` to **update and restart**, or `n` to hide
-that version for the rest of the run. The Usage screen uses `g`.
-
-The check is opportunistic. Offline, unavailable, stale, and malformed release
-metadata does not interrupt startup. Self-update is disabled for development
-runs, manually extracted archives, malformed or moved installations, unsupported
-targets, and headless mode.
-
-An accepted update runs in the background. Klex downloads the installer from the
-exact release commit, invokes it non-interactively for the receipt's install root,
-and leaves PATH configuration untouched. The installer verifies the archive and
-native runtime before moving `current`; failures leave the active version usable.
-Only one install or uninstall transaction may operate on an install root at a
-time. On success, Klex closes active resources, releases the agent-directory lock,
-and starts the new executable through `current` with the original arguments,
-environment, working directory, and terminal streams. Update and restart aborts
-in-flight agent work; it is not a live handoff.
-
-After restart, the new binary acquires the agent-directory lock and validates all local data before services start. Required forward migrations run from a recovery checkpoint; a failed migration restores that checkpoint and aborts startup. An incompatible downgrade refuses to start without modifying data. Checkpoints are disaster recovery and may lose work created after they were taken; they are not a downgrade or history-merging mechanism.
-
-### Options
-
-| macOS and Linux | Windows | Meaning |
-|---|---|---|
-| `--version <x.y.z>` | `-Version <x.y.z>` | Install an exact version instead of the newest release. Also settable as `KLEX_VERSION` |
-| `--install-dir <path>` | `-InstallDir <path>` | Install root. Default: `${XDG_DATA_HOME:-~/.local/share}/klex`, or `%LOCALAPPDATA%\Klex`. Also settable as `KLEX_INSTALL_DIR` |
-| `--no-modify-path` | `-NoModifyPath` | Leave shell startup files and the user `PATH` untouched |
-| `--uninstall` | `-Uninstall` | Remove the installation |
-| `KLEX_HOME` | `KLEX_HOME` | Agent data root. Default: `~/.klex` |
-
-A piped script receives no arguments, so options have to be handed to the shell
-itself. `KLEX_VERSION=... curl ...` sets the variable for `curl`, not for the
-installer:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/stagewise-io/klex/main/install.sh | sh -s -- --version 0.1.1
-```
-
-The Windows script takes PowerShell-style parameters, and a piped script cannot
-take parameters at all, so pass them through a script block:
-
-```powershell
-& ([scriptblock]::Create((irm https://raw.githubusercontent.com/stagewise-io/klex/main/install.ps1))) -NoModifyPath
-```
-
-### Uninstalling
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/stagewise-io/klex/main/install.sh | sh -s -- --uninstall
-```
-
-Uninstalling removes the program and its `PATH` entry. It deliberately leaves
-`KLEX_HOME` (`~/.klex` by default) in place, because that directory holds your
-configuration, credentials, enrollment state, and history. Delete it yourself if
-you want it gone.
-
-### Manual installation
-
-Download the archive for your operating system and architecture from
-[GitHub Releases](../../releases), verify it against the published checksum, and
-extract the complete directory. Klex ships as a relocatable directory because
-its executable loads native runtime dependencies from a sibling `node_modules`;
-copying only the executable out of it will not work.
-
-```bash
-./klex --help
-```
-
-```powershell
-.\klex.exe --help
-```
-
-Release operators should see [apps/klex/RELEASING.md](apps/klex/RELEASING.md).
-
-### Container image
-
-Each release also ships a headless image for `linux/arm64` and `linux/amd64`:
-
-```bash
-docker run -d --read-only --tmpfs /tmp -v klex-data:/data \
-  --stop-timeout 330 ghcr.io/stagewise-io/klex:stable
-```
-
-The volume needs `/data/agent/config.json` before the first start, and only one
-container may use a volume at a time. See
-[apps/klex/container/README.md](apps/klex/container/README.md) for the full
-contract.
+### A Klex Bot has one permanent session
+**All incoming messages enter the same durable default session**. Wherever you chat with the bot, it has the same context. Extensions can explicitly create isolated child sessions when a background-task needs separate context, tools, or model behavior.
 
 
-## Klex is computer-agnostic
-
-By default, Klex only has access to one dedicated, isolated `data-directory` on the machine it's running on. Every other connection to outside environments and machines is established via MCP and an MCP-Extension:
-
-- Talking to you via Telegram, Discord or Slack
-- Research on the Internet using Web-Search
-- Orchestrating Claude Code agents on another remote VM 
-- Updating an Excel-Sheet on your Laptop
-- ...
-
-This allows interoperability between various environments, machines and tools you're working with that do not run on the same machine as Klex. Connecting your local Chrome Browser to a remote Klex is just a few clicks; Provisioning a fresh Windows VM to let Klex run platform-specific code can be done in a minute without redeployment; Or letting Klex fix your remote dev server is possible without spawning the Klex on the same machine.
+### Klex bots are *mcp-native*
+The core agent loop is built around mcp-support. **Incoming messages are sent via mcp servers** that implement **`mcp-extension-push-notifications`**. **Realtime calling** is implemented via **`mcp-extension-realtime-media`**.
 
 
-## Klex is self-improving:
-After every task, Klex will reflect on its actions - and update its internal understanding and memory to do the task more efficiently the next time.
+### Klex bots can't touch their host computer
+
+During runtime, the Klex Bot process **only accesses data in one dedicated, isolated `data-directory`** on its host machine. Connections to outside environments and machines are **established via MCP**. By implementing MCP extensions, **MCP servers can wake-up a Klex Bot (`mcp-extension-push-notifications`) or initiate a voice- and video-call (`mcp-extension-realtime-media`).**
 
 
-## Klex presents one durable agent
-Incoming messages from every connected channel enter the same durable default session. Model chats remain private execution units rather than user-managed conversations. Extensions can explicitly create isolated child sessions when a task needs separate context, tools, or model behavior.
+### Klex bots learn and self-improve (and keep their learnings organized)
+After every unit of work, **a Klex Bot will reflect** on its actions and conversations - it will **create and organize learnings as skills** to do the task more efficiently the next time and remember preferences.
 
 
-### Klex is model-aware:
-Klex knows about its available models and their tradeoffs:
-- Just need to query some info -> Klex will use a flashy model to reduce latency
-- Need to do market research -> Klex will use smart, available models to improve accuracy
+### You can voice-call Klex Bots
+Voice conversations via latest realtime models are **integrated out of the box**. `mcp-extension-realtime-media` lets you initiate a call via MCP - and swill make the bot switch to an agreed-upon realtime protocol (so far, only `LiveKit` is supported).
+
+
+## Community
+
+- [Join the Discord](https://discord.gg/EWXuzvBj6B)
+
 
 ## License
 

@@ -2,6 +2,20 @@
 
 All notable Klex changes are documented here.
 
+## 0.24.0 (2026-10-22)
+
+### Features
+
+- reduce --auto-update check interval to 5m (f1aaa8f)
+
+### Bug Fixes
+
+- harden core system prompt with immediate acknowledgment rule and fix Ground rules typo (21de7df)
+
+### Other Changes
+
+- update README (202b429)
+
 ## 0.23.0 (2026-10-21)
 
 ### Features

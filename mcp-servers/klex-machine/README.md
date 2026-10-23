@@ -42,11 +42,13 @@ Configuration precedence is CLI flag, environment variable, then default:
 
 ## Machine facts reported to Cloud
 
-Enrolled and managed modes report static facts on every authenticated Cloud connection attempt, including reconnect. Local mode and enrollment with `--no-serve` do not report. Collection uses Node OS and filesystem APIs, has a one-second async probe budget, and never invokes MCP tools or a shell.
+Enrolled and managed modes report static facts on every authenticated Cloud connection attempt, including reconnect. Local mode and enrollment with `--no-serve` do not report. Collection uses Node OS/filesystem APIs and fixed system-information commands, with a one-second async probe budget. It never invokes MCP tools or interpolates user input into commands.
 
 Reports include daemon version, OS platform/architecture, kernel release and OS name, CPU model, logical processors available to the process, and runtime-visible total RAM. Hostname, configured workspace path and total size of the filesystem containing that workspace are included by default. RAM is not verified provider entitlement; disk size is not free space or the sum of attached disks. Unavailable optional probes are omitted. Linux distribution names come from `PRETTY_NAME` in os-release, parsed as data.
 
-These are untrusted display-only values exposed through Cloud's existing organization-scoped machine API. No UI changes are included. Facts do not change authorization, quotas, health, idle timers or wake decisions. Cloud retains last-known facts during disconnect or idle.
+The optional `host.deviceType` is `laptop`, `desktop`, `server`, `vm` or `container`. macOS uses System Information model names, Windows queries CIM model/chassis information, and Linux checks container/virtualization signals before DMI chassis data. Unknown types are omitted. Queries have bounded runtime/output, share the collection budget, and do not block authentication if unavailable. No serial numbers or raw system-information output are transmitted. Deploy Cloud's extended strict schema before releasing daemons with this field; older strict validators reject extended facts without rejecting the connection.
+
+These are untrusted display-only values exposed through Cloud's existing organization-scoped machine API. Facts do not change authorization, quotas, health, idle timers or wake decisions. Cloud retains last-known facts during disconnect or idle.
 
 To omit hostname, workspace path and disk size, use:
 
@@ -55,7 +57,7 @@ klex-machine --omit-host-details
 KLEX_MACHINE_OMIT_HOST_DETAILS=1 klex-machine
 ```
 
-The environment setting accepts `1`/`true` or `0`/`false`, case-insensitive. CLI flags take precedence; `--no-omit-host-details` overrides an enabled environment setting. Omission skips hostname and disk probes. A valid report replaces the entire stored document, so previously retained host details disappear only after Cloud accepts an omitted-host report. A disconnected machine or a dropped report does not immediately clear them.
+The environment setting accepts `1`/`true` or `0`/`false`, case-insensitive. CLI flags take precedence; `--no-omit-host-details` overrides an enabled environment setting. Omission skips hostname, disk and device-type probes. A valid report replaces the entire stored document, so previously retained host details disappear only after Cloud accepts an omitted-host report. A disconnected machine or a dropped report does not immediately clear them.
 
 The WebSocket upgrade header `x-klex-machine-facts` carries UTF-8 JSON as unpadded base64url, capped at 4096 bytes. The v1 contract has `v`, `machineVersion`, `os`, `cpu`, `memory` and optional `host`; strings are bounded and numeric values are positive safe integers. Collection and storage are best effort. Old Cloud deployments ignore the extra header; old daemons leave retained Cloud facts untouched. Ship Cloud's additive migration and proxy/API support before releasing this daemon and updating managed images. No SDK release is required.
 

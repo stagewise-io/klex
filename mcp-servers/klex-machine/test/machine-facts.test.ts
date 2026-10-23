@@ -21,6 +21,7 @@ function probes(
     hostname: () => 'work-host',
     readOsRelease: async () => 'PRETTY_NAME="Ubuntu 24.04"',
     volumeBytes: async () => 100n * 1024n ** 3n,
+    deviceType: async () => undefined,
     ...overrides,
   };
 }
@@ -95,13 +96,52 @@ describe('machine facts', () => {
   it('omits host details without probing hostname or volume', async () => {
     const hostname = vi.fn();
     const volumeBytes = vi.fn();
+    const deviceType = vi.fn();
     const facts = await createMachineFactsCollector(
       { ...options, omitHostDetails: true },
-      probes({ hostname, volumeBytes }),
+      probes({ hostname, volumeBytes, deviceType }),
     ).collect();
     expect(facts).not.toHaveProperty('host');
     expect(hostname).not.toHaveBeenCalled();
     expect(volumeBytes).not.toHaveBeenCalled();
+    expect(deviceType).not.toHaveBeenCalled();
+  });
+
+  it('includes the detected device type and tolerates a failed probe', async () => {
+    const deviceType = vi
+      .fn<MachineFactsProbes['deviceType']>()
+      .mockResolvedValueOnce('laptop')
+      .mockRejectedValueOnce(new Error('Unavailable'));
+    const collector = createMachineFactsCollector(
+      options,
+      probes({ deviceType }),
+    );
+    expect((await collector.collect()).host?.deviceType).toBe('laptop');
+    expect((await collector.collect()).host?.deviceType).toBeUndefined();
+  });
+
+  it('bounds a stalled device probe across reconnects and ignores its late result', async () => {
+    vi.useFakeTimers();
+    const pending = Promise.withResolvers<'laptop'>();
+    const deviceType = vi
+      .fn<MachineFactsProbes['deviceType']>()
+      .mockReturnValueOnce(pending.promise)
+      .mockResolvedValue('desktop');
+    const collector = createMachineFactsCollector(
+      options,
+      probes({ deviceType }),
+    );
+    const collecting = collector.collect();
+    await vi.advanceTimersByTimeAsync(1000);
+    const first = await collecting;
+    expect(first.host?.deviceType).toBeUndefined();
+    expect(deviceType.mock.calls[0]?.[0].aborted).toBe(true);
+    await collector.collect();
+    expect(deviceType).toHaveBeenCalledTimes(1);
+    pending.resolve('laptop');
+    await vi.advanceTimersByTimeAsync(0);
+    expect(first.host?.deviceType).toBeUndefined();
+    expect((await collector.collect()).host?.deviceType).toBe('desktop');
   });
 
   it('falls back to the second os-release file and treats input as data', async () => {

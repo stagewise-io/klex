@@ -136,12 +136,15 @@
   color: lch(43.074 1.65 272);
 }
 
+/* Keep the chips on one line and fade out the ones that don't fit; they
+   are decoration, so wrapping them would only crowd small previews. */
 .linear-issue-properties {
   gap: 6px;
   min-height: 24px;
   margin-top: auto;
-  flex-wrap: wrap;
+  overflow: hidden;
   white-space: nowrap;
+  mask-image: linear-gradient(to right, #000 calc(100% - 2.5rem), transparent);
 }
 
 .linear-issue-pill {

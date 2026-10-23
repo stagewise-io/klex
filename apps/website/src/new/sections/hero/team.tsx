@@ -238,6 +238,9 @@ function HeroBot({
   const trigger = useRef<HTMLButtonElement>(null);
   const card = useRef<HTMLDivElement>(null);
   const hoverTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Not every browser reports the pointer type on click, so keep it from
+  // pointerdown.
+  const pointer = useRef('');
   const profileId = `hero-profile-${bot.id}`;
   const clearHoverTimer = () => {
     if (hoverTimer.current) clearTimeout(hoverTimer.current);
@@ -249,17 +252,18 @@ function HeroBot({
     onProfile(bot.id, true);
   };
   const enterProfile = (pointerType: string) => {
-    if (pointerType === 'touch') return;
+    if (pointerType !== 'mouse') return;
     clearHoverTimer();
     if (!profileOpen) hoverTimer.current = setTimeout(openProfile, 100);
   };
   // Mouse users open the profile by hovering, so a click only selects the
-  // bot. Touch and keyboard clicks toggle it.
+  // bot and leaves a pending hover open alone. Touch, pen and keyboard clicks
+  // toggle it.
   const selectBot = (event: ReactMouseEvent) => {
-    clearHoverTimer();
     onSelect(bot.id);
-    if ((event.nativeEvent as PointerEvent).pointerType !== 'mouse')
-      onProfile(bot.id, !profileOpen);
+    if (event.detail > 0 && pointer.current === 'mouse') return;
+    clearHoverTimer();
+    onProfile(bot.id, !profileOpen);
   };
   const leaveProfile = () => {
     clearHoverTimer();
@@ -365,6 +369,9 @@ function HeroBot({
           aria-expanded={profileOpen}
           aria-controls={profileOpen ? profileId : undefined}
           aria-pressed={selected}
+          onPointerDown={(event) => {
+            pointer.current = event.pointerType;
+          }}
           onPointerEnter={(event) => enterProfile(event.pointerType)}
           onPointerLeave={leaveProfile}
           onClick={(event) => {
@@ -388,6 +395,9 @@ function HeroBot({
             aria-expanded={profileOpen}
             aria-controls={profileOpen ? profileId : undefined}
             aria-describedby={profileOpen ? `${profileId}-work` : undefined}
+            onPointerDown={(event) => {
+              pointer.current = event.pointerType;
+            }}
             onPointerEnter={(event) => enterProfile(event.pointerType)}
             onPointerLeave={leaveProfile}
             onFocus={(event) => {

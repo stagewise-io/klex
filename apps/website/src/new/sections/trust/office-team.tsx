@@ -29,6 +29,9 @@ function OfficeTeam({
 }) {
   const [active, setActive] = useState<number | null>(null);
   const hoverTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Not every browser reports the pointer type on click, so keep it from
+  // pointerdown.
+  const pointer = useRef('');
 
   const clearHoverTimer = useCallback(() => {
     if (hoverTimer.current !== null) clearTimeout(hoverTimer.current);
@@ -107,7 +110,8 @@ function OfficeTeam({
                   // Mouse users open profiles by hovering; clicks don't toggle them.
                   if (
                     reason === 'trigger-press' &&
-                    (event as PointerEvent).pointerType === 'mouse'
+                    (event as MouseEvent).detail > 0 &&
+                    pointer.current === 'mouse'
                   )
                     return;
                   clearHoverTimer();
@@ -118,6 +122,9 @@ function OfficeTeam({
               >
                 <PopoverTrigger
                   className="office-member-trigger"
+                  onPointerDown={(event) => {
+                    pointer.current = event.pointerType;
+                  }}
                   onPointerEnter={(event) =>
                     enterProfile(index, event.pointerType)
                   }

@@ -2,6 +2,18 @@
 
 All notable Klex changes are documented here.
 
+## 0.25.0 (2026-10-23)
+
+### Features
+
+- allow editing and deleting learned skills (KLEX-68) (1971894)
+
+### Bug Fixes
+
+- serialize catalog mutations and restore userEdited on failed write (7ddf346)
+- persist skill file before saving state during catalog update (fc20d82)
+- persist edit protection before skill file write (7545656)
+
 ## 0.24.0 (2026-10-22)
 
 ### Features

@@ -1,4 +1,3 @@
-import { gsap } from 'gsap';
 import { motion } from 'motion/react';
 import { type ReactNode, useEffectEvent, useLayoutEffect, useRef } from 'react';
 
@@ -102,9 +101,20 @@ export function WorkWindow({
       element.style.left = `${left}px`;
       element.style.top = `${top}px`;
     };
+    // Place once and again after layout changes. Following the body every
+    // frame made the window shake while the bot types or breathes.
     place();
-    gsap.ticker.add(place);
-    return () => gsap.ticker.remove(place);
+    let pending = 0;
+    const resize = new ResizeObserver(() => {
+      cancelAnimationFrame(pending);
+      // Let the team snap to its resized spots before measuring.
+      pending = requestAnimationFrame(place);
+    });
+    resize.observe(layer);
+    return () => {
+      resize.disconnect();
+      cancelAnimationFrame(pending);
+    };
   }, []);
 
   return (

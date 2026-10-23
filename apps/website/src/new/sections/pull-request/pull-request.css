@@ -425,10 +425,11 @@
   font-size: 12px;
 }
 
-/* Keep the toast inside the illustrated browser instead of the page corner. */
+/* Keep the toast inside the illustrated browser instead of the page corner.
+   Toasts stack upward from the viewport's bottom edge. */
 .new-test-toasts {
   position: absolute;
-  inset: 1rem 1rem auto;
+  inset: auto 1rem 1rem;
   width: auto;
   max-width: 22rem;
   margin: 0 auto;

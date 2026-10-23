@@ -8,6 +8,7 @@ import {
 import {
   type CSSProperties,
   lazy,
+  type MouseEvent as ReactMouseEvent,
   type RefObject,
   Suspense,
   useCallback,
@@ -252,6 +253,14 @@ function HeroBot({
     clearHoverTimer();
     if (!profileOpen) hoverTimer.current = setTimeout(openProfile, 100);
   };
+  // Mouse users open the profile by hovering, so a click only selects the
+  // bot. Touch and keyboard clicks toggle it.
+  const selectBot = (event: ReactMouseEvent) => {
+    clearHoverTimer();
+    onSelect(bot.id);
+    if ((event.nativeEvent as PointerEvent).pointerType !== 'mouse')
+      onProfile(bot.id, !profileOpen);
+  };
   const leaveProfile = () => {
     clearHoverTimer();
     // Keyboard users can read the card until focus moves away or Escape.
@@ -358,10 +367,8 @@ function HeroBot({
           aria-pressed={selected}
           onPointerEnter={(event) => enterProfile(event.pointerType)}
           onPointerLeave={leaveProfile}
-          onClick={() => {
-            clearHoverTimer();
-            onSelect(bot.id);
-            onProfile(bot.id, !profileOpen);
+          onClick={(event) => {
+            selectBot(event);
             klex.current?.emote('hello');
           }}
         />
@@ -387,11 +394,7 @@ function HeroBot({
               if (event.currentTarget.matches(':focus-visible')) openProfile();
             }}
             onBlur={leaveProfile}
-            onClick={() => {
-              clearHoverTimer();
-              onSelect(bot.id);
-              onProfile(bot.id, !profileOpen);
-            }}
+            onClick={selectBot}
           >
             <span>{bot.name}</span>
             {!mobile && <span className="new-klex-name-role">{bot.role}</span>}

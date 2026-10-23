@@ -103,7 +103,13 @@ function OfficeTeam({
               <Popover
                 key={member.id}
                 open={active === index}
-                onOpenChange={(open) => {
+                onOpenChange={(open, { reason, event }) => {
+                  // Mouse users open profiles by hovering; clicks don't toggle them.
+                  if (
+                    reason === 'trigger-press' &&
+                    (event as PointerEvent).pointerType === 'mouse'
+                  )
+                    return;
                   clearHoverTimer();
                   setActive((current) =>
                     open ? index : current === index ? null : current,

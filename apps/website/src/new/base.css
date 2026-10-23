@@ -59,12 +59,12 @@ button:focus-visible {
   top: 1rem;
 }
 
-.new-header-cta,
 .new-hero-cta,
 .new-footer-cta {
   height: auto;
   padding: 0.875rem 1.5rem;
   border-radius: 999px;
+  font-size: 1rem;
 }
 
 .new-eyebrow {

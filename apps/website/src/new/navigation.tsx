@@ -117,7 +117,7 @@ function NewNav() {
         </NavigationMenuList>
       </NavigationMenu>
       <Button
-        className="new-header-cta rounded-full"
+        className="rounded-full px-4"
         size="lg"
         nativeButton={false}
         role="link"

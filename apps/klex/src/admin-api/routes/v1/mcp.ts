@@ -429,6 +429,10 @@ export const callMcpToolRoute = createRoute({
         'application/json': { schema: z.object({ result: z.unknown() }) },
       },
     },
+    400: {
+      description: 'Invalid tool call body',
+      content: { 'application/json': { schema: errorResponseSchema } },
+    },
     404: {
       description: 'Server or tool not found',
       content: { 'application/json': { schema: errorResponseSchema } },

@@ -204,7 +204,10 @@ export class ModelValidation {
             if (
               part.type === 'text-delta' ||
               part.type === 'reasoning-delta' ||
-              part.type === 'finish'
+              (part.type === 'finish' &&
+                (part.finishReason === 'stop' ||
+                  part.finishReason === 'length' ||
+                  part.finishReason === 'tool-calls'))
             )
               return modelValidationResult(
                 'valid',

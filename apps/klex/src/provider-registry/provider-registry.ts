@@ -453,9 +453,7 @@ class ProviderRegistryModule implements ProviderRegistry {
           'unsupported_operation',
           'This provider does not support language generation.',
         );
-      const metadata =
-        instance.knownModels?.[input.modelId] ??
-        definition.resolveModelMetadata?.(input.modelId);
+      const metadata = this.resolveModelMetadata(instance, input.modelId);
       if (
         metadata?.kind &&
         metadata.kind !== 'language' &&

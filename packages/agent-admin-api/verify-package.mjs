@@ -67,6 +67,7 @@ void client.v1.health.$get;
 void client.v1.providers.$get;
 void client.v1.providers[':id'].$patch;
 void client.v1['mcp-servers'].$get;
+void client.v1['mcp-servers'][':name']['tool-calls'].$post;
 void client.v1.introspect.$path;
 async function validateCandidate() {
   const response = await client.v1.models.test.$post({ json: {

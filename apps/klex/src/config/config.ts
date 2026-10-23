@@ -138,6 +138,7 @@ export interface Config {
   get(): Readonly<KlexConfig>;
   /** Returns an ephemeral deep clone with environment placeholders expanded. */
   getRuntime(): Readonly<KlexConfig>;
+  resolveEnvironment<T>(value: T): T;
   replace(input: unknown): Promise<Readonly<KlexConfig>>;
   mutate(fn: (config: KlexConfig) => KlexConfig): Promise<Readonly<KlexConfig>>;
   subscribe(listener: ConfigListener): () => void;
@@ -237,7 +238,12 @@ class ConfigModule implements Config {
   }
 
   getRuntime(): Readonly<KlexConfig> {
-    return interpolateEnvironment(this.requireConfig(), this.deps.env);
+    return this.resolveEnvironment(this.requireConfig());
+  }
+
+  /** Resolve draft values with the same environment as persisted configuration. */
+  resolveEnvironment<T>(value: T): T {
+    return interpolateEnvironment(value, this.deps.env);
   }
 
   replace(input: unknown): Promise<Readonly<KlexConfig>> {

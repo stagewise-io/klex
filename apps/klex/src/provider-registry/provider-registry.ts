@@ -28,6 +28,12 @@ import {
 } from '@/config';
 
 import { mergeProviderModels } from './model-metadata';
+import {
+  ModelValidation,
+  type ModelValidationInput,
+  type ModelValidationResult,
+  modelValidationResult,
+} from './model-validation';
 import { VOICE_PREVIEW_VERSION } from './providers/voice-preview-context';
 import { withRemoteInputMapping } from './remote-input';
 import { createVoiceOperations } from './voice-operations';
@@ -322,6 +328,10 @@ export interface ProviderRegistry extends ProviderModelResolver {
     id: ProviderInstanceId,
     refresh?: boolean,
   ): Promise<ProviderOperationResult<readonly ResolvedProviderModel[]>>;
+  validateModel(
+    input: ModelValidationInput,
+    signal?: AbortSignal,
+  ): Promise<ModelValidationResult>;
   testConnection(
     id: ProviderInstanceId,
   ): Promise<ProviderOperationResult<ProviderConnectionResult>>;
@@ -338,6 +348,7 @@ class ProviderRegistryModule implements ProviderRegistry {
   private readonly definitions: ReadonlyMap<ProviderType, ProviderDefinition>;
   private started = false;
   private readonly voices = createVoiceOperations();
+  private readonly modelValidation = new ModelValidation();
   private unsubscribe: (() => void) | undefined;
   private readonly modelCache = new Map<
     ProviderInstanceId,
@@ -387,12 +398,99 @@ class ProviderRegistryModule implements ProviderRegistry {
     if (!this.started) return;
     this.started = false;
     this.voices.close();
+    this.modelValidation.close();
     this.unsubscribe?.();
     this.unsubscribe = undefined;
     this.configGeneration += 1;
     this.modelCache.clear();
     this.pendingDiscovery.clear();
     this.deps.logger.info('Provider registry stopped');
+  }
+
+  async validateModel(
+    input: ModelValidationInput,
+    signal?: AbortSignal,
+  ): Promise<ModelValidationResult> {
+    if (!this.started)
+      return modelValidationResult(
+        'unverified',
+        'cancelled',
+        'The provider registry is not running.',
+      );
+    if (!['chat', 'memory', 'compaction', 'consult'].includes(input.purpose))
+      return modelValidationResult(
+        'unsupported',
+        'unsupported_operation',
+        'Live validation is only available for language-generation selections.',
+        'Voice, image, audio, and instinct capabilities require purpose-specific checks.',
+      );
+    try {
+      let instance: ProviderInstance;
+      if ('id' in input.provider) {
+        const result = this.getInstance(input.provider.id);
+        if (!result.ok)
+          return modelValidationResult(
+            'invalid',
+            'provider_not_found',
+            'The selected provider is unavailable.',
+            'Select an existing provider.',
+          );
+        instance = result.value;
+      } else {
+        instance = {
+          id: 'model-validation-draft',
+          type: input.provider.type,
+          settings: this.requireConfig().resolveEnvironment(
+            parseProviderSettings(input.provider.type, input.provider.settings),
+          ),
+        };
+      }
+      const definition = this.requireDefinition(instance.type);
+      const createLanguageModel = definition.createLanguageModel;
+      if (!createLanguageModel)
+        return modelValidationResult(
+          'unsupported',
+          'unsupported_operation',
+          'This provider does not support language generation.',
+        );
+      const metadata =
+        instance.knownModels?.[input.modelId] ??
+        definition.resolveModelMetadata?.(input.modelId);
+      if (
+        metadata?.kind &&
+        metadata.kind !== 'language' &&
+        metadata.kind !== 'unknown'
+      )
+        return modelValidationResult(
+          'invalid',
+          'invalid_configuration',
+          'This model is not a language-generation model.',
+          'Choose a language model for this selection.',
+        );
+      const signature = this.settingsSignature(instance.settings);
+      return await this.modelValidation.run(
+        () => createLanguageModel(instance, input.modelId),
+        input,
+        signal,
+        () => {
+          if (!this.started) return false;
+          if (!('id' in input.provider)) return true;
+          const current = this.getInstance(input.provider.id);
+          return (
+            current.ok &&
+            current.value.type === instance.type &&
+            this.settingsSignature(current.value.settings) === signature
+          );
+        },
+      );
+    } catch {
+      return modelValidationResult(
+        'invalid',
+        'invalid_configuration',
+        'Provider settings could not be resolved.',
+        'Check required settings and environment variables.',
+      );
+    }
   }
 
   listProviderTypes(): readonly ProviderTypeInfo[] {

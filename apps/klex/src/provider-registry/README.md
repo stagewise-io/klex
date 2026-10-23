@@ -60,6 +60,32 @@ The Admin API exposes enough metadata to build provider-neutral setup interfaces
 
 Operation failures return a machine-readable `code`, a human-readable `error`, and optional `remediation`. Expected categories include invalid configuration, missing dependencies, authentication, unsupported platforms, connectivity, discovery, conflict, referential integrity, and internal errors. API clients must branch on `code`, not parse the message.
 
+## Candidate model validation
+
+`POST /v1/models/test` accepts one candidate without adding a provider, registering a model, or changing selections:
+
+```json
+{
+  "provider": { "id": "my-provider" },
+  "modelId": "exact-model-or-azure-deployment",
+  "purpose": "chat",
+  "providerOptions": { "openai": { "reasoningEffort": "low" } }
+}
+```
+
+For an unsaved provider, replace `provider` with `{ "type": "azure-openai", "settings": { "resourceName": "example", "apiKey": "${env:AZURE_API_KEY}" } }`. Draft settings must be complete, not redacted or a patch. Environment placeholders resolve through the same configuration environment as existing instances. Model IDs are opaque, and Azure deployment names are not replaced with catalog IDs. The probe passes candidate provider options to the same language-model factory used at runtime.
+
+HTTP 200 means a validation result is available, not that validation passed. Branch on `status` and `code`. Results contain `message`, optional `remediation`, and `scope: "language-generation"`:
+
+- `valid` means the provider generated text or reasoning, or completed the language request.
+- `invalid` covers unresolved settings, unavailable providers, authentication, access, missing models or deployments, and rejected requests.
+- `unverified` covers rate or quota limits, connectivity, timeout, cancellation, and provider settings changing during the check. These are not proof of an invalid model.
+- `unsupported` covers purposes or provider transports this probe cannot test. Only `chat`, `compaction`, `memory`, and `consult` are supported. Validation does not claim tool calling, media input, evaluation, or voice support.
+
+The probe sends only a fixed request to reply with OK, without agent context, tools, history, or memory. It stops after the first text or reasoning token, is potentially billable, has a 15-second deadline, and never retries. At most two probes run concurrently; providers that ignore cancellation retain their slot until they settle. Nothing is cached or persisted. Upstream response bodies, credentials, and endpoint URLs are never returned. Responses use `Cache-Control: private, no-store`; request bodies are capped at 64 KiB. Access uses the existing local admin server or authorized Cloud tunnel.
+
+Cloud should validate each candidate before saving, retain the association between each result and its exact draft, and revalidate edited drafts. Probe results are advisory, not reusable authorization tokens or a guarantee that later generation will succeed. Older bots return HTTP 404 for this route; treat that as validation unavailable, not as a `model_not_found` result or success. The route and schemas are included in OpenAPI and the generated `@klex/agent-admin-api` RPC type.
+
 ## Realtime voices and previews
 
 Provider definitions may implement `listVoices` and `getVoicePreview`. The capabilities `voiceDiscovery` and `voicePreview` advertise hooks; the model-scoped catalog lists the available choices. An empty `voices` array means no choices are available. Unknown/custom STS models retain default operation, but cannot select or preview undocumented voices.

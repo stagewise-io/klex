@@ -39,7 +39,9 @@
 .bento-hosting {
   grid-area: hosting;
 }
-.bento-cell {
+/* Zero specificity, so each card's own .bento-<id> rules win regardless of
+   the order in which the bundler emits the card styles. */
+:where(.bento-cell) {
   position: relative;
   display: flex;
   flex-direction: column;

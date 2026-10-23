@@ -1574,8 +1574,8 @@ class McpModule implements Mcp {
     if (runtime.connection) return { outcome: 'already_connected' };
 
     this.clearRetry(runtime);
-    runtime.attempt?.controller.abort();
-    runtime.attempt = undefined;
+    // Reuse startup discovery: a replaced attempt could still overwrite the
+    // OAuth client or PKCE verifier while the new attempt is authorizing.
     this.connectRuntime(runtime);
 
     const authorization = await this.deps.pendingAuthorizations.waitForServer(

@@ -64,6 +64,10 @@ import {
   startAuthorizationRoute,
 } from './routes/v1/mcp.authorization';
 import {
+  validateModel,
+  validateModelRoute,
+} from './routes/v1/model-validation';
+import {
   canAddProvider,
   canAddProviderRoute,
   createKnownModel,
@@ -201,6 +205,7 @@ export function createAdminApp(deps: AdminAppDependencies) {
     .openapi(updateProviderRoute, updateProvider(deps))
     .openapi(deleteProviderRoute, deleteProvider(deps))
     .openapi(testProviderRoute, testProvider(deps))
+    .openapi(validateModelRoute, validateModel(deps))
     .openapi(getProviderModelsRoute, getProviderModels(deps))
     .openapi(getProviderVoicesRoute, getProviderVoices(deps))
     .openapi(getVoicePreviewRoute, getVoicePreview(deps))

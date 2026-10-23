@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -21,6 +21,7 @@ import {
   createProviderRegistry,
   type ProviderDefinition,
 } from './provider-registry';
+import { azureOpenAiProviderDefinition } from './providers/azure-openai';
 import { vercelAiGatewayProviderDefinition } from './providers/vercel-ai-gateway';
 import { voicePreviewInstructions } from './providers/voice-preview-context';
 
@@ -63,6 +64,110 @@ async function createDataDirectory(): Promise<string> {
 }
 
 describe('provider registry module integration', () => {
+  it('probes unsaved and existing Azure deployments with resolved credentials without changing config', async () => {
+    const dataDirectory = await createDataDirectory();
+    const config = createConfig({
+      logging,
+      dataDirectory,
+      env: { VALIDATION_KEY: 'resolved-key' },
+    });
+    await config.start();
+    const registry = createProviderRegistry({
+      logging,
+      config,
+      definitions: [azureOpenAiProviderDefinition],
+    });
+    await registry.start();
+    const settings = {
+      apiKey: `\${env:VALIDATION_KEY}`,
+      resourceName: 'example',
+      apiVersion: '2025-04-01-preview',
+      useDeploymentBasedUrls: true,
+    };
+    const fetch = vi.fn<typeof globalThis.fetch>(
+      async () =>
+        new Response(
+          JSON.stringify({
+            error: {
+              message: 'private upstream details',
+              code: 'DeploymentNotFound',
+            },
+          }),
+          { status: 404, headers: { 'Content-Type': 'application/json' } },
+        ),
+    );
+    vi.stubGlobal('fetch', fetch);
+    try {
+      const before = await readFile(
+        join(dataDirectory, CONFIG_FILE_NAME),
+        'utf8',
+      );
+      const result = await registry.validateModel({
+        provider: { type: 'azure-openai', settings },
+        modelId: 'exact-deployment',
+        purpose: 'chat',
+        providerOptions: { azure: { store: false } },
+      });
+      expect(result).toMatchObject({
+        status: 'invalid',
+        code: 'model_not_found',
+      });
+      expect(JSON.stringify(result)).not.toContain('private upstream');
+      expect(fetch).toHaveBeenCalledTimes(1);
+      const [url, request] = fetch.mock.calls[0] ?? [];
+      expect(String(url)).toContain('/deployments/exact-deployment/responses');
+      expect(String(url)).toContain('api-version=2025-04-01-preview');
+      expect(new Headers(request?.headers).get('api-key')).toBe('resolved-key');
+      expect(JSON.parse(String(request?.body))).toMatchObject({
+        model: 'exact-deployment',
+        store: false,
+      });
+      expect(
+        await readFile(join(dataDirectory, CONFIG_FILE_NAME), 'utf8'),
+      ).toBe(before);
+      expect(
+        await registry.addInstance({
+          id: 'azure',
+          type: 'azure-openai',
+          settings,
+        }),
+      ).toMatchObject({ ok: true });
+      const persisted = await readFile(
+        join(dataDirectory, CONFIG_FILE_NAME),
+        'utf8',
+      );
+      expect(
+        await registry.validateModel({
+          provider: { id: 'azure' },
+          modelId: 'another-deployment',
+          purpose: 'memory',
+        }),
+      ).toMatchObject({ code: 'model_not_found' });
+      expect(
+        await registry.validateModel({
+          provider: { id: 'azure' },
+          modelId: 'another-deployment',
+          purpose: 'voice.tts',
+        }),
+      ).toMatchObject({ status: 'unsupported' });
+      expect(
+        await readFile(join(dataDirectory, CONFIG_FILE_NAME), 'utf8'),
+      ).toBe(persisted);
+      expect(
+        await registry.validateModel({
+          provider: { id: 'azure' },
+          modelId: 'another-deployment',
+          purpose: 'chat',
+          providerOptions: { azure: { store: 'not-a-boolean' } },
+        }),
+      ).toMatchObject({ status: 'invalid', code: 'invalid_configuration' });
+      expect(fetch).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.unstubAllGlobals();
+      await registry.close();
+      await config.close();
+    }
+  });
   it('resolves persisted Gateway Jev for evaluation but rejects generation and chat', async () => {
     const config = createConfig({
       logging,

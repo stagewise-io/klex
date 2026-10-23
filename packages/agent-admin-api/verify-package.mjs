@@ -68,6 +68,18 @@ void client.v1.providers.$get;
 void client.v1.providers[':id'].$patch;
 void client.v1['mcp-servers'].$get;
 void client.v1.introspect.$path;
+async function validateCandidate() {
+  const response = await client.v1.models.test.$post({ json: {
+    provider: { id: 'my-provider' }, modelId: 'exact-model', purpose: 'chat',
+    providerOptions: { openai: { reasoningEffort: 'low' } },
+  } });
+  if (response.status === 200) {
+    const result = await response.json();
+    const status: 'valid' | 'invalid' | 'unverified' | 'unsupported' = result.status;
+    return status;
+  }
+}
+void validateCandidate;
 `,
   );
 

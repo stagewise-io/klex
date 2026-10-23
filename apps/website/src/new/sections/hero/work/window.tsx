@@ -6,8 +6,8 @@ import { popTransition } from '../../../klex/transitions';
 import { WindowLabel } from '../../build/safari';
 
 /** Work scenes are drawn at this size and scaled down to fit the window. */
-export const designWidth = 440;
-export const designHeight = 290;
+const designWidth = 440;
+const designHeight = 290;
 
 export type WorkApp = {
   name: string;

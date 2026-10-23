@@ -1,20 +1,13 @@
 import { useEffect, useRef } from 'react';
 
-import { heroLooks } from '../../../bot-looks';
+import { heroLooks, klexLook } from '../../../bot-looks';
 import {
   type EmoteId,
   Klex,
   type KlexActivity,
   type KlexHandle,
 } from '../../../klex';
-import { BODY_SHAPES } from '../../../klex/presets';
 import type { SceneProps } from './feature-card';
-
-export const bentoBotLook = {
-  color: '#2559fe',
-  shape: BODY_SHAPES[0],
-  movementMode: 'fly',
-} as const;
 
 export function SceneBot({
   active,
@@ -48,7 +41,7 @@ export function SceneBot({
   return (
     <Klex
       ref={handle}
-      {...(bot ? heroLooks[bot] : bentoBotLook)}
+      {...(bot ? heroLooks[bot] : klexLook)}
       size={size}
       layout="avatar"
       activity={activity}

@@ -25,8 +25,3 @@ export const connectorRegistry = {
   },
 } as const;
 export type ConnectorId = keyof typeof connectorRegistry;
-export function resolveConnector(id: string | null): ConnectorId {
-  return id && Object.hasOwn(connectorRegistry, id)
-    ? (id as ConnectorId)
-    : 'slack';
-}

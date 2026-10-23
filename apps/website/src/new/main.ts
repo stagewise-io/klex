@@ -59,7 +59,11 @@ const disposers = [
     ],
     [
       '.new-trust',
-      () => import('./sections/trust').then((module) => module.mountTrust),
+      // The office drawing is prerendered, so only load the interactive parts.
+      () =>
+        import('./sections/trust/principles').then(
+          (module) => module.mountTrust,
+        ),
     ],
     [
       '.new-guides-faq',

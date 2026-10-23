@@ -1,6 +1,5 @@
 import { gsap } from 'gsap';
 
-import { roundedPath } from '../../mascot/geometry';
 import { createActivity, type KlexActivity } from './activity';
 import {
   type Emote,
@@ -10,7 +9,7 @@ import {
   REST_EMOTE,
 } from './emotes';
 import { fitGaze, gazeRoom } from './gaze';
-import { mirroredOutline, waveAnchor } from './geometry';
+import { mirroredOutline, roundedPath, waveAnchor } from './geometry';
 import { BODY_SHAPES, type BodyShape, DEFAULT_GLIDE } from './presets';
 
 export { DEFAULT_GLIDE } from './presets';
@@ -294,7 +293,6 @@ type GlideElements = {
 export function createGlide(
   { travel, actor, shadow, body, eyes, laptop }: GlideElements,
   onComplete: () => void,
-  onEmoteComplete: () => void = () => {},
   onLookChange: (look: EmoteLook) => void = () => {},
   initialSettings: GlideSettings = DEFAULT_GLIDE,
   initialPosition: KlexPosition = { x: 0, y: 0 },
@@ -552,7 +550,6 @@ export function createGlide(
       emote.time += elapsed;
       if (emote.time >= emote.action.duration) {
         emote = null;
-        onEmoteComplete();
       }
     }
     // Completion callbacks can start travel. Only then do pixel distances matter;
@@ -736,7 +733,6 @@ export function createGlide(
     cancelEmote() {
       if (!emote) return;
       emote = null;
-      onEmoteComplete();
       render();
     },
     moveTo(next: number | KlexPosition) {
@@ -811,10 +807,7 @@ export function createGlide(
       reducedMotion = reduced;
       activity = nextActivity === 'idle' && !nextIdle ? false : nextActivity;
       if (reduced) activityMotion.snapLaptop(activity === 'working');
-      if (reduced && emote) {
-        emote = null;
-        onEmoteComplete();
-      }
+      if (reduced) emote = null;
       if (modeChanged || motionChanged) {
         hop = null;
         transitioning = modeChanged || reduced;

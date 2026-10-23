@@ -99,16 +99,15 @@ export function mountSlack() {
   }
   const composer = mountSlackComposer(composerContainer);
   const monica = mountSlackMonica(monicaHost);
+  const kristine = () => workflowActor(kristineHost, 'kristine');
   const kristineHome: BotSpot = () => {
     const box = kristineHost.getBoundingClientRect();
     return { x: box.left + box.width / 2, y: box.bottom, speech: 'left' };
   };
   const showKristine = (instant = false) => {
-    const actor = workflowActor(kristineHost, 'kristine');
-    if (instant) actor?.place(kristineHome);
-    else actor?.pop(kristineHome);
+    if (instant) kristine()?.place(kristineHome);
+    else kristine()?.pop(kristineHome);
   };
-  const hideKristine = () => workflowActor(kristineHost, 'kristine')?.hide();
 
   const text =
     "@Monica, we're looking for a Product Designer. Can you add the role to our company's website?";
@@ -123,6 +122,19 @@ export function mountSlack() {
   const completeStory = () => {
     completed = true;
     reportProgress(slide, 1);
+  };
+
+  const reset = () => {
+    window.clearTimeout(storyTimer);
+    completed = false;
+    reportProgress(slide, 0);
+    composer.setDraft('');
+    humanMessage.hidden = true;
+    monicaMessage.hidden = true;
+    kristineMessage.hidden = true;
+    typing.style.visibility = 'hidden';
+    monica.setPhase('hidden');
+    kristine()?.hide();
   };
 
   const finishStory = () => {
@@ -140,19 +152,10 @@ export function mountSlack() {
   };
 
   const playStory = () => {
+    reset();
     started = true;
-    window.clearTimeout(storyTimer);
-    completed = false;
-    reportProgress(slide, 0);
-    composer.setDraft('');
-    humanMessage.hidden = true;
-    monicaMessage.hidden = true;
-    kristineMessage.hidden = true;
     messages.scrollTop = 0;
-    typing.style.visibility = 'hidden';
     if (typing.firstChild) typing.firstChild.textContent = 'Monica is typing';
-    monica.setPhase('hidden');
-    hideKristine();
 
     if (reducedMotion.matches) {
       finishStory();
@@ -195,17 +198,17 @@ export function mountSlack() {
           showKristine();
           reportProgress(slide, 0.65);
           later(() => {
-            workflowActor(kristineHost, 'kristine')?.setActivity('working');
-            workflowActor(kristineHost, 'kristine')?.say('Writing…');
+            kristine()?.setActivity('working');
+            kristine()?.say('Writing…');
             if (typing.firstChild)
               typing.firstChild.textContent = 'Kristine is typing';
             typing.style.visibility = 'visible';
             later(() => {
               typing.style.visibility = 'hidden';
               kristineMessage.hidden = false;
-              workflowActor(kristineHost, 'kristine')?.setActivity('idle');
-              workflowActor(kristineHost, 'kristine')?.say(null);
-              workflowActor(kristineHost, 'kristine')?.emote('happy-nod');
+              kristine()?.setActivity('idle');
+              kristine()?.say(null);
+              kristine()?.emote('happy-nod');
               messages.scrollTop = messages.scrollHeight;
               reportProgress(slide, 0.85);
               later(() => {
@@ -241,18 +244,9 @@ export function mountSlack() {
   slide.addEventListener(
     STEP_RESET,
     () => {
-      window.clearTimeout(storyTimer);
+      reset();
       entranceHost.dataset.windowEnter = 'false';
-      humanMessage.hidden = true;
-      monicaMessage.hidden = true;
-      kristineMessage.hidden = true;
-      typing.style.visibility = 'hidden';
-      composer.setDraft('');
-      monica.setPhase('hidden');
-      hideKristine();
       started = false;
-      completed = false;
-      reportProgress(slide, 0);
     },
     { signal: events.signal },
   );
@@ -260,7 +254,7 @@ export function mountSlack() {
     STEP_LEAVE,
     () => {
       if (started && !completed) finishStory();
-      workflowActor(kristineHost, 'kristine')?.rest();
+      kristine()?.rest();
     },
     { signal: events.signal },
   );

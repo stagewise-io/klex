@@ -12,7 +12,6 @@ function prerenderPages(): Plugin {
     transformIndexHtml: {
       order: 'pre',
       async handler(html, context) {
-        if (context.path.startsWith('/old/')) return html;
         pages ??= (async () => {
           const server = await createServer({
             configFile: false,

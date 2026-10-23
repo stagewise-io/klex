@@ -2,7 +2,6 @@ import '../slack/slack.css';
 import './report.css';
 
 import { type CSSProperties, useEffect, useRef, useState } from 'react';
-import { createRoot } from 'react-dom/client';
 
 import { mascotMarkup } from '../../../mascot';
 import { heroLooks } from '../../bot-looks';
@@ -10,18 +9,16 @@ import { slackConversationMarkup } from '../slack';
 import { mountSlackComposer } from '../slack/composer';
 import { SceneProgress } from '../workflow/controls';
 import {
+  mountStory,
   PopBot,
   type PopBotHandle,
+  type StoryProps,
+  storyMarkup,
   usePlay,
-  useStepPlayback,
   wait,
 } from '../workflow/stage';
 
-export const reportMarkup = `
-      <section class="new-report-story" aria-labelledby="new-report-story-title">
-        <div id="new-report-story"></div>
-      </section>
-`;
+export const reportMarkup = storyMarkup('report');
 
 const monicaAvatar = mascotMarkup(
   heroLooks.monica.color,
@@ -43,15 +40,7 @@ function MonicaAvatar() {
   );
 }
 
-function ReportScene({
-  playing,
-  finished,
-  onComplete,
-}: {
-  playing: boolean;
-  finished: boolean;
-  onComplete: () => void;
-}) {
+function ReportScene({ playing, finished, onComplete }: StoryProps) {
   const composer = useRef<HTMLDivElement>(null);
   const composerControls = useRef<ReturnType<typeof mountSlackComposer>>(null);
   const messages = useRef<HTMLDivElement>(null);
@@ -223,24 +212,4 @@ function ReportScene({
   );
 }
 
-function ReportStory() {
-  const { host, run, playing, finished, onComplete } = useStepPlayback();
-  return (
-    <div ref={host}>
-      <ReportScene
-        key={run}
-        playing={playing}
-        finished={finished}
-        onComplete={onComplete}
-      />
-    </div>
-  );
-}
-
-export function mountReport() {
-  const host = document.getElementById('new-report-story');
-  if (!host) throw new Error('The report story container is missing.');
-  const root = createRoot(host);
-  root.render(<ReportStory />);
-  return () => root.unmount();
-}
+export const mountReport = () => mountStory('report', ReportScene);

@@ -1,5 +1,52 @@
 import type { BodyShape } from './presets';
 
+function fixed2(value: number) {
+  // Neutral rig transforms can introduce roundoff at half-cent boundaries.
+  const rounded = Math.round(
+    (value + 8 * Number.EPSILON * Math.abs(value)) * 100,
+  );
+  const absolute = Math.abs(rounded);
+  const integer = Math.floor(absolute / 100);
+  const fraction = absolute - integer * 100;
+  const digits =
+    fraction === 0
+      ? String(integer)
+      : fraction % 10 === 0
+        ? `${integer}.${fraction / 10}`
+        : `${integer}${fraction < 10 ? '.0' : '.'}${fraction}`;
+  return rounded < 0 ? `-${digits}` : digits;
+}
+
+export function roundedPath(points: readonly (readonly [number, number])[]) {
+  let path = '';
+  // A periodic cubic B-spline rounds across the rig points instead of passing
+  // through each one. Its curvature stays continuous, including at the sole.
+  for (let i = 0; i < points.length; i++) {
+    const current = points[i];
+    if (!current) continue;
+    const previous = points[(i + points.length - 1) % points.length] ?? current;
+    const next = points[(i + 1) % points.length] ?? current;
+    const after = points[(i + 2) % points.length] ?? current;
+    if (i === 0) {
+      path = `M${fixed2((previous[0] + 4 * current[0] + next[0]) / 6)} ${fixed2((previous[1] + 4 * current[1] + next[1]) / 6)}`;
+    }
+    path += `C${fixed2((2 * current[0] + next[0]) / 3)} ${fixed2((2 * current[1] + next[1]) / 3)} ${fixed2((current[0] + 2 * next[0]) / 3)} ${fixed2((current[1] + 2 * next[1]) / 3)} ${fixed2((current[0] + 4 * next[0] + after[0]) / 6)} ${fixed2((current[1] + 4 * next[1] + after[1]) / 6)}`;
+  }
+  return `${path}Z`;
+}
+
+export function getKlexEyeColor(bodyColor: string): string {
+  const match = /^#([\da-f]{2})([\da-f]{2})([\da-f]{2})$/i.exec(bodyColor);
+  if (!match) return '#172033';
+
+  const red = Number.parseInt(match[1] ?? '7c', 16);
+  const green = Number.parseInt(match[2] ?? '3a', 16);
+  const blue = Number.parseInt(match[3] ?? 'ed', 16);
+  const brightness = red * 0.299 + green * 0.587 + blue * 0.114;
+
+  return brightness > 160 ? '#172033' : '#ffffff';
+}
+
 const mirroredOutlines = new WeakMap<BodyShape, BodyShape['outline']>();
 
 // Align the mirrored contour before interpolating a turn. Custom outlines can

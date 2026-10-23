@@ -41,14 +41,13 @@ export type WorkState = 'working' | 'done' | 'stopped';
 
 /**
  * The bots take turns: each opens an app window behind it and does a bit
- * of work in it, then the next bot in line starts. The first turn starts as
- * soon as the team arrives. Profiles do not interrupt the rotation;
+ * of work in it, then the next bot in line starts. Mount it once the team
+ * has arrived. Profiles do not interrupt the rotation;
  * moving a bot stops its demo.
  */
 export function HeroWork({
   team,
   order,
-  ready,
   busy,
   active,
   onWork,
@@ -56,8 +55,6 @@ export function HeroWork({
   team: () => HTMLElement | null;
   /** Bot ids in the order they take turns. */
   order: readonly string[];
-  /** The team has arrived and can start using its apps. */
-  ready: boolean;
   /** Moving bots skip their turn and stop working. */
   busy: readonly string[];
   /** False pauses work while the hero is offscreen. */
@@ -80,7 +77,7 @@ export function HeroWork({
   };
 
   useEffect(() => {
-    if (!active || job || !ready || order.length === 0) return;
+    if (!active || job) return;
     let bot = order[turn.current];
     for (let skipped = 0; busy.includes(bot); skipped++) {
       if (skipped === order.length) return;
@@ -104,7 +101,7 @@ export function HeroWork({
       count.current === 0 ? 300 : 500,
     );
     return () => window.clearTimeout(timer);
-  }, [active, job, ready, busy, onWork, order]);
+  }, [active, job, busy, onWork, order]);
 
   // Stop work when a bot moves or the hero leaves view.
   useEffect(() => {

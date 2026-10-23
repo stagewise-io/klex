@@ -1,8 +1,7 @@
 import { useState } from 'react';
 
-import { typeIssueText } from '../../linear';
 import { LinearIssueDialog } from '../../linear/dialog';
-import { usePlay, wait } from '../../workflow/stage';
+import { typeIssueText, usePlay, wait } from '../../workflow/stage';
 import type { WorkSceneProps } from './scenes';
 
 const issues = [

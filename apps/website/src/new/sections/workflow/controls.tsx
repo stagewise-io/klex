@@ -60,6 +60,23 @@ function NextCountdown({ onNext }: { onNext: () => void }) {
   );
 }
 
+function ReplayIcon(props: { 'data-icon'?: string }) {
+  return (
+    <svg
+      {...props}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.75"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M3 10a9 9 0 1 1 2.5 8M3 4v6h6" />
+    </svg>
+  );
+}
+
 function usePlaybackProgress(started: boolean, duration: number) {
   const [value, setValue] = useState(0);
   const completed = useRef(false);
@@ -120,17 +137,7 @@ function Controls({
         title="Replay this step"
         onClick={onReplay}
       >
-        <svg
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="1.75"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          aria-hidden="true"
-        >
-          <path d="M3 10a9 9 0 1 1 2.5 8M3 4v6h6" />
-        </svg>
+        <ReplayIcon />
       </Button>
       <div className="new-workflow-next" data-ready={done}>
         <Progress
@@ -157,20 +164,7 @@ function Controls({
                 aria-hidden="true"
               />
             ))}
-          {last && (
-            <svg
-              data-icon="inline-start"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.75"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              aria-hidden="true"
-            >
-              <path d="M3 10a9 9 0 1 1 2.5 8M3 4v6h6" />
-            </svg>
-          )}
+          {last && <ReplayIcon data-icon="inline-start" />}
           <span>{last ? 'Start over' : 'Next'}</span>
           {!last && (
             <svg

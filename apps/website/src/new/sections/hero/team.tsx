@@ -13,7 +13,6 @@ import {
   useCallback,
   useEffect,
   useLayoutEffect,
-  useMemo,
   useRef,
   useState,
 } from 'react';
@@ -44,49 +43,39 @@ const bots = [
     name: 'Jonathan',
     role: 'Software Engineer',
     mode: 'fly',
+    work: 'Turns Linear tickets into working features and opens pull requests.',
   },
   {
     id: 'kristine',
     name: 'Kristine',
     role: 'Product Manager',
     mode: 'hop',
+    work: 'Turns rough ideas in Slack into a plan and clear Linear tickets.',
   },
   {
     id: 'monica',
     name: 'Monica',
     role: 'Recruiter',
     mode: 'crawl',
+    work: 'Helps the team hire and welcome new teammates.',
   },
   {
     id: 'jeff',
     name: 'Jeff',
     role: 'Quality Assurance',
     mode: 'hop',
+    work: 'Tests new features, finds edge cases, and leaves precise feedback.',
   },
 ] as const satisfies readonly {
   id: string;
   name: string;
   role: string;
   mode: MovementMode;
+  work: string;
 }[];
 
 /** The order in which the bots take turns with their apps. */
 const botIds = bots.map((bot) => bot.id);
-
-const profiles: Record<string, { work: string }> = {
-  jonathan: {
-    work: 'Turns Linear tickets into working features and opens pull requests.',
-  },
-  kristine: {
-    work: 'Turns rough ideas in Slack into a plan and clear Linear tickets.',
-  },
-  monica: {
-    work: 'Helps the team hire and welcome new teammates.',
-  },
-  jeff: {
-    work: 'Tests new features, finds edge cases, and leaves precise feedback.',
-  },
-};
 
 const teamSpread = 1120;
 const floorTilt = 68;
@@ -140,7 +129,6 @@ function HeroBot({
   onMoveEnd: (id: string) => void;
 }) {
   const { color, shape } = heroLooks[bot.id];
-  const { work } = profiles[bot.id];
   const klex = useRef<KlexHandle>(null);
   const [layer, animate] = useAnimate<HTMLLIElement>();
   const arrived = useRef(false);
@@ -446,7 +434,7 @@ function HeroBot({
                   <span>{bot.name}</span>
                   <span className="new-klex-name-role">{bot.role}</span>
                 </div>
-                <p id={`${profileId}-work`}>{work}</p>
+                <p id={`${profileId}-work`}>{bot.work}</p>
                 <ProfileApps
                   name={bot.name}
                   apps={botProfileApps[bot.id] ?? []}
@@ -475,9 +463,8 @@ function HeroTeam({ entrance }: { entrance: Promise<void> }) {
   const [activities, setActivities] = useState<Record<string, KlexActivity>>(
     {},
   );
-  const [profiles, setProfiles] = useState<string[]>([]);
   // An open profile takes priority over the working bot's visual emphasis.
-  const focusedId = profiles.at(-1) ?? null;
+  const [focusedId, setFocusedId] = useState<string | null>(null);
   const focusedIds = focusedId
     ? [focusedId]
     : botIds.filter((id) => activities[id] === 'working');
@@ -485,8 +472,6 @@ function HeroTeam({ entrance }: { entrance: Promise<void> }) {
   const [moving, setMoving] = useState<string[]>([]);
   // Bots the visitor sent somewhere keep that place when the stage resizes.
   const [placed, setPlaced] = useState<string[]>([]);
-  // Moving bots pause their demos; profiles leave the rotation running.
-  const busy = useMemo(() => [...new Set(moving)], [moving]);
   const [inView, setInView] = useState(true);
   const reducedMotion = useReducedMotion() ?? false;
   // Phones fit all four bots in one row, so they are a bit smaller there.
@@ -645,16 +630,13 @@ function HeroTeam({ entrance }: { entrance: Promise<void> }) {
       ...current,
       [id]: state === 'working' ? 'working' : 'idle',
     }));
-    if (state === 'working') return;
     if (state === 'done') handles.current.get(id)?.emote('happy-nod');
   }, []);
   const onMoveEnd = useCallback((id: string) => {
     setMoving((current) => current.filter((entry) => entry !== id));
   }, []);
   const onProfile = useCallback((id: string, open: boolean) => {
-    setProfiles((current) =>
-      open ? [id] : current.filter((entry) => entry !== id),
-    );
+    setFocusedId((current) => (open ? id : current === id ? null : current));
   }, []);
 
   const onArrive = useCallback(() => setArrivalCount((count) => count + 1), []);
@@ -727,8 +709,8 @@ function HeroTeam({ entrance }: { entrance: Promise<void> }) {
           <HeroWork
             team={() => team.current}
             order={botIds}
-            ready={ready}
-            busy={busy}
+            // Moving bots pause their demos; profiles leave the rotation running.
+            busy={moving}
             active={inView}
             onWork={onWork}
           />

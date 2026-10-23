@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { createRoot, type Root } from 'react-dom/client';
+import { createRoot } from 'react-dom/client';
 
 import {
   ContextMenu,
@@ -8,7 +8,7 @@ import {
   ContextMenuTrigger,
 } from '@stagewise/ui';
 
-export function logoMenuActions(dark: boolean) {
+function logoMenuActions(dark: boolean) {
   const theme = dark ? 'dark' : 'light';
   return [
     {
@@ -25,7 +25,7 @@ export function logoMenuActions(dark: boolean) {
   ];
 }
 
-export function LogoContextMenu() {
+function LogoContextMenu() {
   const [dark, setDark] = useState(false);
   return (
     <ContextMenu
@@ -68,54 +68,23 @@ export function LogoContextMenu() {
   );
 }
 
-class LogoMenuModule {
-  private started = false;
-  private closed = false;
-  private readonly mounted: {
-    host: HTMLElement;
-    logo: HTMLAnchorElement;
-    root: Root;
-  }[] = [];
-
-  private readonly container: ParentNode;
-
-  constructor(container: ParentNode) {
-    this.container = container;
-  }
-
-  start() {
-    if (this.started || this.closed) return;
-    this.started = true;
-    try {
-      for (const logo of this.container.querySelectorAll<HTMLAnchorElement>(
-        'a.new-brand',
-      )) {
-        const host = logo.ownerDocument.createElement('span');
-        host.style.display = 'contents';
-        const root = createRoot(host);
-        this.mounted.push({ host, logo, root });
-        logo.replaceWith(host);
-        root.render(<LogoContextMenu />);
-      }
-    } catch (error) {
-      this.close();
-      throw error;
-    }
-  }
-
-  close() {
-    if (this.closed) return;
-    this.closed = true;
-    for (const { host, logo, root } of this.mounted) {
+/** Swaps each prerendered logo link for one with a context menu. */
+export function mountLogoMenus(container: ParentNode) {
+  const mounted = Array.from(
+    container.querySelectorAll<HTMLAnchorElement>('a.new-brand'),
+    (logo) => {
+      const host = logo.ownerDocument.createElement('span');
+      host.style.display = 'contents';
+      const root = createRoot(host);
+      logo.replaceWith(host);
+      root.render(<LogoContextMenu />);
+      return { host, logo, root };
+    },
+  );
+  return () => {
+    for (const { host, logo, root } of mounted) {
       root.unmount();
       host.replaceWith(logo);
     }
-    this.mounted.length = 0;
-  }
-}
-
-export function mountLogoMenus(container: ParentNode) {
-  const menus = new LogoMenuModule(container);
-  menus.start();
-  return () => menus.close();
+  };
 }

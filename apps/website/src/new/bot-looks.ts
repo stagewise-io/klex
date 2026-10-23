@@ -1,10 +1,16 @@
-import type { BodyShape } from '../mascot';
 import {
   capabilityShapes,
   collaborationShapes,
   jonathanLook,
 } from '../shared/mascot-shapes';
-import type { MovementMode } from './klex/presets';
+import { BODY_SHAPES, type BodyShape, type MovementMode } from './klex/presets';
+
+/** The brand-blue Klex used where no team member is meant. */
+export const klexLook = {
+  color: '#2559fe',
+  shape: BODY_SHAPES[0],
+  movementMode: 'fly',
+} as const;
 
 const catShape = {
   ...collaborationShapes.listener,

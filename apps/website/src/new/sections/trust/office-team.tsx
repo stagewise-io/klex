@@ -10,42 +10,15 @@ import { createRoot } from 'react-dom/client';
 
 import { Popover, PopoverTrigger } from '@stagewise/ui';
 
-import { Klex, type KlexHandle } from '../../klex';
+import { Klex } from '../../klex';
 import { botProfileApps, ProfileCard } from '../../profile-card';
-import { project } from './office';
+import { project } from './office-figures';
 import { type OfficeMember, officeMembers } from './office-members';
 
 type OfficeBotSlot = {
   member: Extract<OfficeMember, { kind: 'bot' }>;
   host: SVGGElement;
 };
-
-function WorkingOfficeBot({
-  member,
-  active,
-}: {
-  member: OfficeBotSlot['member'];
-  active: boolean;
-}) {
-  const handle = useRef<KlexHandle>(null);
-  useEffect(() => {
-    if (active) handle.current?.resume();
-    else handle.current?.pause();
-  }, [active]);
-  return (
-    <Klex
-      ref={handle}
-      color={member.color}
-      shape={member.shape}
-      size={160}
-      layout="svg"
-      initialPosition={{ x: 0, y: -23 }}
-      movementMode={member.movementMode}
-      className="office-scene-bot"
-      activity="working"
-    />
-  );
-}
 
 function OfficeTeam({
   stage,
@@ -54,8 +27,6 @@ function OfficeTeam({
   stage: HTMLElement;
   bots: OfficeBotSlot[];
 }) {
-  const [visibility, setVisibility] = useState(0);
-  const [pageVisible, setPageVisible] = useState(!document.hidden);
   const [active, setActive] = useState<number | null>(null);
   const hoverTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -80,29 +51,22 @@ function OfficeTeam({
     }, 180);
   };
 
-  useEffect(() => () => clearHoverTimer(), [clearHoverTimer]);
-
+  // Bots pause themselves offscreen; close any profile they leave open.
   useEffect(() => {
-    const observer = new IntersectionObserver(
-      ([entry]) => {
-        setVisibility(entry.intersectionRatio);
-        if (!entry.isIntersecting) {
-          clearHoverTimer();
-          setActive(null);
-        }
-      },
-      { threshold: [0, 0.55] },
-    );
+    const close = () => {
+      clearHoverTimer();
+      setActive(null);
+    };
+    const observer = new IntersectionObserver(([entry]) => {
+      if (!entry.isIntersecting) close();
+    });
     observer.observe(stage);
     const onVisibility = () => {
-      setPageVisible(!document.hidden);
-      if (document.hidden) {
-        clearHoverTimer();
-        setActive(null);
-      }
+      if (document.hidden) close();
     };
     document.addEventListener('visibilitychange', onVisibility);
     return () => {
+      clearHoverTimer();
       observer.disconnect();
       document.removeEventListener('visibilitychange', onVisibility);
     };
@@ -112,9 +76,15 @@ function OfficeTeam({
     <>
       {bots.map(({ member, host }) =>
         createPortal(
-          <WorkingOfficeBot
-            member={member}
-            active={visibility > 0 && pageVisible}
+          <Klex
+            color={member.color}
+            shape={member.shape}
+            size={160}
+            layout="svg"
+            initialPosition={{ x: 0, y: -23 }}
+            movementMode={member.movementMode}
+            className="office-scene-bot"
+            activity="working"
           />,
           host,
           member.id,
@@ -132,7 +102,7 @@ function OfficeTeam({
             return (
               <Popover
                 key={member.id}
-                open={active === index && visibility > 0 && pageVisible}
+                open={active === index}
                 onOpenChange={(open) => {
                   clearHoverTimer();
                   setActive((current) =>

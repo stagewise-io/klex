@@ -1,27 +1,10 @@
 import './office.css';
 
-import { officeFigure } from './office-figures';
+import { officeFigure, type Point, project } from './office-figures';
 import { officeMembers } from './office-members';
 
-type Point = [number, number, number];
 type Face = { points: Point[]; material: string; open: boolean };
 type DeskPlacement = [distance: number, offset: number, degrees: number];
-
-// A fixed, elevated view into the room. Coordinates are shared by the furniture
-// so figures can later be placed at a desk without guessing screen positions.
-const pitch = Math.atan2(7.2, 18);
-
-export function project([x, y, z]: Point) {
-  const dy = y - 8.5;
-  const dz = z - 18;
-  const depth = -dy * Math.sin(pitch) - dz * Math.cos(pitch);
-  const vertical = dy * Math.cos(pitch) - dz * Math.sin(pitch);
-  return {
-    x: 700 + (x * 1240) / depth,
-    y: 385 - (vertical * 1240) / depth,
-    depth,
-  };
-}
 
 function roomDrawing() {
   let faces: Face[] = [];

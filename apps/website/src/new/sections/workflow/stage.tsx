@@ -1,6 +1,7 @@
 import './stage.css';
 
 import {
+  type ComponentType,
   type Ref,
   type RefObject,
   useEffect,
@@ -9,6 +10,7 @@ import {
   useRef,
   useState,
 } from 'react';
+import { createRoot } from 'react-dom/client';
 
 import type { EmoteId, KlexActivity } from '../../klex';
 
@@ -64,11 +66,44 @@ export async function typeText(
   write(text);
 }
 
+export type StoryProps = {
+  playing: boolean;
+  finished: boolean;
+  skipArrival: boolean;
+  onComplete: () => void;
+};
+
+export async function typeIssueText(
+  text: string,
+  write: (value: string) => void,
+  signal: AbortSignal,
+  duration: number,
+) {
+  signal.throwIfAborted();
+  if (reducedMotion()) {
+    write(text);
+    return;
+  }
+  const delays = Array.from(text, (_, index) => {
+    const previous = text[index - 1] ?? '';
+    if (/[.!?,]/.test(previous)) return 8 + Math.random() * 5;
+    if (previous === ' ') return 2 + Math.random() * 3;
+    return 0.5 + Math.random();
+  });
+  const pace = duration / delays.reduce((sum, delay) => sum + delay, 0);
+  let next = performance.now();
+  for (let index = 0; index < text.length; index++) {
+    next += delays[index] * pace;
+    await wait(Math.max(0, next - performance.now()), signal);
+    write(text.slice(0, index + 1));
+  }
+}
+
 /**
  * Reset and finish remount the scene at the requested story boundary.
  * Completed scenes stay mounted above the current scene.
  */
-export function useStepPlayback() {
+function Story({ Scene }: { Scene: ComponentType<StoryProps> }) {
   const host = useRef<HTMLDivElement>(null);
   const [state, setState] = useState({
     run: 0,
@@ -81,6 +116,13 @@ export function useStepPlayback() {
     const slide = host.current?.closest('.new-workflow-slide');
     if (!slide) throw new Error('A workflow story must live in a slide.');
     const events = new AbortController();
+    const remount = (finished: boolean) => () =>
+      setState(({ run }) => ({
+        run: run + 1,
+        playing: false,
+        finished,
+        skipArrival: false,
+      }));
     slide.addEventListener(
       STEP_ENTER,
       (event) => {
@@ -95,40 +137,46 @@ export function useStepPlayback() {
       },
       { signal: events.signal },
     );
-    slide.addEventListener(
-      STEP_RESET,
-      () => {
-        setState(({ run }) => ({
-          run: run + 1,
-          playing: false,
-          finished: false,
-          skipArrival: false,
-        }));
-      },
-      { signal: events.signal },
-    );
-    slide.addEventListener(
-      STEP_FINISH,
-      () => {
-        setState(({ run }) => ({
-          run: run + 1,
-          playing: false,
-          finished: true,
-          skipArrival: false,
-        }));
-      },
-      { signal: events.signal },
-    );
+    slide.addEventListener(STEP_RESET, remount(false), {
+      signal: events.signal,
+    });
+    slide.addEventListener(STEP_FINISH, remount(true), {
+      signal: events.signal,
+    });
     return () => events.abort();
   }, []);
 
-  return {
-    host,
-    ...state,
-    onComplete: () => {
-      setState((current) => ({ ...current, playing: false, finished: true }));
-    },
-  };
+  const { run, ...props } = state;
+  return (
+    <div ref={host}>
+      <Scene
+        key={run}
+        {...props}
+        onComplete={() =>
+          setState((current) => ({
+            ...current,
+            playing: false,
+            finished: true,
+          }))
+        }
+      />
+    </div>
+  );
+}
+
+export const storyMarkup = (name: string) => `
+      <section class="new-${name}-story" aria-labelledby="new-${name}-story-title">
+        <div id="new-${name}-story"></div>
+      </section>
+`;
+
+/** Mounts a scene into the section rendered by `storyMarkup(name)`. */
+export function mountStory(name: string, Scene: ComponentType<StoryProps>) {
+  const host = document.getElementById(`new-${name}-story`);
+  if (!host) throw new Error(`The ${name} story container is missing.`);
+  const root = createRoot(host);
+  root.render(<Story Scene={Scene} />);
+  return () => root.unmount();
 }
 
 /** Runs the story while playing and cancels it when the step is left. */

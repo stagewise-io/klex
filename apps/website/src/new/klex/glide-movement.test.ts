@@ -61,7 +61,6 @@ test.each(['crawl', 'hop', 'fly'] as const)(
         elements,
         complete,
         undefined,
-        undefined,
         settings,
         { x: -20, y: -140 },
         undefined,
@@ -122,13 +121,7 @@ test.each([false, true])(
       eyes: element<SVGGElement>(),
       laptop: element<SVGGElement>(),
     };
-    const glide = createGlide(
-      elements,
-      vi.fn(),
-      undefined,
-      undefined,
-      settings,
-    );
+    const glide = createGlide(elements, vi.fn(), undefined, settings);
     glide.configure(settings, reduced);
     glide.snapTo({ x: 12, y: -200 });
     expect(transforms.get(elements.actor)!.y).toBe(-64);

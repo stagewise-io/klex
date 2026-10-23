@@ -1,5 +1,23 @@
 import type { OfficeMember } from './office-members';
 
+export type Point = [number, number, number];
+
+// A fixed, elevated view into the room. Coordinates are shared by the furniture
+// so figures can later be placed at a desk without guessing screen positions.
+const pitch = Math.atan2(7.2, 18);
+
+export function project([x, y, z]: Point) {
+  const dy = y - 8.5;
+  const dz = z - 18;
+  const depth = -dy * Math.sin(pitch) - dz * Math.cos(pitch);
+  const vertical = dy * Math.cos(pitch) - dz * Math.sin(pitch);
+  return {
+    x: 700 + (x * 1240) / depth,
+    y: 385 - (vertical * 1240) / depth,
+    depth,
+  };
+}
+
 // Seated figures are drawn in a vertical plane through their chair. The room
 // places bodies behind the desks and forearms above the desktop equipment.
 export function officeFigure(member: OfficeMember, armsOnly = false) {

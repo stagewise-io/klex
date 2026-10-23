@@ -3,6 +3,7 @@ import './styles.css';
 import { gsap } from 'gsap';
 import { useEffect, useRef } from 'react';
 
+import { klexLook } from '../../../../bot-looks';
 import { Klex, type KlexHandle } from '../../../../klex';
 import { DEFAULT_GLIDE, MOVEMENT_STYLES } from '../../../../klex/presets';
 import {
@@ -10,7 +11,6 @@ import {
   FeatureCard,
   type SceneProps,
 } from '../../shared/feature-card';
-import { bentoBotLook } from '../../shared/scene-bot';
 
 export function ToolsCard({ playing }: CardProps) {
   return (
@@ -95,8 +95,9 @@ function ToolsScene({ active }: SceneProps) {
     state.origin += toolStep;
     state.moving = false;
     // Rebase on arrival. Waiting for the final settling animation lets the
-    // conveyor carry the bot away between flights.
-    bot.current?.snapTo({ x: 0, y: tools[state.platform].height });
+    // conveyor carry the bot away between flights. Shifting keeps the residual
+    // settle and flight pose, so the bot does not visibly reset on landing.
+    bot.current?.shiftBy({ x: -50, y: 0 });
     carrier.current?.style.setProperty(
       'transform',
       `translateX(${state.origin - state.distance}px)`,
@@ -122,7 +123,7 @@ function ToolsScene({ active }: SceneProps) {
       <div ref={carrier} className="bento-tools-runner">
         <Klex
           ref={bot}
-          {...bentoBotLook}
+          {...klexLook}
           settings={toolBotSettings}
           size={54}
           width={254}

@@ -2,7 +2,6 @@ import './build.css';
 
 import { Code } from '@sugar-high/react';
 import { useEffect, useRef, useState } from 'react';
-import { createRoot } from 'react-dom/client';
 
 import {
   Badge,
@@ -17,19 +16,28 @@ import {
   Input,
 } from '@stagewise/ui';
 
-import { careersIssue, LinearIssueDialog, typeIssueText } from '../linear';
+import { LinearIssueDialog } from '../linear/dialog';
 import { SceneProgress } from '../workflow/controls';
 import {
+  mountStory,
   PopBot,
   type PopBotHandle,
+  type StoryProps,
+  storyMarkup,
+  typeIssueText,
   typeText,
   usePlay,
-  useStepPlayback,
   WalkingBot,
   type WalkingBotHandle,
   wait,
 } from '../workflow/stage';
 import { SafariWindow, useCareersZoom, WindowLabel } from './safari';
+
+const careersIssue = {
+  title: 'Publish a Product Designer role',
+  description:
+    "Build a careers page with Monica's job description and an application form. Accept a résumé upload and send each application to Monica.",
+};
 
 const codeSteps = [
   `import {
@@ -310,12 +318,7 @@ function BuildScene({
   finished,
   skipArrival,
   onComplete,
-}: {
-  playing: boolean;
-  finished: boolean;
-  skipArrival: boolean;
-  onComplete: () => void;
-}) {
+}: StoryProps) {
   const workspace = useRef<HTMLDivElement>(null);
   const codeScroll = useRef<HTMLDivElement>(null);
   const kristine = useRef<WalkingBotHandle>(null);
@@ -528,32 +531,6 @@ function BuildScene({
   );
 }
 
-function BuildStory() {
-  const { host, run, playing, finished, skipArrival, onComplete } =
-    useStepPlayback();
-  return (
-    <div ref={host}>
-      <BuildScene
-        key={run}
-        playing={playing}
-        finished={finished}
-        skipArrival={skipArrival}
-        onComplete={onComplete}
-      />
-    </div>
-  );
-}
+export const buildMarkup = storyMarkup('build');
 
-export const buildMarkup = `
-      <section class="new-build-story" aria-labelledby="new-build-story-title">
-        <div id="new-build-story"></div>
-      </section>
-`;
-
-export function mountBuild() {
-  const host = document.getElementById('new-build-story');
-  if (!host) throw new Error('The build story container is missing.');
-  const root = createRoot(host);
-  root.render(<BuildStory />);
-  return () => root.unmount();
-}
+export const mountBuild = () => mountStory('build', BuildScene);

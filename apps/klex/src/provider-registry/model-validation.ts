@@ -153,10 +153,24 @@ export class ModelValidation {
     const operation = Promise.resolve()
       .then(async () => {
         combined.throwIfAborted();
+        let model: LanguageModelV4;
+        try {
+          model = createModel();
+        } catch (error) {
+          const result = classifyModelValidationError(error);
+          return result.code === 'connectivity_failed'
+            ? modelValidationResult(
+                'invalid',
+                'invalid_configuration',
+                'The provider could not create the model from these settings.',
+                'Check required settings and resolved credentials.',
+              )
+            : result;
+        }
         const generation = new AbortController();
         try {
           const result = streamText({
-            model: createModel(),
+            model,
             prompt: 'Reply with OK.',
             maxRetries: 0,
             abortSignal: AbortSignal.any([combined, generation.signal]),
@@ -171,11 +185,26 @@ export class ModelValidation {
             if (part.type === 'error')
               return classifyModelValidationError(part.error);
             if (
+              part.type === 'finish' &&
+              part.finishReason === 'content-filter'
+            )
+              return modelValidationResult(
+                'unverified',
+                'request_rejected',
+                'The provider filtered the model check.',
+                'Check the provider content policy, then retry.',
+              );
+            if (part.type === 'finish' && part.finishReason === 'error')
+              return modelValidationResult(
+                'unverified',
+                'request_rejected',
+                'The provider ended the model check with an error.',
+                'Check provider settings and availability, then retry.',
+              );
+            if (
               part.type === 'text-delta' ||
               part.type === 'reasoning-delta' ||
-              (part.type === 'finish' &&
-                part.finishReason !== 'error' &&
-                part.finishReason !== 'content-filter')
+              part.type === 'finish'
             )
               return modelValidationResult(
                 'valid',

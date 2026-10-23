@@ -69,7 +69,7 @@ describe('provider registry module integration', () => {
     const config = createConfig({
       logging,
       dataDirectory,
-      env: { VALIDATION_KEY: 'resolved-key' },
+      env: { VALIDATION_KEY: 'resolved-key', EMPTY_VALIDATION_KEY: '' },
     });
     await config.start();
     const registry = createProviderRegistry({
@@ -161,6 +161,21 @@ describe('provider registry module integration', () => {
           providerOptions: { azure: { store: 'not-a-boolean' } },
         }),
       ).toMatchObject({ status: 'invalid', code: 'invalid_configuration' });
+      for (const apiKey of ['', `\${env:EMPTY_VALIDATION_KEY}`]) {
+        const result = await registry.validateModel({
+          provider: { type: 'azure-openai', settings: { ...settings, apiKey } },
+          modelId: 'exact-deployment',
+          purpose: 'chat',
+        });
+        expect(result).toMatchObject({
+          status: 'invalid',
+          code: 'invalid_configuration',
+        });
+        expect(JSON.stringify(result)).not.toContain('model-validation-draft');
+      }
+      expect(
+        await readFile(join(dataDirectory, CONFIG_FILE_NAME), 'utf8'),
+      ).toBe(persisted);
       expect(fetch).toHaveBeenCalledTimes(2);
     } finally {
       vi.unstubAllGlobals();

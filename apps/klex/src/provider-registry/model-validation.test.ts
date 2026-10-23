@@ -46,6 +46,65 @@ describe('model validation probe', () => {
     ).toMatchObject({ status: 'unverified', code: 'provider_changed' });
   });
 
+  it('classifies local model factory failures without exposing settings', async () => {
+    const result = await new ModelValidation().run(
+      () => {
+        throw new Error('Provider secret-provider requires secret-setting');
+      },
+      input,
+      undefined,
+      () => true,
+    );
+    expect(result).toMatchObject({
+      status: 'invalid',
+      code: 'invalid_configuration',
+    });
+    expect(JSON.stringify(result)).not.toContain('secret');
+  });
+
+  it.each([
+    ['stop', 'valid', 'available'],
+    ['length', 'valid', 'available'],
+    ['content-filter', 'unverified', 'request_rejected'],
+    ['error', 'unverified', 'request_rejected'],
+  ] as const)(
+    'classifies a %s finish without generated tokens',
+    async (finishReason, status, code) => {
+      const model = new MockLanguageModelV4({
+        doStream: async () => ({
+          stream: new ReadableStream({
+            start(controller) {
+              controller.enqueue({
+                type: 'finish',
+                finishReason: { unified: finishReason, raw: finishReason },
+                usage: {
+                  inputTokens: {
+                    total: 1,
+                    noCache: 1,
+                    cacheRead: 0,
+                    cacheWrite: 0,
+                  },
+                  outputTokens: { total: 0, text: 0, reasoning: 0 },
+                },
+              });
+              controller.close();
+            },
+          }),
+        }),
+      });
+      const result = await new ModelValidation().run(
+        () => model,
+        input,
+        undefined,
+        () => true,
+      );
+      expect(result).toMatchObject({ status, code });
+      if (finishReason === 'content-filter')
+        expect(result.message).toContain('filtered');
+      if (finishReason === 'error') expect(result.message).toContain('error');
+    },
+  );
+
   it.each([
     [401, 'invalid', 'authentication_required'],
     [403, 'invalid', 'permission_denied'],

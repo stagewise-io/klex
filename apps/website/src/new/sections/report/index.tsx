@@ -73,6 +73,18 @@ function ReportScene({ playing, finished, onComplete }: StoryProps) {
     });
   }, [sent, thanked, finished]);
 
+  // Open on the latest message. The list only gets its final height after
+  // the composer mounts, so stay pinned to the bottom while it resizes.
+  useEffect(() => {
+    const panel = messages.current;
+    if (!panel) return;
+    const resize = new ResizeObserver(() =>
+      panel.scrollTo({ top: panel.scrollHeight }),
+    );
+    resize.observe(panel);
+    return () => resize.disconnect();
+  }, []);
+
   usePlay(
     playing,
     async (signal) => {

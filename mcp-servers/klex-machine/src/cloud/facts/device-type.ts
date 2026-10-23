@@ -43,7 +43,7 @@ const windowsHardware = z.object({
 function chassisType(value: number): MachineDeviceType | undefined {
   if ([8, 9, 10, 14, 31, 32].includes(value)) return 'laptop';
   if ([3, 4, 5, 6, 7, 13, 15, 16, 24, 35, 36].includes(value)) return 'desktop';
-  if ([23, 28, 29].includes(value)) return 'server';
+  if ([17, 23, 28, 29].includes(value)) return 'server';
   return undefined;
 }
 

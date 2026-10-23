@@ -16,6 +16,7 @@ export type WorkApp = {
 const gutter = 16;
 const gap = 12;
 const foregroundOverlap = 12;
+const minimumScale = 0.6;
 
 /** A readable app preview on the floor behind its working bot. */
 export function WorkWindow({
@@ -75,13 +76,9 @@ export function WorkWindow({
         bounds.height - gutter,
       );
       const availableHeight = bottom - copyBottom - gap - labelHeight;
-      // scrollWidth rounds to whole pixels. Use the same precision so a
-      // fractional width cannot make a fitting label hide the whole window.
-      const width = Math.floor(
-        Math.min(
-          Math.max(0, availableHeight) * (designWidth / designHeight),
-          preferredWidth,
-        ),
+      const width = Math.min(
+        Math.max(0, availableHeight) * (designWidth / designHeight),
+        preferredWidth,
       );
       const scale = width / designWidth;
       const left = Math.min(
@@ -90,8 +87,10 @@ export function WorkWindow({
       );
       const height = (width * designHeight) / designWidth + labelHeight;
       const top = bottom - height;
+      // A bot sent up close to the copy has no room for a readable preview.
+      // Skip the window then instead of shrinking it to a thumbnail.
       element.style.visibility =
-        width >= (label?.scrollWidth ?? 0) && width > 0 ? 'visible' : 'hidden';
+        width >= preferredWidth * minimumScale ? 'visible' : 'hidden';
       element.style.setProperty('--work-width', `${width}px`);
       element.style.setProperty('--work-scale', String(scale));
       element.style.setProperty(

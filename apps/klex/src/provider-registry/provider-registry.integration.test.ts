@@ -64,6 +64,56 @@ async function createDataDirectory(): Promise<string> {
 }
 
 describe('provider registry module integration', () => {
+  it('keeps catalog model kinds when manual metadata only overrides the display name', async () => {
+    const config = createConfig({
+      logging,
+      dataDirectory: await createDataDirectory(),
+    });
+    await config.start();
+    const createLanguageModel =
+      vi.fn<NonNullable<ProviderDefinition['createLanguageModel']>>();
+    const registry = createProviderRegistry({
+      logging,
+      config,
+      definitions: [
+        {
+          type: 'azure-openai',
+          metadata: { displayName: 'Test', description: 'Metadata merge test' },
+          usageGuidance:
+            'Test provider with embedding catalog metadata and no network requests.',
+          createLanguageModel,
+          resolveModelMetadata: () => ({ kind: 'embedding' }),
+          testConnection: async () => ({
+            ok: true,
+            code: 'available',
+            value: { latencyMs: 0 },
+          }),
+        },
+      ],
+    });
+    await registry.start();
+    try {
+      await registry.addInstance({
+        id: 'test-provider',
+        type: 'azure-openai',
+        settings: { apiKey: 'test-key', resourceName: 'example' },
+        knownModels: {
+          'embedding-model': { displayName: 'My embedding model' },
+        },
+      });
+      expect(
+        await registry.validateModel({
+          provider: { id: 'test-provider' },
+          modelId: 'embedding-model',
+          purpose: 'chat',
+        }),
+      ).toMatchObject({ status: 'invalid', code: 'invalid_configuration' });
+      expect(createLanguageModel).not.toHaveBeenCalled();
+    } finally {
+      await registry.close();
+      await config.close();
+    }
+  });
   it('probes unsaved and existing Azure deployments with resolved credentials without changing config', async () => {
     const dataDirectory = await createDataDirectory();
     const config = createConfig({

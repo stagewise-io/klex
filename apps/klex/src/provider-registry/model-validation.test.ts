@@ -65,8 +65,11 @@ describe('model validation probe', () => {
   it.each([
     ['stop', 'valid', 'available'],
     ['length', 'valid', 'available'],
+    ['tool-calls', 'valid', 'available'],
+    ['other', 'unverified', 'connectivity_failed'],
     ['content-filter', 'unverified', 'request_rejected'],
     ['error', 'unverified', 'request_rejected'],
+    ['interrupted', 'unverified', 'connectivity_failed'],
   ] as const)(
     'classifies a %s finish without generated tokens',
     async (finishReason, status, code) => {
@@ -74,19 +77,21 @@ describe('model validation probe', () => {
         doStream: async () => ({
           stream: new ReadableStream({
             start(controller) {
-              controller.enqueue({
-                type: 'finish',
-                finishReason: { unified: finishReason, raw: finishReason },
-                usage: {
-                  inputTokens: {
-                    total: 1,
-                    noCache: 1,
-                    cacheRead: 0,
-                    cacheWrite: 0,
+              // Simulate a stream interrupted before the provider's finish signal.
+              if (finishReason !== 'interrupted')
+                controller.enqueue({
+                  type: 'finish',
+                  finishReason: { unified: finishReason, raw: finishReason },
+                  usage: {
+                    inputTokens: {
+                      total: 1,
+                      noCache: 1,
+                      cacheRead: 0,
+                      cacheWrite: 0,
+                    },
+                    outputTokens: { total: 0, text: 0, reasoning: 0 },
                   },
-                  outputTokens: { total: 0, text: 0, reasoning: 0 },
-                },
-              });
+                });
               controller.close();
             },
           }),

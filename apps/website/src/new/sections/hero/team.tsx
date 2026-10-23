@@ -122,7 +122,7 @@ function HeroBot({
   started: boolean;
   reducedMotion: boolean;
   activity: KlexActivity;
-  handles: RefObject<Map<string, KlexHandle>>;
+  handles: RefObject<Map<string, RefObject<KlexHandle | null>>>;
   onArrive: () => void;
   onSelect: (id: string) => void;
   onProfile: (id: string, open: boolean) => void;
@@ -201,10 +201,9 @@ function HeroBot({
     return () => animation.stop();
   }, [animate, reducedMotion, visible]);
 
+  // Share the ref, not the handle: Klex recreates its handle on every render.
   useLayoutEffect(() => {
-    const handle = klex.current;
-    if (!handle) return;
-    handles.current.set(bot.id, handle);
+    handles.current.set(bot.id, klex);
     return () => {
       handles.current.delete(bot.id);
     };
@@ -454,7 +453,7 @@ function HeroTeam({ entrance }: { entrance: Promise<void> }) {
   const ground = useRef<HTMLDivElement>(null);
   const team = useRef<HTMLUListElement>(null);
   const [started, setStarted] = useState(false);
-  const handles = useRef(new Map<string, KlexHandle>());
+  const handles = useRef(new Map<string, RefObject<KlexHandle | null>>());
   const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
   const [copyBottom, setCopyBottom] = useState(0);
   const [selectedId, setSelectedId] = useState<string>(bots[0].id);
@@ -630,7 +629,7 @@ function HeroTeam({ entrance }: { entrance: Promise<void> }) {
       ...current,
       [id]: state === 'working' ? 'working' : 'idle',
     }));
-    if (state === 'done') handles.current.get(id)?.emote('happy-nod');
+    if (state === 'done') handles.current.get(id)?.current?.emote('happy-nod');
   }, []);
   const onMoveEnd = useCallback((id: string) => {
     setMoving((current) => current.filter((entry) => entry !== id));
@@ -692,7 +691,7 @@ function HeroTeam({ entrance }: { entrance: Promise<void> }) {
           setPlaced((current) =>
             current.includes(selectedId) ? current : [...current, selectedId],
           );
-          handles.current.get(selectedId)?.moveTo(
+          handles.current.get(selectedId)?.current?.moveTo(
             {
               x: trackX(bounds.width, size, x),
               y: Math.max(

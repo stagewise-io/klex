@@ -1,7 +1,5 @@
 import './guides-faq.css';
 
-import { createRoot, hydrateRoot } from 'react-dom/client';
-
 import {
   Accordion,
   AccordionContent,
@@ -9,6 +7,8 @@ import {
   AccordionTrigger,
 } from '@stagewise/ui';
 import { IconPlusOutline18 } from '@stagewise/ui/icons/nucleo/ui-outline-18/IconPlusOutline18.tsx';
+
+import { mountIsland } from '../../island';
 
 export const guidesFaqMarkup = `
   <section class="new-guides-faq" id="guides-faq" aria-label="Guides and FAQs">
@@ -102,12 +102,4 @@ export function GuidesFaq() {
   );
 }
 
-export function mountGuidesFaq() {
-  const host = document.querySelector('.new-guides-faq-mount');
-  if (!host) throw new Error('The guides and FAQ section is missing.');
-  const root = host.hasChildNodes()
-    ? hydrateRoot(host, <GuidesFaq />, { identifierPrefix: 'guides-faq-' })
-    : createRoot(host, { identifierPrefix: 'guides-faq-' });
-  if (!host.hasChildNodes()) root.render(<GuidesFaq />);
-  return () => root.unmount();
-}
+export const mountGuidesFaq = () => mountIsland('guides-faq', <GuidesFaq />);

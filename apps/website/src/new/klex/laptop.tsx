@@ -1,4 +1,4 @@
-import { roundedPath } from '../../mascot/geometry';
+import { roundedPath } from './geometry';
 import { BODY_SHAPES, type BodyShape } from './presets';
 
 const logoShape = BODY_SHAPES[0];

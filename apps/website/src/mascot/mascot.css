@@ -1,71 +1,7 @@
-.hero-mascot {
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  align-self: start;
-  padding-top: 2rem;
-}
 .klex-mascot {
   display: block;
   width: 128px;
   height: 112px;
   flex: none;
   overflow: visible;
-}
-.bot-family {
-  position: relative;
-  width: min(100%, 350px);
-  aspect-ratio: 1.3;
-}
-.family-bot {
-  position: absolute;
-  width: 42%;
-  padding: 0;
-  border: 0;
-  border-radius: 12px;
-  background: transparent;
-  color: var(--foreground);
-  cursor: pointer;
-  -webkit-tap-highlight-color: transparent;
-}
-.family-bot-harry {
-  left: 0;
-  top: 4%;
-}
-.family-bot-sarah {
-  width: 38%;
-  right: 1%;
-  top: 8%;
-}
-.family-bot-pip {
-  width: 36%;
-  left: 8%;
-  bottom: 2%;
-}
-.family-bot-momo {
-  width: 34%;
-  right: 3%;
-  bottom: 0;
-}
-.family-avatar {
-  display: block;
-  transform-origin: 50% 90%;
-}
-.family-bot .klex-mascot {
-  width: 100%;
-  height: auto;
-}
-.family-bot:focus-visible {
-  outline: 2px solid var(--primary);
-  outline-offset: 4px;
-}
-@media (max-width: 680px) {
-  .hero-mascot {
-    justify-content: flex-end;
-    padding-top: 0;
-  }
-  .bot-family {
-    width: 240px;
-    aspect-ratio: 1.2;
-  }
 }

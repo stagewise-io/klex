@@ -161,11 +161,6 @@ const REACTIONS = [
   steps: readonly ReactionStep[];
 }[];
 
-export const EMOTE_CATEGORIES = [
-  { id: 'body', name: 'Body' },
-  { id: 'eyes', name: 'Eyes' },
-  { id: 'reactions', name: 'Reactions' },
-] as const;
 export const EMOTES = [
   ...BODY_ACTIONS.map((action) => ({ ...action, category: 'body' as const })),
   ...EYE_ACTIONS.map((action) => ({ ...action, category: 'eyes' as const })),

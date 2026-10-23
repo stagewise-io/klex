@@ -18,30 +18,21 @@ import { Badge } from '@stagewise/ui';
 import type { KlexActivity } from './klex/activity';
 import { EMOTES, type Emote, type EmoteLook } from './klex/emotes';
 import { type Extra, KlexExtras } from './klex/extras';
-import { type Expression, KlexEyes } from './klex/eyes';
-import { waveAnchor } from './klex/geometry';
+import { KlexEyes } from './klex/eyes';
+import { getKlexEyeColor, waveAnchor } from './klex/geometry';
 import { createGlide, type KlexPosition, klexBody } from './klex/glide';
 import { KlexLaptop } from './klex/laptop';
 import {
   BODY_SHAPES,
   type BodyShape,
   DEFAULT_GLIDE,
-  getKlexEyeColor,
   MOVEMENT_STYLES,
   type MovementMode,
-  PALETTES,
 } from './klex/presets';
 import { KlexSpeech, type KlexSpeechValue } from './klex/speech';
 import { observeVisibility } from './observe-visibility';
 
-export type {
-  BodyShape,
-  Expression,
-  Extra,
-  KlexActivity,
-  KlexPosition,
-  MovementMode,
-};
+export type { BodyShape, KlexActivity, KlexPosition, MovementMode };
 export type EmoteId = Emote['id'];
 
 export type KlexHandle = {
@@ -62,7 +53,6 @@ export type KlexHandle = {
   emote(id: EmoteId): boolean;
   /** Show custom speech without interrupting body emotes. Pass null to dismiss. */
   say(text: string | null, options?: { waiting?: boolean }): void;
-  setExpression(expression: Expression): void;
   /** Select one extra, or 'none' to hide it. */
   setExtra(extra: Extra): void;
   cancelEmote(): void;
@@ -70,7 +60,7 @@ export type KlexHandle = {
   resume(): void;
 };
 
-export type KlexProps = {
+type KlexProps = {
   ref?: Ref<KlexHandle>;
   children?: ReactNode;
   name?: string;
@@ -91,9 +81,7 @@ export type KlexProps = {
   /** Track/portrait HTML layouts, or a native 160-unit SVG scene figure. */
   layout?: 'track' | 'avatar' | 'svg';
   className?: string;
-  initialExpression?: Expression;
   initialExtra?: Extra;
-  extrasEnabled?: boolean;
   settings?: typeof DEFAULT_GLIDE;
   /** Lock a character's locomotion across travel, rest, and caller overrides. */
   movementMode?: MovementMode;
@@ -102,8 +90,6 @@ export type KlexProps = {
   onMoveArrival?: () => void;
   /** Reports the ground line's Y offset as the character moves. */
   onDepthChange?: (y: number) => void;
-  /** Also fires when the active emote is cancelled. */
-  onEmoteComplete?: () => void;
 };
 
 export function Klex({
@@ -112,7 +98,7 @@ export function Klex({
   name,
   role,
   shape = BODY_SHAPES[0],
-  color = PALETTES[0].body,
+  color = '#ffffff',
   size = 160,
   idle = true,
   activity = 'idle',
@@ -120,15 +106,12 @@ export function Klex({
   initialPosition,
   layout = 'track',
   className,
-  initialExpression = 'neutral',
   initialExtra = 'none',
-  extrasEnabled = true,
   settings: suppliedSettings,
   movementMode,
   onMoveComplete,
   onMoveArrival,
   onDepthChange,
-  onEmoteComplete,
 }: KlexProps) {
   const settings = useMemo(() => {
     const base =
@@ -138,7 +121,6 @@ export function Klex({
     return movementMode ? { ...base, mode: movementMode } : base;
   }, [suppliedSettings, movementMode]);
   const eyeColor = getKlexEyeColor(color);
-  const [expression, setExpression] = useState(initialExpression);
   const [extra, setExtra] = useState(initialExtra);
   const [paused, setPaused] = useState(false);
   const [visible, setVisible] = useState(false);
@@ -169,7 +151,6 @@ export function Klex({
   const completeMove = useEffectEvent(() => onMoveComplete?.());
   const arrive = useEffectEvent(() => onMoveArrival?.());
   const reportDepth = useEffectEvent((y: number) => onDepthChange?.(y));
-  const completeEmote = useEffectEvent(() => onEmoteComplete?.());
   const configureSettings = useEffectEvent((next: typeof DEFAULT_GLIDE) => {
     motionRef.current?.configure(
       next,
@@ -203,7 +184,6 @@ export function Klex({
     const motion = createGlide(
       { travel, actor, shadow, body, eyes, laptop },
       completeMove,
-      completeEmote,
       setReactionLook,
       currentSettings.current,
       startingPosition.current,
@@ -237,16 +217,7 @@ export function Klex({
       idle,
       activity,
     );
-  }, [
-    reducedMotion,
-    shape,
-    scale,
-    idle,
-    activity,
-    reactionLook.extra,
-    extra,
-    extrasEnabled,
-  ]);
+  }, [reducedMotion, shape, scale, idle, activity, reactionLook.extra, extra]);
 
   useImperativeHandle(ref, () => ({
     moveTo(target, mode) {
@@ -284,7 +255,6 @@ export function Klex({
     say(text, options) {
       setSpeech(text ? { text, waiting: options?.waiting } : null);
     },
-    setExpression,
     setExtra,
     cancelEmote: () => motionRef.current?.cancelEmote(),
     pause: () => {
@@ -313,13 +283,13 @@ export function Klex({
         transform={`translate(${80 + shape.eyeX} ${shape.eyeY})`}
         data-testid="klex-eyes"
       >
-        <KlexEyes expression={reactionLook.expression ?? expression} />
+        <KlexEyes expression={reactionLook.expression ?? 'neutral'} />
         <g style={{ color }}>
           <KlexExtras
             handAnchor={handAnchor}
             paused={paused || !visible}
             transient={reactionLook.extra === 'wave'}
-            extra={extrasEnabled ? (reactionLook.extra ?? extra) : 'none'}
+            extra={reactionLook.extra ?? extra}
             headTop={
               Math.min(...shape.outline.map((point) => point[1])) -
               shape.eyeY -
@@ -328,12 +298,7 @@ export function Klex({
           />
         </g>
       </g>
-      <g
-        ref={laptopRef}
-        opacity="0"
-        visibility={extrasEnabled ? 'visible' : 'hidden'}
-        data-testid="klex-laptop"
-      >
+      <g ref={laptopRef} opacity="0" data-testid="klex-laptop">
         <KlexLaptop shape={shape} />
       </g>
     </>

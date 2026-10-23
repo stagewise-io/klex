@@ -20,12 +20,7 @@ export function mountWorkflowTitleAvatars(navigation: HTMLElement) {
     const look = heroLooks[host.dataset.bot ?? ''];
     const resize = new ResizeObserver(([entry]) => {
       root.render(
-        <Klex
-          {...look}
-          size={entry.contentRect.width}
-          layout="avatar"
-          activity="idle"
-        />,
+        <Klex {...look} size={entry.contentRect.width} layout="avatar" />,
       );
     });
     resize.observe(host);

@@ -4,8 +4,6 @@ import { buttonVariants } from '@stagewise/ui';
 
 import { officeMarkup } from './office';
 
-export { mountTrust } from './principles';
-
 export const trustMarkup = `
   <section class="new-trust" id="trust" aria-labelledby="trust-title">
     <div class="trust-content">

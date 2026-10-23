@@ -1,7 +1,5 @@
 import './coworkers.css';
 
-import { createRoot, hydrateRoot } from 'react-dom/client';
-
 import {
   Button,
   Card,
@@ -16,6 +14,7 @@ import {
 } from '@stagewise/ui';
 
 import { heroLooks } from '../../bot-looks';
+import { mountIsland } from '../../island';
 import { Klex } from '../../klex';
 
 export const coworkersMarkup = `
@@ -346,12 +345,4 @@ export function Coworkers() {
   );
 }
 
-export function mountCoworkers() {
-  const host = document.querySelector('.new-coworkers-mount');
-  if (!host) throw new Error('The coworkers section is missing.');
-  const root = host.hasChildNodes()
-    ? hydrateRoot(host, <Coworkers />, { identifierPrefix: 'coworkers-' })
-    : createRoot(host, { identifierPrefix: 'coworkers-' });
-  if (!host.hasChildNodes()) root.render(<Coworkers />);
-  return () => root.unmount();
-}
+export const mountCoworkers = () => mountIsland('coworkers', <Coworkers />);

@@ -40,24 +40,6 @@
   left: 35%;
 }
 
-.new-slack-monica-figure {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  opacity: 1;
-  transform-origin: center bottom;
-}
-
-.new-slack-monica-figure[data-phase="hidden"] {
-  opacity: 0;
-}
-
-.new-slack-monica-figure svg[role="img"] {
-  filter: drop-shadow(
-    0 8px 12px light-dark(rgb(0 0 0 / 12%), rgb(0 0 0 / 35%))
-  );
-}
-
 .new-slack-label {
   display: flex;
   align-items: center;

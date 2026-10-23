@@ -1,7 +1,6 @@
 import './pull-request.css';
 
 import { type ReactNode, useEffect, useRef, useState } from 'react';
-import { createRoot } from 'react-dom/client';
 
 import {
   Button,
@@ -26,19 +25,17 @@ import { Klex } from '../../klex';
 import { SafariWindow, useCareersZoom } from '../build/safari';
 import { SceneProgress } from '../workflow/controls';
 import {
+  mountStory,
   PopBot,
   type PopBotHandle,
+  type StoryProps,
+  storyMarkup,
   typeText,
   usePlay,
-  useStepPlayback,
   wait,
 } from '../workflow/stage';
 
-export const pullRequestMarkup = `
-      <section class="new-pr-story" aria-labelledby="new-pr-story-title">
-        <div id="new-pr-story"></div>
-      </section>
-`;
+export const pullRequestMarkup = storyMarkup('pr');
 
 const applicant = {
   name: 'Jeff Tester',
@@ -90,18 +87,31 @@ export function PrComment({
   );
 }
 
-export function PrEvent({
-  icon,
-  children,
-}: {
-  icon: ReactNode;
-  children: ReactNode;
-}) {
+function PrEvent({ icon, children }: { icon: ReactNode; children: ReactNode }) {
   return (
     <p className="new-pr-event">
       <span className="new-pr-event-icon">{icon}</span>
       <span>{children}</span>
     </p>
+  );
+}
+
+export function PrApproved() {
+  return (
+    <PrEvent
+      icon={
+        <svg
+          className="new-pr-icon new-pr-approved"
+          viewBox="0 0 16 16"
+          fill="currentColor"
+          aria-hidden="true"
+        >
+          <path d="M13.78 4.22a.75.75 0 0 1 0 1.06l-7.25 7.25a.75.75 0 0 1-1.06 0L2.22 9.28a.75.75 0 0 1 1.06-1.06L6 10.94l6.72-6.72a.75.75 0 0 1 1.06 0Z" />
+        </svg>
+      }
+    >
+      <strong>jeff-bot</strong> approved these changes
+    </PrEvent>
   );
 }
 
@@ -230,20 +240,7 @@ function PullRequest({
           )}
           {approved && (
             <div className="new-build-reveal">
-              <PrEvent
-                icon={
-                  <svg
-                    className="new-pr-icon new-pr-approved"
-                    viewBox="0 0 16 16"
-                    fill="currentColor"
-                    aria-hidden="true"
-                  >
-                    <path d="M13.78 4.22a.75.75 0 0 1 0 1.06l-7.25 7.25a.75.75 0 0 1-1.06 0L2.22 9.28a.75.75 0 0 1 1.06-1.06L6 10.94l6.72-6.72a.75.75 0 0 1 1.06 0Z" />
-                  </svg>
-                }
-              >
-                <strong>jeff-bot</strong> approved these changes
-              </PrEvent>
+              <PrApproved />
             </div>
           )}
           {merged && (
@@ -377,17 +374,7 @@ function ApplicationPage({
   );
 }
 
-function TestScene({
-  playing,
-  finished,
-  skipArrival,
-  onComplete,
-}: {
-  playing: boolean;
-  finished: boolean;
-  skipArrival: boolean;
-  onComplete: () => void;
-}) {
+function TestScene({ playing, finished, skipArrival, onComplete }: StoryProps) {
   const jeff = useRef<PopBotHandle>(null);
   const jonathan = useRef<PopBotHandle>(null);
   const [toasts] = useState(() => createToastManager());
@@ -545,26 +532,4 @@ function TestScene({
   );
 }
 
-function TestStory() {
-  const { host, run, playing, finished, skipArrival, onComplete } =
-    useStepPlayback();
-  return (
-    <div ref={host}>
-      <TestScene
-        key={run}
-        playing={playing}
-        finished={finished}
-        skipArrival={skipArrival}
-        onComplete={onComplete}
-      />
-    </div>
-  );
-}
-
-export function mountPullRequest() {
-  const host = document.getElementById('new-pr-story');
-  if (!host) throw new Error('The pull request story container is missing.');
-  const root = createRoot(host);
-  root.render(<TestStory />);
-  return () => root.unmount();
-}
+export const mountPullRequest = () => mountStory('pr', TestScene);

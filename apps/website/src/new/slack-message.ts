@@ -1,7 +1,8 @@
 import './slack-message.css';
 
-import { type BodyShape, mascotMarkup } from '../mascot';
+import { mascotMarkup } from '../mascot';
 import { heroLooks } from './bot-looks';
+import type { BodyShape } from './klex/presets';
 
 // Static, authored website content only. body contains trusted message markup.
 export function slackMessageMarkup({

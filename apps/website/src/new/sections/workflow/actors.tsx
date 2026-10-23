@@ -35,7 +35,6 @@ type ActorHandle = {
   hide(): void;
   rest(): void;
   visible(): boolean;
-  spot(): BotSpot | null;
   say: KlexHandle['say'];
   emote: KlexHandle['emote'];
   setActivity(activity: KlexActivity): void;
@@ -132,7 +131,6 @@ function Actor({
       entrance.current = animate(figure, { scale: [0, 1] }, popTransition);
     },
     visible,
-    spot: () => destination.current,
     rest,
     async move(spot, signal) {
       signal?.throwIfAborted();
@@ -207,20 +205,18 @@ export function mountWorkflowActors(track: HTMLElement) {
     const size =
       128 * Math.min(1, track.clientWidth / 736, track.clientHeight / 576);
     root.render(
-      <>
-        {(Object.keys(names) as BotId[]).map((bot) => (
-          <Actor
-            key={bot}
-            bot={bot}
-            size={size}
-            layoutRevision={layoutRevision}
-            ref={(actor) => {
-              if (actor) actors.set(bot, actor);
-              else actors.delete(bot);
-            }}
-          />
-        ))}
-      </>,
+      (Object.keys(names) as BotId[]).map((bot) => (
+        <Actor
+          key={bot}
+          bot={bot}
+          size={size}
+          layoutRevision={layoutRevision}
+          ref={(actor) => {
+            if (actor) actors.set(bot, actor);
+            else actors.delete(bot);
+          }}
+        />
+      )),
     );
   };
   flushSync(render);
@@ -229,18 +225,6 @@ export function mountWorkflowActors(track: HTMLElement) {
   for (const artwork of track.querySelectorAll('.new-workflow-artwork'))
     resize.observe(artwork);
   return {
-    checkpoint() {
-      const spots = [...actors].map(
-        ([bot, actor]) => [bot, actor.spot()] as const,
-      );
-      return () => {
-        for (const [bot, spot] of spots) {
-          const actor = actors.get(bot)!;
-          if (spot) actor.place(spot);
-          else actor.hide();
-        }
-      };
-    },
     reset: () => {
       for (const actor of actors.values()) actor.hide();
     },

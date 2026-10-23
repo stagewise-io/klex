@@ -1,8 +1,8 @@
 import './features.css';
 
 import { Fragment } from 'react';
-import { createRoot, hydrateRoot } from 'react-dom/client';
 
+import { mountIsland } from '../../island';
 import { usePlayback } from '../../playback';
 import { AutonomyCard } from './cards/autonomy';
 import { CollaborationCard } from './cards/collaboration';
@@ -33,14 +33,4 @@ export function FeatureBento() {
   );
 }
 
-export function mountFeatures() {
-  const container = document.querySelector<HTMLElement>('.new-features-mount');
-  if (!container) throw new Error('The feature section is missing.');
-  const root = container.hasChildNodes()
-    ? hydrateRoot(container, <FeatureBento />, {
-        identifierPrefix: 'features-',
-      })
-    : createRoot(container, { identifierPrefix: 'features-' });
-  if (!container.hasChildNodes()) root.render(<FeatureBento />);
-  return () => root.unmount();
-}
+export const mountFeatures = () => mountIsland('features', <FeatureBento />);

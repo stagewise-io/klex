@@ -1,7 +1,7 @@
 import { bench, describe, vi } from 'vitest';
 
-import { roundedPath } from '../../mascot/geometry';
 import { fitGaze, gazeRoom } from './gaze';
+import { roundedPath } from './geometry';
 import { bodyRig, DEFAULT_GLIDE, klexBody } from './glide';
 import { benchmarkFrames } from './glide.fixtures';
 import { BODY_SHAPES } from './presets';

@@ -1,17 +1,9 @@
-export { getKlexEyeColor } from '../../mascot/geometry';
-
 export type BodyShape = {
   id: string;
   name: string;
   outline: readonly (readonly [number, number])[];
   eyeX: number;
   eyeY: number;
-};
-
-export type KlexPalette = {
-  id: string;
-  name: string;
-  body: string;
 };
 
 // Matching rig points and a shared 160×140 frame keep every form compatible.
@@ -21,7 +13,7 @@ export const BODY_SHAPES = [
     name: 'Klex',
     eyeX: 23.294,
     eyeY: 56.824,
-    // Logo contour from packages/ui/src/components/ui/klex-logo.tsx, scaled
+    // Logo contour from @stagewise/ui src/components/ui/klex-logo.tsx, scaled
     // uniformly to 110px high, with three sole points at y=128 for ground contact.
     outline: [
       [94.855, 17.957],
@@ -189,15 +181,6 @@ export const BODY_SHAPES = [
     ],
   },
 ] as const satisfies readonly BodyShape[];
-
-export const PALETTES = [
-  { id: 'porzellan', name: 'Porcelain', body: '#ffffff' },
-  { id: 'pfirsich', name: 'Peach', body: '#ffbd91' },
-  { id: 'lavendel', name: 'Lavender', body: '#d9c4ff' },
-  { id: 'pistazie', name: 'Pistachio', body: '#c8e7a7' },
-  { id: 'rose', name: 'Rose', body: '#ffbdd7' },
-  { id: 'himmel', name: 'Sky', body: '#a5caff' },
-] as const satisfies readonly KlexPalette[];
 
 export type MovementMode = 'crawl' | 'fly' | 'hop';
 

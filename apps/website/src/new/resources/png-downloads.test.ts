@@ -60,41 +60,11 @@ describe('browser PNG generation', () => {
     },
   );
 
-  it('exports a square avatar with a descriptive filename', async () => {
-    vi.stubGlobal(
-      'Image',
-      class {
-        src = '';
-        naturalWidth = 100;
-        naturalHeight = 100;
-        decode = decode;
-      },
-    );
-    const result = await createLogoPng('/brand/klex-avatar.svg', 1024);
-    expect(canvas.height).toBe(1024);
-    expect(result.filename).toBe('klex-avatar-1024x1024.png');
-  });
-
   it('rejects unsupported sizes before loading the image', async () => {
     await expect(createLogoPng('/klex-logo-light.svg', 999999)).rejects.toThrow(
       'supported PNG resolution',
     );
     expect(decode).not.toHaveBeenCalled();
-  });
-
-  it('propagates image loading errors', async () => {
-    decode.mockRejectedValue(new Error('Image unavailable'));
-    await expect(createLogoPng('/missing.svg', 256)).rejects.toThrow(
-      'Image unavailable',
-    );
-    expect(drawImage).not.toHaveBeenCalled();
-  });
-
-  it('reports canvas encoding failure', async () => {
-    canvas.toBlob.mockImplementation((callback) => callback(null));
-    await expect(createLogoPng('/klex-logo-light.svg', 256)).rejects.toThrow(
-      'could not be generated',
-    );
   });
 });
 

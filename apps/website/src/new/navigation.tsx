@@ -17,8 +17,21 @@ import {
   useSidebar,
 } from '@stagewise/ui';
 import { IconGithub } from '@stagewise/ui/icons/nucleo/social-media/IconGithub.tsx';
-import { IconMenuOutline18 } from '@stagewise/ui/icons/nucleo/ui-outline-18/IconMenuOutline18.tsx';
 import { IconXmarkOutline18 } from '@stagewise/ui/icons/nucleo/ui-outline-18/IconXmarkOutline18.tsx';
+
+import { IconMenuOutline18 } from './icon-menu-outline-18';
+
+/** Prerendered page header; `mountNavigation` fills its `nav`. */
+export const headerMarkup = `
+  <a class="new-skip-link" href="#main">Skip to content</a>
+  <header class="new-header">
+    <a class="new-brand" href="/" aria-label="Klex home">
+      <img class="new-logo-light" src="/klex-logo-light.svg" alt="Klex" width="88" height="33" />
+      <img class="new-logo-dark" src="/klex-logo-dark.svg" alt="Klex" width="88" height="33" />
+    </a>
+    <nav id="new-nav" aria-label="Primary navigation"></nav>
+  </header>
+`;
 
 function MobileNavigation() {
   const { isMobile, openMobile, setOpenMobile } = useSidebar();
@@ -78,7 +91,7 @@ function MobileNavigation() {
   );
 }
 
-export function NewNav() {
+function NewNav() {
   return (
     <SidebarProvider
       defaultOpen={false}

@@ -115,37 +115,29 @@ function HostingScene() {
               stroke="#ffffff26"
               strokeWidth="0.6"
             />
-            <path
-              className="bento-hosting-pear"
-              transform="translate(117 105)"
-              fill="#555b63"
-              d="M13 7C9 7 8 10 7 14C6 17 2 20 2 24C2 29 6 32 13 32C20 32 24 29 24 25C20 25 17 22 18 19C18.5 17.5 20 16.5 21 16C20 15 19.5 14.5 19 13C18 9 17 7 13 7ZM13 5C13 2 16 0 20 0C20 3 17 5 13 5Z"
+            <rect
+              x="114"
+              y="106"
+              width="32"
+              height="32"
+              rx="10"
+              fill="#00000020"
             />
-            <g transform="rotate(14 163 153)">
-              <rect
-                x="150"
-                y="141"
-                width="26"
-                height="26"
-                rx="8"
-                fill="#00000020"
-              />
-              <rect
-                x="150"
-                y="140"
-                width="26"
-                height="26"
-                rx="8"
-                fill="#fafafa"
-              />
-              <image
-                href="/klex-avatar.svg"
-                x="152"
-                y="142"
-                width="22"
-                height="22"
-              />
-            </g>
+            <rect
+              x="114"
+              y="105"
+              width="32"
+              height="32"
+              rx="10"
+              fill="#fafafa"
+            />
+            <image
+              href="/klex-avatar.svg"
+              x="116.5"
+              y="107.5"
+              width="27"
+              height="27"
+            />
             <circle
               className="bento-hosting-status-glow"
               cx="164"

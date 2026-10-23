@@ -3,9 +3,8 @@ import './principles.css';
 import { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 
-import { heroLooks } from '../../bot-looks';
+import { heroLooks, klexLook } from '../../bot-looks';
 import { Klex, type KlexHandle } from '../../klex';
-import { BODY_SHAPES } from '../../klex/presets';
 import { usePlayback } from '../../playback';
 import { mountOffice } from './office-team';
 
@@ -178,12 +177,6 @@ const wires = [
   { app: 'outlook', x: 326, y: 185, path: 'M232 150 C278 150 260 185 326 185' },
 ];
 
-const defaultKlexLook = {
-  color: '#2559fe',
-  shape: BODY_SHAPES[0],
-  movementMode: 'fly',
-} as const;
-
 function IsolationScene() {
   const { host, active } = usePlayback();
   const bot = useRef<KlexHandle>(null);
@@ -227,7 +220,7 @@ function IsolationScene() {
       </svg>
       <div className="trust-orb">
         <div className="trust-orb-bot">
-          <Klex ref={bot} {...defaultKlexLook} size={100} layout="avatar" />
+          <Klex ref={bot} {...klexLook} size={100} layout="avatar" />
         </div>
       </div>
     </div>
@@ -276,7 +269,7 @@ function MemoryScene() {
       <div className="trust-memory-bot">
         <Klex
           ref={bot}
-          {...defaultKlexLook}
+          {...klexLook}
           size={120}
           layout="avatar"
           idle={false}
@@ -289,7 +282,7 @@ function MemoryScene() {
             aria-hidden="true"
           >
             <g
-              transform={`translate(${80 + defaultKlexLook.shape.eyeX} ${defaultKlexLook.shape.eyeY})`}
+              transform={`translate(${80 + klexLook.shape.eyeX} ${klexLook.shape.eyeY})`}
             >
               <path
                 className="trust-baby-curl"
@@ -322,7 +315,7 @@ function MemoryScene() {
             aria-hidden="true"
           >
             <g
-              transform={`translate(${80 + defaultKlexLook.shape.eyeX} ${defaultKlexLook.shape.eyeY})`}
+              transform={`translate(${80 + klexLook.shape.eyeX} ${klexLook.shape.eyeY})`}
             >
               <g className="trust-mature-glasses">
                 <rect x="-24" y="-10" width="21" height="20" rx="6" />

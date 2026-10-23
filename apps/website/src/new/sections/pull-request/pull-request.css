@@ -296,32 +296,6 @@
   margin-top: 0.25em;
 }
 
-.new-pr-reactions {
-  display: flex;
-  gap: 4px;
-  color: var(--pr-muted);
-}
-
-.new-pr-add-reaction,
-.new-pr-reaction {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 4px;
-  height: 28px;
-  border: 1px solid var(--pr-border);
-  border-radius: 100px;
-}
-
-.new-pr-add-reaction {
-  width: 28px;
-}
-
-.new-pr-reaction {
-  padding: 0 8px;
-  font-size: 12px;
-}
-
 @media (max-width: 600px) {
   .new-pr-story {
     padding: 4rem 1rem;

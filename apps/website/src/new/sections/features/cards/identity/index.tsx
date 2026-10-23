@@ -6,13 +6,13 @@ import { useEffect, useRef } from 'react';
 import { IconGithub } from '@stagewise/ui/icons/nucleo/social-media/IconGithub.tsx';
 import { IconDiscord } from '@stagewise/ui/icons/provider/IconDiscord.tsx';
 
+import { klexLook } from '../../../../bot-looks';
 import { Klex, type KlexHandle } from '../../../../klex';
 import {
   type CardProps,
   FeatureCard,
   type SceneProps,
 } from '../../shared/feature-card';
-import { bentoBotLook } from '../../shared/scene-bot';
 
 export function IdentityCard({ playing }: CardProps) {
   return (
@@ -96,7 +96,7 @@ function IdentityScene({ active }: SceneProps) {
                     <div className="bento-account-banner" />
                     <div className="bento-account-avatar">
                       <Klex
-                        {...bentoBotLook}
+                        {...klexLook}
                         size={44}
                         layout="avatar"
                         idle={false}
@@ -119,7 +119,7 @@ function IdentityScene({ active }: SceneProps) {
           })}
         </div>
         <div className="bento-identity-bot">
-          <Klex ref={bot} {...bentoBotLook} size={76} layout="avatar" />
+          <Klex ref={bot} {...klexLook} size={76} layout="avatar" />
         </div>
       </div>
     </div>

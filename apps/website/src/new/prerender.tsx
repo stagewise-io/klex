@@ -5,18 +5,20 @@ import { Coworkers } from './sections/coworkers';
 import { FeatureBento } from './sections/features/bento';
 import { GuidesFaq } from './sections/guides-faq';
 
+// Each island hydrates through mountIsland with the same name.
+const islands = {
+  coworkers: <Coworkers />,
+  'guides-faq': <GuidesFaq />,
+  features: <FeatureBento />,
+};
+
 export function prerenderLandingPage() {
-  return pageMarkup
-    .replace(
-      '<div class="new-coworkers-mount"></div>',
-      `<div class="new-coworkers-mount">${renderToString(<Coworkers />, { identifierPrefix: 'coworkers-' })}</div>`,
-    )
-    .replace(
-      '<div class="new-guides-faq-mount"></div>',
-      `<div class="new-guides-faq-mount">${renderToString(<GuidesFaq />, { identifierPrefix: 'guides-faq-' })}</div>`,
-    )
-    .replace(
-      '<div class="new-features-mount"></div>',
-      `<div class="new-features-mount">${renderToString(<FeatureBento />, { identifierPrefix: 'features-' })}</div>`,
-    );
+  return Object.entries(islands).reduce(
+    (html, [name, element]) =>
+      html.replace(
+        `<div class="new-${name}-mount"></div>`,
+        `<div class="new-${name}-mount">${renderToString(element, { identifierPrefix: `${name}-` })}</div>`,
+      ),
+    pageMarkup,
+  );
 }

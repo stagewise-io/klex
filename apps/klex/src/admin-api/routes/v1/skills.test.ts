@@ -200,6 +200,7 @@ describe('skills routes', () => {
 
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({
+      nextCursor: null,
       skills: [
         {
           name: untracked.name,
@@ -218,6 +219,44 @@ describe('skills routes', () => {
       ],
     });
   });
+
+  it('paginates matches and continues after the cursor skill is deleted', async () => {
+    const catalog = createCatalog();
+    const skills = Array.from({ length: 5 }, (_, index) => ({
+      ...untracked,
+      name: `skill-${index}`,
+      description:
+        index % 2 === 0 ? 'Verify FRONTEND changes.' : 'Backend changes.',
+    }));
+    catalog.list = () => skills;
+    const app = createApp(catalog);
+    const first = await app.request('/v1/skills?limit=2&search=%20frontend%20');
+    expect(first.status).toBe(200);
+    expect(await first.json()).toMatchObject({
+      skills: [{ name: 'skill-0' }, { name: 'skill-2' }],
+      nextCursor: 'skill-2',
+    });
+    skills.splice(2, 1);
+    const last = await app.request(
+      '/v1/skills?limit=2&search=frontend&cursor=skill-2',
+    );
+    expect(await last.json()).toMatchObject({
+      skills: [{ name: 'skill-4' }],
+      nextCursor: null,
+    });
+    const empty = await app.request('/v1/skills?limit=2&search=missing');
+    expect(await empty.json()).toEqual({ skills: [], nextCursor: null });
+  });
+
+  it.each(['limit=0', 'limit=101', 'limit=1.5', 'limit=nope', 'cursor='])(
+    'rejects invalid pagination parameters: %s',
+    async (query) => {
+      const response = await createApp(createCatalog()).request(
+        `/v1/skills?${query}`,
+      );
+      expect(response.status).toBe(400);
+    },
+  );
 
   it('returns a skill with body and source episodes', async () => {
     const res = await createApp(createCatalog()).request(

@@ -10,6 +10,7 @@ import {
   deleteSkillResponseSchema,
   errorResponseSchema,
   skillDetailSchema,
+  skillListQuerySchema,
   skillListResponseSchema,
   skillNameParamsSchema,
   updateSkillBodySchema,
@@ -31,13 +32,20 @@ export const listSkillsRoute = createRoute({
   tags: ['Skills'],
   summary: 'List skills',
   description:
-    "Lists the agent's skills with their name, description, origin, and usage bookkeeping. Bodies are omitted; fetch a single skill for its body.",
+    "Lists the agent's skills with their name, description, origin, and usage bookkeeping. Pass limit and cursor to paginate, and search to filter descriptions before pagination. Without limit, all matches are returned. Bodies are omitted; fetch a single skill for its body.",
+  request: { query: skillListQuerySchema },
   responses: {
     200: {
       content: {
         'application/json': { schema: skillListResponseSchema },
       },
       description: 'Skill summaries, sorted by name',
+    },
+    400: {
+      content: {
+        'application/json': { schema: errorResponseSchema },
+      },
+      description: 'Invalid query parameters',
     },
     500: {
       content: {
@@ -59,10 +67,21 @@ export function listSkills(
 ): RouteHandler<typeof listSkillsRoute> {
   return (c) => {
     if (!deps.skillCatalog.isAvailable()) return c.json(NOT_RUNNING, 503);
-    const skills = [...deps.skillCatalog.list()]
-      .sort((a, b) => a.name.localeCompare(b.name))
-      .map((skill) => toSummary(deps.skillCatalog, skill));
-    return c.json({ skills }, 200);
+    const { limit, cursor, search } = c.req.valid('query');
+    const query = search?.toLowerCase() ?? '';
+    const matches = deps.skillCatalog
+      .list()
+      .filter(
+        (skill) =>
+          (!cursor || skill.name.localeCompare(cursor) > 0) &&
+          skill.description.toLowerCase().includes(query),
+      )
+      .sort((a, b) => a.name.localeCompare(b.name));
+    const page = matches.slice(0, limit);
+    const skills = page.map((skill) => toSummary(deps.skillCatalog, skill));
+    const nextCursor =
+      matches.length > page.length ? (page.at(-1)?.name ?? null) : null;
+    return c.json({ skills, nextCursor }, 200);
   };
 }
 

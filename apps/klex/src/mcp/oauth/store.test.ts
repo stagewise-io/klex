@@ -96,6 +96,27 @@ describe('McpOAuthStore', () => {
     ).resolves.toBeUndefined();
   });
 
+  it('preserves supplied-client and unknown metadata through ordinary token writes', async () => {
+    const { filePath, store } = await createStore();
+    const client = {
+      client_id: 'customer-app',
+      klex_registered: true,
+      future_metadata: 'preserved',
+    };
+    const redirect = 'https://cloud.test/callback';
+    const issuer = 'https://login.salesforce.com';
+    await store.saveClientInformation('salesforce', redirect, client, issuer);
+    const restored = new McpOAuthStore(filePath);
+    await restored.saveTokens(
+      'salesforce',
+      { access_token: 'token', token_type: 'Bearer' },
+      issuer,
+    );
+    expect(
+      await restored.clientInformation('salesforce', redirect, issuer),
+    ).toEqual(client);
+  });
+
   it('does not reuse legacy client information without redirect metadata', async () => {
     const { filePath, store } = await createStore();
     await writeFile(

@@ -61,6 +61,14 @@ describe('McpOAuthProvider', () => {
       access_token: 'access',
     });
     await expect(provider.codeVerifier()).resolves.toBe('verifier');
+
+    await provider.saveDiscoveryState({
+      authorizationServerUrl: 'https://auth.example.com',
+    });
+    await provider.invalidateCredentials('client');
+    await expect(
+      provider.clientInformation({ issuer: 'https://auth.example.com' }),
+    ).resolves.toBeUndefined();
   });
 
   it('generates unpredictable state and delegates authorization redirects', async () => {

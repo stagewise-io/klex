@@ -93,7 +93,7 @@ describe('PUT /v1/mcp-servers/{name}/authorization', () => {
       state: 'secret-state',
       expiresAt: pending.expiresAt,
     });
-    expect(requestAuthorization).toHaveBeenCalledWith('qonto');
+    expect(requestAuthorization).toHaveBeenCalledWith('qonto', undefined);
   });
 
   it('serializes the same pending authorization consistently', async () => {

@@ -240,6 +240,8 @@ export function completeAuthorization(
     if (body.error) params.set('error', body.error);
     if (body.error_description)
       params.set('error_description', body.error_description);
+    if (body.iss !== undefined) params.set('iss', body.iss);
+    if (body.error_uri !== undefined) params.set('error_uri', body.error_uri);
 
     const outcome = deps.mcp.completeAuthorization(body.state, params);
     deps.logger.info({ outcome }, 'MCP OAuth callback delivered');

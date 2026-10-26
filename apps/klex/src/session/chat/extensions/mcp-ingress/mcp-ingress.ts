@@ -7,6 +7,7 @@ import z from 'zod';
 
 import type { ModuleLogger } from '@stagewise/logger';
 
+import type { Config } from '@/config';
 import type { Mcp, McpPushNotification } from '@/mcp';
 import type { ChatSessionInbox } from '@/session/chat/inbox';
 import { SessionInboxUrgency } from '@/session/chat/inbox';
@@ -94,6 +95,14 @@ function isResourceStatePart(part: unknown): part is ResourceStatePart {
 // Extension
 // ---------------------------------------------------------------------------
 
+export interface McpIngressExtensionDeps {
+  config: Pick<Config, 'addMcpServer' | 'getMcpServers'>;
+  mcp: Mcp;
+  logger: ModuleLogger;
+  inbox: ChatSessionInbox;
+  getHistory: () => ExtendedUIMessage[];
+}
+
 class McpIngressExtension implements Extension {
   private readonly resourceWindowManager: ResourceWindowManager;
   /** Unsubscribe function for the MCP resource-updated listener. */
@@ -117,12 +126,7 @@ class McpIngressExtension implements Extension {
   private readonly maxConcurrentWindows: number;
 
   constructor(
-    private readonly deps: {
-      mcp: Mcp;
-      logger: ModuleLogger;
-      inbox: ChatSessionInbox;
-      getHistory: () => ExtendedUIMessage[];
-    },
+    private readonly deps: McpIngressExtensionDeps,
     config: McpIngressConfig,
   ) {
     this.maxConcurrentWindows = config.maxConcurrentWindows;
@@ -188,6 +192,69 @@ class McpIngressExtension implements Extension {
 
   getTools(_model: ResolvedModel): ToolSet {
     return {
+      addMcpServer: {
+        description:
+          'Add a new remote HTTP/HTTPS MCP server to config.json. Cannot edit or remove existing servers. Returns header names only, never secret header values.',
+        inputSchema: z.object({
+          name: z.string(),
+          url: z.string(),
+          headers: z.record(z.string(), z.string()).optional(),
+        }),
+        execute: async ({ name: rawName, url, headers }) => {
+          const name = rawName.trim();
+          if (!name) return { error: 'MCP server name must not be blank.' };
+          if (Object.hasOwn(Object.prototype, name) || name === 'prototype') {
+            return { error: 'MCP server name is reserved.' };
+          }
+          if (/\p{Cc}/u.test(name)) {
+            return {
+              error: 'MCP server name must not contain control characters.',
+            };
+          }
+          try {
+            const parsed = new URL(url);
+            if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+              return { error: 'MCP server URL must use HTTP or HTTPS.' };
+            }
+          } catch {
+            return {
+              error: 'MCP server URL must be a valid HTTP or HTTPS URL.',
+            };
+          }
+
+          if (Object.hasOwn(this.deps.config.getMcpServers(), name)) {
+            return { error: 'An MCP server with this name already exists.' };
+          }
+          try {
+            // Config serializes mutations and checks duplicates again atomically.
+            // Its subscribers reconcile the runtime connections after persistence.
+            await this.deps.config.addMcpServer(name, {
+              type: 'http',
+              url,
+              ...(headers && Object.keys(headers).length > 0
+                ? { headers }
+                : {}),
+            });
+          } catch {
+            // Config/transport errors may contain credentials. Never echo them.
+            return {
+              error:
+                'Failed to add MCP server. No existing server was changed.',
+            };
+          }
+          return {
+            name,
+            type: 'http',
+            url,
+            headerNames: Object.keys(headers ?? {}).sort(),
+            status:
+              this.deps.mcp
+                .getServerStatuses()
+                .find((server) => server.name === name)?.status ??
+              'disconnected',
+          };
+        },
+      },
       listResources: {
         description: 'List resources and resource templates of MCP server.',
         inputSchema: z.object({
@@ -1077,6 +1144,7 @@ export function createMcpIngressExt(
       }
       return new McpIngressExtension(
         {
+          config: deps.config,
           mcp: deps.mcp,
           logger: deps.logger,
           inbox: deps.inbox,

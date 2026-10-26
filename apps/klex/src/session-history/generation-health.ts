@@ -88,19 +88,20 @@ export function summarizeGenerationFailure(
       .slice(0, 16384)
       .toLowerCase();
   let category: GenerationFailureCategory = 'unknown';
-  if (
+  const isQuota =
     /insufficient_quota|billing|credit|quota.*(?:exhaust|exceed)|exceed.*quota|resource_exhausted/.test(
       text,
-    )
-  )
-    category = 'quota';
+    );
+  // Per-minute quota errors are rate limits; neither classification should
+  // be overwritten by incidental authentication or configuration wording.
   if (
-    (statusCode === 429 && category !== 'quota') ||
+    (statusCode === 429 && !isQuota) ||
     (/\btpm\b|\brpm\b|per.minute|rate.limit/.test(text) &&
       !/billing|insufficient_quota|credit/.test(text))
   )
     category = 'rate_limit';
-  if (
+  else if (isQuota) category = 'quota';
+  else if (
     statusCode === 401 ||
     statusCode === 403 ||
     /api key|authentication/.test(text)

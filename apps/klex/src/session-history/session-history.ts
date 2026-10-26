@@ -9,15 +9,15 @@ import {
 
 import type { ModuleLogger, RootLogger } from '@stagewise/logger';
 
-import { GenerationHealthErrorSchema } from '@/admin-api/routes/v1/schemas';
 import type { Config, KlexConfig } from '@/config';
 import { assertCurrentSqliteStore } from '@/local-data';
 import type { ExtendedUIMessage } from '@/session/chat/message-types';
 import type { SessionKind } from '@/session/types';
 
-import type {
-  GenerationFailure,
-  GenerationHealthError,
+import {
+  type GenerationFailure,
+  type GenerationHealthError,
+  GenerationHealthErrorSchema,
 } from './generation-health';
 import {
   SESSION_HISTORY_RELATIVE_PATH,

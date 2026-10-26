@@ -34,9 +34,9 @@ const SOUL_TAG_PATTERN = /<\/?soul\b[^>]*>/gi;
  * The mode of a soul extension instance.
  *
  * - `'standard'` — used in regular (default) sessions. The extension is
- *   read-only: it injects the soul content (or a confused rejection
- *   prompt when no soul exists) into the system prompt but provides no
- *   tools. The soul cannot be created or updated from a regular session.
+ *   read-only: it injects the soul content (or a refusal prompt that
+ *   points to setup when no soul exists) into the system prompt but
+ *   provides no tools. The soul cannot be created or updated from a regular session.
  * - `'god'` — used in the dedicated god-message session. The extension
  *   provides `updateSoul`, allowing the agent to define or rewrite its soul
  *   when explicitly instructed by a god message.
@@ -100,11 +100,11 @@ class SoulExt implements Extension {
    * the dedicated soul section. Otherwise the mode-appropriate no-soul prompt
    * is returned:
    *
-   * - `'god'` mode → the aggressive soul-building prompt that instructs
-   *   the model to build its soul (obeying god messages that command
-   *   immediate creation).
-   * - `'standard'` mode → a confused rejection prompt. The agent does
-   *   not know who it is and refuses to function.
+   * - `'god'` mode → the soul-building prompt that instructs the model
+   *   to create its soul as soon as a god message commands it.
+   * - `'standard'` mode → a refusal prompt. The agent refuses to work,
+   *   never collects identity details in conversation, and tells the
+   *   sender that whoever manages it must configure the soul first.
    *
    * Called once per step. Re-reads the file each time so manual edits
    * are picked up without restarting the session.

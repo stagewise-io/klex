@@ -185,6 +185,12 @@ describe('SoulExt (standard) — getSystemPromptPart', () => {
     writeFileSync(join(dir, 'SOUL.md'), 'Updated soul', 'utf-8');
     expect(ext.getSystemPromptPart!()).toContain('Updated soul');
   });
+
+  it('returns the regular no-soul prompt when no soul exists', () => {
+    const ext = createSoulExt.create(makeDeps());
+
+    expect(ext.getSystemPromptPart!()).toBe('regular no-soul prompt');
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -203,6 +209,41 @@ describe('SoulExt (god) — getSystemPromptPart', () => {
     const part = ext.getSystemPromptPart!();
 
     expect(part).toContain(soulContent);
+  });
+
+  it('returns the god no-soul prompt when no soul exists', () => {
+    const ext = createSoulExtGod.create(makeDeps());
+
+    expect(ext.getSystemPromptPart!()).toBe('god no-soul prompt');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// No-soul prompt files — guard against swapped contents
+// ---------------------------------------------------------------------------
+
+describe('no-soul prompt files', () => {
+  const readPrompt = (file: string) =>
+    readFileSync(
+      new URL(`./system-prompt-part/${file}`, import.meta.url),
+      'utf-8',
+    );
+
+  it('regular prompt refuses work and rejects in-chat soul configuration', () => {
+    const prompt = readPrompt('no-soul-regular.md');
+
+    expect(prompt).toContain('cannot create or change your soul');
+    expect(prompt).toContain("can't be done through chat");
+    expect(prompt).not.toContain('updateSoul');
+    expect(prompt).not.toContain('Ask your creator');
+  });
+
+  it('god prompt instructs soul creation on god message', () => {
+    const prompt = readPrompt('no-soul-god.md');
+
+    expect(prompt).toContain('god message');
+    expect(prompt).toContain('updateSoul');
+    expect(prompt).not.toContain('Refuse all requests');
   });
 });
 

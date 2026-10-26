@@ -147,6 +147,8 @@ export class GenerationRunner {
     let modelFallbackOccurred = false;
     let requestRejected = false;
     let salvagedRejection = false;
+    let failureReason: string | null = null;
+    let failedModelId: string | null = null;
 
     const model = this.deps.model;
     let lastUsage: LanguageModelUsage | null = null;
@@ -159,6 +161,16 @@ export class GenerationRunner {
       this.generationAbortController = generationAbortController;
 
       const currentModelEntry = fallbackManager.getChatModelEntry();
+      const context = this.deps.modelContext;
+      const attemptedEntry =
+        context.providerId && context.modelId ? context : currentModelEntry;
+      const attemptedModelId = attemptedEntry
+        ? typeof attemptedEntry === 'string'
+          ? attemptedEntry
+          : attemptedEntry.modelId.includes(':')
+            ? attemptedEntry.modelId
+            : `${attemptedEntry.providerId}:${attemptedEntry.modelId}`
+        : null;
       const currentModelId = currentModelEntry?.modelId ?? 'unknown';
       stepSpan.addEvent('step.generation_attempt', {
         'generation.attempt': attempt,
@@ -285,6 +297,16 @@ export class GenerationRunner {
       }
 
       // Shared outcome handling.
+      if (
+        outcome !== 'done' &&
+        outcome !== 'aborted' &&
+        (outcome !== 'salvage' ||
+          lastClassification?.isModelError ||
+          lastClassification?.isRequestRejected)
+      ) {
+        failureReason = lastClassification?.reason ?? 'generation failed';
+        failedModelId = attemptedModelId;
+      }
       if (outcome === 'done') break;
       if (outcome === 'fatal') {
         fatalError = true;
@@ -327,6 +349,8 @@ export class GenerationRunner {
     // the tool sweep and report the rejection to the turn.
     if (requestRejected) {
       return {
+        failureReason,
+        failedModelId,
         shouldContinue: true,
         forceNextStep: false,
         fatalError: false,
@@ -350,6 +374,8 @@ export class GenerationRunner {
         'Generation attempts exhausted — stopping step',
       );
       return {
+        failureReason: failureReason ?? 'generation failed',
+        failedModelId,
         shouldContinue: false,
         forceNextStep: false,
         fatalError: false,
@@ -393,6 +419,7 @@ export class GenerationRunner {
 
     return {
       shouldContinue: true,
+      ...(failureReason !== null && { failureReason, failedModelId }),
       forceNextStep,
       fatalError,
       fatalErrorReason,

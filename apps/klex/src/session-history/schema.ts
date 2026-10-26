@@ -1,7 +1,7 @@
 import type { SqliteMigration, SqliteStoreDefinition } from '@/local-data';
 
 /** Schema version — increment when adding migrations. */
-export const SESSION_HISTORY_SCHEMA_VERSION = 2;
+export const SESSION_HISTORY_SCHEMA_VERSION = 3;
 
 /** Relative path of the session-history database inside the data directory. */
 export const SESSION_HISTORY_RELATIVE_PATH = 'sessions.sqlite';
@@ -37,6 +37,7 @@ CREATE TABLE IF NOT EXISTS sessions (
   updated_at TEXT NOT NULL,
   ended_at TEXT,
   end_reason TEXT,
+  last_health_failure TEXT,
   message_count INTEGER NOT NULL DEFAULT 0,
   trimmed_message_count INTEGER NOT NULL DEFAULT 0,
   byte_size INTEGER NOT NULL DEFAULT 0
@@ -139,6 +140,16 @@ export const SESSION_HISTORY_MIGRATIONS: SqliteMigration[] = [
       );
     },
   },
+  {
+    from: 2,
+    to: 3,
+    name: 'add_sessions_last_health_failure',
+    up: async (database) => {
+      await database.execute(
+        'ALTER TABLE sessions ADD COLUMN last_health_failure TEXT',
+      );
+    },
+  },
 ];
 
 export const SESSION_HISTORY_STORE_DEFINITION: SqliteStoreDefinition = {
@@ -148,16 +159,18 @@ export const SESSION_HISTORY_STORE_DEFINITION: SqliteStoreDefinition = {
   required: false,
   createIfMissing: true,
   schemaVersion: SESSION_HISTORY_SCHEMA_VERSION,
-  // Older binaries already reject schema v2; no separate floor is needed.
+  // Older binaries reject schema v3; no separate floor is needed.
   compatibilityVersion: 1,
-  // First release shipping the session log (feat → minor after 0.22.x).
-  minimumKlexVersion: '0.23.0',
+  // First release shipping session health failures (feat → minor after 0.25.x).
+  minimumKlexVersion: '0.26.0',
   // Must run before the first table exists; afterwards it has no effect.
   initPragmas: ['PRAGMA auto_vacuum = INCREMENTAL'],
   initSql: SESSION_HISTORY_INIT_SQL,
   migrations: SESSION_HISTORY_MIGRATIONS,
   validate: async (client) => {
-    await client.execute('SELECT instance_id FROM sessions LIMIT 1');
+    await client.execute(
+      'SELECT instance_id, last_health_failure FROM sessions LIMIT 1',
+    );
     await client.execute(
       `SELECT session_id, ord, instance_id, message_id, is_checkpoint,
               covers_through_ord

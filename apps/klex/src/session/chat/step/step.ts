@@ -315,7 +315,7 @@ class StepModule implements Step {
             };
             return complete(noModelEvent);
           }
-          const modelId = entry.modelId;
+          const modelId = typeof entry === 'string' ? entry : entry.modelId;
           selectedModelId = modelId;
           const modelSpan = startChildSpan('fetch_model', {
             attributes: {
@@ -359,6 +359,10 @@ class StepModule implements Step {
             );
             this.deps.fallbackManager.fallbackToNextModel();
             const unusableModelEvent: StepCompleteEvent = {
+              failureReason: 'selected model is unusable',
+              failedModelId: modelId.includes(':')
+                ? modelId
+                : `${entry.providerId}:${modelId}`,
               shouldContinue: true,
               forceNextStep: false,
               fatalError: false,

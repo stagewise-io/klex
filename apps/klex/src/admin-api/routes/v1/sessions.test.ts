@@ -33,6 +33,28 @@ const logger = createLogger({ name: 'test' });
 const directories: string[] = [];
 const modules: SessionHistory[] = [];
 
+it('serializes health failures in list and detail, including empty sessions', async () => {
+  const { app, history } = await setup();
+  const recorder = history.openRecorder(meta());
+  const failure = {
+    kind: 'request_rejected' as const,
+    reason: 'request rejected (400)',
+    modelId: 'work:model',
+    consecutiveFailures: 1,
+    occurredAt: new Date().toISOString(),
+  };
+  recorder.recordHealthFailure(failure);
+  await history.flush();
+  const list = await app.request('/v1/sessions?kind=default&live=true&limit=1');
+  expect(list.status).toBe(200);
+  expect(await list.json()).toMatchObject({
+    sessions: [{ lastHealthFailure: failure }],
+  });
+  const detail = await app.request(`/v1/sessions/${recorder.instanceId}`);
+  expect(detail.status).toBe(200);
+  expect(await detail.json()).toMatchObject({ lastHealthFailure: failure });
+});
+
 interface SessionsBody {
   sessions: Array<{ instanceId: string; kind: string; live: boolean }>;
   nextCursor: string | null;

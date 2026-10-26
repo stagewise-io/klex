@@ -908,8 +908,38 @@ const sessionKindSchema = z
   .enum(['default', 'god', 'child'])
   .openapi('SessionKind');
 
+export const sessionHealthFailureKindSchema = z
+  .enum(['turn_failed', 'request_rejected', 'terminated'])
+  .openapi('SessionHealthFailureKind');
+
+export const sessionHealthFailureSchema = z
+  .object({
+    kind: sessionHealthFailureKindSchema,
+    reason: z
+      .string()
+      .describe('Short model-generation failure classification reason'),
+    modelId: z
+      .string()
+      .nullable()
+      .describe('Attempted model identifier, or null when unknown'),
+    consecutiveFailures: z
+      .number()
+      .int()
+      .min(1)
+      .describe(
+        'Number of consecutive failed turns; one for request rejection',
+      ),
+    occurredAt: z.string().describe('ISO timestamp when the failure occurred'),
+  })
+  .openapi('SessionHealthFailure');
+
 const sessionHistoryRecordSchema = z
   .object({
+    lastHealthFailure: sessionHealthFailureSchema
+      .nullable()
+      .describe(
+        'Latest unresolved model-generation health failure for this session, or null when healthy',
+      ),
     instanceId: z.string(),
     sessionId: z.string(),
     kind: sessionKindSchema,

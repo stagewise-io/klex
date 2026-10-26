@@ -1,5 +1,6 @@
+import type { BodyShape } from '@klex/mascot';
+
 import { FAMILY_SHAPES } from '../mascot/presets';
-import type { BodyShape } from '../new/klex/presets';
 
 /** Jonathan's single visual identity across scenes, cards, and message avatars. */
 export const jonathanLook = {

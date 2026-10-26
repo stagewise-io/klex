@@ -1,12 +1,12 @@
-import { useEffect, useRef } from 'react';
-
-import { heroLooks, klexLook } from '../../../bot-looks';
 import {
   type EmoteId,
   Klex,
   type KlexActivity,
   type KlexHandle,
-} from '../../../klex';
+} from '@klex/mascot';
+import { useEffect, useRef } from 'react';
+
+import { heroLooks, klexLook } from '../../../bot-looks';
 import type { SceneProps } from './feature-card';
 
 export function SceneBot({

@@ -22,6 +22,7 @@ minimumReleaseAge: 2880
 # publish; the release-age guard exists for third-party supply-chain risk.
 minimumReleaseAgeExclude:
   - '@klex/cloud-api'
+  - '@klex/mascot'
   - '@stagewise/ui'
   - blume@1.6.6
   - quickjs-wasi@3.6.3

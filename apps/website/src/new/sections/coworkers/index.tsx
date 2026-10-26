@@ -1,5 +1,7 @@
 import './coworkers.css';
 
+import { Klex } from '@klex/mascot';
+
 import {
   Button,
   Card,
@@ -15,7 +17,6 @@ import {
 
 import { heroLooks } from '../../bot-looks';
 import { mountIsland } from '../../island';
-import { Klex } from '../../klex';
 
 export const coworkersMarkup = `
   <section class="new-coworkers" id="coworkers" aria-labelledby="coworkers-title">

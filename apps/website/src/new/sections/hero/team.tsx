@@ -1,3 +1,12 @@
+import {
+  Klex,
+  type KlexActivity,
+  KlexGroundGrid,
+  type KlexHandle,
+  type KlexPosition,
+  type MovementMode,
+  popTransition,
+} from '@klex/mascot';
 import { gsap } from 'gsap';
 import {
   AnimatePresence,
@@ -21,15 +30,6 @@ import { createPortal, flushSync } from 'react-dom';
 import { createRoot } from 'react-dom/client';
 
 import { heroLooks } from '../../bot-looks';
-import {
-  Klex,
-  type KlexActivity,
-  type KlexHandle,
-  type KlexPosition,
-  type MovementMode,
-} from '../../klex';
-import { KlexGroundGrid } from '../../klex/ground-grid';
-import { popTransition } from '../../klex/transitions';
 import { botProfileApps, ProfileApps } from '../../profile-card';
 import GradualBlur from './react-bits/GradualBlur';
 import type { WorkState } from './work';
@@ -407,7 +407,7 @@ function HeroBot({
             onClick={selectBot}
           >
             <span>{bot.name}</span>
-            {!mobile && <span className="new-klex-name-role">{bot.role}</span>}
+            {!mobile && <span className="klex-name-role">{bot.role}</span>}
           </motion.button>
         </div>
         {createPortal(
@@ -444,7 +444,7 @@ function HeroBot({
               >
                 <div className="new-member-hover-card-identity">
                   <span>{bot.name}</span>
-                  <span className="new-klex-name-role">{bot.role}</span>
+                  <span className="klex-name-role">{bot.role}</span>
                 </div>
                 <p id={`${profileId}-work`}>{bot.work}</p>
                 <ProfileApps

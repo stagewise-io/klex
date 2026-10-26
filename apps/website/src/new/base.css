@@ -1,5 +1,7 @@
 @import "@stagewise/ui/style.css";
+@import "./klex.css";
 @source "../../node_modules/@stagewise/ui/src";
+@source "../../node_modules/@klex/mascot/src";
 
 @font-face {
   font-family: "Fraunces";

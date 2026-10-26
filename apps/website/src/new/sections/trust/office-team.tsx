@@ -1,3 +1,4 @@
+import { Klex } from '@klex/mascot';
 import {
   type CSSProperties,
   useCallback,
@@ -10,7 +11,6 @@ import { createRoot } from 'react-dom/client';
 
 import { Popover, PopoverTrigger } from '@stagewise/ui';
 
-import { Klex } from '../../klex';
 import { botProfileApps, ProfileCard } from '../../profile-card';
 import { project } from './office-figures';
 import { type OfficeMember, officeMembers } from './office-members';

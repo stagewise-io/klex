@@ -1,11 +1,15 @@
 import './styles.css';
 
+import {
+  DEFAULT_GLIDE,
+  Klex,
+  type KlexHandle,
+  MOVEMENT_STYLES,
+} from '@klex/mascot';
 import { gsap } from 'gsap';
 import { useEffect, useRef } from 'react';
 
 import { klexLook } from '../../../../bot-looks';
-import { Klex, type KlexHandle } from '../../../../klex';
-import { DEFAULT_GLIDE, MOVEMENT_STYLES } from '../../../../klex/presets';
 import {
   type CardProps,
   FeatureCard,

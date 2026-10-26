@@ -1,10 +1,10 @@
 import './principles.css';
 
+import { Klex, type KlexHandle } from '@klex/mascot';
 import { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 
 import { heroLooks, klexLook } from '../../bot-looks';
-import { Klex, type KlexHandle } from '../../klex';
 import { usePlayback } from '../../playback';
 import { mountOffice } from './office-team';
 

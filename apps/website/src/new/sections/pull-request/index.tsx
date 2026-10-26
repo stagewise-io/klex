@@ -1,5 +1,6 @@
 import './pull-request.css';
 
+import { Klex } from '@klex/mascot';
 import { type ReactNode, useEffect, useRef, useState } from 'react';
 
 import {
@@ -21,7 +22,6 @@ import { IconCircleCheckOutline18 } from '@stagewise/ui/icons/nucleo/ui-outline-
 import { IconOctagonWarningOutline18 } from '@stagewise/ui/icons/nucleo/ui-outline-18/IconOctagonWarningOutline18.tsx';
 
 import { heroLooks } from '../../bot-looks';
-import { Klex } from '../../klex';
 import { SafariWindow, useCareersZoom } from '../build/safari';
 import { SceneProgress } from '../workflow/controls';
 import {

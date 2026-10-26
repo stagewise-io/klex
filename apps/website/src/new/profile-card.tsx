@@ -70,7 +70,7 @@ export function ProfileCard({
     >
       <div className="new-member-hover-card-identity">
         <PopoverTitle>{name}</PopoverTitle>
-        <span className="new-klex-name-role">{role}</span>
+        <span className="klex-name-role">{role}</span>
       </div>
       <PopoverDescription className="leading-normal text-foreground">
         {work}

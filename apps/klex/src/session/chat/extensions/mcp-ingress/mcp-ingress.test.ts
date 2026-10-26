@@ -47,7 +47,11 @@ function createMockDeps(
       sendMessage: vi.fn(),
       close: vi.fn(),
     },
-    config: { get: () => ({}) } as unknown as ExtensionDeps['config'],
+    config: {
+      get: () => ({}),
+      getMcpServers: vi.fn(() => ({})),
+      addMcpServer: vi.fn().mockResolvedValue({}),
+    } as unknown as ExtensionDeps['config'],
     generateText: vi.fn(() =>
       Promise.resolve({
         success: false as const,
@@ -189,6 +193,191 @@ describe('MCP Ingress extension', () => {
     expect(tools).not.toHaveProperty('refreshResourcesCatalog');
     expect(tools).toHaveProperty('openResource');
     expect(tools).toHaveProperty('closeResource');
+    expect(Object.keys(tools).sort()).toEqual([
+      'addMcpServer',
+      'closeResource',
+      'listResources',
+      'openResource',
+    ]);
+  });
+
+  it.each([
+    ['http://localhost:3000/mcp', undefined],
+    ['https://example.com/mcp', undefined],
+    ['https://example.com/mcp', {}],
+    ['http://localhost:3000/mcp', { Authorization: 'Bearer secret-http' }],
+    [
+      'https://example.com/mcp',
+      { 'X-Token': 'secret-token', Authorization: 'Bearer secret-auth' },
+    ],
+  ])(
+    'adds %s with headers %j and returns only redacted metadata',
+    async (url, headers) => {
+      const deps = createMockDeps();
+      const ext = createMcpIngressExt().create(deps);
+      const result = await callTool(ext, 'addMcpServer', {
+        name: '  remote  ',
+        url,
+        headers,
+      });
+      expect(deps.config.addMcpServer).toHaveBeenCalledExactlyOnceWith(
+        'remote',
+        {
+          type: 'http',
+          url,
+          ...(headers && Object.keys(headers).length ? { headers } : {}),
+        },
+      );
+      expect(result).toEqual({
+        name: 'remote',
+        type: 'http',
+        url,
+        headerNames: Object.keys(headers ?? {}).sort(),
+        status: 'disconnected',
+      });
+      for (const secret of Object.values(headers ?? {})) {
+        expect(JSON.stringify(result)).not.toContain(secret);
+      }
+    },
+  );
+
+  it('reports current runtime status without returning other server metadata', async () => {
+    const deps = createMockDeps({
+      getServerStatuses: vi.fn().mockReturnValue([
+        {
+          name: 'remote',
+          status: 'connecting',
+          headers: { Authorization: 'secret' },
+        },
+      ]),
+    });
+    const result = await callTool(
+      createMcpIngressExt().create(deps),
+      'addMcpServer',
+      {
+        name: 'remote',
+        url: 'https://example.com/mcp',
+      },
+    );
+    expect(result.status).toBe('connecting');
+    expect(JSON.stringify(result)).not.toContain('secret');
+  });
+
+  it('rejects a duplicate trimmed name without overwriting existing config', async () => {
+    const deps = createMockDeps();
+    const existing = {
+      remote: { type: 'http' as const, url: 'https://existing.example/mcp' },
+    };
+    vi.mocked(deps.config.getMcpServers).mockReturnValue(existing);
+    const result = await callTool(
+      createMcpIngressExt().create(deps),
+      'addMcpServer',
+      {
+        name: ' remote ',
+        url: 'https://replacement.example/mcp',
+      },
+    );
+    expect(result.error).toMatch(/already exists/);
+    expect(deps.config.addMcpServer).not.toHaveBeenCalled();
+    expect(existing.remote.url).toBe('https://existing.example/mcp');
+  });
+
+  it.each([
+    'stdio',
+    'stdio:server',
+    'file:///tmp/server',
+    'ftp://example.com',
+    'not a url',
+    '/mcp',
+    '',
+  ])('rejects invalid or unsupported URL %j', async (url) => {
+    const deps = createMockDeps();
+    const result = await callTool(
+      createMcpIngressExt().create(deps),
+      'addMcpServer',
+      { name: 'remote', url },
+    );
+    expect(result.error).toMatch(/HTTP or HTTPS/);
+    expect(deps.config.addMcpServer).not.toHaveBeenCalled();
+  });
+
+  it.each(['', '  ', '\n\t'])('rejects blank name %j', async (name) => {
+    const deps = createMockDeps();
+    const result = await callTool(
+      createMcpIngressExt().create(deps),
+      'addMcpServer',
+      { name, url: 'https://example.com/mcp' },
+    );
+    expect(result.error).toMatch(/must not be blank/);
+    expect(deps.config.addMcpServer).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    '__proto__',
+    'constructor',
+    'prototype',
+    'toString',
+    ' hasOwnProperty ',
+  ])('rejects reserved server name %j before persistence', async (name) => {
+    const deps = createMockDeps();
+    const result = await callTool(
+      createMcpIngressExt().create(deps),
+      'addMcpServer',
+      {
+        name,
+        url: 'https://example.com/mcp',
+      },
+    );
+    expect(result.error).toMatch(/reserved/);
+    expect(deps.config.addMcpServer).not.toHaveBeenCalled();
+  });
+
+  it.each(['remote\nserver', 'remote\u0000server'])(
+    'rejects control characters in name %j',
+    async (name) => {
+      const deps = createMockDeps();
+      const result = await callTool(
+        createMcpIngressExt().create(deps),
+        'addMcpServer',
+        {
+          name,
+          url: 'https://example.com/mcp',
+        },
+      );
+      expect(result.error).toMatch(/control characters/);
+      expect(deps.config.addMcpServer).not.toHaveBeenCalled();
+    },
+  );
+
+  it('does not echo secret values from config failures, including duplicate races', async () => {
+    const deps = createMockDeps();
+    vi.mocked(deps.config.addMcpServer).mockRejectedValue(
+      new Error('Authorization: Bearer secret'),
+    );
+    const result = await callTool(
+      createMcpIngressExt().create(deps),
+      'addMcpServer',
+      {
+        name: 'remote',
+        url: 'https://example.com/mcp',
+        headers: { Authorization: 'Bearer secret' },
+      },
+    );
+    expect(result.error).toMatch(/Failed to add MCP server/);
+    expect(JSON.stringify(result)).not.toContain('secret');
+  });
+
+  it('documents append-only HTTP configuration, header redaction, and Cloud OAuth', async () => {
+    const prompt = await createMcpIngressExt()
+      .create(createMockDeps())
+      .getSystemPromptPart?.();
+    expect(prompt).toContain('addMcpServer');
+    expect(prompt).toContain('HTTP/HTTPS');
+    expect(prompt).toContain('config.json');
+    expect(prompt).toContain('cannot edit or remove');
+    expect(prompt).toContain('never echoes secret header values');
+    expect(prompt).toContain('Cloud UI');
+    expect(prompt).toContain('OAuth');
   });
 
   it('onStart logs an info message and resolves', async () => {

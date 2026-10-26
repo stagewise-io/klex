@@ -116,6 +116,76 @@ describe('resolveSessionHistoryMaxBytes', () => {
 });
 
 describe('session history sync', () => {
+  it.each(['{broken', '{"category":"rate_limit"}', 'null', '[]'])(
+    'ignores invalid stored generation health (%s) and replaces it',
+    async (value) => {
+      const { history, directory } = await setup();
+      const recorder = history.openRecorder(meta());
+      const failure = summarizeGenerationFailure(
+        new Error('rate limit TPM: 30000'),
+      );
+      await recorder.recordGenerationFailure(failure, 'turn_failed', 1);
+      const raw = createClient({
+        url: `file:${join(directory, SESSION_HISTORY_RELATIVE_PATH)}`,
+      });
+      try {
+        await raw.execute({
+          sql: 'UPDATE sessions SET generation_error = ? WHERE instance_id = ?',
+          args: [value, recorder.instanceId],
+        });
+        expect(
+          (await history.getSession(recorder.instanceId))?.generationError,
+        ).toBeNull();
+        expect(
+          (await history.listSessions({ limit: 10 })).sessions,
+        ).toMatchObject([
+          { instanceId: recorder.instanceId, generationError: null },
+        ]);
+        await expect(
+          recorder.recordGenerationFailure(failure, 'turn_failed', 2),
+        ).resolves.toBeUndefined();
+        expect(
+          (await history.getSession(recorder.instanceId))?.generationError,
+        ).toMatchObject({
+          ...failure,
+          consecutiveFailures: 2,
+          occurrenceCount: 1,
+        });
+      } finally {
+        raw.close();
+      }
+    },
+  );
+
+  it('does not reject generation health writes when SQLite rejects updates or the store is closed', async () => {
+    const { history, directory } = await setup();
+    const recorder = history.openRecorder(meta());
+    const failure = summarizeGenerationFailure(new Error('rate limit'));
+    await recorder.recordGenerationFailure(failure, 'turn_failed', 1);
+    const raw = createClient({
+      url: `file:${join(directory, SESSION_HISTORY_RELATIVE_PATH)}`,
+    });
+    try {
+      await raw.execute(`CREATE TRIGGER reject_health BEFORE UPDATE ON sessions
+        BEGIN SELECT RAISE(FAIL, 'injected write failure'); END`);
+      await expect(
+        recorder.recordGenerationFailure(failure, 'turn_failed', 2),
+      ).resolves.toBeUndefined();
+      await expect(recorder.clearGenerationFailure()).resolves.toBeUndefined();
+      expect(
+        (await history.getSession(recorder.instanceId))?.generationError
+          ?.occurrenceCount,
+      ).toBe(1);
+    } finally {
+      raw.close();
+    }
+    await history.close();
+    await expect(
+      recorder.recordGenerationFailure(failure, 'turn_failed', 3),
+    ).resolves.toBeUndefined();
+    await expect(recorder.clearGenerationFailure()).resolves.toBeUndefined();
+  });
+
   it('retains unresolved warning metadata when the size cap evicts its transcript', async () => {
     const { history, setMaxBytes } = await setup();
     const recorder = history.openRecorder(

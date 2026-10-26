@@ -4,16 +4,19 @@ import { join } from 'node:path';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { McpOAuthProvider } from './provider';
+import { McpOAuthProvider, type McpOAuthProviderOptions } from './provider';
 import { McpOAuthStore } from './store';
 
 const temporaryDirectories: string[] = [];
 
-async function createProvider() {
+async function createProvider(
+  clientName?: McpOAuthProviderOptions['clientName'],
+) {
   const directory = await mkdtemp(join(tmpdir(), 'klex-oauth-provider-'));
   temporaryDirectories.push(directory);
   const onAuthorizationRedirect = vi.fn();
   const provider = new McpOAuthProvider({
+    clientName,
     onAuthorizationRedirect,
     redirectUrl: new URL('http://127.0.0.1:12345/oauth/callback'),
     serverName: 'qonto',
@@ -40,6 +43,34 @@ describe('McpOAuthProvider', () => {
       response_types: ['code'],
       token_endpoint_auth_method: 'none',
     });
+  });
+
+  it.each(['Atlas', '  Atlas  '])(
+    'uses the trimmed client name %j',
+    async (clientName) => {
+      const { provider } = await createProvider(clientName);
+      expect(provider.clientMetadata.client_name).toBe('Atlas');
+    },
+  );
+
+  it.each(['', '   ', () => undefined, () => '   '])(
+    'falls back for an empty client name %j',
+    async (clientName) => {
+      const { provider } = await createProvider(clientName);
+      expect(provider.clientMetadata.client_name).toBe('Klex Bot');
+    },
+  );
+
+  it('resolves the current client name each time metadata is read', async () => {
+    let clientName: string | undefined = '  Atlas  ';
+    const { provider } = await createProvider(() => clientName);
+    expect(provider.clientMetadata.client_name).toBe('Atlas');
+
+    clientName = 'Nova';
+    expect(provider.clientMetadata.client_name).toBe('Nova');
+
+    clientName = undefined;
+    expect(provider.clientMetadata.client_name).toBe('Klex Bot');
   });
 
   it('persists SDK credentials and verifier', async () => {

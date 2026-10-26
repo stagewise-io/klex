@@ -53,6 +53,7 @@ describe('connectMcpServer OAuth lifecycle', () => {
   it('reauthorizes against a local server and reconnects with a fresh transport', async () => {
     let origin = '';
     const requests: string[] = [];
+    let registrationMetadata: Record<string, unknown> | undefined;
     let unauthorizedRequests = 0;
     let authorizedRequests = 0;
     let tokenExchanges = 0;
@@ -81,6 +82,7 @@ describe('connectMcpServer OAuth lifecycle', () => {
       }
       if (requestUrl.pathname === '/register') {
         const metadata = await readJsonRequest(request);
+        registrationMetadata = metadata;
         sendJson(response, 201, {
           ...metadata,
           client_id: 'local-test-client',
@@ -169,6 +171,7 @@ describe('connectMcpServer OAuth lifecycle', () => {
         onToolsChanged: () => undefined,
         onAuthorizationStatus: (status) => authorizationStatuses.push(status),
         oauth: {
+          clientName: () => 'Atlas',
           sessionFactory: {
             start: async () => {
               const receiver = await LocalOAuthCallbackReceiver.start();
@@ -190,6 +193,19 @@ describe('connectMcpServer OAuth lifecycle', () => {
       expect(authorizedRequests).toBeGreaterThan(0);
       expect(tokenExchanges).toBe(1);
       expect(requests).toContain('POST /token');
+      expect(requests).toContain('POST /register');
+      expect(registrationMetadata?.client_name).toBe('Atlas');
+      const redirectUris = registrationMetadata?.redirect_uris as string[];
+      const persistedStore = new McpOAuthStore(
+        join(configDirectory, 'mcp-oauth.json'),
+      );
+      await expect(
+        persistedStore.clientInformation(
+          `oauth-fixture\u0000${origin}/mcp`,
+          redirectUris[0]!,
+          origin,
+        ),
+      ).resolves.toMatchObject({ client_name: 'Atlas' });
       await connection.close();
     } finally {
       await coordinator.close();

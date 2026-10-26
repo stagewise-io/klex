@@ -107,6 +107,7 @@ export interface ConnectMcpServerOptions {
     status: 'authorization_required' | 'authorizing' | 'connecting',
   ): void;
   oauth?: {
+    clientName?: string | (() => string | undefined);
     sessionFactory?: OAuthAuthorizationSessionFactory;
     store: McpOAuthStore;
   };
@@ -385,6 +386,7 @@ async function createOAuthTransportOptions(
   });
   let callback: Promise<URLSearchParams> | undefined;
   const provider = new McpOAuthProvider({
+    clientName: options.oauth.clientName,
     onAuthorizationRedirect: (authorizationUrl) => {
       const state = authorizationUrl.searchParams.get('state');
       if (!state)

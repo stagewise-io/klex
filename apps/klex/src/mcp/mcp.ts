@@ -1964,7 +1964,11 @@ export function createMcp(deps: McpDependencies): Mcp {
     : (options) =>
         connectMcpServer({
           ...options,
-          oauth: { sessionFactory, store },
+          oauth: {
+            clientName: () => deps.config.get?.()?.officialName,
+            sessionFactory,
+            store,
+          },
         });
   return new McpModule({
     logger: deps.logging.child({

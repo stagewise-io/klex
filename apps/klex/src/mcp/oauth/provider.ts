@@ -16,6 +16,7 @@ export type AuthorizationRedirectHandler = (
 ) => void | Promise<void>;
 
 export interface McpOAuthProviderOptions {
+  clientName?: string | (() => string | undefined);
   redirectUrl: URL;
   serverName: string;
   store: McpOAuthStore;
@@ -23,6 +24,7 @@ export interface McpOAuthProviderOptions {
 }
 
 export class McpOAuthProvider implements OAuthClientProvider {
+  private readonly clientName: McpOAuthProviderOptions['clientName'];
   private readonly onAuthorizationRedirect: AuthorizationRedirectHandler;
   private readonly serverName: string;
   private readonly store: McpOAuthStore;
@@ -30,6 +32,7 @@ export class McpOAuthProvider implements OAuthClientProvider {
   public readonly redirectUrl: URL;
 
   public constructor(options: McpOAuthProviderOptions) {
+    this.clientName = options.clientName;
     this.onAuthorizationRedirect = options.onAuthorizationRedirect;
     this.redirectUrl = options.redirectUrl;
     this.serverName = options.serverName;
@@ -37,8 +40,12 @@ export class McpOAuthProvider implements OAuthClientProvider {
   }
 
   public get clientMetadata(): OAuthClientMetadata {
+    const clientName =
+      typeof this.clientName === 'function'
+        ? this.clientName()
+        : this.clientName;
     return {
-      client_name: 'Klex Bot',
+      client_name: clientName?.trim() || 'Klex Bot',
       grant_types: ['authorization_code', 'refresh_token'],
       redirect_uris: [this.redirectUrl.toString()],
       response_types: ['code'],

@@ -2,6 +2,16 @@
 
 All notable Klex changes are documented here.
 
+## 0.25.1 (2026-10-26)
+
+### Bug Fixes
+
+- move GenerationHealthErrorSchema to generation-health (764118b)
+- guard generation health persistence and add end-to-end turn test (d6d3771)
+- add StepCompleteEvent.generationFailure and preserve rate-limit/quota classification (c1fa6c9)
+- preserve rate_limit and quota categories over incidental auth/config wording (bf29bf2)
+- restore swapped no-soul prompts for default and god sessions (fb84187)
+
 ## 0.25.0 (2026-10-23)
 
 ### Features

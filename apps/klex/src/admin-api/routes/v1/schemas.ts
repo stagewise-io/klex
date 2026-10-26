@@ -908,38 +908,33 @@ const sessionKindSchema = z
   .enum(['default', 'god', 'child'])
   .openapi('SessionKind');
 
-export const sessionHealthFailureKindSchema = z
-  .enum(['turn_failed', 'request_rejected', 'terminated'])
-  .openapi('SessionHealthFailureKind');
-
-export const sessionHealthFailureSchema = z
-  .object({
-    kind: sessionHealthFailureKindSchema,
-    reason: z
-      .string()
-      .describe('Short model-generation failure classification reason'),
-    modelId: z
-      .string()
-      .nullable()
-      .describe('Attempted model identifier, or null when unknown'),
-    consecutiveFailures: z
-      .number()
-      .int()
-      .min(1)
-      .describe(
-        'Number of consecutive failed turns; one for request rejection',
-      ),
-    occurredAt: z.string().describe('ISO timestamp when the failure occurred'),
-  })
-  .openapi('SessionHealthFailure');
-
 const sessionHistoryRecordSchema = z
   .object({
-    lastHealthFailure: sessionHealthFailureSchema
-      .nullable()
-      .describe(
-        'Latest unresolved model-generation health failure for this session, or null when healthy',
-      ),
+    generationError: z
+      .object({
+        kind: z.enum(['turn_failed', 'request_rejected', 'terminated']),
+        category: z.enum([
+          'rate_limit',
+          'quota',
+          'auth',
+          'connectivity',
+          'configuration',
+          'request_rejected',
+          'server_error',
+          'unknown',
+        ]),
+        reason: z.string().max(128),
+        message: z.string().max(512),
+        providerId: z.string().max(128).nullable(),
+        providerType: z.string().max(128).nullable(),
+        modelId: z.string().max(128).nullable(),
+        statusCode: z.number().int().nullable(),
+        consecutiveFailures: z.number().int().min(1),
+        occurrenceCount: z.number().int().min(1),
+        firstSeenAt: z.string().datetime(),
+        lastSeenAt: z.string().datetime(),
+      })
+      .nullable(),
     instanceId: z.string(),
     sessionId: z.string(),
     kind: sessionKindSchema,

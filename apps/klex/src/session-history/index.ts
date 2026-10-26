@@ -1,3 +1,8 @@
+export type {
+  GenerationFailure,
+  GenerationFailureCategory,
+  GenerationHealthError,
+} from './generation-health';
 export {
   SESSION_HISTORY_RELATIVE_PATH,
   SESSION_HISTORY_STORE_DEFINITION,
@@ -13,8 +18,6 @@ export {
   resolveSessionHistoryMaxBytes,
 } from './session-history';
 export type {
-  SessionHealthFailure,
-  SessionHealthFailureKind,
   SessionHistoryListPage,
   SessionHistoryListQuery,
   SessionHistoryMessage,

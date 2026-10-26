@@ -51,6 +51,7 @@ import type {
   UsagePair,
 } from '@/session/types';
 import type { SessionHistory, SessionHistoryRecorder } from '@/session-history';
+import { summarizeGenerationFailure } from '@/session-history/generation-health';
 import type { TelemetryMetrics } from '@/telemetry-metrics';
 
 import { type CheckpointManager, createCheckpointManager } from './checkpoint';
@@ -176,7 +177,6 @@ class ChatSessionModule implements AgentSession {
   private fallbackManager: ModelFallbackManager;
 
   private backoffManager: BackoffManager;
-  private consecutiveTurnFailures = 0;
 
   private loopActive = false;
   /** The running loop, so close() can let an aborted turn settle. */
@@ -1417,44 +1417,31 @@ class ChatSessionModule implements AgentSession {
           this.latestChatUsage = null;
         }
 
-        // Fatal error — terminate the session.
-        if (
-          turnResult.fatalError ||
-          turnResult.requestRejected ||
-          turnResult.completeFailure
-        ) {
-          const rejected = !turnResult.fatalError && turnResult.requestRejected;
-          this.consecutiveTurnFailures = rejected
-            ? 0
-            : this.consecutiveTurnFailures + 1;
-          const maxFailuresExceeded =
+        // Persist only the final turn outcome, never a recovered model attempt.
+        if (turnResult.fatalError || turnResult.completeFailure) {
+          const countsTowardBackoff =
             !turnResult.fatalError &&
-            !rejected &&
-            turnResult.completeFailure &&
-            this.consecutiveTurnFailures >= MAX_CONSECUTIVE_FAILURES;
-          this.transcriptRecorder?.recordHealthFailure({
-            kind:
-              turnResult.fatalError || maxFailuresExceeded
-                ? 'terminated'
-                : rejected
-                  ? 'request_rejected'
-                  : 'turn_failed',
-            reason:
-              (turnResult.fatalError ? turnResult.fatalErrorReason : null) ??
-              turnResult.failureReason ??
-              (turnResult.fatalError
-                ? 'unknown fatal error'
-                : rejected
-                  ? 'request rejected'
-                  : 'generation failed'),
-            modelId: turnResult.failedModelId ?? null,
-            consecutiveFailures: rejected ? 1 : this.consecutiveTurnFailures,
-            occurredAt: new Date().toISOString(),
-          });
+            !turnResult.requestRejected &&
+            turnResult.stopReason !== 'step_cap_reached';
+          const failures =
+            turnResult.fatalError || countsTowardBackoff
+              ? this.backoffManager.getConsecutiveFailures() + 1
+              : 1;
+          await this.transcriptRecorder?.recordGenerationFailure(
+            turnResult.generationFailure ?? summarizeGenerationFailure(null),
+            turnResult.fatalError ||
+              (countsTowardBackoff && failures >= MAX_CONSECUTIVE_FAILURES)
+              ? 'terminated'
+              : turnResult.requestRejected
+                ? 'request_rejected'
+                : 'turn_failed',
+            failures,
+          );
         } else if (turnResult.stopReason === 'completed') {
-          this.consecutiveTurnFailures = 0;
-          this.transcriptRecorder?.clearHealthFailure();
+          await this.transcriptRecorder?.clearGenerationFailure();
         }
+
+        // Fatal error — terminate the session.
         if (turnResult.fatalError) {
           this.setRuntimeState('terminated');
           this.deps.logger.error(
@@ -1465,10 +1452,7 @@ class ChatSessionModule implements AgentSession {
             'klex.session.id': this.sessionId,
           });
           this.sessionSpan.setAttribute('klex.session.terminated', true);
-          await this.terminate(
-            turnResult.fatalErrorReason ?? 'unknown',
-            'fatal_error',
-          );
+          await this.terminate(turnResult.fatalErrorReason ?? 'unknown');
           return;
         }
 
@@ -1642,6 +1626,11 @@ class ChatSessionModule implements AgentSession {
       });
       this.sessionSpan.setAttribute('klex.session.terminated', true);
       try {
+        await this.transcriptRecorder?.recordGenerationFailure(
+          summarizeGenerationFailure(error),
+          'terminated',
+          this.backoffManager.getConsecutiveFailures() + 1,
+        );
         await this.terminate('unhandled_loop_error');
       } catch (terminateError) {
         this.deps.logger.error(
@@ -1936,11 +1925,8 @@ class ChatSessionModule implements AgentSession {
    * Unlike `close()`, this is only called when the session decides it is
    * unrecoverable, not during owner-initiated graceful shutdown.
    */
-  private async terminate(
-    reason: string,
-    endReason = `terminated: ${reason}`,
-  ): Promise<void> {
-    this.endReason = endReason;
+  private async terminate(reason: string): Promise<void> {
+    this.endReason = `terminated: ${reason}`;
     this.selfTerminating = true;
     this.leaseManager.revoke('default-session-terminated');
 

@@ -1,20 +1,10 @@
 import type { ExtendedUIMessage } from '@/session/chat/message-types';
 import type { SessionKind } from '@/session/types';
 
-export type SessionHealthFailureKind =
-  | 'turn_failed'
-  | 'request_rejected'
-  | 'terminated';
-
-export interface SessionHealthFailure {
-  kind: SessionHealthFailureKind;
-  /** Short classification reason, e.g. `server error (529)` or `request rejected (400)`. */
-  reason: string;
-  /** Model attempted when known, e.g. `anthropic:claude-sonnet-4-5`. */
-  modelId: string | null;
-  consecutiveFailures: number;
-  occurredAt: string;
-}
+import type {
+  GenerationFailure,
+  GenerationHealthError,
+} from './generation-health';
 
 /** Static metadata of one `ChatSession` instance. */
 export interface SessionHistoryRecorderMetadata {
@@ -40,8 +30,12 @@ export interface SessionHistoryRecorderMetadata {
  * failures are logged and retried on the next sync.
  */
 export interface SessionHistoryRecorder {
-  recordHealthFailure(failure: SessionHealthFailure): void;
-  clearHealthFailure(): void;
+  recordGenerationFailure(
+    failure: GenerationFailure,
+    kind: GenerationHealthError['kind'],
+    consecutiveFailures: number,
+  ): Promise<void>;
+  clearGenerationFailure(): Promise<void>;
   readonly instanceId: string;
   /**
    * Schedule a transcript sync. Calls are coalesced; the getter is invoked
@@ -102,7 +96,8 @@ export interface SessionHistoryWindowQuery {
 }
 
 export interface SessionHistoryRecord {
-  lastHealthFailure: SessionHealthFailure | null;
+  /** Latest unresolved failed turn; cleared by recovery in this logical session. */
+  generationError: GenerationHealthError | null;
   instanceId: string;
   sessionId: string;
   kind: SessionKind;

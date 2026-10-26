@@ -37,7 +37,7 @@ CREATE TABLE IF NOT EXISTS sessions (
   updated_at TEXT NOT NULL,
   ended_at TEXT,
   end_reason TEXT,
-  last_health_failure TEXT,
+  generation_error TEXT,
   message_count INTEGER NOT NULL DEFAULT 0,
   trimmed_message_count INTEGER NOT NULL DEFAULT 0,
   byte_size INTEGER NOT NULL DEFAULT 0
@@ -143,10 +143,10 @@ export const SESSION_HISTORY_MIGRATIONS: SqliteMigration[] = [
   {
     from: 2,
     to: 3,
-    name: 'add_sessions_last_health_failure',
+    name: 'session-generation-health',
     up: async (database) => {
       await database.execute(
-        'ALTER TABLE sessions ADD COLUMN last_health_failure TEXT',
+        'ALTER TABLE sessions ADD COLUMN generation_error TEXT',
       );
     },
   },
@@ -161,7 +161,7 @@ export const SESSION_HISTORY_STORE_DEFINITION: SqliteStoreDefinition = {
   schemaVersion: SESSION_HISTORY_SCHEMA_VERSION,
   // Older binaries reject schema v3; no separate floor is needed.
   compatibilityVersion: 1,
-  // First release shipping session health failures (feat → minor after 0.25.x).
+  // First release shipping durable generation health (feat → minor after 0.25.x).
   minimumKlexVersion: '0.26.0',
   // Must run before the first table exists; afterwards it has no effect.
   initPragmas: ['PRAGMA auto_vacuum = INCREMENTAL'],
@@ -169,7 +169,7 @@ export const SESSION_HISTORY_STORE_DEFINITION: SqliteStoreDefinition = {
   migrations: SESSION_HISTORY_MIGRATIONS,
   validate: async (client) => {
     await client.execute(
-      'SELECT instance_id, last_health_failure FROM sessions LIMIT 1',
+      'SELECT instance_id, generation_error FROM sessions LIMIT 1',
     );
     await client.execute(
       `SELECT session_id, ord, instance_id, message_id, is_checkpoint,

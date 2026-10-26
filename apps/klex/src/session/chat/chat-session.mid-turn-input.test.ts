@@ -39,8 +39,6 @@ function createScope(path: string[] = []): IntrospectionScope {
 }
 
 const success: TurnResult = {
-  failureReason: null,
-  failedModelId: null,
   fatalError: false,
   fatalErrorReason: null,
   completeFailure: false,

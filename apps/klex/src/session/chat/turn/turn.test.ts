@@ -1,6 +1,8 @@
 import { context, trace } from '@opentelemetry/api';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { summarizeGenerationFailure } from '@/session-history/generation-health';
+
 import type { StepCompleteEvent } from '../extensions/extension-api';
 import type { ExtendedUIMessage } from '../message-types';
 import { createStep } from '../step';
@@ -71,48 +73,6 @@ function makeMockStep(overrides: Partial<StepCompleteEvent> = {}, delay = 0) {
 
 // --- tests ---
 
-describe('Turn health failure details', () => {
-  it.each([
-    { fatalError: true, fatalErrorReason: 'invalid prompt error' },
-    { generationFailed: true, requestRejected: true },
-    { modelFallbackOccurred: true },
-  ])('propagates the last failure and attempted model: %j', async (flags) => {
-    vi.mocked(createStep).mockReturnValue(
-      makeMockStep({
-        ...flags,
-        shouldContinue: true,
-        failureReason: 'classified failure',
-        failedModelId: 'work:model-a',
-      }),
-    );
-    const result = await createTurn(makeDeps()).run();
-    expect(result).toMatchObject({
-      failureReason: 'classified failure',
-      failedModelId: 'work:model-a',
-    });
-  });
-
-  it('clears failure details when a fallback recovers', async () => {
-    vi.mocked(createStep)
-      .mockReturnValueOnce(
-        makeMockStep({
-          shouldContinue: true,
-          modelFallbackOccurred: true,
-          failureReason: 'server error (529)',
-          failedModelId: 'work:model-a',
-        }),
-      )
-      .mockReturnValueOnce(makeMockStep({ shouldContinue: true }))
-      .mockReturnValue(makeMockStep());
-    expect(await createTurn(makeDeps()).run()).toMatchObject({
-      completeFailure: false,
-      requestRejected: false,
-      failureReason: null,
-      failedModelId: null,
-    });
-  });
-});
-
 describe('Turn — inbox draining', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -137,6 +97,60 @@ describe('Turn — inbox draining', () => {
 describe('Turn — step loop', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+  });
+
+  it('drops a failed provider attempt when a fallback completes the turn', async () => {
+    const failure = summarizeGenerationFailure(new Error('rate limit'), {
+      providerId: 'google',
+      providerType: 'google',
+      modelId: 'gemini',
+    });
+    vi.mocked(createStep)
+      .mockReturnValueOnce(
+        makeMockStep({
+          shouldContinue: true,
+          modelFallbackOccurred: true,
+          generationFailure: failure,
+        }),
+      )
+      .mockReturnValueOnce(makeMockStep({ shouldContinue: true }))
+      .mockReturnValueOnce(makeMockStep());
+    expect(await createTurn(makeDeps()).run()).toMatchObject({
+      completeFailure: false,
+      stopReason: 'completed',
+      generationFailure: null,
+    });
+  });
+
+  it('reports the last attempted provider when mixed-provider failures exhaust the budget', async () => {
+    const google = summarizeGenerationFailure(new Error('quota exhausted'), {
+      providerId: 'google',
+      providerType: 'google',
+      modelId: 'gemini',
+    });
+    const openai = summarizeGenerationFailure(
+      new Error('rate limit TPM: 10000'),
+      { providerId: 'openai', providerType: 'openai', modelId: 'gpt' },
+    );
+    vi.mocked(createStep)
+      .mockReturnValueOnce(
+        makeMockStep({
+          shouldContinue: true,
+          modelFallbackOccurred: true,
+          generationFailure: google,
+        }),
+      )
+      .mockReturnValue(
+        makeMockStep({
+          shouldContinue: true,
+          modelFallbackOccurred: true,
+          generationFailure: openai,
+        }),
+      );
+    expect(await createTurn(makeDeps()).run()).toMatchObject({
+      completeFailure: true,
+      generationFailure: openai,
+    });
   });
 
   it('runs steps until a step returns { shouldContinue: false }', async () => {

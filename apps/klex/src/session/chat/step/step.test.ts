@@ -1078,9 +1078,10 @@ describe('Step — model selection', () => {
       new Error('unsupported model format'),
     );
     const fallbackManager = makeFallbackManager();
-    fallbackManager.getChatModelEntry.mockReturnValue(
-      'speech:text-to-speech' as never,
-    );
+    fallbackManager.getChatModelEntry.mockReturnValue({
+      providerId: 'speech',
+      modelId: 'text-to-speech',
+    } as never);
     const extensionHandler = makeExtensionHandler();
 
     const result = await createStep(
@@ -1094,8 +1095,12 @@ describe('Step — model selection', () => {
 
     expect(fallbackManager.fallbackToNextModel).toHaveBeenCalledOnce();
     expect(result).toEqual({
-      failureReason: 'selected model is unusable',
-      failedModelId: 'speech:text-to-speech',
+      generationFailure: expect.objectContaining({
+        category: 'configuration',
+        providerId: 'speech',
+        modelId: 'text-to-speech',
+        providerType: null,
+      }),
       shouldContinue: true,
       forceNextStep: false,
       fatalError: false,

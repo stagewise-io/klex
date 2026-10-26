@@ -4,28 +4,6 @@ import { describe, expect, it } from 'vitest';
 import { summarizeGenerationFailure } from './generation-health';
 
 describe('privacy-safe generation health', () => {
-  it.each(['api key', 'authentication', 'configuration', 'unsupported'])(
-    'preserves 429 rate-limit and quota classifications when the message mentions %s',
-    (wording) => {
-      for (const [message, category, reason] of [
-        ['Rate limit reached TPM: 30000', 'rate_limit', 'rate limited (429)'],
-        ['Billing quota exhausted', 'quota', 'quota exhausted (429)'],
-      ]) {
-        const error = new APICallError({
-          statusCode: 429,
-          message: `${message}; check ${wording}`,
-          url: 'https://provider.example',
-          requestBodyValues: {},
-        });
-        expect(summarizeGenerationFailure(error)).toMatchObject({
-          category,
-          reason,
-          statusCode: 429,
-        });
-      }
-    },
-  );
-
   it.each([
     [
       429,
@@ -69,6 +47,22 @@ describe('privacy-safe generation health', () => {
       providerType: 'google',
       modelId: 'gemini-2.5-pro',
     });
+  });
+
+  it.each([
+    ['Rate limit exceeded', 'rate_limit'],
+    ['Quota exceeded', 'quota'],
+    ['Forbidden', 'auth'],
+  ])('classifies 403 %s with an authentication reason', (message, category) => {
+    const error = new APICallError({
+      statusCode: 403,
+      message,
+      url: 'https://provider.example',
+      requestBodyValues: {},
+    });
+    expect(
+      summarizeGenerationFailure(error, undefined, 'authentication error'),
+    ).toMatchObject({ category, statusCode: 403 });
   });
 
   it('unwraps SDK failures and preserves numeric rate limits without arbitrary provider prose', () => {

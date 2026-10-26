@@ -88,40 +88,44 @@ export function summarizeGenerationFailure(
       .slice(0, 16384)
       .toLowerCase();
   let category: GenerationFailureCategory = 'unknown';
-  const isQuota =
+  if (
     /insufficient_quota|billing|credit|quota.*(?:exhaust|exceed)|exceed.*quota|resource_exhausted/.test(
       text,
-    );
-  // Per-minute quota errors are rate limits; neither classification should
-  // be overwritten by incidental authentication or configuration wording.
+    )
+  )
+    category = 'quota';
   if (
-    (statusCode === 429 && !isQuota) ||
+    (statusCode === 429 && category !== 'quota') ||
     (/\btpm\b|\brpm\b|per.minute|rate.limit/.test(text) &&
       !/billing|insufficient_quota|credit/.test(text))
   )
     category = 'rate_limit';
-  else if (isQuota) category = 'quota';
-  else if (
-    statusCode === 401 ||
-    statusCode === 403 ||
-    /api key|authentication/.test(text)
-  )
-    category = 'auth';
-  else if (
-    statusCode === 404 ||
-    /no such model|unsupported|configuration|invalid prompt|transformer/.test(
-      text,
+  // Specific quota and rate-limit signals take precedence over HTTP status
+  // and generic authentication classifications from the generation runner.
+  if (category === 'unknown') {
+    if (
+      statusCode === 401 ||
+      statusCode === 403 ||
+      /api key|authentication/.test(text)
     )
-  )
-    category = 'configuration';
-  else if (
-    statusCode === 408 ||
-    /timeout|timed out|network|econn|fetch failed|socket hang up/.test(text)
-  )
-    category = 'connectivity';
-  else if (statusCode !== null && statusCode >= 500) category = 'server_error';
-  else if (statusCode !== null && statusCode >= 400 && statusCode !== 429)
-    category = 'request_rejected';
+      category = 'auth';
+    else if (
+      statusCode === 404 ||
+      /no such model|unsupported|configuration|invalid prompt|transformer/.test(
+        text,
+      )
+    )
+      category = 'configuration';
+    else if (
+      statusCode === 408 ||
+      /timeout|timed out|network|econn|fetch failed|socket hang up/.test(text)
+    )
+      category = 'connectivity';
+    else if (statusCode !== null && statusCode >= 500)
+      category = 'server_error';
+    else if (statusCode !== null && statusCode >= 400 && statusCode !== 429)
+      category = 'request_rejected';
+  }
   const labels: Record<GenerationFailureCategory, string> = {
     rate_limit: 'rate limited',
     quota: 'quota exhausted',

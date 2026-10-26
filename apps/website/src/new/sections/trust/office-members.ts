@@ -1,6 +1,7 @@
+import type { BodyShape, MovementMode } from '@klex/mascot';
+
 import { capabilityShapes } from '../../../shared/mascot-shapes';
 import { heroLooks } from '../../bot-looks';
-import type { BodyShape, MovementMode } from '../../klex';
 
 type OfficeMember = {
   id: string;

@@ -1,3 +1,10 @@
+import {
+  DEFAULT_GLIDE,
+  Klex,
+  type KlexActivity,
+  type KlexHandle,
+  popTransition,
+} from '@klex/mascot';
 import { animate } from 'motion';
 import {
   type Ref,
@@ -11,9 +18,6 @@ import { flushSync } from 'react-dom';
 import { createRoot } from 'react-dom/client';
 
 import { heroLooks } from '../../bot-looks';
-import { Klex, type KlexActivity, type KlexHandle } from '../../klex';
-import { DEFAULT_GLIDE } from '../../klex/presets';
-import { popTransition } from '../../klex/transitions';
 
 const names = {
   monica: 'Monica',

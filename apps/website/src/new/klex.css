@@ -1,0 +1,15 @@
+/* @klex/mascot is styled for Klex Cloud. The website keeps its themed name
+   badge and a soft ground shadow that stays visible in dark mode. */
+:root .klex-name-badge {
+  background: color-mix(in oklab, var(--background) 95%, transparent);
+}
+
+/* Interim until @klex/mascot offers the shadow as an option; remove then.
+   The engine still narrows the shadow with height. Its per-frame opacity is
+   too faint for this shadow, so a fixed opacity replaces it. */
+:root ellipse[data-testid="klex-shadow"] {
+  ry: 6px;
+  fill: light-dark(rgb(0 0 0 / 24%), rgb(0 0 0 / 65%));
+  filter: blur(2px);
+  opacity: 1;
+}

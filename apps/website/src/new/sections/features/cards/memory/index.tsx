@@ -1,9 +1,9 @@
 import './styles.css';
 
+import { popTransition } from '@klex/mascot';
 import { stagger, useAnimate } from 'motion/react';
 import { useEffect, useRef } from 'react';
 
-import { popTransition } from '../../../../klex/transitions';
 import {
   type CardProps,
   FeatureCard,

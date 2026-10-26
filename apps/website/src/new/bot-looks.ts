@@ -1,9 +1,10 @@
+import { BODY_SHAPES, type BodyShape, type MovementMode } from '@klex/mascot';
+
 import {
   capabilityShapes,
   collaborationShapes,
   jonathanLook,
 } from '../shared/mascot-shapes';
-import { BODY_SHAPES, type BodyShape, type MovementMode } from './klex/presets';
 
 /** The brand-blue Klex used where no team member is meant. */
 export const klexLook = {

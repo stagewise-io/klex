@@ -1,5 +1,6 @@
 import './styles.css';
 
+import { Klex, type KlexHandle } from '@klex/mascot';
 import { gsap } from 'gsap';
 import { useEffect, useRef } from 'react';
 
@@ -7,7 +8,6 @@ import { IconGithub } from '@stagewise/ui/icons/nucleo/social-media/IconGithub.t
 import { IconDiscord } from '@stagewise/ui/icons/provider/IconDiscord.tsx';
 
 import { klexLook } from '../../../../bot-looks';
-import { Klex, type KlexHandle } from '../../../../klex';
 import {
   type CardProps,
   FeatureCard,

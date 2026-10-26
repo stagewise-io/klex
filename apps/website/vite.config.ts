@@ -24,7 +24,7 @@ function prerenderPages(): Plugin {
               watch: null,
             },
             optimizeDeps: { noDiscovery: true, include: [] },
-            ssr: { noExternal: ['@stagewise/ui'] },
+            ssr: { noExternal: ['@klex/mascot', '@stagewise/ui'] },
           });
           try {
             const { prerenderLandingPage } = await server.ssrLoadModule(

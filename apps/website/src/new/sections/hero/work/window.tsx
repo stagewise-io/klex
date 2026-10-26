@@ -1,7 +1,7 @@
+import { popTransition } from '@klex/mascot';
 import { motion } from 'motion/react';
 import { type ReactNode, useEffectEvent, useLayoutEffect, useRef } from 'react';
 
-import { popTransition } from '../../../klex/transitions';
 import { WindowLabel } from '../../build/safari';
 
 /** Work scenes are drawn at this size and scaled down to fit the window. */

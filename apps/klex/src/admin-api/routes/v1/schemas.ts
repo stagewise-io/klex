@@ -1,5 +1,7 @@
 import { extendZodWithOpenApi, z } from '@hono/zod-openapi';
 
+import { GenerationHealthErrorSchema } from '@/session-history/generation-health';
+
 import {
   providerTypeSchema as configProviderTypeSchema,
   MODEL_PURPOSES,
@@ -907,30 +909,6 @@ const episodeSummaryListResponseSchema = z
 const sessionKindSchema = z
   .enum(['default', 'god', 'child'])
   .openapi('SessionKind');
-
-export const GenerationHealthErrorSchema = z.object({
-  kind: z.enum(['turn_failed', 'request_rejected', 'terminated']),
-  category: z.enum([
-    'rate_limit',
-    'quota',
-    'auth',
-    'connectivity',
-    'configuration',
-    'request_rejected',
-    'server_error',
-    'unknown',
-  ]),
-  reason: z.string().max(128),
-  message: z.string().max(512),
-  providerId: z.string().max(128).nullable(),
-  providerType: z.string().max(128).nullable(),
-  modelId: z.string().max(128).nullable(),
-  statusCode: z.number().int().nullable(),
-  consecutiveFailures: z.number().int().min(1),
-  occurrenceCount: z.number().int().min(1),
-  firstSeenAt: z.string().datetime(),
-  lastSeenAt: z.string().datetime(),
-});
 
 const sessionHistoryRecordSchema = z
   .object({

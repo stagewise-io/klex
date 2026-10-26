@@ -9,6 +9,7 @@ import {
 
 import type { ModuleLogger, RootLogger } from '@stagewise/logger';
 
+import { GenerationHealthErrorSchema } from '@/admin-api/routes/v1/schemas';
 import type { Config, KlexConfig } from '@/config';
 import { assertCurrentSqliteStore } from '@/local-data';
 import type { ExtendedUIMessage } from '@/session/chat/message-types';
@@ -480,79 +481,86 @@ class SessionHistoryModule implements SessionHistory {
           Pick<GenerationHealthError, 'kind' | 'consecutiveFailures'>)
       | null,
   ): Promise<void> {
-    const client = this.requireClient();
-    const { meta } = recorder;
-    const now = this.nowIso();
-    const previous = await client.execute({
-      sql: 'SELECT generation_error FROM sessions WHERE instance_id = ?',
-      args: [meta.instanceId],
-    });
-    const raw = previous.rows[0]?.generation_error;
-    const old: GenerationHealthError | null =
-      typeof raw === 'string' ? JSON.parse(raw) : null;
-    // Termination is an escalation of the same failure, not a new incident.
-    const identical =
-      old &&
-      failure &&
-      [
-        'category',
-        'reason',
-        'message',
-        'providerId',
-        'providerType',
-        'modelId',
-        'statusCode',
-      ].every(
-        (key) =>
-          old[key as keyof GenerationFailure] ===
-          failure[key as keyof GenerationFailure],
-      );
-    const health: GenerationHealthError | null = failure
-      ? {
-          ...failure,
-          occurrenceCount: identical ? old.occurrenceCount + 1 : 1,
-          firstSeenAt: identical ? old.firstSeenAt : now,
-          lastSeenAt: now,
-        }
-      : null;
-    const statements: InStatement[] = [];
-    if (health)
-      statements.push({
-        sql: `INSERT INTO sessions (instance_id, session_id, kind, name, parent_instance_id,
+    const client = this.client;
+    if (!client) return;
+    try {
+      const { meta } = recorder;
+      const now = this.nowIso();
+      const previous = await client.execute({
+        sql: 'SELECT generation_error FROM sessions WHERE instance_id = ?',
+        args: [meta.instanceId],
+      });
+      const raw = previous.rows[0]?.generation_error;
+      const old = parseGenerationError(raw);
+      // Termination is an escalation of the same failure, not a new incident.
+      const identical =
+        old &&
+        failure &&
+        [
+          'category',
+          'reason',
+          'message',
+          'providerId',
+          'providerType',
+          'modelId',
+          'statusCode',
+        ].every(
+          (key) =>
+            old[key as keyof GenerationFailure] ===
+            failure[key as keyof GenerationFailure],
+        );
+      const health: GenerationHealthError | null = failure
+        ? {
+            ...failure,
+            occurrenceCount: identical ? old.occurrenceCount + 1 : 1,
+            firstSeenAt: identical ? old.firstSeenAt : now,
+            lastSeenAt: now,
+          }
+        : null;
+      const statements: InStatement[] = [];
+      if (health)
+        statements.push({
+          sql: `INSERT INTO sessions (instance_id, session_id, kind, name, parent_instance_id,
         extension_identifier, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT (instance_id) DO NOTHING`,
-        args: [
-          meta.instanceId,
-          meta.sessionId,
-          meta.kind,
-          meta.name,
-          meta.parentInstanceId ?? null,
-          meta.extensionIdentifier ?? null,
-          meta.createdAt,
-          now,
-        ],
-      });
-    // A newer occurrence supersedes every unresolved warning for this logical
-    // session. Recovery resolves only this instance and its predecessors.
-    statements.push({
-      sql: `UPDATE sessions SET generation_error = NULL WHERE session_id = ?
+          args: [
+            meta.instanceId,
+            meta.sessionId,
+            meta.kind,
+            meta.name,
+            meta.parentInstanceId ?? null,
+            meta.extensionIdentifier ?? null,
+            meta.createdAt,
+            now,
+          ],
+        });
+      // A newer occurrence supersedes every unresolved warning for this logical
+      // session. Recovery resolves only this instance and its predecessors.
+      statements.push({
+        sql: `UPDATE sessions SET generation_error = NULL WHERE session_id = ?
         AND (? = 1 OR created_at < ? OR (created_at = ? AND rowid <= COALESCE(
           (SELECT rowid FROM sessions WHERE instance_id = ?), 9223372036854775807)))`,
-      args: [
-        meta.sessionId,
-        health ? 1 : 0,
-        meta.createdAt,
-        meta.createdAt,
-        meta.instanceId,
-      ],
-    });
-    if (health)
-      statements.push({
-        sql: 'UPDATE sessions SET generation_error = ?, updated_at = ? WHERE instance_id = ?',
-        args: [JSON.stringify(health), now, meta.instanceId],
+        args: [
+          meta.sessionId,
+          health ? 1 : 0,
+          meta.createdAt,
+          meta.createdAt,
+          meta.instanceId,
+        ],
       });
-    await client.batch(statements, 'write');
-    if (health) recorder.inserted = true;
+      if (health)
+        statements.push({
+          sql: 'UPDATE sessions SET generation_error = ?, updated_at = ? WHERE instance_id = ?',
+          args: [JSON.stringify(health), now, meta.instanceId],
+        });
+      await client.batch(statements, 'write');
+      if (health) recorder.inserted = true;
+    } catch (error) {
+      this.deps.logger.error(
+        { error, instanceId: recorder.instanceId },
+        'Failed to update session generation health',
+      );
+    }
   }
 
   async runEnd(recorder: RecorderState, reason: string): Promise<void> {
@@ -1276,10 +1284,7 @@ function decodeListCursor(cursor: string): [string, string] {
 function toSessionRecord(row: Row): SessionHistoryRecord {
   const endedAt = toNullableText(row.ended_at);
   return {
-    generationError:
-      typeof row.generation_error === 'string'
-        ? JSON.parse(row.generation_error)
-        : null,
+    generationError: parseGenerationError(row.generation_error),
     instanceId: toText(row.instance_id),
     sessionId: toText(row.session_id),
     kind: toSessionKind(toText(row.kind)),
@@ -1305,6 +1310,16 @@ function toSessionKind(value: string): SessionKind {
 
 /** Row cells; `undefined` under `noUncheckedIndexedAccess`. */
 type Cell = Row[string] | undefined;
+
+function parseGenerationError(value: Cell): GenerationHealthError | null {
+  if (typeof value !== 'string') return null;
+  try {
+    const result = GenerationHealthErrorSchema.safeParse(JSON.parse(value));
+    return result.success ? result.data : null;
+  } catch {
+    return null;
+  }
+}
 
 function toText(value: Cell): string {
   return value === null || value === undefined ? '' : String(value);

@@ -17,6 +17,7 @@ import type {
 } from '@/config';
 import type { Mcp } from '@/mcp';
 import type { ProviderModelResolver } from '@/provider-registry';
+import type { GenerationFailure } from '@/session-history/generation-health';
 import type {
   ChildSessionHandle,
   ChildSessionOptions,
@@ -361,6 +362,7 @@ export interface StepCompleteEvent {
    * without producing any usable output.
    */
   generationFailed: boolean;
+  generationFailure?: GenerationFailure | null;
   /**
    * Generation metadata — null when no generation happened (skipped step,
    * fatal error, or all attempts exhausted).

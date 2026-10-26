@@ -19,6 +19,7 @@ import {
   SESSION_HISTORY_STORE_DEFINITION,
 } from './schema';
 import type {
+  SessionHealthFailure,
   SessionHistoryListPage,
   SessionHistoryListQuery,
   SessionHistoryMessage,
@@ -124,6 +125,15 @@ interface RecordedEntry {
 
 /** Per-instance write state. Entries are only mutated on the write queue. */
 class RecorderState implements SessionHistoryRecorder {
+  recordHealthFailure(failure: SessionHealthFailure): void {
+    if (this.ended) return;
+    void this.store.enqueue(() => this.store.writeHealthFailure(this, failure));
+  }
+
+  clearHealthFailure(): void {
+    if (this.ended) return;
+    void this.store.enqueue(() => this.store.writeHealthFailure(this, null));
+  }
   /** Persisted window messages by message ID. */
   entries = new Map<string, RecordedEntry>();
   /**
@@ -201,6 +211,49 @@ class RecorderState implements SessionHistoryRecorder {
 }
 
 class SessionHistoryModule implements SessionHistory {
+  async writeHealthFailure(
+    recorder: RecorderState,
+    failure: SessionHealthFailure | null,
+  ): Promise<void> {
+    const client = this.client;
+    if (!client) return;
+    const now = failure?.occurredAt ?? this.nowIso();
+    const { meta } = recorder;
+    if (!failure) {
+      await client.execute({
+        sql: `UPDATE sessions SET last_health_failure = NULL, updated_at = ? WHERE (instance_id = ? OR session_id = ?) AND last_health_failure IS NOT NULL`,
+        args: [now, recorder.instanceId, meta.sessionId],
+      });
+      return;
+    }
+    const content = JSON.stringify(failure);
+    await client.execute({
+      sql: `UPDATE sessions SET last_health_failure = NULL, updated_at = ? WHERE session_id = ? AND instance_id <> ? AND last_health_failure IS NOT NULL`,
+      args: [now, meta.sessionId, recorder.instanceId],
+    });
+    if (!recorder.inserted) {
+      await client.execute({
+        sql: `INSERT INTO sessions (instance_id, session_id, kind, name, parent_instance_id, extension_identifier, created_at, updated_at, last_health_failure) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        args: [
+          meta.instanceId,
+          meta.sessionId,
+          meta.kind,
+          meta.name,
+          meta.parentInstanceId ?? null,
+          meta.extensionIdentifier ?? null,
+          meta.createdAt,
+          now,
+          content,
+        ],
+      });
+      recorder.inserted = true;
+    } else {
+      await client.execute({
+        sql: `UPDATE sessions SET last_health_failure = ?, updated_at = ? WHERE instance_id = ?`,
+        args: [content, now, recorder.instanceId],
+      });
+    }
+  }
   private client: Client | null = null;
   private started = false;
   /** Set once `close()` has closed the client; later writes are dropped. */
@@ -1166,6 +1219,7 @@ function decodeListCursor(cursor: string): [string, string] {
 function toSessionRecord(row: Row): SessionHistoryRecord {
   const endedAt = toNullableText(row.ended_at);
   return {
+    lastHealthFailure: parseHealthFailure(row.last_health_failure),
     instanceId: toText(row.instance_id),
     sessionId: toText(row.session_id),
     kind: toSessionKind(toText(row.kind)),
@@ -1181,6 +1235,27 @@ function toSessionRecord(row: Row): SessionHistoryRecord {
     trimmedMessageCount: toNumber(row.trimmed_message_count),
     byteSize: toNumber(row.byte_size),
   };
+}
+
+function parseHealthFailure(value: Cell): SessionHealthFailure | null {
+  try {
+    const failure = JSON.parse(toText(value));
+    if (
+      !failure ||
+      !['turn_failed', 'request_rejected', 'terminated'].includes(
+        failure.kind,
+      ) ||
+      typeof failure.reason !== 'string' ||
+      (failure.modelId !== null && typeof failure.modelId !== 'string') ||
+      !Number.isInteger(failure.consecutiveFailures) ||
+      failure.consecutiveFailures < 1 ||
+      typeof failure.occurredAt !== 'string'
+    )
+      return null;
+    return failure;
+  } catch {
+    return null;
+  }
 }
 
 function toSessionKind(value: string): SessionKind {

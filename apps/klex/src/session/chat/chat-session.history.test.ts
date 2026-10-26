@@ -61,6 +61,8 @@ function fakeSessionHistory(options: { endError?: Error } = {}): {
         meta,
         snapshots: [],
         recorder: {
+          recordHealthFailure: vi.fn(),
+          clearHealthFailure: vi.fn(),
           instanceId: meta.instanceId,
           scheduleSync: vi.fn((getMessages) => {
             entry.snapshots.push([...getMessages()]);

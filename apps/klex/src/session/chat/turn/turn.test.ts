@@ -71,6 +71,48 @@ function makeMockStep(overrides: Partial<StepCompleteEvent> = {}, delay = 0) {
 
 // --- tests ---
 
+describe('Turn health failure details', () => {
+  it.each([
+    { fatalError: true, fatalErrorReason: 'invalid prompt error' },
+    { generationFailed: true, requestRejected: true },
+    { modelFallbackOccurred: true },
+  ])('propagates the last failure and attempted model: %j', async (flags) => {
+    vi.mocked(createStep).mockReturnValue(
+      makeMockStep({
+        ...flags,
+        shouldContinue: true,
+        failureReason: 'classified failure',
+        failedModelId: 'work:model-a',
+      }),
+    );
+    const result = await createTurn(makeDeps()).run();
+    expect(result).toMatchObject({
+      failureReason: 'classified failure',
+      failedModelId: 'work:model-a',
+    });
+  });
+
+  it('clears failure details when a fallback recovers', async () => {
+    vi.mocked(createStep)
+      .mockReturnValueOnce(
+        makeMockStep({
+          shouldContinue: true,
+          modelFallbackOccurred: true,
+          failureReason: 'server error (529)',
+          failedModelId: 'work:model-a',
+        }),
+      )
+      .mockReturnValueOnce(makeMockStep({ shouldContinue: true }))
+      .mockReturnValue(makeMockStep());
+    expect(await createTurn(makeDeps()).run()).toMatchObject({
+      completeFailure: false,
+      requestRejected: false,
+      failureReason: null,
+      failedModelId: null,
+    });
+  });
+});
+
 describe('Turn — inbox draining', () => {
   beforeEach(() => {
     vi.clearAllMocks();

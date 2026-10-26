@@ -1094,6 +1094,8 @@ describe('Step — model selection', () => {
 
     expect(fallbackManager.fallbackToNextModel).toHaveBeenCalledOnce();
     expect(result).toEqual({
+      failureReason: 'selected model is unusable',
+      failedModelId: 'speech:text-to-speech',
       shouldContinue: true,
       forceNextStep: false,
       fatalError: false,

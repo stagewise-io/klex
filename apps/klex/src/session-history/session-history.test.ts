@@ -113,6 +113,146 @@ describe('resolveSessionHistoryMaxBytes', () => {
   });
 });
 
+describe('session health failures', () => {
+  const failure = {
+    kind: 'turn_failed' as const,
+    reason: 'server error (529)',
+    modelId: 'anthropic:claude-sonnet-4-5',
+    consecutiveFailures: 2,
+    occurredAt: '2026-10-26T12:00:00.000Z',
+  };
+
+  it('persists an empty failing session, syncs messages, and clears health', async () => {
+    const { history } = await setup();
+    const metadata = meta();
+    const recorder = history.openRecorder(metadata);
+    recorder.clearHealthFailure();
+    await history.flush();
+    expect(await history.getSession(metadata.instanceId)).toBeUndefined();
+    recorder.recordHealthFailure(failure);
+    await history.flush();
+    const page = await history.listSessions({
+      kind: 'default',
+      live: true,
+      limit: 1,
+    });
+    expect(page.sessions).toEqual([
+      expect.objectContaining({
+        lastHealthFailure: failure,
+        createdAt: metadata.createdAt,
+        updatedAt: failure.occurredAt,
+        live: true,
+        messageCount: 0,
+      }),
+    ]);
+    recorder.scheduleSync(() => [message('first')]);
+    await history.flush();
+    expect(await history.getSession(metadata.instanceId)).toMatchObject({
+      messageCount: 1,
+      lastHealthFailure: failure,
+    });
+    const repeated = { ...failure, consecutiveFailures: 3 };
+    recorder.recordHealthFailure(repeated);
+    await history.flush();
+    expect(await history.getSession(metadata.instanceId)).toMatchObject({
+      messageCount: 1,
+      lastHealthFailure: repeated,
+    });
+    recorder.clearHealthFailure();
+    await history.flush();
+    expect(await history.getSession(metadata.instanceId)).toMatchObject({
+      lastHealthFailure: null,
+    });
+  });
+
+  it('queues a fatal health failure before ending an empty session and clears across replacement instances', async () => {
+    const { history } = await setup();
+    const recorder = history.openRecorder(meta());
+    const fatal = { ...failure, kind: 'terminated' as const };
+    recorder.recordHealthFailure(fatal);
+    await recorder.end('fatal_error');
+    expect(await history.getSession(recorder.instanceId)).toMatchObject({
+      lastHealthFailure: fatal,
+      endedAt: expect.any(String),
+      endReason: 'fatal_error',
+      live: false,
+    });
+
+    const child = history.openRecorder(
+      meta({ sessionId: 'child-1', kind: 'child', name: 'Child' }),
+    );
+    child.recordHealthFailure(failure);
+    await history.flush();
+
+    const replacement = history.openRecorder(meta());
+    replacement.clearHealthFailure();
+    await history.flush();
+    expect(await history.getSession(recorder.instanceId)).toMatchObject({
+      lastHealthFailure: null,
+      live: false,
+    });
+    expect(await history.getSession(child.instanceId)).toMatchObject({
+      lastHealthFailure: failure,
+    });
+  });
+
+  it('reads malformed stored failure JSON as null', async () => {
+    const { history, directory } = await setup();
+    const recorder = history.openRecorder(meta());
+    recorder.recordHealthFailure(failure);
+    await history.flush();
+    const raw = createClient({
+      url: `file:${join(directory, SESSION_HISTORY_RELATIVE_PATH)}`,
+    });
+    try {
+      await raw.execute("UPDATE sessions SET last_health_failure = '{broken'");
+      expect(
+        (await history.getSession(recorder.instanceId))?.lastHealthFailure,
+      ).toBeNull();
+    } finally {
+      raw.close();
+    }
+  });
+
+  it('upgrades v2 sessions without losing their metadata', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'klex-session-health-'));
+    directories.push(directory);
+    const v2: SqliteStoreDefinition = {
+      ...SESSION_HISTORY_STORE_DEFINITION,
+      schemaVersion: 2,
+      initSql: SESSION_HISTORY_STORE_DEFINITION.initSql.replace(
+        '  last_health_failure TEXT,',
+        '',
+      ),
+      migrations: SESSION_HISTORY_STORE_DEFINITION.migrations.filter(
+        (migration) => migration.to <= 2,
+      ),
+      validate: async () => {},
+    };
+    await createLocalData({
+      logging: logger,
+      dataDirectory: directory,
+      klexVersion: KLEX_VERSION,
+      stores: [v2],
+    }).start();
+    const raw = createClient({
+      url: `file:${join(directory, SESSION_HISTORY_RELATIVE_PATH)}`,
+    });
+    try {
+      await raw.execute(
+        "INSERT INTO sessions (instance_id, session_id, kind, name, created_at, updated_at) VALUES ('old', 'default', 'default', 'Old session', '2026-01-01', '2026-01-01')",
+      );
+    } finally {
+      raw.close();
+    }
+    const { history } = await setup({ directory });
+    expect(await history.getSession('old')).toMatchObject({
+      name: 'Old session',
+      lastHealthFailure: null,
+    });
+  });
+});
+
 describe('session history sync', () => {
   it('persists in-place mutations of older messages', async () => {
     const { history } = await setup();
@@ -782,6 +922,14 @@ CREATE TABLE IF NOT EXISTS messages (
       url: `file:${join(directory, SESSION_HISTORY_RELATIVE_PATH)}`,
     });
     try {
+      expect((await history.listSessions({ limit: 10 })).sessions).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            instanceId: 'i1',
+            lastHealthFailure: null,
+          }),
+        ]),
+      );
       const result = await migrated.execute(
         `SELECT session_id, ord, message_id, is_checkpoint, covers_through_ord
          FROM messages ORDER BY session_id, ord`,

@@ -84,6 +84,8 @@ export interface TurnDependencies {
 }
 
 export interface TurnResult {
+  failureReason: string | null;
+  failedModelId: string | null;
   /**
    * True if the turn ended because every step failed with a fatal
    * (non-recoverable) error. The session should be terminated.
@@ -155,6 +157,8 @@ class TurnModule implements Turn {
     this.deps.logger.info({ turnId: this.id }, 'Turn started');
 
     let fatalError = false;
+    let failureReason: string | null = null;
+    let failedModelId: string | null = null;
     let fatalErrorReason: string | null = null;
     let hadAnySuccess = false;
     let hadAnyFailure = false;
@@ -321,6 +325,16 @@ class TurnModule implements Turn {
           }
 
           // Fatal error — stop the turn immediately.
+          if (
+            stepResult.fatalError ||
+            stepResult.generationFailed ||
+            stepResult.modelFallbackOccurred ||
+            stepResult.requestRejected
+          ) {
+            failureReason =
+              stepResult.failureReason ?? stepResult.fatalErrorReason ?? null;
+            failedModelId = stepResult.failedModelId ?? null;
+          }
           if (stepResult.fatalError) {
             fatalError = true;
             fatalErrorReason = stepResult.fatalErrorReason;
@@ -421,11 +435,15 @@ class TurnModule implements Turn {
       this.turnSpan?.end();
     }
 
+    const completeFailure = hadAnyFailure && (!hadAnySuccess || lastStepFailed);
+    const failed = fatalError || completeFailure;
     return {
+      failureReason: failed ? failureReason : null,
+      failedModelId: failed ? failedModelId : null,
       fatalError,
       fatalErrorReason,
-      completeFailure: hadAnyFailure && (!hadAnySuccess || lastStepFailed),
-      requestRejected: lastFailureWasRejection,
+      completeFailure,
+      requestRejected: completeFailure && lastFailureWasRejection,
       stopReason,
       stepCount: totalStepCount,
       usage: lastUsage,

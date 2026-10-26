@@ -176,6 +176,7 @@ class ChatSessionModule implements AgentSession {
   private fallbackManager: ModelFallbackManager;
 
   private backoffManager: BackoffManager;
+  private consecutiveTurnFailures = 0;
 
   private loopActive = false;
   /** The running loop, so close() can let an aborted turn settle. */
@@ -1417,6 +1418,43 @@ class ChatSessionModule implements AgentSession {
         }
 
         // Fatal error — terminate the session.
+        if (
+          turnResult.fatalError ||
+          turnResult.requestRejected ||
+          turnResult.completeFailure
+        ) {
+          const rejected = !turnResult.fatalError && turnResult.requestRejected;
+          this.consecutiveTurnFailures = rejected
+            ? 0
+            : this.consecutiveTurnFailures + 1;
+          const maxFailuresExceeded =
+            !turnResult.fatalError &&
+            !rejected &&
+            turnResult.completeFailure &&
+            this.consecutiveTurnFailures >= MAX_CONSECUTIVE_FAILURES;
+          this.transcriptRecorder?.recordHealthFailure({
+            kind:
+              turnResult.fatalError || maxFailuresExceeded
+                ? 'terminated'
+                : rejected
+                  ? 'request_rejected'
+                  : 'turn_failed',
+            reason:
+              (turnResult.fatalError ? turnResult.fatalErrorReason : null) ??
+              turnResult.failureReason ??
+              (turnResult.fatalError
+                ? 'unknown fatal error'
+                : rejected
+                  ? 'request rejected'
+                  : 'generation failed'),
+            modelId: turnResult.failedModelId ?? null,
+            consecutiveFailures: rejected ? 1 : this.consecutiveTurnFailures,
+            occurredAt: new Date().toISOString(),
+          });
+        } else if (turnResult.stopReason === 'completed') {
+          this.consecutiveTurnFailures = 0;
+          this.transcriptRecorder?.clearHealthFailure();
+        }
         if (turnResult.fatalError) {
           this.setRuntimeState('terminated');
           this.deps.logger.error(
@@ -1427,7 +1465,10 @@ class ChatSessionModule implements AgentSession {
             'klex.session.id': this.sessionId,
           });
           this.sessionSpan.setAttribute('klex.session.terminated', true);
-          await this.terminate(turnResult.fatalErrorReason ?? 'unknown');
+          await this.terminate(
+            turnResult.fatalErrorReason ?? 'unknown',
+            'fatal_error',
+          );
           return;
         }
 
@@ -1895,8 +1936,11 @@ class ChatSessionModule implements AgentSession {
    * Unlike `close()`, this is only called when the session decides it is
    * unrecoverable, not during owner-initiated graceful shutdown.
    */
-  private async terminate(reason: string): Promise<void> {
-    this.endReason = `terminated: ${reason}`;
+  private async terminate(
+    reason: string,
+    endReason = `terminated: ${reason}`,
+  ): Promise<void> {
+    this.endReason = endReason;
     this.selfTerminating = true;
     this.leaseManager.revoke('default-session-terminated');
 

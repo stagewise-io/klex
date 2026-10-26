@@ -13,6 +13,8 @@ export {
   resolveSessionHistoryMaxBytes,
 } from './session-history';
 export type {
+  SessionHealthFailure,
+  SessionHealthFailureKind,
   SessionHistoryListPage,
   SessionHistoryListQuery,
   SessionHistoryMessage,

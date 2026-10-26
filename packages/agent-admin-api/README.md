@@ -15,6 +15,21 @@ const health = await client.v1.health.$get();
 
 ## Model providers
 
+Session-history records from `GET /v1/sessions` and `GET /v1/sessions/{instanceId}`
+include nullable `generationError`. Cloud can display this unresolved warning
+even after an instance ends and leaves live introspection. It includes the failure
+kind/category, a bounded safe reason and actionable message, attempted provider
+and model identifiers, HTTP status, consecutive failed turns, occurrence count,
+and first/last timestamps. The summary represents the final failing attempt of a
+failed turn; recovered fallback attempts never create a warning. Successful turns
+clear warnings for the logical session, including earlier instances. A replacement
+failure supersedes earlier instances' warnings. Follow list cursors to find all
+relevant default and child sessions; `/v1/health` remains process health.
+
+Provider prose, prompts, payloads, headers, and credentials are excluded. Messages
+use fixed classification summaries with allowlisted numeric TPM/RPM details.
+The existing API type build includes this contract automatically.
+
 The provider contract is registry-driven. Clients do not need provider-specific
 routes or hard-coded forms:
 
@@ -85,13 +100,10 @@ god, and child) to local storage. These routes expose it read-only:
   (`default`, `god`, `child`), `live`, and `parentInstanceId`; page with
   `limit` and the opaque `cursor` returned as `nextCursor`. To find the
   current main session, call `GET /v1/sessions?kind=default&live=true&limit=1`.
-  A session is persisted after its first message or a session-health failure, so this list can be
+  A session is persisted only after its first message, so this list can be
   empty right after a restart.
 - `GET /v1/sessions/{instanceId}` returns one instance's metadata, including
   `live`, `endReason`, `messageCount`, and `trimmedMessageCount`.
-  Both list and detail include `lastHealthFailure`: null when healthy, otherwise
-  `{ kind, reason, modelId, consecutiveFailures, occurredAt }`. The kind is
-  `turn_failed`, `request_rejected`, or `terminated`; a successful turn clears it.
 - `GET /v1/sessions/{instanceId}/messages` returns messages in chronological
   order. Without a cursor it returns the newest `limit` messages. Pass the
   numeric `nextCursor` as `cursor` to load the previous, older page.

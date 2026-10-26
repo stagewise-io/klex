@@ -11,6 +11,10 @@ import {
 
 import type { ModuleLogger } from '@stagewise/logger';
 
+import {
+  type GenerationFailure,
+  summarizeGenerationFailure,
+} from '@/session-history/generation-health';
 import type { TelemetryMetrics } from '@/telemetry-metrics';
 import {
   classifyGenerationError,
@@ -142,13 +146,12 @@ export class GenerationRunner {
     let attempt = 0;
     let forceNextStep = false;
     let fatalError = false;
+    let generationFailure: GenerationFailure | null = null;
     let fatalErrorReason: string | null = null;
     let generationFailed = false;
     let modelFallbackOccurred = false;
     let requestRejected = false;
     let salvagedRejection = false;
-    let failureReason: string | null = null;
-    let failedModelId: string | null = null;
 
     const model = this.deps.model;
     let lastUsage: LanguageModelUsage | null = null;
@@ -161,16 +164,6 @@ export class GenerationRunner {
       this.generationAbortController = generationAbortController;
 
       const currentModelEntry = fallbackManager.getChatModelEntry();
-      const context = this.deps.modelContext;
-      const attemptedEntry =
-        context.providerId && context.modelId ? context : currentModelEntry;
-      const attemptedModelId = attemptedEntry
-        ? typeof attemptedEntry === 'string'
-          ? attemptedEntry
-          : attemptedEntry.modelId.includes(':')
-            ? attemptedEntry.modelId
-            : `${attemptedEntry.providerId}:${attemptedEntry.modelId}`
-        : null;
       const currentModelId = currentModelEntry?.modelId ?? 'unknown';
       stepSpan.addEvent('step.generation_attempt', {
         'generation.attempt': attempt,
@@ -256,6 +249,12 @@ export class GenerationRunner {
               ? classifyGenerationError(response.error)
               : null;
           lastClassification = classification;
+          if (!isAborted && !classification?.isAbort)
+            generationFailure = summarizeGenerationFailure(
+              response.error,
+              this.deps.modelContext,
+              classification?.reason,
+            );
           const hasContent =
             response.message !== null && response.message.parts.length > 0;
           const coarse = this.decideOutcome(
@@ -280,6 +279,12 @@ export class GenerationRunner {
         const isAborted = generationAbortController.signal.aborted;
         const classification = classifyGenerationError(e);
         lastClassification = classification;
+        if (!isAborted && !classification.isAbort)
+          generationFailure = summarizeGenerationFailure(
+            e,
+            this.deps.modelContext,
+            classification.reason,
+          );
         const hasContent =
           latestMessage !== null && latestMessage.parts.length > 0;
         const coarse = this.decideOutcome(
@@ -297,16 +302,6 @@ export class GenerationRunner {
       }
 
       // Shared outcome handling.
-      if (
-        outcome !== 'done' &&
-        outcome !== 'aborted' &&
-        (outcome !== 'salvage' ||
-          lastClassification?.isModelError ||
-          lastClassification?.isRequestRejected)
-      ) {
-        failureReason = lastClassification?.reason ?? 'generation failed';
-        failedModelId = attemptedModelId;
-      }
       if (outcome === 'done') break;
       if (outcome === 'fatal') {
         fatalError = true;
@@ -349,8 +344,7 @@ export class GenerationRunner {
     // the tool sweep and report the rejection to the turn.
     if (requestRejected) {
       return {
-        failureReason,
-        failedModelId,
+        generationFailure,
         shouldContinue: true,
         forceNextStep: false,
         fatalError: false,
@@ -374,8 +368,7 @@ export class GenerationRunner {
         'Generation attempts exhausted — stopping step',
       );
       return {
-        failureReason: failureReason ?? 'generation failed',
-        failedModelId,
+        generationFailure,
         shouldContinue: false,
         forceNextStep: false,
         fatalError: false,
@@ -418,8 +411,8 @@ export class GenerationRunner {
     }
 
     return {
+      generationFailure,
       shouldContinue: true,
-      ...(failureReason !== null && { failureReason, failedModelId }),
       forceNextStep,
       fatalError,
       fatalErrorReason,

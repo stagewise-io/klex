@@ -14,12 +14,15 @@ import { assertCurrentSqliteStore } from '@/local-data';
 import type { ExtendedUIMessage } from '@/session/chat/message-types';
 import type { SessionKind } from '@/session/types';
 
+import type {
+  GenerationFailure,
+  GenerationHealthError,
+} from './generation-health';
 import {
   SESSION_HISTORY_RELATIVE_PATH,
   SESSION_HISTORY_STORE_DEFINITION,
 } from './schema';
 import type {
-  SessionHealthFailure,
   SessionHistoryListPage,
   SessionHistoryListQuery,
   SessionHistoryMessage,
@@ -125,15 +128,6 @@ interface RecordedEntry {
 
 /** Per-instance write state. Entries are only mutated on the write queue. */
 class RecorderState implements SessionHistoryRecorder {
-  recordHealthFailure(failure: SessionHealthFailure): void {
-    if (this.ended) return;
-    void this.store.enqueue(() => this.store.writeHealthFailure(this, failure));
-  }
-
-  clearHealthFailure(): void {
-    if (this.ended) return;
-    void this.store.enqueue(() => this.store.writeHealthFailure(this, null));
-  }
   /** Persisted window messages by message ID. */
   entries = new Map<string, RecordedEntry>();
   /**
@@ -157,6 +151,26 @@ class RecorderState implements SessionHistoryRecorder {
 
   get instanceId(): string {
     return this.meta.instanceId;
+  }
+
+  recordGenerationFailure(
+    failure: GenerationFailure,
+    kind: GenerationHealthError['kind'],
+    consecutiveFailures: number,
+  ): Promise<void> {
+    if (this.ended) return Promise.resolve();
+    return this.store.enqueue(() =>
+      this.store.runGenerationHealth(this, {
+        ...failure,
+        kind,
+        consecutiveFailures,
+      }),
+    );
+  }
+
+  clearGenerationFailure(): Promise<void> {
+    if (this.ended) return Promise.resolve();
+    return this.store.enqueue(() => this.store.runGenerationHealth(this, null));
   }
 
   scheduleSync(getMessages: () => readonly ExtendedUIMessage[]): void {
@@ -211,49 +225,6 @@ class RecorderState implements SessionHistoryRecorder {
 }
 
 class SessionHistoryModule implements SessionHistory {
-  async writeHealthFailure(
-    recorder: RecorderState,
-    failure: SessionHealthFailure | null,
-  ): Promise<void> {
-    const client = this.client;
-    if (!client) return;
-    const now = failure?.occurredAt ?? this.nowIso();
-    const { meta } = recorder;
-    if (!failure) {
-      await client.execute({
-        sql: `UPDATE sessions SET last_health_failure = NULL, updated_at = ? WHERE (instance_id = ? OR session_id = ?) AND last_health_failure IS NOT NULL`,
-        args: [now, recorder.instanceId, meta.sessionId],
-      });
-      return;
-    }
-    const content = JSON.stringify(failure);
-    await client.execute({
-      sql: `UPDATE sessions SET last_health_failure = NULL, updated_at = ? WHERE session_id = ? AND instance_id <> ? AND last_health_failure IS NOT NULL`,
-      args: [now, meta.sessionId, recorder.instanceId],
-    });
-    if (!recorder.inserted) {
-      await client.execute({
-        sql: `INSERT INTO sessions (instance_id, session_id, kind, name, parent_instance_id, extension_identifier, created_at, updated_at, last_health_failure) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        args: [
-          meta.instanceId,
-          meta.sessionId,
-          meta.kind,
-          meta.name,
-          meta.parentInstanceId ?? null,
-          meta.extensionIdentifier ?? null,
-          meta.createdAt,
-          now,
-          content,
-        ],
-      });
-      recorder.inserted = true;
-    } else {
-      await client.execute({
-        sql: `UPDATE sessions SET last_health_failure = ?, updated_at = ? WHERE instance_id = ?`,
-        args: [content, now, recorder.instanceId],
-      });
-    }
-  }
   private client: Client | null = null;
   private started = false;
   /** Set once `close()` has closed the client; later writes are dropped. */
@@ -500,6 +471,88 @@ class SessionHistoryModule implements SessionHistory {
     if (!getMessages) return;
     const committed = await this.syncRecorder(recorder, getMessages);
     if (committed) this.maybeScheduleEnforcement();
+  }
+
+  async runGenerationHealth(
+    recorder: RecorderState,
+    failure:
+      | (GenerationFailure &
+          Pick<GenerationHealthError, 'kind' | 'consecutiveFailures'>)
+      | null,
+  ): Promise<void> {
+    const client = this.requireClient();
+    const { meta } = recorder;
+    const now = this.nowIso();
+    const previous = await client.execute({
+      sql: 'SELECT generation_error FROM sessions WHERE instance_id = ?',
+      args: [meta.instanceId],
+    });
+    const raw = previous.rows[0]?.generation_error;
+    const old: GenerationHealthError | null =
+      typeof raw === 'string' ? JSON.parse(raw) : null;
+    // Termination is an escalation of the same failure, not a new incident.
+    const identical =
+      old &&
+      failure &&
+      [
+        'category',
+        'reason',
+        'message',
+        'providerId',
+        'providerType',
+        'modelId',
+        'statusCode',
+      ].every(
+        (key) =>
+          old[key as keyof GenerationFailure] ===
+          failure[key as keyof GenerationFailure],
+      );
+    const health: GenerationHealthError | null = failure
+      ? {
+          ...failure,
+          occurrenceCount: identical ? old.occurrenceCount + 1 : 1,
+          firstSeenAt: identical ? old.firstSeenAt : now,
+          lastSeenAt: now,
+        }
+      : null;
+    const statements: InStatement[] = [];
+    if (health)
+      statements.push({
+        sql: `INSERT INTO sessions (instance_id, session_id, kind, name, parent_instance_id,
+        extension_identifier, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT (instance_id) DO NOTHING`,
+        args: [
+          meta.instanceId,
+          meta.sessionId,
+          meta.kind,
+          meta.name,
+          meta.parentInstanceId ?? null,
+          meta.extensionIdentifier ?? null,
+          meta.createdAt,
+          now,
+        ],
+      });
+    // A newer occurrence supersedes every unresolved warning for this logical
+    // session. Recovery resolves only this instance and its predecessors.
+    statements.push({
+      sql: `UPDATE sessions SET generation_error = NULL WHERE session_id = ?
+        AND (? = 1 OR created_at < ? OR (created_at = ? AND rowid <= COALESCE(
+          (SELECT rowid FROM sessions WHERE instance_id = ?), 9223372036854775807)))`,
+      args: [
+        meta.sessionId,
+        health ? 1 : 0,
+        meta.createdAt,
+        meta.createdAt,
+        meta.instanceId,
+      ],
+    });
+    if (health)
+      statements.push({
+        sql: 'UPDATE sessions SET generation_error = ?, updated_at = ? WHERE instance_id = ?',
+        args: [JSON.stringify(health), now, meta.instanceId],
+      });
+    await client.batch(statements, 'write');
+    if (health) recorder.inserted = true;
   }
 
   async runEnd(recorder: RecorderState, reason: string): Promise<void> {
@@ -844,8 +897,12 @@ class SessionHistoryModule implements SessionHistory {
                 args: [instanceId],
               },
               {
-                sql: 'DELETE FROM sessions WHERE instance_id = ?',
+                sql: 'DELETE FROM sessions WHERE instance_id = ? AND generation_error IS NULL',
                 args: [instanceId],
+              },
+              {
+                sql: 'UPDATE sessions SET byte_size = 0, trimmed_message_count = trimmed_message_count + ? WHERE instance_id = ?',
+                args: [removable, instanceId],
               },
             ],
             'write',
@@ -1219,7 +1276,10 @@ function decodeListCursor(cursor: string): [string, string] {
 function toSessionRecord(row: Row): SessionHistoryRecord {
   const endedAt = toNullableText(row.ended_at);
   return {
-    lastHealthFailure: parseHealthFailure(row.last_health_failure),
+    generationError:
+      typeof row.generation_error === 'string'
+        ? JSON.parse(row.generation_error)
+        : null,
     instanceId: toText(row.instance_id),
     sessionId: toText(row.session_id),
     kind: toSessionKind(toText(row.kind)),
@@ -1235,27 +1295,6 @@ function toSessionRecord(row: Row): SessionHistoryRecord {
     trimmedMessageCount: toNumber(row.trimmed_message_count),
     byteSize: toNumber(row.byte_size),
   };
-}
-
-function parseHealthFailure(value: Cell): SessionHealthFailure | null {
-  try {
-    const failure = JSON.parse(toText(value));
-    if (
-      !failure ||
-      !['turn_failed', 'request_rejected', 'terminated'].includes(
-        failure.kind,
-      ) ||
-      typeof failure.reason !== 'string' ||
-      (failure.modelId !== null && typeof failure.modelId !== 'string') ||
-      !Number.isInteger(failure.consecutiveFailures) ||
-      failure.consecutiveFailures < 1 ||
-      typeof failure.occurredAt !== 'string'
-    )
-      return null;
-    return failure;
-  } catch {
-    return null;
-  }
 }
 
 function toSessionKind(value: string): SessionKind {

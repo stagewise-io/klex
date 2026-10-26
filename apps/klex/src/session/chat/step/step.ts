@@ -13,6 +13,7 @@ import {
   runInferenceContextTransformers,
   runInferenceHistoryTransformers,
 } from '@/session/interaction';
+import { summarizeGenerationFailure } from '@/session-history/generation-health';
 import type { TelemetryMetrics } from '@/telemetry-metrics';
 
 import type { ExtensionHandler } from '../extension-handler';
@@ -153,6 +154,15 @@ class StepModule implements Step {
         const complete = async (event: StepCompleteEvent) => {
           const result: StepCompleteEvent = {
             ...event,
+            ...(event.fatalError && !event.generationFailure
+              ? {
+                  generationFailure: summarizeGenerationFailure(
+                    null,
+                    this.deps.fallbackManager.getChatModelEntry(),
+                    event.fatalErrorReason ?? '',
+                  ),
+                }
+              : {}),
             ...(instinctSummary !== undefined && {
               instinct: instinctSummary,
             }),
@@ -315,7 +325,7 @@ class StepModule implements Step {
             };
             return complete(noModelEvent);
           }
-          const modelId = typeof entry === 'string' ? entry : entry.modelId;
+          const modelId = entry.modelId;
           selectedModelId = modelId;
           const modelSpan = startChildSpan('fetch_model', {
             attributes: {
@@ -359,10 +369,11 @@ class StepModule implements Step {
             );
             this.deps.fallbackManager.fallbackToNextModel();
             const unusableModelEvent: StepCompleteEvent = {
-              failureReason: 'selected model is unusable',
-              failedModelId: modelId.includes(':')
-                ? modelId
-                : `${entry.providerId}:${modelId}`,
+              generationFailure: summarizeGenerationFailure(
+                error,
+                entry,
+                'configuration error',
+              ),
               shouldContinue: true,
               forceNextStep: false,
               fatalError: false,

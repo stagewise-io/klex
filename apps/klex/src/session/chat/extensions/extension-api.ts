@@ -344,10 +344,6 @@ export interface GenerationInfo {
  * successful generation, salvaged partial output, or failed.
  */
 export interface StepCompleteEvent {
-  /** Classification reason when the step encountered a model/generation error or rejection. */
-  failureReason?: string | null;
-  /** Attempted model identifier (e.g. `providerId:modelId`) when the step failed. */
-  failedModelId?: string | null;
   /** True if the turn should run another step after this one. */
   shouldContinue: boolean;
   /** True if the turn must inject a "Continue." message before the next step. */

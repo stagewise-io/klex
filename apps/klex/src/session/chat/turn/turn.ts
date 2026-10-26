@@ -8,6 +8,7 @@ import type { ModuleLogger } from '@stagewise/logger';
 import type { Config } from '@/config';
 import type { ProviderModelResolver } from '@/provider-registry';
 import type { Usage } from '@/session/types';
+import type { GenerationFailure } from '@/session-history';
 import type { TelemetryMetrics } from '@/telemetry-metrics';
 
 import type { ExtensionHandler } from '../extension-handler';
@@ -84,8 +85,8 @@ export interface TurnDependencies {
 }
 
 export interface TurnResult {
-  failureReason: string | null;
-  failedModelId: string | null;
+  /** Safe summary of the last step's failed attempt, if any. */
+  generationFailure?: GenerationFailure | null;
   /**
    * True if the turn ended because every step failed with a fatal
    * (non-recoverable) error. The session should be terminated.
@@ -157,8 +158,7 @@ class TurnModule implements Turn {
     this.deps.logger.info({ turnId: this.id }, 'Turn started');
 
     let fatalError = false;
-    let failureReason: string | null = null;
-    let failedModelId: string | null = null;
+    let generationFailure: GenerationFailure | null = null;
     let fatalErrorReason: string | null = null;
     let hadAnySuccess = false;
     let hadAnyFailure = false;
@@ -302,6 +302,7 @@ class TurnModule implements Turn {
 
           try {
             stepResult = await step.run();
+            generationFailure = stepResult.generationFailure ?? null;
           } finally {
             this.currentStep = null;
           }
@@ -325,16 +326,6 @@ class TurnModule implements Turn {
           }
 
           // Fatal error — stop the turn immediately.
-          if (
-            stepResult.fatalError ||
-            stepResult.generationFailed ||
-            stepResult.modelFallbackOccurred ||
-            stepResult.requestRejected
-          ) {
-            failureReason =
-              stepResult.failureReason ?? stepResult.fatalErrorReason ?? null;
-            failedModelId = stepResult.failedModelId ?? null;
-          }
           if (stepResult.fatalError) {
             fatalError = true;
             fatalErrorReason = stepResult.fatalErrorReason;
@@ -435,15 +426,12 @@ class TurnModule implements Turn {
       this.turnSpan?.end();
     }
 
-    const completeFailure = hadAnyFailure && (!hadAnySuccess || lastStepFailed);
-    const failed = fatalError || completeFailure;
     return {
-      failureReason: failed ? failureReason : null,
-      failedModelId: failed ? failedModelId : null,
+      generationFailure,
       fatalError,
       fatalErrorReason,
-      completeFailure,
-      requestRejected: completeFailure && lastFailureWasRejection,
+      completeFailure: hadAnyFailure && (!hadAnySuccess || lastStepFailed),
+      requestRejected: lastFailureWasRejection,
       stopReason,
       stepCount: totalStepCount,
       usage: lastUsage,

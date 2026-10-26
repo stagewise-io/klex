@@ -61,6 +61,12 @@ Agent discovery may inspect metadata without mutation. Incompatible or corrupt a
 
 Migrations are deterministic, forward-only, and validated after every step. Do not add down migrations. Do not remove old SQLite columns or JSON fields until compatibility policy permits. Add optional fields before requiring them.
 
+Session-history schema 2→3 adds nullable `sessions.generation_error` in Klex 0.26.0.
+Existing rows start without an unresolved warning. Failed turns create a row even
+without transcript messages; successful replacement turns resolve older warnings
+for the same logical session. The registered store uses the existing checkpoint,
+preflight, and recovery path, and older binaries reject schema 3 before writing.
+
 ## Instinct API and model-call availability migrations
 
 Config schema 5→6 raises compatibility to 8 and adds instinct configuration and an empty instinct selection to the released schema 5 shape. Empty instinct selections use the ordered Chat models through generation without changing saved configuration. Explicit instinct entries choose generation/evaluation and an optional bounded attempt timeout; omission uses the remaining shared budget. This single unreleased migration also introduces the TypeSafe AI and Vercel AI Gateway provider types. Other model purposes retain their original contract; the public `configVersion: 2` is unchanged. Config and model-call changes first ship in `0.18.0`.

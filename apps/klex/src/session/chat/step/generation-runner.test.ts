@@ -1,12 +1,7 @@
 import { randomUUID } from 'node:crypto';
 
 import { trace } from '@opentelemetry/api';
-import {
-  APICallError,
-  InvalidPromptError,
-  type LanguageModel,
-  type ModelMessage,
-} from 'ai';
+import { APICallError, type LanguageModel, type ModelMessage } from 'ai';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { ModuleLogger } from '@stagewise/logger';
@@ -127,6 +122,35 @@ describe('GenerationRunner — success', () => {
     setupDefaultMocks();
   });
 
+  it.each(['thrown', 'stream'])(
+    'carries sanitized post-classification details for a %s provider failure',
+    async (mode) => {
+      const error = makeApiError({
+        statusCode: 429,
+        message:
+          'TPM: 30000 RPM: 500 sk-private https://private.example prompt: private-content',
+      });
+      if (mode === 'thrown')
+        vi.mocked(runStreamedGeneration).mockRejectedValueOnce(error);
+      else
+        vi.mocked(runStreamedGeneration).mockResolvedValueOnce(
+          makeGenResult(makeAssistantMessage(), 'error', error),
+        );
+      const result = await new GenerationRunner(makeDeps()).run();
+      expect(result.generationFailure).toMatchObject({
+        providerType: 'openai',
+        providerId: 'work',
+        modelId: 'model-a',
+        statusCode: 429,
+        category: 'rate_limit',
+      });
+      expect(JSON.stringify(result.generationFailure)).not.toMatch(
+        /sk-private|private.example|private-content/,
+      );
+      expect(result.modelFallbackOccurred).toBe(true);
+    },
+  );
+
   it('returns shouldContinue=true on stop finish reason', async () => {
     const runner = new GenerationRunner(makeDeps());
     const result = await runner.run();
@@ -136,7 +160,7 @@ describe('GenerationRunner — success', () => {
     expect(result.fatalError).toBe(false);
     expect(result.generationFailed).toBe(false);
     expect(result.generation).not.toBeNull();
-    expect(result.generation!.usage).toEqual({
+    expect(result.generation?.usage).toEqual({
       inputTokens: 10,
       outputTokens: 5,
     });
@@ -152,7 +176,7 @@ describe('GenerationRunner — success', () => {
 
     expect(result.shouldContinue).toBe(true);
     expect(result.forceNextStep).toBe(false);
-    expect(result.generation!.usage).toEqual({
+    expect(result.generation?.usage).toEqual({
       inputTokens: 10,
       outputTokens: 5,
     });
@@ -300,32 +324,27 @@ describe('GenerationRunner — error finish reason with model fallback', () => {
     expect(messages).toContain(genMsg);
   });
 
-  it.each([429, 529])(
-    'captures the attempted model before fallback on HTTP %i',
-    async (statusCode) => {
-      // 1 model: fallback wraps around but no longer terminates —
-      // the session loop handles retry limits via backoff.
-      const fallbackManager = makeFallbackManager(['model-a', 'model-b']);
-      const fallbackSpy = vi.spyOn(fallbackManager, 'fallbackToNextModel');
+  it('triggers fallback on 429 API error', async () => {
+    // 1 model: fallback wraps around but no longer terminates —
+    // the session loop handles retry limits via backoff.
+    const fallbackManager = makeFallbackManager(['model-a']);
+    const fallbackSpy = vi.spyOn(fallbackManager, 'fallbackToNextModel');
 
-      vi.mocked(runStreamedGeneration).mockResolvedValue(
-        makeGenResult(
-          makeAssistantMessage(),
-          'error',
-          makeApiError({ message: 'Unavailable', statusCode }),
-        ),
-      );
+    vi.mocked(runStreamedGeneration).mockResolvedValue(
+      makeGenResult(
+        makeAssistantMessage(),
+        'error',
+        makeApiError({ message: 'Too Many Requests', statusCode: 429 }),
+      ),
+    );
 
-      const runner = new GenerationRunner(makeDeps({ fallbackManager }));
-      const result = await runner.run();
+    const runner = new GenerationRunner(makeDeps({ fallbackManager }));
+    const result = await runner.run();
 
-      expect(fallbackSpy).toHaveBeenCalledOnce();
-      expect(result.failedModelId).toBe('work:model-a');
-      expect(result.failureReason).toContain(`(${statusCode})`);
-      expect(result.modelFallbackOccurred).toBe(true);
-      expect(result.generationFailed).toBe(false);
-    },
-  );
+    expect(fallbackSpy).toHaveBeenCalledOnce();
+    expect(result.modelFallbackOccurred).toBe(true);
+    expect(result.generationFailed).toBe(false);
+  });
 
   it('salvages partial content on 400 API error and reports the rejection without fallback (not fatal)', async () => {
     const fallbackManager = makeFallbackManager();
@@ -488,28 +507,12 @@ describe('GenerationRunner — generation exception handling', () => {
     const runner = new GenerationRunner(makeDeps({ fallbackManager }));
     const result = await runner.run();
 
-    expect(result).toMatchObject({
-      failureReason: 'request rejected (400)',
-      failedModelId: 'work:model-a',
-    });
-
     expect(runStreamedGeneration).toHaveBeenCalledTimes(1);
     expect(fallbackSpy).not.toHaveBeenCalled();
     expect(result.fatalError).toBe(false);
     expect(result.requestRejected).toBe(true);
     expect(result.generationFailed).toBe(true);
     expect(result.modelFallbackOccurred).toBe(false);
-  });
-
-  it('reports the attempted model and classification for fatal errors', async () => {
-    vi.mocked(runStreamedGeneration).mockRejectedValue(
-      new InvalidPromptError({ prompt: [], message: 'invalid' }),
-    );
-    expect(await new GenerationRunner(makeDeps()).run()).toMatchObject({
-      fatalError: true,
-      failureReason: 'invalid prompt error',
-      failedModelId: 'work:model-a',
-    });
   });
 
   it('does not push partial message when salvage fails on exception', async () => {

@@ -31,7 +31,7 @@ export const listSessionHistoryRoute = createRoute({
   tags: ['Sessions'],
   summary: 'List persisted session instances',
   description:
-    'Lists persisted chat session instances (default, god, and child), newest first. Each ChatSession instance has its own `instanceId`; the default session reuses `sessionId = "default"` across replacements. Use `kind=default&live=true&limit=1` to find the current main session. A session is persisted after its first message or when a session-health failure is recorded, so the list can be empty right after a restart.',
+    'Lists persisted chat session instances (default, god, and child), newest first. Each ChatSession instance has its own `instanceId`; the default session reuses `sessionId = "default"` across replacements. Sessions are persisted after their first message or generation failure. Nullable generationError remains available after termination. Include ended instances and follow pagination cursors when finding unresolved warnings; successful replacement turns resolve older warnings.',
   request: {
     query: sessionHistoryListQuerySchema,
   },

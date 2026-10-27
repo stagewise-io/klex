@@ -2,6 +2,17 @@
 
 All notable Klex changes are documented here.
 
+## 0.26.0 (2026-10-27)
+
+### Features
+
+- use bot officialName as MCP OAuth DCR client_name (58fa981)
+- allow bots to add remote HTTP MCP servers (KLEX-70) (4797106)
+
+### Bug Fixes
+
+- relay OAuth issuer in MCP callbacks (329b7d2)
+
 ## 0.25.1 (2026-10-26)
 
 ### Bug Fixes

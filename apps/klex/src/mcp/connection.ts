@@ -1,11 +1,14 @@
 import {
   type CallToolResult,
   Client,
+  type Implementation,
   type Tool as McpToolDefinition,
   type OAuthClientProvider,
+  type ProtocolEra,
   type ReadResourceResult,
   type Resource,
   type ResourceTemplateType,
+  type ServerCapabilities,
   StreamableHTTPClientTransport,
   type Transport,
   UnauthorizedError,
@@ -48,7 +51,25 @@ export class McpAuthorizationRequiredError extends Error {
   }
 }
 
+/** Protocol-provided metadata, without connection configuration or external enrichment. */
+export interface McpServerMetadata {
+  /** Server-advertised identity, distinct from the configured namespace. */
+  serverInfo?: Implementation;
+  /** Advertised capabilities, not a promise that Klex implements every feature. */
+  capabilities?: ServerCapabilities;
+  /** Server-provided usage guidance, not a display description or trusted directive. */
+  instructions?: string;
+  /** Protocol version selected by the SDK for this connection. */
+  protocolVersion?: string;
+  /** SDK protocol era for the selected version. */
+  protocolEra?: ProtocolEra;
+  /** Versions advertised by modern discovery; absent for legacy initialization. */
+  supportedVersions?: string[];
+}
+
 export interface McpConnection {
+  /** A detached snapshot of metadata learned by the SDK during connection. */
+  readonly metadata: McpServerMetadata;
   readonly namespace: string;
   readonly tools: readonly McpToolDefinition[];
   readonly pushNotifications: RegisteredPushNotificationsClient;
@@ -129,7 +150,12 @@ class McpServerConnection implements McpConnection {
     readonly supportsRealtimeMedia: boolean,
     readonly supportsResourceSubscription: boolean,
     private currentTools: readonly McpToolDefinition[],
+    private readonly serverMetadata: McpServerMetadata,
   ) {}
+
+  get metadata(): McpServerMetadata {
+    return structuredClone(this.serverMetadata);
+  }
 
   get tools(): readonly McpToolDefinition[] {
     return this.currentTools;
@@ -332,6 +358,7 @@ export async function connectMcpServer(
       supportsRealtimeMedia,
       supportsResourceSubscription,
       result.tools,
+      readServerMetadata(client),
     );
     const originalClose = connection.close.bind(connection);
     connection.close = async () => {
@@ -354,6 +381,23 @@ export async function connectMcpServer(
     await oauth?.session.close().catch(() => undefined);
     options.signal.removeEventListener('abort', onAbort);
   }
+}
+
+function readServerMetadata(client: Client): McpServerMetadata {
+  const serverInfo = client.getServerVersion();
+  const capabilities = client.getServerCapabilities();
+  const instructions = client.getInstructions();
+  const protocolVersion = client.getNegotiatedProtocolVersion();
+  const protocolEra = client.getProtocolEra();
+  const supportedVersions = client.getDiscoverResult()?.supportedVersions;
+  return structuredClone({
+    ...(serverInfo !== undefined ? { serverInfo } : {}),
+    ...(capabilities !== undefined ? { capabilities } : {}),
+    ...(instructions !== undefined ? { instructions } : {}),
+    ...(protocolVersion !== undefined ? { protocolVersion } : {}),
+    ...(protocolEra !== undefined ? { protocolEra } : {}),
+    ...(supportedVersions !== undefined ? { supportedVersions } : {}),
+  });
 }
 
 export function resolveVersionNegotiation(

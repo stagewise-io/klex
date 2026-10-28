@@ -22,6 +22,7 @@ import {
   updateMcpServer,
   updateMcpServerRoute,
 } from './mcp';
+import { mcpServerResponseSchema, mcpServersResponseSchema } from './schemas';
 import { setupTestApp } from './test-utils';
 
 const logger = {
@@ -139,6 +140,86 @@ describe('GET /v1/mcp-servers — list MCP servers', () => {
     expect(body.servers).toEqual(servers);
     expect(body.servers[0]?.url).toBe('https://example.com/mcp');
     expect(body.servers[1]).not.toHaveProperty('url');
+  });
+
+  it('preserves SDK-shaped metadata in list and single-server responses and schemas', async () => {
+    const server = makeServerInfo({
+      serverInfo: {
+        name: 'advertised-name',
+        title: 'Example',
+        version: '1.2.3',
+        description: 'Server description',
+        websiteUrl: 'https://example.com',
+        icons: [
+          {
+            src: 'https://example.com/icon.svg',
+            mimeType: 'image/svg+xml',
+            sizes: ['any'],
+            theme: 'light',
+          },
+          { src: 'data:image/png;base64,aGVsbG8=', theme: 'dark' },
+        ],
+      },
+      capabilities: {
+        tools: { listChanged: true },
+        resources: { subscribe: true, listChanged: false },
+        prompts: { listChanged: true },
+        logging: {},
+        completions: {},
+        tasks: {
+          list: {},
+          cancel: {},
+          requests: { tools: { call: {} }, custom: { enabled: true } },
+          custom: { mode: 'preview' },
+        },
+        experimental: { 'example.com/preview': { enabled: true } },
+        extensions: {
+          'example.com/custom': { nested: ['a', { limit: 3, fallback: null }] },
+        },
+      },
+      instructions: '',
+      protocolVersion: '2026-07-28',
+      protocolEra: 'modern',
+      supportedVersions: ['2026-07-28', '2025-11-25'],
+    });
+    const getServerStatuses = vi.fn(() => [server]);
+    const app = createApp(makeDeps({}, { getServerStatuses }));
+    const list = await app.request('/v1/mcp-servers');
+    const single = await app.request('/v1/mcp-servers/test-server');
+    expect(list.status).toBe(200);
+    expect(single.status).toBe(200);
+    const listBody: unknown = await list.json();
+    const singleBody: unknown = await single.json();
+    expect(listBody).toEqual({ servers: [server] });
+    expect(singleBody).toEqual({ server });
+    expect(mcpServersResponseSchema.parse(listBody)).toEqual(listBody);
+    expect(mcpServerResponseSchema.parse(singleBody)).toEqual(singleBody);
+    expect(getServerStatuses).toHaveBeenCalledTimes(2);
+  });
+
+  it('documents metadata in OpenAPI without requiring it for disconnected servers', () => {
+    const app = createApp(makeDeps());
+    const document = app.getOpenAPI31Document({
+      openapi: '3.1.0',
+      info: { title: 'Test', version: '1' },
+    });
+    expect(document.components?.schemas?.McpImplementation).toMatchObject({
+      required: ['name', 'version'],
+      properties: {
+        description: { type: 'string' },
+        websiteUrl: { type: 'string' },
+        icons: { type: 'array' },
+      },
+    });
+    expect(document.components?.schemas?.McpServerCapabilities).toMatchObject({
+      properties: {
+        tools: { type: 'object' },
+        extensions: { type: 'object' },
+        tasks: { type: 'object' },
+      },
+    });
+    const server = makeServerInfo({ status: 'disconnected' });
+    expect(mcpServerResponseSchema.parse({ server })).toEqual({ server });
   });
 
   it('embeds a live authorization plus failure detail in the server row', async () => {

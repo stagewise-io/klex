@@ -43,6 +43,7 @@ import {
   McpAuthorizationRequiredError,
   type McpConnection,
   type McpConnectionFactory,
+  type McpServerMetadata,
   shouldUseAutomaticOAuth,
 } from './connection';
 import type { OAuthAuthorizationSessionFactory } from './oauth/callback';
@@ -127,7 +128,7 @@ export type McpConnectionStatus =
   | 'disconnected';
 
 /** A single MCP server with its config and connection status. */
-export interface McpServerInfo {
+export interface McpServerInfo extends McpServerMetadata {
   /** Unique namespace / server name. */
   name: string;
   /** Current connection status. */
@@ -1511,6 +1512,7 @@ class McpModule implements Mcp {
       const transport = config && 'command' in config ? 'stdio' : 'http';
       const pending = this.deps.pendingAuthorizations.findByServer(name);
       statuses.push({
+        ...connection?.metadata,
         name,
         status: runtime?.status ?? 'disconnected',
         toolCount: connection?.tools.length ?? 0,

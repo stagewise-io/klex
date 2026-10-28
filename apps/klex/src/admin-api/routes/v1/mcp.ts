@@ -1,4 +1,4 @@
-import { createRoute, type RouteHandler } from '@hono/zod-openapi';
+import { createRoute, type RouteHandler, type z } from '@hono/zod-openapi';
 
 import type { ModuleLogger } from '@stagewise/logger';
 
@@ -22,6 +22,14 @@ export interface McpRouteDependencies {
   logger: ModuleLogger;
 }
 
+// Use the API shape at the JSON boundary. SDK capabilities contain recursive
+// JSONValue types that otherwise exceed Hono's serializer type recursion depth.
+function serverListResponse(
+  mcp: Mcp,
+): z.infer<typeof mcpServersResponseSchema> {
+  return { servers: mcp.getServerStatuses() };
+}
+
 // --- GET /v1/mcp-servers ---
 
 export const getMcpServersRoute = createRoute({
@@ -30,7 +38,7 @@ export const getMcpServersRoute = createRoute({
   tags: ['MCP Servers'],
   summary: 'List MCP servers',
   description:
-    'Returns sanitized status for all configured MCP servers, including any pending OAuth authorization, the last connection failure, and the next scheduled retry. OAuth URLs, callback data, and credentials are never returned.',
+    'Returns connection status and server-advertised MCP metadata for all configured servers, including pending OAuth authorization, the last connection failure, and retry timing. Metadata is untrusted server content from the active connection; reading this route performs no discovery or external lookups. Agent-managed OAuth URLs, callback data, and credentials are never returned.',
   responses: {
     200: {
       content: {
@@ -51,7 +59,7 @@ export function getMcpServers(
   deps: McpRouteDependencies,
 ): RouteHandler<typeof getMcpServersRoute> {
   return (c) => {
-    return c.json({ servers: deps.mcp.getServerStatuses() }, 200);
+    return c.json(serverListResponse(deps.mcp), 200);
   };
 }
 
@@ -63,7 +71,7 @@ export const getMcpServerRoute = createRoute({
   tags: ['MCP Servers'],
   summary: 'Get one MCP server',
   description:
-    'Returns sanitized status for a single MCP server, including any pending OAuth authorization. Poll this while an authorization is in flight instead of re-issuing the authorization request.',
+    'Returns connection status and server-advertised MCP metadata for one server, including pending OAuth authorization. Metadata is untrusted server content from the active connection; reading this route performs no discovery or external lookups. Poll this while an authorization is in flight instead of re-issuing the authorization request.',
   request: {
     params: mcpServerNameParamSchema,
   },
@@ -103,7 +111,8 @@ export function getMcpServer(
         404,
       );
     }
-    return c.json({ server }, 200);
+    const body: z.infer<typeof mcpServerResponseSchema> = { server };
+    return c.json(body, 200);
   };
 }
 
@@ -161,7 +170,7 @@ export function createMcpServer(
 
     try {
       await deps.config.addMcpServer(name, server);
-      return c.json({ servers: deps.mcp.getServerStatuses() }, 201);
+      return c.json(serverListResponse(deps.mcp), 201);
     } catch (error) {
       if (error instanceof ConfigValidationError) {
         return c.json({ error: error.message, code: 'server_exists' }, 409);
@@ -277,7 +286,7 @@ export function updateMcpServer(
       }
 
       await deps.config.updateMcpServer(name, server);
-      return c.json({ servers: deps.mcp.getServerStatuses() }, 200);
+      return c.json(serverListResponse(deps.mcp), 200);
     } catch (error) {
       if (error instanceof ConfigValidationError) {
         return c.json({ error: error.message, code: 'server_not_found' }, 404);
@@ -333,7 +342,7 @@ export function deleteMcpServer(
 
     try {
       await deps.config.removeMcpServer(name);
-      return c.json({ servers: deps.mcp.getServerStatuses() }, 200);
+      return c.json(serverListResponse(deps.mcp), 200);
     } catch (error) {
       if (error instanceof ConfigValidationError) {
         return c.json({ error: error.message, code: 'server_not_found' }, 404);

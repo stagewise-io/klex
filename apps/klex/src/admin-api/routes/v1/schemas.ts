@@ -66,13 +66,84 @@ const mcpServerErrorSchema = z
   })
   .openapi('McpServerError');
 
+// Mirror the public SDK Implementation and ServerCapabilities shapes. Keep these
+// concrete Zod objects so the published RPC types are self-contained and OpenAPI
+// documents each field without importing SDK internals.
+const mcpIconSchema = z
+  .object({
+    src: z.string(),
+    mimeType: z.string().optional(),
+    sizes: z.array(z.string()).optional(),
+    theme: z.enum(['light', 'dark']).optional(),
+  })
+  .openapi('McpIcon');
+
+const mcpImplementationSchema = z
+  .object({
+    name: z.string(),
+    title: z.string().optional(),
+    version: z.string(),
+    description: z.string().optional(),
+    websiteUrl: z.string().optional(),
+    icons: z.array(mcpIconSchema).optional(),
+  })
+  .openapi('McpImplementation');
+
+// Extension values are protocol JSON, deliberately opaque in the public RPC
+// type. A recursive JSONValue type exceeds Hono's JSON serialization depth.
+const mcpCapabilityObjectSchema = z
+  .record(z.string(), z.unknown())
+  .openapi('McpCapabilityObject');
+const mcpListChangedCapabilitySchema = z.object({
+  listChanged: z.boolean().optional(),
+});
+const mcpServerCapabilitiesSchema = z
+  .object({
+    experimental: z.record(z.string(), mcpCapabilityObjectSchema).optional(),
+    logging: mcpCapabilityObjectSchema.optional(),
+    completions: mcpCapabilityObjectSchema.optional(),
+    prompts: mcpListChangedCapabilitySchema.optional(),
+    resources: z
+      .object({
+        subscribe: z.boolean().optional(),
+        listChanged: z.boolean().optional(),
+      })
+      .optional(),
+    tools: mcpListChangedCapabilitySchema.optional(),
+    tasks: z
+      .looseObject({
+        list: mcpCapabilityObjectSchema.optional(),
+        cancel: mcpCapabilityObjectSchema.optional(),
+        requests: z
+          .looseObject({
+            tools: z
+              .looseObject({
+                call: mcpCapabilityObjectSchema.optional(),
+              })
+              .optional(),
+          })
+          .optional(),
+      })
+      .optional(),
+    extensions: z.record(z.string(), mcpCapabilityObjectSchema).optional(),
+  })
+  .openapi('McpServerCapabilities');
+
 const mcpServerInfoSchema = z
   .object({
     name: z.string(),
     status: mcpConnectionStatusSchema,
+    serverInfo: mcpImplementationSchema.optional(),
+    capabilities: mcpServerCapabilitiesSchema.optional(),
+    instructions: z.string().optional(),
+    protocolVersion: z.string().optional(),
+    protocolEra: z.enum(['legacy', 'modern']).optional(),
+    supportedVersions: z.array(z.string()).optional(),
     toolCount: z.number().int().min(0),
+    resourceCount: z.number().int().min(0),
     supportsPushNotifications: z.boolean(),
     supportsRealtimeMedia: z.boolean(),
+    supportsResourceSubscription: z.boolean(),
     transport: z.enum(['stdio', 'http']),
     url: z.url().optional(),
     headerNames: z.array(z.string()),

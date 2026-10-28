@@ -824,6 +824,37 @@ describe('MCP tool discovery', () => {
   });
 });
 
+describe('MCP server statuses', () => {
+  it('includes the configured URL for HTTP servers and omits it for stdio servers', async () => {
+    const { mcp } = setup(
+      {
+        remote: { url: 'https://remote.example/mcp' },
+        local: { command: 'node', args: ['server.js'] },
+      },
+      async ({ namespace }) => connection(namespace),
+    );
+
+    try {
+      const assertStatuses = () => {
+        expect(serverRow(mcp, 'remote')).toMatchObject({
+          transport: 'http',
+          url: 'https://remote.example/mcp',
+        });
+        expect(serverRow(mcp, 'local')).toMatchObject({ transport: 'stdio' });
+        expect(serverRow(mcp, 'local')).not.toHaveProperty('url');
+      };
+
+      assertStatuses();
+      await mcp.start();
+      await waitForNamespace(mcp, 'remote');
+      await waitForNamespace(mcp, 'local');
+      assertStatuses();
+    } finally {
+      await mcp.close();
+    }
+  });
+});
+
 describe('MCP namespace isolation', () => {
   it('starts immediately and publishes a healthy namespace independently', async () => {
     const pending = deferred<McpConnection>();

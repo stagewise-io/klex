@@ -293,7 +293,10 @@ export interface ProviderRegistry extends ProviderModelResolver {
     type: ProviderType,
     settings: ProviderSettings,
   ): SerializedProviderSettings;
-  listInstances(): readonly ProviderInstanceInfo[];
+  /** Explicitly opt into resolved secrets. Callers must enforce authorization. */
+  listInstances(options?: {
+    includeSecrets?: boolean;
+  }): readonly ProviderInstanceInfo[];
   resolveRealtimeProvider(): ResolvedRealtimeProvider | undefined;
   preflightCreate(
     type: ProviderType,
@@ -522,10 +525,27 @@ class ProviderRegistryModule implements ProviderRegistry {
     );
   }
 
-  listInstances(): readonly ProviderInstanceInfo[] {
+  listInstances({
+    includeSecrets = false,
+  }: {
+    includeSecrets?: boolean;
+  } = {}): readonly ProviderInstanceInfo[] {
     const config = this.requireConfig();
-    return Object.entries(config.get().providers)
-      .map(([id, instance]) => this.instanceInfo({ id, ...instance }))
+    const providers = includeSecrets
+      ? config.getRuntime().providers
+      : config.get().providers;
+    return Object.entries(providers)
+      .map(([id, instance]) => {
+        const info = this.instanceInfo({ id, ...instance });
+        return includeSecrets
+          ? {
+              ...info,
+              settings: structuredClone(
+                parseProviderSettings(instance.type, instance.settings),
+              ),
+            }
+          : info;
+      })
       .sort((left, right) => left.id.localeCompare(right.id));
   }
 

@@ -22,6 +22,7 @@ import {
   providerModelsQuerySchema,
   providerModelsResponseSchema,
   providerOperationSchema,
+  providersQuerySchema,
   providersResponseSchema,
   providerTypeParamSchema,
   providerTypesResponseSchema,
@@ -267,8 +268,14 @@ export const getProvidersRoute = createRoute({
   method: 'get',
   path: '/v1/providers',
   tags: ['Providers'],
-  summary: 'List provider instances',
+  summary:
+    'List provider instances, with secrets redacted unless explicitly requested',
+  request: { query: providersQuerySchema },
   responses: {
+    400: {
+      content: { 'application/json': { schema: errorResponseSchema } },
+      description: 'Invalid or duplicate includeSecrets flag',
+    },
     200: {
       content: { 'application/json': { schema: providersResponseSchema } },
       description: 'Configured provider instances',
@@ -278,13 +285,31 @@ export const getProvidersRoute = createRoute({
 export function getProviders(
   deps: ProviderRouteDependencies,
 ): RouteHandler<typeof getProvidersRoute> {
-  return (c) =>
-    c.json(
+  return (c) => {
+    c.header('Cache-Control', 'private, no-store');
+    if (
+      c.req.queries('includeSecrets')?.length &&
+      c.req.queries('includeSecrets')?.length !== 1
+    ) {
+      return c.json(
+        {
+          error: 'Specify includeSecrets exactly once',
+          code: 'invalid_configuration',
+        },
+        400,
+      );
+    }
+    const includeSecrets = c.req.valid('query').includeSecrets === 'true';
+    return c.json(
       {
-        providers: deps.providerRegistry.listInstances().map(serializeInstance),
+        providers: deps.providerRegistry
+          .listInstances({ includeSecrets })
+          .map(serializeInstance),
+        ...(includeSecrets ? { secretsIncluded: true as const } : {}),
       },
       200,
     );
+  };
 }
 
 export const createProviderRoute = createRoute({

@@ -256,6 +256,59 @@ describe('provider registry routes', () => {
     });
   });
 
+  it.each([undefined, 'false', 'true'])(
+    'exports secrets only with explicit includeSecrets=%s and acknowledges support',
+    async (flag) => {
+      const includeSecrets = flag === 'true';
+      const listInstances = vi.fn<ProviderRegistry['listInstances']>(
+        (options) => [
+          {
+            ...instance,
+            settings: options?.includeSecrets
+              ? { apiKey: 'test-secret' }
+              : instance.settings,
+          },
+        ],
+      );
+      const response = await makeApp({ listInstances }).request(
+        `/v1/providers${flag ? `?includeSecrets=${flag}` : ''}`,
+      );
+      expect(response.status).toBe(200);
+      expect(response.headers.get('cache-control')).toBe('private, no-store');
+      expect(await response.json()).toEqual({
+        providers: [
+          {
+            ...instance,
+            settings: includeSecrets
+              ? { apiKey: 'test-secret' }
+              : instance.settings,
+          },
+        ],
+        ...(includeSecrets ? { secretsIncluded: true } : {}),
+      });
+      expect(listInstances).toHaveBeenCalledWith({ includeSecrets });
+    },
+  );
+
+  it.each([
+    '1',
+    'TRUE',
+    '',
+    'false&includeSecrets=true',
+    'true&includeSecrets=false',
+    'true&includeSecrets=true',
+  ])(
+    'rejects ambiguous includeSecrets=%s without reading secrets',
+    async (flag) => {
+      const listInstances = vi.fn<ProviderRegistry['listInstances']>(() => []);
+      const response = await makeApp({ listInstances }).request(
+        `/v1/providers?includeSecrets=${flag}`,
+      );
+      expect(response.status).toBe(400);
+      expect(listInstances).not.toHaveBeenCalled();
+    },
+  );
+
   it('returns stable prerequisite failure codes', async () => {
     const app = makeApp({
       preflightCreate: vi.fn(async () => ({

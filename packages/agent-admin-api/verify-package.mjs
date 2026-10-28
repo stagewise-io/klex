@@ -68,6 +68,23 @@ void client.v1.providers.$get;
 void client.v1.providers[':id'].$patch;
 void client.v1['mcp-servers'].$get;
 void client.v1.introspect.$path;
+async function validateMcpMetadata() {
+  const response = await client.v1['mcp-servers'].$get();
+  if (response.status === 200) {
+    const { servers } = await response.json();
+    for (const server of servers) {
+      const description: string | undefined = server.serverInfo?.description;
+      const icon: string | undefined = server.serverInfo?.icons?.[0]?.src;
+      const instructions: string | undefined = server.instructions;
+      const protocolVersion: string | undefined = server.protocolVersion;
+      const protocolEra: 'legacy' | 'modern' | undefined = server.protocolEra;
+      const supportedVersions: string[] | undefined = server.supportedVersions;
+      const toolsChanged: boolean | undefined = server.capabilities?.tools?.listChanged;
+      void [description, icon, instructions, protocolVersion, protocolEra, supportedVersions, toolsChanged];
+    }
+  }
+}
+void validateMcpMetadata;
 async function validateCandidate() {
   const response = await client.v1.models.test.$post({ json: {
     provider: { id: 'my-provider' }, modelId: 'exact-model', purpose: 'chat',

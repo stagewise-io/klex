@@ -1521,12 +1521,12 @@ class McpModule implements Mcp {
         supportsResourceSubscription:
           connection?.supportsResourceSubscription ?? false,
         transport,
-        ...(transport === 'http' && config && !('command' in config)
+        ...(transport === 'http' &&
+        persistedConfig &&
+        !('command' in persistedConfig) &&
+        typeof persistedConfig.url === 'string'
           ? {
-              url:
-                persistedConfig && !('command' in persistedConfig)
-                  ? persistedConfig.url
-                  : config.url,
+              url: persistedConfig.url,
             }
           : {}),
         headerNames:

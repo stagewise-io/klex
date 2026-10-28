@@ -825,6 +825,28 @@ describe('MCP tool discovery', () => {
 });
 
 describe('MCP server statuses', () => {
+  it('preserves the persisted URL template instead of exposing the resolved runtime URL', async () => {
+    const { mcp, config } = setup(
+      { remote: { url: 'https://mcp.example.com/secret-path' } },
+      async ({ namespace }) => connection(namespace),
+    );
+    config.config.get = () =>
+      ({
+        mcpServers: {
+          remote: { url: 'https://mcp.example.com/${env:MCP_PATH}' },
+        },
+      }) as unknown as KlexConfig;
+
+    try {
+      expect(serverRow(mcp, 'remote')).toMatchObject({
+        transport: 'http',
+        url: 'https://mcp.example.com/${env:MCP_PATH}',
+      });
+    } finally {
+      await mcp.close();
+    }
+  });
+
   it('includes the configured URL for HTTP servers and omits it for stdio servers', async () => {
     const { mcp } = setup(
       {

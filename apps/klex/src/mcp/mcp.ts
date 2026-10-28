@@ -1497,6 +1497,7 @@ class McpModule implements Mcp {
 
   getServerStatuses(): McpServerInfo[] {
     const configured = this.deps.config.getMcpServers();
+    const persisted = this.deps.config.get?.()?.mcpServers ?? {};
     const allNames = new Set<string>([
       ...Object.keys(configured),
       ...this.servers.keys(),
@@ -1505,6 +1506,7 @@ class McpModule implements Mcp {
     for (const name of [...allNames].sort()) {
       const runtime = this.servers.get(name);
       const config = configured[name] ?? runtime?.config;
+      const persistedConfig = persisted[name];
       const connection = runtime?.connection;
       const transport = config && 'command' in config ? 'stdio' : 'http';
       const pending = this.deps.pendingAuthorizations.findByServer(name);
@@ -1520,7 +1522,12 @@ class McpModule implements Mcp {
           connection?.supportsResourceSubscription ?? false,
         transport,
         ...(transport === 'http' && config && !('command' in config)
-          ? { url: config.url }
+          ? {
+              url:
+                persistedConfig && !('command' in persistedConfig)
+                  ? persistedConfig.url
+                  : config.url,
+            }
           : {}),
         headerNames:
           transport === 'http' && config && !('command' in config)

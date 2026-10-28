@@ -458,53 +458,6 @@ const providerAvailabilitySchema = z.object({
   remediation: z.string().optional(),
 });
 
-const providerResponseSchema = z.object({
-  id: z.string(),
-  type: configProviderTypeSchema,
-  metadata: providerMetadataSchema,
-  settings: providerSettingsSchema,
-  operations: z.object({
-    update: providerAvailabilitySchema,
-    remove: providerAvailabilitySchema,
-  }),
-});
-
-const providersQuerySchema = z.object({
-  includeSecrets: z.enum(['true', 'false']).optional().openapi({
-    description:
-      'Explicitly include resolved provider secrets. Cloud must require organization owner/admin authorization before forwarding this flag.',
-  }),
-});
-
-const providersResponseSchema = z.object({
-  providers: z.array(providerResponseSchema),
-  secretsIncluded: z.literal(true).optional().openapi({
-    description:
-      'Present only for includeSecrets=true. Absence means the response must not be used to transfer credentials, including on legacy bots.',
-  }),
-});
-
-const createProviderBodySchema = z.object({
-  id: z.string().min(1),
-  type: configProviderTypeSchema,
-  settings: providerSettingsSchema,
-});
-
-const updateProviderBodySchema = z.object({
-  settings: providerSettingsSchema.optional(),
-});
-
-const canAddProviderBodySchema = z.object({
-  settings: providerSettingsSchema,
-});
-
-const providerOperationSchema = z.object({
-  ok: z.boolean(),
-  code: z.string().optional(),
-  message: z.string().optional(),
-  provider: providerResponseSchema.optional(),
-});
-
 const connectivityResultSchema = z.object({
   latencyMs: z.number().nonnegative(),
   target: z.string().optional(),
@@ -587,6 +540,63 @@ const knownModelSchema = z
     capabilities: modelCapabilitiesSchema.optional(),
   })
   .openapi('KnownModel');
+
+const providerKnownModelsSchema = z.record(
+  z.string().min(1),
+  knownModelSchema.omit({ modelId: true }).strict(),
+);
+
+const providerResponseSchema = z.object({
+  id: z.string(),
+  type: configProviderTypeSchema,
+  metadata: providerMetadataSchema,
+  settings: providerSettingsSchema,
+  knownModels: providerKnownModelsSchema.optional().openapi({
+    description:
+      'Exact saved model overrides, included on credential exports without discovery or catalog enrichment.',
+  }),
+  operations: z.object({
+    update: providerAvailabilitySchema,
+    remove: providerAvailabilitySchema,
+  }),
+});
+
+const providersQuerySchema = z.object({
+  includeSecrets: z.enum(['true', 'false']).optional().openapi({
+    description:
+      'Explicitly include resolved provider secrets. Cloud must require organization owner/admin authorization before forwarding this flag.',
+  }),
+});
+
+const providersResponseSchema = z.object({
+  providers: z.array(providerResponseSchema),
+  secretsIncluded: z.literal(true).optional().openapi({
+    description:
+      'Present only for includeSecrets=true. Absence means the response must not be used to transfer credentials, including on legacy bots.',
+  }),
+});
+
+const createProviderBodySchema = z.object({
+  id: z.string().min(1),
+  type: configProviderTypeSchema,
+  settings: providerSettingsSchema,
+  knownModels: providerKnownModelsSchema.optional(),
+});
+
+const updateProviderBodySchema = z.object({
+  settings: providerSettingsSchema.optional(),
+});
+
+const canAddProviderBodySchema = z.object({
+  settings: providerSettingsSchema,
+});
+
+const providerOperationSchema = z.object({
+  ok: z.boolean(),
+  code: z.string().optional(),
+  message: z.string().optional(),
+  provider: providerResponseSchema.optional(),
+});
 
 const knownModelsResponseSchema = z
   .object({

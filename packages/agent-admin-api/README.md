@@ -70,11 +70,27 @@ not add the gate. Do not expose export results through browser queries, logs,
 telemetry, or shared caches. Cloud copy operations should transfer them backend
 to backend after authorizing access to both source and destination bots.
 
+Each exported provider also includes `knownModels`, the exact saved custom-model
+overrides keyed by opaque model ID, or `{}` when none exist. Export does not call
+model discovery or enrich these overrides with catalog metadata. Pass this map
+with `id`, `type`, and `settings` to `POST /v1/providers` to create a destination
+provider and its custom models together. The create response remains redacted.
+Older destination bots may ignore `knownModels` on creation; Cloud must verify
+support or restore overrides through the existing model routes before saving
+selections.
+
+Copy selections separately through `GET` and `PATCH /v1/settings/model-selection`.
+Preserve array order, `providerOptions`, all purpose arrays including `consult`
+and `instincts`, instinct API/timeouts, and the complete `voice` object including
+STS `voiceId`. Remap every `providerId` when destination IDs differ, keeping
+same-type provider instances distinct. A selected STS voice is validated against
+the destination catalog, so selection can fail even after provider creation.
+Cloud must report partial completion rather than claim an atomic whole-bot copy.
+
 Export includes only configured settings. It does not read local CLI auth files,
 resolve ambient AWS/Google credential chains, or export OAuth sessions. Those
 connections require authentication on the destination. Endpoint URLs and other
-machine-specific settings may also require adjustment. Custom model overrides
-remain available separately through the provider model-list contract.
+machine-specific settings may also require adjustment.
 
 ## Realtime voice client contract
 

@@ -97,6 +97,31 @@ async function validateCandidate() {
   }
 }
 void validateCandidate;
+async function validateProviderCopy() {
+  const response = await client.v1.providers.$get({ query: { includeSecrets: 'true' } });
+  if (response.status !== 200) return;
+  const exported = await response.json();
+  if (exported.secretsIncluded !== true) throw new Error('Legacy source');
+  for (const provider of exported.providers) {
+    const knownModels: Record<string, {
+      kind?: string; displayName?: string; contextSize?: number;
+      capabilities?: { tools?: boolean };
+    }> | undefined = provider.knownModels;
+    void knownModels;
+    await client.v1.providers.$post({ json: {
+      id: provider.id, type: provider.type, settings: provider.settings,
+      knownModels: provider.knownModels,
+    } });
+  }
+  const selectionResponse = await client.v1.settings['model-selection'].$get();
+  if (selectionResponse.status === 200) {
+    const selection = await selectionResponse.json();
+    await client.v1.settings['model-selection'].$patch({ json: selection });
+  }
+}
+void validateProviderCopy;
+// @ts-expect-error Export requires an explicit supported string flag.
+void client.v1.providers.$get({ query: { includeSecrets: '1' } });
 `,
   );
 

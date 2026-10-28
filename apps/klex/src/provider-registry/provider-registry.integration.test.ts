@@ -274,7 +274,7 @@ describe('provider registry module integration', () => {
         await registry.validateModel({
           provider: { id: 'azure' },
           modelId: 'another-deployment',
-          purpose: 'voice.tts',
+          purpose: 'voice.sts',
         }),
       ).toMatchObject({ status: 'unsupported' });
       expect(
@@ -688,8 +688,6 @@ describe('provider registry module integration', () => {
     const reference = { providerId: 'voice', modelId: 'gpt-realtime' };
     const voice = {
       sts: [{ ...reference, voiceId: 'cedar' }],
-      tts: [],
-      stt: [],
     };
     expect(await registry.updateModelSelection({ voice })).toMatchObject({
       ok: true,
@@ -1070,7 +1068,7 @@ describe('provider registry module integration', () => {
     ]);
     await expect(
       registry.updateModelSelection({
-        voice: { sts: [selection], tts: [], stt: [] },
+        voice: { sts: [selection] },
       }),
     ).resolves.toMatchObject({
       ok: false,
@@ -1178,7 +1176,7 @@ describe('provider registry module integration', () => {
     const selection = { providerId: 'openai-voice', modelId: 'gpt-realtime' };
     await expect(
       registry.updateModelSelection({
-        voice: { sts: [selection], tts: [], stt: [] },
+        voice: { sts: [selection] },
       }),
     ).resolves.toMatchObject({ ok: true, value: { warnings: [] } });
 

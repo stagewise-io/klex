@@ -21,6 +21,21 @@ function languageProvider(type: ProviderType) {
 
 describe('native provider SDK construction', () => {
   it.each([
+    ['gpt-audio-1.5', 'openai.chat'],
+    ['gpt-audio-future', 'openai.chat'],
+    ['gpt-4.1', 'openai.responses'],
+  ])('routes OpenAI %s through %s', (modelId, expectedProvider) => {
+    const model = languageProvider('openai')(
+      { id: 'openai', type: 'openai', settings: { apiKey: 'synthetic' } },
+      modelId,
+    );
+
+    expect(model.specificationVersion).toBe('v4');
+    expect(model.provider).toBe(expectedProvider);
+    expect(model.modelId).toBe(modelId);
+  });
+
+  it.each([
     'openai',
     'anthropic',
     'google-gemini',

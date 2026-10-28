@@ -41,7 +41,7 @@ const baseConfig: KlexConfig = {
     imageVision: [],
     audioListening: [],
     instincts: [],
-    voice: { sts: [], tts: [], stt: [] },
+    voice: { sts: [] },
   },
   mcpServers: {},
   timezone: 'UTC',
@@ -104,7 +104,42 @@ describe('settings routes', () => {
       '/v1/settings/model-selection',
     );
     expect(response.status).toBe(200);
-    expect(await response.json()).toMatchObject({ chat: [reference] });
+    expect(await response.json()).toMatchObject({
+      chat: [reference],
+      voice: { sts: [] },
+      audioListening: [],
+    });
+  });
+
+  it('updates STS voices without TTS/STT lists and preserves Audio Listening', async () => {
+    const audioListening = [{ ...reference, modelId: 'gpt-audio-1.5' }];
+    let selection = { ...baseConfig.modelSelection, audioListening };
+    const voice = {
+      sts: [{ ...reference, modelId: 'gpt-realtime', voiceId: 'cedar' }],
+    };
+    const updateModelSelection = vi.fn(async (patch) => {
+      selection = { ...selection, ...patch };
+      return {
+        ok: true as const,
+        code: 'available' as const,
+        value: { selection, warnings: [] },
+      };
+    });
+    const response = await app({ get: () => baseConfig } as Config, {
+      updateModelSelection,
+    }).request('/v1/settings/model-selection', {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ voice }),
+    });
+    expect(response.status).toBe(200);
+    expect(updateModelSelection).toHaveBeenCalledWith({ voice });
+    const body = (await response.json()) as {
+      voice: unknown;
+      audioListening: unknown;
+    };
+    expect(body.voice).toEqual(voice);
+    expect(body.audioListening).toEqual(audioListening);
   });
 
   it.each(['chat', 'instincts'] as const)(

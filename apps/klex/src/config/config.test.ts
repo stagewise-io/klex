@@ -123,7 +123,7 @@ describe('config v2', () => {
       ...completeV2Config,
       modelSelection: {
         ...emptyModelSelection,
-        voice: { sts: [entry], tts: [], stt: [] },
+        voice: { sts: [entry] },
       },
     };
     expect(parseKlexConfig(value).modelSelection.voice.sts[0]?.voiceId).toBe(
@@ -135,7 +135,7 @@ describe('config v2', () => {
           ...value,
           modelSelection: {
             ...emptyModelSelection,
-            voice: { sts: [{ ...entry, voiceId }], tts: [], stt: [] },
+            voice: { sts: [{ ...entry, voiceId }] },
           },
         }),
       ).toThrow();
@@ -184,8 +184,6 @@ describe('config v2', () => {
         ...emptyModelSelection,
         voice: {
           sts: [{ providerId: 'voice', modelId, voiceId }],
-          tts: [],
-          stt: [],
         },
       });
       expect(config.resolveRealtimeProvider()).toMatchObject({
@@ -201,7 +199,7 @@ describe('config v2', () => {
       expect(config.get().modelSelection.voice.sts[0]?.voiceId).toBe(voiceId);
       await config.writeModelSelection({
         ...emptyModelSelection,
-        voice: { sts: [{ providerId: 'voice', modelId }], tts: [], stt: [] },
+        voice: { sts: [{ providerId: 'voice', modelId }] },
       });
       expect(config.resolveRealtimeProvider()?.config).not.toHaveProperty(
         'voiceId',
@@ -550,13 +548,34 @@ describe('config v2', () => {
     expect(() => v4?.schema.parse(completeV4StoredConfig)).not.toThrow();
   });
 
-  it('migrates released schema 5 to instinct defaults without changing existing configuration', async () => {
+  it('migrates released schema 5 to instinct defaults and STS-only voice selection', async () => {
     const dataDirectory = await directory();
     const configPath = join(dataDirectory, CONFIG_FILE_NAME);
+    const sts = [
+      {
+        providerId: 'openai-primary',
+        modelId: 'gpt-realtime',
+        voiceId: 'cedar',
+        providerOptions: { openai: { speed: 1.1 } },
+      },
+    ];
+    const audioListening = [
+      { providerId: 'openai-primary', modelId: 'gpt-audio-1.5' },
+    ];
+    const oldSelection = {
+      ...completeV5StoredConfig.modelSelection,
+      audioListening,
+      voice: {
+        sts,
+        tts: [{ providerId: 'openai-primary', modelId: 'tts-1' }],
+        stt: [{ providerId: 'openai-primary', modelId: 'whisper-1' }],
+      },
+    };
     await writeFile(
       configPath,
       JSON.stringify({
         ...completeV5StoredConfig,
+        modelSelection: oldSelection,
         _klex: {
           store: 'config',
           schemaVersion: 5,
@@ -572,8 +591,9 @@ describe('config v2', () => {
     expect(migrated.instinct).toEqual(completeV2Config.instinct);
     expect(migrated.providers).toEqual(completeV5StoredConfig.providers);
     expect(migrated.modelSelection).toEqual({
-      ...completeV5StoredConfig.modelSelection,
+      ...oldSelection,
       instincts: [],
+      voice: { sts },
     });
     expect(migrated.extensions).toEqual(completeV5StoredConfig.extensions);
     expect(migrated._klex).toMatchObject({
@@ -584,12 +604,50 @@ describe('config v2', () => {
     expect(await readFile(configPath, 'utf8')).toBe(bytes);
   });
 
-  it('keeps model selection in stored schemas 2–4 frozen', () => {
-    for (const version of [2, 3, 4]) {
+  it.each(['tts', 'stt'])(
+    'rejects the removed %s selection in schema 6, including empty lists',
+    (purpose) => {
+      expect(parseKlexConfig({}).modelSelection.voice).toEqual({ sts: [] });
+      for (const entries of [[], [{ providerId: 'voice', modelId: 'model' }]]) {
+        expect(() =>
+          parseKlexConfig({
+            ...completeV2Config,
+            modelSelection: {
+              ...emptyModelSelection,
+              voice: { sts: [], [purpose]: entries },
+            },
+          }),
+        ).toThrow();
+      }
+    },
+  );
+
+  it('keeps model selection in stored schemas 1–4 frozen', () => {
+    for (const version of [1, 2, 3, 4]) {
       const schema = CONFIG_STORE_DEFINITION.versions.find(
         (entry) => entry.version === version,
       )!.schema;
       expect(schema.safeParse(completeV4StoredConfig).success).toBe(true);
+      expect(
+        schema.parse({
+          ...completeV4StoredConfig,
+          modelSelection: {
+            ...completeV4StoredConfig.modelSelection,
+            voice: {
+              sts: [],
+              tts: [{ providerId: 'openai-primary', modelId: 'tts-1' }],
+              stt: [{ providerId: 'openai-primary', modelId: 'whisper-1' }],
+            },
+          },
+        }),
+      ).toMatchObject({
+        modelSelection: {
+          voice: {
+            tts: [{ providerId: 'openai-primary', modelId: 'tts-1' }],
+            stt: [{ providerId: 'openai-primary', modelId: 'whisper-1' }],
+          },
+        },
+      });
       for (const purpose of ['classifier', 'instincts']) {
         expect(
           schema.safeParse({
@@ -1048,7 +1106,11 @@ describe('config v2', () => {
           memory: [],
           imageVision: [],
           audioListening: [],
-          voice: { sts: [], tts: [], stt: [] },
+          voice: {
+            sts: ['remote:gpt-realtime'],
+            tts: ['remote:tts-1'],
+            stt: ['remote:whisper-1'],
+          },
         },
         mcpServers: {},
       }),
@@ -1069,6 +1131,9 @@ describe('config v2', () => {
     expect(config.get().providers.remote).toMatchObject({
       type: 'openai',
       settings: { apiKey: '${env:OPENAI_API_KEY}' },
+    });
+    expect(config.get().modelSelection.voice).toEqual({
+      sts: [{ providerId: 'remote', modelId: 'gpt-realtime' }],
     });
     expect(config.get().providers.local).toMatchObject({
       type: 'chat-completions',
@@ -1718,8 +1783,6 @@ describe('config v2', () => {
         audioListening: [],
         voice: {
           sts: [{ providerId: 'p', modelId: 'voice:model' }],
-          tts: [],
-          stt: [],
         },
       },
       mcpServers: {},

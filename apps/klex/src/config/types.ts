@@ -520,9 +520,13 @@ const voiceModelSelectionSchema = z
   })
   .strict();
 
-const currentVoiceModelSelectionSchema = voiceModelSelectionSchema.extend({
+const v5VoiceModelSelectionSchema = voiceModelSelectionSchema.extend({
   sts: z.array(stsModelSelectionEntrySchema).default([]),
 });
+
+const currentVoiceModelSelectionSchema = z
+  .object({ sts: z.array(stsModelSelectionEntrySchema).default([]) })
+  .strict();
 
 export const MODEL_PURPOSES = [
   'chat',
@@ -547,7 +551,7 @@ const historicalModelSelectionSchema = z
   .strict();
 
 const v5ModelSelectionSchema = historicalModelSelectionSchema.extend({
-  voice: currentVoiceModelSelectionSchema.default({
+  voice: v5VoiceModelSelectionSchema.default({
     sts: [],
     tts: [],
     stt: [],
@@ -557,8 +561,6 @@ const v5ModelSelectionSchema = historicalModelSelectionSchema.extend({
 const modelSelectionSchema = historicalModelSelectionSchema.extend({
   voice: currentVoiceModelSelectionSchema.default({
     sts: [],
-    tts: [],
-    stt: [],
   }),
   instincts: z.array(instinctModelSelectionEntrySchema).default([]),
 });
@@ -862,7 +864,7 @@ const storedKlexConfigV5Schema = klexConfigV5Schema
   .extend({ configVersion: z.literal(2) })
   .strict();
 
-/** Stored schema 6: instinct backends and native Gateway provider. */
+/** Stored schema 6: instinct backends, native Gateway provider, and STS-only voice selection. */
 const storedKlexConfigSchema = klexConfigSchema
   .extend({ configVersion: z.literal(2) })
   .strict();
@@ -917,9 +919,16 @@ function parseStoredKlexConfigV5(input: unknown): Record<string, unknown> {
   return storedKlexConfigV5Schema.parse(input);
 }
 
-/** 5→6: add default instinct behavior and an empty, explicitly typed selection. */
+/** 5→6: add instinct defaults and remove TTS/STT model selections. */
 function migrateInstinctConfig(input: unknown): KlexConfig {
-  return klexConfigSchema.parse(storedKlexConfigV5Schema.parse(input));
+  const config = storedKlexConfigV5Schema.parse(input);
+  return klexConfigSchema.parse({
+    ...config,
+    modelSelection: {
+      ...config.modelSelection,
+      voice: { sts: config.modelSelection.voice.sts },
+    },
+  });
 }
 
 function parseStoredKlexConfig(input: unknown): Record<string, unknown> {

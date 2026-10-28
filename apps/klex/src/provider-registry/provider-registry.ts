@@ -782,7 +782,7 @@ class ProviderRegistryModule implements ProviderRegistry {
       audioListening: patch.audioListening ?? [],
       consult: patch.consult ?? [],
       instincts: patch.instincts ?? [],
-      voice: patch.voice ?? { sts: [], tts: [], stt: [] },
+      voice: patch.voice ?? { sts: [] },
     };
     const warnings: ModelSelectionWarning[] = [];
     for (const [purpose, entries] of modelSelectionEntries(changed)) {
@@ -1572,17 +1572,11 @@ function modelSelectionEntries(
     ['consult', selection.consult],
     ['instincts', selection.instincts],
     ['voice.sts', selection.voice.sts],
-    ['voice.tts', selection.voice.tts],
-    ['voice.stt', selection.voice.stt],
   ];
 }
 
-function voiceCapabilityForPurpose(
-  purpose: string,
-): 'sts' | 'tts' | 'stt' | undefined {
+function voiceCapabilityForPurpose(purpose: string): 'sts' | undefined {
   if (purpose === 'voice.sts') return 'sts';
-  if (purpose === 'voice.tts') return 'tts';
-  if (purpose === 'voice.stt') return 'stt';
   return undefined;
 }
 

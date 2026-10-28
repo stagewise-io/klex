@@ -59,7 +59,7 @@ describe('AgentDirectory', () => {
         imageVision: [],
         audioListening: [],
         instincts: [],
-        voice: { sts: [], tts: [], stt: [] },
+        voice: { sts: [] },
       },
       mcpServers: {},
       extensions: {
@@ -121,7 +121,7 @@ describe('AgentDirectory', () => {
           memory: [],
           imageVision: [],
           audioListening: [],
-          voice: { sts: [], tts: [], stt: [] },
+          voice: { sts: [] },
         },
         mcpServers: {},
       }),

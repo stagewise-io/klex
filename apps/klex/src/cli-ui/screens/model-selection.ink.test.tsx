@@ -19,7 +19,7 @@ const emptySelection: ModelSelection = {
   imageVision: [],
   audioListening: [],
   instincts: [],
-  voice: { sts: [], tts: [], stt: [] },
+  voice: { sts: [] },
 };
 
 function provider(id: string): ProviderInfo {
@@ -108,6 +108,54 @@ async function typeText(
 }
 
 describe('ModelSelectionScreen', () => {
+  it('keeps Audio Listening and saves STS without removed voice purposes', async () => {
+    const patchModelSelection = vi.fn().mockResolvedValue(emptySelection);
+    const view = renderScreen(
+      makeClient({
+        patchModelSelection,
+        getKnownModels: vi.fn().mockResolvedValue({
+          models: [
+            {
+              modelId: 'gpt-realtime',
+              displayName: 'Realtime',
+              source: 'discovered',
+              capabilities: { voice: { sts: true } },
+            },
+          ],
+        }),
+      }),
+    );
+    await vi.waitFor(() =>
+      expect(view.lastFrame()).toContain('Speech-to-Speech'),
+    );
+    expect(view.lastFrame()).toContain('Audio Listening');
+    expect(view.lastFrame()).not.toContain('Text-to-Speech');
+    expect(view.lastFrame()).not.toContain('Speech-to-Text');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    for (let index = 0; index < 7; index += 1) {
+      view.stdin.write('\u001B[B');
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+    view.stdin.write('\r');
+    await vi.waitFor(() => expect(view.lastFrame()).toContain('No models'));
+    view.stdin.write('a');
+    await vi.waitFor(() =>
+      expect(view.lastFrame()).toContain('openai-primary'),
+    );
+    view.stdin.write('\r');
+    await vi.waitFor(() => expect(view.lastFrame()).toContain('Realtime'));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    view.stdin.write('\r');
+    await vi.waitFor(() =>
+      expect(patchModelSelection).toHaveBeenCalledWith({
+        voice: {
+          sts: [{ providerId: 'openai-primary', modelId: 'gpt-realtime' }],
+        },
+      }),
+    );
+    view.unmount();
+  });
+
   it('adds a second API, preserves ordered options, and edits its production budget without test controls', async () => {
     let selection: ModelSelection = {
       ...emptySelection,

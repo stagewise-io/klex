@@ -377,8 +377,6 @@ const instinctModelSelectionEntryOapiSchema = modelSelectionEntryOapiSchema
 
 const voiceModelSelectionSchema = z.object({
   sts: z.array(stsModelSelectionEntryOapiSchema),
-  tts: z.array(modelSelectionEntryOapiSchema),
-  stt: z.array(modelSelectionEntryOapiSchema),
 });
 
 const modelSelectionSchema = z

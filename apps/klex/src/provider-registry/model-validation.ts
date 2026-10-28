@@ -39,8 +39,6 @@ export const modelValidationInputSchema = z
         'imageVision',
         'audioListening',
         'voice.sts',
-        'voice.tts',
-        'voice.stt',
       ])
       .default('chat'),
     providerOptions: z

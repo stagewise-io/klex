@@ -65,7 +65,8 @@ export const CONFIG_STORE_DEFINITION: JsonStoreDefinition = {
   relativePath: 'config.json',
   required: true,
   schemaVersion: 6,
-  // Older writers cannot preserve instinct selections or the new provider types.
+  // Older writers cannot preserve instinct selections, the new provider types,
+  // or STS-only voice selections.
   compatibilityVersion: 8,
   minimumKlexVersion: '0.18.0',
   legacySchemaVersion: 1,
@@ -116,6 +117,7 @@ export const CONFIG_STORE_DEFINITION: JsonStoreDefinition = {
     {
       from: 5,
       to: 6,
+      // This unreleased step also removes TTS/STT selections; schemas 1–5 stay frozen.
       name: 'add-instinct-backends',
       up: (value) => migrateInstinctConfig(value),
     },

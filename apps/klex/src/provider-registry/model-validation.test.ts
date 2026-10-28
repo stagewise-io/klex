@@ -2,7 +2,11 @@ import { APICallError } from 'ai';
 import { MockLanguageModelV4 } from 'ai/test';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { ModelValidation, type ModelValidationInput } from './model-validation';
+import {
+  ModelValidation,
+  type ModelValidationInput,
+  modelValidationInputSchema,
+} from './model-validation';
 
 const input: ModelValidationInput = {
   provider: { id: 'openai' },
@@ -26,6 +30,17 @@ function respondingModel() {
 afterEach(() => vi.useRealTimers());
 
 describe('model validation probe', () => {
+  it.each([
+    ['voice.tts', false],
+    ['voice.stt', false],
+    ['voice.sts', true],
+    ['audioListening', true],
+  ])('validates selection purpose %s as %s', (purpose, accepted) => {
+    expect(
+      modelValidationInputSchema.safeParse({ ...input, purpose }).success,
+    ).toBe(accepted);
+  });
+
   it('generates with exact options and ignores stale successes', async () => {
     const model = respondingModel();
     const validation = new ModelValidation();

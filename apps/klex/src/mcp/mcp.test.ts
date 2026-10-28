@@ -847,14 +847,42 @@ describe('MCP server statuses', () => {
     }
   });
 
-  it('includes the configured URL for HTTP servers and omits it for stdio servers', async () => {
+  it('omits the resolved runtime URL when persisted config is unavailable', async () => {
     const { mcp } = setup(
+      { remote: { url: 'https://mcp.example.com/secret-path' } },
+      async ({ namespace }) => connection(namespace),
+    );
+
+    try {
+      const assertStatus = () => {
+        expect(serverRow(mcp, 'remote')).toMatchObject({ transport: 'http' });
+        expect(serverRow(mcp, 'remote')).not.toHaveProperty('url');
+      };
+
+      assertStatus();
+      await mcp.start();
+      await waitForNamespace(mcp, 'remote');
+      assertStatus();
+    } finally {
+      await mcp.close();
+    }
+  });
+
+  it('includes the persisted URL for HTTP servers and omits it for stdio servers', async () => {
+    const { mcp, config } = setup(
       {
         remote: { url: 'https://remote.example/mcp' },
         local: { command: 'node', args: ['server.js'] },
       },
       async ({ namespace }) => connection(namespace),
     );
+    config.config.get = () =>
+      ({
+        mcpServers: {
+          remote: { url: 'https://remote.example/mcp' },
+          local: { command: 'node', args: ['server.js'] },
+        },
+      }) as unknown as KlexConfig;
 
     try {
       const assertStatuses = () => {

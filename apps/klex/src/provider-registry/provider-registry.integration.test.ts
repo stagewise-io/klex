@@ -84,11 +84,13 @@ describe('provider registry module integration', () => {
         apiKey: environmentReference,
         resourceName: 'example',
       };
+      const knownModels = { custom: { displayName: 'Original' } };
       expect(
         await registry.addInstance({
           id: 'azure',
           type: 'azure-openai',
           settings,
+          knownModels,
         }),
       ).toMatchObject({
         ok: true,
@@ -108,7 +110,14 @@ describe('provider registry module integration', () => {
       ).toEqual({ configured: true });
       const exported = registry.listInstances({ includeSecrets: true });
       expect(exported[0]?.settings.apiKey).toBe('resolved-copy-secret');
+      expect(exported[0]?.knownModels).toEqual(knownModels);
       if (exported[0]) exported[0].settings.apiKey = 'modified';
+      const exportedModel = exported[0]?.knownModels?.custom;
+      if (exportedModel) exportedModel.displayName = 'Modified';
+      expect(
+        registry.listInstances({ includeSecrets: true })[0]?.knownModels,
+      ).toEqual(knownModels);
+      expect(registry.listInstances()[0]?.knownModels).toBeUndefined();
       expect(
         registry.listInstances({ includeSecrets: true })[0]?.settings.apiKey,
       ).toBe('resolved-copy-secret');

@@ -225,6 +225,7 @@ export interface ProviderInstanceInfo {
   id: ProviderInstanceId;
   type: ProviderType;
   settings: SerializedProviderSettings;
+  knownModels?: Record<string, ModelDefinition>;
   metadata: ProviderMetadata;
   operations: {
     update: { available: true };
@@ -543,6 +544,7 @@ class ProviderRegistryModule implements ProviderRegistry {
               settings: structuredClone(
                 parseProviderSettings(instance.type, instance.settings),
               ),
+              knownModels: structuredClone(instance.knownModels ?? {}),
             }
           : info;
       })

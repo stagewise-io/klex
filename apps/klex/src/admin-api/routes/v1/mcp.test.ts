@@ -117,7 +117,7 @@ describe('GET /v1/mcp-servers — list MCP servers', () => {
 
   it('returns all server statuses with full detail', async () => {
     const servers = [
-      makeServerInfo(),
+      makeServerInfo({ url: 'https://example.com/mcp' }),
       makeServerInfo({
         name: 'stdio-server',
         status: 'connecting',
@@ -137,6 +137,8 @@ describe('GET /v1/mcp-servers — list MCP servers', () => {
     const body = (await response.json()) as { servers: McpServerInfo[] };
     expect(body.servers).toHaveLength(3);
     expect(body.servers).toEqual(servers);
+    expect(body.servers[0]?.url).toBe('https://example.com/mcp');
+    expect(body.servers[1]).not.toHaveProperty('url');
   });
 
   it('embeds a live authorization plus failure detail in the server row', async () => {
@@ -184,7 +186,11 @@ describe('GET /v1/mcp-servers/{name} — read one MCP server', () => {
   it('returns the matching server row', async () => {
     const servers = [
       makeServerInfo({ name: 'other' }),
-      makeServerInfo({ name: 'wanted', toolCount: 7 }),
+      makeServerInfo({
+        name: 'wanted',
+        toolCount: 7,
+        url: 'https://wanted.example.com/mcp',
+      }),
     ];
     const app = createApp(makeDeps({}, { getServerStatuses: () => servers }));
     const response = await app.request('/v1/mcp-servers/wanted');

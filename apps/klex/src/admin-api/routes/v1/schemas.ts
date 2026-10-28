@@ -1,7 +1,5 @@
 import { extendZodWithOpenApi, z } from '@hono/zod-openapi';
 
-import { GenerationHealthErrorSchema } from '@/session-history/generation-health';
-
 import {
   providerTypeSchema as configProviderTypeSchema,
   MODEL_PURPOSES,
@@ -10,6 +8,7 @@ import {
   MAX_BODY_LENGTH,
   MAX_DESCRIPTION_LENGTH,
 } from '@/session/chat/extensions/learning/learning-config';
+import { GenerationHealthErrorSchema } from '@/session-history/generation-health';
 
 // Extend Zod with .openapi() metadata support for spec generation.
 extendZodWithOpenApi(z);
@@ -75,6 +74,7 @@ const mcpServerInfoSchema = z
     supportsPushNotifications: z.boolean(),
     supportsRealtimeMedia: z.boolean(),
     transport: z.enum(['stdio', 'http']),
+    url: z.url().optional(),
     headerNames: z.array(z.string()),
     usesInteractiveOAuth: z.boolean(),
     authorization: mcpServerAuthorizationSchema.nullable(),

@@ -144,6 +144,8 @@ export interface McpServerInfo {
   supportsResourceSubscription: boolean;
   /** Server type: stdio or http. */
   transport: 'stdio' | 'http';
+  /** Configured server URL when transport is 'http'. */
+  url?: string;
   /** Configured HTTP header names. Values are never exposed. */
   headerNames: string[];
   /**
@@ -1517,6 +1519,9 @@ class McpModule implements Mcp {
         supportsResourceSubscription:
           connection?.supportsResourceSubscription ?? false,
         transport,
+        ...(transport === 'http' && config && !('command' in config)
+          ? { url: config.url }
+          : {}),
         headerNames:
           transport === 'http' && config && !('command' in config)
             ? Object.keys(config.headers ?? {}).sort()

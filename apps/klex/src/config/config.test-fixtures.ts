@@ -8,7 +8,7 @@ export const emptyModelSelection: ModelSelection = {
   audioListening: [],
   consult: [],
   instincts: [],
-  voice: { sts: [], tts: [], stt: [] },
+  voice: { sts: [] },
 };
 
 export const defaultInstinctConfig: KlexConfig['instinct'] = {
@@ -104,13 +104,19 @@ const { extensions: _extensions, ...releasedV4Config } = releasedConfig;
 /** Actual released schema 5: no instinct configuration or selection. */
 export const completeV5StoredConfig = {
   ...releasedConfig,
-  modelSelection: historicalModelSelection,
+  modelSelection: {
+    ...historicalModelSelection,
+    voice: { ...completeV2Config.modelSelection.voice, tts: [], stt: [] },
+  },
 };
 
 /** Stored schema 2–4 shape: root memory keys, no `extensions`. */
 export const completeV4StoredConfig = {
   ...releasedV4Config,
-  modelSelection: historicalModelSelection,
+  modelSelection: {
+    ...historicalModelSelection,
+    voice: { ...completeV2Config.modelSelection.voice, tts: [], stt: [] },
+  },
   episodeFinishIdleTriggerTimeMs: 450_000,
   memoryWriteIntervalMs: 60_000,
   memoryWriteStepInterval: 3,

@@ -51,6 +51,21 @@ const CASES: ReadonlyArray<{
 ];
 
 describe('built-in provider model catalogs', () => {
+  it.each(['gpt-audio-1.5', 'gpt-audio-future'])(
+    'declares supported Audio Listening media types for %s',
+    (modelId) => {
+      const openai = builtInProviderDefinitions.find(
+        ({ type }) => type === 'openai',
+      );
+      const metadata = openai?.resolveModelMetadata?.(modelId);
+      expect(metadata?.kind).toBe('language');
+      expect(metadata?.capabilities?.input?.audio?.mediaTypes).toEqual([
+        'audio/mpeg',
+        'audio/wav',
+      ]);
+    },
+  );
+
   it.each(CASES)(
     '$type resolves $modelId conservatively',
     ({ type, modelId, kind }) => {

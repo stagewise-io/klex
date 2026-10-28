@@ -125,7 +125,7 @@ class AgentDirectoryModule implements AgentDirectory {
         imageVision: [],
         audioListening: [],
         instincts: [],
-        voice: { sts: [], tts: [], stt: [] },
+        voice: { sts: [] },
       },
       mcpServers: {},
       extensions: {

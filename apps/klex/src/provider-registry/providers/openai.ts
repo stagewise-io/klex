@@ -18,6 +18,7 @@ import { generateVoicePreview } from './voice-preview';
 
 const BASE_URL = 'https://api.openai.com/v1';
 const MODEL_DOCS = 'https://developers.openai.com/api/docs/models';
+const AUDIO_MEDIA_TYPES = ['audio/mpeg', 'audio/wav'];
 const IMAGE_MEDIA_TYPES = [
   'image/png',
   'image/jpeg',
@@ -62,7 +63,12 @@ const MODEL_FALLBACKS = [
   },
   {
     prefixes: ['gpt-audio-'],
-    metadata: { kind: 'language', capabilities: { input: { audio: {} } } },
+    metadata: {
+      kind: 'language',
+      capabilities: {
+        input: { audio: { mediaTypes: AUDIO_MEDIA_TYPES } },
+      },
+    },
     documentationUrl: MODEL_DOCS,
   },
   {
@@ -206,7 +212,9 @@ const MODEL_CATALOG = [
       kind: 'language',
       displayName: 'GPT-Audio-1.5',
       contextSize: 128_000,
-      capabilities: { input: { audio: {} } },
+      capabilities: {
+        input: { audio: { mediaTypes: AUDIO_MEDIA_TYPES } },
+      },
     },
     `${MODEL_DOCS}/gpt-audio-1.5`,
   ),
@@ -281,7 +289,9 @@ function createLanguageModel(
   instance: ProviderInstance,
   modelId: string,
 ): LanguageModelV4 {
-  return createProvider(instance).languageModel(modelId);
+  return modelId.startsWith('gpt-audio-')
+    ? createProvider(instance).chat(modelId)
+    : createProvider(instance).languageModel(modelId);
 }
 
 function createProvider(instance: ProviderInstance) {

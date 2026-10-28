@@ -94,9 +94,7 @@ type.
     ],
     "audioListening": [],
     "voice": {
-      "sts": [],
-      "tts": [],
-      "stt": []
+      "sts": []
     }
   },
   "mcpServers": {},
@@ -140,6 +138,11 @@ Config schema 5 moved these settings under `extensions`. Migration from schema
 (`300000` when absent) and drops `memoryWriteIntervalMs` and
 `memoryWriteStepInterval`.
 
+Config schema 6 keeps only `sts` in `modelSelection.voice`. The 5→6 migration
+removes the TTS/STT selection lists while preserving speech-to-speech entries
+and `audioListening` selections. Released config schemas 1–5 retain their
+original voice shape. The public `configVersion` remains `2`.
+
 `openai-primary` and `openai-secondary` demonstrate independent instances of
 one provider type. `openai-internal` keeps native OpenAI behavior while routing
 it to a configured internal endpoint. `custom-chat` is a single-endpoint
@@ -174,8 +177,9 @@ layers (`shared-catalog`, `provider-family`, `provider-exact`, `discovered`, or
 `image-generation`, `embedding`, `reranking`, `moderation`,
 `speech-to-speech`, `text-to-speech`, `speech-to-text`, or `unknown`. Models
 with no authoritative classification remain unclassified; do not infer broad
-capabilities from an opaque deployment name. Realtime, TTS, and STT selection
-also requires the corresponding `capabilities.voice` flag.
+capabilities from an opaque deployment name. Speech-to-speech selection also
+requires `capabilities.voice.sts`. The `tts` and `stt` voice capability flags
+remain available to classify discovered models; they are not selection purposes.
 
 Catalog maintenance policy:
 
@@ -242,18 +246,16 @@ Only `modelSelection.voice.sts` entries accept optional `voiceId`. Obtain compat
 ```json
 {
   "voice": {
-    "sts": [{ "providerId": "openai-primary", "modelId": "gpt-realtime", "voiceId": "cedar" }],
-    "tts": [],
-    "stt": []
+    "sts": [{ "providerId": "openai-primary", "modelId": "gpt-realtime", "voiceId": "cedar" }]
   }
 }
 ```
 
-This is the body for `PATCH /v1/settings/model-selection`; the `voice` object replaces all three voice lists. Preserve existing TTS/STT lists when editing STS. To reset, replace the STS reference with the same provider/model and omit `voiceId`. Empty or whitespace-padded IDs are invalid. Other selection purposes reject the field.
+This is the body for `PATCH /v1/settings/model-selection`; the `voice` object contains only `sts` and is replaced by the patch. To reset, replace the STS reference with the same provider/model and omit `voiceId`. Empty or whitespace-padded IDs are invalid. Other selection purposes reject the field.
 
 New voices are validated atomically against the compatible catalog; unchanged persisted triples can be retained offline. Config loading and new-call resolution do not discover voices over the network. Upstream rejection is an explicit error rather than a silent substitution. Existing selections without a voice keep their defaults: OpenAI Realtime and GPT-Live use `marin`; Gemini leaves its default to the provider. GPT-Live's explicit factory override takes precedence over persistence.
 
-Changes apply to new calls; active calls and reconnects retain their startup voice. The field raises the config compatibility floor to 7 while preserving schema 5 and frozen historical schemas. Local-data upgrades metadata without transforming the document; older writers reject the new floor before mutation. The minimum-version diagnostic is `0.16.0`, the first stable release supporting this compatibility floor.
+Changes apply to new calls; active calls and reconnects retain their startup voice. The field was introduced in schema 5 with compatibility floor 7 and a minimum-version diagnostic of `0.16.0`. Current schema 6 retains `voiceId`, removes TTS/STT selections, and uses compatibility floor 8; older writers reject it before mutation.
 
 ## Realtime media
 

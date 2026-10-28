@@ -172,8 +172,6 @@ export interface ModelSelection {
   instincts: InstinctModelSelectionEntry[];
   voice: {
     sts: ModelSelectionEntry[];
-    tts: ModelSelectionEntry[];
-    stt: ModelSelectionEntry[];
   };
   warnings?: Array<{ modelId: string; message: string }>;
 }

@@ -256,6 +256,31 @@ describe('provider registry routes', () => {
     });
   });
 
+  it('documents and sanitizes provider export failures', async () => {
+    const app = makeApp({
+      listInstances: () => {
+        throw new Error('Unresolved environment reference: PRIVATE_KEY');
+      },
+    });
+    const document = app.getOpenAPI31Document({
+      openapi: '3.1.0',
+      info: { title: 'Test', version: '1.0.0' },
+    });
+    expect(
+      document.paths?.['/v1/providers']?.get?.responses?.['500'],
+    ).toMatchObject({
+      description: 'Internal error',
+      content: { 'application/json': { schema: expect.any(Object) } },
+    });
+    const response = await app.request('/v1/providers?includeSecrets=true');
+    expect(response.status).toBe(500);
+    expect(response.headers.get('cache-control')).toBe('private, no-store');
+    expect(await response.json()).toEqual({
+      error: 'Internal server error',
+      code: 'internal_error',
+    });
+  });
+
   it.each([undefined, 'false', 'true'])(
     'exports secrets only with explicit includeSecrets=%s and acknowledges support',
     async (flag) => {

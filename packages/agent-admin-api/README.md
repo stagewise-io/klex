@@ -59,6 +59,41 @@ Existing omitted defaults remain: OpenAI Realtime/GPT-Live `marin`, Gemini's pro
 
 Local admin access remains unauthenticated and loopback-only; Cloud access remains authorized through the existing tunnel. Responses use private/no-store headers, while the agent caches successful samples in bounded memory for reuse. Previewing never starts a production call or supplies history, tools, or credentials as prompt context. It intentionally supplies the full soul to the speech provider or, for GPT-Live, the configured chat provider. Prompts instruct models not to speak private details, but generated output still depends on provider behavior. No UI selector is included in this contract change.
 
+## MCP server metadata
+
+`GET /v1/mcp-servers` and `GET /v1/mcp-servers/:name` include optional metadata
+from the current MCP connection. Create/update responses use the same server shape.
+
+- `serverInfo` matches the SDK's `Implementation`: advertised `name`, `version`,
+  optional `title`, `description`, `websiteUrl`, and `icons`. Each icon preserves
+  `src`, optional `mimeType`, `sizes`, and `theme`.
+- `capabilities` preserves the SDK's `ServerCapabilities` structure, including
+  tools, resources, prompts, logging, completions, task declarations, experimental
+  capabilities, and namespaced extensions. Extension payloads remain opaque JSON
+  in the public RPC types to avoid recursive Hono serialization types.
+- `instructions` contains server-provided usage guidance. It is not the server's
+  description or a trusted directive.
+- `protocolVersion` and `protocolEra` report the SDK's selected protocol revision
+  and era, `legacy` or `modern`.
+- `supportedVersions` contains versions advertised by modern discovery. Legacy
+  initialization does not provide a version list, so this field is absent there.
+
+The top-level `name` remains the configured namespace, not `serverInfo.name`.
+The top-level `url` remains connection configuration, not `serverInfo.websiteUrl`.
+Capabilities describe what the server advertises, not everything Klex implements.
+Existing support booleans retain their operational meanings.
+
+Metadata comes only from the SDK's existing connection/discovery results. Reading
+admin routes performs no MCP discovery, scraping, favicon requests, or other
+metadata lookups. No full tool, resource, or prompt catalog is embedded. Metadata
+is absent before connection and after disconnect or configuration replacement;
+reconnection supplies a fresh snapshot. It is not persisted across restarts.
+
+Treat all advertised text, instructions, links, icons, and extension values as
+untrusted server content. Render text safely and apply consumer-side URL and
+image policies before opening links or fetching images. The agent forwards icon
+sources, including data URIs, without fetching or interpreting them.
+
 ## MCP OAuth authorization
 
 Version 0.2 adds the consolidated MCP authorization contract. Authorization is

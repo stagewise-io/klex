@@ -66,6 +66,22 @@ Key invariants:
 - Only the current connection owns the namespace's event worker.
 - Late connections from superseded attempts close immediately.
 
+## Server metadata
+
+Each connection snapshots the SDK's server identity, capabilities, instructions,
+selected protocol revision and era, and discovery-supported versions when present.
+`McpServerMetadata` uses the public SDK `Implementation`, `ServerCapabilities`, and
+`ProtocolEra` types. Metadata reads return detached copies, so admin consumers
+cannot mutate connection state. `getServerStatuses()` includes only the active
+connection's metadata; disconnects and configuration replacement discard it.
+Reconnection captures fresh values. Metadata is process-local, not persisted.
+
+The existing admin list and single-server routes forward these fields. They do
+not perform additional discovery or external enrichment. Configured namespace
+and URL stay separate from server-advertised name and website. Advertised
+capabilities are not operational support guarantees. Text, instructions, links,
+and icons remain untrusted server content for consumers to handle safely.
+
 ## OAuth authorization
 
 OAuth-protected HTTP MCP servers are authorized through one of two `OAuthAuthorizationSession` implementations. `connection.ts` calls `sessionFactory.start()` once per connection attempt and awaits `session.authorize()`.

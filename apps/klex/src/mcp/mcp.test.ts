@@ -22,6 +22,7 @@ import {
   McpAuthorizationRequiredError,
   type McpConnection,
   type McpConnectionFactory,
+  type McpServerMetadata,
 } from './connection';
 import { createMcp, type Mcp, shouldUseCloudAuthorization } from './mcp';
 import { McpPendingAuthorizationRegistry } from './oauth/pending-authorizations';
@@ -79,6 +80,7 @@ function createConfigHarness(initial: Record<string, McpServerConfig>): {
 function connection(namespace: string): McpConnection {
   return {
     namespace,
+    metadata: {},
     tools: [
       {
         name: 'echo',
@@ -825,6 +827,68 @@ describe('MCP tool discovery', () => {
 });
 
 describe('MCP server statuses', () => {
+  it('forwards only current connection metadata and replaces it after reconnect', async () => {
+    vi.useFakeTimers();
+    let activeOptions: ConnectMcpServerOptions | undefined;
+    let activeConnection: McpConnection | undefined;
+    let attempt = 0;
+    const metadata = (version: string): McpServerMetadata => ({
+      serverInfo: {
+        name: 'advertised-name',
+        title: 'Example',
+        version,
+        description: 'Server description',
+        icons: [{ src: 'https://example.com/icon.svg' }],
+      },
+      capabilities: {
+        resources: { subscribe: true },
+        extensions: {
+          'example.com/custom': { nested: ['a', { enabled: true }] },
+        },
+      },
+      instructions: 'Usage instructions',
+      protocolVersion: '2026-07-28',
+      protocolEra: 'modern',
+      supportedVersions: ['2026-07-28'],
+    });
+    const { mcp } = setup(
+      { remote: { url: 'https://example.com/mcp' } },
+      async (options) => {
+        activeOptions = options;
+        activeConnection = {
+          ...connection(options.namespace),
+          metadata: metadata(String(++attempt)),
+        };
+        return activeConnection;
+      },
+    );
+    const assertNoMetadata = () => {
+      for (const key of Object.keys(metadata('1'))) {
+        expect(serverRow(mcp, 'remote')).not.toHaveProperty(key);
+      }
+    };
+    try {
+      assertNoMetadata();
+      await mcp.start();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(serverRow(mcp, 'remote')).toMatchObject({
+        name: 'remote',
+        ...metadata('1'),
+      });
+      if (!activeOptions || !activeConnection)
+        throw new Error('Expected an active connection');
+      activeOptions.onDisconnect(activeConnection);
+      assertNoMetadata();
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(serverRow(mcp, 'remote')).toMatchObject({
+        name: 'remote',
+        ...metadata('2'),
+      });
+    } finally {
+      await mcp.close();
+    }
+  });
+
   it('preserves the persisted URL template instead of exposing the resolved runtime URL', async () => {
     const { mcp, config } = setup(
       { remote: { url: 'https://mcp.example.com/secret-path' } },

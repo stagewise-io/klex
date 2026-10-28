@@ -398,8 +398,19 @@ const providerResponseSchema = z.object({
   }),
 });
 
+const providersQuerySchema = z.object({
+  includeSecrets: z.enum(['true', 'false']).optional().openapi({
+    description:
+      'Explicitly include resolved provider secrets. Cloud must require organization owner/admin authorization before forwarding this flag.',
+  }),
+});
+
 const providersResponseSchema = z.object({
   providers: z.array(providerResponseSchema),
+  secretsIncluded: z.literal(true).optional().openapi({
+    description:
+      'Present only for includeSecrets=true. Absence means the response must not be used to transfer credentials, including on legacy bots.',
+  }),
 });
 
 const createProviderBodySchema = z.object({
@@ -1272,6 +1283,7 @@ export {
   providerModelsResponseSchema,
   providerOperationSchema,
   providerResponseSchema,
+  providersQuerySchema,
   providersResponseSchema,
   providerTypeParamSchema,
   providerTypesResponseSchema,

@@ -64,6 +64,65 @@ async function createDataDirectory(): Promise<string> {
 }
 
 describe('provider registry module integration', () => {
+  it('only exports resolved credentials on explicit opt-in without mutating stored config', async () => {
+    const config = createConfig({
+      logging,
+      dataDirectory: await createDataDirectory(),
+      env: { COPY_KEY: 'resolved-copy-secret' },
+    });
+    await config.start();
+    const registry = createProviderRegistry({
+      logging,
+      config,
+      definitions: [azureOpenAiProviderDefinition],
+    });
+    await registry.start();
+    try {
+      // biome-ignore lint/suspicious/noTemplateCurlyInString: Config resolves this literal environment reference.
+      const environmentReference = '${env:COPY_KEY}';
+      const settings = {
+        apiKey: environmentReference,
+        resourceName: 'example',
+      };
+      expect(
+        await registry.addInstance({
+          id: 'azure',
+          type: 'azure-openai',
+          settings,
+        }),
+      ).toMatchObject({
+        ok: true,
+        value: { settings: { apiKey: { configured: true } } },
+      });
+      expect(
+        await registry.updateInstance('azure', { settings }),
+      ).toMatchObject({
+        ok: true,
+        value: { settings: { apiKey: { configured: true } } },
+      });
+      expect(registry.listInstances()[0]?.settings.apiKey).toEqual({
+        configured: true,
+      });
+      expect(
+        registry.listInstances({ includeSecrets: false })[0]?.settings.apiKey,
+      ).toEqual({ configured: true });
+      const exported = registry.listInstances({ includeSecrets: true });
+      expect(exported[0]?.settings.apiKey).toBe('resolved-copy-secret');
+      if (exported[0]) exported[0].settings.apiKey = 'modified';
+      expect(
+        registry.listInstances({ includeSecrets: true })[0]?.settings.apiKey,
+      ).toBe('resolved-copy-secret');
+      expect(config.get().providers.azure?.settings.apiKey).toBe(
+        environmentReference,
+      );
+      expect(registry.listInstances()[0]?.settings.apiKey).toEqual({
+        configured: true,
+      });
+    } finally {
+      await registry.close();
+      await config.close();
+    }
+  });
   it('keeps catalog model kinds when manual metadata only overrides the display name', async () => {
     const config = createConfig({
       logging,

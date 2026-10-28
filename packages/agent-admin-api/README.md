@@ -45,9 +45,36 @@ routes or hard-coded forms:
 
 Failures contain a stable `code`, a human-readable `error`, and optional
 `remediation`. Branch on the code rather than parsing messages. Provider settings
-returned by the API are redacted and must never contain resolved environment
-secrets. Model selection uses separate `providerId` and opaque `modelId` fields;
-clients must not split model IDs on colons.
+returned by the API are redacted by default, including all create/update responses.
+Model selection uses separate `providerId` and opaque `modelId` fields; clients
+must not split model IDs on colons.
+
+### Explicit credential export
+
+`GET /v1/providers?includeSecrets=true` explicitly exports configured provider
+settings with resolved environment references and unredacted credentials. Only
+the exact, single value `true` enables export. Omission or `false` preserves the
+existing redacted response; invalid values or repeated flags return 400. All
+provider-list responses use `Cache-Control: private, no-store`.
+
+An export response includes `secretsIncluded: true`. This marker is absent on
+ordinary responses and legacy bots that ignore unknown query parameters. A
+caller must require the marker before attempting credential transfer. Never
+retry a missing marker as if redacted settings were credentials.
+
+The bot Admin API has no per-user roles. Its local listener remains loopback-only;
+Cloud must enforce organization owner/admin permission before forwarding this
+flag, for both GET and HEAD. **Deploy that Cloud authorization gate before
+connecting secret-export-capable bots to Cloud.** Publishing this SDK alone does
+not add the gate. Do not expose export results through browser queries, logs,
+telemetry, or shared caches. Cloud copy operations should transfer them backend
+to backend after authorizing access to both source and destination bots.
+
+Export includes only configured settings. It does not read local CLI auth files,
+resolve ambient AWS/Google credential chains, or export OAuth sessions. Those
+connections require authentication on the destination. Endpoint URLs and other
+machine-specific settings may also require adjustment. Custom model overrides
+remain available separately through the provider model-list contract.
 
 ## Realtime voice client contract
 

@@ -532,17 +532,17 @@ class ProviderRegistryModule implements ProviderRegistry {
     includeSecrets?: boolean;
   } = {}): readonly ProviderInstanceInfo[] {
     const config = this.requireConfig();
-    const providers = includeSecrets
-      ? config.getRuntime().providers
-      : config.get().providers;
-    return Object.entries(providers)
+    return Object.entries(config.get().providers)
       .map(([id, instance]) => {
         const info = this.instanceInfo({ id, ...instance });
         return includeSecrets
           ? {
               ...info,
               settings: structuredClone(
-                parseProviderSettings(instance.type, instance.settings),
+                parseProviderSettings(
+                  instance.type,
+                  config.resolveEnvironment(instance.settings),
+                ),
               ),
               knownModels: structuredClone(instance.knownModels ?? {}),
             }

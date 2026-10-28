@@ -280,6 +280,10 @@ export const getProvidersRoute = createRoute({
       content: { 'application/json': { schema: providersResponseSchema } },
       description: 'Configured provider instances',
     },
+    500: {
+      content: { 'application/json': { schema: errorResponseSchema } },
+      description: 'Internal error',
+    },
   },
 });
 export function getProviders(

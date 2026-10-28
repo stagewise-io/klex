@@ -68,7 +68,10 @@ describe('provider registry module integration', () => {
     const config = createConfig({
       logging,
       dataDirectory: await createDataDirectory(),
-      env: { COPY_KEY: 'resolved-copy-secret' },
+      env: {
+        COPY_KEY: 'resolved-copy-secret',
+        COPY_METADATA_SECRET: 'unrelated-environment-secret',
+      },
     });
     await config.start();
     const registry = createProviderRegistry({
@@ -84,7 +87,10 @@ describe('provider registry module integration', () => {
         apiKey: environmentReference,
         resourceName: 'example',
       };
-      const knownModels = { custom: { displayName: 'Original' } };
+      const knownModels = {
+        // biome-ignore lint/suspicious/noTemplateCurlyInString: Model metadata must preserve literal environment references.
+        custom: { displayName: '${env:COPY_METADATA_SECRET}' },
+      };
       expect(
         await registry.addInstance({
           id: 'azure',
@@ -111,6 +117,9 @@ describe('provider registry module integration', () => {
       const exported = registry.listInstances({ includeSecrets: true });
       expect(exported[0]?.settings.apiKey).toBe('resolved-copy-secret');
       expect(exported[0]?.knownModels).toEqual(knownModels);
+      expect(JSON.stringify(exported)).not.toContain(
+        'unrelated-environment-secret',
+      );
       if (exported[0]) exported[0].settings.apiKey = 'modified';
       const exportedModel = exported[0]?.knownModels?.custom;
       if (exportedModel) exportedModel.displayName = 'Modified';

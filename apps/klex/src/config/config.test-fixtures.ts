@@ -1,4 +1,4 @@
-import type { KlexConfig, ModelSelection } from './types';
+import type { KlexConfig, ModelSelection } from './schema';
 
 export const emptyModelSelection: ModelSelection = {
   chat: [],

@@ -95,8 +95,8 @@ jobs:
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
 
-  local-data-history:
-    name: Local Data History
+  local-data-migrations:
+    name: Local Data Migrations
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -110,9 +110,9 @@ jobs:
           node-version-file: .nvmrc
           cache: pnpm
       - name: Test migration history checker
-        run: node --test scripts/check-local-data-history.test.mjs
+        run: node --test scripts/check-local-data-migrations.test.mjs
       - name: Verify append-only migration history
-        run: node scripts/check-local-data-history.mjs "$BASE_SHA"
+        run: node scripts/check-local-data-migrations.mjs "$BASE_SHA"
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
       - run: pnpm install --frozen-lockfile

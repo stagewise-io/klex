@@ -1,5 +1,5 @@
 import type { SqliteStoreDefinition } from '@/local-data';
-import { LOCAL_DATA_HISTORY } from '@/local-data-history';
+import { LOCAL_DATA_MIGRATIONS } from '@/local-data-migrations';
 
 /** Schema version — increment when adding migrations. */
 export const SESSION_HISTORY_SCHEMA_VERSION = 3;
@@ -75,7 +75,7 @@ CREATE INDEX IF NOT EXISTS idx_messages_session_checkpoint ON messages (session_
  * session row keep their instance id as the logical session id.
  */
 export const SESSION_HISTORY_MIGRATIONS =
-  LOCAL_DATA_HISTORY.sessions.migrations;
+  LOCAL_DATA_MIGRATIONS.sessions.migrations;
 
 export const SESSION_HISTORY_STORE_DEFINITION: SqliteStoreDefinition = {
   kind: 'sqlite',

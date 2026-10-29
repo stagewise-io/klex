@@ -32,7 +32,7 @@ import {
 import { createLocalData } from './local-data';
 import type { SqliteStoreDefinition } from './types';
 
-const fixtures = new URL('../local-data-history-fixtures/', import.meta.url);
+const fixtures = new URL('../local-data-migration-fixtures/', import.meta.url);
 const directories: string[] = [];
 const logging = createLogger({ name: 'frozen-upgrades' });
 

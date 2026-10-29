@@ -1,5 +1,5 @@
 import type { JsonStoreDefinition } from '@/local-data';
-import { LOCAL_DATA_HISTORY } from '@/local-data-history';
+import { LOCAL_DATA_MIGRATIONS } from '@/local-data-migrations';
 
 export const CONFIG_STORE_DEFINITION: JsonStoreDefinition = {
   kind: 'json',
@@ -11,6 +11,6 @@ export const CONFIG_STORE_DEFINITION: JsonStoreDefinition = {
   compatibilityVersion: 8,
   minimumKlexVersion: '0.27.1',
   legacySchemaVersion: 1,
-  versions: LOCAL_DATA_HISTORY.config.versions,
-  migrations: LOCAL_DATA_HISTORY.config.migrations,
+  versions: LOCAL_DATA_MIGRATIONS.config.versions,
+  migrations: LOCAL_DATA_MIGRATIONS.config.migrations,
 };

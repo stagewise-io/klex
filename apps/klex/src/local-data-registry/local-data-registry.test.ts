@@ -60,7 +60,7 @@ vi.mock('@/session/chat/extensions/episode-summary/summary-prompt.md', () => ({
 }));
 
 import { validateLocalDataRegistry } from '@/local-data';
-import { LOCAL_DATA_HISTORY } from '@/local-data-history';
+import { LOCAL_DATA_MIGRATIONS } from '@/local-data-migrations';
 
 import { KLEX_LOCAL_DATA_STORES } from './local-data-registry';
 
@@ -92,7 +92,7 @@ describe('Klex local-data registry', () => {
   });
 
   it('uses frozen history directly and declares the actual latest version', () => {
-    for (const [id, history] of Object.entries(LOCAL_DATA_HISTORY)) {
+    for (const [id, history] of Object.entries(LOCAL_DATA_MIGRATIONS)) {
       const store = KLEX_LOCAL_DATA_STORES.find(
         (candidate) => candidate.id === id,
       );
@@ -105,7 +105,7 @@ describe('Klex local-data registry', () => {
     }
     for (const store of KLEX_LOCAL_DATA_STORES) {
       if (store.migrations.length > 0)
-        expect(Object.hasOwn(LOCAL_DATA_HISTORY, store.id), store.id).toBe(
+        expect(Object.hasOwn(LOCAL_DATA_MIGRATIONS, store.id), store.id).toBe(
           true,
         );
     }

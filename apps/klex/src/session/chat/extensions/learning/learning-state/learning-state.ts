@@ -6,7 +6,7 @@ import {
   readCurrentJsonStore,
   writeJsonStoreDocument,
 } from '@/local-data';
-import { LOCAL_DATA_HISTORY } from '@/local-data-history';
+import { LOCAL_DATA_MIGRATIONS } from '@/local-data-migrations';
 import { KLEX_VERSION } from '@/release';
 
 const STATE_FILE = 'state.json';
@@ -31,8 +31,8 @@ export const LEARNING_STATE_STORE_DEFINITION: JsonStoreDefinition = {
   schemaVersion: 2,
   compatibilityVersion: 2,
   minimumKlexVersion: '0.24.0',
-  versions: LOCAL_DATA_HISTORY['learning-extension-state'].versions,
-  migrations: LOCAL_DATA_HISTORY['learning-extension-state'].migrations,
+  versions: LOCAL_DATA_MIGRATIONS['learning-extension-state'].versions,
+  migrations: LOCAL_DATA_MIGRATIONS['learning-extension-state'].migrations,
 };
 
 export interface SkillState {

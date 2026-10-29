@@ -19,7 +19,7 @@ import { KLEX_VERSION } from '@/release';
 import { createConfig } from './config';
 import { CONFIG_STORE_DEFINITION } from './storage-definition';
 
-const fixtures = new URL('../local-data-history-fixtures/', import.meta.url);
+const fixtures = new URL('../local-data-migration-fixtures/', import.meta.url);
 const directories: string[] = [];
 const logging = {
   child: () => ({ error() {}, info() {}, warn() {} }),

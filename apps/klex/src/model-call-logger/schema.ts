@@ -7,7 +7,7 @@ import {
 } from 'drizzle-orm/sqlite-core';
 
 import type { localDataMetaTable, SqliteStoreDefinition } from '@/local-data';
-import { LOCAL_DATA_HISTORY } from '@/local-data-history';
+import { LOCAL_DATA_MIGRATIONS } from '@/local-data-migrations';
 
 /**
  * Drizzle schema for the model-call logger.
@@ -67,7 +67,7 @@ export type ModelCallSchema = {
 export const MODEL_CALL_SCHEMA_VERSION = 3;
 
 export const MODEL_CALL_MIGRATIONS =
-  LOCAL_DATA_HISTORY['model-calls'].migrations;
+  LOCAL_DATA_MIGRATIONS['model-calls'].migrations;
 
 /**
  * Multi-statement SQL for fresh database initialization.

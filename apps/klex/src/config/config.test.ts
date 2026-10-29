@@ -9,10 +9,10 @@ import type { RootLogger } from '@stagewise/logger';
 
 import { createLocalData } from '@/local-data';
 import {
-  dropLegacyTelemetryConfig,
-  migrateLegacyKlexConfig,
-  nestMemoryExtensionConfig,
-} from '@/local-data-history';
+  migrateConfigV1ToV2,
+  migrateConfigV3ToV4,
+  migrateConfigV4ToV5,
+} from '@/local-data-migrations';
 import { KLEX_VERSION } from '@/release';
 
 import {
@@ -28,12 +28,12 @@ import {
   completeV6StoredConfig,
   emptyModelSelection,
 } from './config.test-fixtures';
-import { CONFIG_STORE_DEFINITION } from './storage-definition';
 import {
   getProviderSettingsJsonSchema,
   klexConfigSchema,
   parseKlexConfig,
-} from './types';
+} from './schema';
+import { CONFIG_STORE_DEFINITION } from './storage-definition';
 
 const directories: string[] = [];
 const logging = {
@@ -436,7 +436,7 @@ describe('config v2', () => {
           expect(() => schema.parse(input)).not.toThrow();
         }
       }
-      expect(dropLegacyTelemetryConfig(input)).not.toHaveProperty('telemetry');
+      expect(migrateConfigV3ToV4(input)).not.toHaveProperty('telemetry');
     }
   });
 
@@ -530,7 +530,7 @@ describe('config v2', () => {
       ...withoutMemoryKeys
     } = completeV4StoredConfig;
     expect(
-      nestMemoryExtensionConfig(withoutMemoryKeys).extensions.memory.episodes,
+      migrateConfigV4ToV5(withoutMemoryKeys).extensions.memory.episodes,
     ).toEqual({
       maxCharacters: 50_000,
       maxDurationMs: 3_600_000,
@@ -861,10 +861,10 @@ describe('config v2', () => {
       }
     }
     expect(
-      dropLegacyTelemetryConfig(completeV4StoredConfig).modelSelection,
+      migrateConfigV3ToV4(completeV4StoredConfig).modelSelection,
     ).not.toHaveProperty('classifier');
     expect(
-      dropLegacyTelemetryConfig(completeV4StoredConfig).modelSelection,
+      migrateConfigV3ToV4(completeV4StoredConfig).modelSelection,
     ).not.toHaveProperty('instincts');
   });
 
@@ -1362,7 +1362,7 @@ describe('config v2', () => {
   });
 
   it('assigns deterministic instance IDs when migrating a multi-endpoint provider', () => {
-    const parsed = migrateLegacyKlexConfig({
+    const parsed = migrateConfigV1ToV2({
       officialName: 'Migration',
       providers: {
         remote: {
@@ -1406,7 +1406,7 @@ describe('config v2', () => {
   });
 
   it('preserves complete legacy provider, model, selection, and environment semantics', () => {
-    const parsed = migrateLegacyKlexConfig({
+    const parsed = migrateConfigV1ToV2({
       officialName: 'Complete migration',
       providers: {
         cloud: {
@@ -1525,7 +1525,7 @@ describe('config v2', () => {
   });
 
   it('migrates legacy OpenAI-compatible voice endpoints without blocking startup', () => {
-    const parsed = migrateLegacyKlexConfig({
+    const parsed = migrateConfigV1ToV2({
       officialName: 'Voice migration',
       providers: {
         voice: {
@@ -1592,7 +1592,7 @@ describe('config v2', () => {
 
   it('fails migration instead of overwriting colliding instance IDs', () => {
     expect(() =>
-      migrateLegacyKlexConfig({
+      migrateConfigV1ToV2({
         officialName: 'Migration',
         providers: {
           remote: {

@@ -47,7 +47,6 @@ const storedOAuthClientInformationSchema: z.ZodType<McpOAuthClientInformation> =
       issuer: z.string().optional(),
       jwks: z.unknown().optional(),
       jwks_uri: z.url().optional(),
-      klex_registered: z.boolean().optional(),
       logo_uri: z.union([z.url(), z.literal('')]).optional(),
       policy_uri: z.string().optional(),
       redirect_uris: z.array(z.url()).optional(),

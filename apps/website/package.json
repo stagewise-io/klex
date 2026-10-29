@@ -24,6 +24,7 @@
     "@sugar-high/react": "^2.4.0",
     "gsap": "^3.15.0",
     "motion": "^13.4.0",
+    "posthog-js": "1.439.0",
     "react": "19.2.8",
     "react-dom": "19.2.8"
   },

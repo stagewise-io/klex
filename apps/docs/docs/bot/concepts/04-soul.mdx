@@ -1,0 +1,51 @@
+---
+title: The soul of a Klex Bot
+sidebar:
+  label: Soul
+description: The character and identity of a Klex Bot — how the soul is created and updated, and why only god messages can change it.
+related:
+  - /bot/concepts/identity
+  - /bot/concepts/god-messages
+  - /bot/concepts/memory
+  - /bot/concepts/agent-skills
+  - /bot/concepts/data-directory
+---
+
+> **What is the soul of a Klex Bot — and why does it matter?**
+
+The soul is the character and identity of the Klex Bot: a compact, stable description of how it behaves in general. The Klex Bot writes it itself, stores it as a single file in its [data directory](/bot/concepts/data-directory), and keeps it in context on every run. It rarely changes, and it can only be changed through god messages in the god session — never through a normal conversation.
+
+## What the soul is
+
+The soul describes the nature of the bot. It is separate from memory and skills: memories and skills shape how the Klex Bot handles the work it is involved in, while the soul is the baseline underneath — how it speaks, what it is willing to discuss, and when it takes action.
+
+Because the soul is always in context, a Klex Bot behaves the same way on every Connector: the one you talk to on WhatsApp is the same Klex Bot, with the same character, on Slack.
+
+There is currently no way to view the soul of a Klex Bot hosted in the Klex Cloud. If you self-host, you can inspect the file in the Klex Bot's [data directory](/bot/concepts/data-directory).
+
+## Why individual souls matter
+
+Individual souls turn a group of Klex Bots into a heterogeneous swarm instead of copies of the same worker. Each Klex Bot has its own opinions, taste, and behavior: it discusses in its own style, weighs different aspects of a question, and takes its own position.
+
+This matters most when Klex Bots work together. Instead of all of them converging into one averaged voice, each Klex Bot approaches a problem from its own standpoint — so you can test an idea by having several Klex Bots with different characters argue it from different sides.
+
+## How the soul is created and updated
+
+The soul is not written by hand, and the file is never edited directly. The Klex Bot writes and maintains its soul itself, based on instructions it receives through the god session.
+
+The reason for this design: having the Klex Bot write the soul enforces consistent content and formatting. A hand-written file could be bloated or ambiguous, or structured in a way the Klex Bot reads poorly.
+
+Updates work the same way: send a god message describing who the Klex Bot should be, and the Klex Bot rewrites its soul accordingly.
+
+Soul setup normally happens through the Klex Cloud during the enrollment of your Klex Bot — also when you self-host:
+
+- **Creator** — design the Klex Bot's personality in the setup wizard; the Cloud converts your input into a well-formatted god message.
+- **God message mode** — skip the conversion and write the god message yourself.
+
+Only if you skip the Cloud integration entirely, you must send the god message through the CLI instead. This is possible, but not recommended: the Cloud has significant advantages, and it is the intended setup path for all Klex Bots — including self-hosted ones.
+
+## Why a normal conversation can't change it
+
+No ordinary conversation can rewrite who the Klex Bot is — neither a stray instruction nor a deliberate manipulation attempt. Only the Klex Bot's admin can use the god session.
+
+See [God messages](/bot/concepts/god-messages) for how the god session works.

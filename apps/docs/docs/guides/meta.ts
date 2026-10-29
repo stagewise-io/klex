@@ -1,4 +1,4 @@
 export default {
-  title: 'Become Bot-Native',
-  pages: ['company-handbook', 'bot-identities', 'shared-messaging-boards'],
+  title: 'Bot-Native Company Guide',
+  pages: ['index', 'company-handbook', 'collaboration', 'security'],
 };

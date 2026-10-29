@@ -1,4 +1,5 @@
 import { defineConfig } from 'blume';
+import { posthog } from 'blume/analytics';
 
 const posthogKey = process.env.POSTHOG_KEY?.trim();
 const posthogHost = process.env.POSTHOG_HOST?.trim();
@@ -6,9 +7,10 @@ const posthogHost = process.env.POSTHOG_HOST?.trim();
 export default defineConfig({
   title: 'Klex Docs',
   description: 'Documentation for Klex — one durable agent, many channels.',
-  ...(posthogKey && posthogHost
-    ? { analytics: { posthog: { key: posthogKey, host: posthogHost } } }
-    : {}),
+  analytics:
+    posthogKey && posthogHost
+      ? [posthog({ key: posthogKey, host: posthogHost })]
+      : [],
   theme: {
     // @stagewise/ui primary palette (hue 265, chroma scale 1)
     // light: primary-500 (peak chroma), dark: primary-400
@@ -57,6 +59,11 @@ export default defineConfig({
     site: 'https://docs.klex.bot',
   },
   navigation: {
+    tabs: [
+      { label: 'Understand Klex Bots', path: '/bot' },
+      { label: 'Use the Klex Cloud', path: '/cloud' },
+      { label: 'Bot-Native Company Guide', path: '/guides' },
+    ],
     featured: [
       {
         label: 'Klex Homepage',
@@ -65,6 +72,58 @@ export default defineConfig({
       },
     ],
   },
+  // Keep published URLs working: pre-tab URLs in every locale, plus English
+  // pages that moved again when the Bot tab was re-sectioned into concepts/
+  // guides/reliability/faq (other locales keep their first-sectioned paths).
+  redirects: [
+    // English: pre-tab URLs → current (re-sectioned) paths.
+    { from: '/', to: '/bot' },
+    { from: '/quickstart', to: '/bot/quickstart' },
+    { from: '/architecture', to: '/bot/concepts/how-bots-work' },
+    { from: '/concepts/cognitive-architecture', to: '/bot/concepts/memory' },
+    { from: '/concepts/soul', to: '/bot/concepts/soul' },
+    { from: '/concepts/god-messages', to: '/bot/concepts/god-messages' },
+    { from: '/concepts/model-providers', to: '/bot/concepts/models' },
+    { from: '/concepts/model-selection', to: '/bot/concepts/models' },
+    { from: '/concepts/data-directory', to: '/bot/concepts/data-directory' },
+    // English: first-sectioned URLs → re-sectioned paths.
+    { from: '/bot/architecture', to: '/bot/concepts/how-bots-work' },
+    {
+      from: '/bot/concepts/cognitive-architecture',
+      to: '/bot/concepts/memory',
+    },
+    { from: '/bot/concepts/model-providers', to: '/bot/concepts/models' },
+    { from: '/bot/concepts/model-selection', to: '/bot/concepts/models' },
+    // Locales: pre-tab URLs → their (unchanged) first-sectioned paths.
+    ...[
+      '/zh',
+      '/ja',
+      '/ko',
+      '/de',
+      '/fr',
+      '/es',
+      '/pt',
+      '/hi',
+      '/uk',
+      '/ru',
+      '/ar',
+    ].flatMap((locale) =>
+      [
+        '',
+        '/quickstart',
+        '/architecture',
+        '/concepts/cognitive-architecture',
+        '/concepts/soul',
+        '/concepts/god-messages',
+        '/concepts/model-providers',
+        '/concepts/model-selection',
+        '/concepts/data-directory',
+      ].map((path) => ({
+        from: `${locale}${path}`,
+        to: `${locale}/bot${path}`,
+      })),
+    ),
+  ],
   // Discoverability: SEO + AEO. Most features are on by default, but
   // deployment.site must be set (done above) for absolute URLs to work.
   // Structured data (JSON-LD) feeds both search engines and AI answer engines.
@@ -126,11 +185,13 @@ export default defineConfig({
   },
   // AI-facing features: llms.txt manifest and the "Open in chat" page action.
   // MCP server is disabled — it requires server output which we don't use.
-  ai: {
+  agents: {
     llmsTxt: true,
     mcp: {
       enabled: false,
     },
+  },
+  ai: {
     openInChat: ['chatgpt', 'claude', 't3'],
   },
 });

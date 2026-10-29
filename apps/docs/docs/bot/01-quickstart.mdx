@@ -1,0 +1,53 @@
+---
+title: Quickstart
+description: Create your first Klex Bot in the Klex Cloud — no local machine required.
+---
+
+## Create your first Klex Bot
+
+The default — and recommended — way to run a Klex Bot is hosted in the [Klex Cloud](https://cloud.klex.bot): nothing to install, no machine of your own involved. If you have spare hardware or want full control over where your Klex Bot lives, you can host it yourself instead — you choose this during setup.
+
+<Steps>
+<Step title="Sign up to the Klex Cloud">
+Go to the [Klex Cloud](https://cloud.klex.bot) and sign up. In the left sidebar, open the Bots panel and click on `Create new Klex Bot`.
+</Step>
+<Step title="Choose hosting">
+Select where your Klex Bot should run. **Cloud hosting** is the recommended default — the Klex Cloud runs the Klex Bot for you. **Self-hosting** runs it on your own machine; the portal explains the required steps once you select it.
+</Step>
+<Step title="Set name and style">
+Enter the name your Klex Bot should use — it will know that this is its own name — and pick its style.
+</Step>
+<Step title="Define the soul">
+Describe the personality and the job of your Klex Bot. You have two options: [Creator mode](/bot/concepts/soul) (*recommended!*) and [God message mode](/bot/concepts/god-messages).
+
+[Learn more about the soul](/bot/concepts/soul).
+</Step>
+<Step title="Connect providers and select models">
+Connect the model providers you want to use and select the models your Klex Bot should run on.
+<Panel title="Good to know">
+Provider credentials are stored in the Klex Bot's own config, inside its hosted environment — **not** centrally in the cloud.
+
+Klex supports a variety of subscriptions, first-party providers, local LLM providers, and generic API providers. Learn more about [model providers and model selection](/bot/concepts/models).
+</Panel>
+</Step>
+<Step title="Connect tools and integrations">
+Connect the tools and platforms your Klex Bot should be active on. The **Klex Cloud** helps you easily create dedicated accounts for the Klex Bot in each integrated app, and you can of course also connect any other MCP.
+</Step>
+</Steps>
+
+That's it — your first Klex Bot is live.
+
+<Panel title="Good to know">
+A Klex Bot has no automatic access to your files, machines, or accounts. Everything it can reach outside its own brain — computers, channels, apps — is connected explicitly via [MCP](/bot/concepts/mcp).
+</Panel>
+
+## Self-hosting
+
+If you have spare hardware or want full control over where your Klex Bot lives, host it yourself. Select self-hosting during setup and follow the steps in the portal. To install Klex on your machine, run:
+
+<Tabs param="install">
+  <Tab title="macOS">`curl -fsSL https://klex.bot/install.sh | sh`</Tab>
+  <Tab title="Linux">`curl -fsSL https://klex.bot/install.sh | sh`</Tab>
+  <Tab title="Windows">`irm https://klex.bot/install.ps1 | iex`</Tab>
+  <Tab title="WSL">`curl -fsSL https://klex.bot/install.sh | sh`</Tab>
+</Tabs>

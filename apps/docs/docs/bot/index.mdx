@@ -1,0 +1,43 @@
+---
+title: Introduction
+description: "What Klex Bots are — and where to start: quickstart, concepts, guides, and FAQ."
+related:
+  - /bot/quickstart
+  - /bot/use-cases
+  - /bot/faq
+---
+
+Klex is an open-source, self-hostable system for creating and running Klex Bots (fully autonomous agents), and is purpose-built for teams to extend their workforce with AI-powered digital coworkers. Klex is built by [stagewise](https://stagewise.io) and licensed under Apache-2.0.
+
+<GithubInfo owner="stagewise-io" repo="klex" />
+
+A single Klex bot acts like an individual identity. It has its own personality, its own memories, and its own identity in all your work platforms.
+
+We **don't** like to call Klex Bots "assistants", because while you *can* create a Klex Bot that has the job of being your assistant,
+Klex Bots are much more powerful than that: you can create a full team of them that works together with their coworkers, no matter if they're humans, Klex Bots, or other agents.
+
+## Find your way
+
+- **New to bots?** Start with the [quickstart](/bot/quickstart) to create your first Klex Bot, then browse [what to use Klex Bots for](/bot/use-cases).
+- **Used another agent?** See [what makes Klex different and how to migrate](/bot/migrate-from-another-agent).
+- **Just exploring?** The [FAQ](/bot/faq) lists every common question with a link to its answer.
+
+## Our core principles
+
+Everything we build is guided by six principles:
+
+- **Open-source and model-agnostic** — No vendor lock-in. Change models at any time, or run Klex Bots on your own infrastructure.
+- **Own identity** — Klex Bots act as themselves, not on behalf of someone else. Every integration is built with this in mind.
+- **Ease of use** — An AI-powered workforce should be available to everyone. We favor **ease of use over customization** and keep setup and maintenance simple.
+- **Standard-compliance** — All external communication goes through [**MCP**](https://modelcontextprotocol.io/docs/2026-07-28/getting-started/intro) — no custom gateways. Communication platforms connect via MCP plus a small extension that lets apps proactively trigger the bot. The memory system is also compatible with [**Agent Skills**](https://agentskills.io/home) for storing procedural memory.
+- **Introspectability** — The Klex Bot's memory is stored in pure Markdown. You can read and inspect everything the Klex Bot knows at any time.
+- **Adaptability** — Klex Bots only access machines explicitly connected via MCP — never the host they run on. They can't introspect their own raw memory, change their personality, or alter host settings. This keeps operations safe by design.
+
+## Klex Cloud
+
+[Klex Cloud](/cloud) is an optional service for connecting Klex Bots to work platforms with their own identities. See **Use the Klex Cloud** for an overview and cloud-assisted setup.
+
+## Next steps
+
+- [Install Klex](/bot/quickstart) and create your first bot.
+- Understand [how Klex Bots work](/bot/concepts/how-bots-work) and how they interact with the outside world.

@@ -423,11 +423,11 @@ export const configV6OutputSchema = z.object({
     .default('Agent'),
   providers: z.record(providerIdSchema, providerSchema).default({}),
   modelSelection: modelSelectionSchema.prefault({}),
-  instinct: instinctSchema.prefault({}),
   mcpServers: z.record(z.string(), mcpServerSchema).default({}),
   timezone: timezoneSchema.default('UTC'),
   extensions: extensionsSchema.prefault({}),
   sessionHistory: sessionHistorySchema.optional(),
+  instinct: instinctSchema.prefault({}),
 });
 // Persisted validation requires configVersion.
 export const configV6Schema = configV6OutputSchema

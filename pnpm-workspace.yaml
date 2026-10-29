@@ -10,6 +10,7 @@ allowBuilds:
   '@ffprobe-installer/linux-x64': true
   '@ffprobe-installer/win32-x64': true
   '@scarf/scarf': true
+  core-js: false
   esbuild: true
   ffmpeg-static: true
   node-pty: true

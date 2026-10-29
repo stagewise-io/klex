@@ -5,6 +5,10 @@ import { mountLogoMenus } from './logo-menu';
 import { mountNearViewport } from './mount-near-viewport';
 import { mountNavigation } from './navigation';
 import { mountHero } from './sections/hero';
+import { createTelemetry } from './telemetry';
+
+const telemetry = createTelemetry();
+void telemetry.initialize();
 
 const app = document.getElementById('app');
 if (!app) throw new Error('The website root is missing.');

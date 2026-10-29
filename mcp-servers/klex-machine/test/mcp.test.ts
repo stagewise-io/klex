@@ -2,15 +2,22 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
+import { detectMachineDeviceType } from '../src/cloud/facts/device-type.js';
+import { machineIcons } from '../src/icons.js';
 import { createMachineMcp, type MachineMcp } from '../src/mcp.js';
+
+vi.mock('../src/cloud/facts/device-type.js', () => ({
+  detectMachineDeviceType: vi.fn(async () => 'laptop'),
+}));
 
 interface RpcResult {
   result: {
     content?: { type: string; text: string }[];
     isError?: boolean;
     tools?: { name: string }[];
+    serverInfo?: { name: string; icons?: ReturnType<typeof machineIcons> };
   };
 }
 
@@ -67,6 +74,34 @@ describe('machine MCP module', () => {
       recursive: true,
       retryDelay: 100,
     });
+  });
+
+  it('advertises detected device icons in the initialize response', async () => {
+    const response = await rpc(mcp, 'initialize', {
+      protocolVersion: '2025-11-25',
+      capabilities: {},
+      clientInfo: { name: 'icon-test', version: '1.0.0' },
+    });
+    expect(response.serverInfo?.name).toBe('klex-machine');
+    expect(response.serverInfo?.icons).toEqual(machineIcons('laptop'));
+  });
+
+  it('omits device probes and uses generic icons when host details are disabled', async () => {
+    const privateMcp = createMachineMcp(cwd, { omitHostDetails: true });
+    const before = vi.mocked(detectMachineDeviceType).mock.calls.length;
+    try {
+      const response = await rpc(privateMcp, 'initialize', {
+        protocolVersion: '2025-11-25',
+        capabilities: {},
+        clientInfo: { name: 'private-icon-test', version: '1.0.0' },
+      });
+      expect(response.serverInfo?.icons).toEqual(machineIcons());
+      expect(vi.mocked(detectMachineDeviceType).mock.calls).toHaveLength(
+        before,
+      );
+    } finally {
+      await privateMcp.close();
+    }
   });
 
   it('registers filesystem and shell tools', async () => {

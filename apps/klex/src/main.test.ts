@@ -12,7 +12,7 @@ const mocks = vi.hoisted(() => {
     start: vi.fn(async () => undefined),
     close: vi.fn(async () => undefined),
     acquire: vi.fn(async () => undefined),
-    release: vi.fn(async () => undefined),
+    release: vi.fn(async (): Promise<void> => undefined),
     get: () => ({ officialName: 'Selected agent', timezone: 'UTC' }),
     agentStarted: vi.fn(),
     setDynamicResourceAttributes: vi.fn(),
@@ -360,6 +360,41 @@ describe('managed-update agent continuity', () => {
     expect(mocks.createCliUi).not.toHaveBeenCalled();
   });
 
+  it('bounds stalled provider cleanup during startup rollback', async () => {
+    const closed = Promise.withResolvers<void>();
+    const close = vi.fn(() => closed.promise);
+    mocks.createConfig.mockReturnValue({
+      ...mocks.resource,
+      start: vi.fn(async () => {
+        throw new Error('Configuration startup failed');
+      }),
+      close,
+    });
+    process.argv = [
+      process.execPath,
+      'klex',
+      '--headless',
+      '--auto-update',
+      '--data-dir',
+      'existing/agent',
+    ];
+    vi.useFakeTimers();
+    try {
+      await import('./main');
+      await vi.waitFor(() => expect(close).toHaveBeenCalledOnce());
+      expect(mocks.resource.release).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(6_000);
+      expect(mocks.resource.release).toHaveBeenCalledOnce();
+      expect(mocks.logger.warn).toHaveBeenCalledWith(
+        expect.stringContaining('update-recovery mode'),
+      );
+      expect(mocks.logger.fatal).not.toHaveBeenCalled();
+    } finally {
+      closed.resolve();
+      vi.useRealTimers();
+    }
+  });
+
   it('preserves the first lock-release failure during normal shutdown', async () => {
     await launch();
     const failure = new Error('Cannot unlink the agent lock');
@@ -385,6 +420,43 @@ describe('managed-update agent continuity', () => {
     expect(mocks.resource.release).toHaveBeenCalledOnce();
     expect(mocks.logger[Symbol.asyncDispose]).toHaveBeenCalledOnce();
   });
+
+  it.each(['lock', 'tracing'] as const)(
+    'waits for a slow %s cleanup without recording a rollback timeout',
+    async (resource) => {
+      const closed = Promise.withResolvers<void>();
+      const close = vi.fn(() => closed.promise);
+      if (resource === 'tracing') {
+        mocks.createTracing.mockReturnValue({ ...mocks.resource, close });
+      }
+      await launch();
+      if (resource === 'lock')
+        mocks.resource.release.mockImplementationOnce(close);
+      const shutdown = mocks.shutdowns.at(-1);
+      if (!shutdown) throw new Error('No shutdown coordinator was captured');
+      vi.useFakeTimers();
+      let settled = false;
+      const cleanup = shutdown.cleanup().finally(() => {
+        settled = true;
+      });
+      const completed = expect(cleanup).resolves.toBeUndefined();
+      try {
+        await vi.advanceTimersByTimeAsync(6_000);
+        expect(close).toHaveBeenCalledOnce();
+        expect(settled).toBe(false);
+        expect(mocks.logger.error).not.toHaveBeenCalled();
+        expect(mocks.logger[Symbol.asyncDispose]).not.toHaveBeenCalled();
+        closed.resolve();
+        await completed;
+        expect(close).toHaveBeenCalledOnce();
+        expect(mocks.logger[Symbol.asyncDispose]).toHaveBeenCalledOnce();
+      } finally {
+        closed.resolve();
+        vi.useRealTimers();
+        await completed;
+      }
+    },
+  );
 
   it('wires a lazy soul reader for the selected agent into learning', async () => {
     await launch();

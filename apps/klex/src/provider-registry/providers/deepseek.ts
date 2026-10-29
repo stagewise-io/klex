@@ -1,5 +1,9 @@
 import type { ProviderDefinition } from '../provider-registry';
-import { exactModel, resolveCatalogMetadata } from './model-catalog-helpers';
+import {
+  catalogModels,
+  exactModel,
+  resolveCatalogMetadata,
+} from './model-catalog-helpers';
 import {
   createOpenAiCompatibleLanguageModel,
   discoverOpenAiCompatibleModels,
@@ -49,6 +53,23 @@ const MODEL_CATALOG = [
   ),
 ];
 
+function resolveDeepSeekModelMetadata(modelId: string) {
+  return resolveCatalogMetadata(modelId, MODEL_CATALOG, undefined, [
+    {
+      prefixes: ['deepseek-'],
+      includesAny: ['vision', '-vl'],
+      metadata: {
+        kind: 'language',
+        capabilities: { input: { image: {} } },
+      },
+    },
+    {
+      prefixes: ['deepseek-'],
+      metadata: { kind: 'language', capabilities: { input: {} } },
+    },
+  ]);
+}
+
 export const deepSeekProviderDefinition: ProviderDefinition = {
   type: 'deepseek',
   usageGuidance:
@@ -57,21 +78,8 @@ export const deepSeekProviderDefinition: ProviderDefinition = {
     displayName: 'DeepSeek',
     description: 'DeepSeek models served through the official API.',
   },
-  resolveModelMetadata: (modelId) =>
-    resolveCatalogMetadata(modelId, MODEL_CATALOG, undefined, [
-      {
-        prefixes: ['deepseek-'],
-        includesAny: ['vision', '-vl'],
-        metadata: {
-          kind: 'language',
-          capabilities: { input: { image: {} } },
-        },
-      },
-      {
-        prefixes: ['deepseek-'],
-        metadata: { kind: 'language', capabilities: { input: {} } },
-      },
-    ]),
+  resolveModelMetadata: resolveDeepSeekModelMetadata,
+  catalogModels: catalogModels(MODEL_CATALOG, resolveDeepSeekModelMetadata),
   createLanguageModel: (instance, modelId) =>
     createOpenAiCompatibleLanguageModel(instance, modelId, BASE_URL),
   discoverModels: (instance, signal) =>

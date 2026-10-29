@@ -1,9 +1,25 @@
-import type { ProviderDefinition } from '../provider-registry';
-import { exactModel, resolveCatalogMetadata } from './model-catalog-helpers';
+import type {
+  ProviderDefinition,
+  ProviderInstance,
+  ProviderModel,
+  ProviderOperationResult,
+} from '../provider-registry';
 import {
+  catalogModels,
+  exactModel,
+  resolveCatalogMetadata,
+} from './model-catalog-helpers';
+import {
+  available,
   createOpenAiCompatibleLanguageModel,
-  discoverOpenAiCompatibleModels,
+  fetchJson,
+  isRecord,
+  modelListUrl,
+  parseModelCreatedAt,
+  providerHeaders,
+  sanitizedError,
   testDiscoveryConnection,
+  unavailable,
 } from './shared';
 
 const BASE_URL = 'https://api.mistral.ai/v1';
@@ -151,6 +167,36 @@ const MODEL_CATALOG = [
   ),
 ];
 
+export function resolveMistralModelMetadata(modelId: string) {
+  return resolveCatalogMetadata(modelId, MODEL_CATALOG, undefined, [
+    {
+      prefixes: ['voxtral-'],
+      metadata: { kind: 'language', capabilities: { input: { audio: {} } } },
+    },
+    {
+      prefixes: ['pixtral-', 'ocr-'],
+      metadata: {
+        kind: 'language',
+        capabilities: { input: { image: IMAGE_CAPABILITY } },
+      },
+    },
+    {
+      prefixes: ['mistral-', 'ministral-'],
+      excludesAny: ['embed', 'moderation'],
+      metadata: {
+        kind: 'language',
+        capabilities: { input: { image: IMAGE_CAPABILITY } },
+      },
+    },
+    {
+      prefixes: ['codestral-', 'devstral-', 'leanstral-'],
+      metadata: { kind: 'language', capabilities: { input: {} } },
+    },
+    { prefixes: ['mistral-embed'], metadata: { kind: 'embedding' } },
+    { prefixes: ['mistral-moderation'], metadata: { kind: 'moderation' } },
+  ]);
+}
+
 export const mistralProviderDefinition: ProviderDefinition = {
   type: 'mistral',
   usageGuidance:
@@ -159,40 +205,80 @@ export const mistralProviderDefinition: ProviderDefinition = {
     displayName: 'Mistral AI',
     description: 'Mistral models served through the official API.',
   },
-  resolveModelMetadata: (modelId) =>
-    resolveCatalogMetadata(modelId, MODEL_CATALOG, undefined, [
-      {
-        prefixes: ['voxtral-'],
-        metadata: { kind: 'language', capabilities: { input: { audio: {} } } },
-      },
-      {
-        prefixes: ['pixtral-', 'ocr-'],
-        metadata: {
-          kind: 'language',
-          capabilities: { input: { image: IMAGE_CAPABILITY } },
-        },
-      },
-      {
-        prefixes: ['mistral-', 'ministral-'],
-        excludesAny: ['embed', 'moderation'],
-        metadata: {
-          kind: 'language',
-          capabilities: { input: { image: IMAGE_CAPABILITY } },
-        },
-      },
-      {
-        prefixes: ['codestral-', 'devstral-', 'leanstral-'],
-        metadata: { kind: 'language', capabilities: { input: {} } },
-      },
-      { prefixes: ['mistral-embed'], metadata: { kind: 'embedding' } },
-      { prefixes: ['mistral-moderation'], metadata: { kind: 'moderation' } },
-    ]),
+  resolveModelMetadata: resolveMistralModelMetadata,
+  catalogModels: catalogModels(MODEL_CATALOG, resolveMistralModelMetadata),
   createLanguageModel: (instance, modelId) =>
     createOpenAiCompatibleLanguageModel(instance, modelId, BASE_URL),
-  discoverModels: (instance, signal) =>
-    discoverOpenAiCompatibleModels(instance, BASE_URL, signal),
+  discoverModels,
   testConnection: (instance, signal) =>
     testDiscoveryConnection(instance, BASE_URL, () =>
-      discoverOpenAiCompatibleModels(instance, BASE_URL, signal),
+      discoverModels(instance, signal),
     ),
 };
+
+/**
+ * Mistral's model list reports capabilities and deprecation per model:
+ * https://docs.mistral.ai/api/endpoint/models
+ */
+async function discoverModels(
+  instance: ProviderInstance,
+  signal: AbortSignal,
+): Promise<ProviderOperationResult<readonly ProviderModel[]>> {
+  try {
+    const body = await fetchJson(
+      modelListUrl(instance, BASE_URL),
+      providerHeaders(instance, 'openai'),
+      signal,
+    );
+    if (!isRecord(body) || !Array.isArray(body.data)) return available([]);
+    const now = Date.now();
+    return available(
+      body.data.flatMap((item): ProviderModel[] => {
+        if (!isRecord(item) || typeof item.id !== 'string') return [];
+        if (item.archived === true) return [];
+        const deprecation = parseModelCreatedAt(item.deprecation);
+        if (deprecation && Date.parse(deprecation) <= now) return [];
+        const capabilities = isRecord(item.capabilities)
+          ? item.capabilities
+          : {};
+        const kind =
+          capabilities.completion_chat === true
+            ? ('language' as const)
+            : capabilities.audio_transcription === true
+              ? ('speech-to-text' as const)
+              : undefined;
+        // Embedding, moderation, classifier and OCR-only models cannot chat.
+        if (
+          !kind &&
+          (capabilities.completion_chat === false ||
+            /embed|moderation/i.test(item.id))
+        )
+          return [];
+        const input = {
+          ...(capabilities.vision === true && { image: {} }),
+          ...(capabilities.audio === true && { audio: {} }),
+          ...(kind === 'speech-to-text' && { audio: {} }),
+        };
+        const createdAt = parseModelCreatedAt(item.created);
+        return [
+          {
+            modelId: item.id,
+            ...(createdAt && { createdAt }),
+            ...(kind && { kind }),
+            ...(typeof item.max_context_length === 'number' &&
+              item.max_context_length > 0 && {
+                contextSize: item.max_context_length,
+              }),
+            capabilities: {
+              input,
+              ...(capabilities.function_calling === true && { tools: true }),
+              ...(kind === 'speech-to-text' && { voice: { stt: true } }),
+            },
+          },
+        ];
+      }),
+    );
+  } catch (error) {
+    return unavailable('discovery_failed', sanitizedError(error));
+  }
+}

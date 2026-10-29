@@ -92,11 +92,16 @@ export interface KnownModel {
     documentationUrl?: string;
     reviewedAt?: string;
   }>;
-  source: 'manual' | 'discovered' | 'merged';
+  source: 'manual' | 'discovered' | 'catalog' | 'merged';
 }
 
 export interface KnownModelsResponse {
   models: KnownModel[];
+  discovery?: {
+    status: 'live' | 'cached' | 'stale' | 'catalog';
+    fetchedAt?: string;
+    issue?: { code: string; message: string; remediation?: string };
+  };
 }
 export interface ConnectivityResponse {
   latencyMs: number;

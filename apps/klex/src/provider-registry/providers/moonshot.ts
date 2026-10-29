@@ -1,5 +1,9 @@
 import type { ProviderDefinition } from '../provider-registry';
-import { exactModel, resolveCatalogMetadata } from './model-catalog-helpers';
+import {
+  catalogModels,
+  exactModel,
+  resolveCatalogMetadata,
+} from './model-catalog-helpers';
 import {
   createOpenAiCompatibleLanguageModel,
   discoverOpenAiCompatibleModels,
@@ -39,6 +43,24 @@ const MODEL_CATALOG = (
   ),
 );
 
+function resolveMoonshotModelMetadata(modelId: string) {
+  return resolveCatalogMetadata(modelId, MODEL_CATALOG, undefined, [
+    {
+      prefixes: ['kimi-'],
+      metadata: {
+        kind: 'language',
+        capabilities: { input: { image: IMAGE_CAPABILITY } },
+      },
+      documentationUrl: MODEL_DOCS,
+    },
+    {
+      prefixes: ['moonshot-'],
+      metadata: { kind: 'language', capabilities: { input: {} } },
+      documentationUrl: MODEL_DOCS,
+    },
+  ]);
+}
+
 export const moonshotProviderDefinition: ProviderDefinition = {
   type: 'moonshot',
   usageGuidance:
@@ -47,22 +69,8 @@ export const moonshotProviderDefinition: ProviderDefinition = {
     displayName: 'Moonshot AI',
     description: 'Moonshot AI models served through its public API.',
   },
-  resolveModelMetadata: (modelId) =>
-    resolveCatalogMetadata(modelId, MODEL_CATALOG, undefined, [
-      {
-        prefixes: ['kimi-'],
-        metadata: {
-          kind: 'language',
-          capabilities: { input: { image: IMAGE_CAPABILITY } },
-        },
-        documentationUrl: MODEL_DOCS,
-      },
-      {
-        prefixes: ['moonshot-'],
-        metadata: { kind: 'language', capabilities: { input: {} } },
-        documentationUrl: MODEL_DOCS,
-      },
-    ]),
+  resolveModelMetadata: resolveMoonshotModelMetadata,
+  catalogModels: catalogModels(MODEL_CATALOG, resolveMoonshotModelMetadata),
   createLanguageModel: (instance, modelId) =>
     createOpenAiCompatibleLanguageModel(instance, modelId, BASE_URL),
   discoverModels: (instance, signal) =>

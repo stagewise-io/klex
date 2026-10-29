@@ -1,5 +1,9 @@
 import type { ProviderDefinition } from '../provider-registry';
-import { exactModel, resolveCatalogMetadata } from './model-catalog-helpers';
+import {
+  catalogModels,
+  exactModel,
+  resolveCatalogMetadata,
+} from './model-catalog-helpers';
 import {
   createOpenAiCompatibleLanguageModel,
   discoverOpenAiCompatibleModels,
@@ -67,6 +71,7 @@ export const minimaxProviderDefinition: ProviderDefinition = {
     description: 'MiniMax models served through the official API.',
   },
   resolveModelMetadata: resolveMinimaxModelMetadata,
+  catalogModels: catalogModels(MODEL_CATALOG, resolveMinimaxModelMetadata),
   createLanguageModel: (instance, modelId) =>
     createOpenAiCompatibleLanguageModel(instance, modelId, BASE_URL),
   discoverModels: (instance, signal) =>

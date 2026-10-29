@@ -19,13 +19,13 @@ The provider registry is the single integration point for language-model transpo
 | `zai` | Z.ai / GLM | OpenAI-compatible discovery |
 | `minimax` | MiniMax | OpenAI-compatible discovery |
 | `xiaomi-mimo` | Xiaomi MiMo | OpenAI-compatible discovery |
-| `mistral` | Mistral AI | OpenAI-compatible discovery |
-| `xai` | xAI | OpenAI-compatible discovery |
+| `mistral` | Mistral AI | Yes, with capabilities and deprecation |
+| `xai` | xAI | Yes, with input modalities |
 | `glm-coding-plan` | GLM Coding Plan | OpenAI-compatible discovery |
 | `minimax-coding-plan` | MiniMax Coding Plan | OpenAI-compatible discovery |
 | `opencode-go` | OpenCode Go API plan | OpenAI-compatible discovery |
 | `opencode-zen` | OpenCode Zen API plan | OpenAI-compatible discovery |
-| `chatgpt-codex-subscription` | ChatGPT Codex Subscription model transport | No |
+| `chatgpt-codex-subscription` | ChatGPT Codex Subscription model transport | Codex CLI model cache |
 | `chat-completions` | Custom OpenAI Chat Completions endpoint | No |
 | `responses` | Custom OpenAI Responses endpoint | No |
 | `anthropic-messages` | Custom Anthropic Messages endpoint | No |
@@ -41,6 +41,7 @@ Every provider definition exposes user-facing metadata (`name`, `description`, o
 - **Preflight:** `preflightCreate`, `preflightUpdate`, and `preflightRemove` validate prerequisites without mutating configuration. Failures use stable codes and may include remediation text.
 - **Setup:** optional setup hooks run after preflight and before persistence. They may resolve local dependencies or normalize settings. Cleanup hooks run as part of removal. A failed hook leaves configuration unchanged.
 - **Discovery:** `discoverModels` returns transient model metadata. Discovery never rewrites configuration. Manual `knownModels` entries are merged by exact model ID and take precedence field by field.
+- **Discovery fallback:** discovered lists are cached in memory for one hour per instance and settings; `refresh=true` bypasses the cache. When a fetch fails, the registry returns the last good list, or else the definition's `catalogModels` (maintained exact catalog entries for chat and voice), together with the failure. It returns the failure itself only when it has no cached, catalog or manual models to show. Discovery drops models no Klex purpose can use where the provider marks them (for example OpenAI base completion, embedding, moderation and video models; Gemini models without a `generateContent` method; retired or non-chat Mistral models). Voice, transcription and image models stay and carry their `kind`.
 - **Connectivity:** `testConnection` returns a structured success or failure result. Tests use the configured credentials and an optional provider-specific test model; they do not persist discovered models.
 - **Resolution:** runtime selection always uses the pair `{ providerId, modelId }`. Model IDs are opaque and may contain colons.
 
@@ -55,7 +56,7 @@ The Admin API exposes enough metadata to build provider-neutral setup interfaces
 - `PATCH /v1/providers/{id}` updates an instance.
 - `DELETE /v1/providers/{id}` removes an instance after referential-integrity and lifecycle checks.
 - `POST /v1/providers/{id}/test` runs the standardized connectivity test.
-- `GET /v1/providers/{id}/models` returns merged manual and discovered models; callers can control discovery through the query contract.
+- `GET /v1/providers/{id}/models` returns merged manual and discovered models; callers can control discovery through the query contract. For provider types with discovery, `discovery.status` is `live`, `cached`, `stale` (last good list after a failed refresh) or `catalog` (maintained fallback list, model `source: "catalog"`); `stale` and `catalog` include the failure as `discovery.issue` so clients can show it next to the list.
 - `POST /v1/providers/{id}/models`, `PATCH /v1/providers/{id}/models/{modelId}`, and `DELETE /v1/providers/{id}/models/{modelId}` manage manual model metadata.
 
 Operation failures return a machine-readable `code`, a human-readable `error`, and optional `remediation`. Expected categories include invalid configuration, missing dependencies, authentication, unsupported platforms, connectivity, discovery, conflict, referential integrity, and internal errors. API clients must branch on `code`, not parse the message.

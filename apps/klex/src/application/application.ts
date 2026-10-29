@@ -143,6 +143,7 @@ class ApplicationModule implements Application {
   private readonly resources: (() => Promise<void>)[] = [];
   private starting: Promise<boolean> | undefined;
   private closing: Promise<void> | undefined;
+  private shuttingDown = false;
   private exitHandler: (() => void) | undefined;
   private terminationHandler: (() => void) | undefined;
   private restartHandler:
@@ -181,8 +182,13 @@ class ApplicationModule implements Application {
 
   private own(resource: { close(): Promise<void> }): () => Promise<void> {
     let closing: Promise<void> | undefined;
-    const close = () => (closing ??= closeWithTimeout(() => resource.close()));
-    this.resources.push(close);
+    const close = () =>
+      (closing ??= Promise.resolve().then(() => resource.close()));
+    // Rollback may stop waiting, but must not replace the actual cleanup result.
+    // Normal shutdown is bounded only by the coordinator's overall deadline.
+    this.resources.push(() =>
+      this.shuttingDown ? close() : closeWithTimeout(close),
+    );
     return close;
   }
 
@@ -742,6 +748,7 @@ class ApplicationModule implements Application {
       },
       closeUi: () => cliUi?.close(),
       cleanup: async () => {
+        this.shuttingDown = true;
         // Tell Klex Cloud first: the agent stops accepting tunneled work now,
         // and a slow teardown below must not consume the shutdown deadline
         // before the cloud learns about it. Token access stays available for

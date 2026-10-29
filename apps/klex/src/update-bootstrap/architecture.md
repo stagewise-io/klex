@@ -24,8 +24,9 @@ startup rollback has per-step deadlines so one failed service cannot prevent lat
 resources from being released. Normal runtime shutdown waits for each dependency
 in order, including stopping ingress before the session host and finishing transcript
 writes before closing session history. Its overall deadline belongs to the shutdown
-coordinator. Owned provider cleanup results are memoized so a failed lock release or
-tracing shutdown cannot be hidden by a second, idempotent no-op.
+coordinator, including slow lock release and telemetry provider shutdown. Owned
+provider cleanup results memoize the underlying operation, not a rollback timeout,
+so actual failures cannot be hidden by a second, idempotent no-op.
 
 Manual interactive updates retain their existing discovery and offer flow. Without
 automatic updates, or outside a managed installation, a startup failure remains a
@@ -67,6 +68,6 @@ and restart, offline and bounded checks, installer failures, startup/import fail
 recovery, later healing releases, healthy drain delegation, signal cleanup and
 idempotency. `main.test.ts` exercises real bootstrap/application wiring with mocked
 services, including config-load failure, cleanup, health readiness and restart
-agent continuity, plus lock-release and tracing cleanup failures. Composition tests
+agent continuity, plus slow and failed lock-release and tracing cleanup. Composition tests
 cover bounded partial runtime rollback and slow ordered normal shutdown. Packaged executable smoke tests verify the SEA and its
 native dependencies separately.

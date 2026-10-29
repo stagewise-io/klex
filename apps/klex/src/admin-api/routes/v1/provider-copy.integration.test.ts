@@ -48,7 +48,7 @@ const emptySelection: ModelSelection = {
   audioListening: [],
   consult: [],
   instincts: [],
-  voice: { sts: [], tts: [], stt: [] },
+  voice: { sts: [] },
 };
 
 async function createBot(definition: ProviderDefinition) {
@@ -178,8 +178,6 @@ it('copies providers, exact custom metadata and all selections between real bots
     instincts: [{ ...reference, api: 'generation', attemptTimeoutMs: 1234 }],
     voice: {
       sts: [{ ...reference, voiceId: 'cedar' }],
-      tts: [reference],
-      stt: [reference],
     },
   };
   expect(
@@ -231,8 +229,6 @@ it('copies providers, exact custom metadata and all selections between real bots
     instincts: remap(sourceSelection.instincts),
     voice: {
       sts: remap(sourceSelection.voice.sts),
-      tts: remap(sourceSelection.voice.tts),
-      stt: remap(sourceSelection.voice.stt),
     },
   };
   const saved = await target.app.request('/v1/settings/model-selection', {

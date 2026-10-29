@@ -22,6 +22,7 @@ export interface MachineServerOptions {
   mcp?: MachineMcp;
   logger?: MachineLogger;
   registerSignals?: boolean;
+  omitHostDetails?: boolean;
   /** Directory for persisted notification state. Memory-only when omitted. */
   dataDir?: string;
 }
@@ -47,7 +48,11 @@ export async function startMachineServer(
   } else {
     store = createNotificationStore({ dataDir: options.dataDir, logger });
     await store.ready();
-    mcp = createMachineMcp(config.cwd, { notifications: store, logger });
+    mcp = createMachineMcp(config.cwd, {
+      notifications: store,
+      logger,
+      omitHostDetails: options.omitHostDetails,
+    });
   }
   const app = createMachineApp(mcp, config.host);
 

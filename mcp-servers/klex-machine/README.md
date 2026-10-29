@@ -40,6 +40,12 @@ Configuration precedence is CLI flag, environment variable, then default:
 | `--enrollment-code-file` | `KLEX_MACHINE_ENROLLMENT_CODE_FILE` | none |
 | `--omit-host-details` | `KLEX_MACHINE_OMIT_HOST_DETAILS` | `false` |
 
+## MCP icons
+
+The MCP `initialize` response advertises light/dark SVG icons through standard `serverInfo.icons`. Images are self-contained base64 data URLs with scalable `sizes: ["any"]`, designed for 16px badges. Laptop, desktop, server and container shapes follow the same device-type detector as Cloud machine facts. Virtual machines use the server rack icon. Unknown devices use a generic monitor.
+
+Detection is lazy, shared across principals and requests, and limited to one second per process. Failures use the generic icon without blocking subsequent requests or retrying probes. `--omit-host-details` skips icon device detection too and always advertises the generic icon. No external image host or Cloud-specific URL matching is required. Existing machines need an updated daemon and an MCP reconnect before clients receive the icons.
+
 ## Machine facts reported to Cloud
 
 Enrolled and managed modes report static facts on every authenticated Cloud connection attempt, including reconnect. Local mode and enrollment with `--no-serve` do not report. Collection uses Node OS/filesystem APIs and fixed system-information commands, with a one-second async probe budget. It never invokes MCP tools or interpolates user input into commands.

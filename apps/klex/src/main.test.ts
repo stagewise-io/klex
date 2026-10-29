@@ -2,7 +2,10 @@ import { join, resolve } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { RestartRequest } from '@/shutdown-coordinator';
+import type {
+  RestartRequest,
+  ShutdownCoordinatorOptions,
+} from '@/shutdown-coordinator';
 
 const mocks = vi.hoisted(() => {
   const resource = {
@@ -16,6 +19,8 @@ const mocks = vi.hoisted(() => {
     setModelCallSink: vi.fn(),
     handle: vi.fn(),
     setTunnelRequestHandler: vi.fn(),
+    disconnect: vi.fn(async () => undefined),
+    forceFlush: vi.fn(async () => undefined),
   };
   const logger = {
     info: vi.fn(),
@@ -32,6 +37,8 @@ const mocks = vi.hoisted(() => {
     resource,
     bootstraps: [] as { close(): Promise<void> }[],
     createConfig: vi.fn(),
+    createTracing: vi.fn(),
+    shutdowns: [] as ShutdownCoordinatorOptions[],
     checkForUpdates: vi.fn(async () => undefined),
     healthServer: {
       start: vi.fn(async () => undefined),
@@ -174,10 +181,13 @@ vi.mock('@/session/session-host', () => ({ createSessionHost: vi.fn() }));
 vi.mock('@/session/chat/utils/system-prompt.md', () => ({ default: '' }));
 vi.mock('@/shutdown-coordinator', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/shutdown-coordinator')>()),
-  createShutdownCoordinator: () => ({
-    requestExit: vi.fn(),
-    requestRestart: mocks.requestRestart,
-  }),
+  createShutdownCoordinator: (options: ShutdownCoordinatorOptions) => {
+    mocks.shutdowns.push(options);
+    return {
+      requestExit: vi.fn(),
+      requestRestart: mocks.requestRestart,
+    };
+  },
   DEFAULT_SHUTDOWN_TIMEOUT_MS: 15_000,
 }));
 vi.mock('@/telemetry-manager', () => ({
@@ -196,7 +206,7 @@ vi.mock('@/telemetry-resource', () => ({
   createIdentityResourceAttributes: vi.fn(),
   createTelemetryResourceAttributes: vi.fn(),
 }));
-vi.mock('@/tracing', () => ({ createTracing: () => mocks.resource }));
+vi.mock('@/tracing', () => ({ createTracing: mocks.createTracing }));
 vi.mock('@/update-bootstrap', async (importOriginal) => {
   const original = await importOriginal<typeof import('@/update-bootstrap')>();
   return {
@@ -236,6 +246,8 @@ describe('managed-update agent continuity', () => {
     );
     mocks.createCliUi.mockReturnValue(mocks.resource);
     mocks.createConfig.mockReturnValue(mocks.resource);
+    mocks.createTracing.mockReturnValue(mocks.resource);
+    mocks.shutdowns.length = 0;
   });
 
   afterEach(async () => {
@@ -346,6 +358,32 @@ describe('managed-update agent continuity', () => {
     expect(mocks.healthServer.markReady).not.toHaveBeenCalled();
     expect(mocks.healthServer.close).not.toHaveBeenCalled();
     expect(mocks.createCliUi).not.toHaveBeenCalled();
+  });
+
+  it('preserves the first lock-release failure during normal shutdown', async () => {
+    await launch();
+    const failure = new Error('Cannot unlink the agent lock');
+    mocks.resource.release.mockRejectedValueOnce(failure);
+    const shutdown = mocks.shutdowns.at(-1);
+    expect(shutdown).toBeDefined();
+    await expect(shutdown?.cleanup()).rejects.toThrow(
+      'Could not release the agent-directory lock',
+    );
+    expect(mocks.resource.release).toHaveBeenCalledOnce();
+    expect(mocks.logger[Symbol.asyncDispose]).toHaveBeenCalledOnce();
+  });
+
+  it('preserves the first tracing-close failure during normal shutdown', async () => {
+    const failure = new Error('Tracing shutdown failed');
+    const close = vi.fn(async () => undefined).mockRejectedValueOnce(failure);
+    mocks.createTracing.mockReturnValue({ ...mocks.resource, close });
+    await launch();
+    const shutdown = mocks.shutdowns.at(-1);
+    expect(shutdown).toBeDefined();
+    await expect(shutdown?.cleanup()).rejects.toBe(failure);
+    expect(close).toHaveBeenCalledOnce();
+    expect(mocks.resource.release).toHaveBeenCalledOnce();
+    expect(mocks.logger[Symbol.asyncDispose]).toHaveBeenCalledOnce();
   });
 
   it('wires a lazy soul reader for the selected agent into learning', async () => {

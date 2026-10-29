@@ -147,15 +147,22 @@ async function closeReverse(
   resources: readonly ClosableResource[],
   logger: Pick<RootLogger, 'error'>,
 ): Promise<void> {
-  await closeInOrder(resources.toReversed(), logger);
+  await closeInOrder(resources.toReversed(), logger, true);
 }
 
 async function closeInOrder(
   resources: readonly ClosableResource[],
   logger: Pick<RootLogger, 'error'>,
+  rollback = false,
 ): Promise<void> {
   for (const resource of resources) {
-    await closeWithTimeout(() => resource.close()).catch((error: unknown) => {
+    // Only startup rollback may abandon a stalled step to keep recovery alive.
+    // Normal shutdown must wait for transcript writers before closing storage;
+    // its process-level deadline is owned by the shutdown coordinator.
+    const closing = rollback
+      ? closeWithTimeout(() => resource.close())
+      : Promise.resolve().then(() => resource.close());
+    await closing.catch((error: unknown) => {
       logger.error({ error }, 'Resource shutdown failed');
     });
   }

@@ -116,6 +116,8 @@ jobs:
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
       - run: pnpm install --frozen-lockfile
+      - name: Build workspace dependencies
+        run: pnpm --filter '@stagewise/klex^...' build
       - name: Verify runtime registration and frozen startup upgrades
         run: pnpm -F @stagewise/klex test src/local-data-registry src/local-data/local-data-upgrades.test.ts src/config/config-upgrades.test.ts
 

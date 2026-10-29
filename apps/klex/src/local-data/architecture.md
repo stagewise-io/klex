@@ -61,6 +61,8 @@ Agent discovery may inspect metadata without mutation. Incompatible or corrupt a
 
 Migrations are deterministic, forward-only, and validated after every step. Do not add down migrations. Do not remove old SQLite columns or JSON fields until compatibility policy permits. Add optional fields before requiring them.
 
+Released schemas, nested schemas, defaults, and migration outputs are immutable contracts. Verify them against release history before editing. Deleted or withdrawn releases still count as released. If release status is uncertain, treat the contract as released. Do not tighten a historical validator to match the current runtime model or fold a new transformation into an old migration. Removing an optional field, including an empty list, requires a new schema version and a new step. Historical fixtures must retain their original shape and metadata. Test them through registered startup preflight and migration, not only the runtime parser. The repository's `local-data-migrations` skill contains the release audit and regression checklist.
+
 Session-history schema 2→3 adds nullable `sessions.generation_error` in Klex 0.26.0.
 Existing rows start without an unresolved warning. Failed turns create a row even
 without transcript messages; successful replacement turns resolve older warnings
@@ -69,13 +71,19 @@ preflight, and recovery path, and older binaries reject schema 3 before writing.
 
 ## Instinct API and model-call availability migrations
 
-Config schema 5→6 raises compatibility to 8 and adds instinct configuration and an empty instinct selection to the released schema 5 shape. Empty instinct selections use the ordered Chat models through generation without changing saved configuration. Explicit instinct entries choose generation/evaluation and an optional bounded attempt timeout; omission uses the remaining shared budget. This single unreleased migration also introduces the TypeSafe AI and Vercel AI Gateway provider types and removes the `modelSelection.voice.tts` and `modelSelection.voice.stt` lists. Schema 6 voice selection contains only `sts`; existing STS entries, including `voiceId` and provider options, and `audioListening` selections are preserved. Released schemas 1–5 retain all three voice lists. Provider model kinds and voice capability metadata still classify TTS/STT models. Other model purposes retain their original contract; the public `configVersion: 2` is unchanged. Config and model-call changes first ship in `0.18.0`.
+Config schema 5→6 raises compatibility to 8 and adds instinct configuration and an empty instinct selection to the released schema 5 shape. Empty instinct selections use the ordered Chat models through generation without changing saved configuration. Explicit instinct entries choose generation/evaluation and an optional bounded attempt timeout; omission uses the remaining shared budget. This released migration also introduces the TypeSafe AI and Vercel AI Gateway provider types. Released schemas 1–6 retain all three voice lists. Provider model kinds and voice capability metadata still classify TTS/STT models. Other model purposes retain their original contract; the public `configVersion: 2` is unchanged. Config schema 6 shipped in `0.22.0` and remains in `0.26.0`; its historical minimum-version diagnostic is `0.18.0`, not its first release.
 
 Model-call SQLite schema 2→3 raises compatibility to 2 and adds nullable `api`, `token_usage_reported`, and `cache_usage_reported` columns. Historical rows keep unknown (`null`) API/availability rather than claiming measured usage. New availability flags distinguish fully reported totals/cache metrics from absent or incomplete pairs; individually reported numbers are retained. Existing numeric columns remain additive storage, and aggregate usage reports incompleteness counts so sums with missing metrics are recognized as reported lower bounds, not complete consumption or cost estimates. No synthetic operation-test source or verification store is introduced.
 
 Both migrations use the same registered checkpoint/preflight/recovery path below and reject incompatible older writers before mutation.
 
-Gateway Jev uses `typesafe-ai/jev` with the instinct evaluation API, independently of the direct TypeSafe `jev-latest` model. Compatibility 8 blocks older config writers that cannot preserve the new provider types and instinct semantics. Released config schemas 1–5 remain frozen. Config remains registered in `local-data-registry`; checkpoint, failure, and recovery behavior is unchanged.
+Gateway Jev uses `typesafe-ai/jev` with the instinct evaluation API, independently of the direct TypeSafe `jev-latest` model. Compatibility 8 blocks older config writers that cannot preserve the new provider types and instinct semantics. Released config schemas 1–6 remain frozen. Config remains registered in `local-data-registry`; checkpoint, failure, and recovery behavior is unchanged.
+
+## STS-only voice selection migration
+
+Config schema 6→7 first ships in `0.27.1` and removes only `modelSelection.voice.tts` and `modelSelection.voice.stt`. STS entries, `voiceId`, provider options, `audioListening`, providers, instinct settings, and other config values are preserved. Compatibility remains 8 because the schema bump already prevents older writers from opening the transformed config. The minimum-version diagnostic becomes `0.27.1`.
+
+Version `0.27.0` incorrectly changed the already released schema 6 and the 5→6 migration in place. Existing schema-6 configs failed preflight on their legacy voice keys. The fix restores that historical contract and adds the separate 6→7 step. Schema-6 files written by `0.27.0` without TTS/STT keys also pass validation and migrate. The migration uses the registered checkpoint, preflight, and recovery path. Bots that crash before updater initialization require a manual binary update.
 
 ## Recovery state machine
 

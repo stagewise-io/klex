@@ -138,10 +138,12 @@ Config schema 5 moved these settings under `extensions`. Migration from schema
 (`300000` when absent) and drops `memoryWriteIntervalMs` and
 `memoryWriteStepInterval`.
 
-Config schema 6 keeps only `sts` in `modelSelection.voice`. The 5→6 migration
-removes the TTS/STT selection lists while preserving speech-to-speech entries
-and `audioListening` selections. Released config schemas 1–5 retain their
-original voice shape. The public `configVersion` remains `2`.
+Config schema 7, introduced in `0.27.1`, keeps only `sts` in
+`modelSelection.voice`. The 6→7 migration removes the TTS/STT selection lists
+while preserving speech-to-speech entries and `audioListening` selections.
+Released config schemas 1–6 retain their original voice shape. The public
+`configVersion` remains `2`. Configs written by `0.27.0` without TTS/STT keys
+also migrate from schema 6 to 7. Older binaries reject schema 7 before writing.
 
 `openai-primary` and `openai-secondary` demonstrate independent instances of
 one provider type. `openai-internal` keeps native OpenAI behavior while routing
@@ -255,7 +257,7 @@ This is the body for `PATCH /v1/settings/model-selection`; the `voice` object co
 
 New voices are validated atomically against the compatible catalog; unchanged persisted triples can be retained offline. Config loading and new-call resolution do not discover voices over the network. Upstream rejection is an explicit error rather than a silent substitution. Existing selections without a voice keep their defaults: OpenAI Realtime and GPT-Live use `marin`; Gemini leaves its default to the provider. GPT-Live's explicit factory override takes precedence over persistence.
 
-Changes apply to new calls; active calls and reconnects retain their startup voice. The field was introduced in schema 5 with compatibility floor 7 and a minimum-version diagnostic of `0.16.0`. Current schema 6 retains `voiceId`, removes TTS/STT selections, and uses compatibility floor 8; older writers reject it before mutation.
+Changes apply to new calls; active calls and reconnects retain their startup voice. The field was introduced in schema 5 with compatibility floor 7 and a minimum-version diagnostic of `0.16.0`. Current schema 7 retains `voiceId`, removes TTS/STT selections, and uses compatibility floor 8; older writers reject it before mutation.
 
 ## Realtime media
 

@@ -20,6 +20,7 @@ import {
   completeV2Config,
   completeV4StoredConfig,
   completeV5StoredConfig,
+  completeV6StoredConfig,
   emptyModelSelection,
 } from './config.test-fixtures';
 import { CONFIG_STORE_DEFINITION } from './storage-definition';
@@ -210,7 +211,7 @@ describe('config v2', () => {
 
   it('advances compatibility metadata for consult model selection', async () => {
     expect(CONFIG_STORE_DEFINITION.compatibilityVersion).toBe(8);
-    expect(CONFIG_STORE_DEFINITION.minimumKlexVersion).toBe('0.18.0');
+    expect(CONFIG_STORE_DEFINITION.minimumKlexVersion).toBe('0.27.1');
 
     const dataDirectory = await directory();
     await writeFile(
@@ -235,7 +236,7 @@ describe('config v2', () => {
     };
     expect(persisted._klex).toMatchObject({
       compatibilityVersion: 8,
-      minimumKlexVersion: '0.18.0',
+      minimumKlexVersion: '0.27.1',
     });
   });
 
@@ -293,7 +294,7 @@ describe('config v2', () => {
     await prepareConfigStore(dataDirectory);
     const migrated = JSON.parse(await readFile(configPath, 'utf8'));
     expect(migrated._klex).toMatchObject({
-      schemaVersion: 6,
+      schemaVersion: 7,
       compatibilityVersion: 8,
     });
     expect(migrated.modelSelection).toEqual(completeV2Config.modelSelection);
@@ -464,7 +465,7 @@ describe('config v2', () => {
     expect(persisted).not.toHaveProperty('telemetry');
     expect(persisted._klex).toMatchObject({
       store: 'config',
-      schemaVersion: 6,
+      schemaVersion: 7,
     });
     expect(persisted.extensions).toEqual({
       memory: {
@@ -503,7 +504,7 @@ describe('config v2', () => {
       string,
       unknown
     >;
-    expect(persisted._klex).toMatchObject({ schemaVersion: 6 });
+    expect(persisted._klex).toMatchObject({ schemaVersion: 7 });
     expect(persisted).not.toHaveProperty('episodeFinishIdleTriggerTimeMs');
     expect(persisted).not.toHaveProperty('memoryWriteIntervalMs');
     expect(persisted).not.toHaveProperty('memoryWriteStepInterval');
@@ -597,15 +598,212 @@ describe('config v2', () => {
     });
     expect(migrated.extensions).toEqual(completeV5StoredConfig.extensions);
     expect(migrated._klex).toMatchObject({
-      schemaVersion: 6,
+      schemaVersion: 7,
       compatibilityVersion: 8,
     });
     await prepareConfigStore(dataDirectory);
     expect(await readFile(configPath, 'utf8')).toBe(bytes);
   });
 
+  it.each(['populated', 'empty', 'absent'] as const)(
+    'migrates schema 6 with %s legacy voice lists and protects against downgrade',
+    async (shape) => {
+      const dataDirectory = await directory();
+      const configPath = join(dataDirectory, CONFIG_FILE_NAME);
+      const sts = [
+        {
+          providerId: 'openai-primary',
+          modelId: 'gpt-realtime',
+          voiceId: 'cedar',
+          providerOptions: { openai: { speed: 1.1 } },
+        },
+      ];
+      const audioListening = [
+        { providerId: 'openai-primary', modelId: 'gpt-audio-1.5' },
+      ];
+      const voice =
+        shape === 'absent'
+          ? { sts }
+          : {
+              sts,
+              tts:
+                shape === 'empty'
+                  ? []
+                  : [{ providerId: 'openai-primary', modelId: 'tts-1' }],
+              stt:
+                shape === 'empty'
+                  ? []
+                  : [{ providerId: 'openai-primary', modelId: 'whisper-1' }],
+            };
+      const original = {
+        ...completeV6StoredConfig,
+        modelSelection: {
+          ...completeV6StoredConfig.modelSelection,
+          audioListening,
+          voice,
+        },
+        _klex: {
+          store: 'config',
+          schemaVersion: 6,
+          compatibilityVersion: 8,
+          minimumKlexVersion: '0.18.0',
+          writtenByKlexVersion: shape === 'absent' ? '0.27.0' : '0.26.0',
+        },
+      };
+      await writeFile(configPath, JSON.stringify(original));
+      await prepareConfigStore(dataDirectory);
+      const bytes = await readFile(configPath, 'utf8');
+      expect(JSON.parse(bytes)).toEqual({
+        ...original,
+        modelSelection: { ...original.modelSelection, voice: { sts } },
+        _klex: {
+          ...original._klex,
+          schemaVersion: 7,
+          minimumKlexVersion: '0.27.1',
+          writtenByKlexVersion: KLEX_VERSION,
+        },
+      });
+      await prepareConfigStore(dataDirectory);
+      expect(await readFile(configPath, 'utf8')).toBe(bytes);
+      const config = createConfig({
+        logging,
+        dataDirectory,
+        env: {
+          OPENAI_PRIMARY_KEY: 'test',
+          OPENAI_SECONDARY_KEY: 'test',
+          INTERNAL_OPENAI_KEY: 'test',
+          CUSTOM_API_KEY: 'test',
+        },
+      });
+      await config.start();
+      expect(config.get().modelSelection.voice).toEqual({ sts });
+      await config.close();
+      const before = await readFile(configPath, 'utf8');
+      await expect(
+        createLocalData({
+          logging,
+          dataDirectory,
+          klexVersion: '0.26.0',
+          stores: [
+            {
+              ...CONFIG_STORE_DEFINITION,
+              schemaVersion: 6,
+              minimumKlexVersion: '0.18.0',
+              versions: CONFIG_STORE_DEFINITION.versions.filter(
+                ({ version }) => version <= 6,
+              ),
+              migrations: CONFIG_STORE_DEFINITION.migrations.filter(
+                ({ to }) => to <= 6,
+              ),
+            },
+          ],
+        }).start(),
+      ).rejects.toThrow(/schema/i);
+      expect(await readFile(configPath, 'utf8')).toBe(before);
+    },
+  );
+
+  it('keeps the released 5→6 migration and schema-6 voice selections intact', () => {
+    const step = CONFIG_STORE_DEFINITION.migrations.find(
+      ({ from }) => from === 5,
+    )!;
+    const input = {
+      ...completeV5StoredConfig,
+      modelSelection: {
+        ...completeV5StoredConfig.modelSelection,
+        voice: {
+          sts: [],
+          tts: [{ providerId: 'openai-primary', modelId: 'tts-1' }],
+          stt: [{ providerId: 'openai-primary', modelId: 'whisper-1' }],
+        },
+      },
+    };
+    const migrated = step.up(input);
+    expect(migrated).toEqual({
+      ...input,
+      instinct: completeV2Config.instinct,
+      modelSelection: { ...input.modelSelection, instincts: [] },
+    });
+    const schema = CONFIG_STORE_DEFINITION.versions.find(
+      ({ version }) => version === 6,
+    )!.schema;
+    expect(schema.parse(migrated)).toEqual(migrated);
+  });
+
+  it.each([6, 8])(
+    'leaves invalid or newer schema %s configs untouched',
+    async (schemaVersion) => {
+      const dataDirectory = await directory();
+      const configPath = join(dataDirectory, CONFIG_FILE_NAME);
+      const original = JSON.stringify({
+        ...completeV6StoredConfig,
+        modelSelection: {
+          ...completeV6StoredConfig.modelSelection,
+          voice: {
+            sts: [],
+            tts: schemaVersion === 6 ? 'invalid' : [],
+            stt: [],
+          },
+        },
+        _klex: {
+          store: 'config',
+          schemaVersion,
+          compatibilityVersion: 8,
+          minimumKlexVersion: '0.18.0',
+          writtenByKlexVersion: '0.26.0',
+        },
+      });
+      await writeFile(configPath, original);
+      await expect(prepareConfigStore(dataDirectory)).rejects.toThrow();
+      expect(await readFile(configPath, 'utf8')).toBe(original);
+    },
+  );
+
+  it('restores the schema-6 config after migration failure and retries successfully', async () => {
+    const dataDirectory = await directory();
+    const configPath = join(dataDirectory, CONFIG_FILE_NAME);
+    const original = JSON.stringify({
+      ...completeV6StoredConfig,
+      _klex: {
+        store: 'config',
+        schemaVersion: 6,
+        compatibilityVersion: 8,
+        minimumKlexVersion: '0.18.0',
+        writtenByKlexVersion: '0.26.0',
+      },
+    });
+    await writeFile(configPath, original);
+    await expect(
+      createLocalData({
+        logging,
+        dataDirectory,
+        klexVersion: KLEX_VERSION,
+        stores: [
+          {
+            ...CONFIG_STORE_DEFINITION,
+            migrations: CONFIG_STORE_DEFINITION.migrations.map((step) =>
+              step.from === 6
+                ? {
+                    ...step,
+                    up: () => {
+                      throw new Error('injected voice migration failure');
+                    },
+                  }
+                : step,
+            ),
+          },
+        ],
+      }).start(),
+    ).rejects.toThrow(/original data was restored/);
+    expect(await readFile(configPath, 'utf8')).toBe(original);
+    await prepareConfigStore(dataDirectory);
+    expect(
+      JSON.parse(await readFile(configPath, 'utf8'))._klex.schemaVersion,
+    ).toBe(7);
+  });
+
   it.each(['tts', 'stt'])(
-    'rejects the removed %s selection in schema 6, including empty lists',
+    'rejects the removed %s selection in schema 7, including empty lists',
     (purpose) => {
       expect(parseKlexConfig({}).modelSelection.voice).toEqual({ sts: [] });
       for (const entries of [[], [{ providerId: 'voice', modelId: 'model' }]]) {
@@ -852,7 +1050,7 @@ describe('config v2', () => {
 
   it('records the current config compatibility metadata', async () => {
     expect(CONFIG_STORE_DEFINITION.compatibilityVersion).toBe(8);
-    expect(CONFIG_STORE_DEFINITION.minimumKlexVersion).toBe('0.18.0');
+    expect(CONFIG_STORE_DEFINITION.minimumKlexVersion).toBe('0.27.1');
 
     const dataDirectory = await directory();
     await writeFile(
@@ -877,7 +1075,7 @@ describe('config v2', () => {
     };
     expect(persisted._klex).toMatchObject({
       compatibilityVersion: 8,
-      minimumKlexVersion: '0.18.0',
+      minimumKlexVersion: '0.27.1',
     });
   });
 
@@ -1155,7 +1353,7 @@ describe('config v2', () => {
     );
     expect(persisted._klex).toMatchObject({
       store: 'config',
-      schemaVersion: 6,
+      schemaVersion: 7,
     });
     expect(parseKlexConfig(persisted).configVersion).toBe(2);
     await config.close();

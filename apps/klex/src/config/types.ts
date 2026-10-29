@@ -790,11 +790,20 @@ const klexConfigV5Schema = z.object({
   sessionHistory: sessionHistoryConfigSchema.optional(),
 });
 
-const klexConfigSchema = klexConfigV5Schema.extend({
+/** Frozen released schema 6: instinct backends with all three voice lists. */
+const klexConfigV6Schema = klexConfigV5Schema.extend({
   instinct: instinctConfigSchema.prefault({}),
   providers: z
     .record(providerInstanceIdSchema, providerConfigSchema)
     .default({}),
+  modelSelection: v5ModelSelectionSchema
+    .extend({
+      instincts: z.array(instinctModelSelectionEntrySchema).default([]),
+    })
+    .prefault({}),
+});
+
+const klexConfigSchema = klexConfigV6Schema.extend({
   modelSelection: modelSelectionSchema.prefault({}),
 });
 
@@ -864,7 +873,11 @@ const storedKlexConfigV5Schema = klexConfigV5Schema
   .extend({ configVersion: z.literal(2) })
   .strict();
 
-/** Stored schema 6: instinct backends, native Gateway provider, and STS-only voice selection. */
+const storedKlexConfigV6Schema = klexConfigV6Schema
+  .extend({ configVersion: z.literal(2) })
+  .strict();
+
+/** Stored schema 7: STS-only voice selection. */
 const storedKlexConfigSchema = klexConfigSchema
   .extend({ configVersion: z.literal(2) })
   .strict();
@@ -919,9 +932,20 @@ function parseStoredKlexConfigV5(input: unknown): Record<string, unknown> {
   return storedKlexConfigV5Schema.parse(input);
 }
 
-/** 5→6: add instinct defaults and remove TTS/STT model selections. */
-function migrateInstinctConfig(input: unknown): KlexConfig {
-  const config = storedKlexConfigV5Schema.parse(input);
+function parseStoredKlexConfigV6(input: unknown): Record<string, unknown> {
+  return storedKlexConfigV6Schema.parse(input);
+}
+
+/** Frozen 5→6: add instinct defaults without changing voice selections. */
+function migrateInstinctConfig(
+  input: unknown,
+): z.infer<typeof klexConfigV6Schema> {
+  return klexConfigV6Schema.parse(storedKlexConfigV5Schema.parse(input));
+}
+
+/** 6→7: remove TTS/STT selections, including empty legacy lists. */
+function dropLegacyVoiceSelections(input: unknown): KlexConfig {
+  const config = storedKlexConfigV6Schema.parse(input);
   return klexConfigSchema.parse({
     ...config,
     modelSelection: {
@@ -1120,6 +1144,7 @@ export type {
 };
 export {
   dropLegacyTelemetryConfig,
+  dropLegacyVoiceSelections,
   getProviderSettingsJsonSchema,
   instinctModelSelectionEntrySchema,
   isProviderSecretSetting,
@@ -1139,6 +1164,7 @@ export {
   parseStoredKlexConfigV2,
   parseStoredKlexConfigV4,
   parseStoredKlexConfigV5,
+  parseStoredKlexConfigV6,
   providerConfigSchema,
   providerInstanceIdSchema,
   providerTypeSchema,

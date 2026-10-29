@@ -101,6 +101,66 @@ const { instincts: _instincts, ...historicalModelSelection } =
 const { instinct: _instinct, ...releasedConfig } = completeV2Config;
 const { extensions: _extensions, ...releasedV4Config } = releasedConfig;
 
+/** Frozen schema-6 shape from v0.26.0. Do not derive it from runtime defaults. */
+export const completeV6StoredConfig = {
+  configVersion: 2,
+  officialName: 'Released Fixture Agent',
+  timezone: 'Europe/Berlin',
+  providers: {
+    'openai-primary': {
+      type: 'openai',
+      settings: { apiKey: '${env:OPENAI_PRIMARY_KEY}' },
+      knownModels: {
+        'gpt-4.1': { displayName: 'Saved model', contextSize: 128_000 },
+      },
+    },
+  },
+  modelSelection: {
+    chat: [
+      {
+        providerId: 'openai-primary',
+        modelId: 'gpt-4.1',
+        providerOptions: { openai: { reasoningEffort: 'high' } },
+      },
+    ],
+    compaction: [],
+    memory: [],
+    imageVision: [],
+    audioListening: [],
+    consult: [],
+    instincts: [
+      {
+        providerId: 'openai-primary',
+        modelId: 'gpt-4.1',
+        api: 'generation',
+        attemptTimeoutMs: 2_500,
+      },
+    ],
+    voice: { sts: [], tts: [], stt: [] },
+  },
+  mcpServers: {
+    workspace: { command: 'workspace-mcp', args: ['--root', '/workspace'] },
+  },
+  instinct: {
+    enabled: false,
+    timeoutMs: 6_000,
+    classifierTimeoutMs: 3_000,
+    historyCharacterCap: 12_000,
+    messageCharacterCap: 1_000,
+    contextCharacterCap: 1_000,
+  },
+  extensions: {
+    memory: {
+      episodes: {
+        maxCharacters: 40_000,
+        maxDurationMs: 1_800_000,
+        idleTimeoutMs: 300_000,
+      },
+    },
+  },
+  sessionHistory: { maxBytes: 33_554_432 },
+};
+
 /** Actual released schema 5: no instinct configuration or selection. */
 export const completeV5StoredConfig = {
   ...releasedConfig,

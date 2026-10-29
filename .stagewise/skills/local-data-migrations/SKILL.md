@@ -15,7 +15,7 @@ Read `apps/klex/src/local-data/architecture.md` before changing persistent state
    - Compatible additive change.
    - Schema migration.
    - Compatibility-floor increase.
-3. Update the store definition in its owning module. For a representation change, add a new schema and one new forward step from the current version. Keep the old schema and old steps intact. Review shared dependencies for accidental changes to historical behavior.
+3. Update the store definition in its owning module as required by the classification. For a schema migration, add a new schema and one new forward step from the current version. Compatible additive changes may retain versions only when older readers preserve and safely ignore the addition. Keep the old schema and old steps intact. Review shared dependencies for accidental changes to historical behavior.
 4. Confirm the definition remains present in `local-data-registry`.
 5. Add old/current/newer fixtures and downgrade, failure, and recovery tests appropriate to the classification. Follow the regression checklist below.
 6. Run local-data tests, the owning module tests, typecheck, lint, executable build, and native smoke verification. Report failures and skipped checks explicitly. Do not describe a parser-only test as startup verification.

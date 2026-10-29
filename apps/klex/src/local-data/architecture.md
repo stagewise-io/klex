@@ -83,7 +83,7 @@ Gateway Jev uses `typesafe-ai/jev` with the instinct evaluation API, independent
 
 Config schema 6→7 first ships in `0.27.1` and removes only `modelSelection.voice.tts` and `modelSelection.voice.stt`. STS entries, `voiceId`, provider options, `audioListening`, providers, instinct settings, and other config values are preserved. Compatibility remains 8 because the schema bump already prevents older writers from opening the transformed config. The minimum-version diagnostic becomes `0.27.1`.
 
-Version `0.27.0` incorrectly changed the already released schema 6 and the 5→6 migration in place. Existing schema-6 configs failed preflight on their legacy voice keys. The fix restores that historical contract and adds the separate 6→7 step. Schema-6 files written by `0.27.0` without TTS/STT keys also pass validation and migrate. The migration uses the registered checkpoint, preflight, and recovery path. Bots that crash before updater initialization require a manual binary update.
+Version `0.27.0` incorrectly changed the already released schema 6 and the 5→6 migration in place. Existing schema-6 configs failed preflight on their legacy voice keys. The fix restores that historical contract and adds the separate 6→7 step. Schema-6 files written by `0.27.0` without TTS/STT keys also pass validation and migrate. The migration uses the registered checkpoint, preflight, and recovery path.
 
 ## Recovery state machine
 

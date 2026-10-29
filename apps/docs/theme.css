@@ -42,3 +42,9 @@
 [data-blume-header] img {
   height: 1.75rem;
 }
+
+/* Blume renders the native "Related pages" heading as text-sm font-medium.
+   Bump it to text-base font-semibold so it reads as a section, not a caption. */
+[data-blume-related] h2 {
+  @apply text-xl font-semibold;
+}

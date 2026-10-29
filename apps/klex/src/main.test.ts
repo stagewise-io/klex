@@ -30,6 +30,9 @@ const mocks = vi.hoisted(() => {
   logger.child.mockReturnValue(logger);
   return {
     resource,
+    bootstraps: [] as { close(): Promise<void> }[],
+    createConfig: vi.fn(),
+    checkForUpdates: vi.fn(async () => undefined),
     healthServer: {
       start: vi.fn(async () => undefined),
       close: vi.fn(async () => undefined),
@@ -67,7 +70,7 @@ vi.mock('@/cloud-connectivity', () => ({
 vi.mock('@/composition/runtime', () => ({
   startRuntime: () => mocks.resource,
 }));
-vi.mock('@/config', () => ({ createConfig: () => mocks.resource }));
+vi.mock('@/config', () => ({ createConfig: mocks.createConfig }));
 vi.mock('@/data-directory', () => ({
   ensureDataDirectory: mocks.ensureDataDirectory,
 }));
@@ -103,6 +106,12 @@ vi.mock('@/self-update', () => ({
       mocks.onRestartRequested = options.onRestartRequested;
     }
     start() {}
+    check = mocks.checkForUpdates;
+    getState() {
+      return { status: 'up-to-date' };
+    }
+    stop() {}
+    async cancelInstall() {}
   },
 }));
 vi.mock('@/session/chat', () => ({ createChatSession: vi.fn() }));
@@ -163,7 +172,8 @@ vi.mock('@/session/realtime', () => ({
 }));
 vi.mock('@/session/session-host', () => ({ createSessionHost: vi.fn() }));
 vi.mock('@/session/chat/utils/system-prompt.md', () => ({ default: '' }));
-vi.mock('@/shutdown-coordinator', () => ({
+vi.mock('@/shutdown-coordinator', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/shutdown-coordinator')>()),
   createShutdownCoordinator: () => ({
     requestExit: vi.fn(),
     requestRestart: mocks.requestRestart,
@@ -187,6 +197,19 @@ vi.mock('@/telemetry-resource', () => ({
   createTelemetryResourceAttributes: vi.fn(),
 }));
 vi.mock('@/tracing', () => ({ createTracing: () => mocks.resource }));
+vi.mock('@/update-bootstrap', async (importOriginal) => {
+  const original = await importOriginal<typeof import('@/update-bootstrap')>();
+  return {
+    ...original,
+    createUpdateBootstrap: (
+      deps: Parameters<typeof original.createUpdateBootstrap>[0],
+    ) => {
+      const bootstrap = original.createUpdateBootstrap(deps);
+      mocks.bootstraps.push(bootstrap);
+      return bootstrap;
+    },
+  };
+});
 
 describe('managed-update agent continuity', () => {
   const originalArgv = process.argv;
@@ -212,9 +235,13 @@ describe('managed-update agent continuity', () => {
       }),
     );
     mocks.createCliUi.mockReturnValue(mocks.resource);
+    mocks.createConfig.mockReturnValue(mocks.resource);
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    await Promise.all(
+      mocks.bootstraps.splice(0).map((bootstrap) => bootstrap.close()),
+    );
     process.argv = originalArgv;
     vi.unstubAllEnvs();
     vi.restoreAllMocks();
@@ -257,10 +284,13 @@ describe('managed-update agent continuity', () => {
       );
       process.argv = [process.execPath, 'klex', '--health-port', '8081'];
       await import('./main');
-      await vi.waitFor(() => {
-        expect(mocks.resource.close).toHaveBeenCalled();
-        expect(mocks.healthServer.close).toHaveBeenCalledOnce();
-      });
+      await vi.waitFor(
+        () => {
+          expect(mocks.resource.close).toHaveBeenCalled();
+          expect(mocks.healthServer.close).toHaveBeenCalledOnce();
+        },
+        { timeout: 5_000 },
+      );
       expect(mocks.logger.fatal).not.toHaveBeenCalled();
       expect(mocks.healthServer.markReady).not.toHaveBeenCalled();
       expect(mocks.createCliUi).not.toHaveBeenCalled();
@@ -270,6 +300,53 @@ describe('managed-update agent continuity', () => {
       }
     },
   );
+
+  it('checks for updates before config loading and survives a config startup failure', async () => {
+    const failure = new Error('Existing configuration cannot be loaded');
+    const configClose = vi.fn(async () => undefined);
+    const configStart = vi.fn(async () => {
+      throw failure;
+    });
+    mocks.createConfig.mockReturnValue({
+      ...mocks.resource,
+      start: configStart,
+      close: configClose,
+    });
+    process.argv = [
+      process.execPath,
+      'klex',
+      '--headless',
+      '--auto-update',
+      '--data-dir',
+      'existing/agent',
+      '--health-port',
+      '8081',
+    ];
+    await import('./main');
+    await vi.waitFor(() => {
+      expect(mocks.logger.warn).toHaveBeenCalledWith(
+        expect.stringContaining('update-recovery mode'),
+      );
+    });
+    expect(mocks.checkForUpdates).toHaveBeenCalledOnce();
+    expect(configStart).toHaveBeenCalledOnce();
+    const startOrder = configStart.mock.invocationCallOrder[0];
+    if (startOrder === undefined) throw new Error('Config did not start');
+    expect(mocks.checkForUpdates.mock.invocationCallOrder[0]).toBeLessThan(
+      startOrder,
+    );
+    expect(configClose).toHaveBeenCalledOnce();
+    expect(mocks.resource.release).toHaveBeenCalledOnce();
+    expect(mocks.logger.error).toHaveBeenCalledWith(
+      { error: failure },
+      'Agent startup failed',
+    );
+    expect(mocks.logger.fatal).not.toHaveBeenCalled();
+    expect(mocks.healthServer.start).toHaveBeenCalledOnce();
+    expect(mocks.healthServer.markReady).not.toHaveBeenCalled();
+    expect(mocks.healthServer.close).not.toHaveBeenCalled();
+    expect(mocks.createCliUi).not.toHaveBeenCalled();
+  });
 
   it('wires a lazy soul reader for the selected agent into learning', async () => {
     await launch();

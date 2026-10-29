@@ -176,6 +176,33 @@ describe('runtime composition', () => {
     expect(adoptedClose).not.toHaveBeenCalled();
   });
 
+  it('bounds a hung rollback step and still releases earlier modules', async () => {
+    vi.useFakeTimers();
+    try {
+      const recorded = emptyRecord();
+      const modules = createModules({ recorded, failing: 'mcp' });
+      modules.mcp.close = () => new Promise(() => {});
+      const startup = expect(
+        startRuntime({ logging: createLoggingMock(), modules }),
+      ).rejects.toThrow('mcp failed');
+      await vi.advanceTimersByTimeAsync(4_999);
+      expect(recorded.closes).toEqual([]);
+      await vi.advanceTimersByTimeAsync(1);
+      await startup;
+      expect(recorded.closes).toEqual([
+        'realtime',
+        'session-host',
+        'cloud-connectivity',
+        'admin-api',
+        'session-history',
+        'model-call-logger',
+      ]);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('continues unwinding when a module close fails', async () => {
     const recorded = emptyRecord();
     const modules = createModules({ recorded });

@@ -1,5 +1,7 @@
 import type { RootLogger } from '@stagewise/logger';
 
+import { closeWithTimeout } from '@/shutdown-coordinator';
+
 /** Shutdown contract shared by runtime modules and adopted resources. */
 export interface ClosableResource {
   close(): Promise<void>;
@@ -153,7 +155,7 @@ async function closeInOrder(
   logger: Pick<RootLogger, 'error'>,
 ): Promise<void> {
   for (const resource of resources) {
-    await resource.close().catch((error: unknown) => {
+    await closeWithTimeout(() => resource.close()).catch((error: unknown) => {
       logger.error({ error }, 'Resource shutdown failed');
     });
   }

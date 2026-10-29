@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 
-import { createRoute, type RouteHandler, z } from '@hono/zod-openapi';
+import { createRoute, type RouteHandler, type z } from '@hono/zod-openapi';
 
 import type { ModuleLogger } from '@stagewise/logger';
 
@@ -10,6 +10,8 @@ import type { Mcp } from '@/mcp';
 import { assertJsonValue } from '@/tool-provider';
 
 import {
+  callMcpToolBodySchema,
+  callMcpToolResponseSchema,
   createMcpServerBodySchema,
   errorResponseSchema,
   mcpServerNameParamSchema,
@@ -414,10 +416,7 @@ export const callMcpToolRoute = createRoute({
       required: true,
       content: {
         'application/json': {
-          schema: z.object({
-            toolName: z.string().min(1),
-            arguments: z.record(z.string(), z.unknown()),
-          }),
+          schema: callMcpToolBodySchema,
         },
       },
     },
@@ -426,7 +425,7 @@ export const callMcpToolRoute = createRoute({
     200: {
       description: 'MCP tool result',
       content: {
-        'application/json': { schema: z.object({ result: z.unknown() }) },
+        'application/json': { schema: callMcpToolResponseSchema },
       },
     },
     400: {

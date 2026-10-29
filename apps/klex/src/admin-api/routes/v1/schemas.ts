@@ -240,6 +240,17 @@ const toolCallHistoryResponseSchema = z
   })
   .openapi('ToolCallHistoryResponse');
 
+const callMcpToolBodySchema = z
+  .object({
+    toolName: z.string().min(1),
+    arguments: z.record(z.string(), z.unknown()),
+  })
+  .openapi('CallMcpToolBody');
+
+const callMcpToolResponseSchema = z
+  .object({ result: z.unknown() })
+  .openapi('CallMcpToolResponse');
+
 const mcpServerNameParamSchema = z.object({
   name: z.string().min(1),
 });
@@ -1318,6 +1329,8 @@ export {
   agentIdentityPatchSchema,
   agentIdentityResponseSchema,
   audioInputCapabilitySchema,
+  callMcpToolBodySchema,
+  callMcpToolResponseSchema,
   canAddProviderBodySchema,
   cloudEnrollBodySchema,
   cloudEnrollResponseSchema,

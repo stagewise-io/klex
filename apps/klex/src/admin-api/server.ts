@@ -179,12 +179,12 @@ export function createAdminApp(deps: AdminAppDependencies) {
       getIntrospectionRoot({ introspector: deps.introspector }),
     )
     .openapi(getMcpServersRoute, getMcpServers(deps))
-    .openapi(callMcpToolRoute, callMcpTool(deps))
     .openapi(getMcpServerRoute, getMcpServer(deps))
     .openapi(createMcpServerRoute, createMcpServer(deps))
     .openapi(updateMcpServerRoute, updateMcpServer(deps))
     .openapi(deleteMcpServerRoute, deleteMcpServer(deps))
     .openapi(getMcpToolCallHistoryRoute, getMcpToolCallHistory(deps))
+    .openapi(callMcpToolRoute, callMcpTool(deps))
     .openapi(startAuthorizationRoute, startAuthorization(deps))
     .openapi(cancelAuthorizationRoute, cancelAuthorization(deps))
     .openapi(completeAuthorizationRoute, completeAuthorization(deps))

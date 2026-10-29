@@ -8,6 +8,11 @@ import { afterEach, describe, expect, it } from 'vitest';
 import type { RootLogger } from '@stagewise/logger';
 
 import { createLocalData } from '@/local-data';
+import {
+  dropLegacyTelemetryConfig,
+  migrateLegacyKlexConfig,
+  nestMemoryExtensionConfig,
+} from '@/local-data-history';
 import { KLEX_VERSION } from '@/release';
 
 import {
@@ -25,11 +30,8 @@ import {
 } from './config.test-fixtures';
 import { CONFIG_STORE_DEFINITION } from './storage-definition';
 import {
-  dropLegacyTelemetryConfig,
   getProviderSettingsJsonSchema,
   klexConfigSchema,
-  migrateLegacyKlexConfig,
-  nestMemoryExtensionConfig,
   parseKlexConfig,
 } from './types';
 

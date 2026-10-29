@@ -95,16 +95,12 @@ const apiFormatSchema = z.enum([
   'transcriptions', // used for OpenAI-compatible speech-to-text endpoints
 ]);
 
-type ApiFormat = z.infer<typeof apiFormatSchema>;
-
 // Endpoint auth: apiKey (literal or {env:VAR}) plus optional custom headers
 
 const legacyEndpointAuthSchema = z.object({
   apiKey: z.string().optional(),
   headers: z.record(z.string(), z.string()).optional(),
 });
-
-type LegacyEndpointAuth = z.infer<typeof legacyEndpointAuthSchema>;
 
 // Endpoint config
 
@@ -714,8 +710,6 @@ const klexConfigV4Schema = z.object({
   timezone: timezoneSchema.default('UTC'),
 });
 
-type KlexConfigV4 = z.infer<typeof klexConfigV4Schema>;
-
 const MAX_TIMER_MS = 2_147_483_647;
 
 /** Episode rotation limits of the memory extension. */
@@ -807,7 +801,6 @@ const klexConfigSchema = klexConfigV6Schema.extend({
   modelSelection: modelSelectionSchema.prefault({}),
 });
 
-type KlexConfigV5 = z.infer<typeof klexConfigV5Schema>;
 type KlexConfig = z.infer<typeof klexConfigSchema>;
 type SessionHistoryConfig = z.infer<typeof sessionHistoryConfigSchema>;
 type EpisodeRotationConfig = z.infer<typeof episodeRotationConfigSchema>;
@@ -882,35 +875,7 @@ const storedKlexConfigSchema = klexConfigSchema
   .extend({ configVersion: z.literal(2) })
   .strict();
 
-/** 3→4 migration: normalizes to the v4 shape, dropping `telemetry`. */
-function dropLegacyTelemetryConfig(input: unknown): KlexConfigV4 {
-  return klexConfigV4Schema.parse(storedKlexConfigV2Schema.parse(input));
-}
-
-/**
- * 4→5 migration: moves `episodeFinishIdleTriggerTimeMs` unchanged to
- * `extensions.memory.episodes.idleTimeoutMs` and drops the obsolete
- * `memoryWriteIntervalMs` / `memoryWriteStepInterval`. The other rotation
- * limits receive their defaults.
- */
-function nestMemoryExtensionConfig(input: unknown): KlexConfigV5 {
-  const {
-    episodeFinishIdleTriggerTimeMs,
-    memoryWriteIntervalMs: _memoryWriteIntervalMs,
-    memoryWriteStepInterval: _memoryWriteStepInterval,
-    ...rest
-  } = storedKlexConfigV4Schema.parse(input);
-  return klexConfigV5Schema.parse({
-    ...rest,
-    extensions: {
-      memory: { episodes: { idleTimeoutMs: episodeFinishIdleTriggerTimeMs } },
-    },
-  });
-}
-
 type LegacyKlexConfig = z.infer<typeof legacyKlexConfigSchema>;
-type LegacyProviderConfig = z.infer<typeof legacyProviderConfigSchema>;
-type LegacyModelEntry = z.infer<typeof legacyModelSelectionEntrySchema>;
 
 function parseKlexConfig(input: unknown): KlexConfig {
   return klexConfigSchema.parse(input);
@@ -936,186 +901,8 @@ function parseStoredKlexConfigV6(input: unknown): Record<string, unknown> {
   return storedKlexConfigV6Schema.parse(input);
 }
 
-/** Frozen 5→6: add instinct defaults without changing voice selections. */
-function migrateInstinctConfig(
-  input: unknown,
-): z.infer<typeof klexConfigV6Schema> {
-  return klexConfigV6Schema.parse(storedKlexConfigV5Schema.parse(input));
-}
-
-/** 6→7: remove TTS/STT selections, including empty legacy lists. */
-function dropLegacyVoiceSelections(input: unknown): KlexConfig {
-  const config = storedKlexConfigV6Schema.parse(input);
-  return klexConfigSchema.parse({
-    ...config,
-    modelSelection: {
-      ...config.modelSelection,
-      voice: { sts: config.modelSelection.voice.sts },
-    },
-  });
-}
-
 function parseStoredKlexConfig(input: unknown): Record<string, unknown> {
   return storedKlexConfigSchema.parse(input);
-}
-
-function migrateLegacyKlexConfig(input: unknown): KlexConfigV4 {
-  return migrateLegacyConfig(parseLegacyKlexConfig(input));
-}
-
-function migrateLegacyConfig(legacy: LegacyKlexConfig): KlexConfigV4 {
-  const providers: KlexConfigV4['providers'] = {};
-  const providerIds = new Map<string, Map<string | undefined, string>>();
-  for (const [oldProviderId, provider] of Object.entries(legacy.providers)) {
-    const ids = new Map<string | undefined, string>();
-    if ('preset' in provider) {
-      addMigratedProvider(providers, oldProviderId, {
-        type: provider.preset === 'google' ? 'google-gemini' : provider.preset,
-        settings: legacySettings(provider.auth),
-        knownModels: provider.knownModels,
-      });
-      ids.set(undefined, oldProviderId);
-    } else {
-      const entries = Object.entries(provider.endpoints);
-      for (const [endpointId, endpoint] of entries) {
-        const instanceId =
-          entries.length === 1
-            ? oldProviderId
-            : `${oldProviderId}--${endpointId}`;
-        addMigratedProvider(providers, instanceId, {
-          type: legacyFormatProviderType(endpoint.format),
-          settings: {
-            baseUrl: endpoint.url,
-            ...legacySettings(endpoint.auth),
-          },
-          knownModels: endpoint.knownModels,
-        });
-        ids.set(endpointId, instanceId);
-      }
-    }
-    providerIds.set(oldProviderId, ids);
-  }
-
-  const migrateList = (entries: readonly LegacyModelEntry[]) =>
-    entries.map((entry) =>
-      migrateLegacyModelEntry(entry, legacy.providers, providerIds),
-    );
-  const selection = legacy.modelSelection;
-  return klexConfigV4Schema.parse({
-    configVersion: 2,
-    episodeFinishIdleTriggerTimeMs: legacy.episodeFinishIdleTriggerTimeMs,
-    officialName: legacy.officialName,
-    providers,
-    modelSelection: {
-      chat: migrateList(selection.chat),
-      compaction: migrateList(selection.compaction),
-      memory: migrateList(selection.memory),
-      imageVision: migrateList(selection.imageVision),
-      audioListening: migrateList(selection.audioListening),
-      consult: migrateList(selection.consult),
-      voice: {
-        sts: migrateList(selection.voice.sts),
-        tts: migrateList(selection.voice.tts),
-        stt: migrateList(selection.voice.stt),
-      },
-    },
-    mcpServers: legacy.mcpServers,
-  });
-}
-
-function migrateLegacyModelEntry(
-  entry: LegacyModelEntry,
-  providers: Record<string, LegacyProviderConfig>,
-  providerIds: ReadonlyMap<string, ReadonlyMap<string | undefined, string>>,
-): ModelSelectionEntry {
-  const encoded = typeof entry === 'string' ? entry : entry.model;
-  const separator = encoded.indexOf(':');
-  const oldProviderId = encoded.slice(0, separator);
-  const remainder = encoded.slice(separator + 1);
-  const provider = providers[oldProviderId];
-  const ids = providerIds.get(oldProviderId);
-  if (!provider || !ids)
-    throw new Error(
-      `Unknown provider '${oldProviderId}' in legacy model reference`,
-    );
-
-  let providerId: string | undefined;
-  let modelId = remainder;
-  if ('preset' in provider) {
-    providerId = ids.get(undefined);
-  } else {
-    const endpointSeparator = remainder.indexOf(':');
-    if (endpointSeparator === -1) {
-      throw new Error(
-        `Legacy model reference '${encoded}' is missing an endpoint`,
-      );
-    }
-    const endpointId = remainder.slice(0, endpointSeparator);
-    providerId = ids.get(endpointId);
-    modelId = remainder.slice(endpointSeparator + 1);
-  }
-  if (!providerId || !modelId)
-    throw new Error(`Invalid legacy model reference '${encoded}'`);
-  return {
-    providerId,
-    modelId,
-    ...(typeof entry === 'object' && entry.providerOptions
-      ? { providerOptions: entry.providerOptions }
-      : {}),
-  };
-}
-
-function addMigratedProvider(
-  providers: KlexConfigV4['providers'],
-  providerId: string,
-  provider: KlexConfigV4['providers'][string],
-): void {
-  if (providers[providerId]) {
-    throw new Error(`Provider migration ID collision at '${providerId}'`);
-  }
-  providers[providerId] = provider;
-}
-
-function legacySettings(auth: LegacyEndpointAuth): Record<string, unknown> {
-  return {
-    ...(auth.apiKey !== undefined && {
-      apiKey: migrateLegacyEnvironmentReferences(auth.apiKey),
-    }),
-    ...(auth.headers !== undefined && {
-      headers: Object.fromEntries(
-        Object.entries(auth.headers).map(([key, value]) => [
-          key,
-          migrateLegacyEnvironmentReferences(value),
-        ]),
-      ),
-    }),
-  };
-}
-
-function migrateLegacyEnvironmentReferences(value: string): string {
-  return value.replace(/(?<!\$)\{env:([A-Za-z_][A-Za-z0-9_]*)\}/g, '${env:$1}');
-}
-
-function legacyFormatProviderType(
-  format: ApiFormat,
-): KlexConfigV4['providers'][string]['type'] {
-  switch (format) {
-    case 'openai':
-      return 'openai';
-    case 'chat-completions':
-      return 'chat-completions';
-    case 'anthropic':
-    case 'messages':
-      return 'anthropic-messages';
-    case 'google':
-      return 'google-generative';
-    case 'open-responses':
-      return 'responses';
-    case 'realtime':
-    case 'speech':
-    case 'transcriptions':
-      return 'openai';
-  }
 }
 
 export type {
@@ -1143,20 +930,15 @@ export type {
   VoiceModelPurpose,
 };
 export {
-  dropLegacyTelemetryConfig,
-  dropLegacyVoiceSelections,
   getProviderSettingsJsonSchema,
   instinctModelSelectionEntrySchema,
   isProviderSecretSetting,
   klexConfigSchema,
   mcpServerConfigSchema,
-  migrateInstinctConfig,
-  migrateLegacyKlexConfig,
   modelCapabilitiesSchema,
   modelIdSchema,
   modelKindSchema,
   modelSelectionSchema,
-  nestMemoryExtensionConfig,
   parseKlexConfig,
   parseLegacyKlexConfig,
   parseProviderSettings,

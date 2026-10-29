@@ -1,65 +1,15 @@
 import { join } from 'node:path';
 
-import { z } from 'zod';
-
 import {
   type JsonStoreDefinition,
   type LocalDataMetadata,
   readCurrentJsonStore,
   writeJsonStoreDocument,
 } from '@/local-data';
+import { LOCAL_DATA_HISTORY } from '@/local-data-history';
 import { KLEX_VERSION } from '@/release';
 
 const STATE_FILE = 'state.json';
-
-const isoTimestamp = z
-  .string()
-  .refine((value) => Number.isFinite(Date.parse(value)), {
-    message: 'Timestamp must be a valid ISO 8601 datetime',
-  });
-
-const legacySkillStateSchema = z
-  .object({
-    createdAt: isoTimestamp,
-    updatedAt: isoTimestamp,
-    lastReadAt: isoTimestamp.nullable(),
-    readCount: z.number().int().nonnegative(),
-    sourceEpisodes: z.array(z.string()),
-  })
-  .passthrough();
-
-const learningStatePayloadSchema = z
-  .object({
-    cursor: z.string().nullable(),
-    episodeFailures: z.record(z.string(), z.number().int().nonnegative()),
-    changedRunsSinceConsolidation: z.number().int().nonnegative(),
-    lastConsolidationAt: isoTimestamp.nullable(),
-    skills: z.record(z.string(), legacySkillStateSchema),
-  })
-  .passthrough();
-
-const activity = z.number().int().nonnegative();
-const deferredSchema = z
-  .object({ id: z.string(), after: z.string(), attempts: activity })
-  .passthrough();
-const skillStateSchema = legacySkillStateSchema.extend({
-  userEdited: z.boolean().default(false),
-});
-const activitySkillSchema = skillStateSchema.extend({
-  createdEpisode: activity,
-  updatedEpisode: activity,
-  lastReadEpisode: activity.nullable(),
-});
-const activityStateSchema = learningStatePayloadSchema.extend({
-  processedEpisodeCount: activity,
-  pendingChangeWeight: activity,
-  lastConsolidationEpisode: activity,
-  lastConsolidationSkillCount: activity,
-  consolidationFailures: activity,
-  nextConsolidationEpisode: activity.nullable(),
-  deferred: z.array(deferredSchema).max(20),
-  skills: z.record(z.string(), activitySkillSchema),
-});
 
 function activityDefaults() {
   return {
@@ -81,35 +31,8 @@ export const LEARNING_STATE_STORE_DEFINITION: JsonStoreDefinition = {
   schemaVersion: 2,
   compatibilityVersion: 2,
   minimumKlexVersion: '0.24.0',
-  versions: [
-    { version: 1, schema: learningStatePayloadSchema },
-    { version: 2, schema: activityStateSchema },
-  ],
-  migrations: [
-    {
-      from: 1,
-      to: 2,
-      name: 'episode-activity',
-      up: (value) => {
-        const old = learningStatePayloadSchema.parse(value);
-        return {
-          ...old,
-          ...activityDefaults(),
-          skills: Object.fromEntries(
-            Object.entries(old.skills).map(([name, skill]) => [
-              name,
-              {
-                ...skill,
-                createdEpisode: 0,
-                updatedEpisode: 0,
-                lastReadEpisode: null,
-              },
-            ]),
-          ),
-        };
-      },
-    },
-  ],
+  versions: LOCAL_DATA_HISTORY['learning-extension-state'].versions,
+  migrations: LOCAL_DATA_HISTORY['learning-extension-state'].migrations,
 };
 
 export interface SkillState {

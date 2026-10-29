@@ -140,6 +140,85 @@ describe('frozen persisted config upgrades', () => {
     },
   );
 
+  it('does not rewrite an already-current config in released key order on first startup', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'klex-current-order-'));
+    directories.push(directory);
+    const expected = JSON.parse(
+      await readFile(new URL('config-expected-v7.json', fixtures), 'utf8'),
+    );
+    const { _klex } = JSON.parse(
+      await readFile(new URL('config-v7.json', fixtures), 'utf8'),
+    );
+    const { instincts, ...selections } = expected.modelSelection;
+    // v0.27.1 inherited these positions from v5, then appended instinct.
+    // Keep the order literal and independent of the live parser.
+    const payload = {
+      configVersion: expected.configVersion,
+      officialName: expected.officialName,
+      providers: expected.providers,
+      modelSelection: { ...selections, instincts },
+      mcpServers: expected.mcpServers,
+      timezone: expected.timezone,
+      extensions: expected.extensions,
+      sessionHistory: { maxBytes: 32 * 1024 * 1024 },
+      instinct: expected.instinct,
+    };
+    await writeFile(
+      join(directory, 'config.json'),
+      JSON.stringify({ ...payload, _klex }, null, 2),
+    );
+    const beforeStartup = await snapshot(directory);
+    const localData = createLocalData({
+      logging,
+      dataDirectory: directory,
+      klexVersion: KLEX_VERSION,
+      stores: [CONFIG_STORE_DEFINITION],
+    });
+    await localData.start();
+    const config = createConfig({
+      logging,
+      dataDirectory: directory,
+      env: { PRIMARY_API_KEY: 'fixture-key' },
+    });
+    try {
+      await config.start();
+      expect(config.get()).toEqual(payload);
+      expect(Object.keys(config.get())).toEqual(Object.keys(payload));
+      expect(await snapshot(directory)).toEqual(beforeStartup);
+    } finally {
+      await config.close();
+      await localData.close();
+    }
+  });
+
+  it.each([5, 6])(
+    'preserves released root key order in migration from v%i',
+    async (version) => {
+      const { _klex: _metadata, ...input } = JSON.parse(
+        await readFile(new URL(`config-v${version}.json`, fixtures), 'utf8'),
+      );
+      const migration = CONFIG_STORE_DEFINITION.migrations.find(
+        (step) => step.from === version,
+      );
+      if (!migration) throw new Error(`Missing migration from v${version}`);
+      const output = await migration.up({
+        ...input,
+        sessionHistory: { maxBytes: 32 * 1024 * 1024 },
+      });
+      expect(Object.keys(output)).toEqual([
+        'configVersion',
+        'officialName',
+        'providers',
+        'modelSelection',
+        'mcpServers',
+        'timezone',
+        'extensions',
+        'sessionHistory',
+        'instinct',
+      ]);
+    },
+  );
+
   it('keeps the released 5→6 output voice lists; only 6→7 removes them', async () => {
     const { _klex: _metadata, ...input } = JSON.parse(
       await readFile(new URL('config-v5.json', fixtures), 'utf8'),

@@ -601,12 +601,12 @@ const klexConfigSchema = z.object({
     .record(providerInstanceIdSchema, providerConfigSchema)
     .default({}),
   modelSelection: modelSelectionSchema.prefault({}),
-  instinct: instinctConfigSchema.prefault({}),
   mcpServers: z.record(z.string(), mcpServerConfigSchema).default({}),
   timezone: timezoneSchema.default('UTC'),
   // `.prefault` (not `.default`) so nested defaults are applied.
   extensions: extensionsConfigSchema.prefault({}),
   sessionHistory: sessionHistoryConfigSchema.optional(),
+  instinct: instinctConfigSchema.prefault({}),
 });
 
 type KlexConfig = z.infer<typeof klexConfigSchema>;

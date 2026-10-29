@@ -4,6 +4,7 @@ import type { JsonStoreDefinition } from '@/local-data';
 
 import {
   dropLegacyTelemetryConfig,
+  dropLegacyVoiceSelections,
   migrateInstinctConfig,
   migrateLegacyKlexConfig,
   nestMemoryExtensionConfig,
@@ -12,6 +13,7 @@ import {
   parseStoredKlexConfigV2,
   parseStoredKlexConfigV4,
   parseStoredKlexConfigV5,
+  parseStoredKlexConfigV6,
 } from './types';
 
 function preservingSchema(
@@ -55,6 +57,9 @@ const v4ConfigStorageSchema = preservingSchema((value) => {
 const v5ConfigStorageSchema = preservingSchema((value) => {
   parseStoredKlexConfigV5(value);
 });
+const v6ConfigStorageSchema = preservingSchema((value) => {
+  parseStoredKlexConfigV6(value);
+});
 const currentConfigStorageSchema = preservingSchema((value) => {
   parseStoredKlexConfig(value);
 });
@@ -64,11 +69,10 @@ export const CONFIG_STORE_DEFINITION: JsonStoreDefinition = {
   id: 'config',
   relativePath: 'config.json',
   required: true,
-  schemaVersion: 6,
-  // Older writers cannot preserve instinct selections, the new provider types,
-  // or STS-only voice selections.
+  schemaVersion: 7,
+  // Schema 7 blocks older writers that still persist TTS/STT selections.
   compatibilityVersion: 8,
-  minimumKlexVersion: '0.18.0',
+  minimumKlexVersion: '0.27.1',
   legacySchemaVersion: 1,
   versions: [
     { version: 1, schema: legacyConfigStorageSchema },
@@ -77,7 +81,8 @@ export const CONFIG_STORE_DEFINITION: JsonStoreDefinition = {
     { version: 3, schema: v2ConfigStorageSchema },
     { version: 4, schema: v4ConfigStorageSchema },
     { version: 5, schema: v5ConfigStorageSchema },
-    { version: 6, schema: currentConfigStorageSchema },
+    { version: 6, schema: v6ConfigStorageSchema },
+    { version: 7, schema: currentConfigStorageSchema },
   ],
   migrations: [
     {
@@ -117,9 +122,14 @@ export const CONFIG_STORE_DEFINITION: JsonStoreDefinition = {
     {
       from: 5,
       to: 6,
-      // This unreleased step also removes TTS/STT selections; schemas 1–5 stay frozen.
       name: 'add-instinct-backends',
       up: (value) => migrateInstinctConfig(value),
+    },
+    {
+      from: 6,
+      to: 7,
+      name: 'drop-legacy-voice-selections',
+      up: (value) => dropLegacyVoiceSelections(value),
     },
   ],
 };

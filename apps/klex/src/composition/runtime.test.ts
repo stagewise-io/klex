@@ -130,6 +130,38 @@ describe('runtime composition', () => {
     );
   });
 
+  it('waits past the rollback deadline before closing transcript storage', async () => {
+    vi.useFakeTimers();
+    const sessionClosed = Promise.withResolvers<void>();
+    try {
+      const recorded = emptyRecord();
+      const modules = createModules({ recorded });
+      const closeSession = vi.fn(async () => {
+        await sessionClosed.promise;
+        recorded.closes.push('session-host');
+      });
+      modules.sessionHost.close = closeSession;
+      const runtime = await startRuntime({
+        logging: createLoggingMock(),
+        modules,
+      });
+      const closing = runtime.close();
+      await vi.advanceTimersByTimeAsync(6_000);
+      expect(closeSession).toHaveBeenCalledOnce();
+      expect(recorded.closes).not.toContain('session-history');
+      sessionClosed.resolve();
+      await closing;
+      expect(recorded.closes.indexOf('session-host')).toBeLessThan(
+        recorded.closes.indexOf('session-history'),
+      );
+      expect(recorded.closes.at(-1)).toBe('session-history');
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      sessionClosed.resolve();
+      vi.useRealTimers();
+    }
+  });
+
   it('is idempotent across repeated close calls', async () => {
     const recorded = emptyRecord();
     const runtime = await startRuntime({

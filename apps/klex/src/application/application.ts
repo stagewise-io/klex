@@ -179,8 +179,11 @@ class ApplicationModule implements Application {
     return this.restartHandler?.(installation);
   }
 
-  private own(resource: { close(): Promise<void> }): void {
-    this.resources.push(() => closeWithTimeout(() => resource.close()));
+  private own(resource: { close(): Promise<void> }): () => Promise<void> {
+    let closing: Promise<void> | undefined;
+    const close = () => (closing ??= closeWithTimeout(() => resource.close()));
+    this.resources.push(close);
+    return close;
   }
 
   private async run(): Promise<boolean> {
@@ -370,7 +373,7 @@ class ApplicationModule implements Application {
         logging,
         dataDirectory: cli.dataDirectory,
       });
-    this.resources.push(() => closeWithTimeout(() => dirLock.release()));
+    const releaseLock = this.own({ close: () => dirLock.release() });
     if (!interactiveLock) await dirLock.acquire();
     interactiveLock = undefined;
 
@@ -456,7 +459,7 @@ class ApplicationModule implements Application {
       getAgentId: getCloudClientId,
       enabled: telemetryPolicy.getSnapshot().tracesEnabled,
     });
-    this.own(tracing);
+    const closeTracing = this.own(tracing);
     await tracing.start();
     telemetryMetrics = createTelemetryMetrics({
       logging,
@@ -701,8 +704,8 @@ class ApplicationModule implements Application {
       },
     });
     interactiveCloud = undefined;
-    // Runtime bounds each of its own cleanup steps. Do not race that ordered
-    // teardown against the shorter per-provider deadline below.
+    // Normal runtime shutdown must preserve dependency ordering, even when a
+    // session takes longer than the partial-startup cleanup deadline.
     const runningRuntime = runtime;
     this.resources.push(() => runningRuntime.close());
     const runningAdminApi = adminApi;
@@ -764,9 +767,11 @@ class ApplicationModule implements Application {
         // Dispose pre-runtime providers only after the explicit flush phase.
         await this.close();
         await this.deps.closeInfrastructure();
+        // Observe the original cleanup results. Retrying these idempotent
+        // methods would hide a failed first attempt behind a successful no-op.
         const [lockRelease, tracingClose] = await Promise.allSettled([
-          dirLock.release(),
-          tracing?.close(),
+          releaseLock(),
+          closeTracing(),
         ]);
         // Logger disposal is last so shutdown diagnostics and buffered OTLP logs
         // are drained after every other telemetry provider has stopped.

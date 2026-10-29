@@ -2,6 +2,20 @@
 
 All notable Klex changes are documented here.
 
+## 0.27.1 (2026-10-29)
+
+### Fix existing config startup
+
+Fixes the startup failure introduced in 0.27.0 when loading existing configs. Supports both legacy schema-6 configs and STS-only configs written by 0.27.0. The migration removes obsolete TTS/STT model selections while preserving STS voices, provider options, audio-listening selections, providers, and instinct settings.
+
+### Bug Fixes
+
+- migrate legacy voice selections without breaking startup (e610aa1)
+
+### Other Changes
+
+- simplify release notes and clarify migration rules (29670bf)
+
 ## 0.27.0 (2026-10-29)
 
 ### Features

@@ -66,6 +66,20 @@ async function createDataDirectory(): Promise<string> {
   return path;
 }
 
+/** Keeps addInstance offline for tests that do not cover the connection check. */
+function withAvailableConnection(
+  definition: ProviderDefinition,
+): ProviderDefinition {
+  return {
+    ...definition,
+    testConnection: async () => ({
+      ok: true,
+      code: 'available',
+      value: { latencyMs: 0 },
+    }),
+  };
+}
+
 describe('provider registry module integration', () => {
   it('only exports resolved credentials on explicit opt-in without mutating stored config', async () => {
     const config = createConfig({
@@ -80,7 +94,7 @@ describe('provider registry module integration', () => {
     const registry = createProviderRegistry({
       logging,
       config,
-      definitions: [azureOpenAiProviderDefinition],
+      definitions: [withAvailableConnection(azureOpenAiProviderDefinition)],
     });
     await registry.start();
     try {
@@ -205,7 +219,7 @@ describe('provider registry module integration', () => {
     const registry = createProviderRegistry({
       logging,
       config,
-      definitions: [azureOpenAiProviderDefinition],
+      definitions: [withAvailableConnection(azureOpenAiProviderDefinition)],
     });
     await registry.start();
     const settings = {
@@ -322,7 +336,7 @@ describe('provider registry module integration', () => {
     const registry = createProviderRegistry({
       logging,
       config,
-      definitions: [vercelAiGatewayProviderDefinition],
+      definitions: [withAvailableConnection(vercelAiGatewayProviderDefinition)],
     });
     await registry.start();
     try {

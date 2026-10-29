@@ -47,7 +47,16 @@ async function snapshot(path: string) {
   return Object.fromEntries(
     await Promise.all(
       entries
-        .filter((entry) => entry.isFile())
+        // After clients close, SQLite may still remove live WAL/SHM sidecars.
+        // Compare database/checkpoint files, excluding only top-level sidecars.
+        .filter(
+          (entry) =>
+            entry.isFile() &&
+            !(
+              entry.parentPath === path &&
+              /\.sqlite-(wal|shm)$/.test(entry.name)
+            ),
+        )
         .map(async (entry) => {
           const file = join(entry.parentPath, entry.name);
           return [

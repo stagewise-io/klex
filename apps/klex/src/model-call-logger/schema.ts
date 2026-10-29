@@ -6,11 +6,8 @@ import {
   text,
 } from 'drizzle-orm/sqlite-core';
 
-import type {
-  localDataMetaTable,
-  SqliteMigration,
-  SqliteStoreDefinition,
-} from '@/local-data';
+import type { localDataMetaTable, SqliteStoreDefinition } from '@/local-data';
+import { LOCAL_DATA_HISTORY } from '@/local-data-history';
 
 /**
  * Drizzle schema for the model-call logger.
@@ -69,36 +66,8 @@ export type ModelCallSchema = {
 /** Schema version — increment when adding migrations. */
 export const MODEL_CALL_SCHEMA_VERSION = 3;
 
-export const MODEL_CALL_MIGRATIONS: SqliteMigration[] = [
-  {
-    from: 1,
-    to: 2,
-    name: 'add-provider-type',
-    up: async (database) => {
-      await database.execute(
-        'ALTER TABLE model_calls ADD COLUMN provider_type TEXT',
-      );
-      await database.execute('DROP INDEX IF EXISTS idx_model_calls_split');
-      await database.execute(
-        'CREATE INDEX idx_model_calls_split ON model_calls (provider_type, provider_id, endpoint_id, model_id)',
-      );
-    },
-  },
-  {
-    from: 2,
-    to: 3,
-    name: 'add-api-and-usage-availability',
-    up: async (database) => {
-      await database.execute('ALTER TABLE model_calls ADD COLUMN api TEXT');
-      await database.execute(
-        'ALTER TABLE model_calls ADD COLUMN token_usage_reported INTEGER',
-      );
-      await database.execute(
-        'ALTER TABLE model_calls ADD COLUMN cache_usage_reported INTEGER',
-      );
-    },
-  },
-];
+export const MODEL_CALL_MIGRATIONS =
+  LOCAL_DATA_HISTORY['model-calls'].migrations;
 
 /**
  * Multi-statement SQL for fresh database initialization.

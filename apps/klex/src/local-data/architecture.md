@@ -85,6 +85,63 @@ Config schema 6→7 first ships in `0.27.1` and removes only `modelSelection.voi
 
 Version `0.27.0` incorrectly changed the already released schema 6 and the 5→6 migration in place. Existing schema-6 configs failed preflight on their legacy voice keys. The fix restores that historical contract and adds the separate 6→7 step. Schema-6 files written by `0.27.0` without TTS/STT keys also pass validation and migrate. The migration uses the registered checkpoint, preflight, and recovery path.
 
+## Immutable migration history and CI
+
+`local-data-history/` is the closed historical module. Each migration has its own
+versioned file; historical JSON schemas, nested schemas, defaults, constants and
+helpers live there too. The initial config/learning snapshots are shared only
+within this frozen module. They are deliberately duplicated from runtime schemas:
+changing `config/types.ts` must never change a previously registered migration.
+Add new schema/helper files for future versions instead of editing these snapshots.
+Keep fresh SQLite initialization and current Drizzle table definitions in their
+owning modules; do not import them into migration history.
+
+The only mutable history file is the literal `LOCAL_DATA_HISTORY` registry. Append
+new imports and append new entries to a store's arrays. Never remove, replace, or
+reorder their existing prefix. Register every store with migrations there, then
+use its arrays directly in the owning store definition. Runtime-registry tests
+verify that wiring and the latest schema version.
+
+`Local Data History` CI compares against the PR target commit (or the pre-push
+commit on `main`), not a checksum manifest supplied by the PR. Once merged, **all**
+history files and frozen fixtures are immutable, including migrations shipped
+only in nightlies. Edits, deletion and renames fail. A new migration must be
+contiguous and have a new historical output schema for JSON. Historical code can
+import only other frozen relative modules, Zod, and type-only `JsonMigration` or
+`SqliteMigration` interfaces. Runtime application imports, re-exports, side-effect
+imports, `require` and dynamic imports fail the dependency check. Keep imports
+explicit and the registry data-only; the dependency-free checker intentionally
+accepts a narrow TypeScript syntax instead of executing registry code.
+
+The first extraction has no prior history directory to compare and is a
+reviewed bootstrap. It preserves the `v0.27.1` behavior and versions: config 7/8,
+model calls 3/2, sessions 3/1 and learning state 2/2 (schema/compatibility).
+Subsequent PRs compare to this merged baseline. Corrections always add a new
+forward migration; there is no runtime checksum metadata or engine redesign.
+
+`local-data-history-fixtures/` contains literal, representative persisted data,
+not production secrets or snapshots generated from current parsers. Config covers
+versions 1–7, populated/empty/absent legacy voice selections, the broken `0.27.0`
+shape, provider options and environment placeholders. SQL fixtures independently
+freeze the older model-call and session layouts; learning JSON fixtures retain
+unknown fields. Upgrade tests seed these files, run registered startup, read them
+through their owners, check expected values/metadata, restart and compare file
+bytes and mtimes. Existing downgrade, corruption, failure and recovery tests remain.
+Fixtures sample important shapes; they are not a proof for every possible input
+or against behavioral changes in external dependencies.
+
+Run locally (use the actual target commit/ref):
+
+```sh
+node --test scripts/check-local-data-history.test.mjs
+node scripts/check-local-data-history.mjs origin/main
+pnpm -F @stagewise/klex test src/local-data src/local-data-registry src/config
+```
+
+Repository administrators must require the **Local Data History** check in branch
+protection/rulesets. Committing the workflow alone does not enforce merge blocking;
+changes to the guard or workflow also need normal trusted review.
+
 ## Recovery state machine
 
 Before the first mutation, Klex creates an owner-only checkpoint, atomically publishes its manifest, and writes a journal. SQLite stores are checkpointed after truncating WAL while the directory lock is held. Each migration is applied in registry order and validated. Success removes the journal; failure restores every targeted store as one unit, verifies hashes, marks the checkpoint failed, and aborts startup. An active journal on the next startup triggers restoration before preflight retries.

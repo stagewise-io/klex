@@ -1,0 +1,34 @@
+{
+  "_klex": {
+    "store": "learning-extension-state",
+    "schemaVersion": 2,
+    "compatibilityVersion": 2,
+    "minimumKlexVersion": "0.24.0",
+    "writtenByKlexVersion": "0.24.0"
+  },
+  "cursor": "episode-frozen",
+  "episodeFailures": { "episode-retry": 2 },
+  "changedRunsSinceConsolidation": 3,
+  "lastConsolidationAt": "2026-08-14T10:00:00.000Z",
+  "futureField": { "preserve": true },
+  "processedEpisodeCount": 0,
+  "pendingChangeWeight": 0,
+  "lastConsolidationEpisode": 0,
+  "lastConsolidationSkillCount": 0,
+  "consolidationFailures": 0,
+  "nextConsolidationEpisode": null,
+  "deferred": [],
+  "skills": {
+    "research": {
+      "createdAt": "2026-08-14T10:00:00.000Z",
+      "updatedAt": "2026-08-14T10:00:01.000Z",
+      "lastReadAt": null,
+      "readCount": 4,
+      "sourceEpisodes": ["episode-frozen"],
+      "futureSkillField": "keep",
+      "createdEpisode": 0,
+      "updatedEpisode": 0,
+      "lastReadEpisode": null
+    }
+  }
+}

@@ -60,6 +60,7 @@ vi.mock('@/session/chat/extensions/episode-summary/summary-prompt.md', () => ({
 }));
 
 import { validateLocalDataRegistry } from '@/local-data';
+import { LOCAL_DATA_HISTORY } from '@/local-data-history';
 
 import { KLEX_LOCAL_DATA_STORES } from './local-data-registry';
 
@@ -88,6 +89,26 @@ describe('Klex local-data registry', () => {
     expect(new Set(registry.map((store) => store.relativePath)).size).toBe(
       registry.length,
     );
+  });
+
+  it('uses frozen history directly and declares the actual latest version', () => {
+    for (const [id, history] of Object.entries(LOCAL_DATA_HISTORY)) {
+      const store = KLEX_LOCAL_DATA_STORES.find(
+        (candidate) => candidate.id === id,
+      );
+      expect(store, id).toBeDefined();
+      expect(store?.migrations, id).toBe(history.migrations);
+      expect(store?.schemaVersion, id).toBe(history.migrations.at(-1)?.to);
+      if (store?.kind === 'json' && 'versions' in history) {
+        expect(store.versions, id).toBe(history.versions);
+      }
+    }
+    for (const store of KLEX_LOCAL_DATA_STORES) {
+      if (store.migrations.length > 0)
+        expect(Object.hasOwn(LOCAL_DATA_HISTORY, store.id), store.id).toBe(
+          true,
+        );
+    }
   });
 
   it('declares a current schema and contiguous migrations for every store', () => {

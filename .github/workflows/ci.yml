@@ -95,6 +95,30 @@ jobs:
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
 
+  local-data-history:
+    name: Local Data History
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
+        with:
+          version: ${{ env.PNPM_VERSION }}
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - name: Test migration history checker
+        run: node --test scripts/check-local-data-history.test.mjs
+      - name: Verify append-only migration history
+        run: node scripts/check-local-data-history.mjs "$BASE_SHA"
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+      - run: pnpm install --frozen-lockfile
+      - name: Verify runtime registration and frozen startup upgrades
+        run: pnpm -F @stagewise/klex test src/local-data-registry src/local-data/local-data-upgrades.test.ts src/config/config-upgrades.test.ts
+
   installers:
     name: Installer Scripts
     runs-on: ubuntu-latest

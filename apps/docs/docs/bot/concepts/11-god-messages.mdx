@@ -1,0 +1,31 @@
+---
+title: God messages
+sidebar:
+  label: God messages
+description: What god messages are — instructions written by the admin inside the god session, and the only way to create or update a Klex Bot's soul.
+related:
+  - /bot/concepts/soul
+  - /bot/concepts/identity
+  - /bot/guides/control-and-limits
+---
+
+> **What are god messages?**
+
+God messages are instructions written by the Klex Bot's admin inside the **god session** — a dedicated, elevated control channel that runs outside the Klex Bot's normal conversations. Today they serve one purpose: telling the Klex Bot to create or update its [soul](/bot/concepts/soul).
+
+## The god session
+
+The god session is a restricted part of the Klex Bot's brain with elevated permissions. It receives no input from the outside world except god messages, and only the Klex Bot's admin can send those. Because nothing that happens in normal conversations can reach it, only deliberate admin action changes the Klex Bot at this level.
+
+## Sending a god message
+
+God messages are normally sent through the Klex Cloud during the enrollment of your Klex Bot:
+
+- **Creator** — design the personality in the setup wizard; the Cloud converts your input into a well-formatted god message.
+- **God message mode** — write the god message yourself.
+
+This applies to self-hosted Klex Bots as well, because enrollment happens in the Cloud. Only if you skip the Cloud integration entirely, you must send god messages through the CLI instead — possible, but not the recommended flow.
+
+## What god messages can do today
+
+Creating and updating the [soul](/bot/concepts/soul) is currently the only use of the god session. See [The soul of a Klex Bot](/bot/concepts/soul) for why the soul is written this way instead of being edited by hand.

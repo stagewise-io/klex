@@ -311,25 +311,64 @@ describe('ProviderRegistry', () => {
               name: 'models/embed-test',
               supportedGenerationMethods: ['embedContent'],
             },
+            {
+              name: 'models/imagen-test',
+              supportedGenerationMethods: ['predict'],
+            },
           ],
           nextPageToken: 'next-page',
         }),
       )
-      .mockResolvedValueOnce(Response.json({ models: [] }));
+      .mockResolvedValueOnce(
+        Response.json({
+          models: [
+            {
+              name: 'models/gemini-9-flash-preview-tts',
+              supportedGenerationMethods: ['generateContent'],
+            },
+            {
+              name: 'models/gemini-9-flash-image',
+              supportedGenerationMethods: ['generateContent'],
+            },
+            {
+              name: 'models/gemini-9-flash-live',
+              supportedGenerationMethods: ['bidiGenerateContent'],
+            },
+            {
+              name: 'models/gemini-9-pro',
+              thinking: true,
+              supportedGenerationMethods: ['generateContent', 'countTokens'],
+            },
+          ],
+        }),
+      );
     vi.stubGlobal('fetch', googleFetch);
     const googleResult = await discovery(google)(
       { id: 'google-1', type: 'google-gemini', settings: { apiKey: 'key' } },
       signal(),
     );
+    // Catalog kinds win for TTS, image and Live models; non-chat models drop.
     expect(googleResult.ok && googleResult.value).toEqual([
       {
         modelId: 'gemini-test',
         displayName: 'Gemini Test',
         contextSize: 32_000,
-        kind: 'language',
       },
-      { modelId: 'embed-test', kind: 'embedding' },
+      { modelId: 'gemini-9-flash-preview-tts' },
+      { modelId: 'gemini-9-flash-image' },
+      { modelId: 'gemini-9-flash-live' },
+      { modelId: 'gemini-9-pro', capabilities: { reasoning: true } },
     ]);
+    expect(
+      [
+        'gemini-9-flash-preview-tts',
+        'gemini-9-flash-image',
+        'gemini-9-flash-live',
+      ].map((modelId) => google.resolveModelMetadata?.(modelId)?.kind),
+    ).toEqual(['text-to-speech', 'image-generation', 'speech-to-speech']);
+    expect(google.catalogModels).toContainEqual(
+      expect.objectContaining({ modelId: 'gemini-2.5-pro', kind: 'language' }),
+    );
     expect(
       new URL(String(googleFetch.mock.calls[0]?.[0])).searchParams.get('key'),
     ).toBe('key');
@@ -338,6 +377,258 @@ describe('ProviderRegistry', () => {
         'pageToken',
       ),
     ).toBe('next-page');
+  });
+
+  it('drops OpenAI models no Klex purpose can use', async () => {
+    const ids = [
+      'babbage-002',
+      'davinci-002',
+      'gpt-3.5-turbo-instruct',
+      'gpt-3.5-turbo-instruct-0914',
+      'text-embedding-3-large',
+      'text-moderation-latest',
+      'omni-moderation-2024-09-26',
+      'sora-2',
+      'gpt-5.5',
+      'gpt-3.5-turbo',
+      'gpt-realtime-2',
+      'gpt-4o-transcribe',
+      'whisper-1',
+      'tts-1-hd',
+      'gpt-audio-1.5',
+      'gpt-image-2',
+      'chatgpt-image-latest',
+    ];
+    vi.stubGlobal(
+      'fetch',
+      vi
+        .fn()
+        .mockResolvedValue(
+          Response.json({ data: ids.map((id) => ({ id, object: 'model' })) }),
+        ),
+    );
+    const openai = builtIn('openai');
+    const result = await discovery(openai)(
+      { id: 'openai-1', type: 'openai', settings: { apiKey: 'secret' } },
+      signal(),
+    );
+
+    const kept = result.ok ? result.value.map(({ modelId }) => modelId) : [];
+    expect(kept).toEqual([
+      'gpt-5.5',
+      'gpt-3.5-turbo',
+      'gpt-realtime-2',
+      'gpt-4o-transcribe',
+      'whisper-1',
+      'tts-1-hd',
+      'gpt-audio-1.5',
+      'gpt-image-2',
+      'chatgpt-image-latest',
+    ]);
+    expect(
+      kept.map((modelId) => openai.resolveModelMetadata?.(modelId)?.kind),
+    ).toEqual([
+      'language',
+      'language',
+      'speech-to-speech',
+      'speech-to-text',
+      'speech-to-text',
+      'text-to-speech',
+      'language',
+      'image-generation',
+      'image-generation',
+    ]);
+  });
+
+  it('lists maintained catalog fallbacks without embedding or image models', () => {
+    for (const provider of builtInProviderDefinitions) {
+      for (const model of provider.catalogModels ?? []) {
+        expect(
+          ['language', 'speech-to-speech', 'speech-to-text', 'text-to-speech'],
+          `${provider.type}/${model.modelId}`,
+        ).toContain(model.kind);
+      }
+    }
+    expect(builtIn('anthropic').catalogModels).toContainEqual(
+      expect.objectContaining({
+        modelId: 'claude-sonnet-5',
+        displayName: 'Claude Sonnet 5',
+      }),
+    );
+    expect(
+      builtIn('minimax').catalogModels?.map(({ modelId }) => modelId),
+    ).toContain('MiniMax-M3');
+    expect(
+      builtIn('openai').catalogModels?.map(({ modelId }) => modelId),
+    ).not.toContain('omni-moderation-latest');
+  });
+
+  it('discovers Mistral capabilities and hides retired or non-chat models', async () => {
+    // https://docs.mistral.ai/api/endpoint/models
+    vi.setSystemTime(new Date('2026-10-29T00:00:00.000Z'));
+    const fetchMock = vi.fn().mockResolvedValue(
+      Response.json({
+        object: 'list',
+        data: [
+          {
+            id: 'mistral-medium-latest',
+            created: 1_775_000_000,
+            max_context_length: 131_072,
+            capabilities: {
+              completion_chat: true,
+              function_calling: true,
+              vision: true,
+            },
+            deprecation: null,
+          },
+          {
+            id: 'voxtral-small-latest',
+            capabilities: { completion_chat: true, audio: true },
+          },
+          {
+            id: 'voxtral-mini-transcribe-2607',
+            capabilities: { completion_chat: false, audio_transcription: true },
+          },
+          {
+            id: 'mistral-large-2407',
+            capabilities: { completion_chat: true },
+            deprecation: '2025-03-30T12:00:00Z',
+          },
+          {
+            id: 'mistral-small-2609',
+            capabilities: { completion_chat: true },
+            deprecation: '2027-01-01T00:00:00Z',
+          },
+          {
+            id: 'open-mistral-7b',
+            capabilities: { completion_chat: true },
+            archived: true,
+          },
+          { id: 'mistral-embed', capabilities: { completion_chat: false } },
+          {
+            id: 'mistral-ocr-latest',
+            capabilities: { completion_chat: false, ocr: true },
+          },
+          { id: 'mistral-moderation-latest', capabilities: {} },
+          { id: 'future-model' },
+        ],
+      }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    try {
+      const result = await discovery(builtIn('mistral'))(
+        { id: 'mistral-1', type: 'mistral', settings: { apiKey: 'secret' } },
+        signal(),
+      );
+
+      expect(result.ok && result.value).toEqual([
+        {
+          modelId: 'mistral-medium-latest',
+          createdAt: '2026-03-31T23:33:20.000Z',
+          kind: 'language',
+          contextSize: 131_072,
+          capabilities: { input: { image: {} }, tools: true },
+        },
+        {
+          modelId: 'voxtral-small-latest',
+          kind: 'language',
+          capabilities: { input: { audio: {} } },
+        },
+        {
+          modelId: 'voxtral-mini-transcribe-2607',
+          kind: 'speech-to-text',
+          capabilities: { input: { audio: {} }, voice: { stt: true } },
+        },
+        {
+          modelId: 'mistral-small-2609',
+          kind: 'language',
+          capabilities: { input: {} },
+        },
+        { modelId: 'future-model', capabilities: { input: {} } },
+      ]);
+      expect(fetchMock.mock.calls[0]?.[1].headers).toMatchObject({
+        Authorization: 'Bearer secret',
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('discovers xAI input modalities and falls back for proxies', async () => {
+    // https://docs.x.ai/docs/api-reference#list-language-models
+    const fetchMock = vi.fn().mockResolvedValueOnce(
+      Response.json({
+        models: [
+          {
+            id: 'grok-9',
+            created: 1_775_000_000,
+            input_modalities: ['text', 'image'],
+            output_modalities: ['text'],
+          },
+          {
+            id: 'grok-9-code',
+            input_modalities: ['text'],
+            output_modalities: ['text'],
+          },
+          {
+            id: 'grok-9-image',
+            input_modalities: ['text'],
+            output_modalities: ['image'],
+          },
+        ],
+      }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    const xai = builtIn('xai');
+    const result = await discovery(xai)(
+      { id: 'xai-1', type: 'xai', settings: { apiKey: 'secret' } },
+      signal(),
+    );
+    expect(result.ok && result.value).toEqual([
+      {
+        modelId: 'grok-9',
+        kind: 'language',
+        createdAt: '2026-03-31T23:33:20.000Z',
+        capabilities: { input: { image: {} } },
+      },
+      { modelId: 'grok-9-code', kind: 'language' },
+    ]);
+    expect(String(fetchMock.mock.calls[0]?.[0])).toBe(
+      'https://api.x.ai/v1/language-models',
+    );
+
+    fetchMock
+      .mockResolvedValueOnce(new Response('not found', { status: 404 }))
+      .mockResolvedValueOnce(
+        Response.json({ data: [{ id: 'grok-proxy' }, { id: 'grok-9-image' }] }),
+      );
+    const proxied = await discovery(xai)(
+      {
+        id: 'xai-2',
+        type: 'xai',
+        settings: {
+          apiKey: 'secret',
+          baseUrl: 'https://proxy.example.test/v1',
+        },
+      },
+      signal(),
+    );
+    expect(proxied.ok && proxied.value).toEqual([{ modelId: 'grok-proxy' }]);
+    expect(String(fetchMock.mock.calls[2]?.[0])).toBe(
+      'https://proxy.example.test/v1/models',
+    );
+
+    fetchMock.mockResolvedValueOnce(new Response('denied', { status: 401 }));
+    await expect(
+      discovery(xai)(
+        { id: 'xai-3', type: 'xai', settings: { apiKey: 'bad' } },
+        signal(),
+      ),
+    ).resolves.toMatchObject({
+      ok: false,
+      code: 'discovery_failed',
+      message: 'Provider returned HTTP 401',
+    });
   });
 
   it('discovers documented OpenRouter capabilities', async () => {
@@ -668,10 +959,7 @@ describe('ProviderRegistry', () => {
     expect(result).toEqual({
       ok: true,
       code: 'available',
-      value: [
-        { modelId: 'vendor:model:2026-09' },
-        { modelId: 'text-embedding-3-small' },
-      ],
+      value: [{ modelId: 'vendor:model:2026-09' }],
     });
     expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({
       headers: { Authorization: 'Bearer secret' },

@@ -2,6 +2,21 @@
 
 All notable Klex changes are documented here.
 
+## 0.27.0 (2026-10-29)
+
+### Features
+
+- remove TTS/STT model selections and fix gpt-audio-* audio listening (835f843)
+- preserve custom models in provider copies (603f99a)
+- add opt-in provider credential export (6f43186)
+- forward advertised MCP server metadata (205c74a)
+
+### Bug Fixes
+
+- scope provider export env resolution (00f1c97)
+- redact resolved MCP server URLs (86f60a9)
+- preserve configured MCP URL in status (ce27193)
+
 ## 0.26.0 (2026-10-27)
 
 ### Features

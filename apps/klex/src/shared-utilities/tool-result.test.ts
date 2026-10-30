@@ -14,6 +14,24 @@ function extract(output: ToolResultPart['output']): string {
 
 describe('extractToolResultText', () => {
   it.each([
+    { content: [] },
+    { content: [{ type: 'text', text: '' }] },
+    {
+      content: [
+        { type: 'text', text: '' },
+        { type: 'text', text: '' },
+      ],
+    },
+  ])('preserves structured results with empty content %j', ({ content }) => {
+    const value = { content, structuredContent: { status: 'ok', count: 3 } };
+    expect(extractContentOutputText(value)).toBeNull();
+    for (const type of ['json', 'error-json'] as const) {
+      expect(extractContentOutputText({ type, value })).toBeNull();
+      expect(extract({ type, value })).toBe(JSON.stringify(value));
+    }
+  });
+
+  it.each([
     { content: ['a', 'b'] },
     { content: [{ id: 1, title: 'Note' }], total: 1 },
     { content: [], structuredContent: null },

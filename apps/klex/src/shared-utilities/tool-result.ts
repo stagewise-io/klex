@@ -72,12 +72,20 @@ function envelopeContent(value: object): unknown[] | null {
     )
   )
     return null;
+  if (
+    !Array.isArray(envelope.content) ||
+    !envelope.content.every(isContentBlock)
+  )
+    return null;
+  // Preserve structured-only results through the caller's JSON fallback.
+  if (
+    envelope.structuredContent !== undefined &&
+    envelope.content.every((part) => part.type === 'text' && part.text === '')
+  )
+    return null;
   // Structured content and metadata may duplicate media payloads or signed URLs.
   // Only the recognized content blocks are projected into transcript text.
-  return Array.isArray(envelope.content) &&
-    envelope.content.every(isContentBlock)
-    ? envelope.content
-    : null;
+  return envelope.content;
 }
 
 /** Describe media without copying binary payloads or URLs into text prompts. */

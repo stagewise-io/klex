@@ -1646,6 +1646,20 @@ describe('ContextCompactionExt — transcript rendering', () => {
     expect(prompt).toContain('result\n¦{"lines":42,"lang":"ts"}');
   });
 
+  it.each(['raw', 'json', 'error-json'] as const)(
+    'preserves structured-only MCP tool results (%s)',
+    async (type) => {
+      const value = {
+        content: [],
+        structuredContent: { status: 'ok', count: 3 },
+      };
+      const output = type === 'raw' ? value : { type, value };
+      const prompt = await promptFor([makeToolCallMessage('read', {}, output)]);
+      expect(prompt).toContain(JSON.stringify(value));
+      expect(prompt).toContain('result\n¦');
+    },
+  );
+
   it.each(['sdk', 'mcp'])(
     'preserves %s tool media and following text before truncation',
     async (format) => {

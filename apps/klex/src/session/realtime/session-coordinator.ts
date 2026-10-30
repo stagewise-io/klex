@@ -324,7 +324,6 @@ class RealtimeSessionCoordinatorModule implements RealtimeSessionCoordinator {
     session.modelEventTask = modelEventTask;
     session.tasks.push(
       this.discoverAudioSources(session, transport, processor),
-      this.forwardUpdates(session, lease, processor),
       this.monitorLease(session, lease),
       this.pipeAudio(
         session,
@@ -358,6 +357,7 @@ class RealtimeSessionCoordinatorModule implements RealtimeSessionCoordinator {
       },
       requestResponse: true,
     });
+    session.tasks.push(this.forwardUpdates(session, lease, processor));
     this.deps.logger.info(
       {
         namespace: session.namespace,

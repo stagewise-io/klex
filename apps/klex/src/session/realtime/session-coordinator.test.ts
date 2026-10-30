@@ -645,6 +645,56 @@ describe('realtime session coordinator', () => {
     await coordinator.close();
   });
 
+  it('finishes sending the greeting before forwarding queued inbox updates', async () => {
+    const { coordinator, mcpHarness, processorFactory, host } = setup();
+    const greetingSent = deferred<void>();
+    const acquireLease = host.acquireInteractionLease.bind(host);
+    vi.spyOn(host, 'acquireInteractionLease').mockImplementation(
+      async (request) => {
+        const lease = await acquireLease(request);
+        lease.publish(update(4));
+        lease.publish(update(5));
+        return lease;
+      },
+    );
+    const createProcessor = processorFactory.create.bind(processorFactory);
+    vi.spyOn(processorFactory, 'create').mockImplementation(async (options) => {
+      const processor = await createProcessor(options);
+      const sendUpdate = processor.sendUpdate.bind(processor);
+      vi.spyOn(processor, 'sendUpdate').mockImplementation(async (entry) => {
+        await sendUpdate(entry);
+        if (entry.sequence === 0) await greetingSent.promise;
+      });
+      return processor;
+    });
+
+    try {
+      await coordinator.start();
+      await mcpHarness.notify(offered());
+      const lease = await host.nextLease();
+      const processor = await processorFactory.nextProcessor();
+
+      await vi.waitFor(() => expect(processor.receivedUpdates).toHaveLength(1));
+      expect(processor.receivedUpdates[0]).toMatchObject({
+        eventId: 'realtime:voice:session-1:started',
+        requestResponse: true,
+      });
+      expect(lease.getPendingUpdateCount()).toBe(2);
+      expect(lease.acknowledged).toEqual([]);
+
+      greetingSent.resolve(undefined);
+      await vi.waitFor(() => {
+        expect(processor.receivedUpdates.map((entry) => entry.eventId)).toEqual(
+          ['realtime:voice:session-1:started', 'update-4', 'update-5'],
+        );
+        expect(lease.acknowledged).toEqual([4, 5]);
+      });
+    } finally {
+      greetingSent.resolve(undefined);
+      await coordinator.close();
+    }
+  });
+
   it('requests a greeting when the session activates without acknowledging an inbox update', async () => {
     const { coordinator, mcpHarness, processorFactory, host } = setup();
     await coordinator.start();

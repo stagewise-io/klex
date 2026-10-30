@@ -2,21 +2,25 @@
 title: Klex Bot chats and memory
 sidebar:
   label: Memory
-description: Where Klex Bot chats and memory are stored in hosted and self-hosted setups.
+description: Where Klex Bots manage memory and where chats and memory are stored and accessed.
 related:
   - /bot/concepts/data-directory
-  - /bot/concepts/identity
-  - /cloud/data-privacy
+  - /bot/concepts/how-bots-work
+  - /cloud/hosted-vs-local
 ---
 
-> **Where does a Klex Bot store its chats and memory?**
+> **Where does a Klex Bot manage and store its memory?**
 
-A Klex Bot stores its chats and memory in its data directory. For a Cloud-hosted Bot, that directory is in the hosted environment. For a self-hosted Bot, it is in the local folder used to store the Bot's data.
+A Klex Bot manages memory in its own environment, which also keeps the Bot running. The Bot does not carry out work there; all work happens in connected environments.
 
-Admins can access chats and memory through the Bot's Admin API. The Klex Cloud dashboard acts as a reverse proxy and frontend for each Bot's own Admin API.
+## Where chats and memory are stored
 
-## What this page covers
+A Klex Bot stores its chats and memory in its data directory. For a Cloud-hosted Bot, the directory is in the hosted environment. For a self-hosted Bot, it is in the local folder used to store the Bot's data.
 
-This page documents where chats and memory are stored and how administrators access the Bot's API. It does not specify what the Bot remembers from a conversation, the exact memory format, retention periods, deletion behavior, backups, or what model providers process. Those details need separate confirmation before publication.
+## How administrators access chats and memory
 
-See [The data directory](/bot/concepts/data-directory) for an overview of the Bot's data location, and [Data privacy](/cloud/data-privacy) for the current scope of confirmed data-handling information.
+Admins can access chats and memory through the Bot's Admin API. The Klex Cloud dashboard acts as a reverse proxy and frontend for each Bot's Admin API.
+
+For more detail about the data directory and hosting locations, see [The Klex Bot data directory](/bot/concepts/data-directory) and [Hosted vs. self-hosted Klex Bots](/cloud/hosted-vs-local).
+
+This page covers the confirmed role, storage location, and administrator access for chats and memory. It does not describe what information becomes a memory, how memories are created or recalled, or retention, deletion, and backup behavior; those details need product confirmation.

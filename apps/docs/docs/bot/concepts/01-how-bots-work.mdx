@@ -2,29 +2,33 @@
 title: How Klex Bots work
 sidebar:
   label: Overview
-description: How a Klex Bot manages memory and active sessions, and uses connected tools to work in external environments.
+description: A Klex Bot manages memory and stays running in its own environment; all work happens in connected environments.
 related:
   - /bot/quickstart
   - /bot/concepts/brain-and-computers
   - /bot/concepts/memory
-  - /bot/concepts/mcp
-  - /bot/concepts/communication
+  - /bot/concepts/data-directory
 ---
 
-> **How do Klex Bots work?**
+> **Where does a Klex Bot do its work?**
 
-A Klex Bot manages its memory and active sessions in its own environment. To do work outside that environment, it acts through tools connected to external systems, such as computers and MCP servers. Work happens in those connected environments through the tools available there.
+A Klex Bot uses its own environment to manage memory and keep the Bot running. All work happens in other, connected environments.
 
-## The Bot and its tools
+![Diagram: The Bot's own environment manages memory and keeps the Bot running. Machines and MCP servers connect it to other environments, where all work takes place.](/images/klex-bot-work-environments.svg)
 
-The Bot's internal environment is where it manages memory and active sessions. Its work tools connect to external environments rather than to the Bot's own internal environment. This keeps the Bot's internal management separate from the systems it uses to carry out work.
+## Two environments, different roles
 
-For example, a tool connected to a computer can perform work in that computer's environment; an MCP server can provide tools for an external service. The Bot can only act through the tools that are connected to it.
+### The Bot's own environment
 
-## Manage access
+The Bot's own environment manages its memory and keeps the Bot running. It is not where the Bot carries out work.
 
-Use the Cloud dashboard to review a Bot's activity and connect or disconnect MCPs. For permissions in other apps and accounts the Bot uses, configure those permissions in the external service or account.
+### Connected environments
 
-Klex does not currently provide action-by-action approvals or restrictions. To stop a self-hosted Bot, close its app. To stop a Cloud-hosted Bot, select **Stop** in the Cloud dashboard.
+The Bot carries out all work in connected environments. Machines and MCP servers are connectors to those environments.
 
-See [Hosted vs. self-hosted Klex Bots](/cloud/hosted-vs-local) for hosting options and [Memory](/bot/concepts/memory) for where chats and memory are stored.
+## Where to go next
+
+- [Set up a Klex Bot](/bot/quickstart)
+- Learn about [machines and MCP servers](/bot/concepts/brain-and-computers)
+- Read about [Klex Bot memory](/bot/concepts/memory) and the [data directory](/bot/concepts/data-directory)
+- Compare [Cloud-hosted and self-hosted Bots](/cloud/hosted-vs-local)

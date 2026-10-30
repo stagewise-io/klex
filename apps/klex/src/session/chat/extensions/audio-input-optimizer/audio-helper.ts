@@ -42,8 +42,8 @@ export function resolveAudioModels(
  * Optimizes an audio part for the first configured audio helper
  * model's input capabilities. Uses the same optimization pipeline
  * as the main audio processing path (format conversion, size
- * reduction). Falls back to the original part if no audio models
- * are configured, the model can't be resolved, or optimization fails.
+ * reduction). Failed optimization skips the candidate rather than sending
+ * audio that may violate its limits. References remain provider-managed.
  */
 export async function optimizeForAudioHelper(
   deps: ExtensionDeps,
@@ -51,7 +51,7 @@ export async function optimizeForAudioHelper(
   buffer: Buffer | null,
   audioModelIds: readonly ModelSelectionEntry[],
   audioHash: string | null,
-): Promise<FilePart> {
+): Promise<FilePart | null> {
   if (buffer === null || !audioHash) return part;
   if (audioModelIds.length === 0) return part;
 
@@ -63,12 +63,12 @@ export async function optimizeForAudioHelper(
     const info = deps.modelResolver.resolveModelInfo(firstEntry);
     settings = resolveEffectiveAudio(info.inputCapabilities);
   } catch {
-    return part;
+    return null;
   }
 
-  if (!settings.supports) return part;
+  if (!settings.supports) return null;
 
-  const cacheKey = `${audioHash}:${firstEntry.providerId}:${audioModelId}`;
+  const cacheKey = `${audioHash}:${firstEntry.providerId}:${audioModelId}:${JSON.stringify(settings)}`;
   const cached = cache.get(cacheKey);
   if (cached !== undefined && cached.type !== 'text') return cached;
 
@@ -78,7 +78,7 @@ export async function optimizeForAudioHelper(
     return filePart;
   } catch (error) {
     deps.logger.error({ error }, 'Failed to optimize audio for audio model');
-    return part; // Return original — audio model may still handle it
+    return null;
   }
 }
 
@@ -122,7 +122,10 @@ export async function describeAudio(
 
   if (audioHash && !lookFor) {
     inflightDescriptions.set(audioHash, promise);
-    promise.finally(() => inflightDescriptions.delete(audioHash));
+    void promise.then(
+      () => inflightDescriptions.delete(audioHash),
+      () => inflightDescriptions.delete(audioHash),
+    );
   }
 
   return promise;
@@ -137,85 +140,43 @@ async function runDescribeAudio(
   lookFor: string | undefined,
   systemPrompt: string,
 ): Promise<string | null> {
-  // Optimize the audio for the audio helper model's capabilities
-  // before sending it — same pipeline as regular audio processing.
-  const optimizedPart = await optimizeForAudioHelper(
-    deps,
-    audioPart,
-    buffer,
-    audioModelIds,
-    audioHash,
-  );
-
-  const userContent: Array<FilePart | TextPart> = [optimizedPart];
-  if (lookFor) {
-    userContent.push({
-      type: 'text',
-      text: `Specifically listen for: ${lookFor}`,
-    });
-  }
-  const messages: ModelMessage[] = [{ role: 'user', content: userContent }];
-
-  const result = await deps.generateText({
-    modelIds: audioModelIds,
-    system: systemPrompt,
-    messages,
-  });
-
-  if (result.success) {
-    if (audioHash && !lookFor) descriptionCache.set(audioHash, result.text);
-    return result.text;
-  }
-
-  // Fallback: try chat models with audio capability
-  const chatEntries = deps.config.getModelSelection('chat');
-  const audioChatEntries = chatEntries.filter((entry) => {
+  const chatEntries = deps.config.getModelSelection('chat').filter((entry) => {
     try {
-      const info = deps.modelResolver.resolveModelInfo(entry);
-      return info.inputCapabilities?.audio !== undefined;
+      return (
+        deps.modelResolver.resolveModelInfo(entry).inputCapabilities?.audio !==
+        undefined
+      );
     } catch {
       return false;
     }
   });
-
-  if (audioChatEntries.length > 0) {
-    deps.logger.warn(
-      'All audio-vision models failed — falling back to chat models with audio capability',
-    );
-    // Re-optimize for the fallback chat models — they may have different
-    // format or byte constraints than the primary audio helper model.
-    const fallbackOptimizedPart = await optimizeForAudioHelper(
+  // Re-project from the original for every helper candidate, including chat fallback.
+  for (const entry of [...audioModelIds, ...chatEntries]) {
+    const optimizedPart = await optimizeForAudioHelper(
       deps,
       audioPart,
       buffer,
-      audioChatEntries,
+      [entry],
       audioHash,
     );
-    const fallbackUserContent: Array<FilePart | TextPart> = [
-      fallbackOptimizedPart,
-    ];
-    if (lookFor) {
-      fallbackUserContent.push({
+    if (optimizedPart === null) continue;
+    const userContent: Array<FilePart | TextPart> = [optimizedPart];
+    if (lookFor)
+      userContent.push({
         type: 'text',
         text: `Specifically listen for: ${lookFor}`,
       });
-    }
-    const fallbackMessages: ModelMessage[] = [
-      { role: 'user', content: fallbackUserContent },
-    ];
-    const fallbackResult = await deps.generateText({
-      modelIds: audioChatEntries,
+    const result = await deps.generateText({
+      modelIds: [entry],
       system: systemPrompt,
-      messages: fallbackMessages,
+      messages: [{ role: 'user', content: userContent }],
     });
-
-    if (fallbackResult.success) {
-      if (audioHash && !lookFor)
-        descriptionCache.set(audioHash, fallbackResult.text);
-      return fallbackResult.text;
+    if (result.success) {
+      if (audioHash && !lookFor) descriptionCache.set(audioHash, result.text);
+      return result.text;
     }
+    if (result.failureReason === 'aborted') return null;
   }
-
   return null;
 }
 

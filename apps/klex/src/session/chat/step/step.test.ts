@@ -4,10 +4,19 @@ import { context } from '@opentelemetry/api';
 import { isToolUIPart, type LanguageModel } from 'ai';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import type { SessionHistoryRecorder } from '@/session-history';
+
+import {
+  CHECKPOINT_DATA_PART_TRANSFORMERS,
+  createCheckpointManager,
+} from '../checkpoint';
+import { createContextCompactionExt } from '../extensions/context-compaction/context-compaction';
 import type {
+  ExtensionDeps,
   InstinctSummary,
   StepCompleteEvent,
 } from '../extensions/extension-api';
+import { createTimeExt } from '../extensions/time/time';
 import type { InstinctRunner } from '../instinct';
 import type { ExtendedUIMessage } from '../message-types';
 import {
@@ -15,6 +24,7 @@ import {
   makeExtensionHandler,
   makeFallbackManager,
   makeModelResolver,
+  makeTestSpan,
 } from '../test-helpers';
 import {
   checkAndFixHistory,
@@ -717,6 +727,145 @@ describe('Step — provisional step context', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     setupDefaultMocks();
+  });
+
+  it('continues a compacted tool-heavy turn with its audio prompt and clock in the header', async () => {
+    const now = Math.floor(Date.now() / 1000);
+    const old = makeUserMessage('previous turn');
+    old.parts.push(
+      { type: 'data-time', data: { timestamp: now, tz: 'UTC' } } as never,
+      { type: 'data-timezone', data: { timestamp: now, tz: 'UTC' } } as never,
+    );
+    const active = makeUserMessage('Act on this voice message');
+    active.parts.push({
+      type: 'file',
+      mediaType: 'audio/ogg',
+      url: 'data:audio/ogg;base64,YXVkaW8=',
+    });
+    const tail = [
+      active,
+      ...Array.from({ length: 15 }, (_, i) =>
+        makeAssistantMessage([
+          {
+            type: 'dynamic-tool',
+            toolName: 'read',
+            toolCallId: `call-${i}`,
+            state: 'output-available',
+            input: { i },
+            output: `result ${i}`,
+          },
+        ]),
+      ),
+    ];
+    const messages = [
+      old,
+      makeAssistantMessage([{ type: 'text', text: 'previous answer' }]),
+      ...tail,
+    ];
+    const time = createTimeExt({
+      timezone: 'UTC',
+      timeUpdatePeriod: 300,
+    }).create({} as ExtensionDeps);
+    const extensionHandler = makeExtensionHandler();
+    const manager = createCheckpointManager({
+      logger,
+      span: makeTestSpan(),
+      messages,
+      extensionHandler: () => ({
+        collectCheckpointCarry: async (dropped) => {
+          if (!time.getCheckpointCarry)
+            throw new Error('Time extension must provide checkpoint carry');
+          const carry = await time.getCheckpointCarry(dropped);
+          if (!carry) throw new Error('Expected time checkpoint carry');
+          return carry;
+        },
+        runCheckpointApplyingHooks: async () => ({ defer: false }),
+      }),
+      recorder: {
+        commitCheckpoint: vi.fn(async () => {}),
+        markTrimmed: vi.fn(),
+      } as unknown as SessionHistoryRecorder,
+      onApplied: vi.fn(),
+    });
+    const compaction = createContextCompactionExt.create({
+      logger,
+      config: { getModelSelection: () => ['test:model'] },
+      modelResolver: { resolveModelInfo: () => ({ contextSize: 1_000 }) },
+      getHistory: () => messages,
+      checkpoints: manager,
+      generateText: vi.fn(async () => ({
+        success: true,
+        text: 'Previous work summarized',
+      })),
+    } as unknown as ExtensionDeps);
+    if (!compaction.onStepComplete)
+      throw new Error('Compaction extension must provide onStepComplete');
+    await compaction.onStepComplete({
+      ...SUCCESS_RESULT,
+      generation: {
+        modelId: 'test:model',
+        finishReason: 'tool-calls',
+        usage: { inputTokens: 100_000 } as never,
+      },
+    });
+    await vi.waitFor(() => expect(manager.hasPending).toBe(true));
+    await manager.applyPending();
+    expect(messages.slice(1)).toEqual(tail);
+
+    Object.assign(extensionHandler, {
+      getProvisionalStepContext: vi.fn(
+        async (history: readonly ExtendedUIMessage[]) => {
+          if (!time.getProvisionalStepContext)
+            throw new Error('Time extension must provide step context');
+          const context = await time.getProvisionalStepContext(
+            history,
+            {} as never,
+          );
+          if (!context) throw new Error('Expected time step context');
+          return context;
+        },
+      ),
+    });
+    extensionHandler.getDataPartTransformers.mockReturnValue({
+      ...CHECKPOINT_DATA_PART_TRANSFORMERS,
+      ...time.dataPartTransformers,
+    });
+    const actual = await vi.importActual<
+      typeof import('../utils/convert-to-model-messages')
+    >('../utils/convert-to-model-messages');
+    vi.mocked(convertToModelMessagesExtended).mockImplementationOnce(
+      actual.convertToModelMessagesExtended,
+    );
+    await createStep(
+      makeDeps({ messages, extensionHandler: extensionHandler as never }),
+    ).run();
+
+    const generationCall = vi.mocked(createGenerationRunner).mock.calls.at(-1);
+    if (!generationCall) throw new Error('Expected a generation runner call');
+    const modelMessages = generationCall[0].modelMessages;
+    expect(modelMessages[0]).toMatchObject({
+      role: 'user',
+      content: [
+        { type: 'text', text: '<summary>Previous work summarized</summary>' },
+        { type: 'text', text: expect.stringContaining('<time>') },
+        { type: 'text', text: expect.stringContaining('<timezone>UTC') },
+      ],
+    });
+    expect(modelMessages[1]).toMatchObject({
+      role: 'user',
+      content: [
+        { type: 'text', text: 'Act on this voice message' },
+        { type: 'file', mediaType: 'audio/ogg' },
+      ],
+    });
+    expect(modelMessages.at(-1)?.role).toBe('tool');
+    expect(
+      modelMessages.filter((message) => message.role === 'tool'),
+    ).toHaveLength(15);
+    expect(
+      modelMessages.filter((message) => message.role === 'user'),
+    ).toHaveLength(2);
+    expect(messages.slice(1)).toEqual(tail);
   });
 
   it('calls getProvisionalStepContext after model resolution with messages and resolved model', async () => {

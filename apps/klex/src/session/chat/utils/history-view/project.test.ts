@@ -67,6 +67,23 @@ describe('applyScope', () => {
 });
 
 describe('projectMessage', () => {
+  it.each([
+    'https://example.test/audio?token=SECRET',
+    'file:///private/SECRET',
+    'audio.ogg?token=SECRET',
+  ])('omits sensitive filenames from history: %s', (filename) => {
+    expect(
+      records(
+        msg(
+          [{ type: 'file', mediaType: 'audio/ogg', filename, url: filename }],
+          'user',
+        ),
+        {
+          text: { roles: ['user'], limit: { max: 1000, truncate: 'end' } },
+        },
+      ),
+    ).toEqual([{ kind: 'text', text: '[Audio attachment: audio/ogg]' }]);
+  });
   it('keeps identity and projects nothing for excluded roles or skipped messages', () => {
     const message = msg([{ type: 'text', text: 'hi' }], 'user');
     const text = { roles: ['user'] as const, limit: LIMIT };
@@ -136,6 +153,59 @@ describe('projectMessage', () => {
   });
 
   describe('tools', () => {
+    it.each(['json', 'error-json'])(
+      'sanitizes nested %s media before rendering',
+      (type) => {
+        const output = {
+          type,
+          value: {
+            content: [
+              {
+                type: 'image-url',
+                url: 'https://example.test/image?token=PRIVATE_TOKEN',
+              },
+              {
+                type: 'file-data',
+                mediaType: 'audio/ogg',
+                data: 'PRIVATE_PAYLOAD'.repeat(1000),
+              },
+              { type: 'text', text: 'Useful caption after media' },
+            ],
+          },
+        };
+        const before = structuredClone(output);
+        expect(
+          records(
+            msg([
+              {
+                type: 'dynamic-tool',
+                toolName: 'read',
+                toolCallId: 'read',
+                state: 'output-available',
+                input: {},
+                output,
+              },
+            ]),
+            {
+              tools: {
+                input: false,
+                error: false,
+                output: { max: 500, truncate: 'end', json: 'plain' },
+              },
+            },
+          ),
+        ).toEqual([
+          {
+            kind: 'tool',
+            name: 'read',
+            status: 'succeeded',
+            output:
+              '[Image attachment: image-url]\n[Audio attachment: audio/ogg]\nUseful caption after media',
+          },
+        ]);
+        expect(output).toEqual(before);
+      },
+    );
     const tools: Exclude<HistoryFilterOptions['tools'], false> = {
       input: { max: 20, truncate: 'end', json: 'plain' },
       output: { max: 20, truncate: 'end', json: 'compact' },
@@ -393,7 +463,7 @@ describe('projectMessage', () => {
 
   it('ignores unsupported parts', () => {
     expect(
-      records(msg([{ type: 'step-start' }, { type: 'file', url: 'x' }]), {
+      records(msg([{ type: 'step-start' }]), {
         text: { roles: ['assistant'], limit: LIMIT },
       }),
     ).toEqual([]);

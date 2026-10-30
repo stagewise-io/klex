@@ -2,6 +2,20 @@
 
 All notable Klex changes are documented here.
 
+## 0.27.2 (2026-10-30)
+
+### Bug Fixes
+
+- limit provider cleanup deadlines to startup rollback (11ff391)
+- preserve shutdown ordering and cleanup failures (99ffea8)
+- run automatic updates before agent startup (9ee2847)
+- preserve released config serialization order (953b308)
+- freeze local data migration history (ca10508)
+
+### Other Changes
+
+- isolate migrations by store and version (470beec)
+
 ## 0.27.1 (2026-10-29)
 
 ### Fix existing config startup

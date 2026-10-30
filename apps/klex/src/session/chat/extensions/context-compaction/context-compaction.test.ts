@@ -1018,6 +1018,162 @@ describe('ContextCompactionExt — compaction trigger', () => {
   });
 });
 
+describe('ContextCompactionExt — summary acceptance', () => {
+  const refusal =
+    'Sorry, I can’t help with identifying who’s speaking in this audio clip.';
+  const entry = (modelId: string) => ({ providerId: 'test', modelId });
+
+  it.each([
+    '',
+    ' \n ',
+    '{"error":"no summary"}',
+    '{"status":"denied"}',
+    '{"ref":"message-id","view":"list"}',
+    refusal,
+  ])('keeps the old window and re-arms after rejecting %j', async (summary) => {
+    const window = conversation();
+    const before = structuredClone(window);
+    const deps = makeWindowDeps(window, {
+      generateText: vi.fn().mockResolvedValue(genSuccess(summary)),
+    });
+    vi.mocked(deps.config.getModelSelection).mockImplementation((purpose) =>
+      purpose === 'compaction' ? [entry('summary')] : [],
+    );
+    const ext = createContextCompactionExt.create(deps);
+    await step(ext, FALLBACK_COMPACTION_THRESHOLD);
+    expect(deps.checkpoints.commit).not.toHaveBeenCalled();
+    expect(window).toEqual(before);
+    expect(ext.introspect?.()).toEqual({
+      status: 'idle',
+      latestSummary: null,
+    });
+    await step(ext, FALLBACK_COMPACTION_THRESHOLD);
+    expect(deps.generateText).toHaveBeenCalledTimes(2);
+    expect(deps.checkpoints.commit).not.toHaveBeenCalled();
+  });
+
+  it('tries the next configured candidate after an ordinary successful refusal', async () => {
+    const deps = makeWindowDeps(conversation(), {
+      generateText: vi
+        .fn()
+        .mockResolvedValueOnce(genSuccess(refusal))
+        .mockResolvedValueOnce(genSuccess('Useful replacement summary')),
+    });
+    vi.mocked(deps.config.getModelSelection).mockImplementation((purpose) =>
+      purpose === 'compaction' ? [entry('first'), entry('second')] : [],
+    );
+    await step(
+      createContextCompactionExt.create(deps),
+      FALLBACK_COMPACTION_THRESHOLD,
+    );
+    expect(
+      vi.mocked(deps.generateText).mock.calls.map(([args]) => args.modelIds),
+    ).toEqual([[entry('first')], [entry('second')]]);
+    expect(deps.checkpoints.commit).toHaveBeenCalledWith(
+      expect.objectContaining({ summary: 'Useful replacement summary' }),
+    );
+  });
+
+  it.each([
+    'recover',
+    'no-helper',
+    'helper-aborted',
+    'helper-failed',
+    'second-refusal',
+    'content-filter',
+  ] as const)(
+    'handles native refusal via a bounded helper retry: %s',
+    async (mode) => {
+      const window = sliceOf(
+        {
+          id: 'original-audio',
+          role: 'user',
+          parts: [
+            {
+              type: 'file',
+              mediaType: 'audio/wav',
+              url: 'data:audio/wav;base64,YXVkaW8=',
+            },
+          ],
+        },
+        makeTextMessage('user', 'active input'),
+      );
+      const before = structuredClone(window);
+      const deps = makeWindowDeps(window);
+      vi.mocked(deps.config.getModelSelection).mockImplementation((purpose) =>
+        purpose === 'compaction'
+          ? [entry('native')]
+          : purpose === 'audioListening' && mode !== 'no-helper'
+            ? [entry('helper')]
+            : [],
+      );
+      vi.mocked(deps.modelResolver.resolveModelInfo).mockReturnValue({
+        contextSize: 20000,
+        inputCapabilities: { audio: {} },
+      } as never);
+      vi.mocked(deps.generateText)
+        .mockResolvedValueOnce(
+          mode === 'content-filter'
+            ? genFailure('content-filter')
+            : genSuccess(refusal),
+        )
+        .mockResolvedValueOnce(
+          mode === 'helper-aborted'
+            ? genFailure('aborted')
+            : mode === 'helper-failed'
+              ? genFailure()
+              : genSuccess('The recording discusses ranking benchmarks.'),
+        )
+        .mockResolvedValueOnce(
+          genSuccess(
+            mode === 'second-refusal'
+              ? refusal
+              : 'Summary: ranking benchmarks.',
+          ),
+        );
+      const ext = createContextCompactionExt.create(deps);
+      await step(ext, FALLBACK_COMPACTION_THRESHOLD);
+      await vi.waitFor(() =>
+        expect(ext.introspect?.()).toMatchObject({ status: 'idle' }),
+      );
+      const args = vi
+        .mocked(deps.generateText)
+        .mock.calls.map(([args]) => args);
+      expect(JSON.stringify(args[0]?.messages)).toContain('audio/wav');
+      expect(window).toEqual(before);
+      if (mode === 'recover' || mode === 'content-filter') {
+        expect(args).toHaveLength(3);
+        expect(args[1]?.modelIds).toEqual([entry('helper')]);
+        const derivedParts = args[2]?.messages?.flatMap<{ type: string }>(
+          (message) => (Array.isArray(message.content) ? message.content : []),
+        );
+        expect(derivedParts).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              type: 'text',
+              text: expect.stringContaining('<derived-content source="audio"'),
+            }),
+          ]),
+        );
+        expect(derivedParts?.every((part) => part.type === 'text')).toBe(true);
+        expect(JSON.stringify(args[2]?.messages)).not.toContain(refusal);
+        expect(deps.checkpoints.commit).toHaveBeenCalledWith(
+          expect.objectContaining({ summary: 'Summary: ranking benchmarks.' }),
+        );
+      } else {
+        expect(deps.checkpoints.commit).not.toHaveBeenCalled();
+        expect(ext.introspect?.()).toMatchObject({ latestSummary: null });
+        expect(args).toHaveLength(
+          mode === 'no-helper' ? 1 : mode === 'second-refusal' ? 3 : 2,
+        );
+      }
+      expect(
+        JSON.stringify(vi.mocked(deps.logger.warn).mock.calls),
+      ).not.toContain(refusal);
+    },
+  );
+});
+
 describe('ContextCompactionExt — checkpoint commit', () => {
   it('commits a checkpoint covering everything before the raw tail', async () => {
     const window = conversation();
@@ -1119,7 +1275,7 @@ describe('ContextCompactionExt — checkpoint commit', () => {
     expect(args.system).toContain(LINES_FORMAT_PROMPT);
   });
 
-  it('delegates model fallback to the session proxy', async () => {
+  it('validates each candidate separately and stops after the first accepted summary', async () => {
     const deps = makeWindowDeps(conversation(), {
       config: {
         getModelSelection: vi.fn(() => ['remote:gpt-4o', 'remote:claude']),
@@ -1137,7 +1293,6 @@ describe('ContextCompactionExt — checkpoint commit', () => {
     expect(deps.generateText).toHaveBeenCalledTimes(1);
     expect(vi.mocked(deps.generateText).mock.calls[0]![0].modelIds).toEqual([
       'remote:gpt-4o',
-      'remote:claude',
     ]);
     expect(deps.checkpoints.commit).toHaveBeenCalledTimes(1);
   });

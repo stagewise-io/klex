@@ -39,6 +39,21 @@ export function projectToolMedia(value: unknown): FilePart | ImagePart | null {
   return null;
 }
 
+/** Unwrap only recognized tool envelopes, never arbitrary result/metadata fields. */
+function toolContent(output: unknown): unknown[] {
+  const seen = new Set<unknown>();
+  while (output && typeof output === 'object' && !seen.has(output)) {
+    seen.add(output);
+    const envelope = output as Record<string, unknown>;
+    if (Array.isArray(envelope.content)) return envelope.content;
+    if (envelope.type === 'content' && Array.isArray(envelope.value))
+      return envelope.value;
+    if (envelope.type !== 'json' && envelope.type !== 'error-json') break;
+    output = envelope.value;
+  }
+  return [];
+}
+
 /** Collect only media; the history view remains the authority for safe transcript text. */
 export function collectMedia(
   messages: readonly ModelMessage[],
@@ -49,17 +64,7 @@ export function collectMedia(
     for (const part of message.content) {
       if (part.type === 'file' || part.type === 'image') media.push(part);
       if (part.type !== 'tool-result') continue;
-      const output = part.output;
-      let items: unknown = output.type === 'content' ? output.value : undefined;
-      if (
-        (output.type === 'json' || output.type === 'error-json') &&
-        output.value &&
-        typeof output.value === 'object' &&
-        'content' in output.value
-      )
-        items = output.value.content;
-      if (!Array.isArray(items)) continue;
-      for (const item of items) {
+      for (const item of toolContent(part.output)) {
         const projected = projectToolMedia(item);
         if (projected) media.push(projected);
       }

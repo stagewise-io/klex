@@ -1,6 +1,8 @@
 import type { ModelMessage } from 'ai';
 import { expect, it } from 'vitest';
 
+import type { ExtendedUIMessage } from '../../message-types';
+import { convertToModelMessagesExtended } from '../../utils/convert-to-model-messages';
 import { collectMedia, projectToolMedia } from './media-projection';
 
 it('collects SDK and MCP tool media in order without rendering payloads', () => {
@@ -96,6 +98,72 @@ it('collects nested error-json media in order without mutating history', () => {
     { type: 'file', mediaType: 'image/png', data: 'ERROR_IMAGE' },
   ]);
   expect(history).toEqual(before);
+});
+
+it.each([
+  ['image-data', 'image/png'],
+  ['file-data', 'audio/wav'],
+  ['file-data', 'application/pdf'],
+] as const)(
+  'collects SDK %s (%s) through the real UI converter and nested JSON wrappers',
+  async (type, mediaType) => {
+    const payload = { type, mediaType, data: 'ORIGINAL_BYTES' };
+    const sdk = { type: 'content', value: [payload] };
+    for (const output of [
+      sdk,
+      { type: 'json', value: sdk },
+      { type: 'error-json', value: { type: 'json', value: sdk } },
+    ]) {
+      const ui: ExtendedUIMessage[] = [
+        {
+          id: 'sdk-message',
+          role: 'assistant',
+          parts: [
+            {
+              type: 'dynamic-tool',
+              toolName: 'read',
+              toolCallId: 'sdk-call',
+              state: 'output-available',
+              input: {},
+              output,
+            },
+          ],
+        },
+      ];
+      const before = structuredClone(ui);
+      const converted = await convertToModelMessagesExtended(ui, {});
+      expect(converted.some((message) => message.role === 'tool')).toBe(true);
+      expect(collectMedia(converted)).toEqual([
+        { type: 'file', mediaType, data: payload.data },
+      ]);
+      expect(ui).toEqual(before);
+    }
+  },
+);
+
+it('does not traverse arbitrary fields, metadata, or cyclic JSON envelopes', () => {
+  const sdk = {
+    type: 'content',
+    value: [{ type: 'image-data', mediaType: 'image/png', data: 'HIDDEN' }],
+  };
+  const cycle: { type: 'json'; value?: unknown } = { type: 'json' };
+  cycle.value = cycle;
+  for (const value of [null, { metadata: sdk }, { nested: sdk }, cycle]) {
+    const messages = [
+      {
+        role: 'tool',
+        content: [
+          {
+            type: 'tool-result',
+            toolCallId: 'unrecognized',
+            toolName: 'read',
+            output: { type: 'json', value },
+          },
+        ],
+      },
+    ] as ModelMessage[];
+    expect(collectMedia(messages)).toEqual([]);
+  }
 });
 
 it('ignores non-media objects and malformed URLs', () => {

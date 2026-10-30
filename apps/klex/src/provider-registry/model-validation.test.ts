@@ -31,6 +31,42 @@ afterEach(() => vi.useRealTimers());
 
 describe('model validation probe', () => {
   it.each([
+    [
+      'anthropic',
+      { anthropic: { cacheControl: { type: 'ephemeral', ttl: '1h' } } },
+    ],
+    ['anthropic', { anthropic: { cacheControl: null } }],
+    [
+      'anthropic-messages',
+      { anthropic: { cacheControl: { type: 'ephemeral' } } },
+    ],
+    ['anthropic-messages', { anthropic: { cacheControl: null } }],
+    ['vercel-ai-gateway', { gateway: { caching: 'auto' } }],
+    ['vercel-ai-gateway', { gateway: { caching: null } }],
+    ['openrouter', { openrouter: { cache_control: { type: 'ephemeral' } } }],
+    ['openrouter', { openrouter: { cache_control: null } }],
+  ])(
+    'accepts and forwards %s caching options: %j',
+    async (type, providerOptions) => {
+      const parsed = modelValidationInputSchema.parse({
+        ...input,
+        provider: { type, settings: {} },
+        providerOptions,
+      });
+      const model = respondingModel();
+      expect(
+        await new ModelValidation().run(
+          () => model,
+          parsed,
+          undefined,
+          () => true,
+        ),
+      ).toMatchObject({ status: 'valid' });
+      expect(model.doStreamCalls[0]?.providerOptions).toEqual(providerOptions);
+    },
+  );
+
+  it.each([
     ['voice.tts', false],
     ['voice.stt', false],
     ['voice.sts', true],

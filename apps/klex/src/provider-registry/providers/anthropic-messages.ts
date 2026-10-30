@@ -6,6 +6,7 @@ import type {
   ProviderInstance,
 } from '../provider-registry';
 import { resolveAnthropicModelMetadata } from './anthropic';
+import { withPromptCaching } from './prompt-caching';
 import {
   gatewayAttributionHeaders,
   providerHeaders,
@@ -37,14 +38,18 @@ function createLanguageModel(
   instance: ProviderInstance,
   modelId: string,
 ): LanguageModelV4 {
-  return createAnthropic({
-    ...(setting(instance, 'baseUrl') && {
-      baseURL: setting(instance, 'baseUrl'),
-    }),
-    apiKey: setting(instance, 'apiKey') ?? '',
-    headers: {
-      ...providerHeaders(instance, 'anthropic'),
-      ...gatewayAttributionHeaders(),
-    },
-  }).languageModel(modelId);
+  return withPromptCaching(
+    createAnthropic({
+      ...(setting(instance, 'baseUrl') && {
+        baseURL: setting(instance, 'baseUrl'),
+      }),
+      apiKey: setting(instance, 'apiKey') ?? '',
+      headers: {
+        ...providerHeaders(instance, 'anthropic'),
+        ...gatewayAttributionHeaders(),
+      },
+    }).languageModel(modelId),
+    'anthropic',
+    [instance.type],
+  );
 }

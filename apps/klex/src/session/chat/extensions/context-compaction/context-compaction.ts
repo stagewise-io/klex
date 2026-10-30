@@ -22,6 +22,7 @@ import {
   type StepCompleteEvent,
 } from '../extension-api';
 import compactionPrompt from './compaction-prompt.md';
+import { summaryRejectionReason } from './summary-validation';
 
 const COMPACTION_TRANSCRIPT_VIEW = createTranscriptHistoryView();
 const COMPACTION_SYSTEM_PROMPT = `${compactionPrompt}\n\n${LINES_FORMAT_PROMPT}`;
@@ -451,34 +452,76 @@ class ContextCompactionExt implements Extension {
         });
     }
 
+    const validate = (result: GenerateTextResult): GenerateTextResult => {
+      if (!result.success) return result;
+      const reason = summaryRejectionReason(result.text);
+      if (!reason) return result;
+      this.deps.logger.warn(
+        { modelId: result.modelId, reason },
+        'Compaction summary rejected',
+      );
+      span.addEvent('compaction.summary_rejected', { reason });
+      return { success: false, failureReason: 'all-models-failed' };
+    };
     const summarize = async (
       candidates: readonly ModelSelectionEntry[],
     ): Promise<GenerateTextResult> => {
-      if (media.length === 0)
-        return this.deps.generateText({
-          modelIds: candidates,
-          system: COMPACTION_SYSTEM_PROMPT,
-          prompt: transcript,
-        });
       let result: GenerateTextResult = {
         success: false,
         failureReason: 'no-models',
       };
       for (const candidate of candidates) {
         try {
-          const info = this.deps.modelResolver.resolveModelInfo(candidate);
-          const { adaptContent } = await import(
-            '../content-adaptation/content-adaptation'
+          const adapt = media.length
+            ? (await import('../content-adaptation/content-adaptation'))
+                .adaptContent
+            : null;
+          const messages = adapt
+            ? await adapt(media, this.deps, {
+                modelId: candidate.modelId,
+                inputCapabilities:
+                  this.deps.modelResolver.resolveModelInfo(candidate)
+                    .inputCapabilities,
+              })
+            : undefined;
+          const generate = (attachments?: ModelMessage[]) =>
+            this.deps.generateText({
+              modelIds: [candidate],
+              system: COMPACTION_SYSTEM_PROMPT,
+              ...(attachments
+                ? {
+                    messages: [
+                      { role: 'user' as const, content: transcript },
+                      ...attachments,
+                    ],
+                  }
+                : { prompt: transcript }),
+            });
+          const generated = await generate(messages);
+          result = validate(generated);
+          const hasNativeMedia = messages?.some(
+            (message) =>
+              Array.isArray(message.content) &&
+              message.content.some(
+                (part) => part.type === 'file' || part.type === 'image',
+              ),
           );
-          const messages = await adaptContent(media, this.deps, {
-            modelId: candidate.modelId,
-            inputCapabilities: info.inputCapabilities,
-          });
-          result = await this.deps.generateText({
-            modelIds: [candidate],
-            system: COMPACTION_SYSTEM_PROMPT,
-            messages: [{ role: 'user', content: transcript }, ...messages],
-          });
+          if (
+            !result.success &&
+            (generated.success ||
+              generated.failureReason === 'content-filter') &&
+            adapt &&
+            hasNativeMedia
+          ) {
+            // One bounded retry through the existing helper projection. Always
+            // re-project originals; a refusal must never become source context.
+            span.addEvent('compaction.retry_with_derived_media');
+            const derived = await adapt(media, this.deps, {
+              modelId: candidate.modelId,
+              inputCapabilities: {},
+            });
+            result = validate(await generate(derived));
+          }
           if (result.success || result.failureReason === 'aborted')
             return result;
         } catch (error) {

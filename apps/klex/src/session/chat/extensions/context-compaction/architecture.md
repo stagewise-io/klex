@@ -38,6 +38,34 @@ The session creates the `ExtensionHandler` at construction time, passing it sess
 
 The handler is passed by reference through the turn to the step. The step calls the dispatchers at specific points in its pipeline. Extensions never interact with the session directly — they go through the deps the handler gave them.
 
+## Compaction summary acceptance
+
+Compaction renders safe transcript text and separately collects attachments from the
+covered prefix. Media collection unwraps recognized SDK/MCP and JSON/error-JSON
+tool envelopes, including envelopes nested by UI-to-model conversion. It does not
+search arbitrary result fields or metadata for attachments.
+
+Each summarizer candidate is attempted and validated separately, including for
+text-only history. Empty responses, top-level JSON error/refusal envelopes,
+standalone denial-status or ref/view control envelopes, and obvious first-person
+refusal non-answers are rejected before checkpoint commit.
+Provider content-filter failures remain structured failures. A rejected native
+media attempt gets at most one retry for that candidate using the existing
+transcription/description helpers, re-projecting the original attachments with no
+native input capabilities. Rejected responses never become helper input. Failure
+or cancellation of that helper path cannot authorize a checkpoint; normal
+candidate/chat fallback and cancellation rules still apply. If no usable summary
+is obtained, the old active window stays intact and compaction re-arms.
+Audio-only models can reject text-only helper input; recovery then requires a
+configured text-capable alternate. No alternate model is silently invented.
+Unavailable remote media also aborts rather than authorizing a media-free trim.
+
+The text guard is deliberately conservative and English-oriented, not a semantic
+summary-quality evaluator. Quoted/historical refusals within a summary remain
+valid facts; undetected or paraphrased non-answers remain a limitation. Rejection
+logs contain only the model ID and reason, not generated responses or prompts.
+No storage contract or checkpoint format changes are required.
+
 ## Extension identity
 
 Every extension has a unique **identifier** in reverse-domain notation (e.g. `"io.stagewise/context-compaction"`). This is a machine-readable ID, not a human-readable label. The handler enforces uniqueness at registration time — duplicate identifiers throw before any extension is instantiated.

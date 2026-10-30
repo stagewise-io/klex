@@ -4,6 +4,10 @@ Static Vite marketing website. Run `pnpm --filter @klex/website dev` from the re
 
 The homepage at `/` loads `src/new/main.ts` from the root `index.html`. See [the page structure](src/new/README.md) for its sections.
 
+## Versioned legal pages
+
+`/legal/privacy` and `/legal/terms` select the latest effective Markdown revision in the browser. Dated revision pages and original source downloads are static; `/legal/policies.json` lists every revision newest-first with UTC effective dates, fixed URLs, and exact-byte SHA-256 hashes. Add dated Markdown under `content/legal/<policy>/`; hashes are computed during the build and CI protects existing revisions using Git history. No approved text is included yet. See [legal authoring, nginx configuration, cloud integration, and launch checks](LEGAL.md).
+
 ## Brand and press pages
 
 `/brand` and `/press` are separate static HTML entry points, also available with trailing slashes. Both load `src/new/resources/main.ts`, reuse the live navigation and footer, and have route-specific page titles, descriptions, and canonical URLs. Both include a static `robots` meta tag with `noindex`; crawlers can still access the pages and follow their links. Vite emits `brand/index.html` and `press/index.html`; production hosting must support directory-index resolution for those routes.

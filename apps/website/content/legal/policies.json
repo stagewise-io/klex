@@ -1,0 +1,7 @@
+{
+  "schemaVersion": 1,
+  "policies": [
+    { "slug": "privacy", "label": "Privacy Policy" },
+    { "slug": "terms", "label": "Terms of Service" }
+  ]
+}

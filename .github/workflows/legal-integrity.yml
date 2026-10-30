@@ -1,0 +1,46 @@
+name: Legal Integrity
+
+on:
+  push:
+    branches:
+      - '**'
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  PNPM_VERSION: 11.22.0
+
+jobs:
+  legal-integrity:
+    name: Legal Revision Integrity
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
+        with:
+          version: ${{ env.PNPM_VERSION }}
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Compare legal history with trusted baseline
+        run: |
+          # A new branch has no previous push; compare it with the default branch instead.
+          if [ "$BASE_SHA" = "0000000000000000000000000000000000000000" ]; then
+            BASE_SHA="$(git rev-parse "origin/$DEFAULT_BRANCH")"
+          fi
+          node scripts/check-legal-revisions.mjs "$BASE_SHA"
+        env:
+          BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+      - run: node --test scripts/check-legal-revisions.test.mjs
+      - run: pnpm --filter @klex/website test:legal
+      - run: pnpm --filter @klex/website build
+      - run: pnpm --filter @klex/website exec playwright install --with-deps chromium
+      - run: pnpm --filter @klex/website test:legal-browser
+      - run: pnpm --filter @klex/website test:legal-nginx

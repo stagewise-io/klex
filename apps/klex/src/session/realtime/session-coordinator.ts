@@ -16,6 +16,7 @@ import type {
   MediaTransport,
   MediaTransportConnector,
 } from '@/media-transport';
+import { SessionInboxUrgency } from '@/session/inbox';
 import type {
   ConversationHost,
   ExternalInteractionContext,
@@ -24,6 +25,7 @@ import type {
   InteractionUpdateEnvelope,
   PreparedInferenceContextHandle,
 } from '@/session/interaction';
+import { REALTIME_SOURCE_ENV } from '@/session/interaction/commit-messages';
 import {
   registerActivityStateProviders,
   setRealtimeSessionCount,
@@ -70,6 +72,8 @@ interface ActiveRealtimeSession {
   acquisitionController: AbortController;
   accepted: boolean;
   endSent: boolean;
+  failureReason?: string;
+  endReason?: string;
   transport?: MediaTransport;
   processor?: RealtimeModelSession;
   lease?: InteractionLease;
@@ -192,6 +196,7 @@ class RealtimeSessionCoordinatorModule implements RealtimeSessionCoordinator {
       sessionKey(event.namespace, notification.params.sessionId),
     );
     if (!session) return;
+    session.endReason = notification.params.reason;
     void this.finishSession(session, { notifyRemote: false });
   }
 
@@ -224,14 +229,8 @@ class RealtimeSessionCoordinatorModule implements RealtimeSessionCoordinator {
     session.setup = this.activateSession(session, offer).catch(
       (error: unknown) => {
         if (!session.controller.signal.aborted) {
-          this.deps.logger.warn(
-            { error, namespace, sessionId: offer.sessionId },
-            'Realtime session setup failed',
-          );
+          this.failSession(session, error, 'Realtime session setup failed');
         }
-        void this.finishSession(session, {
-          notifyRemote: session.accepted,
-        });
       },
     );
   }
@@ -266,20 +265,7 @@ class RealtimeSessionCoordinatorModule implements RealtimeSessionCoordinator {
       return;
     }
 
-    try {
-      session.callConfiguration = this.deps.resolveCallConfiguration();
-    } catch (error) {
-      this.deps.logger.info(
-        { error, namespace: session.namespace, sessionId: session.sessionId },
-        'Rejecting realtime session offer: no realtime provider configured',
-      );
-      await this.deps.mcp.rejectRealtimeMediaSession(
-        session.namespace,
-        session.sessionId,
-      );
-      void this.finishSession(session, { notifyRemote: false });
-      return;
-    }
+    session.callConfiguration = this.deps.resolveCallConfiguration();
 
     const lease = await this.acquireLease(session);
     if (!lease) return;
@@ -326,10 +312,12 @@ class RealtimeSessionCoordinatorModule implements RealtimeSessionCoordinator {
     }
     this.settleContext(session, 'commit');
 
+    const startedTimestamp = this.timestamp();
+    const startedEventId = `realtime:${session.namespace}:${session.sessionId}:started`;
     await lease.commit({
       type: 'session-started',
-      eventId: `realtime:${session.namespace}:${session.sessionId}:started`,
-      timestamp: this.timestamp(),
+      eventId: startedEventId,
+      timestamp: startedTimestamp,
     });
 
     const modelEventTask = this.consumeModelEvents(session, lease, processor);
@@ -347,6 +335,29 @@ class RealtimeSessionCoordinatorModule implements RealtimeSessionCoordinator {
       this.monitorTransport(session, transport),
       this.monitorProcessor(session, processor),
     );
+    await processor.sendUpdate({
+      sequence: 0,
+      eventId: startedEventId,
+      event: {
+        eventId: startedEventId,
+        sourceEnv: REALTIME_SOURCE_ENV,
+        urgency: SessionInboxUrgency.Default,
+        context: {
+          sourceEnv: REALTIME_SOURCE_ENV,
+          metadata: {
+            kind: 'realtime-session-started',
+            timestamp: startedTimestamp,
+          },
+          content: [
+            {
+              type: 'text',
+              text: 'A realtime voice call connected. Greet the user briefly to start the conversation.',
+            },
+          ],
+        },
+      },
+      requestResponse: true,
+    });
     this.deps.logger.info(
       {
         namespace: session.namespace,
@@ -536,13 +547,16 @@ class RealtimeSessionCoordinatorModule implements RealtimeSessionCoordinator {
     const lease = session.lease;
     if (!lease) return;
     session.lease = undefined;
-    const finalEvent = session.accepted
-      ? {
-          type: 'session-ended' as const,
-          eventId: `realtime:${session.namespace}:${session.sessionId}:ended`,
-          timestamp: this.timestamp(),
-        }
-      : undefined;
+    const reason = session.failureReason ?? session.endReason;
+    const finalEvent =
+      session.accepted || session.failureReason !== undefined
+        ? {
+            type: 'session-ended' as const,
+            eventId: `realtime:${session.namespace}:${session.sessionId}:ended`,
+            timestamp: this.timestamp(),
+            ...(reason !== undefined && { reason }),
+          }
+        : undefined;
     await lease
       .release('realtime-session-ended', finalEvent)
       .catch((error: unknown) => {
@@ -642,6 +656,11 @@ class RealtimeSessionCoordinatorModule implements RealtimeSessionCoordinator {
     error: unknown,
     message: string,
   ): void {
+    if (session.finish) return;
+    session.failureReason =
+      error instanceof Error && error.message.trim()
+        ? `${message}: ${error.message}`
+        : message;
     this.deps.logger.warn(
       {
         error,
@@ -652,7 +671,7 @@ class RealtimeSessionCoordinatorModule implements RealtimeSessionCoordinator {
       },
       message,
     );
-    void this.finishSession(session, { notifyRemote: session.accepted });
+    void this.finishSession(session, { notifyRemote: true });
   }
 
   private async handleAvailability(
@@ -713,20 +732,27 @@ class RealtimeSessionCoordinatorModule implements RealtimeSessionCoordinator {
       );
       if (!tasksSettled)
         this.logTeardownTimeout(session, lease, 'background-task-drain');
-      if (options.notifyRemote && session.accepted && !session.endSent) {
+      if (options.notifyRemote && !session.endSent) {
         session.endSent = true;
-        await this.deps.mcp
-          .endRealtimeMediaSession(session.namespace, session.sessionId)
-          .catch((error: unknown) => {
-            this.deps.logger.warn(
-              {
-                error,
-                namespace: session.namespace,
-                sessionId: session.sessionId,
-              },
-              'Realtime session end request failed',
+        const notifyRemote = session.accepted
+          ? this.deps.mcp.endRealtimeMediaSession(
+              session.namespace,
+              session.sessionId,
+            )
+          : this.deps.mcp.rejectRealtimeMediaSession(
+              session.namespace,
+              session.sessionId,
             );
-          });
+        await notifyRemote.catch((error: unknown) => {
+          this.deps.logger.warn(
+            {
+              error,
+              namespace: session.namespace,
+              sessionId: session.sessionId,
+            },
+            'Realtime session end request failed',
+          );
+        });
       }
       if (this.sessions.get(session.key) === session)
         this.sessions.delete(session.key);

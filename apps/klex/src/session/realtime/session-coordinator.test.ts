@@ -457,10 +457,12 @@ describe('realtime session coordinator', () => {
   });
 
   it('ends the MCP session on processor failure', async () => {
-    const { coordinator, mcpHarness, processorFactory } = setup();
+    const { coordinator, mcpHarness, processorFactory, host } = setup();
     await coordinator.start();
     await mcpHarness.notify(offered());
     const processor = await processorFactory.nextProcessor();
+    const lease = await host.nextLease();
+    await vi.waitFor(() => expect(processor.receivedUpdates).toHaveLength(1));
     processor.fail(new Error('model failed'));
 
     await vi.waitFor(() =>
@@ -468,6 +470,10 @@ describe('realtime session coordinator', () => {
     );
     await vi.waitFor(() => expect(coordinator.getActiveSessionCount()).toBe(0));
     expect(processor.closeCount).toBe(1);
+    expect(lease.commits.at(-1)).toMatchObject({
+      type: 'session-ended',
+      reason: expect.stringContaining(': model failed'),
+    });
     await coordinator.close();
   });
 
@@ -609,6 +615,10 @@ describe('realtime session coordinator', () => {
     ]);
     expect(lease.releaseCount).toBe(1);
     expect(lease.contextRollbacks).toBe(0);
+    expect(lease.commits.at(-1)).toMatchObject({
+      type: 'session-ended',
+      reason: 'remote-end',
+    });
     expect(host.requests[0]?.signal.aborted).toBe(false);
 
     await coordinator.close();
@@ -625,6 +635,7 @@ describe('realtime session coordinator', () => {
     expect(lease.publish(update(4))).toBe(true);
     await vi.waitFor(() => {
       expect(processor.receivedUpdates.map((entry) => entry.eventId)).toEqual([
+        'realtime:voice:session-1:started',
         'update-4',
       ]);
       expect(lease.acknowledged).toEqual([4]);
@@ -633,6 +644,103 @@ describe('realtime session coordinator', () => {
     await mcpHarness.notify(ended());
     await coordinator.close();
   });
+
+  it('requests a greeting when the session activates without acknowledging an inbox update', async () => {
+    const { coordinator, mcpHarness, processorFactory, host } = setup();
+    await coordinator.start();
+    await mcpHarness.notify(offered());
+    const lease = await host.nextLease();
+    const processor = await processorFactory.nextProcessor();
+    await vi.waitFor(() =>
+      expect(processor.receivedUpdates).toEqual([
+        {
+          sequence: 0,
+          eventId: 'realtime:voice:session-1:started',
+          event: {
+            eventId: 'realtime:voice:session-1:started',
+            sourceEnv: 'realtime-voice',
+            urgency: SessionInboxUrgency.Default,
+            context: {
+              sourceEnv: 'realtime-voice',
+              metadata: {
+                kind: 'realtime-session-started',
+                timestamp: lease.commits[0]?.timestamp,
+              },
+              content: [
+                {
+                  type: 'text',
+                  text: 'A realtime voice call connected. Greet the user briefly to start the conversation.',
+                },
+              ],
+            },
+          },
+          requestResponse: true,
+        },
+      ]),
+    );
+    expect(lease.acknowledged).toEqual([]);
+    await coordinator.close();
+  });
+
+  it('records processor startup failures and ends the accepted call', async () => {
+    const { coordinator, mcpHarness, processorFactory, host, connector } =
+      setup();
+    vi.spyOn(processorFactory, 'create').mockRejectedValue(
+      new Error('model unavailable'),
+    );
+    await coordinator.start();
+    await mcpHarness.notify(offered());
+    const lease = await host.nextLease();
+    const transport = await connector.nextTransport();
+    await vi.waitFor(() => expect(coordinator.getActiveSessionCount()).toBe(0));
+    expect(lease.commits).toEqual([
+      expect.objectContaining({
+        type: 'session-ended',
+        reason: 'Realtime session setup failed: model unavailable',
+      }),
+    ]);
+    expect(lease.contextRollbacks).toBe(1);
+    expect(lease.releaseCount).toBe(1);
+    expect(transport.closeCount).toBe(1);
+    expect(mcpHarness.endRealtimeMediaSession).toHaveBeenCalledWith(
+      'voice',
+      'session-1',
+    );
+    expect(mcpHarness.rejectRealtimeMediaSession).not.toHaveBeenCalled();
+    await coordinator.close();
+  });
+
+  it.each([new Error('accept failed'), new Error(''), 'unknown failure'])(
+    'rejects unaccepted calls and records setup failures: %s',
+    async (error) => {
+      const mcpHarness = createMcpHarness({
+        accept: async () => {
+          throw error;
+        },
+      });
+      const { coordinator, host } = setup({ mcp: mcpHarness });
+      await coordinator.start();
+      await mcpHarness.notify(offered());
+      const lease = await host.nextLease();
+      await vi.waitFor(() =>
+        expect(coordinator.getActiveSessionCount()).toBe(0),
+      );
+      expect(lease.commits).toEqual([
+        expect.objectContaining({
+          type: 'session-ended',
+          reason:
+            error instanceof Error && error.message
+              ? 'Realtime session setup failed: accept failed'
+              : 'Realtime session setup failed',
+        }),
+      ]);
+      expect(
+        mcpHarness.rejectRealtimeMediaSession,
+      ).toHaveBeenCalledExactlyOnceWith('voice', 'session-1');
+      expect(mcpHarness.endRealtimeMediaSession).not.toHaveBeenCalled();
+      await coordinator.close();
+    },
+  );
 
   it('runs model tool calls through the lease and returns the result', async () => {
     const { coordinator, mcpHarness, processorFactory, host } = setup();

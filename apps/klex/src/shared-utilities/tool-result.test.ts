@@ -1,7 +1,7 @@
 import type { ToolResultPart } from 'ai';
 import { describe, expect, it } from 'vitest';
 
-import { extractToolResultText } from './tool-result';
+import { extractContentOutputText, extractToolResultText } from './tool-result';
 
 function extract(output: ToolResultPart['output']): string {
   return extractToolResultText({
@@ -13,6 +13,35 @@ function extract(output: ToolResultPart['output']): string {
 }
 
 describe('extractToolResultText', () => {
+  it.each([
+    { content: ['line 1'], total: 1 },
+    { content: [{ id: 1 }], page: 2 },
+    { content: [{ type: 'paragraph', body: 'x' }] },
+    { content: [{ type: 'file', name: 'a.txt' }] },
+    { content: [{ type: 'text', text: 'x' }], total: 1 },
+    { content: [{ type: 'text', text: 'x', body: 'extra' }] },
+    { content: [], isError: 'false' },
+    { content: [], _meta: null },
+  ])('preserves ordinary JSON %j', (value) => {
+    expect(extractContentOutputText(value)).toBeNull();
+    for (const type of ['json', 'error-json'] as const) {
+      expect(extract({ type, value })).toBe(JSON.stringify(value));
+    }
+  });
+
+  it('accepts MCP envelope metadata and valid content blocks', () => {
+    expect(
+      extractContentOutputText({
+        content: [
+          { type: 'text', text: 'caption', annotations: {} },
+          { type: 'image', data: new Uint8Array([1]) },
+          { type: 'file', data: new URL('https://example.test/file') },
+        ],
+        isError: false,
+        _meta: {},
+      }),
+    ).toBe('caption\n[Image attachment: image]\n[File attachment: file]');
+  });
   it.each(['json', 'error-json'] as const)(
     'projects nested %s content without signed URLs or inline data',
     (type) => {

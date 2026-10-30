@@ -153,6 +153,47 @@ describe('projectMessage', () => {
   });
 
   describe('tools', () => {
+    it.each([
+      { content: ['line 1'], total: 1 },
+      { content: [{ id: 1 }], page: 2 },
+      { content: [{ type: 'paragraph', body: 'x' }] },
+      { content: [{ type: 'file', name: 'a.txt' }] },
+    ])('preserves ordinary JSON tool output %j', (value) => {
+      for (const output of [
+        value,
+        { type: 'json', value },
+        { type: 'error-json', value },
+      ]) {
+        expect(
+          records(
+            msg([
+              {
+                type: 'dynamic-tool',
+                toolName: 'read',
+                toolCallId: 'read',
+                state: 'output-available',
+                input: {},
+                output,
+              },
+            ]),
+            {
+              tools: {
+                input: false,
+                error: false,
+                output: { max: 1000, truncate: 'end', json: 'plain' },
+              },
+            },
+          ),
+        ).toEqual([
+          {
+            kind: 'tool',
+            name: 'read',
+            status: 'succeeded',
+            output: JSON.stringify(output),
+          },
+        ]);
+      }
+    });
     it.each(['json', 'error-json'])(
       'sanitizes nested %s media before rendering',
       (type) => {

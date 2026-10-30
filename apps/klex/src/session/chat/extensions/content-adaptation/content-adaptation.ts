@@ -37,7 +37,19 @@ export async function adaptContent(
   deps: ExtensionDeps,
   model: Pick<ResolvedModel, 'modelId' | 'inputCapabilities'>,
 ): Promise<ModelMessage[]> {
-  const audio = await adaptAudioContent(history, deps, model);
+  let aborted = false;
+  const trackedDeps: ExtensionDeps = {
+    ...deps,
+    generateText: async (args) => {
+      if (aborted) return { success: false, failureReason: 'aborted' };
+      const result = await deps.generateText(args);
+      if (!result.success && result.failureReason === 'aborted') aborted = true;
+      return result;
+    },
+  };
+  const audio = await adaptAudioContent(history, trackedDeps, model);
+  if (aborted)
+    throw new Error('Media adaptation aborted', { cause: 'aborted' });
   return Promise.all(
     audio.map(async (message) => {
       if (message.role !== 'user' || !Array.isArray(message.content))
@@ -47,6 +59,8 @@ export async function adaptContent(
           // A checkpoint must not discard audio that no candidate could hear.
           // Interactive callers use adaptAudioContent and can retry via their tool.
           if (part.type === 'text' && part.text === UNSUPPORTED_AUDIO_TEXT) {
+            if (aborted)
+              throw new Error('Media adaptation aborted', { cause: 'aborted' });
             throw new Error('Audio could not be adapted for compaction');
           }
           if (part.type !== 'image' && part.type !== 'file') return part;
@@ -55,12 +69,15 @@ export async function adaptContent(
           if (part.type === 'file' && !part.mediaType.startsWith('image/')) {
             return { type: 'text' as const, text: describeMediaContent(part) };
           }
-          const adapted = await adaptImagePart(part, deps, model);
+          const adapted = await adaptImagePart(part, trackedDeps, model);
           if (
             adapted.type === 'text' &&
             adapted.text === UNSUPPORTED_IMAGE_TEXT
-          )
+          ) {
+            if (aborted)
+              throw new Error('Media adaptation aborted', { cause: 'aborted' });
             throw new Error('Image could not be adapted for compaction');
+          }
           return adapted;
         }),
       );

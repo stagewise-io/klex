@@ -5,6 +5,7 @@ import type {
   ProviderOperationResult,
 } from '../provider-registry';
 import { resolveCatalogMetadata } from './model-catalog-helpers';
+import { withPromptCaching } from './prompt-caching';
 import {
   available,
   createOpenAiCompatibleLanguageModel,
@@ -33,11 +34,15 @@ export const openRouterProviderDefinition: ProviderDefinition = {
   resolveModelMetadata: (modelId) =>
     resolveCatalogMetadata(modelId, [], modelId),
   createLanguageModel: (instance, modelId) =>
-    createOpenAiCompatibleLanguageModel(
-      instance,
-      modelId,
-      BASE_URL,
-      gatewayAttributionHeaders(),
+    withPromptCaching(
+      createOpenAiCompatibleLanguageModel(
+        instance,
+        modelId,
+        BASE_URL,
+        gatewayAttributionHeaders(),
+      ),
+      'openrouter',
+      ['openaiCompatible'],
     ),
   discoverModels,
   testConnection: (instance, signal) =>

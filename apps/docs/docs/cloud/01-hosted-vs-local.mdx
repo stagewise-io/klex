@@ -1,15 +1,37 @@
 ---
-title: Hosted vs. local Klex Bots
-description: The differences between cloud-hosted and self-hosted Klex Bots — and how a Klex Bot moves between both.
+title: Hosted vs. self-hosted Klex Bots
+description: Compare Klex Cloud-hosted Bots with self-hosted Bots, including cloud enrollment and where chats and memory are stored.
 related:
   - /cloud
   - /cloud/self-hosting
   - /bot/quickstart
+  - /cloud/data-privacy
 ---
 
-> **Can I use Klex Bots without the cloud — and if yes, how?**
+> **Can I run a Klex Bot without Klex Cloud?**
 
-<Panel title="This answer is being written">
-This page will compare running bots through Klex Cloud with running them fully local:
-what the cloud adds, what works without it, and how the same bot moves between both.
-</Panel>
+Yes. A self-hosted Klex Bot can run without cloud enrollment. Klex recommends a Cloud-hosted Bot for most users, and recommends enrolling a self-hosted Bot in Klex Cloud for a more complete management experience.
+
+## Choose how to host the Bot
+
+### Klex Cloud-hosted Bot
+
+Klex runs the Bot in its hosted environment. The Bot's chats and memory are stored in its data directory in that environment. You can use the Cloud dashboard to view activity and manage connected MCPs.
+
+### Self-hosted Bot enrolled in Klex Cloud
+
+You run the Bot in an environment you manage and can enroll it in Klex Cloud. This gives you more control over where the Bot operates while retaining Cloud management. The Bot's chats and memory stay in its local data directory. The Cloud dashboard provides a frontend and reverse proxy to the Bot's Admin API.
+
+### Self-hosted Bot without Cloud enrollment
+
+Cloud enrollment is not a technical requirement for a self-hosted Bot. Klex recommends enrollment because the standalone experience is less complete.
+
+### Self-hosted Cloud
+
+Self-hosting the Klex Cloud service is available to Enterprise customers only.
+
+## Manage access and stop a Bot
+
+In the Cloud dashboard, you can review Bot activity and connect or disconnect MCPs. For other apps and accounts the Bot uses, configure permissions in those apps or accounts. To stop a self-hosted Bot, close its app. To stop a Cloud-hosted Bot, use **Stop** in the Cloud dashboard.
+
+> **Product note:** Details about transferring a Bot between hosting modes, chat retention, deletion, and third-party data processing are not covered here; those require separate confirmation.

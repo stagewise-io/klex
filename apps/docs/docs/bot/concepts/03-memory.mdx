@@ -1,34 +1,22 @@
 ---
-title: How Klex Bot memory works
+title: Klex Bot chats and memory
 sidebar:
   label: Memory
-description: A Global Workspace-inspired architecture of concurrent sessions, consolidated into Markdown memory.
+description: Where Klex Bot chats and memory are stored in hosted and self-hosted setups.
 related:
   - /bot/concepts/data-directory
   - /bot/concepts/identity
-  - /bot/concepts/agent-skills
+  - /cloud/data-privacy
 ---
 
-> **How is the memory of a Klex Bot structured, and how does it work?**
+> **Where does a Klex Bot store its chats and memory?**
 
-A single Klex bot acts as a single identity and one instance of consciousness, being limited in the amount of multitasking it can do. This does not mean, however, that the bot consists of a single internal conversation.
+A Klex Bot stores its chats and memory in its data directory. For a Cloud-hosted Bot, that directory is in the hosted environment. For a self-hosted Bot, it is in the local folder used to store the Bot's data.
 
-On the contrary, the architecture of Klex Bots uses parallelization in a way that's roughly analogous to how the [Global Workspace Theory (GWT)](https://en.wikipedia.org/wiki/Global_workspace_theory) envisions the human brain operating.
+Admins can access chats and memory through the Bot's Admin API. The Klex Cloud dashboard acts as a reverse proxy and frontend for each Bot's own Admin API.
 
-## The technical foundation
+## What this page covers
 
-A single Klex bot has a variable number of **sessions** that operate concurrently. Each session is a conversation between an LLM agent and an internal environment, and can operate for arbitrarily long durations thanks to automated context compaction. Only one open session has access to the environment and can interact with the outside world to express behavior (the "illuminated main stage" according to the GWT).
+This page documents where chats and memory are stored and how administrators access the Bot's API. It does not specify what the Bot remembers from a conversation, the exact memory format, retention periods, deletion behavior, backups, or what model providers process. Those details need separate confirmation before publication.
 
-Other sessions serve different purposes, e.g. filtering incoming signals or updating and consolidating memories. They act independently of the main session, but can influence it by passing context into it.
-
-### Main session
-
-The main session represents the bot's actual behavior and actions. Only this session gets access to MCPs, allowing it to interact with its connections to the environment. It does not, however, handle tasks such as creating or consolidating memories, and can purely focus on actual work based on incoming events from the outside world, or internal triggers such as reminders or to-dos.
-
-### Utility sessions
-
-Utility sessions have no access to the outside world, but can interact with the bot's data directory. They handle tasks such as analyzing existing sessions to build new memories, deleting deprecated memories, fine-tuning skills (procedural memories), and linking the bot's experiences to entities in memory.
-
-### God session
-
-The god session is a dedicated session that has limited access to the outside world and is only usable through the Admin API. It does not receive inputs from the outside world other than dedicated [god messages](/bot/concepts/god-messages) and its purpose is to perform administrative tasks that require elevated permissions, such as commanding the bot to create or update its [soul](/bot/concepts/soul).
+See [The data directory](/bot/concepts/data-directory) for an overview of the Bot's data location, and [Data privacy](/cloud/data-privacy) for the current scope of confirmed data-handling information.

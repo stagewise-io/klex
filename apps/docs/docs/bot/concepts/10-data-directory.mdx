@@ -1,17 +1,16 @@
 ---
-title: Data Directory
-description: Klex Bots store all of their memories, character information, and configuration in a single directory.
+title: The Klex Bot data directory
+description: Where a Klex Bot stores chats and memory in hosted and self-hosted setups.
 related:
   - /bot/concepts/memory
-  - /bot/concepts/identity
+  - /cloud/hosted-vs-local
   - /cloud/data-privacy
 ---
 
-> **Where does a Klex Bot store its memory and configuration?**
+> **Where are a Klex Bot's chats and memory stored?**
 
-The data directory is the location where each bot stores its memories and configuration.
+Each Klex Bot stores its chats and memory in its data directory. For a Cloud-hosted Bot, the directory is in the hosted environment. For a self-hosted Bot, it is in the local folder used to store the Bot's data.
 
-It is only accessible to the Klex application, but **not** to the Klex bot itself.
-Klex Bots don't have file system access and instead get curated access to parts of their memory and other information.
+Admins can access chats and memory through the Bot's Admin API. The Klex Cloud dashboard acts as a reverse proxy and frontend to each Bot's own Admin API.
 
-This prevents leaking information or malicious manipulation of these files.
+This page describes only the confirmed storage location for chats and memory. It does not establish the exact directory contents, file layout, access-control model beyond the Admin API, retention or deletion rules, or third-party data processing.

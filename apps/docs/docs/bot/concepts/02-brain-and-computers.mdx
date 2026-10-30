@@ -1,18 +1,26 @@
 ---
-title: How the Klex Bot's brain and computers are split
+title: The Klex Bot and connected computers
 sidebar:
-  label: Brain & computers
-description: Klex Bots run in a brain-only VM — computers and work environments are attached from outside via MCP.
+  label: Bot & computers
+description: What a Klex Bot manages in its own environment and how its tools work with external computers and MCP servers.
 related:
   - /bot/concepts/how-bots-work
   - /bot/concepts/mcp
-  - /guides/limit-blast-radius
+  - /cloud/hosted-vs-local
 ---
 
-> **Why do you split Klex Bot hosting from the computers it uses?**
+> **Where does a Klex Bot work, and how does it use connected computers?**
 
-<Panel title="This answer is being written">
-This page will explain the brain-only VM: the Klex Bot VM holds brain, memory, config, and
-orchestration state, while all work environments — Linux VMs, browsers, shells — attach from
-the outside through MCP and stay replaceable.
-</Panel>
+A Klex Bot manages memory and active sessions in its own environment. When it needs to work outside that environment, it uses tools connected to external systems, such as computers and MCP servers. The work happens in those connected environments through the tools available there.
+
+## The Bot's environment
+
+The Bot's internal environment manages its memory and active sessions. Its work tools connect to external environments, not to the Bot's own internal environment.
+
+## Connected computers and services
+
+A connected computer or MCP server provides tools the Bot can use in that external environment. The Bot acts through those tools; access to an app or account should be configured in the app or account itself. You can review Bot activity and connect or disconnect MCPs in the Cloud dashboard.
+
+This describes where the Bot's work is carried out. It does not describe network isolation, security boundaries, or approvals for individual actions. Klex does not currently provide action-by-action approvals or restrictions.
+
+For hosting options, see [Hosted vs. self-hosted Klex Bots](/cloud/hosted-vs-local).

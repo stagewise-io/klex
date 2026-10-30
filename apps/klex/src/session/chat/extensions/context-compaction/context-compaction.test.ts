@@ -355,6 +355,65 @@ function lastPrompt(deps: ExtensionDeps): string {
 // --- tests ---
 
 describe('compaction media adaptation', () => {
+  it.each(['imageVision', 'audioListening'] as const)(
+    'stops compaction when %s adaptation is aborted',
+    async (purpose) => {
+      const mediaType = purpose === 'imageVision' ? 'image/png' : 'audio/wav';
+      const entry = (modelId: string) => ({ providerId: 'test', modelId });
+      const deps = makeWindowDeps(
+        sliceOf(
+          {
+            id: 'aborted-media',
+            role: 'user',
+            parts: [
+              {
+                type: 'file',
+                mediaType,
+                url: `data:${mediaType};base64,YWJvcnQ=`,
+              },
+            ],
+          },
+          makeTextMessage('user', 'active turn'),
+        ),
+      );
+      vi.mocked(deps.config.getModelSelection).mockImplementation((selected) =>
+        selected === purpose
+          ? [entry('helper'), entry('other-helper')]
+          : selected === 'compaction'
+            ? [entry('first'), entry('second')]
+            : selected === 'chat'
+              ? [entry('chat')]
+              : [],
+      );
+      vi.mocked(deps.modelResolver.resolveModelInfo).mockImplementation(
+        ({ modelId }) =>
+          ({
+            contextSize: 20000,
+            inputCapabilities: modelId.includes('helper')
+              ? { image: {}, audio: {} }
+              : {},
+          }) as never,
+      );
+      vi.mocked(deps.generateText).mockResolvedValue(genFailure('aborted'));
+      const ext = createContextCompactionExt.create(deps);
+      await step(ext, 20000);
+      await vi.waitFor(() => expect(ext.introspect?.().status).toBe('idle'));
+      expect(deps.generateText).toHaveBeenCalledTimes(1);
+      expect(deps.generateText).toHaveBeenCalledWith(
+        expect.objectContaining({
+          modelIds: [entry('helper')],
+        }),
+      );
+      expect(deps.checkpoints.commit).not.toHaveBeenCalled();
+      expect(deps.logger.warn).not.toHaveBeenCalledWith(
+        expect.anything(),
+        'Could not adapt compaction candidate',
+      );
+      expect(deps.logger.warn).not.toHaveBeenCalledWith(
+        'All compaction models failed — falling back to chat models',
+      );
+    },
+  );
   it.each([false, true])(
     'keeps JSON tool media out of transcript text (wrapped=%s)',
     async (wrapped) => {

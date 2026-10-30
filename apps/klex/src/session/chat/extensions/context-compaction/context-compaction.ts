@@ -482,6 +482,8 @@ class ContextCompactionExt implements Extension {
           if (result.success || result.failureReason === 'aborted')
             return result;
         } catch (error) {
+          if (error instanceof Error && error.cause === 'aborted')
+            return { success: false, failureReason: 'aborted' };
           this.deps.logger.warn(
             { error },
             'Could not adapt compaction candidate',
@@ -520,6 +522,7 @@ class ContextCompactionExt implements Extension {
           const fallbackResult = await summarize(chatModelIds);
 
           if (!fallbackResult.success) {
+            if (fallbackResult.failureReason === 'aborted') return null;
             if (fallbackResult.failureReason === 'content-filter') {
               this.deps.logger.warn(
                 'Chat model fallback also returned content-filter — compaction aborted',

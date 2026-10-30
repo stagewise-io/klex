@@ -1,5 +1,68 @@
 import type { ToolResultPart } from 'ai';
 
+const KNOWN_MEDIA_TYPES = new Set([
+  'audio',
+  'image',
+  'image-data',
+  'image-url',
+  'file',
+  'file-data',
+  'file-url',
+  'file-id',
+  'media',
+]);
+const TEXT_KEYS = new Set([
+  'type',
+  'text',
+  'annotations',
+  '_meta',
+  'providerMetadata',
+  'providerOptions',
+]);
+
+function isContentBlock(value: unknown): boolean {
+  if (!value || typeof value !== 'object') return false;
+  const part = value as Record<string, unknown>;
+  if (part.type === 'text')
+    return (
+      typeof part.text === 'string' &&
+      Reflect.ownKeys(part).every(
+        (key) => typeof key === 'string' && TEXT_KEYS.has(key),
+      )
+    );
+  return (
+    typeof part.type === 'string' &&
+    KNOWN_MEDIA_TYPES.has(part.type) &&
+    (typeof part.data === 'string' ||
+      part.data instanceof Uint8Array ||
+      part.data instanceof URL ||
+      typeof part.url === 'string' ||
+      part.url instanceof URL ||
+      typeof part.fileId === 'string' ||
+      typeof part.mediaType === 'string' ||
+      typeof part.mimeType === 'string')
+  );
+}
+
+function envelopeContent(value: object): unknown[] | null {
+  const envelope = value as Record<string, unknown>;
+  if (
+    !Reflect.ownKeys(envelope).every(
+      (key) =>
+        key === 'content' ||
+        (key === 'isError' && typeof envelope.isError === 'boolean') ||
+        (key === '_meta' &&
+          envelope._meta !== null &&
+          typeof envelope._meta === 'object'),
+    )
+  )
+    return null;
+  return Array.isArray(envelope.content) &&
+    envelope.content.every(isContentBlock)
+    ? envelope.content
+    : null;
+}
+
 /** Describe media without copying binary payloads or URLs into text prompts. */
 export function describeMediaContent(part: {
   type: string;
@@ -32,14 +95,12 @@ export function extractContentOutputText(output: unknown): string | null {
     typeof output.value === 'object' &&
     'content' in output.value
   ) {
-    return extractContentOutputText({ content: output.value.content });
+    return extractContentOutputText(output.value);
   }
   const value =
     'type' in output && output.type === 'content' && 'value' in output
       ? output.value
-      : 'content' in output
-        ? output.content
-        : null;
+      : envelopeContent(output);
   if (!Array.isArray(value)) return null;
   return value
     .map((part: unknown) => {

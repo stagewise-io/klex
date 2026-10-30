@@ -5,6 +5,7 @@ const KNOWN_MEDIA_TYPES = new Set([
   'image',
   'image-data',
   'image-url',
+  'image-file-id',
   'file',
   'file-data',
   'file-url',
@@ -23,6 +24,16 @@ const TEXT_KEYS = new Set([
 function isContentBlock(value: unknown): boolean {
   if (!value || typeof value !== 'object') return false;
   const part = value as Record<string, unknown>;
+  if (part.type === 'resource_link') return typeof part.uri === 'string';
+  if (part.type === 'resource') {
+    const resource = part.resource;
+    return (
+      resource !== null &&
+      typeof resource === 'object' &&
+      'uri' in resource &&
+      typeof resource.uri === 'string'
+    );
+  }
   if (part.type === 'text')
     return (
       typeof part.text === 'string' &&
@@ -50,6 +61,10 @@ function envelopeContent(value: object): unknown[] | null {
     !Reflect.ownKeys(envelope).every(
       (key) =>
         key === 'content' ||
+        (key === 'structuredContent' &&
+          envelope.structuredContent !== null &&
+          typeof envelope.structuredContent === 'object' &&
+          !Array.isArray(envelope.structuredContent)) ||
         (key === 'isError' && typeof envelope.isError === 'boolean') ||
         (key === '_meta' &&
           envelope._meta !== null &&
@@ -57,6 +72,8 @@ function envelopeContent(value: object): unknown[] | null {
     )
   )
     return null;
+  // Structured content and metadata may duplicate media payloads or signed URLs.
+  // Only the recognized content blocks are projected into transcript text.
   return Array.isArray(envelope.content) &&
     envelope.content.every(isContentBlock)
     ? envelope.content
@@ -119,15 +136,20 @@ export function extractContentOutputText(output: unknown): string | null {
       )
         return part.text;
       const field = (key: string): string | undefined => {
-        const value = (part as Record<string, unknown>)[key];
+        const source =
+          part.type === 'resource' &&
+          'resource' in part &&
+          part.resource !== null &&
+          typeof part.resource === 'object'
+            ? part.resource
+            : part;
+        const value = (source as Record<string, unknown>)[key];
         return typeof value === 'string' ? value : undefined;
       };
       return describeMediaContent({
         type: part.type,
         mediaType: field('mediaType'),
         mimeType: field('mimeType'),
-        filename: field('filename'),
-        url: field('url'),
       });
     })
     .join('\n');

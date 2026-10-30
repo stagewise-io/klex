@@ -14,6 +14,11 @@ function extract(output: ToolResultPart['output']): string {
 
 describe('extractToolResultText', () => {
   it.each([
+    { content: ['a', 'b'] },
+    { content: [{ id: 1, title: 'Note' }], total: 1 },
+    { content: [], structuredContent: null },
+    { content: [], structuredContent: [] },
+    { content: [], structuredContent: 'ordinary' },
     { content: ['line 1'], total: 1 },
     { content: [{ id: 1 }], page: 2 },
     { content: [{ type: 'paragraph', body: 'x' }] },
@@ -28,6 +33,53 @@ describe('extractToolResultText', () => {
       expect(extract({ type, value })).toBe(JSON.stringify(value));
     }
   });
+
+  it.each(['json', 'error-json'] as const)(
+    'projects %s MCP resources and structured content without payloads',
+    (type) => {
+      const uri = 'https://example.test/media?token=PRIVATE_URI';
+      const value = {
+        content: [
+          { type: 'text', text: 'before' },
+          { type: 'image', mimeType: 'image/png', data: 'PRIVATE_IMAGE' },
+          {
+            type: 'resource',
+            resource: { uri, mimeType: 'audio/ogg', blob: 'PRIVATE_BLOB' },
+          },
+          {
+            type: 'resource',
+            resource: { uri, mediaType: 'image/png', blob: 'PRIVATE_BLOB' },
+          },
+          {
+            type: 'resource',
+            resource: { uri, mimeType: 'text/plain', text: uri },
+          },
+          { type: 'resource_link', uri, mimeType: 'image/jpeg', name: uri },
+          { type: 'resource_link', uri },
+          { type: 'image-file-id', fileId: 'PRIVATE_FILE_ID' },
+          { type: 'text', text: 'after' },
+        ],
+        structuredContent: { uri, data: 'PRIVATE_STRUCTURED_PAYLOAD' },
+        isError: false,
+        _meta: { url: uri },
+      };
+      const before = structuredClone(value);
+      const expected = [
+        'before',
+        '[Image attachment: image/png]',
+        '[Audio attachment: audio/ogg]',
+        '[Image attachment: image/png]',
+        '[Media attachment: text/plain]',
+        '[Image attachment: image/jpeg]',
+        '[Media attachment: resource_link]',
+        '[Image attachment: image-file-id]',
+        'after',
+      ].join('\n');
+      expect(extractContentOutputText(value)).toBe(expected);
+      expect(extract({ type, value })).toBe(expected);
+      expect(value).toEqual(before);
+    },
+  );
 
   it('accepts MCP envelope metadata and valid content blocks', () => {
     expect(

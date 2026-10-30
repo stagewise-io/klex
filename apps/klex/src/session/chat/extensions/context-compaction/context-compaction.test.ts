@@ -397,7 +397,9 @@ describe('compaction media adaptation', () => {
       vi.mocked(deps.generateText).mockResolvedValue(genFailure('aborted'));
       const ext = createContextCompactionExt.create(deps);
       await step(ext, 20000);
-      await vi.waitFor(() => expect(ext.introspect?.().status).toBe('idle'));
+      await vi.waitFor(async () =>
+        expect((await ext.introspect?.())?.status).toBe('idle'),
+      );
       expect(deps.generateText).toHaveBeenCalledTimes(1);
       expect(deps.generateText).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -424,8 +426,19 @@ describe('compaction media adaptation', () => {
         content: [
           { type: 'image-url', url },
           { type: 'file-data', mediaType: 'image/png', data: payload },
+          {
+            type: 'resource',
+            resource: { uri: url, mimeType: 'audio/ogg', blob: 'PRIVATE_BLOB' },
+          },
+          {
+            type: 'resource',
+            resource: { uri: url, mimeType: 'text/plain', text: url },
+          },
+          { type: 'resource_link', uri: url, mimeType: 'image/jpeg' },
+          { type: 'image-file-id', fileId: 'PRIVATE_FILE_ID' },
           { type: 'text', text: 'Useful caption after media' },
         ],
+        structuredContent: { url, data: 'PRIVATE_STRUCTURED_PAYLOAD' },
       };
       const source: ExtendedUIMessage = {
         id: 'json-media',
@@ -461,12 +474,19 @@ describe('compaction media adaptation', () => {
       expect(transcript).toContain('Useful caption after media');
       expect(transcript).toContain('[Image attachment: image-url]');
       expect(transcript).toContain('[Image attachment: image/png]');
+      expect(transcript).toContain('[Audio attachment: audio/ogg]');
+      expect(transcript).toContain('[Media attachment: text/plain]');
+      expect(transcript).toContain('[Image attachment: image/jpeg]');
+      expect(transcript).toContain('[Image attachment: image-file-id]');
       for (const secret of [
         url,
         'https://',
         'PRIVATE_TOKEN',
         'PRIVATE_SIGNATURE',
         payload,
+        'PRIVATE_BLOB',
+        'PRIVATE_FILE_ID',
+        'PRIVATE_STRUCTURED_PAYLOAD',
       ])
         expect(transcript).not.toContain(secret);
       // The SDK wraps raw MCP output in JSON during conversion. Those media

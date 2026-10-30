@@ -32,6 +32,7 @@ import {
   createDeterministicMediaTransportConnector,
   DETERMINISTIC_REALTIME_MODEL,
   type DeterministicConversationHost,
+  type DeterministicInteractionLease,
 } from './test-support';
 
 const logging = {
@@ -651,7 +652,9 @@ describe('realtime session coordinator', () => {
     const acquireLease = host.acquireInteractionLease.bind(host);
     vi.spyOn(host, 'acquireInteractionLease').mockImplementation(
       async (request) => {
-        const lease = await acquireLease(request);
+        const lease = (await acquireLease(
+          request,
+        )) as DeterministicInteractionLease;
         lease.publish(update(4));
         lease.publish(update(5));
         return lease;

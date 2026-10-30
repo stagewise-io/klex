@@ -1,5 +1,9 @@
 import type { ProviderDefinition } from '../provider-registry';
-import { exactModel, resolveCatalogMetadata } from './model-catalog-helpers';
+import {
+  catalogModels,
+  exactModel,
+  resolveCatalogMetadata,
+} from './model-catalog-helpers';
 import {
   createOpenAiCompatibleLanguageModel,
   discoverOpenAiCompatibleModels,
@@ -133,6 +137,7 @@ export const zaiProviderDefinition: ProviderDefinition = {
     description: 'GLM models served through the Z.ai public API.',
   },
   resolveModelMetadata: resolveZaiModelMetadata,
+  catalogModels: catalogModels(MODEL_CATALOG, resolveZaiModelMetadata),
   createLanguageModel: (instance, modelId) =>
     createOpenAiCompatibleLanguageModel(instance, modelId, BASE_URL),
   discoverModels: (instance, signal) =>

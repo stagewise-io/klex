@@ -408,14 +408,20 @@ describe('provider registry routes', () => {
     const listModels = vi.fn(async () => ({
       ok: true as const,
       code: 'available' as const,
-      value: [
-        {
-          modelId: 'vendor:model:latest',
-          createdAt: '2026-01-02T00:00:00.000Z',
-          displayName: 'Latest',
-          source: 'merged' as const,
+      value: {
+        models: [
+          {
+            modelId: 'vendor:model:latest',
+            createdAt: '2026-01-02T00:00:00.000Z',
+            displayName: 'Latest',
+            source: 'merged' as const,
+          },
+        ],
+        discovery: {
+          status: 'live' as const,
+          fetchedAt: '2026-10-29T10:00:00.000Z',
         },
-      ],
+      },
     }));
     const app = makeApp({ listModels });
     const response = await app.request(
@@ -433,6 +439,45 @@ describe('provider registry routes', () => {
           source: 'merged',
         },
       ],
+      discovery: { status: 'live', fetchedAt: '2026-10-29T10:00:00.000Z' },
+    });
+  });
+
+  it('returns catalog fallback models with the discovery issue', async () => {
+    const app = makeApp({
+      listModels: vi.fn(async () => ({
+        ok: true as const,
+        code: 'available' as const,
+        value: {
+          models: [
+            {
+              modelId: 'gpt-5.5',
+              kind: 'language' as const,
+              source: 'catalog' as const,
+            },
+          ],
+          discovery: {
+            status: 'catalog' as const,
+            issue: {
+              code: 'discovery_failed' as const,
+              message: 'Provider returned HTTP 503',
+            },
+          },
+        },
+      })),
+    });
+
+    const response = await app.request('/v1/providers/test-main/models');
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      models: [{ modelId: 'gpt-5.5', kind: 'language', source: 'catalog' }],
+      discovery: {
+        status: 'catalog',
+        issue: {
+          code: 'discovery_failed',
+          message: 'Provider returned HTTP 503',
+        },
+      },
     });
   });
 
@@ -447,7 +492,7 @@ describe('provider registry routes', () => {
     const listModels = vi.fn(async () => ({
       ok: true as const,
       code: 'available' as const,
-      value: [],
+      value: { models: [] },
     }));
     const app = makeApp({
       addKnownModel,

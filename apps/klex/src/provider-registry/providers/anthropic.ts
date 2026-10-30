@@ -7,7 +7,11 @@ import type {
   ProviderModel,
   ProviderOperationResult,
 } from '../provider-registry';
-import { exactModel, resolveCatalogMetadata } from './model-catalog-helpers';
+import {
+  catalogModels,
+  exactModel,
+  resolveCatalogMetadata,
+} from './model-catalog-helpers';
 import {
   available,
   fetchJson,
@@ -73,6 +77,7 @@ export const anthropicProviderDefinition: ProviderDefinition = {
     documentationUrl: 'https://docs.anthropic.com',
   },
   resolveModelMetadata: resolveAnthropicModelMetadata,
+  catalogModels: catalogModels(MODEL_CATALOG, resolveAnthropicModelMetadata),
   createLanguageModel,
   createEvaluationModel: (instance, modelId) =>
     createProvider(instance).evaluationModel(modelId),

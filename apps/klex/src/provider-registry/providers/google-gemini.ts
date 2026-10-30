@@ -7,7 +7,11 @@ import type {
   ProviderModel,
   ProviderOperationResult,
 } from '../provider-registry';
-import { exactModel, resolveCatalogMetadata } from './model-catalog-helpers';
+import {
+  catalogModels,
+  exactModel,
+  resolveCatalogMetadata,
+} from './model-catalog-helpers';
 import {
   available,
   customHeaders,
@@ -226,6 +230,15 @@ export function resolveGoogleModelMetadata(modelId: string) {
     },
     {
       prefixes: ['gemini-'],
+      includesAny: ['-tts'],
+      metadata: {
+        kind: 'text-to-speech',
+        capabilities: { voice: { tts: true } },
+      },
+      documentationUrl: MODEL_DOCS,
+    },
+    {
+      prefixes: ['gemini-'],
       includesAny: ['-image'],
       metadata: { kind: 'image-generation' },
       documentationUrl: MODEL_DOCS,
@@ -259,6 +272,7 @@ export const googleGeminiProviderDefinition: ProviderDefinition = {
     documentationUrl: 'https://ai.google.dev/gemini-api/docs',
   },
   resolveModelMetadata: resolveGoogleModelMetadata,
+  catalogModels: catalogModels(MODEL_CATALOG, resolveGoogleModelMetadata),
   createLanguageModel,
   createEvaluationModel: (instance, modelId) =>
     createProvider(instance).evaluationModel(modelId),
@@ -305,20 +319,31 @@ async function discoverModels(
               (method): method is string => typeof method === 'string',
             )
           : [];
+        // Embedding, Imagen, Veo and AQA models expose no conversation API.
+        if (
+          !methods.includes('generateContent') &&
+          !methods.includes('bidiGenerateContent')
+        )
+          continue;
+        const modelId = item.name.replace(/^models\//, '');
+        // Methods do not tell chat from TTS, image or Live models; the
+        // catalog's kind wins when it has one.
+        const kind =
+          methods.includes('generateContent') &&
+          !resolveGoogleModelMetadata(modelId)?.kind
+            ? ('language' as const)
+            : undefined;
         models.push({
-          modelId: item.name.replace(/^models\//, ''),
-          ...(methods.includes('embedContent') &&
-            !methods.includes('generateContent') && {
-              kind: 'embedding' as const,
-            }),
-          ...(methods.includes('generateContent') && {
-            kind: 'language' as const,
-          }),
+          modelId,
+          ...(kind && { kind }),
           ...(typeof item.displayName === 'string' && {
             displayName: item.displayName,
           }),
           ...(typeof item.inputTokenLimit === 'number' && {
             contextSize: item.inputTokenLimit,
+          }),
+          ...(item.thinking === true && {
+            capabilities: { reasoning: true },
           }),
         });
       }

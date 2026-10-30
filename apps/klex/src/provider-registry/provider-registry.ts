@@ -43,6 +43,9 @@ export type ProviderInstanceId = string;
 export type ProviderSettings = Record<string, unknown>;
 export type ProviderSettingsPatch = Record<string, unknown | null>;
 
+/** Provider model lists change rarely; refresh=true bypasses this. */
+const MODEL_DISCOVERY_TTL_MS = 60 * 60 * 1000;
+
 export type ProviderErrorCode =
   | 'available'
   | 'dependency_missing'
@@ -181,6 +184,8 @@ export interface ProviderDefinition {
     instance: ProviderInstance,
     signal: AbortSignal,
   ): Promise<ProviderOperationResult<readonly ProviderModel[]>>;
+  /** Maintained model IDs listed when live discovery fails and nothing is cached. */
+  catalogModels?: readonly ProviderModel[];
   listVoices?(
     instance: ProviderInstance,
     modelId: string,
@@ -208,7 +213,23 @@ export interface ProviderTypeInfo extends ProviderMetadata {
 }
 
 export interface ResolvedProviderModel extends ProviderModel {
-  source: 'discovered' | 'manual' | 'merged';
+  source: 'discovered' | 'catalog' | 'manual' | 'merged';
+}
+
+/**
+ * Where the discovered part of a model list came from. `stale` and
+ * `catalog` mean the live provider request failed; `issue` explains why.
+ */
+export interface ModelDiscoveryStatus {
+  status: 'live' | 'cached' | 'stale' | 'catalog';
+  fetchedAt?: string;
+  issue?: Omit<ProviderOperationFailure, 'ok'>;
+}
+
+export interface ProviderModelList {
+  models: readonly ResolvedProviderModel[];
+  /** Absent for provider types without model discovery. */
+  discovery?: ModelDiscoveryStatus;
 }
 
 export interface ModelSelectionWarning {
@@ -331,7 +352,7 @@ export interface ProviderRegistry extends ProviderModelResolver {
   listModels(
     id: ProviderInstanceId,
     refresh?: boolean,
-  ): Promise<ProviderOperationResult<readonly ResolvedProviderModel[]>>;
+  ): Promise<ProviderOperationResult<ProviderModelList>>;
   validateModel(
     input: ModelValidationInput,
     signal?: AbortSignal,
@@ -356,7 +377,7 @@ class ProviderRegistryModule implements ProviderRegistry {
   private unsubscribe: (() => void) | undefined;
   private readonly modelCache = new Map<
     ProviderInstanceId,
-    { signature: string; models: readonly ProviderModel[] }
+    { signature: string; models: readonly ProviderModel[]; fetchedAt: number }
   >();
   private readonly pendingDiscovery = new Map<
     ProviderInstanceId,
@@ -947,7 +968,7 @@ class ProviderRegistryModule implements ProviderRegistry {
   async listModels(
     id: ProviderInstanceId,
     refresh = false,
-  ): Promise<ProviderOperationResult<readonly ResolvedProviderModel[]>> {
+  ): Promise<ProviderOperationResult<ProviderModelList>> {
     const instance = this.getInstance(id);
     if (!instance.ok) return instance;
     const definition = this.requireDefinition(instance.value.type);
@@ -963,8 +984,8 @@ class ProviderRegistryModule implements ProviderRegistry {
         model,
       ) ?? model;
     if (!definition.discoverModels) {
-      return success(
-        manual.map((model) => ({
+      return success({
+        models: manual.map((model) => ({
           ...enrich(model),
           provenance: [
             ...(enrich(model).provenance ?? []),
@@ -972,26 +993,56 @@ class ProviderRegistryModule implements ProviderRegistry {
           ],
           source: 'manual' as const,
         })),
-      );
+      });
     }
     const signature = this.settingsSignature(instance.value.settings);
     const cached = this.modelCache.get(id);
-    let discovered =
-      !refresh && cached?.signature === signature
-        ? success(cached.models)
-        : undefined;
-    if (!discovered)
-      discovered = await this.discover(
+    const usable = cached?.signature === signature ? cached : undefined;
+    let models: readonly ProviderModel[];
+    let source: 'discovered' | 'catalog' = 'discovered';
+    let discovery: ModelDiscoveryStatus;
+    if (
+      !refresh &&
+      usable &&
+      Date.now() - usable.fetchedAt < MODEL_DISCOVERY_TTL_MS
+    ) {
+      models = usable.models;
+      discovery = {
+        status: 'cached',
+        fetchedAt: new Date(usable.fetchedAt).toISOString(),
+      };
+    } else {
+      const result = await this.discover(
         id,
         definition,
         instance.value,
         signature,
       );
-    if (!discovered.ok && cached?.signature === signature)
-      discovered = success(cached.models);
-    if (!discovered.ok) return discovered;
+      if (result.ok) {
+        models = result.value;
+        discovery = { status: 'live', fetchedAt: new Date().toISOString() };
+      } else {
+        const { ok: _ok, ...issue } = result;
+        // A failed refresh keeps the last good list or the maintained
+        // catalog, so pickers stay usable and still show why.
+        if (usable) {
+          models = usable.models;
+          discovery = {
+            status: 'stale',
+            fetchedAt: new Date(usable.fetchedAt).toISOString(),
+            issue,
+          };
+        } else if (definition.catalogModels?.length || manual.length > 0) {
+          models = definition.catalogModels ?? [];
+          source = 'catalog';
+          discovery = { status: 'catalog', issue };
+        } else {
+          return result;
+        }
+      }
+    }
     const merged = new Map<string, ResolvedProviderModel>(
-      discovered.value.map((model) => {
+      models.map((model) => {
         const enriched = enrich(model);
         return [
           model.modelId,
@@ -999,9 +1050,11 @@ class ProviderRegistryModule implements ProviderRegistry {
             ...enriched,
             provenance: [
               ...(enriched.provenance ?? []),
-              { source: 'discovered' as const },
+              ...(source === 'discovered'
+                ? [{ source: 'discovered' as const }]
+                : []),
             ],
-            source: 'discovered' as const,
+            source,
           },
         ];
       }),
@@ -1019,11 +1072,12 @@ class ProviderRegistryModule implements ProviderRegistry {
         source: existing ? 'merged' : 'manual',
       });
     }
-    return success(
-      [...merged.values()].sort((left, right) =>
+    return success({
+      models: [...merged.values()].sort((left, right) =>
         left.modelId.localeCompare(right.modelId),
       ),
-    );
+      discovery,
+    });
   }
 
   resolveRealtimeProvider(): ResolvedRealtimeProvider | undefined {
@@ -1372,7 +1426,12 @@ class ProviderRegistryModule implements ProviderRegistry {
     try {
       const result = await request;
       if (result.ok && generation === this.configGeneration) {
-        this.modelCache.set(id, { signature, models: result.value });
+        this.modelCache.delete(id);
+        this.modelCache.set(id, {
+          signature,
+          models: result.value,
+          fetchedAt: Date.now(),
+        });
         while (this.modelCache.size > 128) {
           const oldest = this.modelCache.keys().next().value;
           if (oldest === undefined) break;

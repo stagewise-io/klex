@@ -191,6 +191,161 @@ describe('provider registry module integration', () => {
       await config.close();
     }
   });
+
+  it('falls back to the last good list or the catalog when discovery fails', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-10-29T10:00:00.000Z'));
+    const config = createConfig({
+      logging,
+      dataDirectory: await createDataDirectory(),
+    });
+    await config.start();
+    const outage = {
+      ok: false as const,
+      code: 'discovery_failed' as const,
+      message: 'Provider returned HTTP 503',
+    };
+    const discoverModels = vi
+      .fn<NonNullable<ProviderDefinition['discoverModels']>>()
+      .mockResolvedValueOnce(outage)
+      .mockResolvedValueOnce({
+        ok: true,
+        code: 'available',
+        value: [{ modelId: 'live-model' }],
+      })
+      .mockResolvedValue(outage);
+    const definition: ProviderDefinition = {
+      type: 'openrouter',
+      usageGuidance:
+        'Use this provider only for registry discovery fallback tests; it never sends network requests.',
+      metadata: { displayName: 'Fallback', description: 'Discovery fallback' },
+      createLanguageModel: () => ({}) as LanguageModelV4,
+      discoverModels,
+      catalogModels: [{ modelId: 'catalog-model', kind: 'language' }],
+      testConnection: async () => ({
+        ok: true,
+        code: 'available',
+        value: { latencyMs: 0 },
+      }),
+    };
+    const registry = createProviderRegistry({
+      logging,
+      config,
+      definitions: [definition],
+    });
+    await registry.start();
+    try {
+      await registry.addInstance({
+        id: 'fallback',
+        type: 'openrouter',
+        settings: { apiKey: 'key' },
+      });
+
+      expect(await registry.listModels('fallback')).toEqual({
+        ok: true,
+        code: 'available',
+        value: {
+          models: [
+            {
+              modelId: 'catalog-model',
+              kind: 'language',
+              provenance: [],
+              source: 'catalog',
+            },
+          ],
+          discovery: {
+            status: 'catalog',
+            issue: {
+              code: 'discovery_failed',
+              message: 'Provider returned HTTP 503',
+            },
+          },
+        },
+      });
+
+      expect(await registry.listModels('fallback', true)).toMatchObject({
+        ok: true,
+        value: {
+          models: [{ modelId: 'live-model', source: 'discovered' }],
+          discovery: { status: 'live', fetchedAt: '2026-10-29T10:00:00.000Z' },
+        },
+      });
+      vi.setSystemTime(new Date('2026-10-29T10:59:00.000Z'));
+      expect(await registry.listModels('fallback')).toMatchObject({
+        value: {
+          models: [{ modelId: 'live-model' }],
+          discovery: { status: 'cached' },
+        },
+      });
+      expect(discoverModels).toHaveBeenCalledTimes(2);
+
+      // After the cache expires, a failed refresh keeps the last good list.
+      vi.setSystemTime(new Date('2026-10-29T11:01:00.000Z'));
+      expect(await registry.listModels('fallback')).toMatchObject({
+        value: {
+          models: [{ modelId: 'live-model', source: 'discovered' }],
+          discovery: {
+            status: 'stale',
+            fetchedAt: '2026-10-29T10:00:00.000Z',
+            issue: { code: 'discovery_failed' },
+          },
+        },
+      });
+      expect(discoverModels).toHaveBeenCalledTimes(3);
+    } finally {
+      vi.useRealTimers();
+      await registry.close();
+      await config.close();
+    }
+  });
+
+  it('reports discovery failures when no fallback models exist', async () => {
+    const config = createConfig({
+      logging,
+      dataDirectory: await createDataDirectory(),
+    });
+    await config.start();
+    const registry = createProviderRegistry({
+      logging,
+      config,
+      definitions: [
+        {
+          type: 'openrouter',
+          usageGuidance:
+            'Use this provider only for registry discovery failure tests; it never sends network requests.',
+          metadata: { displayName: 'Failing', description: 'No fallback' },
+          createLanguageModel: () => ({}) as LanguageModelV4,
+          discoverModels: async () => ({
+            ok: false,
+            code: 'authentication_required',
+            message: 'Invalid credentials',
+          }),
+          testConnection: async () => ({
+            ok: true,
+            code: 'available',
+            value: { latencyMs: 0 },
+          }),
+        },
+      ],
+    });
+    await registry.start();
+    try {
+      await registry.addInstance({
+        id: 'failing',
+        type: 'openrouter',
+        settings: { apiKey: 'key' },
+      });
+      expect(await registry.listModels('failing')).toEqual({
+        ok: false,
+        code: 'authentication_required',
+        message: 'Invalid credentials',
+      });
+    } finally {
+      await registry.close();
+      await config.close();
+    }
+  });
+
   it('probes unsaved and existing Azure deployments with resolved credentials without changing config', async () => {
     const dataDirectory = await createDataDirectory();
     const config = createConfig({
@@ -985,28 +1140,31 @@ describe('provider registry module integration', () => {
     const models = await registry.listModels('provider-primary');
     expect(models).toMatchObject({
       ok: true,
-      value: [
-        {
-          modelId: 'autodetected-only',
-          source: 'discovered',
-          provenance: [{ source: 'discovered' }],
-        },
-        {
-          modelId: 'vendor:model:v2',
-          displayName: 'Manual override',
-          contextSize: 32_000,
-          kind: 'language',
-          capabilities: {
-            input: { audio: {}, image: { maxBytes: 10_000_000 } },
+      value: {
+        discovery: { status: 'live' },
+        models: [
+          {
+            modelId: 'autodetected-only',
+            source: 'discovered',
+            provenance: [{ source: 'discovered' }],
           },
-          source: 'merged',
-          provenance: [
-            { source: 'provider-exact' },
-            { source: 'discovered' },
-            { source: 'user' },
-          ],
-        },
-      ],
+          {
+            modelId: 'vendor:model:v2',
+            displayName: 'Manual override',
+            contextSize: 32_000,
+            kind: 'language',
+            capabilities: {
+              input: { audio: {}, image: { maxBytes: 10_000_000 } },
+            },
+            source: 'merged',
+            provenance: [
+              { source: 'provider-exact' },
+              { source: 'discovered' },
+              { source: 'user' },
+            ],
+          },
+        ],
+      },
     });
     expect(discoverModels).toHaveBeenCalledTimes(2);
 

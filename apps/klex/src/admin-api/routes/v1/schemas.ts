@@ -634,7 +634,7 @@ const updateKnownModelBodySchema = z
 
 const providerModelSchema = knownModelSchema.extend({
   createdAt: z.iso.datetime().optional(),
-  source: z.enum(['manual', 'discovered', 'merged']),
+  source: z.enum(['manual', 'discovered', 'catalog', 'merged']),
   provenance: z
     .array(
       z.object({
@@ -651,8 +651,26 @@ const providerModelSchema = knownModelSchema.extend({
     )
     .optional(),
 });
+const modelDiscoveryStatusSchema = z
+  .object({
+    status: z
+      .enum(['live', 'cached', 'stale', 'catalog'])
+      .describe(
+        'live/cached: provider list. stale: last good list after a failed refresh. catalog: maintained fallback list after a failed fetch.',
+      ),
+    fetchedAt: z.iso.datetime().optional(),
+    issue: z
+      .object({
+        code: z.string(),
+        message: z.string(),
+        remediation: z.string().optional(),
+      })
+      .optional(),
+  })
+  .openapi('ModelDiscoveryStatus');
 const providerModelsResponseSchema = z.object({
   models: z.array(providerModelSchema),
+  discovery: modelDiscoveryStatusSchema.optional(),
 });
 const providerVoicesQuerySchema = z
   .object({

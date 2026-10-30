@@ -1,26 +1,23 @@
 ---
-title: The Klex Bot and connected computers
+title: Where do Klex Bots do their work?
 sidebar:
-  label: Bot & computers
-description: What a Klex Bot manages in its own environment and how its tools work with external computers and MCP servers.
+  label: Connections
+description: How machines and MCP servers connect a Klex Bot to the environments where it works.
 related:
   - /bot/concepts/how-bots-work
-  - /bot/concepts/mcp
-  - /cloud/hosted-vs-local
+  - /bot/quickstart
 ---
 
-> **Where does a Klex Bot work, and how does it use connected computers?**
+> **What do machines and MCP servers connect a Klex Bot to?**
 
-A Klex Bot manages memory and active sessions in its own environment. When it needs to work outside that environment, it uses tools connected to external systems, such as computers and MCP servers. The work happens in those connected environments through the tools available there.
+Machines and MCP servers connect a Klex Bot to other environments. The Bot manages memory and stays running in its own environment, but carries out all work in those connected environments.
 
-## The Bot's environment
+## Connectors and work environments
 
-The Bot's internal environment manages its memory and active sessions. Its work tools connect to external environments, not to the Bot's own internal environment.
+Machines and MCP servers are connectors; the environment they connect to is where work happens. Connecting a Bot to an environment does not move that work into the Bot's own environment.
 
-## Connected computers and services
+## Configure access where it belongs
 
-A connected computer or MCP server provides tools the Bot can use in that external environment. The Bot acts through those tools; access to an app or account should be configured in the app or account itself. You can review Bot activity and connect or disconnect MCPs in the Cloud dashboard.
+Configure permissions for connected apps and accounts in those apps or accounts. In Klex Cloud, you can review a Bot's activity and connect or disconnect MCP servers.
 
-This describes where the Bot's work is carried out. It does not describe network isolation, security boundaries, or approvals for individual actions. Klex does not currently provide action-by-action approvals or restrictions.
-
-For hosting options, see [Hosted vs. self-hosted Klex Bots](/cloud/hosted-vs-local).
+For the overall model, see [How Klex Bots work](/bot/concepts/how-bots-work). For storage and access to chats and memory, see [The Klex Bot data directory](/bot/concepts/data-directory).

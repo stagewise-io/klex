@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1120 410" role="img" aria-labelledby="title desc">
+  <title id="title">Where a Klex Bot manages memory and does work</title>
+  <desc id="desc">The Bot's own environment manages memory and keeps the Bot running. Machines and MCP servers connect it to another environment, where all work takes place.</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#2559FE"/>
+    </marker>
+  </defs>
+  <rect x="18" y="18" width="1084" height="374" rx="24" fill="#F8FAFC" stroke="#CBD5E1" stroke-width="2"/>
+  <rect x="42" y="72" width="300" height="266" rx="18" fill="#EEF2FF" stroke="#6C63FF" stroke-width="2"/>
+  <text x="66" y="111" font-family="Arial, sans-serif" font-size="16" font-weight="700" letter-spacing="1" fill="#312E81">BOT ENVIRONMENT</text>
+  <circle cx="76" cy="161" r="7" fill="#6C63FF"/>
+  <text x="96" y="167" font-family="Arial, sans-serif" font-size="20" font-weight="600" fill="#1E1B4B">Manages memory</text>
+  <circle cx="76" cy="207" r="7" fill="#6C63FF"/>
+  <text x="96" y="213" font-family="Arial, sans-serif" font-size="18" font-weight="600" fill="#1E1B4B">Keeps the Bot running</text>
+  <rect x="66" y="256" width="252" height="48" rx="10" fill="#E0E7FF"/>
+  <text x="192" y="286" text-anchor="middle" font-family="Arial, sans-serif" font-size="16" font-weight="700" fill="#3730A3">No work happens here</text>
+  <path d="M 353 205 H 400" fill="none" stroke="#2559FE" stroke-width="4" marker-end="url(#arrow)"/>
+  <rect x="418" y="72" width="280" height="266" rx="18" fill="#F1F5F9" stroke="#94A3B8" stroke-width="2"/>
+  <text x="442" y="111" font-family="Arial, sans-serif" font-size="16" font-weight="700" letter-spacing="1" fill="#334155">CONNECTORS</text>
+  <rect x="442" y="143" width="232" height="48" rx="10" fill="#E2E8F0"/>
+  <text x="558" y="174" text-anchor="middle" font-family="Arial, sans-serif" font-size="18" font-weight="600" fill="#1E293B">Machines</text>
+  <rect x="442" y="204" width="232" height="48" rx="10" fill="#E2E8F0"/>
+  <text x="558" y="235" text-anchor="middle" font-family="Arial, sans-serif" font-size="18" font-weight="600" fill="#1E293B">MCP servers</text>
+  <text x="558" y="289" text-anchor="middle" font-family="Arial, sans-serif" font-size="14" fill="#475569">Connect the Bot to another environment</text>
+  <path d="M 709 205 H 750" fill="none" stroke="#2559FE" stroke-width="4" marker-end="url(#arrow)"/>
+  <rect x="768" y="72" width="310" height="266" rx="18" fill="#EFF6FF" stroke="#2559FE" stroke-width="2"/>
+  <text x="792" y="111" font-family="Arial, sans-serif" font-size="16" font-weight="700" letter-spacing="0.8" fill="#1E3A8A">CONNECTED ENVIRONMENTS</text>
+  <text x="923" y="250" text-anchor="middle" font-family="Arial, sans-serif" font-size="20" font-weight="700" fill="#1E3A8A">All work happens here</text>
+  <text x="923" y="280" text-anchor="middle" font-family="Arial, sans-serif" font-size="15" fill="#334155">Not in the Bot environment</text>
+</svg>

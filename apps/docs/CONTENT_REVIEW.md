@@ -1,28 +1,28 @@
 # Editorial fact-check plan
 
-> Maintainer note for this draft PR. This is not a source of product truth and is not part of the published docs. Do not convert unanswered questions into product claims.
+> Maintainer note for this draft PR. This file is not product documentation. Keep unsupported claims out of published pages.
 
-## Confirmed direction from Glenn
+## Confirmed directly by Glenn (30 Oct 2026)
 
-The rewrite should help readers: get started with agents; understand how Klex Bots compare with other agents and how to migrate; identify useful applications; and operate multiple bots effectively. Glenn's question list also calls for coverage of architecture, memory, models, MCP and Agent Skills, channels, Cloud versus local use, reliability, permissions, privacy, security, and collaboration. These are topics to answer—not evidence of how the product behaves.
+- **Hosting:** Klex recommends a Cloud-hosted Bot. A Bot can also run in a user-managed environment and be enrolled in Klex Cloud; enrollment is not technically required for a self-hosted Bot, but the standalone experience is less complete. Self-hosted Cloud is available only to Enterprise customers.
+- **Architecture:** Inside a Bot, the relevant internal functions are memory and active-session management. The Bot performs work through tools connected to external environments, such as computers and MCPs; those tools do not operate on the Bot's own environment.
+- **Data location and access:** Chats and memory are stored in the Bot's data directory: in the hosted environment for Cloud-hosted Bots, or locally for self-hosted Bots. Admins can access them through the Admin API. The Cloud dashboard acts as a reverse proxy and frontend for each Bot's Admin API.
+- **Access management and stopping:** Users can review Bot activity in the dashboard and connect or disconnect MCPs. For other connected apps and accounts, Glenn recommends configuring their permissions directly. A self-hosted Bot can be stopped by closing its app; a Cloud Bot can be stopped with the dashboard's Stop control.
+- **Safety controls:** Action approvals and restrictions are not implemented today. Advanced tracking and behavioral-analysis tooling is planned; do not describe it as available, or publish roadmap details, without approval.
 
-## Product facts to confirm before publication
+## Confirmed from the repository; check release scope
 
-- **Audience and positioning:** primary reader, first-session outcome, approved definition and terminology, validated customer use cases, and supportable product comparisons.
-- **Setup and architecture:** exact first-bot setup for hosted and local use; supported runtime/sandbox options; what the bot, host, machine, MCP server, channel, and skills can access; and default permissions.
-- **Memory, identity, and models:** memory behavior and persistence; how people are identified across channels; Agent Skills support; model/provider support; why multiple models may be needed; and recommended configuration.
-- **Operations:** availability and wake behavior; recurring tasks; concurrency and parallel work; bot/channel limits; how to inspect, pause, stop, and recover; chat grouping; and update compatibility.
-- **Trust and data handling:** where hosted and local prompts, memory, credentials, logs, and task data are stored or processed; third-party processors; Stagewise access; security controls and their limits; approved permission guidance; self-hosting availability; and guarantees we must not make.
-- **Company workflows:** how bots communicate or collaborate, whether there is a recommended platform, how many bots to use, and which customer examples are approved for publication.
+- The provider-registry README lists 25 provider types. It describes provider types and model discovery, not a fixed exhaustive model catalogue. Exact available models depend on the provider and configured account.
+- Source also registers TypeSafe AI and Vercel AI Gateway, but `apps/klex/src/local-data/architecture.md` describes those provider types as unreleased and says config/model-call changes first ship in 0.18.0. Do not describe them as currently available without release confirmation.
+- No single recommended model setup was found in the repository; Glenn has not yet confirmed model-selection advice.
 
-## Draft sections needing a fact-check pass
+## Open questions: do not infer
 
-Before publication, review the claims and descriptions in `docs/bot/concepts/`, `docs/bot/guides/`, `docs/bot/reliability/`, `docs/cloud/`, and `docs/guides/`. In particular, the current English drafts describe implementation details and make claims about memory/session behavior, MCP access, identity, bot isolation, Cloud enrollment and credentials, privacy, security controls, availability, updates, and self-hosting. Treat those as unverified until Glenn or the responsible product owner confirms them. The pages marked “This answer is being written” are outlines, not answers.
+- Memory-selection/consolidation behavior, chat retention, deletion, backups, and exact file layout.
+- Cloud staff access, third-party/model-provider processing, provider credential storage, and security/encryption guarantees.
+- Detailed limits or guarantees around sessions, identity, channel access, and tool permissions.
+- Recommended model configuration, including primary/fallback or task-specific choices.
 
-## Coverage gaps to resolve
+## Drafting rule
 
-The current page map does not yet provide verified guidance for other sandbox providers, a recommended chat platform, approved customer examples, or the specific first-session success criteria. Confirm whether each should be answered, deferred, or intentionally out of scope.
-
-## Working rule
-
-Keep the information architecture and questions; publish product behavior only after confirmation. For privacy, security, data handling, availability, and product comparisons, record the source or owner who confirmed the wording.
+Keep the page map and reader questions, but replace implementation detail with only confirmed behavior. Separate current capabilities from plans. For privacy, security, retention, and data-handling claims, record the confirming source or owner before publication.

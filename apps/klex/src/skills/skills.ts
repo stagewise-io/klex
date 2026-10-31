@@ -70,6 +70,8 @@ export interface SkillPutOptions {
   /** Replaces the namespace-owned metadata when given. */
   metadata?: Record<string, unknown>;
   seed?: SkillSeed;
+  /** Rejects when bookkeeping cannot be persisted; the document stays written. */
+  durable?: boolean;
 }
 
 /** Read/write access to one namespace, handed to its owning extension. */
@@ -288,7 +290,10 @@ class SkillRegistryModule implements SkillRegistry {
     const changed = !existing || !sameContent(existing, next);
     if (changed) await store.write(next);
 
-    const seeded = !existing || this.synthesized.has(id);
+    // A document without persisted bookkeeping counts as new, so a re-run
+    // after a crash between document and bookkeeping write keeps its seed.
+    const seeded =
+      !existing || !Object.hasOwn(this.records, id) || this.synthesized.has(id);
     const at = new Date().toISOString();
     const record = seeded
       ? this.createRecord(id, at, options.seed)
@@ -304,7 +309,8 @@ class SkillRegistryModule implements SkillRegistry {
       record.metadata = metadata;
       dirty = true;
     }
-    if (dirty) await this.persistSafely();
+    if (options.durable) await this.persist();
+    else if (dirty) await this.persistSafely();
     return this.getSkill(namespace, name) as Skill;
   }
 

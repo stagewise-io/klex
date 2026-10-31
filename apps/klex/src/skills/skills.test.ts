@@ -182,6 +182,30 @@ describe('skill registry usage', () => {
     expect(handle.get('fix-build')?.readCount).toBe(4);
   });
 
+  it('seeds a document that has no persisted bookkeeping yet', async () => {
+    const dir = await dataDirectory();
+    const folder = join(dir, 'skills', 'alpha', 'fix-build');
+    await mkdir(folder, { recursive: true });
+    await writeFile(
+      join(folder, 'SKILL.md'),
+      serializeSkill({ name: 'fix-build', ...content }),
+    );
+    const { registry } = await started(dir);
+    registry.claimNamespace('a', 'alpha');
+    const handle = registry.forNamespace('alpha');
+    await handle.put('fix-build', content, {
+      seed: { createdAt: '2025-01-01T00:00:00.000Z', readCount: 4 },
+      durable: true,
+    });
+    expect(handle.get('fix-build')).toMatchObject({
+      createdAt: '2025-01-01T00:00:00.000Z',
+      readCount: 4,
+    });
+    expect(
+      (await readRegistryFile(dir)).skills['alpha/fix-build'],
+    ).toMatchObject({ readCount: 4 });
+  });
+
   it('rejects oversized or non-object metadata', async () => {
     const { registry } = await started();
     registry.claimNamespace('a', 'alpha');

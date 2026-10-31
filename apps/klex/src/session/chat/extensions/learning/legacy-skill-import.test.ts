@@ -33,10 +33,25 @@ import { LEARNING_STATE_STORE_DEFINITION } from './learning-state';
 vi.mock('./extraction-prompt.md', () => ({ default: 'Extract.' }));
 vi.mock('./consolidation-prompt.md', () => ({ default: 'Consolidate.' }));
 
-/** Injects a crash between the registry write and the legacy folder removal. */
+/** Injects a crash between the registry write and the legacy folder removal, or a failing bookkeeping save. */
 const injected = vi.hoisted(() => ({
   failRemoval: null as null | ((path: string) => boolean),
+  failRegistrySave: false,
 }));
+vi.mock('@/local-data', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/local-data')>();
+  return {
+    ...actual,
+    writeJsonStoreDocument: (
+      ...args: Parameters<typeof actual.writeJsonStoreDocument>
+    ) => {
+      if (injected.failRegistrySave && args[1].id === 'skill-registry') {
+        return Promise.reject(new Error('injected bookkeeping failure'));
+      }
+      return actual.writeJsonStoreDocument(...args);
+    },
+  };
+});
 vi.mock('node:fs/promises', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:fs/promises')>();
   return {
@@ -78,6 +93,8 @@ beforeEach(() => {
 
 afterEach(async () => {
   injected.failRemoval = null;
+  injected.failRegistrySave = false;
+  vi.mocked(logger.error).mockClear();
   vi.useRealTimers();
   await Promise.all(
     directories
@@ -355,6 +372,66 @@ describe('legacy skill import through registered startup', () => {
       1,
     );
     expect(await contents(crashed)).toEqual(await contents(clean));
+  });
+
+  it('keeps legacy folders and usage until registry bookkeeping is on disk', async () => {
+    const agentDir = await seededAgent();
+    const stateBefore = await readJson(statePath(agentDir));
+    vi.setSystemTime(new Date('2026-10-31T13:00:00.000Z'));
+    injected.failRegistrySave = true;
+
+    await startAgent(agentDir);
+
+    for (const name of ['deploy-notes', 'fix-build', 'no-state']) {
+      expect(await exists(join(legacyRoot(agentDir), name))).toBe(true);
+      // The document itself was written before the bookkeeping failed.
+      expect(await exists(importedPath(agentDir, name))).toBe(true);
+    }
+    // Entries of folders still in place survive; folderless ones are pruned.
+    const { vanished: _vanished, ...kept } = stateBefore.skills;
+    expect((await readJson(statePath(agentDir))).skills).toEqual(kept);
+
+    injected.failRegistrySave = false;
+    vi.setSystemTime(new Date(NOW));
+    const skills = await startAgent(agentDir);
+
+    // Documents without persisted bookkeeping still take the legacy seed.
+    expect(skills.find((skill) => skill.name === 'fix-build')).toMatchObject({
+      createdAt: '2026-09-01T08:00:00.000Z',
+      readCount: 7,
+      userEdited: true,
+      metadata: { sourceEpisodes: ['episode-0003', 'episode-0017'] },
+    });
+    expect(await exists(join(legacyRoot(agentDir), 'fix-build'))).toBe(false);
+  });
+
+  it('prunes leftover usage when a crash already removed the legacy root', async () => {
+    const agentDir = await seededAgent({ withBroken: false });
+    await rm(legacyRoot(agentDir), { recursive: true });
+    expect(
+      Object.keys((await readJson(statePath(agentDir))).skills).length,
+    ).toBeGreaterThan(0);
+
+    await startAgent(agentDir);
+
+    expect((await readJson(statePath(agentDir))).skills).toEqual({});
+  });
+
+  it('starts the session but pauses learning when the import throws', async () => {
+    const agentDir = await seededAgent();
+    await rm(legacyRoot(agentDir), { recursive: true });
+    // readdir on a file fails with ENOTDIR.
+    await writeFile(legacyRoot(agentDir), 'not a folder');
+    const usage = (await readJson(statePath(agentDir))).skills;
+
+    await expect(startAgent(agentDir)).resolves.toEqual([]);
+
+    expect(logger.error).toHaveBeenCalledWith(
+      expect.objectContaining({ error: expect.any(Error) }),
+      'Importing legacy skills failed; learning paused until next start',
+    );
+    expect(await readFile(legacyRoot(agentDir), 'utf8')).toBe('not a folder');
+    expect((await readJson(statePath(agentDir))).skills).toEqual(usage);
   });
 
   it('leaves an identical pre-existing core skill untouched', async () => {

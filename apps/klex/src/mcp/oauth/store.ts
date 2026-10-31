@@ -77,7 +77,7 @@ const serverOAuthStateSchema = z
   })
   .passthrough();
 
-type ServerOAuthState = z.infer<typeof serverOAuthStateSchema>;
+export type ServerOAuthState = z.infer<typeof serverOAuthStateSchema>;
 
 const oauthStoreSchema = z
   .object({
@@ -141,6 +141,7 @@ export class McpOAuthStore {
   public async invalidate(
     serverName: string,
     scope: OAuthCredentialScope,
+    signal?: AbortSignal,
   ): Promise<void> {
     await this.mutate((data) => {
       const server = data.servers[serverName];
@@ -157,7 +158,22 @@ export class McpOAuthStore {
       if (scope === 'all' || scope === 'verifier') delete server.codeVerifier;
       if (scope === 'all' || scope === 'discovery')
         delete server.discoveryState;
+    }, signal);
+  }
+
+  /** Removes every URL used by this namespace, including legacy unscoped entries. */
+  public async removeServer(namespace: string): Promise<ServerOAuthState[]> {
+    const removed: ServerOAuthState[] = [];
+    await this.mutate((data) => {
+      for (const [key, server] of Object.entries(data.servers)) {
+        if (key !== namespace && !key.startsWith(`${namespace}\u0000`))
+          continue;
+        removed.push(server);
+        delete data.servers[key];
+      }
+      if (removed.length === 0) return false;
     });
+    return removed;
   }
 
   public async saveClientInformation(
@@ -165,44 +181,48 @@ export class McpOAuthStore {
     redirectUrl: string,
     clientInformation: StoredOAuthClientInformation,
     issuer?: string,
+    signal?: AbortSignal,
   ): Promise<void> {
     await this.mutate((data) => {
       const server = this.getOrCreateServer(data, serverName);
       const issuerKey = issuer ?? clientInformation.issuer ?? DEFAULT_ISSUER;
       server.clientInformationByIssuer[issuerKey] = clientInformation;
       server.clientRedirectUrlsByIssuer[issuerKey] = redirectUrl;
-    });
+    }, signal);
   }
 
   public async saveCodeVerifier(
     serverName: string,
     codeVerifier: string,
+    signal?: AbortSignal,
   ): Promise<void> {
     await this.mutate((data) => {
       this.getOrCreateServer(data, serverName).codeVerifier = codeVerifier;
-    });
+    }, signal);
   }
 
   public async saveDiscoveryState(
     serverName: string,
     discoveryState: OAuthDiscoveryState,
+    signal?: AbortSignal,
   ): Promise<void> {
     await this.mutate((data) => {
       this.getOrCreateServer(data, serverName).discoveryState = discoveryState;
-    });
+    }, signal);
   }
 
   public async saveTokens(
     serverName: string,
     tokens: StoredOAuthTokens,
     issuer?: string,
+    signal?: AbortSignal,
   ): Promise<void> {
     await this.mutate((data) => {
       const server = this.getOrCreateServer(data, serverName);
       const issuerKey = issuer ?? tokens.issuer ?? DEFAULT_ISSUER;
       server.tokensByIssuer[issuerKey] = tokens;
       server.lastTokenIssuer = issuerKey;
-    });
+    }, signal);
   }
 
   public async tokens(
@@ -232,10 +252,15 @@ export class McpOAuthStore {
     return created;
   }
 
-  private async mutate(update: (data: OAuthStoreData) => void): Promise<void> {
+  private async mutate(
+    update: (data: OAuthStoreData) => undefined | false,
+    signal?: AbortSignal,
+  ): Promise<void> {
     const mutation = this.mutationQueue.then(async () => {
       const data = await this.read();
-      update(data);
+      // Check inside the queue so a closed connection cannot restore deleted credentials.
+      signal?.throwIfAborted();
+      if (update(data) === false) return;
       await this.write(data);
     });
     this.mutationQueue = mutation.catch(() => undefined);

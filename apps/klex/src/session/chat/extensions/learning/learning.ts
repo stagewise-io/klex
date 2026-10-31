@@ -46,16 +46,23 @@ class LearningExtension implements Extension {
       name: 'learning-skill-import',
       bindings: { module: 'learning-skill-import' },
     });
+    // Learning before the import finishes could later be overwritten by
+    // legacy content, so learning pauses until a start imports cleanly.
     try {
-      await importLegacySkills({
+      const { failed } = await importLegacySkills({
         legacyRoot: join(dataDirectory, 'skills'),
         skills,
         state: this.state,
         logger,
       });
+      if (failed > 0) {
+        logger.error(
+          { failed },
+          'Some legacy skills were not imported; learning paused until next start',
+        );
+        return;
+      }
     } catch (error) {
-      // Learning before the import finishes could later be overwritten by
-      // legacy content, so learning pauses until a start imports cleanly.
       logger.error(
         { error },
         'Importing legacy skills failed; learning paused until next start',

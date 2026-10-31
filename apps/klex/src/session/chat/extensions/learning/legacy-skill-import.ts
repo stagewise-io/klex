@@ -27,6 +27,11 @@ export interface LegacySkillImportResult {
   imported: number;
   /** Legacy folders left in place; retried on the next start. */
   remaining: number;
+  /**
+   * Parseable skills whose import failed. Their registry document may exist
+   * already and is rewritten from the legacy folder on the next start.
+   */
+  failed: number;
 }
 
 /**
@@ -53,12 +58,13 @@ export async function importLegacySkills(
         draft.skills = {};
       });
     }
-    return { imported: 0, remaining: 0 };
+    return { imported: 0, remaining: 0, failed: 0 };
   }
 
   const usage = state.get().skills;
   const remaining = new Set<string>();
   let imported = 0;
+  let failed = 0;
   for (const entry of entries) {
     if (!entry.isDirectory()) {
       remaining.add(entry.name);
@@ -101,6 +107,7 @@ export async function importLegacySkills(
         'Importing legacy skill failed; retrying on next start',
       );
       remaining.add(entry.name);
+      failed += 1;
     }
   }
 
@@ -119,11 +126,11 @@ export async function importLegacySkills(
   }
   if (imported > 0 || remaining.size > 0) {
     logger.info(
-      { imported, remaining: remaining.size },
+      { imported, remaining: remaining.size, failed },
       'Imported legacy learned skills',
     );
   }
-  return { imported, remaining: remaining.size };
+  return { imported, remaining: remaining.size, failed };
 }
 
 /** Null unless `{directory}/SKILL.md` is a regular file with a valid skill named like its folder. */

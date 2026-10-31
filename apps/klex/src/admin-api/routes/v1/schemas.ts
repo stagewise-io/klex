@@ -910,9 +910,26 @@ const skillSummarySchema = z
   })
   .openapi('SkillSummary');
 
+const skillListQuerySchema = z
+  .object({
+    limit: z.coerce.number().int().min(1).max(100).optional(),
+    cursor: z
+      .string()
+      .min(1)
+      .optional()
+      .describe('Last skill name from the previous page'),
+    search: z
+      .string()
+      .trim()
+      .optional()
+      .describe('Case-insensitive description search'),
+  })
+  .openapi('SkillListQuery');
+
 const skillListResponseSchema = z
   .object({
     skills: z.array(skillSummarySchema),
+    nextCursor: z.string().nullable(),
   })
   .openapi('SkillListResponse');
 
@@ -1379,6 +1396,7 @@ export {
   sessionInstanceIdParamSchema,
   sessionKindSchema,
   skillDetailSchema,
+  skillListQuerySchema,
   skillListResponseSchema,
   skillNameParamsSchema,
   skillSummarySchema,

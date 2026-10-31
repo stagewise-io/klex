@@ -3,7 +3,7 @@ import { resolveCatalogMetadata } from './model-catalog-helpers';
 import {
   createOpenAiCompatibleLanguageModel,
   discoverOpenAiCompatibleModels,
-  testDiscoveryConnection,
+  testModelConnection,
 } from './shared';
 
 const BASE_URL = 'https://opencode.ai/zen/v1';
@@ -23,7 +23,13 @@ export const openCodeZenProviderDefinition: ProviderDefinition = {
   discoverModels: (instance, signal) =>
     discoverOpenAiCompatibleModels(instance, BASE_URL, signal),
   testConnection: (instance, signal) =>
-    testDiscoveryConnection(instance, BASE_URL, () =>
-      discoverOpenAiCompatibleModels(instance, BASE_URL, signal),
+    // The catalog is public; use a paid model to verify authentication.
+    testModelConnection(
+      instance,
+      BASE_URL,
+      (modelId) =>
+        createOpenAiCompatibleLanguageModel(instance, modelId, BASE_URL),
+      signal,
+      'deepseek-v4.1-flash',
     ),
 };

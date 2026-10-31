@@ -3,9 +3,10 @@ import {
   MAX_DESCRIPTION_LENGTH,
   MAX_NAME_LENGTH,
   SKILL_NAME_PATTERN,
-} from '../learning-config';
+} from './skills-config';
 
-export interface LearnedSkill {
+/** Content of one Agent Skills `SKILL.md`. */
+export interface SkillDocument {
   name: string;
   description: string;
   body: string;
@@ -15,8 +16,30 @@ export function isValidSkillName(name: string): boolean {
   return name.length <= MAX_NAME_LENGTH && SKILL_NAME_PATTERN.test(name);
 }
 
+/** Namespaces use the same slug syntax as skill names. */
+export function isValidSkillNamespace(namespace: string): boolean {
+  return isValidSkillName(namespace);
+}
+
+/** Qualified skill id: `namespace/name`. */
+export function formatSkillId(namespace: string, name: string): string {
+  return `${namespace}/${name}`;
+}
+
+/** Null unless `id` is a valid `namespace/name`. */
+export function parseSkillId(
+  id: string,
+): { namespace: string; name: string } | null {
+  const separator = id.indexOf('/');
+  if (separator <= 0) return null;
+  const namespace = id.slice(0, separator);
+  const name = id.slice(separator + 1);
+  if (!isValidSkillNamespace(namespace) || !isValidSkillName(name)) return null;
+  return { namespace, name };
+}
+
 /** Null when valid, otherwise the reason. */
-export function validateSkill(skill: LearnedSkill): string | null {
+export function validateSkill(skill: SkillDocument): string | null {
   if (!isValidSkillName(skill.name)) return `invalid name "${skill.name}"`;
   const description = skill.description.trim();
   if (!description) return 'empty description';
@@ -34,7 +57,7 @@ export function validateSkill(skill: LearnedSkill): string | null {
  * strings, which is valid YAML double-quoted syntax, so no YAML library is
  * needed and names like `true` or `123` stay strings.
  */
-export function serializeSkill(skill: LearnedSkill): string {
+export function serializeSkill(skill: SkillDocument): string {
   return [
     '---',
     `name: ${JSON.stringify(skill.name)}`,
@@ -48,7 +71,7 @@ export function serializeSkill(skill: LearnedSkill): string {
 const FRONTMATTER = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/;
 
 /** Parses a `SKILL.md` with single-line `name` and `description`. */
-export function parseSkill(content: string): LearnedSkill | null {
+export function parseSkill(content: string): SkillDocument | null {
   const match = FRONTMATTER.exec(content);
   if (!match) return null;
   const fields = new Map<string, string>();

@@ -10,8 +10,8 @@ import type { Mcp } from '@/mcp';
 import type { ModelCallLogger } from '@/model-call-logger';
 import type { ProviderRegistry } from '@/provider-registry';
 import type { EpisodeSummaryLog } from '@/session/chat/extensions/episode-summary/summary-log';
-import type { SkillCatalog } from '@/session/chat/extensions/learning/skill-store';
 import type { SessionHistory } from '@/session-history';
+import type { SkillRegistry } from '@/skills';
 
 import { createErrorHandler, notFoundHandler, validationHook } from './errors';
 import {
@@ -116,12 +116,18 @@ import {
   patchModelSelectionRoute,
 } from './routes/v1/settings';
 import {
+  deleteLegacySkill,
+  deleteLegacySkillRoute,
   deleteSkill,
   deleteSkillRoute,
+  getLegacySkill,
+  getLegacySkillRoute,
   getSkill,
   getSkillRoute,
   listSkills,
   listSkillsRoute,
+  updateLegacySkill,
+  updateLegacySkillRoute,
   updateSkill,
   updateSkillRoute,
 } from './routes/v1/skills';
@@ -136,7 +142,7 @@ export interface AdminAppDependencies {
   cloudConnectivity: CloudConnectivity;
   godMessages: GodMessages;
   sessionHistory: SessionHistory;
-  skillCatalog: SkillCatalog;
+  skillRegistry: SkillRegistry;
   episodeSummaryLog: EpisodeSummaryLog;
   logger: ModuleLogger;
   localPort: number | undefined;
@@ -197,6 +203,9 @@ export function createAdminApp(deps: AdminAppDependencies) {
     .openapi(getSkillRoute, getSkill(deps))
     .openapi(updateSkillRoute, updateSkill(deps))
     .openapi(deleteSkillRoute, deleteSkill(deps))
+    .openapi(getLegacySkillRoute, getLegacySkill(deps))
+    .openapi(updateLegacySkillRoute, updateLegacySkill(deps))
+    .openapi(deleteLegacySkillRoute, deleteLegacySkill(deps))
     .openapi(listEpisodeSummariesRoute, listEpisodeSummaries(deps))
     .openapi(getProviderTypesRoute, getProviderTypes(deps))
     .openapi(canAddProviderRoute, canAddProvider(deps))

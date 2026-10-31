@@ -147,7 +147,9 @@ vi.mock('@/session/chat/extensions/js-repl-sandbox', () => ({
 }));
 vi.mock('@/session/chat/extensions/learning', () => ({
   createLearningExt: mocks.createLearningExt,
-  createSkillCatalog: vi.fn(),
+}));
+vi.mock('@/session/chat/extensions/skills', () => ({
+  createSkillsExt: vi.fn(),
 }));
 vi.mock('@/session/chat/extensions/mcp-ingress', () => ({
   createMcpIngressExt: vi.fn(),
@@ -172,6 +174,7 @@ vi.mock('@/session/chat/extensions/time', () => ({
   createTimeExtGod: vi.fn(),
 }));
 vi.mock('@/session/chat/extensions/todos', () => ({ createTodosExt: vi.fn() }));
+vi.mock('@/skills', () => ({ createSkillRegistry: () => mocks.resource }));
 vi.mock('@/session/realtime', () => ({
   createProductionMediaTransportConnector: vi.fn(),
   createRealtime: vi.fn(),

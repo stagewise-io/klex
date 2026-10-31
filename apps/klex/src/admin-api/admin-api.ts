@@ -10,8 +10,8 @@ import type { Mcp } from '@/mcp';
 import type { ModelCallLogger } from '@/model-call-logger';
 import type { ProviderRegistry } from '@/provider-registry';
 import type { EpisodeSummaryLog } from '@/session/chat/extensions/episode-summary/summary-log';
-import type { SkillCatalog } from '@/session/chat/extensions/learning/skill-store';
 import type { SessionHistory } from '@/session-history';
+import type { SkillRegistry } from '@/skills';
 
 import { createAdminApp } from './server';
 
@@ -25,7 +25,7 @@ export interface AdminApiDependencies {
   cloudConnectivity: CloudConnectivity;
   godMessages: GodMessages;
   sessionHistory: SessionHistory;
-  skillCatalog: SkillCatalog;
+  skillRegistry: SkillRegistry;
   episodeSummaryLog: EpisodeSummaryLog;
   localPort: number | undefined;
   timezone: string;
@@ -53,7 +53,7 @@ class AdminApiModule implements AdminApi {
       cloudConnectivity: CloudConnectivity;
       godMessages: GodMessages;
       sessionHistory: SessionHistory;
-      skillCatalog: SkillCatalog;
+      skillRegistry: SkillRegistry;
       episodeSummaryLog: EpisodeSummaryLog;
       localPort: number | undefined;
       timezone: string;
@@ -73,7 +73,7 @@ class AdminApiModule implements AdminApi {
       cloudConnectivity: this.deps.cloudConnectivity,
       godMessages: this.deps.godMessages,
       sessionHistory: this.deps.sessionHistory,
-      skillCatalog: this.deps.skillCatalog,
+      skillRegistry: this.deps.skillRegistry,
       episodeSummaryLog: this.deps.episodeSummaryLog,
       logger: this.deps.logger,
       localPort: this.deps.localPort,
@@ -137,7 +137,7 @@ export function createAdminApi(deps: AdminApiDependencies): AdminApi {
     cloudConnectivity: deps.cloudConnectivity,
     godMessages: deps.godMessages,
     sessionHistory: deps.sessionHistory,
-    skillCatalog: deps.skillCatalog,
+    skillRegistry: deps.skillRegistry,
     episodeSummaryLog: deps.episodeSummaryLog,
     localPort: deps.localPort,
     timezone: deps.timezone,

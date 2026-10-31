@@ -7,6 +7,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 
 import type { IntrospectionScope } from '@/introspection';
+import { createSkillRegistry } from '@/skills';
 
 import type {
   BaseExtensionDeps,
@@ -172,6 +173,123 @@ function factoryWith(
 }
 
 // --- tests ---
+
+describe('ExtensionHandler — skill namespaces', () => {
+  function registry() {
+    return createSkillRegistry({
+      dataDirectory: '/tmp/test-agent-data',
+      logger: noopDeps.logger,
+    });
+  }
+
+  function capture(factory: Omit<ExtensionFactory, 'create'>): {
+    factory: ExtensionFactory;
+    deps: () => ExtensionDeps;
+  } {
+    let captured: ExtensionDeps | undefined;
+    return {
+      factory: {
+        ...factory,
+        create: (deps) => {
+          captured = deps;
+          return {};
+        },
+      },
+      deps: () => captured as ExtensionDeps,
+    };
+  }
+
+  it('hands a declaring extension a handle fixed to its namespace', () => {
+    const ext = capture({
+      identifier: 'test.example/learner',
+      skillNamespace: 'learning',
+    });
+    createExtensionHandler({
+      factories: [ext.factory],
+      ...HANDLER_OPTS,
+      skillRegistry: registry(),
+    });
+    expect(ext.deps().skills?.namespace).toBe('learning');
+  });
+
+  it('gives no handle to extensions without a namespace', () => {
+    const ext = capture({ identifier: 'test.example/plain' });
+    createExtensionHandler({
+      factories: [ext.factory],
+      ...HANDLER_OPTS,
+      skillRegistry: registry(),
+    });
+    expect(ext.deps().skills).toBeNull();
+  });
+
+  it('rejects the reserved user namespace', () => {
+    const ext = capture({
+      identifier: 'test.example/impostor',
+      skillNamespace: 'user',
+    });
+    expect(() =>
+      createExtensionHandler({
+        factories: [ext.factory],
+        ...HANDLER_OPTS,
+        skillRegistry: registry(),
+      }),
+    ).toThrow(/reserved/);
+  });
+
+  it('rejects a namespace owned by another extension', () => {
+    const skillRegistry = registry();
+    const first = capture({
+      identifier: 'test.example/first',
+      skillNamespace: 'shared',
+    });
+    const second = capture({
+      identifier: 'test.example/second',
+      skillNamespace: 'shared',
+    });
+    createExtensionHandler({
+      factories: [first.factory],
+      ...HANDLER_OPTS,
+      skillRegistry,
+    });
+    expect(() =>
+      createExtensionHandler({
+        factories: [second.factory],
+        ...HANDLER_OPTS,
+        skillRegistry,
+      }),
+    ).toThrow(/already claimed/);
+  });
+
+  it('lets the same extension claim its namespace in every session', () => {
+    const skillRegistry = registry();
+    const ext = capture({
+      identifier: 'test.example/learner',
+      skillNamespace: 'learning',
+    });
+    createExtensionHandler({
+      factories: [ext.factory],
+      ...HANDLER_OPTS,
+      skillRegistry,
+    });
+    const firstHandle = ext.deps().skills;
+    createExtensionHandler({
+      factories: [ext.factory],
+      ...HANDLER_OPTS,
+      skillRegistry,
+    });
+    expect(ext.deps().skills).toBe(firstHandle);
+  });
+
+  it('fails fast when a namespace is declared without a registry', () => {
+    const ext = capture({
+      identifier: 'test.example/learner',
+      skillNamespace: 'learning',
+    });
+    expect(() =>
+      createExtensionHandler({ factories: [ext.factory], ...HANDLER_OPTS }),
+    ).toThrow(/no skill registry/);
+  });
+});
 
 describe('ExtensionHandler — factory', () => {
   it('returns an object implementing ExtensionHandler', () => {

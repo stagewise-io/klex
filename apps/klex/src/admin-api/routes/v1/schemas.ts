@@ -4,11 +4,8 @@ import {
   providerTypeSchema as configProviderTypeSchema,
   MODEL_PURPOSES,
 } from '@/config';
-import {
-  MAX_BODY_LENGTH,
-  MAX_DESCRIPTION_LENGTH,
-} from '@/session/chat/extensions/learning/learning-config';
 import { GenerationHealthErrorSchema } from '@/session-history/generation-health';
+import { MAX_BODY_LENGTH, MAX_DESCRIPTION_LENGTH } from '@/skills';
 
 // Extend Zod with .openapi() metadata support for spec generation.
 extendZodWithOpenApi(z);
@@ -875,44 +872,64 @@ const godMessageResetResponseSchema = z
 
 // --- Skills ---
 
+const turnSchema = z.number().int().min(0);
+
 const skillSummarySchema = z
   .object({
-    userEdited: z.boolean().optional(),
-    name: z.string().describe('Skill name, unique across the agent'),
+    id: z
+      .string()
+      .describe('Qualified skill id `namespace/name`, unique across the agent'),
+    namespace: z
+      .string()
+      .describe('Source of the skill: the namespace of its contributor'),
+    name: z.string().describe('Skill name, unique within its namespace'),
     description: z
       .string()
       .describe('One-line description of when the skill applies'),
     origin: z
-      .literal('learned')
-      .describe('Where the skill comes from. Only learned skills exist today'),
+      .string()
+      .openapi({ deprecated: true })
+      .describe(
+        'Deprecated: use `namespace`. `learned` for the learning namespace, otherwise the namespace',
+      ),
     createdAt: z
       .string()
       .datetime()
-      .optional()
       .describe('When the skill was first written'),
     updatedAt: z
       .string()
       .datetime()
-      .optional()
-      .describe('When the skill was last rewritten'),
+      .describe('When the description or body last changed'),
     lastReadAt: z
       .string()
       .datetime()
       .nullable()
-      .optional()
       .describe('When the agent last read the skill; null if never'),
     readCount: z
       .number()
       .int()
       .min(0)
-      .optional()
       .describe('How often the agent has read the skill'),
+    createdTurn: turnSchema.describe('Agent turn the skill was created at'),
+    updatedTurn: turnSchema.describe('Agent turn of the last content change'),
+    lastReadTurn: turnSchema
+      .nullable()
+      .describe('Agent turn of the last read; null if never'),
+    userEdited: z
+      .boolean()
+      .describe(
+        'True after an admin content change, until the namespace rewrites it',
+      ),
+    metadata: z
+      .record(z.string(), z.unknown())
+      .describe('Namespace-owned metadata; read-only through this API'),
   })
   .openapi('SkillSummary');
 
 const skillListResponseSchema = z
   .object({
     skills: z.array(skillSummarySchema),
+    currentTurn: turnSchema.describe('Current agent activity clock'),
   })
   .openapi('SkillListResponse');
 
@@ -921,17 +938,39 @@ const skillDetailSchema = skillSummarySchema
     body: z.string().describe('Markdown body of the SKILL.md'),
     sourceEpisodes: z
       .array(z.string())
-      .optional()
-      .describe('Memory episode IDs the skill was learned from'),
+      .openapi({ deprecated: true })
+      .describe(
+        'Deprecated: use `metadata`. Memory episode IDs the skill was learned from',
+      ),
+    currentTurn: turnSchema.describe('Current agent activity clock'),
   })
   .openapi('SkillDetail');
 
 const skillNameParamsSchema = z.object({
   name: z.string().min(1).openapi({
+    description: 'Bare skill name, resolved across namespaces',
+    example: 'ask-before-contract-changes',
+  }),
+});
+
+const skillIdParamsSchema = z.object({
+  namespace: z.string().min(1).openapi({
+    description: 'Skill namespace',
+    example: 'learning',
+  }),
+  name: z.string().min(1).openapi({
     description: 'Skill name',
     example: 'ask-before-contract-changes',
   }),
 });
+
+const ambiguousSkillResponseSchema = errorResponseSchema
+  .extend({
+    candidates: z
+      .array(z.string())
+      .describe('Qualified ids of all skills with this name'),
+  })
+  .openapi('AmbiguousSkillResponse');
 
 export const updateSkillBodySchema = z
   .object({
@@ -954,7 +993,7 @@ export const updateSkillBodySchema = z
   .openapi('UpdateSkillBody');
 
 export const deleteSkillResponseSchema = z
-  .object({ deleted: z.literal(true), name: z.string() })
+  .object({ deleted: z.literal(true), id: z.string(), name: z.string() })
   .openapi('DeleteSkillResponse');
 
 // --- Episode summaries ---
@@ -1316,6 +1355,7 @@ const cloudEnrollResponseSchema = z
 export {
   agentIdentityPatchSchema,
   agentIdentityResponseSchema,
+  ambiguousSkillResponseSchema,
   audioInputCapabilitySchema,
   canAddProviderBodySchema,
   cloudEnrollBodySchema,
@@ -1379,6 +1419,7 @@ export {
   sessionInstanceIdParamSchema,
   sessionKindSchema,
   skillDetailSchema,
+  skillIdParamsSchema,
   skillListResponseSchema,
   skillNameParamsSchema,
   skillSummarySchema,

@@ -17,12 +17,13 @@ import type {
 } from '@/config';
 import type { Mcp } from '@/mcp';
 import type { ProviderModelResolver } from '@/provider-registry';
-import type { GenerationFailure } from '@/session-history/generation-health';
 import type {
   ChildSessionHandle,
   ChildSessionOptions,
   SessionContext,
 } from '@/session/types';
+import type { GenerationFailure } from '@/session-history/generation-health';
+import type { SkillNamespaceHandle } from '@/skills';
 
 import type { ChatSessionInbox } from '../inbox';
 import type { ExtendedUIMessage } from '../message-types';
@@ -935,14 +936,22 @@ export interface ExtensionDeps {
    *   `{agentDataDir}/extensions/{extensionIdentifier}`.
    */
   getDataDir: (global?: boolean) => string;
+
+  /**
+   * Agent-wide skills of the namespace declared by
+   * {@link ExtensionFactory.skillNamespace}. Reads and writes only that
+   * namespace; the core owns files, validation and usage bookkeeping.
+   * `null` when the factory declares no namespace.
+   */
+  skills: SkillNamespaceHandle | null;
 }
 
 /**
  * The base dependencies the session provides to every extension.
- * The handler augments these with a per-extension `getDataDir` before
- * passing them to each factory.
+ * The handler augments these with a per-extension `getDataDir` and
+ * `skills` handle before passing them to each factory.
  */
-export type BaseExtensionDeps = Omit<ExtensionDeps, 'getDataDir'>;
+export type BaseExtensionDeps = Omit<ExtensionDeps, 'getDataDir' | 'skills'>;
 
 /**
  * The descriptor passed to the extension handler when registering an
@@ -961,6 +970,13 @@ export interface ExtensionFactory {
    * Optional human-readable name shown in UIs and logs.
    */
   readonly displayName?: string;
+
+  /**
+   * Skill namespace this extension contributes to, e.g. `"learning"`. A
+   * lowercase slug; `user` is reserved. One extension identifier owns a
+   * namespace. Its skills are identified as `namespace/name`.
+   */
+  readonly skillNamespace?: string;
 
   /**
    * Creates the extension instance with the provided dependencies. Construction

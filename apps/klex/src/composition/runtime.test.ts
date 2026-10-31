@@ -42,6 +42,7 @@ function createModules(options: {
   return {
     modelCallLogger: make('model-call-logger'),
     sessionHistory: make('session-history'),
+    skillRegistry: make('skill-registry'),
     adminApi: make('admin-api'),
     cloudConnectivity: make('cloud-connectivity'),
     sessionHost: make('session-host'),
@@ -65,6 +66,7 @@ describe('runtime composition', () => {
     expect(order).toEqual([
       'model-call-logger',
       'session-history',
+      'skill-registry',
       'admin-api',
       'cloud-connectivity',
       'session-host',
@@ -113,10 +115,15 @@ describe('runtime composition', () => {
       'session-host',
       'cloud-connectivity',
       'admin-api',
+      'skill-registry',
       'model-call-logger',
       'session-history',
       'local-data',
     ]);
+    // Sessions and the admin API stop writing skills before the registry flushes.
+    expect(recorded.closes.indexOf('session-host')).toBeLessThan(
+      recorded.closes.indexOf('skill-registry'),
+    );
     // Sessions flush their final transcript before the store closes.
     expect(recorded.closes.indexOf('session-host')).toBeLessThan(
       recorded.closes.indexOf('session-history'),
@@ -172,7 +179,7 @@ describe('runtime composition', () => {
     await Promise.all([runtime.close(), runtime.close()]);
     await runtime.close();
 
-    expect(recorded.closes).toHaveLength(9);
+    expect(recorded.closes).toHaveLength(10);
   });
 
   it('unwinds started modules and rethrows when one fails to start', async () => {
@@ -190,6 +197,7 @@ describe('runtime composition', () => {
     expect(recorded.starts).toEqual([
       'model-call-logger',
       'session-history',
+      'skill-registry',
       'admin-api',
       'cloud-connectivity',
       'session-host',
@@ -201,6 +209,7 @@ describe('runtime composition', () => {
       'session-host',
       'cloud-connectivity',
       'admin-api',
+      'skill-registry',
       'session-history',
       'model-call-logger',
     ]);
@@ -226,6 +235,7 @@ describe('runtime composition', () => {
         'session-host',
         'cloud-connectivity',
         'admin-api',
+        'skill-registry',
         'session-history',
         'model-call-logger',
       ]);
@@ -260,6 +270,7 @@ describe('runtime composition', () => {
       'session-host',
       'cloud-connectivity',
       'admin-api',
+      'skill-registry',
       'model-call-logger',
       'session-history',
     ]);

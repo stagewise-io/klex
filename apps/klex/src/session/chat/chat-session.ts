@@ -52,6 +52,7 @@ import type {
 } from '@/session/types';
 import type { SessionHistory, SessionHistoryRecorder } from '@/session-history';
 import { summarizeGenerationFailure } from '@/session-history/generation-health';
+import type { SkillRegistry } from '@/skills';
 import type { TelemetryMetrics } from '@/telemetry-metrics';
 
 import { type CheckpointManager, createCheckpointManager } from './checkpoint';
@@ -113,6 +114,8 @@ export interface ChatSessionDependencies {
   extensionFactories: ExtensionFactory[];
   /** Root data directory of the agent. Used for extension data dirs. */
   dataDirectory: string;
+  /** Agent-wide skill registry; required by extensions declaring a skill namespace. */
+  skillRegistry?: SkillRegistry;
   /** Parent introspection scope (the "sessions" group). The session creates its own child. */
   introspectionScope: IntrospectionScope;
   hooks?: SessionHooks;
@@ -322,6 +325,7 @@ class ChatSessionModule implements AgentSession {
       modelResolver: ProviderModelResolver;
       config: Config;
       dataDirectory: string;
+      skillRegistry?: SkillRegistry;
       mcp: Mcp | null;
       extensionFactories: ExtensionFactory[];
       introspectionScope: IntrospectionScope;
@@ -543,6 +547,7 @@ class ChatSessionModule implements AgentSession {
         factories: deps.extensionFactories,
         extensionDeps,
         dataDirectory: this.deps.dataDirectory,
+        skillRegistry: this.deps.skillRegistry,
         sessionId: this.sessionId,
         introspectionScope: extensionsScope,
         onExtensionUsage: (identifier, usage) =>
@@ -2096,6 +2101,7 @@ export function createChatSession(
     modelResolver: deps.modelResolver,
     config: deps.config,
     dataDirectory: deps.dataDirectory,
+    skillRegistry: deps.skillRegistry,
     mcp: deps.mcp,
     extensionFactories: deps.extensionFactories,
     introspectionScope: deps.introspectionScope,

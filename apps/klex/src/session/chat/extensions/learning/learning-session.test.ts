@@ -6,7 +6,7 @@ import type { LanguageModelV4StreamPart } from '@ai-sdk/provider';
 import { MockLanguageModelV4 } from 'ai/test';
 import { describe, expect, it, vi } from 'vitest';
 
-import type { RootLogger } from '@stagewise/logger';
+import type { ModuleLogger, RootLogger } from '@stagewise/logger';
 
 import type { Config } from '@/config';
 import { createIntrospector } from '@/introspection';
@@ -16,15 +16,15 @@ import {
 } from '@/session/chat';
 import { createEpisodeFeed } from '@/session/chat/extensions/memory';
 import type { ChatSessionHandle, SessionFactory } from '@/session/types';
+import { createSkillRegistry } from '@/skills';
 
 import { createLearningExt } from './learning';
-import { createSkillCatalog } from './skill-store';
+import { sourceEpisodesOf } from './prompts';
 
 vi.mock('./extraction-prompt.md', () => ({
   default: 'Extract. {{NAME}} {{SOUL}}',
 }));
 vi.mock('./consolidation-prompt.md', () => ({ default: 'Consolidate.' }));
-vi.mock('./system-prompt-part.md', () => ({ default: '## Learned skills\n' }));
 vi.mock('@/session/chat/extensions/time/system-prompt.md', () => ({
   default: '',
 }));
@@ -87,7 +87,11 @@ describe('learning child session execution', () => {
     );
     const episodes = createEpisodeFeed();
     const read = vi.spyOn(episodes, 'readPage');
-    const catalog = createSkillCatalog();
+    const skillRegistry = createSkillRegistry({
+      dataDirectory: join(root, 'registry'),
+      logger: logger as unknown as ModuleLogger,
+    });
+    await skillRegistry.start();
     const introspection = createIntrospector({ logging });
     const finish = Promise.withResolvers<void>();
     const finalStep = Promise.withResolvers<void>();
@@ -178,10 +182,10 @@ describe('learning child session execution', () => {
       modelResolver,
       dataDirectory: root,
       mcp: null,
+      skillRegistry,
       extensionFactories: [
         createLearningExt({
           episodes,
-          skillCatalog: catalog,
           getSoul: () => 'Product manager.',
         }),
       ],
@@ -216,8 +220,9 @@ describe('learning child session execution', () => {
           child.sessionId,
         ]),
       ).toBeDefined();
-      expect(catalog.get('ask-first')?.body).toContain('Ask for approval');
-      expect(catalog.getUsage('ask-first')?.sourceEpisodes).toEqual([id]);
+      const learned = skillRegistry.get('learning/ask-first');
+      expect(learned?.body).toContain('Ask for approval');
+      expect(learned && sourceEpisodesOf(learned)).toEqual([id]);
       expect(read).toHaveBeenCalledTimes(2);
       expect(model.doStreamCalls).toHaveLength(3);
       expect(JSON.stringify(model.doStreamCalls[1]?.prompt)).toContain(
@@ -228,7 +233,7 @@ describe('learning child session execution', () => {
         expect(child.getSessionInfo().status).toBe('terminated'),
       );
       await vi.waitFor(() => expect(parent.isQuiescent()).toBe(true));
-      expect(catalog.get('ask-first')).not.toBeNull();
+      expect(skillRegistry.get('learning/ask-first')).not.toBeNull();
       expect(
         await introspection.read([
           'default',
@@ -239,6 +244,7 @@ describe('learning child session execution', () => {
     } finally {
       finish.resolve();
       await parent.close();
+      await skillRegistry.close();
       expect(parent.isQuiescent()).toBe(true);
       await rm(root, { recursive: true, force: true });
     }

@@ -20,7 +20,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { ModuleLogger } from '@stagewise/logger';
 
-import { createSkillStore } from './skill-store';
+import { createSkillDocumentStore } from './skill-files';
 
 vi.mock('node:fs/promises', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:fs/promises')>();
@@ -44,7 +44,7 @@ afterEach(async () => {
 });
 
 async function root(): Promise<string> {
-  const directory = await mkdtemp(join(tmpdir(), 'klex-skill-store-'));
+  const directory = await mkdtemp(join(tmpdir(), 'klex-skill-files-'));
   directories.push(directory);
   return join(directory, 'skills');
 }
@@ -54,7 +54,7 @@ const skill = { name: 'retry-flaky-build', description: 'd', body: 'b' };
 describe('skill store', () => {
   it('writes, updates, reads, and deletes skills', async () => {
     const dir = await root();
-    const store = createSkillStore(dir, logger);
+    const store = createSkillDocumentStore(dir, logger);
     await store.start();
     await store.write(skill);
     expect(store.get(skill.name)).toEqual(skill);
@@ -70,7 +70,7 @@ describe('skill store', () => {
 
   it('keeps the previous file and cache when atomic replacement fails', async () => {
     const dir = await root();
-    const store = createSkillStore(dir, logger);
+    const store = createSkillDocumentStore(dir, logger);
     await store.write(skill);
     const path = join(dir, skill.name, 'SKILL.md');
     const before = await readFile(path, 'utf-8');
@@ -85,7 +85,7 @@ describe('skill store', () => {
 
   it('preserves existing file permissions during atomic updates', async () => {
     const dir = await root();
-    const store = createSkillStore(dir, logger);
+    const store = createSkillDocumentStore(dir, logger);
     await store.write(skill);
     const path = join(dir, skill.name, 'SKILL.md');
     await chmod(path, 0o600);
@@ -101,7 +101,7 @@ describe('skill store', () => {
       const path = join(dir, skill.name, 'SKILL.md');
       await mkdir(join(dir, skill.name), { recursive: true });
       execFileSync('mkfifo', [path]);
-      const store = createSkillStore(dir, logger);
+      const store = createSkillDocumentStore(dir, logger);
       await store.start();
       expect(store.list()).toEqual([]);
       await expect(store.write(skill)).rejects.toThrow(/not a regular file/);
@@ -120,7 +120,7 @@ describe('skill store', () => {
     await mkdir(join(dir, skill.name), { recursive: true });
     const path = join(dir, skill.name, 'SKILL.md');
     await symlink(target, path);
-    const store = createSkillStore(dir, logger);
+    const store = createSkillDocumentStore(dir, logger);
     await store.start();
     expect(store.list()).toEqual([]);
     await store.write(skill);
@@ -130,7 +130,7 @@ describe('skill store', () => {
 
   it('rejects a file swapped for an external symlink when no-follow is unavailable', async () => {
     const dir = await root();
-    await createSkillStore(dir, logger).write(skill);
+    await createSkillDocumentStore(dir, logger).write(skill);
     const path = join(dir, skill.name, 'SKILL.md');
     const outside = await root();
     await mkdir(outside, { recursive: true });
@@ -149,7 +149,7 @@ describe('skill store', () => {
       vi.spyOn(handle, 'readFile').mockImplementation(read);
       return handle;
     });
-    const store = createSkillStore(dir, logger);
+    const store = createSkillDocumentStore(dir, logger);
     await store.start();
     expect(store.list()).toEqual([]);
     expect(read).not.toHaveBeenCalled();
@@ -160,12 +160,12 @@ describe('skill store', () => {
           message: 'SKILL.md changed while opening',
         }),
       },
-      'Skipping learned skill without readable SKILL.md',
+      'Skipping skill without readable SKILL.md',
     );
   });
 
   it('rejects invalid names and over-length content', async () => {
-    const store = createSkillStore(await root(), logger);
+    const store = createSkillDocumentStore(await root(), logger);
     await expect(store.write({ ...skill, name: '..' })).rejects.toThrow();
     await expect(store.write({ ...skill, name: 'a/b' })).rejects.toThrow();
     await expect(
@@ -176,13 +176,13 @@ describe('skill store', () => {
 
   it('skips and keeps corrupt folders, and reloads from disk', async () => {
     const dir = await root();
-    const first = createSkillStore(dir, logger);
+    const first = createSkillDocumentStore(dir, logger);
     await first.write(skill);
     await mkdir(join(dir, 'corrupt'));
     await writeFile(join(dir, 'corrupt', 'SKILL.md'), 'garbage');
     await mkdir(join(dir, 'empty'));
 
-    const second = createSkillStore(dir, logger);
+    const second = createSkillDocumentStore(dir, logger);
     await second.start();
     expect(second.list()).toEqual([skill]);
     expect(await readFile(join(dir, 'corrupt', 'SKILL.md'), 'utf-8')).toBe(
@@ -190,18 +190,18 @@ describe('skill store', () => {
     );
     expect(logger.warn).toHaveBeenCalledWith(
       { skill: 'corrupt' },
-      'Skipping malformed learned skill',
+      'Skipping malformed skill',
     );
   });
 
   it('serializes concurrent writes to the same skill', async () => {
     const dir = await root();
-    const store = createSkillStore(dir, logger);
+    const store = createSkillDocumentStore(dir, logger);
     await Promise.all(
       ['one', 'two', 'three'].map((body) => store.write({ ...skill, body })),
     );
     expect(store.get(skill.name)?.body).toBe('three');
-    const reloaded = createSkillStore(dir, logger);
+    const reloaded = createSkillDocumentStore(dir, logger);
     await reloaded.start();
     expect(reloaded.get(skill.name)?.body).toBe('three');
   });
@@ -211,7 +211,7 @@ describe('skill store', () => {
     const outside = await root();
     await mkdir(dir, { recursive: true });
     await symlink(outside, join(dir, skill.name));
-    const store = createSkillStore(dir, logger);
+    const store = createSkillDocumentStore(dir, logger);
     await expect(store.write(skill)).rejects.toThrow(/not a plain directory/);
     await expect(stat(join(outside, 'SKILL.md'))).rejects.toThrow();
   });

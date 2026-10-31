@@ -1,88 +1,171 @@
-import { describe, expect, it } from 'vitest';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
-import type {
-  CatalogSkill,
-  SkillCatalog,
-  SkillUsage,
-} from '@/session/chat/extensions/learning/skill-store';
-import { SkillValidationError } from '@/session/chat/extensions/learning/skill-store';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+
+import type { ModuleLogger } from '@stagewise/logger';
+
+import { createSkillRegistry, type SkillRegistry } from '@/skills';
 
 import {
+  deleteLegacySkill,
+  deleteLegacySkillRoute,
   deleteSkill,
   deleteSkillRoute,
+  getLegacySkill,
+  getLegacySkillRoute,
   getSkill,
   getSkillRoute,
   listSkills,
   listSkillsRoute,
+  updateLegacySkill,
+  updateLegacySkillRoute,
   updateSkill,
   updateSkillRoute,
 } from './skills';
 import { setupTestApp } from './test-utils';
 
-const tracked: CatalogSkill = {
-  name: 'verify-node-version',
-  description: 'Use before running tests on a VM.',
-  body: 'Run `nvm use` first.',
-  origin: 'learned',
-};
-const untracked: CatalogSkill = {
-  name: 'ask-before-contract-changes',
-  description: 'Use before changing a published protocol field.',
-  body: 'Ask the team first.',
-  origin: 'learned',
-};
-const usage: SkillUsage = {
-  createdAt: '2026-10-01T00:00:00.000Z',
-  updatedAt: '2026-10-02T00:00:00.000Z',
-  lastReadAt: null,
-  readCount: 0,
-  sourceEpisodes: ['episode-1'],
-};
+const directories: string[] = [];
+const logger = {
+  warn: vi.fn(),
+  debug: vi.fn(),
+  info: vi.fn(),
+} as unknown as ModuleLogger;
 
-function createCatalog(available = true): SkillCatalog {
-  const skills = [tracked, untracked];
-  return {
-    update: async (name, patch) => {
-      const skill = skills.find((skill) => skill.name === name);
-      return skill ? { ...skill, ...patch } : null;
-    },
-    delete: async (name) => skills.some((skill) => skill.name === name),
-    isAvailable: () => available,
-    list: () => skills,
-    get: (name) => skills.find((skill) => skill.name === name) ?? null,
-    getUsage: (name) => (name === tracked.name ? usage : null),
-  };
+afterEach(async () => {
+  await Promise.all(
+    directories
+      .splice(0)
+      .map((directory) => rm(directory, { recursive: true, force: true })),
+  );
+});
+
+async function seededRegistry() {
+  const directory = await mkdtemp(join(tmpdir(), 'klex-skills-admin-'));
+  directories.push(directory);
+  const registry = createSkillRegistry({ dataDirectory: directory, logger });
+  await registry.start();
+  registry.claimNamespace('io.stagewise/learning', 'learning');
+  registry.claimNamespace('example.templates', 'templates');
+  const learning = registry.forNamespace('learning');
+  await learning.put(
+    'verify-node-version',
+    { description: 'Use before running tests on a VM.', body: 'Run nvm use.' },
+    { metadata: { sourceEpisodes: ['episode-1'] } },
+  );
+  await learning.put('shared', { description: 'Learned.', body: 'L.' });
+  await registry
+    .forNamespace('templates')
+    .put(
+      'shared',
+      { description: 'Templated.', body: 'T.' },
+      { metadata: { sourceEpisodes: 'not-a-list', template: 'x' } },
+    );
+  return registry;
 }
 
-function createApp(skillCatalog: SkillCatalog) {
+function createApp(skillRegistry: SkillRegistry) {
   return setupTestApp((app) => {
-    app.openapi(listSkillsRoute, listSkills({ skillCatalog }));
-    app.openapi(getSkillRoute, getSkill({ skillCatalog }));
-    app.openapi(updateSkillRoute, updateSkill({ skillCatalog }));
-    app.openapi(deleteSkillRoute, deleteSkill({ skillCatalog }));
+    const deps = { skillRegistry };
+    app.openapi(listSkillsRoute, listSkills(deps));
+    app.openapi(getSkillRoute, getSkill(deps));
+    app.openapi(updateSkillRoute, updateSkill(deps));
+    app.openapi(deleteSkillRoute, deleteSkill(deps));
+    app.openapi(getLegacySkillRoute, getLegacySkill(deps));
+    app.openapi(updateLegacySkillRoute, updateLegacySkill(deps));
+    app.openapi(deleteLegacySkillRoute, deleteLegacySkill(deps));
   });
 }
 
+const patch = (body: unknown) => ({
+  method: 'PATCH',
+  headers: { 'content-type': 'application/json' },
+  body: JSON.stringify(body),
+});
+
 describe('skills routes', () => {
-  it('updates a skill and returns its detail and provenance', async () => {
-    const response = await createApp(createCatalog()).request(
-      `/v1/skills/${tracked.name}`,
-      {
-        method: 'PATCH',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ body: '  Edited.  ' }),
-      },
+  it('lists skills of every namespace with ids, sources and the clock', async () => {
+    const registry = await seededRegistry();
+    registry.tick();
+    const res = await createApp(registry).request('/v1/skills');
+
+    expect(res.status).toBe(200);
+    const json = (await res.json()) as {
+      currentTurn: number;
+      skills: { id: string; origin: string }[];
+    };
+    expect(json.currentTurn).toBe(1);
+    expect(json.skills.map((skill) => [skill.id, skill.origin])).toEqual([
+      ['learning/shared', 'learned'],
+      ['learning/verify-node-version', 'learned'],
+      ['templates/shared', 'templates'],
+    ]);
+    expect(json.skills[1]).toMatchObject({
+      namespace: 'learning',
+      name: 'verify-node-version',
+      readCount: 0,
+      lastReadAt: null,
+      createdTurn: 0,
+      lastReadTurn: null,
+      userEdited: false,
+      metadata: { sourceEpisodes: ['episode-1'] },
+    });
+    expect(json.skills[1]).not.toHaveProperty('body');
+  });
+
+  it('returns a qualified skill with body and deprecated fields', async () => {
+    const app = createApp(await seededRegistry());
+    const learned = await app.request(
+      '/v1/skills/learning/verify-node-version',
     );
-    expect(response.status).toBe(200);
-    expect(await response.json()).toMatchObject({
+    expect(learned.status).toBe(200);
+    expect(await learned.json()).toMatchObject({
+      id: 'learning/verify-node-version',
+      body: 'Run nvm use.',
+      origin: 'learned',
+      sourceEpisodes: ['episode-1'],
+      currentTurn: 0,
+    });
+
+    const templated = await app.request('/v1/skills/templates/shared');
+    expect(await templated.json()).toMatchObject({
+      origin: 'templates',
+      sourceEpisodes: [],
+      metadata: { sourceEpisodes: 'not-a-list', template: 'x' },
+    });
+  });
+
+  it('edits skills of any namespace and marks them user-edited', async () => {
+    const registry = await seededRegistry();
+    const res = await createApp(registry).request(
+      '/v1/skills/templates/shared',
+      patch({ body: '  Edited.  ' }),
+    );
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({
       body: 'Edited.',
-      description: tracked.description,
-      sourceEpisodes: usage.sourceEpisodes,
+      description: 'Templated.',
+      userEdited: true,
+    });
+    expect(registry.get('learning/shared')?.body).toBe('L.');
+  });
+
+  it('ignores metadata in edits', async () => {
+    const registry = await seededRegistry();
+    const res = await createApp(registry).request(
+      '/v1/skills/learning/verify-node-version',
+      patch({ body: 'Edited.', metadata: { sourceEpisodes: [] } }),
+    );
+    expect(res.status).toBe(200);
+    expect(registry.get('learning/verify-node-version')?.metadata).toEqual({
+      sourceEpisodes: ['episode-1'],
     });
   });
 
   it.each([
     {},
+    { metadata: { a: 1 } },
     { body: '' },
     { body: ' '.repeat(5) },
     { body: 'x'.repeat(4001) },
@@ -90,182 +173,118 @@ describe('skills routes', () => {
     { description: 'two\nlines' },
     { description: null },
   ])('rejects invalid edits %j', async (body) => {
-    const response = await createApp(createCatalog()).request(
-      `/v1/skills/${tracked.name}`,
-      {
-        method: 'PATCH',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify(body),
-      },
-    );
-    expect(response.status).toBe(400);
-    expect(await response.json()).toMatchObject({ code: 'validation_failed' });
+    const app = createApp(await seededRegistry());
+    for (const path of [
+      '/v1/skills/learning/verify-node-version',
+      '/v1/skills/verify-node-version',
+    ]) {
+      const response = await app.request(path, patch(body));
+      expect(response.status).toBe(400);
+      expect(await response.json()).toMatchObject({
+        code: 'validation_failed',
+      });
+    }
   });
 
-  it.each(['PATCH', 'DELETE'])(
-    'handles missing, unavailable, and failed %s requests',
-    async (method) => {
-      const request = {
-        method,
-        headers: { 'content-type': 'application/json' },
-        ...(method === 'PATCH'
-          ? { body: JSON.stringify({ body: 'Edited.' }) }
-          : {}),
-      };
-      expect(
-        (
-          await createApp(createCatalog()).request(
-            '/v1/skills/missing',
-            request,
-          )
-        ).status,
-      ).toBe(404);
-      expect(
-        (
-          await createApp(createCatalog(false)).request(
-            `/v1/skills/${tracked.name}`,
-            request,
-          )
-        ).status,
-      ).toBe(503);
-      const catalog = createCatalog();
-      catalog.update = catalog.delete = async () => {
-        throw new Error('disk failed');
-      };
-      expect(
-        (
-          await createApp(catalog).request(
-            `/v1/skills/${tracked.name}`,
-            request,
-          )
-        ).status,
-      ).toBe(500);
-    },
-  );
-
-  it('maps catalog validation errors to 400', async () => {
-    const catalog = createCatalog();
-    catalog.update = async () => {
-      throw new SkillValidationError('invalid skill');
-    };
-    const response = await createApp(catalog).request(
-      `/v1/skills/${tracked.name}`,
-      {
-        method: 'PATCH',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ body: 'Edited.' }),
-      },
-    );
-    expect(response.status).toBe(400);
-    expect(await response.json()).toEqual({
-      error: 'invalid skill',
-      code: 'validation_failed',
-    });
-  });
-
-  it('deletes a skill', async () => {
-    const response = await createApp(createCatalog()).request(
-      `/v1/skills/${tracked.name}`,
+  it('deletes a skill with its bookkeeping', async () => {
+    const registry = await seededRegistry();
+    const response = await createApp(registry).request(
+      '/v1/skills/templates/shared',
       { method: 'DELETE' },
     );
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({
       deleted: true,
-      name: tracked.name,
+      id: 'templates/shared',
+      name: 'shared',
     });
-  });
-  it('declares and returns shared 500 errors for catalog failures', async () => {
-    const catalog = createCatalog();
-    catalog.list = () => {
-      throw new Error('catalog failed');
-    };
-    catalog.get = () => {
-      throw new Error('catalog failed');
-    };
-    expect(listSkillsRoute.responses[500]).toBeDefined();
-    expect(getSkillRoute.responses[500]).toBeDefined();
-    const app = createApp(catalog);
-    for (const path of ['/v1/skills', `/v1/skills/${tracked.name}`]) {
-      const response = await app.request(path);
-      expect(response.status).toBe(500);
-      expect(await response.json()).toMatchObject({
-        error: expect.any(String),
-        code: 'internal_error',
-      });
-    }
+    expect(registry.get('templates/shared')).toBeNull();
+    expect(registry.get('learning/shared')).not.toBeNull();
   });
 
-  it('lists skill summaries sorted by name without bodies', async () => {
-    const res = await createApp(createCatalog()).request('/v1/skills');
+  it.each(['GET', 'PATCH', 'DELETE'])(
+    'returns 404 for unknown skills on %s',
+    async (method) => {
+      const app = createApp(await seededRegistry());
+      const init = method === 'PATCH' ? patch({ body: 'Edited.' }) : { method };
+      for (const path of [
+        '/v1/skills/learning/missing',
+        '/v1/skills/unknown/shared',
+        '/v1/skills/missing',
+      ]) {
+        const res = await app.request(path, init);
+        expect(res.status).toBe(404);
+        expect(await res.json()).toMatchObject({ code: 'not_found' });
+      }
+    },
+  );
 
+  it('resolves unique legacy names across namespaces', async () => {
+    const registry = await seededRegistry();
+    const app = createApp(registry);
+    const res = await app.request('/v1/skills/verify-node-version');
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({
-      skills: [
-        {
-          name: untracked.name,
-          description: untracked.description,
-          origin: 'learned',
-        },
-        {
-          name: tracked.name,
-          description: tracked.description,
-          origin: 'learned',
-          createdAt: usage.createdAt,
-          updatedAt: usage.updatedAt,
-          lastReadAt: null,
-          readCount: 0,
-        },
-      ],
-    });
-  });
-
-  it('returns a skill with body and source episodes', async () => {
-    const res = await createApp(createCatalog()).request(
-      `/v1/skills/${tracked.name}`,
-    );
-
-    expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({
-      name: tracked.name,
-      description: tracked.description,
-      origin: 'learned',
-      createdAt: usage.createdAt,
-      updatedAt: usage.updatedAt,
-      lastReadAt: null,
-      readCount: 0,
-      body: tracked.body,
+    expect(await res.json()).toMatchObject({
+      id: 'learning/verify-node-version',
       sourceEpisodes: ['episode-1'],
     });
-  });
 
-  it('omits usage fields for a skill without learning state', async () => {
-    const res = await createApp(createCatalog()).request(
-      `/v1/skills/${untracked.name}`,
+    const edited = await app.request(
+      '/v1/skills/verify-node-version',
+      patch({ description: 'Edited.' }),
     );
+    expect(await edited.json()).toMatchObject({
+      description: 'Edited.',
+      userEdited: true,
+    });
 
-    expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({
-      name: untracked.name,
-      description: untracked.description,
-      origin: 'learned',
-      body: untracked.body,
+    const deleted = await app.request('/v1/skills/verify-node-version', {
+      method: 'DELETE',
+    });
+    expect(await deleted.json()).toEqual({
+      deleted: true,
+      id: 'learning/verify-node-version',
+      name: 'verify-node-version',
     });
   });
 
-  it('returns 404 for an unknown skill', async () => {
-    const res = await createApp(createCatalog()).request('/v1/skills/missing');
+  it.each(['GET', 'PATCH', 'DELETE'])(
+    'returns 409 with candidates for ambiguous legacy names on %s',
+    async (method) => {
+      const registry = await seededRegistry();
+      const init = method === 'PATCH' ? patch({ body: 'Edited.' }) : { method };
+      const res = await createApp(registry).request('/v1/skills/shared', init);
+      expect(res.status).toBe(409);
+      expect(await res.json()).toMatchObject({
+        code: 'ambiguous_skill_name',
+        candidates: ['learning/shared', 'templates/shared'],
+      });
+      expect(registry.get('learning/shared')?.body).toBe('L.');
+      expect(registry.get('templates/shared')?.body).toBe('T.');
+    },
+  );
 
-    expect(res.status).toBe(404);
-    expect(await res.json()).toMatchObject({ code: 'not_found' });
-  });
-
-  it('returns 503 when the learning extension is not running', async () => {
-    const app = createApp(createCatalog(false));
-
-    for (const path of ['/v1/skills', `/v1/skills/${tracked.name}`]) {
-      const res = await app.request(path);
-      expect(res.status).toBe(503);
-      expect(await res.json()).toMatchObject({ code: 'not_running' });
+  it('returns shared 500 errors for registry failures', async () => {
+    const registry = await seededRegistry();
+    registry.list = () => {
+      throw new Error('registry failed');
+    };
+    registry.get = () => {
+      throw new Error('registry failed');
+    };
+    registry.update = registry.delete = async () => {
+      throw new Error('disk failed');
+    };
+    const app = createApp(registry);
+    for (const [path, init] of [
+      ['/v1/skills', {}],
+      ['/v1/skills/learning/shared', {}],
+      ['/v1/skills/learning/shared', patch({ body: 'Edited.' })],
+      ['/v1/skills/learning/shared', { method: 'DELETE' }],
+    ] as const) {
+      const response = await app.request(path, init);
+      expect(response.status).toBe(500);
+      expect(await response.json()).toMatchObject({ code: 'internal_error' });
     }
   });
 });

@@ -206,6 +206,34 @@ describe('skill registry usage', () => {
     ).toMatchObject({ readCount: 4 });
   });
 
+  it('keeps seeding listed documents after a sibling persists bookkeeping', async () => {
+    const dir = await dataDirectory();
+    for (const name of ['first', 'second']) {
+      const folder = join(dir, 'skills', 'alpha', name);
+      await mkdir(folder, { recursive: true });
+      await writeFile(
+        join(folder, 'SKILL.md'),
+        serializeSkill({ name, ...content }),
+      );
+    }
+    const { registry } = await started(dir);
+    registry.claimNamespace('a', 'alpha');
+    const handle = registry.forNamespace('alpha');
+    // Listing synthesizes stand-in usage for both documents.
+    expect(registry.list()).toHaveLength(2);
+    const seed = { createdAt: '2025-01-01T00:00:00.000Z', readCount: 4 };
+    await handle.put('first', content, { seed, durable: true });
+    expect(Object.keys((await readRegistryFile(dir)).skills)).toEqual([
+      'alpha/first',
+    ]);
+
+    await handle.put('second', content, { seed, durable: true });
+    expect(handle.get('second')).toMatchObject(seed);
+    expect((await readRegistryFile(dir)).skills['alpha/second']).toMatchObject(
+      seed,
+    );
+  });
+
   it('rejects oversized or non-object metadata', async () => {
     const { registry } = await started();
     registry.claimNamespace('a', 'alpha');

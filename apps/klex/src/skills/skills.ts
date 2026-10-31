@@ -131,7 +131,11 @@ class SkillRegistryModule implements SkillRegistry {
   private readonly claims = new Map<string, string>();
   private readonly handles = new Map<string, SkillNamespaceHandle>();
   private records: Record<string, StoredSkillUsage> = {};
-  /** Records created in memory for documents without persisted bookkeeping. */
+  /**
+   * Read-only stand-ins for documents without persisted bookkeeping. Never
+   * persisted, so a later put can still apply its seed; any mutation
+   * materializes them.
+   */
   private readonly synthesized = new Set<string>();
   private unknownFields: Record<string, unknown> = {};
   private turn = 0;
@@ -199,7 +203,7 @@ class SkillRegistryModule implements SkillRegistry {
       const changed = !sameContent(existing, next);
       if (!changed) return this.getSkill(parsed.namespace, parsed.name);
       await store.write(next);
-      const record = this.ensureRecord(id);
+      const record = this.materialize(id);
       record.updatedAt = new Date().toISOString();
       record.updatedTurn = this.turn;
       record.userEdited = true;
@@ -219,7 +223,7 @@ class SkillRegistryModule implements SkillRegistry {
   recordRead(id: string): Promise<void> {
     return this.enqueue(async () => {
       if (!this.get(id)) return;
-      const record = this.ensureRecord(id);
+      const record = this.materialize(id);
       record.lastReadAt = new Date().toISOString();
       record.lastReadTurn = this.turn;
       record.readCount += 1;
@@ -297,7 +301,7 @@ class SkillRegistryModule implements SkillRegistry {
     const at = new Date().toISOString();
     const record = seeded
       ? this.createRecord(id, at, options.seed)
-      : this.ensureRecord(id);
+      : this.materialize(id);
     let dirty = seeded;
     if (existing && changed) {
       record.updatedAt = at;
@@ -321,8 +325,10 @@ class SkillRegistryModule implements SkillRegistry {
   ): Promise<Skill | null> {
     if (!this.namespaces.get(namespace)?.get(name)) return null;
     const normalized = normalizeMetadata(metadata);
-    const record = this.ensureRecord(formatSkillId(namespace, name));
+    const id = formatSkillId(namespace, name);
+    const record = this.ensureRecord(id);
     if (!sameJson(record.metadata, normalized)) {
+      this.synthesized.delete(id);
       record.metadata = normalized;
       await this.persistSafely();
     }
@@ -380,6 +386,13 @@ class SkillRegistryModule implements SkillRegistry {
     if (existing) return existing;
     const record = this.createRecord(id, new Date().toISOString());
     this.synthesized.add(id);
+    return record;
+  }
+
+  /** Bookkeeping that is about to change and must be persisted from now on. */
+  private materialize(id: string): StoredSkillUsage {
+    const record = this.ensureRecord(id);
+    this.synthesized.delete(id);
     return record;
   }
 
@@ -461,17 +474,20 @@ class SkillRegistryModule implements SkillRegistry {
   }
 
   private async persist(): Promise<void> {
+    const records: Record<string, StoredSkillUsage> = {};
     const skills: Record<string, StoredSkillUsage> = {};
     for (const [id, record] of Object.entries(this.records)) {
       const parsed = parseSkillId(id);
-      if (parsed && this.namespaces.get(parsed.namespace)?.get(parsed.name)) {
-        skills[id] = record;
+      if (!parsed || !this.namespaces.get(parsed.namespace)?.get(parsed.name)) {
+        this.synthesized.delete(id);
+        continue;
       }
+      records[id] = record;
+      if (!this.synthesized.has(id)) skills[id] = record;
     }
-    this.records = skills;
+    this.records = records;
     const turn = this.turn;
     await this.file.save({ ...this.unknownFields, turn, skills });
-    this.synthesized.clear();
     if (this.turn === turn) this.turnDirty = false;
   }
 

@@ -390,8 +390,14 @@ describe('legacy skill import through registered startup', () => {
     // Entries of folders still in place survive; folderless ones are pruned.
     const { vanished: _vanished, ...kept } = stateBefore.skills;
     expect((await readJson(statePath(agentDir))).skills).toEqual(kept);
+    // Learning writes would be overwritten by the next import.
+    expect(logger.error).toHaveBeenCalledWith(
+      { failed: 3 },
+      'Some legacy skills were not imported; learning paused until next start',
+    );
 
     injected.failRegistrySave = false;
+    vi.mocked(logger.error).mockClear();
     vi.setSystemTime(new Date(NOW));
     const skills = await startAgent(agentDir);
 
@@ -403,6 +409,7 @@ describe('legacy skill import through registered startup', () => {
       metadata: { sourceEpisodes: ['episode-0003', 'episode-0017'] },
     });
     expect(await exists(join(legacyRoot(agentDir), 'fix-build'))).toBe(false);
+    expect(logger.error).not.toHaveBeenCalled();
   });
 
   it('prunes leftover usage when a crash already removed the legacy root', async () => {

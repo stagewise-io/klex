@@ -1,5 +1,7 @@
 import * as oauth from 'oauth4webapi';
 
+import { isLoopbackHost } from '../config.js';
+
 export interface MachineTokenClient {
   getToken(): Promise<string>;
   invalidate(): void;
@@ -60,6 +62,8 @@ export function createMachineTokenClient(
       auth,
       parameters,
       {
+        [oauth.allowInsecureRequests]:
+          endpoint.protocol === 'http:' && isLoopbackHost(endpoint.hostname),
         [oauth.customFetch]: (input, init) =>
           (options.fetch ?? globalThis.fetch)(input, {
             ...init,

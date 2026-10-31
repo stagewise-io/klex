@@ -16,6 +16,9 @@ import {
 import { KLEX_VERSION } from '@/release';
 
 const DEFAULT_ISSUER = '__default__';
+export type McpOAuthClientInformation = StoredOAuthClientInformation & {
+  klex_registered?: boolean;
+};
 
 const storedOAuthTokensSchema: z.ZodType<StoredOAuthTokens> = z
   .object({
@@ -29,7 +32,7 @@ const storedOAuthTokensSchema: z.ZodType<StoredOAuthTokens> = z
   })
   .passthrough();
 
-const storedOAuthClientInformationSchema: z.ZodType<StoredOAuthClientInformation> =
+const storedOAuthClientInformationSchema: z.ZodType<McpOAuthClientInformation> =
   z
     .object({
       application_type: z.string().optional(),
@@ -120,7 +123,7 @@ export class McpOAuthStore {
     serverName: string,
     redirectUrl: string,
     issuer?: string,
-  ): Promise<StoredOAuthClientInformation | undefined> {
+  ): Promise<McpOAuthClientInformation | undefined> {
     const server = await this.readServer(serverName);
     const issuerKey = issuer ?? DEFAULT_ISSUER;
     if (server?.clientRedirectUrlsByIssuer[issuerKey] !== redirectUrl)
@@ -163,7 +166,7 @@ export class McpOAuthStore {
   public async saveClientInformation(
     serverName: string,
     redirectUrl: string,
-    clientInformation: StoredOAuthClientInformation,
+    clientInformation: McpOAuthClientInformation,
     issuer?: string,
   ): Promise<void> {
     await this.mutate((data) => {

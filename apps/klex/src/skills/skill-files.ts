@@ -81,7 +81,7 @@ class SkillDocumentStoreModule implements SkillDocumentStore {
     if (problem) throw new Error(`Invalid skill: ${problem}`);
     const directory = this.skillDirectory(normalized.name);
     await this.serialize(async () => {
-      await mkdir(this.root, { recursive: true });
+      await this.ensureRoot();
       // Non-recursive, so an existing (even dangling) symlink is not followed.
       await mkdir(directory).catch((error: NodeJS.ErrnoException) => {
         if (error.code !== 'EEXIST') throw error;
@@ -139,8 +139,16 @@ class SkillDocumentStoreModule implements SkillDocumentStore {
     return directory;
   }
 
-  private async load(): Promise<void> {
+  /** Creates the root; a symlinked root would redirect writes and deletes. */
+  private async ensureRoot(): Promise<void> {
     await mkdir(this.root, { recursive: true });
+    if (!(await lstat(this.root)).isDirectory()) {
+      throw new Error(`Skill root is not a plain directory: "${this.root}"`);
+    }
+  }
+
+  private async load(): Promise<void> {
+    await this.ensureRoot();
     const entries = await readdir(this.root, { withFileTypes: true });
     for (const entry of entries) {
       if (!entry.isDirectory()) continue;

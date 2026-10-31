@@ -68,9 +68,15 @@ export function fairOrder<T extends ListedSkill>(skills: readonly T[]): T[] {
   return ordered;
 }
 
+/** Latest activity: the later of last read and last content change. */
 function recency(skill: ListedSkill): number {
-  const value = Date.parse(skill.lastReadAt ?? skill.updatedAt);
-  return Number.isFinite(value) ? value : 0;
+  return Math.max(time(skill.lastReadAt), time(skill.updatedAt));
+}
+
+function time(value: string | null): number {
+  if (value === null) return 0;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : 0;
 }
 
 /** Description lines in order until `budget`; the rest are overflow ids. */

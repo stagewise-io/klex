@@ -90,6 +90,20 @@ describe('skill list rendering', () => {
     ]);
   });
 
+  it('ranks a recent update above an older read', () => {
+    const ordered = fairOrder([
+      listed('alpha', 'read-long-ago', 'x', '2026-01-02T00:00:00.000Z'),
+      {
+        ...listed('alpha', 'just-updated', 'x', '2025-12-01T00:00:00.000Z'),
+        updatedAt: '2026-03-01T00:00:00.000Z',
+      },
+    ]);
+    expect(ordered.map((skill) => skill.id)).toEqual([
+      'alpha/just-updated',
+      'alpha/read-long-ago',
+    ]);
+  });
+
   it('keeps a small namespace visible next to an oversized one', () => {
     const long = 'x'.repeat(400);
     const skills = [

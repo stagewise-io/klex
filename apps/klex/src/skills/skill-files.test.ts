@@ -215,4 +215,19 @@ describe('skill store', () => {
     await expect(store.write(skill)).rejects.toThrow(/not a plain directory/);
     await expect(stat(join(outside, 'SKILL.md'))).rejects.toThrow();
   });
+
+  it('refuses a symlinked store root', async () => {
+    const outside = await root();
+    await mkdir(outside, { recursive: true });
+    const dir = await root();
+    await symlink(outside, dir);
+    const store = createSkillDocumentStore(dir, logger);
+    await expect(store.start()).rejects.toThrow(
+      /root is not a plain directory/,
+    );
+    await expect(store.write(skill)).rejects.toThrow(
+      /root is not a plain directory/,
+    );
+    expect(await readdir(outside)).toEqual([]);
+  });
 });

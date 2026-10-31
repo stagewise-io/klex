@@ -33,8 +33,8 @@ export interface LegacySkillImportResult {
  * Moves pre-registry learned skills into the learning namespace. Each skill
  * is written to the registry before its legacy folder is removed, so a crash
  * in between re-imports identical content on the next start, which the
- * registry treats as a no-op; seeds apply only on create. Unparseable
- * folders stay in place and keep their bookkeeping.
+ * registry treats as a no-op; seeds apply while the skill has no persisted
+ * bookkeeping. Unparseable folders stay in place and keep their bookkeeping.
  */
 export async function importLegacySkills(
   options: LegacySkillImportOptions,
@@ -46,7 +46,15 @@ export async function importLegacySkills(
       throw error;
     },
   );
-  if (entries === null) return { imported: 0, remaining: 0 };
+  if (entries === null) {
+    // A crash after removing the legacy root can leave stale bookkeeping.
+    if (Object.keys(state.get().skills).length > 0) {
+      await state.update((draft) => {
+        draft.skills = {};
+      });
+    }
+    return { imported: 0, remaining: 0 };
+  }
 
   const usage = state.get().skills;
   const remaining = new Set<string>();
@@ -74,6 +82,9 @@ export async function importLegacySkills(
         document.name,
         { description: document.description, body: document.body },
         {
+          // The legacy folder holds the only copy of its usage until the
+          // registry bookkeeping is on disk.
+          durable: true,
           ...(previous
             ? {
                 seed: seedFrom(previous),

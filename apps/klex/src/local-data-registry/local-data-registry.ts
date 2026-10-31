@@ -11,6 +11,7 @@ import { LEARNING_STATE_STORE_DEFINITION } from '@/session/chat/extensions/learn
 import { EPISODIC_SEARCH_INDEX_STORE_DEFINITION } from '@/session/chat/extensions/memory';
 import { TODOS_STORE_DEFINITION } from '@/session/chat/extensions/todos';
 import { SESSION_HISTORY_STORE_DEFINITION } from '@/session-history';
+import { SKILL_REGISTRY_STORE_DEFINITION } from '@/skills';
 
 export const KLEX_LOCAL_DATA_STORES = [
   CONFIG_STORE_DEFINITION,
@@ -23,4 +24,5 @@ export const KLEX_LOCAL_DATA_STORES = [
   LEARNING_STATE_STORE_DEFINITION,
   EPISODE_SUMMARY_STORE_DEFINITION,
   SESSION_HISTORY_STORE_DEFINITION,
+  SKILL_REGISTRY_STORE_DEFINITION,
 ] as const satisfies readonly LocalDataStoreDefinition[];

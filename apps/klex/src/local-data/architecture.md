@@ -18,14 +18,19 @@ The composition root in `local-data-registry` contains every structured Klex-own
 | `learning-extension-state` | `extensions/io.stagewise/learning/state.json` | JSON | Optional |
 | `episode-summaries` | `extensions/io.stagewise/episode-summary/summaries.sqlite` | SQLite | Created when missing |
 | `sessions` | `sessions.sqlite` | SQLite | Created when missing |
+| `skill-registry` | `skills/registry.json` | JSON | Optional |
 
 Initialization creates missing parent directories for nested stores. SQLite definitions may declare `initPragmas`, which run one by one before `initSql` only when the database is created. Settings such as `auto_vacuum` take effect only on an empty file and are never re-applied to existing stores.
 
-`identity/private-key.pem`, `SOUL.md`, episode JSONL files under `episodic/`, learned `SKILL.md` folders under `extensions/io.stagewise/learning/skills/`, locks, logs, downloaded assets, and reconstructable caches are not migration stores. Private identity keys are opaque and must never be transformed by a migration. Soul, episode, and skill files are plain documents, not versioned migration stores; skill files use Agent Skills frontmatter for metadata and a Markdown instruction body, and readers skip skills they cannot parse; episode lines carry their own format version `v` and readers skip lines they cannot validate.
+`identity/private-key.pem`, `SOUL.md`, episode JSONL files under `episodic/`, skill `SKILL.md` folders under `skills/{namespace}/` (and legacy learned folders under `extensions/io.stagewise/learning/skills/` awaiting import), locks, logs, downloaded assets, and reconstructable caches are not migration stores. Private identity keys are opaque and must never be transformed by a migration. Soul, episode, and skill files are plain documents, not versioned migration stores; skill files use Agent Skills frontmatter for metadata and a Markdown instruction body, and readers skip skills they cannot parse; episode lines carry their own format version `v` and readers skip lines they cannot validate.
 
 The learning state store uses schema v2. Its deterministic v1-to-v2 migration keeps cursor, failures, per-skill usage and sources, timestamps, legacy counters and unknown fields. Activity counters and skill activity positions start at zero; pending weighted changes, retry scheduling and deferred references start empty. Historical wall-clock timestamps never become synthetic episode activity. Older writers reject v2 before mutation; skill and episode documents remain unchanged.
 
 Learning state compatibility v2 adds the default-false `userEdited` flag in Klex 0.24.0. The representation remains schema v2; the compatibility floor prevents older writers from ignoring protection of user edits during consolidation. The historical v1 schema remains unchanged.
+
+Learning state compatibility v3 (Klex 0.28.0) marks the move of learned skills into the core skill registry. On start, the learning extension imports each parsable legacy folder from `extensions/io.stagewise/learning/skills/` into `skills/learning/`, seeding usage from `skills` in the learning state, then deletes the folder; unparsable folders stay and are retried. Once no parsable legacy folder remains, `skills` is emptied. The representation remains schema v2 and `skills` stays a valid (empty) field until a later schema removes it. The floor stops older binaries, which would see no learned skills and relearn them into the legacy location, from starting on imported data.
+
+The skill registry store (`skills/registry.json`, schema v1, Klex 0.28.0) holds bookkeeping only: the agent activity `turn` and, per qualified id `namespace/name`, ISO dates, turn positions, read count, `userEdited` and namespace-owned `metadata`. It has no migrations. Unknown top-level and per-skill fields are preserved. The `SKILL.md` documents are the source of truth; entries without a document are dropped on the next write, and a document without an entry gets fresh usage.
 
 ## Metadata contract
 

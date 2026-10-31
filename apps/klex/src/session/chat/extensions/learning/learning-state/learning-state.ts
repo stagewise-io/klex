@@ -29,8 +29,8 @@ export const LEARNING_STATE_STORE_DEFINITION: JsonStoreDefinition = {
   relativePath: 'extensions/io.stagewise/learning/state.json',
   required: false,
   schemaVersion: 2,
-  compatibilityVersion: 2,
-  minimumKlexVersion: '0.24.0',
+  compatibilityVersion: 3,
+  minimumKlexVersion: '0.28.0',
   versions: LOCAL_DATA_MIGRATIONS['learning-extension-state'].versions,
   migrations: LOCAL_DATA_MIGRATIONS['learning-extension-state'].migrations,
 };

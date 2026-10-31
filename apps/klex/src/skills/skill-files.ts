@@ -16,32 +16,32 @@ import type { ModuleLogger } from '@stagewise/logger';
 
 import {
   isValidSkillName,
-  type LearnedSkill,
   parseSkill,
+  type SkillDocument,
   serializeSkill,
   validateSkill,
 } from './skill-format';
 
 const SKILL_FILE = 'SKILL.md';
 
-export interface SkillStore {
+export interface SkillDocumentStore {
   /** Creates the root and loads all skills into the cache. Idempotent. */
   start(): Promise<void>;
-  list(): readonly LearnedSkill[];
-  get(name: string): LearnedSkill | null;
+  list(): readonly SkillDocument[];
+  get(name: string): SkillDocument | null;
   /** Full `SKILL.md` content of a cached skill. */
   read(name: string): string | null;
-  write(skill: LearnedSkill): Promise<void>;
+  write(skill: SkillDocument): Promise<void>;
   delete(name: string): Promise<void>;
 }
 
 /**
- * Learned skills as Agent Skills folders: `{root}/{name}/SKILL.md`. The
+ * Skills as Agent Skills folders: `{root}/{name}/SKILL.md`. The
  * in-memory cache serves synchronous reads; it changes only after the disk
  * write succeeded. Unparseable folders are skipped, never deleted.
  */
-class SkillStoreModule implements SkillStore {
-  private readonly skills = new Map<string, LearnedSkill>();
+class SkillDocumentStoreModule implements SkillDocumentStore {
+  private readonly skills = new Map<string, SkillDocument>();
   private startPromise: Promise<void> | undefined;
   private work: Promise<void> = Promise.resolve();
 
@@ -55,13 +55,13 @@ class SkillStoreModule implements SkillStore {
     return this.startPromise;
   }
 
-  list(): readonly LearnedSkill[] {
+  list(): readonly SkillDocument[] {
     return [...this.skills.values()]
       .sort((left, right) => left.name.localeCompare(right.name))
       .map((skill) => ({ ...skill }));
   }
 
-  get(name: string): LearnedSkill | null {
+  get(name: string): SkillDocument | null {
     const skill = this.skills.get(name);
     return skill ? { ...skill } : null;
   }
@@ -71,8 +71,8 @@ class SkillStoreModule implements SkillStore {
     return skill ? serializeSkill(skill) : null;
   }
 
-  async write(skill: LearnedSkill): Promise<void> {
-    const normalized: LearnedSkill = {
+  async write(skill: SkillDocument): Promise<void> {
+    const normalized: SkillDocument = {
       name: skill.name,
       description: skill.description.trim(),
       body: skill.body.trim(),
@@ -172,16 +172,13 @@ class SkillStoreModule implements SkillStore {
       } catch (error) {
         this.logger.warn(
           { skill: entry.name, error },
-          'Skipping learned skill without readable SKILL.md',
+          'Skipping skill without readable SKILL.md',
         );
         continue;
       }
       const skill = parseSkill(content);
       if (!skill || skill.name !== entry.name || validateSkill(skill)) {
-        this.logger.warn(
-          { skill: entry.name },
-          'Skipping malformed learned skill',
-        );
+        this.logger.warn({ skill: entry.name }, 'Skipping malformed skill');
         continue;
       }
       this.skills.set(skill.name, skill);
@@ -196,9 +193,9 @@ class SkillStoreModule implements SkillStore {
   }
 }
 
-export function createSkillStore(
+export function createSkillDocumentStore(
   root: string,
   logger: ModuleLogger,
-): SkillStore {
-  return new SkillStoreModule(root, logger);
+): SkillDocumentStore {
+  return new SkillDocumentStoreModule(root, logger);
 }

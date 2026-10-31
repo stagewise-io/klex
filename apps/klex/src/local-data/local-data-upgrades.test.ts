@@ -280,8 +280,8 @@ describe('frozen learning-state upgrades', () => {
         _klex: {
           store: 'learning-extension-state',
           schemaVersion: 2,
-          compatibilityVersion: 2,
-          minimumKlexVersion: '0.24.0',
+          compatibilityVersion: 3,
+          minimumKlexVersion: '0.28.0',
         },
       });
       const beforeRestart = await snapshot(dataDirectory);

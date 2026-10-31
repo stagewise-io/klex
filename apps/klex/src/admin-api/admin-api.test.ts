@@ -10,8 +10,8 @@ import type { Mcp } from '@/mcp';
 import type { ModelCallLogger } from '@/model-call-logger';
 import type { ProviderRegistry } from '@/provider-registry';
 import type { EpisodeSummaryLog } from '@/session/chat/extensions/episode-summary';
-import type { SkillCatalog } from '@/session/chat/extensions/learning/skill-store';
 import type { SessionHistory } from '@/session-history';
+import type { SkillRegistry } from '@/skills';
 
 import { type AdminApi, createAdminApi } from './admin-api';
 
@@ -59,14 +59,7 @@ const godMessages = {
   close: async () => undefined,
 } as unknown as GodMessages;
 const sessionHistory = {} as unknown as SessionHistory;
-const skillCatalog: SkillCatalog = {
-  update: async () => null,
-  delete: async () => false,
-  isAvailable: () => false,
-  list: () => [],
-  get: () => null,
-  getUsage: () => null,
-};
+const skillRegistry = {} as SkillRegistry;
 const episodeSummaryLog: EpisodeSummaryLog = {
   isAvailable: () => false,
   list: async () => ({ items: [], nextCursor: null, hasMore: false }),
@@ -87,7 +80,7 @@ describe('AdminApi', () => {
         cloudConnectivity,
         godMessages,
         sessionHistory,
-        skillCatalog,
+        skillRegistry,
         episodeSummaryLog,
         localPort: 19999,
         timezone: 'UTC',
@@ -122,7 +115,7 @@ describe('AdminApi', () => {
         cloudConnectivity,
         godMessages,
         sessionHistory,
-        skillCatalog,
+        skillRegistry,
         episodeSummaryLog,
         localPort: undefined,
         timezone: 'UTC',

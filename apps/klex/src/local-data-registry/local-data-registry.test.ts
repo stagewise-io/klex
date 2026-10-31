@@ -77,6 +77,7 @@ describe('Klex local-data registry', () => {
       'learning-extension-state',
       'episode-summaries',
       'sessions',
+      'skill-registry',
     ]);
   });
 

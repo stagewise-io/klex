@@ -1,3 +1,13 @@
+export {
+  MAX_BODY_LENGTH,
+  MAX_DESCRIPTION_LENGTH,
+  MAX_NAME_LENGTH,
+  SKILL_NAME_PATTERN,
+} from '@/skills';
+
+/** Skill namespace owned by the learning extension. */
+export const LEARNING_SKILL_NAMESPACE = 'learning';
+
 /**
  * Starting values for the learning extension. Tune here; they are code
  * constants on purpose so changes need no config migration.
@@ -14,19 +24,14 @@ export const MAX_EPISODE_CHARACTERS = 60_000;
 /** After this many consecutive failures an episode is skipped. */
 export const MAX_FAILURES_PER_EPISODE = 3;
 
+/** Cap of skills in the learning namespace. */
 export const MAX_SKILLS = 30;
-export const MAX_NAME_LENGTH = 64;
-export const MAX_DESCRIPTION_LENGTH = 300;
-export const MAX_BODY_LENGTH = 4_000;
 /** Provenance kept per skill; older episode ids are dropped. */
 export const MAX_SOURCE_EPISODES = 20;
-/** Cap of the skill list in the main-session system prompt. */
-export const MAX_PROMPT_LIST_CHARACTERS = 6_000;
 
 export const CONSOLIDATE_CHANGE_WEIGHT = 20;
 export const SOFT_SKILL_COUNT = 25;
 export const SOFT_THRESHOLD_CHANGE_WEIGHT = 5;
-export const STALE_AFTER_EPISODES = 100;
+/** Agent turns without creation, change, or read after which a skill is stale. */
+export const STALE_AFTER_TURNS = 300;
 export const STALE_CONSOLIDATION_SPACING = 10;
-
-export const SKILL_NAME_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;

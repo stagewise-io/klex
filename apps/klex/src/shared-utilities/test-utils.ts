@@ -59,6 +59,7 @@ export function makeDeps(overrides?: Partial<ExtensionDeps>): ExtensionDeps {
       vi.fn() as unknown as ExtensionDeps['createChildSession'],
     sessionId: 'test-session',
     getDataDir: vi.fn(() => '/tmp/test-ext-data'),
+    skills: null,
     ...overrides,
   };
 }

@@ -8,10 +8,13 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ModuleLogger } from '@stagewise/logger';
 
 import { createEpisodeFeed } from '@/session/chat/extensions/memory';
+import { createSkillRegistry } from '@/skills';
 
+import { LEARNING_EXTENSION_ID } from './learning';
+import { LEARNING_SKILL_NAMESPACE } from './learning-config';
 import { createLearningState } from './learning-state';
 import { createLearningWorker } from './learning-worker';
-import { createSkillStore } from './skill-store';
+import { sourceEpisodesOf } from './prompts';
 import { type ChildReply, childHarness, reply as ok } from './test-child';
 
 // The real prompt text, so the test sees the sections the model sees.
@@ -33,7 +36,6 @@ vi.mock('./consolidation-prompt.md', async () => {
     ),
   };
 });
-vi.mock('./system-prompt-part.md', () => ({ default: '## Learned skills\n' }));
 // Only the episode feed is real; the rest of the memory barrel pulls in the
 // whole extension graph and its Markdown imports.
 vi.mock('@/session/chat/extensions/memory/memory', () => ({
@@ -92,15 +94,16 @@ async function harness() {
     warn: vi.fn(),
     error: vi.fn(),
   } as unknown as ModuleLogger;
-  const dataDir = join(root, 'learning');
-  const store = createSkillStore(join(dataDir, 'skills'), logger);
-  const state = createLearningState(dataDir);
-  await Promise.all([store.start(), state.start()]);
+  const registry = createSkillRegistry({ dataDirectory: root, logger });
+  const state = createLearningState(join(root, 'learning'));
+  await Promise.all([registry.start(), state.start()]);
+  registry.claimNamespace(LEARNING_EXTENSION_ID, LEARNING_SKILL_NAMESPACE);
+  const skills = registry.forNamespace(LEARNING_SKILL_NAMESPACE);
 
   const { runChild, createChildSession } = childHarness();
   const worker = createLearningWorker({
     episodes,
-    store,
+    skills,
     state,
     createChildSession,
     getModelPurpose: () => 'memory',
@@ -108,7 +111,7 @@ async function harness() {
     logger,
     now: () => Date.parse('2026-10-02T00:00:00.000Z'),
   });
-  return { root, episodes, store, state, runChild, worker };
+  return { root, episodes, skills, state, runChild, worker };
 }
 
 describe('learning fixtures', () => {
@@ -124,7 +127,7 @@ describe('learning fixtures', () => {
   });
 
   it('runs extraction end to end and records provenance', async () => {
-    const { store, state, runChild, worker } = await harness();
+    const { skills, state, runChild, worker } = await harness();
     const [feedbackId, fixId, noLessonId] = EPISODES.map(([, id]) => id);
 
     runChild
@@ -170,27 +173,25 @@ describe('learning fixtures', () => {
     expect(await worker.runOnce()).toBe('processed');
     expect(runChild).toHaveBeenCalledTimes(3);
 
-    expect(
-      store
-        .list()
-        .map((skill) => skill.name)
-        .sort(),
-    ).toEqual(['ask-before-core-contract-changes', 'use-pinned-node-version']);
+    expect(skills.list().map((skill) => skill.name)).toEqual([
+      'ask-before-core-contract-changes',
+      'use-pinned-node-version',
+    ]);
+    const sources = (name: string) => {
+      const skill = skills.get(name);
+      return skill ? sourceEpisodesOf(skill) : null;
+    };
+    expect(sources('ask-before-core-contract-changes')).toEqual([feedbackId]);
+    expect(sources('use-pinned-node-version')).toEqual([fixId]);
     const current = state.get();
     expect(current.cursor).toBe(noLessonId);
-    expect(
-      current.skills['ask-before-core-contract-changes']?.sourceEpisodes,
-    ).toEqual([feedbackId]);
-    expect(current.skills['use-pinned-node-version']?.sourceEpisodes).toEqual([
-      fixId,
-    ]);
     expect(current.changedRunsSinceConsolidation).toBe(0);
     expect(current.lastConsolidationAt).toBeNull();
     expect(current.pendingChangeWeight).toBe(4);
     expect(current.processedEpisodeCount).toBe(3);
   });
 
-  it('writes learned skills as Agent Skills files', async () => {
+  it('writes learned skills as Agent Skills files in the learning namespace', async () => {
     const { root, runChild, worker } = await harness();
     runChild
       .mockResolvedValueOnce(
@@ -209,8 +210,8 @@ describe('learning fixtures', () => {
     const content = await readFile(
       join(
         root,
-        'learning',
         'skills',
+        LEARNING_SKILL_NAMESPACE,
         'ask-before-core-contract-changes',
         'SKILL.md',
       ),

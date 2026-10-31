@@ -42,6 +42,7 @@ function makeDeps(config: Config): ExtensionDeps {
       vi.fn() as unknown as ExtensionDeps['createChildSession'],
     sessionId: 'test-session-id',
     getDataDir: vi.fn(() => '/tmp/test'),
+    skills: null,
   } as ExtensionDeps;
 }
 

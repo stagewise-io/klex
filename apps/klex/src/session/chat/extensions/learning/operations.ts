@@ -1,5 +1,7 @@
 import { z } from 'zod';
 
+import { type SkillDocument, validateSkill } from '@/skills';
+
 import {
   MAX_BODY_LENGTH,
   MAX_DESCRIPTION_LENGTH,
@@ -7,7 +9,6 @@ import {
   MAX_SKILLS,
   SKILL_NAME_PATTERN,
 } from './learning-config';
-import { type LearnedSkill, validateSkill } from './skill-store';
 
 const skillNameSchema = z
   .string()
@@ -67,22 +68,12 @@ export interface ValidatedOperations {
 export function validateOperations(
   operations: readonly SkillOperation[],
   existingNames: Iterable<string>,
-  protectedNames?: Iterable<string>,
 ): ValidatedOperations {
   const names = new Set(existingNames);
-  const protectedSkills = new Set(protectedNames);
   const accepted: SkillOperation[] = [];
   const rejected: RejectedOperation[] = [];
   for (const operation of operations) {
-    const protectedName =
-      operation.op !== 'create' && protectedSkills.has(operation.name)
-        ? operation.name
-        : operation.op === 'update'
-          ? operation.mergedFrom?.find((name) => protectedSkills.has(name))
-          : undefined;
-    const reason = protectedName
-      ? `skill "${protectedName}" is user-edited and cannot be modified by consolidation`
-      : rejectionReason(operation, names);
+    const reason = rejectionReason(operation, names);
     if (reason) {
       rejected.push({ operation, reason });
       continue;
@@ -107,7 +98,7 @@ function rejectionReason(
   return validateSkill(toSkill(operation));
 }
 
-export function toSkill(operation: WriteOperation): LearnedSkill {
+export function toSkill(operation: WriteOperation): SkillDocument {
   return {
     name: operation.name,
     description: operation.description.trim(),

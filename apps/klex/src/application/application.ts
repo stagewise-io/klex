@@ -62,10 +62,7 @@ import {
 } from '@/session/chat/extensions/god-messages';
 import { createImageInputOptimizerExt } from '@/session/chat/extensions/image-input-optimizer';
 import { createJsReplSandboxExt } from '@/session/chat/extensions/js-repl-sandbox';
-import {
-  createLearningExt,
-  createSkillCatalog,
-} from '@/session/chat/extensions/learning';
+import { createLearningExt } from '@/session/chat/extensions/learning';
 import { createMcpIngressExt } from '@/session/chat/extensions/mcp-ingress';
 import {
   createEpisodeFeed,
@@ -73,6 +70,7 @@ import {
 } from '@/session/chat/extensions/memory';
 import { createNameLoaderExt } from '@/session/chat/extensions/name-loader';
 import { createReadAttachmentExt } from '@/session/chat/extensions/read-attachment/read-attachment';
+import { createSkillsExt } from '@/session/chat/extensions/skills';
 import {
   createSoulExt,
   createSoulExtGod,
@@ -97,6 +95,7 @@ import {
   createShutdownCoordinator,
   DEFAULT_SHUTDOWN_TIMEOUT_MS,
 } from '@/shutdown-coordinator';
+import { createSkillRegistry } from '@/skills';
 import {
   createTelemetryExportConfiguration,
   describeTelemetryWarning,
@@ -532,6 +531,14 @@ class ApplicationModule implements Application {
       config,
     });
 
+    const skillRegistry = createSkillRegistry({
+      dataDirectory: cli.dataDirectory,
+      logger: logging.child({
+        name: 'skills',
+        bindings: { module: 'skills' },
+      }),
+    });
+
     tracing.setModelCallSink((record) => {
       modelCallLogger.recordCall(record);
       telemetryMetrics?.recordModelCall({
@@ -560,6 +567,7 @@ class ApplicationModule implements Application {
       config,
       modelResolver: providerRegistry,
       dataDirectory,
+      skillRegistry,
       telemetryMetrics,
       productAnalytics,
       sessionHistory,
@@ -595,10 +603,9 @@ class ApplicationModule implements Application {
       timezone,
     });
 
-    // Agent-wide hubs: memory publishes episodes, learning publishes skills,
-    // episode-summary publishes episode titles.
+    // Agent-wide hubs: memory publishes episodes, episode-summary publishes
+    // episode titles. Skills live in the core skill registry.
     const episodeFeed = createEpisodeFeed();
-    const skillCatalog = createSkillCatalog();
     const episodeSummaryLog = createEpisodeSummaryLog();
 
     // Default session: full extension set + MCP access.
@@ -613,11 +620,11 @@ class ApplicationModule implements Application {
       createAudioInputOptimizerExt,
       createReadAttachmentExt,
       createTodosExt,
+      createSkillsExt(skillRegistry),
       createMcpIngressExt(),
       createMemoryExt({ episodeFeed }),
       createLearningExt({
         episodes: episodeFeed,
-        skillCatalog,
         getSoul: () =>
           readSoul(join(dataDirectory, 'extensions', createSoulExt.identifier)),
       }),
@@ -673,7 +680,7 @@ class ApplicationModule implements Application {
       cloudConnectivity,
       godMessages,
       sessionHistory,
-      skillCatalog,
+      skillRegistry,
       episodeSummaryLog,
       localPort: cli.dangerousLocalAdminApiPort,
       timezone,
@@ -700,6 +707,7 @@ class ApplicationModule implements Application {
       modules: {
         modelCallLogger,
         sessionHistory,
+        skillRegistry,
         adminApi,
         cloudConnectivity,
         sessionHost,

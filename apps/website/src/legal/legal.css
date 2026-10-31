@@ -1,0 +1,229 @@
+@import "../new/base.css";
+@import "../new/navigation.css";
+
+.legal-main {
+  width: min(72ch, calc(100% - 2 * var(--page-gutter)));
+  margin: 0 auto;
+  padding-block: clamp(2rem, 5vw, 4rem) 5rem;
+  min-height: calc(100svh - var(--new-header-height) - 9rem);
+  font-size: 1.0625rem;
+  line-height: 1.75;
+  overflow-wrap: anywhere;
+}
+.legal-main {
+  --legal-link: var(--primary);
+}
+.dark .legal-main {
+  --legal-link: var(--color-primary-200);
+}
+.legal-main a {
+  color: var(--legal-link);
+  text-decoration: underline;
+  text-underline-offset: 0.2em;
+}
+.legal-main a:hover {
+  text-decoration-thickness: 2px;
+}
+.legal-main :is(a, button):focus-visible {
+  outline: 2px solid var(--legal-link);
+  outline-offset: 3px;
+}
+.legal-main h1,
+.legal-main h2,
+.legal-main h3,
+.legal-main h4,
+.legal-main h5,
+.legal-main h6 {
+  font-family: "Fraunces", Georgia, serif;
+  font-weight: 500;
+  font-optical-sizing: none;
+  font-variation-settings:
+    "WONK" 0,
+    "opsz" 0;
+  letter-spacing: -0.025em;
+  text-wrap: balance;
+  line-height: 1.2;
+}
+.legal-main h1 {
+  font-size: clamp(2.5rem, 5vw, 3.75rem);
+  margin: 0 0 1.5rem;
+}
+.legal-main h2 {
+  font-size: 1.75rem;
+  margin: 2.5rem 0 0.75rem;
+}
+.legal-main h3 {
+  font-size: 1.375rem;
+  margin: 2rem 0 0.75rem;
+}
+.legal-main :is(h4, h5, h6) {
+  font-size: 1.125rem;
+  margin: 1.75rem 0 0.5rem;
+}
+.legal-main p {
+  margin-block: 0 1.25rem;
+}
+.legal-notice {
+  margin-bottom: 2rem;
+  border-block: 1px solid var(--border);
+  padding-block: 1rem;
+  font-size: 0.9375rem;
+}
+.legal-notice p {
+  margin: 0;
+}
+.legal-notice button {
+  margin-top: 0.75rem;
+  padding: 0.5rem 1rem;
+  min-height: 2.75rem;
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  color: var(--foreground);
+  background: var(--background);
+  cursor: pointer;
+}
+.legal-notice button:hover {
+  background: var(--muted);
+}
+.legal-metadata {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1.5rem;
+  font-size: 0.875rem;
+  font-variant-numeric: tabular-nums;
+}
+.legal-summary {
+  font-size: 0.9375rem;
+}
+.legal-document-header {
+  margin-bottom: 2.5rem;
+}
+.legal-main ul,
+.legal-main ol {
+  margin: 0 0 1.25rem;
+  padding-left: 1.5rem;
+}
+.legal-main ul {
+  list-style-type: disc;
+}
+.legal-main ol {
+  list-style-type: decimal;
+}
+.legal-main li {
+  padding-left: 0.25rem;
+  margin-block: 0.5rem;
+}
+.legal-main blockquote {
+  border-left: 1px solid var(--border);
+  padding-left: 1.5rem;
+  margin: 1.5rem 0;
+}
+.legal-main pre {
+  max-width: 100%;
+  overflow-x: auto;
+  padding: 1rem;
+  background: var(--muted);
+}
+.legal-main code {
+  font-size: 0.875em;
+}
+.legal-prose table {
+  display: block;
+  width: 100%;
+  overflow-x: auto;
+  border-collapse: collapse;
+  margin-block: 1.5rem;
+}
+.legal-prose th,
+.legal-prose td {
+  padding: 0.75rem 1rem;
+  border: 1px solid var(--border);
+  text-align: left;
+}
+.legal-main hr {
+  border: 0;
+  border-top: 1px solid var(--border);
+  margin-block: 2rem;
+}
+.legal-source,
+.legal-history,
+.legal-fallback {
+  border-top: 1px solid var(--border);
+  margin-top: 3rem;
+  padding-top: 1.5rem;
+}
+.legal-source {
+  font-size: 0.875rem;
+}
+.legal-source p {
+  margin: 1rem 0 0.25rem;
+}
+.legal-source code {
+  display: block;
+  overflow-wrap: anywhere;
+  font-variant-numeric: tabular-nums;
+}
+.legal-main :is(.legal-history, .legal-fallback) h2 {
+  margin-top: 0;
+  font-size: 1.5rem;
+}
+.legal-main ::selection {
+  background: var(--primary);
+  color: var(--primary-foreground);
+}
+[hidden] {
+  /* biome-ignore lint/complexity/noImportantStyles: Native hidden must override layout display declarations. */
+  display: none !important;
+}
+@media (max-width: 767px) {
+  .legal-main {
+    padding-bottom: 3rem;
+  }
+}
+@media print {
+  .new-header,
+  .new-footer,
+  .legal-history,
+  .legal-fallback,
+  .new-skip-link,
+  .legal-notice button {
+    /* biome-ignore lint/complexity/noImportantStyles: Printing must suppress inherited navigation and interaction styles. */
+    display: none !important;
+  }
+  :root,
+  .dark {
+    color-scheme: light;
+    --background: white;
+    --foreground: black;
+    --primary: black;
+    --border: #777;
+  }
+  .legal-main {
+    width: 100%;
+    margin: 0;
+    padding: 0;
+    min-height: 0;
+    font-size: 11pt;
+    line-height: 1.5;
+  }
+  .legal-main a {
+    color: black;
+  }
+  .legal-main h1 {
+    font-size: 26pt;
+  }
+  .legal-main :is(h1, h2, h3, h4, h5, h6) {
+    break-after: avoid;
+  }
+  .legal-metadata,
+  .legal-source {
+    break-inside: avoid;
+  }
+  .legal-prose table {
+    display: table;
+    overflow: visible;
+  }
+  .legal-prose pre {
+    white-space: pre-wrap;
+  }
+}

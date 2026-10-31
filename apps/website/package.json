@@ -7,16 +7,26 @@
     "build": "tsc && vite build",
     "dev": "vite",
     "preview": "vite preview",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:legal": "vitest run src/legal",
+    "test:legal-browser": "node scripts/legal-browser.mjs",
+    "test:legal-nginx": "node scripts/legal-nginx.mjs"
   },
   "devDependencies": {
     "@tailwindcss/vite": "4.3.3",
+    "@types/markdown-it": "14.2.0",
     "@types/node": "26.1.1",
     "@types/react": "19.2.18",
     "@types/react-dom": "^19.3.0",
+    "jsdom": "30.1.1",
+    "markdown-it": "15.0.2",
+    "playwright": "1.63.0",
     "tailwindcss": "4.3.3",
     "typescript": "6.0.2",
-    "vite": "8.2.2"
+    "vite": "8.2.2",
+    "vitest": "4.1.10",
+    "yaml": "2.9.1"
   },
   "dependencies": {
     "@klex/mascot": "^0.1.0",

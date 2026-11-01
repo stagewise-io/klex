@@ -241,6 +241,15 @@ The learning extension (`io.stagewise/learning`) loads only in the default sessi
 - **Main session and admin API**: learned skills appear through the skills extension and the registry routes described under [Skills](#skills). Learning does not see or rewrite skills of other namespaces. A content write by learning clears `userEdited` set by an admin change.
 - **Known limits**: raw user text is not in episodes, so feedback typed directly into a local chat is not learned. Channel feedback arrives as incoming context and is learned. There is no sender-trust policy or approval step yet, so anyone who can reach a channel can teach the agent. This is **Temporary** and acceptable for in-house use only. Source episode IDs make a bad skill traceable. A single JSONL record larger than the two-megabyte scan budget cannot be parsed by the bounded reader. If the tail has insufficient complete evidence, learning retries and eventually skips that episode with a warning rather than reading it unboundedly.
 
+## Legacy removal: skill registry
+
+Compatibility code for the move to the skill registry is tagged `LEGACY(skill-registry)`. Each tag says what to remove and when. Find every site with `rg 'LEGACY\(skill-registry\)'` in this repository and in Cloud. Klex 0.28.0 is the first stable release with the registry; nightlies have it since 2026-11-01. Remove in this order:
+
+1. **Cloud fallbacks.** The admin proxy allow-list, the bare-name request path and the optional registry fields in Cloud's skill types serve bots older than Klex 0.28.0. Remove them once no connected bot runs an older version.
+2. **Bare-name Admin API.** `GET`, `PATCH` and `DELETE /v1/skills/{name}`, the 409 `ambiguous_skill_name` response, `SkillRegistry.resolveName` and the deprecated `origin` and `sourceEpisodes` fields. Remove them after step 1 has shipped, because Cloud still calls these routes for older bots. This is a breaking Admin API change; commit it with the `klex,agent-admin-api` scopes.
+3. **Legacy import.** `learning/legacy-skill-import.ts`, its tests and fixtures, and the import step in `learning.ts`. Remove it once no supported upgrade starts below Klex 0.28.0. Data that skips the import loses its learned skills; it is not corrupted.
+4. **Learning-state `skills` map.** Released in schema v2, so removing it needs schema v3 with a forward migration that drops it. Do it after step 3, following `.stagewise/skills/local-data-migrations/SKILL.md`. Keep the historical v1 and v2 schemas and fixtures unchanged. Compatibility v3 and its floor stay.
+
 ## Episode summaries
 
 The episode-summary extension (`io.stagewise/episode-summary`) gives each newly finished episode a short, past-tense English title for a UI-facing activity log. Like learning, it loads only in the default session, and one owner runs per agent.

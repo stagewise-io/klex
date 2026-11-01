@@ -35,6 +35,14 @@ export const LEARNING_STATE_STORE_DEFINITION: JsonStoreDefinition = {
   migrations: LOCAL_DATA_MIGRATIONS['learning-extension-state'].migrations,
 };
 
+/**
+ * Pre-registry per-skill usage, read only by the legacy import.
+ *
+ * LEGACY(skill-registry): released in schema v2, so removing it needs a new
+ * schema version and a forward migration that drops `skills`. Do this only
+ * after the legacy import is gone, and keep the historical v1 and v2 schemas
+ * and fixtures unchanged (see the local-data-migrations skill).
+ */
 export interface SkillState {
   userEdited?: boolean;
   createdAt: string;
@@ -55,6 +63,7 @@ export interface LearningStateData {
   episodeFailures: Record<string, number>;
   changedRunsSinceConsolidation: number;
   lastConsolidationAt: string | null;
+  /** LEGACY(skill-registry): see `SkillState`. Empty once imported. */
   skills: Record<string, SkillState>;
   processedEpisodeCount: number;
   pendingChangeWeight: number;
@@ -120,6 +129,7 @@ class LearningStateModule implements LearningState {
     const operation = this.updateWork.then(async () => {
       const next = this.get();
       mutate(next);
+      // LEGACY(skill-registry): defaults for entries awaiting import.
       for (const entry of Object.values(next.skills)) {
         entry.userEdited ??= false;
         entry.createdEpisode ??= next.processedEpisodeCount;

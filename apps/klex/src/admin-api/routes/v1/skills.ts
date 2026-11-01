@@ -38,6 +38,7 @@ const detailResponses = {
   500: errorResponse('Internal server error'),
 };
 
+// LEGACY(skill-registry): only the bare-name routes answer 409.
 const ambiguousResponse = {
   409: {
     content: { 'application/json': { schema: ambiguousSkillResponseSchema } },
@@ -167,6 +168,14 @@ export function deleteSkill(
 
 // --- Legacy bare-name routes ---
 
+// LEGACY(skill-registry): kept for clients that do not send a namespace,
+// such as Cloud talking to bots older than Klex 0.28.0. Remove after Cloud no
+// longer calls them. Removing them is a breaking Admin API change, so commit it
+// with the `klex,agent-admin-api` scopes. Also remove `resolve`,
+// `ambiguousResponse`, `skillNameParamsSchema`,
+// `ambiguousSkillResponseSchema`, `SkillRegistry.resolveName` and the
+// registrations in `server.ts`.
+
 export const getLegacySkillRoute = createRoute({
   method: 'get',
   path: '/v1/skills/{name}',
@@ -293,6 +302,7 @@ function toSummary(skill: Skill) {
     namespace: skill.namespace,
     name: skill.name,
     description: skill.description,
+    // LEGACY(skill-registry): deprecated field, see `skillSummarySchema`.
     origin:
       skill.namespace === LEARNING_NAMESPACE ? 'learned' : skill.namespace,
     createdAt: skill.createdAt,
@@ -312,6 +322,7 @@ function toDetail(registry: SkillRegistry, skill: Skill) {
   return {
     ...toSummary(skill),
     body: skill.body,
+    // LEGACY(skill-registry): deprecated field, see `skillDetailSchema`.
     sourceEpisodes:
       Array.isArray(sourceEpisodes) &&
       sourceEpisodes.every((episode) => typeof episode === 'string')

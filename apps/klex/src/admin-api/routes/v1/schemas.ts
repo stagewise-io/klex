@@ -886,6 +886,8 @@ const skillSummarySchema = z
     description: z
       .string()
       .describe('One-line description of when the skill applies'),
+    // LEGACY(skill-registry): Cloud does not read `origin`. Removing it is a
+    // breaking Admin API change; remove it with the bare-name routes.
     origin: z
       .string()
       .openapi({ deprecated: true })
@@ -936,6 +938,9 @@ const skillListResponseSchema = z
 const skillDetailSchema = skillSummarySchema
   .extend({
     body: z.string().describe('Markdown body of the SKILL.md'),
+    // LEGACY(skill-registry): duplicates `metadata.sourceEpisodes` of learned
+    // skills, and Cloud does not read it. Removing it is a breaking Admin API
+    // change; remove it with the bare-name routes.
     sourceEpisodes: z
       .array(z.string())
       .openapi({ deprecated: true })
@@ -946,6 +951,8 @@ const skillDetailSchema = skillSummarySchema
   })
   .openapi('SkillDetail');
 
+// LEGACY(skill-registry): bare-name routes only, as is
+// `ambiguousSkillResponseSchema`.
 const skillNameParamsSchema = z.object({
   name: z.string().min(1).openapi({
     description: 'Bare skill name, resolved across namespaces',

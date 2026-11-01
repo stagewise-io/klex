@@ -46,6 +46,8 @@ class LearningExtension implements Extension {
       name: 'learning-skill-import',
       bindings: { module: 'learning-skill-import' },
     });
+    // LEGACY(skill-registry): remove this import step together with
+    // `legacy-skill-import.ts`; the worker then starts right after the state.
     // Learning before the import finishes could later be overwritten by
     // legacy content, so learning pauses until a start imports cleanly.
     try {

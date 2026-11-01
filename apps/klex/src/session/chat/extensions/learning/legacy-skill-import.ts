@@ -40,6 +40,12 @@ export interface LegacySkillImportResult {
  * in between re-imports identical content on the next start, which the
  * registry treats as a no-op; seeds apply while the skill has no persisted
  * bookkeeping. Unparseable folders stay in place and keep their bookkeeping.
+ *
+ * LEGACY(skill-registry): only data written by Klex < 0.28.0 has legacy
+ * folders. Delete this file, its tests and fixtures, and the call in
+ * `learning.ts` once no supported upgrade starts below 0.28.0. Dropping the
+ * `skills` map from the learning state is a separate schema change; see
+ * "Legacy removal" in `session/chat/architecture.md`.
  */
 export async function importLegacySkills(
   options: LegacySkillImportOptions,

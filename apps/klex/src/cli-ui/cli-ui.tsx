@@ -1,5 +1,5 @@
-import { Box, render, Text, useInput } from 'ink';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { render, useInput } from 'ink';
+import { useCallback, useMemo, useRef, useState } from 'react';
 
 import { AdminApiClient } from './api-client';
 import { AppFrame } from './components/app-frame';
@@ -17,7 +17,6 @@ import {
   useTextInputActive,
 } from './hooks/use-text-input-active';
 import { type Toast, ToastContext } from './hooks/use-toast';
-import { MenuKeys, useMenuInput } from './menu-keys';
 import { AgentIdentityScreen } from './screens/agent-identity';
 import { CloudScreen } from './screens/cloud';
 import { DebugInformationScreen } from './screens/debug-information';
@@ -28,6 +27,7 @@ import { McpScreen } from './screens/mcp';
 import { ModelSelectionScreen } from './screens/model-selection';
 import { ProvidersScreen } from './screens/providers';
 import { SettingsScreen } from './screens/settings';
+import { SoulScreen } from './screens/soul';
 import { UsageScreen } from './screens/usage';
 import type { CliUiDependencies } from './types';
 
@@ -352,6 +352,7 @@ function ScreenRouter({
         <SettingsScreen
           dataDirectory={dataDirectory}
           onOpenAgentIdentity={() => navigation.navigate('agent-identity')}
+          onOpenSoul={() => navigation.navigate('soul')}
           onOpenProviders={() => navigation.navigate('providers')}
           onOpenCloud={() => navigation.navigate('cloud')}
           onOpenMcp={() => navigation.navigate('mcp-servers')}
@@ -363,6 +364,10 @@ function ScreenRouter({
           onOpenGodMessages={() => navigation.navigate('god-messages')}
           onBack={() => navigation.goBack()}
         />
+      );
+    case 'soul':
+      return (
+        <SoulScreen apiClient={apiClient} onBack={() => navigation.goBack()} />
       );
     case 'providers':
       return (

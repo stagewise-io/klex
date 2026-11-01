@@ -72,6 +72,7 @@ import { createNameLoaderExt } from '@/session/chat/extensions/name-loader';
 import { createReadAttachmentExt } from '@/session/chat/extensions/read-attachment/read-attachment';
 import { createSkillsExt } from '@/session/chat/extensions/skills';
 import {
+  createSoul,
   createSoulExt,
   createSoulExtGod,
   readSoul,
@@ -670,6 +671,16 @@ class ApplicationModule implements Application {
         createTodosExt,
       ],
     });
+    const soul = createSoul({
+      logging,
+      config,
+      modelResolver: providerRegistry,
+      soulDirectory: join(
+        dataDirectory,
+        'extensions',
+        createSoulExt.identifier,
+      ),
+    });
     const adminApi = createAdminApi({
       logging,
       config,
@@ -682,6 +693,7 @@ class ApplicationModule implements Application {
       sessionHistory,
       skillRegistry,
       episodeSummaryLog,
+      soul,
       localPort: cli.dangerousLocalAdminApiPort,
       timezone,
     });

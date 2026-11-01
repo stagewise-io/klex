@@ -10,6 +10,7 @@ import type { Mcp } from '@/mcp';
 import type { ModelCallLogger } from '@/model-call-logger';
 import type { ProviderRegistry } from '@/provider-registry';
 import type { EpisodeSummaryLog } from '@/session/chat/extensions/episode-summary/summary-log';
+import type { Soul } from '@/session/chat/extensions/soul';
 import type { SessionHistory } from '@/session-history';
 import type { SkillRegistry } from '@/skills';
 
@@ -27,6 +28,7 @@ export interface AdminApiDependencies {
   sessionHistory: SessionHistory;
   skillRegistry: SkillRegistry;
   episodeSummaryLog: EpisodeSummaryLog;
+  soul: Soul;
   localPort: number | undefined;
   timezone: string;
 }
@@ -41,6 +43,7 @@ class AdminApiModule implements AdminApi {
   private server: ServerType | null = null;
   private app: ReturnType<typeof createAdminApp> | null = null;
   private started = false;
+  private readonly shutdown = new AbortController();
 
   constructor(
     private readonly deps: {
@@ -55,6 +58,7 @@ class AdminApiModule implements AdminApi {
       sessionHistory: SessionHistory;
       skillRegistry: SkillRegistry;
       episodeSummaryLog: EpisodeSummaryLog;
+      soul: Soul;
       localPort: number | undefined;
       timezone: string;
     },
@@ -75,6 +79,8 @@ class AdminApiModule implements AdminApi {
       sessionHistory: this.deps.sessionHistory,
       skillRegistry: this.deps.skillRegistry,
       episodeSummaryLog: this.deps.episodeSummaryLog,
+      soul: this.deps.soul,
+      soulAbortSignal: this.shutdown.signal,
       logger: this.deps.logger,
       localPort: this.deps.localPort,
       timezone: this.deps.timezone,
@@ -114,6 +120,10 @@ class AdminApiModule implements AdminApi {
   }
 
   async close(): Promise<void> {
+    if (!this.started) return;
+    // Cancel one-shot soul calls even when requests use the in-process tunnel
+    // handler and there is no local listener to close.
+    this.shutdown.abort();
     const server = this.server;
     if (!server) return;
 
@@ -139,6 +149,7 @@ export function createAdminApi(deps: AdminApiDependencies): AdminApi {
     sessionHistory: deps.sessionHistory,
     skillRegistry: deps.skillRegistry,
     episodeSummaryLog: deps.episodeSummaryLog,
+    soul: deps.soul,
     localPort: deps.localPort,
     timezone: deps.timezone,
   });

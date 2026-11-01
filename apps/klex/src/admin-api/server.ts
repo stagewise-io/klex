@@ -10,6 +10,7 @@ import type { Mcp } from '@/mcp';
 import type { ModelCallLogger } from '@/model-call-logger';
 import type { ProviderRegistry } from '@/provider-registry';
 import type { EpisodeSummaryLog } from '@/session/chat/extensions/episode-summary/summary-log';
+import type { Soul } from '@/session/chat/extensions/soul';
 import type { SessionHistory } from '@/session-history';
 import type { SkillRegistry } from '@/skills';
 
@@ -131,6 +132,14 @@ import {
   updateSkill,
   updateSkillRoute,
 } from './routes/v1/skills';
+import {
+  createSoul,
+  createSoulRoute,
+  getSoul,
+  getSoulRoute,
+  patchSoul,
+  patchSoulRoute,
+} from './routes/v1/soul';
 import { getUsage, getUsageRoute } from './routes/v1/usage';
 
 export interface AdminAppDependencies {
@@ -144,6 +153,8 @@ export interface AdminAppDependencies {
   sessionHistory: SessionHistory;
   skillRegistry: SkillRegistry;
   episodeSummaryLog: EpisodeSummaryLog;
+  soul: Soul;
+  soulAbortSignal?: AbortSignal;
   logger: ModuleLogger;
   localPort: number | undefined;
   timezone: string;
@@ -171,6 +182,9 @@ export function createAdminApp(deps: AdminAppDependencies) {
 
   const routedApp = app
     .openapi(healthRoute, getHealth())
+    .openapi(getSoulRoute, getSoul(deps))
+    .openapi(createSoulRoute, createSoul(deps))
+    .openapi(patchSoulRoute, patchSoul(deps))
     .openapi(getCloudStatusRoute, getCloudStatus(deps))
     .openapi(enrollCloudRoute, enrollCloud(deps))
     .openapi(getAgentIdentityRoute, getAgentIdentity(deps))

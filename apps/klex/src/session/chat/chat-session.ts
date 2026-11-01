@@ -1011,8 +1011,9 @@ class ChatSessionModule implements AgentSession {
     this.transcriptRecorder?.scheduleSync(() => this.messages);
   }
 
-  /** Step boundary inside a turn: apply a pending checkpoint. */
+  /** Apply a pending checkpoint at the step boundary inside a turn. */
   private readonly atStepBoundary = async (): Promise<void> => {
+    if (this._status === 'terminated' || this.laneSuspended) return;
     if (!this.checkpointManager.hasPending) return;
     await this.checkpointManager.applyPending();
     // Input that arrived while applying belongs after the committed step.
@@ -1350,6 +1351,8 @@ class ChatSessionModule implements AgentSession {
           return;
         }
 
+        this.setRuntimeState('working');
+
         // Reset the input flags before each turn so we only detect
         // input that arrives during this specific turn.
         this.newInputDuringTurn = false;
@@ -1382,7 +1385,8 @@ class ChatSessionModule implements AgentSession {
           forceCheck: needsCheckRetry,
           flushPendingImmediate: this.flushPendingImmediate,
           atStepBoundary: this.atStepBoundary,
-          shouldYieldGenerationLane: () => this.laneSuspended,
+          shouldYieldGenerationLane: () =>
+            this.laneSuspended || this._status === 'terminated',
           basePrompt: this.deps.basePrompt,
           instinctRunner: this.instinctRunner,
         });
@@ -1399,6 +1403,7 @@ class ChatSessionModule implements AgentSession {
         }
         // Turn end is a boundary too (commits during the last step).
         await this.atStepBoundary();
+        if (this.runtimeState === 'terminated') return;
 
         // Update observability counters.
         this.turnCount++;

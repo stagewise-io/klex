@@ -136,6 +136,49 @@ function setupDefaultMocks() {
 
 // --- tests ---
 
+describe('Step — extension skip', () => {
+  it('keeps new canonical history when an extension skips without removing it', async () => {
+    vi.clearAllMocks();
+    setupDefaultMocks();
+    const messages = [makeUserMessage('Keep this for later')];
+    const original = structuredClone(messages);
+    const handler = makeExtensionHandler();
+    handler.shouldRunStep.mockReturnValue(false);
+    const result = await createStep(
+      makeDeps({ messages, extensionHandler: handler as never }),
+    ).run();
+    expect(result).toMatchObject({ shouldContinue: false, generation: null });
+    expect(messages).toEqual(original);
+    expect(createGenerationRunner).not.toHaveBeenCalled();
+    expect(handler.runStepCompleteHooks).toHaveBeenCalledOnce();
+  });
+
+  it('allows history removal and skips hooks, repair, instinct, model resolution and generation', async () => {
+    vi.clearAllMocks();
+    setupDefaultMocks();
+    const messages = [makeUserMessage()];
+    const handler = makeExtensionHandler();
+    handler.shouldRunStep.mockImplementation(() => {
+      messages.splice(0);
+      return false;
+    });
+    const deps = makeDeps({ messages, extensionHandler: handler as never });
+    const result = await createStep(deps).run();
+    expect(messages).toEqual([]);
+    expect(result).toMatchObject({
+      shouldContinue: false,
+      generation: null,
+      fatalError: false,
+    });
+    expect(handler.runStepStartHooks).not.toHaveBeenCalled();
+    expect(checkAndFixHistory).not.toHaveBeenCalled();
+    expect(handler.hasInstinctParticipants).not.toHaveBeenCalled();
+    expect(deps.modelResolver.getLanguageModel).not.toHaveBeenCalled();
+    expect(createGenerationRunner).not.toHaveBeenCalled();
+    expect(handler.runStepCompleteHooks).toHaveBeenCalledOnce();
+  });
+});
+
 describe('Step — preparation cancellation and completion', () => {
   const summary: InstinctSummary = {
     durationMs: 1,

@@ -37,10 +37,7 @@ vi.mock('../../context-compaction/compaction-prompt.md', () => ({
 vi.mock('../../soul/system-prompt-part/no-soul-god.md', () => ({
   default: '',
 }));
-vi.mock('../../soul/system-prompt-part/no-soul-regular.md', () => ({
-  default: '',
-}));
-vi.mock('../../soul/update-soul-tool-description.md', () => ({ default: '' }));
+vi.mock('../../soul/generation-prompt.md', () => ({ default: '' }));
 vi.mock('../../audio-input-optimizer/audio-system-prompt.md', () => ({
   default: '',
 }));

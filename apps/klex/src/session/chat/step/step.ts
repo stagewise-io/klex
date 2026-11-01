@@ -188,7 +188,10 @@ class StepModule implements Step {
         // 2.2.1: Notify extensions that a step is starting. This fires
         // before any processing — inbox drain, history repair, or the
         // step decision — so extensions can reset per-step state.
-        await this.deps.extensionHandler.runStepStartHooks();
+        const shouldRun = this.deps.extensionHandler.shouldRunStep(
+          this.deps.messages,
+        );
+        if (shouldRun) await this.deps.extensionHandler.runStepStartHooks();
         if (this.stepAbort.signal.aborted) return abortPreparation();
 
         // 2.2.2.1: Repair history before making any step decision.
@@ -198,7 +201,9 @@ class StepModule implements Step {
         // Without this, a stale tool call would cause `canStepBeExecuted`
         // to return false, skipping the step and permanently stucking the
         // session.
-        const repairResult = checkAndFixHistory(this.deps.messages);
+        const repairResult = shouldRun
+          ? checkAndFixHistory(this.deps.messages)
+          : { repaired: [] };
         if (repairResult.repaired.length > 0) {
           stepSpan.addEvent('step.history_repaired', {
             'step.repairCount': repairResult.repaired.length,
@@ -217,7 +222,7 @@ class StepModule implements Step {
           },
         });
 
-        const canRunStep = this.canStepBeExecuted();
+        const canRunStep = shouldRun && this.canStepBeExecuted();
         const lastMsg = this.deps.messages[this.deps.messages.length - 1];
         const lastRole = lastMsg?.role ?? 'none';
         const lastMsgHasToolCalls =
@@ -230,6 +235,8 @@ class StepModule implements Step {
             lastRole === 'user'
               ? 'last message is user input'
               : 'last assistant message has all tool calls resolved';
+        } else if (!shouldRun) {
+          decisionReason = 'skipped by extension';
         } else {
           decisionReason =
             lastRole === 'none'

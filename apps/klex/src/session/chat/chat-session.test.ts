@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -33,6 +33,7 @@ import {
   type ChatSessionDependencies,
   createChatSession,
 } from './chat-session';
+import { createSoulExt } from './extensions/soul';
 import type { Turn, TurnDependencies } from './turn';
 import { BackoffManager } from './utils/backoff-manager';
 
@@ -41,6 +42,105 @@ vi.mock('./turn', async (original) => ({
   ...(await original<typeof import('./turn')>()),
   createTurn: createTurnMock,
 }));
+
+it.each(['alone', 'before-soul', 'after-soul'] as const)(
+  'drops history only without a soul, with a retaining skip extension %s',
+  async (skipOrder) => {
+    const directory = await mkdtemp(join(tmpdir(), 'klex-soul-gate-'));
+    const logging = createLogger({ name: 'soul-gate' });
+    const value = klexConfigSchema.parse({});
+    const scope = (): IntrospectionScope => ({
+      path: [],
+      introspect: vi.fn(),
+      child: scope,
+      removeChild: vi.fn(),
+    });
+    const generation = vi.fn();
+    const session = createChatSession({
+      logging,
+      config: { get: () => value } as unknown as Config,
+      modelResolver: {
+        resolveModelInfo: () => undefined,
+        getLanguageModel: generation,
+      } as never,
+      dataDirectory: directory,
+      mcp: null,
+      extensionFactories: (() => {
+        const retainingSkip = {
+          identifier: 'test/retaining-skip',
+          create: () => ({ shouldRunStep: () => false }),
+        };
+        if (skipOrder === 'before-soul') return [retainingSkip, createSoulExt];
+        if (skipOrder === 'after-soul') return [createSoulExt, retainingSkip];
+        return [createSoulExt];
+      })(),
+      introspectionScope: scope(),
+      sessionContext: { kind: 'default', name: 'main', sessionId: 'default' },
+      basePrompt: 'Test.',
+    });
+    createTurnMock.mockReset();
+    createTurnMock.mockImplementation(
+      (deps: TurnDependencies): Turn => ({
+        run: async () => {
+          const actual =
+            await vi.importActual<typeof import('./turn')>('./turn');
+          return actual.createTurn(deps).run();
+        },
+        abortGeneration: vi.fn(),
+        abortTools: vi.fn(),
+      }),
+    );
+    try {
+      await session.start();
+      session.inbox.sendMessage(
+        {
+          id: 'pending-work',
+          role: 'user',
+          parts: [{ type: 'text', text: 'Work' }],
+        },
+        SessionInboxUrgency.Deferrable,
+      );
+      await expect(session.waitForIdle(3_000)).resolves.toBe(true);
+      expect(session.getMessages()).toEqual([]);
+      expect(generation).not.toHaveBeenCalled();
+      const soulDir = join(directory, 'extensions', createSoulExt.identifier);
+      await mkdir(soulDir, { recursive: true });
+      await writeFile(join(soulDir, 'SOUL.md'), 'I help with precision.');
+      await expect(session.waitForIdle(3_000)).resolves.toBe(true);
+      expect(session.getMessages()).toEqual([]);
+      session.inbox.sendMessage(
+        {
+          id: 'fresh-work',
+          role: 'user',
+          parts: [{ type: 'text', text: 'Fresh work' }],
+        },
+        SessionInboxUrgency.Default,
+      );
+      await expect(session.waitForIdle(3_000)).resolves.toBe(true);
+      expect(session.getMessages().map((message) => message.id)).toEqual([
+        'fresh-work',
+      ]);
+      await rm(join(soulDir, 'SOUL.md'));
+      session.inbox.sendMessage(
+        {
+          id: 'blocked-again',
+          role: 'user',
+          parts: [{ type: 'text', text: 'More work' }],
+        },
+        SessionInboxUrgency.Default,
+      );
+      await expect(session.waitForIdle(3_000)).resolves.toBe(true);
+      expect(session.getMessages().map((message) => message.id)).toEqual([
+        'fresh-work',
+      ]);
+      expect(generation).not.toHaveBeenCalled();
+    } finally {
+      await session.close();
+      await rm(directory, { recursive: true, force: true });
+      createTurnMock.mockReset();
+    }
+  },
+);
 
 it('exposes a sanitized zero-message provider failure through HTTP and clears it after a real successful turn', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'klex-health-e2e-'));

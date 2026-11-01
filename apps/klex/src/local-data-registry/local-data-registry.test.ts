@@ -18,14 +18,9 @@ vi.mock(
   '@/session/chat/extensions/soul/system-prompt-part/no-soul-god.md',
   () => ({ default: '' }),
 );
-vi.mock(
-  '@/session/chat/extensions/soul/system-prompt-part/no-soul-regular.md',
-  () => ({ default: '' }),
-);
-vi.mock(
-  '@/session/chat/extensions/soul/update-soul-tool-description.md',
-  () => ({ default: '' }),
-);
+vi.mock('@/session/chat/extensions/soul/generation-prompt.md', () => ({
+  default: '',
+}));
 vi.mock(
   '@/session/chat/extensions/audio-input-optimizer/audio-system-prompt.md',
   () => ({ default: '' }),

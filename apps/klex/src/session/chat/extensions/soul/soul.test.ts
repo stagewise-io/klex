@@ -1,5 +1,4 @@
 import {
-  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -9,8 +8,11 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+import type { Tool } from 'ai';
 import { describe, expect, it, vi } from 'vitest';
+import type z from 'zod';
 
+import type { ExtendedUIMessage } from '../../message-types';
 import type { ExtensionDeps } from '../extension-api';
 import { createSoulExt, createSoulExtGod, readSoul } from './soul';
 
@@ -18,12 +20,8 @@ vi.mock('./system-prompt-part/no-soul-god.md', () => ({
   default: 'god no-soul prompt',
 }));
 
-vi.mock('./system-prompt-part/no-soul-regular.md', () => ({
-  default: 'regular no-soul prompt',
-}));
-
-vi.mock('./update-soul-tool-description.md', () => ({
-  default: 'update-soul description',
+vi.mock('./generation-prompt.md', () => ({
+  default: 'Soul generation instructions',
 }));
 
 const MOCK_MODEL = {
@@ -143,6 +141,7 @@ describe('SoulExt (standard) — getSystemPromptPart', () => {
     const part = ext.getSystemPromptPart!();
 
     expect(part).toContain(soulContent);
+    expect(part).not.toContain('<soul-writing-guidelines>');
   });
 
   it('removes nested soul tags from loaded content', () => {
@@ -186,10 +185,10 @@ describe('SoulExt (standard) — getSystemPromptPart', () => {
     expect(ext.getSystemPromptPart!()).toContain('Updated soul');
   });
 
-  it('returns the regular no-soul prompt when no soul exists', () => {
+  it('contributes no prompt when no soul exists', () => {
     const ext = createSoulExt.create(makeDeps());
 
-    expect(ext.getSystemPromptPart!()).toBe('regular no-soul prompt');
+    expect(ext.getSystemPromptPart!()).toBe('');
   });
 });
 
@@ -209,12 +208,15 @@ describe('SoulExt (god) — getSystemPromptPart', () => {
     const part = ext.getSystemPromptPart!();
 
     expect(part).toContain(soulContent);
+    expect(part).toContain('<soul-writing-guidelines>');
+    expect(part).toContain('updateSoul');
   });
 
   it('returns the god no-soul prompt when no soul exists', () => {
     const ext = createSoulExtGod.create(makeDeps());
 
-    expect(ext.getSystemPromptPart!()).toBe('god no-soul prompt');
+    expect(ext.getSystemPromptPart!()).toContain('god no-soul prompt');
+    expect(ext.getSystemPromptPart!()).toContain('<soul-writing-guidelines>');
   });
 });
 
@@ -229,27 +231,72 @@ describe('no-soul prompt files', () => {
       'utf-8',
     );
 
-  it('regular prompt refuses work and rejects in-chat soul configuration', () => {
-    const prompt = readPrompt('no-soul-regular.md');
-
-    expect(prompt).toContain('cannot create or change your soul');
-    expect(prompt).toContain("can't be done through chat");
-    expect(prompt).not.toContain('updateSoul');
-    expect(prompt).not.toContain('Ask your creator');
-  });
-
-  it('god prompt instructs soul creation on god message', () => {
+  it('god prompt retains explicit legacy soul setup for the deployed cloud', () => {
     const prompt = readPrompt('no-soul-god.md');
-
-    expect(prompt).toContain('god message');
+    expect(prompt).toContain('explicit god message');
     expect(prompt).toContain('updateSoul');
-    expect(prompt).not.toContain('Refuse all requests');
+    expect(prompt).not.toContain('cannot create or change your soul');
   });
 });
 
 // ---------------------------------------------------------------------------
 // getTools — standard mode (always empty)
 // ---------------------------------------------------------------------------
+
+describe('SoulExt — step decision', () => {
+  it('drops only newly added history without a soul, including after deletion', async () => {
+    const dir = makeTmpDir();
+    const restored: ExtendedUIMessage = {
+      id: 'restored',
+      role: 'assistant',
+      parts: [],
+    };
+    const history = [restored];
+    const deps = makeDeps({
+      getDataDir: () => dir,
+      getHistory: () => [...history],
+    });
+    const ext = createSoulExt.create(deps);
+    try {
+      await ext.onStart!();
+      for (const content of ['', '  ', '<soul></soul>']) {
+        writeFileSync(join(dir, 'SOUL.md'), content);
+        history.push({ id: 'discarded', role: 'user', parts: [] });
+        expect(ext.shouldRunStep!(history)).toBe(false);
+        expect(history).toEqual([restored]);
+      }
+      writeFileSync(join(dir, 'SOUL.md'), 'I help with precision.');
+      history.push({ id: 'accepted', role: 'user', parts: [] });
+      expect(ext.shouldRunStep!(history)).toBe(true);
+      await ext.onStepComplete!({} as never);
+      rmSync(join(dir, 'SOUL.md'));
+      // Also drop mid-history inserts, not just the trailing message.
+      history.splice(1, 0, { id: 'discarded-insert', role: 'user', parts: [] });
+      history.push({ id: 'discarded-after-deletion', role: 'user', parts: [] });
+      expect(ext.shouldRunStep!(history)).toBe(false);
+      expect(history.map((message) => message.id)).toEqual([
+        'restored',
+        'accepted',
+      ]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('allows god steps without a soul and leaves their history intact', () => {
+    const dir = makeTmpDir();
+    try {
+      const history: ExtendedUIMessage[] = [
+        { id: 'directive', role: 'user', parts: [] },
+      ];
+      const ext = createSoulExtGod.create(makeDeps({ getDataDir: () => dir }));
+      expect(ext.shouldRunStep!(history)).toBe(true);
+      expect(history).toHaveLength(1);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
 
 describe('SoulExt (standard) — getTools', () => {
   it('returns no tools when no soul exists', () => {
@@ -280,115 +327,64 @@ describe('SoulExt (standard) — getTools', () => {
 // getTools — god mode
 // ---------------------------------------------------------------------------
 
-describe('SoulExt (god) — getTools', () => {
-  it('provides updateSoul when no soul exists', () => {
-    const ext = createSoulExtGod.create(makeDeps());
-
-    expect(ext.getTools!(MOCK_MODEL)).toHaveProperty('updateSoul');
+describe('SoulExt (god) — legacy updateSoul compatibility', () => {
+  it('rejects a tag-only tool write without replacing a working soul', async () => {
+    const dir = makeTmpDir();
+    try {
+      writeFileSync(join(dir, 'SOUL.md'), 'Existing identity');
+      const ext = createSoulExtGod.create(makeDeps({ getDataDir: () => dir }));
+      const update = ext.getTools!(MOCK_MODEL).updateSoul as Tool<
+        { content: string },
+        string
+      >;
+      await expect(
+        update.execute!(
+          { content: '<soul> </soul>' },
+          { toolCallId: 'empty', messages: [], context: undefined },
+        ),
+      ).rejects.toThrow('must not be blank');
+      expect(readSoul(dir)).toBe('Existing identity');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
-  it('provides updateSoul when a soul exists', () => {
+  it('exposes the same content schema and success result before and after creation', async () => {
     const dir = makeTmpDir();
-    writeFileSync(join(dir, 'SOUL.md'), 'I am someone.', 'utf-8');
-    const ext = createSoulExtGod.create(makeDeps({ getDataDir: () => dir }));
-
-    expect(ext.getTools!(MOCK_MODEL)).toHaveProperty('updateSoul');
-  });
-});
-
-// ---------------------------------------------------------------------------
-// updateSoul tool (god mode only)
-// ---------------------------------------------------------------------------
-
-describe('SoulExt (god) — updateSoul tool', () => {
-  it('overwrites the existing soul file and returns a success message', async () => {
-    const dir = makeTmpDir();
-    writeFileSync(join(dir, 'SOUL.md'), 'Original soul', 'utf-8');
-
-    const deps = makeDeps({ getDataDir: () => dir });
-    const ext = createSoulExtGod.create(deps);
-
-    const tools = ext.getTools!(MOCK_MODEL);
-    const updateSoul = tools.updateSoul as unknown as {
-      execute: (args: { content: string }) => Promise<string>;
-    };
-
-    const newContent = '# Updated Soul\n\nI am now different.';
-    const result = await updateSoul.execute({ content: newContent });
-
-    expect(result).toBe('Your soul has been updated.');
-    expect(readFileSync(join(dir, 'SOUL.md'), 'utf-8')).toBe(newContent);
-  });
-
-  it('writes the soul when no soul currently exists', async () => {
-    const dir = makeTmpDir();
-    writeFileSync(join(dir, 'SOUL.md'), 'Soul exists', 'utf-8');
-
-    const deps = makeDeps({ getDataDir: () => dir });
-    const ext = createSoulExtGod.create(deps);
-
-    const tools = ext.getTools!(MOCK_MODEL);
-    const updateSoul = tools.updateSoul as unknown as {
-      execute: (args: { content: string }) => Promise<string>;
-    };
-
-    // Even if the file is deleted before execute, updateSoul still writes
-    rmSync(join(dir, 'SOUL.md'));
-    const result = await updateSoul.execute({ content: 'New soul' });
-
-    expect(result).toBe('Your soul has been updated.');
-    expect(readFileSync(join(dir, 'SOUL.md'), 'utf-8')).toBe('New soul');
-  });
-
-  it('rejects empty content via schema validation', () => {
-    const dir = makeTmpDir();
-    writeFileSync(join(dir, 'SOUL.md'), 'I exist.', 'utf-8');
-
-    const deps = makeDeps({ getDataDir: () => dir });
-    const ext = createSoulExtGod.create(deps);
-
-    const tools = ext.getTools!(MOCK_MODEL);
-    const updateSoul = tools.updateSoul as unknown as {
-      inputSchema: { safeParse: (input: unknown) => { success: boolean } };
-    };
-
-    expect(updateSoul.inputSchema.safeParse({ content: '' }).success).toBe(
-      false,
-    );
-  });
-
-  it('rejects content exceeding the 10000 character limit', () => {
-    const dir = makeTmpDir();
-    writeFileSync(join(dir, 'SOUL.md'), 'I exist.', 'utf-8');
-
-    const deps = makeDeps({ getDataDir: () => dir });
-    const ext = createSoulExtGod.create(deps);
-
-    const tools = ext.getTools!(MOCK_MODEL);
-    const updateSoul = tools.updateSoul as unknown as {
-      inputSchema: { safeParse: (input: unknown) => { success: boolean } };
-    };
-
-    expect(
-      updateSoul.inputSchema.safeParse({ content: 'x'.repeat(10_001) }).success,
-    ).toBe(false);
-  });
-
-  it('accepts content at exactly 10000 characters', () => {
-    const dir = makeTmpDir();
-    writeFileSync(join(dir, 'SOUL.md'), 'I exist.', 'utf-8');
-
-    const deps = makeDeps({ getDataDir: () => dir });
-    const ext = createSoulExtGod.create(deps);
-
-    const tools = ext.getTools!(MOCK_MODEL);
-    const updateSoul = tools.updateSoul as unknown as {
-      inputSchema: { safeParse: (input: unknown) => { success: boolean } };
-    };
-
-    expect(
-      updateSoul.inputSchema.safeParse({ content: 'x'.repeat(10_000) }).success,
-    ).toBe(true);
+    try {
+      const ext = createSoulExtGod.create(makeDeps({ getDataDir: () => dir }));
+      for (const content of ['New soul', 'Updated soul']) {
+        const tools = ext.getTools?.(MOCK_MODEL);
+        expect(Object.keys(tools ?? {})).toEqual(['updateSoul']);
+        const update = tools?.updateSoul as
+          | Tool<{ content: string }, string>
+          | undefined;
+        const schema = update?.inputSchema as z.ZodType;
+        for (const content of [
+          '',
+          ' \n ',
+          '<soul> </soul>',
+          'x'.repeat(10_001),
+        ]) {
+          expect(schema.safeParse({ content }).success).toBe(false);
+        }
+        expect(schema.safeParse({ content: 'x'.repeat(10_000) }).success).toBe(
+          true,
+        );
+        expect(update?.description).toContain('god message explicitly orders');
+        const execute = update?.execute;
+        if (!execute) throw new Error('Missing legacy execute');
+        const result = await execute(
+          { content },
+          { toolCallId: 'legacy', messages: [], context: undefined },
+        );
+        expect(result).toBe('Your soul has been updated.');
+        expect(readFileSync(join(dir, 'SOUL.md'), 'utf8')).toBe(content);
+        expect(ext.getSystemPromptPart?.()).toContain(content);
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 

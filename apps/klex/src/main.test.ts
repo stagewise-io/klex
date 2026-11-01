@@ -165,6 +165,7 @@ vi.mock('@/session/chat/extensions/read-attachment/read-attachment', () => ({
   createReadAttachmentExt: vi.fn(),
 }));
 vi.mock('@/session/chat/extensions/soul', () => ({
+  createSoul: vi.fn(() => ({ get: () => null })),
   createSoulExt: { identifier: 'io.stagewise/soul', create: vi.fn() },
   createSoulExtGod: vi.fn(),
   readSoul: mocks.readSoul,

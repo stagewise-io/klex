@@ -616,6 +616,14 @@ export function readInstinctClassification<
 
 export interface Extension {
   /**
+   * Checked before step-start hooks, history repair, or inference. Returning
+   * false skips the step without retrying or automatically removing history.
+   * A hook may explicitly remove canonical messages (e.g. missing-soul cleanup).
+   * All hooks run in factory order, even after another hook returns false.
+   */
+  shouldRunStep?: (history: ExtendedUIMessage[]) => boolean;
+
+  /**
    * Called once when the session starts, before the first step.
    * Extensions use this to initialize owned resources (e.g. starting
    * a worker, opening a connection).

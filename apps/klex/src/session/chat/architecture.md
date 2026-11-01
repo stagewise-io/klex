@@ -54,7 +54,9 @@ Every turn terminates. A hard cap of `MAX_STEPS_PER_TURN` (200) steps covers lon
 
 ## Step
 
-Coordinator: history repair → decision (can a step run?) → shared instinct → model fetch → history transformation (clone → extension pre-process → model-aware conversion → extension post-process) → delegate to GenerationRunner.
+Coordinator: extension step decision → history repair → decision (can a step run?) → shared instinct → model fetch → history transformation (clone → extension pre-process → model-aware conversion → extension post-process) → delegate to GenerationRunner.
+
+`shouldRunStep(history)` lets an extension remove newly added canonical messages and skip the step before lifecycle hooks or inference. The soul extension uses it to discard new history while no soul exists, preserving previously retained history. Skipped work is not queued for soul creation; there is no polling.
 
 Generation operates on a `structuredClone` copy, so mid-turn appends are visible to the next step without corrupting the original. The original is only mutated in synchronous sequential code (turn-start drain, history repair, Continue/check injection, response push, immediate inbox appends).
 

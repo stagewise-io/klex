@@ -1,6 +1,7 @@
 export type Screen =
   | 'home'
   | 'settings'
+  | 'soul'
   | 'providers'
   | 'mcp-servers'
   | 'cloud'

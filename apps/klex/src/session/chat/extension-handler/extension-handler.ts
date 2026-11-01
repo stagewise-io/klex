@@ -76,6 +76,9 @@ export interface ExtensionHandler {
   /** All instantiated extensions. */
   readonly extensions: readonly Extension[];
 
+  /** Let extensions update canonical history and skip the step. */
+  shouldRunStep(history: ExtendedUIMessage[]): boolean;
+
   /**
    * True when at least one extension defines `getInstinctClassificationRequest` or
    * `onInstinct`. Without participants the step skips instinct entirely.
@@ -377,6 +380,16 @@ class ExtensionHandlerModule implements ExtensionHandler {
 
       return ext;
     });
+  }
+
+  shouldRunStep(history: ExtendedUIMessage[]): boolean {
+    let shouldRun = true;
+    for (const ext of this.extensions) {
+      // Do not short-circuit: later hooks may need to clean up history even
+      // when an earlier extension already requested a skip.
+      if (ext.shouldRunStep?.(history) === false) shouldRun = false;
+    }
+    return shouldRun;
   }
 
   hasInstinctParticipants(): boolean {

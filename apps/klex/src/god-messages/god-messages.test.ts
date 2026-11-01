@@ -161,6 +161,25 @@ function setup() {
   return { godMessages, sessions, factory };
 }
 
+describe('GodMessagesModule — no soul setup', () => {
+  it('delivers directives without scheduling soul continuations', async () => {
+    vi.useFakeTimers();
+    const { godMessages, sessions } = setup();
+    try {
+      await godMessages.start();
+      await godMessages.sendGodMessage([
+        { type: 'text', text: 'Create a soul' },
+      ]);
+      await vi.advanceTimersByTimeAsync(1_200_000);
+      expect(getSession(sessions, 0).sentMessages).toHaveLength(1);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      await godMessages.close();
+      vi.useRealTimers();
+    }
+  });
+});
+
 describe('GodMessagesModule — start()', () => {
   it('creates exactly one session on start', async () => {
     const { godMessages, sessions } = setup();

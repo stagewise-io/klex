@@ -10,6 +10,7 @@ import type { Mcp } from '@/mcp';
 import type { ModelCallLogger } from '@/model-call-logger';
 import type { ProviderRegistry } from '@/provider-registry';
 import type { EpisodeSummaryLog } from '@/session/chat/extensions/episode-summary';
+import { type Soul, SoulError } from '@/session/chat/extensions/soul';
 import type { SessionHistory } from '@/session-history';
 import type { SkillRegistry } from '@/skills';
 
@@ -58,6 +59,11 @@ const godMessages = {
   sendGodMessage: async () => ({ sessionId: 'test' }),
   close: async () => undefined,
 } as unknown as GodMessages;
+const soul: Soul = {
+  get: () => null,
+  create: async () => 'Created soul',
+  update: async () => 'Updated soul',
+};
 const sessionHistory = {} as unknown as SessionHistory;
 const skillRegistry = {} as SkillRegistry;
 const episodeSummaryLog: EpisodeSummaryLog = {
@@ -82,6 +88,7 @@ describe('AdminApi', () => {
         sessionHistory,
         skillRegistry,
         episodeSummaryLog,
+        soul,
         localPort: 19999,
         timezone: 'UTC',
       });
@@ -117,6 +124,7 @@ describe('AdminApi', () => {
         sessionHistory,
         skillRegistry,
         episodeSummaryLog,
+        soul,
         localPort: undefined,
         timezone: 'UTC',
       });
@@ -145,6 +153,77 @@ describe('AdminApi', () => {
         error: 'Not found',
         code: 'not_found',
       });
+    });
+
+    it('serves the soul contract and advertises it in OpenAPI through the admin handler', async () => {
+      const read = await api.handle(new Request('http://klex.local/v1/soul'));
+      expect(read.status).toBe(200);
+      expect(await read.json()).toBeNull();
+      for (const [method, status, expected] of [
+        ['POST', 201, 'Created soul'],
+        ['PATCH', 200, 'Updated soul'],
+      ] as const) {
+        const response = await api.handle(
+          new Request('http://klex.local/v1/soul', {
+            method,
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ instructions: 'Be precise' }),
+          }),
+        );
+        expect(response.status).toBe(status);
+        expect(await response.json()).toBe(expected);
+      }
+      const spec = await api.handle(
+        new Request('http://klex.local/v1/openapi.json'),
+      );
+      expect(await spec.json()).toMatchObject({
+        paths: { '/v1/soul': { get: {}, post: {}, patch: {} } },
+      });
+    });
+
+    it('cancels in-flight soul writes on shutdown without a local listener', async () => {
+      const started = Promise.withResolvers<AbortSignal>();
+      const create: Soul['create'] = async (_instructions, signal) => {
+        if (!signal) throw new Error('Missing cancellation signal');
+        started.resolve(signal);
+        await new Promise<void>((resolve) =>
+          signal.addEventListener('abort', () => resolve(), { once: true }),
+        );
+        throw new SoulError('request_cancelled', 'Cancelled');
+      };
+      const closingApi = createAdminApi({
+        logging: logger,
+        config,
+        mcp,
+        introspector,
+        modelCallLogger,
+        providerRegistry,
+        cloudConnectivity,
+        godMessages,
+        sessionHistory,
+        skillRegistry,
+        episodeSummaryLog,
+        soul: { ...soul, create },
+        localPort: undefined,
+        timezone: 'UTC',
+      });
+      await closingApi.start();
+      try {
+        const response = closingApi.handle(
+          new Request('http://klex.local/v1/soul', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ instructions: 'Be precise' }),
+          }),
+        );
+        const signal = await started.promise;
+        expect(signal.aborted).toBe(false);
+        await closingApi.close();
+        expect(signal.aborted).toBe(true);
+        expect((await response).status).toBe(503);
+      } finally {
+        await closingApi.close();
+      }
     });
 
     it('close() is safe without a local listener', async () => {

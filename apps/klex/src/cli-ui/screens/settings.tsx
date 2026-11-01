@@ -9,6 +9,7 @@ import { MenuKeys, useMenuInput } from '../menu-keys';
 export interface SettingsScreenProps {
   dataDirectory: string;
   onOpenAgentIdentity: () => void;
+  onOpenSoul: () => void;
   onOpenProviders: () => void;
   onOpenCloud: () => void;
   onOpenMcp: () => void;
@@ -26,6 +27,7 @@ interface MenuItem {
 
 const MENU_ITEMS: MenuItem[] = [
   { label: 'Agent Identity', value: 'agent-identity' },
+  { label: 'Soul', value: 'soul' },
   { label: 'Cloud', value: 'cloud' },
   { label: 'Providers & Endpoints', value: 'providers' },
   { label: 'MCP Servers', value: 'mcp' },
@@ -38,6 +40,7 @@ const MENU_ITEMS: MenuItem[] = [
 export function SettingsScreen({
   dataDirectory,
   onOpenAgentIdentity,
+  onOpenSoul,
   onOpenProviders,
   onOpenCloud,
   onOpenMcp,
@@ -70,6 +73,9 @@ export function SettingsScreen({
       case 'agent-identity':
         onOpenAgentIdentity();
         break;
+      case 'soul':
+        onOpenSoul();
+        break;
       case 'cloud':
         onOpenCloud();
         break;
@@ -96,7 +102,9 @@ export function SettingsScreen({
 
   return (
     <ScreenSection title="Configure your Klex Bot">
-      <Text dimColor>Manage connectivity, models, tools, and diagnostics.</Text>
+      <Text dimColor>
+        Manage identity, soul, connectivity, models, tools, and diagnostics.
+      </Text>
       <Box marginTop={1} flexDirection="column">
         <Text dimColor>Agent data directory</Text>
         <Text>{dataDirectory}</Text>

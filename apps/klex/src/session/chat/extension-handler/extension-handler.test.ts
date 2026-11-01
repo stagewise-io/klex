@@ -157,6 +157,7 @@ function factoryWith(
   return {
     identifier: id,
     create: () => ({
+      shouldRunStep: overrides.shouldRunStep,
       onStart: overrides.onStart,
       onClose: overrides.onClose,
       getTools: overrides.getTools,
@@ -288,6 +289,37 @@ describe('ExtensionHandler — skill namespaces', () => {
     expect(() =>
       createExtensionHandler({ factories: [ext.factory], ...HANDLER_OPTS }),
     ).toThrow(/no skill registry/);
+  });
+});
+
+describe('ExtensionHandler step decision', () => {
+  it('retains history on skip and still runs later decision hooks', () => {
+    const history = [makeMessage('keep')];
+    const original = structuredClone(history);
+    const laterHook = vi.fn(() => true);
+    const handler = createExtensionHandler({
+      ...HANDLER_OPTS,
+      factories: [
+        factoryWith({ shouldRunStep: () => false }),
+        factoryWith({ shouldRunStep: laterHook }),
+      ],
+    });
+    expect(handler.shouldRunStep(history)).toBe(false);
+    expect(history).toEqual(original);
+    expect(laterHook).toHaveBeenCalledWith(history);
+  });
+
+  it('allows steps by default and passes canonical history to extensions', () => {
+    const history: ExtendedUIMessage[] = [];
+    const shouldRunStep = vi.fn(() => false);
+    const handler = createExtensionHandler({
+      ...HANDLER_OPTS,
+      factories: [factoryWith(), factoryWith({ shouldRunStep })],
+    });
+    expect(handler.shouldRunStep(history)).toBe(false);
+    expect(shouldRunStep).toHaveBeenCalledWith(history);
+    shouldRunStep.mockReturnValue(true);
+    expect(handler.shouldRunStep(history)).toBe(true);
   });
 });
 

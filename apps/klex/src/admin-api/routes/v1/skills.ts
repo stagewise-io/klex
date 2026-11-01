@@ -173,8 +173,8 @@ export function deleteSkill(
 // longer calls them. Removing them is a breaking Admin API change, so commit it
 // with the `klex,agent-admin-api` scopes. Also remove `resolve`,
 // `ambiguousResponse`, `skillNameParamsSchema`,
-// `ambiguousSkillResponseSchema`, `SkillRegistry.resolveName` and the
-// registrations in `server.ts`.
+// `ambiguousSkillResponseSchema` and the registrations in `server.ts`. Keep
+// `SkillRegistry.resolveName`: session `readSkill` errors use it for hints.
 
 export const getLegacySkillRoute = createRoute({
   method: 'get',

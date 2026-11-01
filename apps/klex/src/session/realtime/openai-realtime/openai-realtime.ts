@@ -19,6 +19,7 @@ import {
   renderInteractionUpdateText,
 } from '@/session/interaction';
 
+import { assembleRealtimeInstructions } from '../instructions';
 import type {
   RealtimeModelEvent,
   RealtimeModelSession,
@@ -318,7 +319,9 @@ class OpenAIRealtimeSession implements RealtimeModelSession {
       type: 'session.update',
       session: {
         type: 'realtime',
-        instructions: this.context?.instructions ?? DEFAULT_INSTRUCTIONS,
+        instructions: assembleRealtimeInstructions(
+          this.context?.instructions ?? DEFAULT_INSTRUCTIONS,
+        ),
         ...(tools.length > 0 && { tools, tool_choice: 'auto' }),
         audio: {
           input: {

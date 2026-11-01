@@ -12,6 +12,7 @@ import {
   type PreparedInferenceContext,
 } from '@/session/interaction';
 
+import { assembleRealtimeInstructions } from '../instructions';
 import {
   createOpenAIRealtimeProcessorFactory,
   type RealtimeReconnectPolicy,
@@ -710,7 +711,10 @@ describe('OpenAI realtime processor', () => {
 
   it('configures instructions, tools and transcription from the prepared context', async () => {
     const { update } = await activate(preparedContext);
-    expect(update.session.instructions).toBe('You are Klex, on a call.');
+    expect(update.session.instructions).toBe(
+      assembleRealtimeInstructions(preparedContext.instructions),
+    );
+    expect(preparedContext.instructions).toBe('You are Klex, on a call.');
     expect(update.session.audio.input.transcription).toEqual({
       model: 'gpt-4o-mini-transcribe',
     });
@@ -726,6 +730,14 @@ describe('OpenAI realtime processor', () => {
         },
       },
     ]);
+  });
+
+  it('includes voice visibility rules without a prepared context', async () => {
+    const { update, processor } = await activate();
+    expect(update.session.instructions).toBe(
+      assembleRealtimeInstructions('You are Klex. Answer clearly and briefly.'),
+    );
+    await processor.close();
   });
 
   it('seeds external session data as a user item without requesting a response', async () => {

@@ -12,6 +12,7 @@ import {
   type PreparedInferenceContext,
 } from '@/session/interaction';
 
+import { assembleRealtimeInstructions } from '../instructions';
 import { toGeminiContentTurns } from './conversation-items';
 import {
   createGeminiLiveProcessorFactory,
@@ -167,7 +168,7 @@ describe('Gemini live processor', () => {
     expect(setupMsg.setup.inputAudioTranscription).toEqual({});
     expect(setupMsg.setup.outputAudioTranscription).toEqual({});
     expect(setupMsg.setup.systemInstruction.parts[0].text).toBe(
-      'You are Klex Gemini.',
+      assembleRealtimeInstructions('You are Klex Gemini.'),
     );
     const declaration = setupMsg.setup.tools[0].functionDeclarations[0];
     expect(declaration.name).toBe('get_weather');
@@ -180,6 +181,27 @@ describe('Gemini live processor', () => {
 
     harness.socket.message({ setupComplete: {} });
     await expect(harness.promise).resolves.toBeDefined();
+  });
+
+  it('includes voice visibility rules without a prepared context', async () => {
+    const socket = new FakeSocket();
+    const factory = createGeminiLiveProcessorFactory({
+      logging,
+      config,
+      connect: () => socket,
+    });
+    const promise = factory.create({
+      namespace: 'test',
+      sessionId: 'session',
+      signal: new AbortController().signal,
+    });
+    socket.open();
+    const setupMsg = JSON.parse(socket.sent[0] ?? '{}');
+    expect(setupMsg.setup.systemInstruction.parts[0].text).toBe(
+      assembleRealtimeInstructions('You are Klex. Answer clearly and briefly.'),
+    );
+    socket.message({ setupComplete: {} });
+    await (await promise).close();
   });
 
   it('seeds external session data as a user turn without completing it', async () => {

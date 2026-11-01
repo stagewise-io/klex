@@ -7,6 +7,8 @@ import type {
   PreparedInferenceContext,
 } from '@/session/interaction';
 
+import { assembleRealtimeInstructions } from '../instructions';
+
 const tokenizer = getEncoding('o200k_base');
 
 const MAX_HISTORY_TEXT_CHARACTERS = 131_072;
@@ -90,9 +92,12 @@ export function buildGPTLiveSessionConfig(
     'maxHistoryTokens',
   );
 
+  const backendInstructions = assembleRealtimeInstructions(
+    context.instructions,
+  );
   const sessionInstructions = [
     options.frontendInstructions.trim(),
-    context.instructions.trim(),
+    backendInstructions,
   ]
     .filter((part) => part.length > 0)
     .join('\n\n');
@@ -103,7 +108,7 @@ export function buildGPTLiveSessionConfig(
     'GPT-Live frontend instructions',
   );
   assertWithinTokenBudget(
-    context.instructions,
+    backendInstructions,
     maxBackendInstructionTokens,
     'Responses backend instructions',
   );
@@ -131,7 +136,7 @@ export function buildGPTLiveSessionConfig(
         type: 'responses',
         responses: {
           model: options.responsesModel,
-          instructions: context.instructions,
+          instructions: backendInstructions,
           tools: toFunctionTools(context.tools),
         },
       },

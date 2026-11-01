@@ -1,6 +1,8 @@
 import type { ModelMessage } from 'ai';
 import { describe, expect, it } from 'vitest';
 
+import basePrompt from '@/session/chat/utils/system-prompt.md';
+
 import {
   appendExternalInteractionContext,
   assembleInferenceInstructions,
@@ -65,6 +67,21 @@ describe('external interaction context', () => {
 });
 
 describe('assembleInferenceInstructions', () => {
+  it('keeps MCP replies and immediate acknowledgements mandatory for text turns', () => {
+    const instructions = assembleInferenceInstructions(basePrompt, []);
+
+    expect(instructions).toContain(
+      'text turns: normal output invisible to user. MUST respond in conversation using MCP tool.',
+    );
+    expect(instructions).toContain(
+      'text turns: reply on same MCP + conversation message came from',
+    );
+    expect(instructions).toContain(
+      'text turns: before work or investigation, acknowledge user immediately on that MCP',
+    );
+    expect(instructions).not.toContain('## Live voice call');
+  });
+
   it('preserves ordered, non-empty instruction contributions', () => {
     expect(
       assembleInferenceInstructions('  base  ', [

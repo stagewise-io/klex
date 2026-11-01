@@ -124,7 +124,7 @@ describe('frozen SQLite upgrades', () => {
         const dataDirectory = await directory();
         const path = join(dataDirectory, store.relativePath);
         await seedSqlite(path, `${store.id}-v${version}.sql`);
-        const start = async () => {
+        const start = async (loadOwner: boolean) => {
           const localData = createLocalData({
             logging,
             dataDirectory,
@@ -133,6 +133,7 @@ describe('frozen SQLite upgrades', () => {
           });
           await localData.start();
           try {
+            if (!loadOwner) return;
             if (store.id === 'model-calls') {
               const owner = createModelCallLogger({ logging, dataDirectory });
               await owner.start();
@@ -221,11 +222,15 @@ describe('frozen SQLite upgrades', () => {
             await localData.close();
           }
         };
-        await start();
+        // Check migration idempotence before starting an owner: owners can
+        // legitimately write (session recovery, retention, WAL checkpoints).
+        // Their lifecycle must not be part of the byte-for-byte comparison.
+        await start(false);
         await assertSqliteMetadata(path, store);
         const beforeRestart = await snapshot(dataDirectory);
-        await start();
+        await start(false);
         expect(await snapshot(dataDirectory)).toEqual(beforeRestart);
+        await start(true);
       },
     );
   }

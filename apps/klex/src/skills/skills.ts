@@ -104,12 +104,7 @@ export interface SkillRegistry {
   get(id: string): Skill | null;
   /** Full `SKILL.md` content. */
   read(id: string): string | null;
-  /**
-   * All skills with this bare name, sorted by id.
-   *
-   * LEGACY(skill-registry): used only by the bare-name Admin API routes.
-   * Remove it with them.
-   */
+  /** All skills with this bare name, sorted by id. */
   resolveName(name: string): readonly Skill[];
   /** Admin content change; sets `userEdited`. Null when unknown. */
   update(id: string, patch: SkillPatch): Promise<Skill | null>;

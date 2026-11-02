@@ -1,38 +1,33 @@
-import { mkdtemp, readdir, readFile, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { readdir } from 'node:fs/promises';
 
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import z from 'zod';
 
-import type { ExtendedUIMessage } from '../../message-types';
+import { createActivityFixture } from '@/activity-history/test-support';
+import type { ExtendedUIMessage } from '@/session/chat/message-types';
+
 import type {
   Extension,
   ExtensionDeps,
   StepCompleteEvent,
 } from '../extension-api';
-import { createEpisodeFeed } from './episodes';
-import { outputTexts } from './episodes/test-utils';
 import { createMemoryExt } from './memory';
 
 vi.mock('./system-prompt-part.md', () => ({ default: 'Memory.' }));
-vi.mock('@/session/chat/extensions/time/system-prompt.md', () => ({
-  default: 'Time.',
-}));
-
 const coordinator = vi.hoisted(() => ({
   start: vi.fn(async () => {}),
   close: vi.fn(async () => {}),
   setMainTurnActive: vi.fn(),
-  observe: vi.fn(() => true),
+  observe: vi.fn((_input: { text: string }) => true),
+  remember: vi.fn(),
   introspect: vi.fn(() => ({})),
 }));
-
-vi.mock('./retrieval', () => ({
+vi.mock('./retrieval', async () => ({
   createMemoryRetrievalCoordinator: () => coordinator,
   recallInputSchema: z.object({}),
   RecallRejectedError: class extends Error {},
-  renderObservation: () => ({ text: '', cursor: null, hasMore: false }),
+  renderObservation: (await import('./retrieval/observation-view'))
+    .renderObservation,
 }));
 
 const success = {
@@ -42,246 +37,161 @@ const success = {
   modelFallbackOccurred: false,
   requestRejected: false,
 } as StepCompleteEvent;
-const directories: string[] = [];
-
-afterEach(async () => {
-  vi.useRealTimers();
-  await Promise.all(
-    directories
-      .splice(0)
-      .map((directory) => rm(directory, { recursive: true, force: true })),
-  );
+const fixtures: Awaited<ReturnType<typeof createActivityFixture>>[] = [];
+beforeEach(() => {
+  vi.clearAllMocks();
+  coordinator.observe.mockReturnValue(true);
 });
-
+afterEach(async () => {
+  await Promise.all(fixtures.splice(0).map((fixture) => fixture.close()));
+});
 function message(id: string, text: string): ExtendedUIMessage {
-  return { id, role: 'assistant', parts: [{ type: 'text', text }] };
+  return { id, role: 'user', parts: [{ type: 'text', text }] };
 }
-
-async function harness(options: Parameters<typeof createMemoryExt>[0] = {}) {
-  const dataDir = await mkdtemp(join(tmpdir(), 'klex-memory-ext-'));
-  directories.push(dataDir);
+async function harness() {
+  const fixture = await createActivityFixture();
+  fixtures.push(fixture);
   const history: ExtendedUIMessage[] = [];
-  const logger = {
-    debug: vi.fn(),
-    info: vi.fn(),
-    warn: vi.fn(),
-    error: vi.fn(),
-  };
-  const episodes = {
-    maxCharacters: 50_000,
-    maxDurationMs: 3_600_000,
-    idleTimeoutMs: 600_000,
-  };
-  const deps = {
-    getDataDir: () => dataDir,
+  const extension = createMemoryExt({ activities: fixture.activities }).create({
+    getDataDir: () => fixture.directory,
     getHistory: () => history,
-    config: { get: () => ({ extensions: { memory: { episodes } } }) },
-    logger,
-  } as unknown as ExtensionDeps;
-  const extension = createMemoryExt(options).create(deps) as Extension;
-  const recorded = async (): Promise<string[]> => {
-    const root = join(dataDir, 'episodic');
-    const texts: string[] = [];
-    for (const date of await readdir(root).catch(() => [])) {
-      for (const file of (await readdir(join(root, date))).sort()) {
-        texts.push(
-          ...outputTexts(await readFile(join(root, date, file), 'utf-8')),
-        );
-      }
-    }
-    return texts;
-  };
-  const cursor = () => {
-    const state = extension.introspect?.() as
-      | { recorder: { cursor: unknown } | null }
-      | undefined;
-    return state?.recorder?.cursor ?? null;
-  };
-  return { extension, history, recorded, cursor };
+    logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+  } as unknown as ExtensionDeps) as Extension;
+  return { extension, history, fixture };
 }
 
 describe('memory extension lifecycle', () => {
-  it('closes an idle episode and emits exactly one completion hint without another turn', async () => {
-    vi.useFakeTimers({ toFake: ['Date', 'setInterval', 'clearInterval'] });
-    const feed = createEpisodeFeed();
-    const hint = vi.fn();
-    feed.subscribe(hint);
-    const { extension, history } = await harness({ episodeFeed: feed });
+  it('owns only retrieval, never a transcript copy or episode publisher', async () => {
+    const { extension, history, fixture } = await harness();
     await extension.onStart?.();
+    await extension.onStart?.();
+    expect(coordinator.start).toHaveBeenCalledOnce();
     extension.onStepStart?.();
-    history.push(message('idle', 'finished conversation'));
+    history.push(message('a1', 'remember this result'));
     await extension.onStepComplete?.(success);
-    await Promise.resolve();
-    hint.mockClear();
-    vi.advanceTimersByTime(600_000);
-    await vi.waitFor(() =>
-      expect(extension.introspect?.()).toMatchObject({
-        recorder: { episode: null },
+    expect(coordinator.observe).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: expect.stringContaining('remember this result'),
       }),
     );
-    expect(await feed.listCompleted(null, 10)).toHaveLength(1);
-    expect(hint).toHaveBeenCalledTimes(1);
-    vi.advanceTimersByTime(60_000);
-    await new Promise((resolve) => setTimeout(resolve, 20));
-    expect(hint).toHaveBeenCalledTimes(1);
     await extension.onClose?.();
+    expect(coordinator.close).toHaveBeenCalledOnce();
+    expect(await fixture.activities.manifest()).toEqual([]);
+    expect(await readdir(fixture.directory)).not.toContain('episodic');
+    expect(extension.introspect?.()).not.toHaveProperty('recorder');
   });
 
-  it('idle-completes without another turn after a throwing step settles as fatal', async () => {
-    vi.useFakeTimers({ toFake: ['Date', 'setInterval', 'clearInterval'] });
-    const feed = createEpisodeFeed();
-    const { extension, history } = await harness({ episodeFeed: feed });
+  it('seeds observation at the restored window end without replay', async () => {
+    const { extension, history } = await harness();
+    history.push(message('restored', 'old result'));
     await extension.onStart?.();
     extension.onStepStart?.();
-    history.push(message('first', 'recorded before failure'));
+    expect(coordinator.observe).not.toHaveBeenCalled();
+    history.push(message('new', 'new result'));
     await extension.onStepComplete?.(success);
-    extension.onStepStart?.();
-    await extension.onStepComplete?.({ ...success, fatalError: true });
-    await new Promise((resolve) => setTimeout(resolve, 20));
-    vi.advanceTimersByTime(600_000);
-    await vi.waitFor(() =>
-      expect(extension.introspect?.()).toMatchObject({
-        recorder: { episode: null },
-      }),
-    );
-    expect(await feed.listCompleted(null, 10)).toHaveLength(1);
-    await extension.onClose?.();
-  });
-
-  it('never idle-completes an episode while a long main step is active', async () => {
-    vi.useFakeTimers({ toFake: ['Date', 'setInterval', 'clearInterval'] });
-    const feed = createEpisodeFeed();
-    const { extension, history } = await harness({ episodeFeed: feed });
-    await extension.onStart?.();
-    extension.onStepStart?.();
-    history.push(message('first', 'initial'));
-    await extension.onStepComplete?.(success);
-    extension.onStepStart?.();
-    vi.advanceTimersByTime(660_000);
-    await new Promise((resolve) => setTimeout(resolve, 20));
-    expect(await feed.listCompleted(null, 10)).toEqual([]);
-    await extension.onStepComplete?.({ ...success, generationFailed: true });
-    await new Promise((resolve) => setTimeout(resolve, 20));
-    vi.advanceTimersByTime(30_000);
-    await new Promise((resolve) => setTimeout(resolve, 20));
-    expect(await feed.listCompleted(null, 10)).toEqual([]);
-    vi.advanceTimersByTime(570_000);
-    await vi.waitFor(() =>
-      expect(extension.introspect?.()).toMatchObject({
-        recorder: { episode: null },
-      }),
-    );
-    expect(await feed.listCompleted(null, 10)).toHaveLength(1);
-    await extension.onClose?.();
-  });
-  it('attaches the episode feed on start and detaches on close', async () => {
-    const episodeFeed = createEpisodeFeed();
-    const { extension, history } = await harness({ episodeFeed });
-    expect(episodeFeed.isAvailable()).toBe(false);
-    await extension.onStart?.();
-    expect(episodeFeed.isAvailable()).toBe(true);
-    extension.onStepStart?.();
-    history.push(message('a1', 'open'));
-    await extension.onStepComplete?.(success);
-    expect(await episodeFeed.listCompleted(null, 10)).toEqual([]);
-    await extension.onClose?.();
-    expect(episodeFeed.isAvailable()).toBe(false);
-  });
-
-  it('records the history after each successful step', async () => {
-    const { extension, history, recorded } = await harness();
-    await extension.onStart?.();
-    extension.onStepStart?.();
-    history.push(message('a1', 'first'));
-    await extension.onStepComplete?.(success);
-    extension.onStepStart?.();
-    history.push(message('a2', 'second'));
-    await extension.onStepComplete?.(success);
-    expect(await recorded()).toEqual(['first', 'second']);
-    await extension.onClose?.();
-  });
-
-  it('skips failed steps and records their history on the next success', async () => {
-    const { extension, history, recorded } = await harness();
-    await extension.onStart?.();
-    extension.onStepStart?.();
-    history.push(message('a1', 'first'));
-    await extension.onStepComplete?.({ ...success, generationFailed: true });
-    expect(await recorded()).toEqual([]);
-    extension.onStepStart?.();
-    await extension.onStepComplete?.(success);
-    expect(await recorded()).toEqual(['first']);
-    await extension.onClose?.();
-  });
-
-  it('flushes on close, closes retrieval, and ignores later steps', async () => {
-    const { extension, history, recorded } = await harness();
-    await extension.onStart?.();
-    history.push(message('a1', 'pending'));
-    await extension.onClose?.();
-    expect(coordinator.close).toHaveBeenCalled();
-    expect(await recorded()).toEqual(['pending']);
-    history.push(message('a2', 'late'));
-    await extension.onStepComplete?.(success);
-    expect(await recorded()).toEqual(['pending']);
-  });
-
-  it('flushes on the interval only between steps', async () => {
-    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
-    const { extension, history, cursor } = await harness();
-    await extension.onStart?.();
-    extension.onStepStart?.();
-    history.push(message('a1', 'during step'));
-    vi.advanceTimersByTime(30_000);
-    await new Promise((resolve) => setTimeout(resolve, 20));
-    expect(cursor()).toBeNull();
-
-    await extension.onStepComplete?.({ ...success, fatalError: true });
-    vi.advanceTimersByTime(30_000);
-    await vi.waitFor(() => expect(cursor()).toBe('a1'));
-    await extension.onClose?.();
-  });
-
-  it('does not re-record a restored window on start', async () => {
-    const { extension, history, recorded, cursor } = await harness();
-    history.push(message('old1', 'restored'), message('old2', 'restored too'));
-    await extension.onStart?.();
-    expect(cursor()).toBe('old2');
-    extension.onStepStart?.();
-    history.push(message('a1', 'new'));
-    await extension.onStepComplete?.(success);
-    expect(await recorded()).toEqual(['new']);
-    await extension.onClose?.();
-  });
-
-  it('records before a checkpoint trims and resumes after the header', async () => {
-    const { extension, history, recorded, cursor } = await harness();
-    await extension.onStart?.();
-    history.push(message('a1', 'first'), message('a2', 'second'));
-    const result = await extension.onCheckpointApplying?.({
-      droppedMessageIds: ['a1'],
-      checkpointMessageId: 'cp',
+    expect(coordinator.observe).toHaveBeenCalledOnce();
+    expect(coordinator.observe.mock.calls[0]?.[0]).toEqual({
+      text: expect.stringContaining('new result'),
     });
-    expect(result).toBeUndefined();
-    expect(await recorded()).toEqual(['first', 'second']);
-    expect(cursor()).toBe('a2');
+    expect(extension.introspect?.()).toMatchObject({
+      lastObservedMessageId: 'new',
+    });
+    await extension.onClose?.();
+  });
 
-    // Staged only: an aborted apply must not move the cursor.
+  it('tracks continuing and throwing steps without leaving retrieval paused', async () => {
+    const { extension } = await harness();
+    await extension.onStart?.();
+    extension.onStepStart?.();
+    expect(coordinator.setMainTurnActive).toHaveBeenLastCalledWith(true);
+    await extension.onStepComplete?.({ ...success, shouldContinue: true });
+    expect(coordinator.setMainTurnActive).toHaveBeenLastCalledWith(true);
+    await extension.onStepComplete?.({ ...success, fatalError: true });
+    expect(coordinator.setMainTurnActive).toHaveBeenLastCalledWith(false);
+    expect(extension.introspect?.()).toMatchObject({ stepActive: false });
+    await extension.onClose?.();
+  });
+
+  it('does not lose undelivered observations when the child is unavailable', async () => {
+    const { extension, history } = await harness();
+    await extension.onStart?.();
+    history.push(message('a1', 'waiting result'));
+    coordinator.observe.mockReturnValue(false);
+    await extension.onStepComplete?.(success);
+    expect(extension.introspect?.()).toMatchObject({
+      lastObservedMessageId: null,
+    });
+    coordinator.observe.mockReturnValue(true);
+    await extension.onStepComplete?.(success);
+    expect(extension.introspect?.()).toMatchObject({
+      lastObservedMessageId: 'a1',
+    });
+    await extension.onClose?.();
+  });
+
+  it('preserves the observation cursor around staged and applied checkpoints', async () => {
+    const { extension, history } = await harness();
+    await extension.onStart?.();
+    history.push(message('a1', 'first result'), message('a2', 'second result'));
+    expect(
+      await extension.onCheckpointApplying?.({
+        droppedMessageIds: ['a1', 'a2'],
+        checkpointMessageId: 'cp',
+      }),
+    ).toBeUndefined();
+    expect(extension.introspect?.()).toMatchObject({
+      lastObservedMessageId: 'a2',
+    });
     await extension.onCheckpointApplying?.({
       droppedMessageIds: ['a1', 'a2'],
-      checkpointMessageId: 'cp-aborted',
+      checkpointMessageId: 'aborted',
     });
-    expect(cursor()).toBe('a2');
-
+    expect(extension.introspect?.()).toMatchObject({
+      lastObservedMessageId: 'a2',
+    });
     await extension.onCheckpointApplying?.({
       droppedMessageIds: ['a1', 'a2'],
       checkpointMessageId: 'cp2',
     });
     history.splice(0, 2, message('cp2', 'header'));
+    history.push(message('a3', 'third result'));
     extension.onStepStart?.();
-    history.push(message('a3', 'third'));
-    await extension.onStepComplete?.(success);
-    expect(await recorded()).toEqual(['first', 'second', 'third']);
+    expect(extension.introspect?.()).toMatchObject({
+      lastObservedMessageId: 'a3',
+    });
+    expect(coordinator.observe).toHaveBeenLastCalledWith({
+      text: expect.stringContaining('third result'),
+    });
     await extension.onClose?.();
+  });
+
+  it('isolates observation failure and retries on a later step', async () => {
+    const { extension, history } = await harness();
+    await extension.onStart?.();
+    history.push(message('a1', 'pending result'));
+    coordinator.observe.mockImplementationOnce(() => {
+      throw new Error('child unavailable');
+    });
+    await expect(extension.onStepComplete?.(success)).resolves.toBeUndefined();
+    expect(extension.introspect?.()).toMatchObject({
+      lastObservedMessageId: null,
+    });
+    await extension.onStepComplete?.(success);
+    expect(extension.introspect?.()).toMatchObject({
+      lastObservedMessageId: 'a1',
+    });
+    await extension.onClose?.();
+  });
+
+  it('ignores steps after close and does not close the injected history', async () => {
+    const { extension, history, fixture } = await harness();
+    await extension.onStart?.();
+    await extension.onClose?.();
+    history.push(message('late', 'late result'));
+    extension.onStepStart?.();
+    await extension.onStepComplete?.(success);
+    expect(coordinator.observe).not.toHaveBeenCalled();
+    expect(fixture.activities.isAvailable()).toBe(true);
+    expect(extension.getTools?.({} as never)).toEqual({});
   });
 });

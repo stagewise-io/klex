@@ -6,10 +6,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { ModuleLogger } from '@stagewise/logger';
 
-import type {
-  CompletedEpisode,
-  EpisodeFeed,
-} from '@/session/chat/extensions/memory';
+import { type ActivityHistory, activityOrdinal } from '@/activity-history';
+import { TEST_ACTIVITY_LIMITS } from '@/activity-history/test-support';
 import {
   createSkillRegistry,
   type SkillDocument,
@@ -57,22 +55,24 @@ afterEach(async () => {
 const LONG_TEXT = 'x'.repeat(MIN_EPISODE_CHARACTERS);
 
 function episodeId(index: number): string {
-  return `2026-10-01/${String(index).padStart(3, '0')}-10-00.jsonl`;
+  return `history:${Buffer.from(JSON.stringify([index, 'test', String(index)])).toString('base64url')}`;
 }
 
 function fakeFeed(
   count: number,
   textOf: (index: number) => string = () => LONG_TEXT,
   available = true,
-): EpisodeFeed & { reads: string[] } {
+): ActivityHistory & { reads: string[] } {
   const ids = Array.from({ length: count }, (_, index) => episodeId(index));
   const ref = (id: string) => ({
     id,
-    date: '2026-10-01',
-    index: ids.indexOf(id),
+    ordinal: ids.indexOf(id),
+    persistedAt: '2026-10-01T10:00:00.000Z',
+    bytes: textOf(ids.indexOf(id)).length,
+    revision: 'test',
   });
   const reads: string[] = [];
-  return {
+  const feed: ActivityHistory & { reads: string[] } = {
     reads,
     subscribe: () => () => undefined,
     listNeighbors: async () => [],
@@ -101,27 +101,38 @@ function fakeFeed(
       truncated: false,
     }),
     isAvailable: () => available,
-    listCompleted: async (after, limit) =>
-      ids
-        .filter((id) => after === null || id > after)
-        .slice(0, limit)
-        .map(ref),
-    listLatestCompleted: async (latest) => ids.slice(-latest).map(ref),
-    // Ids are zero-padded here, so string order is episode order.
-    compareIds: (left, right) => (left < right ? -1 : left > right ? 1 : 0),
-    read: async (id): Promise<CompletedEpisode | null> => {
-      reads.push(id);
-      const index = ids.indexOf(id);
-      if (index < 0) return null;
+    manifest: async () => ids.map(ref),
+    latest: async (latest) => ids.slice(-latest).map(ref),
+    compareIds: (left, right) =>
+      (activityOrdinal(left) ?? -1) - (activityOrdinal(right) ?? -1),
+    readPending: async (after) => {
+      const id = ids.find(
+        (id) =>
+          after === null ||
+          (activityOrdinal(id) ?? -1) > (activityOrdinal(after) ?? -1),
+      );
+      if (!id) return null;
+      const page = await feed.readPage(id, {
+        offset: 0,
+        limit: 128_000,
+        maxBytes: 2_000_000,
+        tail: true,
+      });
       return {
-        ...ref(id),
-        startedAt: '2026-10-01T10:00:00.000Z',
-        endedAt: '2026-10-01T10:30:00.000Z',
+        id,
+        text: '',
+        offset: 0,
+        nextOffset: null,
+        scannedBytes: 0,
+        truncated: true,
+        ...page,
+        startedAt: page?.startedAt ?? '2026-10-01T10:00:00.000Z',
+        endedAt: page?.endedAt ?? '2026-10-01T10:30:00.000Z',
         recordCount: 1,
-        text: textOf(index),
       };
     },
   };
+  return feed;
 }
 
 function noSubmission(text = 'No submission.'): ChildReply {
@@ -155,7 +166,7 @@ async function startedRegistry(directory: string, logger: ModuleLogger) {
   return registry;
 }
 
-async function harness(feed: EpisodeFeed) {
+async function harness(feed: ActivityHistory) {
   const dataDir = await temporaryDirectory('klex-learning-worker-');
   const registryDir = await temporaryDirectory('klex-learning-registry-');
   const logger = {
@@ -172,7 +183,8 @@ async function harness(feed: EpisodeFeed) {
   const getAgent = vi.fn(() => ({ name: 'Atlas', soul: 'Initial soul' }));
   let now = Date.parse('2026-10-02T00:00:00.000Z');
   const worker = createLearningWorker({
-    episodes: feed,
+    activities: feed,
+    getLimits: () => TEST_ACTIVITY_LIMITS,
     skills,
     state,
     createChildSession,
@@ -501,7 +513,7 @@ describe('learning worker', () => {
     });
     const put = vi.spyOn(skills, 'put');
     runChild.mockImplementationOnce(async ({ tools, abortSignal }) => {
-      await tools?.readEpisode?.execute?.(
+      await tools?.readActivity?.execute?.(
         { id: episodeId(1), offset: 0, limit: 100 },
         {
           toolCallId: 'evidence',
@@ -772,15 +784,17 @@ describe('learning worker', () => {
   it('retries a failed first episode after the backfill window grows', async () => {
     const full = fakeFeed(INITIAL_BACKFILL_EPISODES + 5);
     let visible = INITIAL_BACKFILL_EPISODES;
-    const shown = async (after: string | null) =>
-      (await full.listCompleted(after, Number.POSITIVE_INFINITY)).filter(
-        (ref) => ref.index < visible,
-      );
-    const feed: EpisodeFeed = {
+    const shown = async () =>
+      (await full.manifest()).filter((ref) => ref.ordinal < visible);
+    const feed: ActivityHistory = {
       ...full,
-      listCompleted: async (after, limit) =>
-        (await shown(after)).slice(0, limit),
-      listLatestCompleted: async (count) => (await shown(null)).slice(-count),
+      latest: async (count) => (await shown()).slice(-count),
+      readPending: async (...args) => {
+        const batch = await full.readPending(...args);
+        return batch && (activityOrdinal(batch.id) ?? -1) < visible
+          ? batch
+          : null;
+      },
     };
     const { worker, state, createChildSession } = await harness(feed);
     createChildSession.mockRejectedValueOnce(new Error('Child startup failed'));
@@ -916,33 +930,22 @@ describe('learning worker', () => {
     expect(state.get().episodeFailures).toEqual({});
   });
 
-  it('counts read exceptions per episode and reaches later episodes after the retry ceiling', async () => {
+  it('retries a failed canonical query without inventing a source to skip', async () => {
     const feed = fakeFeed(2);
-    const read = feed.readPage.bind(feed);
-    feed.readPage = async (id, options) => {
-      if (id === episodeId(0)) throw new Error('unreadable episode');
-      return read(id, options);
-    };
-    const { worker, state, runChild, logger } = await harness(feed);
-    for (let attempt = 1; attempt < MAX_FAILURES_PER_EPISODE; attempt++) {
-      expect(await worker.runOnce()).toBe('retry-later');
-      expect(state.get().episodeFailures[episodeId(0)]).toBe(attempt);
+    const read = feed.readPending.bind(feed);
+    const query = vi
+      .spyOn(feed, 'readPending')
+      .mockRejectedValue(new Error('SQLite query failed'));
+    const { worker, state, runChild } = await harness(feed);
+    for (let attempt = 0; attempt < MAX_FAILURES_PER_EPISODE; attempt++) {
+      expect(await worker.runOnce()).toBe('failed');
       expect(state.get().cursor).toBeNull();
+      expect(state.get().episodeFailures).toEqual({});
     }
+    query.mockImplementation(read);
     expect(await worker.runOnce()).toBe('processed');
-    expect(state.get()).toMatchObject({
-      cursor: episodeId(1),
-      processedEpisodeCount: 2,
-      episodeFailures: {},
-    });
-    expect(runChild).toHaveBeenCalledTimes(1);
-    expect(logger.warn).toHaveBeenCalledWith(
-      expect.objectContaining({
-        episode: episodeId(0),
-        failures: MAX_FAILURES_PER_EPISODE,
-      }),
-      'Skipping episode after repeated learning failures',
-    );
+    expect(state.get().cursor).toBe(episodeId(1));
+    expect(runChild).toHaveBeenCalledTimes(2);
   });
 
   it('records a truncated empty scan as a failure rather than silently skipping it', async () => {
@@ -1114,9 +1117,7 @@ describe('learning worker', () => {
 
   it('automatically drains successive unreadable episodes with a fresh retry budget after progress', async () => {
     const feed = fakeFeed(2);
-    feed.readPage = async () => {
-      throw new Error('unreadable');
-    };
+    feed.readPage = async () => null;
     const { worker, state } = await harness(feed);
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     try {

@@ -15,9 +15,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createLogger, type ModuleLogger } from '@stagewise/logger';
 
+import type { ActivityHistory } from '@/activity-history';
 import { createLocalData } from '@/local-data';
 import { KLEX_VERSION } from '@/release';
-import type { EpisodeFeed } from '@/session/chat/extensions/memory';
 import { DEFAULT_SESSION_ID } from '@/session/types';
 import {
   createSkillRegistry,
@@ -129,7 +129,7 @@ async function seededAgent({
   return agentDir;
 }
 
-function episodeFeed(): EpisodeFeed {
+function activitySource(): ActivityHistory {
   return {
     isAvailable: () => false,
     subscribe: () => () => undefined,
@@ -141,9 +141,9 @@ function episodeFeed(): EpisodeFeed {
       scannedBytes: 0,
       truncated: false,
     }),
-    listCompleted: async () => [],
-    listLatestCompleted: async () => [],
-    read: async () => null,
+    manifest: async () => [],
+    latest: async () => [],
+    readPending: async () => null,
     compareIds: (left, right) => left.localeCompare(right),
   };
 }
@@ -167,7 +167,7 @@ async function startAgent(agentDir: string): Promise<readonly Skill[]> {
     registry.claimNamespace(LEARNING_EXTENSION_ID, LEARNING_SKILL_NAMESPACE);
     const extension = createLearningExt({
       getSoul: () => null,
-      episodes: episodeFeed(),
+      activities: activitySource(),
     }).create({
       sessionId: DEFAULT_SESSION_ID,
       getDataDir: () => extensionDir(agentDir),
@@ -322,8 +322,8 @@ describe('legacy skill import through registered startup', () => {
       _klex: {
         store: 'learning-extension-state',
         schemaVersion: 2,
-        compatibilityVersion: 3,
-        minimumKlexVersion: '0.28.0',
+        compatibilityVersion: 4,
+        minimumKlexVersion: '0.29.0',
         writtenByKlexVersion: KLEX_VERSION,
       },
       cursor: 'episode-0042',
@@ -527,7 +527,7 @@ describe('learning-state compatibility floor', () => {
         stores: [olderReader, SKILL_REGISTRY_STORE_DEFINITION],
       }).start(),
     ).rejects.toThrow(
-      /requires a newer read\/write compatibility level.*Use Klex 0\.28\.0 or newer/,
+      /requires a newer read\/write compatibility level.*Use Klex 0\.29\.0 or newer/,
     );
     expect(await snapshot(agentDir)).toEqual(before);
   });

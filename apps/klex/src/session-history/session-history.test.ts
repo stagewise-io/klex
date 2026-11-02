@@ -100,6 +100,50 @@ afterEach(async () => {
   );
 });
 
+describe('canonical activity queries', () => {
+  it('pages across instances, excludes children, and advances oversized sources', async () => {
+    const { history } = await setup();
+    const first = history.openRecorder(meta());
+    const child = history.openRecorder(
+      meta({ sessionId: 'child', kind: 'child' }),
+    );
+    const hints = { count: 0 };
+    const detach = history.subscribeActivity(() => hints.count++);
+    first.scheduleSync(() => [message('one', 'first', 'assistant')]);
+    child.scheduleSync(() => [message('hidden', 'secret', 'assistant')]);
+    await history.flush();
+    const second = history.openRecorder(meta());
+    second.scheduleSync(() => [message('two', 'second', 'assistant')]);
+    await history.flush();
+    const manifest = await history.activityManifest();
+    expect(manifest).toHaveLength(2);
+    expect(manifest[1]!.ordinal).toBeGreaterThan(manifest[0]!.ordinal);
+    const page = await history.readActivity({ limit: 1, maxBytes: 1 });
+    expect(page[0]?.message).toBeNull();
+    expect(
+      (await history.readActivity({ after: page[0]!.ordinal }))[0]?.message?.id,
+    ).toBe('two');
+    expect(hints.count).toBeGreaterThan(0);
+    detach();
+  });
+
+  it('reflects same-size repairs and rollback deletion in manifests', async () => {
+    const { history } = await setup();
+    const recorder = history.openRecorder(meta());
+    recorder.scheduleSync(() => [message('one', 'before', 'assistant')]);
+    await history.flush();
+    const before = (await history.activityManifest())[0]!;
+    recorder.scheduleSync(() => [message('one', 'after!', 'assistant')]);
+    await history.flush();
+    expect((await history.activityManifest())[0]!.revision).not.toBe(
+      before.revision,
+    );
+    recorder.scheduleSync(() => []);
+    await history.flush();
+    expect(await history.activityManifest()).toEqual([]);
+  });
+});
+
 describe('resolveSessionHistoryMaxBytes', () => {
   it('uses the default unless the config overrides it', () => {
     const config = klexConfigSchema.parse({});

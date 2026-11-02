@@ -29,8 +29,8 @@ export const LEARNING_STATE_STORE_DEFINITION: JsonStoreDefinition = {
   relativePath: 'extensions/io.stagewise/learning/state.json',
   required: false,
   schemaVersion: 2,
-  compatibilityVersion: 3,
-  minimumKlexVersion: '0.28.0',
+  compatibilityVersion: 4,
+  minimumKlexVersion: '0.29.0',
   versions: LOCAL_DATA_MIGRATIONS['learning-extension-state'].versions,
   migrations: LOCAL_DATA_MIGRATIONS['learning-extension-state'].migrations,
 };
@@ -57,9 +57,9 @@ export interface SkillState {
 }
 
 export interface LearningStateData {
-  /** Last processed episode id. */
+  /** Last consumed canonical source. Legacy file cursors trigger a one-time cutover. */
   cursor: string | null;
-  /** Episode id → consecutive failures. */
+  /** Source id → consecutive failures (released field name retained). */
   episodeFailures: Record<string, number>;
   changedRunsSinceConsolidation: number;
   lastConsolidationAt: string | null;

@@ -1874,8 +1874,7 @@ class ChatSessionModule implements AgentSession {
               'Session transcript end failed',
             );
           });
-        // Cleanup must finish even when an extension (for example, the
-        // episodic writer) rejects during shutdown. Otherwise the terminated
+        // Cleanup must finish even when an extension rejects during shutdown. Otherwise the terminated
         // session remains registered and blocks its replacement.
         try {
           this.sessionSpan.addEvent('session.closed', {

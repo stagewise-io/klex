@@ -1,5 +1,4 @@
-import { copyFile, mkdir, mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { rm } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import type { LanguageModelV4StreamPart } from '@ai-sdk/provider';
@@ -8,13 +7,16 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { ModuleLogger, RootLogger } from '@stagewise/logger';
 
+import {
+  createActivityFixture,
+  TEST_ACTIVITY_LIMITS,
+} from '@/activity-history/test-support';
 import type { Config } from '@/config';
 import { createIntrospector } from '@/introspection';
 import {
   type ChatSessionDependencies,
   createChatSession,
 } from '@/session/chat';
-import { createEpisodeFeed } from '@/session/chat/extensions/memory';
 import type { ChatSessionHandle, SessionFactory } from '@/session/types';
 import { createSkillRegistry } from '@/skills';
 
@@ -77,16 +79,18 @@ function toolStream(toolName: string, input: unknown, id: string) {
 
 describe('learning child session execution', () => {
   it('investigates and persists through streamed steps, then idles and releases parent quiescence', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'klex-learning-session-'));
-    const id = '2026-10-01/1-09-00.jsonl';
-    const episodicDir = join(root, 'episodic');
-    await mkdir(join(episodicDir, '2026-10-01'), { recursive: true });
-    await copyFile(
-      new URL('./fixtures/feedback.jsonl', import.meta.url),
-      join(episodicDir, id),
+    const fixture = await createActivityFixture();
+    const root = fixture.directory;
+    const { id } = await fixture.append(
+      'Always ask before changing a core contract. Propose the change first, explain downstream impact, and wait for approval. '.repeat(
+        5,
+      ),
     );
-    const episodes = createEpisodeFeed();
-    const read = vi.spyOn(episodes, 'readPage');
+    const activities = fixture.activities;
+    const availability = vi
+      .spyOn(activities, 'isAvailable')
+      .mockReturnValue(false);
+    const read = vi.spyOn(activities, 'readPage');
     const skillRegistry = createSkillRegistry({
       dataDirectory: join(root, 'registry'),
       logger: logger as unknown as ModuleLogger,
@@ -101,7 +105,7 @@ describe('learning child session execution', () => {
         const current = step++;
         if (current === 0)
           return toolStream(
-            'readEpisode',
+            'readActivity',
             { id, offset: 0, limit: 1000 },
             'read',
           );
@@ -139,6 +143,7 @@ describe('learning child session execution', () => {
     const config = {
       get: () => ({
         officialName: 'Atlas',
+        extensions: { memory: { episodes: TEST_ACTIVITY_LIMITS } },
         instinct: { enabled: false },
         modelSelection: { chat: ['test:model'], memory: ['test:model'] },
       }),
@@ -185,7 +190,7 @@ describe('learning child session execution', () => {
       skillRegistry,
       extensionFactories: [
         createLearningExt({
-          episodes,
+          activities,
           getSoul: () => 'Product manager.',
         }),
       ],
@@ -197,7 +202,8 @@ describe('learning child session execution', () => {
     try {
       await parent.start();
       expect(parent.isQuiescent()).toBe(true);
-      episodes.attach({ episodicDir, getOpenEpisode: async () => null });
+      availability.mockRestore();
+      await fixture.append('wake the worker', 'user');
       await vi.waitFor(() => expect(step).toBe(3));
       await finalStep.promise;
       expect(parent.isQuiescent()).toBe(false);
@@ -223,10 +229,10 @@ describe('learning child session execution', () => {
       const learned = skillRegistry.get('learning/ask-first');
       expect(learned?.body).toContain('Ask for approval');
       expect(learned && sourceEpisodesOf(learned)).toEqual([id]);
-      expect(read).toHaveBeenCalledTimes(2);
+      expect(read).toHaveBeenCalledTimes(1);
       expect(model.doStreamCalls).toHaveLength(3);
       expect(JSON.stringify(model.doStreamCalls[1]?.prompt)).toContain(
-        'readEpisode',
+        'readActivity',
       );
       finish.resolve();
       await vi.waitFor(() =>
@@ -246,6 +252,7 @@ describe('learning child session execution', () => {
       await parent.close();
       await skillRegistry.close();
       expect(parent.isQuiescent()).toBe(true);
+      await fixture.close();
       await rm(root, { recursive: true, force: true });
     }
   });

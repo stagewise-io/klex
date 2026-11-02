@@ -20,7 +20,7 @@ const writeOperationFields = {
   description: z.string().trim().min(1).max(MAX_DESCRIPTION_LENGTH),
   body: z.string().trim().min(1).max(MAX_BODY_LENGTH),
   reason: z.string().optional().default(''),
-  evidenceEpisodes: z.array(z.string().max(200)).max(6).optional(),
+  evidenceEpisodes: z.array(z.string().max(4096)).max(6).optional(),
 };
 
 const operationSchema = z.discriminatedUnion('op', [

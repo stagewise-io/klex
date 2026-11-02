@@ -1,12 +1,11 @@
 import { formatTimeContext } from '@/session/chat/extensions/time';
+import type { ExtendedUIMessage } from '@/session/chat/message-types';
 import {
   createHistoryView,
   type FieldLimit,
   type FittedHistory,
   type ValueLimit,
 } from '@/session/chat/utils/history-view';
-
-import type { ExtendedUIMessage } from '../../message-types';
 
 const TEXT_LIMIT: FieldLimit = { max: 500, truncate: 'middle' };
 const CONTEXT_TEXT_LIMIT: FieldLimit = { max: 300, truncate: 'middle' };
@@ -28,8 +27,8 @@ const OUTPUT_LIMIT: ValueLimit = {
   json: 'plain',
 };
 
-/** Writer view: compact agent actions, thoughts, outputs, context, and time. */
-const EPISODIC_HISTORY_VIEW = createHistoryView({
+/** Canonical activity view: compact agent actions, thoughts, outputs, context, and time. */
+const ACTIVITY_HISTORY_VIEW = createHistoryView({
   filter: {
     roles: ['user', 'assistant'],
     text: { roles: ['assistant'], limit: TEXT_LIMIT },
@@ -58,11 +57,11 @@ const EPISODIC_HISTORY_VIEW = createHistoryView({
  * Structured episodic records after `cursor`. Rendering them in line format
  * yields exactly the text of the episodic line view.
  */
-export function collectEpisodicHistory(
+export function collectActivityHistory(
   history: readonly ExtendedUIMessage[],
   cursor: string | null,
 ): FittedHistory {
-  return EPISODIC_HISTORY_VIEW.fit(history, { kind: 'after-cursor', cursor });
+  return ACTIVITY_HISTORY_VIEW.fit(history, { kind: 'after-cursor', cursor });
 }
 
 function projectTime(data: unknown): { label: string; value: string } | null {

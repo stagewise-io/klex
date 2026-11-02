@@ -67,6 +67,28 @@ export interface SessionHistoryRecorder {
   end(reason: string): Promise<void>;
 }
 
+/** Canonical default-session evidence; no persisted activity grouping. */
+export interface ActivitySource {
+  id: string;
+  ordinal: number;
+  persistedAt: string;
+  bytes: number;
+  revision: string;
+}
+
+export interface ActivityMessage extends ActivitySource {
+  /** Null when this message exceeds the remaining read budget. */
+  message: ExtendedUIMessage | null;
+}
+
+export interface ActivityQuery {
+  after?: number;
+  through?: number;
+  descending?: boolean;
+  limit?: number;
+  maxBytes?: number;
+}
+
 /** One persisted message of a restored window. */
 export interface SessionHistoryWindowEntry {
   message: ExtendedUIMessage;

@@ -18,6 +18,9 @@ export {
   resolveSessionHistoryMaxBytes,
 } from './session-history';
 export type {
+  ActivityMessage,
+  ActivityQuery,
+  ActivitySource,
   SessionHistoryListPage,
   SessionHistoryListQuery,
   SessionHistoryMessage,

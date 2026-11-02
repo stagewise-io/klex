@@ -30,7 +30,7 @@ interface TurnBudget {
   outputCharacters: number;
   unresolvedHandles: number;
   surfaced: number;
-  /** Index synced with the episode files this turn. */
+  /** Index synced with the canonical retained history this turn. */
   reconciled: boolean;
 }
 
@@ -73,7 +73,7 @@ class RetrievalToolsExt implements Extension {
     return this.turnId ?? 'default';
   }
 
-  /** Picks up episodes written since the last turn, once per turn. */
+  /** Reconciles committed activity changes since the last turn, once per turn. */
   private async ensureFresh(): Promise<void> {
     if (this.budget.reconciled) return;
     await this.options.index.reconcile();

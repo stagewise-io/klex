@@ -2,10 +2,12 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { ModuleLogger } from '@stagewise/logger';
 
-import type {
-  CompletedEpisode,
-  EpisodeFeed,
-} from '@/session/chat/extensions/memory';
+import {
+  type ActivityBatch,
+  type ActivityHistory,
+  activityOrdinal,
+} from '@/activity-history';
+import { TEST_ACTIVITY_LIMITS } from '@/activity-history/test-support';
 
 import type { GenerateTextArgs, GenerateTextResult } from '../extension-api';
 import {
@@ -25,11 +27,20 @@ import type {
 
 vi.mock('./summary-prompt.md', () => ({ default: 'Title the episode.' }));
 
-function episode(id: string, recordCount = 3): CompletedEpisode {
+function canonical(id: string): string {
+  return `history:${Buffer.from(JSON.stringify([Number(id.replace(/\D/gu, '')), 'test', id])).toString('base64url')}`;
+}
+function original(id: string): string {
+  return JSON.parse(Buffer.from(id.slice(8), 'base64url').toString())[2];
+}
+
+function episode(id: string, recordCount = 3): ActivityBatch {
   return {
-    id,
-    date: '2026-10-01',
-    index: Number(id.replace(/\D/gu, '')) || 0,
+    id: canonical(id),
+    offset: 0,
+    nextOffset: null,
+    scannedBytes: 10,
+    truncated: false,
     startedAt: `2026-10-01T10:0${id.at(-1)}:00.000Z`,
     endedAt: `2026-10-01T10:0${id.at(-1)}:30.000Z`,
     recordCount,
@@ -37,11 +48,18 @@ function episode(id: string, recordCount = 3): CompletedEpisode {
   };
 }
 
-function createFeed(initial: CompletedEpisode[]) {
+function createFeed(initial: ActivityBatch[]) {
   const episodes = [...initial];
   const missing = new Set<string>();
   const state = { available: true };
-  const feed: EpisodeFeed = {
+  const ref = (item: ActivityBatch) => ({
+    id: item.id,
+    ordinal: activityOrdinal(item.id)!,
+    persistedAt: item.endedAt,
+    bytes: 10,
+    revision: 'test',
+  });
+  const feed: ActivityHistory = {
     isAvailable: () => state.available,
     subscribe: () => () => undefined,
     listNeighbors: async () => [],
@@ -52,15 +70,15 @@ function createFeed(initial: CompletedEpisode[]) {
       scannedBytes: 0,
       truncated: false,
     }),
-    listCompleted: async (after, limit) =>
-      episodes
-        .filter((item) => after === null || item.id > after)
-        .slice(0, limit),
-    listLatestCompleted: async (count) => episodes.slice(-count).reverse(),
-    read: async (id) =>
-      missing.has(id)
-        ? null
-        : (episodes.find((item) => item.id === id) ?? null),
+    manifest: async () => episodes.map(ref),
+    latest: async (count) => episodes.slice(-count).reverse().map(ref),
+    readPending: async (after) =>
+      episodes.find(
+        (item) =>
+          !missing.has(original(item.id)) &&
+          (after === null ||
+            activityOrdinal(item.id)! > activityOrdinal(after)!),
+      ) ?? null,
     compareIds: (left, right) => left.localeCompare(right),
   };
   return { feed, episodes, missing, state };
@@ -76,7 +94,8 @@ function createStore(initialized = true, episodeId: string | null = null) {
       cursor = { initialized: true, episodeId: id };
     },
     commit: async (row) => {
-      if (!rows.has(row.episodeId)) rows.set(row.episodeId, row);
+      if (!rows.has(original(row.episodeId)))
+        rows.set(original(row.episodeId), row);
       cursor = { initialized: true, episodeId: row.episodeId };
     },
     list: async (): Promise<StoredSummaryPage> => ({
@@ -86,7 +105,14 @@ function createStore(initialized = true, episodeId: string | null = null) {
     }),
     close: async () => undefined,
   };
-  return { store, rows, cursor: () => cursor };
+  return {
+    store,
+    rows,
+    cursor: () => ({
+      ...cursor,
+      episodeId: cursor.episodeId ? original(cursor.episodeId) : null,
+    }),
+  };
 }
 
 type Success = Extract<GenerateTextResult, { success: true }>;
@@ -114,7 +140,7 @@ const logger = {
 } as unknown as ModuleLogger;
 
 function setup(options: {
-  episodes: CompletedEpisode[];
+  episodes: ActivityBatch[];
   initialized?: boolean;
   cursor?: string | null;
   generateText?: (args: GenerateTextArgs) => Promise<GenerateTextResult>;
@@ -129,7 +155,8 @@ function setup(options: {
       (async (args: GenerateTextArgs) => success(`Handled ${args.prompt}`)),
   );
   const summarizer = createSummarizer({
-    episodes: feed.feed,
+    activities: feed.feed,
+    getLimits: () => TEST_ACTIVITY_LIMITS,
     store: store.store,
     generateText,
     getModelIds: () => [MODEL],
@@ -234,12 +261,9 @@ describe('summarizer', () => {
       e1: { status: 'titled', title: 'Did text of e1', modelId: 'test:model' },
       e2: { status: 'skipped', title: null, modelId: null },
       e3: { status: 'skipped', title: null, modelId: 'test:model' },
-      e4: {
-        status: 'skipped',
-        startedAt: '2026-10-02T00:00:00.000Z',
-      },
     });
-    expect(store.cursor().episodeId).toBe('e4');
+    expect(store.rows.has('e4')).toBe(false);
+    expect(store.cursor().episodeId).toBe('e3');
 
     // A second wake with nothing new is a no-op.
     summarizer.wake();

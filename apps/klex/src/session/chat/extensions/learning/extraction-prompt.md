@@ -15,6 +15,8 @@ You observe the AI Agent *{{NAME}}*. It does real work and you must help it do t
 
 
 ### Execution
+The `<activity>` block is a runtime activity batch rendered from retained canonical SQLite history, not a stored episode file. Its id is a canonical source handle. Use `readActivity` (including tail or nextOffset), `listActivityNeighbors`, and `searchActivities` for bounded investigations. `evidenceEpisodes` is a compatibility field name: cite only canonical handles exposed in the primary input or tool evidence. Old file-based source citations are unavailable legacy provenance, not evidence of current facts. Evicted or budget-omitted content is not evidence.
+
 Investigate briefly using only relevant evidence. Call `submitLearnings` with a complete batch, or empty operations when nothing should change. If a batch is rejected, correct the reported problem and resubmit. Successful submissions write immediately. After a successful submission, stop; do not continue investigating or repeat the batch.
 
 ### How to write learning

@@ -1,14 +1,13 @@
 import { describe, expect, it, vi } from 'vitest';
 
+import { createDataPart } from '@/session/chat/extensions/extension-api';
+import type { ExtendedUIMessage } from '@/session/chat/message-types';
 import {
   RECORD_SEPARATOR,
   renderFittedMessage,
 } from '@/session/chat/utils/history-view';
 
-import type { ExtendedUIMessage } from '../../message-types';
-import { createDataPart } from '../extension-api';
-import { episodeEntryText, toEpisodeRecordInputs } from './episodes';
-import { collectEpisodicHistory } from './history-compression';
+import { collectActivityHistory } from './history-projection';
 
 vi.mock('@/session/chat/extensions/time/system-prompt.md', () => ({
   default: 'Time.',
@@ -72,20 +71,20 @@ function toolMessage(id: string, toolName = 'doWork'): ExtendedUIMessage {
 
 /** Line texts of the episode records collected after `cursor`. */
 function collectTexts(history: ExtendedUIMessage[], cursor: string | null) {
-  const result = collectEpisodicHistory(history, cursor);
-  const texts = toEpisodeRecordInputs(result.messages).map((input) =>
-    episodeEntryText({ kind: 'record', v: 1, at: '', ...input }),
+  const result = collectActivityHistory(history, cursor);
+  const texts = result.messages.map(
+    (message) => renderFittedMessage(message).text,
   );
   return { texts, cursor: result.cursor };
 }
 
-describe('collectEpisodicHistory', () => {
+describe('collectActivityHistory', () => {
   it('returns records and advances the cursor', () => {
     const history = [
       textMessage('user', 'ignored', 'u1'),
       textMessage('assistant', 'answer', 'a1'),
     ];
-    expect(collectEpisodicHistory(history, null)).toEqual({
+    expect(collectActivityHistory(history, null)).toEqual({
       messages: [
         {
           id: 'a1',
@@ -107,20 +106,16 @@ describe('collectEpisodicHistory', () => {
         text: `${index}-${'x'.repeat(500)}`,
       })),
     };
-    const [message] = collectEpisodicHistory([longParts], null).messages;
+    const [message] = collectActivityHistory([longParts], null).messages;
     expect(message?.omittedRecords).toBeGreaterThan(0);
-    const inputs = toEpisodeRecordInputs([message!]);
-    expect(inputs.slice(0, -1).some((input) => input.omittedRecords)).toBe(
-      false,
-    );
-    expect(inputs.at(-1)?.omittedRecords).toBe(message?.omittedRecords);
+    expect(renderFittedMessage(message!).text).toMatch(/more parts/);
     expect(collectTexts([longParts], null).texts.join(RECORD_SEPARATOR)).toBe(
       renderFittedMessage(message!).text,
     );
   });
 
   it('uses placeholders for media', () => {
-    const [message] = collectEpisodicHistory(
+    const [message] = collectActivityHistory(
       [contextMessage('ctx')],
       null,
     ).messages;

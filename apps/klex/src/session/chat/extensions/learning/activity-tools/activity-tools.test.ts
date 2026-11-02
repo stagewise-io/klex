@@ -1,12 +1,9 @@
 import type { Tool } from 'ai';
 import { describe, expect, it, vi } from 'vitest';
 
-import {
-  type EpisodeFeed,
-  EpisodePageReadError,
-} from '@/session/chat/extensions/memory/episodes';
+import type { ActivityHistory } from '@/activity-history';
 
-import { createEpisodeInvestigation } from './episode-tools';
+import { createActivityInvestigation } from './activity-tools';
 
 vi.mock('@/session/chat/extensions/time/system-prompt.md', () => ({
   default: '',
@@ -14,7 +11,7 @@ vi.mock('@/session/chat/extensions/time/system-prompt.md', () => ({
 
 function fixture() {
   const controller = new AbortController();
-  const readPage = vi.fn<EpisodeFeed['readPage']>(async (id, options) => ({
+  const readPage = vi.fn<ActivityHistory['readPage']>(async (id, options) => ({
     id,
     text: 'x'.repeat(options.limit),
     offset: options.offset,
@@ -24,7 +21,7 @@ function fixture() {
     startedAt: 'a',
     endedAt: 'b',
   }));
-  const search = vi.fn<EpisodeFeed['search']>(async (query, options) => ({
+  const search = vi.fn<ActivityHistory['search']>(async (query, options) => ({
     matches: Array.from({ length: options.limit }, (_, i) => ({
       id: `found-${i}`,
       snippet: query,
@@ -34,20 +31,26 @@ function fixture() {
     nextOffset: 1,
     truncated: true,
   }));
-  const feed: EpisodeFeed = {
+  const feed: ActivityHistory = {
     isAvailable: () => true,
     subscribe: () => () => undefined,
-    listCompleted: async () => [],
-    listLatestCompleted: async () => [],
+    manifest: async () => [],
+    latest: async () => [],
     listNeighbors: async () => [
-      { id: '2026-10-06/2-12-00.jsonl', date: '2026-10-06', index: 2 },
+      {
+        id: 'neighbor',
+        ordinal: 2,
+        persistedAt: '2026-10-06T12:00:00Z',
+        bytes: 10,
+        revision: 'test',
+      },
     ],
     compareIds: (a, b) => a.localeCompare(b),
-    read: async () => null,
+    readPending: async () => null,
     readPage,
     search,
   };
-  const investigation = createEpisodeInvestigation(
+  const investigation = createActivityInvestigation(
     feed,
     controller.signal,
     'primary',
@@ -69,15 +72,21 @@ describe('episode investigation', () => {
   it('exposes only read-only tools and treats listings as no evidence', async () => {
     const { investigation, execute } = fixture();
     expect(Object.keys(investigation.tools).sort()).toEqual([
-      'listEpisodeNeighbors',
-      'readEpisode',
-      'searchEpisodes',
+      'listActivityNeighbors',
+      'readActivity',
+      'searchActivities',
     ]);
     expect(
-      await execute('listEpisodeNeighbors', { id: 'primary', count: 5 }),
+      await execute('listActivityNeighbors', { id: 'primary', count: 5 }),
     ).toEqual({
-      episodes: [
-        { id: '2026-10-06/2-12-00.jsonl', date: '2026-10-06', index: 2 },
+      activities: [
+        {
+          id: 'neighbor',
+          ordinal: 2,
+          persistedAt: '2026-10-06T12:00:00Z',
+          bytes: 10,
+          revision: 'test',
+        },
       ],
     });
     expect([...investigation.evidence]).toEqual(['primary']);
@@ -86,7 +95,7 @@ describe('episode investigation', () => {
     const { execute, readPage, investigation } = fixture();
     const results = await Promise.all(
       Array.from({ length: 8 }, (_, i) =>
-        execute('readEpisode', { id: `extra-${i}`, offset: 0, limit: 12_000 }),
+        execute('readActivity', { id: `extra-${i}`, offset: 0, limit: 12_000 }),
       ),
     );
     expect(readPage).toHaveBeenCalledTimes(5);
@@ -126,11 +135,11 @@ describe('episode investigation', () => {
           endedAt: null,
         }));
       await Promise.resolve(
-        execute('readEpisode', { id: 'bad', offset: 0, limit: 100 }),
+        execute('readActivity', { id: 'bad', offset: 0, limit: 100 }),
       ).catch(() => undefined);
       for (let index = 0; index < 6; index++) {
         expect(
-          await execute('readEpisode', {
+          await execute('readActivity', {
             id: `valid-${index}`,
             offset: 0,
             limit: 100,
@@ -142,51 +151,46 @@ describe('episode investigation', () => {
     },
   );
 
-  it.each([0, 100_000])(
-    'refunds unused read budgets after failure with %i scanned bytes',
-    async (scannedBytes) => {
-      const { execute, readPage, investigation } = fixture();
-      readPage.mockRejectedValueOnce(
-        new EpisodePageReadError(new Error('EIO'), scannedBytes),
-      );
-      await expect(
-        execute('readEpisode', { id: 'bad', offset: 0, limit: 12_000 }),
-      ).rejects.toThrow();
-      for (let index = 0; index < 5; index++) {
-        expect(
-          await execute('readEpisode', {
-            id: `valid-${index}`,
-            offset: 0,
-            limit: 12_000,
-          }),
-        ).toMatchObject({ status: 'ok' });
-      }
+  it('refunds unused read budgets after an atomic query failure', async () => {
+    const { execute, readPage, investigation } = fixture();
+    readPage.mockRejectedValueOnce(new Error('SQLite query failed'));
+    await expect(
+      execute('readActivity', { id: 'bad', offset: 0, limit: 12_000 }),
+    ).rejects.toThrow();
+    for (let index = 0; index < 5; index++) {
       expect(
-        readPage.mock.calls.slice(1).map(([, options]) => options.limit),
-      ).toEqual([12_000, 12_000, 12_000, 12_000, 12_000]);
-      expect(investigation.evidence.has('bad')).toBe(false);
-    },
-  );
+        await execute('readActivity', {
+          id: `valid-${index}`,
+          offset: 0,
+          limit: 12_000,
+        }),
+      ).toMatchObject({ status: 'ok' });
+    }
+    expect(
+      readPage.mock.calls.slice(1).map(([, options]) => options.limit),
+    ).toEqual([12_000, 12_000, 12_000, 12_000, 12_000]);
+    expect(investigation.evidence.has('bad')).toBe(false);
+  });
 
-  it.each(['readEpisode', 'searchEpisodes'])(
-    'charges only scanned bytes after a failed %s call',
+  it.each(['readActivity', 'searchActivities'])(
+    'refunds byte reservations after an atomic failed %s call',
     async (tool) => {
       const { execute, readPage, search } = fixture();
-      const error = new EpisodePageReadError(new Error('EIO'), 100_000);
-      if (tool === 'readEpisode') readPage.mockRejectedValueOnce(error);
+      const error = new Error('SQLite query failed');
+      if (tool === 'readActivity') readPage.mockRejectedValueOnce(error);
       else search.mockRejectedValueOnce(error);
       await expect(
         execute(
           tool,
-          tool === 'readEpisode'
+          tool === 'readActivity'
             ? { id: 'bad', offset: 0, limit: 12_000 }
             : { query: 'bad', offset: 0 },
         ),
       ).rejects.toThrow();
       expect(
-        await execute('searchEpisodes', { query: 'valid', offset: 0 }),
+        await execute('searchActivities', { query: 'valid', offset: 0 }),
       ).toMatchObject({ status: 'ok' });
-      expect(search.mock.lastCall?.[1]).toMatchObject({ maxBytes: 1_900_000 });
+      expect(search.mock.lastCall?.[1]).toMatchObject({ maxBytes: 2_000_000 });
     },
   );
 
@@ -194,11 +198,11 @@ describe('episode investigation', () => {
     const { execute, readPage, search } = fixture();
     search.mockRejectedValueOnce(new Error('listing failed'));
     await expect(
-      execute('searchEpisodes', { query: 'bad', offset: 0 }),
+      execute('searchActivities', { query: 'bad', offset: 0 }),
     ).rejects.toThrow();
     for (let index = 0; index < 5; index++)
       expect(
-        await execute('readEpisode', {
+        await execute('readActivity', {
           id: `valid-${index}`,
           offset: 0,
           limit: 12_000,
@@ -216,25 +220,25 @@ describe('episode investigation', () => {
       resolvePending = resolve;
     });
     readPage.mockResolvedValueOnce(null).mockReturnValueOnce(pending);
-    const first = execute('readEpisode', {
+    const first = execute('readActivity', {
       id: 'shared',
       offset: 0,
       limit: 100,
     });
-    const second = execute('readEpisode', {
+    const second = execute('readActivity', {
       id: 'shared',
       offset: 100,
       limit: 100,
     });
     await first;
     for (let index = 0; index < 5; index++)
-      await execute('readEpisode', {
+      await execute('readActivity', {
         id: `valid-${index}`,
         offset: 0,
         limit: 100,
       });
     expect(
-      await execute('readEpisode', { id: 'seventh', offset: 0, limit: 100 }),
+      await execute('readActivity', { id: 'seventh', offset: 0, limit: 100 }),
     ).toEqual({ status: 'budget-exhausted' });
     resolvePending(null);
     await second;
@@ -244,13 +248,13 @@ describe('episode investigation', () => {
   it('shares the call budget across same-episode pages and reuse', async () => {
     const { execute, readPage, investigation } = fixture();
     for (let i = 0; i < 8; i++)
-      await execute('readEpisode', {
+      await execute('readActivity', {
         id: 'primary',
         offset: i * 100,
         limit: 100,
       });
     expect(
-      await execute('readEpisode', { id: 'primary', offset: 800, limit: 100 }),
+      await execute('readActivity', { id: 'primary', offset: 800, limit: 100 }),
     ).toEqual({ status: 'budget-exhausted' });
     expect(readPage).toHaveBeenCalledTimes(8);
     expect([...investigation.evidence]).toEqual(['primary']);
@@ -258,12 +262,12 @@ describe('episode investigation', () => {
   it('counts snippets as evidence and returns partial search metadata', async () => {
     const { execute, search, investigation } = fixture();
     expect(
-      await execute('searchEpisodes', { query: 'fix', offset: 0 }),
+      await execute('searchActivities', { query: 'fix', offset: 0 }),
     ).toMatchObject({ status: 'ok', truncated: true, nextOffset: 1 });
     expect(search).toHaveBeenCalledTimes(1);
     expect(investigation.evidence.size).toBe(7);
     expect(
-      await execute('readEpisode', { id: 'seventh', offset: 0, limit: 100 }),
+      await execute('readActivity', { id: 'seventh', offset: 0, limit: 100 }),
     ).toEqual({ status: 'budget-exhausted' });
   });
   it('does not charge the primary episode as an additional search result', async () => {
@@ -284,10 +288,10 @@ describe('episode investigation', () => {
       startedAt: 'a',
       endedAt: 'b',
     }));
-    await execute('searchEpisodes', { query: 'fix', offset: 0 });
+    await execute('searchActivities', { query: 'fix', offset: 0 });
     for (let index = 0; index < 6; index++)
       expect(
-        await execute('readEpisode', {
+        await execute('readActivity', {
           id: `extra-${index}`,
           offset: 0,
           limit: 100,
@@ -296,7 +300,7 @@ describe('episode investigation', () => {
     expect(readPage).toHaveBeenCalledTimes(6);
     expect(investigation.evidence.size).toBe(7);
     expect(
-      await execute('readEpisode', { id: 'seventh', offset: 0, limit: 100 }),
+      await execute('readActivity', { id: 'seventh', offset: 0, limit: 100 }),
     ).toEqual({ status: 'budget-exhausted' });
   });
 
@@ -316,11 +320,11 @@ describe('episode investigation', () => {
       };
     });
     expect(
-      await execute('readEpisode', { id: 'late', offset: 0, limit: 100 }),
+      await execute('readActivity', { id: 'late', offset: 0, limit: 100 }),
     ).toEqual({ status: 'cancelled' });
     expect(investigation.evidence.has('late')).toBe(false);
     expect(
-      await execute('readEpisode', { id: 'later', offset: 0, limit: 100 }),
+      await execute('readActivity', { id: 'later', offset: 0, limit: 100 }),
     ).toEqual({ status: 'cancelled' });
     expect(readPage).toHaveBeenCalledTimes(1);
   });

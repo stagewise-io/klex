@@ -1,11 +1,9 @@
 import { type Client, createClient } from '@libsql/client';
 
 import type { SqliteStoreDefinition } from '@/local-data';
+import { LOCAL_DATA_MIGRATIONS } from '@/local-data-migrations';
 
-import type {
-  EpisodicEntryLocation,
-  EpisodicEntryStore,
-} from './episode-reader';
+import type { ActivityEntry, ActivityEntryStore } from './activity-reader';
 
 export type SearchIndexStatus = 'ready' | 'partial' | 'rebuilding';
 
@@ -15,51 +13,51 @@ export const EPISODIC_SEARCH_INDEX_STORE_DEFINITION: SqliteStoreDefinition = {
   relativePath: 'extensions/io.stagewise/memory/episodic-search.sqlite',
   required: false,
   createIfMissing: true,
-  schemaVersion: 1,
-  compatibilityVersion: 1,
-  minimumKlexVersion: '0.9.2',
+  schemaVersion: 2,
+  compatibilityVersion: 2,
+  minimumKlexVersion: '0.29.0',
   initSql: `
     CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
-    CREATE TABLE IF NOT EXISTS episodic_files (
-      relative_file TEXT PRIMARY KEY,
-      size INTEGER NOT NULL,
-      mtime_ms REAL NOT NULL
+    CREATE TABLE IF NOT EXISTS activity_sources (
+      source_id TEXT PRIMARY KEY,
+      byte_size INTEGER NOT NULL,
+      revision TEXT NOT NULL
     );
-    CREATE TABLE IF NOT EXISTS episodic_vocabulary (
+    CREATE TABLE IF NOT EXISTS activity_vocabulary (
       term TEXT PRIMARY KEY,
       frequency INTEGER NOT NULL
     );
-    CREATE TABLE IF NOT EXISTS episodic_term_trigrams (
+    CREATE TABLE IF NOT EXISTS activity_term_trigrams (
       trigram TEXT NOT NULL,
-      term TEXT NOT NULL REFERENCES episodic_vocabulary(term) ON DELETE CASCADE,
+      term TEXT NOT NULL REFERENCES activity_vocabulary(term) ON DELETE CASCADE,
       PRIMARY KEY (trigram, term)
     );
-    CREATE INDEX IF NOT EXISTS episodic_term_trigrams_lookup
-      ON episodic_term_trigrams (trigram);
-    CREATE TABLE IF NOT EXISTS episodic_file_terms (
-      relative_file TEXT NOT NULL,
+    CREATE INDEX IF NOT EXISTS activity_term_trigrams_lookup
+      ON activity_term_trigrams (trigram);
+    CREATE TABLE IF NOT EXISTS activity_source_terms (
+      source_id TEXT NOT NULL,
       term TEXT NOT NULL,
       frequency INTEGER NOT NULL,
-      PRIMARY KEY (relative_file, term)
+      PRIMARY KEY (source_id, term)
     );
-    CREATE VIRTUAL TABLE IF NOT EXISTS episodic_entries USING fts5(
+    CREATE VIRTUAL TABLE IF NOT EXISTS activity_entries USING fts5(
       text,
       normalized_text UNINDEXED,
-      relative_file UNINDEXED,
+      source_id UNINDEXED,
       entry_ordinal UNINDEXED,
       occurred_at UNINDEXED,
       tokenize = 'porter unicode61'
     );
   `,
-  migrations: [],
+  migrations: LOCAL_DATA_MIGRATIONS['episodic-search-index'].migrations,
   validate: async (client) => {
     const columns = await client.execute(
-      "PRAGMA table_info('episodic_entries')",
+      "PRAGMA table_info('activity_entries')",
     );
     const required = new Set([
       'text',
       'normalized_text',
-      'relative_file',
+      'source_id',
       'entry_ordinal',
       'occurred_at',
     ]);
@@ -82,10 +80,10 @@ export const EPISODIC_SEARCH_INDEX_STORE_DEFINITION: SqliteStoreDefinition = {
       }),
     );
     for (const table of [
-      'episodic_files',
-      'episodic_vocabulary',
-      'episodic_term_trigrams',
-      'episodic_file_terms',
+      'activity_sources',
+      'activity_vocabulary',
+      'activity_term_trigrams',
+      'activity_source_terms',
     ]) {
       if (!tableNames.has(table))
         throw new Error(`Episodic search index is missing table: ${table}`);
@@ -105,7 +103,7 @@ export interface SearchHit {
 
 interface IndexedRow {
   rowId: number;
-  relativeFile: string;
+  sourceId: string;
   entryOrdinal: number;
   occurredAt: string;
   text: string;
@@ -122,7 +120,7 @@ export class EpisodicSearchIndex {
 
   constructor(
     private readonly databasePath: string,
-    private readonly store: EpisodicEntryStore,
+    private readonly store: ActivityEntryStore,
   ) {}
 
   getStatus(): SearchIndexStatus {
@@ -163,46 +161,44 @@ export class EpisodicSearchIndex {
     if (!this.client) throw new Error('Episodic search index is not started');
     this.status = 'rebuilding';
     try {
-      const files = await this.store.listFiles();
+      const sources = await this.store.listSources();
       const existing = await this.client.execute(
-        'SELECT relative_file, size, mtime_ms FROM episodic_files',
+        'SELECT source_id, byte_size, revision FROM activity_sources',
       );
-      const existingFiles = new Map(
+      const existingSources = new Map(
         existing.rows.flatMap((row) => {
-          const path = stringValue(row.relative_file);
-          const size = numberValue(row.size);
-          const mtimeMs = numberValue(row.mtime_ms);
-          return path && size !== null && mtimeMs !== null
-            ? [[path, { size, mtimeMs }] as const]
+          const path = stringValue(row.source_id);
+          const bytes = numberValue(row.byte_size);
+          const revision = stringValue(row.revision);
+          return path && bytes !== null && revision
+            ? [[path, { bytes, revision }] as const]
             : [];
         }),
       );
-      const currentFiles = new Set(files.map((file) => file.relativeFile));
+      const currentSources = new Set(sources.map((source) => source.id));
       await this.client.execute('BEGIN');
       try {
-        for (const oldFile of existingFiles.keys()) {
-          if (currentFiles.has(oldFile)) continue;
-          await this.removeFileVocabulary(oldFile);
-          await this.deleteFile(oldFile);
+        for (const oldSource of existingSources.keys()) {
+          if (currentSources.has(oldSource)) continue;
+          await this.removeSourceVocabulary(oldSource);
+          await this.deleteSource(oldSource);
         }
-        for (const file of files) {
-          const previous = existingFiles.get(file.relativeFile);
+        for (const source of sources) {
+          const previous = existingSources.get(source.id);
           if (
-            previous &&
-            previous.size === file.size &&
-            previous.mtimeMs === file.mtimeMs
-          ) {
+            previous?.bytes === source.bytes &&
+            previous.revision === source.revision
+          )
             continue;
-          }
-          await this.removeFileVocabulary(file.relativeFile);
-          await this.deleteFile(file.relativeFile);
+          await this.removeSourceVocabulary(source.id);
+          await this.deleteSource(source.id);
+          const entries = await this.store.read(source.id);
           await this.client.execute({
-            sql: 'INSERT INTO episodic_files (relative_file, size, mtime_ms) VALUES (?, ?, ?)',
-            args: [file.relativeFile, file.size, file.mtimeMs],
+            sql: 'INSERT INTO activity_sources (source_id, byte_size, revision) VALUES (?, ?, ?)',
+            args: [source.id, source.bytes, source.revision],
           });
-          const entries = await this.store.read(file.relativeFile);
           for (const entry of entries) await this.insert(entry);
-          await this.indexVocabulary(file.relativeFile, entries);
+          await this.indexVocabulary(source.id, entries);
         }
         await this.client.execute('COMMIT');
         this.status = 'ready';
@@ -232,8 +228,8 @@ export class EpisodicSearchIndex {
     const placeholders = trigrams.map(() => '?').join(', ');
     const result = await this.client.execute({
       sql: `SELECT v.term, v.frequency, COUNT(*) AS overlap
-        FROM episodic_vocabulary v
-        JOIN episodic_term_trigrams t ON t.term = v.term
+        FROM activity_vocabulary v
+        JOIN activity_term_trigrams t ON t.term = v.term
         WHERE t.trigram IN (${placeholders})
         GROUP BY v.term
         ORDER BY overlap DESC, v.frequency DESC
@@ -321,7 +317,7 @@ export class EpisodicSearchIndex {
 
   private async hasTerm(term: string): Promise<boolean> {
     const result = await this.client?.execute({
-      sql: 'SELECT 1 FROM episodic_vocabulary WHERE term = ? LIMIT 1',
+      sql: 'SELECT 1 FROM activity_vocabulary WHERE term = ? LIMIT 1',
       args: [term],
     });
     return (result?.rows.length ?? 0) > 0;
@@ -337,47 +333,50 @@ export class EpisodicSearchIndex {
     const expression = ftsQuery(contentQuery);
     if (!expression) return [];
     const result = await this.client.execute({
-      sql: `SELECT rowid, relative_file, entry_ordinal, occurred_at, text,
-        bm25(episodic_entries) AS rank,
-        snippet(episodic_entries, 0, '[', ']', '…', 36) AS snippet
-        FROM episodic_entries
-        WHERE episodic_entries MATCH ?
+      sql: `SELECT rowid, source_id, entry_ordinal, occurred_at, text,
+        bm25(activity_entries) AS rank,
+        snippet(activity_entries, 0, '[', ']', '…', 36) AS snippet
+        FROM activity_entries
+        WHERE activity_entries MATCH ?
         ORDER BY ${impliesRecency(query) ? 'occurred_at DESC, rank' : 'rank'}
         LIMIT ?`,
       args: [expression, Math.max(1, Math.min(limit, 20))],
     });
-    const hits = result.rows.flatMap((row) => {
+    const hits: SearchHit[] = [];
+    for (const row of result.rows) {
       const rowId = numberValue(row.rowid);
-      const relativeFile = stringValue(row.relative_file);
+      const sourceId = stringValue(row.source_id);
       const entryOrdinal = numberValue(row.entry_ordinal);
       const occurredAt = stringValue(row.occurred_at);
       const text = stringValue(row.text);
       const rank = numberValue(row.rank) ?? 0;
+      if (rowId === null || !sourceId || entryOrdinal === null || !occurredAt)
+        continue;
+      // The index is disposable: repairs, retention and rollback may have
+      // invalidated it since reconciliation. Never expose its stale text.
+      const current = await this.store.read(sourceId);
       if (
-        rowId === null ||
-        !relativeFile ||
-        entryOrdinal === null ||
-        !occurredAt
+        !current.some(
+          (entry) => entry.entryOrdinal === entryOrdinal && entry.text === text,
+        )
       )
-        return [];
+        continue;
       const handle = `hit_${++this.handleCounter}`;
       this.handles.set(handle, {
         rowId,
-        relativeFile,
+        sourceId,
         entryOrdinal,
         occurredAt,
         text,
       });
       this.handleOwners.set(handle, owner);
-      return [
-        {
-          handle,
-          occurredAt,
-          snippet: stringValue(row.snippet) || text.slice(0, 300),
-          scoreBand: scoreBand(rank, query, text),
-        },
-      ];
-    });
+      hits.push({
+        handle,
+        occurredAt,
+        snippet: stringValue(row.snippet) || text.slice(0, 300),
+        scoreBand: scoreBand(rank, query, text),
+      });
+    }
     return hits;
   }
 
@@ -401,14 +400,14 @@ export class EpisodicSearchIndex {
     before = 1,
     after = 1,
     owner = 'default',
-  ): Promise<EpisodicEntryLocation[]> {
-    const result: EpisodicEntryLocation[] = [];
+  ): Promise<ActivityEntry[]> {
+    const result: ActivityEntry[] = [];
     for (const handle of handles) {
       const row = this.handles.get(handle);
       if (!row || this.handleOwners.get(handle) !== owner) continue;
       const entries = await this.store.readNeighbors(
         {
-          relativeFile: row.relativeFile,
+          sourceId: row.sourceId,
           entryOrdinal: row.entryOrdinal,
           occurredAt: row.occurredAt,
           text: row.text,
@@ -429,8 +428,8 @@ export class EpisodicSearchIndex {
   }
 
   private async indexVocabulary(
-    relativeFile: string,
-    entries: readonly EpisodicEntryLocation[],
+    sourceId: string,
+    entries: readonly ActivityEntry[],
   ): Promise<void> {
     if (!this.client) return;
     const frequencies = new Map<string, number>();
@@ -440,68 +439,68 @@ export class EpisodicSearchIndex {
     }
     for (const [term, frequency] of frequencies) {
       await this.client.execute({
-        sql: 'INSERT INTO episodic_file_terms (relative_file, term, frequency) VALUES (?, ?, ?)',
-        args: [relativeFile, term, frequency],
+        sql: 'INSERT INTO activity_source_terms (source_id, term, frequency) VALUES (?, ?, ?)',
+        args: [sourceId, term, frequency],
       });
       await this.client.execute({
-        sql: `INSERT INTO episodic_vocabulary (term, frequency) VALUES (?, ?)
+        sql: `INSERT INTO activity_vocabulary (term, frequency) VALUES (?, ?)
           ON CONFLICT(term) DO UPDATE SET frequency = frequency + excluded.frequency`,
         args: [term, frequency],
       });
       for (const trigram of trigramsFor(term))
         await this.client.execute({
-          sql: 'INSERT OR IGNORE INTO episodic_term_trigrams (trigram, term) VALUES (?, ?)',
+          sql: 'INSERT OR IGNORE INTO activity_term_trigrams (trigram, term) VALUES (?, ?)',
           args: [trigram, term],
         });
     }
   }
 
-  private async removeFileVocabulary(relativeFile: string): Promise<void> {
+  private async removeSourceVocabulary(sourceId: string): Promise<void> {
     if (!this.client) return;
     const terms = await this.client.execute({
-      sql: 'SELECT term, frequency FROM episodic_file_terms WHERE relative_file = ?',
-      args: [relativeFile],
+      sql: 'SELECT term, frequency FROM activity_source_terms WHERE source_id = ?',
+      args: [sourceId],
     });
     for (const row of terms.rows) {
       const term = stringValue(row.term);
       const frequency = numberValue(row.frequency) ?? 0;
       if (!term) continue;
       await this.client.execute({
-        sql: 'UPDATE episodic_vocabulary SET frequency = frequency - ? WHERE term = ?',
+        sql: 'UPDATE activity_vocabulary SET frequency = frequency - ? WHERE term = ?',
         args: [frequency, term],
       });
       await this.client.execute({
-        sql: 'DELETE FROM episodic_term_trigrams WHERE term = ? AND NOT EXISTS (SELECT 1 FROM episodic_file_terms WHERE term = ? AND relative_file <> ?)',
-        args: [term, term, relativeFile],
+        sql: 'DELETE FROM activity_term_trigrams WHERE term = ? AND NOT EXISTS (SELECT 1 FROM activity_source_terms WHERE term = ? AND source_id <> ?)',
+        args: [term, term, sourceId],
       });
     }
     await this.client.execute({
-      sql: 'DELETE FROM episodic_vocabulary WHERE frequency <= 0',
+      sql: 'DELETE FROM activity_vocabulary WHERE frequency <= 0',
     });
     await this.client.execute({
-      sql: 'DELETE FROM episodic_file_terms WHERE relative_file = ?',
-      args: [relativeFile],
+      sql: 'DELETE FROM activity_source_terms WHERE source_id = ?',
+      args: [sourceId],
     });
   }
 
-  private async deleteFile(relativeFile: string): Promise<void> {
+  private async deleteSource(sourceId: string): Promise<void> {
     await this.client?.execute({
-      sql: 'DELETE FROM episodic_entries WHERE relative_file = ?',
-      args: [relativeFile],
+      sql: 'DELETE FROM activity_entries WHERE source_id = ?',
+      args: [sourceId],
     });
     await this.client?.execute({
-      sql: 'DELETE FROM episodic_files WHERE relative_file = ?',
-      args: [relativeFile],
+      sql: 'DELETE FROM activity_sources WHERE source_id = ?',
+      args: [sourceId],
     });
   }
 
-  private async insert(entry: EpisodicEntryLocation): Promise<void> {
+  private async insert(entry: ActivityEntry): Promise<void> {
     await this.client?.execute({
-      sql: 'INSERT INTO episodic_entries (text, normalized_text, relative_file, entry_ordinal, occurred_at) VALUES (?, ?, ?, ?, ?)',
+      sql: 'INSERT INTO activity_entries (text, normalized_text, source_id, entry_ordinal, occurred_at) VALUES (?, ?, ?, ?, ?)',
       args: [
         entry.text,
         normalizeForSearch(entry.text),
-        entry.relativeFile,
+        entry.sourceId,
         entry.entryOrdinal,
         entry.occurredAt,
       ],

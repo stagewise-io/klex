@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createLogger } from '@stagewise/logger';
 
+import { createActivityFixture } from '@/activity-history/test-support';
 import {
   initializeSqliteStore,
   type SqliteStoreDefinition,
@@ -60,6 +61,7 @@ vi.mock('./retrieval-tools', () => ({
 
 const logging = createLogger({ name: 'retrieval-test', type: 'hidden' });
 const directories: string[] = [];
+const historyFixtures: Awaited<ReturnType<typeof createActivityFixture>>[] = [];
 const config = {
   recallAnswerWindowMs: 100,
 } satisfies Partial<MemoryRetrievalConfig>;
@@ -114,6 +116,8 @@ async function createHarness(options?: {
     children.push(child);
     return child;
   });
+  const fixture = await createActivityFixture();
+  historyFixtures.push(fixture);
   const coordinator = createMemoryRetrievalCoordinator(
     {
       logger: logging,
@@ -131,6 +135,7 @@ async function createHarness(options?: {
       createChildSession: options?.createChildSession ?? createChildSessionMock,
       inbox: { sendMessage: delivered } as never,
     },
+    fixture.activities,
     { ...config, ...options?.config },
   );
   if (options?.start !== false) await coordinator.start();
@@ -155,6 +160,9 @@ beforeEach(() => {
 
 afterEach(async () => {
   vi.useRealTimers();
+  await Promise.all(
+    historyFixtures.splice(0).map((fixture) => fixture.close()),
+  );
   await Promise.all(
     directories
       .splice(0)

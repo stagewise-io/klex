@@ -27,13 +27,13 @@ function createHarness(config: Partial<MemoryRetrievalConfig> = {}) {
     getState: vi.fn(() => ({ status: 'ready' })),
     readHandles: vi.fn(async () => [
       {
-        relativeFile: '2026-01-02/1-14-03.jsonl',
+        sourceId: 'history:test-source',
         entryOrdinal: 0,
         occurredAt: '2026-01-02T14:03:00Z',
         text: 'your_action sendMessage succeeded\n¦chatId: C123\n¦text: hello',
       },
       {
-        relativeFile: '2026-01-02/1-14-03.jsonl',
+        sourceId: 'history:test-source',
         entryOrdinal: 1,
         occurredAt: '2026-01-02T14:04:00Z',
         text: 'context slack\n¦from: U42',

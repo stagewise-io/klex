@@ -4,16 +4,20 @@ import type { ToolSet } from 'ai';
 
 import type { ModuleLogger } from '@stagewise/logger';
 
+import {
+  type ActivityHistory,
+  type ActivityLimits,
+  activityOrdinal,
+} from '@/activity-history';
 import type {
   Extension,
   ExtensionDeps,
 } from '@/session/chat/extensions/extension-api';
-import type { EpisodeFeed } from '@/session/chat/extensions/memory';
 import { SessionInboxUrgency } from '@/session/inbox';
 import type { ChildSessionHandle } from '@/session/types';
 import type { Skill, SkillNamespaceHandle } from '@/skills';
 
-import { createEpisodeInvestigation } from './episode-tools';
+import { createActivityInvestigation } from './activity-tools';
 import {
   CONSOLIDATE_CHANGE_WEIGHT,
   FAILURE_RETRY_DELAYS_MS,
@@ -47,7 +51,8 @@ import {
 import { createLearningSubmissionTools } from './submission-tools';
 
 export interface LearningWorkerOptions {
-  episodes: EpisodeFeed;
+  activities: ActivityHistory;
+  getLimits: () => ActivityLimits;
   /** The learning namespace of the core skill registry. */
   skills: SkillNamespaceHandle;
   /** Cursor and consolidation bookkeeping; skill usage lives in the registry. */
@@ -79,6 +84,7 @@ export interface LearningWorkerIntrospection extends Record<string, unknown> {
 
 export interface LearningWorker {
   start(): void;
+  setStepActive(active: boolean): void;
   close(): Promise<void>;
   /** One extraction pass; joins the in-flight run instead of overlapping. */
   runOnce(): Promise<LearningRunResult>;
@@ -88,12 +94,21 @@ export interface LearningWorker {
 type EpisodeOutcome = 'changed' | 'unchanged' | 'deferred' | 'stop';
 
 /**
- * Agent-wide background loop: reads finished episodes in order, turns
+ * Agent-wide background loop: reads finished activities in order, turns
  * lessons into skills, and periodically consolidates the skill set.
  * Logs names, counts, ids, and reasons only, never prompts or episode text.
  */
 class LearningWorkerModule implements LearningWorker {
   private timer: NodeJS.Timeout | undefined;
+  private idleTimer: NodeJS.Timeout | undefined;
+  private stepActive = false;
+  private lastActivityAt = 0;
+
+  setStepActive(active: boolean): void {
+    this.stepActive = active;
+    this.lastActivityAt = this.now();
+    if (!active) this.wake();
+  }
   private unsubscribe: (() => void) | undefined;
   private dirty = false;
   private pumping = false;
@@ -113,12 +128,15 @@ class LearningWorkerModule implements LearningWorker {
 
   start(): void {
     if (this.unsubscribe || this.closed) return;
-    this.unsubscribe = this.options.episodes.subscribe(() => this.wake());
+    this.unsubscribe = this.options.activities.subscribe(() => this.wake());
+    this.idleTimer = setInterval(() => this.wake(), 30_000);
+    this.idleTimer.unref();
     this.wake();
   }
 
   async close(): Promise<void> {
     this.closed = true;
+    if (this.idleTimer) clearInterval(this.idleTimer);
     this.unsubscribe?.();
     this.unsubscribe = undefined;
     this.abort?.abort();
@@ -216,23 +234,29 @@ class LearningWorkerModule implements LearningWorker {
   }
 
   private async runSteps(): Promise<LearningRunResult> {
-    const { episodes, state } = this.options;
-    if (!episodes.isAvailable()) return 'unavailable';
+    const { activities, state } = this.options;
+    if (!activities.isAvailable()) return 'unavailable';
     await this.backfillCursor();
     let result: LearningRunResult = 'idle';
     let characters = 0;
     while (!this.closed && characters < PRIMARY_PASS_CHARACTERS) {
-      const [ref] = await episodes.listCompleted(state.get().cursor, 1);
-      if (!ref || this.closed) break;
+      const pending = await activities.readPending(state.get().cursor, {
+        ...this.options.getLimits(),
+        active: this.stepActive,
+        lastActivityAt: this.lastActivityAt,
+        now: this.now(),
+      });
+      if (!pending || this.closed) break;
+      const ref = { id: pending.id };
       result = 'processed';
       let outcome: EpisodeOutcome;
       try {
-        const page = await episodes.readPage(ref.id, {
-          offset: 0,
-          limit: MAX_EPISODE_CHARACTERS,
-          maxBytes: 2_000_000,
-          tail: true,
-        });
+        const page = {
+          ...pending,
+          text: pending.text.slice(-MAX_EPISODE_CHARACTERS),
+          truncated:
+            pending.truncated || pending.text.length > MAX_EPISODE_CHARACTERS,
+        };
         characters += Math.max(MIN_EPISODE_CHARACTERS, page?.text.length ?? 0);
         outcome = await this.processEpisode(ref.id, false, page);
       } catch (error) {
@@ -264,18 +288,25 @@ class LearningWorkerModule implements LearningWorker {
   /**
    * Without a cursor, pins the backfill window by persisting the cursor
    * just before the newest `INITIAL_BACKFILL_EPISODES`. Later runs then
-   * continue from there instead of re-picking the newest episodes. A
+   * continue from there instead of re-picking the newest activities. A
    * recorded failure without a cursor means learning already started from
    * the beginning; re-pinning then could jump past the failed episode.
    */
   private async backfillCursor(): Promise<string | null> {
-    const { episodes, state } = this.options;
+    const { activities, state } = this.options;
     const { cursor, episodeFailures } = state.get();
+    if (cursor !== null && activityOrdinal(cursor) === null) {
+      const latest = (await activities.latest(1)).at(-1)?.id ?? null;
+      await state.update((draft) => {
+        draft.cursor = latest;
+        draft.episodeFailures = {};
+        draft.deferred = [];
+      });
+      return latest;
+    }
     if (cursor !== null) return cursor;
     if (Object.keys(episodeFailures).length > 0) return null;
-    const latest = await episodes.listLatestCompleted(
-      INITIAL_BACKFILL_EPISODES + 1,
-    );
+    const latest = await activities.latest(INITIAL_BACKFILL_EPISODES + 1);
     if (latest.length <= INITIAL_BACKFILL_EPISODES) return null;
     if (this.closed) return null;
     const start = latest[0]?.id ?? null;
@@ -288,7 +319,7 @@ class LearningWorkerModule implements LearningWorker {
   private async processEpisode(
     id: string,
     revisit = false,
-    supplied?: Awaited<ReturnType<EpisodeFeed['readPage']>>,
+    supplied?: Awaited<ReturnType<ActivityHistory['readPage']>>,
   ): Promise<EpisodeOutcome> {
     try {
       return await this.processEpisodeSteps(id, revisit, supplied);
@@ -306,12 +337,12 @@ class LearningWorkerModule implements LearningWorker {
   private async processEpisodeSteps(
     id: string,
     revisit: boolean,
-    supplied?: Awaited<ReturnType<EpisodeFeed['readPage']>>,
+    supplied?: Awaited<ReturnType<ActivityHistory['readPage']>>,
   ): Promise<EpisodeOutcome> {
-    const { episodes, skills, logger } = this.options;
+    const { activities, skills, logger } = this.options;
     const page =
       supplied === undefined
-        ? await episodes.readPage(id, {
+        ? await activities.readPage(id, {
             offset: 0,
             limit: MAX_EPISODE_CHARACTERS,
             maxBytes: 2_000_000,
@@ -353,10 +384,10 @@ class LearningWorkerModule implements LearningWorker {
     });
     const controller = new AbortController();
     this.abort = controller;
-    const investigation = createEpisodeInvestigation(
-      episodes,
+    const investigation = createActivityInvestigation(
+      activities,
       controller.signal,
-      id,
+      page.sourceIds ?? id,
     );
     let outcome: EpisodeOutcome = 'unchanged';
     const submission = createLearningSubmissionTools({
@@ -379,7 +410,20 @@ class LearningWorkerModule implements LearningWorker {
           outcome = 'deferred';
           return 0;
         }
-        const applied = await this.persist(batch.operations, id);
+        const operations = batch.operations.map((operation) =>
+          operation.op === 'delete'
+            ? operation
+            : {
+                ...operation,
+                evidenceEpisodes: [
+                  ...new Set([
+                    ...(page.sourceIds ?? [id]),
+                    ...(operation.evidenceEpisodes ?? []),
+                  ]),
+                ].slice(-6),
+              },
+        );
+        const applied = await this.persist(operations, id);
         outcome = applied > 0 ? 'changed' : 'unchanged';
         logger.info({ episode: id, applied }, 'Learned from episode');
         return applied;
@@ -423,11 +467,12 @@ class LearningWorkerModule implements LearningWorker {
   }
 
   private async revisitDeferred(): Promise<boolean> {
-    const { state, episodes, logger } = this.options;
+    const { state, activities, logger } = this.options;
     const cursor = state.get().cursor;
     if (!cursor) return true;
     for (const item of state.get().deferred) {
-      if (this.closed || episodes.compareIds(cursor, item.after) <= 0) continue;
+      if (this.closed || activities.compareIds(cursor, item.after) <= 0)
+        continue;
       if (item.attempts >= 3) {
         logger.debug(
           { episode: item.id },
@@ -466,7 +511,7 @@ class LearningWorkerModule implements LearningWorker {
     await this.options.state.update((draft) => {
       if (
         draft.cursor === null ||
-        this.options.episodes.compareIds(id, draft.cursor) > 0
+        this.options.activities.compareIds(id, draft.cursor) > 0
       ) {
         draft.cursor = id;
         draft.processedEpisodeCount += 1;
@@ -596,8 +641,8 @@ class LearningWorkerModule implements LearningWorker {
     });
     const controller = new AbortController();
     this.abort = controller;
-    const investigation = createEpisodeInvestigation(
-      this.options.episodes,
+    const investigation = createActivityInvestigation(
+      this.options.activities,
       controller.signal,
       null,
     );
@@ -716,11 +761,10 @@ class LearningWorkerModule implements LearningWorker {
     const candidates = [
       ...existing,
       ...merged,
-      ...(sourceEpisode ? [sourceEpisode] : []),
-      ...(operation.evidenceEpisodes ?? []),
+      ...(operation.evidenceEpisodes ?? (sourceEpisode ? [sourceEpisode] : [])),
     ];
     return [...new Set(candidates)]
-      .sort((left, right) => this.options.episodes.compareIds(left, right))
+      .sort((left, right) => this.options.activities.compareIds(left, right))
       .slice(-MAX_SOURCE_EPISODES);
   }
 

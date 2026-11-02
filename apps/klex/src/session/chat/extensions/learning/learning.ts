@@ -1,6 +1,6 @@
 import { join } from 'node:path';
 
-import type { EpisodeFeed } from '@/session/chat/extensions/memory';
+import type { ActivityHistory } from '@/activity-history';
 import { DEFAULT_SESSION_ID } from '@/session/types';
 import type { SkillNamespaceHandle } from '@/skills';
 
@@ -17,7 +17,7 @@ import { importLegacySkills } from './legacy-skill-import';
 export const LEARNING_EXTENSION_ID = 'io.stagewise/learning';
 
 export interface LearningExtOptions {
-  episodes: EpisodeFeed;
+  activities: ActivityHistory;
   /** Reads the current observed agent's soul; storage remains owned by soul. */
   getSoul: () => string | null;
 }
@@ -73,7 +73,8 @@ class LearningExtension implements Extension {
     }
     if (this.closed) return;
     const worker = createLearningWorker({
-      episodes: this.options.episodes,
+      activities: this.options.activities,
+      getLimits: () => this.deps.config.get().extensions.memory.episodes,
       skills,
       state: this.state,
       createChildSession: this.deps.createChildSession,
@@ -92,6 +93,14 @@ class LearningExtension implements Extension {
     });
     this.worker = worker;
     worker.start();
+  }
+
+  onStepStart(): void {
+    this.worker?.setStepActive(true);
+  }
+
+  onStepComplete(): void {
+    this.worker?.setStepActive(false);
   }
 
   async onClose(): Promise<void> {
@@ -149,7 +158,7 @@ class LearningExtensionFactory implements ExtensionFactory {
 }
 
 /**
- * Learns skills from finished memory episodes in the background and writes
+ * Learns skills from bounded canonical activity batches in the background and writes
  * them to the `learning` skill namespace. The default-session instance
  * imports pre-registry skills once before its worker starts.
  */

@@ -33,7 +33,7 @@ import {
   type ChatSessionDependencies,
   createChatSession,
 } from './chat-session';
-import { createSoulExt } from './extensions/soul';
+import { createSoulExt, createSoulExtGod } from './extensions/soul';
 import type { Turn, TurnDependencies } from './turn';
 import { BackoffManager } from './utils/backoff-manager';
 
@@ -138,6 +138,87 @@ it.each(['alone', 'before-soul', 'after-soul'] as const)(
       await session.close();
       await rm(directory, { recursive: true, force: true });
       createTurnMock.mockReset();
+    }
+  },
+);
+
+it.each(['standard', 'god', 'without-extension'] as const)(
+  'checks soul availability before realtime bootstrap in %s mode',
+  async (mode) => {
+    const directory = await mkdtemp(join(tmpdir(), 'klex-soul-realtime-'));
+    const value = klexConfigSchema.parse({});
+    const scope = (): IntrospectionScope => ({
+      path: [],
+      introspect: vi.fn(),
+      child: scope,
+      removeChild: vi.fn(),
+    });
+    const assemblePrompt = vi.fn(() => 'Additional instructions.');
+    const session = createChatSession({
+      logging: createLogger({ name: 'soul-realtime' }),
+      config: { get: () => value } as unknown as Config,
+      modelResolver: {} as never,
+      dataDirectory: directory,
+      mcp: null,
+      extensionFactories: [
+        ...(mode === 'standard' ? [createSoulExt] : []),
+        ...(mode === 'god' ? [createSoulExtGod] : []),
+        {
+          identifier: 'test/context-assembly',
+          create: () => ({ getSystemPromptPart: assemblePrompt }),
+        },
+      ],
+      introspectionScope: scope(),
+      sessionContext: { kind: 'default', name: 'main', sessionId: 'default' },
+      basePrompt: 'Test.',
+    });
+    const request = {
+      mode: 'realtime' as const,
+      externalSessionId: 'test-call',
+      namespace: 'test',
+      signal: new AbortController().signal,
+      model: { modelId: 'test', contextSize: 32_000, inputCapabilities: {} },
+    };
+    try {
+      await session.start();
+      if (mode === 'standard') {
+        const soulDir = join(directory, 'extensions', createSoulExt.identifier);
+        await mkdir(soulDir, { recursive: true });
+        for (const content of [null, '  ', '<soul></soul>']) {
+          if (content !== null)
+            await writeFile(join(soulDir, 'SOUL.md'), content);
+          const lease = await session.acquireInteractionLease(request);
+          try {
+            await expect(lease.bootstrap()).rejects.toThrow(
+              'Session extensions blocked interaction context preparation',
+            );
+            expect(assemblePrompt).not.toHaveBeenCalled();
+          } finally {
+            await lease.release('setup-failed');
+          }
+        }
+        await writeFile(join(soulDir, 'SOUL.md'), 'I help with precision.');
+      }
+      const lease = await session.acquireInteractionLease(request);
+      try {
+        const prepared = await lease.bootstrap();
+        expect(prepared.context.instructions).toContain(
+          'Additional instructions.',
+        );
+        if (mode === 'standard') {
+          expect(prepared.context.instructions).toContain(
+            'I help with precision.',
+          );
+        }
+        expect(assemblePrompt).toHaveBeenCalledOnce();
+        prepared.rollback();
+      } finally {
+        await lease.release();
+      }
+      await expect(session.waitForIdle(3_000)).resolves.toBe(true);
+    } finally {
+      await session.close();
+      await rm(directory, { recursive: true, force: true });
     }
   },
 );

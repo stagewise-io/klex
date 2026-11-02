@@ -2,6 +2,35 @@
 
 All notable Klex changes are documented here.
 
+## 0.28.0 (2026-11-02)
+
+### Features
+
+- add template skill namespace and sync route (8834e4f)
+- add soul management API and CLI (363814f)
+- nudge prompt to acknowledge, queue, and prioritize concurrent requests (KLEX-76) (c08d038)
+- add central namespaced skill registry (fd74f1c)
+- greet user on call connect and report startup errors (KLEX-75) (caf933e)
+
+### Bug Fixes
+
+- enforce soul checks during realtime bootstrap (4ba233d)
+- clarify voice vs MCP output visibility during live voice calls (KLEX-77) (cde7a4a)
+- keep import seeds and pause learning on failed imports (04c16c8)
+- harden legacy skill import and registry writes (27ffcad)
+- send initial realtime greeting before forwarding queued inbox updates (KLEX-75) (33dffab)
+- preserve tool media and reject invalid compaction summaries (443dbb6)
+- preserve structured-only MCP tool results (c905a7f)
+- recognize MCP structuredContent and resource blocks in tool results (4770f77)
+- tighten MCP tool envelope check and propagate adaptation aborts (50d0e41)
+
+### Other Changes
+
+- isolate migration restart checks from owner writes (7a98fe2)
+- keep resolveName out of the legacy removal set (6157299)
+- tag skill registry compatibility code for removal (a2aecd9)
+- use typed deterministic lease in greeting ordering test (4cb40ae)
+
 ## 0.27.2 (2026-10-30)
 
 ### Bug Fixes

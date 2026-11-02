@@ -56,12 +56,52 @@ describe('skill registry namespaces', () => {
     const { registry } = await started();
     expect(() => registry.claimNamespace('a', 'Bad_Name')).toThrow(/Invalid/);
     expect(() => registry.claimNamespace('a', 'user')).toThrow(/reserved/);
+    expect(() => registry.claimNamespace('a', 'templates')).toThrow(/reserved/);
     registry.claimNamespace('a', 'learning');
     registry.claimNamespace('a', 'learning');
     expect(() => registry.claimNamespace('b', 'learning')).toThrow(
       /already claimed by "a"/,
     );
     expect(() => registry.forNamespace('other')).toThrow(/not claimed/);
+  });
+
+  it('replaces template skills with files and bookkeeping', async () => {
+    const { registry, dir } = await started();
+    const skill = (name: string, body = 'Body.') => ({
+      name,
+      description: `Use for ${name}.`,
+      body,
+    });
+    await registry.replaceTemplateSkills([skill('keep'), skill('drop')]);
+    await registry.recordRead('templates/keep');
+
+    await expect(
+      registry.replaceTemplateSkills([skill('new'), skill('Bad_Name')]),
+    ).rejects.toBeInstanceOf(SkillValidationError);
+    expect(registry.get('templates/new')).toBeNull();
+
+    const skills = await registry.replaceTemplateSkills([
+      skill('keep'),
+      skill('new', '  Trimmed.  '),
+    ]);
+    expect(skills.map((entry) => [entry.id, entry.body])).toEqual([
+      ['templates/keep', 'Body.'],
+      ['templates/new', 'Trimmed.'],
+    ]);
+    expect(registry.get('templates/keep')?.readCount).toBe(1);
+    await expect(
+      readFile(join(dir, 'skills', 'templates', 'drop', 'SKILL.md')),
+    ).rejects.toMatchObject({ code: 'ENOENT' });
+    expect(Object.keys((await readRegistryFile(dir)).skills).sort()).toEqual([
+      'templates/keep',
+      'templates/new',
+    ]);
+
+    const reloaded = await started(dir);
+    expect(reloaded.registry.list().map((entry) => entry.id)).toEqual([
+      'templates/keep',
+      'templates/new',
+    ]);
   });
 
   it('isolates handles by namespace and qualifies ids', async () => {

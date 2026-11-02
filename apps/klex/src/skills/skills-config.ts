@@ -14,5 +14,14 @@ export const MAX_METADATA_BYTES = 4_096;
 /** Skill names and namespaces share the Agent Skills name syntax. */
 export const SKILL_NAME_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
-/** Namespaces no extension may claim. `user` is kept for user-managed skills. */
-export const RESERVED_SKILL_NAMESPACES: readonly string[] = ['user'];
+/** Core-owned namespace of template skills; written only through the admin API. */
+export const TEMPLATE_SKILL_NAMESPACE = 'templates';
+
+/**
+ * Namespaces no extension may claim. `user` is kept for user-managed skills,
+ * `templates` for {@link TEMPLATE_SKILL_NAMESPACE}.
+ */
+export const RESERVED_SKILL_NAMESPACES: readonly string[] = [
+  'user',
+  TEMPLATE_SKILL_NAMESPACE,
+];

@@ -21,7 +21,11 @@ import {
   type SkillDocument,
   validateSkill,
 } from './skill-format';
-import { MAX_METADATA_BYTES, RESERVED_SKILL_NAMESPACES } from './skills-config';
+import {
+  MAX_METADATA_BYTES,
+  RESERVED_SKILL_NAMESPACES,
+  TEMPLATE_SKILL_NAMESPACE,
+} from './skills-config';
 
 /** Rejected skill input; the message is safe to show to callers. */
 export class SkillValidationError extends Error {}
@@ -109,6 +113,12 @@ export interface SkillRegistry {
   /** Admin content change; sets `userEdited`. Null when unknown. */
   update(id: string, patch: SkillPatch): Promise<Skill | null>;
   delete(id: string): Promise<boolean>;
+  /**
+   * Makes the `templates` namespace hold exactly these skills: creates new,
+   * rewrites changed and deletes missing ones. Validates all input before
+   * writing. Unchanged skills keep their usage; rewrites clear `userEdited`.
+   */
+  replaceTemplateSkills(skills: readonly SkillDocument[]): Promise<Skill[]>;
   recordRead(id: string): Promise<void>;
   /** Advances the agent activity clock by one turn; persisted lazily. */
   tick(): void;
@@ -217,6 +227,30 @@ class SkillRegistryModule implements SkillRegistry {
       const parsed = parseSkillId(id);
       if (!parsed) return false;
       return this.deleteSkill(parsed.namespace, parsed.name);
+    });
+  }
+
+  replaceTemplateSkills(skills: readonly SkillDocument[]): Promise<Skill[]> {
+    return this.enqueue(async () => {
+      const namespace = TEMPLATE_SKILL_NAMESPACE;
+      const next = new Map<string, SkillDocument>();
+      for (const skill of skills) {
+        if (next.has(skill.name)) {
+          throw new SkillValidationError(
+            `Duplicate skill name "${skill.name}"`,
+          );
+        }
+        next.set(skill.name, normalize(skill));
+      }
+      for (const { name, description, body } of next.values()) {
+        await this.putSkill(namespace, name, { description, body });
+      }
+      for (const existing of this.listNamespace(namespace)) {
+        if (!next.has(existing.name)) {
+          await this.deleteSkill(namespace, existing.name);
+        }
+      }
+      return this.listNamespace(namespace);
     });
   }
 

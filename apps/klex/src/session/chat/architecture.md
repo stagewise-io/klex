@@ -44,6 +44,8 @@ Lease acquisition is a safe-boundary handoff: quiesce the generation lane, inter
 
 ### Context preparation
 
+Leased bootstrap checks `shouldRunStep` before assembling context, just like a chat step. A missing soul removes newly added canonical history and rejects bootstrap; the caller releases the failed setup lease. Other extension skips do not automatically remove history. God-mode sessions remain allowed without a soul.
+
 Both chat steps and leased interactions use the same context assembly: provisional extension context, cloned canonical history (the bounded window), history transformers, model-message conversion, context transformers, tool collection, then instructions. The preparation handle is committed only after provider setup succeeds; setup failure rolls it back.
 
 ## Turn

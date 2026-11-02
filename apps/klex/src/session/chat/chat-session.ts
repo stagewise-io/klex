@@ -1126,6 +1126,14 @@ class ChatSessionModule implements AgentSession {
   private async prepareLeaseContext(
     request: InteractionLeaseRequest,
   ): Promise<PreparedInferenceContextHandle> {
+    // Realtime bootstrap bypasses Step, so apply the same extension decision
+    // before exposing history, instructions, or tools to the provider.
+    if (!this.extensionHandler.shouldRunStep(this.messages)) {
+      this.scheduleTranscriptSync();
+      throw new Error(
+        'Session extensions blocked interaction context preparation',
+      );
+    }
     const model = {
       modelId: request.model.modelId,
       ...(request.model.displayName !== undefined && {

@@ -5,7 +5,11 @@ import {
   MODEL_PURPOSES,
 } from '@/config';
 import { GenerationHealthErrorSchema } from '@/session-history/generation-health';
-import { MAX_BODY_LENGTH, MAX_DESCRIPTION_LENGTH } from '@/skills';
+import {
+  MAX_BODY_LENGTH,
+  MAX_DESCRIPTION_LENGTH,
+  MAX_NAME_LENGTH,
+} from '@/skills';
 
 // Extend Zod with .openapi() metadata support for spec generation.
 extendZodWithOpenApi(z);
@@ -979,25 +983,49 @@ const ambiguousSkillResponseSchema = errorResponseSchema
   })
   .openapi('AmbiguousSkillResponse');
 
+const skillDescriptionInputSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(MAX_DESCRIPTION_LENGTH)
+  .refine(
+    (value) => !/[\n\r\u0085\u2028\u2029]/u.test(value),
+    'Description must be a single line',
+  );
+
+const skillBodyInputSchema = z.string().trim().min(1).max(MAX_BODY_LENGTH);
+
 export const updateSkillBodySchema = z
   .object({
-    description: z
-      .string()
-      .trim()
-      .min(1)
-      .max(MAX_DESCRIPTION_LENGTH)
-      .refine(
-        (value) => !/[\n\r\u0085\u2028\u2029]/u.test(value),
-        'Description must be a single line',
-      )
-      .optional(),
-    body: z.string().trim().min(1).max(MAX_BODY_LENGTH).optional(),
+    description: skillDescriptionInputSchema.optional(),
+    body: skillBodyInputSchema.optional(),
   })
   .refine(
     (value) => value.description !== undefined || value.body !== undefined,
     'At least one field is required',
   )
   .openapi('UpdateSkillBody');
+
+export const replaceTemplateSkillsBodySchema = z
+  .object({
+    skills: z
+      .array(
+        z.object({
+          name: z.string().min(1).max(MAX_NAME_LENGTH).openapi({
+            description: 'Skill name, unique within the request',
+            example: 'review-pull-requests',
+          }),
+          description: skillDescriptionInputSchema.describe(
+            'One-line description of when the skill applies',
+          ),
+          body: skillBodyInputSchema.describe('Markdown body of the SKILL.md'),
+        }),
+      )
+      .describe(
+        'Complete set of template skills. Skills missing from it are deleted',
+      ),
+  })
+  .openapi('ReplaceTemplateSkillsBody');
 
 export const deleteSkillResponseSchema = z
   .object({ deleted: z.literal(true), id: z.string(), name: z.string() })

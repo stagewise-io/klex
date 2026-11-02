@@ -19,6 +19,8 @@ import {
   getSkillRoute,
   listSkills,
   listSkillsRoute,
+  replaceTemplateSkills,
+  replaceTemplateSkillsRoute,
   updateLegacySkill,
   updateLegacySkillRoute,
   updateSkill,
@@ -47,7 +49,7 @@ async function seededRegistry() {
   const registry = createSkillRegistry({ dataDirectory: directory, logger });
   await registry.start();
   registry.claimNamespace('io.stagewise/learning', 'learning');
-  registry.claimNamespace('example.templates', 'templates');
+  registry.claimNamespace('example.notes', 'notes');
   const learning = registry.forNamespace('learning');
   await learning.put(
     'verify-node-version',
@@ -56,7 +58,7 @@ async function seededRegistry() {
   );
   await learning.put('shared', { description: 'Learned.', body: 'L.' });
   await registry
-    .forNamespace('templates')
+    .forNamespace('notes')
     .put(
       'shared',
       { description: 'Templated.', body: 'T.' },
@@ -72,6 +74,7 @@ function createApp(skillRegistry: SkillRegistry) {
     app.openapi(getSkillRoute, getSkill(deps));
     app.openapi(updateSkillRoute, updateSkill(deps));
     app.openapi(deleteSkillRoute, deleteSkill(deps));
+    app.openapi(replaceTemplateSkillsRoute, replaceTemplateSkills(deps));
     app.openapi(getLegacySkillRoute, getLegacySkill(deps));
     app.openapi(updateLegacySkillRoute, updateLegacySkill(deps));
     app.openapi(deleteLegacySkillRoute, deleteLegacySkill(deps));
@@ -82,6 +85,18 @@ const patch = (body: unknown) => ({
   method: 'PATCH',
   headers: { 'content-type': 'application/json' },
   body: JSON.stringify(body),
+});
+
+const put = (body: unknown) => ({
+  method: 'PUT',
+  headers: { 'content-type': 'application/json' },
+  body: JSON.stringify(body),
+});
+
+const template = (name: string, body = `Body of ${name}.`) => ({
+  name,
+  description: `Use for ${name}.`,
+  body,
 });
 
 describe('skills routes', () => {
@@ -99,7 +114,7 @@ describe('skills routes', () => {
     expect(json.skills.map((skill) => [skill.id, skill.origin])).toEqual([
       ['learning/shared', 'learned'],
       ['learning/verify-node-version', 'learned'],
-      ['templates/shared', 'templates'],
+      ['notes/shared', 'notes'],
     ]);
     expect(json.skills[1]).toMatchObject({
       namespace: 'learning',
@@ -128,9 +143,9 @@ describe('skills routes', () => {
       currentTurn: 0,
     });
 
-    const templated = await app.request('/v1/skills/templates/shared');
-    expect(await templated.json()).toMatchObject({
-      origin: 'templates',
+    const noted = await app.request('/v1/skills/notes/shared');
+    expect(await noted.json()).toMatchObject({
+      origin: 'notes',
       sourceEpisodes: [],
       metadata: { sourceEpisodes: 'not-a-list', template: 'x' },
     });
@@ -139,7 +154,7 @@ describe('skills routes', () => {
   it('edits skills of any namespace and marks them user-edited', async () => {
     const registry = await seededRegistry();
     const res = await createApp(registry).request(
-      '/v1/skills/templates/shared',
+      '/v1/skills/notes/shared',
       patch({ body: '  Edited.  ' }),
     );
     expect(res.status).toBe(200);
@@ -189,16 +204,16 @@ describe('skills routes', () => {
   it('deletes a skill with its bookkeeping', async () => {
     const registry = await seededRegistry();
     const response = await createApp(registry).request(
-      '/v1/skills/templates/shared',
+      '/v1/skills/notes/shared',
       { method: 'DELETE' },
     );
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({
       deleted: true,
-      id: 'templates/shared',
+      id: 'notes/shared',
       name: 'shared',
     });
-    expect(registry.get('templates/shared')).toBeNull();
+    expect(registry.get('notes/shared')).toBeNull();
     expect(registry.get('learning/shared')).not.toBeNull();
   });
 
@@ -257,12 +272,111 @@ describe('skills routes', () => {
       expect(res.status).toBe(409);
       expect(await res.json()).toMatchObject({
         code: 'ambiguous_skill_name',
-        candidates: ['learning/shared', 'templates/shared'],
+        candidates: ['learning/shared', 'notes/shared'],
       });
       expect(registry.get('learning/shared')?.body).toBe('L.');
-      expect(registry.get('templates/shared')?.body).toBe('T.');
+      expect(registry.get('notes/shared')?.body).toBe('T.');
     },
   );
+
+  it('replaces the template skill set', async () => {
+    const registry = await seededRegistry();
+    const app = createApp(registry);
+    const first = await app.request(
+      '/v1/skills/templates',
+      put({ skills: [template('review'), template('deploy')] }),
+    );
+    expect(first.status).toBe(200);
+    expect(await first.json()).toMatchObject({
+      currentTurn: 0,
+      skills: [
+        { id: 'templates/deploy', namespace: 'templates' },
+        { id: 'templates/review', namespace: 'templates' },
+      ],
+    });
+
+    await registry.recordRead('templates/review');
+    await app.request(
+      '/v1/skills/templates/deploy',
+      patch({ body: 'Edited.' }),
+    );
+    registry.tick();
+    const second = await app.request(
+      '/v1/skills/templates',
+      put({
+        skills: [
+          template('review'),
+          template('deploy', 'New.'),
+          template('triage'),
+        ],
+      }),
+    );
+    expect(second.status).toBe(200);
+    expect(registry.get('templates/review')).toMatchObject({
+      readCount: 1,
+      updatedTurn: 0,
+    });
+    expect(registry.get('templates/deploy')).toMatchObject({
+      body: 'New.',
+      userEdited: false,
+      updatedTurn: 1,
+    });
+    expect(registry.get('templates/triage')).toMatchObject({
+      createdTurn: 1,
+    });
+
+    const third = await app.request(
+      '/v1/skills/templates',
+      put({ skills: [template('triage')] }),
+    );
+    expect(
+      ((await third.json()) as { skills: { id: string }[] }).skills,
+    ).toMatchObject([{ id: 'templates/triage' }]);
+    expect(registry.get('templates/review')).toBeNull();
+    expect(registry.get('templates/deploy')).toBeNull();
+    expect(registry.get('learning/shared')).not.toBeNull();
+    expect(registry.get('notes/shared')).not.toBeNull();
+
+    const empty = await app.request(
+      '/v1/skills/templates',
+      put({ skills: [] }),
+    );
+    expect(empty.status).toBe(200);
+    expect(registry.get('templates/triage')).toBeNull();
+  });
+
+  it.each([
+    [{ name: 'review', description: 'D.' }],
+    [template('Bad_Name')],
+    [template('review'), template('review', 'Other.')],
+    [{ ...template('review'), description: 'two\nlines' }],
+    [template('review', 'x'.repeat(4001))],
+  ])('rejects invalid template sets without writing %j', async (...skills) => {
+    const registry = await seededRegistry();
+    const app = createApp(registry);
+    await app.request(
+      '/v1/skills/templates',
+      put({ skills: [template('existing')] }),
+    );
+    const response = await app.request(
+      '/v1/skills/templates',
+      put({ skills: [template('fresh'), ...skills] }),
+    );
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({
+      code: 'validation_failed',
+    });
+    expect(registry.get('templates/fresh')).toBeNull();
+    expect(registry.get('templates/existing')).not.toBeNull();
+  });
+
+  it('rejects a template request without a skill list', async () => {
+    const response = await createApp(await seededRegistry()).request(
+      '/v1/skills/templates',
+      put({}),
+    );
+    expect(response.status).toBe(400);
+  });
 
   it('returns shared 500 errors for registry failures', async () => {
     const registry = await seededRegistry();

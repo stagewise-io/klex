@@ -11,6 +11,7 @@ import {
   ambiguousSkillResponseSchema,
   deleteSkillResponseSchema,
   errorResponseSchema,
+  replaceTemplateSkillsBodySchema,
   skillDetailSchema,
   skillIdParamsSchema,
   skillListResponseSchema,
@@ -163,6 +164,54 @@ export function deleteSkill(
     if (!(await deps.skillRegistry.delete(id)))
       return c.json(notFound(id), 404);
     return c.json({ deleted: true as const, id, name }, 200);
+  };
+}
+
+export const replaceTemplateSkillsRoute = createRoute({
+  method: 'put',
+  path: '/v1/skills/templates',
+  tags: ['Skills'],
+  summary: 'Replace template skills',
+  description:
+    'Makes the `templates` namespace hold exactly the given skills: creates new ones, rewrites changed ones and deletes missing ones. Unchanged skills keep their usage; rewritten ones are no longer user-edited. Validates the whole set before writing.',
+  request: {
+    body: {
+      required: true,
+      content: {
+        'application/json': { schema: replaceTemplateSkillsBodySchema },
+      },
+    },
+  },
+  responses: {
+    200: {
+      content: { 'application/json': { schema: skillListResponseSchema } },
+      description: 'Template skill summaries, sorted by id',
+    },
+    400: errorResponse('Invalid template skills'),
+    500: errorResponse('Internal server error'),
+  },
+});
+
+export function replaceTemplateSkills(
+  deps: SkillsRouteDependencies,
+): RouteHandler<typeof replaceTemplateSkillsRoute> {
+  return async (c) => {
+    try {
+      const skills = await deps.skillRegistry.replaceTemplateSkills(
+        c.req.valid('json').skills,
+      );
+      return c.json(
+        {
+          skills: skills.map(toSummary),
+          currentTurn: deps.skillRegistry.currentTurn(),
+        },
+        200,
+      );
+    } catch (error) {
+      if (error instanceof SkillValidationError)
+        return c.json({ error: error.message, code: 'validation_failed' }, 400);
+      throw error;
+    }
   };
 }
 

@@ -4,7 +4,8 @@ import { join } from 'node:path';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import type { EpisodeFeed } from '@/session/chat/extensions/memory';
+import type { ActivityHistory } from '@/activity-history';
+import { TEST_ACTIVITY_LIMITS } from '@/activity-history/test-support';
 import { DEFAULT_SESSION_ID } from '@/session/types';
 
 import type { ExtensionDeps } from '../extension-api';
@@ -14,7 +15,7 @@ import { createEpisodeSummaryLog } from './summary-log';
 vi.mock('./summary-prompt.md', () => ({ default: 'Title the episode.' }));
 
 /** Memory not ready: the summarizer idles, which keeps these tests model-free. */
-function createEpisodeFeed(): EpisodeFeed & { listeners: number } {
+function createActivitySource(): ActivityHistory & { listeners: number } {
   const feed = {
     listeners: 0,
     isAvailable: () => false,
@@ -32,9 +33,9 @@ function createEpisodeFeed(): EpisodeFeed & { listeners: number } {
       scannedBytes: 0,
       truncated: false,
     }),
-    listCompleted: async () => [],
-    listLatestCompleted: async () => [],
-    read: async () => null,
+    manifest: async () => [],
+    latest: async () => [],
+    readPending: async () => null,
     compareIds: (left: string, right: string) => left.localeCompare(right),
   };
   return feed;
@@ -68,7 +69,12 @@ function fakeDeps(dataDir: string, sessionId: string) {
     getDataDir: () => dataDir,
     logger,
     logging: { child: () => logger },
-    config: { getModelSelection: () => ['test/model'] },
+    config: {
+      getModelSelection: () => ['test/model'],
+      get: () => ({
+        extensions: { memory: { episodes: TEST_ACTIVITY_LIMITS } },
+      }),
+    },
     generateText: vi.fn(),
   } as unknown as ExtensionDeps;
   return { deps, logger };
@@ -77,9 +83,12 @@ function fakeDeps(dataDir: string, sessionId: string) {
 describe('episode summary extension', () => {
   it('lets only the first default session own the summarizer and log', async () => {
     const dataDir = await dataDirectory();
-    const episodes = createEpisodeFeed();
+    const episodes = createActivitySource();
     const summaryLog = createEpisodeSummaryLog();
-    const factory = createEpisodeSummaryExt({ episodes, summaryLog });
+    const factory = createEpisodeSummaryExt({
+      activities: episodes,
+      summaryLog,
+    });
 
     const background = factory.create(fakeDeps(dataDir, 'background-1').deps);
     await background.onStart?.();
@@ -117,12 +126,45 @@ describe('episode summary extension', () => {
     await successor.onClose?.();
   });
 
+  it('does not generate titles on empty timer ticks and detaches all owned resources', async () => {
+    const dataDir = await dataDirectory();
+    const activities = createActivitySource();
+    activities.isAvailable = () => true;
+    const reads = vi.spyOn(activities, 'readPending');
+    const summaryLog = createEpisodeSummaryLog();
+    const { deps } = fakeDeps(dataDir, DEFAULT_SESSION_ID);
+    const owner = createEpisodeSummaryExt({ activities, summaryLog }).create(
+      deps,
+    );
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+    const baseline = vi.getTimerCount();
+    try {
+      await owner.onStart?.();
+      expect(activities.listeners).toBe(1);
+      expect(vi.getTimerCount()).toBe(baseline + 1);
+      await vi.advanceTimersByTimeAsync(90_000);
+      expect(reads).toHaveBeenCalled();
+      expect(deps.generateText).not.toHaveBeenCalled();
+      expect(await summaryLog.list({ limit: 5 })).toMatchObject({ items: [] });
+      await owner.onClose?.();
+      expect(activities.listeners).toBe(0);
+      expect(summaryLog.isAvailable()).toBe(false);
+      expect(vi.getTimerCount()).toBe(baseline);
+    } finally {
+      await owner.onClose?.();
+      vi.useRealTimers();
+    }
+  });
+
   it('keeps the log unavailable when the store cannot start', async () => {
     const dataDir = await dataDirectory();
     await writeFile(join(dataDir, 'summaries.sqlite'), 'not a database');
-    const episodes = createEpisodeFeed();
+    const episodes = createActivitySource();
     const summaryLog = createEpisodeSummaryLog();
-    const factory = createEpisodeSummaryExt({ episodes, summaryLog });
+    const factory = createEpisodeSummaryExt({
+      activities: episodes,
+      summaryLog,
+    });
     const { deps, logger } = fakeDeps(dataDir, DEFAULT_SESSION_ID);
 
     const owner = factory.create(deps);

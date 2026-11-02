@@ -1,10 +1,9 @@
-import { join } from 'node:path';
-
 import { type ToolSet, tool } from 'ai';
+
+import type { ActivityHistory } from '@/activity-history';
 
 import type {
   CheckpointApplyingEvent,
-  CheckpointApplyingResult,
   Extension,
   ExtensionDeps,
   ExtensionFactory,
@@ -15,34 +14,22 @@ import {
   type StagedCheckpoint,
 } from './checkpoint-cursor';
 import {
-  createEpisodeRecorder,
-  type EpisodeFeedHub,
-  type EpisodeRecorder,
-  EpisodeStore,
-} from './episodes';
-import {
   createMemoryRetrievalCoordinator,
   type MemoryRetrievalCoordinator,
   RecallRejectedError,
   recallInputSchema,
   renderObservation,
 } from './retrieval';
-import { settleBefore } from './settle-before';
 import systemPromptPart from './system-prompt-part.md';
 
-const SHUTDOWN_FLUSH_TIMEOUT_MS = 25_000;
 /** Observation batches sent per step; the rest drains on later steps. */
 const MAX_OBSERVATION_BATCHES_PER_STEP = 4;
-const EPISODE_FLUSH_INTERVAL_MS = 30_000;
 
 export interface MemoryExtOptions {
-  /** Receives the live episode store so other extensions can read finished episodes. */
-  episodeFeed?: EpisodeFeedHub;
+  activities: ActivityHistory;
 }
 
 class MemoryExt implements Extension {
-  private recorder: EpisodeRecorder | null = null;
-  private detachEpisodeFeed: (() => void) | null = null;
   private retrievalCoordinator: MemoryRetrievalCoordinator | null = null;
   private closed = false;
   /** Retrieval observation cursor; independent of the recorder cursor. */
@@ -50,8 +37,6 @@ class MemoryExt implements Extension {
   private stagedCheckpoint: StagedCheckpoint | null = null;
   // onStepComplete settles this guard on both normal and throwing steps.
   private stepActive = false;
-  private flushTimer: NodeJS.Timeout | null = null;
-  private operation: Promise<void> = Promise.resolve();
 
   constructor(
     private readonly deps: ExtensionDeps,
@@ -59,85 +44,21 @@ class MemoryExt implements Extension {
   ) {}
 
   async onStart(): Promise<void> {
-    if (this.recorder) return;
-    const episodicDir = join(this.deps.getDataDir(true), 'episodic');
-    const getLimits = () => this.deps.config.get().extensions.memory.episodes;
-    const store = new EpisodeStore({
-      episodicDir,
-      getLimits,
-      logger: this.deps.logger,
-      onCompleted: () => {
-        if (this.detachEpisodeFeed) this.options.episodeFeed?.notifyChanged();
-      },
-    });
-    if (this.options.episodeFeed) {
-      try {
-        this.detachEpisodeFeed = this.options.episodeFeed.attach({
-          episodicDir,
-          getOpenEpisode: async () => {
-            // Idle without a running step: the next step or append rotates
-            // it, so it never receives records again and counts as finished.
-            // A step running at either end may still extend the snapshot.
-            const stepWasActive = this.stepActive;
-            const open = await store.readOpenEpisode();
-            const finished =
-              open !== null &&
-              !stepWasActive &&
-              !this.stepActive &&
-              open.lastActivityAt !== null &&
-              Date.now() - open.lastActivityAt >= getLimits().idleTimeoutMs;
-            return finished ? null : open;
-          },
-        });
-      } catch (error) {
-        this.deps.logger.warn(
-          { error },
-          'Episode feed already attached — not exposing this episode store',
-        );
-      }
-    }
-    this.recorder = createEpisodeRecorder({
-      getHistory: () => this.deps.getHistory(),
-      store,
-      logger: this.deps.logger,
-    });
-    // The window may be restored from a previous instance that already
-    // recorded and observed it; resume after its last message.
+    if (this.retrievalCoordinator || this.closed) return;
     const window = this.deps.getHistory();
-    this.recorder.seed(window);
     this.lastObservedMessageId = window.at(-1)?.id ?? null;
-    this.flushTimer = setInterval(() => {
-      void this.serialize(async () => {
-        if (this.closed || this.stepActive) return;
-        await this.recorder?.flush();
-        if (!this.stepActive) await this.recorder?.store.closeIdle();
-      });
-    }, EPISODE_FLUSH_INTERVAL_MS);
-    this.flushTimer.unref();
-    this.retrievalCoordinator = createMemoryRetrievalCoordinator(this.deps);
+    this.retrievalCoordinator = createMemoryRetrievalCoordinator(
+      this.deps,
+      this.options.activities,
+    );
     await this.retrievalCoordinator.start();
     this.deps.logger.info('Memory extension started');
   }
 
   async onClose(): Promise<void> {
     this.closed = true;
-    if (this.flushTimer) clearInterval(this.flushTimer);
-    this.flushTimer = null;
     await this.retrievalCoordinator?.close();
     this.retrievalCoordinator = null;
-    const deadline = Date.now() + SHUTDOWN_FLUSH_TIMEOUT_MS;
-    const flush = this.serialize(async () => {
-      await this.recorder?.flush();
-    });
-    if (!(await settleBefore(flush, deadline))) {
-      this.deps.logger.warn(
-        { timeoutMs: SHUTDOWN_FLUSH_TIMEOUT_MS },
-        'Memory shutdown flush did not finish before deadline',
-      );
-    }
-    this.recorder = null;
-    this.detachEpisodeFeed?.();
-    this.detachEpisodeFeed = null;
     this.deps.logger.info('Memory extension closed');
   }
 
@@ -176,7 +97,6 @@ class MemoryExt implements Extension {
 
   onStepStart(): void {
     this.stepActive = true;
-    void this.recorder?.store.observeActivity();
     this.retrievalCoordinator?.setMainTurnActive(true);
     // New incoming context reaches the retriever before main generates.
     this.observeDelta();
@@ -188,45 +108,21 @@ class MemoryExt implements Extension {
       if (!event.fatalError) this.observeDelta();
     }
     this.stepActive = false;
-    // The step kept the session busy; a long step must not count as idle.
-    void this.recorder?.store.extendActivity();
-    if (
-      this.closed ||
-      event.fatalError ||
-      event.generationFailed ||
-      event.modelFallbackOccurred
-    ) {
-      return Promise.resolve();
-    }
-    return this.serialize(() => this.recorder?.flush() ?? Promise.resolve());
+    return Promise.resolve();
   }
 
-  /**
-   * Records everything up to the trim before it happens and stages the
-   * checkpoint so cursors it trims resolve to its header once applied.
-   * Staging happens first, so a forced apply after repeated deferrals still
-   * resumes at the header. Defers the checkpoint while episode writes fail
-   * so no unrecorded message is trimmed.
-   */
-  onCheckpointApplying(
-    event: CheckpointApplyingEvent,
-  ): Promise<CheckpointApplyingResult | undefined> {
-    return this.serializeResult(async () => {
-      const recorder = this.recorder;
-      if (this.closed || !recorder) return undefined;
-      this.stagedCheckpoint = event;
-      recorder.stageCheckpoint(event);
-      this.observeDelta();
-      if (!(await recorder.flush())) return { defer: true };
-      return undefined;
-    });
+  /** Preserve the live retriever's cursor across canonical checkpoints. */
+  onCheckpointApplying(event: CheckpointApplyingEvent): undefined {
+    if (this.closed) return;
+    this.stagedCheckpoint = event;
+    this.observeDelta();
+    return undefined;
   }
 
   introspect(): Record<string, unknown> {
     return {
       lastObservedMessageId: this.lastObservedMessageId,
       stepActive: this.stepActive,
-      recorder: this.recorder?.introspect() ?? null,
       retrieval: this.retrievalCoordinator?.introspect() ?? null,
     };
   }
@@ -265,25 +161,10 @@ class MemoryExt implements Extension {
       this.deps.logger.debug({ error }, 'Memory observation failed');
     }
   }
-
-  private serialize(action: () => Promise<unknown>): Promise<void> {
-    return this.serializeResult(action).then(() => undefined);
-  }
-
-  private serializeResult<T>(action: () => Promise<T>): Promise<T> {
-    const result = this.operation.then(action, action);
-    this.operation = result.then(
-      () => undefined,
-      () => undefined,
-    );
-    return result;
-  }
 }
 
-/** Maintains episodic memory through deterministic history recording. */
-export function createMemoryExt(
-  options: MemoryExtOptions = {},
-): ExtensionFactory {
+/** Retrieves retained activity and observes the live default session. */
+export function createMemoryExt(options: MemoryExtOptions): ExtensionFactory {
   return {
     identifier: 'io.stagewise/memory',
     displayName: 'Memory',

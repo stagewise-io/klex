@@ -24,6 +24,9 @@ import {
   SESSION_HISTORY_STORE_DEFINITION,
 } from './schema';
 import type {
+  ActivityMessage,
+  ActivityQuery,
+  ActivitySource,
   SessionHistoryListPage,
   SessionHistoryListQuery,
   SessionHistoryMessage,
@@ -47,6 +50,10 @@ export interface SessionHistoryDependencies {
 
 export interface SessionHistory {
   start(): Promise<void>;
+  activityAvailable(): boolean;
+  subscribeActivity(listener: () => void): () => void;
+  activityManifest(): Promise<ActivitySource[]>;
+  readActivity(query: ActivityQuery): Promise<ActivityMessage[]>;
   /** Drain pending writes, then close the database. */
   close(): Promise<void>;
   openRecorder(meta: SessionHistoryRecorderMetadata): SessionHistoryRecorder;
@@ -239,6 +246,97 @@ class SessionHistoryModule implements SessionHistory {
    * the data-directory lock and every write goes through the queue.
    */
   private readonly nextOrds = new Map<string, number>();
+  private readonly activityListeners = new Set<() => void>();
+  private readonly activityRevisions = new Map<number, string>();
+
+  activityAvailable(): boolean {
+    return this.started && !this.closed;
+  }
+
+  subscribeActivity(listener: () => void): () => void {
+    this.activityListeners.add(listener);
+    return () => this.activityListeners.delete(listener);
+  }
+
+  private notifyActivity(): void {
+    for (const listener of this.activityListeners) {
+      try {
+        listener();
+      } catch {
+        /* Hints cannot interrupt persistence. */
+      }
+    }
+  }
+
+  activityManifest(): Promise<ActivitySource[]> {
+    return this.enqueueResult(async () => {
+      const rows = await this.requireClient().execute({
+        sql: `SELECT ord, instance_id, message_id, byte_size, persisted_at FROM messages
+              WHERE session_id = 'default' AND is_checkpoint = 0 ORDER BY ord`,
+        args: [],
+      });
+      return rows.rows.map((row) => this.activitySource(row));
+    });
+  }
+
+  private activitySource(row: Row): ActivitySource {
+    const ordinal = toNumber(row.ord);
+    return {
+      id: `history:${Buffer.from(JSON.stringify([ordinal, toText(row.instance_id), toText(row.message_id)])).toString('base64url')}`,
+      ordinal,
+      persistedAt: toText(row.persisted_at),
+      bytes: toNumber(row.byte_size),
+      revision:
+        this.activityRevisions.get(ordinal) ??
+        `${toText(row.persisted_at)}:${toNumber(row.byte_size)}`,
+    };
+  }
+
+  readActivity(query: ActivityQuery): Promise<ActivityMessage[]> {
+    return this.enqueueResult(async () => {
+      const client = this.requireClient();
+      const rows = await client.execute({
+        sql: `SELECT ord, instance_id, message_id, byte_size, persisted_at FROM messages
+              WHERE session_id = 'default' AND is_checkpoint = 0 AND ord > ? AND ord <= ?
+              ORDER BY ord ${query.descending ? 'DESC' : 'ASC'} LIMIT ?`,
+        args: [
+          query.after ?? -1,
+          query.through ?? Number.MAX_SAFE_INTEGER,
+          Math.max(1, Math.min(200, Math.floor(query.limit ?? 200))),
+        ],
+      });
+      let remaining = Math.max(
+        0,
+        Math.min(2_000_000, query.maxBytes ?? 2_000_000),
+      );
+      const result: ActivityMessage[] = [];
+      for (const row of rows.rows) {
+        const source = this.activitySource(row);
+        // Stop at a page seam rather than marking affordable content as omitted.
+        // An individually oversized source still advances with an explicit null body.
+        if (
+          (query.maxBytes ?? 2_000_000) > 0 &&
+          source.bytes > remaining &&
+          source.bytes <= Math.min(2_000_000, query.maxBytes ?? 2_000_000) &&
+          result.length > 0
+        )
+          break;
+        let message: ExtendedUIMessage | null = null;
+        if (source.bytes <= remaining) {
+          const content = await client.execute({
+            sql: `SELECT content FROM messages WHERE session_id = 'default' AND ord = ?`,
+            args: [source.ordinal],
+          });
+          message = JSON.parse(
+            toText(content.rows[0]?.content),
+          ) as ExtendedUIMessage;
+          remaining -= source.bytes;
+        }
+        result.push({ ...source, message });
+      }
+      return query.descending ? result.reverse() : result;
+    });
+  }
 
   constructor(
     private readonly deps: {
@@ -800,6 +898,12 @@ class SessionHistoryModule implements SessionHistory {
     for (const id of trimmed) recorder.pendingTrimmed.delete(id);
     this.prunePendingTrimmed(recorder);
     recorder.inserted = true;
+    if (meta.sessionId === 'default') {
+      this.activityRevisions.clear();
+      for (const entry of nextEntries.values())
+        this.activityRevisions.set(entry.ord, entry.hash);
+      this.notifyActivity();
+    }
     return true;
   }
 
@@ -989,6 +1093,7 @@ class SessionHistoryModule implements SessionHistory {
     // `execute` steps the pragma once and frees a single page;
     // `executeMultiple` runs it to completion.
     await client.executeMultiple('PRAGMA incremental_vacuum;');
+    this.notifyActivity();
     this.deps.logger.info(
       {
         maxBytes,

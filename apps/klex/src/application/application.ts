@@ -8,6 +8,7 @@ import type {
   RootLogger,
 } from '@stagewise/logger';
 
+import { createActivityHistory } from '@/activity-history';
 import { createAdminApi } from '@/admin-api';
 import { createAgentDirectory, defaultAgentRoot } from '@/agent-directory';
 import { createAgentPicker } from '@/agent-picker';
@@ -64,10 +65,7 @@ import { createImageInputOptimizerExt } from '@/session/chat/extensions/image-in
 import { createJsReplSandboxExt } from '@/session/chat/extensions/js-repl-sandbox';
 import { createLearningExt } from '@/session/chat/extensions/learning';
 import { createMcpIngressExt } from '@/session/chat/extensions/mcp-ingress';
-import {
-  createEpisodeFeed,
-  createMemoryExt,
-} from '@/session/chat/extensions/memory';
+import { createMemoryExt } from '@/session/chat/extensions/memory';
 import { createNameLoaderExt } from '@/session/chat/extensions/name-loader';
 import { createReadAttachmentExt } from '@/session/chat/extensions/read-attachment/read-attachment';
 import { createSkillsExt } from '@/session/chat/extensions/skills';
@@ -604,9 +602,8 @@ class ApplicationModule implements Application {
       timezone,
     });
 
-    // Agent-wide hubs: memory publishes episodes, episode-summary publishes
-    // episode titles. Skills live in the core skill registry.
-    const episodeFeed = createEpisodeFeed();
+    // Shared canonical reader; grouping and progress belong to each consumer.
+    const activities = createActivityHistory(sessionHistory);
     const episodeSummaryLog = createEpisodeSummaryLog();
 
     // Default session: full extension set + MCP access.
@@ -623,14 +620,14 @@ class ApplicationModule implements Application {
       createTodosExt,
       createSkillsExt(skillRegistry),
       createMcpIngressExt(),
-      createMemoryExt({ episodeFeed }),
+      createMemoryExt({ activities }),
       createLearningExt({
-        episodes: episodeFeed,
+        activities,
         getSoul: () =>
           readSoul(join(dataDirectory, 'extensions', createSoulExt.identifier)),
       }),
       createEpisodeSummaryExt({
-        episodes: episodeFeed,
+        activities,
         summaryLog: episodeSummaryLog,
       }),
       createConsultExt({

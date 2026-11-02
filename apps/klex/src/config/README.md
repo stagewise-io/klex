@@ -118,18 +118,20 @@ next write.
 `extensions` holds behavior settings owned by session extensions, keyed by
 extension; new extension settings belong under `extensions.<extension>`, not at
 the root. Model routing stays in `modelSelection` (`modelSelection.memory` is
-used only by memory retrieval).
+used by memory retrieval, learning and activity-title generation).
 The whole object and every nested field are optional; omitted fields use their
 defaults. Unknown keys are rejected.
 
-`extensions.memory.episodes` controls when the episodic-memory recorder starts a
-new episode file. A new episode starts when any limit is reached:
+`extensions.memory.episodes` retains its configuration shape and now controls
+runtime activity batching independently in learning and activity-title generation.
+No episode files or durable groups are created. A batch becomes ready at a size,
+duration, idle or UTC-date boundary:
 
-- `maxCharacters`: the next entry would push the episode file past this many
-  characters of serialized JSON Lines. Default `50000`. The crossing entry goes whole into the new
-  episode; an entry larger than the limit gets an episode of its own.
-- `maxDurationMs`: the episode has spanned this many milliseconds since its
-  first entry. Default `3600000` (one hour).
+- `maxCharacters`: rendered history-view characters, including time prefixes and
+  record separators, rather than serialized JSON Lines. Default `50000`.
+  A crossing message starts the next batch; oversized bodies are bounded.
+- `maxDurationMs`: retained activity has spanned this many milliseconds since its
+  first source persistence timestamp. Default `3600000` (one hour).
 - `idleTimeoutMs`: no main-session activity for this many milliseconds. Default
   `600000` (ten minutes).
 

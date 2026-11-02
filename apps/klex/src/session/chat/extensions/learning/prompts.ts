@@ -20,6 +20,7 @@ export type SkillTurns = Pick<
 
 export interface PromptEpisode {
   id: string;
+  sourceIds?: readonly string[];
   startedAt: string;
   endedAt: string;
   text: string;
@@ -58,7 +59,7 @@ export function fillPlaceholders(
 }
 
 /** Opening or closing prompt tags, tolerant of whitespace and attributes. */
-const PROMPT_TAG = /<(\s*\/?\s*(?:skills|skill|episode|soul)\b)/giu;
+const PROMPT_TAG = /<(\s*\/?\s*(?:skills|skill|episode|activity|soul)\b)/giu;
 
 /** Defuses prompt tags so embedded content cannot close or forge a block. */
 export function defuse(text: string): string {
@@ -98,8 +99,8 @@ export function buildExtractionPrompt(input: {
     system: `${fillPlaceholders(extractionPrompt, input.agent).trimEnd()}\n\n${LINES_FORMAT_PROMPT}`,
     prompt:
       `${renderSkills(input.skills)}\n\n` +
-      `<episode id="${attribute(episode.id)}" started="${attribute(episode.startedAt)}" ended="${attribute(episode.endedAt)}">\n` +
-      `${defuse(clipEpisodeText(episode.text))}\n</episode>`,
+      `<activity id="${attribute(episode.id)}" sources="${attribute((episode.sourceIds ?? [episode.id]).join(','))}" started="${attribute(episode.startedAt)}" ended="${attribute(episode.endedAt)}">\n` +
+      `${defuse(clipEpisodeText(episode.text))}\n</activity>`,
   };
 }
 

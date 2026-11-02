@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { access, rename } from 'node:fs/promises';
 import { join } from 'node:path';
 
+import type { ActivityHistory } from '@/activity-history';
 import {
   initializeSqliteStore,
   inspectSqliteStore,
@@ -18,7 +19,7 @@ import { getExtensionIdentifier } from '@/session/chat/utils/tracing';
 import { SessionInboxUrgency } from '@/session/inbox';
 import type { ChildSessionHandle } from '@/session/types';
 
-import { EpisodicEntryStore } from './episode-reader';
+import { ActivityEntryStore } from './activity-reader';
 import { isMemoryResultMessage, wrapMemoryResult } from './memory-result';
 import {
   DEFAULT_MEMORY_RETRIEVAL_CONFIG,
@@ -123,6 +124,7 @@ class MemoryRetrievalCoordinatorImpl implements MemoryRetrievalCoordinator {
 
   constructor(
     private readonly deps: CoordinatorDeps,
+    private readonly activities: ActivityHistory,
     config?: Partial<MemoryRetrievalConfig>,
   ) {
     this.config = {
@@ -383,7 +385,7 @@ class MemoryRetrievalCoordinatorImpl implements MemoryRetrievalCoordinator {
     const dataDir = this.deps.getDataDir(true);
     const databasePath = join(dataDir, 'episodic-search.sqlite');
     await prepareSearchIndexStore(databasePath, dataDir, this.deps.logger);
-    const store = new EpisodicEntryStore(join(dataDir, 'episodic'));
+    const store = new ActivityEntryStore(this.activities);
     const index = new EpisodicSearchIndex(databasePath, store);
     try {
       await index.start();
@@ -554,7 +556,8 @@ function renderSurfacedMemory(memory: SurfacedMemory): string {
 
 export function createMemoryRetrievalCoordinator(
   deps: CoordinatorDeps,
+  activities: ActivityHistory,
   config?: Partial<MemoryRetrievalConfig>,
 ): MemoryRetrievalCoordinator {
-  return new MemoryRetrievalCoordinatorImpl(deps, config);
+  return new MemoryRetrievalCoordinatorImpl(deps, activities, config);
 }

@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { ModuleLogger } from '@stagewise/logger';
 
-import type { EpisodeFeed } from '@/session/chat/extensions/memory';
+import type { ActivityHistory } from '@/activity-history';
 import { DEFAULT_SESSION_ID } from '@/session/types';
 import {
   createSkillRegistry,
@@ -22,7 +22,7 @@ vi.mock('./extraction-prompt.md', () => ({ default: 'Extract.' }));
 vi.mock('./consolidation-prompt.md', () => ({ default: 'Consolidate.' }));
 
 /** Memory not ready: the worker idles, which keeps these tests model-free. */
-function createEpisodeFeed(): EpisodeFeed {
+function createActivitySource(): ActivityHistory {
   return {
     isAvailable: () => false,
     subscribe: () => () => undefined,
@@ -34,9 +34,9 @@ function createEpisodeFeed(): EpisodeFeed {
       scannedBytes: 0,
       truncated: false,
     }),
-    listCompleted: async () => [],
-    listLatestCompleted: async () => [],
-    read: async () => null,
+    manifest: async () => [],
+    latest: async () => [],
+    readPending: async () => null,
     compareIds: (left, right) => left.localeCompare(right),
   };
 }
@@ -143,7 +143,7 @@ function fakeDeps(
 function factory() {
   return createLearningExt({
     getSoul: () => null,
-    episodes: createEpisodeFeed(),
+    activities: createActivitySource(),
   });
 }
 
@@ -281,6 +281,52 @@ describe('learning extension', () => {
     await second.onClose?.();
     await owner.onClose?.();
     await background.onClose?.();
+  });
+
+  it('releases subscriptions and timers before a replacement takes ownership', async () => {
+    const target = await fixture([]);
+    const activities = createActivitySource();
+    const listeners = new Set<() => void>();
+    activities.subscribe = (listener) => {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    };
+    const learning = createLearningExt({ activities, getSoul: () => null });
+    const first = learning.create(fakeDeps(target, DEFAULT_SESSION_ID));
+    const duplicate = learning.create(fakeDeps(target, DEFAULT_SESSION_ID));
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+    const baseline = vi.getTimerCount();
+    try {
+      await first.onStart?.();
+      await duplicate.onStart?.();
+      expect(listeners.size).toBe(1);
+      expect(vi.getTimerCount()).toBe(baseline + 1);
+      await duplicate.onClose?.();
+      expect(listeners.size).toBe(1);
+      await first.onClose?.();
+      expect(listeners.size).toBe(0);
+      expect(vi.getTimerCount()).toBe(baseline);
+      const successor = learning.create(fakeDeps(target, DEFAULT_SESSION_ID));
+      try {
+        await successor.onStart?.();
+        expect(listeners.size).toBe(1);
+        await vi.advanceTimersByTimeAsync(90_000);
+        expect(successor.introspect?.()).toMatchObject({
+          running: false,
+          processedEpisodeCount: 0,
+        });
+      } finally {
+        await successor.onClose?.();
+      }
+      expect(listeners.size).toBe(0);
+      expect(vi.getTimerCount()).toBe(baseline);
+    } finally {
+      await duplicate.onClose?.();
+      await first.onClose?.();
+      vi.useRealTimers();
+    }
   });
 
   it('exposes no prompt part or tools; the skills extension owns them', async () => {

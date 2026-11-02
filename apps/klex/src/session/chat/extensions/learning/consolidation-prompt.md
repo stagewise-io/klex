@@ -16,4 +16,6 @@ You observe the AI Agent *{{NAME}}*. It does real work and you must help it do t
 - Verify newer, same-scope evidence before keeping an old workaround or resolving a contradiction. Observed facts, user instructions, and agent proposals have different authority; a proposal is not standing policy.
 - Remove secrets, credentials, tokens and sensitive personal data.
 
+Use `readActivity`, `listActivityNeighbors`, and `searchActivities` for bounded investigations of retained canonical history. The compatibility fields `sourceEpisodes` and `evidenceEpisodes` contain source references; old file-based references are unavailable legacy provenance. Do not treat unavailable, evicted, or budget-omitted content as evidence.
+
 Investigate briefly using only relevant evidence. Call `submitLearnings` with a complete operation batch. Submit empty operations when nothing should change. If a batch is rejected, correct the reported problem and resubmit. Successful submissions write immediately. After a successful submission, stop; do not repeat the batch. Do not return operations as text.

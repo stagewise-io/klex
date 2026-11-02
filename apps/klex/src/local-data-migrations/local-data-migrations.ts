@@ -10,6 +10,7 @@ import { configV5ToV6 } from './config/v5-to-v6/migration';
 import { configV6 } from './config/v5-to-v6/schemas';
 import { configV6ToV7 } from './config/v6-to-v7/migration';
 import { configV7 } from './config/v6-to-v7/schemas';
+import { episodicSearchV1ToV2 } from './episodic-search-index/v1-to-v2/migration';
 import { learningStateV1ToV2 } from './learning-extension-state/v1-to-v2/migration';
 import {
   learningStateV1,
@@ -47,4 +48,5 @@ export const LOCAL_DATA_MIGRATIONS = {
   },
   'model-calls': { migrations: [modelCallsV1ToV2, modelCallsV2ToV3] },
   sessions: { migrations: [sessionsV1ToV2, sessionsV2ToV3] },
+  'episodic-search-index': { migrations: [episodicSearchV1ToV2] },
 };

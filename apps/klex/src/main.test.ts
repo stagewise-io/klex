@@ -155,7 +155,6 @@ vi.mock('@/session/chat/extensions/mcp-ingress', () => ({
   createMcpIngressExt: vi.fn(),
 }));
 vi.mock('@/session/chat/extensions/memory', () => ({
-  createEpisodeFeed: vi.fn(),
   createMemoryExt: vi.fn(),
 }));
 vi.mock('@/session/chat/extensions/name-loader', () => ({

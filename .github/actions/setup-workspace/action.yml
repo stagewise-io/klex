@@ -15,6 +15,10 @@ inputs:
       Extra arguments for pnpm install, for example
       "--filter klex --filter @klex/machine...". Empty installs the workspace.
     default: ''
+  registry-url:
+    description: >-
+      Optional npm registry for setup-node, needed by jobs that publish.
+    default: ''
 
 runs:
   using: composite
@@ -24,6 +28,7 @@ runs:
     - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
       with:
         node-version-file: .nvmrc
+        registry-url: ${{ inputs.registry-url }}
     - id: store
       shell: bash
       run: |
@@ -41,6 +46,12 @@ runs:
         key: ${{ steps.store.outputs.key }}-${{ hashFiles('pnpm-lock.yaml') }}
         restore-keys: ${{ steps.store.outputs.key }}-
     - shell: bash
+      env:
+        # pnpm clones files on APFS, so store entries keep a link count of 1
+        # and `pnpm store prune` deletes them as unreferenced, which saved
+        # empty macOS caches. Hardlinks keep the store contents referenced;
+        # store and workspace share one volume on macOS runners.
+        PNPM_CONFIG_PACKAGE_IMPORT_METHOD: ${{ runner.os == 'macOS' && 'hardlink' || 'auto' }}
       run: pnpm install --frozen-lockfile ${{ inputs.install-filter }}
     - if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.restore.outputs.cache-hit != 'true'
       shell: bash

@@ -1521,8 +1521,23 @@ function validateSettings(
   try {
     return success(parseProviderSettings(type, input));
   } catch (error) {
-    return failure('invalid_configuration', sanitizedError(error));
+    return failure('invalid_configuration', settingsErrorMessage(error));
   }
+}
+
+// Zod issue messages name paths and expected shapes, never input values, so
+// they are safe to return even when the rejected settings contain secrets.
+function settingsErrorMessage(error: unknown): string {
+  if (!(error instanceof z.ZodError) || error.issues.length === 0)
+    return sanitizedError(error);
+  const issues = error.issues
+    .slice(0, 3)
+    .map((issue) =>
+      issue.path.length > 0
+        ? `${issue.path.map(String).join('.')}: ${issue.message}`
+        : issue.message,
+    );
+  return `Invalid provider settings: ${issues.join('; ')}`;
 }
 
 function hasTrustedModelMetadata(

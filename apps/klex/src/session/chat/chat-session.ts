@@ -9,7 +9,7 @@ import {
   type SpanContext,
   trace,
 } from '@opentelemetry/api';
-import { generateText, type ToolSet } from 'ai';
+import { generateText, Output, type ToolSet } from 'ai';
 
 import type { ModuleLogger, RootLogger } from '@stagewise/logger';
 
@@ -801,6 +801,9 @@ class ChatSessionModule implements AgentSession {
                   ? { messages: args.messages }
                   : { prompt: args.prompt ?? '' }),
                 tools: args.tools,
+                ...(args.outputSchema
+                  ? { output: Output.object({ schema: args.outputSchema }) }
+                  : {}),
                 temperature: args.temperature,
                 maxOutputTokens: args.maxOutputTokens,
                 maxRetries: args.maxRetries ?? 0,
@@ -860,6 +863,10 @@ class ChatSessionModule implements AgentSession {
                   'Extension generation ended with a model error',
                 );
 
+              // Accessing output validates the schema and can throw. Keep it
+              // inside the model attempt so invalid output tries the fallback.
+              const output = args.outputSchema ? result.output : undefined;
+
               span.setAttribute('gen.outcome', 'success');
               span.setAttribute('gen.modelId', modelId);
               span.setAttribute('gen.finishReason', result.finishReason);
@@ -884,6 +891,7 @@ class ChatSessionModule implements AgentSession {
               return {
                 success: true as const,
                 text: result.text,
+                ...(args.outputSchema ? { output } : {}),
                 modelId,
                 usage: result.usage,
                 finishReason: result.finishReason,

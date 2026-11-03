@@ -94,7 +94,7 @@ export function activityOrdinal(id: string | null): number | null {
   }
 }
 
-export function renderActivityRecords(source: ActivityMessage): string[] {
+function renderActivityRecords(source: ActivityMessage): string[] {
   if (!source.message) return [];
   return collectActivityHistory([source.message], null).messages.flatMap(
     (message) =>

@@ -33,6 +33,11 @@ export const summaryOutputSchema = z.strictObject({
     .trim()
     .min(1)
     .max(100)
+    .regex(/^[^\r\n\u0085\u2028\u2029]+$/u, 'Title must be a single line')
+    .refine(
+      (title) => title.split(/\s+/u).length <= 10,
+      'Title must contain at most 10 words',
+    )
     .describe('Short English past-tense activity title, at most 10 words'),
 });
 

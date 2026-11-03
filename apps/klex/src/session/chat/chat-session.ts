@@ -9,7 +9,7 @@ import {
   type SpanContext,
   trace,
 } from '@opentelemetry/api';
-import { generateText, Output, type ToolSet } from 'ai';
+import { generateText, isStepCount, Output, type ToolSet } from 'ai';
 
 import type { ModuleLogger, RootLogger } from '@stagewise/logger';
 
@@ -787,6 +787,7 @@ class ChatSessionModule implements AgentSession {
           for (const entry of modelIds) {
             if (args.abortSignal?.aborted) return aborted();
             const modelId = entry.modelId;
+            let toolExecutionStarted = false;
             try {
               const model =
                 await this.deps.modelResolver.getLanguageModel(entry);
@@ -801,6 +802,14 @@ class ChatSessionModule implements AgentSession {
                   ? { messages: args.messages }
                   : { prompt: args.prompt ?? '' }),
                 tools: args.tools,
+                // Structured callers may execute tools once, then produce their
+                // final object in a tool-free step. Other callers stay single-step.
+                stopWhen: isStepCount(args.outputSchema && args.tools ? 2 : 1),
+                prepareStep: ({ stepNumber }) =>
+                  stepNumber > 0 ? { toolChoice: 'none' } : {},
+                onToolExecutionStart: () => {
+                  toolExecutionStarted = true;
+                },
                 ...(args.outputSchema
                   ? { output: Output.object({ schema: args.outputSchema }) }
                   : {}),
@@ -855,6 +864,7 @@ class ChatSessionModule implements AgentSession {
                   'gen.modelId': modelId,
                   'gen.finishReason': result.finishReason,
                 });
+                if (toolExecutionStarted) break;
                 continue;
               }
 
@@ -863,8 +873,8 @@ class ChatSessionModule implements AgentSession {
                   'Extension generation ended with a model error',
                 );
 
-              // Accessing output validates the schema and can throw. Keep it
-              // inside the model attempt so invalid output tries the fallback.
+              // Accessing output validates the schema and can throw. Fallback
+              // is safe only before tool execution; effects cannot be rolled back.
               const output = args.outputSchema ? result.output : undefined;
 
               span.setAttribute('gen.outcome', 'success');
@@ -872,15 +882,15 @@ class ChatSessionModule implements AgentSession {
               span.setAttribute('gen.finishReason', result.finishReason);
               span.setAttribute(
                 'gen.usage.inputTokens',
-                result.usage.inputTokens ?? 0,
+                result.totalUsage.inputTokens ?? 0,
               );
               span.setAttribute(
                 'gen.usage.outputTokens',
-                result.usage.outputTokens ?? 0,
+                result.totalUsage.outputTokens ?? 0,
               );
               span.setAttribute(
                 'gen.usage.totalTokens',
-                result.usage.totalTokens ?? 0,
+                result.totalUsage.totalTokens ?? 0,
               );
               span.setAttribute('gen.outputLength', result.text.length);
               span.addEvent('gen.success', {
@@ -893,7 +903,7 @@ class ChatSessionModule implements AgentSession {
                 text: result.text,
                 ...(args.outputSchema ? { output } : {}),
                 modelId,
-                usage: result.usage,
+                usage: result.totalUsage,
                 finishReason: result.finishReason,
               };
             } catch (error) {
@@ -909,6 +919,9 @@ class ChatSessionModule implements AgentSession {
                 'gen.modelId': modelId,
                 'gen.error': msg,
               });
+              // A tool may have committed effects even when it threw or the
+              // subsequent model/output validation failed. Never replay it.
+              if (toolExecutionStarted) break;
             }
           }
 

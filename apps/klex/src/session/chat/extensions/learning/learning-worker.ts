@@ -344,9 +344,14 @@ class LearningWorkerModule implements LearningWorker {
     supplied?: Awaited<ReturnType<ActivityHistory['readPage']>>,
   ): Promise<EpisodeOutcome> {
     const { activities, skills, logger } = this.options;
+    const firstSourceId = revisit
+      ? this.options.state.get().deferred.find((item) => item.id === id)
+          ?.firstSourceId
+      : undefined;
     const page =
       supplied === undefined
         ? await activities.readPage(id, {
+            firstSourceId,
             offset: 0,
             limit: MAX_EPISODE_CHARACTERS,
             maxBytes: 2_000_000,
@@ -499,17 +504,7 @@ class LearningWorkerModule implements LearningWorker {
         });
         continue;
       }
-      const page =
-        item.firstSourceId === undefined
-          ? undefined
-          : await activities.readPage(item.id, {
-              firstSourceId: item.firstSourceId,
-              offset: 0,
-              limit: MAX_EPISODE_CHARACTERS,
-              maxBytes: 2_000_000,
-              tail: true,
-            });
-      const outcome = await this.processEpisode(item.id, true, page);
+      const outcome = await this.processEpisode(item.id, true);
       if (outcome === 'stop') return false;
       await state.update((draft) => {
         delete draft.episodeFailures[item.id];

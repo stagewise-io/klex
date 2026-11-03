@@ -2,6 +2,20 @@
 
 All notable Klex changes are documented here.
 
+## 0.28.1 (2026-11-03)
+
+### Bug Fixes
+
+- report which provider settings failed validation (120f0c0)
+- harden activity generation and deferred retries (65dbe2c)
+- harden canonical activity consumers (0c6768a)
+- persist stable activity revisions (2777dfd)
+
+### Other Changes
+
+- generate structured activity titles (27e57d5)
+- derive episodic memory from SQLite history (c8073fe)
+
 ## 0.28.0 (2026-11-02)
 
 ### Features

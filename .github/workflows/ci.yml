@@ -23,6 +23,9 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: ./.github/actions/setup-workspace
       - uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        env:
+          # Same fail-fast bound as the pnpm store restore in setup-workspace.
+          SEGMENT_DOWNLOAD_TIMEOUT_MINS: '2'
         with:
           path: .turbo/cache
           key: turbo-v1-${{ github.job }}-${{ github.sha }}
@@ -46,6 +49,9 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: ./.github/actions/setup-workspace
       - uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        env:
+          # Same fail-fast bound as the pnpm store restore in setup-workspace.
+          SEGMENT_DOWNLOAD_TIMEOUT_MINS: '2'
         with:
           path: .turbo/cache
           key: turbo-v1-${{ github.job }}-${{ github.sha }}

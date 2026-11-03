@@ -2,6 +2,15 @@
 
 All notable Klex changes are documented here.
 
+## 0.28.2 (2026-11-03)
+
+### Bug Fixes
+
+- bound episodic search index rebuild memory (2c8e99e)
+- optimize episodic search index reconciliation (a3dae52)
+- complete turn on silent stop after resolved tool calls (f10eea0)
+- exclude readAttachment remote URLs from compaction media projection (9e7f8a3)
+
 ## 0.28.1 (2026-11-03)
 
 ### Bug Fixes

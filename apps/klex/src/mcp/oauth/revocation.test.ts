@@ -135,6 +135,28 @@ describe('MCP OAuth revocation', () => {
     expect(warn).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ['a redirect', () => Promise.reject(new TypeError('redirect'))],
+    ['a server error', async () => new Response(null, { status: 500 })],
+    [
+      'metadata without revocation',
+      async () => Response.json(metadata({ revocation_endpoint: undefined })),
+    ],
+  ])('continues to OIDC discovery after %s', async (_case, first) => {
+    const fetch = vi.fn(async (url: string | URL, init: RequestInit) => {
+      if (init.method === 'POST') return new Response(null, { status: 200 });
+      if (String(url) === `${issuer}/.well-known/oauth-authorization-server`)
+        return first();
+      return Response.json(metadata());
+    });
+    vi.stubGlobal('fetch', fetch);
+    await revokeOAuthCredentials([credentials()], 'clay', logger);
+    expect(
+      fetch.mock.calls.filter(([_url, init]) => init.method === 'POST'),
+    ).toHaveLength(2);
+    expect(warn).not.toHaveBeenCalled();
+  });
+
   it('uses saved discovery for legacy tokens without an issuer', async () => {
     const fetch = vi.fn(async (_url, init: RequestInit) =>
       init.method === 'POST'

@@ -89,22 +89,29 @@ export async function revokeOAuthCredentials(
   );
 }
 
-// The SDK's OIDC metadata parser drops revocation fields.
+// The SDK's OIDC metadata parser drops revocation fields. Providers may
+// advertise revocation in only one of the documents, so a failing or
+// endpoint-less document does not end the search.
 async function discoverRevocationMetadata(issuer: string, signal: AbortSignal) {
   for (const { url } of buildDiscoveryUrls(issuer)) {
-    const response = await fetch(url, {
-      headers: { Accept: 'application/json' },
-      signal,
-      redirect: 'error',
-    });
-    if (
-      (response.status >= 400 && response.status < 500) ||
-      response.status === 502
-    ) {
-      await response.body?.cancel();
-      continue;
+    try {
+      const response = await fetch(url, {
+        headers: { Accept: 'application/json' },
+        signal,
+        redirect: 'error',
+      });
+      if (!response.ok) {
+        await response.body?.cancel();
+        continue;
+      }
+      const metadata = await processDiscoveryResponse(
+        new URL(issuer),
+        response,
+      );
+      if (metadata.revocation_endpoint) return metadata;
+    } catch (error) {
+      if (signal.aborted) throw error;
     }
-    return processDiscoveryResponse(new URL(issuer), response);
   }
 }
 

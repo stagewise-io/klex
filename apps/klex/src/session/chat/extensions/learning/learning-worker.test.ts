@@ -1022,6 +1022,67 @@ describe('learning worker', () => {
     });
   });
 
+  it.each(['transient', 'permanent'] as const)(
+    'accounts for %s deferred range read failures without recounting progress',
+    async (failure) => {
+      const feed = fakeFeed(2);
+      const read = feed.readPage.bind(feed);
+      let rejectRange = false;
+      const readPage = vi
+        .spyOn(feed, 'readPage')
+        .mockImplementation(async (id, options) => {
+          if (rejectRange && options.firstSourceId !== undefined)
+            throw new Error('SQLite temporarily unavailable');
+          const page = await read(id, options);
+          return page ? { ...page, firstSourceId: id } : null;
+        });
+      const { worker, state, runChild } = await harness(feed);
+      runChild
+        .mockResolvedValueOnce(ok('{"operations": [], "deferred": true}'))
+        .mockImplementationOnce(async () => {
+          rejectRange = true;
+          return ok('{"operations": []}');
+        });
+
+      expect(await worker.runOnce()).toBe('retry-later');
+      expect(state.get()).toMatchObject({
+        cursor: episodeId(1),
+        processedEpisodeCount: 2,
+        deferred: [
+          { id: episodeId(0), firstSourceId: episodeId(0), attempts: 0 },
+        ],
+        episodeFailures: { [episodeId(0)]: 1 },
+      });
+      expect(readPage).toHaveBeenLastCalledWith(
+        episodeId(0),
+        expect.objectContaining({
+          firstSourceId: episodeId(0),
+          maxBytes: 2_000_000,
+          tail: true,
+        }),
+      );
+
+      if (failure === 'transient') rejectRange = false;
+      else {
+        for (let attempt = 2; attempt < MAX_FAILURES_PER_EPISODE; attempt++) {
+          expect(await worker.runOnce()).toBe('retry-later');
+          expect(state.get().episodeFailures).toEqual({
+            [episodeId(0)]: attempt,
+          });
+          expect(runChild).toHaveBeenCalledTimes(2);
+        }
+      }
+      expect(await worker.runOnce()).toBe('idle');
+      expect(state.get()).toMatchObject({
+        cursor: episodeId(1),
+        processedEpisodeCount: 2,
+        deferred: [],
+        episodeFailures: {},
+      });
+      expect(runChild).toHaveBeenCalledTimes(failure === 'transient' ? 3 : 2);
+    },
+  );
+
   it('skips short episodes without a model call', async () => {
     const { worker, state, runChild } = await harness(
       fakeFeed(2, () => 'short'),

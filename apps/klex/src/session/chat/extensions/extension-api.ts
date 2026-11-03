@@ -236,7 +236,7 @@ export interface ResolvedModel {
  * Both are passed through to the AI SDK's `generateText`.
  */
 export interface GenerateTextArgs {
-  /** Ordered list of model selection entries to try. First success wins. */
+  /** Ordered models to try. Fallback stops once any tool execution begins. */
   modelIds: readonly ModelSelectionEntry[];
   /** System prompt. */
   system?: string;
@@ -246,7 +246,10 @@ export interface GenerateTextArgs {
   messages?: ModelMessage[];
   /** Tools available to the model during generation. */
   tools?: ToolSet;
-  /** Requests schema-constrained structured output instead of free-form text. */
+  /**
+   * Requests schema-constrained output. With tools, allows one tool step and
+   * a final tool-free output step; without a schema, generation is single-step.
+   */
   outputSchema?: FlexibleSchema<unknown>;
   /** Sampling temperature (provider-specific range, typically 0–2). */
   temperature?: number;

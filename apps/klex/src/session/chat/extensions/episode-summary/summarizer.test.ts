@@ -187,6 +187,12 @@ describe('summaryOutputSchema', () => {
       { title: '  ' },
       { title: 123 },
       { title: 'x'.repeat(101) },
+      { title: 'Fixed deployment\nWith an explanation' },
+      { title: 'Fixed deployment\rWith an explanation' },
+      { title: 'Fixed deployment\u0085With an explanation' },
+      { title: 'Fixed deployment\u2028With an explanation' },
+      { title: 'Fixed deployment\u2029With an explanation' },
+      { title: 'one two three four five six seven eight nine ten eleven' },
       { title: 'Fixed deployment', explanation: 'extra' },
     ]) {
       expect(summaryOutputSchema.safeParse(output).success).toBe(false);
@@ -296,6 +302,11 @@ describe('summarizer', () => {
   it.each([
     ['truncated', success('Confirmed PR', 'length')],
     ['empty title', success('  \n')],
+    ['multiline title', success('Fixed deployment\nExplained the steps')],
+    [
+      'too many words',
+      success('one two three four five six seven eight nine ten eleven'),
+    ],
     ['missing output', { ...success('Valid title'), output: undefined }],
     ['missing title', { ...success('Valid title'), output: {} }],
     [

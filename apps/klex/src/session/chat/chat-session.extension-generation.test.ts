@@ -120,7 +120,18 @@ async function harness(models: MockLanguageModelV4[]) {
   return { generate: deps.generateText, session, args, submit };
 }
 
-describe('single-step extension generation', () => {
+function structuredResponse(
+  text: string,
+  finish: 'stop' | 'content-filter' | 'error' = 'stop',
+) {
+  return {
+    ...call('unused'),
+    content: [{ type: 'text' as const, text }],
+    finishReason: { unified: finish, raw: finish },
+  };
+}
+
+describe('extension generation', () => {
   it('executes one step and retains text, model and usage without a learning-result contract', async () => {
     const model = new MockLanguageModelV4({ doGenerate: [call('accepted')] });
     const { generate, session, args, submit } = await harness([model]);
@@ -253,6 +264,97 @@ describe('single-step extension generation', () => {
       await session.close();
     }
   });
+
+  it('executes tools once before a tool-free structured output step', async () => {
+    const model = new MockLanguageModelV4({
+      doGenerate: [
+        call('accepted'),
+        structuredResponse('{"title":"Fixed deployment"}'),
+      ],
+    });
+    const { generate, session, args, submit } = await harness([model]);
+    try {
+      expect(
+        await generate({
+          ...args,
+          outputSchema: z.strictObject({ title: z.string().min(1) }),
+        }),
+      ).toMatchObject({
+        success: true,
+        output: { title: 'Fixed deployment' },
+        usage: { totalTokens: 4 },
+      });
+      expect(submit).toHaveBeenCalledOnce();
+      expect(model.doGenerateCalls).toHaveLength(2);
+      expect(model.doGenerateCalls[1]?.toolChoice).toEqual({ type: 'none' });
+      expect(model.doGenerateCalls[1]?.prompt).toEqual(
+        expect.arrayContaining([expect.objectContaining({ role: 'tool' })]),
+      );
+    } finally {
+      await session.close();
+    }
+  });
+
+  it.each([
+    'invalid output',
+    'throw',
+    'content-filter',
+    'error',
+    'tool throw',
+  ] as const)(
+    'does not fall back after tool execution followed by %s',
+    async (failure) => {
+      let steps = 0;
+      const losing = new MockLanguageModelV4({
+        doGenerate: async () => {
+          if (steps++ === 0) return call('accepted');
+          if (failure === 'throw')
+            throw new Error('Provider unavailable after tool execution');
+          return structuredResponse(
+            failure === 'content-filter' || failure === 'error'
+              ? '{"title":"Filtered or failed response"}'
+              : '{}',
+            failure === 'content-filter' || failure === 'error'
+              ? failure
+              : 'stop',
+          );
+        },
+      });
+      const winning = new MockLanguageModelV4({
+        doGenerate: [
+          call('duplicate'),
+          structuredResponse('{"title":"Duplicated effects"}'),
+        ],
+      });
+      const { generate, session, args, submit } = await harness([
+        losing,
+        winning,
+      ]);
+      if (failure === 'tool throw')
+        submit.mockImplementationOnce(() => {
+          throw new Error('Tool failed after committing effects');
+        });
+      try {
+        expect(
+          await generate({
+            ...args,
+            outputSchema: z.strictObject({ title: z.string().min(1) }),
+          }),
+        ).toMatchObject({
+          success: false,
+          failureReason:
+            failure === 'content-filter'
+              ? 'content-filter'
+              : 'all-models-failed',
+        });
+        expect(submit).toHaveBeenCalledOnce();
+        expect(losing.doGenerateCalls).toHaveLength(2);
+        expect(winning.doGenerateCalls).toHaveLength(0);
+      } finally {
+        await session.close();
+      }
+    },
+  );
 
   it('cancels before starting a model', async () => {
     const model = new MockLanguageModelV4({ doGenerate: [call('unused')] });

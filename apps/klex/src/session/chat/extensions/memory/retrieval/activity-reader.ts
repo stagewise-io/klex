@@ -59,9 +59,12 @@ export class ActivityEntryStore {
     const ordinal = activityOrdinal(location.sourceId)!;
     const beforeRefs = refs
       .filter((source) => source.ordinal < ordinal)
-      .slice(-Math.max(0, before));
+      .sort((left, right) => right.ordinal - left.ordinal)
+      .slice(0, Math.max(0, before))
+      .reverse();
     const afterRefs = refs
       .filter((source) => source.ordinal > ordinal)
+      .sort((left, right) => left.ordinal - right.ordinal)
       .slice(0, Math.max(0, after));
     const older = await Promise.all(beforeRefs.map((ref) => this.read(ref.id)));
     const newer = await Promise.all(afterRefs.map((ref) => this.read(ref.id)));

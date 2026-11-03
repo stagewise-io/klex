@@ -304,7 +304,11 @@ describe('default session bounded window (end to end)', () => {
     expect(loggedIds).toHaveLength(turnIds.length + checkpoints);
 
     // SQLite alone retains answers across checkpoint trims.
-    expect(await readdir(dataDirectory)).not.toContain('episodic');
+    expect(await readdir(dataDirectory, { recursive: true })).not.toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(/(^|[\\/])episodic([\\/]|$)/u),
+      ]),
+    );
     const answers = Array.from({ length: TURNS }, (_, i) => `answer ${i}`);
     expect(await retainedAnswers(history)).toEqual(answers);
 

@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { ExtendedUIMessage } from '@/session/chat/message-types';
 
@@ -90,6 +90,83 @@ describe('canonical activity view', () => {
     expect(batch?.id).toBe(first.id);
     expect(batch?.text).toContain('first bounded record');
     expect(batch?.text).not.toContain('second bounded record');
+  });
+
+  it('bounds the first oversized source and advances past it without waiting for idle', async () => {
+    const { activities, append, now } = await setup();
+    const first = await append('x'.repeat(1000));
+    const batch = await activities.readPending(null, {
+      ...ready(now()),
+      maxCharacters: 10,
+    });
+    expect(batch).toMatchObject({ id: first.id, truncated: true });
+    expect(batch?.text).toHaveLength(10);
+    expect(await activities.readPending(first.id, ready(now()))).toBeNull();
+  });
+
+  it('includes separators in the rendered size budget', async () => {
+    const { activities, append, now } = await setup();
+    const first = await append('first');
+    await append('second');
+    const pages = await Promise.all(
+      (await activities.manifest()).map((ref) =>
+        activities.readPage(ref.id, {
+          offset: 0,
+          limit: 1000,
+          maxBytes: 10000,
+        }),
+      ),
+    );
+    const maxCharacters = pages.reduce(
+      (sum, page) => sum + (page?.text.length ?? 0),
+      0,
+    );
+    const batch = await activities.readPending(null, {
+      ...ready(now()),
+      maxCharacters,
+    });
+    expect(batch?.id).toBe(first.id);
+    expect(batch?.text.length).toBeLessThanOrEqual(maxCharacters);
+  });
+
+  it('returns partial search progress and byte charges when a later page fails', async () => {
+    const { activities, append } = await setup();
+    await append('first evidence');
+    const first = await append('second evidence');
+    const original = activities.readPage.bind(activities);
+    const readPage = vi.spyOn(activities, 'readPage');
+    readPage
+      .mockImplementationOnce(original)
+      .mockRejectedValueOnce(new Error('SQLite read failed'));
+    const result = await activities.search('evidence', {
+      offset: 0,
+      limit: 5,
+      maxBytes: 10000,
+    });
+    expect(result).toMatchObject({
+      scannedBytes: first.bytes,
+      nextOffset: 1,
+      truncated: true,
+    });
+    expect(result.matches.map((match) => match.id)).toEqual([first.id]);
+    readPage.mockRestore();
+  });
+
+  it('reconstructs a bounded batch range rather than just the final source', async () => {
+    const { activities, append, now } = await setup();
+    const first = await append('earlier evidence');
+    const last = await append('final evidence');
+    const batch = await activities.readPending(null, ready(now() + 600_000));
+    expect(batch?.firstSourceId).toBe(first.id);
+    const retry = await activities.readPage(last.id, {
+      firstSourceId: first.id,
+      offset: 0,
+      limit: 128000,
+      maxBytes: 2000000,
+      tail: true,
+    });
+    expect(retry?.text).toBe(batch?.text);
+    expect(retry?.sourceIds).toEqual([first.id, last.id]);
   });
 
   it('splits on elapsed duration within the same UTC date', async () => {

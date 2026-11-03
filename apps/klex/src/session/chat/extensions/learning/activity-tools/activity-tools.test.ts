@@ -2,6 +2,7 @@ import type { Tool } from 'ai';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { ActivityHistory } from '@/activity-history';
+import { createActivityFixture } from '@/activity-history/test-support';
 
 import { createActivityInvestigation } from './activity-tools';
 
@@ -9,7 +10,7 @@ vi.mock('@/session/chat/extensions/time/system-prompt.md', () => ({
   default: '',
 }));
 
-function fixture() {
+function fixture(activities?: ActivityHistory) {
   const controller = new AbortController();
   const readPage = vi.fn<ActivityHistory['readPage']>(async (id, options) => ({
     id,
@@ -51,7 +52,7 @@ function fixture() {
     search,
   };
   const investigation = createActivityInvestigation(
-    feed,
+    activities ?? feed,
     controller.signal,
     'primary',
   );
@@ -150,6 +151,37 @@ describe('episode investigation', () => {
       expect(investigation.evidence.size).toBe(7);
     },
   );
+
+  it('charges completed search reads when a later SQLite query fails', async () => {
+    const real = await createActivityFixture();
+    try {
+      await real.append('first evidence');
+      const first = await real.append('second evidence');
+      const originalRead = real.activities.readPage.bind(real.activities);
+      const read = vi.spyOn(real.activities, 'readPage');
+      read
+        .mockImplementationOnce(originalRead)
+        .mockRejectedValueOnce(new Error('SQLite read failed'));
+      const search = vi.spyOn(real.activities, 'search');
+      const { execute } = fixture(real.activities);
+      expect(
+        await execute('searchActivities', {
+          query: 'evidence',
+          limit: 5,
+          offset: 0,
+        }),
+      ).toMatchObject({ status: 'ok', truncated: true });
+      await execute('searchActivities', {
+        query: 'evidence',
+        limit: 5,
+        offset: 1,
+      });
+      expect(search.mock.calls[1]?.[1].maxBytes).toBe(2_000_000 - first.bytes);
+      expect(read.mock.calls[2]?.[1].maxBytes).toBe(2_000_000 - first.bytes);
+    } finally {
+      await real.close();
+    }
+  });
 
   it('refunds unused read budgets after an atomic query failure', async () => {
     const { execute, readPage, investigation } = fixture();

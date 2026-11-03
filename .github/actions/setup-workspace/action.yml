@@ -1,0 +1,54 @@
+name: Set up workspace
+description: >-
+  Installs pnpm and Node, restores the pnpm store, and installs dependencies.
+  Only pushes to main write the store cache; every other run reads main's
+  entry, so pull requests cannot evict each other from the 10 GB budget.
+
+inputs:
+  install-scope:
+    description: >-
+      Cache scope name. Jobs that install the same filter must share a scope so
+      they share one cache entry.
+    default: full
+  install-filter:
+    description: >-
+      Extra arguments for pnpm install, for example
+      "--filter klex --filter @klex/machine...". Empty installs the workspace.
+    default: ''
+
+runs:
+  using: composite
+  steps:
+    # Version comes from the packageManager field in package.json.
+    - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
+    - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+      with:
+        node-version-file: .nvmrc
+    - id: store
+      shell: bash
+      run: |
+        echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+        echo "key=pnpm-store-v1-${RUNNER_OS}-${RUNNER_ARCH}-${{ inputs.install-scope }}" >> "$GITHUB_OUTPUT"
+    - id: restore
+      uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+      env:
+        # A healthy restore takes well under a minute. The default 10 minute
+        # segment timeout let stalled macOS downloads hold jobs for 11+ minutes;
+        # failing fast falls back to a network install instead.
+        SEGMENT_DOWNLOAD_TIMEOUT_MINS: '2'
+      with:
+        path: ${{ steps.store.outputs.path }}
+        key: ${{ steps.store.outputs.key }}-${{ hashFiles('pnpm-lock.yaml') }}
+        restore-keys: ${{ steps.store.outputs.key }}-
+    - shell: bash
+      run: pnpm install --frozen-lockfile ${{ inputs.install-filter }}
+    - if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.restore.outputs.cache-hit != 'true'
+      shell: bash
+      # A restore-key hit carries packages from older lockfiles; drop them so
+      # the saved entry does not grow with every dependency change.
+      run: pnpm store prune
+    - if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.restore.outputs.cache-hit != 'true'
+      uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+      with:
+        path: ${{ steps.store.outputs.path }}
+        key: ${{ steps.store.outputs.key }}-${{ hashFiles('pnpm-lock.yaml') }}

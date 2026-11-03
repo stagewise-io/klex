@@ -1610,7 +1610,6 @@ class McpModule implements Mcp {
     const existing = this.deps.pendingAuthorizations.findByServer(serverName);
     if (existing && !client)
       return { outcome: 'pending', authorization: existing };
-    if (existing) this.deps.pendingAuthorizations.cancel(existing.id);
 
     if (!isCloudAuthorizationAvailable(this.deps.cloudConnectivity)) {
       return { outcome: 'unavailable' };
@@ -1624,6 +1623,8 @@ class McpModule implements Mcp {
       // here means the module is not running — not a slow connection attempt.
       if (!runtime) return { outcome: 'not_running' };
     }
+    // Only drop a parked grant once the replacement can actually start.
+    if (existing) this.deps.pendingAuthorizations.cancel(existing.id);
     if (runtime.connection && !client) return { outcome: 'already_connected' };
 
     const connection = runtime.connection;
@@ -1643,7 +1644,14 @@ class McpModule implements Mcp {
     if (client) {
       runtime.status = 'authorization_required';
       this.publishRegistry();
-      await this.deps.configureOAuthClient(serverName, config.url, client);
+      try {
+        await this.deps.configureOAuthClient(serverName, config.url, client);
+      } catch (error) {
+        // A failed setup must not leave the server down without a retry;
+        // reconnect with whatever credentials are still stored.
+        if (this.isCurrentRuntime(runtime)) this.connectRuntime(runtime);
+        throw error;
+      }
       if (!this.isCurrentRuntime(runtime)) return { outcome: 'not_found' };
     }
     this.connectRuntime(runtime);

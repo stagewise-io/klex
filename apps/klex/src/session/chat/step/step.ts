@@ -452,6 +452,7 @@ class StepModule implements Step {
           ...instinctProvisional,
           ...provisionalContext.parts,
         ];
+        const allowEmptyStop = this.isPostToolContinuation();
         const provisionalMessageId =
           provisionalParts.length > 0 ? randomUUID() : null;
         if (provisionalMessageId !== null) {
@@ -649,6 +650,7 @@ class StepModule implements Step {
             this.deps.extensionHandler.getSystemPromptParts();
           if (this.stepAbort.signal.aborted) return abortPreparation();
           const runner = createGenerationRunner({
+            allowEmptyStop,
             logger: this.deps.logger,
             sessionId: this.deps.sessionId,
             stepSpan,
@@ -674,6 +676,7 @@ class StepModule implements Step {
           try {
             const result = await runner.run();
             retainProvisionalContext =
+              result.shouldContinue &&
               !result.generationFailed &&
               !result.modelFallbackOccurred &&
               !result.requestRejected &&
@@ -788,6 +791,11 @@ class StepModule implements Step {
 
     if (lastMsg?.role === 'user') return true;
 
+    return this.isPostToolContinuation();
+  }
+
+  private isPostToolContinuation(): boolean {
+    const lastMsg = this.deps.messages.at(-1);
     if (lastMsg?.role === 'assistant') {
       const toolCallParts = lastMsg.parts.filter((p) => isToolUIPart(p));
       if (toolCallParts.length === 0) return false;

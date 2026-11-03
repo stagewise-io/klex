@@ -30,6 +30,7 @@ export type StreamedGenerationOutput = {
 };
 
 export interface RunStreamedGenerationParams {
+  allowEmptyStop?: boolean;
   model: LanguageModel;
   modelMessages: ModelMessage[];
   tools: AgentTools;
@@ -178,7 +179,10 @@ export async function runStreamedGeneration(
     throw attachStreamError(e, streamError);
   }
 
-  if (message.parts.length === 0) {
+  if (
+    message.parts.length === 0 &&
+    !(params.allowEmptyStop && finishReason === 'stop')
+  ) {
     throw new EmptyResponseBodyError({
       message: 'No content received during generation.',
     });

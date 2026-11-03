@@ -772,6 +772,57 @@ describe('Step — provisional step context', () => {
     setupDefaultMocks();
   });
 
+  it.each([
+    'user',
+    'output-available',
+    'output-denied',
+    'output-error',
+    'approval-responded',
+  ])(
+    'captures %s history before provisional context and rolls back on completion',
+    async (state) => {
+      const original =
+        state === 'user'
+          ? makeUserMessage()
+          : makeAssistantMessage([makeToolPart('call-1', state)]);
+      const messages = [original];
+      const extensionHandler = makeExtensionHandler();
+      const parts = [{ type: 'text' as const, text: 'additional context' }];
+      extensionHandler.getProvisionalStepContext.mockResolvedValue({
+        parts: parts as never[],
+      });
+      const result: StepCompleteEvent = {
+        ...SUCCESS_RESULT,
+        shouldContinue: false,
+        generation: {
+          modelId: 'model-a',
+          finishReason: 'stop',
+          usage: { inputTokens: 10, outputTokens: 0 } as never,
+        },
+      };
+      vi.mocked(createGenerationRunner).mockImplementationOnce((deps) => {
+        expect(deps.allowEmptyStop).toBe(state !== 'user');
+        expect(messages.at(-1)).toMatchObject({ role: 'user', parts });
+        expect(messages).toHaveLength(2);
+        return {
+          run: vi.fn(async () => result),
+          abort: vi.fn(),
+          abortTools: vi.fn(),
+        } as never;
+      });
+      expect(
+        await createStep(
+          makeDeps({
+            messages,
+            extensionHandler: extensionHandler as never,
+          }),
+        ).run(),
+      ).toEqual(result);
+      expect(createGenerationRunner).toHaveBeenCalledOnce();
+      expect(messages).toEqual([original]);
+    },
+  );
+
   it('continues a compacted tool-heavy turn with its audio prompt and clock in the header', async () => {
     const now = Math.floor(Date.now() / 1000);
     const old = makeUserMessage('previous turn');

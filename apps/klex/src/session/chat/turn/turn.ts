@@ -339,7 +339,7 @@ class TurnModule implements Turn {
 
           // Track whether any step succeeded or failed.
           if (
-            stepResult.shouldContinue &&
+            (stepResult.shouldContinue || stepResult.generation !== null) &&
             !stepResult.instinctAborted &&
             !stepResult.forceNextStep &&
             !stepResult.modelFallbackOccurred &&

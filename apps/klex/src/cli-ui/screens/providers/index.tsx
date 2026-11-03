@@ -223,7 +223,7 @@ export function ProvidersScreen({ apiClient, onBack }: ProvidersScreenProps) {
   }
 
   if (mode === 'edit-model' && selected && selectedModel) {
-    const createsOverride = selectedModel.source === 'discovered';
+    const createsOverride = !isKnownModel(selectedModel);
     return (
       <KnownModelForm
         model={selectedModel}
@@ -1020,6 +1020,11 @@ function ProviderSetupForm({
   );
 }
 
+/** Manual or overridden models; discovered and catalog models are not saved. */
+function isKnownModel(model: KnownModel): boolean {
+  return model.source === 'manual' || model.source === 'merged';
+}
+
 function fuzzyModelMatch(model: KnownModel, query: string): boolean {
   const terms = query.toLowerCase().trim().split(/\s+/).filter(Boolean);
   const fields = [model.displayName ?? '', model.modelId].map((field) =>
@@ -1079,7 +1084,7 @@ function KnownModelsPage({
         filterFocused,
         modelHighlighted: highlighted !== undefined,
         manualModelHighlighted:
-          highlighted !== undefined && highlighted.source !== 'discovered',
+          highlighted !== undefined && isKnownModel(highlighted),
       }),
     [filterFocused, highlighted, onActionStateChange],
   );
@@ -1099,7 +1104,7 @@ function KnownModelsPage({
         );
     },
     [MenuKeys.Delete]: () => {
-      if (!highlighted || highlighted.source === 'discovered') return;
+      if (!highlighted || !isKnownModel(highlighted)) return;
       void apiClient
         .deleteKnownModel(provider.id, highlighted.modelId)
         .then(() => {

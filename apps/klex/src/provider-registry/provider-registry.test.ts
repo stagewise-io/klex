@@ -461,6 +461,11 @@ describe('ProviderRegistry', () => {
     expect(
       builtIn('openai').catalogModels?.map(({ modelId }) => modelId),
     ).not.toContain('omni-moderation-latest');
+    const mistral = builtIn('mistral').catalogModels?.map(
+      ({ modelId }) => modelId,
+    );
+    expect(mistral).toContain('mistral-large-2512');
+    expect(mistral?.filter((modelId) => modelId.includes('ocr'))).toEqual([]);
   });
 
   it('discovers Mistral capabilities and hides retired or non-chat models', async () => {

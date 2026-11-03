@@ -206,7 +206,11 @@ export const mistralProviderDefinition: ProviderDefinition = {
     description: 'Mistral models served through the official API.',
   },
   resolveModelMetadata: resolveMistralModelMetadata,
-  catalogModels: catalogModels(MODEL_CATALOG, resolveMistralModelMetadata),
+  // OCR models cannot chat; live discovery drops them too.
+  catalogModels: catalogModels(
+    MODEL_CATALOG,
+    resolveMistralModelMetadata,
+  ).filter(({ modelId }) => !modelId.includes('-ocr-')),
   createLanguageModel: (instance, modelId) =>
     createOpenAiCompatibleLanguageModel(instance, modelId, BASE_URL),
   discoverModels,

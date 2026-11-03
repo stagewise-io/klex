@@ -20,6 +20,7 @@ import { modelCallsV1ToV2 } from './model-calls/v1-to-v2/migration';
 import { modelCallsV2ToV3 } from './model-calls/v2-to-v3/migration';
 import { sessionsV1ToV2 } from './sessions/v1-to-v2/migration';
 import { sessionsV2ToV3 } from './sessions/v2-to-v3/migration';
+import { sessionsV3ToV4 } from './sessions/v3-to-v4/migration';
 
 // Data-only and append-only: CI compares import identities and array prefixes.
 export const LOCAL_DATA_MIGRATIONS = {
@@ -47,6 +48,6 @@ export const LOCAL_DATA_MIGRATIONS = {
     migrations: [learningStateV1ToV2],
   },
   'model-calls': { migrations: [modelCallsV1ToV2, modelCallsV2ToV3] },
-  sessions: { migrations: [sessionsV1ToV2, sessionsV2ToV3] },
+  sessions: { migrations: [sessionsV1ToV2, sessionsV2ToV3, sessionsV3ToV4] },
   'episodic-search-index': { migrations: [episodicSearchV1ToV2] },
 };

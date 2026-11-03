@@ -68,8 +68,16 @@ function post(path: string, body: unknown): Request {
   });
 }
 
-function put(path: string): Request {
-  return new Request(`http://localhost${path}`, { method: 'PUT' });
+function put(path: string, body?: unknown): Request {
+  return new Request(`http://localhost${path}`, {
+    method: 'PUT',
+    ...(body === undefined
+      ? {}
+      : {
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(body),
+        }),
+  });
 }
 
 describe('PUT /v1/mcp-servers/{name}/authorization', () => {
@@ -94,6 +102,42 @@ describe('PUT /v1/mcp-servers/{name}/authorization', () => {
       expiresAt: pending.expiresAt,
     });
     expect(requestAuthorization).toHaveBeenCalledWith('qonto', undefined);
+  });
+
+  it('passes a registered OAuth client to the authorization', async () => {
+    const requestAuthorization = vi.fn(
+      async (): Promise<RequestAuthorizationResult> => ({
+        outcome: 'pending',
+        authorization: pending,
+      }),
+    );
+    const client = {
+      clientId: 'client-1',
+      clientSecret: 'secret',
+      scope: 'mcp',
+    };
+    const response = await app(makeDeps({ requestAuthorization })).request(
+      put('/v1/mcp-servers/qonto/authorization', { client }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(requestAuthorization).toHaveBeenCalledWith('qonto', client);
+  });
+
+  it.each([
+    { client: { clientId: ' ' } },
+    { client: { clientId: 'client-1', extra: true } },
+    { other: true },
+  ])('rejects an invalid OAuth client body: %j', async (body) => {
+    const requestAuthorization = vi.fn();
+    const response = await app(makeDeps({ requestAuthorization })).request(
+      put('/v1/mcp-servers/qonto/authorization', body),
+    );
+
+    expect(startAuthorizationRoute.responses[400]).toBeDefined();
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({ code: 'validation_failed' });
+    expect(requestAuthorization).not.toHaveBeenCalled();
   });
 
   it('serializes the same pending authorization consistently', async () => {

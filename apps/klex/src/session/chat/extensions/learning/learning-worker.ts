@@ -15,7 +15,11 @@ import type {
 } from '@/session/chat/extensions/extension-api';
 import { SessionInboxUrgency } from '@/session/inbox';
 import type { ChildSessionHandle } from '@/session/types';
-import type { Skill, SkillNamespaceHandle } from '@/skills';
+import {
+  MAX_METADATA_BYTES,
+  type Skill,
+  type SkillNamespaceHandle,
+} from '@/skills';
 
 import { createActivityInvestigation } from './activity-tools';
 import {
@@ -401,10 +405,20 @@ class LearningWorkerModule implements LearningWorker {
           await this.options.state.update((draft) => {
             const existing = draft.deferred.find((item) => item.id === id);
             const after = revisit ? (draft.cursor ?? id) : id;
-            if (existing) existing.after = after;
-            else {
+            if (existing) {
+              existing.after = after;
+              if (page.firstSourceId !== undefined)
+                existing.firstSourceId = page.firstSourceId;
+            } else {
               if (draft.deferred.length >= 20) draft.deferred.shift();
-              draft.deferred.push({ id, after, attempts: 0 });
+              draft.deferred.push({
+                id,
+                after,
+                attempts: 0,
+                ...(page.firstSourceId === undefined
+                  ? {}
+                  : { firstSourceId: page.firstSourceId }),
+              });
             }
           });
           outcome = 'deferred';
@@ -485,7 +499,17 @@ class LearningWorkerModule implements LearningWorker {
         });
         continue;
       }
-      const outcome = await this.processEpisode(item.id, true);
+      const page =
+        item.firstSourceId === undefined
+          ? undefined
+          : await activities.readPage(item.id, {
+              firstSourceId: item.firstSourceId,
+              offset: 0,
+              limit: MAX_EPISODE_CHARACTERS,
+              maxBytes: 2_000_000,
+              tail: true,
+            });
+      const outcome = await this.processEpisode(item.id, true, page);
       if (outcome === 'stop') return false;
       await state.update((draft) => {
         delete draft.episodeFailures[item.id];
@@ -570,10 +594,23 @@ class LearningWorkerModule implements LearningWorker {
           (operation.op !== 'update' || !operation.mergedFrom?.length)
         )
           continue;
-        const metadata = {
+        const metadata: Record<string, unknown> = {
           ...(existing?.metadata ?? {}),
           sourceEpisodes: sources,
         };
+        // Canonical handles can be large, and unrelated namespace metadata
+        // shares the registry's byte budget. Keep the newest provenance that fits.
+        while (
+          sources.length &&
+          Buffer.byteLength(JSON.stringify(metadata), 'utf8') >
+            MAX_METADATA_BYTES
+        )
+          sources.shift();
+        if (
+          Buffer.byteLength(JSON.stringify(metadata), 'utf8') >
+          MAX_METADATA_BYTES
+        )
+          delete metadata.sourceEpisodes;
         // Citations alone are no refresh: metadata writes keep `updated*`.
         if (material || !existing)
           await skills.put(

@@ -80,6 +80,8 @@ function toolStream(toolName: string, input: unknown, id: string) {
 describe('learning child session execution', () => {
   it('investigates and persists through streamed steps, then idles and releases parent quiescence', async () => {
     const fixture = await createActivityFixture();
+    // Always idle relative to the worker's real clock, even on the fixture date.
+    fixture.setTime(new Date(Date.now() - 24 * 60 * 60_000).toISOString());
     const root = fixture.directory;
     const { id } = await fixture.append(
       'Always ask before changing a core contract. Propose the change first, explain downstream impact, and wait for approval. '.repeat(

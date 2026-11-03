@@ -12,6 +12,8 @@ import { collectActivityHistory } from './history-projection';
 
 export interface ActivityPage {
   id: string;
+  /** Inclusive start of a bounded runtime batch, retained for deferred revisits. */
+  firstSourceId?: string;
   /** Canonical evidence actually rendered; absent on single-source pages. */
   sourceIds?: string[];
   startedAt: string | null;
@@ -62,6 +64,7 @@ export interface ActivityHistory {
       limit: number;
       maxBytes: number;
       tail?: boolean;
+      firstSourceId?: string;
     },
   ): Promise<ActivityPage | null>;
   listNeighbors(id: string, count: number): Promise<ActivitySource[]>;
@@ -152,14 +155,16 @@ class ActivityHistoryModule implements ActivityHistory {
     let size = 0;
     let count = 0;
     let boundary = false;
+    let truncated = false;
     for (const row of rows) {
       const records = renderActivityRecords(row);
       const text = records
         .map((record) => `${row.persistedAt.slice(11, 16)} ${record}`)
         .join(RECORD_SEPARATOR);
+      const separatorSize = text && blocks.length ? RECORD_SEPARATOR.length : 0;
       if (
         selected.length &&
-        (size + text.length > options.maxCharacters ||
+        (size + separatorSize + text.length > options.maxCharacters ||
           Date.parse(row.persistedAt) - Date.parse(first.persistedAt) >=
             options.maxDurationMs ||
           row.persistedAt.slice(0, 10) !== first.persistedAt.slice(0, 10))
@@ -169,10 +174,19 @@ class ActivityHistoryModule implements ActivityHistory {
       }
       selected.push(row);
       if (text) {
-        blocks.push(text);
-        size += text.length + RECORD_SEPARATOR.length;
+        const bounded = text.slice(
+          0,
+          Math.max(0, options.maxCharacters - size - separatorSize),
+        );
+        blocks.push(bounded);
+        size += bounded.length + separatorSize;
+        truncated ||= bounded.length < text.length;
       }
       count += records.length;
+      if (truncated) {
+        boundary = true;
+        break;
+      }
     }
     const last = selected.at(-1)!;
     const idleAt = Math.max(
@@ -190,6 +204,7 @@ class ActivityHistoryModule implements ActivityHistory {
       return null;
     return {
       id: last.id,
+      firstSourceId: first.id,
       sourceIds: selected
         .filter((row) => renderActivityRecords(row).length > 0)
         .map((row) => row.id)
@@ -204,7 +219,7 @@ class ActivityHistoryModule implements ActivityHistory {
         (sum, row) => sum + (row.message ? row.bytes : 0),
         0,
       ),
-      truncated: selected.some((row) => row.message === null),
+      truncated: truncated || selected.some((row) => row.message === null),
     };
   }
 
@@ -215,19 +230,33 @@ class ActivityHistoryModule implements ActivityHistory {
       limit: number;
       maxBytes: number;
       tail?: boolean;
+      firstSourceId?: string;
     },
   ): Promise<ActivityPage | null> {
     const ordinal = activityOrdinal(id);
     if (ordinal === null) return null;
-    const [row] = await this.history.readActivity({
-      after: ordinal - 1,
+    const firstOrdinal =
+      options.firstSourceId === undefined
+        ? ordinal
+        : activityOrdinal(options.firstSourceId);
+    if (firstOrdinal === null || firstOrdinal > ordinal) return null;
+    const rows = await this.history.readActivity({
+      after: firstOrdinal - 1,
       through: ordinal,
-      limit: 1,
+      limit: options.firstSourceId === undefined ? 1 : 200,
       maxBytes: options.maxBytes,
     });
+    const row = rows.at(-1);
     if (!row || row.id !== id) return null;
-    const text = renderActivityRecords(row)
-      .map((record) => `${row.persistedAt.slice(11, 16)} ${record}`)
+    const rendered = rows.map((source) => ({
+      source,
+      text: renderActivityRecords(source)
+        .map((record) => `${source.persistedAt.slice(11, 16)} ${record}`)
+        .join(RECORD_SEPARATOR),
+    }));
+    const text = rendered
+      .filter((item) => item.text)
+      .map((item) => item.text)
       .join(RECORD_SEPARATOR);
     const limit = Math.max(0, Math.min(60_000, options.limit));
     const offset = options.tail
@@ -235,13 +264,29 @@ class ActivityHistoryModule implements ActivityHistory {
       : Math.max(0, options.offset);
     return {
       id,
-      startedAt: row.persistedAt,
+      ...(options.firstSourceId === undefined
+        ? {}
+        : {
+            firstSourceId: options.firstSourceId,
+            sourceIds: rendered
+              .filter((item) => item.text)
+              .map((item) => item.source.id)
+              .slice(-6),
+          }),
+      startedAt: rows[0]?.persistedAt ?? row.persistedAt,
       endedAt: row.persistedAt,
       text: text.slice(offset, offset + limit),
       offset,
       nextOffset: offset + limit < text.length ? offset + limit : null,
-      scannedBytes: row.message ? row.bytes : 0,
-      truncated: row.message === null || (Boolean(options.tail) && offset > 0),
+      scannedBytes: rows.reduce(
+        (sum, source) => sum + (source.message ? source.bytes : 0),
+        0,
+      ),
+      truncated:
+        rows.some((source) => source.message === null) ||
+        (options.firstSourceId !== undefined &&
+          rows[0]?.id !== options.firstSourceId) ||
+        (Boolean(options.tail) && offset > 0),
     };
   }
 
@@ -281,11 +326,20 @@ class ActivityHistoryModule implements ActivityHistory {
     ) {
       const source = sources[index]!;
       // Debit oversized candidates too: an omitted body must not allow unlimited work.
-      const page = await this.readPage(source.id, {
-        offset: 0,
-        limit: 60_000,
-        maxBytes: options.maxBytes - scannedBytes,
-      });
+      let page: ActivityPage | null;
+      try {
+        page = await this.readPage(source.id, {
+          offset: 0,
+          limit: 60_000,
+          maxBytes: options.maxBytes - scannedBytes,
+        });
+      } catch (error) {
+        // Preserve completed work and its byte charge when a later query fails.
+        // A failure before any work still propagates as an atomic failure.
+        if (scannedBytes === 0) throw error;
+        truncated = true;
+        break;
+      }
       if (!page) {
         truncated = true;
         continue;

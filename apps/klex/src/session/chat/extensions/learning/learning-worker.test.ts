@@ -7,9 +7,13 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ModuleLogger } from '@stagewise/logger';
 
 import { type ActivityHistory, activityOrdinal } from '@/activity-history';
-import { TEST_ACTIVITY_LIMITS } from '@/activity-history/test-support';
+import {
+  createActivityFixture,
+  TEST_ACTIVITY_LIMITS,
+} from '@/activity-history/test-support';
 import {
   createSkillRegistry,
+  MAX_METADATA_BYTES,
   type SkillDocument,
   type SkillPutOptions,
 } from '@/skills';
@@ -594,6 +598,118 @@ describe('learning worker', () => {
       pendingChangeWeight: 2,
       processedEpisodeCount: 1,
     });
+  });
+
+  it('keeps aggregate provenance within the shared skill metadata budget', async () => {
+    const feed = fakeFeed(0);
+    const ids = Array.from(
+      { length: 6 },
+      (_, ordinal) =>
+        `history:${Buffer.from(JSON.stringify([ordinal, 'instance'.repeat(180), String(ordinal)])).toString('base64url')}`,
+    );
+    const h = await harness(feed);
+    await h.write(
+      { name: 'target', description: 'Use when targeting.', body: 'Before.' },
+      { metadata: { future: 'z'.repeat(2000), sourceEpisodes: [ids[0]] } },
+    );
+    await h.write(
+      { name: 'donor', description: 'Use when donating.', body: 'Donor.' },
+      { metadata: { sourceEpisodes: [ids[1]] } },
+    );
+    const lastId = ids.at(-1);
+    if (!lastId) throw new Error('Missing provenance fixture');
+    vi.spyOn(feed, 'readPending')
+      .mockResolvedValueOnce({
+        id: lastId,
+        sourceIds: ids,
+        text: LONG_TEXT,
+        recordCount: 6,
+        startedAt: '2026-10-01T10:00:00Z',
+        endedAt: '2026-10-01T10:00:00Z',
+        offset: 0,
+        nextOffset: null,
+        scannedBytes: LONG_TEXT.length,
+        truncated: false,
+      })
+      .mockResolvedValue(null);
+    h.runChild.mockResolvedValueOnce(
+      ok(
+        JSON.stringify({
+          operations: [
+            {
+              op: 'update',
+              name: 'target',
+              description: 'Use when targeting.',
+              body: 'After.',
+              mergedFrom: ['donor'],
+              evidenceEpisodes: ids,
+            },
+          ],
+        }),
+      ),
+    );
+    expect(await h.worker.runOnce()).toBe('processed');
+    const skill = h.skills.get('target');
+    if (!skill) throw new Error('Skill write failed');
+    expect(skill.body).toBe('After.');
+    expect(skill.metadata?.future).toBe('z'.repeat(2000));
+    expect(
+      Buffer.byteLength(JSON.stringify(skill.metadata), 'utf8'),
+    ).toBeLessThanOrEqual(MAX_METADATA_BYTES);
+    expect(h.sources('target')?.length).toBeGreaterThan(0);
+    expect(h.sources('target')?.at(-1)).toBe(ids[5]);
+    await h.worker.close();
+  });
+
+  it('revisits the full deferred SQLite batch after restart without recounting', async () => {
+    const fixture = await createActivityFixture();
+    let restarted: ReturnType<typeof createLearningWorker> | undefined;
+    const h = await harness(fixture.activities);
+    try {
+      const first = await fixture.append(`earlier evidence ${LONG_TEXT}`);
+      const last = await fixture.append('last batch message');
+      h.runChild.mockResolvedValueOnce(
+        ok('{"operations": [], "deferred": true}'),
+      );
+      await h.worker.runOnce();
+      expect(h.state.get().deferred).toMatchObject([
+        { id: last.id, firstSourceId: first.id },
+      ]);
+      await h.worker.close();
+      const state = createLearningState(h.dataDir);
+      await state.start();
+      fixture.setTime('2026-10-02T12:00:00Z');
+      await fixture.append(`newer progress ${LONG_TEXT}`);
+      h.runChild
+        .mockResolvedValueOnce(ok())
+        .mockResolvedValueOnce(ok(createReply('verified-range')));
+      restarted = createLearningWorker({
+        activities: fixture.activities,
+        getLimits: () => TEST_ACTIVITY_LIMITS,
+        skills: h.skills,
+        state,
+        createChildSession: h.createChildSession,
+        getModelPurpose: () => 'memory',
+        getAgent: h.getAgent,
+        logger: h.logger,
+        now: () => Date.parse('2026-10-03T12:00:00Z'),
+      });
+      await restarted.runOnce();
+      expect(h.runChild).toHaveBeenCalledTimes(3);
+      const prompt = h.runChild.mock.calls[2]?.[0].prompt;
+      expect(prompt).toContain('earlier evidence');
+      expect(prompt).toContain('last batch message');
+      expect(prompt).not.toContain('newer progress');
+      expect(h.sources('verified-range')).toEqual([first.id, last.id]);
+      expect(state.get()).toMatchObject({
+        processedEpisodeCount: 2,
+        deferred: [],
+      });
+    } finally {
+      await restarted?.close();
+      await h.worker.close();
+      await fixture.close();
+    }
   });
 
   it('persists deferred references and revisits only after newer progress without recounting', async () => {

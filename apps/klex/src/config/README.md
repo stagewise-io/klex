@@ -125,7 +125,8 @@ defaults. Unknown keys are rejected.
 `extensions.memory.episodes` retains its configuration shape and now controls
 runtime activity batching independently in learning and activity-title generation.
 No episode files or durable groups are created. A batch becomes ready at a size,
-duration, idle or UTC-date boundary:
+duration, idle or UTC-date boundary, or after 200 source rows (including
+filtered-only rows), whichever comes first:
 
 - `maxCharacters`: rendered history-view characters, including time prefixes and
   record separators, rather than serialized JSON Lines. Default `50000`.

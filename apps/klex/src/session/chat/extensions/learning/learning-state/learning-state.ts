@@ -75,6 +75,8 @@ export interface LearningStateData {
     id: string;
     after: string;
     attempts: number;
+    /** Optional canonical range start; old single-source references remain valid. */
+    firstSourceId?: string;
     [key: string]: unknown;
   }[];
 }

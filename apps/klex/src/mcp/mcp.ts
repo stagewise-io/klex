@@ -389,6 +389,8 @@ interface McpServerRuntime {
   status: Exclude<McpConnectionStatus, 'disconnected'>;
   connection?: McpConnection;
   attempt?: McpConnectionAttempt;
+  /** Aborted with the runtime so a removed server gets no late client writes. */
+  clientSetup?: AbortController;
   retryAttempt: number;
   retryTimer?: ReturnType<typeof setTimeout>;
   lastError?: McpServerErrorInfo;
@@ -451,6 +453,7 @@ class McpModule implements Mcp {
         serverName: string,
         serverUrl: string,
         client: RegisteredOAuthClient,
+        signal: AbortSignal,
       ) => Promise<void>;
     },
   ) {}
@@ -1075,6 +1078,7 @@ class McpModule implements Mcp {
       this.servers.delete(runtime.namespace);
     runtime.attempt?.controller.abort();
     runtime.attempt = undefined;
+    runtime.clientSetup?.abort();
     this.clearRetry(runtime);
     this.stopEventWorker(runtime.namespace);
     this.stopRealtimeWorker(runtime.namespace);
@@ -1692,13 +1696,24 @@ class McpModule implements Mcp {
     if (client) {
       runtime.status = 'authorization_required';
       this.publishRegistry();
+      const setup = new AbortController();
+      runtime.clientSetup?.abort();
+      runtime.clientSetup = setup;
       try {
-        await this.deps.configureOAuthClient(serverName, config.url, client);
+        await this.deps.configureOAuthClient(
+          serverName,
+          config.url,
+          client,
+          setup.signal,
+        );
       } catch (error) {
+        if (setup.signal.aborted) return { outcome: 'not_found' };
         // A failed setup must not leave the server down without a retry;
         // reconnect with whatever credentials are still stored.
         if (this.isCurrentRuntime(runtime)) this.connectRuntime(runtime);
         throw error;
+      } finally {
+        if (runtime.clientSetup === setup) runtime.clientSetup = undefined;
       }
       if (!this.isCurrentRuntime(runtime)) return { outcome: 'not_found' };
     }
@@ -2113,7 +2128,7 @@ export function createMcp(deps: McpDependencies): Mcp {
       await revokeOAuthCredentials(credentials, namespace, logger);
       return credentials.length;
     },
-    configureOAuthClient: (serverName, serverUrl, client) => {
+    configureOAuthClient: (serverName, serverUrl, client, signal) => {
       const cloud = deps.cloudConnectivity;
       if (!cloud) throw new Error('Cloud authorization unavailable');
       return saveRegisteredOAuthClient(
@@ -2122,6 +2137,7 @@ export function createMcp(deps: McpDependencies): Mcp {
         serverUrl,
         cloudCallbackUrl(cloud.getCloudBaseUrl()),
         client,
+        { signal },
       );
     },
     closeOAuth: async () => {

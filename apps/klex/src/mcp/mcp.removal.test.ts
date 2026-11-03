@@ -18,6 +18,7 @@ import {
 import type { McpConnection, McpConnectionFactory } from './connection';
 import { createMcp, type Mcp } from './mcp';
 import { McpPendingAuthorizationRegistry } from './oauth/pending-authorizations';
+import * as registeredClient from './oauth/register-client';
 import { McpOAuthStore } from './oauth/store';
 
 const directories: string[] = [];
@@ -39,6 +40,7 @@ function connection(namespace: string): McpConnection {
 async function setup(
   connect: McpConnectionFactory = async ({ namespace }) =>
     connection(namespace),
+  cloudConnectivity?: Partial<CloudConnectivity>,
 ) {
   const directory = await mkdtemp(join(tmpdir(), 'klex-mcp-removal-'));
   directories.push(directory);
@@ -79,6 +81,7 @@ async function setup(
     logging: { child: () => logger } as unknown as RootLogger,
     dataDirectory: directory,
     connect,
+    cloudConnectivity: cloudConnectivity as CloudConnectivity | undefined,
     pendingAuthorizations,
   });
   modules.push(mcp);
@@ -111,6 +114,59 @@ afterEach(async () => {
 });
 
 describe('MCP server removal', () => {
+  it('rejects registered client writes that finish after the server was removed', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response(null, { status: 200 })),
+    );
+    let release = () => {};
+    const released = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let redirect = '';
+    let started = () => {};
+    const setupStarted = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    vi.spyOn(registeredClient, 'saveRegisteredOAuthClient').mockImplementation(
+      async (store, serverName, serverUrl, redirectUrl, client, options) => {
+        redirect = redirectUrl.toString();
+        started();
+        await released;
+        await store.saveClientInformation(
+          `${serverName}\u0000${serverUrl}`,
+          redirectUrl.toString(),
+          { client_id: client.clientId, issuer },
+          issuer,
+          options?.signal,
+        );
+      },
+    );
+    const { mcp, store } = await setup(undefined, {
+      isCloudEnabled: () => true,
+      isEnrolled: () => true,
+      getTunnelState: () => 'connected',
+      getCloudBaseUrl: () => 'https://cloud.example.com',
+    });
+    await mcp.start();
+    await vi.waitFor(() =>
+      expect(mcp.getServerStatuses()[0]?.status).toBe('connected'),
+    );
+
+    const request = mcp.requestAuthorization('clay', {
+      clientId: 'customer-app',
+    });
+    await setupStarted;
+    await mcp.removeServer('clay');
+    release();
+
+    await expect(request).resolves.toEqual({ outcome: 'not_found' });
+    await expect(
+      store.clientInformation(key, redirect, issuer),
+    ).resolves.toBeUndefined();
+    await expect(store.tokens(key, issuer)).resolves.toBeUndefined();
+  });
+
   it('retries failed credential cleanup after the configuration is already gone', async () => {
     vi.stubGlobal(
       'fetch',

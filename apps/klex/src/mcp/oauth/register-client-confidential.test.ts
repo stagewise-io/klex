@@ -56,7 +56,7 @@ test('a registered confidential client completes PKCE and replaces its previous 
       serverUrl,
       redirectUrl,
       { clientId: 'registered-client', clientSecret: 'test-only-secret' },
-      fetcher,
+      { fetch: fetcher },
     );
     const redirect = vi.fn();
     const provider = new McpOAuthProvider({
@@ -107,7 +107,7 @@ test('a registered confidential client completes PKCE and replaces its previous 
       serverUrl,
       redirectUrl,
       { clientId: 'replacement', clientSecret: 'replacement-secret' },
-      fetcher,
+      { fetch: fetcher },
     );
     expect(await restarted.tokens(key, issuer)).toBeUndefined();
     expect(

@@ -1,3 +1,5 @@
+import { z } from 'zod';
+
 import type { ModuleLogger } from '@stagewise/logger';
 
 import {
@@ -21,13 +23,18 @@ const OMITTED_MARKER = '\n\n[… middle omitted …]\n\n';
 export const MIN_RECORDS = 2;
 /**
  * Reasoning models spend most of the budget thinking before the title, so
- * 256 truncated them in E2E runs. Title length is enforced by `parseTitle`.
+ * 256 truncated them in E2E runs. Title length is enforced by the schema.
  * No temperature: reasoning models the provider does not recognize reject it.
  */
 export const MAX_OUTPUT_TOKENS = 1024;
-const MAX_TITLE_WORDS = 12;
-const MAX_TITLE_CHARACTERS = 100;
-const SKIP_TOKEN = 'SKIP';
+export const summaryOutputSchema = z.strictObject({
+  title: z
+    .string()
+    .trim()
+    .min(1)
+    .max(100)
+    .describe('Short English past-tense activity title, at most 10 words'),
+});
 
 /** Keeps the start and the (more outcome-relevant) end of long episodes. */
 export function buildEpisodeInput(text: string): string {
@@ -35,30 +42,6 @@ export function buildEpisodeInput(text: string): string {
   const tailCharacters =
     MAX_INPUT_CHARACTERS - HEAD_CHARACTERS - OMITTED_MARKER.length;
   return `${text.slice(0, HEAD_CHARACTERS)}${OMITTED_MARKER}${text.slice(-tailCharacters)}`;
-}
-
-/** Normalizes model output to one short title, or null for "skip". */
-export function parseTitle(raw: string): string | null {
-  const line = raw
-    .split(/\r?\n/u)
-    .map((candidate) => candidate.trim())
-    .find((candidate) => candidate.length > 0);
-  if (!line) return null;
-  let title = line
-    .replace(/^(?:[-*•]|\d+[.)])\s+/u, '')
-    .replace(/^(?:title:\s*)/iu, '')
-    .replace(/^["'`“”‘’]+|["'`“”‘’]+$/gu, '')
-    .replace(/\s+/gu, ' ')
-    .trim()
-    .replace(/[.。]+$/u, '')
-    .trim();
-  if (!title || title.toUpperCase() === SKIP_TOKEN) return null;
-  const words = title.split(' ');
-  if (words.length > MAX_TITLE_WORDS)
-    title = words.slice(0, MAX_TITLE_WORDS).join(' ');
-  if (title.length > MAX_TITLE_CHARACTERS)
-    title = title.slice(0, MAX_TITLE_CHARACTERS).trimEnd();
-  return title;
 }
 
 export const SUMMARY_SYSTEM_PROMPT = `${summaryPrompt.trim()}\n\n${LINES_FORMAT_PROMPT}`;
@@ -184,6 +167,7 @@ class SummarizerModule implements Summarizer {
       modelIds: this.deps.getModelIds(),
       system: SUMMARY_SYSTEM_PROMPT,
       prompt: buildEpisodeInput(episode.text),
+      outputSchema: summaryOutputSchema,
       maxOutputTokens: MAX_OUTPUT_TOKENS,
       abortSignal: this.abort.signal,
     });
@@ -202,9 +186,9 @@ class SummarizerModule implements Summarizer {
       return false;
     }
     if (this.closed) return false;
-    // Truncated or empty output is not a model decision to skip; storing it
-    // would permanently lose the title, so retry like a failed call.
-    if (result.finishReason === 'length' || result.text.trim() === '') {
+    // Never advance progress for truncated or invalid structured output.
+    const parsed = summaryOutputSchema.safeParse(result.output);
+    if (result.finishReason === 'length' || !parsed.success) {
       this.lastError = `incomplete output (${result.finishReason})`;
       this.deps.logger.warn(
         { episodeId: episode.id, finishReason: result.finishReason },
@@ -212,14 +196,8 @@ class SummarizerModule implements Summarizer {
       );
       return false;
     }
-    const title = parseTitle(result.text);
-    await this.commit(
-      episode.id,
-      episode,
-      title ? 'titled' : 'skipped',
-      title,
-      result.modelId,
-    );
+    const { title } = parsed.data;
+    await this.commit(episode.id, episode, 'titled', title, result.modelId);
     return true;
   }
 

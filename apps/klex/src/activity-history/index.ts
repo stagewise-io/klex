@@ -5,8 +5,4 @@ export type {
   ActivityPage,
   ActivitySearchResult,
 } from './activity-history';
-export {
-  activityOrdinal,
-  createActivityHistory,
-  renderActivityRecords,
-} from './activity-history';
+export { activityOrdinal, createActivityHistory } from './activity-history';

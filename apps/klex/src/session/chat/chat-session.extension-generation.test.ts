@@ -180,6 +180,80 @@ describe('single-step extension generation', () => {
       await session.close();
     }
   });
+  it('requests schema-constrained output and returns the validated title', async () => {
+    const response = {
+      ...call('unused'),
+      content: [
+        {
+          type: 'text' as const,
+          text: JSON.stringify({ title: 'Fixed deployment' }),
+        },
+      ],
+      finishReason: { unified: 'stop' as const, raw: 'stop' },
+    };
+    const model = new MockLanguageModelV4({ doGenerate: [response] });
+    const { generate, session, args } = await harness([model]);
+    try {
+      expect(
+        await generate({
+          ...args,
+          tools: undefined,
+          outputSchema: z.strictObject({ title: z.string().min(1) }),
+        }),
+      ).toMatchObject({
+        success: true,
+        output: { title: 'Fixed deployment' },
+        modelId: '0',
+        usage: { totalTokens: 2 },
+      });
+      expect(model.doGenerateCalls[0]?.responseFormat).toMatchObject({
+        type: 'json',
+        schema: {
+          type: 'object',
+          required: ['title'],
+          additionalProperties: false,
+        },
+      });
+    } finally {
+      await session.close();
+    }
+  });
+
+  it.each([
+    'not json',
+    '{}',
+    '{"title": 42}',
+    '{"title": "Fixed deployment", "extra": true}',
+  ])('falls back after invalid structured output: %s', async (text) => {
+    const response = (value: string) => ({
+      ...call('unused'),
+      content: [{ type: 'text' as const, text: value }],
+      finishReason: { unified: 'stop' as const, raw: 'stop' },
+    });
+    const losing = new MockLanguageModelV4({ doGenerate: [response(text)] });
+    const winning = new MockLanguageModelV4({
+      doGenerate: [response('{"title":"Fixed deployment"}')],
+    });
+    const { generate, session, args } = await harness([losing, winning]);
+    try {
+      expect(
+        await generate({
+          ...args,
+          tools: undefined,
+          outputSchema: z.strictObject({ title: z.string().min(1) }),
+        }),
+      ).toMatchObject({
+        success: true,
+        output: { title: 'Fixed deployment' },
+        modelId: '1',
+      });
+      expect(losing.doGenerateCalls).toHaveLength(1);
+      expect(winning.doGenerateCalls).toHaveLength(1);
+    } finally {
+      await session.close();
+    }
+  });
+
   it('cancels before starting a model', async () => {
     const model = new MockLanguageModelV4({ doGenerate: [call('unused')] });
     const { generate, session, args } = await harness([model]);

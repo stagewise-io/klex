@@ -1,6 +1,7 @@
 import type {
   FilePart,
   FinishReason,
+  FlexibleSchema,
   LanguageModelUsage,
   ModelMessage,
   TextPart,
@@ -245,6 +246,8 @@ export interface GenerateTextArgs {
   messages?: ModelMessage[];
   /** Tools available to the model during generation. */
   tools?: ToolSet;
+  /** Requests schema-constrained structured output instead of free-form text. */
+  outputSchema?: FlexibleSchema<unknown>;
   /** Sampling temperature (provider-specific range, typically 0–2). */
   temperature?: number;
   /** Maximum number of tokens to generate. */
@@ -261,6 +264,8 @@ export interface GenerateTextArgs {
 export interface GenerateTextSuccess {
   /** The generated text. */
   text: string;
+  /** Validated structured output when an `outputSchema` was requested. */
+  output?: unknown;
   /** The model ID that produced the output. */
   modelId: string;
   /** Token usage from the successful generation, including cache details. */

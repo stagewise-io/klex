@@ -101,19 +101,11 @@ export interface SearchHit {
   scoreBand: 'strong' | 'medium' | 'weak';
 }
 
-interface IndexedRow {
-  rowId: number;
-  sourceId: string;
-  entryOrdinal: number;
-  occurredAt: string;
-  text: string;
-}
-
 export class EpisodicSearchIndex {
   private client: Client | null = null;
   private status: SearchIndexStatus = 'partial';
   private lastReconciledAt: string | null = null;
-  private readonly handles = new Map<string, IndexedRow>();
+  private readonly handles = new Map<string, ActivityEntry>();
   private readonly handleOwners = new Map<string, string>();
   private handleCounter = 0;
   private reconcilePromise: Promise<void> | null = null;
@@ -333,7 +325,7 @@ export class EpisodicSearchIndex {
     const expression = ftsQuery(contentQuery);
     if (!expression) return [];
     const result = await this.client.execute({
-      sql: `SELECT rowid, source_id, entry_ordinal, occurred_at, text,
+      sql: `SELECT source_id, entry_ordinal, occurred_at, text,
         bm25(activity_entries) AS rank,
         snippet(activity_entries, 0, '[', ']', '…', 36) AS snippet
         FROM activity_entries
@@ -344,14 +336,12 @@ export class EpisodicSearchIndex {
     });
     const hits: SearchHit[] = [];
     for (const row of result.rows) {
-      const rowId = numberValue(row.rowid);
       const sourceId = stringValue(row.source_id);
       const entryOrdinal = numberValue(row.entry_ordinal);
       const occurredAt = stringValue(row.occurred_at);
       const text = stringValue(row.text);
       const rank = numberValue(row.rank) ?? 0;
-      if (rowId === null || !sourceId || entryOrdinal === null || !occurredAt)
-        continue;
+      if (!sourceId || entryOrdinal === null || !occurredAt) continue;
       // The index is disposable: repairs, retention and rollback may have
       // invalidated it since reconciliation. Never expose its stale text.
       const current = await this.store.read(sourceId);
@@ -363,7 +353,6 @@ export class EpisodicSearchIndex {
         continue;
       const handle = `hit_${++this.handleCounter}`;
       this.handles.set(handle, {
-        rowId,
         sourceId,
         entryOrdinal,
         occurredAt,
@@ -405,16 +394,7 @@ export class EpisodicSearchIndex {
     for (const handle of handles) {
       const row = this.handles.get(handle);
       if (!row || this.handleOwners.get(handle) !== owner) continue;
-      const entries = await this.store.readNeighbors(
-        {
-          sourceId: row.sourceId,
-          entryOrdinal: row.entryOrdinal,
-          occurredAt: row.occurredAt,
-          text: row.text,
-        },
-        before,
-        after,
-      );
+      const entries = await this.store.readNeighbors(row, before, after);
       result.push(...entries);
     }
     return result;
@@ -521,19 +501,17 @@ function stripRecencyTerms(query: string): string {
 }
 
 function ftsQuery(query: string): string {
-  const expression = (value: string, joiner: ' OR ' | ' AND ') =>
-    (value.match(/"[^"\n]*"|\S+/gu) ?? [])
-      .map((token) => {
-        const quoted = token.startsWith('"') && token.endsWith('"');
-        const normalized = (quoted ? token.slice(1, -1) : token)
-          .normalize('NFKC')
-          .replace(/[^\p{L}\p{N}_-]/gu, ' ')
-          .trim();
-        return normalized ? `"${normalized.replaceAll('"', '""')}"` : '';
-      })
-      .filter(Boolean)
-      .join(joiner);
-  return expression(query, ' OR ');
+  return (query.match(/"[^"\n]*"|\S+/gu) ?? [])
+    .map((token) => {
+      const quoted = token.startsWith('"') && token.endsWith('"');
+      const normalized = (quoted ? token.slice(1, -1) : token)
+        .normalize('NFKC')
+        .replace(/[^\p{L}\p{N}_-]/gu, ' ')
+        .trim();
+      return normalized ? `"${normalized.replaceAll('"', '""')}"` : '';
+    })
+    .filter(Boolean)
+    .join(' OR ');
 }
 
 function impliesRecency(query: string): boolean {

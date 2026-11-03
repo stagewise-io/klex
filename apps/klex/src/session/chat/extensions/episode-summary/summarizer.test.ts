@@ -15,8 +15,8 @@ import {
   createSummarizer,
   MAX_INPUT_CHARACTERS,
   MAX_OUTPUT_TOKENS,
-  parseTitle,
   type Summarizer,
+  summaryOutputSchema,
 } from './summarizer';
 import type {
   StoredSummaryPage,
@@ -123,7 +123,8 @@ function success(
 ): GenerateTextResult {
   return {
     success: true,
-    text,
+    text: JSON.stringify({ title: text }),
+    output: { title: text },
     modelId: 'test:model',
     usage: {} as Success['usage'],
     finishReason,
@@ -173,25 +174,23 @@ async function settle(summarizer: Summarizer): Promise<void> {
   });
 }
 
-describe('parseTitle', () => {
-  it('normalizes quotes, bullets, prefixes and trailing periods', () => {
-    expect(parseTitle('\n- "Fixed the deploy script."\nextra')).toBe(
+describe('summaryOutputSchema', () => {
+  it('accepts only a nonempty title field', () => {
+    expect(
+      summaryOutputSchema.parse({ title: ' Fixed the deploy script ' }),
+    ).toEqual({ title: 'Fixed the deploy script' });
+    for (const output of [
+      undefined,
       'Fixed the deploy script',
-    );
-    expect(parseTitle('Title: Planned the offsite')).toBe(
-      'Planned the offsite',
-    );
-  });
-
-  it('returns null for SKIP and empty output', () => {
-    expect(parseTitle(' skip ')).toBeNull();
-    expect(parseTitle('\n\n')).toBeNull();
-  });
-
-  it('caps words and characters', () => {
-    const long = Array.from({ length: 20 }, (_, i) => `word${i}`).join(' ');
-    expect(parseTitle(long)?.split(' ')).toHaveLength(12);
-    expect(parseTitle('x'.repeat(300))?.length).toBe(100);
+      {},
+      { title: null },
+      { title: '  ' },
+      { title: 123 },
+      { title: 'x'.repeat(101) },
+      { title: 'Fixed deployment', explanation: 'extra' },
+    ]) {
+      expect(summaryOutputSchema.safeParse(output).success).toBe(false);
+    }
   });
 });
 
@@ -239,11 +238,10 @@ describe('summarizer', () => {
     expect(store.cursor()).toEqual({ initialized: true, episodeId: 'e1' });
   });
 
-  it('titles new episodes in order and skips trivial ones without a call', async () => {
+  it('titles new episodes with structured output and skips trivial ones without a call', async () => {
     const { feed, store, generateText, summarizer } = setup({
       episodes: [episode('e1'), episode('e2', 1), episode('e3'), episode('e4')],
-      generateText: async (args) =>
-        success(args.prompt?.includes('e3') ? 'SKIP' : `Did ${args.prompt}`),
+      generateText: async (args) => success(`Did ${args.prompt}`),
     });
     feed.missing.add('e4');
 
@@ -255,12 +253,13 @@ describe('summarizer', () => {
       modelIds: [MODEL],
       prompt: 'text of e1',
       maxOutputTokens: MAX_OUTPUT_TOKENS,
+      outputSchema: summaryOutputSchema,
     });
     expect(generateText.mock.calls[0]?.[0]).not.toHaveProperty('temperature');
     expect(Object.fromEntries(store.rows)).toMatchObject({
       e1: { status: 'titled', title: 'Did text of e1', modelId: 'test:model' },
       e2: { status: 'skipped', title: null, modelId: null },
-      e3: { status: 'skipped', title: null, modelId: 'test:model' },
+      e3: { status: 'titled', title: 'Did text of e3', modelId: 'test:model' },
     });
     expect(store.rows.has('e4')).toBe(false);
     expect(store.cursor().episodeId).toBe('e3');
@@ -296,7 +295,17 @@ describe('summarizer', () => {
 
   it.each([
     ['truncated', success('Confirmed PR', 'length')],
-    ['empty', success('  \n')],
+    ['empty title', success('  \n')],
+    ['missing output', { ...success('Valid title'), output: undefined }],
+    ['missing title', { ...success('Valid title'), output: {} }],
+    [
+      'extra field',
+      {
+        ...success('Valid title'),
+        output: { title: 'Valid title', explanation: 'not allowed' },
+      },
+    ],
+    ['invalid title', { ...success('Valid title'), output: { title: null } }],
   ])(
     'keeps the cursor on %s output and retries on the next wake',
     async (_, first) => {
@@ -321,6 +330,16 @@ describe('summarizer', () => {
       });
     },
   );
+
+  it('uses the structured title rather than parsing the response text', async () => {
+    const { store, summarizer } = setup({
+      episodes: [episode('e1')],
+      generateText: async () => ({ ...success('Fixed deployment'), text: '' }),
+    });
+    summarizer.wake();
+    await settle(summarizer);
+    expect(store.rows.get('e1')?.title).toBe('Fixed deployment');
+  });
 
   it('reruns once when woken during a pass', async () => {
     let release: () => void = () => undefined;

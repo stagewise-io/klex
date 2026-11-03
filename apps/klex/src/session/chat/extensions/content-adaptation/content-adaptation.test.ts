@@ -63,6 +63,33 @@ function depsForAudio() {
 }
 
 describe('content adaptation', () => {
+  it('leaves readAttachment audio outputs to their owning extension', async () => {
+    const deps = depsForAudio();
+    const history: ModelMessage[] = [
+      {
+        role: 'tool',
+        content: [
+          {
+            type: 'tool-result',
+            toolCallId: 'attachment',
+            toolName: 'readAttachment',
+            output: {
+              type: 'content',
+              value: [
+                { type: 'file-data', mediaType: 'audio/mp4', data: 'YXVkaW8=' },
+              ],
+            },
+          },
+        ],
+      },
+    ];
+    for (const model of [makeModel({ inputCapabilities: {} }), makeModel()]) {
+      expect(await adaptAudioContent(history, deps, model)).toEqual(history);
+    }
+    expect(deps.generateText).not.toHaveBeenCalled();
+    expect(runOptimization).not.toHaveBeenCalled();
+  });
+
   it('adapts SDK tool audio outputs without changing canonical tool results', async () => {
     const deps = depsForAudio();
     const history: ModelMessage[] = [

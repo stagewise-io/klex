@@ -49,7 +49,11 @@
     "@stagewise/mcp-extension-push-notifications#test": {
       "dependsOn": ["^build"],
       "outputs": ["coverage**"],
-      "inputs": ["$TURBO_DEFAULT$", "$TURBO_ROOT$/scripts/**"]
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/scripts/**",
+        "$TURBO_ROOT$/biome.jsonc"
+      ]
     },
     "verify": {
       "dependsOn": ["build"],

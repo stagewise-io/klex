@@ -1595,11 +1595,53 @@ describe('MCP cloud authorization requests', () => {
       await expect(
         mcp.requestAuthorization('protected', { clientId: 'customer-app' }),
       ).rejects.toThrow('Discovery unavailable');
-      expect(serverRow(mcp, 'protected')?.status).toBe(
-        'authorization_required',
-      );
+      // The server is retried with its stored credentials, not left down.
+      await vi.waitFor(() => expect(attempt).toBe(2));
+      expect(serverRow(mcp, 'protected')?.status).toBe('authorizing');
       expect(await mcp.requestAuthorization('protected')).toMatchObject({
         outcome: 'pending',
+        authorization: { state: 'retry-2' },
+      });
+    } finally {
+      await mcp.close();
+      configure.mockRestore();
+    }
+  });
+
+  it('keeps a pending authorization when a client replacement cannot start', async () => {
+    const configure = vi.spyOn(registeredClient, 'saveRegisteredOAuthClient');
+    let tunnel: 'connected' | 'disconnected' = 'connected';
+    const { mcp, pendingAuthorizations } = setupAuthorization(
+      { protected: { url: 'https://protected.example/mcp' } },
+      async ({ namespace, signal, onAuthorizationStatus }) => {
+        onAuthorizationStatus?.('authorizing');
+        await pendingAuthorizations.register(
+          {
+            serverName: namespace,
+            serverUrl: 'https://protected.example/mcp',
+            authorizationUrl: 'https://auth.example/authorize?state=parked',
+            state: 'parked',
+          },
+          { signal, timeoutMs: 60_000 },
+        );
+        return connection(namespace);
+      },
+      { ...cloudReady, getTunnelState: () => tunnel },
+    );
+    try {
+      await mcp.start();
+      await vi.waitFor(() =>
+        expect(authorizationOf(mcp, 'protected')).not.toBeNull(),
+      );
+      tunnel = 'disconnected';
+      expect(
+        await mcp.requestAuthorization('protected', {
+          clientId: 'customer-app',
+        }),
+      ).toEqual({ outcome: 'unavailable' });
+      expect(configure).not.toHaveBeenCalled();
+      expect(pendingAuthorizations.findByServer('protected')).toMatchObject({
+        state: 'parked',
       });
     } finally {
       await mcp.close();

@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -101,6 +101,127 @@ afterEach(async () => {
 });
 
 describe('canonical activity queries', () => {
+  it('keeps revisions stable across other recorder syncs and restarts', async () => {
+    const { history, directory } = await setup();
+    const first = history.openRecorder(meta());
+    first.scheduleSync(() => [message('first')]);
+    await history.flush();
+    const [source] = await history.activityManifest();
+    const second = history.openRecorder(meta());
+    second.scheduleSync(() => [message('second')]);
+    await history.flush();
+    expect((await history.activityManifest())[0]).toEqual(source);
+    await history.close();
+    const restarted = await setup({ directory });
+    expect((await restarted.history.activityManifest())[0]).toEqual(source);
+    const repaired = restarted.history.openRecorder(meta());
+    const restored = await restarted.history.loadWindow('default', {
+      fallbackMaxBytes: 10000,
+    });
+    repaired.seed(restored);
+    const messages = restored.entries.map((entry) => entry.message);
+    // Same-size repairs must change the content revision, not just a size field.
+    repaired.scheduleSync(() =>
+      messages.map((entry) =>
+        entry.id === 'first' ? message('first', 'other') : entry,
+      ),
+    );
+    await restarted.history.flush();
+    expect((await restarted.history.activityManifest())[0]?.revision).not.toBe(
+      source?.revision,
+    );
+  });
+
+  it('migrates frozen v3 through registered startup, recovers failure and rejects old writers', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'klex-history-v3-'));
+    directories.push(directory);
+    const path = join(directory, SESSION_HISTORY_RELATIVE_PATH);
+    const raw = createClient({ url: `file:${path}` });
+    await raw.executeMultiple(
+      await readFile(
+        new URL(
+          '../local-data-migration-fixtures/sessions-v3.sql',
+          import.meta.url,
+        ),
+        'utf8',
+      ),
+    );
+    const before = (await raw.execute('SELECT * FROM messages ORDER BY ord'))
+      .rows;
+    raw.close();
+    const migrate = (store: SqliteStoreDefinition) =>
+      createLocalData({
+        logging: logger,
+        dataDirectory: directory,
+        klexVersion: KLEX_VERSION,
+        stores: [store],
+      }).start();
+    const broken = {
+      ...SESSION_HISTORY_STORE_DEFINITION,
+      migrations: SESSION_HISTORY_STORE_DEFINITION.migrations.map((step) =>
+        step.to === 4
+          ? {
+              ...step,
+              up: async (client: Parameters<typeof step.up>[0]) => {
+                await step.up(client);
+                throw new Error('injected revision migration failure');
+              },
+            }
+          : step,
+      ),
+    };
+    await expect(migrate(broken)).rejects.toThrow(/restored/);
+    const restored = createClient({ url: `file:${path}` });
+    expect(
+      (await restored.execute('SELECT * FROM messages ORDER BY ord')).rows,
+    ).toEqual(before);
+    expect(
+      (
+        await restored.execute(
+          "SELECT value FROM meta WHERE key = 'schemaVersion'",
+        )
+      ).rows[0]?.value,
+    ).toBe('3');
+    restored.close();
+    const first = await setup({ directory });
+    const sources = await first.history.activityManifest();
+    expect(sources[0]?.revision).toBe('2026-08-14T10:00:00.000Z:78');
+    await first.history.close();
+    const migrated = createClient({ url: `file:${path}` });
+    const rows = (await migrated.execute('SELECT * FROM messages ORDER BY ord'))
+      .rows;
+    expect(
+      rows.map(({ content_revision, ...row }) => {
+        expect(content_revision).toBeNull();
+        return row;
+      }),
+    ).toEqual(before);
+    expect(
+      (
+        await migrated.execute(
+          "SELECT value FROM meta WHERE key = 'schemaVersion'",
+        )
+      ).rows[0]?.value,
+    ).toBe('4');
+    migrated.close();
+    const bytes = await readFile(path);
+    await migrate(SESSION_HISTORY_STORE_DEFINITION);
+    expect(await readFile(path)).toEqual(bytes);
+    await expect(
+      migrate({
+        ...SESSION_HISTORY_STORE_DEFINITION,
+        schemaVersion: 3,
+        minimumKlexVersion: '0.26.0',
+        migrations: SESSION_HISTORY_STORE_DEFINITION.migrations.filter(
+          (step) => step.to <= 3,
+        ),
+      }),
+    ).rejects.toThrow(/schema=4.*schema=3/);
+    expect(await readFile(path)).toEqual(bytes);
+    const second = await setup({ directory });
+    expect(await second.history.activityManifest()).toEqual(sources);
+  });
+
   it('pages across instances, excludes children, and advances oversized sources', async () => {
     const { history } = await setup();
     const first = history.openRecorder(meta());
@@ -296,7 +417,7 @@ describe('session history sync', () => {
       initSql: SESSION_HISTORY_INIT_SQL.replace(
         '  generation_error TEXT,\n',
         '',
-      ),
+      ).replace('  content_revision TEXT,\n', ''),
       migrations: SESSION_HISTORY_STORE_DEFINITION.migrations.filter(
         (migration) => migration.to <= 2,
       ),
@@ -334,6 +455,9 @@ describe('session history sync', () => {
             throw new Error('injected migration failure');
           },
         },
+        ...SESSION_HISTORY_STORE_DEFINITION.migrations.filter(
+          (migration) => migration.from >= 3,
+        ),
       ],
     };
     await expect(migrate(broken)).rejects.toThrow(/restored/);
@@ -345,7 +469,7 @@ describe('session history sync', () => {
       name: 'old',
     });
     await history.close();
-    await expect(migrate(v2)).rejects.toThrow(/schema=3.*schema=2/);
+    await expect(migrate(v2)).rejects.toThrow(/schema=4.*schema=2/);
   });
 
   it('persists and deduplicates zero-message failures through sync, end, and restart', async () => {

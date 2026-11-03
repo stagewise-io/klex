@@ -2,7 +2,7 @@ import type { SqliteStoreDefinition } from '@/local-data';
 import { LOCAL_DATA_MIGRATIONS } from '@/local-data-migrations';
 
 /** Schema version — increment when adding migrations. */
-export const SESSION_HISTORY_SCHEMA_VERSION = 3;
+export const SESSION_HISTORY_SCHEMA_VERSION = 4;
 
 /** Relative path of the session-history database inside the data directory. */
 export const SESSION_HISTORY_RELATIVE_PATH = 'sessions.sqlite';
@@ -51,6 +51,7 @@ CREATE TABLE IF NOT EXISTS messages (
   message_id TEXT NOT NULL,
   role TEXT NOT NULL,
   content TEXT NOT NULL,
+  content_revision TEXT,
   byte_size INTEGER NOT NULL,
   persisted_at TEXT NOT NULL,
   is_checkpoint INTEGER NOT NULL DEFAULT 0,
@@ -84,10 +85,10 @@ export const SESSION_HISTORY_STORE_DEFINITION: SqliteStoreDefinition = {
   required: false,
   createIfMissing: true,
   schemaVersion: SESSION_HISTORY_SCHEMA_VERSION,
-  // Older binaries reject schema v3; no separate floor is needed.
+  // Older binaries reject schema v4; no separate floor is needed.
   compatibilityVersion: 1,
-  // First release shipping durable generation health (feat → minor after 0.25.x).
-  minimumKlexVersion: '0.26.0',
+  // First release shipping stable canonical activity revisions.
+  minimumKlexVersion: '0.29.0',
   // Must run before the first table exists; afterwards it has no effect.
   initPragmas: ['PRAGMA auto_vacuum = INCREMENTAL'],
   initSql: SESSION_HISTORY_INIT_SQL,
@@ -98,7 +99,7 @@ export const SESSION_HISTORY_STORE_DEFINITION: SqliteStoreDefinition = {
     );
     await client.execute(
       `SELECT session_id, ord, instance_id, message_id, is_checkpoint,
-              covers_through_ord
+              covers_through_ord, content_revision
        FROM messages LIMIT 1`,
     );
     const result = await client.execute('PRAGMA auto_vacuum');

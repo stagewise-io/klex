@@ -247,7 +247,6 @@ class SessionHistoryModule implements SessionHistory {
    */
   private readonly nextOrds = new Map<string, number>();
   private readonly activityListeners = new Set<() => void>();
-  private readonly activityRevisions = new Map<number, string>();
 
   activityAvailable(): boolean {
     return this.started && !this.closed;
@@ -271,7 +270,7 @@ class SessionHistoryModule implements SessionHistory {
   activityManifest(): Promise<ActivitySource[]> {
     return this.enqueueResult(async () => {
       const rows = await this.requireClient().execute({
-        sql: `SELECT ord, instance_id, message_id, byte_size, persisted_at FROM messages
+        sql: `SELECT ord, instance_id, message_id, byte_size, persisted_at, content_revision FROM messages
               WHERE session_id = 'default' AND is_checkpoint = 0 ORDER BY ord`,
         args: [],
       });
@@ -287,7 +286,7 @@ class SessionHistoryModule implements SessionHistory {
       persistedAt: toText(row.persisted_at),
       bytes: toNumber(row.byte_size),
       revision:
-        this.activityRevisions.get(ordinal) ??
+        (toText(row.content_revision) || null) ??
         `${toText(row.persisted_at)}:${toNumber(row.byte_size)}`,
     };
   }
@@ -296,7 +295,7 @@ class SessionHistoryModule implements SessionHistory {
     return this.enqueueResult(async () => {
       const client = this.requireClient();
       const rows = await client.execute({
-        sql: `SELECT ord, instance_id, message_id, byte_size, persisted_at FROM messages
+        sql: `SELECT ord, instance_id, message_id, byte_size, persisted_at, content_revision FROM messages
               WHERE session_id = 'default' AND is_checkpoint = 0 AND ord > ? AND ord <= ?
               ORDER BY ord ${query.descending ? 'DESC' : 'ASC'} LIMIT ?`,
         args: [
@@ -768,13 +767,14 @@ class SessionHistoryModule implements SessionHistory {
         changed = true;
         touched.add(previous.instanceId);
         statements.push({
-          sql: `UPDATE messages SET role = ?, content = ?, byte_size = ?, persisted_at = ?
+          sql: `UPDATE messages SET role = ?, content = ?, byte_size = ?, persisted_at = ?, content_revision = ?
                 WHERE session_id = ? AND ord = ?`,
           args: [
             message.role,
             content,
             bytes,
             now,
+            hash,
             meta.sessionId,
             previous.ord,
           ],
@@ -788,13 +788,14 @@ class SessionHistoryModule implements SessionHistory {
         changed = true;
         touched.add(previous.instanceId);
         statements.push({
-          sql: `UPDATE messages SET role = ?, content = ?, byte_size = ?, persisted_at = ?
+          sql: `UPDATE messages SET role = ?, content = ?, byte_size = ?, persisted_at = ?, content_revision = ?
                 WHERE session_id = ? AND ord = ?`,
           args: [
             message.role,
             content,
             bytes,
             now,
+            hash,
             meta.sessionId,
             previous.ord,
           ],
@@ -808,7 +809,7 @@ class SessionHistoryModule implements SessionHistory {
         touched.add(previous.instanceId);
         nextEntries.set(message.id, { ...previous, ord, hash });
         statements.push({
-          sql: `UPDATE messages SET ord = ?, role = ?, content = ?, byte_size = ?, persisted_at = ?
+          sql: `UPDATE messages SET ord = ?, role = ?, content = ?, byte_size = ?, persisted_at = ?, content_revision = ?
                 WHERE session_id = ? AND ord = ?`,
           args: [
             ord,
@@ -816,6 +817,7 @@ class SessionHistoryModule implements SessionHistory {
             content,
             bytes,
             now,
+            hash,
             meta.sessionId,
             previous.ord,
           ],
@@ -833,8 +835,8 @@ class SessionHistoryModule implements SessionHistory {
       statements.push({
         sql: `INSERT INTO messages (
                 session_id, ord, instance_id, message_id, role, content,
-                byte_size, persisted_at
-              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+                byte_size, persisted_at, content_revision
+              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         args: [
           meta.sessionId,
           ord,
@@ -844,6 +846,7 @@ class SessionHistoryModule implements SessionHistory {
           content,
           bytes,
           now,
+          hash,
         ],
       });
     }
@@ -899,9 +902,6 @@ class SessionHistoryModule implements SessionHistory {
     this.prunePendingTrimmed(recorder);
     recorder.inserted = true;
     if (meta.sessionId === 'default') {
-      this.activityRevisions.clear();
-      for (const entry of nextEntries.values())
-        this.activityRevisions.set(entry.ord, entry.hash);
       this.notifyActivity();
     }
     return true;

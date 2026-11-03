@@ -6,6 +6,7 @@ import {
   type AdminApiClient,
   AdminApiClientError,
   type KnownModel,
+  type KnownModelsResponse,
   type ProviderInfo,
   type ProviderResponse,
   type ProviderTypeInfo,
@@ -1020,6 +1021,18 @@ function ProviderSetupForm({
   );
 }
 
+/** Why a failed fetch fell back to the last good list or the catalog. */
+function discoveryIssueText(
+  discovery: KnownModelsResponse['discovery'],
+): string | undefined {
+  if (!discovery?.issue) return undefined;
+  const fallback =
+    discovery.status === 'catalog'
+      ? 'showing the built-in catalog'
+      : 'showing the last fetched list';
+  return `Model discovery failed (${fallback}): ${discovery.issue.message}`;
+}
+
 /** Manual or overridden models; discovered and catalog models are not saved. */
 function isKnownModel(model: KnownModel): boolean {
   return model.source === 'manual' || model.source === 'merged';
@@ -1073,6 +1086,7 @@ function KnownModelsPage({
     models.findIndex((model) => model.modelId === highlightedModelId),
   );
   const highlighted = models[highlightedIndex];
+  const discoveryIssue = discoveryIssueText(modelsPoll.data?.discovery);
 
   useEffect(() => {
     setActive(filterFocused);
@@ -1095,9 +1109,11 @@ function KnownModelsPage({
       if (!provider.metadata.capabilities.modelDiscovery) return;
       void apiClient
         .getKnownModels(provider.id, true)
-        .then(() => {
+        .then((response) => {
           modelsPoll.refresh();
-          pushToast('Discovered models refreshed', 'info');
+          const issue = discoveryIssueText(response.discovery);
+          if (issue) pushToast(issue, 'warning');
+          else pushToast('Discovered models refreshed', 'info');
         })
         .catch((error) =>
           pushProviderError(pushToast, error, 'Failed to refresh models'),
@@ -1124,6 +1140,7 @@ function KnownModelsPage({
         Discovered and manually added models for {provider.metadata.displayName}
         .
       </Text>
+      {discoveryIssue && <Text color="yellow">{discoveryIssue}</Text>}
       <Box marginTop={1}>
         <Text>Search: </Text>
         <TextInput

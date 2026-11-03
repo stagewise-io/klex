@@ -28,6 +28,29 @@
       "dependsOn": ["^build"],
       "outputs": ["coverage**"]
     },
+    "@klex/agent-admin-api#test": {
+      "dependsOn": ["^build"],
+      "outputs": ["coverage**"],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/scripts/**",
+        "$TURBO_ROOT$/.github/workflows/**",
+        "$TURBO_ROOT$/.github/actions/**",
+        "$TURBO_ROOT$/package.json",
+        "$TURBO_ROOT$/pnpm-workspace.yaml",
+        "$TURBO_ROOT$/apps/*/package.json",
+        "$TURBO_ROOT$/apps/*/.releaserc.js",
+        "$TURBO_ROOT$/packages/*/package.json",
+        "$TURBO_ROOT$/packages/*/.releaserc.js",
+        "$TURBO_ROOT$/mcp-servers/*/package.json",
+        "$TURBO_ROOT$/mcp-servers/*/.releaserc.js"
+      ]
+    },
+    "@stagewise/mcp-extension-push-notifications#test": {
+      "dependsOn": ["^build"],
+      "outputs": ["coverage**"],
+      "inputs": ["$TURBO_DEFAULT$", "$TURBO_ROOT$/scripts/**"]
+    },
     "verify": {
       "dependsOn": ["build"],
       "cache": false

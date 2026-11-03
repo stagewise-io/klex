@@ -88,7 +88,7 @@ export const SESSION_HISTORY_STORE_DEFINITION: SqliteStoreDefinition = {
   // Older binaries reject schema v4; no separate floor is needed.
   compatibilityVersion: 1,
   // First release shipping stable canonical activity revisions.
-  minimumKlexVersion: '0.29.0',
+  minimumKlexVersion: '0.28.1',
   // Must run before the first table exists; afterwards it has no effect.
   initPragmas: ['PRAGMA auto_vacuum = INCREMENTAL'],
   initSql: SESSION_HISTORY_INIT_SQL,

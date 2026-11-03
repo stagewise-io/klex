@@ -30,7 +30,7 @@ export const LEARNING_STATE_STORE_DEFINITION: JsonStoreDefinition = {
   required: false,
   schemaVersion: 2,
   compatibilityVersion: 4,
-  minimumKlexVersion: '0.29.0',
+  minimumKlexVersion: '0.28.1',
   versions: LOCAL_DATA_MIGRATIONS['learning-extension-state'].versions,
   migrations: LOCAL_DATA_MIGRATIONS['learning-extension-state'].migrations,
 };

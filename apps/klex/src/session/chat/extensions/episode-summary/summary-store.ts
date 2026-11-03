@@ -16,7 +16,7 @@ export const EPISODE_SUMMARY_STORE_DEFINITION: SqliteStoreDefinition = {
   createIfMissing: true,
   schemaVersion: 1,
   compatibilityVersion: 2,
-  minimumKlexVersion: '0.29.0',
+  minimumKlexVersion: '0.28.1',
   initSql: `
     CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS summaries (

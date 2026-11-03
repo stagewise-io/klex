@@ -99,6 +99,31 @@ describe('Turn — step loop', () => {
     vi.clearAllMocks();
   });
 
+  it('counts a silent post-tool stop as success after a failed attempt', async () => {
+    vi.mocked(createStep)
+      .mockReturnValueOnce(
+        makeMockStep({
+          shouldContinue: true,
+          modelFallbackOccurred: true,
+        }),
+      )
+      .mockReturnValueOnce(
+        makeMockStep({
+          shouldContinue: false,
+          generation: {
+            modelId: 'model-a',
+            finishReason: 'stop',
+            usage: { inputTokens: 10, outputTokens: 0 } as never,
+          },
+        }),
+      );
+    expect(await createTurn(makeDeps()).run()).toMatchObject({
+      completeFailure: false,
+      stopReason: 'completed',
+    });
+    expect(createStep).toHaveBeenCalledTimes(2);
+  });
+
   it('drops a failed provider attempt when a fallback completes the turn', async () => {
     const failure = summarizeGenerationFailure(new Error('rate limit'), {
       providerId: 'google',

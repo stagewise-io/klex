@@ -34,6 +34,7 @@ import { startChildSpan } from '../utils/tracing';
 import { ToolDispatcher } from './tool-dispatcher';
 
 export interface GenerationRunnerDependencies {
+  allowEmptyStop?: boolean;
   logger: ModuleLogger;
   sessionId: string;
   telemetryMetrics?: TelemetryMetrics;
@@ -123,6 +124,9 @@ export class GenerationRunner {
 
   async run(): Promise<StepCompleteEvent> {
     const { stepSpan, fallbackManager, messages } = this.deps;
+    const allowEmptyStop =
+      this.deps.allowEmptyStop ?? this.isPostToolContinuation();
+    let emptyStop = false;
 
     const toolDispatcher = new ToolDispatcher({
       logger: this.deps.logger,
@@ -185,6 +189,7 @@ export class GenerationRunner {
 
       try {
         const response = await runStreamedGeneration({
+          allowEmptyStop,
           model,
           modelMessages: this.deps.modelMessages,
           tools: this.deps.tools,
@@ -235,7 +240,11 @@ export class GenerationRunner {
           response.finishReason === 'stop' ||
           response.finishReason === 'tool-calls'
         ) {
-          messages.push(response.message);
+          emptyStop =
+            allowEmptyStop &&
+            response.finishReason === 'stop' &&
+            response.message.parts.length === 0;
+          if (!emptyStop) messages.push(response.message);
           fallbackManager.recordSuccessfulGeneration();
           lastUsage = response.usage;
           lastFinishReason = response.finishReason;
@@ -412,7 +421,7 @@ export class GenerationRunner {
 
     return {
       generationFailure,
-      shouldContinue: true,
+      shouldContinue: !emptyStop,
       forceNextStep,
       fatalError,
       fatalErrorReason,
@@ -429,6 +438,25 @@ export class GenerationRunner {
       modelFallbackOccurred,
       requestRejected: salvagedRejection,
     };
+  }
+
+  private isPostToolContinuation(): boolean {
+    const lastMessage = this.deps.messages.at(-1);
+    const toolParts =
+      lastMessage?.role === 'assistant'
+        ? lastMessage.parts.filter(isToolUIPart)
+        : [];
+    return (
+      (toolParts.length > 0 &&
+        toolParts.every(
+          (part) =>
+            part.state === 'output-available' ||
+            part.state === 'output-denied' ||
+            part.state === 'output-error' ||
+            part.state === 'approval-responded',
+        )) ||
+      this.deps.modelMessages.at(-1)?.role === 'tool'
+    );
   }
 
   abort(reason?: string): void {

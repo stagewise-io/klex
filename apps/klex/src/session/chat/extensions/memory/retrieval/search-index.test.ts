@@ -125,41 +125,198 @@ describe('canonical activity search index', () => {
     }
   });
 
-  it('keeps snapshots consistent after a failed append transaction and retries all entries', async () => {
-    const { index, client, replace, store, sourceId } = await mutableSource();
-    replace(['migration']);
+  it.each(['append', 'rewrite'] as const)(
+    'keeps snapshots consistent after a failed %s transaction and retries all entries',
+    async (mode) => {
+      const { index, client, replace } = await mutableSource();
+      replace(['migration']);
+      await index.reconcile();
+      await client.executeMultiple(`
+      CREATE TRIGGER fail_blocked BEFORE INSERT ON activity_source_terms
+      WHEN NEW.term = 'blocked'
+      BEGIN SELECT RAISE(ABORT, 'injected failure'); END;
+    `);
+      replace(
+        mode === 'append' ? ['migration', 'blocked'] : ['blocked', 'migration'],
+      );
+      await expect(index.reconcile()).rejects.toThrow('injected failure');
+      expect(index.getStatus()).toBe('partial');
+      expect(
+        (
+          await client.execute(
+            "SELECT * FROM activity_entries WHERE text = 'blocked'",
+          )
+        ).rows,
+      ).toEqual([]);
+      expect(
+        (
+          await client.execute(
+            "SELECT term, frequency FROM activity_vocabulary WHERE term IN ('migration', 'blocked') ORDER BY term",
+          )
+        ).rows,
+      ).toEqual([{ term: 'migration', frequency: 1 }]);
+      expect(
+        (
+          await client.execute(
+            "SELECT text FROM activity_entries WHERE text = 'migration'",
+          )
+        ).rows,
+      ).toEqual([{ text: 'migration' }]);
+      await client.execute('DROP TRIGGER fail_blocked');
+      await index.reconcile();
+      expect(await index.search('blocked', 5)).toHaveLength(1);
+      expect(
+        (
+          await client.execute(
+            "SELECT term, frequency FROM activity_vocabulary WHERE term IN ('migration', 'blocked') ORDER BY term",
+          )
+        ).rows,
+      ).toEqual([
+        { term: 'blocked', frequency: 1 },
+        { term: 'migration', frequency: 1 },
+      ]);
+    },
+  );
+
+  it('resumes a failed cold rebuild after restart without rereading committed sources', async () => {
+    const { index, store, database, sync } = await setup();
+    await sync(
+      ['first', 'second', 'third'].map((word) => ({
+        id: word,
+        role: 'assistant' as const,
+        parts: [{ type: 'text' as const, text: `migration ${word}` }],
+      })),
+    );
+    const sources = await store.listSources();
+    const failedId = sources[2]!.id;
+    const read = store.read.bind(store);
+    const reads = vi.spyOn(store, 'read').mockImplementation(async (id) => {
+      if (id === failedId) throw new Error('interrupted rebuild');
+      return read(id);
+    });
+    await expect(index.reconcile()).rejects.toThrow('interrupted rebuild');
+    expect(index.getStatus()).toBe('partial');
+    const client = inspect(database);
+    expect(
+      (
+        await client.execute(
+          'SELECT source_id FROM activity_sources ORDER BY source_id',
+        )
+      ).rows,
+    ).toEqual(sources.slice(0, 2).map((source) => ({ source_id: source.id })));
+    expect(
+      (
+        await client.execute(
+          "SELECT frequency FROM activity_vocabulary WHERE term = 'migration'",
+        )
+      ).rows,
+    ).toEqual([{ frequency: 2 }]);
+    await index.close();
+    reads.mockImplementation(read).mockClear();
+    await index.start();
+    expect(reads.mock.calls).toEqual([[failedId]]);
+    expect(index.getStatus()).toBe('ready');
+    expect(
+      (
+        await client.execute(
+          "SELECT frequency FROM activity_vocabulary WHERE term = 'migration'",
+        )
+      ).rows,
+    ).toEqual([{ frequency: 3 }]);
+    reads.mockClear();
+    await index.reconcile();
+    expect(reads).not.toHaveBeenCalled();
+    for (const word of ['first', 'second', 'third']) {
+      expect(await index.search(word, 5)).toHaveLength(1);
+    }
+  });
+
+  it('retains only bounded fixed-size digests and rebuilds correctly after cache eviction', async () => {
+    const { index, store, sync, database } = await setup();
+    await sync(
+      Array.from({ length: 140 }, (_, i) => ({
+        id: `cache-${i}`,
+        role: 'assistant' as const,
+        parts: [
+          {
+            type: 'text' as const,
+            text: `cachemarker ${i} ${'padding '.repeat(200)}`,
+          },
+        ],
+      })),
+    );
+    await index.reconcile();
+    // Assert retention directly instead of relying on GC timing or RSS thresholds.
+    const snapshots = index['indexedSources'];
+    expect(snapshots.size).toBe(128);
+    for (const fingerprints of snapshots.values()) {
+      for (const fingerprint of fingerprints)
+        expect(fingerprint).toMatch(/^[a-f0-9]{64}$/);
+    }
+    const sources = await store.listSources();
+    const evicted = sources[0]!;
+    expect(snapshots.has(evicted.id)).toBe(false);
+    const read = store.read.bind(store);
+    vi.spyOn(store, 'listSources').mockResolvedValue(sources);
+    evicted.revision += '-changed';
+    vi.spyOn(store, 'read').mockImplementation(async (id) => {
+      const entries = await read(id);
+      return id === evicted.id
+        ? entries.map((entry) => ({
+            ...entry,
+            text: 'replacement cachemarker',
+          }))
+        : entries;
+    });
+    await index.reconcile();
+    const client = inspect(database);
+    expect(
+      (
+        await client.execute({
+          sql: 'SELECT text FROM activity_entries WHERE source_id = ?',
+          args: [evicted.id],
+        })
+      ).rows,
+    ).toEqual([{ text: 'replacement cachemarker' }]);
+    expect(
+      (
+        await client.execute(
+          "SELECT frequency FROM activity_vocabulary WHERE term = 'cachemarker'",
+        )
+      ).rows,
+    ).toEqual([{ frequency: 140 }]);
+    expect(snapshots.size).toBe(128);
+  });
+
+  it('bounds the total cached entry count and skips oversized source snapshots', async () => {
+    const { index, store, replace, sourceId } = await mutableSource();
+    replace(Array.from({ length: 2_050 }, () => 'migration'));
     await index.reconcile();
     const sources = await store.listSources();
     const sentinel = sources.find((source) => source.id !== sourceId)!;
     sentinel.revision += '-changed';
     const read = vi.mocked(store.read).getMockImplementation()!;
-    vi.spyOn(store, 'read').mockImplementation(async (id) => {
-      if (id === sentinel.id) throw new Error('injected failure');
-      return read(id);
-    });
-    replace(['migration', 'blocked']);
-    await expect(index.reconcile()).rejects.toThrow('injected failure');
-    expect(index.getStatus()).toBe('partial');
-    expect(
-      (
-        await client.execute(
-          "SELECT * FROM activity_entries WHERE text = 'blocked'",
-        )
-      ).rows,
-    ).toEqual([]);
-    vi.spyOn(store, 'read').mockImplementation(read);
+    vi.spyOn(store, 'read').mockImplementation(async (id) =>
+      id === sentinel.id
+        ? Array.from({ length: 2_050 }, (_, entryOrdinal) => ({
+            sourceId: id,
+            entryOrdinal,
+            occurredAt: sentinel.persistedAt,
+            text: 'sentinel',
+          }))
+        : read(id),
+    );
     await index.reconcile();
-    expect(await index.search('blocked', 5)).toHaveLength(1);
+    const snapshots = index['indexedSources'];
+    expect(snapshots.has(sourceId)).toBe(false);
     expect(
-      (
-        await client.execute(
-          "SELECT term, frequency FROM activity_vocabulary WHERE term IN ('migration', 'blocked') ORDER BY term",
-        )
-      ).rows,
-    ).toEqual([
-      { term: 'blocked', frequency: 1 },
-      { term: 'migration', frequency: 1 },
-    ]);
+      [...snapshots.values()].reduce((sum, entries) => sum + entries.length, 0),
+    ).toBeLessThanOrEqual(4_096);
+    replace(Array.from({ length: 4_097 }, () => 'replacement'));
+    await index.reconcile();
+    expect(snapshots.has(sourceId)).toBe(false);
+    expect(await index.search('replacement', 5)).toHaveLength(5);
+    expect(await index.search('migration', 5)).toEqual([]);
   });
 
   it.each(['edit', 'delete'] as const)(

@@ -471,10 +471,9 @@ class McpIngressExtension implements Extension {
   // -- getCheckpointCarry -------------------------------------------------
 
   /**
-   * Carries the latest server list and open-resource list out of the
-   * dropped prefix as initial (full) parts. Resource state parts are not
-   * carried: provisional context re-emits full state for windows whose
-   * state is missing from the window.
+   * Carries full baselines at the cutoff, never snapshots from the live
+   * window manager (which may already include updates in the retained tail).
+   * Only resources in the last dropped open-resource list are carried.
    */
   getCheckpointCarry(
     dropped: readonly ExtendedUIMessage[],
@@ -501,6 +500,73 @@ class McpIngressExtension implements Extension {
       );
     }
 
+    if (lastOpenResources) {
+      const states = new Map<string, ResourceStateData>();
+      for (const message of dropped) {
+        for (const part of message.parts) {
+          let state = this.resourceState(part);
+          if (!state) continue;
+
+          // Watcher events already persist the full snapshot alongside a diff.
+          // It is not rendered during ordinary steps, but makes the cutoff
+          // baseline independent of both earlier patches and live state.
+          if (
+            part.type === 'data-context' &&
+            part.data.sourceEnv === WATCHER_SOURCE_ENV &&
+            Array.isArray(part.data.metadata.currentContent)
+          ) {
+            state = {
+              ...state,
+              diff: {
+                kind: 'full',
+                reason: 'initial',
+                content: part.data.metadata
+                  .currentContent as ContextDataContent[],
+              },
+            };
+          }
+
+          if (state.truncated === true) {
+            // Bounded watcher events can omit the handle and generation.
+            for (const [handle, previous] of states) {
+              if (
+                previous.namespace === state.namespace &&
+                previous.uri === state.uri
+              ) {
+                states.delete(handle);
+              }
+            }
+            continue;
+          }
+          if (state.diff.kind !== 'full' || state.diff.reason === 'deleted') {
+            // Do not carry a stale baseline when the latest state cannot be
+            // materialized. Missing-state recovery can supply a current one.
+            states.delete(state.handle);
+            continue;
+          }
+          states.set(state.handle, state);
+        }
+      }
+
+      for (const resource of lastOpenResources.resources) {
+        const state = states.get(resource.handle);
+        if (
+          !state ||
+          state.namespace !== resource.server ||
+          state.uri !== resource.uri
+        ) {
+          continue;
+        }
+        carry.push(
+          createDataPart('mcp-resource-state', {
+            ...state,
+            isInitial: true,
+            diff: { ...state.diff, reason: 'initial' },
+          }) as unknown as ExtendedUIMessage['parts'][number],
+        );
+      }
+    }
+
     return carry;
   }
 
@@ -524,22 +590,29 @@ class McpIngressExtension implements Extension {
     history: readonly ExtendedUIMessage[],
     _model: ResolvedModel,
   ): ProvisionalStepContext {
-    // A historical state is current only for the same handle generation and URI.
-    const knownKeys = new Set<string>();
+    // Diffs are meaningful only after a full baseline for the same generation.
+    const knownStates = new Map<string, ResourceStateData>();
     for (const msg of history) {
       for (const part of msg.parts) {
-        const unknownPart: unknown = part;
-        if (
-          isResourceStatePart(unknownPart) &&
-          unknownPart.data.truncated !== true
-        ) {
-          knownKeys.add(
-            resourceStateKey(
-              unknownPart.data.handle,
-              unknownPart.data.generation,
-              unknownPart.data.uri,
-            ),
+        const state = this.resourceState(part);
+        if (!state) continue;
+        if (state.truncated === true) {
+          for (const [key, previous] of knownStates) {
+            if (
+              previous.namespace === state.namespace &&
+              previous.uri === state.uri
+            ) {
+              knownStates.delete(key);
+            }
+          }
+        } else if (state.diff.kind === 'full') {
+          const key = resourceStateKey(
+            state.handle,
+            state.generation,
+            state.uri,
           );
+          if (state.diff.reason === 'deleted') knownStates.delete(key);
+          else knownStates.set(key, state);
         }
       }
     }
@@ -554,7 +627,7 @@ class McpIngressExtension implements Extension {
         window.generation,
         window.uri,
       );
-      if (knownKeys.has(key)) continue;
+      if (knownStates.has(key)) continue;
 
       const snapshot = this.resourceWindowManager.getSnapshot(window.handle);
       if (!snapshot) continue;
@@ -1005,6 +1078,22 @@ class McpIngressExtension implements Extension {
   }
 
   // -- Internal: rendering helpers ----------------------------------------
+
+  /** Reads both canonical watcher events and rendered resource-state parts. */
+  private resourceState(
+    part: ExtendedUIMessage['parts'][number],
+  ): ResourceStateData | undefined {
+    const unknownPart: unknown = part;
+    if (isResourceStatePart(unknownPart)) return unknownPart.data;
+    if (
+      part.type === 'data-context' &&
+      part.data.sourceEnv === WATCHER_SOURCE_ENV &&
+      typeof part.data.metadata.diffKind === 'string'
+    ) {
+      return this.contextToStateData(part.data);
+    }
+    return undefined;
+  }
 
   /**
    * Converts a `data-context` part from the resource watcher into

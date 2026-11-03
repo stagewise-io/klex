@@ -10,6 +10,7 @@ import type { ExtendedUIMessage } from '@/session/chat/message-types';
 
 import type { ExtensionDeps, ExtensionFactory } from '../extension-api';
 import { createDataPart, isDataPartOf } from '../extension-api';
+import { boundInboxEvent } from './inbox-helpers';
 import { createMcpIngressExt } from './mcp-ingress';
 import type {
   ContextDataContent,
@@ -2567,6 +2568,105 @@ describe('MCP Ingress extension', () => {
     );
     await ext.onClose?.();
   });
+
+  it.each(
+    ['uri', 'namespace', 'both'].flatMap((clipped) =>
+      [false, true].flatMap((legacy) =>
+        [false, true].map((rendered) => ({ clipped, legacy, rendered })),
+      ),
+    ),
+  )(
+    'invalidates bounded $clipped identity (legacy: $legacy, rendered: $rendered)',
+    async ({ clipped, legacy, rendered }) => {
+      const namespace = clipped === 'uri' ? 'github' : 'server-'.repeat(200);
+      const uri = `file:///${clipped === 'namespace' ? 'data.txt' : '文'.repeat(1_000)}`;
+      const deps = createMockDeps({
+        readResource: vi.fn().mockResolvedValue({
+          contents: [{ uri, mimeType: 'text/plain', text: 'current' }],
+        }),
+      });
+      const ext = createMcpIngressExt().create(deps);
+      try {
+        await callTool(ext, 'openResource', { serverName: namespace, uri });
+        const baseline = createResourceStateMessage({
+          namespace,
+          uri,
+          isInitial: true,
+          diff: {
+            kind: 'full',
+            reason: 'initial',
+            content: [{ type: 'text', text: 'stale' }],
+          },
+        });
+        const event = boundInboxEvent(
+          {
+            context: {
+              sourceEnv: 'mcp-resource-watcher',
+              metadata: {
+                namespace,
+                uri,
+                ...(!legacy ? { handle: 'r1', generation: 1 } : {}),
+              },
+              content: [{ type: 'text' as const, text: 'x'.repeat(20_000) }],
+            },
+          },
+          4_096,
+        );
+        expect(Buffer.byteLength(JSON.stringify(event), 'utf8')).toBeLessThan(
+          4_096,
+        );
+        expect(event.context.metadata).toHaveProperty('truncated', true);
+        if (!legacy) {
+          expect(event.context.metadata).toMatchObject({
+            handle: 'r1',
+            generation: 1,
+          });
+        }
+        if (clipped !== 'namespace')
+          expect(event.context.metadata.uri).not.toBe(uri);
+        if (clipped !== 'uri')
+          expect(event.context.metadata.namespace).not.toBe(namespace);
+        const bounded: ExtendedUIMessage = {
+          id: 'bounded',
+          role: 'user',
+          parts: [{ type: 'data-context', data: event.context }],
+        };
+        const history = [
+          createOpenResourcesMessage({
+            isInitial: true,
+            resources: [{ handle: 'r1', server: namespace, uri, live: false }],
+          }),
+          baseline,
+          bounded,
+        ];
+        const view = rendered
+          ? unwrapHistoryResult(ext.historyTransformer?.(history, {} as never))
+          : history;
+        // Round-trip the exact canonical/rendered representation as on restart.
+        const restored: ExtendedUIMessage[] = JSON.parse(JSON.stringify(view));
+        const carry = (await ext.getCheckpointCarry?.(restored)) ?? [];
+        expect(
+          findStateParts([{ id: 'checkpoint', role: 'user', parts: carry }]),
+        ).toEqual([]);
+        const provisional = await ext.getProvisionalStepContext?.(
+          restored,
+          {} as never,
+        );
+        const states = findStateParts([
+          { id: 'recovery', role: 'user', parts: provisional?.parts ?? [] },
+        ]);
+        expect(states).toHaveLength(1);
+        expect(states[0]).toHaveProperty('data.uri', uri);
+        expect(states[0]).toHaveProperty('data.namespace', namespace);
+        expect(states[0]).toHaveProperty(
+          'data.diff.content.0.text',
+          expect.stringContaining('current'),
+        );
+      } finally {
+        await ext.onClose?.();
+      }
+    },
+  );
 
   it('does not mistake a resource-linked notification for full resource content', async () => {
     const ext = createMcpIngressExt().create(createMockDeps());

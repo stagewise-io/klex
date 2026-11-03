@@ -23,7 +23,19 @@ describe('createCloudOAuthAuthorizationSessionFactory', () => {
       expect(session.redirectUrl.toString()).toBe(
         'https://cloud.example.com/v1/mcp-oauth/callback',
       );
+      expect(session.clientMetadataUrl?.toString()).toBe(
+        'https://cloud.example.com/v1/mcp-oauth/client.json',
+      );
     }
+  });
+
+  it('keeps dynamic registration for an HTTP cloud, since CIMD needs HTTPS', async () => {
+    const factory = createCloudOAuthAuthorizationSessionFactory({
+      registry: new McpPendingAuthorizationRegistry(),
+      getCloudBaseUrl: () => 'http://localhost:5173',
+    });
+    const session = await factory.start(context);
+    expect(session.clientMetadataUrl).toBeUndefined();
   });
 
   it('registers a pending authorization that the registry can complete', async () => {

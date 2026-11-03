@@ -21,6 +21,8 @@ export type AuthorizationRedirectHandler = (
 
 export interface McpOAuthProviderOptions {
   clientName?: string | (() => string | undefined);
+  /** Used as the client ID where the authorization server supports CIMD. */
+  clientMetadataUrl?: URL;
   redirectUrl: URL;
   serverName: string;
   store: McpOAuthStore;
@@ -36,9 +38,11 @@ export class McpOAuthProvider implements OAuthClientProvider {
   private readonly signal: AbortSignal | undefined;
 
   public readonly redirectUrl: URL;
+  public readonly clientMetadataUrl?: string;
 
   public constructor(options: McpOAuthProviderOptions) {
     this.clientName = options.clientName;
+    this.clientMetadataUrl = options.clientMetadataUrl?.toString();
     this.onAuthorizationRedirect = options.onAuthorizationRedirect;
     this.redirectUrl = options.redirectUrl;
     this.serverName = options.serverName;

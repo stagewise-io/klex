@@ -72,7 +72,7 @@ test('uses a supplied public client with PKCE and refresh scope, persists it and
     serverUrl,
     redirectUrl,
     { clientId: 'customer-app', scope: 'mcp_api refresh_token' },
-    fetcher,
+    { fetch: fetcher },
   );
   const redirect = vi.fn();
   const provider = new McpOAuthProvider({

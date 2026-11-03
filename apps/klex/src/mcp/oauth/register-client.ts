@@ -15,13 +15,21 @@ export async function saveRegisteredOAuthClient(
   serverUrl: string,
   redirectUrl: URL,
   client: RegisteredOAuthClient,
-  fetchImpl: typeof fetch = fetch,
+  {
+    fetch: fetchImpl = fetch,
+    signal,
+  }: {
+    fetch?: typeof fetch;
+    /** Rejects later writes, e.g. after the server was removed meanwhile. */
+    signal?: AbortSignal;
+  } = {},
 ): Promise<void> {
+  const timeout = AbortSignal.timeout(10_000);
   const discovery = await discoverOAuthServerInfo(serverUrl, {
     fetchFn: (url, init) =>
       fetchImpl(url, {
         ...init,
-        signal: AbortSignal.timeout(10_000),
+        signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
         redirect: 'error',
       }),
   });
@@ -35,7 +43,7 @@ export async function saveRegisteredOAuthClient(
   }
   const key = `${serverName}\u0000${serverUrl}`;
   // Replacing a client must never reuse the previous client's grant.
-  await store.invalidate(key, 'all');
+  await store.invalidate(key, 'all', signal);
   await store.saveClientInformation(
     key,
     redirectUrl.toString(),
@@ -52,6 +60,7 @@ export async function saveRegisteredOAuthClient(
       response_types: ['code'],
     },
     metadata.issuer,
+    signal,
   );
-  await store.saveDiscoveryState(key, discovery);
+  await store.saveDiscoveryState(key, discovery, signal);
 }

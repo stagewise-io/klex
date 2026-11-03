@@ -2214,6 +2214,455 @@ describe('MCP Ingress extension', () => {
     expect(openPart?.data.resources.map((r) => r.handle)).toEqual(['r1']);
   });
 
+  it.each(['text-diff', 'json-diff'])(
+    'carries the full cutoff snapshot for a %s, not newer live content',
+    async (diffKind) => {
+      const deps = createMockDeps({
+        readResource: vi.fn().mockResolvedValue({
+          contents: [
+            {
+              uri: 'file:///data.txt',
+              mimeType: 'text/plain',
+              text: 'newer live content',
+            },
+          ],
+        }),
+      });
+      const ext = createMcpIngressExt().create(deps);
+      await callTool(ext, 'openResource', {
+        serverName: 'github',
+        uri: 'file:///data.txt',
+      });
+      const resource = {
+        handle: 'r1',
+        server: 'github',
+        uri: 'file:///data.txt',
+        mimeType: 'text/plain',
+        live: false,
+      };
+      const baselineContent = [
+        { type: 'text' as const, text: 'full content at cutoff' },
+      ];
+      const dropped = [
+        createOpenResourcesMessage({ isInitial: true, resources: [resource] }),
+        createResourceStateMessage({
+          namespace: 'github',
+          uri: resource.uri,
+          mimeType: resource.mimeType,
+          isInitial: true,
+          diff: {
+            kind: 'full',
+            reason: 'initial',
+            content: [{ type: 'text', text: 'older content' }],
+          },
+        }),
+        createDataContextMessage(
+          {
+            namespace: 'github',
+            uri: resource.uri,
+            mimeType: resource.mimeType,
+            diffKind,
+            currentContent: baselineContent,
+            patch: 'cutoff patch',
+          },
+          [{ type: 'text', text: 'cutoff patch' }],
+        ),
+      ];
+      const before = structuredClone(dropped);
+      const carry = (await ext.getCheckpointCarry?.(dropped)) ?? [];
+      const states = findStateParts([
+        { id: 'checkpoint', role: 'user', parts: carry },
+      ]);
+      expect(states).toEqual([
+        {
+          type: 'data-mcp-resource-state',
+          data: {
+            handle: 'r1',
+            generation: 1,
+            namespace: 'github',
+            uri: resource.uri,
+            mimeType: resource.mimeType,
+            isInitial: true,
+            diff: { kind: 'full', reason: 'initial', content: baselineContent },
+          },
+        },
+      ]);
+      expect(dropped).toEqual(before);
+
+      // Simulate restart: no live windows are needed to carry the baseline again.
+      const restored = createMcpIngressExt().create(createMockDeps());
+      const header = JSON.parse(
+        JSON.stringify({ id: 'checkpoint', role: 'user', parts: carry }),
+      );
+      expect(await restored.getCheckpointCarry?.([header])).toEqual(carry);
+
+      // A retained diff must follow, not be folded into, the cutoff snapshot.
+      const tail = createDataContextMessage(
+        {
+          namespace: 'github',
+          uri: resource.uri,
+          mimeType: resource.mimeType,
+          diffKind: 'text-diff',
+          patch: 'later patch',
+        },
+        [{ type: 'text', text: 'later patch' }],
+      );
+      const history = [header, tail];
+      const provisional = await ext.getProvisionalStepContext?.(
+        history,
+        {} as never,
+      );
+      expect(
+        findStateParts([
+          { id: 'provisional', role: 'user', parts: provisional?.parts ?? [] },
+        ]),
+      ).toEqual([]);
+      const rendered = unwrapHistoryResult(
+        ext.historyTransformer?.(structuredClone(history), {} as never),
+      );
+      expect(findStateParts(rendered)).toHaveLength(2);
+      expect(findStateParts(rendered)[0]).toEqual(states[0]);
+      expect(findStateParts(rendered)[1]).toHaveProperty(
+        'data.diff.patch',
+        'later patch',
+      );
+      await ext.onClose?.();
+    },
+  );
+
+  it('carries only resources open at the cutoff, regardless of current live windows', async () => {
+    const ext = createMcpIngressExt().create(createMockDeps());
+    const makeState = (
+      handle: string,
+      namespace: string,
+      uri: string,
+      generation = 1,
+    ) =>
+      createResourceStateMessage({
+        handle,
+        generation,
+        namespace,
+        uri,
+        mimeType: 'text/plain',
+        isInitial: true,
+        diff: {
+          kind: 'full',
+          reason: 'initial',
+          content: [{ type: 'text', text: `${handle}:${uri}` }],
+        },
+      });
+    const open = {
+      handle: 'r1',
+      server: 'github',
+      uri: 'file:///open.txt',
+      live: true,
+    };
+    const closed = {
+      handle: 'r2',
+      server: 'github',
+      uri: 'file:///closed.txt',
+      live: true,
+    };
+    const navigated = {
+      handle: 'r3',
+      server: 'github',
+      uri: 'file:///new.txt',
+      live: false,
+    };
+    const dropped = [
+      createOpenResourcesMessage({
+        isInitial: true,
+        resources: [open, closed],
+      }),
+      makeState('r1', 'github', open.uri),
+      makeState('r2', 'github', closed.uri),
+      makeState('r3', 'github', 'file:///old.txt'),
+      makeState('r1', 'github', open.uri, 2),
+      makeState('r3', 'github', navigated.uri, 2),
+      createOpenResourcesMessage({
+        isInitial: false,
+        resources: [open, navigated],
+      }),
+    ];
+    const carry = (await ext.getCheckpointCarry?.(dropped)) ?? [];
+    const states = findStateParts([
+      { id: 'checkpoint', role: 'user', parts: carry },
+    ]);
+    expect(states).toHaveLength(2);
+    expect(states[0]).toHaveProperty('data.handle', 'r1');
+    expect(states[0]).toHaveProperty('data.generation', 2);
+    expect(states[1]).toHaveProperty('data.uri', navigated.uri);
+    expect(states[1]).toHaveProperty('data.generation', 2);
+
+    const closedCarry =
+      (await ext.getCheckpointCarry?.([
+        ...dropped,
+        createOpenResourcesMessage({ isInitial: false, resources: [] }),
+      ])) ?? [];
+    expect(
+      findStateParts([
+        { id: 'closed-checkpoint', role: 'user', parts: closedCarry },
+      ]),
+    ).toEqual([]);
+  });
+
+  it('carries full image content without consulting the live resource manager', async () => {
+    const ext = createMcpIngressExt().create(createMockDeps());
+    const content = [
+      { type: 'image', mimeType: 'image/png', data: 'aW1hZ2U=' },
+    ];
+    const carry =
+      (await ext.getCheckpointCarry?.([
+        createOpenResourcesMessage({
+          isInitial: true,
+          resources: [
+            {
+              handle: 'r1',
+              server: 'github',
+              uri: 'file:///image.png',
+              live: false,
+            },
+          ],
+        }),
+        createResourceStateMessage({
+          namespace: 'github',
+          uri: 'file:///image.png',
+          mimeType: 'image/png',
+          isInitial: false,
+          diff: { kind: 'full', reason: 'significant-change', content },
+        }),
+      ])) ?? [];
+    expect(
+      findStateParts([{ id: 'checkpoint', role: 'user', parts: carry }])[0],
+    ).toHaveProperty('data.diff', {
+      kind: 'full',
+      reason: 'initial',
+      content,
+    });
+  });
+
+  it.each(['truncated', 'deleted', 'diff-only'])(
+    'does not carry a stale snapshot after a %s update',
+    async (kind) => {
+      const ext = createMcpIngressExt().create(createMockDeps());
+      const state = {
+        namespace: 'github',
+        uri: 'file:///data.txt',
+        mimeType: 'text/plain',
+        isInitial: true,
+        diff: {
+          kind: 'full',
+          reason: 'initial',
+          content: [{ type: 'text', text: 'old content' }],
+        },
+      };
+      const update =
+        kind === 'diff-only'
+          ? {
+              ...state,
+              diff: { kind: 'text-diff', patch: 'patch', content: [] },
+            }
+          : {
+              ...state,
+              truncated: kind === 'truncated',
+              diff: {
+                ...state.diff,
+                reason: kind === 'deleted' ? 'deleted' : 'significant-change',
+              },
+            };
+      const carry =
+        (await ext.getCheckpointCarry?.([
+          createOpenResourcesMessage({
+            isInitial: true,
+            resources: [
+              { handle: 'r1', server: 'github', uri: state.uri, live: true },
+            ],
+          }),
+          createResourceStateMessage(state),
+          createResourceStateMessage(update),
+        ])) ?? [];
+      expect(
+        findStateParts([{ id: 'checkpoint', role: 'user', parts: carry }]),
+      ).toEqual([]);
+    },
+  );
+
+  it('invalidates an earlier baseline after a bounded update without a handle', async () => {
+    const deps = createMockDeps({
+      readResource: vi.fn().mockResolvedValue({
+        contents: [
+          {
+            uri: 'file:///data.txt',
+            mimeType: 'text/plain',
+            text: 'current',
+          },
+        ],
+      }),
+    });
+    const ext = createMcpIngressExt().create(deps);
+    await callTool(ext, 'openResource', {
+      serverName: 'github',
+      uri: 'file:///data.txt',
+    });
+    const baseline = createResourceStateMessage({
+      namespace: 'github',
+      uri: 'file:///data.txt',
+      isInitial: true,
+      diff: {
+        kind: 'full',
+        reason: 'initial',
+        content: [{ type: 'text', text: 'stale' }],
+      },
+    });
+    const bounded: ExtendedUIMessage = {
+      id: 'bounded',
+      role: 'user',
+      parts: [
+        {
+          type: 'data-context',
+          data: {
+            sourceEnv: 'mcp-resource-watcher',
+            metadata: {
+              namespace: 'github',
+              uri: 'file:///data.txt',
+              diffKind: 'full',
+              reason: 'significant-change',
+              truncated: true,
+            },
+            content: [{ type: 'text', text: 'Resource update omitted.' }],
+          },
+        },
+      ],
+    };
+    const history = [
+      createOpenResourcesMessage({
+        isInitial: true,
+        resources: [
+          {
+            handle: 'r1',
+            server: 'github',
+            uri: 'file:///data.txt',
+            live: false,
+          },
+        ],
+      }),
+      baseline,
+      bounded,
+    ];
+    const carry = (await ext.getCheckpointCarry?.(history)) ?? [];
+    expect(
+      findStateParts([{ id: 'checkpoint', role: 'user', parts: carry }]),
+    ).toEqual([]);
+    const provisional = await ext.getProvisionalStepContext?.(
+      history,
+      {} as never,
+    );
+    const states = findStateParts([
+      { id: 'recovery', role: 'user', parts: provisional?.parts ?? [] },
+    ]);
+    expect(states).toHaveLength(1);
+    expect(states[0]).toHaveProperty(
+      'data.diff.content.0.text',
+      expect.stringContaining('current'),
+    );
+    await ext.onClose?.();
+  });
+
+  it('does not mistake a resource-linked notification for full resource content', async () => {
+    const ext = createMcpIngressExt().create(createMockDeps());
+    const state = createResourceStateMessage({
+      namespace: 'github',
+      uri: 'file:///data.txt',
+      mimeType: 'text/plain',
+      isInitial: true,
+      diff: {
+        kind: 'full',
+        reason: 'initial',
+        content: [{ type: 'text', text: 'baseline' }],
+      },
+    });
+    const carry =
+      (await ext.getCheckpointCarry?.([
+        createOpenResourcesMessage({
+          isInitial: true,
+          resources: [
+            {
+              handle: 'r1',
+              server: 'github',
+              uri: 'file:///data.txt',
+              live: true,
+            },
+          ],
+        }),
+        state,
+        createDataContextMessage(
+          {
+            kind: 'push-notification-notice',
+            namespace: 'github',
+            uri: 'file:///data.txt',
+          },
+          [{ type: 'text', text: 'Resource changed' }],
+        ),
+      ])) ?? [];
+    expect(
+      findStateParts([{ id: 'checkpoint', role: 'user', parts: carry }]),
+    ).toEqual(state.parts);
+  });
+
+  it.each([false, true])(
+    'recovers full content when only a diff survived (canonical watcher: %s)',
+    async (canonical) => {
+      const deps = createMockDeps({
+        readResource: vi.fn().mockResolvedValue({
+          contents: [
+            {
+              uri: 'file:///data.txt',
+              mimeType: 'text/plain',
+              text: 'current content',
+            },
+          ],
+        }),
+      });
+      const ext = createMcpIngressExt().create(deps);
+      await callTool(ext, 'openResource', {
+        serverName: 'github',
+        uri: 'file:///data.txt',
+      });
+      const history = [
+        canonical
+          ? createDataContextMessage(
+              {
+                namespace: 'github',
+                uri: 'file:///data.txt',
+                diffKind: 'text-diff',
+                patch: 'orphan patch',
+              },
+              [{ type: 'text', text: 'orphan patch' }],
+            )
+          : createResourceStateMessage({
+              namespace: 'github',
+              uri: 'file:///data.txt',
+              isInitial: false,
+              diff: { kind: 'text-diff', patch: 'orphan patch', content: [] },
+            }),
+      ];
+      const provisional = await ext.getProvisionalStepContext?.(
+        history,
+        {} as never,
+      );
+      const states = findStateParts([
+        { id: 'recovery', role: 'user', parts: provisional?.parts ?? [] },
+      ]);
+      expect(states).toHaveLength(1);
+      expect(states[0]).toHaveProperty('data.diff.kind', 'full');
+      expect(states[0]).toHaveProperty(
+        'data.diff.content.0.text',
+        expect.stringContaining('current content'),
+      );
+      await ext.onClose?.();
+    },
+  );
+
   it('dataPartTransformers renders initial open-resources as open-resources XML', () => {
     const deps = createMockDeps();
     const ext = createMcpIngressExt().create(deps);

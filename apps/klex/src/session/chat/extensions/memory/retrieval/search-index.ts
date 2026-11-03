@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+
 import { type Client, createClient } from '@libsql/client';
 
 import type { SqliteStoreDefinition } from '@/local-data';
@@ -6,6 +8,10 @@ import { LOCAL_DATA_MIGRATIONS } from '@/local-data-migrations';
 import type { ActivityEntry, ActivityEntryStore } from './activity-reader';
 
 export type SearchIndexStatus = 'ready' | 'partial' | 'rebuilding';
+
+// Snapshots accelerate appends, but must never retain the activity history.
+const MAX_CACHED_SOURCES = 128;
+const MAX_CACHED_ENTRY_FINGERPRINTS = 4_096;
 
 const TERM_INDEXES_SQL = `
   CREATE INDEX IF NOT EXISTS activity_term_trigrams_term ON activity_term_trigrams (term);
@@ -116,6 +122,7 @@ export class EpisodicSearchIndex {
   private handleCounter = 0;
   private reconcilePromise: Promise<void> | null = null;
   private readonly indexedSources = new Map<string, readonly string[]>();
+  private cachedFingerprintCount = 0;
 
   constructor(
     private readonly databasePath: string,
@@ -158,11 +165,12 @@ export class EpisodicSearchIndex {
   }
 
   private async reconcileInternal(): Promise<void> {
-    if (!this.client) throw new Error('Episodic search index is not started');
+    const client = this.client;
+    if (!client) throw new Error('Episodic search index is not started');
     this.status = 'rebuilding';
     try {
       const sources = await this.store.listSources();
-      const existing = await this.client.execute(
+      const existing = await client.execute(
         'SELECT source_id, byte_size, revision FROM activity_sources',
       );
       const existingSources = new Map(
@@ -176,33 +184,37 @@ export class EpisodicSearchIndex {
         }),
       );
       const currentSources = new Set(sources.map((source) => source.id));
-      const pendingSnapshots = new Map<string, readonly string[] | null>();
-      await this.client.execute('BEGIN');
-      try {
-        for (const oldSource of existingSources.keys()) {
-          if (currentSources.has(oldSource)) continue;
+      for (const oldSource of existingSources.keys()) {
+        if (currentSources.has(oldSource)) continue;
+        await this.transaction(async () => {
           await this.removeSourceVocabulary(oldSource);
           await this.deleteSource(oldSource);
-          pendingSnapshots.set(oldSource, null);
-        }
-        for (const source of sources) {
-          const previous = existingSources.get(source.id);
-          if (
-            previous?.bytes === source.bytes &&
-            previous.revision === source.revision
-          )
-            continue;
-          const entries = await this.store.read(source.id);
-          const fingerprints = entries.map(entryFingerprint);
-          const previousFingerprints = this.indexedSources.get(source.id);
+        });
+        this.rememberSource(oldSource, null);
+      }
+      for (const source of sources) {
+        const previous = existingSources.get(source.id);
+        if (
+          previous?.bytes === source.bytes &&
+          previous.revision === source.revision
+        )
+          continue;
+        const entries = await this.store.read(source.id);
+        const fingerprints =
+          entries.length <= MAX_CACHED_ENTRY_FINGERPRINTS
+            ? entries.map(entryFingerprint)
+            : null;
+        const previousFingerprints = this.indexedSources.get(source.id);
+        await this.transaction(async () => {
           if (
             previous &&
+            fingerprints &&
             previousFingerprints &&
             entries.length >= previousFingerprints.length &&
             previousFingerprints.every((value, i) => value === fingerprints[i])
           ) {
             const appendedEntries = entries.slice(previousFingerprints.length);
-            await this.client.execute({
+            await client.execute({
               sql: 'UPDATE activity_sources SET byte_size = ?, revision = ? WHERE source_id = ?',
               args: [source.bytes, source.revision, source.id],
             });
@@ -213,26 +225,19 @@ export class EpisodicSearchIndex {
               await this.removeSourceVocabulary(source.id);
               await this.deleteSource(source.id);
             }
-            await this.client.execute({
+            await client.execute({
               sql: 'INSERT INTO activity_sources (source_id, byte_size, revision) VALUES (?, ?, ?)',
               args: [source.id, source.bytes, source.revision],
             });
             await this.insertEntries(entries);
             await this.indexVocabulary(source.id, entries);
           }
-          pendingSnapshots.set(source.id, fingerprints);
-        }
-        await this.client.execute('COMMIT');
-        for (const [sourceId, fingerprints] of pendingSnapshots) {
-          if (fingerprints === null) this.indexedSources.delete(sourceId);
-          else this.indexedSources.set(sourceId, fingerprints);
-        }
-        this.status = 'ready';
-        this.lastReconciledAt = new Date().toISOString();
-      } catch (error) {
-        await this.client.execute('ROLLBACK').catch(() => undefined);
-        throw error;
+        });
+        // Publish only committed snapshots. Earlier sources survive a later failure.
+        this.rememberSource(source.id, fingerprints);
       }
+      this.status = 'ready';
+      this.lastReconciledAt = new Date().toISOString();
     } catch (error) {
       this.status = 'partial';
       throw error;
@@ -440,6 +445,42 @@ export class EpisodicSearchIndex {
     this.handles.clear();
     this.handleOwners.clear();
     this.indexedSources.clear();
+    this.cachedFingerprintCount = 0;
+  }
+
+  private async transaction(change: () => Promise<void>): Promise<void> {
+    const client = this.client;
+    if (!client) throw new Error('Episodic search index is not started');
+    await client.execute('BEGIN');
+    try {
+      await change();
+      await client.execute('COMMIT');
+    } catch (error) {
+      await client.execute('ROLLBACK').catch(() => undefined);
+      throw error;
+    }
+  }
+
+  private rememberSource(
+    sourceId: string,
+    fingerprints: readonly string[] | null,
+  ): void {
+    this.cachedFingerprintCount -=
+      this.indexedSources.get(sourceId)?.length ?? 0;
+    this.indexedSources.delete(sourceId);
+    if (!fingerprints) return;
+    for (const [oldestId, oldest] of this.indexedSources) {
+      if (
+        this.indexedSources.size < MAX_CACHED_SOURCES &&
+        this.cachedFingerprintCount + fingerprints.length <=
+          MAX_CACHED_ENTRY_FINGERPRINTS
+      )
+        break;
+      this.indexedSources.delete(oldestId);
+      this.cachedFingerprintCount -= oldest.length;
+    }
+    this.indexedSources.set(sourceId, fingerprints);
+    this.cachedFingerprintCount += fingerprints.length;
   }
 
   private async indexVocabulary(
@@ -467,16 +508,24 @@ export class EpisodicSearchIndex {
         args: batch.flat(),
       });
     }
-    const pairs = terms.flatMap(([term]) =>
-      trigramsFor(term).map((trigram) => [trigram, term]),
-    );
-    for (let offset = 0; offset < pairs.length; offset += 300) {
-      const batch = pairs.slice(offset, offset + 300);
-      await this.client.execute({
-        sql: `INSERT OR IGNORE INTO activity_term_trigrams (trigram, term) VALUES ${batch.map(() => '(?, ?)').join(', ')}`,
-        args: batch.flat(),
-      });
+    let trigramArgs: string[] = [];
+    for (const term of frequencies.keys()) {
+      for (const trigram of trigramsFor(term)) {
+        trigramArgs.push(trigram, term);
+        if (trigramArgs.length === 600) {
+          await this.insertTrigrams(trigramArgs);
+          trigramArgs = [];
+        }
+      }
     }
+    if (trigramArgs.length > 0) await this.insertTrigrams(trigramArgs);
+  }
+
+  private async insertTrigrams(args: string[]): Promise<void> {
+    await this.client?.execute({
+      sql: `INSERT OR IGNORE INTO activity_term_trigrams (trigram, term) VALUES ${Array.from({ length: args.length / 2 }, () => '(?, ?)').join(', ')}`,
+      args,
+    });
   }
 
   private async removeSourceVocabulary(sourceId: string): Promise<void> {
@@ -533,7 +582,10 @@ export class EpisodicSearchIndex {
 }
 
 function entryFingerprint(entry: ActivityEntry): string {
-  return JSON.stringify([entry.entryOrdinal, entry.occurredAt, entry.text]);
+  return createHash('sha256')
+    .update(JSON.stringify([entry.entryOrdinal, entry.occurredAt]))
+    .update(entry.text)
+    .digest('hex');
 }
 
 function normalizeForSearch(value: string): string {

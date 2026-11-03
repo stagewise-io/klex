@@ -55,6 +55,10 @@ export const startAuthorizationRoute = createRoute({
       },
       description: 'Authorization is pending user consent',
     },
+    400: {
+      content: { 'application/json': { schema: errorResponseSchema } },
+      description: 'Invalid OAuth client',
+    },
     404: {
       content: { 'application/json': { schema: errorResponseSchema } },
       description: 'MCP server not found',

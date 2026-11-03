@@ -323,7 +323,7 @@ describe('legacy skill import through registered startup', () => {
         store: 'learning-extension-state',
         schemaVersion: 2,
         compatibilityVersion: 4,
-        minimumKlexVersion: '0.29.0',
+        minimumKlexVersion: '0.28.1',
         writtenByKlexVersion: KLEX_VERSION,
       },
       cursor: 'episode-0042',
@@ -527,7 +527,7 @@ describe('learning-state compatibility floor', () => {
         stores: [olderReader, SKILL_REGISTRY_STORE_DEFINITION],
       }).start(),
     ).rejects.toThrow(
-      /requires a newer read\/write compatibility level.*Use Klex 0\.29\.0 or newer/,
+      /requires a newer read\/write compatibility level.*Use Klex 0\.28\.1 or newer/,
     );
     expect(await snapshot(agentDir)).toEqual(before);
   });

@@ -54,7 +54,7 @@ async function startup(
   const localData = createLocalData({
     logging,
     dataDirectory: directory,
-    klexVersion: '0.29.0',
+    klexVersion: '0.28.1',
     stores: [store],
   });
   try {

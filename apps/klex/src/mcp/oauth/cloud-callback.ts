@@ -12,6 +12,13 @@ import type { McpPendingAuthorizationRegistry } from './pending-authorizations';
 export const CLOUD_OAUTH_CALLBACK_PATH = '/v1/mcp-oauth/callback';
 
 /**
+ * Klex Cloud's Client ID Metadata Document. Providers that support CIMD (such
+ * as Vercel's MCP, which limits dynamic registration to reviewed clients)
+ * accept this URL as the client ID. It must stay in sync with the cloud route.
+ */
+export const CLOUD_OAUTH_CLIENT_METADATA_PATH = '/v1/mcp-oauth/client.json';
+
+/**
  * Cloud authorizations are user-driven and asynchronous — the user may add a
  * server and consent minutes later — so the window is far wider than the local
  * browser flow's five minutes.
@@ -38,9 +45,17 @@ export function createCloudOAuthAuthorizationSessionFactory(
   const timeoutMs = options.timeoutMs ?? CLOUD_AUTHORIZATION_TIMEOUT_MS;
   return {
     start: async (context): Promise<OAuthAuthorizationSession> => {
-      const redirectUrl = cloudCallbackUrl(options.getCloudBaseUrl());
+      const cloudBaseUrl = options.getCloudBaseUrl();
+      const redirectUrl = cloudCallbackUrl(cloudBaseUrl);
       return {
         redirectUrl,
+        // CIMD requires HTTPS; a local HTTP Cloud keeps dynamic registration.
+        ...(redirectUrl.protocol === 'https:' && {
+          clientMetadataUrl: cloudUrl(
+            cloudBaseUrl,
+            CLOUD_OAUTH_CLIENT_METADATA_PATH,
+          ),
+        }),
         authorize: ({ authorizationUrl, signal, state }) =>
           options.registry.register(
             {
@@ -63,7 +78,9 @@ export function createCloudOAuthAuthorizationSessionFactory(
 }
 
 export function cloudCallbackUrl(cloudBaseUrl: string): URL {
-  return new URL(
-    `${cloudBaseUrl.replace(/\/$/, '')}${CLOUD_OAUTH_CALLBACK_PATH}`,
-  );
+  return cloudUrl(cloudBaseUrl, CLOUD_OAUTH_CALLBACK_PATH);
+}
+
+function cloudUrl(cloudBaseUrl: string, path: string): URL {
+  return new URL(`${cloudBaseUrl.replace(/\/$/, '')}${path}`);
 }

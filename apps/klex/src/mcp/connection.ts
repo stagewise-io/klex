@@ -451,6 +451,7 @@ async function createOAuthTransportOptions(
       });
     },
     redirectUrl: session.redirectUrl,
+    clientMetadataUrl: session.clientMetadataUrl,
     serverName: `${options.namespace}\u0000${options.config.url}`,
     store: options.oauth.store,
     signal: options.signal,

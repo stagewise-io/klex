@@ -7,6 +7,11 @@
  */
 export interface OAuthAuthorizationSession {
   readonly redirectUrl: URL;
+  /**
+   * Client ID Metadata Document URL. Authorization servers that support CIMD
+   * use it as the client ID instead of dynamic client registration.
+   */
+  readonly clientMetadataUrl?: URL;
   authorize(options: {
     authorizationUrl: URL;
     signal: AbortSignal;

@@ -39,6 +39,7 @@ export function boundInboxEvent<
   if (Buffer.byteLength(JSON.stringify(event), 'utf8') <= maxBytes)
     return event;
 
+  const { handle, generation } = event.context.metadata;
   const namespace = String(event.context.metadata.namespace ?? '');
   const uri = String(event.context.metadata.uri ?? '');
   const bounded = {
@@ -46,6 +47,10 @@ export function boundInboxEvent<
     context: {
       ...event.context,
       metadata: {
+        // Window handles and generations are small internal identifiers. Keep
+        // them intact: display namespace/URI strings may both be clipped.
+        ...(typeof handle === 'string' ? { handle } : {}),
+        ...(typeof generation === 'number' ? { generation } : {}),
         namespace: truncateUtf8(namespace, 1_000),
         uri: truncateUtf8(uri, 2_000),
         diffKind: 'full',

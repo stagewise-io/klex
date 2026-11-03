@@ -26,7 +26,7 @@ import type {
   ResolvedModel,
 } from '../extension-api';
 import { createDataPart, dataPartTransformer } from '../extension-api';
-import { boundInboxEvent } from './inbox-helpers';
+import { boundInboxEvent, truncateUtf8 } from './inbox-helpers';
 import {
   diffOpenResources,
   latestOpenResourcesPart,
@@ -88,6 +88,31 @@ function isResourceStatePart(part: unknown): part is ResourceStatePart {
     part !== null &&
     (part as { type?: unknown }).type === 'data-mcp-resource-state' &&
     typeof (part as { data?: unknown }).data === 'object'
+  );
+}
+
+/** Matches a truncated update without relying on its clipped display identity. */
+function matchesTruncatedResource(
+  previous: ResourceStateData,
+  update: ResourceStateData,
+): boolean {
+  if (
+    typeof update.handle === 'string' &&
+    typeof update.generation === 'number'
+  ) {
+    return (
+      previous.handle === update.handle &&
+      previous.generation === update.generation
+    );
+  }
+
+  // Older bounded events omitted the window identity. Compare using the
+  // released clipping limits; collisions invalidate all possible matches,
+  // preferring recovery over silently retaining stale resource content.
+  return (
+    truncateUtf8(previous.namespace, 1_000) ===
+      truncateUtf8(update.namespace, 1_000) &&
+    truncateUtf8(previous.uri, 2_000) === truncateUtf8(update.uri, 2_000)
   );
 }
 
@@ -527,12 +552,9 @@ class McpIngressExtension implements Extension {
           }
 
           if (state.truncated === true) {
-            // Bounded watcher events can omit the handle and generation.
+            // Invalidate by stable identity, with recovery for legacy events.
             for (const [handle, previous] of states) {
-              if (
-                previous.namespace === state.namespace &&
-                previous.uri === state.uri
-              ) {
+              if (matchesTruncatedResource(previous, state)) {
                 states.delete(handle);
               }
             }
@@ -598,10 +620,7 @@ class McpIngressExtension implements Extension {
         if (!state) continue;
         if (state.truncated === true) {
           for (const [key, previous] of knownStates) {
-            if (
-              previous.namespace === state.namespace &&
-              previous.uri === state.uri
-            ) {
+            if (matchesTruncatedResource(previous, state)) {
               knownStates.delete(key);
             }
           }

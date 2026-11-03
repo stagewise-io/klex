@@ -7,6 +7,11 @@ import type { ActivityEntry, ActivityEntryStore } from './activity-reader';
 
 export type SearchIndexStatus = 'ready' | 'partial' | 'rebuilding';
 
+const TERM_INDEXES_SQL = `
+  CREATE INDEX IF NOT EXISTS activity_term_trigrams_term ON activity_term_trigrams (term);
+  CREATE INDEX IF NOT EXISTS activity_source_terms_term ON activity_source_terms (term);
+`;
+
 export const EPISODIC_SEARCH_INDEX_STORE_DEFINITION: SqliteStoreDefinition = {
   kind: 'sqlite',
   id: 'episodic-search-index',
@@ -40,6 +45,7 @@ export const EPISODIC_SEARCH_INDEX_STORE_DEFINITION: SqliteStoreDefinition = {
       frequency INTEGER NOT NULL,
       PRIMARY KEY (source_id, term)
     );
+    ${TERM_INDEXES_SQL}
     CREATE VIRTUAL TABLE IF NOT EXISTS activity_entries USING fts5(
       text,
       normalized_text UNINDEXED,
@@ -109,6 +115,7 @@ export class EpisodicSearchIndex {
   private readonly handleOwners = new Map<string, string>();
   private handleCounter = 0;
   private reconcilePromise: Promise<void> | null = null;
+  private readonly indexedSources = new Map<string, readonly string[]>();
 
   constructor(
     private readonly databasePath: string,
@@ -133,6 +140,7 @@ export class EpisodicSearchIndex {
     if (this.client) return;
     this.client = createClient({ url: `file:${this.databasePath}` });
     try {
+      await this.client.executeMultiple(TERM_INDEXES_SQL);
       await this.reconcile();
     } catch (error) {
       this.client.close();
@@ -168,12 +176,14 @@ export class EpisodicSearchIndex {
         }),
       );
       const currentSources = new Set(sources.map((source) => source.id));
+      const pendingSnapshots = new Map<string, readonly string[] | null>();
       await this.client.execute('BEGIN');
       try {
         for (const oldSource of existingSources.keys()) {
           if (currentSources.has(oldSource)) continue;
           await this.removeSourceVocabulary(oldSource);
           await this.deleteSource(oldSource);
+          pendingSnapshots.set(oldSource, null);
         }
         for (const source of sources) {
           const previous = existingSources.get(source.id);
@@ -182,17 +192,41 @@ export class EpisodicSearchIndex {
             previous.revision === source.revision
           )
             continue;
-          await this.removeSourceVocabulary(source.id);
-          await this.deleteSource(source.id);
           const entries = await this.store.read(source.id);
-          await this.client.execute({
-            sql: 'INSERT INTO activity_sources (source_id, byte_size, revision) VALUES (?, ?, ?)',
-            args: [source.id, source.bytes, source.revision],
-          });
-          for (const entry of entries) await this.insert(entry);
-          await this.indexVocabulary(source.id, entries);
+          const fingerprints = entries.map(entryFingerprint);
+          const previousFingerprints = this.indexedSources.get(source.id);
+          if (
+            previous &&
+            previousFingerprints &&
+            entries.length >= previousFingerprints.length &&
+            previousFingerprints.every((value, i) => value === fingerprints[i])
+          ) {
+            const appendedEntries = entries.slice(previousFingerprints.length);
+            await this.client.execute({
+              sql: 'UPDATE activity_sources SET byte_size = ?, revision = ? WHERE source_id = ?',
+              args: [source.bytes, source.revision, source.id],
+            });
+            await this.insertEntries(appendedEntries);
+            await this.indexVocabulary(source.id, appendedEntries);
+          } else {
+            if (previous) {
+              await this.removeSourceVocabulary(source.id);
+              await this.deleteSource(source.id);
+            }
+            await this.client.execute({
+              sql: 'INSERT INTO activity_sources (source_id, byte_size, revision) VALUES (?, ?, ?)',
+              args: [source.id, source.bytes, source.revision],
+            });
+            await this.insertEntries(entries);
+            await this.indexVocabulary(source.id, entries);
+          }
+          pendingSnapshots.set(source.id, fingerprints);
         }
         await this.client.execute('COMMIT');
+        for (const [sourceId, fingerprints] of pendingSnapshots) {
+          if (fingerprints === null) this.indexedSources.delete(sourceId);
+          else this.indexedSources.set(sourceId, fingerprints);
+        }
         this.status = 'ready';
         this.lastReconciledAt = new Date().toISOString();
       } catch (error) {
@@ -405,6 +439,7 @@ export class EpisodicSearchIndex {
     this.client = null;
     this.handles.clear();
     this.handleOwners.clear();
+    this.indexedSources.clear();
   }
 
   private async indexVocabulary(
@@ -417,43 +452,47 @@ export class EpisodicSearchIndex {
       for (const term of tokenizeTerms(entry.text))
         frequencies.set(term, (frequencies.get(term) ?? 0) + 1);
     }
-    for (const [term, frequency] of frequencies) {
+    if (frequencies.size === 0) return;
+    const terms = [...frequencies];
+    for (let offset = 0; offset < terms.length; offset += 200) {
+      const batch = terms.slice(offset, offset + 200);
       await this.client.execute({
-        sql: 'INSERT INTO activity_source_terms (source_id, term, frequency) VALUES (?, ?, ?)',
-        args: [sourceId, term, frequency],
+        sql: `INSERT INTO activity_source_terms (source_id, term, frequency) VALUES ${batch.map(() => '(?, ?, ?)').join(', ')}
+          ON CONFLICT(source_id, term) DO UPDATE SET frequency = frequency + excluded.frequency`,
+        args: batch.flatMap(([term, frequency]) => [sourceId, term, frequency]),
       });
       await this.client.execute({
-        sql: `INSERT INTO activity_vocabulary (term, frequency) VALUES (?, ?)
+        sql: `INSERT INTO activity_vocabulary (term, frequency) VALUES ${batch.map(() => '(?, ?)').join(', ')}
           ON CONFLICT(term) DO UPDATE SET frequency = frequency + excluded.frequency`,
-        args: [term, frequency],
+        args: batch.flat(),
       });
-      for (const trigram of trigramsFor(term))
-        await this.client.execute({
-          sql: 'INSERT OR IGNORE INTO activity_term_trigrams (trigram, term) VALUES (?, ?)',
-          args: [trigram, term],
-        });
+    }
+    const pairs = terms.flatMap(([term]) =>
+      trigramsFor(term).map((trigram) => [trigram, term]),
+    );
+    for (let offset = 0; offset < pairs.length; offset += 300) {
+      const batch = pairs.slice(offset, offset + 300);
+      await this.client.execute({
+        sql: `INSERT OR IGNORE INTO activity_term_trigrams (trigram, term) VALUES ${batch.map(() => '(?, ?)').join(', ')}`,
+        args: batch.flat(),
+      });
     }
   }
 
   private async removeSourceVocabulary(sourceId: string): Promise<void> {
     if (!this.client) return;
-    const terms = await this.client.execute({
-      sql: 'SELECT term, frequency FROM activity_source_terms WHERE source_id = ?',
-      args: [sourceId],
+    await this.client.execute({
+      sql: `UPDATE activity_vocabulary
+        SET frequency = activity_vocabulary.frequency - (
+          SELECT f.frequency FROM activity_source_terms f
+          WHERE f.source_id = ? AND f.term = activity_vocabulary.term
+        )
+        WHERE term IN (SELECT term FROM activity_source_terms WHERE source_id = ?)`,
+      args: [sourceId, sourceId],
     });
-    for (const row of terms.rows) {
-      const term = stringValue(row.term);
-      const frequency = numberValue(row.frequency) ?? 0;
-      if (!term) continue;
-      await this.client.execute({
-        sql: 'UPDATE activity_vocabulary SET frequency = frequency - ? WHERE term = ?',
-        args: [frequency, term],
-      });
-      await this.client.execute({
-        sql: 'DELETE FROM activity_term_trigrams WHERE term = ? AND NOT EXISTS (SELECT 1 FROM activity_source_terms WHERE term = ? AND source_id <> ?)',
-        args: [term, term, sourceId],
-      });
-    }
+    await this.client.execute({
+      sql: 'DELETE FROM activity_term_trigrams WHERE term IN (SELECT term FROM activity_vocabulary WHERE frequency <= 0)',
+    });
     await this.client.execute({
       sql: 'DELETE FROM activity_vocabulary WHERE frequency <= 0',
     });
@@ -474,18 +513,27 @@ export class EpisodicSearchIndex {
     });
   }
 
-  private async insert(entry: ActivityEntry): Promise<void> {
-    await this.client?.execute({
-      sql: 'INSERT INTO activity_entries (text, normalized_text, source_id, entry_ordinal, occurred_at) VALUES (?, ?, ?, ?, ?)',
-      args: [
-        entry.text,
-        normalizeForSearch(entry.text),
-        entry.sourceId,
-        entry.entryOrdinal,
-        entry.occurredAt,
-      ],
-    });
+  private async insertEntries(
+    entries: readonly ActivityEntry[],
+  ): Promise<void> {
+    for (let offset = 0; offset < entries.length; offset += 100) {
+      const batch = entries.slice(offset, offset + 100);
+      await this.client?.execute({
+        sql: `INSERT INTO activity_entries (text, normalized_text, source_id, entry_ordinal, occurred_at) VALUES ${batch.map(() => '(?, ?, ?, ?, ?)').join(', ')}`,
+        args: batch.flatMap((entry) => [
+          entry.text,
+          normalizeForSearch(entry.text),
+          entry.sourceId,
+          entry.entryOrdinal,
+          entry.occurredAt,
+        ]),
+      });
+    }
   }
+}
+
+function entryFingerprint(entry: ActivityEntry): string {
+  return JSON.stringify([entry.entryOrdinal, entry.occurredAt, entry.text]);
 }
 
 function normalizeForSearch(value: string): string {

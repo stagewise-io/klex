@@ -1,11 +1,12 @@
 import { join } from 'node:path';
 import { performance } from 'node:perf_hooks';
 
+import { createClient } from '@libsql/client';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createActivityFixture } from '@/activity-history/test-support';
 
-import { ActivityEntryStore } from './activity-reader';
+import { type ActivityEntry, ActivityEntryStore } from './activity-reader';
 import {
   EPISODIC_SEARCH_INDEX_STORE_DEFINITION,
   EpisodicSearchIndex,
@@ -33,7 +34,250 @@ async function setup(texts: string[] = []) {
   return { ...fixture, database, store, index };
 }
 
+function inspect(database: string) {
+  const client = createClient({ url: `file:${database}` });
+  cleanup.push(async () => client.close());
+  return client;
+}
+
+async function mutableSource() {
+  const fixture = await setup(['migration original', 'sentinel']);
+  const sources = await fixture.store.listSources();
+  const source = sources[0]!;
+  let entries = await fixture.store.read(source.id);
+  const read = fixture.store.read.bind(fixture.store);
+  vi.spyOn(fixture.store, 'listSources').mockImplementation(
+    async () => sources,
+  );
+  vi.spyOn(fixture.store, 'read').mockImplementation(async (id) =>
+    id === source.id ? entries : read(id),
+  );
+  return {
+    ...fixture,
+    client: inspect(fixture.database),
+    sourceId: source.id,
+    replace(texts: string[]) {
+      entries = texts.map(
+        (text, entryOrdinal): ActivityEntry => ({
+          sourceId: source.id,
+          entryOrdinal,
+          occurredAt: source.persistedAt,
+          text,
+        }),
+      );
+      source.bytes = texts.join('').length;
+      source.revision += '-changed';
+    },
+  };
+}
+
 describe('canonical activity search index', () => {
+  it('preserves existing FTS rows on append and replaces rewritten or truncated entries', async () => {
+    const { index, client, replace, sourceId } = await mutableSource();
+    replace(['migration original']);
+    await index.reconcile();
+    await client.execute(
+      "UPDATE activity_entries SET rowid = 100 WHERE text LIKE '%sentinel%'",
+    );
+    const rows = () =>
+      client.execute({
+        sql: 'SELECT rowid, text FROM activity_entries WHERE source_id = ? ORDER BY entry_ordinal',
+        args: [sourceId],
+      });
+    const original = (await rows()).rows[0];
+    replace(['migration original', 'migration appended']);
+    await index.reconcile();
+    expect((await rows()).rows[0]).toEqual(original);
+    expect(await index.search('original', 5)).toHaveLength(1);
+    expect(await index.search('appended', 5)).toHaveLength(1);
+    expect(await index.fuzzyCandidates('migraton')).toContain('migration');
+    expect(await index.fuzzyCandidates('appendd')).toContain('appended');
+    expect(
+      (
+        await client.execute(
+          "SELECT frequency FROM activity_vocabulary WHERE term = 'migration'",
+        )
+      ).rows[0]?.frequency,
+    ).toBe(2);
+    expect(
+      (
+        await client.execute(
+          "SELECT frequency FROM activity_source_terms WHERE term = 'migration'",
+        )
+      ).rows[0]?.frequency,
+    ).toBe(2);
+    replace(['migration revised', 'migration appended']);
+    await index.reconcile();
+    expect(await index.search('original', 5)).toEqual([]);
+    expect(await index.search('revised', 5)).toHaveLength(1);
+    replace(['replacement']);
+    await index.reconcile();
+    expect(await index.search('appended', 5)).toEqual([]);
+    expect((await rows()).rows).toHaveLength(1);
+    for (const table of ['activity_vocabulary', 'activity_term_trigrams']) {
+      expect(
+        (
+          await client.execute(
+            `SELECT * FROM ${table} WHERE term IN ('migration', 'original', 'appended', 'revised')`,
+          )
+        ).rows,
+      ).toEqual([]);
+    }
+  });
+
+  it('keeps snapshots consistent after a failed append transaction and retries all entries', async () => {
+    const { index, client, replace, store, sourceId } = await mutableSource();
+    replace(['migration']);
+    await index.reconcile();
+    const sources = await store.listSources();
+    const sentinel = sources.find((source) => source.id !== sourceId)!;
+    sentinel.revision += '-changed';
+    const read = vi.mocked(store.read).getMockImplementation()!;
+    vi.spyOn(store, 'read').mockImplementation(async (id) => {
+      if (id === sentinel.id) throw new Error('injected failure');
+      return read(id);
+    });
+    replace(['migration', 'blocked']);
+    await expect(index.reconcile()).rejects.toThrow('injected failure');
+    expect(index.getStatus()).toBe('partial');
+    expect(
+      (
+        await client.execute(
+          "SELECT * FROM activity_entries WHERE text = 'blocked'",
+        )
+      ).rows,
+    ).toEqual([]);
+    vi.spyOn(store, 'read').mockImplementation(read);
+    await index.reconcile();
+    expect(await index.search('blocked', 5)).toHaveLength(1);
+    expect(
+      (
+        await client.execute(
+          "SELECT term, frequency FROM activity_vocabulary WHERE term IN ('migration', 'blocked') ORDER BY term",
+        )
+      ).rows,
+    ).toEqual([
+      { term: 'blocked', frequency: 1 },
+      { term: 'migration', frequency: 1 },
+    ]);
+  });
+
+  it.each(['edit', 'delete'] as const)(
+    'preserves shared vocabulary and removes exclusive terms after source %s',
+    async (operation) => {
+      const { index, database, sync } = await setup();
+      const message = (id: string, text: string) => ({
+        id,
+        role: 'assistant' as const,
+        parts: [{ type: 'text' as const, text }],
+      });
+      const retained = message('retained', 'migration retained');
+      await sync([message('changed', 'migration exclusive'), retained]);
+      await index.reconcile();
+      const client = inspect(database);
+      const trigrams = await client.execute(
+        "SELECT trigram FROM activity_term_trigrams WHERE term = 'migration' ORDER BY trigram",
+      );
+      await sync(
+        operation === 'edit'
+          ? [message('changed', 'replacement'), retained]
+          : [retained],
+      );
+      await index.reconcile();
+      expect(await index.search('migration', 5)).toHaveLength(1);
+      expect(await index.fuzzyCandidates('migraton')).toContain('migration');
+      expect(await index.fuzzyCandidates('exclusiv')).not.toContain(
+        'exclusive',
+      );
+      expect(
+        (
+          await client.execute(
+            "SELECT frequency FROM activity_vocabulary WHERE term = 'migration'",
+          )
+        ).rows[0]?.frequency,
+      ).toBe(1);
+      expect(
+        (
+          await client.execute(
+            "SELECT trigram FROM activity_term_trigrams WHERE term = 'migration' ORDER BY trigram",
+          )
+        ).rows,
+      ).toEqual(trigrams.rows);
+      for (const table of [
+        'activity_vocabulary',
+        'activity_term_trigrams',
+        'activity_source_terms',
+      ]) {
+        expect(
+          (
+            await client.execute(
+              `SELECT * FROM ${table} WHERE term = 'exclusive'`,
+            )
+          ).rows,
+        ).toEqual([]);
+      }
+    },
+  );
+
+  it('batches large sources across entry, vocabulary and trigram boundaries', async () => {
+    const { index, client, replace } = await mutableSource();
+    const texts = Array.from(
+      { length: 205 },
+      (_, i) => `migration term${i} extra${i}`,
+    );
+    replace(texts);
+    await index.reconcile();
+    replace([...texts, 'migration appended']);
+    await index.reconcile();
+    expect(await index.search('term204', 5)).toHaveLength(1);
+    expect(await index.search('appended', 5)).toHaveLength(1);
+    expect(
+      (
+        await client.execute(
+          "SELECT frequency FROM activity_vocabulary WHERE term = 'migration'",
+        )
+      ).rows[0]?.frequency,
+    ).toBe(206);
+    expect(
+      (
+        await client.execute(
+          "SELECT COUNT(*) AS count FROM activity_source_terms WHERE term LIKE 'term%'",
+        )
+      ).rows[0]?.count,
+    ).toBe(205);
+  });
+
+  it('adds missing secondary indexes at startup and safely reconciles changed sources after restart', async () => {
+    const { index, client, replace, database } = await mutableSource();
+    replace(['migration']);
+    await index.reconcile();
+    await index.close();
+    await client.executeMultiple(
+      'DROP INDEX activity_term_trigrams_term; DROP INDEX activity_source_terms_term;',
+    );
+    replace(['replacement']);
+    await index.start();
+    expect(await index.search('migration', 5)).toEqual([]);
+    expect(await index.search('replacement', 5)).toHaveLength(1);
+    const restartedClient = inspect(database);
+    for (const table of ['activity_term_trigrams', 'activity_source_terms']) {
+      expect(
+        (await restartedClient.execute(`PRAGMA index_info('${table}_term')`))
+          .rows,
+      ).toMatchObject([{ name: 'term' }]);
+    }
+    expect(
+      (
+        await client.execute(
+          "SELECT key, value FROM meta WHERE key IN ('schemaVersion', 'compatibilityVersion') ORDER BY key",
+        )
+      ).rows,
+    ).toEqual([
+      { key: 'compatibilityVersion', value: '2' },
+      { key: 'schemaVersion', value: '2' },
+    ]);
+  });
+
   it('supports SQLite FTS5, bounded snippets and owned context handles', async () => {
     const { index } = await setup(['I completed the billing migration review']);
     const hits = await index.search('billing migration', 5, 'owner');

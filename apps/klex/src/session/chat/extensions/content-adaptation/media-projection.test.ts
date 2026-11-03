@@ -166,6 +166,68 @@ it('does not traverse arbitrary fields, metadata, or cyclic JSON envelopes', () 
   }
 });
 
+it('ignores readAttachment media before and after UI conversion', async () => {
+  const remote = {
+    type: 'file',
+    mediaType: 'image/png',
+    data: {
+      type: 'url',
+      url: 'https://example.test/ephemeral.png?token=SECRET',
+    },
+  };
+  expect(projectToolMedia(remote)).toBeNull();
+  for (const payload of [
+    remote,
+    { type: 'file-data', mediaType: 'image/png', data: 'IMAGE' },
+  ]) {
+    const output = { type: 'content', value: [payload] };
+    expect(
+      collectMedia([
+        {
+          role: 'tool',
+          content: [
+            {
+              type: 'tool-result',
+              toolCallId: 'attachment',
+              toolName: 'readAttachment',
+              output,
+            },
+          ],
+        },
+      ] as ModelMessage[]),
+    ).toEqual([]);
+    const converted = await convertToModelMessagesExtended(
+      [
+        {
+          id: 'attachment-message',
+          role: 'assistant',
+          parts: [
+            {
+              type: 'dynamic-tool',
+              toolName: 'readAttachment',
+              toolCallId: 'attachment',
+              state: 'output-available',
+              input: {},
+              output,
+            },
+          ],
+        },
+      ],
+      {},
+    );
+    expect(converted).toContainEqual({
+      role: 'tool',
+      content: [
+        expect.objectContaining({
+          toolName: 'readAttachment',
+          output: { type: 'json', value: output },
+        }),
+      ],
+    });
+    expect(collectMedia(converted)).toEqual([]);
+  }
+});
+
 it('ignores non-media objects and malformed URLs', () => {
   expect(projectToolMedia({ type: 'text', text: 'caption' })).toBeNull();
   expect(

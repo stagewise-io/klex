@@ -230,7 +230,11 @@ export async function adaptAudioContent(
       if (message.role === 'tool') {
         const content = await Promise.all(
           message.content.map(async (part, partIndex) => {
-            if (part.type !== 'tool-result') return part;
+            if (
+              part.type !== 'tool-result' ||
+              part.toolName === 'readAttachment'
+            )
+              return part;
             const output = part.output;
             if (
               !output ||

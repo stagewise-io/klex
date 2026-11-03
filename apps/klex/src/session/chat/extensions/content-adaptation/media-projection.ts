@@ -35,6 +35,13 @@ export function projectToolMedia(value: unknown): FilePart | ImagePart | null {
       return null;
     }
   }
+  if (
+    typeof item.data === 'object' &&
+    item.data !== null &&
+    'type' in item.data &&
+    (item.data as { type?: unknown }).type === 'url'
+  )
+    return null;
   if (item.type === 'file' && item.data !== undefined) return value as FilePart;
   return null;
 }
@@ -63,7 +70,8 @@ export function collectMedia(
     if (!Array.isArray(message.content)) continue;
     for (const part of message.content) {
       if (part.type === 'file' || part.type === 'image') media.push(part);
-      if (part.type !== 'tool-result') continue;
+      if (part.type !== 'tool-result' || part.toolName === 'readAttachment')
+        continue;
       for (const item of toolContent(part.output)) {
         const projected = projectToolMedia(item);
         if (projected) media.push(projected);

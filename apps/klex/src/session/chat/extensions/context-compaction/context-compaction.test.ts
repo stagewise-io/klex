@@ -355,6 +355,78 @@ function lastPrompt(deps: ExtensionDeps): string {
 // --- tests ---
 
 describe('compaction media adaptation', () => {
+  it('keeps readAttachment placeholders without replaying remote URLs', async () => {
+    const source: ExtendedUIMessage = {
+      id: 'attachment-message',
+      role: 'assistant',
+      parts: [
+        {
+          type: 'dynamic-tool',
+          toolName: 'readAttachment',
+          toolCallId: 'attachment',
+          state: 'output-available',
+          input: {},
+          output: {
+            type: 'content',
+            value: [
+              {
+                type: 'file',
+                mediaType: 'image/png',
+                data: {
+                  type: 'url',
+                  url: 'https://example.test/ephemeral.png?token=SECRET',
+                },
+              },
+            ],
+          },
+        },
+      ],
+    };
+    const deps = makeWindowDeps(
+      sliceOf(
+        source,
+        makeTextMessage('assistant', 'Image reviewed.'),
+        makeTextMessage('user', 'active turn'),
+      ),
+      {
+        generateText: vi
+          .fn()
+          .mockResolvedValue(genSuccess('Attachment summary')),
+      },
+    );
+    vi.mocked(deps.modelResolver.resolveModelInfo).mockReturnValue({
+      contextSize: 20000,
+      inputCapabilities: { image: {} },
+    } as never);
+    await step(
+      createContextCompactionExt.create(deps),
+      FALLBACK_COMPACTION_THRESHOLD,
+    );
+    await vi.waitFor(() =>
+      expect(deps.checkpoints.commit).toHaveBeenCalledOnce(),
+    );
+    expect(deps.checkpoints.commit).toHaveBeenCalledWith(
+      expect.objectContaining({ summary: 'Attachment summary' }),
+    );
+    expect(lastPrompt(deps)).toContain('[Image attachment: image/png]');
+    expect(deps.generateText).toHaveBeenCalledOnce();
+    const args = vi.mocked(deps.generateText).mock.calls[0]?.[0];
+    if (!args) throw new Error('Missing compaction request');
+    const request = JSON.stringify({
+      prompt: args.prompt,
+      messages: args.messages,
+    });
+    expect(request).not.toContain('SECRET');
+    expect(request).not.toContain('https://');
+    for (const message of args.messages ?? []) {
+      if (Array.isArray(message.content)) {
+        expect(message.content.every((part) => part.type === 'text')).toBe(
+          true,
+        );
+      }
+    }
+  });
+
   it.each(['imageVision', 'audioListening'] as const)(
     'stops compaction when %s adaptation is aborted',
     async (purpose) => {

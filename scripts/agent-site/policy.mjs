@@ -31,6 +31,7 @@ class DiscoveryPolicy {
         .map((segment, index) => {
           if (segment === '**')
             return index === segments.length - 1 ? '(?:/.*)?' : '(?:/[^/]+)*';
+          if (segment === '*') return '/[^/]+';
           return `/${segment
             .split('*')
             .map((literal) => literal.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))

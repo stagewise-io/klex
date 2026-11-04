@@ -10,6 +10,8 @@ import { z } from 'zod';
 
 import { providerTypeSchema } from '@/config';
 
+import { ProviderCredentialError } from './authorization/credential-manager';
+
 export const modelValidationInputSchema = z
   .object({
     provider: z.union([
@@ -266,6 +268,16 @@ export function classifyModelValidationError(
 ): ModelValidationResult {
   // The SDK can wrap upstream failures. Never return raw bodies, messages, or URLs.
   for (let depth = 0; depth < 5; depth++) {
+    if (
+      error instanceof ProviderCredentialError &&
+      error.failure.code === 'authentication_required'
+    )
+      return modelValidationResult(
+        'invalid',
+        'authentication_required',
+        'The provider is not signed in.',
+        'Sign in to the provider, then retry.',
+      );
     if (NoSuchModelError.isInstance(error))
       return modelValidationResult(
         'invalid',

@@ -4,6 +4,7 @@ import { delimiter, dirname, join } from 'node:path';
 import { createOpenResponses } from '@ai-sdk/open-responses';
 import type { LanguageModelV4 } from '@ai-sdk/provider';
 
+import { ProviderCredentialError } from '../authorization/credential-manager';
 import type {
   ProviderAuthorization,
   ProviderConnectionResult,
@@ -163,7 +164,10 @@ async function discoverManagedModels(
   try {
     response = await managedFetch(context)(url, { method: 'GET', signal });
   } catch (error) {
-    if (error instanceof Error && error.message === SIGN_IN_REQUIRED)
+    if (
+      error instanceof ProviderCredentialError &&
+      error.failure.code === 'authentication_required'
+    )
       return unavailable(
         'authentication_required',
         SIGN_IN_REQUIRED,
@@ -321,7 +325,14 @@ function localCliFetch(instance: ProviderInstance): typeof fetch {
 function managedFetch(context: ProviderContext | undefined): typeof fetch {
   return async (input, init) => {
     const credential = await context?.credential();
-    if (!credential) throw new Error(SIGN_IN_REQUIRED);
+    // Typed so validation and generation report a sign-in, not connectivity.
+    if (!credential)
+      throw new ProviderCredentialError({
+        ok: false,
+        code: 'authentication_required',
+        message: SIGN_IN_REQUIRED,
+        remediation: 'Sign in with ChatGPT first.',
+      });
     const response = await fetch(input, {
       ...init,
       headers: withCodexHeaders(init, credential),

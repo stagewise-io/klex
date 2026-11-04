@@ -32,6 +32,7 @@ import {
   getProviderSettingsJsonSchema,
   klexConfigSchema,
   parseKlexConfig,
+  providerSettingKeysForAuthMode,
 } from './schema';
 import { CONFIG_STORE_DEFINITION } from './storage-definition';
 
@@ -1988,5 +1989,39 @@ describe('config v2', () => {
       mcpServers: {},
     });
     expect(parsed.modelSelection.voice.sts[0]?.modelId).toBe('voice:model');
+  });
+});
+
+describe('providerSettingKeysForAuthMode', () => {
+  it('resolves the keys of discriminated and plain auth-mode unions', () => {
+    expect([
+      ...(providerSettingKeysForAuthMode('amazon-bedrock', 'api-key') ?? []),
+    ]).toEqual(['region', 'testModelId', 'authMode', 'apiKey']);
+    expect(
+      [
+        ...(providerSettingKeysForAuthMode(
+          'google-vertex',
+          'service-account',
+        ) ?? []),
+      ].sort(),
+    ).toEqual([
+      'authMode',
+      'googleCredentials',
+      'location',
+      'project',
+      'testModelId',
+    ]);
+    expect(
+      [
+        ...(providerSettingKeysForAuthMode(
+          'chatgpt-codex-subscription',
+          'managed',
+        ) ?? []),
+      ].sort(),
+    ).toEqual(['authMode', 'baseUrl', 'testModelId']);
+    expect(providerSettingKeysForAuthMode('openai', 'api-key')).toBeUndefined();
+    expect(
+      providerSettingKeysForAuthMode('amazon-bedrock', 'unknown'),
+    ).toBeUndefined();
   });
 });

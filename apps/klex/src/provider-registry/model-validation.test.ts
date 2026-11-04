@@ -2,6 +2,7 @@ import { APICallError } from 'ai';
 import { MockLanguageModelV4 } from 'ai/test';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { ProviderCredentialError } from './authorization/credential-manager';
 import {
   ModelValidation,
   type ModelValidationInput,
@@ -193,6 +194,28 @@ describe('model validation probe', () => {
       expect(model.doStreamCalls).toHaveLength(1);
     },
   );
+
+  it('reports a missing provider sign-in as authentication_required', async () => {
+    const model = new MockLanguageModelV4({
+      doStream: async () => {
+        throw new ProviderCredentialError({
+          ok: false,
+          code: 'authentication_required',
+          message: 'ChatGPT sign-in is required for this provider',
+        });
+      },
+    });
+    const result = await new ModelValidation().run(
+      () => model,
+      input,
+      undefined,
+      () => true,
+    );
+    expect(result).toMatchObject({
+      status: 'invalid',
+      code: 'authentication_required',
+    });
+  });
 
   it('bounds concurrency and returns on timeout or cancellation even if a provider hangs', async () => {
     vi.useFakeTimers();

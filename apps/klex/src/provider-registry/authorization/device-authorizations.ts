@@ -184,6 +184,8 @@ export class DeviceAuthorizations {
           this.finish(attempt, 'failed', 'Could not store the credential');
           return;
         }
+        // A sign-out during the write wins; the manager kept nothing.
+        if (signal.aborted) return;
         if (this.attempts.get(instance.id) === attempt)
           this.attempts.delete(instance.id);
         this.deps.logger.info(

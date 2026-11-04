@@ -6,6 +6,21 @@
       "dependsOn": ["^build"],
       "outputs": ["dist/**", "src/generated/**"]
     },
+    "@klex/website#build": {
+      "dependsOn": ["^build"],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/scripts/agent-site/**",
+        "$TURBO_ROOT$/install.sh",
+        "$TURBO_ROOT$/install.ps1"
+      ],
+      "outputs": ["dist/**", ".vercel/output/**"]
+    },
+    "docs#build": {
+      "dependsOn": ["^build"],
+      "inputs": ["$TURBO_DEFAULT$", "$TURBO_ROOT$/scripts/agent-site/**"],
+      "outputs": ["dist/**", ".vercel/output/**"]
+    },
     "build:admin-api-types": {
       "dependsOn": ["^build"],
       "outputs": [".types/admin-api/**"]

@@ -41,6 +41,8 @@ describe('representation negotiation', () => {
     'text/markdown',
     'text/html;q=0.2,text/markdown;q=0.9',
     'TEXT/MARKDOWN',
+    'text/markdown ;q=1',
+    'text/html ; q=0.1, text/markdown ; q=0.9',
     'text/html;q=0,text/*;q=0.5',
   ])('returns Markdown for %s', (accept) => {
     const result = request('/?tracking=test', accept);

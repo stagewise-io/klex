@@ -26,6 +26,21 @@ describe('discovery exclusion policy', () => {
     expect(policy.includes('markdown', '/draft/nested/page')).toBe(true);
     expect(policy.includes('agents', '/internal-other/page')).toBe(true);
   });
+  it('matches globstars with zero, one, or multiple path segments', () => {
+    const policy = createDiscoveryPolicy({
+      agents: ['/docs/**/guide', '/internal/**'],
+    });
+    for (const route of [
+      '/docs/guide',
+      '/docs/a/guide',
+      '/docs/a/b/guide',
+      '/internal',
+      '/internal/a',
+    ])
+      expect(policy.includes('agents', route)).toBe(false);
+    expect(policy.includes('agents', '/docs/guidebook')).toBe(true);
+    expect(policy.includes('agents', '/other/docs/guide')).toBe(true);
+  });
   it.each([
     { typo: [] },
     { sitemap: 'bad' },

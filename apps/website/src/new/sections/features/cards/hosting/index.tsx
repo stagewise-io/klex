@@ -26,7 +26,7 @@ function HostingScene() {
         aria-hidden="true"
       >
         <g transform="rotate(-9 130 122)">
-          <use href={`${deskUrl}#desk`} />
+          <image href={deskUrl} x="0" y="-250" width="260" height="480" />
           <image
             href="/klex-avatar.svg"
             x="116.5"

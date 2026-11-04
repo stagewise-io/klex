@@ -26,15 +26,17 @@ class DiscoveryPolicy {
   includes(surface, route) {
     const normalized = route.replace(/\/$/, '') || '/';
     return !(this.configuration[surface] ?? []).some((pattern) => {
-      const expression = pattern
-        .split('**')
-        .map((part) =>
-          part
+      const segments = pattern.split('/').slice(1);
+      const expression = segments
+        .map((segment, index) => {
+          if (segment === '**')
+            return index === segments.length - 1 ? '(?:/.*)?' : '(?:/[^/]+)*';
+          return `/${segment
             .split('*')
             .map((literal) => literal.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
-            .join('[^/]*'),
-        )
-        .join('.*');
+            .join('[^/]*')}`;
+        })
+        .join('');
       return new RegExp(`^${expression}$`).test(normalized);
     });
   }

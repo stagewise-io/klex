@@ -69,13 +69,17 @@ export function ProgressiveMascot({
       motion.removeEventListener('change', update);
     };
   }, []);
+  const readyCallback = useRef(onReady);
+  useEffect(() => {
+    readyCallback.current = onReady;
+  }, [onReady]);
   const attach = useCallback(
     (handle: KlexHandle | null) => {
       if (typeof ref === 'function') ref(handle);
       else if (ref) ref.current = handle;
-      if (handle) onReady?.();
+      if (handle) readyCallback.current?.();
     },
-    [ref, onReady],
+    [ref],
   );
   const fallback = (
     <span

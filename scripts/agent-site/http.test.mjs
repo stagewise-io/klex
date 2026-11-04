@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { readFile } from 'node:fs/promises';
+import { fileURLToPath } from 'node:url';
 
 import Ajv from 'ajv/dist/2020.js';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -16,7 +17,7 @@ beforeAll(async () => {
       const child = spawn(
         process.execPath,
         [
-          new URL('./preview.mjs', import.meta.url).pathname,
+          fileURLToPath(new URL('./preview.mjs', import.meta.url)),
           kind,
           '--port',
           new URL(origin).port,
@@ -35,6 +36,10 @@ beforeAll(async () => {
             resolve();
           }
         });
+        child.once('error', (error) => {
+          clearTimeout(timeout);
+          reject(error);
+        });
         child.once('exit', (code) => {
           clearTimeout(timeout);
           reject(new Error(`Preview exited: ${code}`));
@@ -46,6 +51,8 @@ beforeAll(async () => {
 afterAll(async () => {
   await Promise.all(
     processes.map(async (child) => {
+      if (child.exitCode !== null || child.signalCode !== null || !child.pid)
+        return;
       const exit = once(child, 'exit');
       child.kill();
       await exit;
@@ -60,6 +67,53 @@ const get = (kind, path, options = {}) =>
   });
 
 describe('built routing over HTTP', () => {
+  it('serves emitted images and fonts with their actual MIME types', async () => {
+    const { readdir } = await import('node:fs/promises');
+    const files = await readdir(
+      new URL('../../apps/website/.vercel/output/static/', import.meta.url),
+      { recursive: true },
+    );
+    const expected = {
+      '.webp': 'image/webp',
+      '.jpeg': 'image/jpeg',
+      '.jpg': 'image/jpeg',
+      '.ttf': 'font/ttf',
+    };
+    for (const [extension, type] of Object.entries(expected)) {
+      for (const file of files.filter((file) => file.endsWith(extension))) {
+        const response = await get(
+          'marketing',
+          `/${file.replaceAll('\\', '/')}`,
+          { method: 'HEAD' },
+        );
+        expect(response.status).toBe(200);
+        expect(response.headers.get('content-type')).toBe(type);
+      }
+    }
+  });
+  it('only configures an API catalog where the artifact exists', async () => {
+    const marketingConfig = JSON.parse(
+      await readFile(
+        new URL(
+          '../../apps/website/.vercel/output/config.json',
+          import.meta.url,
+        ),
+        'utf8',
+      ),
+    );
+    expect(
+      marketingConfig.routes.some(
+        (route) =>
+          route.headers?.['Content-Type'] === 'application/linkset+json',
+      ),
+    ).toBe(false);
+    const response = await get('docs', '/.well-known/api-catalog');
+    expect(response.status).toBe(200);
+    expect(response.headers.get('content-type')).toContain(
+      'application/linkset+json',
+    );
+    expect(await response.json()).toHaveProperty('linkset');
+  });
   it('serves content-hashed static geometry with immutable caching', async () => {
     const html = await (await get('marketing', '/')).text();
     const path = html.match(

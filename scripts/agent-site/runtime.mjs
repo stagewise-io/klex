@@ -12,7 +12,10 @@ class AgentSite {
     const [major] = type.split('/');
     let result = { specificity: -1, quality: 0 };
     for (const entry of accept.toLowerCase().split(',')) {
-      const [media, ...parameters] = entry.trim().split(';');
+      const [media, ...parameters] = entry
+        .trim()
+        .split(';')
+        .map((value) => value.trim());
       const specificity =
         media === type
           ? 2

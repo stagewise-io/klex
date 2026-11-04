@@ -5,6 +5,7 @@ import tailwindcss from '@tailwindcss/vite';
 import { type Connect, createServer, defineConfig, type Plugin } from 'vite';
 
 import { createLegalPlugin } from './src/legal/node/index.ts';
+import { staticMascots } from './static-mascot-plugin.ts';
 
 function prerenderPages(): Plugin {
   let pages: Promise<Record<string, string>> | undefined;
@@ -28,6 +29,8 @@ function prerenderPages(): Plugin {
             },
             optimizeDeps: { noDiscovery: true, include: [] },
             ssr: { noExternal: ['@klex/mascot', '@stagewise/ui'] },
+            plugins: [staticMascots()],
+            build: { assetsInlineLimit: 0 },
           });
           try {
             const { prerenderLandingPage } = await server.ssrLoadModule(
@@ -120,8 +123,18 @@ function klexInstallerAssets(): Plugin {
 export default defineConfig({
   appType: 'mpa',
   resolve: { alias: { '@': fileURLToPath(new URL('./src', import.meta.url)) } },
-  server: { allowedHosts: ['.trycloudflare.com'] },
+  server: {
+    allowedHosts: ['.trycloudflare.com'],
+    proxy: {
+      '/api/cloud-status': {
+        target: 'https://status.klex.bot',
+        changeOrigin: true,
+        rewrite: () => '/api/v1/summary',
+      },
+    },
+  },
   plugins: [
+    staticMascots(),
     prerenderPages(),
     {
       name: 'klex-page-routes',
@@ -142,6 +155,7 @@ export default defineConfig({
     tailwindcss(),
   ],
   build: {
+    assetsInlineLimit: 0,
     rolldownOptions: {
       input: {
         legal: fileURLToPath(new URL('./legal/index.html', import.meta.url)),

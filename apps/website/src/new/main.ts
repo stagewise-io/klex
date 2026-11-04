@@ -1,6 +1,7 @@
 import './base.css';
 import './navigation.css';
 
+import { mountCloudStatus } from './cloud-status';
 import { mountLogoMenus } from './logo-menu';
 import { mountNearViewport } from './mount-near-viewport';
 import { mountNavigation } from './navigation';
@@ -27,6 +28,7 @@ theme.addEventListener(
 );
 
 const disposers = [
+  mountCloudStatus(),
   mountLogoMenus(app),
   mountNavigation(),
   mountHero(),

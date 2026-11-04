@@ -27,6 +27,10 @@ export function createFooterMarkup({
             <img src="/stagewise-wordmark.svg" alt="stagewise" width="114" height="24" />
           </a>
         </p>
+        <a class="new-footer-status" href="https://status.klex.bot/" data-cloud-status data-state="unknown">
+          <span class="new-footer-status-dot" aria-hidden="true"></span>
+          <span data-cloud-status-label aria-live="polite">Klex Cloud status</span>
+        </a>
         <p class="new-footer-attribution">Klex® and stagewise® are registered trademarks of stagewise GmbH and protected in the EU by the European Union Intellectual Property Office (EUIPO).<br />Unauthorized use is prohibited.</p>
         <p class="new-footer-attribution">Third-party product names, logos, illustrations and brands referenced on this site are property of their respective owners. Use is for identification purposes only and does not imply any affiliation or endorsement.</p>
       </div>

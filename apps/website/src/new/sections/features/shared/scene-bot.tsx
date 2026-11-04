@@ -1,12 +1,8 @@
-import {
-  type EmoteId,
-  Klex,
-  type KlexActivity,
-  type KlexHandle,
-} from '@klex/mascot';
-import { useEffect, useRef } from 'react';
+import type { EmoteId, KlexActivity, KlexHandle } from '@klex/mascot';
+import { useCallback, useEffect, useRef } from 'react';
 
 import { heroLooks, klexLook } from '../../../bot-looks';
+import { ProgressiveMascot } from '../../../static-mascot';
 import type { SceneProps } from './feature-card';
 
 export function SceneBot({
@@ -38,8 +34,17 @@ export function SceneBot({
     handle.current?.resume();
     if (reaction) handle.current?.emote(reaction);
   }, [active, beat, reaction]);
+  const ready = useCallback(() => {
+    handle.current?.say(speech ?? null);
+    if (active) {
+      handle.current?.resume();
+      if (reaction) handle.current?.emote(reaction);
+    } else handle.current?.pause();
+  }, [active, speech, reaction]);
   return (
-    <Klex
+    <ProgressiveMascot
+      snapshot={bot ?? 'brand'}
+      onReady={ready}
       ref={handle}
       {...(bot ? heroLooks[bot] : klexLook)}
       size={size}

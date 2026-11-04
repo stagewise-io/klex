@@ -43,29 +43,29 @@ const steps = [
 ];
 
 export const workflowMarkup = (panels: string[]) => `
-  <section class="new-workflow" id="how-it-works" aria-labelledby="new-workflow-intro">
+  <section class="new-workflow" data-markdown-bot-names="Monica,Kristine,Jonathan,Jeff" id="how-it-works" aria-labelledby="new-workflow-intro">
     <div class="new-workflow-viewport" data-klex-viewport>
       <div class="new-workflow-body">
         <div class="new-workflow-navigation" role="group" aria-label="Workflow steps">
           <h2 class="new-workflow-intro" id="new-workflow-intro">How Klex Bots work together</h2>
-          <div class="new-workflow-mobile-steps" aria-label="Choose a story step">
+          <div class="new-workflow-mobile-steps" data-markdown="exclude" aria-label="Choose a story step">
             ${steps.map(({ phase }, index) => `<button type="button" data-step="${index}" aria-label="Step ${index + 1}: ${phase}" aria-controls="new-workflow-panel-${index}" aria-current="${index === 0 ? 'step' : 'false'}">${String(index + 1).padStart(2, '0')}</button>`).join('')}
           </div>
           <div class="new-workflow-step-viewport">
-          <ol class="new-workflow-steps">
+          <ol class="new-workflow-steps" data-markdown-layout="sections">
             ${steps
               .map(
                 ({ id, phase, title, description }, index) => `
               <li class="new-workflow-step" data-active="${index === 0}">
-                <h3 id="${id}">
+                <h3 id="${id}" data-markdown-text="Step ${index + 1}: ${phase} — ${title}">
                   <button class="new-workflow-step-button" type="button" data-step="${index}" aria-controls="new-workflow-panel-${index}" aria-current="${index === 0 ? 'step' : 'false'}">
                     <span class="new-workflow-step-number"><span class="new-workflow-step-index">${String(index + 1).padStart(2, '0')}</span> · ${phase}</span>
                     ${workflowTitleMarkup(title)}
                   </button>
                 </h3>
-                <div class="new-workflow-description" aria-hidden="${index !== 0}"${index === 0 ? '' : ' inert'}><div>
+                <div class="new-workflow-description" data-markdown="include" aria-hidden="${index !== 0}"${index === 0 ? '' : ' inert'}><div>
                   <p>${description}</p>
-                  <div class="new-workflow-controls-slot">${index === 0 ? '<div class="new-workflow-controls-mount"></div>' : ''}</div>
+                  <div class="new-workflow-controls-slot" data-markdown="exclude">${index === 0 ? '<div class="new-workflow-controls-mount"></div>' : ''}</div>
                 </div>
                 </div>
               </li>
@@ -75,7 +75,7 @@ export const workflowMarkup = (panels: string[]) => `
           </ol>
           </div>
         </div>
-        <div class="new-workflow-scenes" role="group" aria-label="Workflow illustrations">
+        <div class="new-workflow-scenes" data-markdown="exclude" role="group" aria-label="Workflow illustrations">
           <div class="new-workflow-track">
             ${panels.map((panel, index) => `<div class="new-workflow-slide" id="new-workflow-panel-${index}"${index === 0 ? '' : ' inert aria-hidden="true"'}><div class="new-workflow-artwork">${panel}</div></div>`).join('')}
           </div>

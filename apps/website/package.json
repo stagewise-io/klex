@@ -29,7 +29,7 @@
     "yaml": "2.9.1"
   },
   "dependencies": {
-    "@klex/mascot": "^0.1.0",
+    "@klex/mascot": "0.4.0",
     "@stagewise/ui": "^0.12.1",
     "@sugar-high/react": "^2.4.0",
     "gsap": "^3.15.0",

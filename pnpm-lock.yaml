@@ -256,8 +256,8 @@ importers:
   apps/website:
     dependencies:
       '@klex/mascot':
-        specifier: ^0.1.0
-        version: 0.1.0(@stagewise/ui@0.12.1(@date-fns/tz@1.5.0)(@types/react-dom@19.3.0(@types/react@19.2.18))(@types/react@19.2.18)(date-fns@4.4.0)(react-dom@19.2.8(react@19.2.8))(react-is@19.2.8)(react@19.2.8)(redux@5.0.1)(tailwindcss@4.3.3))(gsap@3.15.0)(motion@13.4.0(react-dom@19.2.8(react@19.2.8))(react@19.2.8))(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
+        specifier: 0.4.0
+        version: 0.4.0(@stagewise/ui@0.12.1(@date-fns/tz@1.5.0)(@types/react-dom@19.3.0(@types/react@19.2.18))(@types/react@19.2.18)(date-fns@4.4.0)(react-dom@19.2.8(react@19.2.8))(react-is@19.2.8)(react@19.2.8)(redux@5.0.1)(tailwindcss@4.3.3))(gsap@3.15.0)(motion@13.4.0(react-dom@19.2.8(react@19.2.8))(react@19.2.8))(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
       '@stagewise/ui':
         specifier: ^0.12.1
         version: 0.12.1(@date-fns/tz@1.5.0)(@types/react-dom@19.3.0(@types/react@19.2.18))(@types/react@19.2.18)(date-fns@4.4.0)(react-dom@19.2.8(react@19.2.8))(react-is@19.2.8)(react@19.2.8)(redux@5.0.1)(tailwindcss@4.3.3)
@@ -2213,8 +2213,8 @@ packages:
     resolution: {integrity: sha512-7MLtObObIPHXE29NNQ2Dq95kjUGiG28fyucy0GgfmY8wuewVCh6xpeJVHjzO4iuJqMLReMGRE/Cyj2erzAYCkA==}
     engines: {node: '>=22'}
 
-  '@klex/mascot@0.1.0':
-    resolution: {integrity: sha512-LO9k/oTlG1RoZdHeoFE6iNMVZ0x20Wv0/7jFx70NWRGxpzRjKyBhyFHEhZKaDs6EZT0P8OMoiNRfI6AKEeWMZg==}
+  '@klex/mascot@0.4.0':
+    resolution: {integrity: sha512-6JGcH8DCWaafR6b54LZm+HSme6bqNVoFICbqSQR0a2qebJRy/eordwTn3h3t8702fGIOhYXb+Tyo8ohPOsW1GQ==}
     peerDependencies:
       '@stagewise/ui': '>=0.12.0'
       gsap: ^3.15.0
@@ -10884,7 +10884,7 @@ snapshots:
       - utf-8-validate
       - zod
 
-  '@klex/mascot@0.1.0(@stagewise/ui@0.12.1(@date-fns/tz@1.5.0)(@types/react-dom@19.3.0(@types/react@19.2.18))(@types/react@19.2.18)(date-fns@4.4.0)(react-dom@19.2.8(react@19.2.8))(react-is@19.2.8)(react@19.2.8)(redux@5.0.1)(tailwindcss@4.3.3))(gsap@3.15.0)(motion@13.4.0(react-dom@19.2.8(react@19.2.8))(react@19.2.8))(react-dom@19.2.8(react@19.2.8))(react@19.2.8)':
+  '@klex/mascot@0.4.0(@stagewise/ui@0.12.1(@date-fns/tz@1.5.0)(@types/react-dom@19.3.0(@types/react@19.2.18))(@types/react@19.2.18)(date-fns@4.4.0)(react-dom@19.2.8(react@19.2.8))(react-is@19.2.8)(react@19.2.8)(redux@5.0.1)(tailwindcss@4.3.3))(gsap@3.15.0)(motion@13.4.0(react-dom@19.2.8(react@19.2.8))(react@19.2.8))(react-dom@19.2.8(react@19.2.8))(react@19.2.8)':
     dependencies:
       '@stagewise/ui': 0.12.1(@date-fns/tz@1.5.0)(@types/react-dom@19.3.0(@types/react@19.2.18))(@types/react@19.2.18)(date-fns@4.4.0)(react-dom@19.2.8(react@19.2.8))(react-is@19.2.8)(react@19.2.8)(redux@5.0.1)(tailwindcss@4.3.3)
       gsap: 3.15.0

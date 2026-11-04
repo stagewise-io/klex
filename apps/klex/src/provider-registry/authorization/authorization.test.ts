@@ -262,11 +262,55 @@ describe('ProviderCredentialManager', () => {
       await manager.contextFor(instance, authorization()).credential(),
     ).toBeUndefined();
   });
+
+  it('lets a sign-out during an in-flight sign-in write win', async () => {
+    const store = new ProviderCredentialStore(filePath);
+    const manager = new ProviderCredentialManager({ store, runHook, logger });
+    const saving = manager.save(instance, credential('late'));
+    await manager.delete('codex');
+    await saving;
+    expect(manager.record('codex')).toBeUndefined();
+    expect(await store.get('codex')).toBeUndefined();
+    const restarted = new ProviderCredentialManager({
+      store: new ProviderCredentialStore(filePath),
+      runHook,
+      logger,
+    });
+    await restarted.load();
+    expect(restarted.record('codex')).toBeUndefined();
+  });
+
+  it('discards a refresh that finishes after sign-out', async () => {
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const auth = authorization({
+      refresh: vi.fn(async () => {
+        await gate;
+        return ok(credential('rotated', Date.now() + 3_600_000));
+      }),
+    });
+    const store = new ProviderCredentialStore(filePath);
+    const manager = new ProviderCredentialManager({ store, runHook, logger });
+    await manager.save(instance, credential('stale', Date.now() + 60_000));
+    const refreshing = manager.contextFor(instance, auth).credential();
+    await vi.waitFor(() => expect(auth.refresh).toHaveBeenCalled());
+    await manager.delete('codex');
+    release();
+    expect(await refreshing).toBeUndefined();
+    expect(manager.record('codex')).toBeUndefined();
+    expect(await store.get('codex')).toBeUndefined();
+  });
 });
 
 describe('DeviceAuthorizations', () => {
   function setup(auth: ProviderAuthorization, now?: () => number) {
-    const credentials = new ProviderCredentialManager({ runHook, logger });
+    const credentials = new ProviderCredentialManager({
+      store: new ProviderCredentialStore(filePath),
+      runHook,
+      logger,
+    });
     const onAuthorized = vi.fn();
     const devices = new DeviceAuthorizations({
       runHook,
@@ -310,6 +354,69 @@ describe('DeviceAuthorizations', () => {
       'granted',
     );
     expect(devices.status('codex')).toBeUndefined();
+  });
+
+  // Mirrors the registry's sign-out: cancel the attempt, then delete.
+  async function signOut(
+    devices: DeviceAuthorizations,
+    credentials: ProviderCredentialManager,
+  ): Promise<void> {
+    devices.cancel('codex');
+    await credentials.delete('codex');
+  }
+
+  it('drops a grant whose poll finishes after sign-out', async () => {
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const poll = vi.fn(async () => {
+      await gate;
+      return ok<DeviceAuthorizationPollResult>({
+        status: 'authorized',
+        credential: credential('late'),
+      });
+    });
+    const auth = authorization({ poll });
+    const { credentials, devices, onAuthorized } = setup(auth);
+    await devices.start(instance, auth);
+    await vi.waitFor(() => expect(poll).toHaveBeenCalled());
+    await signOut(devices, credentials);
+    release();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(onAuthorized).not.toHaveBeenCalled();
+    expect(credentials.record('codex')).toBeUndefined();
+    expect(
+      await new ProviderCredentialStore(filePath).get('codex'),
+    ).toBeUndefined();
+  });
+
+  it('drops a grant when sign-out lands during its credential write', async () => {
+    const auth = authorization({
+      poll: vi.fn(async () =>
+        ok<DeviceAuthorizationPollResult>({
+          status: 'authorized',
+          credential: credential('late'),
+        }),
+      ),
+    });
+    const { credentials, devices, onAuthorized } = setup(auth);
+    const save = credentials.save.bind(credentials);
+    let signedOut: Promise<void> | undefined;
+    vi.spyOn(credentials, 'save').mockImplementation(async (...args) => {
+      const writing = save(...args);
+      signedOut = signOut(devices, credentials);
+      await writing;
+    });
+    await devices.start(instance, auth);
+    await vi.waitFor(() => expect(signedOut).toBeDefined());
+    await signedOut;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(onAuthorized).not.toHaveBeenCalled();
+    expect(credentials.record('codex')).toBeUndefined();
+    expect(
+      await new ProviderCredentialStore(filePath).get('codex'),
+    ).toBeUndefined();
   });
 
   it('reports a denied sign-in as failed', async () => {

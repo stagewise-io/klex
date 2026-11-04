@@ -539,6 +539,12 @@ class AgentBuild {
       }
     }
     if (this.kind === 'marketing') {
+      for (const policy of ['terms', 'privacy'])
+        routes.push({
+          src: `^/${policy}/?$`,
+          status: 308,
+          headers: { Location: `/legal/${policy}` },
+        });
       routes.push({
         src: '^/openapi\\.json$',
         status: 307,

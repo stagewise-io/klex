@@ -105,7 +105,9 @@ class AgentBuild {
         route,
         file,
         markdownPath: route === '/' ? '/index.md' : `${route}.md`,
-        sources: ['apps/website/src/new', `apps/website/${file}`],
+        sources: file.startsWith('legal/')
+          ? ['apps/website/content/legal', 'apps/website/src/legal']
+          : ['apps/website/src/new', `apps/website/${file}`],
       });
     }
     if (!inventory.some((page) => page.route === '/'))
@@ -179,7 +181,15 @@ class AgentBuild {
         );
       }
       html = html.replace('</head>', `${alternate}\n</head>`);
-      const markdown = this.content.markdown(html, canonical);
+      // Dated legal Markdown is the approved source artifact, with catalog hashes.
+      // Never replace its bytes with an HTML-derived representation.
+      let markdown;
+      if (/^\/legal\/[^/]+\/\d{4}-\d{2}-\d{2}$/.test(entry.route)) {
+        markdown = await readFile(
+          resolve(this.directory, 'dist', entry.markdownPath.slice(1)),
+          'utf8',
+        );
+      } else markdown = this.content.markdown(html, canonical);
       pages[entry.route] = {
         ...entry,
         ...metadata,

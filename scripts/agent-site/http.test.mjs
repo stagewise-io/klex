@@ -158,6 +158,7 @@ describe('built routing over HTTP', () => {
         'utf8',
       ),
     );
+    const checked = new Set();
     for (const page of Object.values(manifest.pages)) {
       const urls = new Set(
         [...page.html.matchAll(/(?:src|href)="([^"#]+)(?:#[^"]*)?"/g)].map(
@@ -171,6 +172,8 @@ describe('built routing over HTTP', () => {
           target.pathname.startsWith('/_vercel/')
         )
           continue;
+        if (checked.has(target.pathname)) continue;
+        checked.add(target.pathname);
         const response = await get('marketing', target.pathname, {
           method: 'HEAD',
         });
@@ -182,6 +185,50 @@ describe('built routing over HTTP', () => {
       expect(page.html).toContain('<html lang="en">');
       expect(page.html).toContain(`href="${page.canonical}"`);
       if (page.markdown) expect(page.markdown).not.toContain('Canonical:');
+    }
+  });
+  it('exposes every legal policy and approved revision as Markdown to agents', async () => {
+    const catalogResponse = await get('marketing', '/legal/policies.json');
+    expect(catalogResponse.status).toBe(200);
+    const catalog = await catalogResponse.json();
+    const center = await get('marketing', '/legal', {
+      headers: { accept: 'text/markdown', 'user-agent': 'GPTBot' },
+    });
+    expect(center.headers.get('content-type')).toContain('text/markdown');
+    const index = await center.text();
+    const discovery = await (await get('marketing', '/llms.txt')).text();
+    for (const [policy, revisions] of Object.entries(catalog.policies)) {
+      expect(index).toContain(`/legal/${policy}`);
+      expect(discovery).toContain(`/legal/${policy}.md`);
+      const current = await get('marketing', `/legal/${policy}`, {
+        headers: { accept: 'text/markdown', 'user-agent': 'ClaudeBot' },
+      });
+      expect(current.status).toBe(200);
+      expect(current.headers.get('content-type')).toContain('text/markdown');
+      expect(current.headers.get('vary')).toContain('Accept');
+      const text = await current.text();
+      expect(text).toContain('## ');
+      const mirror = await get('marketing', `/legal/${policy}.md`);
+      expect(await mirror.text()).toBe(text);
+      for (const revision of revisions) {
+        const path = `/legal/${policy}/${revision.revision}`;
+        const original = await readFile(
+          new URL(
+            `../../apps/website/content/legal/${policy}/${revision.revision}.md`,
+            import.meta.url,
+          ),
+        );
+        for (const route of [path, `${path}.md`]) {
+          const response = await get('marketing', route, {
+            headers: { accept: 'text/markdown', 'user-agent': 'GPTBot' },
+          });
+          expect(response.status).toBe(200);
+          expect(response.headers.get('content-type')).toContain(
+            'text/markdown',
+          );
+          expect(Buffer.from(await response.arrayBuffer())).toEqual(original);
+        }
+      }
     }
   });
   it('alternates HTML and Markdown without cacheable variants', async () => {

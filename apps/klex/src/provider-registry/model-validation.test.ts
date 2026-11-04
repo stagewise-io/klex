@@ -195,26 +195,65 @@ describe('model validation probe', () => {
     },
   );
 
-  it('reports a missing provider sign-in as authentication_required', async () => {
+  it.each([
+    ['unwrapped', (error: Error) => error],
+    [
+      'wrapped in a status-less APICallError',
+      (error: Error) =>
+        new APICallError({
+          message: 'Cannot connect to API',
+          url: 'https://secret-endpoint',
+          requestBodyValues: {},
+          cause: error,
+        }),
+    ],
+  ])(
+    'reports a missing provider sign-in %s as authentication_required',
+    async (_label, wrap) => {
+      const model = new MockLanguageModelV4({
+        doStream: async () => {
+          throw wrap(
+            new ProviderCredentialError({
+              ok: false,
+              code: 'authentication_required',
+              message: 'ChatGPT sign-in is required for this provider',
+            }),
+          );
+        },
+      });
+      const result = await new ModelValidation().run(
+        () => model,
+        input,
+        undefined,
+        () => true,
+      );
+      expect(result).toMatchObject({
+        status: 'invalid',
+        code: 'authentication_required',
+      });
+      expect(JSON.stringify(result)).not.toContain('secret');
+    },
+  );
+
+  it('keeps status-less network failures as connectivity_failed', async () => {
     const model = new MockLanguageModelV4({
       doStream: async () => {
-        throw new ProviderCredentialError({
-          ok: false,
-          code: 'authentication_required',
-          message: 'ChatGPT sign-in is required for this provider',
+        throw new APICallError({
+          message: 'Cannot connect to API',
+          url: 'https://secret-endpoint',
+          requestBodyValues: {},
+          cause: Object.assign(new Error('connect'), { code: 'ECONNREFUSED' }),
         });
       },
     });
-    const result = await new ModelValidation().run(
-      () => model,
-      input,
-      undefined,
-      () => true,
-    );
-    expect(result).toMatchObject({
-      status: 'invalid',
-      code: 'authentication_required',
-    });
+    expect(
+      await new ModelValidation().run(
+        () => model,
+        input,
+        undefined,
+        () => true,
+      ),
+    ).toMatchObject({ status: 'unverified', code: 'connectivity_failed' });
   });
 
   it('bounds concurrency and returns on timeout or cancellation even if a provider hangs', async () => {

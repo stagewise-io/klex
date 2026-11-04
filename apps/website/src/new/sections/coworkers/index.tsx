@@ -1,7 +1,5 @@
 import './coworkers.css';
 
-import { Klex } from '@klex/mascot';
-
 import {
   Button,
   Card,
@@ -17,6 +15,7 @@ import {
 
 import { heroLooks } from '../../bot-looks';
 import { mountIsland } from '../../island';
+import { ProgressiveMascot } from '../../static-mascot';
 
 export const coworkersMarkup = `
   <section class="new-coworkers" id="coworkers" aria-labelledby="coworkers-title">
@@ -63,7 +62,7 @@ const comparisons = [
   },
 ];
 
-type BotName = keyof typeof heroLooks;
+type BotName = 'jonathan' | 'kristine' | 'monica' | 'jeff';
 type Kind = 'you' | 'person' | 'company' | 'assistant' | BotName;
 type Member = {
   x: number;
@@ -178,7 +177,8 @@ function Glyph({ kind, small }: { kind: Kind; small?: boolean }) {
     );
   }
   return (
-    <Klex
+    <ProgressiveMascot
+      snapshot={kind}
       {...heroLooks[kind]}
       size={small ? 15 : 20}
       layout="avatar"
@@ -280,17 +280,22 @@ export function Coworkers() {
                   <div className="coworkers-product" aria-hidden="true">
                     <span className="coworkers-assistant-symbol">AI</span>
                   </div>
-                  <span className="coworkers-column-title" data-font="plain">
+                  <span
+                    data-markdown="include"
+                    className="coworkers-column-title"
+                    data-font="plain"
+                  >
                     Personal AI Assistant
                   </span>
-                  <p>Built around you.</p>
+                  <p data-markdown="exclude">Built around you.</p>
                 </TableHead>
                 <TableHead scope="col">
                   <div className="coworkers-product" aria-hidden="true">
                     {(['monica', 'jonathan', 'kristine'] as const).map(
                       (bot) => (
-                        <Klex
+                        <ProgressiveMascot
                           key={bot}
+                          snapshot={bot}
                           {...heroLooks[bot]}
                           size={64}
                           layout="avatar"
@@ -300,9 +305,10 @@ export function Coworkers() {
                     )}
                   </div>
                   <span className="coworkers-column-title">Klex Bots</span>
-                  <p>Built into your team.</p>
+                  <p data-markdown="exclude">Built into your team.</p>
                   <Button
                     size="lg"
+                    data-markdown="exclude"
                     className="coworkers-cta rounded-full px-4"
                     nativeButton={false}
                     role="link"

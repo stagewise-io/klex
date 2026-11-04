@@ -60,7 +60,7 @@ export default defineConfig({
     featured: [
       {
         label: 'Klex Homepage',
-        href: 'https://klex.bot',
+        href: 'https://www.klex.bot',
         icon: 'home',
       },
     ],
@@ -96,7 +96,7 @@ export default defineConfig({
       sameAs: ['https://github.com/stagewise-io/klex'],
     },
     organization: {
-      name: 'stagewise',
+      name: 'stagewise GmbH',
       url: 'https://stagewise.io',
       sameAs: ['https://github.com/stagewise-io', 'https://stagewise.io'],
     },

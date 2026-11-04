@@ -61,7 +61,12 @@ const questions = [
 export function GuidesFaq() {
   return (
     <>
-      <nav className="guides-intro" id="guides" aria-labelledby="guides-title">
+      <nav
+        data-markdown="include"
+        className="guides-intro"
+        id="guides"
+        aria-labelledby="guides-title"
+      >
         <h2 id="guides-title">
           Best practices for building a Bot-native team.
         </h2>

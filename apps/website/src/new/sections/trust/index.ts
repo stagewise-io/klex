@@ -9,7 +9,7 @@ export const trustMarkup = `
     <div class="trust-content">
       <header class="trust-intro">
         <h2 id="trust-title">How teams work with Klex Bots</h2>
-        <p>Who better to show you how Klex Bots work in real organizations than the team behind them? Hover over a Klex Bot to see what they do.</p>
+        <p>Who better to show you how Klex Bots work in real organizations than the team behind them? <span data-markdown="exclude">Hover over a Klex Bot to see what they do.</span></p>
       </header>
 
       ${officeMarkup}
@@ -41,11 +41,11 @@ export const trustMarkup = `
             <h4 id="cloud-compliance-title">Klex Cloud security &amp; compliance</h4>
             <div class="trust-center-compliance">
               <p class="trust-center-status">
-                <span class="trust-center-status-name">SOC 2 Type 2</span>
+                <span class="trust-center-status-name" data-markdown-text="SOC 2 Type 2:">SOC 2 Type 2</span>
                 <span class="trust-center-status-progress">Audit underway</span>
               </p>
               <p class="trust-center-status">
-                <span class="trust-center-status-name">ISO 27001</span>
+                <span class="trust-center-status-name" data-markdown-text="ISO 27001:">ISO 27001</span>
                 <span class="trust-center-status-progress">Certification underway</span>
               </p>
             </div>

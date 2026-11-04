@@ -21,7 +21,9 @@ export function ProductCard({ playing }: CardProps) {
       <span className="bento-product-label">
         Your team of digital coworkers
       </span>
-      <p className="bento-product-title">Klex Bots</p>
+      <h2 id="features-title" className="bento-product-title">
+        Klex Bots
+      </h2>
       <div className="bento-product-scene" aria-hidden="true">
         <ProductScene active={active} />
       </div>

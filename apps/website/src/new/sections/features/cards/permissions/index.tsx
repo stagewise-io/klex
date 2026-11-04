@@ -39,13 +39,15 @@ function PermissionsScene({ active }: SceneProps) {
               <th scope="col">Channel access</th>
               {(['monica', 'jeff'] as const).map((bot, i) => (
                 <th key={bot} scope="col">
-                  <SceneBot
-                    active={active && selectedBot === i}
-                    bot={bot}
-                    beat={beat}
-                    reaction="happy-nod"
-                    size={32}
-                  />
+                  <div className="bento-permission-avatar" data-bot={bot}>
+                    <SceneBot
+                      active={active && selectedBot === i}
+                      bot={bot}
+                      beat={beat}
+                      reaction="happy-nod"
+                      size={32}
+                    />
+                  </div>
                   <span>{i === 0 ? 'Monica' : 'Jeff'}</span>
                 </th>
               ))}

@@ -67,8 +67,18 @@
   font-size: 8px;
   vertical-align: bottom;
 }
-.bento-permission-table :where(thead th) > div {
+.bento-permission-avatar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
   margin: 0 auto 4px;
+  border-radius: 50%;
+}
+.bento-permission-avatar > [data-progressive-mascot] {
+  /* Avatar rigs translate their figure down by 40% of its size. */
+  transform: translateY(-6px);
 }
 .bento-permissions-scene [data-testid="klex-shadow"] {
   display: none;

@@ -1,15 +1,11 @@
 import './styles.css';
 
-import {
-  DEFAULT_GLIDE,
-  Klex,
-  type KlexHandle,
-  MOVEMENT_STYLES,
-} from '@klex/mascot';
+import { DEFAULT_GLIDE, type KlexHandle, MOVEMENT_STYLES } from '@klex/mascot';
 import { gsap } from 'gsap';
-import { useEffect, useRef } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 
 import { klexLook } from '../../../../bot-looks';
+import { ProgressiveMascot } from '../../../../static-mascot';
 import {
   type CardProps,
   FeatureCard,
@@ -77,7 +73,7 @@ function ToolsScene({ active }: SceneProps) {
       );
       belt.style.transform = `translateX(${-state.distance % toolCycle}px)`;
       frame.style.transform = `translateX(${state.origin - state.distance}px)`;
-      if (!state.moving && state.distance - state.origin >= 40) {
+      if (!state.moving && bot.current && state.distance - state.origin >= 40) {
         state.moving = true;
         bot.current?.moveTo({
           x: 50,
@@ -108,6 +104,10 @@ function ToolsScene({ active }: SceneProps) {
     );
   };
 
+  const ready = useCallback(() => {
+    if (active) bot.current?.resume();
+    else bot.current?.pause();
+  }, [active]);
   return (
     <div className="bento-tools-scene" data-klex-viewport="">
       <div ref={conveyor} className="bento-tool-conveyor">
@@ -125,7 +125,9 @@ function ToolsScene({ active }: SceneProps) {
         ))}
       </div>
       <div ref={carrier} className="bento-tools-runner">
-        <Klex
+        <ProgressiveMascot
+          snapshot="brand"
+          onReady={ready}
           ref={bot}
           {...klexLook}
           settings={toolBotSettings}

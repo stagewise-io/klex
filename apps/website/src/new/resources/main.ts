@@ -3,6 +3,7 @@ import '../navigation.css';
 import '../sections/footer/footer.css';
 import './resources.css';
 
+import { mountCloudStatus } from '../cloud-status';
 import { mountLogoMenus } from '../logo-menu';
 import { mountNavigation } from '../navigation';
 import { mountPngDownloads } from './png-downloads';
@@ -21,11 +22,13 @@ matchMedia('(prefers-color-scheme: dark)').addEventListener(
   ({ matches }) => document.documentElement.classList.toggle('dark', matches),
   { signal: events.signal },
 );
+const disposeCloudStatus = mountCloudStatus();
 const disposeLogoMenus = mountLogoMenus(app);
 const disposeNavigation = mountNavigation();
 const disposePngDownloads = mountPngDownloads(app);
 import.meta.hot?.dispose(() => {
   events.abort();
+  disposeCloudStatus();
   disposeLogoMenus();
   disposeNavigation();
   disposePngDownloads();

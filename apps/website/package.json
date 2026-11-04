@@ -4,9 +4,9 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "build": "tsc && vite build",
+    "build": "tsc && vite build && node ../../scripts/agent-site/build.mjs marketing",
     "dev": "vite",
-    "preview": "vite preview",
+    "preview": "node ../../scripts/agent-site/preview.mjs marketing",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:legal": "vitest run src/legal",

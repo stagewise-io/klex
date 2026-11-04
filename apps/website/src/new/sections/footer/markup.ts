@@ -47,6 +47,10 @@ export function createFooterMarkup({
         <a href="/legal/privacy">Privacy Policy</a>
         <a href="/legal/terms">Terms of Service</a>
         <a href="/legal">Legal Center</a>
+        <a href="/legal/acceptable-use">Acceptable Use Policy</a>
+        <a href="/legal/service-and-billing">Service and billing conditions</a>
+        <a href="/legal/data-act-switching">EU Data Act switching addendum</a>
+        <a href="/legal/data-processing-agreement">Data Processing Agreement</a>
         <a href="mailto:support@klex.bot">Support</a>
         <a href="https://x.com/stagewise_io" target="_blank" rel="noreferrer">X</a>
         <a href="https://linkedin.com/company/stagewise-io" target="_blank" rel="noreferrer">LinkedIn</a>

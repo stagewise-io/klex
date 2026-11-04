@@ -78,7 +78,7 @@ function frame(
 <p class="legal-back"><a href="/legal"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m12 19-7-7 7-7M5 12h14"/></svg>Legal Center</a></p>
 ${notice ? `<div class="legal-notice"><p>${notice}</p></div>` : ''}
 <div id="legal-document">${displayed ? article(displayed) : `<h1>${escapeHtml(label)}</h1><p class="legal-unavailable">${documents.length ? 'No policy is effective yet. Upcoming versions are listed below.' : 'This policy is not yet available.'}</p>`}</div>
-${history ? `<nav id="legal-history" class="legal-history" aria-label="Revision history">${history}</nav>` : ''}
+${history ? `<nav id="legal-history" class="legal-history" aria-label="Revision history" data-markdown="include">${history}</nav>` : ''}
 ${displayed ? '' : revisionList(sources, policy)}</main>
 ${createFooterMarkup({ showCta: false })}`;
 }
@@ -107,7 +107,7 @@ export function generateArtifacts(
   );
   artifacts.set('legal/policies.json', catalogText);
   const centerBody = frame(sources, '', 'Legal Center');
-  const centerMain = `<main id="legal-center" tabindex="-1" class="legal-main"><header class="legal-document-header"><h1>Legal Center</h1></header><nav aria-label="Legal documents"><ul class="legal-center-list">${sources.registry.policies.map((type) => `<li><a href="/legal/${escapeHtml(type.slug)}">${escapeHtml(type.label)}<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 5 7 7-7 7"/></svg></a></li>`).join('')}</ul></nav></main>`;
+  const centerMain = `<main id="legal-center" tabindex="-1" class="legal-main"><header class="legal-document-header"><h1>Legal Center</h1></header><nav aria-label="Legal documents" data-markdown="include"><ul class="legal-center-list">${sources.registry.policies.map((type) => `<li><a href="/legal/${escapeHtml(type.slug)}">${escapeHtml(type.label)}<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 5 7 7-7 7"/></svg></a></li>`).join('')}</ul></nav></main>`;
   artifacts.set(
     'legal/index.html',
     template

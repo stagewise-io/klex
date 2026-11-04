@@ -34,12 +34,10 @@ describe('shared website footer', () => {
     expect(footerMarkup).toContain('href="/legal">Legal Center</a>');
     expect(footerMarkup).toContain('href="/legal/privacy">Privacy Policy</a>');
     expect(footerMarkup).toContain('href="/legal/terms">Terms of Service</a>');
-    expect(footerMarkup).not.toContain('href="/legal/acceptable-use"');
-    expect(footerMarkup).not.toContain('href="/legal/service-and-billing"');
-    expect(footerMarkup).not.toContain('href="/legal/data-act-switching"');
-    expect(footerMarkup).not.toContain(
-      'href="/legal/data-processing-agreement"',
-    );
+    expect(footerMarkup).toContain('href="/legal/acceptable-use"');
+    expect(footerMarkup).toContain('href="/legal/service-and-billing"');
+    expect(footerMarkup).toContain('href="/legal/data-act-switching"');
+    expect(footerMarkup).toContain('href="/legal/data-processing-agreement"');
     expect(footerMarkup).toContain(
       'href="mailto:support@klex.bot">Support</a>',
     );
